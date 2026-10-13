@@ -53,7 +53,7 @@ mopm link-plan tests/fixtures/chain/http_client.mopm.json tests/fixtures/chain/c
 
 ## Build and test
 
-You need [Zig](https://ziglang.org) 0.12.0.
+You need [Zig](https://ziglang.org) 0.12.0 (`tools/install_zig.sh <dir>` installs it, checked against a pinned sha256).
 
 ```sh
 zig build            # builds zig-out/bin/mopm
