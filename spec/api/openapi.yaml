@@ -589,7 +589,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: mopm token
-      description: Any live token of a user: a session token or an API token.
+      description: "Any live token of a user: a session token or an API token."
     freshSession:
       type: http
       scheme: bearer
