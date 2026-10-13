@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mopm.dev/schema/package-metadata-1.json",
+  "title": "mopm package metadata (<name>.mopm.json)",
+  "type": "object",
+  "required": ["schema", "name"],
+  "properties": {
+    "schema": { "const": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "version": { "type": "string" },
+    "deps": {
+      "description": "Direct Mojo dependencies.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "range": { "type": "string" }
+        }
+      }
+    },
+    "native": {
+      "description": "Native libraries this package ships.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "soname"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "soname": {
+            "description": "Library file name, lib<name>.<suffix>.",
+            "type": "string",
+            "pattern": "^lib[^./]+\\..+$"
+          },
+          "kind": { "enum": ["shared", "static", "both"], "default": "shared" },
+          "mode": { "enum": ["link", "load"], "default": "link" },
+          "file": {
+            "description": "Shared object, relative to this file. Required for kind shared and both.",
+            "type": "string"
+          },
+          "static_file": {
+            "description": "Static archive, relative to this file. Required for kind static and both.",
+            "type": "string"
+          },
+          "needs": {
+            "description": "Sonames of native libraries from other packages this one needs.",
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "kind": { "enum": ["shared", "both"] } } },
+            "then": { "required": ["file"] }
+          },
+          {
+            "if": { "required": ["kind"], "properties": { "kind": { "enum": ["static", "both"] } } },
+            "then": { "required": ["static_file"] }
+          }
+        ]
+      }
+    }
+  }
+}

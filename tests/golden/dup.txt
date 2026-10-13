@@ -1,0 +1,9 @@
+build:
+  -Ltests/fixtures/dup/lib
+  -ldup
+run:
+  -Xlinker tests/fixtures/dup/lib/libdup.so.1
+repl-preload:
+  tests/fixtures/dup/lib/libdup.so.1
+diagnostics:
+  [all] duplicate_owner: libdup.so.1 is provided by both pkg_a and pkg_b; one owner per native library

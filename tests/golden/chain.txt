@@ -1,0 +1,11 @@
+build:
+  -Ltests/fixtures/chain/lib
+  -lcurl_shim
+  -lcrypto_native
+run:
+  -Xlinker tests/fixtures/chain/lib/libcurl_shim.so.1
+  -Xlinker tests/fixtures/chain/lib/libcrypto_native.so.1
+repl-preload:
+  tests/fixtures/chain/lib/libcurl_shim.so.1
+  tests/fixtures/chain/lib/libcrypto_native.so.1
+diagnostics:
