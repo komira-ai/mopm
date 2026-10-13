@@ -88,7 +88,7 @@ def schema_errors(spec, schema, instance):
 
 
 def template_regex(template):
-    parts = re.split(r"\{[a-z_]+\}", template)
+    parts = re.split(r"\{[a-z0-9_]+\}", template)
     return re.compile(".+".join(re.escape(p) for p in parts))
 
 
