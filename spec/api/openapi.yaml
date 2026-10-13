@@ -1,0 +1,1231 @@
+openapi: 3.1.0
+info:
+  title: mopm registry API
+  version: "1.0.0"
+  summary: The HTTP API of the hosted mopm registry, version 1.
+  description: |
+    This file is the contract between the `mopm` command line tool and the
+    hosted registry at mopm.dev. The registry implementation is not part of
+    this repository. This repository holds the contract and a local fake
+    registry (planned, see `registry/README.md`) that the CLI is tested
+    against. The hosted registry is tested against the same contract.
+
+    ## Versioning rule (additive only)
+
+    All paths live under `/api/v1`. Within `/api/v1`:
+
+    - A change may add an optional request field, add a response field, add an
+      endpoint, add a value to a response enum, or add an error code.
+    - A change may NOT remove or rename a field, make an optional request field
+      required, tighten validation of a request that was accepted before,
+      change the type, format or meaning of a field, change an error code or the
+      HTTP status of an existing error, or change the cursor format.
+    - Clients MUST ignore response fields they do not know, MUST treat an
+      unknown enum value as "unknown" rather than as an error, and MUST treat
+      an unknown error code as the generic failure of its HTTP status class.
+    - A breaking change ships as `/api/v2`, served alongside `/api/v1`. The
+      registry keeps serving every released CLI version.
+    - The static index (`spec/index.md`) is versioned separately by
+      `index_version` in `config.json`; a CLI refuses an index version it does
+      not know.
+
+    ## Conventions
+
+    - Bodies are JSON (`application/json`, UTF-8). Timestamps are RFC 3339 in UTC.
+    - Every response carries the header `x-mopm-request-id`. The CLI prints it
+      with any error.
+    - Errors have the shape `{"error": {"code", "message", "hint"}}`. The
+      stable codes are the `ErrorCode` enum; the table of code, HTTP status,
+      message template and hint is the `x-mopm-errors` extension at the end of
+      this file. Clients branch on `code`, never on `message`.
+    - Writes need `Authorization: Bearer <token>`. Reads and installs never
+      need a token.
+    - Names in paths are normalised names (lowercase; runs of `-`, `.` and `_`
+      collapse to one `_`). The service answers a non-normalised name with
+      `invalid_name`; it does not redirect.
+    - Versions in paths start with a digit, so a version never collides with
+      the literal path segments `owners`, `versions` or `claim`.
+    - Two versions that are equal under conda version ordering (`1.0` and
+      `1.0.0`) are the same version: the second is refused with `version_exists`.
+    - Lists are paginated with an opaque `cursor`; `next_cursor` is null on the
+      last page.
+
+    ## Authentication
+
+    Tokens look like `mopm_` followed by lowercase base32 characters. The
+    prefix lets secret scanners recognise them. There are four ways a bearer
+    token is accepted, named below as security schemes. A request with no token
+    where one is required gets `token_missing`.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: https://{host}/api/v1
+    description: One host per stage. Prod is mopm.dev.
+    variables:
+      host:
+        default: mopm.dev
+        enum:
+          - mopm.dev
+          - gamma.mopm.dev
+          - beta.mopm.dev
+tags:
+  - name: auth
+  - name: tokens
+  - name: publish
+  - name: packages
+  - name: owners
+  - name: me
+  - name: meta
+security: []
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      tags: [meta]
+      summary: Liveness and mode of the stage.
+      security: []
+      responses:
+        "200":
+          description: The stage is up. `read_only` is true when new uploads are refused.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /auth/device:
+    post:
+      operationId: startDeviceLogin
+      tags: [auth]
+      summary: Start the device login flow (CLI login through GitHub).
+      description: |
+        Returns a user code to show the person and a device code to poll with.
+        The approval page shows the requesting client and expires in ten
+        minutes. Throttled per IP and per device code.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeviceStartRequest" }
+      responses:
+        "200":
+          description: A device login was started.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceStartResponse" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /auth/device/poll:
+    post:
+      operationId: pollDeviceLogin
+      tags: [auth]
+      summary: Poll a started device login.
+      description: |
+        Poll no faster than `interval` seconds. While the person has not
+        decided, `status` is `pending`. `approved` carries a session token;
+        the session is fresh (see `fresh_until`) so that the CLI can mint an
+        API token right after login.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DevicePollRequest" }
+      responses:
+        "200":
+          description: The state of the login.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DevicePollResponse" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /auth/oidc/exchange:
+    post:
+      operationId: exchangeOidcToken
+      tags: [auth]
+      summary: Exchange a CI identity token for a short-lived publish token.
+      description: |
+        The token is valid for 15 minutes, may only publish, and only for the
+        one package and version named in the request. The CI identity must
+        match a trusted publisher registered for the package.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OidcExchangeRequest" }
+      responses:
+        "200":
+          description: A publish token for one package version.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OidcExchangeResponse" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /me:
+    get:
+      operationId: getMe
+      tags: [me]
+      summary: The calling user.
+      security:
+        - userToken: []
+      responses:
+        "200":
+          description: The user behind the token.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /me/tokens:
+    post:
+      operationId: createToken
+      tags: [tokens]
+      summary: Create an API token.
+      description: |
+        Needs a fresh session. The secret is shown once and stored hashed.
+        `packages` is mandatory: an explicit list, or `all_current`, a snapshot
+        of the caller's packages at creation time (not future claims).
+        There is no `owners` scope: API tokens cannot change owners.
+      security:
+        - freshSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTokenRequest" }
+      responses:
+        "201":
+          description: The token. `token` is the only time the secret is returned.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateTokenResponse" }
+        default: { $ref: "#/components/responses/Error" }
+    get:
+      operationId: listTokens
+      tags: [tokens]
+      summary: List the caller's tokens (metadata only, never secrets).
+      security:
+        - freshSession: []
+      responses:
+        "200":
+          description: The caller's live tokens.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenList" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /me/tokens/{token_id}:
+    delete:
+      operationId: revokeToken
+      tags: [tokens]
+      summary: Revoke a token. Revocation is immediate.
+      security:
+        - freshSession: []
+      parameters:
+        - { $ref: "#/components/parameters/TokenId" }
+      responses:
+        "204":
+          description: The token is revoked.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /me/invitations:
+    get:
+      operationId: listInvitations
+      tags: [me, owners]
+      summary: Pending ownership invitations addressed to the caller.
+      security:
+        - userToken: []
+      responses:
+        "200":
+          description: The caller's pending invitations.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvitationList" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /me/invitations/{invitation_id}/accept:
+    post:
+      operationId: acceptInvitation
+      tags: [me, owners]
+      summary: Accept an ownership invitation.
+      description: Only the invited GitHub account can accept, and only before it expires.
+      security:
+        - userToken: []
+      parameters:
+        - { $ref: "#/components/parameters/InvitationId" }
+      responses:
+        "200":
+          description: The caller is now an owner.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OwnerList" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /packages:
+    get:
+      operationId: searchPackages
+      tags: [packages]
+      summary: List or search packages.
+      description: |
+        v1 filters only what the index serves: a name prefix (`q`) and a sort
+        order. Filtering by platform, Mojo version or native library is not
+        in v1.
+      security: []
+      parameters:
+        - { $ref: "#/components/parameters/Query" }
+        - { $ref: "#/components/parameters/Sort" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: One page of packages.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PackageList" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /packages/{name}:
+    get:
+      operationId: getPackage
+      tags: [packages]
+      summary: Package information.
+      security: []
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: The package, its owners and its versions.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PackageInfo" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /packages/{name}/claim:
+    post:
+      operationId: claimPackage
+      tags: [packages]
+      summary: Reserve a free package name.
+      description: |
+        The only way to create a package. A claim with no published version
+        expires after 30 days. A name that is too similar to an existing one
+        needs `confirm_similar`.
+      security:
+        - userToken: []
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClaimRequest" }
+      responses:
+        "201":
+          description: The name is reserved for the caller.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClaimResponse" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /packages/{name}/versions:
+    get:
+      operationId: listVersions
+      tags: [packages]
+      summary: Versions of a package, newest first.
+      description: Includes yanked and tombstoned versions, with their state.
+      security: []
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: One page of versions.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VersionList" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /packages/{name}/owners:
+    get:
+      operationId: listOwners
+      tags: [owners]
+      summary: Owners of a package. Public.
+      security: []
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+      responses:
+        "200":
+          description: The owners.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OwnerList" }
+        default: { $ref: "#/components/responses/Error" }
+    put:
+      operationId: inviteOwner
+      tags: [owners]
+      summary: Invite a GitHub account to become an owner.
+      description: |
+        Needs a fresh session of an existing owner. The handle is resolved to a
+        numeric GitHub id at invite time and the invitation is bound to that id.
+        Inviting the same handle again returns the pending invitation.
+      security:
+        - freshSession: []
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InviteOwnerRequest" }
+      responses:
+        "202":
+          description: The invitation is pending until the invitee accepts.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invitation" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /packages/{name}/owners/{github_id}:
+    delete:
+      operationId: removeOwner
+      tags: [owners]
+      summary: Remove an owner.
+      description: |
+        Needs a fresh session of an owner. Any owner may remove another owner;
+        the last owner cannot be removed (`last_owner`).
+      security:
+        - freshSession: []
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+        - { $ref: "#/components/parameters/GithubId" }
+      responses:
+        "204":
+          description: The owner is removed.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /packages/{name}/{version}:
+    get:
+      operationId: getVersion
+      tags: [packages]
+      summary: One version of a package.
+      description: |
+        A yanked version is returned with `state: yanked` and its reason. A
+        tombstoned version is returned with `state: tombstoned`, the reason
+        code and the sha256 of each file, but no `url`.
+      security: []
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+        - { $ref: "#/components/parameters/Version" }
+      responses:
+        "200":
+          description: The version.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VersionDetail" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /packages/{name}/{version}/files:
+    post:
+      operationId: beginUpload
+      tags: [publish]
+      summary: Begin the upload of one file of a version.
+      description: |
+        Publishing is three steps: begin an upload per file (this call), PUT the
+        bytes to the returned URL with the returned headers, then commit
+        (`commitPublish`). The registry binds the upload to the caller, the
+        name, the version, the sha256 and the size; the presigned URL carries a
+        signed `x-amz-checksum-sha256` and an exact content length so the
+        storage layer itself rejects any other bytes. The URL expires in at
+        most five minutes.
+      security:
+        - publishToken: []
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+        - { $ref: "#/components/parameters/Version" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BeginUploadRequest" }
+      responses:
+        "200":
+          description: Where and how to upload.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BeginUploadResponse" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /packages/{name}/{version}/publish:
+    post:
+      operationId: commitPublish
+      tags: [publish]
+      summary: Commit uploaded files as a version.
+      description: |
+        Asynchronous. The registry answers 202 with a status URL; the CLI
+        polls it. Each upload id is single use and must belong to the caller
+        and to this name and version. Committing the same upload ids again
+        while the version is still `pending` resumes the same publish. A
+        version that exists in any other state is refused with
+        `version_exists`, whose message carries the sha256 already published;
+        a client that wants "succeed if these exact bytes are already
+        published" compares that sha256 with its own (or reads `getVersion`).
+        The file set of a version is fixed at commit.
+      security:
+        - publishToken: []
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+        - { $ref: "#/components/parameters/Version" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommitPublishRequest" }
+      responses:
+        "202":
+          description: The publish was accepted and is being processed.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommitPublishResponse" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /publishes/{publish_id}:
+    get:
+      operationId: getPublishStatus
+      tags: [publish]
+      summary: Status of a publish.
+      description: |
+        `pending`, `validating` and `indexing` are in progress; `published` and
+        `rejected` are final. A rejected publish burns the version number.
+      security:
+        - publishToken: []
+      parameters:
+        - { $ref: "#/components/parameters/PublishId" }
+      responses:
+        "200":
+          description: The current status.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublishStatus" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /packages/{name}/{version}/yank:
+    put:
+      operationId: setYanked
+      tags: [publish]
+      summary: Yank or unyank a version.
+      description: |
+        `yanked: true` hides the version from new resolution; its files stay
+        downloadable at their exact URLs, so existing locks keep working.
+        `yanked: false` restores it. Allowed for an owner or a token with the
+        `yank` or `publish` scope for the package. The call is idempotent.
+      security:
+        - yankToken: []
+        - publishToken: []
+      parameters:
+        - { $ref: "#/components/parameters/Name" }
+        - { $ref: "#/components/parameters/Version" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/YankRequest" }
+      responses:
+        "200":
+          description: The version after the change.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VersionSummary" }
+        default: { $ref: "#/components/responses/Error" }
+
+components:
+  securitySchemes:
+    userToken:
+      type: http
+      scheme: bearer
+      bearerFormat: mopm token
+      description: Any live token of a user: a session token or an API token.
+    freshSession:
+      type: http
+      scheme: bearer
+      bearerFormat: mopm session token
+      description: |
+        A session token younger than 15 minutes (login again to refresh). An
+        older session, or an API token, gets `stale_session`. Used for owner
+        changes and for token management.
+    publishToken:
+      type: http
+      scheme: bearer
+      bearerFormat: mopm token
+      description: |
+        An API token with the `publish` scope for the package, or a token from
+        the OIDC exchange for exactly this package and version.
+    yankToken:
+      type: http
+      scheme: bearer
+      bearerFormat: mopm token
+      description: An API token with the `yank` scope for the package.
+
+  headers:
+    RequestId:
+      description: Identifies the request in the registry's logs. Print it with every error.
+      required: true
+      schema: { type: string, minLength: 1 }
+    RetryAfter:
+      description: Seconds to wait before retrying. Present on `rate_limited` and `read_only_mode`.
+      schema: { type: integer, minimum: 0 }
+
+  responses:
+    Error:
+      description: |
+        Any error. The `code` is stable (see `x-mopm-errors`); the HTTP status
+        is the one the catalogue lists for that code.
+      headers:
+        x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+        retry-after: { $ref: "#/components/headers/RetryAfter" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  parameters:
+    Name:
+      name: name
+      in: path
+      required: true
+      description: Normalised package name.
+      schema: { $ref: "#/components/schemas/Name" }
+    Version:
+      name: version
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/Version" }
+    GithubId:
+      name: github_id
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    TokenId:
+      name: token_id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 64 }
+    InvitationId:
+      name: invitation_id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 64 }
+    PublishId:
+      name: publish_id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 64 }
+    Query:
+      name: q
+      in: query
+      required: false
+      description: Name prefix, normalised before matching.
+      schema: { type: string, maxLength: 64 }
+    Sort:
+      name: sort
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [name, updated]
+        default: name
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque. Pass the `next_cursor` of the previous page.
+      schema: { type: string, minLength: 1, maxLength: 512 }
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+
+  schemas:
+    # ---- primitives -------------------------------------------------------
+    Name:
+      description: A normalised package name.
+      type: string
+      pattern: "^[a-z][a-z0-9_]{1,63}$"
+    Version:
+      description: |
+        A version. Digits separated by dots, with an optional pre-release
+        suffix (`a`, `b`, `rc` or `dev` and a number). Equality is conda
+        equality, so the registry may refuse a spelling that equals an existing
+        version; this pattern is what a client may send.
+      type: string
+      pattern: "^(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))*((a|b|rc|dev)(0|[1-9][0-9]*))?$"
+    Sha256:
+      type: string
+      pattern: "^[0-9a-f]{64}$"
+    Subdir:
+      description: A conda subdir. New values may be added.
+      type: string
+      enum: [linux-64, linux-aarch64, osx-arm64, noarch]
+    Filename:
+      description: The conda file name, `mojo-<name>-<version>-<build>.conda`.
+      type: string
+      pattern: "^mojo-[a-z][a-z0-9_]{1,63}-[0-9][0-9a-z.]*-[A-Za-z0-9_.]+\\.conda$"
+    Timestamp:
+      type: string
+      format: date-time
+    Token:
+      description: A bearer token. Shown once, at creation.
+      type: string
+      pattern: "^mopm_[a-z2-7]{32,64}$"
+    VersionState:
+      description: |
+        `published`: resolvable. `yanked`: hidden from new resolution, bytes
+        stay. `tombstoned`: bytes removed by an administrator; the number stays
+        burned. Clients treat an unknown state as not resolvable.
+      type: string
+      enum: [published, yanked, tombstoned]
+    FileRef:
+      type: object
+      required: [subdir, filename, sha256, size]
+      properties:
+        subdir: { $ref: "#/components/schemas/Subdir" }
+        filename: { $ref: "#/components/schemas/Filename" }
+        sha256: { $ref: "#/components/schemas/Sha256" }
+        size: { type: integer, minimum: 1 }
+        url:
+          description: Absolute URL on the channel host. Absent when the version is tombstoned.
+          type: string
+          format: uri
+    Dep:
+      type: object
+      required: [name]
+      properties:
+        name: { $ref: "#/components/schemas/Name" }
+        range: { type: string }
+    NativeRef:
+      type: object
+      required: [id, soname]
+      properties:
+        id: { type: string, minLength: 1 }
+        soname: { type: string, minLength: 1 }
+    Owner:
+      type: object
+      required: [github_id, handle]
+      properties:
+        github_id: { type: integer, minimum: 1 }
+        handle: { type: string, minLength: 1 }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, hint]
+          properties:
+            code: { $ref: "#/components/schemas/ErrorCode" }
+            message: { type: string, minLength: 1 }
+            hint: { type: string }
+    ErrorCode:
+      description: |
+        Stable machine-readable error codes. A client MUST treat a code it does
+        not know as the generic failure of the HTTP status class.
+      type: string
+      enum:
+        - invalid_request
+        - invalid_name
+        - invalid_version
+        - upload_invalid
+        - token_missing
+        - token_unknown
+        - token_expired
+        - token_revoked
+        - stale_session
+        - oidc_token_invalid
+        - scope_missing
+        - not_owner
+        - name_reserved
+        - oidc_not_trusted
+        - package_not_found
+        - version_not_found
+        - user_not_found
+        - invitation_not_found
+        - device_code_unknown
+        - token_not_found
+        - owner_not_found
+        - publish_not_found
+        - name_taken
+        - name_too_similar
+        - version_exists
+        - already_owner
+        - last_owner
+        - upload_used
+        - invitation_expired
+        - payload_too_large
+        - rate_limited
+        - internal_error
+        - read_only_mode
+        - unavailable
+    RejectionCode:
+      description: |
+        Why a publish was rejected after it was accepted (`PublishStatus`).
+        Not an HTTP error. Clients treat an unknown value as a generic rejection.
+      type: string
+      enum:
+        - archive_invalid
+        - path_not_allowed
+        - limit_exceeded
+        - manifest_invalid
+        - filename_mismatch
+        - sha256_mismatch
+        - dependency_not_allowed
+
+    # ---- meta -------------------------------------------------------------
+    Health:
+      type: object
+      required: [status, stage, api_version, read_only]
+      properties:
+        status: { type: string, enum: [ok] }
+        stage: { type: string, enum: [beta, gamma, prod] }
+        api_version: { type: string, const: v1 }
+        read_only: { type: boolean }
+
+    # ---- auth -------------------------------------------------------------
+    DeviceStartRequest:
+      type: object
+      required: [client]
+      properties:
+        client:
+          description: Shown on the approval page, e.g. `mopm 0.1.0`.
+          type: string
+          minLength: 1
+          maxLength: 80
+    DeviceStartResponse:
+      type: object
+      required: [device_code, user_code, verification_uri, expires_in, interval]
+      properties:
+        device_code: { type: string, minLength: 16 }
+        user_code: { type: string, minLength: 4 }
+        verification_uri: { type: string, format: uri }
+        expires_in: { type: integer, minimum: 1, description: Seconds. Ten minutes. }
+        interval: { type: integer, minimum: 1, description: Minimum seconds between polls. }
+    DevicePollRequest:
+      type: object
+      required: [device_code]
+      properties:
+        device_code: { type: string, minLength: 16 }
+    DevicePollResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [pending, approved, denied, expired]
+        interval: { type: integer, minimum: 1 }
+        token: { $ref: "#/components/schemas/Token" }
+        token_kind: { type: string, enum: [session] }
+        expires_at: { $ref: "#/components/schemas/Timestamp" }
+        fresh_until: { $ref: "#/components/schemas/Timestamp" }
+        handle: { type: string, minLength: 1 }
+      if:
+        properties:
+          status: { const: approved }
+      then:
+        required: [token, token_kind, expires_at, fresh_until, handle]
+    OidcExchangeRequest:
+      type: object
+      required: [jwt, name, version]
+      properties:
+        jwt: { type: string, minLength: 1 }
+        name: { $ref: "#/components/schemas/Name" }
+        version: { $ref: "#/components/schemas/Version" }
+    OidcExchangeResponse:
+      type: object
+      required: [token, token_kind, expires_at, name, version]
+      properties:
+        token: { $ref: "#/components/schemas/Token" }
+        token_kind: { type: string, enum: [publish] }
+        expires_at: { $ref: "#/components/schemas/Timestamp" }
+        name: { $ref: "#/components/schemas/Name" }
+        version: { $ref: "#/components/schemas/Version" }
+
+    # ---- me and tokens ----------------------------------------------------
+    Me:
+      type: object
+      required: [github_id, handle, packages, pending_invitations]
+      properties:
+        github_id: { type: integer, minimum: 1 }
+        handle: { type: string, minLength: 1 }
+        packages:
+          type: array
+          items: { $ref: "#/components/schemas/Name" }
+        pending_invitations: { type: integer, minimum: 0 }
+    TokenScope:
+      type: string
+      enum: [publish, yank]
+    TokenPackages:
+      description: An explicit package list, or the string `all_current`.
+      oneOf:
+        - type: array
+          minItems: 1
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/Name" }
+        - type: string
+          const: all_current
+    CreateTokenRequest:
+      type: object
+      required: [name, scopes, packages, expires_in_days]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+        scopes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/TokenScope" }
+        packages: { $ref: "#/components/schemas/TokenPackages" }
+        expires_in_days: { type: integer, minimum: 1, maximum: 90 }
+    CreateTokenResponse:
+      type: object
+      required: [id, name, token, scopes, packages, expires_at]
+      properties:
+        id: { type: string, minLength: 1 }
+        name: { type: string }
+        token: { $ref: "#/components/schemas/Token" }
+        scopes:
+          type: array
+          items: { $ref: "#/components/schemas/TokenScope" }
+        packages: { $ref: "#/components/schemas/TokenPackages" }
+        expires_at: { $ref: "#/components/schemas/Timestamp" }
+    TokenMeta:
+      type: object
+      required: [id, name, scopes, packages, created_at, expires_at]
+      properties:
+        id: { type: string, minLength: 1 }
+        name: { type: string }
+        scopes:
+          type: array
+          items: { $ref: "#/components/schemas/TokenScope" }
+        packages: { $ref: "#/components/schemas/TokenPackages" }
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+        expires_at: { $ref: "#/components/schemas/Timestamp" }
+        last_used_at:
+          oneOf:
+            - { $ref: "#/components/schemas/Timestamp" }
+            - { type: "null" }
+    TokenList:
+      type: object
+      required: [tokens]
+      properties:
+        tokens:
+          type: array
+          items: { $ref: "#/components/schemas/TokenMeta" }
+
+    # ---- owners -----------------------------------------------------------
+    OwnerList:
+      type: object
+      required: [owners]
+      properties:
+        owners:
+          type: array
+          items: { $ref: "#/components/schemas/Owner" }
+    InviteOwnerRequest:
+      type: object
+      required: [handle]
+      properties:
+        handle: { type: string, minLength: 1 }
+    Invitation:
+      type: object
+      required: [id, name, github_id, handle, inviter, expires_at]
+      properties:
+        id: { type: string, minLength: 1 }
+        name: { $ref: "#/components/schemas/Name" }
+        github_id: { type: integer, minimum: 1 }
+        handle: { type: string, minLength: 1 }
+        inviter: { type: string, minLength: 1 }
+        expires_at: { $ref: "#/components/schemas/Timestamp" }
+    InvitationList:
+      type: object
+      required: [invitations]
+      properties:
+        invitations:
+          type: array
+          items: { $ref: "#/components/schemas/Invitation" }
+
+    # ---- packages ---------------------------------------------------------
+    ClaimRequest:
+      type: object
+      properties:
+        confirm_similar:
+          description: Acknowledge `name_too_similar` and claim anyway.
+          type: boolean
+          default: false
+    ClaimResponse:
+      type: object
+      required: [name, state, claim_expires_at]
+      properties:
+        name: { $ref: "#/components/schemas/Name" }
+        state: { type: string, enum: [claimed] }
+        claim_expires_at: { $ref: "#/components/schemas/Timestamp" }
+    PackageSummary:
+      type: object
+      required: [name, latest, description, updated_at]
+      properties:
+        name: { $ref: "#/components/schemas/Name" }
+        latest:
+          description: Newest non-yanked, non-prerelease version, or null.
+          oneOf:
+            - { $ref: "#/components/schemas/Version" }
+            - { type: "null" }
+        description: { type: [string, "null"] }
+        updated_at: { $ref: "#/components/schemas/Timestamp" }
+    PackageList:
+      type: object
+      required: [packages, next_cursor]
+      properties:
+        packages:
+          type: array
+          items: { $ref: "#/components/schemas/PackageSummary" }
+        next_cursor: { type: [string, "null"] }
+    VersionSummary:
+      type: object
+      required: [version, state, published_at]
+      properties:
+        version: { $ref: "#/components/schemas/Version" }
+        state: { $ref: "#/components/schemas/VersionState" }
+        published_at: { $ref: "#/components/schemas/Timestamp" }
+        yank_reason: { type: [string, "null"] }
+    VersionList:
+      type: object
+      required: [versions, next_cursor]
+      properties:
+        versions:
+          type: array
+          items: { $ref: "#/components/schemas/VersionSummary" }
+        next_cursor: { type: [string, "null"] }
+    PackageInfo:
+      type: object
+      required: [name, state, owners, latest, repository, license, description, created_at, versions]
+      properties:
+        name: { $ref: "#/components/schemas/Name" }
+        display_name: { type: string }
+        state: { type: string, enum: [claimed, active] }
+        owners:
+          type: array
+          items: { $ref: "#/components/schemas/Owner" }
+        latest:
+          oneOf:
+            - { $ref: "#/components/schemas/Version" }
+            - { type: "null" }
+        repository: { type: [string, "null"], description: An https URL. }
+        license: { type: [string, "null"] }
+        description: { type: [string, "null"] }
+        created_at: { $ref: "#/components/schemas/Timestamp" }
+        versions:
+          type: array
+          items: { $ref: "#/components/schemas/VersionSummary" }
+    Provenance:
+      type: object
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [none, oidc] }
+        repository: { type: string }
+        workflow_ref: { type: string }
+    Tombstone:
+      type: object
+      required: [reason_code, date]
+      properties:
+        reason_code: { type: string, minLength: 1 }
+        date: { type: string, format: date }
+    VersionDetail:
+      type: object
+      required: [name, version, state, published_at, requires_mojo, deps, native, files, manifest_sha256, provenance]
+      properties:
+        name: { $ref: "#/components/schemas/Name" }
+        version: { $ref: "#/components/schemas/Version" }
+        state: { $ref: "#/components/schemas/VersionState" }
+        yank_reason: { type: [string, "null"] }
+        tombstone: { $ref: "#/components/schemas/Tombstone" }
+        published_at: { $ref: "#/components/schemas/Timestamp" }
+        published_by: { type: string }
+        requires_mojo:
+          description: The conda requirement on the compiler, e.g. `==1.0.0`.
+          type: string
+          minLength: 1
+        deps:
+          type: array
+          items: { $ref: "#/components/schemas/Dep" }
+        native:
+          type: array
+          items: { $ref: "#/components/schemas/NativeRef" }
+        files:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/FileRef" }
+        manifest_sha256: { $ref: "#/components/schemas/Sha256" }
+        manifest:
+          description: The embedded `<name>.mopm.json` (see spec/package-metadata.schema.json).
+          type: object
+        readme_html:
+          description: Sanitised HTML. Never trust it on a cookie-authenticated origin.
+          type: [string, "null"]
+        provenance: { $ref: "#/components/schemas/Provenance" }
+
+    # ---- publish ----------------------------------------------------------
+    BeginUploadRequest:
+      type: object
+      required: [subdir, filename, sha256, size]
+      properties:
+        subdir: { $ref: "#/components/schemas/Subdir" }
+        filename: { $ref: "#/components/schemas/Filename" }
+        sha256: { $ref: "#/components/schemas/Sha256" }
+        size:
+          description: Bytes. At most 50 MiB in v1.
+          type: integer
+          minimum: 1
+          maximum: 52428800
+    BeginUploadResponse:
+      type: object
+      required: [upload_id, put_url, put_headers, expires_at]
+      properties:
+        upload_id: { type: string, minLength: 1 }
+        put_url: { type: string, format: uri }
+        put_headers:
+          description: Headers the client MUST send with the PUT, exactly as given.
+          type: object
+          additionalProperties: { type: string }
+        expires_at: { $ref: "#/components/schemas/Timestamp" }
+    CommitPublishRequest:
+      type: object
+      required: [upload_ids, manifest_sha256]
+      properties:
+        upload_ids:
+          type: array
+          minItems: 1
+          maxItems: 20
+          uniqueItems: true
+          items: { type: string, minLength: 1 }
+        manifest_sha256: { $ref: "#/components/schemas/Sha256" }
+        readme:
+          description: Markdown, at most 512 KiB.
+          type: string
+          maxLength: 524288
+    CommitPublishResponse:
+      type: object
+      required: [publish_id, status_url]
+      properties:
+        publish_id: { type: string, minLength: 1 }
+        status_url:
+          description: Path on the same host. GET it with the same token.
+          type: string
+          pattern: "^/api/v1/publishes/"
+    PublishStatus:
+      type: object
+      required: [publish_id, name, version, status]
+      properties:
+        publish_id: { type: string, minLength: 1 }
+        name: { $ref: "#/components/schemas/Name" }
+        version: { $ref: "#/components/schemas/Version" }
+        status:
+          type: string
+          enum: [pending, validating, indexing, published, rejected]
+        rejection_code: { $ref: "#/components/schemas/RejectionCode" }
+        message: { type: string }
+      if:
+        properties:
+          status: { const: rejected }
+      then:
+        required: [rejection_code]
+    YankRequest:
+      type: object
+      required: [yanked]
+      properties:
+        yanked: { type: boolean }
+        reason:
+          description: Required when `yanked` is true. Shown to people who locked the version.
+          type: string
+          maxLength: 280
+      if:
+        properties:
+          yanked: { const: true }
+      then:
+        required: [reason]
+
+x-mopm-errors:
+  invalid_request:       { status: 400, message: "The request is not valid: {detail}.", hint: "Check the request against the API documentation; update mopm if it is old." }
+  invalid_name:          { status: 400, message: "'{name}' is not a valid package name.", hint: "Names are lowercase letters, digits and underscores, 2 to 64 characters, starting with a letter." }
+  invalid_version:       { status: 400, message: "'{version}' is not a valid version.", hint: "Use digits separated by dots, with an optional a, b, rc or dev suffix." }
+  upload_invalid:        { status: 400, message: "The upload does not match what was declared: {detail}.", hint: "Begin a new upload with the real file name, sha256 and size." }
+  token_missing:         { status: 401, message: "This request needs a token.", hint: "Run 'mopm login' or pass a token." }
+  token_unknown:         { status: 401, message: "The token is not recognised.", hint: "Create a new token with 'mopm token create', or run 'mopm login'." }
+  token_expired:         { status: 401, message: "The token expired at {expires_at}.", hint: "Create a new token." }
+  token_revoked:         { status: 401, message: "The token was revoked.", hint: "Create a new token." }
+  stale_session:         { status: 401, message: "This action needs a login from the last 15 minutes.", hint: "Run 'mopm login' again." }
+  oidc_token_invalid:    { status: 401, message: "The CI identity token was rejected: {detail}.", hint: "Check the audience and that the job has permission to request an identity token." }
+  scope_missing:         { status: 403, message: "The token does not have the '{scope}' scope for '{name}'.", hint: "Create a token with that scope and that package." }
+  not_owner:             { status: 403, message: "You are not an owner of '{name}'.", hint: "Ask an owner to invite you." }
+  name_reserved:         { status: 403, message: "'{name}' is reserved.", hint: "Choose another name." }
+  oidc_not_trusted:      { status: 403, message: "No trusted publisher of '{name}' matches this CI identity.", hint: "Register the repository, workflow and environment as a trusted publisher of the package." }
+  package_not_found:     { status: 404, message: "There is no package '{name}'.", hint: "Check the spelling, or claim the name." }
+  version_not_found:     { status: 404, message: "'{name}' has no version '{version}'.", hint: "List the versions with 'mopm info {name}'." }
+  user_not_found:        { status: 404, message: "No GitHub account '{handle}'.", hint: "Check the handle." }
+  invitation_not_found:  { status: 404, message: "There is no such invitation for you.", hint: "List yours with 'mopm invitations list'." }
+  device_code_unknown:   { status: 404, message: "The device code is not recognised.", hint: "Start the login again." }
+  token_not_found:       { status: 404, message: "There is no such token.", hint: "List yours with 'mopm token list'." }
+  owner_not_found:       { status: 404, message: "That account is not an owner of '{name}'.", hint: "List owners with 'mopm owners list'." }
+  publish_not_found:     { status: 404, message: "There is no such publish.", hint: "Publish ids are only valid for the caller who made them." }
+  name_taken:            { status: 409, message: "'{name}' is already taken.", hint: "Choose another name." }
+  name_too_similar:      { status: 409, message: "'{name}' is too similar to '{other}'.", hint: "Choose another name, or claim again with confirm_similar if you are sure." }
+  version_exists:        { status: 409, message: "'{name}' {version} already exists (sha256 {sha256}); versions are immutable.", hint: "Publish a new version." }
+  already_owner:         { status: 409, message: "'{handle}' already owns '{name}'.", hint: "" }
+  last_owner:            { status: 409, message: "'{handle}' is the last owner of '{name}'.", hint: "Add another owner first." }
+  upload_used:           { status: 409, message: "The upload '{upload_id}' was already used.", hint: "Begin a new upload." }
+  invitation_expired:    { status: 410, message: "The invitation expired.", hint: "Ask the owner to invite you again." }
+  payload_too_large:     { status: 413, message: "The file is larger than the limit of {limit} bytes.", hint: "Reduce the package size." }
+  rate_limited:          { status: 429, message: "Too many requests.", hint: "Wait {retry_after} seconds; the Retry-After header says how long." }
+  internal_error:        { status: 500, message: "Something went wrong on our side.", hint: "Try again; report the request id if it persists." }
+  read_only_mode:        { status: 503, message: "The registry is read-only right now; new uploads are refused.", hint: "Installs still work. Try again later." }
+  unavailable:           { status: 503, message: "The registry is temporarily unavailable.", hint: "Try again shortly." }

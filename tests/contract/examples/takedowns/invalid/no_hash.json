@@ -1,0 +1,12 @@
+{
+  "index_version": 1,
+  "takedowns": [
+    {
+      "name": "tls",
+      "version": "1.0.0",
+      "reason_code": "malware",
+      "sha256": [],
+      "date": "2026-10-14"
+    }
+  ]
+}

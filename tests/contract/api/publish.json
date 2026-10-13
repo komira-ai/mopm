@@ -1,0 +1,627 @@
+{
+  "cases": [
+    {
+      "name": "begin an upload",
+      "operationId": "beginUpload",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.4.0"
+        },
+        "body": {
+          "subdir": "linux-64",
+          "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+          "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "size": 123456
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "upload_id": "upl-42ab",
+          "put_url": "https://uploads.example.invalid/q/upl-42ab/mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+          "put_headers": {
+            "content-length": "123456",
+            "x-amz-checksum-sha256": "nhjQgIhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg="
+          },
+          "expires_at": "2026-10-13T12:05:00Z"
+        }
+      }
+    },
+    {
+      "name": "upload over the size limit",
+      "operationId": "beginUpload",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.4.0"
+        },
+        "body": {
+          "subdir": "linux-64",
+          "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+          "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "size": 60000000
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "upload_id": "upl-42ab",
+          "put_url": "https://uploads.example.invalid/q/upl-42ab/mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+          "put_headers": {
+            "content-length": "123456",
+            "x-amz-checksum-sha256": "nhjQgIhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg="
+          },
+          "expires_at": "2026-10-13T12:05:00Z"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "filename that is not a mojo conda package",
+      "operationId": "beginUpload",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.4.0"
+        },
+        "body": {
+          "subdir": "linux-64",
+          "filename": "../../evil.tar.bz2",
+          "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "size": 123456
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "upload_id": "upl-42ab",
+          "put_url": "https://uploads.example.invalid/q/upl-42ab/mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+          "put_headers": {
+            "content-length": "123456",
+            "x-amz-checksum-sha256": "nhjQgIhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg="
+          },
+          "expires_at": "2026-10-13T12:05:00Z"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a yank-only token cannot begin an upload",
+      "operationId": "beginUpload",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.4.0"
+        },
+        "body": {
+          "subdir": "linux-64",
+          "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+          "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "size": 123456
+        },
+        "auth": "yankToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "upload_id": "upl-42ab",
+          "put_url": "https://uploads.example.invalid/q/upl-42ab/mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+          "put_headers": {
+            "content-length": "123456",
+            "x-amz-checksum-sha256": "nhjQgIhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg="
+          },
+          "expires_at": "2026-10-13T12:05:00Z"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "commit",
+      "operationId": "commitPublish",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.4.0"
+        },
+        "body": {
+          "upload_ids": [
+            "upl-42ab"
+          ],
+          "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "readme": "# http_client\n"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub-5d1e",
+          "status_url": "/api/v1/publishes/pub-5d1e"
+        }
+      }
+    },
+    {
+      "name": "commit with no uploads",
+      "operationId": "commitPublish",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.4.0"
+        },
+        "body": {
+          "upload_ids": [],
+          "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub-5d1e",
+          "status_url": "/api/v1/publishes/pub-5d1e"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "commit answers with a status url on another path",
+      "operationId": "commitPublish",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.4.0"
+        },
+        "body": {
+          "upload_ids": [
+            "upl-42ab"
+          ],
+          "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub-5d1e",
+          "status_url": "/status/pub-5d1e"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "status pending",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub-5d1e"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub-5d1e",
+          "name": "http_client",
+          "version": "0.4.0",
+          "status": "pending"
+        }
+      }
+    },
+    {
+      "name": "status validating",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub-5d1e"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub-5d1e",
+          "name": "http_client",
+          "version": "0.4.0",
+          "status": "validating"
+        }
+      }
+    },
+    {
+      "name": "status indexing",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub-5d1e"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub-5d1e",
+          "name": "http_client",
+          "version": "0.4.0",
+          "status": "indexing"
+        }
+      }
+    },
+    {
+      "name": "status published",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub-5d1e"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub-5d1e",
+          "name": "http_client",
+          "version": "0.4.0",
+          "status": "published"
+        }
+      }
+    },
+    {
+      "name": "rejected: archive_invalid",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub-5d1e"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub-5d1e",
+          "name": "http_client",
+          "version": "0.4.0",
+          "status": "rejected",
+          "rejection_code": "archive_invalid",
+          "message": "rejected"
+        }
+      }
+    },
+    {
+      "name": "rejected: path_not_allowed",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub-5d1e"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub-5d1e",
+          "name": "http_client",
+          "version": "0.4.0",
+          "status": "rejected",
+          "rejection_code": "path_not_allowed",
+          "message": "rejected"
+        }
+      }
+    },
+    {
+      "name": "rejected: limit_exceeded",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub-5d1e"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub-5d1e",
+          "name": "http_client",
+          "version": "0.4.0",
+          "status": "rejected",
+          "rejection_code": "limit_exceeded",
+          "message": "rejected"
+        }
+      }
+    },
+    {
+      "name": "rejected: manifest_invalid",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub-5d1e"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub-5d1e",
+          "name": "http_client",
+          "version": "0.4.0",
+          "status": "rejected",
+          "rejection_code": "manifest_invalid",
+          "message": "rejected"
+        }
+      }
+    },
+    {
+      "name": "rejected: filename_mismatch",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub-5d1e"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub-5d1e",
+          "name": "http_client",
+          "version": "0.4.0",
+          "status": "rejected",
+          "rejection_code": "filename_mismatch",
+          "message": "rejected"
+        }
+      }
+    },
+    {
+      "name": "rejected: sha256_mismatch",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub-5d1e"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub-5d1e",
+          "name": "http_client",
+          "version": "0.4.0",
+          "status": "rejected",
+          "rejection_code": "sha256_mismatch",
+          "message": "rejected"
+        }
+      }
+    },
+    {
+      "name": "rejected: dependency_not_allowed",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub-5d1e"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub-5d1e",
+          "name": "http_client",
+          "version": "0.4.0",
+          "status": "rejected",
+          "rejection_code": "dependency_not_allowed",
+          "message": "rejected"
+        }
+      }
+    },
+    {
+      "name": "rejected without a reason",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub-5d1e"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub-5d1e",
+          "name": "http_client",
+          "version": "0.4.0",
+          "status": "rejected"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "an unknown rejection code is not accepted by the contract",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub-5d1e"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "publish_id": "pub-5d1e",
+          "name": "http_client",
+          "version": "0.4.0",
+          "status": "rejected",
+          "rejection_code": "because"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "yank",
+      "operationId": "setYanked",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.4.0"
+        },
+        "body": {
+          "yanked": true,
+          "reason": "crashes on empty body"
+        },
+        "auth": "yankToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "version": "0.4.0",
+          "state": "yanked",
+          "published_at": "2026-10-13T12:00:00Z",
+          "yank_reason": "crashes on empty body"
+        }
+      }
+    },
+    {
+      "name": "yank with a publish token",
+      "operationId": "setYanked",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.4.0"
+        },
+        "body": {
+          "yanked": true,
+          "reason": "crashes on empty body"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "version": "0.4.0",
+          "state": "yanked",
+          "published_at": "2026-10-13T12:00:00Z",
+          "yank_reason": "crashes on empty body"
+        }
+      }
+    },
+    {
+      "name": "unyank",
+      "operationId": "setYanked",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.4.0"
+        },
+        "body": {
+          "yanked": false
+        },
+        "auth": "yankToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "version": "0.4.0",
+          "state": "published",
+          "published_at": "2026-10-13T12:00:00Z",
+          "yank_reason": null
+        }
+      }
+    },
+    {
+      "name": "yank without a reason",
+      "operationId": "setYanked",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.4.0"
+        },
+        "body": {
+          "yanked": true
+        },
+        "auth": "yankToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "version": "0.4.0",
+          "state": "yanked",
+          "published_at": "2026-10-13T12:00:00Z",
+          "yank_reason": "crashes on empty body"
+        }
+      },
+      "expect": "invalid"
+    }
+  ]
+}

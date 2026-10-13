@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mopm.dev/schema/index-config-1.json",
+  "title": "mopm index config (/index/config.json)",
+  "description": "Read first by the CLI. A CLI that does not know index_version refuses the index.",
+  "type": "object",
+  "required": ["index_version", "stage", "api_url", "channel_url", "min_cli_version"],
+  "properties": {
+    "index_version": { "type": "integer", "minimum": 1 },
+    "stage": { "enum": ["beta", "gamma", "prod"] },
+    "api_url": { "type": "string", "pattern": "^https://[^/]+/api/v1$" },
+    "channel_url": { "type": "string", "pattern": "^https://conda\\.[^/]+/$" },
+    "min_cli_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "read_only": { "type": "boolean" }
+  }
+}

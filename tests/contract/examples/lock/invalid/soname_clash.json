@@ -1,0 +1,45 @@
+{
+  "lock_version": 1,
+  "toolchain": {
+    "mojo": "1.0.0"
+  },
+  "channels": [
+    "https://conda.mopm.dev/"
+  ],
+  "packages": [
+    {
+      "name": "crypto",
+      "version": "2.0.1",
+      "build": "mojo1.0.0_0",
+      "subdir": "linux-64",
+      "channel": "https://conda.mopm.dev/",
+      "url": "https://conda.mopm.dev/linux-64/mojo-crypto-2.0.1-mojo1.0.0_0.conda",
+      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "size": 1000,
+      "mojo": "1.0.0",
+      "native": [
+        {
+          "id": "crypto",
+          "soname": "libz.so.1"
+        }
+      ]
+    },
+    {
+      "name": "zlib_native",
+      "version": "1.3.0",
+      "build": "mojo1.0.0_0",
+      "subdir": "linux-64",
+      "channel": "https://conda.mopm.dev/",
+      "url": "https://conda.mopm.dev/linux-64/mojo-zlib_native-1.3.0-mojo1.0.0_0.conda",
+      "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+      "size": 1000,
+      "mojo": "1.0.0",
+      "native": [
+        {
+          "id": "z",
+          "soname": "libz.so.1"
+        }
+      ]
+    }
+  ]
+}

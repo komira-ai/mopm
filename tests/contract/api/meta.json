@@ -1,0 +1,89 @@
+{
+  "cases": [
+    {
+      "name": "prod is up",
+      "operationId": "getHealth",
+      "request": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "status": "ok",
+          "stage": "prod",
+          "api_version": "v1",
+          "read_only": false
+        }
+      }
+    },
+    {
+      "name": "beta in read-only mode",
+      "operationId": "getHealth",
+      "request": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "status": "ok",
+          "stage": "beta",
+          "api_version": "v1",
+          "read_only": true
+        }
+      }
+    },
+    {
+      "name": "unknown stage is not in the contract",
+      "operationId": "getHealth",
+      "request": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "status": "ok",
+          "stage": "dev",
+          "api_version": "v1",
+          "read_only": false
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "missing read_only field",
+      "operationId": "getHealth",
+      "request": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "status": "ok",
+          "stage": "prod",
+          "api_version": "v1"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "missing request id header",
+      "operationId": "getHealth",
+      "request": {},
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "status": "ok",
+          "stage": "prod",
+          "api_version": "v1",
+          "read_only": false
+        }
+      },
+      "expect": "invalid"
+    }
+  ]
+}

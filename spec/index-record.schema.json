@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mopm.dev/schema/index-record-1.json",
+  "title": "mopm sparse index record (one line of /index/<aa>/<bb>/<name>)",
+  "description": "One published version of one package. A package file is newline-delimited JSON: one record per line. Unknown keys are ignored; a higher v is refused.",
+  "type": "object",
+  "required": ["v", "name", "version", "build", "state", "published_at", "requires_mojo", "deps", "files", "manifest_sha256"],
+  "properties": {
+    "v": { "const": 1 },
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,63}$" },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))*((a|b|rc|dev)(0|[1-9][0-9]*))?$"
+    },
+    "build": { "type": "string", "pattern": "^[A-Za-z0-9_.]+$" },
+    "state": { "enum": ["published", "yanked", "tombstoned"] },
+    "yank_reason": { "type": "string", "minLength": 1, "maxLength": 280 },
+    "tombstone": {
+      "type": "object",
+      "required": ["reason_code", "date"],
+      "properties": {
+        "reason_code": { "type": "string", "minLength": 1 },
+        "date": { "type": "string", "format": "date" }
+      }
+    },
+    "published_at": { "type": "string", "format": "date-time" },
+    "requires_mojo": { "type": "string", "minLength": 1 },
+    "deps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,63}$" },
+          "range": { "type": "string" }
+        }
+      }
+    },
+    "native": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "soname"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "soname": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["subdir", "filename", "sha256", "size"],
+        "properties": {
+          "subdir": { "enum": ["linux-64", "linux-aarch64", "osx-arm64", "noarch"] },
+          "filename": { "type": "string", "pattern": "^mojo-[a-z][a-z0-9_]{1,63}-[0-9][0-9a-z.]*-[A-Za-z0-9_.]+\\.conda$" },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "size": { "type": "integer", "minimum": 1 },
+          "url": { "type": "string", "format": "uri" }
+        }
+      }
+    },
+    "manifest_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "provenance": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["none", "oidc"] },
+        "repository": { "type": "string" },
+        "workflow_ref": { "type": "string" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "state": { "const": "yanked" } }, "required": ["state"] },
+      "then": { "required": ["yank_reason"] }
+    },
+    {
+      "if": { "properties": { "state": { "const": "tombstoned" } }, "required": ["state"] },
+      "then": { "required": ["tombstone"] },
+      "else": { "properties": { "files": { "items": { "required": ["url"] } } } }
+    }
+  ]
+}

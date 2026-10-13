@@ -1,0 +1,123 @@
+{
+  "cases": [
+    {
+      "name": "whoami",
+      "operationId": "getMe",
+      "request": {
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "github_id": 583231,
+          "handle": "octocat",
+          "packages": [
+            "http_client",
+            "tls"
+          ],
+          "pending_invitations": 1
+        }
+      }
+    },
+    {
+      "name": "whoami with a publish-only scheme",
+      "operationId": "getMe",
+      "request": {
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "github_id": 583231,
+          "handle": "octocat",
+          "packages": [
+            "http_client",
+            "tls"
+          ],
+          "pending_invitations": 1
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "whoami with no token answers 200",
+      "operationId": "getMe",
+      "request": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "github_id": 583231,
+          "handle": "octocat",
+          "packages": [
+            "http_client",
+            "tls"
+          ],
+          "pending_invitations": 1
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "list invitations",
+      "operationId": "listInvitations",
+      "request": {
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "invitations": [
+            {
+              "id": "inv-91c2",
+              "name": "tls",
+              "github_id": 583231,
+              "handle": "octocat",
+              "inviter": "hubot",
+              "expires_at": "2026-10-20T12:00:00Z"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "accept an invitation",
+      "operationId": "acceptInvitation",
+      "request": {
+        "path": {
+          "invitation_id": "inv-91c2"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "owners": [
+            {
+              "github_id": 583231,
+              "handle": "octocat"
+            },
+            {
+              "github_id": 9919,
+              "handle": "hubot"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
