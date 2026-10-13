@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "name": "staticpkg",
+  "version": "1.0.0",
+  "native": [
+    {
+      "id": "arch",
+      "soname": "libarch.a",
+      "kind": "static",
+      "static_file": "lib/libarch.a"
+    }
+  ]
+}

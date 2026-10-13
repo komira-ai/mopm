@@ -1,0 +1,10 @@
+build:
+  -Ltests/fixtures/missing/lib
+  -lcurl_shim
+run:
+  -Xlinker tests/fixtures/missing/lib/libcurl_shim.so.1
+repl-preload:
+  tests/fixtures/missing/lib/libcurl_shim.so.1
+diagnostics:
+  [all] missing_package: http_client depends on crypto, which is not in the closure
+  [all] missing_library: http_client (native curl_shim) needs libcrypto_native.so.1, which no package in the closure provides

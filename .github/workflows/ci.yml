@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Unit and golden tests
+        run: zig build test
+      - name: Build the CLI
+        run: zig build
+      - name: Link-plan golden files
+        run: tests/run_golden.sh ./zig-out/bin/mopm
