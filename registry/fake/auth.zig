@@ -91,7 +91,7 @@ pub fn startDeviceLogin(ctx: *Ctx, _: []const []const u8) anyerror!Response {
         .user_code = login.user_code,
         .verification_uri = try std.fmt.allocPrint(ctx.arena, "{s}/device", .{s.base_url}),
         .expires_in = st.device_secs,
-        .interval = st.poll_interval,
+        .interval = s.poll_secs,
     });
 }
 
@@ -105,7 +105,7 @@ pub fn pollDeviceLogin(ctx: *Ctx, _: []const []const u8) anyerror!Response {
         .denied => return resp.json(ctx.arena, .ok, .{ .status = "denied" }),
         .pending => {
             if (s.now() >= login.expires_at) return resp.json(ctx.arena, .ok, .{ .status = "expired" });
-            return resp.json(ctx.arena, .ok, .{ .status = "pending", .interval = st.poll_interval });
+            return resp.json(ctx.arena, .ok, .{ .status = "pending", .interval = s.poll_secs });
         },
         .approved => {
             const t = login.token orelse blk: {

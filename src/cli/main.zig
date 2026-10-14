@@ -6,6 +6,7 @@ const std = @import("std");
 const core = @import("mopm_core");
 const mojo_cmd = core.mojo_cmd;
 const test_cmd = @import("test_cmd.zig");
+const registry_cmd = @import("registry_cmd.zig");
 
 pub const version = "0.0.1";
 
@@ -43,6 +44,10 @@ const usage =
     \\                          --check also builds each file and compares the
     \\                          list with the binary's `--skip-all` listing
     \\                          (--strict-discovery, --prefix <dir>)
+    \\  login | logout | whoami [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
+    \\                          an account on a registry (device login through
+    \\                          GitHub; the token is kept in credentials.json,
+    \\                          mode 0600, and never printed)
     \\
     \\  options for build, run and repl:
     \\    --prefix <dir>        the environment (default: CONDA_PREFIX, then
@@ -362,6 +367,9 @@ fn run(arena: std.mem.Allocator) u8 {
     if (std.mem.eql(u8, cmd, "metadata")) return metadataCmd(arena, args[2..]);
     if (std.mem.eql(u8, cmd, "new") or std.mem.eql(u8, cmd, "init")) return scaffoldCmd(arena, cmd, args[2..]);
     if (std.mem.eql(u8, cmd, "test")) return test_cmd.main(arena, args[2..]);
+    if (std.mem.eql(u8, cmd, "login") or std.mem.eql(u8, cmd, "logout") or std.mem.eql(u8, cmd, "whoami")) {
+        return registry_cmd.main(arena, cmd, args[2..], version);
+    }
     if (std.meta.stringToEnum(mojo_cmd.Tool, cmd)) |tool| return autolink(arena, tool, args[2..]);
     if (isPlanned(cmd)) {
         std.debug.print("mopm {s}: not implemented yet\n", .{cmd});
@@ -375,6 +383,10 @@ pub fn main() void {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const code = run(arena_state.allocator());
     std.process.exit(code);
+}
+
+test {
+    _ = registry_cmd;
 }
 
 test "planned commands are recognised, working ones are not planned" {

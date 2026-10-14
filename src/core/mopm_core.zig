@@ -13,6 +13,9 @@ pub const env = @import("env.zig");
 pub const mojo_cmd = @import("mojo_cmd.zig");
 pub const test_scan = @import("test_scan.zig");
 pub const test_harness = @import("test_harness.zig");
+pub const http = @import("http.zig");
+pub const registry = @import("registry.zig");
+pub const credentials = @import("credentials.zig");
 
 test {
     _ = @import("metadata.zig");
@@ -25,4 +28,7 @@ test {
     _ = @import("mojo_cmd.zig");
     _ = @import("test_scan.zig");
     _ = @import("test_harness.zig");
+    _ = @import("http.zig");
+    _ = @import("registry.zig");
+    _ = @import("credentials.zig");
 }

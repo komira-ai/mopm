@@ -169,6 +169,8 @@ pub const State = struct {
     /// The data directory (`--dir`): uploads, channel and index files.
     dir: []const u8 = ".",
     stage: []const u8,
+    /// The `interval` a device login tells the client to poll at (seconds).
+    poll_secs: i64 = poll_interval,
     read_only: bool = false,
     /// Added to the wall clock: `/_fake/clock` moves time forward.
     clock_offset: i64 = 0,
