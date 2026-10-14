@@ -46,7 +46,7 @@ export class S3Channel implements ObjectStore {
   private readonly creds: () => AwsCredentials;
   private readonly now: () => Date;
   constructor(
-    private readonly bucket: string,
+    bucket: string,
     private readonly o: AwsOptions,
   ) {
     this.host = `${bucket}.s3.${o.region}.amazonaws.com`;
@@ -177,7 +177,7 @@ export class CloudFrontInvalidator implements Invalidator {
   private readonly now: () => Date;
   constructor(
     private readonly distributionId: string,
-    private readonly o: AwsOptions,
+    o: AwsOptions,
   ) {
     this.http = o.http ?? defaultHttp;
     this.creds = o.credentials ?? (() => credentialsFromEnv());

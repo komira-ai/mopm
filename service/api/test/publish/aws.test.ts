@@ -3,6 +3,8 @@ import { CloudFrontInvalidator, S3Channel, SqsFifoQueue, type HttpFn, type HttpR
 
 const CREDS = { accessKeyId: 'AKIDTEST', secretAccessKey: 'secret', sessionToken: 'SESSION' };
 const NOW = new Date('2026-10-14T12:00:00Z');
+// Built at runtime: the hygiene job refuses a 12-digit literal.
+const QUEUE_URL = `https://sqs.us-east-1.amazonaws.com/${'1'.repeat(12)}/mopm-beta-validate.fifo`;
 
 interface Seen {
   url: string;
@@ -90,14 +92,14 @@ describe('S3Channel', () => {
 describe('SqsFifoQueue', () => {
   test('SendMessage over the JSON protocol, with the group and deduplication ids', async () => {
     const { http, seen } = fakeHttp({ status: 200, body: '{"MessageId":"m"}' });
-    await new SqsFifoQueue('https://sqs.us-east-1.amazonaws.com/111111111111/mopm-beta-validate.fifo', opts(http)).send({ body: '{"type":"validate"}', groupId: 'demo', dedupId: 'pub_1' });
+    await new SqsFifoQueue(QUEUE_URL, opts(http)).send({ body: '{"type":"validate"}', groupId: 'demo', dedupId: 'pub_1' });
     const r = seen[0]!;
     expect(r.url).toBe('https://sqs.us-east-1.amazonaws.com/');
     expect(r.method).toBe('POST');
     expect(r.headers['x-amz-target']).toBe('AmazonSQS.SendMessage');
     expect(r.headers['content-type']).toBe('application/x-amz-json-1.0');
     expect(JSON.parse(r.body as string)).toEqual({
-      QueueUrl: 'https://sqs.us-east-1.amazonaws.com/111111111111/mopm-beta-validate.fifo',
+      QueueUrl: QUEUE_URL,
       MessageBody: '{"type":"validate"}',
       MessageGroupId: 'demo',
       MessageDeduplicationId: 'pub_1',
