@@ -57,6 +57,11 @@ const inputs: [string, string, boolean?][] = [
   ['empty links after stars', fill('*[]()')],
   ['links before stars', fill('[a](b)*')],
   ['links after underscores', fill('_[a](b)')],
+  // openers_bottom must survive the removal of the delimiter it names: here a `*` closer marks a `_` as its stop,
+  // that `_` is then matched and removed, and a stop kept as a pointer is never met again, so every later `*`
+  // walks the whole `__` stack. Kept as a source position, the stop still holds.
+  ['openers below matched pairs', ('__a '.repeat(N / 8) + '_*"'.repeat(N / 6)).slice(0, N)],
+  ['star openers below matched pairs', ('a*__'.repeat(N / 8) + '_*"'.repeat(N / 6)).slice(0, N)],
   ['hash lines', fill('#\n')],
   ['fence openers', fill('```\n')],
   ['setext-looking lines', fill('a\n=\n')],

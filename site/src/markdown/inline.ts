@@ -40,6 +40,8 @@ interface Delim {
   node: LNode;
   ch: string;
   orig: number;
+  /** Where the run starts in the source: delimiters enter the stack left to right, so this rises up the stack. */
+  pos: number;
   canOpen: boolean;
   canClose: boolean;
   prev: Delim | null;
@@ -253,7 +255,7 @@ class InlineScanner {
     const canClose = ch === '*' ? right : right && (!left || isPunct(after));
     const node = this.push(mk('text', s.slice(i, j)));
     if (canOpen || canClose) {
-      const d: Delim = { node, ch, orig: j - i, canOpen, canClose, prev: this.delims, next: null };
+      const d: Delim = { node, ch, orig: j - i, pos: i, canOpen, canClose, prev: this.delims, next: null };
       if (this.delims) this.delims.next = d;
       this.delims = d;
     }
@@ -283,7 +285,10 @@ class InlineScanner {
       current = current.prev;
     }
     if (current === bottom) current = null;
-    const openersBottom: (Delim | null)[] = new Array(12).fill(bottom);
+    // openers_bottom holds source positions, not delimiters: the delimiter that marks a stop can itself be matched
+    // and removed later, and a stop kept as a pointer to it would never be met again.
+    const bottomPos = bottom ? bottom.pos : -1;
+    const openersBottom: number[] = new Array(12).fill(bottomPos);
     while (current) {
       this.st.steps++;
       if (!current.canClose) {
@@ -293,7 +298,7 @@ class InlineScanner {
       const key = (current.ch === '*' ? 0 : 6) + (current.canOpen ? 3 : 0) + (current.orig % 3);
       let opener: Delim | null = current.prev;
       let found = false;
-      while (opener && opener !== bottom && opener !== openersBottom[key]) {
+      while (opener && opener !== bottom && opener.pos > openersBottom[key]) {
         this.st.steps++;
         if (opener.ch === current.ch && opener.canOpen) {
           const odd =
@@ -336,7 +341,7 @@ class InlineScanner {
           current = next;
         }
       } else {
-        openersBottom[key] = current.prev;
+        openersBottom[key] = current.prev ? current.prev.pos : bottomPos;
         const next: Delim | null = current.next;
         if (!current.canOpen) this.removeDelim(current);
         current = next;
