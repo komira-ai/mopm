@@ -13,7 +13,14 @@ function normalise(stage: Stage, json: unknown): unknown {
   const host = siteHost(stage);
   const hostRe = new RegExp(`(?<![A-Za-z0-9-])${host.replace(/\./g, '\\.')}(?![A-Za-z0-9-])`, 'g');
   const stageRe = new RegExp(`(?<![A-Za-z0-9])${stage}(?![A-Za-z0-9])`, 'gi');
-  const text = JSON.stringify(json).replace(hostRe, '<site>').replace(stageRe, '<stage>');
+  const text = JSON.stringify(json)
+    .replace(hostRe, '<site>')
+    // CDK builds logical ids and generated names from the construct path, which contains the stage ("mopmbeta...").
+    .replace(new RegExp(`mopm${stage}`, 'g'), 'mopm<stage>')
+    .replace(stageRe, '<stage>')
+    // ... and ends them with an 8-character hash of that path, which therefore differs per stage.
+    .replace(/aws-cdk:cr-owned:[0-9a-f]{8}/g, 'aws-cdk:cr-owned:<hash>')
+    .replace(/(?<=[A-Za-z0-9])[0-9A-F]{8}(?=")/g, '');
   return JSON.parse(text);
 }
 
@@ -25,13 +32,14 @@ function fingerprint(stage: Stage): Map<string, string> {
     const resources = Template.fromStack(stack).toJSON().Resources ?? {};
     for (const [logicalId, r] of Object.entries<any>(resources)) {
       const n = normalise(stage, r) as any;
+      const id = normalise(stage, logicalId) as string;
       const props = n.Properties ?? {};
       const entries: [string, unknown][] = [
         ['DeletionPolicy', n.DeletionPolicy],
         ['UpdateReplacePolicy', n.UpdateReplacePolicy],
         ...Object.entries(props).map(([k, v]) => [`Properties.${k}`, v] as [string, unknown]),
       ];
-      for (const [k, v] of entries) out.set(`${name}:${r.Type}:${logicalId}:${k}`, JSON.stringify(v ?? null));
+      for (const [k, v] of entries) out.set(`${name}:${r.Type}:${id}:${k}`, JSON.stringify(v ?? null));
     }
   }
   return out;
