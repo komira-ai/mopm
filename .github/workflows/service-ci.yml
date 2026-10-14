@@ -44,7 +44,7 @@ jobs:
           for stage in beta gamma prod; do
             npx cdk synth --quiet -c stage=$stage -c hostedZoneId=Z0DUMMYZONE -c version=ci -c commit=ci --output cdk.out/$stage
           done
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: stacks-package-lock
           path: service/infra/stacks/package-lock.json
@@ -81,7 +81,7 @@ jobs:
           else npm install --ignore-scripts --no-audit --no-fund; fi
       - run: npx tsc --noEmit
       - run: npx jest --ci
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: access-package-lock
           path: service/infra/access/package-lock.json
