@@ -58,9 +58,9 @@ Skip the OIDC provider if the account already has one for GitHub (only one may e
    required reviewers (and prevent self-review). On all three set deployment branches to "Selected
    branches": `main` only. The roles' trust policies repeat both limits (environment and
    `refs/heads/main` in `job_workflow_ref`), so a loosened GitHub setting alone does not open a role.
-3. In each environment store, as **variables** (not secrets): `AWS_ACCOUNT_ID`, `AWS_REGION`,
-   `DEPLOY_ROLE_ARN` (`arn:aws:iam::<account>:role/mopm-<stage>-deploy`), `E2E_ROLE_ARN`
-   (`arn:aws:iam::<account>:role/mopm-<stage>-e2e`). The deploy workflow reads them as `vars.*`.
+3. In each environment store, as **secrets**: `AWS_ACCOUNT_ID` and `AWS_REGION`. Nothing else is stored:
+   the workflows build the role ARNs (`arn:aws:iam::<id>:role/mopm-<stage>-deploy` and `-e2e`) inside
+   the job and mask them.
 
 ## Verification
 

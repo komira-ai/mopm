@@ -70,5 +70,5 @@ run npx cdk deploy "mopm-${stage}-access" \
 
 cat <<NEXT
 # Remaining manual steps (see BOOTSTRAP.md): set the repo OIDC subject template once,
-# create the ${stage} GitHub environment, and store the role ARNs as environment variables.
+# create the ${stage} GitHub environment, and store AWS_ACCOUNT_ID and AWS_REGION as environment secrets (no ARNs are stored).
 NEXT

@@ -76,13 +76,15 @@ jobs:
       - name: Assume the deploy role through OIDC
         env:
           STAGE: ${{ inputs.stage }}
-          ROLE_ARN: ${{ vars.DEPLOY_ROLE_ARN }}
-          AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
         run: |
           set -euo pipefail
-          if [ -z "$ROLE_ARN" ] || [ -z "$AWS_DEFAULT_REGION" ]; then
-            echo "DEPLOY_ROLE_ARN and AWS_REGION must be set on the $STAGE environment" >&2; exit 1
+          if [ -z "$AWS_ACCOUNT_ID" ] || [ -z "$AWS_DEFAULT_REGION" ]; then
+            echo "secrets AWS_ACCOUNT_ID and AWS_REGION must be set on the $STAGE environment" >&2; exit 1
           fi
+          echo "::add-mask::$AWS_ACCOUNT_ID"
+          ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/mopm-${STAGE}-deploy"
           echo "::add-mask::$ROLE_ARN"
           resp=$(curl -sSf -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
@@ -106,9 +108,9 @@ jobs:
         working-directory: service/infra/stacks
         env:
           STAGE: ${{ inputs.stage }}
-          CDK_DEFAULT_ACCOUNT: ${{ vars.AWS_ACCOUNT_ID }}
-          CDK_DEFAULT_REGION: ${{ vars.AWS_REGION }}
-          AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+          CDK_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
         run: |
           set -euo pipefail
           if [ -z "$CDK_DEFAULT_ACCOUNT" ]; then echo "AWS_ACCOUNT_ID is not set on the $STAGE environment" >&2; exit 1; fi

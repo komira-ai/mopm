@@ -14,8 +14,8 @@ design depends on.
 
 Stage settings with no secrets and no account ids are in `service/config/<stage>.json`; a test
 keeps them equal to what the stacks deploy. The account id, region and role ARNs come from GitHub
-environment variables (`AWS_ACCOUNT_ID`, `AWS_REGION`, `DEPLOY_ROLE_ARN`, `E2E_ROLE_ARN`) set on the
-`beta`, `gamma` and `prod` environments. Nothing here holds a credential: jobs request a GitHub OIDC
+environment secrets (`AWS_ACCOUNT_ID`, `AWS_REGION`) set on the
+`beta`, `gamma` and `prod` environments; the role ARNs are built from them in the job. Nothing here holds a credential: jobs request a GitHub OIDC
 token (audience `sts.amazonaws.com`) and call `aws sts assume-role-with-web-identity`; the session
 credentials are masked and live only in the job.
 

@@ -42,6 +42,7 @@ Dir[".github/workflows/*.{yml,yaml}"].sort.each do |f|
     end
   end
 
+  File.read(f).scan(/\bvars\.\w*(?:ACCOUNT|REGION|ARN)\w*/i) { |m| fail_.("#{f}: #{m}: account, region and role ARNs come from environment secrets, not vars") }
   fail_.("#{f}: secrets: inherit is not allowed") if File.read(f) =~ /secrets:\s*inherit/
   # The privileged PR trigger is spelled in two pieces so hygiene.rb does not flag this file.
   ["pull_request_" + "target", "workflow_run", "issue_comment"].each do |t|

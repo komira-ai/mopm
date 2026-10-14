@@ -22,7 +22,7 @@ corresponding row as open.
 | The deploy role can only assume the CDK bootstrap roles of its account; the e2e role reads one secret and the channel bucket, with `e2e_*` cleanup on beta and gamma only | `service/infra/access` | A hijacked e2e run changing infrastructure |
 | The CloudFormation execution policy is scoped to `mopm-<stage>-*`, has no `kms:*`, conditions role-policy attachment, and denies edits to the access roles, OIDC provider and bootstrap roles | `cfn-exec-policy.template.json` | A deploy widening its own access |
 | The access bootstrap is a held script: dry run unless `--apply`, flags only, the admin's own credentials | `service/infra/access/bootstrap.sh` | Standing CI access to IAM |
-| Account id, region and role ARNs are GitHub environment variables, never files | workflows, `hygiene` job | Account identity in a public tree |
+| Account id and region are GitHub environment secrets (`secrets.*`), never files or `vars.*`; role ARNs are built in the job, not stored | workflows, `hygiene` and `workflows` jobs | Account identity in a public tree |
 
 ## Settings only the repository owner can make
 
@@ -31,34 +31,34 @@ Each row says what to set and the attack it closes. Settings 1 to 3 matter most:
 
 | # | Setting (Settings page) | Value | Closes |
 |---|---|---|---|
-| 1 | Branches: ruleset or protection on `main` | Require a pull request; at least one approval; require review from Code Owners; dismiss stale approvals; require approval of the most recent push; require status checks `hygiene`, `workflows`, `stacks`, `access` and the `ci` tests, with branches up to date; block force pushes and deletion; no bypass list; apply to administrators | Direct pushes and unreviewed merges, which would deploy; weakening a check in the same change that needs it |
-| 2 | `.github/CODEOWNERS` | Replace the placeholder handle with the CEO's handle or a team; owners for `/.github/`, `/service/`, `/docs/security/` | A contributor editing workflows, trust policies or the lint scripts with only an ordinary review. The scripts under `.github/scripts/` run from the pull request's own head, so only review protects them |
-| 3 | Environments: `beta`, `gamma`, `prod` | Deployment branches: selected branches, `main` only. Required reviewers on `gamma` and `prod` (and on `beta` if wanted); prevent self-review; disable administrator bypass. Variables (not secrets): `AWS_ACCOUNT_ID`, `AWS_REGION`, `DEPLOY_ROLE_ARN`, `E2E_ROLE_ARN` | A run from another branch reading stage variables or presenting the stage environment; promoting to gamma or prod without a human |
+| 1 | Branches: ruleset or protection on `main` | Ruleset on `main`: restrict deletions; block force pushes; require a pull request with **0 required approvals** (our PRs are authored by the account that merges them, so an approval rule would block every merge; the human gate is the environment reviewers); require status checks by job name `hygiene`, `workflows`, `stacks`, `access` and the `ci` tests, with branches up to date | Direct pushes and unreviewed merges, which would deploy; weakening a check in the same change that needs it |
+| 2 | `.github/CODEOWNERS` | Set to `@asuresh8` for `/.github/` and `/service/` (also `/docs/security/`, `/SECURITY.md`). Code Owners review is not required in the ruleset (0 approvals) | Marks who owns workflows, trust policies and the lint scripts. The scripts under `.github/scripts/` run from the pull request's own head, so only the owner's review of what is merged protects them |
+| 3 | Environments: `beta`, `gamma`, `prod` | Deployment branches: selected branches, `main` only. Required reviewers on `gamma` and `prod` (and on `beta` if wanted); prevent self-review; disable administrator bypass. Environment **secrets**: `AWS_ACCOUNT_ID`, `AWS_REGION` (no role ARN is stored; workflows build `arn:aws:iam::<id>:role/mopm-<stage>-{deploy,e2e}`) | A run from another branch reading stage variables or presenting the stage environment; promoting to gamma or prod without a human |
 | 4 | Actions, General: fork pull request workflows | Require approval for all outside contributors (not only first-time); do not send write tokens or secrets to fork workflows | Fork pull requests spending minutes, or probing the runner, before a maintainer looks |
-| 5 | Actions, General: workflow permissions | Read repository contents only; leave "Allow GitHub Actions to create and approve pull requests" off | A workflow approving or merging its own pull request; a token with write by default |
+| 5 | Actions, General: workflow permissions | Read repository contents only; do not allow GitHub Actions to create or approve pull requests (leave that box off) | A workflow approving or merging its own pull request; a token with write by default |
 | 6 | Actions, General: allowed actions | Allow actions created by GitHub only; require actions to be pinned to a full-length commit SHA | A third-party action, or a moved tag, running with credentials |
-| 7 | Code security: secret scanning and push protection | Both on (include validity checks) | A credential committed by accident staying in history |
+| 7 | Code security: secret scanning and push protection | Advanced Security: secret scanning and push protection both on (include validity checks) | A credential committed by accident staying in history |
 | 8 | Code security: Dependabot | Alerts and version updates for `github-actions` and `npm` (`service/infra/stacks`, `service/infra/access`) | Stale pinned actions and vulnerable CDK dependencies |
 | 9 | Code security: private vulnerability reporting | On (`SECURITY.md` points to it) | Public disclosure of an unfixed hole |
 | 10 | Actions, Runners | GitHub-hosted runners only; register no self-hosted runner | A persistent runner kept by a hostile pull request |
-| 11 | OIDC subject claim: `PUT /repos/komira-ai/mopm/actions/oidc/customization/sub` with `use_default=false` and `include_claim_keys` = `repo`, `context`, `job_workflow_ref` | Set once, before the first deploy; verify with the matching `GET` | Without it the `sub` is the same for `deploy.yml` and `e2e.yml`, so a test job could assume the deploy role. With it, the roles trust one workflow file each |
+| 11 | OIDC subject claim: `PUT /repos/komira-ai/mopm/actions/oidc/customization/sub` with `use_default=false` and `include_claim_keys` = `repo`, `context`, `job_workflow_ref` | Run `gh api -X PUT repos/komira-ai/mopm/actions/oidc/customization/sub -F use_default=false -f 'include_claim_keys[]=repo' -f 'include_claim_keys[]=context' -f 'include_claim_keys[]=job_workflow_ref'` BEFORE the bootstrap (the trust policies assume this `sub`); verify with the matching `GET` | Without it the `sub` is the same for `deploy.yml` and `e2e.yml`, so a test job could assume the deploy role. With it, the roles trust one workflow file each |
 | 12 | Organization: who may create repositories and teams | Do not delete or rename `komira-ai/mopm` while the roles exist | The role trust names the repository. A repository re-created under the same name would match the same `sub`. Delete the stage access stacks first |
 
 ## Order of operations
 
 1. Set 1 to 10 on the repository (the owner).
-2. Set 11 (the OIDC subject template).
+2. Set 11 (the OIDC subject template) BEFORE any bootstrap.
 3. Per stage, an administrator runs `service/infra/access/bootstrap.sh` with their own
    credentials (dry run first; see `service/infra/access/BOOTSTRAP.md`).
-4. Create the three environments (setting 3) and store the four variables on each.
+4. Create the three environments (setting 3) and store the two secrets (`AWS_ACCOUNT_ID`, `AWS_REGION`) on each.
 5. Merge. The push to `main` runs `promote.yml`; `gamma` and `prod` wait for a reviewer.
 
 ## Known limits
 
-- **Variables are not secrets.** `vars.*` values are printed in the step header of public
-  logs. The workflows mask the role ARN and account id once their step starts, but the
-  value in that first header is visible. AWS does not treat an account id as secret. If the
-  owner wants them hidden, store them as environment secrets and change `vars.` to `secrets.`.
+- **Account id and region are secrets, not variables.** They are environment secrets so GitHub
+  masks them everywhere in public logs; the workflows additionally mask the derived role ARN.
+  The `workflows` job rejects `vars.` for account, region or role ARN. The hygiene scan has no
+  allow-list: a 12-digit id is rejected everywhere, fixtures included (tests build theirs at runtime).
 - **Inline role policies.** The deploy can write inline policies on `mopm-<stage>-*` roles,
   which a permissions boundary would bound. Recorded in `BOOTSTRAP.md`; the guard is the
   reviewed `main` plus the environment reviewers.
