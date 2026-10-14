@@ -15,8 +15,11 @@
 //! only for `mojo run`. mopm passes the planned `-L`/`-l` (and archives by
 //! path) through `-Xlinker`, plus `-Xlinker -rpath -Xlinker <prefix>/lib`, and
 //! never sets the config's `shared_libs` (doing so drops the default run
-//! path). That route is proved by the end-to-end CI job (PR #29), which builds
-//! a program against a fixture package and runs the binary in an empty
+//! path). On Linux the planned libraries are linked with `--no-as-needed`
+//! (inside `--push-state`/`--pop-state`), so the binary names a transitive
+//! library it never calls. That route is proved by the end-to-end CI job
+//! (PR #29), which builds a program against a fixture package, including one
+//! that reaches a library only transitively, and runs the binary in an empty
 //! environment.
 
 const std = @import("std");
@@ -84,7 +87,17 @@ pub fn construct(arena: Allocator, req: Request, p: link_planner.Plan) Allocator
     try argv.append(@tagName(req.tool));
     switch (req.tool) {
         .build => {
+            // Linux: the binary itself must name every planned library
+            // (DT_NEEDED). A transitive library (libinner, needed by
+            // libouter) is found through the binary's run path only when
+            // the binary names it, because a run path does not apply to
+            // another library's needs; a linker running --as-needed drops
+            // a library the program does not call directly. The state is
+            // pushed and popped so that only the planned libraries change.
+            const wrap = req.os == .linux and p.build.len > 0;
+            if (wrap) try argv.appendSlice(&.{ "-Xlinker", "--push-state", "-Xlinker", "--no-as-needed" });
             for (p.build) |arg| try argv.appendSlice(&.{ "-Xlinker", arg });
+            if (wrap) try argv.appendSlice(&.{ "-Xlinker", "--pop-state" });
             const lib = try std.fs.path.join(arena, &.{ req.prefix, "lib" });
             try argv.appendSlice(&.{ "-Xlinker", "-rpath", "-Xlinker", lib });
             if (req.out) |o| try argv.appendSlice(&.{ "-o", o });
@@ -200,15 +213,30 @@ test "build: planned -L/-l through -Xlinker plus an absolute run path to <prefix
     const c = try construct(a, .{ .tool = .build, .prefix = "/e", .os = .linux, .file = "m.mojo", .out = "m" }, p);
     try expectArgv(&.{
         "/e/bin/mojo", "build",
+        "-Xlinker",    "--push-state",
+        "-Xlinker",    "--no-as-needed",
         "-Xlinker",    "-L/e/lib",
         "-Xlinker",    "-lb",
         "-Xlinker",    "-la",
+        "-Xlinker",    "--pop-state",
         "-Xlinker",    "-rpath",
         "-Xlinker",    "/e/lib",
         "-o",          "m",
         "m.mojo",
     }, c.argv);
     try expectArgv(&.{"MODULAR_HOME=/e/share/max"}, c.env);
+}
+
+test "build: macOS gets no --as-needed state (ld64 has no such flag; @rpath reaches transitive libraries)" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const p = try chainPlan(a, .macos);
+    const c = try construct(a, .{ .tool = .build, .prefix = "/e", .os = .macos, .file = "m.mojo" }, p);
+    for (c.argv) |arg| {
+        try std.testing.expect(std.mem.indexOf(u8, arg, "as-needed") == null);
+        try std.testing.expect(std.mem.indexOf(u8, arg, "-state") == null);
+    }
 }
 
 test "build: the run path is there even with no natives, and -o is optional" {
@@ -228,7 +256,7 @@ test "build: a static archive is passed by path" {
         \\{"schema": 1, "name": "s", "native": [{"id": "x", "soname": "libx.a", "kind": "static", "static_file": "../libx.a"}]}
     ) }});
     const c = try construct(a, .{ .tool = .build, .prefix = "/e", .os = .linux, .file = "m.mojo" }, p);
-    try expectArgv(&.{ "/e/bin/mojo", "build", "-Xlinker", "/e/lib/libx.a", "-Xlinker", "-rpath", "-Xlinker", "/e/lib", "m.mojo" }, c.argv);
+    try expectArgv(&.{ "/e/bin/mojo", "build", "-Xlinker", "--push-state", "-Xlinker", "--no-as-needed", "-Xlinker", "/e/lib/libx.a", "-Xlinker", "--pop-state", "-Xlinker", "-rpath", "-Xlinker", "/e/lib", "m.mojo" }, c.argv);
     try std.testing.expectEqual(@as(usize, 0), (try refusals(a, .build, p)).len);
     try std.testing.expectEqual(@as(usize, 1), (try refusals(a, .run, p)).len);
     try std.testing.expectEqual(@as(usize, 1), (try refusals(a, .repl, p)).len);

@@ -124,7 +124,7 @@ exec_env=tests/fixtures/env/exec
 case "$(uname -s)" in Darwin) host=macos ;; *) host=linux ;; esac
 cmd "exec: run" tests/golden/exec/run.txt 7 \
     env MODULAR_HOME="$dup/share/max" MOPM_GOLDEN_MARK=kept "$mopm" run hello.mojo --prefix "$exec_env"
-cmd "exec: build" tests/golden/exec/build.txt 7 \
+cmd "exec: build" "tests/golden/exec/build.$host.txt" 7 \
     "$mopm" build hello.mojo -o hello --prefix "$exec_env"
 golden_stdin=tests/golden/exec/repl.stdin
 cmd "exec: repl reads stdin" "tests/golden/exec/repl.$host.txt" 7 \

@@ -38,7 +38,7 @@ Working today:
 ```text
 mopm --version
 mopm link-plan tests/fixtures/chain/http_client.mopm.json tests/fixtures/chain/crypto.mopm.json
-mopm build hello.mojo -o hello   # -Xlinker -L/-l plus a run path to <env>/lib
+mopm build hello.mojo -o hello   # -Xlinker -L/-l (Linux: --no-as-needed) plus a run path to <env>/lib
 mopm run hello.mojo              # one -Xlinker <shared object> per library
 mopm repl                        # LD_PRELOAD (macOS DYLD_INSERT_LIBRARIES) for the JIT
 ```
