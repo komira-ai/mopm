@@ -50,3 +50,7 @@ test('the focus ring sets no border-radius (it would override a code block\'s ro
   expect(rule(':focus-visible')).toContain('outline: 3px solid var(--focus);');
   expect(rule(':focus-visible')).not.toContain('border-radius');
 });
+
+test('a .home-wide section spans every column of the home grid', () => {
+  expect(rule('.home-wide')).toContain('grid-column: 1 / -1;');
+});

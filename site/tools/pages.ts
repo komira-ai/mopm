@@ -62,8 +62,10 @@ function codeList(items: readonly string[], conj: string): (SNode | string)[] {
   return out;
 }
 
-function section(id: string, title: string, ...children: (SNode | string | null)[]): SNode {
-  return h(doc, 'section', { class: 'home-section', 'aria-labelledby': id }, h(doc, 'h2', { id }, title), ...children);
+/** A home section: a card in the two-column grid, or `wide` across both columns (long code lines, the closing list). */
+function section(id: string, title: string, wide: boolean, ...children: (SNode | string | null)[]): SNode {
+  const cls = wide ? 'home-section home-wide' : 'home-section';
+  return h(doc, 'section', { class: cls, 'aria-labelledby': id }, h(doc, 'h2', { id }, title), ...children);
 }
 
 export function homePage(): PageSpec {
@@ -111,6 +113,7 @@ export function homePage(): PageSpec {
   const registry = section(
     'registry',
     'Install from the registry',
+    false,
     h(
       doc,
       'p',
@@ -133,6 +136,7 @@ export function homePage(): PageSpec {
   const install = section(
     'build',
     'Build mopm',
+    false,
     h(
       doc,
       'p',
@@ -148,6 +152,7 @@ export function homePage(): PageSpec {
   const quickstart = section(
     'quickstart',
     'Quickstart',
+    true,
     h(
       doc,
       'p',
@@ -200,6 +205,7 @@ export function homePage(): PageSpec {
   const planned = section(
     'planned',
     'Planned',
+    true,
     h(doc, 'p', null, 'Not implemented yet: ', ...codeList(PLANNED, 'and'), '. The design may change.'),
     h(
       doc,

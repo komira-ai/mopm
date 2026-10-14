@@ -232,6 +232,25 @@ describe('the home page says what the repository says', () => {
     expect(textOf(byId(home, 'mojo-exec'))).toMatch(/^build, run and repl each run <env>\/bin\/mojo in place of mopm\b.* test starts one mojo process per test\./);
   });
 
+  // At 60rem and up .home-grid has two columns: at the 72rem wrap each holds about 31rem of code, about 56 characters
+  // of 0.875rem monospace. A code block with a longer line spans both columns (.home-wide), so its comments are not cut
+  // off behind a horizontal scroll on a desktop screen.
+  test('a home code block with a line over 56 characters is in a full-width section', () => {
+    const sections = read('index.html').split('<section class="').slice(1);
+    let wide = 0;
+    for (const sec of sections) {
+      const cls = sec.slice(0, sec.indexOf('"'));
+      for (const m of sec.matchAll(/<pre[^>]*><code>([^<]*)<\/code><\/pre>/g)) {
+        const longest = Math.max(...textOf(m[1]).split('\n').map((l) => l.length));
+        if (longest > 56) {
+          expect([cls, longest]).toEqual([expect.stringMatching(/\bhome-wide\b/), longest]);
+          wide++;
+        }
+      }
+    }
+    expect(wide).toBeGreaterThan(0);
+  });
+
   test('the home page search comes before the status note, and its browse link is name-sorted', () => {
     const home = read('index.html');
     expect(home.indexOf('class="hero-search"')).toBeGreaterThan(home.indexOf('id="opening"'));
