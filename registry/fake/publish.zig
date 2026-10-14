@@ -18,6 +18,7 @@ const Response = resp.Response;
 const util = @import("util.zig");
 const auth = @import("auth.zig");
 const versions = @import("versions.zig");
+const channel = @import("files.zig");
 
 const subdirs = [_][]const u8{ "linux-64", "linux-aarch64", "osx-arm64", "noarch" };
 
@@ -341,6 +342,8 @@ fn finish(ctx: *Ctx, v: *st.Version) anyerror!void {
     v.published_at = now;
     v.package.state = .active;
     v.package.updated_at = now;
+    try channel.addFiles(ctx.state, v);
+    try channel.rewrite(ctx.arena, ctx.state);
 }
 
 // ---------------------------------------------------------------------------
@@ -375,6 +378,7 @@ pub fn setYanked(ctx: *Ctx, params: []const []const u8) anyerror!Response {
             v.yank_reason = null;
         }
         p.updated_at = ctx.state.now();
+        try channel.rewrite(ctx.arena, ctx.state);
     }
     return resp.json(ctx.arena, .ok, try summary(ctx.arena, v));
 }
@@ -426,7 +430,7 @@ pub fn latest(p: *const st.Package) ?[]const u8 {
 }
 
 /// The compiler requirement from a build string `mojo<version>_<n>`.
-fn requiresMojo(arena: Allocator, filename: []const u8) Allocator.Error![]const u8 {
+pub fn requiresMojo(arena: Allocator, filename: []const u8) Allocator.Error![]const u8 {
     const stem = filename[0 .. filename.len - ".conda".len];
     const dash = std.mem.lastIndexOfScalar(u8, stem, '-') orelse return ">=0";
     const build = stem[dash + 1 ..];

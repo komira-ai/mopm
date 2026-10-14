@@ -10,6 +10,7 @@ pub const Response = struct {
     /// Empty for 204.
     body: []const u8 = "",
     retry_after: ?u32 = null,
+    content_type: []const u8 = "application/json",
 };
 
 /// Seconds the fake asks a client to wait on `rate_limited` and `read_only_mode`.

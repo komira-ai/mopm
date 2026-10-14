@@ -10,6 +10,7 @@ const errors = @import("errors.zig");
 const resp = @import("resp.zig");
 const Response = resp.Response;
 const util = @import("util.zig");
+const files = @import("files.zig");
 
 pub fn handle(ctx: *Ctx) anyerror!Response {
     if (ctx.method != .POST) return resp.invalid(ctx.arena, "the /_fake controls take POST");
@@ -56,6 +57,7 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
     // {"read_only"}: refuse new uploads (read_only_mode), as a stage can.
     if (std.mem.eql(u8, path, "/mode")) {
         s.read_only = util.getBool(obj, "read_only") orelse return resp.invalid(ctx.arena, "'read_only' must be a boolean");
+        try files.rewrite(ctx.arena, s);
         return resp.json(ctx.arena, .ok, .{});
     }
     // {"operation", "code"}: the next request to that operationId answers that
@@ -88,6 +90,8 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
             v.state = .tombstoned;
             v.tombstone_reason = try s.alloc.dupe(u8, reason);
             v.tombstone_at = s.now();
+            try files.removeFiles(s, v);
+            try files.rewrite(ctx.arena, s);
             return resp.json(ctx.arena, .ok, .{});
         }
         return resp.invalid(ctx.arena, "no such published version");
