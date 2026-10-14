@@ -220,6 +220,18 @@ describe('the home page says what the repository says', () => {
     expect(textOf(byId(home, 'build-run'))).toBe('Build and run take a Mojo file with a main (hello.mojo here is your own file):');
   });
 
+  test('the quickstart says it needs a Mojo environment before the first command block, as README.md names it', () => {
+    const home = read('index.html');
+    const env = textOf(byId(home, 'mojo-env'));
+    expect(env).toBe('mopm runs the mojo of a Mojo environment: --prefix <dir>, else CONDA_PREFIX, else MODULAR_HOME without its /share/max. test, repl, build and run need one.');
+    const readme = readFileSync(join(REPO_ROOT, 'README.md'), 'utf8').replace(/\s*\n\s*/g, ' ');
+    expect(readme).toContain('The environment is `--prefix <dir>`, else `CONDA_PREFIX`, else `MODULAR_HOME` without its `/share/max`.');
+    expect(home.indexOf('id="mojo-env"')).toBeGreaterThan(home.indexOf('id="quickstart"'));
+    expect(home.indexOf('id="mojo-env"')).toBeLessThan(home.indexOf('aria-label="Quickstart commands"'));
+    // Only build, run and repl replace mopm with mojo (an exec); test starts one mojo process per test.
+    expect(textOf(byId(home, 'mojo-exec'))).toMatch(/^build, run and repl each run <env>\/bin\/mojo in place of mopm\b.* test starts one mojo process per test\./);
+  });
+
   test('the home page search comes before the status note, and its browse link is name-sorted', () => {
     const home = read('index.html');
     expect(home.indexOf('class="hero-search"')).toBeGreaterThan(home.indexOf('id="opening"'));
