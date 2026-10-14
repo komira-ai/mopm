@@ -11,6 +11,11 @@ name: promote
 on:
   workflow_dispatch:
 
+# Each called job reads AWS_ACCOUNT_ID and AWS_REGION from its stage's environment
+# secrets. A reusable workflow only sees secrets its caller passes, so every call here
+# says `secrets: inherit` (GitHub docs: "Reusing workflows", and the workflow syntax
+# reference for jobs.<job_id>.secrets). The repository has no repository-level secrets.
+
 concurrency:
   group: promote
   cancel-in-progress: false
@@ -23,33 +28,39 @@ jobs:
     uses: ./.github/workflows/deploy.yml
     with: { stage: beta }
     permissions: { id-token: write, contents: read }
+    secrets: inherit
 
   beta-e2e:
     needs: beta-deploy
     uses: ./.github/workflows/e2e.yml
     with: { stage: beta, sha: "${{ needs.beta-deploy.outputs.deployed_sha }}" }
     permissions: { id-token: write, contents: read }
+    secrets: inherit
 
   gamma-deploy:
     needs: beta-e2e
     uses: ./.github/workflows/deploy.yml
     with: { stage: gamma }
     permissions: { id-token: write, contents: read }
+    secrets: inherit
 
   gamma-e2e:
     needs: gamma-deploy
     uses: ./.github/workflows/e2e.yml
     with: { stage: gamma, sha: "${{ needs.gamma-deploy.outputs.deployed_sha }}" }
     permissions: { id-token: write, contents: read }
+    secrets: inherit
 
   prod-deploy:
     needs: gamma-e2e
     uses: ./.github/workflows/deploy.yml
     with: { stage: prod }
     permissions: { id-token: write, contents: read }
+    secrets: inherit
 
   prod-smoke:
     needs: prod-deploy
     uses: ./.github/workflows/e2e.yml
     with: { stage: prod, sha: "${{ needs.prod-deploy.outputs.deployed_sha }}" }
     permissions: { id-token: write, contents: read }
+    secrets: inherit

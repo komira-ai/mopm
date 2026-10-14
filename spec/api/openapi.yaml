@@ -561,7 +561,12 @@ paths:
         `yanked: true` hides the version from new resolution; its files stay
         downloadable at their exact URLs, so existing locks keep working.
         `yanked: false` restores it. Allowed for an owner or a token with the
-        `yank` or `publish` scope for the package. The call is idempotent.
+        `yank` or `publish` scope for the package. Repeating the same change
+        is a no-op and returns 200. A change the version's state does not
+        allow is refused with `invalid_transition` (409): yanking a version
+        that is still pending or is tombstoned, unyanking a version that is
+        not yanked, or any change to a tombstoned version. A tombstoned
+        version (taken down by an administrator) never changes state.
       security:
         - yankToken: []
         - publishToken: []
@@ -581,6 +586,13 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/VersionSummary" }
+        "409":
+          description: "`invalid_transition`: the version's state does not allow this change."
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         default: { $ref: "#/components/responses/Error" }
 
 components:
@@ -804,6 +816,7 @@ components:
         - already_owner
         - last_owner
         - upload_used
+        - invalid_transition
         - invitation_expired
         - payload_too_large
         - rate_limited
@@ -1223,6 +1236,7 @@ x-mopm-errors:
   already_owner:         { status: 409, message: "'{handle}' already owns '{name}'.", hint: "" }
   last_owner:            { status: 409, message: "'{handle}' is the last owner of '{name}'.", hint: "Add another owner first." }
   upload_used:           { status: 409, message: "The upload '{upload_id}' was already used.", hint: "Begin a new upload." }
+  invalid_transition:    { status: 409, message: "Cannot {action} '{name}' {version}: it is {state}.", hint: "Only a published version can be yanked, only a yanked version can be unyanked, and a tombstoned version never changes." }
   invitation_expired:    { status: 410, message: "The invitation expired.", hint: "Ask the owner to invite you again." }
   payload_too_large:     { status: 413, message: "The file is larger than the limit of {limit} bytes.", hint: "Reduce the package size." }
   rate_limited:          { status: 429, message: "Too many requests.", hint: "Wait {retry_after} seconds; the Retry-After header says how long." }
