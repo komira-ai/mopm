@@ -1,3 +1,4 @@
+import * as path from 'path';
 import { App } from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
 import { StageStacks, createStageStacks } from '../lib/app';
@@ -16,6 +17,7 @@ export function build(stage: Stage): StageStacks {
     { account: DUMMY_ACCOUNT, region: 'us-east-1' },
     '1.2.3',
     'c0ffee',
+    path.join(__dirname, 'fixtures/api-handler'),
   );
 }
 
