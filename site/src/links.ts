@@ -112,3 +112,33 @@ export function internalHref(path: string): SafeHref {
   }
   return path as SafeHref;
 }
+
+/** A web link from API metadata (a repository or homepage): http or https only, normalised; anything else is null. */
+export function webHref(raw: string): SafeHref | null {
+  const href = safeHref(raw, { mode: 'readme', idPrefix: '' });
+  return href !== null && /^https?:\/\//.test(href) ? href : null;
+}
+
+/**
+ * A file's download link: only an https URL on the conda channel of the site the page is served on (`channel` is
+ * condaBase(location.hostname)), with no credentials in it. Anything else, including a URL on another stage's
+ * channel, is null and the page shows the file name as text.
+ */
+export function channelFileHref(raw: string, channel: string | null): SafeHref | null {
+  if (channel === null || raw.replace(STRIP, '') !== raw) return null;
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  const c = new URL(channel);
+  if (u.protocol !== 'https:' || u.host !== c.host || u.username !== '' || u.password !== '') return null;
+  return u.href as SafeHref;
+}
+
+/** An in-page link to an element id the site itself sets (the skip link's '#main'). Throws on anything else. */
+export function anchorHref(id: string): SafeHref {
+  if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(id)) throw new Error(`anchorHref: '${id}' is not a plain id`);
+  return `#${id}` as SafeHref;
+}

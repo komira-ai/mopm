@@ -88,8 +88,17 @@ jobs:
       - name: Install (npm ci)
         run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run typecheck
-      # The tests read the API contract fixtures (tests/contract/api) and the published docs (spec/, docs/).
+      # The tests read the API contract fixtures (tests/contract/api), the published docs (spec/, docs/), README.md and
+      # src/cli/main.zig (the home page copy is held to them).
       - run: npm test
+      # The build renders the pages from the docs and README, hashes the assets and checks the tree (tools/check-dist.ts).
+      - name: Build the site
+        run: |
+          npm run build
+          for f in index.html app.html 404.html docs/index.html docs/mopm-toml/index.html docs/mopm-test/index.html; do
+            test -f "dist/$f" || { echo "dist/$f is missing" >&2; exit 1; }
+          done
+          ls dist/assets/*/main.js dist/assets/*/site.css
 
   dns:
     runs-on: ubuntu-24.04

@@ -6,7 +6,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.browser.json",
     "test": "jest --ci",
-    "build": "tsc -p tsconfig.browser.json"
+    "build": "node -e \"require('fs').rmSync('build',{recursive:true,force:true})\" && tsc -p tsconfig.browser.json && tsc -p tsconfig.tools.json && node build/tools/tools/build.js"
   },
   "devDependencies": {
     "@types/jest": "29.5.14",

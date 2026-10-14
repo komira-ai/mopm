@@ -12,5 +12,5 @@
     "types": ["node", "jest"],
     "noEmit": true
   },
-  "include": ["src", "test"]
+  "include": ["src", "tools", "test"]
 }

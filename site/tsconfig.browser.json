@@ -5,6 +5,7 @@
     "moduleResolution": "bundler",
     "types": [],
     "noEmit": false,
+    "removeComments": true,
     "outDir": "build/browser",
     "rootDir": "src"
   },
