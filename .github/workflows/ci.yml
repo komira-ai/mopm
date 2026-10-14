@@ -150,12 +150,40 @@ jobs:
         run: zig build
       - name: mopm login, logout and whoami against the fake registry
         run: python3 -I tests/registry_e2e/run.py ./zig-out/bin/mopm ./zig-out/bin/mopm-fake-registry
+      - name: mopm pack and publish against the fake registry
+        run: python3 -I tests/registry_e2e/publish.py ./zig-out/bin/mopm ./zig-out/bin/mopm-fake-registry
+
       - name: Install the contract validators (pip, in a throwaway environment)
         run: |
           python3 -m venv "$RUNNER_TEMP/contract-venv"
           "$RUNNER_TEMP/contract-venv/bin/pip" install --disable-pip-version-check -r tests/contract/requirements.txt
       - name: mopm lock, update and tree against the fake registry (wrong-version traps, refusals, lock schema)
         run: '"$RUNNER_TEMP/contract-venv/bin/python" -I tests/resolve_e2e/run.py ./zig-out/bin/mopm ./zig-out/bin/mopm-fake-registry'
+
+  # The packer against the registry's own validator (service/api/src/validate): what mopm pack writes must be accepted,
+  # and each planted defect must be refused with its rule.
+  pack-conformance:
+    name: pack conformance (validator)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Build the CLI
+        run: zig build
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '20'
+      - name: Build the validator (service/api, as service-ci.yml installs it)
+        working-directory: service/api
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+      - name: mopm pack, then the validator on the result
+        run: node tests/pack_conformance/check.mjs ./zig-out/bin/mopm service/api/dist
 
   install-e2e:
     name: install e2e (${{ matrix.os }})

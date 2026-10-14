@@ -23,7 +23,9 @@ pub const Options = struct {
     /// Sent as `Authorization: Bearer <token>`.
     token: ?[]const u8 = null,
     body: ?[]const u8 = null,
-    content_type: []const u8 = "application/json",
+    /// null sends no `Content-Type` (an upload sends exactly the headers the
+    /// registry names, and the PUT of a presigned URL signs them).
+    content_type: ?[]const u8 = "application/json",
     /// Sent as given (the presigned upload's headers).
     extra_headers: []const std.http.Header = &.{},
 };
@@ -39,7 +41,7 @@ pub fn request(arena: Allocator, method: std.http.Method, url: []const u8, optio
         .keep_alive = false,
         .headers = .{
             .authorization = if (authorization) |a| .{ .override = a } else .default,
-            .content_type = if (options.body != null) .{ .override = options.content_type } else .default,
+            .content_type = if (options.body == null) .default else if (options.content_type) |ct| .{ .override = ct } else .omit,
             .user_agent = .{ .override = "mopm" },
         },
         .extra_headers = options.extra_headers,
