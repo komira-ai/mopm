@@ -11,6 +11,10 @@ const account = process.env.CDK_DEFAULT_ACCOUNT;
 if (!account) {
   throw new Error('CDK_DEFAULT_ACCOUNT is not set; the account is provided by the CDK environment at deploy time');
 }
+const wantedRegion = process.env.CDK_DEFAULT_REGION;
+if (wantedRegion && wantedRegion !== REGION) {
+  throw new Error(`stacks deploy to ${REGION} only (CloudFront certificates); CDK_DEFAULT_REGION is '${wantedRegion}'`);
+}
 const zoneId = app.node.tryGetContext('hostedZoneId');
 const version = String(app.node.tryGetContext('version') ?? 'dev');
 const commit = String(app.node.tryGetContext('commit') ?? 'dev');

@@ -1,8 +1,8 @@
 {
   "stage": "gamma",
-  "apiDomain": "gamma.mopm.dev",
   "siteDomain": "gamma.mopm.dev",
   "condaDomain": "conda.gamma.mopm.dev",
-  "hostedZoneName": "gamma.mopm.dev",
-  "disposable": false
+  "apiDomain": "api.gamma.mopm.dev",
+  "hostedZoneName": "mopm.dev",
+  "disposable": true
 }
