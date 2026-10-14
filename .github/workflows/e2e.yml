@@ -114,3 +114,61 @@ jobs:
             echo "expected commit $EXPECTED_SHA, health reported '${gotsha}'" >&2
             exit 1
           fi
+      # Read-only checks of the publish surface. They need no token and no OAuth app: an unauthenticated write is refused
+      # before it touches anything, so these stay green before login is configured, and change nothing on any stage.
+      - name: Read-only checks, publish surface and channel
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: |
+          set -euo pipefail
+          domain=$(jq -r .apiDomain "service/config/${STAGE}.json")
+          conda=$(jq -r .condaDomain "service/config/${STAGE}.json")
+          api="https://${domain}/api/v1"
+          out=$(mktemp)
+          # http <method> <url> [data]: prints the status code, leaves the body in $out. Retries only connection-level failures.
+          http() {
+            if [ -n "${3:-}" ]; then
+              curl -sS --retry 5 --retry-delay 5 --retry-all-errors -o "$out" -w '%{http_code}' -X "$1" \
+                -H 'content-type: application/json' --data "$3" "$2"
+            else
+              curl -sS --retry 5 --retry-delay 5 --retry-all-errors -o "$out" -w '%{http_code}' -X "$1" "$2"
+            fi
+          }
+          expect() { # expect <label> <want status> <got status> <want error code>
+            if [ "$2" != "$3" ]; then echo "$1: expected HTTP $2, got $3: $(head -c 300 "$out")" >&2; exit 1; fi
+            got=$(jq -r '.error.code // empty' "$out")
+            if [ "$got" != "$4" ]; then echo "$1: expected error code $4, got '$got'" >&2; exit 1; fi
+            echo "ok: $1 -> $2 $4"
+          }
+
+          # The health endpoint says whether uploads are on; it must be a boolean either way.
+          code=$(http GET "${api}/health")
+          [ "$code" = "200" ] || { echo "health: HTTP $code" >&2; exit 1; }
+          jq -e '.read_only | type == "boolean"' "$out" >/dev/null || { echo "health.read_only is not a boolean" >&2; exit 1; }
+          read_only=$(jq -r .read_only "$out")
+
+          # A package that does not exist: the read API answers with the contract's error.
+          code=$(http GET "${api}/packages/e2e_no_such_package")
+          expect "unknown package" 404 "$code" package_not_found
+
+          # Writes without a token. In read-only mode every write is 503 read_only_mode before the token is looked at.
+          want=token_missing; status=401
+          if [ "$read_only" = "true" ]; then want=read_only_mode; status=503; fi
+          body='{"subdir":"noarch","filename":"mojo-e2e_no_such_package-1.0.0-mojo1.0.0_0.conda","sha256":"0000000000000000000000000000000000000000000000000000000000000000","size":1}'
+          code=$(http POST "${api}/packages/e2e_no_such_package/1.0.0/files" "$body")
+          expect "begin upload without a token" "$status" "$code" "$want"
+          code=$(http POST "${api}/packages/e2e_no_such_package/1.0.0/publish" '{"upload_ids":["x"],"manifest_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}')
+          expect "commit without a token" "$status" "$code" "$want"
+          code=$(http GET "${api}/publishes/pub_e2e_no_such_publish")
+          expect "publish status without a token" 401 "$code" token_missing
+
+          # The channel host. A stage that has never had a publish may not serve repodata yet (the index writer creates it with
+          # the first publish): 403 and 404 are fine then. When it does serve one, it must be the right subdir's repodata.
+          code=$(curl -sS --retry 5 --retry-delay 5 --retry-all-errors -o "$out" -w '%{http_code}' "https://${conda}/noarch/repodata.json")
+          case "$code" in
+            200) jq -e '.info.subdir == "noarch" and (.["packages.conda"] | type == "object")' "$out" >/dev/null \
+                   || { echo "noarch/repodata.json is not a noarch repodata" >&2; exit 1; }
+                 echo "ok: channel noarch/repodata.json is valid" ;;
+            403|404) echo "ok: channel has no repodata yet (HTTP $code)" ;;
+            *) echo "channel noarch/repodata.json: HTTP $code" >&2; exit 1 ;;
+          esac

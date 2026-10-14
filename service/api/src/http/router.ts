@@ -1,8 +1,9 @@
 import { RegistryError, type ErrorCode, HTTP_STATUS } from '../errors';
 import type { Store } from '../store';
-import type { PackageRecord, PackageSummaryRecord, VersionRecord } from '../types';
+import { README_MAX_BYTES, type PackageRecord, type PackageSummaryRecord, type VersionRecord } from '../types';
 import { canonicalVersion, compareVersions, parseVersion } from '../version';
 import { CATALOGUE, render } from './catalogue';
+import { routePublish, type PublishApi } from './publish-routes';
 
 export type Stage = 'beta' | 'gamma' | 'prod';
 
@@ -11,6 +12,10 @@ export interface HttpRequest {
   /** The raw path, e.g. `/api/v1/packages/http_client`. */
   path: string;
   query: Record<string, string | undefined>;
+  /** Lower-case names. Only the publish operations read them (authorization). */
+  headers?: Record<string, string | undefined>;
+  /** The decoded request body, for the operations that take one. */
+  body?: string;
 }
 
 export interface HttpResponse {
@@ -26,6 +31,8 @@ export interface RouterDeps {
   version: string;
   commit: string;
   readOnly: boolean;
+  /** The publish operations (begin, commit, status). Absent: the router serves reads only. */
+  publish?: PublishApi;
 }
 
 const PREFIX = '/api/v1';
@@ -98,6 +105,22 @@ function versionSummary(v: VersionRecord) {
   };
 }
 
+/**
+ * The optional display metadata (spec: VersionDetail, PackageInfo): a field is present only when it is stored.
+ * A readme over the cap is dropped rather than truncated mid-character; the publish pipeline refuses such a readme,
+ * so this is a guard for a row written some other way.
+ */
+function displayMetadata(r: Partial<Pick<VersionRecord, 'description' | 'license' | 'repository' | 'homepage' | 'keywords' | 'readme'>>) {
+  return {
+    ...(r.description === undefined ? {} : { description: r.description }),
+    ...(r.license === undefined ? {} : { license: r.license }),
+    ...(r.repository === undefined ? {} : { repository: r.repository }),
+    ...(r.homepage === undefined ? {} : { homepage: r.homepage }),
+    ...(r.keywords === undefined ? {} : { keywords: r.keywords }),
+    ...(r.readme === undefined || Buffer.byteLength(r.readme, 'utf8') > README_MAX_BYTES ? {} : { readme: r.readme }),
+  };
+}
+
 /** Newest published, non-prerelease version, or null (spec: PackageSummary.latest). */
 function latestOf(vs: VersionRecord[]): string | null {
   const candidates = vs.filter((v) => v.state === 'published' && parseVersion(v.version).pre === undefined);
@@ -107,6 +130,12 @@ function latestOf(vs: VersionRecord[]): string | null {
 /** The newest publication time, or the claim time when nothing is published. */
 const updatedAt = (p: PackageSummaryRecord, vs: VersionRecord[]) =>
   vs.reduce((m, v) => (v.published_at > m ? v.published_at : m), p.created_at);
+
+function readmeOf(vs: VersionRecord[]): string | undefined {
+  const latest = latestOf(vs);
+  const v = latest === null ? undefined : vs.find((x) => x.version === latest);
+  return v === undefined ? undefined : displayMetadata({ readme: v.readme }).readme;
+}
 
 function packageSummary(p: PackageSummaryRecord, vs: VersionRecord[]) {
   return { name: p.name, latest: latestOf(vs), description: p.description ?? null, updated_at: updatedAt(p, vs) };
@@ -147,6 +176,10 @@ async function getPackage(deps: RouterDeps, name: string) {
     repository: p.repository ?? null,
     license: p.license ?? null,
     description: p.description ?? null,
+    ...(p.homepage === undefined ? {} : { homepage: p.homepage }),
+    ...(p.keywords === undefined ? {} : { keywords: p.keywords }),
+    // The readme of the latest version, when it has one.
+    ...(readmeOf(vs) === undefined ? {} : { readme: readmeOf(vs) }),
     created_at: p.created_at,
     versions: newestFirst(vs).map(versionSummary),
   };
@@ -244,6 +277,7 @@ async function getVersion(deps: RouterDeps, name: string, version: string) {
       return v.state === 'tombstoned' || url === undefined ? rest : { ...rest, url };
     }),
     manifest_sha256: v.manifest_sha256,
+    ...displayMetadata(v),
     provenance: v.provenance ?? { kind: 'none' },
   };
 }
@@ -260,6 +294,10 @@ function segments(path: string): string[] | undefined {
 /** Handle one request. Never throws: every failure is an error body from the contract's catalogue. */
 export async function route(req: HttpRequest, deps: RouterDeps, requestId: string): Promise<HttpResponse> {
   try {
+    if (deps.publish) {
+      const published = await routePublish(req, deps.publish, requestId);
+      if (published) return published;
+    }
     const seg = segments(req.path);
     if (seg && req.method === 'GET') {
       if (seg.length === 1 && seg[0] === 'health') return respond(200, requestId, getHealth(deps));

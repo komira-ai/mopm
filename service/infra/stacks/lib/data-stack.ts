@@ -41,6 +41,10 @@ export const TABLES: TableDef[] = [
   { id: 'trusted_publishers', pk: 'name', sk: 'publisher' },
   { id: 'audit', pk: 'name', sk: 'ts_seq', appendOnly: true },
   { id: 'reserved_names', pk: 'name' },
+  // Publish pipeline. `publishes` holds publish records, the per-version commit lock and the rate counters (told apart by
+  // key prefix; the TTL attribute cleans up the counters). `config` holds runtime switches, e.g. {key: 'read_only', value: true}.
+  { id: 'publishes', pk: 'publish_id', ttl: 'expires_at' },
+  { id: 'config', pk: 'key' },
 ];
 
 export class DataStack extends Stack {

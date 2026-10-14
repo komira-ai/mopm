@@ -1,6 +1,7 @@
 import { MemoryStore } from '../../src/memory-store';
 import type { Store } from '../../src/store';
 import { route, normaliseQuery, type HttpResponse, type RouterDeps } from '../../src/http/router';
+import { README_MAX_BYTES } from '../../src/types';
 import { audit, rec } from '../helpers';
 
 async function get(store: Store, path: string, query: Record<string, string> = {}, over: Partial<RouterDeps> = {}) {
@@ -167,6 +168,43 @@ describe('getVersion', () => {
     const { body } = await get(s, '/api/v1/packages/pkg/1.0');
     expect(body).toMatchObject({ state: 'yanked', yank_reason: 'broken' });
     expect(body.files[0].url).toBeDefined();
+  });
+  test('the display metadata of a version is served when stored, and absent when not', async () => {
+    const s = await withVersions();
+    const bare = (await get(s, '/api/v1/packages/pkg/1.0')).body;
+    for (const k of ['description', 'license', 'repository', 'homepage', 'keywords', 'readme']) expect(bare).not.toHaveProperty(k);
+    const meta = {
+      description: 'HTTP client',
+      license: 'MIT OR Apache-2.0',
+      repository: 'https://github.com/example/pkg',
+      homepage: 'https://example.com/pkg',
+      keywords: ['http', 'client'],
+      readme: '# pkg\n',
+    };
+    await s.createVersion(rec({ name: 'pkg', version: '1.1', ...meta }), audit('pkg', 'publish', '1.1'));
+    expect((await get(s, '/api/v1/packages/pkg/1.1')).body).toMatchObject(meta);
+  });
+  test('a readme over the cap is not served; one exactly at the cap is (bytes, not characters)', async () => {
+    const s = await withVersions();
+    await s.createVersion(rec({ name: 'pkg', version: '1.1', readme: 'x'.repeat(README_MAX_BYTES) }), audit('pkg', 'publish', '1.1'));
+    await s.createVersion(rec({ name: 'pkg', version: '1.2', readme: 'x'.repeat(README_MAX_BYTES + 1) }), audit('pkg', 'publish', '1.2'));
+    await s.createVersion(rec({ name: 'pkg', version: '1.3', readme: '\u00e9'.repeat(README_MAX_BYTES / 2 + 1) }), audit('pkg', 'publish', '1.3'));
+    expect((await get(s, '/api/v1/packages/pkg/1.1')).body.readme).toHaveLength(README_MAX_BYTES);
+    expect((await get(s, '/api/v1/packages/pkg/1.2')).body).not.toHaveProperty('readme');
+    expect((await get(s, '/api/v1/packages/pkg/1.3')).body).not.toHaveProperty('readme');
+  });
+  test('package info carries homepage and keywords from the package and the readme of the latest version only', async () => {
+    const s = new MemoryStore();
+    await s.createPackage({ name: 'pkg', state: 'active', created_at: '2026-10-01T00:00:00Z', homepage: 'https://example.com/pkg', keywords: ['a'] });
+    await s.createVersion(rec({ name: 'pkg', version: '1.0', readme: 'old' }), audit('pkg', 'publish', '1.0'));
+    await s.createVersion(rec({ name: 'pkg', version: '2.0', readme: 'new' }), audit('pkg', 'publish', '2.0'));
+    await s.createVersion(rec({ name: 'pkg', version: '3.0a1', readme: 'pre' }), audit('pkg', 'publish', '3.0a1'));
+    expect((await get(s, '/api/v1/packages/pkg')).body).toMatchObject({ homepage: 'https://example.com/pkg', keywords: ['a'], readme: 'new' });
+    const none = new MemoryStore();
+    await none.createPackage({ name: 'pkg', state: 'claimed', created_at: '2026-10-01T00:00:00Z' });
+    const { body } = await get(none, '/api/v1/packages/pkg');
+    for (const k of ['homepage', 'keywords', 'readme']) expect(body).not.toHaveProperty(k);
+    expect(body).toMatchObject({ repository: null, license: null, description: null });
   });
   test('a tombstoned version has the sha256 of each file and no url', async () => {
     const s = await withVersions();
