@@ -131,6 +131,9 @@ export class ChannelStack extends Stack {
     // a missing key). prune=false and retainOnDelete: never deletes published files (the bucket policy denies
     // delete anyway). The sources are constant, so the custom resource only re-runs if they change; no
     // invalidation is needed, repodata is cached for 60 seconds.
+    // WARNING: changing the channel seed re-runs the BucketDeployment and overwrites live repodata on every stage,
+    // including prod. The index writer must own repodata before any change here. This seeding is removed when the
+    // index writer lands (before the first real publish). empty-channel.test.ts pins the seed hashes.
     new deploy.BucketDeployment(this, 'EmptyRepodata', {
       destinationBucket: this.bucket,
       sources: [deploy.Source.asset(writeEmptyChannel())],
