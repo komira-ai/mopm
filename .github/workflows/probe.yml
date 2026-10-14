@@ -8,7 +8,11 @@ permissions:
 
 jobs:
   repl:
-    runs-on: macos-14
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -26,20 +30,20 @@ jobs:
         run: |
           e="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
           export MODULAR_HOME="$e/share/max"
-          sw_vers || true
-          DevToolsSecurity -status || true
-          ls -la "$e/bin" | grep -i 'lldb\|debugserver\|mojo' || true
-          ls -la "$e/lib" | grep -i 'lldb\|repl\|Mojo' || true
-          grep -i 'lldb\|repl' "$MODULAR_HOME/modular.cfg" | sed "s|$e|<E>|g" || true
-          codesign -dv --verbose=2 "$e/bin/debugserver" 2>&1 | head -12 || true
+          /usr/bin/sw_vers || true
+          xcode-select -p || true
+          for d in "$(xcode-select -p)/../SharedFrameworks/LLDB.framework/Versions/A/Resources/debugserver" "$(xcode-select -p)/Library/PrivateFrameworks/LLDB.framework/Versions/A/Resources/debugserver" /Library/Developer/CommandLineTools/Library/PrivateFrameworks/LLDB.framework/Versions/A/Resources/debugserver; do
+            [ -x "$d" ] && echo "found $d"
+          done
           echo "--- plain repl"
-          printf 'print(1 + 1)\n\n' | "$e/bin/mojo" repl 2>&1 | tail -20 || true
-          echo "--- repl with lldb log"
-          printf 'print(1 + 1)\n\n' | "$e/bin/mojo" repl -O "log enable -f $RUNNER_TEMP/lldb.log lldb default process platform host" 2>&1 | tail -20 || true
-          tail -80 "$RUNNER_TEMP/lldb.log" | sed "s|$e|<E>|g" || true
-          echo "--- mojo-lldb plugin list"
-          "$e/bin/mojo-lldb" --version || true
-          "$e/bin/mojo-lldb" -b -o "plugin load $e/lib/libMojoLLDB.dylib" -o "version" 2>&1 | tail -20 || true
-          echo "--- with sudo DevToolsSecurity -enable"
-          sudo DevToolsSecurity -enable || true
-          printf 'print(1 + 1)\n\n' | "$e/bin/mojo" repl 2>&1 | tail -20 || true
+          printf 'print(1 + 1)\n\n' | "$e/bin/mojo" repl 2>&1 | grep -v Crashpad | tail -5 || true
+          ds="$(xcode-select -p)/../SharedFrameworks/LLDB.framework/Versions/A/Resources/debugserver"
+          [ -x "$ds" ] || ds=/Library/Developer/CommandLineTools/Library/PrivateFrameworks/LLDB.framework/Versions/A/Resources/debugserver
+          echo "--- repl with LLDB_DEBUGSERVER_PATH=$ds"
+          printf 'print(1 + 1)\n\n' | LLDB_DEBUGSERVER_PATH="$ds" "$e/bin/mojo" repl 2>&1 | grep -v Crashpad | tail -5 || true
+          echo "--- debugserver alone"
+          "$e/bin/debugserver" --version 2>&1 | head -3 || true
+          echo "--- crash reports"
+          ls -t ~/Library/Logs/DiagnosticReports/ 2>/dev/null | head -5 || true
+          f=$(ls -t ~/Library/Logs/DiagnosticReports/debugserver* 2>/dev/null | head -1)
+          [ -n "$f" ] && head -60 "$f" | sed "s|$e|<E>|g" || true
