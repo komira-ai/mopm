@@ -72,7 +72,7 @@ Skip the OIDC provider if the account already has one for GitHub (only one may e
      -F use_default=false -f 'include_claim_keys[]=repo' -f 'include_claim_keys[]=context' -f 'include_claim_keys[]=job_workflow_ref'
    ```
    (`PUT /repos/{owner}/{repo}/actions/oidc/customization/sub`). Verify with the matching `GET`.
-2. Create environments `beta`, `gamma`, `prod` (Settings, Environments). On `gamma` and `prod` add
+2. Create environments `beta`, `gamma`, `prod` (Settings, Environments). On all three add
    required reviewers (and prevent self-review). On all three set deployment branches to "Selected
    branches": `main` only. The roles' trust policies repeat both limits (environment and
    `refs/heads/main` in `job_workflow_ref`), so a loosened GitHub setting alone does not open a role.
