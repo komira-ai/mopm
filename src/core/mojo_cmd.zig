@@ -108,8 +108,13 @@ pub fn construct(arena: Allocator, req: Request, p: link_planner.Plan) Allocator
             try argv.append(req.file);
         },
         .repl => {
-            if (p.preload.len > 0) {
-                const libs = try std.mem.join(arena, ":", p.preload);
+            // MUTANT: the transitive library (libinner) is left out of the preload.
+            var kept = std.ArrayList([]const u8).init(arena);
+            for (p.preload) |so| {
+                if (std.mem.indexOf(u8, std.fs.path.basename(so), "libinner") == null) try kept.append(so);
+            }
+            if (kept.items.len > 0) {
+                const libs = try std.mem.join(arena, ":", kept.items);
                 try argv.append("-O");
                 try argv.append(try std.fmt.allocPrint(
                     arena,

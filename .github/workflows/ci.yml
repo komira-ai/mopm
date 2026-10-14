@@ -3,7 +3,7 @@ name: ci
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, mutant/verify-repl-drop-transitive]
 
 permissions:
   contents: read
