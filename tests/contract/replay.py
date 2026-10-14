@@ -315,7 +315,7 @@ def accept(f, expire=False):
     if expire:
         f.control("/clock", {"advance_seconds": 8 * 86400})
     return step("acceptInvitation", path={"invitation_id": inv}, token=f.session(invitee), auth="userToken",
-                check=lambda b: invitee in [o["handle"] for o in b["owners"]])
+                check=None if expire else (lambda b: invitee in [o["handle"] for o in b["owners"]]))
 
 
 def list_invitations(f):
