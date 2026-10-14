@@ -6,19 +6,22 @@
 //! closure of the root requirements:
 //!
 //! - requirements follow cargo's rules (semver.zig), for the project's own
-//!   dependencies and for the `range` of a dependency in an index record (a
-//!   record without a range accepts any version);
+//!   dependencies and for the `range` of a dependency in an index record.
+//!   That `range` is the cargo requirement from the publisher's mopm.toml,
+//!   verbatim (a record without a range accepts any version). The `depends`
+//!   of the channel's repodata.json are never read: they are conda's
+//!   spelling of the same graph, for conda and pixi, not for this resolver;
 //! - a candidate must be `published` (yanked and taken-down versions are
 //!   hidden from new resolution, spec/channel.md) and built for exactly the
 //!   project's Mojo (`requires_mojo` is `==<toolchain>`);
 //! - candidates are tried newest first, after the version a lock already
 //!   pins (`Input.pins`); a dead end backtracks to the latest choice.
 //!
-//! A registry version is conda-spelled (`1.2`, `0.5.0rc1`). It is read as
-//! MAJOR.MINOR.PATCH with missing parts zero (conda equality: `1.2` is
-//! `1.2.0`), and its `a`/`b`/`rc`/`dev` suffix as a pre-release, so that it
-//! matches only a requirement naming a pre-release. A version of more than
-//! three parts matches no requirement.
+//! A registry version is MAJOR.MINOR.PATCH, digits only; `MAJOR.MINOR` is
+//! read with a zero patch (`1.0` is `1.0.0`). Every other version string in
+//! an index (one part, four or more parts, any pre-release or suffix such as
+//! `2.0.0-rc1` or `2.1.0b1`) is ignored: it is never picked, and the resolver
+//! adds a warning naming it to `Input.warnings`.
 //!
 //! A failure sets `Diagnostic`: what kind it is and a message naming the
 //! requirements and where each came from.
@@ -45,7 +48,7 @@ pub const Record = struct {
     deps: []const Dep = &.{},
     native: []const Native = &.{},
     files: []const File,
-    /// `version` read as a semantic version; null if it has more than three parts.
+    /// `version` read as MAJOR.MINOR.PATCH; null when it is not one (ignored).
     sv: ?semver.Version,
 
     /// Whether this build is for exactly `mojo` (`requires_mojo` is `==<mojo>`).
@@ -105,24 +108,18 @@ fn number(s: []const u8) ?u64 {
     return std.fmt.parseInt(u64, s, 10) catch null;
 }
 
-/// A registry version as a semantic version (see the file comment), or null.
+/// A registry version as MAJOR.MINOR.PATCH (`MAJOR.MINOR` gets a zero
+/// patch), or null for any other spelling (see the file comment).
 pub fn semverOf(text: []const u8) ?semver.Version {
-    var end: usize = 0;
-    while (end < text.len and (std.ascii.isDigit(text[end]) or text[end] == '.')) end += 1;
-    const suffix = text[end..];
-    if (suffix.len > 0) {
-        var letters: usize = 0;
-        while (letters < suffix.len and std.ascii.isLower(suffix[letters])) letters += 1;
-        if (letters == 0 or number(suffix[letters..]) == null) return null;
-    }
     var parts: [3]u64 = .{ 0, 0, 0 };
     var n: usize = 0;
-    var it = std.mem.splitScalar(u8, text[0..end], '.');
+    var it = std.mem.splitScalar(u8, text, '.');
     while (it.next()) |p| : (n += 1) {
         if (n == 3) return null;
         parts[n] = number(p) orelse return null;
     }
-    return .{ .major = parts[0], .minor = parts[1], .patch = parts[2], .pre = suffix };
+    if (n < 2) return null;
+    return .{ .major = parts[0], .minor = parts[1], .patch = parts[2] };
 }
 
 fn sameVersion(a: Record, b: Record) bool {
@@ -272,6 +269,9 @@ pub const Input = struct {
     mojo: []const u8,
     roots: []const Root,
     pins: []const Pin = &.{},
+    /// Where the resolver adds one line per index version it ignores
+    /// because it is not MAJOR.MINOR.PATCH; null to drop them.
+    warnings: ?*std.ArrayList([]const u8) = null,
     /// Choices tried before the search gives up.
     max_steps: usize = 100_000,
 };
@@ -368,6 +368,12 @@ fn Resolver(comptime S: type) type {
             };
             const parsed = try parseIndex(self.arena, r.name, text, self.diag);
             try self.index.put(r.name, parsed);
+            if (self.input.warnings) |w| {
+                for (parsed) |rec| {
+                    if (rec.sv != null) continue;
+                    try w.append(try std.fmt.allocPrint(self.arena, "the index lists {s} {s}, which is not a MAJOR.MINOR.PATCH version; it is ignored", .{ rec.name, rec.version }));
+                }
+            }
             return parsed;
         }
 
@@ -446,7 +452,7 @@ fn Resolver(comptime S: type) type {
             if (matching.items.len == 0) {
                 var have = std.ArrayList(u8).init(self.arena);
                 for (all, 0..) |rec, i| {
-                    try have.writer().print("{s}{s}{s}", .{ if (i == 0) "" else ", ", rec.version, switch (rec.state) {
+                    try have.writer().print("{s}{s}{s}", .{ if (i == 0) "" else ", ", rec.version, if (rec.sv == null) " (ignored: not MAJOR.MINOR.PATCH)" else switch (rec.state) {
                         .published => "",
                         .yanked => " (yanked)",
                         .tombstoned => " (taken down)",
@@ -486,6 +492,8 @@ fn Resolver(comptime S: type) type {
             }
         }
 
+        /// The requirement a record's `deps[]` entry puts on `d.name`: its
+        /// `range`, verbatim, as cargo reads it.
         fn dependency(self: *Self, rec: *const Record, d: Dep) Error!Req {
             const text = d.range orelse "*";
             var why: []const u8 = "";
@@ -597,16 +605,49 @@ fn expectFailure(index: MemoryIndex, roots: []const Root, kind: Kind, contains: 
 }
 
 const core_versions = indexLine("core", "1.0.0", no_deps) ++ indexLine("core", "1.2.0", no_deps) ++ indexLine("core", "1.2.7", no_deps) ++
-    indexLine("core", "1.3.0", no_deps) ++ indexLine("core", "2.0.0", no_deps) ++ indexLine("core", "2.1.0b1", no_deps);
+    indexLine("core", "1.3.0", no_deps) ++ indexLine("core", "2.0.0", no_deps) ++ indexLine("core", "2.1.0-rc1", no_deps);
 
-test "registry versions read as semantic versions" {
+test "registry versions are MAJOR.MINOR.PATCH; MAJOR.MINOR gets a zero patch; nothing else is read" {
     const v = semverOf("1.2").?;
+    try std.testing.expectEqual(@as(u64, 1), v.major);
     try std.testing.expectEqual(@as(u64, 2), v.minor);
     try std.testing.expectEqual(@as(u64, 0), v.patch);
-    try std.testing.expectEqualStrings("rc1", semverOf("0.5.0rc1").?.pre);
-    try std.testing.expect(semverOf("1.2.3.4") == null);
-    try std.testing.expect(semverOf("01.2") == null);
-    try std.testing.expect(semverOf("1.0rc") == null);
+    const w = semverOf("10.20.30").?;
+    try std.testing.expectEqual(@as(u64, 30), w.patch);
+    try std.testing.expectEqualStrings("", w.pre);
+    for ([_][]const u8{ "1", "1.2.3.4", "2.0.0-rc1", "2.1.0b1", "0.5.0rc1", "1.0.0dev1", "1.0.0+b", "01.2", "1..2", "1.2.", "", "v1.2.3" }) |text| {
+        if (semverOf(text)) |_| {
+            std.debug.print("read '{s}' as a version\n", .{text});
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
+test "versions that are not MAJOR.MINOR.PATCH are never picked and each gets a warning; 1.0 is 1.0.0" {
+    const index = comptime MemoryIndex{ .files = &.{.{
+        "legacy",
+        indexLine("legacy", "1.0", no_deps) ++ indexLine("legacy", "1.1.0", no_deps) ++
+            indexLine("legacy", "1.2.3.4", no_deps) ++ indexLine("legacy", "2.0.0-rc1", no_deps),
+    }} };
+    // A reader that cut 1.2.3.4 to 1.2.3 would pick it for "1".
+    try expectPicks(index, &.{.{ .name = "legacy", .requirement = "1" }}, &.{}, &.{.{ "legacy", "1.1.0" }});
+    try expectPicks(index, &.{.{ .name = "legacy", .requirement = "=1.0.0" }}, &.{}, &.{.{ "legacy", "1.0" }});
+    try expectPicks(index, &.{.{ .name = "legacy", .requirement = "<1.1" }}, &.{}, &.{.{ "legacy", "1.0" }});
+    // A reader that kept the pre-release would pick 2.0.0-rc1 here.
+    try expectFailure(index, &.{.{ .name = "legacy", .requirement = ">=2.0.0-rc1" }}, .no_match, &.{"2.0.0-rc1 (ignored: not MAJOR.MINOR.PATCH)"});
+    try expectFailure(index, &.{.{ .name = "legacy", .requirement = "=1.2.3" }}, .no_match, &.{"1.2.3.4 (ignored: not MAJOR.MINOR.PATCH)"});
+    // A pin on an ignored version is not honoured either.
+    try expectPicks(index, &.{.{ .name = "legacy", .requirement = "*" }}, &.{.{ .name = "legacy", .version = "1.2.3.4" }}, &.{.{ "legacy", "1.1.0" }});
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var warnings = std.ArrayList([]const u8).init(a);
+    var diag: Diagnostic = .{};
+    _ = try resolve(a, index, .{ .mojo = "1.0.0", .roots = &.{.{ .name = "legacy", .requirement = "1" }}, .warnings = &warnings }, &diag);
+    try std.testing.expectEqual(@as(usize, 2), warnings.items.len);
+    try std.testing.expectEqualStrings("the index lists legacy 1.2.3.4, which is not a MAJOR.MINOR.PATCH version; it is ignored", warnings.items[0]);
+    try std.testing.expectEqualStrings("the index lists legacy 2.0.0-rc1, which is not a MAJOR.MINOR.PATCH version; it is ignored", warnings.items[1]);
 }
 
 test "requirement edge cases pick the newest version each one allows" {
@@ -619,7 +660,7 @@ test "requirement edge cases pick the newest version each one allows" {
         .{ "=1.2.0", "1.2.0" },
         .{ "<1.2", "1.0.0" },
         .{ ">=1.2, <1.3", "1.2.7" },
-        .{ "*", "2.0.0" }, // never the pre-release 2.1.0b1
+        .{ "*", "2.0.0" }, // never 2.1.0-rc1, which is ignored
     };
     for (cases) |case| {
         expectPicks(index, &.{.{ .name = "core", .requirement = case[0] }}, &.{}, &.{.{ "core", case[1] }}) catch |e| {
@@ -627,9 +668,9 @@ test "requirement edge cases pick the newest version each one allows" {
             return e;
         };
     }
-    // A pre-release is picked only when the requirement names one.
-    try expectPicks(index, &.{.{ .name = "core", .requirement = ">=2.1.0-b1" }}, &.{}, &.{.{ "core", "2.1.0b1" }});
-    try expectFailure(index, &.{.{ .name = "core", .requirement = ">2.0.0" }}, .no_match, &.{ ">2.0.0 (from mopm.toml)", "2.1.0b1" });
+    // A registry pre-release is ignored, even for a requirement that names one.
+    try expectFailure(index, &.{.{ .name = "core", .requirement = ">=2.1.0-rc1" }}, .no_match, &.{ ">=2.1.0-rc1 (from mopm.toml)", "2.1.0-rc1 (ignored" });
+    try expectFailure(index, &.{.{ .name = "core", .requirement = ">2.0.0" }}, .no_match, &.{">2.0.0 (from mopm.toml)"});
 }
 
 test "a lock's pin is kept while it fits, and dropped when it does not" {

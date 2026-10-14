@@ -21,7 +21,21 @@ version a faulty resolver would pick:
     http_core   1.2.6   is yanked
     http_core   1.2.4   is older: the resolver must take the newest that fits
     tls         1.2.0   is taken down
-    crypto      2.1.0b1 is a pre-release, which "2" does not allow
+    crypto      2.1.0b1 is not MAJOR.MINOR.PATCH: ignored, with a warning
+    legacy      1.2.3.4 has four parts: ignored ("1" must give 1.1.0, not it)
+    legacy      2.0.0-rc1 is a pre-release: ignored (">=2.0.0-rc1" matches nothing)
+    legacy      1.0     is 1.0.0 ("=1.0.0" picks it)
+
+The repodata `depends` disagree with the index records' `deps[].range` on
+purpose (every range there is ">=99"): the resolver reads only `deps[].range`,
+the cargo requirement from the publisher's mopm.toml, so the lock must not
+change.
+
+The lock's channel is the fake's loopback http URL with a path
+(`http://127.0.0.1:<port>/channel/`), which mopm writes and reads; a lock
+naming a plain-http channel on any other host is refused. spec/lock.schema.json
+does not allow such a channel yet, so the lock is compared byte for byte here
+and the schema check follows the spec change.
 """
 import hashlib
 import json
@@ -81,7 +95,15 @@ PACKAGES = {
     ],
     # The repodata disagrees with the index about this one's bytes.
     "badsum": [version("badsum", "1.0.0")],
+    # Only MAJOR.MINOR.PATCH is read; 1.0 is 1.0.0; the rest are ignored.
+    "legacy": [
+        version("legacy", "1.0"),
+        version("legacy", "1.1.0"),
+        version("legacy", "1.2.3.4"),
+        version("legacy", "2.0.0-rc1"),
+    ],
 }
+WARNING = "mopm lock: warning: the index lists %s %s, which is not a MAJOR.MINOR.PATCH version; it is ignored\n"
 SUBDIRS = ("linux-64", "linux-aarch64", "osx-arm64", "noarch")
 
 
@@ -106,7 +128,9 @@ def write_registry(root, base):
                     sha = digest(s, fn) if name != "badsum" else digest(s, "tampered")
                     repodata[s]["packages.conda"][fn] = {
                         "build": "mojo%s_0" % v["mojo"], "build_number": 0,
-                        "depends": ["mojo-compiler ==%s" % v["mojo"]] + ["mojo-%s %s" % (d["name"], d["range"]) for d in v["deps"]],
+                        # Deliberately not the index's ranges: never read.
+                        "depends": ["mojo-compiler ==%s" % v["mojo"]] + ["mojo-%s >=99" % d["name"] for d in v["deps"]]
+                        + ["mojo-zlib_never_read 1"],
                         "name": "mojo-" + name, "sha256": sha, "size": SIZE, "subdir": s, "version": v["version"]}
                 else:
                     repodata[s]["removed"].append(fn)
@@ -195,6 +219,9 @@ def main(mopm, fake_exe):
 
             r = run(app, "lock", *reg)
             check("lock succeeds", r.returncode == 0, r.stdout + r.stderr)
+            check("lock warns once about crypto 2.1.0b1 and about nothing else",
+                  r.stderr == WARNING % ("crypto", "2.1.0b1"), r.stderr)
+            check("the channel is loopback http with a path", re.fullmatch(r"http://127\.0\.0\.1:\d+/channel/", channel) is not None, channel)
             got = lock_of(app)
             check("the lock picks exactly the expected versions and bytes", got == expected,
                   "\n--- got\n%s\n--- want\n%s" % (got, expected))
@@ -226,6 +253,30 @@ def main(mopm, fake_exe):
             check("update refuses a package the lock does not hold",
                   r.returncode == 1 and "nosuch is not in mopm.lock" in r.stderr, r.stderr)
 
+            for host in ("http://example.com/channel/", "http://127.0.0.2:80/channel/"):
+                with open(os.path.join(app, "mopm.lock"), "w") as f:
+                    f.write(expected.replace(channel, host))
+                for cmd in (["tree"], ["lock", *reg]):
+                    r = run(app, *cmd)
+                    check("%s refuses a lock whose channel is %s" % (cmd[0], host),
+                          r.returncode == 1 and ("channel %s is refused: a channel ends with '/' and is https, or plain http "
+                                                 "only to 127.0.0.1, [::1] or localhost with a port" % host) in r.stderr, r.stderr)
+
+            # Versions: 1.0 is 1.0.0; 1.2.3.4 and 2.0.0-rc1 are ignored, with a warning each.
+            legacy_warnings = WARNING % ("legacy", "1.2.3.4") + WARNING % ("legacy", "2.0.0-rc1")
+            for name, req, want in (("caret", "1", "1.1.0"), ("exact", "=1.0.0", "1.0"), ("below", "<1.1", "1.0")):
+                d = project("legacy_" + name, 'legacy = "%s"' % req)
+                r = run(d, "lock", *reg)
+                text = lock_of(d)
+                picked = [(p["version"], p["url"]) for p in json.loads(text)["packages"]] if text else []
+                fn = "mojo-legacy-%s-mojo1.0.0_0.conda" % want
+                check("legacy %s picks %s and warns about each ignored version" % (req, want),
+                      r.returncode == 0 and r.stderr == legacy_warnings and picked == [(want, channel + "linux-64/" + fn)],
+                      "exit %d, picked %s, stderr %s" % (r.returncode, picked, r.stderr))
+            # Locking with the lock in place reads it back (the version 1.0 too).
+            r = run(d, "lock", *reg)
+            check("a lock holding legacy 1.0 is read back and kept", r.returncode == 0 and lock_of(d) == text, r.stdout + r.stderr)
+
             with open(os.path.join(app, "mopm.lock"), "w") as f:
                 f.write(expected.replace('"lock_version": 1', '"lock_version": 2'))
             r = run(app, "lock", *reg)
@@ -240,6 +291,12 @@ def main(mopm, fake_exe):
                  ["no version of http_core satisfies every requirement on it",
                   ">=1.2,<2 (from http_client 0.4.0)", "2 (from mopm.toml)"]),
                 ("no_match", 'http_core = "3"', ["no version of http_core matches 3 (from mopm.toml)"]),
+                ("pre_release", 'legacy = ">=2.0.0-rc1"',
+                 ["no version of legacy matches >=2.0.0-rc1 (from mopm.toml)", "2.0.0-rc1 (ignored: not MAJOR.MINOR.PATCH)",
+                  WARNING % ("legacy", "2.0.0-rc1")]),
+                ("four_parts", 'legacy = "=1.2.3"',
+                 ["no version of legacy matches =1.2.3 (from mopm.toml)", "1.2.3.4 (ignored: not MAJOR.MINOR.PATCH)",
+                  WARNING % ("legacy", "1.2.3.4")]),
                 ("badsum", 'badsum = "1"',
                  ["the index says sha256 " + digest("linux-64", filename(PACKAGES["badsum"][0])),
                   "repodata.json says sha256 " + digest("linux-64", "tampered")]),
