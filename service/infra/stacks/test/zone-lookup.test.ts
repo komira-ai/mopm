@@ -40,7 +40,7 @@ describe.each(STAGES)('hostnames are inside the looked-up zone %s', (stage) => {
 
   test('every ACM certificate and record name in the synthesized stacks is inside the zone', () => {
     const app = new App();
-    createStageStacks(app, stageConfig(stage, 'Z0DUMMYZONE'), { account: DUMMY_ACCOUNT, region: 'us-east-1' }, '1.2.3');
+    createStageStacks(app, stageConfig(stage, 'Z0DUMMYZONE'), { account: DUMMY_ACCOUNT, region: 'us-east-1' }, '1.2.3', 'dev', HANDLER_STUB_DIR);
     const names: string[] = [];
     for (const art of app.synth().artifacts) {
       const t = (art as unknown as { template?: { Resources?: Record<string, { Type: string; Properties: Record<string, unknown> }> } }).template;
