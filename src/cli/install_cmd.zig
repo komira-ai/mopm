@@ -1,16 +1,26 @@
-//! `mopm lock`, `mopm update` and `mopm tree`: resolve the project's
-//! dependencies against a registry's sparse index and write mopm.lock, or
-//! draw the locked graph.
+//! `mopm lock`, `mopm update`, `mopm tree` and `mopm sync`: resolve the
+//! project's dependencies against a registry's sparse index and write
+//! mopm.lock, draw the locked graph, or install the lock.
 //!
 //!   mopm lock   [--registry <prod|gamma|beta|url>]
 //!   mopm update [<package>...] [--registry <prod|gamma|beta|url>]
 //!   mopm tree
+//!   mopm sync   [--locked] [--registry <prod|gamma|beta|url>] [--pixi <path>]
 //!
-//! All three work in the current directory (mopm.toml and mopm.lock). `lock`
+//! All four work in the current directory (mopm.toml and mopm.lock). `lock`
 //! keeps every version the existing lock pins while it still fits; `update`
 //! drops the pins of the named packages (of all, with no names) and picks the
 //! newest versions that fit. Reading the index needs no account. `tree`
 //! reads only mopm.toml and mopm.lock.
+//!
+//! `sync` locks first when there is no lock or it no longer matches
+//! mopm.toml (as `lock` does), then installs the lock into `.mopm/` (see
+//! core/install.zig): it downloads each locked file of this machine's
+//! subdir, refuses one whose size or sha256 differs from the lock, writes the
+//! internal pixi project, runs `pixi install` (the `pixi` on PATH, or
+//! `--pixi`), and checks what pixi installed against the lock. With
+//! `--locked` it never locks: a missing or out-of-date lock is an error, and
+//! the sparse index is not read.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -21,13 +31,15 @@ const manifest = core.manifest;
 const resolve = core.resolve;
 const lock = core.lock;
 const plan = core.install_plan;
+const inst = core.install;
 
-pub const Command = enum { lock, update, tree };
+pub const Command = enum { lock, update, tree, sync };
 
 const usage =
     \\usage: mopm lock   [--registry <prod|gamma|beta|url>]
     \\       mopm update [<package>...] [--registry <prod|gamma|beta|url>]
     \\       mopm tree
+    \\       mopm sync   [--locked] [--registry <prod|gamma|beta|url>] [--pixi <path>]
     \\
 ;
 
@@ -37,6 +49,10 @@ const lock_path = "mopm.lock";
 pub const Args = struct {
     registry: []const u8 = "prod",
     packages: []const []const u8 = &.{},
+    /// `sync --locked`: install the existing lock or fail; never lock.
+    locked: bool = false,
+    /// `sync --pixi <path>`: the pixi to run.
+    pixi: []const u8 = "pixi",
 };
 
 /// The arguments of `cmd`; null on a usage error.
@@ -50,6 +66,12 @@ pub fn parseArgs(arena: Allocator, cmd: Command, args: []const []const u8) Alloc
             if (i + 1 >= args.len) return null;
             i += 1;
             out.registry = args[i];
+        } else if (cmd == .sync and std.mem.eql(u8, a, "--locked")) {
+            out.locked = true;
+        } else if (cmd == .sync and std.mem.eql(u8, a, "--pixi")) {
+            if (i + 1 >= args.len or args[i + 1].len == 0) return null;
+            i += 1;
+            out.pixi = args[i];
         } else if (cmd == .update and a.len > 0 and a[0] != '-') {
             try names.append(a);
         } else return null;
@@ -169,11 +191,11 @@ fn run(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8) !u8 
     };
     if (cmd == .tree) return tree(arena, project, old);
 
-    const toolchains = project.m.mojo;
-    if (toolchains.len == 0) {
+    if (project.m.mojo.len == 0) {
         err(cmd, "{s} has no [toolchain] mojo; a lock pins the one compiler every package is built with\n", .{manifest_path});
         return 1;
     }
+    if (cmd == .sync) return sync(arena, project, old, args, cli_version);
     for (args.packages) |name| {
         const known = (old != null and old.?.versionOf(name) != null);
         if (!known) {
@@ -181,19 +203,25 @@ fn run(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8) !u8 
             return 1;
         }
     }
+    return if ((try lockProject(arena, cmd, project, old, args, cli_version)) == null) 1 else 0;
+}
 
+/// Resolves the project, writes mopm.lock and prints what changed. Null when
+/// it failed (already reported).
+fn lockProject(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock, args: Args, cli_version: []const u8) !?lock.Lock {
+    const toolchains = project.m.mojo;
     const base = switch (registry.resolve(args.registry)) {
         .ok => |b| b,
         .bad => |why| {
             err(cmd, "--registry {s}: {s}\n", .{ args.registry, why });
-            return 1;
+            return null;
         },
     };
     const config = switch (try registry.load(arena, base, cli_version)) {
         .ok => |c| c,
         .bad => |why| {
             err(cmd, "{s}: {s}\n", .{ base, why });
-            return 1;
+            return null;
         },
     };
 
@@ -219,17 +247,150 @@ fn run(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8) !u8 
         const new = plan.buildLock(arena, res, config.channel_url, ChannelSource{ .channel_url = config.channel_url }, &diag) catch |e| {
             if (e != error.ResolveFailed) return e;
             err(cmd, "{s}\n", .{diag.message});
-            return 1;
+            return null;
         };
         const text = try lock.render(arena, new);
         try std.fs.cwd().writeFile(lock_path, text);
         const out = std.io.getStdOut().writer();
         try plan.writeChanges(old, new, out);
         try out.print("locked {d} packages for mojo {s}\n", .{ res.packages.len, mojo });
-        return 0;
+        return new;
     }
     err(cmd, "cannot resolve the dependencies of {s}:\n{s}", .{ project.m.package.name, failures.items });
-    return 1;
+    return null;
+}
+
+/// `mopm sync`: lock when needed (never with `--locked`), then install.
+fn sync(arena: Allocator, project: Project, old: ?lock.Lock, args: Args, cli_version: []const u8) !u8 {
+    var stale: ?[]const u8 = "there is no " ++ lock_path;
+    if (old) |o| {
+        stale = null;
+        if (try inst.staleness(arena, project.m.mojo, project.roots, o)) |why| {
+            stale = try std.fmt.allocPrint(arena, "{s} is out of date with {s}: {s}", .{ lock_path, manifest_path, why });
+        }
+    }
+    const l = if (stale) |why| blk: {
+        if (args.locked) {
+            err(.sync, "--locked: {s}; run 'mopm lock' (or 'mopm sync' without --locked)\n", .{why});
+            return 1;
+        }
+        break :blk (try lockProject(arena, .sync, project, old, args, cli_version)) orelse return 1;
+    } else old.?;
+    return install(arena, l, args.pixi);
+}
+
+/// The largest package file mopm downloads (the HTTP client's limit).
+const max_file = 64 << 20;
+
+/// An anonymous GET; null when the request failed (reported).
+fn httpGet(arena: Allocator, url: []const u8) ?http.Answer {
+    return http.request(arena, .GET, url, .{}) catch |e| {
+        err(.sync, "cannot read {s}: {s}\n", .{ url, @errorName(e) });
+        return null;
+    };
+}
+
+/// Installs `l` into `.mopm/` (see core/install.zig); 0 when the environment
+/// is exactly the lock.
+fn install(arena: Allocator, l: lock.Lock, pixi: []const u8) !u8 {
+    const cwd = std.fs.cwd();
+    const subdir = inst.hostSubdir() orelse {
+        err(.sync, "no Mojo toolchain is published for this machine (linux-64, linux-aarch64 and osx-arm64 are)\n", .{});
+        return 1;
+    };
+    const pkgs = switch (try inst.forSubdir(arena, l, subdir)) {
+        .ok => |p| p,
+        .bad => |why| {
+            err(.sync, "{s}\n", .{why});
+            return 1;
+        },
+    };
+
+    var repodata = std.StringHashMap([]const u8).init(arena);
+    var files = std.ArrayList(inst.LocalFile).init(arena);
+    for (pkgs) |p| {
+        const where = try std.fmt.allocPrint(arena, "{s}{s}/repodata.json", .{ p.channel, p.subdir });
+        const text = repodata.get(where) orelse blk: {
+            const answer = httpGet(arena, where) orelse return 1;
+            if (!answer.ok()) {
+                err(.sync, "{s} answered HTTP {d}\n", .{ where, answer.status });
+                return 1;
+            }
+            try repodata.put(where, answer.body);
+            break :blk answer.body;
+        };
+        const depends = switch (try inst.lookUp(arena, text, p)) {
+            .ok => |d| d orelse blk: {
+                err(.sync, "warning: {s} {s} is yanked (the channel lists it as removed); it installs because {s} pins it\n", .{ p.name, p.version, lock_path });
+                break :blk try inst.dependsFromLock(arena, p);
+            },
+            .bad => |why| {
+                err(.sync, "{s}\n", .{why});
+                return 1;
+            },
+        };
+
+        // A file kept from an earlier sync is used only if it is still the
+        // pinned bytes; otherwise it is downloaded again.
+        const local = try std.fmt.allocPrint(arena, "{s}/{s}/{s}", .{ inst.channel_dir, p.subdir, try inst.fileName(arena, p) });
+        const kept: ?[]const u8 = cwd.readFileAlloc(arena, local, max_file) catch null;
+        const reuse = if (kept) |b| (try inst.checkBytes(arena, p, b)) == null else false;
+        if (!reuse) {
+            const answer = httpGet(arena, p.url) orelse return 1;
+            switch (answer.status) {
+                403, 404, 410 => {
+                    err(.sync, "{s} answered HTTP {d}: {s} {s} has been taken down or is unavailable\n", .{ p.url, answer.status, p.name, p.version });
+                    return 1;
+                },
+                else => {},
+            }
+            if (!answer.ok()) {
+                err(.sync, "{s} answered HTTP {d}\n", .{ p.url, answer.status });
+                return 1;
+            }
+            if (try inst.checkBytes(arena, p, answer.body)) |why| {
+                err(.sync, "{s} (downloaded from {s})\n", .{ why, p.url });
+                return 1;
+            }
+            try cwd.makePath(std.fs.path.dirname(local).?);
+            try cwd.writeFile(local, answer.body);
+        }
+        try files.append(.{ .pkg = p, .depends = depends });
+    }
+
+    for ([_][]const u8{ subdir, "noarch" }) |s| {
+        const d = try std.fmt.allocPrint(arena, "{s}/{s}", .{ inst.channel_dir, s });
+        try cwd.makePath(d);
+        try cwd.writeFile(try std.fmt.allocPrint(arena, "{s}/repodata.json", .{d}), try inst.localRepodata(arena, s, files.items));
+    }
+    const channel = try inst.fileUrl(arena, try cwd.realpathAlloc(arena, inst.channel_dir));
+    try cwd.writeFile(inst.pixi_manifest, try inst.pixiToml(arena, channel, subdir, l.mojo, pkgs));
+
+    var child = std.ChildProcess.init(&.{ pixi, "install", "--manifest-path", inst.pixi_manifest }, arena);
+    const term = child.spawnAndWait() catch |e| {
+        err(.sync, "cannot run {s}: {s}; pass --pixi <path to pixi>\n", .{ pixi, @errorName(e) });
+        return 1;
+    };
+    const exited_ok = switch (term) {
+        .Exited => |c| c == 0,
+        else => false,
+    };
+    if (!exited_ok) {
+        err(.sync, "{s} install --manifest-path {s} failed\n", .{ pixi, inst.pixi_manifest });
+        return 1;
+    }
+
+    var env = cwd.openDir(inst.prefix, .{}) catch |e| {
+        err(.sync, "pixi made no environment at {s}: {s}\n", .{ inst.prefix, @errorName(e) });
+        return 1;
+    };
+    defer env.close();
+    if (try inst.checkInstalled(arena, env, pkgs)) |why| {
+        err(.sync, "{s}\n", .{why});
+        return 1;
+    }
+    try std.io.getStdOut().writer().print("installed {d} packages for {s} (mojo {s}) into {s}\n", .{ pkgs.len, subdir, l.mojo, inst.prefix });
+    return 0;
 }
 
 fn tree(arena: Allocator, project: Project, l: ?lock.Lock) !u8 {
@@ -262,4 +423,15 @@ test "lock, update and tree arguments" {
     try std.testing.expectEqualStrings("http_core", u.packages[1]);
     try std.testing.expect((try parseArgs(a, .tree, &.{ "--registry", "beta" })) == null);
     try std.testing.expect((try parseArgs(a, .update, &.{"--frobnicate"})) == null);
+
+    const s = (try parseArgs(a, .sync, &.{ "--locked", "--pixi", "/opt/pixi", "--registry", "beta" })).?;
+    try std.testing.expect(s.locked);
+    try std.testing.expectEqualStrings("/opt/pixi", s.pixi);
+    try std.testing.expectEqualStrings("beta", s.registry);
+    const d = (try parseArgs(a, .sync, &.{})).?;
+    try std.testing.expect(!d.locked);
+    try std.testing.expectEqualStrings("pixi", d.pixi);
+    try std.testing.expect((try parseArgs(a, .sync, &.{"--pixi"})) == null);
+    try std.testing.expect((try parseArgs(a, .sync, &.{"tls"})) == null);
+    try std.testing.expect((try parseArgs(a, .lock, &.{"--locked"})) == null);
 }
