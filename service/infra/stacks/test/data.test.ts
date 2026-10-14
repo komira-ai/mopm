@@ -57,6 +57,25 @@ describe.each(STAGES)('DataStack %s', (stage) => {
     }
   });
 
+  test('packages has the name-search index: constant partition, name sort key, only what a result shows', () => {
+    // Mirrors SEARCH_INDEX in service/api/src/dynamo-store.ts (search_bucket is written there, the Query reads this index).
+    t.hasResourceProperties('AWS::DynamoDB::Table', {
+      TableName: `mopm-${stage}-packages`,
+      GlobalSecondaryIndexes: [
+        {
+          IndexName: 'by_search_bucket',
+          KeySchema: [{ AttributeName: 'search_bucket', KeyType: 'HASH' }, { AttributeName: 'name', KeyType: 'RANGE' }],
+          Projection: { ProjectionType: 'INCLUDE', NonKeyAttributes: ['description', 'state', 'created_at'] },
+        },
+      ],
+    });
+    const packages = tables.find((r) => r.Properties.TableName === `mopm-${stage}-packages`);
+    // Not the whole row: repository and license are never copied into the index.
+    expect(JSON.stringify(packages.Properties.GlobalSecondaryIndexes)).not.toMatch(/repository|license|"ALL"/);
+    // On-demand: the index needs no capacity of its own.
+    expect(packages.Properties.GlobalSecondaryIndexes[0].ProvisionedThroughput).toBeUndefined();
+  });
+
   test('owners has a by-github-id index', () => {
     t.hasResourceProperties('AWS::DynamoDB::Table', {
       TableName: `mopm-${stage}-owners`,

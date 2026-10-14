@@ -1,7 +1,7 @@
 import { RegistryError, type ErrorCode, HTTP_STATUS } from '../errors';
 import type { Store } from '../store';
-import type { PackageRecord, VersionRecord } from '../types';
-import { compareVersions, parseVersion } from '../version';
+import type { PackageRecord, PackageSummaryRecord, VersionRecord } from '../types';
+import { canonicalVersion, compareVersions, parseVersion } from '../version';
 import { CATALOGUE, render } from './catalogue';
 import { routePublish, type PublishApi } from './publish-routes';
 
@@ -112,10 +112,10 @@ function latestOf(vs: VersionRecord[]): string | null {
 }
 
 /** The newest publication time, or the claim time when nothing is published. */
-const updatedAt = (p: PackageRecord, vs: VersionRecord[]) =>
+const updatedAt = (p: PackageSummaryRecord, vs: VersionRecord[]) =>
   vs.reduce((m, v) => (v.published_at > m ? v.published_at : m), p.created_at);
 
-function packageSummary(p: PackageRecord, vs: VersionRecord[]) {
+function packageSummary(p: PackageSummaryRecord, vs: VersionRecord[]) {
   return { name: p.name, latest: latestOf(vs), description: p.description ?? null, updated_at: updatedAt(p, vs) };
 }
 
@@ -172,6 +172,10 @@ async function listVersions(deps: RouterDeps, name: string, query: HttpRequest['
   };
 }
 
+/** `sort=updated` ranks every match by its newest publication, so it reads them all; beyond this many it refuses. */
+const MAX_UPDATED_SCAN = 1000;
+const SEARCH_PAGE = 100;
+
 async function searchPackages(deps: RouterDeps, query: HttpRequest['query']) {
   const limit = parseLimit(query.limit);
   const sort = query.sort ?? 'name';
@@ -181,35 +185,31 @@ async function searchPackages(deps: RouterDeps, query: HttpRequest['query']) {
   const prefix = normaliseQuery(q);
   const after = query.cursor === undefined ? undefined : decodeCursor(query.cursor, sort);
 
-  let names: string[];
-  try {
-    names = await deps.store.listPackageNames();
-  } catch (err) {
-    // The Lambda's role may only GetItem and Query (read-only by design); listing every package name needs a
-    // Scan or an index the data stack does not have yet. Say so honestly rather than answer 500.
-    if ((err as { name?: string }).name === 'AccessDeniedException') throw new RegistryError('unavailable', 'search is not available', {});
-    throw err;
-  }
-  names = names.filter((n) => n.startsWith(prefix)).sort();
-
-  const load = async (name: string) => {
-    const p = await deps.store.getPackage(name);
-    if (!p) return undefined;
-    return packageSummary(p, visible(await deps.store.listVersions(name)));
-  };
+  const summarise = async (p: PackageSummaryRecord) => packageSummary(p, visible(await deps.store.listVersions(p.name)));
 
   if (sort === 'name') {
-    if (after) names = names.filter((n) => n > after.after);
-    const page = names.slice(0, limit);
-    const packages = (await Promise.all(page.map(load))).filter((x) => x !== undefined);
+    // A name cursor continues the index at that name; one that does not start with this query's prefix is for
+    // another query and would be outside the index range.
+    if (after && !after.after.startsWith(prefix)) throw bad('cursor does not belong to this query');
+    // One more than the page, to know whether there is a next page.
+    const found = await deps.store.searchPackages(prefix, after?.after, limit + 1);
+    const page = found.slice(0, limit);
     return {
-      packages,
-      next_cursor: names.length > limit ? encodeCursor({ k: 'name', after: page[page.length - 1]! }) : null,
+      packages: await Promise.all(page.map(summarise)),
+      next_cursor: found.length > limit ? encodeCursor({ k: 'name', after: page[page.length - 1]!.name }) : null,
     };
   }
 
-  // sort=updated needs every match's newest publication time. In memory for now (see the follow-up in the PR).
-  let all = (await Promise.all(names.map(load))).filter((x) => x !== undefined);
+  // sort=updated needs every match's newest publication time (there is no index on it yet).
+  const matches: PackageSummaryRecord[] = [];
+  for (let last: string | undefined; ; ) {
+    const chunk = await deps.store.searchPackages(prefix, last, SEARCH_PAGE);
+    matches.push(...chunk);
+    if (matches.length > MAX_UPDATED_SCAN) throw bad(`sort=updated needs a longer q: more than ${MAX_UPDATED_SCAN} packages match`);
+    if (chunk.length < SEARCH_PAGE) break;
+    last = chunk[chunk.length - 1]!.name;
+  }
+  let all = await Promise.all(matches.map(summarise));
   all.sort((a, b) => (a.updated_at === b.updated_at ? (a.name < b.name ? -1 : 1) : a.updated_at < b.updated_at ? 1 : -1));
   if (after && after.k === 'updated') {
     all = all.filter((s) => s.updated_at < after.ts || (s.updated_at === after.ts && s.name > after.after));
@@ -219,6 +219,39 @@ async function searchPackages(deps: RouterDeps, query: HttpRequest['query']) {
   return {
     packages: page,
     next_cursor: all.length > limit && last ? encodeCursor({ k: 'updated', ts: last.updated_at, after: last.name }) : null,
+  };
+}
+
+async function listOwners(deps: RouterDeps, name: string) {
+  const p = await requirePackage(deps, name);
+  return { owners: (await deps.store.listOwners(p.name)).map((o) => ({ github_id: o.github_id, handle: o.handle })) };
+}
+
+/** The full record of one version (spec: VersionDetail). A pending version is not visible; any equivalent spelling finds it. */
+async function getVersion(deps: RouterDeps, name: string, version: string) {
+  validName(name);
+  canonicalVersion(version); // throws invalid_version before anything is read
+  const p = await requirePackage(deps, name);
+  const v = await deps.store.getVersion(p.name, version);
+  if (!v || v.state === 'pending') throw new RegistryError('version_not_found', `'${p.name}' has no version '${version}'.`, { name: p.name, version });
+  return {
+    name: v.name,
+    version: v.version,
+    state: v.state,
+    yank_reason: v.state === 'yanked' ? (v.yank_reason ?? null) : null,
+    ...(v.tombstone ? { tombstone: v.tombstone } : {}),
+    published_at: v.published_at,
+    ...(v.published_by === undefined ? {} : { published_by: v.published_by }),
+    requires_mojo: v.requires_mojo,
+    deps: v.deps,
+    native: v.native,
+    // A tombstoned version keeps each file's sha256 but not its url, whatever the row still holds.
+    files: v.files.map((f) => {
+      const { url, ...rest } = f;
+      return v.state === 'tombstoned' || url === undefined ? rest : { ...rest, url };
+    }),
+    manifest_sha256: v.manifest_sha256,
+    provenance: v.provenance ?? { kind: 'none' },
   };
 }
 
@@ -246,10 +279,16 @@ export async function route(req: HttpRequest, deps: RouterDeps, requestId: strin
       if (seg.length === 3 && seg[0] === 'packages' && seg[2] === 'versions') {
         return respond(200, requestId, await listVersions(deps, seg[1]!, req.query));
       }
+      if (seg.length === 3 && seg[0] === 'packages' && seg[2] === 'owners') {
+        return respond(200, requestId, await listOwners(deps, seg[1]!));
+      }
+      // `claim` is a literal segment of another operation (POST), never a version (spec: versions start with a digit).
+      if (seg.length === 3 && seg[0] === 'packages' && seg[2] !== 'claim') {
+        return respond(200, requestId, await getVersion(deps, seg[1]!, seg[2]!));
+      }
     }
-    // The gateway routes only the operations below, so this is unreachable there; the catalogue has no
-    // "no such endpoint" code, so the generic 400 is the closest stable answer.
-    throw bad('no such operation');
+    // The gateway routes only the operations above, so this is reached only by a request that cannot come through it.
+    throw new RegistryError('route_not_found', 'no such operation');
   } catch (err) {
     if (err instanceof RegistryError && CATALOGUE[err.code]) return errorResponse(requestId, err.code, err.detail);
     console.error(JSON.stringify({ level: 'error', requestId, error: String((err as Error)?.stack ?? err) }));

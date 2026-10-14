@@ -1,6 +1,6 @@
 import { App } from 'aws-cdk-lib';
 import { Match } from 'aws-cdk-lib/assertions';
-import { ApiStack, PUBLISH_ROUTES, READ_ACTIONS, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
+import { ApiStack, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
 import { STAGES, stageConfig, tableName } from '../lib/config';
 import { DUMMY_ACCOUNT, tpl } from './util';
 
@@ -30,6 +30,8 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
         'GET /api/v1/packages',
         'GET /api/v1/packages/{name}',
         'GET /api/v1/packages/{name}/versions',
+        'GET /api/v1/packages/{name}/owners',
+        'GET /api/v1/packages/{name}/{version}',
         'POST /api/v1/packages/{name}/{version}/files',
         'POST /api/v1/packages/{name}/{version}/publish',
         'GET /api/v1/publishes/{publish_id}',
@@ -82,6 +84,16 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
       const named = (flatten(st.Resource).match(/table\/mopm-[a-z]+-[a-z_]+/g) ?? []).sort();
       expect(named).toEqual(g.tables.map((x) => `table/${tableName(stage, x)}`).sort());
     }
+  });
+
+  test('the one index the handler may Query is named exactly; no index wildcard', () => {
+    expect(READ_INDEXES).toEqual({ packages: ['by_search_bucket'] });
+    const st = statements().filter((s) => acts(s).some((a) => a.startsWith('dynamodb:')));
+    const resources = JSON.stringify(st[0].Resource);
+    expect(resources).toContain(`${tableName(stage, 'packages')}/index/by_search_bucket`);
+    expect(resources).not.toContain('index/*');
+    expect(resources).not.toContain('by_github_id'); // the owners index is not read by the read API
+    expect((resources.match(/\/index\//g) ?? []).length).toBe(1);
   });
 
   test('no statement anywhere grants a delete, a scan or a wildcard action', () => {

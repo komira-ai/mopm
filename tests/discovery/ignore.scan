@@ -1,0 +1,20 @@
+kind bare
+test 5 test_issue_number ignored "needs network" #12
+test 11 test_owner_repo_issue ignored "flaky on macOS" komira-ai/mopm#7
+test 16 test_url ignored "spaces around are trimmed" https://example.com/issues/3
+test 20 test_not_ignored
+test 25 test_no_issue
+test 30 test_no_reason
+test 35 test_empty_reason
+test 40 test_bad_reference
+test 51 test_twice ignored "twice" #17
+test 63 test_after_blank_line
+helper 57 test_marked_both
+error 24: `# mopm: ignore` needs a reason in double quotes and an issue reference: `# mopm: ignore "<reason>" #<n>` (or <owner>/<repo>#<n>, or an https URL)
+error 29: `# mopm: ignore` needs a reason in double quotes and an issue reference: `# mopm: ignore "<reason>" #<n>` (or <owner>/<repo>#<n>, or an https URL)
+error 34: `# mopm: ignore` needs a reason in double quotes and an issue reference: `# mopm: ignore "<reason>" #<n>` (or <owner>/<repo>#<n>, or an https URL)
+error 39: `# mopm: ignore` needs a reason in double quotes and an issue reference: `# mopm: ignore "<reason>" #<n>` (or <owner>/<repo>#<n>, or an https URL)
+error 44: `# mopm: ignore` is above 'helper', which is not a test_ function
+error 50: a second `# mopm: ignore` above the same def (the first is at line 49)
+error 55: `# mopm: ignore` and `# mopm: not-a-test` above the same def: a helper is never run, so it cannot be ignored
+error 61: `# mopm: ignore` must stand directly above a top-level def or its decorators

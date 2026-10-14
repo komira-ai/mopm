@@ -164,7 +164,7 @@ describe('response shapes', () => {
     const h = new Harness();
     const { publish: _p, ...reads } = h.deps;
     const r = await route({ method: 'POST', path: '/api/v1/packages/demo/1.0.0/files', query: {}, headers: {}, body: '{}' }, reads, 'r');
-    expect(err(r).code).toBe('invalid_request');
+    expect([r.statusCode, err(r).code]).toEqual([404, 'route_not_found']);
     expect((await route({ method: 'GET', path: '/api/v1/health', query: {} }, reads, 'r')).statusCode).toBe(200);
   });
 });

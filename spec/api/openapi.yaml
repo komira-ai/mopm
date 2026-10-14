@@ -38,6 +38,9 @@ info:
       stable codes are the `ErrorCode` enum; the table of code, HTTP status,
       message template and hint is the `x-mopm-errors` extension at the end of
       this file. Clients branch on `code`, never on `message`.
+    - A path that is not an operation of this API, or a method the path does
+      not take, is answered `route_not_found` (404). It is never a 400: the
+      request was well formed, there is just nothing there.
     - Writes need `Authorization: Bearer <token>`. Reads and installs never
       need a token.
     - Names in paths are normalised names (lowercase; runs of `-`, `.` and `_`
@@ -823,6 +826,7 @@ components:
         - internal_error
         - read_only_mode
         - unavailable
+        - route_not_found
     RejectionCode:
       description: |
         Why a publish was rejected after it was accepted (`PublishStatus`).
@@ -1243,3 +1247,4 @@ x-mopm-errors:
   internal_error:        { status: 500, message: "Something went wrong on our side.", hint: "Try again; report the request id if it persists." }
   read_only_mode:        { status: 503, message: "The registry is read-only right now; new uploads are refused.", hint: "Installs still work. Try again later." }
   unavailable:           { status: 503, message: "The registry is temporarily unavailable.", hint: "Try again shortly." }
+  route_not_found:       { status: 404, message: "There is no such operation.", hint: "Check the request against the API documentation; update mopm if it is old." }
