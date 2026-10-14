@@ -41,11 +41,9 @@ const Opts = struct {
 };
 
 const File = struct {
-    /// As printed: relative to the root it was found under, joined to it
-    /// unless the root is ".", or as given on the command line.
+    /// As printed and as opened: relative to the root it was found under,
+    /// joined to it unless the root is ".", or as given on the command line.
     display: []const u8,
-    /// Openable from the current directory.
-    path: []const u8,
 };
 
 fn lessFile(_: void, a: File, b: File) bool {
@@ -104,10 +102,10 @@ fn run(arena: std.mem.Allocator, args: []const []const u8) !u8 {
         if (st.kind == .directory) {
             for (try test_harness.findTestFiles(arena, p)) |rel| {
                 const shown = if (std.mem.eql(u8, p, ".")) rel else try std.fs.path.join(arena, &.{ p, rel });
-                try files.append(.{ .display = shown, .path = try std.fs.path.join(arena, &.{ p, rel }) });
+                try files.append(.{ .display = shown });
             }
         } else {
-            try files.append(.{ .display = p, .path = p });
+            try files.append(.{ .display = p });
         }
     }
     std.sort.insertion(File, files.items, {}, lessFile);
@@ -118,7 +116,7 @@ fn run(arena: std.mem.Allocator, args: []const []const u8) !u8 {
     for (files.items) |f| {
         if (prev) |q| if (std.mem.eql(u8, q, f.display)) continue;
         prev = f.display;
-        const src = std.fs.cwd().readFileAlloc(arena, f.path, 16 << 20) catch |e| {
+        const src = std.fs.cwd().readFileAlloc(arena, f.display, 16 << 20) catch |e| {
             try err.print("mopm test: {s}: {s}\n", .{ f.display, @errorName(e) });
             failed = true;
             continue;
@@ -159,10 +157,10 @@ fn check(arena: std.mem.Allocator, o: Opts, f: File, src: []const u8, sc: test_s
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(f.display, &digest, .{});
     const hash = try std.fmt.allocPrint(arena, "{s}", .{std.fmt.fmtSliceHexLower(digest[0..8])});
-    const base = std.fs.path.basename(f.path);
+    const base = std.fs.path.basename(f.display);
     const stem = base[0 .. base.len - std.fs.path.extension(base).len];
 
-    var program = f.path;
+    var program = f.display;
     if (sc.kind == .bare) {
         const dir = try std.fs.path.join(arena, &.{ "target", "mopm", "gen", hash });
         try std.fs.cwd().makePath(dir);
