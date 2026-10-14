@@ -12,7 +12,7 @@ export interface StageConfig {
   condaDomain: string;
   /** Host of the website. */
   siteDomain: string;
-  /** Public hosted zone, looked up by name in the stage account. */
+  /** The stage's own public hosted zone (beta.mopm.dev, gamma.mopm.dev, mopm.dev), looked up by name in the stage account. Every host above sits inside it. */
   hostedZoneName: string;
   /** Dummy-synth only: skips the hosted zone lookup. Never set at real deploys. */
   hostedZoneId?: string;
@@ -40,7 +40,8 @@ export function stageConfig(stage: Stage, hostedZoneId?: string): StageConfig {
     siteDomain: site,
     condaDomain: `conda.${site}`,
     apiDomain: `api.${site}`,
-    hostedZoneName: ZONE,
+    // Each stage account holds only its own zone; prod holds mopm.dev and delegates beta and gamma (service/infra/dns).
+    hostedZoneName: site,
     ...(hostedZoneId ? { hostedZoneId } : {}),
   };
 }

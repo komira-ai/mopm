@@ -3,6 +3,6 @@
   "siteDomain": "gamma.mopm.dev",
   "condaDomain": "conda.gamma.mopm.dev",
   "apiDomain": "api.gamma.mopm.dev",
-  "hostedZoneName": "mopm.dev",
+  "hostedZoneName": "gamma.mopm.dev",
   "disposable": true
 }
