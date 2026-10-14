@@ -1,4 +1,4 @@
-import { App } from 'aws-cdk-lib';
+import { App, CliCredentialsStackSynthesizer } from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -53,12 +53,34 @@ describe.each(c.STAGES)('stage %s', (stage) => {
   const deploy = role(t, `mopm-${stage}-deploy`);
   const e2e = role(t, `mopm-${stage}-e2e`);
 
-  test('exactly one GitHub OIDC provider with audience sts.amazonaws.com', () => {
-    t.resourceCountIs('Custom::AWSCDKOpenIdConnectProvider', 1);
-    t.hasResourceProperties('Custom::AWSCDKOpenIdConnectProvider', {
+  test('exactly one native GitHub OIDC provider with audience sts.amazonaws.com', () => {
+    t.resourceCountIs('AWS::IAM::OIDCProvider', 1);
+    t.hasResourceProperties('AWS::IAM::OIDCProvider', {
       Url: 'https://token.actions.githubusercontent.com',
-      ClientIDList: ['sts.amazonaws.com'],
+      ClientIdList: ['sts.amazonaws.com'],
     });
+    const p: any = Object.values(t.findResources('AWS::IAM::OIDCProvider'))[0];
+    expect(p.Properties.ThumbprintList).toBeUndefined(); // not required for GitHub since 2023
+  });
+
+  test('no custom resource and no Lambda (the OIDC provider needs neither)', () => {
+    t.resourceCountIs('Custom::AWSCDKOpenIdConnectProvider', 0);
+    expect(Object.keys(t.findResources('AWS::Lambda::Function'))).toHaveLength(0);
+    const types = Object.values(t.toJSON().Resources ?? {}).map((r: any) => r.Type as string);
+    expect(types.filter((x) => x.startsWith('Custom::') || x === 'AWS::CloudFormation::CustomResource')).toEqual([]);
+  });
+
+  test('synthesizer is CLI credentials: no AssumeRole into the bootstrap roles', () => {
+    const app = new App();
+    const stack = new GithubAccessStack(app, 'syn', { stage, regions: [REGION], env: { account: ACCOUNT, region: REGION } });
+    expect(stack.synthesizer).toBeInstanceOf(CliCredentialsStackSynthesizer);
+    const art = app.synth().getStackByName('syn');
+    expect(art.assumeRoleArn).toBeUndefined();
+    expect(art.cloudFormationExecutionRoleArn).toBeUndefined();
+    expect(art.requiresBootstrapStackVersion).toBeUndefined();
+    expect(art.bootstrapStackVersionSsmParameter).toBeUndefined();
+    // the assets bucket name may appear (the CLI uploads with the admin's credentials); no bootstrap ROLE may
+    expect(JSON.stringify(art.manifest)).not.toMatch(/cdk-hnb659fds-[a-z-]*role/);
   });
 
   test.each([

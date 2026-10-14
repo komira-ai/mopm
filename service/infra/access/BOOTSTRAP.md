@@ -9,7 +9,7 @@ settings this design relies on, and the attack each closes, is `docs/security/pu
 
 ## What the access stack creates
 
-- the GitHub OIDC provider (`token.actions.githubusercontent.com`, audience `sts.amazonaws.com`);
+- the GitHub OIDC provider (a native `AWS::IAM::OIDCProvider`, no Lambda or custom resource; `token.actions.githubusercontent.com`, audience `sts.amazonaws.com`);
 - `mopm-<stage>-deploy`: trusted only for `deploy.yml` on `main` in the `<stage>` environment;
   permission: `sts:AssumeRole` on this account's `cdk-hnb659fds-*` roles, nothing else;
 - `mopm-<stage>-e2e`: trusted only for `e2e.yml` on `main` in the `<stage>` environment;
@@ -67,6 +67,17 @@ It does, in order:
    `mopm-<stage>-*`, denies on the access roles, the OIDC provider and the bootstrap roles; not AdministratorAccess);
 2. `cdk bootstrap aws://<account>/<region> --cloudformation-execution-policies arn:aws:iam::<account>:policy/mopm-<stage>-cfn-exec`;
 3. `cdk deploy mopm-<stage>-access` (context flags `stage`, `account`, `region`; the trusted repository is fixed to `komira-ai/mopm` in `lib/contract.ts`).
+
+### Why the access stack bypasses the scoped execution role
+
+Step 3 deploys with the admin's own credentials (the stack uses `CliCredentialsStackSynthesizer`), not
+through the bootstrap deploy role and `cdk-hnb659fds-cfn-exec-role`. This is deliberate: the scoped policy from
+step 1 denies `iam:CreateOpenIDConnectProvider` and `iam:*` on `mopm-<stage>-deploy`, `mopm-<stage>-e2e`, the
+`cdk-hnb659fds-*` roles and the OIDC provider, so that later (automated) deploys can never touch the access
+layer. The access stack is exactly those resources, so through that role it would be denied and roll back.
+The deny statements stay unchanged; only a human with their own credentials creates or changes the access stack.
+The OIDC provider carries no thumbprint list: AWS no longer requires thumbprints for GitHub's provider
+(it validates against its trusted root CAs) and the CloudFormation property is optional.
 
 Skip the OIDC provider if the account already has one for GitHub (only one may exist per account and URL).
 

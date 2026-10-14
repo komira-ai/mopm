@@ -38,9 +38,15 @@ export class GithubAccessStack extends Stack {
     if (!/^[1-9]\d*$/.test(ownerId) || !/^[1-9]\d*$/.test(repoId)) throw new Error('owner and repo ids must be numeric');
     if (regions.length === 0) throw new Error('regions must not be empty');
 
-    const provider = new iam.OpenIdConnectProvider(this, 'GithubOidc', {
+    // Native AWS::IAM::OIDCProvider (not the CDK OpenIdConnectProvider construct, which is a custom
+    // resource backed by a Lambda and extra IAM). ThumbprintList is omitted on purpose: AWS no longer
+    // requires or uses thumbprints for GitHub's token.actions.githubusercontent.com; it validates the
+    // IdP certificate chain against its own trusted root CAs (AWS IAM docs, "Create an OpenID Connect
+    // (OIDC) identity provider in IAM"; GitHub changelog, July 2023). The property is optional in the
+    // CloudFormation schema, so there is nothing to supply.
+    const provider = new iam.CfnOIDCProvider(this, 'GithubOidc', {
       url: c.GITHUB_OIDC_URL,
-      clientIds: [c.OIDC_AUDIENCE],
+      clientIdList: [c.OIDC_AUDIENCE],
     });
 
     // sub = repo:<owner>@<ownerId>/<name>@<repoId>:environment:<stage>:job_workflow_ref:<repo>/<file>@<ref>
@@ -53,7 +59,7 @@ export class GithubAccessStack extends Stack {
 
     const trust = (workflowFile: string) =>
       new iam.FederatedPrincipal(
-        provider.openIdConnectProviderArn,
+        provider.attrArn,
         {
           StringEquals: {
             [`${c.GITHUB_OIDC_HOST}:aud`]: c.OIDC_AUDIENCE,
