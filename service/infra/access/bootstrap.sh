@@ -63,7 +63,8 @@ run npm install --no-audit --no-fund
 run npx cdk bootstrap "aws://${account}/${region}" \
   --profile "$profile" --cloudformation-execution-policies "$policy_arn"
 
-# 3. The access stack (GitHub OIDC provider + deploy and e2e roles).
+# 3. The access stack (GitHub OIDC provider + deploy and e2e roles). It deploys with the admin's own
+# credentials (CliCredentialsStackSynthesizer), NOT via the scoped execution role, which denies these resources.
 run npx cdk deploy "mopm-${stage}-access" \
   --profile "$profile" --require-approval broadening \
   -c "stage=${stage}" -c "account=${account}" -c "region=${region}"
