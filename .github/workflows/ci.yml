@@ -42,6 +42,12 @@ jobs:
           "$RUNNER_TEMP/contract-venv/bin/pip" install --disable-pip-version-check -r tests/contract/requirements.txt
       - name: Validate the OpenAPI document, the schemas and the examples
         run: '"$RUNNER_TEMP/contract-venv/bin/python" -I tests/contract/validate.py'
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Build the fake registry
+        run: zig build
+      - name: Replay the API cases against the fake registry
+        run: '"$RUNNER_TEMP/contract-venv/bin/python" -I tests/contract/replay.py ./zig-out/bin/mopm-fake-registry'
 
   autolink:
     name: autolink e2e (${{ matrix.os }})

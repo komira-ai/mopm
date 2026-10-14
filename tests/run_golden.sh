@@ -61,6 +61,21 @@ if got=$("$mopm" metadata "$bad.toml" 2>&1 >/dev/null); then
 fi
 [ "$got" = "mopm: $bad.toml:$(cat "$bad.err")" ] || { echo "FAIL metadata error text: $got"; fail=1; }
 
+# mopm new / init: the trees they make equal tests/new/{lib,bin}; an existing
+# package is never overwritten; a Mojo keyword is refused as a name.
+work=$(mktemp -d)
+abs_mopm=$(cd "$(dirname "$mopm")" && pwd)/$(basename "$mopm")
+( cd "$work" && "$abs_mopm" new demo > /dev/null ) || { echo "FAIL new demo"; fail=1; }
+diff -r tests/new/lib "$work/demo" || { echo "FAIL new demo: tree differs from tests/new/lib"; fail=1; }
+( cd "$work" && "$abs_mopm" new demo > /dev/null 2>&1 ) && { echo "FAIL new over an existing directory"; fail=1; }
+mkdir -p "$work/bin/demo"
+( cd "$work/bin/demo" && "$abs_mopm" init --bin > /dev/null ) || { echo "FAIL init --bin"; fail=1; }
+diff -r tests/new/bin "$work/bin/demo" || { echo "FAIL init --bin: tree differs from tests/new/bin"; fail=1; }
+( cd "$work/bin/demo" && "$abs_mopm" init --bin > /dev/null 2>&1 ) && { echo "FAIL init over an existing package"; fail=1; }
+( cd "$work" && "$abs_mopm" new async > /dev/null 2>&1 ) && { echo "FAIL new accepted a keyword as a name"; fail=1; }
+[ -e "$work/async" ] && { echo "FAIL new made a directory for a refused name"; fail=1; }
+rm -rf "$work"
+
 # cmd <label> <golden file> <expected exit code> <mopm args>...
 # Runs with CONDA_PREFIX and MODULAR_HOME unset unless the args set them
 # through env(1), and stdin from $golden_stdin; stdout and stderr are
