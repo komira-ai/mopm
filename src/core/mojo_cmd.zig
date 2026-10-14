@@ -55,6 +55,9 @@ pub const Request = struct {
     file: []const u8 = "",
     /// `-o` for build; absent means mojo's default name.
     out: ?[]const u8 = null,
+    /// Compiler options for build, placed right after `build` (`mopm test`
+    /// passes `-D ASSERT=all --optimization-level 1`; `mopm build` none).
+    flags: []const []const u8 = &.{},
 };
 
 pub const Command = struct {
@@ -87,6 +90,7 @@ pub fn construct(arena: Allocator, req: Request, p: link_planner.Plan) Allocator
     try argv.append(@tagName(req.tool));
     switch (req.tool) {
         .build => {
+            try argv.appendSlice(req.flags);
             // Linux: the binary itself must name every planned library
             // (DT_NEEDED). A transitive library (libinner, needed by
             // libouter) is found through the binary's run path only when
@@ -225,6 +229,15 @@ test "build: planned -L/-l through -Xlinker plus an absolute run path to <prefix
         "m.mojo",
     }, c.argv);
     try expectArgv(&.{"MODULAR_HOME=/e/share/max"}, c.env);
+}
+
+test "build: compiler flags come right after build, before the link arguments" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const p = try link_planner.plan(a, &.{});
+    const c = try construct(a, .{ .tool = .build, .prefix = "/e", .os = .linux, .file = "t.mojo", .out = "t", .flags = &.{ "-D", "ASSERT=all", "--optimization-level", "1" } }, p);
+    try expectArgv(&.{ "/e/bin/mojo", "build", "-D", "ASSERT=all", "--optimization-level", "1", "-Xlinker", "-rpath", "-Xlinker", "/e/lib", "-o", "t", "t.mojo" }, c.argv);
 }
 
 test "build: macOS gets no --as-needed state (ld64 has no such flag; @rpath reaches transitive libraries)" {

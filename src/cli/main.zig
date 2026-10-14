@@ -39,11 +39,13 @@ const usage =
     \\  repl                    run the stock mojo of the environment, with its
     \\                          native libraries linked or preloaded; the exit
     \\                          status is mojo's
-    \\  test --list [<path>...] list the tests of tests/**/test_*.mojo and
-    \\                          src/**/tests/test_*.mojo (running them: not yet);
-    \\                          --check also builds each file and compares the
-    \\                          list with the binary's `--skip-all` listing
-    \\                          (--strict-discovery, --prefix <dir>)
+    \\  test [<path>...]        run the tests of tests/**/test_*.mojo and
+    \\                          src/**/tests/test_*.mojo, one process per test
+    \\                          (--timeout <s>, --memory <MiB>, --format json,
+    \\                          --junit <file>; see docs/mopm-test.md)
+    \\  test --list [<path>...] list them; --check also builds each file and
+    \\                          compares the list with the binary's `--skip-all`
+    \\                          listing (--strict-discovery, --prefix <dir>)
     \\  login | logout | whoami [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
     \\                          an account on a registry (device login through
     \\                          GitHub; the token is kept in credentials.json,

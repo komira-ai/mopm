@@ -5,8 +5,8 @@ tooling for [Mojo](https://www.modular.com/mojo) projects, with a package
 registry at [mopm.dev](https://mopm.dev).
 
 **Status: early.** `mopm --version`, `mopm link-plan`, `mopm metadata`,
-`mopm new`, `mopm init`, `mopm build`, `mopm run` and `mopm repl` work today. Everything
-else below is a plan, and the design may change.
+`mopm new`, `mopm init`, `mopm build`, `mopm run`, `mopm repl` and `mopm test` work today.
+Everything else below is a plan, and the design may change.
 
 ## Goals
 
@@ -43,6 +43,7 @@ mopm new my_package --lib      # or --bin; `mopm init` makes one in the current 
 mopm build hello.mojo -o hello   # -Xlinker -L/-l (Linux: --no-as-needed) plus a run path to <env>/lib
 mopm run hello.mojo              # one -Xlinker <shared object> per library
 mopm repl                        # LD_PRELOAD (macOS DYLD_INSERT_LIBRARIES) for the JIT
+mopm test                        # tests/**/test_*.mojo, one process per test (docs/mopm-test.md)
 ```
 
 Each runs `<env>/bin/mojo` in place of mopm (with `MODULAR_HOME` set to

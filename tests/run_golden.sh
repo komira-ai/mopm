@@ -178,7 +178,10 @@ rm -f golden_cmd.raw
 # mopm test --list. A package root (one passed as a path, and the current
 # directory); a file named twice is listed once; explicit files; a file
 # whose tests do not conform (exit 2, nothing listed); a self-hosted file
-# with nothing mopm can read (a warning, exit 0); usage errors.
+# with nothing mopm can read (a warning, exit 0); usage errors. Then the
+# refusals of `mopm test` (running) that need no Mojo: no environment (exit
+# 5), no tests (exit 2, or 0 with --allow-empty). Running real tests is
+# tests/e2e/test_supervisor.sh.
 g=tests/golden/test
 cmd "test --list: a package root" "$g/tree.txt" 0 \
     "$mopm" test --list tests/discovery/tree
@@ -200,10 +203,16 @@ cmd "test --list: nonconforming tests are refused" "$g/nonconforming.txt" 2 \
     "$mopm" test --list tests/discovery/nonconforming.mojo tests/discovery/bare_basic.mojo
 cmd "test --list: a self-hosted file without readable registrations" "$g/self_hosted_none.txt" 0 \
     "$mopm" test --list tests/discovery/self_hosted_none.mojo
-cmd "test: without --list" "$g/no_list.txt" 1 \
-    "$mopm" test
 cmd "test --list: --prefix without --check" "$g/check_only.txt" 2 \
     "$mopm" test --list --prefix /nowhere
+cmd "test --list: a flag that applies only to running tests" "$g/list_run_flag.txt" 2 \
+    "$mopm" test --list --timeout 5
+cmd "test: running with no environment" "$g/no_env.txt" 5 \
+    "$mopm" test --prefix /nowhere tests/discovery/tree
+cmd "test: no tests at all" "$g/no_tests.txt" 2 \
+    "$mopm" test tests/discovery/none.mojo
+cmd "test: no tests at all, --allow-empty" "$g/empty.txt" 0 \
+    "$mopm" test --allow-empty tests/discovery/none.mojo
 cmd "test --list: a path that does not exist" "$g/missing.txt" 2 \
     "$mopm" test --list tests/discovery/no_such_dir
 
