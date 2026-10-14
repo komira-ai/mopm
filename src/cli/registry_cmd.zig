@@ -104,7 +104,7 @@ pub fn main(arena: Allocator, cmd: []const u8, args: []const []const u8, cli_ver
     };
 }
 
-fn printFailure(a: http.Answer) void {
+pub fn printFailure(a: http.Answer) void {
     const text = http.describe(std.heap.page_allocator, a) catch return;
     std.io.getStdErr().writer().print("mopm: {s}", .{text}) catch {};
 }

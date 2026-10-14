@@ -20,6 +20,7 @@ pub const test_filter = @import("test_filter.zig");
 pub const http = @import("http.zig");
 pub const registry = @import("registry.zig");
 pub const credentials = @import("credentials.zig");
+pub const conda = @import("conda.zig");
 
 test {
     _ = @import("metadata.zig");
@@ -39,4 +40,5 @@ test {
     _ = @import("http.zig");
     _ = @import("registry.zig");
     _ = @import("credentials.zig");
+    _ = @import("conda.zig");
 }
