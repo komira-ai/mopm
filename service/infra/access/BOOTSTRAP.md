@@ -47,7 +47,13 @@ Compare the beta job's `sub` with
 (the `job_workflow_ref` of this check is `oidc-subject-check.yml`; the deploy and e2e files differ only there).
 Stop and fix the stack if the prefix, the ids or the `job_workflow_ref` form differ.
 
-## Steps per stage
+## Step 1: DNS (once, before any stack deploys)
+
+The service stacks look up the Route 53 zone of their stage by name, so the zones must exist first. Follow
+`service/infra/dns/README.md` in order: zone in prod, GoDaddy nameservers, zones in beta and gamma, delegation
+from prod, `dig` verification. It needs no `cdk bootstrap`, so it can run before the per-stage steps below.
+
+## Step 2: access, per stage
 
 Run from a checkout of this repo. Preview first (the script prints and executes nothing without `--apply`):
 
