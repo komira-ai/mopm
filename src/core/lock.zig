@@ -6,9 +6,16 @@
 //! CLI checks them on every read. `write` prints one fixed layout (two-space
 //! indent, the key order of the spec's example, `deps` and `native` left out
 //! when empty, a final newline), so the same lock always gives the same bytes.
+//!
+//! A channel URL (`channels[]` and each `channel`) ends with `/` and may
+//! carry a path. Its scheme is https, or plain http only to a loopback host
+//! with a port (127.0.0.1, [::1], localhost): the rule `--registry` and
+//! config.json follow (registry.allowedUrl). `check` refuses any other
+//! channel, so a lock with one is neither read nor written.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const registry = @import("registry.zig");
 
 /// The `lock_version` this mopm reads and writes.
 pub const lock_version: i64 = 1;
@@ -69,8 +76,19 @@ pub fn sortPackages(packages: []Package) void {
     std.mem.sort(Package, packages, {}, lessThan);
 }
 
+/// Whether `url` may be a lock channel (see the file comment).
+pub fn allowedChannel(url: []const u8) bool {
+    return std.mem.endsWith(u8, url, "/") and registry.allowedUrl(url);
+}
+
+/// Why `url` is not a lock channel, for messages.
+pub const channel_rule = "a channel ends with '/' and is https, or plain http only to 127.0.0.1, [::1] or localhost with a port";
+
 /// The first rule of spec/lock.md that `l` breaks, worded, or null.
 pub fn check(arena: Allocator, l: Lock) Allocator.Error!?[]const u8 {
+    for (l.channels) |c| {
+        if (!allowedChannel(c)) return try std.fmt.allocPrint(arena, "channel {s} is refused: {s}", .{ c, channel_rule });
+    }
     for (l.packages, 0..) |p, i| {
         if (i > 0 and order(l.packages[i - 1], p) != .lt) {
             return try std.fmt.allocPrint(arena, "packages are not sorted by name, version and subdir with no repeats (at {s} {s} {s})", .{ p.name, p.version, p.subdir });
@@ -350,5 +368,71 @@ test "each invalid example lock is refused, for the reason its name gives" {
             std.debug.print("{s}: refused with '{s}', want '{s}'\n", .{ case[0], why, case[1] });
             return error.TestUnexpectedResult;
         }
+    }
+}
+
+test "a channel may carry a path; its scheme is https, or http only to a loopback host" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const template =
+        \\{
+        \\  "lock_version": 1,
+        \\  "toolchain": {
+        \\    "mojo": "1.0.0"
+        \\  },
+        \\  "channels": [
+        \\    "@C@"
+        \\  ],
+        \\  "packages": [
+        \\    {
+        \\      "name": "tls",
+        \\      "version": "1.1.0",
+        \\      "build": "mojo1.0.0_0",
+        \\      "subdir": "linux-64",
+        \\      "channel": "@C@",
+        \\      "url": "@C@linux-64/mojo-tls-1.1.0-mojo1.0.0_0.conda",
+        \\      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        \\      "size": 1000,
+        \\      "mojo": "1.0.0"
+        \\    }
+        \\  ]
+        \\}
+        \\
+    ;
+    const accepted = [_][]const u8{
+        "https://conda.mopm.dev/",
+        "https://mopm.dev/channel/",
+        "http://127.0.0.1:5000/channel/",
+        "http://[::1]:8080/a/b/",
+        "http://localhost:1/channel/",
+    };
+    for (accepted) |c| {
+        const text = try std.mem.replaceOwned(u8, a, template, "@C@", c);
+        var why: []const u8 = "";
+        const l = parse(a, text, &why) catch |e| {
+            std.debug.print("{s}: refused: {s}\n", .{ c, why });
+            return e;
+        };
+        try std.testing.expectEqualStrings(text, try render(a, l));
+    }
+    const refused = [_][]const u8{
+        "http://example.com/channel/",
+        "http://conda.mopm.dev/",
+        "http://127.0.0.2:80/channel/",
+        "http://127.0.0.1/channel/",
+        "http://localhost.evil:80/",
+        "ftp://127.0.0.1:21/",
+        "https:///",
+        "https://mopm.dev/channel",
+    };
+    for (refused) |c| {
+        const text = try std.mem.replaceOwned(u8, a, template, "@C@", c);
+        var why: []const u8 = "";
+        if (parse(a, text, &why)) |_| {
+            std.debug.print("{s}: accepted\n", .{c});
+            return error.TestUnexpectedResult;
+        } else |e| if (e != error.Invalid) return e;
+        try std.testing.expect(std.mem.indexOf(u8, why, channel_rule) != null);
     }
 }

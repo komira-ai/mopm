@@ -6,6 +6,10 @@
 //! `<subdir>/repodata.json` (spec/channel.md). The sparse index must carry
 //! the same values (spec/index.md, "files[].sha256 and size"); a difference,
 //! or a file the repodata does not offer, is an error that names both sides.
+//! Only `sha256`, `size` and `removed` are read from repodata.json: a lock
+//! entry's `deps` come from the index record's `deps[]`, never from the
+//! repodata's `depends`. The channel URL must be one a lock may hold
+//! (lock.allowedChannel), or no lock is built.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -48,6 +52,7 @@ fn parseRepodata(arena: Allocator, subdir: []const u8, text: []const u8, diag: *
 /// `channel.fetch(arena, subdir, diag)` returns the text of that subdir's
 /// repodata.json, or `error.ResolveFailed` with `diag` set.
 pub fn buildLock(arena: Allocator, res: resolve.Resolution, channel_url: []const u8, channel: anytype, diag: *Diagnostic) Error!lock.Lock {
+    if (!lock.allowedChannel(channel_url)) return bad(arena, diag, "channel {s} is refused: {s}", .{ channel_url, lock.channel_rule });
     var repodata = std.StringHashMap(Repodata).init(arena);
     var packages = std.ArrayList(lock.Package).init(arena);
     for (res.packages) |p| {
@@ -253,8 +258,58 @@ const diamond_channel = MemoryChannel{ .files = &.{
 const diamond_roots = [_]resolve.Root{ .{ .name = "tls", .requirement = "1" }, .{ .name = "http_client", .requirement = "0.4" } };
 
 fn diamondLock(a: Allocator, channel: anytype, diag: *Diagnostic) Error!lock.Lock {
+    return diamondLockAt(a, "https://conda.mopm.dev/", channel, diag);
+}
+
+fn diamondLockAt(a: Allocator, channel_url: []const u8, channel: anytype, diag: *Diagnostic) Error!lock.Lock {
     const res = try resolve.resolve(a, diamond_index, .{ .mojo = "1.0.0", .roots = &diamond_roots }, diag);
-    return buildLock(a, res, "https://conda.mopm.dev/", channel, diag);
+    return buildLock(a, res, channel_url, channel, diag);
+}
+
+test "the lock is written for a loopback http channel with a path, and refused for any other http channel" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var diag: Diagnostic = .{};
+    const l = diamondLockAt(a, "http://127.0.0.1:5000/channel/", diamond_channel, &diag) catch |e| {
+        std.debug.print("{s}: {s}\n", .{ @tagName(diag.kind), diag.message });
+        return e;
+    };
+    try std.testing.expectEqualStrings("http://127.0.0.1:5000/channel/linux-64/mojo-crypto-2.0.1-mojo1.0.0_0.conda", l.packages[0].url);
+    const text = try lock.render(a, l);
+    var why: []const u8 = "";
+    _ = lock.parse(a, text, &why) catch |e| {
+        std.debug.print("refused: {s}\n", .{why});
+        return e;
+    };
+    for ([_][]const u8{ "http://conda.mopm.dev/", "http://example.com:5000/channel/", "http://127.0.0.1/channel/" }) |url| {
+        diag = .{};
+        try std.testing.expectError(error.ResolveFailed, diamondLockAt(a, url, diamond_channel, &diag));
+        try std.testing.expectEqual(resolve.Kind.bad_channel, diag.kind);
+        try std.testing.expect(std.mem.indexOf(u8, diag.message, lock.channel_rule) != null);
+    }
+}
+
+test "a lock entry's deps come from the index record's deps[], never from the repodata's depends" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    // The repodata says http_client depends on http_core >=2 and on zlib;
+    // the index record says http_core ">=1.2,<2" and crypto "2".
+    const disagreeing = comptime MemoryChannel{ .files = &.{
+        .{ "linux-64", repodataJson("linux-64", entryJson("crypto", "2.0.1", "linux-64", digests[3]) ++ "," ++
+            "\"mojo-http_client-0.4.0-mojo1.0.0_0.conda\":{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\",\"mojo-http_core >=2\",\"mojo-zlib 1\"],\"name\":\"mojo-http_client\",\"sha256\":\"" ++ digests[0] ++ "\",\"size\":1000,\"subdir\":\"linux-64\",\"version\":\"0.4.0\"}," ++
+            entryJson("http_core", "1.2.5", "linux-64", digests[2]) ++ "," ++ entryJson("http_core", "1.3.0", "linux-64", digests[4]) ++ "," ++ entryJson("tls", "1.1.0", "linux-64", digests[1]), "") },
+        .{ "osx-arm64", repodataJson("osx-arm64", entryJson("crypto", "2.0.1", "osx-arm64", digests[4]), "") },
+    } };
+    var diag: Diagnostic = .{};
+    const l = diamondLock(a, disagreeing, &diag) catch |e| {
+        std.debug.print("{s}: {s}\n", .{ @tagName(diag.kind), diag.message });
+        return e;
+    };
+    // Same bytes as with agreeing repodata: http_core 1.2.5, deps crypto and http_core.
+    const want = try std.fs.cwd().readFileAlloc(a, "tests/resolve/golden/diamond.lock", 1 << 20);
+    try std.testing.expectEqualStrings(want, try lock.render(a, l));
 }
 
 test "golden: the diamond's lock is tests/resolve/golden/diamond.lock, byte for byte" {

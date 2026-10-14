@@ -10,7 +10,8 @@
 //! keeps every version the existing lock pins while it still fits; `update`
 //! drops the pins of the named packages (of all, with no names) and picks the
 //! newest versions that fit. Reading the index needs no account. `tree`
-//! reads only mopm.toml and mopm.lock.
+//! reads only mopm.toml and mopm.lock. Each index version that is not
+//! MAJOR.MINOR.PATCH is ignored with a warning on stderr.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -198,6 +199,8 @@ fn run(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8) !u8 
     };
 
     var failures = std.ArrayList(u8).init(arena);
+    var warnings = std.ArrayList([]const u8).init(arena);
+    defer printWarnings(cmd, warnings.items);
     for (toolchains) |mojo| {
         var pins = std.ArrayList(resolve.Pin).init(arena);
         if (old) |o| {
@@ -211,7 +214,7 @@ fn run(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8) !u8 
             }
         }
         var diag: resolve.Diagnostic = .{};
-        const res = resolve.resolve(arena, IndexSource{ .config = config }, .{ .mojo = mojo, .roots = project.roots, .pins = pins.items }, &diag) catch |e| {
+        const res = resolve.resolve(arena, IndexSource{ .config = config }, .{ .mojo = mojo, .roots = project.roots, .pins = pins.items, .warnings = &warnings }, &diag) catch |e| {
             if (e != error.ResolveFailed) return e;
             try failures.writer().print("  with mojo {s}: {s}\n", .{ mojo, diag.message });
             continue;
@@ -230,6 +233,16 @@ fn run(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8) !u8 
     }
     err(cmd, "cannot resolve the dependencies of {s}:\n{s}", .{ project.m.package.name, failures.items });
     return 1;
+}
+
+/// Each warning once, in the order first given (a second toolchain reads
+/// the same index again).
+fn printWarnings(cmd: Command, warnings: []const []const u8) void {
+    for (warnings, 0..) |w, i| {
+        var seen = false;
+        for (warnings[0..i]) |x| seen = seen or std.mem.eql(u8, x, w);
+        if (!seen) err(cmd, "warning: {s}\n", .{w});
+    }
 }
 
 fn tree(arena: Allocator, project: Project, l: ?lock.Lock) !u8 {
