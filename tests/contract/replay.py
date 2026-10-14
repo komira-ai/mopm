@@ -648,7 +648,7 @@ def check_files(f):
     if sorted(v["version"] for v in mine.values()) != ["0.4.0", "0.5.0rc1"]:
         problems.append("repodata.json lists %s" % sorted(v["version"] for v in mine.values()))
     for v in mine.values():
-        if v["build_number"] != 0 or v["subdir"] != "linux-64" or v["depends"] != ["mojo ==1.0.0"]:
+        if v["build_number"] != 0 or v["subdir"] != "linux-64" or v["depends"] != ["mojo-compiler ==1.0.0"]:
             problems.append("repodata entry %s: %s" % (v["version"], v))
     for version in ("0.2.0", "0.3.0"):
         if r.filename(version) not in repodata["removed"]:

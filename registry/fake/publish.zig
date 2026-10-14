@@ -388,6 +388,7 @@ pub fn setYanked(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         v.state = .yanked;
         v.yank_reason = try ctx.state.alloc.dupe(u8, reason.?);
         p.updated_at = ctx.state.now();
+        try channel.rewrite(ctx.arena, ctx.state);
     } else if (!yanked) {
         v.state = .published;
         v.yank_reason = null;

@@ -239,7 +239,7 @@ fn repodata(arena: Allocator, s: *const st.State, subdir: []const u8, current: b
     try ws.beginObject();
     for (live.items) |e| {
         const requires = try publish.requiresMojo(arena, e.filename);
-        const depends = [_][]const u8{try std.fmt.allocPrint(arena, "mojo {s}", .{requires})};
+        const depends = [_][]const u8{try std.fmt.allocPrint(arena, "mojo-compiler {s}", .{requires})};
         try ws.objectField(e.filename);
         try ws.write(.{
             .build = build(e.filename),
