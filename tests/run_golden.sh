@@ -216,6 +216,37 @@ cmd "test: no tests at all, --allow-empty" "$g/empty.txt" 0 \
 cmd "test --list: a path that does not exist" "$g/missing.txt" 2 \
     "$mopm" test --list tests/discovery/no_such_dir
 
+# Selection (src/core/test_filter.zig) over the fixture package of
+# tests/e2e/test_flaky.sh: 11 tests in 3 files, test_alpha_one in two of
+# them, test_ignored_fails marked `# mopm: ignore`. --list prints exactly
+# what a run would run; tests/e2e/test_flaky.sh shows a run runs exactly
+# that. The last cases select nothing to run, so they need no Mojo: exit 2,
+# or 0 with --allow-empty; an ignored test is still reported, as SKIP.
+fx=tests/e2e/flaky
+fxt=$fx/tests
+cmd "test --list: no filter (the ignored test is not listed)" "$g/filter_none.txt" 0 \
+    "$mopm" test --list "$fx"
+cmd "test --list: a substring of <file>::<test>" "$g/filter_substring.txt" 0 \
+    "$mopm" test --list "$fx" -- alpha
+cmd "test --list: globs, on the name or the whole id" "$g/filter_glob.txt" 0 \
+    "$mopm" test --list "$fx" -- 'test_?eta' "$fxt/sub/*::test_g*"
+cmd "test --list: --exact takes the whole id" "$g/filter_exact.txt" 0 \
+    "$mopm" test --list --exact "$fx" -- "$fxt/test_names.mojo::test_alpha_one"
+cmd "test --list: --exact with a bare name selects nothing" "$g/filter_exact_name.txt" 0 \
+    "$mopm" test --list --exact "$fx" -- test_alpha_one
+cmd "test --list: --skip, twice" "$g/filter_skip.txt" 0 \
+    "$mopm" test --list "$fx" --skip alpha --skip=fails
+cmd "test --list: --ignored lists only the ignored test" "$g/filter_ignored.txt" 0 \
+    "$mopm" test --list --ignored "$fx"
+cmd "test --list: --include-ignored with patterns" "$g/filter_include_ignored.txt" 0 \
+    "$mopm" test --list --include-ignored "$fx" -- ignored steady
+cmd "test: patterns that leave nothing to run" "$g/filter_none_selected.txt" 2 \
+    "$mopm" test --ignored "$fx" -- alpha
+cmd "test: only an ignored test selected (SKIP, nothing to run)" "$g/filter_only_ignored.txt" 2 \
+    "$mopm" test "$fx" -- ignored
+cmd "test: only an ignored test selected, --allow-empty" "$g/filter_only_ignored_allow.txt" 0 \
+    "$mopm" test --allow-empty "$fx" -- ignored
+
 [ "$("$mopm" --version)" = "mopm 0.0.1" ] || { echo "FAIL --version"; fail=1; }
 "$mopm" add > /dev/null 2>&1 && { echo "FAIL planned command should exit non-zero"; fail=1; }
 "$mopm" add 2>&1 | grep -q "not implemented yet" || { echo "FAIL planned command message"; fail=1; }

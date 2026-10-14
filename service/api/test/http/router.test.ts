@@ -115,13 +115,127 @@ describe('search', () => {
     expect(res.statusCode).toBe(200);
   });
 
-  test('a role without Scan gets 503 unavailable, not 500', async () => {
-    const denied: Store = new Proxy({} as Store, {
-      get: () => async () => { throw Object.assign(new Error('not authorized'), { name: 'AccessDeniedException' }); },
+  test('a name cursor from another query is refused (it would lie outside the index range)', async () => {
+    const s = await seed(['http_a', 'http_b', 'zlib']);
+    const cursor = (await get(s, '/api/v1/packages', { q: 'zlib', limit: '1' })).body.next_cursor;
+    expect(cursor).toBeNull(); // sanity: one match, no next page
+    const other = (await get(s, '/api/v1/packages', { limit: '1' })).body.next_cursor; // a cursor after 'http_a'
+    const { res, body } = await get(s, '/api/v1/packages', { q: 'zlib', cursor: other });
+    expect(res.statusCode).toBe(400);
+    expect(body.error.code).toBe('invalid_request');
+  });
+
+  test('search asks the store for the prefix, one past the page, after the cursor; it never lists every name', async () => {
+    const s = new MemoryStore();
+    const calls: unknown[][] = [];
+    const real = s.searchPackages.bind(s);
+    s.searchPackages = async (...a) => (calls.push(a), real(...a));
+    s.listPackageNames = async () => { throw new Error('search must not list every name'); };
+    await get(s, '/api/v1/packages', { q: 'Http-Cli', limit: '5' });
+    expect(calls).toEqual([['http_cli', undefined, 6]]);
+  });
+
+  test('sort=updated over more than 1000 matches is refused with a way out, not slowly answered', async () => {
+    const s = new MemoryStore();
+    for (let i = 0; i < 1001; i++) await s.createPackage({ name: `p${String(i).padStart(4, '0')}`, state: 'claimed', created_at: '2026-10-01T00:00:00Z' });
+    const { res, body } = await get(s, '/api/v1/packages', { sort: 'updated' });
+    expect(res.statusCode).toBe(400);
+    expect(body.error.message).toContain('longer q');
+    expect((await get(s, '/api/v1/packages', { sort: 'updated', q: 'p000' })).res.statusCode).toBe(200);
+  });
+});
+
+describe('getVersion', () => {
+  async function withVersions() {
+    const s = new MemoryStore();
+    await s.createPackage({ name: 'pkg', state: 'active', created_at: '2026-10-01T00:00:00Z' });
+    await s.createVersion(rec({ name: 'pkg', version: '1.0' }), audit('pkg', 'publish', '1.0'));
+    await s.createVersion(rec({ name: 'pkg', version: '2.0', state: 'pending' }), audit('pkg', 'reserve', '2.0'));
+    return s;
+  }
+  test('an equivalent spelling finds the version and the answer keeps the published spelling', async () => {
+    const s = await withVersions();
+    for (const v of ['1.0', '1.0.0', '1']) {
+      const { res, body } = await get(s, `/api/v1/packages/pkg/${v}`);
+      expect([res.statusCode, body.version]).toEqual([200, '1.0']);
+    }
+  });
+  test('provenance defaults to none; a yanked version keeps files and gives the reason; a non-yanked one has a null reason', async () => {
+    const s = await withVersions();
+    expect((await get(s, '/api/v1/packages/pkg/1.0')).body).toMatchObject({ state: 'published', yank_reason: null, provenance: { kind: 'none' } });
+    await s.updateVersion('pkg', '1.0', { type: 'yank', reason: 'broken' }, audit('pkg', 'yank', '1.0'));
+    const { body } = await get(s, '/api/v1/packages/pkg/1.0');
+    expect(body).toMatchObject({ state: 'yanked', yank_reason: 'broken' });
+    expect(body.files[0].url).toBeDefined();
+  });
+  test('a tombstoned version has the sha256 of each file and no url', async () => {
+    const s = await withVersions();
+    await s.updateVersion('pkg', '1.0', { type: 'tombstone', reason_code: 'malware', date: '2026-10-14' }, audit('pkg', 'takedown', '1.0'));
+    const { body } = await get(s, '/api/v1/packages/pkg/1.0');
+    expect(body.tombstone).toEqual({ reason_code: 'malware', date: '2026-10-14' });
+    expect(body.files.map((f: any) => [f.sha256, 'url' in f])).toEqual([['a'.repeat(64), false]]);
+  });
+  test('a pending version is version_not_found; a missing package is package_not_found; checks run in order name, version, package', async () => {
+    const s = await withVersions();
+    expect((await get(s, '/api/v1/packages/pkg/2.0')).body.error.code).toBe('version_not_found');
+    expect((await get(s, '/api/v1/packages/pkg/9.9')).body.error.code).toBe('version_not_found');
+    expect((await get(s, '/api/v1/packages/nosuch/1.0')).body.error.code).toBe('package_not_found');
+    expect((await get(s, '/api/v1/packages/Bad-Name/1.0')).body.error.code).toBe('invalid_name');
+    const bad = await get(s, '/api/v1/packages/nosuch/1.0.0+local');
+    expect([bad.res.statusCode, bad.body.error.code]).toEqual([400, 'invalid_version']);
+  });
+  test('a store error is a 500 that leaks nothing', async () => {
+    const broken: Store = new Proxy({} as Store, { get: () => async () => { throw new Error('secret table name'); } });
+    const { res, body } = await get(broken, '/api/v1/packages/pkg/1.0');
+    expect([res.statusCode, JSON.stringify(body).includes('secret')]).toEqual([500, false]);
+  });
+});
+
+describe('listOwners', () => {
+  test('owners by github id, only id and handle; unknown package 404; invalid name 400', async () => {
+    const s = new MemoryStore();
+    await s.createPackage({ name: 'pkg', state: 'active', created_at: '2026-10-01T00:00:00Z' });
+    await s.addOwner({ name: 'pkg', github_id: 30, handle: 'zed', added_at: '2026-10-02T00:00:00Z' });
+    await s.addOwner({ name: 'pkg', github_id: 4, handle: 'amy', added_at: '2026-10-01T00:00:00Z' });
+    const ok = await get(s, '/api/v1/packages/pkg/owners');
+    expect(ok.res.statusCode).toBe(200);
+    expect(ok.body).toEqual({ owners: [{ github_id: 4, handle: 'amy' }, { github_id: 30, handle: 'zed' }] });
+    expect((await get(s, '/api/v1/packages/nosuch/owners')).body.error.code).toBe('package_not_found');
+    expect((await get(s, '/api/v1/packages/X/owners')).body.error.code).toBe('invalid_name');
+  });
+  test('"owners" and "versions" are never taken for a version', async () => {
+    const s = new MemoryStore();
+    await s.createPackage({ name: 'pkg', state: 'active', created_at: '2026-10-01T00:00:00Z' });
+    expect(Object.keys((await get(s, '/api/v1/packages/pkg/owners')).body)).toEqual(['owners']);
+    expect(Object.keys((await get(s, '/api/v1/packages/pkg/versions')).body)).toEqual(['versions', 'next_cursor']);
+  });
+});
+
+describe('route_not_found', () => {
+  const none = (method: string, path: string) =>
+    route({ method, path, query: {} }, { store: new MemoryStore(), stage: 'beta', version: 'v', commit: 'c', readOnly: false }, 'r');
+  test.each([
+    ['GET', '/api/v1/nope'],
+    ['GET', '/other/v1/packages'],
+    ['GET', '/api/v1'],
+    ['GET', '/api/v1/packages/pkg/1.0/files'],
+    ['GET', '/api/v1/packages/pkg/claim'], // a literal segment of the POST claim operation, not a version
+    ['GET', '/api/v1/packages/%E0%A4%A'], // undecodable percent escape
+    ['POST', '/api/v1/packages/pkg/claim'],
+    ['DELETE', '/api/v1/packages/pkg'],
+    ['PUT', '/api/v1/packages/pkg/owners'],
+  ])('%s %s is 404 route_not_found', async (method, path) => {
+    const res = await none(method, path);
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body).error).toEqual({
+      code: 'route_not_found',
+      message: 'There is no such operation.',
+      hint: 'Check the request against the API documentation; update mopm if it is old.',
     });
-    const { res, body } = await get(denied, '/api/v1/packages');
-    expect(res.statusCode).toBe(503);
-    expect(body.error.code).toBe('unavailable');
+    expect(res.headers['x-mopm-request-id']).toBe('r');
+  });
+  test('a real operation with a bad argument is still its own error, not route_not_found', async () => {
+    expect(JSON.parse((await none('GET', '/api/v1/packages/Bad')).body).error.code).toBe('invalid_name');
   });
 });
 
@@ -136,6 +250,6 @@ describe('failures', () => {
 
   test('writes are not served here', async () => {
     const res = await route({ method: 'POST', path: '/api/v1/packages/pkg_one/claim', query: {} }, { store: new MemoryStore(), stage: 'beta', version: 'v', commit: 'c', readOnly: false }, 'r');
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(404);
   });
 });

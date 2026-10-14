@@ -879,6 +879,24 @@
       }
     },
     {
+      "name": "error route_not_found",
+      "operationId": "getHealth",
+      "request": {},
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "route_not_found",
+            "message": "There is no such operation.",
+            "hint": "Check the request against the API documentation; update mopm if it is old."
+          }
+        }
+      }
+    },
+    {
       "name": "catalogued with the wrong status",
       "operationId": "getPackage",
       "request": {
@@ -983,6 +1001,25 @@
           "error": {
             "code": "package_not_found",
             "message": "There is no package 'nosuch'."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "route_not_found answered 400 instead of 404",
+      "operationId": "getHealth",
+      "request": {},
+      "response": {
+        "status": 400,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "route_not_found",
+            "message": "There is no such operation.",
+            "hint": "Check the request against the API documentation; update mopm if it is old."
           }
         }
       },

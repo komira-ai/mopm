@@ -148,11 +148,13 @@ class Fake:
         return out
 
 
-def step(op, path=None, query=None, body=None, token=None, auth=None, check=None, after=None, malformed=False):
+def step(op, path=None, query=None, body=None, token=None, auth=None, check=None, after=None, malformed=False,
+         raw_path=None):
     """What a recipe sends. `auth` names the security scheme `token` stands for;
-    `check(body)` is an extra assertion; `after()` undoes a control."""
+    `check(body)` is an extra assertion; `after()` undoes a control; `raw_path`
+    sends a GET to that path instead of the operation's own."""
     return dict(op=op, path=path or {}, query=query or {}, body=body, token=token, auth=auth,
-                check=check, after=after, malformed=malformed)
+                check=check, after=after, malformed=malformed, raw_path=raw_path)
 
 
 def read_only(f):
@@ -259,6 +261,11 @@ def fault(f, op, code, **kw):
     return step(op, **kw)
 
 
+def route_not_found(f):
+    """The real thing: a path the API does not have, not a planted fault. The case's operation is only its carrier."""
+    return step("getHealth", raw_path="/api/v1/no_such_operation")
+
+
 def search_prefix(f):
     s = f.session()
     prefix = f.name("srch")
@@ -356,6 +363,7 @@ RECIPES.update({
     ("searchPackages", "error invalid_request"): lambda f: step("searchPackages", query={"cursor": "garbage"}),
     ("searchPackages", "error rate_limited"): lambda f: fault(f, "searchPackages", "rate_limited", query={"q": "http"}),
     ("searchPackages", "error unavailable"): lambda f: fault(f, "searchPackages", "unavailable"),
+    ("getHealth", "error route_not_found"): route_not_found,
     ("searchPackages", "search by prefix"): search_prefix,
     ("searchPackages", "search, last page, claimed package with no version"): search_last_page,
     ("getPackage", "error invalid_name"):
@@ -711,9 +719,12 @@ def main(exe):
                 continue
             s = RECIPES[key](fake)
             template, method = ops[s["op"]][0], ops[s["op"]][1]
-            status, headers, body = fake.request(
-                method.upper(), "/api/v1" + template.format(**s["path"]), s["body"], s["token"], s["query"]
-            )
+            if s["raw_path"]:
+                status, headers, body = fake.request("GET", s["raw_path"])
+            else:
+                status, headers, body = fake.request(
+                    method.upper(), "/api/v1" + template.format(**s["path"]), s["body"], s["token"], s["query"]
+                )
             live = {
                 "operationId": s["op"],
                 "request": {"path": s["path"], "query": s["query"]},

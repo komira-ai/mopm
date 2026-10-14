@@ -35,12 +35,16 @@ export const DEFAULT_HANDLER_DIR = path.resolve(__dirname, '../../../api/dist');
 
 /** The read-only tables the handler may use. Grants are GetItem and Query: never a write, never a Scan. */
 export const READ_TABLES = ['packages', 'versions', 'owners', 'audit'] as const;
+/** The indexes the handler may Query, by table. Only these: the other index (owners by_github_id) is not read by the read API. */
+export const READ_INDEXES: Record<string, string[]> = { packages: ['by_search_bucket'] };
 /** The read operations of spec/api/openapi.yaml served by the handler. */
 export const READ_ROUTES = [
   '/api/v1/health',
   '/api/v1/packages',
   '/api/v1/packages/{name}',
   '/api/v1/packages/{name}/versions',
+  '/api/v1/packages/{name}/owners',
+  '/api/v1/packages/{name}/{version}',
 ];
 export const READ_ACTIONS = ['dynamodb:GetItem', 'dynamodb:Query'];
 
@@ -107,13 +111,18 @@ export class ApiStack extends Stack {
       },
     });
 
-    // Read-only on the registry's tables (and their indexes): the read API never writes.
+    // Read-only on the registry's tables and the indexes named in READ_INDEXES: the read API never writes.
     const tableArns = READ_TABLES.map((t) => this.formatArn({ service: 'dynamodb', resource: 'table', resourceName: tableName(c.stage, t) }));
     this.handler.addToRolePolicy(
       new iam.PolicyStatement({
         sid: 'ReadRegistryTables',
         actions: READ_ACTIONS,
-        resources: [...tableArns, ...tableArns.map((a) => `${a}/index/*`)],
+        resources: [
+          ...tableArns,
+          ...Object.entries(READ_INDEXES).flatMap(([t, ixs]) =>
+            ixs.map((ix) => this.formatArn({ service: 'dynamodb', resource: 'table', resourceName: `${tableName(c.stage, t)}/index/${ix}` })),
+          ),
+        ],
       }),
     );
 

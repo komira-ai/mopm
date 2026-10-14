@@ -329,10 +329,10 @@ describe('without auth wiring (no OAuth secret configured, tables not wired)', (
     }
   });
 
-  test('a method the operation does not take is the generic 400, not an auth error', async () => {
+  test('a method the operation does not take is route_not_found (404), not an auth error', async () => {
     const w = world('memory');
-    expect(errorOf(await w.send('GET', '/auth/device'))).toEqual({ status: 400, code: 'invalid_request' });
-    expect(errorOf(await w.send('PUT', '/me/tokens'))).toEqual({ status: 400, code: 'invalid_request' });
+    expect(errorOf(await w.send('GET', '/auth/device'))).toEqual({ status: 404, code: 'route_not_found' });
+    expect(errorOf(await w.send('PUT', '/me/tokens'))).toEqual({ status: 404, code: 'route_not_found' });
   });
 });
 

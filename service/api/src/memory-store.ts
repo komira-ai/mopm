@@ -1,7 +1,7 @@
 import { RegistryError, versionExists } from './errors';
 import { applyEvent, type VersionEvent } from './state';
 import { auditSortKey, byVersion, type Store } from './store';
-import type { AuditEntry, OwnerRecord, PackageRecord, VersionRecord } from './types';
+import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, VersionRecord } from './types';
 import { canonicalVersion } from './version';
 
 const copy = <T>(v: T): T => structuredClone(v);
@@ -26,6 +26,14 @@ export class MemoryStore implements Store {
   }
   async listPackageNames() {
     return [...this.packages.keys()].sort();
+  }
+
+  async searchPackages(prefix: string, after: string | undefined, limit: number): Promise<PackageSummaryRecord[]> {
+    return [...this.packages.values()]
+      .filter((p) => p.name.startsWith(prefix) && (after === undefined || p.name > after))
+      .sort((a, b) => (a.name < b.name ? -1 : 1))
+      .slice(0, limit)
+      .map((p) => copy({ name: p.name, state: p.state, created_at: p.created_at, ...(p.description === undefined ? {} : { description: p.description }) }));
   }
 
   async createVersion(rec: VersionRecord, audit: AuditEntry): Promise<void> {

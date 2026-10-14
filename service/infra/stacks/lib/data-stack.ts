@@ -17,14 +17,21 @@ interface TableDef {
   sk?: string;
   /** Attribute holding an epoch-seconds expiry. DynamoDB TTL is lazy cleanup only; code checks expiry on every read. */
   ttl?: string;
-  gsi?: { name: string; pk: string; sk?: string };
+  /** A global secondary index. `include` projects only those attributes (plus the keys); absent projects everything. */
+  gsi?: { name: string; pk: string; sk?: string; include?: string[] };
   /** Rows are never deleted by anyone (append-only). */
   appendOnly?: boolean;
 }
 
 /** Tables from the design (data model). Versions are create-once via conditional writes in code. */
 export const TABLES: TableDef[] = [
-  { id: 'packages', pk: 'name' },
+  // Name search (service/api/src/dynamo-store.ts, SEARCH_INDEX, writes `search_bucket` and reads this index): every
+  // row has the same `search_bucket`, so a prefix search is one Query with begins_with on `name`, in name order. One
+  // partition is deliberate: a GSI partition serves ~3000 reads a second, far above search traffic over thousands of
+  // names, and "browse everything" stays a single ordered Query. The index is sparse: a row without the attribute
+  // (written before this index existed) is not searchable until it is backfilled. Projection is what a search result
+  // shows, so the Lambda never reads the table for it; repository and license stay out of the index.
+  { id: 'packages', pk: 'name', gsi: { name: 'by_search_bucket', pk: 'search_bucket', sk: 'name', include: ['description', 'state', 'created_at'] } },
   { id: 'versions', pk: 'name', sk: 'version' },
   { id: 'owners', pk: 'name', sk: 'github_id', gsi: { name: 'by_github_id', pk: 'github_id', sk: 'name' } },
   { id: 'invitations', pk: 'id', ttl: 'expires_at' },
@@ -66,7 +73,9 @@ export class DataStack extends Stack {
           indexName: d.gsi.name,
           partitionKey: { name: d.gsi.pk, type: S },
           ...(d.gsi.sk ? { sortKey: { name: d.gsi.sk, type: S } } : {}),
-          projectionType: dynamodb.ProjectionType.ALL,
+          ...(d.gsi.include
+            ? { projectionType: dynamodb.ProjectionType.INCLUDE, nonKeyAttributes: d.gsi.include }
+            : { projectionType: dynamodb.ProjectionType.ALL }),
         });
       }
 

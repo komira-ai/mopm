@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { App } from 'aws-cdk-lib';
 import { Match } from 'aws-cdk-lib/assertions';
-import { ApiStack, AUTH_GRANTS, AUTH_ROUTES, READ_ACTIONS, READ_ROUTES, READ_TABLES } from '../lib/api-stack';
+import { ApiStack, AUTH_GRANTS, AUTH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES } from '../lib/api-stack';
 import { STAGES, stageConfig, tableName } from '../lib/config';
 import { DUMMY_ACCOUNT, tpl } from './util';
 
@@ -77,8 +77,8 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
       ].sort(),
     );
     expect(AUTH_ROUTES).toHaveLength(6);
-    // The write operations of the registry (claim, publish, owners, yank) are not routed yet.
-    expect(keys.some((k) => /\/(claim|publish|owners|files)/.test(k))).toBe(false);
+    // The write operations of the registry (claim, publish, yank) are not routed yet.
+    expect(keys.some((k) => /\/(claim|publish|files)/.test(k))).toBe(false);
   });
 
   // Every policy statement the handler's role gets. The role is the only one in the stack with a policy.
@@ -97,6 +97,16 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     expect(resources).not.toContain('"*"');
     const named = (resources.match(/table\/mopm-[a-z]+-[a-z_]+/g) ?? []).map((m) => m.replace(/\/index.*/, ''));
     expect([...new Set(named)].sort()).toEqual(READ_TABLES.map((x) => `table/${tableName(stage, x)}`).sort());
+  });
+
+  test('the one index the read statement may Query is named exactly; no index wildcard', () => {
+    expect(READ_INDEXES).toEqual({ packages: ['by_search_bucket'] });
+    const st = statements().filter((s) => s.Sid === 'ReadRegistryTables');
+    const resources = JSON.stringify(st[0].Resource);
+    expect(resources).toContain(`${tableName(stage, 'packages')}/index/by_search_bucket`);
+    expect(resources).not.toContain('index/*');
+    expect(resources).not.toContain('by_github_id'); // the owners index is not read by the read API
+    expect((resources.match(/\/index\//g) ?? []).length).toBe(1);
   });
 
   test('each auth table has one statement with exactly its actions; indexes are named, never index/*', () => {

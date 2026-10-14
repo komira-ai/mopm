@@ -61,9 +61,20 @@ const KEYS: Record<string, KeyDef> = {
 };
 
 /**
+ * The one global secondary index the adapter reads, written out as the stack defines it (service/infra/stacks/lib/data-stack.ts,
+ * pinned there by data.test.ts). Deliberately literals, not SEARCH_INDEX: store.test.ts asserts the adapter's constant equals this.
+ */
+const INDEXES: Record<string, Record<string, { pk: string; sk: string; projected: readonly string[] }>> = {
+  'mopm-t-packages': { by_search_bucket: { pk: 'search_bucket', sk: 'name', projected: ['description', 'state', 'created_at'] } },
+};
+
+/**
  * An in-process stand-in for DynamoDBDocumentClient.send, with no network. It implements what the
  * adapter uses: Get, Put, Delete, Query and Scan (paged, `pageSize` items at a time), and
- * TransactWrite (all conditions checked, then all writes, atomically). Conditions: `attribute_exists(#x)`,
+ * TransactWrite (all conditions checked, then all writes, atomically). Query also runs on the packages search
+ * index: `#b = :b` with an optional `AND begins_with(#n, :p)` on the sort key, a sparse index (rows without the
+ * key attribute are absent), `Limit`, `ExclusiveStartKey`, and the index's projection (only its keys and projected
+ * attributes come back). Conditions: `attribute_exists(#x)`,
  * `attribute_not_exists(#x)` and `#x = :v`, joined by AND. Anything else throws, so a new expression
  * in the adapter fails loudly here instead of being silently accepted.
  *
@@ -73,6 +84,8 @@ const KEYS: Record<string, KeyDef> = {
 export class FakeDocClient {
   tables = new Map<string, Map<string, Item>>();
   calls: string[] = [];
+  /** Every command's input, in order, so a test can assert exactly what was asked of DynamoDB. */
+  inputs: any[] = [];
   constructor(
     private pageSize = 2,
     private yields = 4,
@@ -107,6 +120,7 @@ export class FakeDocClient {
   async send(cmd: any): Promise<any> {
     for (let i = 0; i < this.yields; i++) await Promise.resolve();
     this.calls.push(cmd.constructor.name);
+    this.inputs.push(structuredClone(cmd.input));
     if (cmd instanceof GetCommand) {
       const { TableName, Key } = cmd.input;
       const item = this.table(TableName!).get(this.keyOf(TableName!, Key!));
@@ -145,6 +159,7 @@ export class FakeDocClient {
       for (const it of items) this.table(it.Put!.TableName!).set(this.keyOf(it.Put!.TableName!, it.Put!.Item!), structuredClone(it.Put!.Item!));
       return {};
     }
+    if (cmd instanceof QueryCommand && cmd.input.IndexName) return this.queryIndex(cmd.input);
     if (cmd instanceof QueryCommand) {
       const { TableName, ExpressionAttributeValues, ExclusiveStartKey } = cmd.input;
       const k = KEYS[TableName!]!;
@@ -157,6 +172,39 @@ export class FakeDocClient {
       return this.page(TableName!, [...this.table(TableName!).values()], ExclusiveStartKey);
     }
     throw new Error(`fake: unsupported command ${cmd.constructor.name}`);
+  }
+
+  private queryIndex(input: any) {
+    const { TableName, IndexName, KeyConditionExpression, ExpressionAttributeNames: n = {}, ExpressionAttributeValues: v = {}, Limit, ExclusiveStartKey } = input;
+    const ix = INDEXES[TableName]?.[IndexName];
+    if (!ix) throw new Error(`fake: no index ${IndexName} on ${TableName}`);
+    const m = /^(#\w+) = (:\w+)(?: AND begins_with\((#\w+), (:\w+)\))?$/.exec(KeyConditionExpression);
+    if (!m) throw new Error(`fake: unsupported key condition ${KeyConditionExpression}`);
+    if (n[m[1]!] !== ix.pk) throw new Error(`fake: the partition key of ${IndexName} is ${ix.pk}, not ${n[m[1]!]}`);
+    if (m[3] && n[m[3]] !== ix.sk) throw new Error(`fake: begins_with must be on the sort key ${ix.sk}`);
+    if (m[4] !== undefined && (typeof v[m[4]] !== 'string' || v[m[4]] === '')) throw new Error('fake: DynamoDB refuses an empty or non-string begins_with operand');
+    if (!Number.isInteger(Limit) || Limit < 1) throw new Error('fake: Limit must be a positive integer');
+    const bucket = v[m[2]!];
+    const prefix = m[4] ? (v[m[4]] as string) : '';
+    if (ExclusiveStartKey) {
+      if (ExclusiveStartKey[ix.pk] !== bucket || typeof ExclusiveStartKey[ix.sk] !== 'string' || !ExclusiveStartKey[ix.sk].startsWith(prefix)) {
+        throw new Error('fake: the starting key is outside the query boundaries');
+      }
+    }
+    const rows = [...this.table(TableName).values()]
+      .filter((i) => i[ix.pk] === bucket && ix.sk in i && (i[ix.sk] as string).startsWith(prefix))
+      .sort((a, b) => (a[ix.sk] < b[ix.sk] ? -1 : 1));
+    const from = ExclusiveStartKey ? rows.findIndex((i) => i[ix.sk] > ExclusiveStartKey[ix.sk]) : 0;
+    const rest = from < 0 ? [] : rows.slice(from);
+    const take = Math.min(Limit, this.pageSize);
+    const slice = rest.slice(0, take);
+    const keep = new Set([ix.pk, ix.sk, ...ix.projected]);
+    const last = slice[slice.length - 1];
+    return {
+      Items: slice.map((i) => Object.fromEntries(Object.entries(structuredClone(i)).filter(([k]) => keep.has(k)))),
+      // A page ended by Limit or by size reports where to continue, as DynamoDB does.
+      LastEvaluatedKey: rest.length > take && last ? { [ix.pk]: last[ix.pk], [ix.sk]: last[ix.sk] } : undefined,
+    };
   }
 
   private page(table: string, items: Item[], start?: Item) {
