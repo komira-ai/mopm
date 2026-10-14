@@ -1,0 +1,1 @@
+mopm repl: refused (static_only): staticpkg ships only libarch.a (native arch); mojo repl cannot load an archive: use mopm build or ask for a shared flavour

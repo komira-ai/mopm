@@ -1,0 +1,1 @@
+MODULAR_HOME=@ROOT@/tests/fixtures/env/macos/static/share/max @ROOT@/tests/fixtures/env/macos/static/bin/mojo build -Xlinker @ROOT@/tests/fixtures/env/macos/static/lib/libarch.a -Xlinker -rpath -Xlinker @ROOT@/tests/fixtures/env/macos/static/lib -o hello hello.mojo
