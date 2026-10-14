@@ -30,6 +30,19 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '20'
+      - name: bootstrap.sh passes the context to cdk and gates --approve-iam
+        run: |
+          acct="$(printf '5%.0s' $(seq 12))"
+          out="$(./bootstrap.sh --stage beta --account "$acct" --region us-east-1 --profile p)"
+          boot="$(echo "$out" | grep '^DRY-RUN: npx cdk bootstrap')"
+          for v in stage=beta "account=$acct" region=us-east-1; do
+            echo "$boot" | grep -q -- "-c $v" || { echo "bootstrap lacks -c $v" >&2; exit 1; }
+          done
+          echo "$out" | grep -q '^DRY-RUN: npx cdk diff' || { echo "no cdk diff" >&2; exit 1; }
+          echo "$out" | grep -q 'require-approval broadening' || { echo "default is not broadening" >&2; exit 1; }
+          if echo "$out" | grep -q -- '--approve-iam\|require-approval never'; then echo "approval flag present without --approve-iam" >&2; exit 1; fi
+          out2="$(./bootstrap.sh --stage beta --account "$acct" --region us-east-1 --profile p --approve-iam)"
+          echo "$out2" | grep -q 'require-approval never' || { echo "--approve-iam ignored" >&2; exit 1; }
       # The same install deploy.yml runs; it fails if package-lock.json is missing or out of step with package.json.
       - name: Install (npm ci, as in deploy.yml)
         run: npm ci --ignore-scripts --no-audit --no-fund

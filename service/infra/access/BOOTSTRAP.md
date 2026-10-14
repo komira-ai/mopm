@@ -64,9 +64,19 @@ service/infra/access/bootstrap.sh --stage beta --account <id> --region <region> 
 
 It does, in order:
 1. creates the managed policy `mopm-<stage>-cfn-exec` from `cfn-exec-policy.template.json` (name-scoped to
-   `mopm-<stage>-*`, denies on the access roles, the OIDC provider and the bootstrap roles; not AdministratorAccess);
-2. `cdk bootstrap aws://<account>/<region> --cloudformation-execution-policies arn:aws:iam::<account>:policy/mopm-<stage>-cfn-exec`;
-3. `cdk deploy mopm-<stage>-access` (context flags `stage`, `account`, `region`; the trusted repository is fixed to `komira-ai/mopm` in `lib/contract.ts`).
+   `mopm-<stage>-*`, denies on the access roles, the OIDC provider and the bootstrap roles; not AdministratorAccess).
+   Resumable: if the policy exists with an identical document it is skipped; if it exists with a different one the
+   script stops with a message (it never forces or creates a new policy version, you resolve the difference by hand);
+2. `cdk bootstrap aws://<account>/<region> --cloudformation-execution-policies arn:aws:iam::<account>:policy/mopm-<stage>-cfn-exec -c stage=<stage> -c account=<account> -c region=<region>`;
+3. `cdk diff mopm-<stage>-access` (same context), always, printed before anything is deployed;
+4. `cdk deploy mopm-<stage>-access` (same context; the trusted repository is fixed to `komira-ai/mopm` in `lib/contract.ts`)
+   with `--require-approval broadening`, so CDK asks before IAM or security-group broadening. In a non-interactive shell
+   pass `--approve-iam` (`--require-approval never`), only after a human has reviewed the diff printed in step 3.
+
+Lesson from the beta run: `cdk bootstrap` also loads the app (`bin/access.ts`), which throws `missing context -c stage=...`
+without the context flags, so all three `-c` values go on every cdk command. The first run had to be finished by hand
+(bootstrap with the flags, `cdk diff`, `cdk deploy ... --require-approval never` after reviewing the IAM diff); the script
+now does that, and a re-run after a partial failure skips the policy it already created.
 
 ### Why the access stack bypasses the scoped execution role
 
