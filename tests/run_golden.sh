@@ -8,6 +8,10 @@
 #     whose bin/mojo is a script that prints what it was given and exits 7
 #     (tests/golden/exec): argv, environment, stdin and exit status pass
 #     through. The real mojo runs in tests/e2e.
+#   * `mopm test --list` on tests/discovery (tests/golden/test): the test
+#     files a package root holds, the tests each one has, and the refusals.
+#     The scanner's per-file goldens are unit tests (src/core/test_scan.zig);
+#     building and listing real harnesses is tests/e2e/test_discovery.sh.
 # The repository root is written as @ROOT@ in the golden files.
 # Usage: tests/run_golden.sh [path-to-mopm]   (run from the repository root)
 set -u
@@ -56,6 +60,21 @@ if got=$("$mopm" metadata "$bad.toml" 2>&1 >/dev/null); then
     echo "FAIL metadata accepted $bad.toml"; fail=1
 fi
 [ "$got" = "mopm: $bad.toml:$(cat "$bad.err")" ] || { echo "FAIL metadata error text: $got"; fail=1; }
+
+# mopm new / init: the trees they make equal tests/new/{lib,bin}; an existing
+# package is never overwritten; a Mojo keyword is refused as a name.
+work=$(mktemp -d)
+abs_mopm=$(cd "$(dirname "$mopm")" && pwd)/$(basename "$mopm")
+( cd "$work" && "$abs_mopm" new demo > /dev/null ) || { echo "FAIL new demo"; fail=1; }
+diff -r tests/new/lib "$work/demo" || { echo "FAIL new demo: tree differs from tests/new/lib"; fail=1; }
+( cd "$work" && "$abs_mopm" new demo > /dev/null 2>&1 ) && { echo "FAIL new over an existing directory"; fail=1; }
+mkdir -p "$work/bin/demo"
+( cd "$work/bin/demo" && "$abs_mopm" init --bin > /dev/null ) || { echo "FAIL init --bin"; fail=1; }
+diff -r tests/new/bin "$work/bin/demo" || { echo "FAIL init --bin: tree differs from tests/new/bin"; fail=1; }
+( cd "$work/bin/demo" && "$abs_mopm" init --bin > /dev/null 2>&1 ) && { echo "FAIL init over an existing package"; fail=1; }
+( cd "$work" && "$abs_mopm" new async > /dev/null 2>&1 ) && { echo "FAIL new accepted a keyword as a name"; fail=1; }
+[ -e "$work/async" ] && { echo "FAIL new made a directory for a refused name"; fail=1; }
+rm -rf "$work"
 
 # cmd <label> <golden file> <expected exit code> <mopm args>...
 # Runs with CONDA_PREFIX and MODULAR_HOME unset unless the args set them
@@ -155,6 +174,38 @@ else
     echo "ok   exec: --os without --print-cmd is a usage error"
 fi
 rm -f golden_cmd.raw
+
+# mopm test --list. A package root (one passed as a path, and the current
+# directory); a file named twice is listed once; explicit files; a file
+# whose tests do not conform (exit 2, nothing listed); a self-hosted file
+# with nothing mopm can read (a warning, exit 0); usage errors.
+g=tests/golden/test
+cmd "test --list: a package root" "$g/tree.txt" 0 \
+    "$mopm" test --list tests/discovery/tree
+cmd "test --list: a file under the root named again is listed once" "$g/tree.txt" 0 \
+    "$mopm" test --list tests/discovery/tree tests/discovery/tree/tests/test_bare.mojo
+mopm_abs=$(cd "$(dirname "$mopm")" && pwd -P)/$(basename "$mopm")
+(cd tests/discovery/tree && "$mopm_abs" test --list) > golden_cmd.out 2>&1
+rc=$?
+if [ "$rc" -ne 0 ] || ! diff -u "$g/tree_dot.txt" golden_cmd.out; then
+    echo "FAIL test --list: the current directory (exit $rc)"
+    fail=1
+else
+    echo "ok   test --list: the current directory"
+fi
+rm -f golden_cmd.out
+cmd "test --list: explicit files" "$g/files.txt" 0 \
+    "$mopm" test --list tests/discovery/self_hosted_explicit.mojo tests/discovery/bare_basic.mojo
+cmd "test --list: nonconforming tests are refused" "$g/nonconforming.txt" 2 \
+    "$mopm" test --list tests/discovery/nonconforming.mojo tests/discovery/bare_basic.mojo
+cmd "test --list: a self-hosted file without readable registrations" "$g/self_hosted_none.txt" 0 \
+    "$mopm" test --list tests/discovery/self_hosted_none.mojo
+cmd "test: without --list" "$g/no_list.txt" 1 \
+    "$mopm" test
+cmd "test --list: --prefix without --check" "$g/check_only.txt" 2 \
+    "$mopm" test --list --prefix /nowhere
+cmd "test --list: a path that does not exist" "$g/missing.txt" 2 \
+    "$mopm" test --list tests/discovery/no_such_dir
 
 [ "$("$mopm" --version)" = "mopm 0.0.1" ] || { echo "FAIL --version"; fail=1; }
 "$mopm" add > /dev/null 2>&1 && { echo "FAIL planned command should exit non-zero"; fail=1; }

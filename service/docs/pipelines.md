@@ -44,6 +44,15 @@ that SHA. A `concurrency` group prevents two promotions interleaving. `workflows
 fails if the trigger is anything but `workflow_dispatch`, or if the chain, the called files or the stages in `promote.yml` change, or if a promotion job gains an
 `if:` or `continue-on-error`.
 
+Every job in `promote.yml` that calls `deploy.yml` or `e2e.yml` sets `secrets: inherit`. The called jobs
+read `AWS_ACCOUNT_ID` and `AWS_REGION` from their stage's environment secrets (the repository has no
+repository-level secrets), and a reusable workflow sees only the secrets its caller passes; without it
+they arrive empty and the role step stops with "secrets AWS_ACCOUNT_ID and AWS_REGION must be set". A
+direct `workflow_dispatch` of `deploy.yml` does not need it. See GitHub's "Reusing workflows" and the
+workflow syntax reference for `jobs.<job_id>.secrets`. `workflow_lint.rb` requires it on every reusable
+call in `promote.yml` and rejects `secrets: inherit` in any other workflow; `tests/lint/run.rb` has a
+promote fixture without it that must fail.
+
 ## Settings made outside this repository
 
 Not enforced by any file here (full list in `docs/security/public-deploy.md`): branch protection on
