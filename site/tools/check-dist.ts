@@ -2,7 +2,8 @@
 //  - the pages the edge router and the error responses name exist (index, app, 404, docs);
 //  - every /assets/<id>/ reference in a page, and every relative import in a module, names a file that exists
 //    (a dangling one is a broken page after deploy, since assets are immutable and pages are not);
-//  - no inline script, no style attribute or element, no event-handler attribute (the CSP would block them);
+//  - every <script> is empty and has a src under /assets/; no style attribute or element, no event-handler attribute,
+//    no javascript:, data: or vbscript: URL, read after entity decoding as a browser reads it (the CSP would block them);
 //  - only .html, .js and .css files (the bucket serves nothing else);
 //  - the JavaScript and CSS stay small: each module at most JS_MAX_BYTES, all of them at most JS_TOTAL_MAX_BYTES (tsc
 //    output is not minified; the edge compresses it), the stylesheet at most CSS_MAX_BYTES.
@@ -60,6 +61,36 @@ export function tagsIn(html: string): [string, [string, string][]][] {
   return out;
 }
 
+const NAMED: Readonly<Record<string, string>> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", colon: ':', tab: '\t', newline: '\n' };
+const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction']);
+
+/**
+ * An attribute value as the browser reads it: character references decoded in one pass, or null when it holds a named
+ * reference this list does not know (the page's own serializer writes only &amp;, &lt;, &gt; and &quot;).
+ */
+export function decodeAttr(raw: string): string | null {
+  let unknown = false;
+  const out = raw.replace(/&(#[xX][0-9a-fA-F]+|#[0-9]+|[a-zA-Z][a-zA-Z0-9]*);?/g, (_m, ref: string) => {
+    if (ref[0] === '#') {
+      const cp = ref[1] === 'x' || ref[1] === 'X' ? parseInt(ref.slice(2), 16) : parseInt(ref.slice(1), 10);
+      return cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : '\ufffd';
+    }
+    const c = NAMED[ref.toLowerCase()];
+    if (c === undefined) unknown = true;
+    return c ?? '';
+  });
+  return unknown ? null : out;
+}
+
+/** Whether a URL attribute value runs script or embeds a document, as a browser's URL parser reads it. */
+export function isScriptUrl(raw: string): boolean {
+  const v = decodeAttr(raw);
+  if (v === null) return true;
+  // The URL parser drops leading C0 controls and spaces, and every tab and newline anywhere.
+  const s = v.replace(/[\t\n\r]/g, '').replace(/^[\x00-\x20]+/, '');
+  return /^(?:javascript|data|vbscript):/i.test(s);
+}
+
 /** Throws a DistError listing every problem found. */
 export function checkDist(dir: string): void {
   const files = listFiles(dir);
@@ -89,17 +120,20 @@ export function checkDist(dir: string): void {
       if (!f.startsWith('assets/')) problems.push(`${f}: a stylesheet outside assets/`);
     }
     if (ext !== '.html') continue;
-    for (const m of text.matchAll(/<script\b([^>]*)>/gi)) {
-      if (!/\bsrc="/.test(m[1])) problems.push(`${f}: an inline <script>`);
+    // A script's content runs whatever its attributes say; every one must be empty (an unclosed one runs to the end).
+    for (const m of text.matchAll(/<script\b[^>]*>([\s\S]*?)(?:<\/script\s*>|$)/gi)) {
+      if (m[1] !== '') problems.push(`${f}: an inline <script>`);
     }
     if (/<style\b/i.test(text)) problems.push(`${f}: a <style> element`);
     for (const [tag, attrs] of tagsIn(text)) {
+      if (tag === 'script') {
+        const src = attrs.filter(([name]) => name === 'src');
+        if (src.length !== 1 || !src[0][1].startsWith('/assets/')) problems.push(`${f}: a <script> without one src under /assets/`);
+      }
       for (const [name, value] of attrs) {
         if (name === 'style') problems.push(`${f}: a style attribute on <${tag}>`);
         if (name.startsWith('on')) problems.push(`${f}: an event-handler attribute ${name} on <${tag}>`);
-        if ((name === 'href' || name === 'src' || name === 'action') && /^\s*(?:javascript|data|vbscript):/i.test(value)) {
-          problems.push(`${f}: a script URL on <${tag}>`);
-        }
+        if (URL_ATTRS.has(name) && isScriptUrl(value)) problems.push(`${f}: a script URL (or an unknown character reference) in ${name} on <${tag}>`);
         const asset = (name === 'href' || name === 'src') && /^\/(assets\/[^#?]+)/.exec(value);
         if (asset && !have.has(asset[1])) problems.push(`${f}: references /${asset[1]}, which is not in dist`);
       }

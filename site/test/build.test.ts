@@ -1,10 +1,10 @@
 // T16: the build. The same inputs give the same tree byte for byte (no clock, no commit, no randomness), so every
 // stage deploys one artifact; the asset id is a content hash, so a changed asset gets a new URL (assets are cached as
 // immutable); only the entry and what it imports ship; and checkDist refuses a tree the site stack must not deploy.
-import { readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
+import { appendFileSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { assetId, moduleGraph } from '../tools/build';
-import { checkDist, DistError, JS_MAX_BYTES, REQUIRED } from '../tools/check-dist';
+import { checkDist, CSS_MAX_BYTES, decodeAttr, DistError, isScriptUrl, JS_MAX_BYTES, JS_TOTAL_MAX_BYTES, REQUIRED } from '../tools/check-dist';
 import { cleanup, type Fixture, fixture } from './build-fixture';
 
 const made: Fixture[] = [];
@@ -93,6 +93,29 @@ describe('assetId and moduleGraph', () => {
   });
 });
 
+describe('reading attribute values as a browser does', () => {
+  test('decodeAttr decodes numeric and the known named references in one pass', () => {
+    expect(decodeAttr('java&#x73;cript&#58;x')).toBe('javascript:x');
+    expect(decodeAttr('/search?q=a&amp;sort=updated')).toBe('/search?q=a&sort=updated');
+    expect(decodeAttr('&amp;colon;')).toBe('&colon;');
+    expect(decodeAttr('&nbsp;')).toBeNull();
+  });
+
+  test.each([
+    ['javascript:x', true],
+    ['  JaVaScRiPt:x', true],
+    ['\x01javascript:x', true],
+    ['java\nscript:x', true],
+    ['data:text/html,x', true],
+    ['vbscript:x', true],
+    ['https://example.com/javascript:x', false],
+    ['/search?q=javascript:x', false],
+    ['#javascript', false],
+  ])('isScriptUrl(%j) is %s', (v, want) => {
+    expect(isScriptUrl(v)).toBe(want);
+  });
+});
+
 describe('checkDist refuses', () => {
   function built(): { f: Fixture; id: string } {
     const f = fresh();
@@ -133,6 +156,17 @@ describe('checkDist refuses', () => {
     ['an event handler', '<p onclick="x()">x</p>', /event-handler attribute onclick/],
     ['an unquoted event handler', '<img src=x onerror=alert(1)>', /event-handler attribute onerror/],
     ['a script URL', '<a href="javascript:alert(1)">x</a>', /a script URL/],
+    ['a script with data-src only', '<script data-src="x">alert(1)</script>', /an inline <script>/],
+    ['an empty script with data-src only', '<script data-src="/assets/x.js"></script>', /a <script> without one src under \/assets\//],
+    ['a script from another origin', '<script src="https://cdn.example/x.js"></script>', /a <script> without one src under \/assets\//],
+    ['a script with a src and content', '<script src="/assets/x/main.js">alert(1)</script>', /an inline <script>/],
+    ['an unclosed script', '<script src="/assets/x/main.js">alert(1)', /an inline <script>/],
+    ['an entity-encoded script URL', '<a href=" java&#x73;cript:x">x</a>', /a script URL .*in href on <a>/],
+    ['a named-reference script URL', '<a href="javascript&colon;x">x</a>', /a script URL/],
+    ['a tab inside the scheme', '<a href="java&Tab;script:x">x</a>', /a script URL/],
+    ['an unknown named reference in a URL', '<a href="&nbsp;javascript:x">x</a>', /an unknown character reference/],
+    ['a script URL in a form action', '<form action="javascript:x"></form>', /a script URL .*in action on <form>/],
+    ['a script URL in a formaction', '<button formaction="javascript:x">x</button>', /a script URL .*in formaction on <button>/],
   ])('%s in a page', (_what, markup, re) => {
     const { f } = built();
     const p = join(f.outDir, '404.html');
@@ -151,6 +185,33 @@ describe('checkDist refuses', () => {
     const { f } = built();
     writeFileSync(join(f.outDir, 'logo.png'), 'x');
     expectRefusal(f, /logo\.png: only \.html, \.js and \.css/);
+  });
+
+  test('a stylesheet over the CSS budget', () => {
+    const { f, id } = built();
+    appendFileSync(join(f.outDir, 'assets', id, 'site.css'), `/*${'x'.repeat(CSS_MAX_BYTES)}*/\n`);
+    expectRefusal(f, /CSS is \d+ bytes; the limit is 16384/);
+  });
+
+  test('modules each under the per-module limit but over the total', () => {
+    const { f, id } = built();
+    const each = JS_MAX_BYTES - 100;
+    const n = Math.ceil(JS_TOTAL_MAX_BYTES / each) + 1;
+    for (let i = 0; i < n; i++) writeFileSync(join(f.outDir, 'assets', id, `big${i}.js`), `export const b = '${'x'.repeat(each - 40)}';\n`);
+    expect(() => checkDist(f.outDir)).toThrow(/JavaScript is \d+ bytes in all; the limit is 131072/);
+    expect(() => checkDist(f.outDir)).not.toThrow(/limit for one module/);
+  });
+
+  test('a script outside assets/', () => {
+    const { f } = built();
+    writeFileSync(join(f.outDir, 'x.js'), 'export {};\n');
+    expectRefusal(f, /x\.js: a script outside assets\//);
+  });
+
+  test('a stylesheet outside assets/', () => {
+    const { f } = built();
+    writeFileSync(join(f.outDir, 'x.css'), 'p{}\n');
+    expectRefusal(f, /x\.css: a stylesheet outside assets\//);
   });
 
   test('a module over the size limit', () => {
