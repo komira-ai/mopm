@@ -10,6 +10,8 @@ version = "0.4.0"
 description = "HTTP/1.1 client"
 license = "Apache-2.0"
 repository = "https://github.com/example/http_client"
+homepage = "https://example.com/http_client"
+keywords = ["http", "client"]
 readme = "README.md"
 
 [toolchain]
@@ -42,6 +44,11 @@ tests = ["tests"]
 
 - `[package]`: identity. `name` is unique in the registry; only its owner can
   publish versions of it, and a published version is immutable.
+  All of `description`, `license`, `repository`, `homepage`, `keywords` and
+  `readme` are optional. When present they are checked as below and served by
+  the registry's read API (`description`, `license`, `repository`, `homepage`,
+  `keywords` and `readme` of a version; spec/api/openapi.yaml). The publish
+  pipeline copies them from the file at publish time.
 - `[dependencies]`: Mojo packages with version requirements, or a `path`.
 - `[native-dependencies]`: native libraries from outside the Mojo ecosystem.
   `kind` (shared | static) is what the package asks for; `mode` (link | load,
@@ -69,6 +76,21 @@ Dependency versions follow cargo's rules:
   pre-release of the same major.minor.patch.
 - Native dependency versions are passed to the native package's ecosystem as
   written (they follow its version scheme, not semver).
+
+## `[package]` display fields
+
+| field | type | rule |
+|---|---|---|
+| `description` | string | one line, 1 to 512 characters, no line breaks |
+| `license` | string | an SPDX license expression, such as `Apache-2.0` or `MIT OR Apache-2.0`, at most 128 characters |
+| `repository` | string | an `https://` URL, at most 2048 characters |
+| `homepage` | string | an `http://` or `https://` URL, at most 2048 characters |
+| `keywords` | array of strings | at most 10, unique, each 1 to 32 characters of letters, digits, `-`, `_`, `.` or `+` |
+| `readme` | string | path of a Markdown file inside the package, relative to `mopm.toml`; at most 64 KiB (65,536 bytes) of UTF-8 |
+
+A value that breaks its rule is an error, not a warning; the publish pipeline
+refuses it. The
+registry serves the readme's text, not its path.
 
 ## Rules
 

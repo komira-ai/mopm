@@ -1080,10 +1080,22 @@ components:
         repository: { type: [string, "null"], description: An https URL. }
         license: { type: [string, "null"] }
         description: { type: [string, "null"] }
+        homepage: { type: string, format: uri, maxLength: 2048, description: An http or https URL, from mopm.toml. Absent when not set. }
+        keywords: { $ref: "#/components/schemas/Keywords" }
+        readme:
+          description: Markdown of the latest version's readme (see VersionDetail.readme). Absent when it has none.
+          type: string
+          maxLength: 65536
         created_at: { $ref: "#/components/schemas/Timestamp" }
         versions:
           type: array
           items: { $ref: "#/components/schemas/VersionSummary" }
+    Keywords:
+      description: Free-form tags from `keywords` in mopm.toml, at most 10, each 1 to 32 characters (see spec/mopm-toml.md).
+      type: array
+      maxItems: 10
+      uniqueItems: true
+      items: { type: string, minLength: 1, maxLength: 32 }
     Provenance:
       type: object
       required: [kind]
@@ -1126,6 +1138,19 @@ components:
         manifest:
           description: The embedded `<name>.mopm.json` (see spec/package-metadata.schema.json).
           type: object
+        description: { type: string, maxLength: 512, description: "`[package] description` of this version's mopm.toml. Absent when not set." }
+        license: { type: string, maxLength: 128, description: "`[package] license`, an SPDX expression. Absent when not set." }
+        repository: { type: string, format: uri, maxLength: 2048, description: An https URL. Absent when not set. }
+        homepage: { type: string, format: uri, maxLength: 2048, description: An http or https URL. Absent when not set. }
+        keywords: { $ref: "#/components/schemas/Keywords" }
+        readme:
+          description: |
+            Markdown, at most 64 KiB (65,536 bytes of UTF-8), from the file `[package] readme` names. Render it as
+            untrusted text. Absent when the version has none. The five fields above and this one are copied from
+            mopm.toml by the publish pipeline when it publishes a version; versions published before that carry none
+            of them. All are additive and optional, so older clients ignore them.
+          type: string
+          maxLength: 65536
         readme_html:
           description: Sanitised HTML. Never trust it on a cookie-authenticated origin.
           type: [string, "null"]

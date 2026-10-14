@@ -82,6 +82,25 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     t.hasResourceProperties('AWS::Route53::RecordSet', Match.objectLike({ Name: `${host}.`, Type: 'A' }));
   });
 
+  test('CORS allows exactly this stage\'s own site origin, over https, and no credentials', () => {
+    const own = `https://${stageConfig(stage).siteDomain}`;
+    const apis = Object.values(t.findResources('AWS::ApiGatewayV2::Api')) as any[];
+    expect(apis).toHaveLength(1);
+    const cors = apis[0].Properties.CorsConfiguration;
+    expect(cors.AllowOrigins).toEqual([own]);
+    expect(own).toBe(stage === 'prod' ? 'https://mopm.dev' : `https://${stage}.mopm.dev`);
+    expect(JSON.stringify(cors)).not.toContain('*');
+    expect(cors.AllowCredentials).toBeUndefined();
+  });
+
+  test('CORS methods are GET, HEAD and OPTIONS only; max-age is bounded; only the request id is exposed', () => {
+    const cors = (Object.values(t.findResources('AWS::ApiGatewayV2::Api')) as any[])[0].Properties.CorsConfiguration;
+    expect([...cors.AllowMethods].sort()).toEqual(['GET', 'HEAD', 'OPTIONS']);
+    expect(cors.MaxAge).toBe(3600);
+    expect(cors.ExposeHeaders).toEqual(['x-mopm-request-id']);
+    expect(cors.AllowHeaders).toBeUndefined();
+  });
+
   test('log group has bounded retention', () => {
     t.hasResourceProperties('AWS::Logs::LogGroup', { RetentionInDays: 30 });
   });
@@ -98,4 +117,14 @@ test('a missing handler bundle stops the synth with the fix in the message', () 
         handlerDir: '/nonexistent/handler',
       }),
   ).toThrow(/npm run build/);
+});
+
+test('no stage allows another stage\'s origin (the three origin lists are pairwise disjoint)', () => {
+  const origins = STAGES.map((st) => {
+    const api = tpl(st).api;
+    return (Object.values(api.findResources('AWS::ApiGatewayV2::Api')) as any[])[0].Properties.CorsConfiguration.AllowOrigins as string[];
+  });
+  const all = origins.flat();
+  expect(new Set(all).size).toBe(all.length);
+  expect(all.sort()).toEqual(['https://beta.mopm.dev', 'https://gamma.mopm.dev', 'https://mopm.dev']);
 });
