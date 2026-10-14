@@ -1,1 +1,0 @@
-mopm build: running mojo is not implemented yet; --print-cmd prints the command

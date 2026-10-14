@@ -1,0 +1,12 @@
+#!/bin/sh
+# Stands in for mojo in tests/run_golden.sh: shows what mopm handed over (one
+# argument per line, two environment variables, stdin for the REPL) and exits
+# with a status of its own, so the golden files can check that mopm passes
+# argv, environment, stdin and exit status through.
+for a in "$@"; do echo "arg: $a"; done
+echo "MODULAR_HOME=${MODULAR_HOME-<unset>}"
+echo "MOPM_GOLDEN_MARK=${MOPM_GOLDEN_MARK-<unset>}"
+if [ "${1-}" = repl ]; then
+    while IFS= read -r line; do echo "stdin: $line"; done
+fi
+exit 7

@@ -106,6 +106,16 @@ pub fn construct(arena: Allocator, req: Request, p: link_planner.Plan) Allocator
     return .{ .env = envs, .argv = try argv.toOwnedSlice() };
 }
 
+/// Put each `NAME=value` of `pairs` into `map`, replacing what the caller
+/// had (a stale `MODULAR_HOME` from another environment loses).
+pub fn applyEnv(map: *std.process.EnvMap, pairs: []const []const u8) Allocator.Error!void {
+    for (pairs) |pair| {
+        const eq = std.mem.indexOfScalar(u8, pair, '=') orelse pair.len;
+        const value = if (eq < pair.len) pair[eq + 1 ..] else "";
+        try map.put(pair[0..eq], value);
+    }
+}
+
 fn shellSafe(c: u8) bool {
     return std.ascii.isAlphanumeric(c) or std.mem.indexOfScalar(u8, "_-./=:,+@%", c) != null;
 }
@@ -276,4 +286,16 @@ test "render quotes only words that need it" {
         "MODULAR_HOME='/e x/share/max' /e/bin/mojo repl -O 'settings set target.env-vars LD_PRELOAD=/e/lib/it'\\''s.so'\n",
         buf.items,
     );
+}
+
+test "applyEnv overrides the caller's value and keeps the rest" {
+    var map = std.process.EnvMap.init(std.testing.allocator);
+    defer map.deinit();
+    try map.put("MODULAR_HOME", "/other/share/max");
+    try map.put("PATH", "/usr/bin");
+    try applyEnv(&map, &.{ "MODULAR_HOME=/e/share/max", "EMPTY=" });
+    try std.testing.expectEqualStrings("/e/share/max", map.get("MODULAR_HOME").?);
+    try std.testing.expectEqualStrings("/usr/bin", map.get("PATH").?);
+    try std.testing.expectEqualStrings("", map.get("EMPTY").?);
+    try std.testing.expectEqual(@as(std.process.EnvMap.Size, 3), map.count());
 }

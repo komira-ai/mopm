@@ -1,5 +1,6 @@
-//! mopm command line. `--version`, `link-plan`, and `build`/`run`/`repl` with
-//! `--print-cmd` work; running mojo is not implemented yet.
+//! mopm command line. `--version`, `link-plan`, and `build`/`run`/`repl`,
+//! which run the stock `mojo` with the environment's native libraries linked
+//! or preloaded (or print that command with `--print-cmd`).
 
 const std = @import("std");
 const core = @import("mopm_core");
@@ -27,20 +28,21 @@ const usage =
     \\  --version               print the version
     \\  link-plan <file>...     print the link plan for installed packages,
     \\                          given their <name>.mopm.json files
-    \\  build <file.mojo> [-o <out>] --print-cmd
-    \\  run <file.mojo> --print-cmd
-    \\  repl --print-cmd        print the stock mojo command, with the native
-    \\                          libraries of the environment linked or preloaded
+    \\  build <file.mojo> [-o <out>]
+    \\  run <file.mojo>
+    \\  repl                    run the stock mojo of the environment, with its
+    \\                          native libraries linked or preloaded; the exit
+    \\                          status is mojo's
     \\
     \\  options for build, run and repl:
     \\    --prefix <dir>        the environment (default: CONDA_PREFIX, then
     \\                          MODULAR_HOME without /share/max)
-    \\    --os <linux|macos>    the spelling to print (default: this host)
     \\    --print-cmd           print the command instead of running it
+    \\    --os <linux|macos>    with --print-cmd: the spelling to print
+    \\                          (default: this host)
     \\
     \\planned (not implemented yet):
     \\  new init add remove lock sync test cov tree check publish export launch
-    \\  running mojo from build, run and repl
     \\
 ;
 
@@ -67,6 +69,8 @@ fn linkPlan(arena: std.mem.Allocator, paths: []const []const u8) u8 {
 pub const Opts = struct {
     prefix: ?[]const u8 = null,
     os: mojo_cmd.Os,
+    /// Whether `--os` was given; it only applies to `--print-cmd`.
+    os_given: bool = false,
     print_cmd: bool = false,
     out: ?[]const u8 = null,
     file: ?[]const u8 = null,
@@ -104,6 +108,7 @@ pub fn parseOpts(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []
         } else if (optValue(args, &i, "--os")) |v| {
             o.os = std.meta.stringToEnum(mojo_cmd.Os, v) orelse
                 return .{ .usage = try std.fmt.allocPrint(arena, "--os must be linux or macos, not '{s}'", .{v}) };
+            o.os_given = true;
         } else if (tool == .build and std.mem.eql(u8, arg, "-o")) {
             if (i + 1 >= args.len) return .{ .usage = "-o needs a file name" };
             i += 1;
@@ -119,6 +124,7 @@ pub fn parseOpts(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []
         }
     }
     if (tool != .repl and o.file == null) return .{ .usage = "a program is required: <file.mojo>" };
+    if (o.os_given and !o.print_cmd) return .{ .usage = "--os applies only with --print-cmd: a command that runs uses this host's spelling" };
     return .{ .ok = o };
 }
 
@@ -126,8 +132,26 @@ fn getEnv(arena: std.mem.Allocator, key: []const u8) ?[]const u8 {
     return std.process.getEnvVarOwned(arena, key) catch null;
 }
 
-/// `mopm build|run|repl`: discover the environment, plan, refuse or print.
-/// Diagnostics go to stderr; the command line to stdout.
+/// Replace this process with mojo: `argv`, and the caller's environment with
+/// `cmd.env` applied on top. Exec rather than spawn-and-wait: the terminal,
+/// stdin (the REPL reads it), signals such as Ctrl-C, and the exit status all
+/// belong to mojo with nothing in between. Returns only if the exec failed:
+/// 127 when the program does not exist, 126 otherwise (the shell's codes).
+fn execMojo(arena: std.mem.Allocator, name: []const u8, cmd: mojo_cmd.Command) u8 {
+    const err = std.io.getStdErr().writer();
+    var env_map = std.process.getEnvMap(arena) catch |e| {
+        err.print("mopm {s}: reading the environment: {s}\n", .{ name, @errorName(e) }) catch {};
+        return 1;
+    };
+    mojo_cmd.applyEnv(&env_map, cmd.env) catch return 1;
+    const e = std.process.execve(arena, cmd.argv, &env_map);
+    err.print("mopm {s}: cannot run {s}: {s}\n", .{ name, cmd.argv[0], @errorName(e) }) catch {};
+    return if (e == error.FileNotFound) 127 else 126;
+}
+
+/// `mopm build|run|repl`: discover the environment, plan, refuse, then run
+/// mojo or print its command. Diagnostics go to stderr; a printed command
+/// line to stdout.
 fn autolink(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const u8) u8 {
     const name = @tagName(tool);
     const err = std.io.getStdErr().writer();
@@ -187,10 +211,7 @@ fn autolink(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const
         .file = o.file orelse "",
         .out = o.out,
     }, plan) catch return 1;
-    if (!o.print_cmd) {
-        err.print("mopm {s}: running mojo is not implemented yet; --print-cmd prints the command\n", .{name}) catch {};
-        return 1;
-    }
+    if (!o.print_cmd) return execMojo(arena, name, cmd);
     var buf = std.ArrayList(u8).init(arena);
     mojo_cmd.render(cmd, buf.writer()) catch return 1;
     std.io.getStdOut().writeAll(buf.items) catch return 1;
@@ -266,10 +287,13 @@ test "options: both spellings, any order" {
     try std.testing.expectEqualStrings("/e", o.prefix.?);
     try std.testing.expectEqualStrings("out", o.out.?);
     try std.testing.expectEqual(mojo_cmd.Os.macos, o.os);
-    const r = try parseOk(a, .repl, &.{ "--prefix", "/e", "--os=linux" });
+    const r = try parseOk(a, .repl, &.{ "--prefix", "/e", "--os=linux", "--print-cmd" });
     try std.testing.expectEqualStrings("/e", r.prefix.?);
     try std.testing.expectEqual(mojo_cmd.Os.linux, r.os);
-    try std.testing.expect(!r.print_cmd);
+    const x = try parseOk(a, .run, &.{ "m.mojo", "--prefix", "/e" });
+    try std.testing.expect(!x.print_cmd);
+    try std.testing.expect(!x.os_given);
+    try std.testing.expectEqual(mojo_cmd.Os.host(), x.os);
 }
 
 test "options: usage errors" {
@@ -283,4 +307,6 @@ test "options: usage errors" {
     try parseUsage(a, .build, &.{ "a.mojo", "--prefix" }); // flag without value
     try parseUsage(a, .build, &.{ "a.mojo", "--os", "windows" });
     try parseUsage(a, .build, &.{ "a.mojo", "--frobnicate" });
+    try parseUsage(a, .run, &.{ "a.mojo", "--os", "linux" }); // --os without --print-cmd
+    try parseUsage(a, .repl, &.{"--os=macos"});
 }
