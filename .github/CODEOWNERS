@@ -1,0 +1,9 @@
+# PLACEHOLDER OWNER. Replace @CEO-GITHUB-HANDLE below with the CEO's GitHub handle (or a
+# team) BEFORE enabling "Require review from Code Owners" in branch protection; until then
+# these rules match no real user and nothing enforces them. See docs/security/public-deploy.md.
+
+/.github/           @CEO-GITHUB-HANDLE
+/service/           @CEO-GITHUB-HANDLE
+/docs/security/     @CEO-GITHUB-HANDLE
+/SECURITY.md        @CEO-GITHUB-HANDLE
+/.github/CODEOWNERS @CEO-GITHUB-HANDLE
