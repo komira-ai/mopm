@@ -9,6 +9,9 @@ import { Stage, stageConfig } from '../lib/config';
 export const DUMMY_ACCOUNT = '1'.repeat(12);
 export const DUMMY_ZONE_ID = 'Z0DUMMYZONE';
 
+/** A stand-in for the CI-built handler bundle, so tests synthesize without a build. */
+export const HANDLER_STUB_DIR = path.join(__dirname, 'fixtures/api-handler');
+
 export function build(stage: Stage): StageStacks {
   const app = new App();
   return createStageStacks(
@@ -17,7 +20,7 @@ export function build(stage: Stage): StageStacks {
     { account: DUMMY_ACCOUNT, region: 'us-east-1' },
     '1.2.3',
     'c0ffee',
-    path.join(__dirname, 'fixtures/api-handler'),
+    HANDLER_STUB_DIR,
   );
 }
 

@@ -77,7 +77,8 @@ export async function replay(c: Case, recipe: Recipe, router: Router): Promise<s
   if (!res.headers['x-mopm-request-id']) problems.push('missing x-mopm-request-id');
   const actual = JSON.parse(res.body);
   for (const k of recipe.extraKeys ?? []) delete actual[k];
-  const expected = structuredClone(c.response.body);
+  // A JSON round trip, not structuredClone: under jest the latter yields objects of another realm, which isDeepStrictEqual rejects.
+  const expected = JSON.parse(JSON.stringify(c.response.body));
   for (const k of recipe.omitExpected ?? []) delete expected[k];
   if (expected && 'next_cursor' in expected && typeof expected.next_cursor === 'string' && typeof actual.next_cursor === 'string') {
     actual.next_cursor = expected.next_cursor;
