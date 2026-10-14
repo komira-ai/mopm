@@ -1,0 +1,3 @@
+// Stand-in for the CI-built handler bundle (service/api/dist), so the stack tests synthesize without a build.
+// The real bundle is never committed.
+exports.handler = async () => ({ statusCode: 200, body: '{}' });

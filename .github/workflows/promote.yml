@@ -2,15 +2,28 @@ name: promote
 
 # beta deploy -> e2e -> gamma deploy -> e2e -> prod deploy -> prod smoke.
 # Every stage runs the same commit (the one this run was started on). A red e2e
-# blocks the next stage through needs:. The gamma and prod environments have
-# required reviewers, so those deploy jobs wait for approval. It runs only by hand
-# (workflow_dispatch) for now, and the called workflows refuse any ref but main.
-# The push trigger (branches: [main], paths: ['service/**']) returns once beta is live
-# and the CEO approves; until then a merge to main deploys nothing.
+# blocks the next stage through needs:. Deploys are fully automated by CEO decision:
+# no manual approvals; the e2e suites are the gates. A push to main that touches
+# service/** or the workflows used here starts a run; workflow_dispatch is the manual
+# re-run. The called workflows refuse any ref but main.
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'service/**'
+      - '.github/workflows/promote.yml'
+      - '.github/workflows/deploy.yml'
+      - '.github/workflows/e2e.yml'
   workflow_dispatch:
 
+# Each called job reads AWS_ACCOUNT_ID and AWS_REGION from its stage's environment
+# secrets. A reusable workflow only sees secrets its caller passes, so every call here
+# says `secrets: inherit` (GitHub docs: "Reusing workflows", and the workflow syntax
+# reference for jobs.<job_id>.secrets). The repository has no repository-level secrets.
+
+# One promotion at a time, so two pushes never deploy the same stage at once. Runs
+# queue (cancel-in-progress: false); GitHub keeps only the newest queued run.
 concurrency:
   group: promote
   cancel-in-progress: false
@@ -23,33 +36,39 @@ jobs:
     uses: ./.github/workflows/deploy.yml
     with: { stage: beta }
     permissions: { id-token: write, contents: read }
+    secrets: inherit
 
   beta-e2e:
     needs: beta-deploy
     uses: ./.github/workflows/e2e.yml
     with: { stage: beta, sha: "${{ needs.beta-deploy.outputs.deployed_sha }}" }
     permissions: { id-token: write, contents: read }
+    secrets: inherit
 
   gamma-deploy:
     needs: beta-e2e
     uses: ./.github/workflows/deploy.yml
     with: { stage: gamma }
     permissions: { id-token: write, contents: read }
+    secrets: inherit
 
   gamma-e2e:
     needs: gamma-deploy
     uses: ./.github/workflows/e2e.yml
     with: { stage: gamma, sha: "${{ needs.gamma-deploy.outputs.deployed_sha }}" }
     permissions: { id-token: write, contents: read }
+    secrets: inherit
 
   prod-deploy:
     needs: gamma-e2e
     uses: ./.github/workflows/deploy.yml
     with: { stage: prod }
     permissions: { id-token: write, contents: read }
+    secrets: inherit
 
   prod-smoke:
     needs: prod-deploy
     uses: ./.github/workflows/e2e.yml
     with: { stage: prod, sha: "${{ needs.prod-deploy.outputs.deployed_sha }}" }
     permissions: { id-token: write, contents: read }
+    secrets: inherit

@@ -68,6 +68,13 @@ jobs:
       - name: Install CDK dependencies
         working-directory: service/infra/stacks
         run: npm ci --ignore-scripts --no-audit --no-fund
+      # The API stack deploys this bundle (service/api compiled; the Node.js runtime provides AWS SDK v3).
+      - name: Build the API handler bundle
+        working-directory: service/api
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          test -f dist/http/lambda.js
       - name: Validate stage
         env:
           STAGE: ${{ inputs.stage }}

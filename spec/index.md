@@ -23,6 +23,13 @@ the index with a message that says to update mopm. `min_cli_version` is the
 oldest CLI the registry still supports; an older CLI says so and stops.
 `read_only: true` means the stage refuses new uploads; reading still works.
 
+`api_url` and `channel_url` are `https` URLs, with one exception: loopback
+`http` (`http://127.0.0.1:<port>`, `http://[::1]:<port>`,
+`http://localhost:<port>`, port 1-65535 required) is accepted for local and
+test registries only. `api_url` must end in `/api/v1`; `channel_url` is a base
+URL ending in `/` (a loopback channel may be served under any path, such as
+`/channel/`). Clients must refuse `http` for any non-loopback host.
+
 ### Path of a package
 
 For the normalised name `name`: `aa` is its first two characters; `bb` is its
