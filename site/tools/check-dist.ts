@@ -2,8 +2,11 @@
 //  - the pages the edge router and the error responses name exist (index, app, 404, docs);
 //  - every /assets/<id>/ reference in a page, and every relative import in a module, names a file that exists
 //    (a dangling one is a broken page after deploy, since assets are immutable and pages are not);
+//  - every '<' in a page starts a tag the scanner reads as the browser does (no comment, no '<' inside a tag, no
+//    unclosed tag), so nothing below can be skipped;
 //  - every <script> is empty and has a src under /assets/; no style attribute or element, no event-handler attribute,
-//    no javascript:, data: or vbscript: URL, read after entity decoding as a browser reads it (the CSP would block them);
+//    no javascript:, data: or vbscript: URL in any *href, src, action, formaction or data, read after entity decoding
+//    as a browser reads it (the CSP would block them);
 //  - only .html, .js and .css files (the bucket serves nothing else);
 //  - the JavaScript and CSS stay small: each module at most JS_MAX_BYTES, all of them at most JS_TOTAL_MAX_BYTES (tsc
 //    output is not minified; the edge compresses it), the stylesheet at most CSS_MAX_BYTES.
@@ -46,23 +49,90 @@ export class DistError extends Error {
   }
 }
 
+export type Tag = [string, [string, string][]];
+
+const WS = new Set(['\t', '\n', '\f', '\r', ' ']);
+const isAlpha = (c: string | undefined): boolean => c !== undefined && /^[a-zA-Z]$/.test(c);
+
 /**
- * Every start tag in a page with its attributes (lowercased names, raw values). Text and attribute values are escaped
- * by the serializer, so a '<' always starts a tag and a '"' always ends a value.
+ * Reads one start or end tag beginning at html[i] (a '<'), as the HTML tokenizer does: a '/' separates attributes; a
+ * name runs to whitespace, '/', '>' or '=' (and may start with '='); a quoted value runs to its quote, an unquoted
+ * one to whitespace or '>'. Returns the tag and the index after its '>', or null when the page ends first.
  */
-export function tagsIn(html: string): [string, [string, string][]][] {
-  const out: [string, [string, string][]][] = [];
-  for (const m of html.matchAll(/<([a-zA-Z][a-zA-Z0-9]*)((?:\s+[^\s=>"'\/]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>"']+))?)*)\s*\/?>/g)) {
-    const attrs = [...m[2].matchAll(/([^\s=>"'\/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+)))?/g)].map(
-      (a): [string, string] => [a[1].toLowerCase(), a[2] ?? a[3] ?? a[4] ?? ''],
-    );
-    out.push([m[1].toLowerCase(), attrs]);
+function readTag(html: string, i: number): { tag: Tag; end: number } | null {
+  let j = i + 1;
+  if (html[j] === '/') j++;
+  let name = '';
+  while (j < html.length && !WS.has(html[j]) && html[j] !== '/' && html[j] !== '>') name += html[j++];
+  const attrs: [string, string][] = [];
+  for (;;) {
+    while (j < html.length && (WS.has(html[j]) || html[j] === '/')) j++;
+    if (j >= html.length) return null;
+    if (html[j] === '>') return { tag: [name.toLowerCase(), attrs], end: j + 1 };
+    let attr = html[j++];
+    while (j < html.length && !WS.has(html[j]) && html[j] !== '/' && html[j] !== '>' && html[j] !== '=') attr += html[j++];
+    while (j < html.length && WS.has(html[j])) j++;
+    let value = '';
+    if (html[j] === '=') {
+      j++;
+      while (j < html.length && WS.has(html[j])) j++;
+      const q = html[j];
+      if (q === '"' || q === "'") {
+        const close = html.indexOf(q, j + 1);
+        if (close < 0) return null;
+        value = html.slice(j + 1, close);
+        j = close + 1;
+      } else {
+        while (j < html.length && !WS.has(html[j]) && html[j] !== '>') value += html[j++];
+      }
+    }
+    attrs.push([attr.toLowerCase(), value]);
   }
-  return out;
+}
+
+/**
+ * Every start tag in a page with its attributes (lowercased names, raw values, duplicates kept), and what the scanner
+ * could not read. It fails closed: the serializer escapes every '<' in text and attribute values, so in a page this
+ * site builds a '<' starts a start tag, an end tag or the leading doctype. Any other '<' (a comment, a '<' inside a
+ * tag), or a tag the page does not close, is a problem, so no markup the browser reads can hide from the checks.
+ */
+export function readTags(html: string): { tags: Tag[]; problems: string[] } {
+  const tags: Tag[] = [];
+  const problems: string[] = [];
+  const doctype = /^<!doctype html>/i.exec(html);
+  let i = doctype ? doctype[0].length : 0;
+  for (;;) {
+    const lt = html.indexOf('<', i);
+    if (lt < 0) break;
+    const isTag = isAlpha(html[lt + 1]) || (html[lt + 1] === '/' && isAlpha(html[lt + 2]));
+    if (!isTag) {
+      problems.push(`a '<' that does not start a tag, at offset ${lt}`);
+      i = lt + 1;
+      continue;
+    }
+    const r = readTag(html, lt);
+    if (r === null) {
+      problems.push(`a tag the page does not close, at offset ${lt}`);
+      break;
+    }
+    if (html.slice(lt + 1, r.end).includes('<')) problems.push(`a '<' inside a tag, at offset ${lt}`);
+    if (html[lt + 1] !== '/') tags.push(r.tag);
+    i = r.end;
+  }
+  return { tags, problems };
+}
+
+/** The start tags of a page (see readTags); throws when the page holds anything the scanner cannot read. */
+export function tagsIn(html: string): Tag[] {
+  const { tags, problems } = readTags(html);
+  if (problems.length > 0) throw new Error(problems.join('; '));
+  return tags;
 }
 
 const NAMED: Readonly<Record<string, string>> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", colon: ':', tab: '\t', newline: '\n' };
-const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction']);
+// Every *href (href, xlink:href) and the other attributes that take a URL a browser may navigate to or load.
+const URL_ATTRS = new Set(['src', 'action', 'formaction', 'data']);
+const isUrlAttr = (name: string): boolean => name.endsWith('href') || URL_ATTRS.has(name);
 
 /**
  * An attribute value as the browser reads it: character references decoded in one pass, or null when it holds a named
@@ -125,7 +195,9 @@ export function checkDist(dir: string): void {
       if (m[1] !== '') problems.push(`${f}: an inline <script>`);
     }
     if (/<style\b/i.test(text)) problems.push(`${f}: a <style> element`);
-    for (const [tag, attrs] of tagsIn(text)) {
+    const { tags, problems: unread } = readTags(text);
+    for (const p of unread) problems.push(`${f}: ${p}`);
+    for (const [tag, attrs] of tags) {
       if (tag === 'script') {
         const src = attrs.filter(([name]) => name === 'src');
         if (src.length !== 1 || !src[0][1].startsWith('/assets/')) problems.push(`${f}: a <script> without one src under /assets/`);
@@ -133,7 +205,7 @@ export function checkDist(dir: string): void {
       for (const [name, value] of attrs) {
         if (name === 'style') problems.push(`${f}: a style attribute on <${tag}>`);
         if (name.startsWith('on')) problems.push(`${f}: an event-handler attribute ${name} on <${tag}>`);
-        if (URL_ATTRS.has(name) && isScriptUrl(value)) problems.push(`${f}: a script URL (or an unknown character reference) in ${name} on <${tag}>`);
+        if (isUrlAttr(name) && isScriptUrl(value)) problems.push(`${f}: a script URL (or an unknown character reference) in ${name} on <${tag}>`);
         const asset = (name === 'href' || name === 'src') && /^\/(assets\/[^#?]+)/.exec(value);
         if (asset && !have.has(asset[1])) problems.push(`${f}: references /${asset[1]}, which is not in dist`);
       }

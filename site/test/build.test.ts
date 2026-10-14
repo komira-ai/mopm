@@ -4,7 +4,7 @@
 import { appendFileSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { assetId, moduleGraph } from '../tools/build';
-import { checkDist, CSS_MAX_BYTES, decodeAttr, DistError, isScriptUrl, JS_MAX_BYTES, JS_TOTAL_MAX_BYTES, REQUIRED } from '../tools/check-dist';
+import { checkDist, CSS_MAX_BYTES, decodeAttr, DistError, isScriptUrl, JS_MAX_BYTES, JS_TOTAL_MAX_BYTES, REQUIRED, tagsIn } from '../tools/check-dist';
 import { cleanup, type Fixture, fixture } from './build-fixture';
 
 const made: Fixture[] = [];
@@ -93,6 +93,29 @@ describe('assetId and moduleGraph', () => {
   });
 });
 
+describe('reading tags as a browser does', () => {
+  test('a slash separates attributes; an unquoted value runs to whitespace or >, slashes included', () => {
+    expect(tagsIn('<img/src=x/onerror=alert(1)>')).toEqual([['img', [['src', 'x/onerror=alert(1)']]]]);
+    expect(tagsIn('<a/href="/x"/title=t>')).toEqual([['a', [['href', '/x'], ['title', 't']]]]);
+  });
+
+  test('a name runs to whitespace, /, > or =, and may start with =; a quoted value needs no space after it', () => {
+    expect(tagsIn('<a x"=1 onclick="y">')).toEqual([['a', [['x"', '1'], ['onclick', 'y']]]]);
+    expect(tagsIn('<a =x title="a"href="/b">')).toEqual([['a', [['=x', ''], ['title', 'a'], ['href', '/b']]]]);
+    expect(tagsIn('<A HREF = \'/x\' >')).toEqual([['a', [['href', '/x']]]]);
+  });
+
+  test('end tags are read but not returned; text and the doctype are skipped', () => {
+    expect(tagsIn('<!doctype html><p class="a">x &lt; y</p>')).toEqual([['p', [['class', 'a']]]]);
+  });
+
+  test('a page the scanner cannot read throws', () => {
+    expect(() => tagsIn('<p>a <!-- b --></p>')).toThrow(/a '<' that does not start a tag/);
+    expect(() => tagsIn('<p title="<b>">')).toThrow(/a '<' inside a tag/);
+    expect(() => tagsIn('<p title="x')).toThrow(/a tag the page does not close/);
+  });
+});
+
 describe('reading attribute values as a browser does', () => {
   test('decodeAttr decodes numeric and the known named references in one pass', () => {
     expect(decodeAttr('java&#x73;cript&#58;x')).toBe('javascript:x');
@@ -167,11 +190,29 @@ describe('checkDist refuses', () => {
     ['an unknown named reference in a URL', '<a href="&nbsp;javascript:x">x</a>', /an unknown character reference/],
     ['a script URL in a form action', '<form action="javascript:x"></form>', /a script URL .*in action on <form>/],
     ['a script URL in a formaction', '<button formaction="javascript:x">x</button>', /a script URL .*in formaction on <button>/],
+    // A '/' separates attributes, and an attribute name may hold '"': the browser reads these tags, so the scanner must.
+    ['a script whose src follows a slash', '<script/src="https://evil.example/x.js"></script>', /a <script> without one src under \/assets\//],
+    ['an event handler after a slash', '<img/src=x onerror=alert(1)>', /event-handler attribute onerror on <img>/],
+    ['a script URL after a slash', '<a/href="javascript:alert(1)">x</a>', /a script URL .*in href on <a>/],
+    ['an event handler after a name holding a quote', '<a x"=1 onclick="alert(1)">x</a>', /event-handler attribute onclick on <a>/],
+    ['a script URL in xlink:href', '<svg><a xlink:href="javascript:x">x</a></svg>', /a script URL .*in xlink:href on <a>/],
+    ['a script URL in an object\'s data', '<object data="javascript:x"></object>', /a script URL .*in data on <object>/],
+    // A '<' that the scanner would read inside a quoted value, where the browser reads markup: a comment ends at the
+    // first '-->', and a title's text ends at '</title>', so the img below is a real element to the browser.
+    ['a comment hiding a tag in a quoted value', '<!-- <a title=" --><img src=x onerror=alert(1)>" -->', /a '<' that does not start a tag/],
+    ['raw text hiding a tag in a quoted value', '<textarea><a title="</textarea><img src=x onerror=alert(1)>"></textarea>', /a '<' inside a tag/],
+    ['a tag without its closing >', '<a href="/x" onclick="alert(1)"</main><p>', /a '<' inside a tag/],
   ])('%s in a page', (_what, markup, re) => {
     const { f } = built();
     const p = join(f.outDir, '404.html');
     writeFileSync(p, readFileSync(p, 'utf8').replace('</main>', `${markup}</main>`));
     expectRefusal(f, re);
+  });
+
+  test('a start tag cut off by the end of the page', () => {
+    const { f } = built();
+    appendFileSync(join(f.outDir, '404.html'), '<a href="/x" onclick="alert(1)"');
+    expectRefusal(f, /404\.html: a tag the page does not close/);
   });
 
   test('event-handler-looking text in a page is not a handler', () => {
