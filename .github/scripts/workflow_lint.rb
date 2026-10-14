@@ -106,7 +106,12 @@ if ARGV.empty?
            "gamma-e2e" => "e2e", "prod-deploy" => "deploy", "prod-smoke" => "e2e" }
   stage = { "beta-deploy" => "beta", "beta-e2e" => "beta", "gamma-deploy" => "gamma",
             "gamma-e2e" => "gamma", "prod-deploy" => "prod", "prod-smoke" => "prod" }
-  pj = YAML.safe_load(File.read(".github/workflows/promote.yml"), aliases: false)["jobs"]
+  pdoc = YAML.safe_load(File.read(".github/workflows/promote.yml"), aliases: false)
+  pon = pdoc["on"] || pdoc[true]
+  pon_keys = pon.is_a?(Hash) ? pon.keys : Array(pon)
+  # Manual only until beta is live and the CEO approves a push trigger; then change this and docs together.
+  fail_.("promote.yml: triggers must be exactly workflow_dispatch for now, got #{pon_keys.inspect}") if pon_keys != ["workflow_dispatch"]
+  pj = pdoc["jobs"]
   fail_.("promote.yml: jobs #{pj.keys.sort} differ from expected #{chain.keys.sort}") if pj.keys.sort != chain.keys.sort
   chain.each do |jn, prev|
     job = pj[jn] or next

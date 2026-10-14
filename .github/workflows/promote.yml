@@ -3,14 +3,13 @@ name: promote
 # beta deploy -> e2e -> gamma deploy -> e2e -> prod deploy -> prod smoke.
 # Every stage runs the same commit (the one this run was started on). A red e2e
 # blocks the next stage through needs:. The gamma and prod environments have
-# required reviewers, so those deploy jobs wait for approval. It runs on a push to
-# main that touches service/**, or by hand; the called workflows refuse any other ref.
+# required reviewers, so those deploy jobs wait for approval. It runs only by hand
+# (workflow_dispatch) for now, and the called workflows refuse any ref but main.
+# The push trigger (branches: [main], paths: ['service/**']) returns once beta is live
+# and the CEO approves; until then a merge to main deploys nothing.
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: ['service/**']
 
 concurrency:
   group: promote

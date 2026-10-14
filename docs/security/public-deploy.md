@@ -27,13 +27,13 @@ corresponding row as open.
 ## Settings only the repository owner can make
 
 Each row says what to set and the attack it closes. Settings 1 to 3 matter most: a push to
-`main` starts a beta deploy.
+`main` will start a beta deploy once the push trigger returns (today `promote.yml` is manual).
 
 | # | Setting (Settings page) | Value | Closes |
 |---|---|---|---|
 | 1 | Branches: ruleset or protection on `main` | Ruleset on `main`: restrict deletions; block force pushes; require a pull request with **0 required approvals** (our PRs are authored by the account that merges them, so an approval rule would block every merge; the human gate is the environment reviewers); require status checks by job name `hygiene`, `workflows`, `stacks`, `access` and the `ci` tests, with branches up to date | Direct pushes and unreviewed merges, which would deploy; weakening a check in the same change that needs it |
 | 2 | `.github/CODEOWNERS` | Set to `@asuresh8` for `/.github/` and `/service/` (also `/docs/security/`, `/SECURITY.md`). Code Owners review is not required in the ruleset (0 approvals) | Marks who owns workflows, trust policies and the lint scripts. The scripts under `.github/scripts/` run from the pull request's own head, so only the owner's review of what is merged protects them |
-| 3 | Environments: `beta`, `gamma`, `prod` | Deployment branches: selected branches, `main` only. Required reviewers on `gamma` and `prod` (and on `beta` if wanted); prevent self-review; disable administrator bypass. Environment **secrets**: `AWS_ACCOUNT_ID`, `AWS_REGION` (no role ARN is stored; workflows build `arn:aws:iam::<id>:role/mopm-<stage>-{deploy,e2e}`) | A run from another branch reading stage variables or presenting the stage environment; promoting to gamma or prod without a human |
+| 3 | Environments: `beta`, `gamma`, `prod` | Deployment branches: selected branches, `main` only. Required reviewers on all three: `beta`, `gamma` and `prod` (beta too, so no deploy touches AWS without a human); prevent self-review; disable administrator bypass. Environment **secrets**: `AWS_ACCOUNT_ID`, `AWS_REGION` (no role ARN is stored; workflows build `arn:aws:iam::<id>:role/mopm-<stage>-{deploy,e2e}`) | A run from another branch reading stage variables or presenting the stage environment; promoting to gamma or prod without a human |
 | 4 | Actions, General: fork pull request workflows | Require approval for all outside contributors (not only first-time); do not send write tokens or secrets to fork workflows | Fork pull requests spending minutes, or probing the runner, before a maintainer looks |
 | 5 | Actions, General: workflow permissions | Read repository contents only; do not allow GitHub Actions to create or approve pull requests (leave that box off) | A workflow approving or merging its own pull request; a token with write by default |
 | 6 | Actions, General: allowed actions | Allow actions created by GitHub only; require actions to be pinned to a full-length commit SHA | A third-party action, or a moved tag, running with credentials |
@@ -51,7 +51,7 @@ Each row says what to set and the attack it closes. Settings 1 to 3 matter most:
 3. Per stage, an administrator runs `service/infra/access/bootstrap.sh` with their own
    credentials (dry run first; see `service/infra/access/BOOTSTRAP.md`).
 4. Create the three environments (setting 3) and store the two secrets (`AWS_ACCOUNT_ID`, `AWS_REGION`) on each.
-5. Merge. The push to `main` runs `promote.yml`; `gamma` and `prod` wait for a reviewer.
+5. Merge. `promote.yml` runs only when started by hand on `main` (Actions, promote, Run workflow); each stage waits for a reviewer. A push trigger is added back once beta is live and the CEO approves.
 
 ## Known limits
 

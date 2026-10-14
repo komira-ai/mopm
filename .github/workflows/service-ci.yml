@@ -30,10 +30,9 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
-      - name: Install (lockfile if present)
-        run: |
-          if [ -f package-lock.json ]; then npm ci --ignore-scripts --no-audit --no-fund
-          else npm install --ignore-scripts --no-audit --no-fund; fi
+      # The same install deploy.yml runs; it fails if package-lock.json is missing or out of step with package.json.
+      - name: Install (npm ci, as in deploy.yml)
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run typecheck
       - run: npm test
       - name: Synth every stage with a dummy account and zone id
@@ -44,12 +43,6 @@ jobs:
           for stage in beta gamma prod; do
             npx cdk synth --quiet -c stage=$stage -c hostedZoneId=Z0DUMMYZONE -c version=ci -c commit=ci --output cdk.out/$stage
           done
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: stacks-package-lock
-          path: service/infra/stacks/package-lock.json
-          retention-days: 3
-          if-no-files-found: ignore
 
   access:
     runs-on: ubuntu-24.04
@@ -75,15 +68,8 @@ jobs:
           if ./bootstrap.sh --stage dev --account "$acct" --region r --profile p; then exit 1; fi
           if ./bootstrap.sh --stage beta --account 123 --region r --profile p; then exit 1; fi
           if ./bootstrap.sh --stage beta --account "$acct" --region r --profile p --repo other/repo; then exit 1; fi
-      - name: Install (lockfile if present)
-        run: |
-          if [ -f package-lock.json ]; then npm ci --ignore-scripts --no-audit --no-fund
-          else npm install --ignore-scripts --no-audit --no-fund; fi
+      # The same install deploy.yml runs; it fails if package-lock.json is missing or out of step with package.json.
+      - name: Install (npm ci, as in deploy.yml)
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npx tsc --noEmit
       - run: npx jest --ci
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: access-package-lock
-          path: service/infra/access/package-lock.json
-          retention-days: 3
-          if-no-files-found: ignore
