@@ -19,13 +19,22 @@ function page(at: { pathname: string; search?: string; hash?: string }, opts: { 
     replaced: [] as string[],
     listeners: [] as Listener[],
   };
-  const inside = {};
+  // Focus as a browser keeps it: the active element is <body>, <main> or a node inside <main>. A focused node that
+  // replaceChildren removes is no longer active, and focus falls back to <body>.
+  const body = { tag: 'body' };
+  const focusedChild = sdoc.el('button') as SNode; // the old view's Retry button
+  if (opts.focusInside) rec.children = [focusedChild];
+  let active: unknown = opts.focusInside ? focusedChild : body;
   const main: MainElement<SNode> = {
-    contains: (n) => n === inside,
+    contains: (n) => n === main || rec.children.includes(n as SNode),
     replaceChildren: (...nodes) => {
       rec.children = nodes;
+      if (active !== main && !nodes.includes(active as SNode)) active = body;
     },
-    focus: (o) => void rec.focused.push(o),
+    focus: (o) => {
+      rec.focused.push(o);
+      active = main;
+    },
     // The view's Retry button, when the nodes hold one.
     querySelector: () =>
       serialize(rec.children).includes('<button type="button" class="button retry">')
@@ -36,7 +45,7 @@ function page(at: { pathname: string; search?: string; hash?: string }, opts: { 
   const t: MountTarget<SNode> = {
     main,
     headerQ,
-    activeElement: () => (opts.focusInside ? inside : {}),
+    activeElement: () => active,
     setTitle: (s) => void rec.titles.push(s),
     hasRobotsMeta: () => opts.robots === true,
     addNoindex: () => void rec.noindexAdded++,
@@ -59,8 +68,11 @@ describe('mount', () => {
 
   test('focus inside <main> stays on <main>; focus elsewhere is left alone', () => {
     const inside = page({ pathname: '/x' }, { focusInside: true });
+    expect(inside.t.main.contains(inside.t.activeElement())).toBe(true);
     mount(inside.t, view(), () => undefined);
     expect(inside.rec.focused).toEqual([{ preventScroll: true }]);
+    // The focused Retry button is gone with the old view; focus is on <main>, not fallen back to <body>.
+    expect(inside.t.activeElement()).toBe(inside.t.main);
     const outside = page({ pathname: '/x' });
     mount(outside.t, view(), () => undefined);
     expect(outside.rec.focused).toEqual([]);
