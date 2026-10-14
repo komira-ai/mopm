@@ -2,6 +2,7 @@
 // name, no latest release, a latest mopm cannot name, an unknown state, a hostile readme or repository URL). Every
 // value is shown as text; only checked URLs become links; the state of a version is words, not only a class.
 import { packageView, README_MAX_BYTES } from '../src/views/package';
+import { PLANNED, WORKING_TODAY } from '../tools/pages';
 import { hrefs, html, packageFixture, sdoc, text, uniqueIds } from './view-helpers';
 
 const CTX = { host: 'mopm.dev' };
@@ -26,8 +27,12 @@ describe('an active package (fixture: package info)', () => {
     expect(out).toContain('<p class="snippet-label" id="snippet-pixi">pixi, in a project that lists the channel</p><pre tabindex="0" role="region" aria-labelledby="snippet-pixi">');
   });
 
-  test('the page says registry installs through mopm are planned', () => {
-    expect(text(out)).toContain('fetching registry packages (mopm add, mopm sync) is planned');
+  // The note names only commands README.md says work today or src/cli/main.zig still plans (layout.test.ts pins
+  // PLANNED to main.zig), so a command the CLI has since implemented is never called planned here.
+  test('the install note says mopm add is planned, and names no other command as planned', () => {
+    expect(text(out)).toContain('mopm metadata checks this table today; mopm add is planned.');
+    const named = [...text(out).matchAll(/\bmopm ([a-z-]+)/g)].map((m) => m[1]);
+    for (const cmd of named) expect([...WORKING_TODAY, ...PLANNED]).toContain(cmd);
   });
 
   test('the versions table has a caption, column headers and the state as text', () => {

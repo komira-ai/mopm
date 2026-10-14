@@ -5,8 +5,8 @@
 // '1.0rc1' and a part over 2^64-1 get no line (manifestRefusal says which). A bare version is a caret requirement, so
 // the package page writes the latest version as published (its lower bound is kept). A version page pins it with '='
 // on all three parts: semver.zig compares only the parts a comparator has, so '=1.2' would match every 1.2.x, while
-// '=1.2.0' names the one version (the registry's '1.2' is conda-equal to '1.2.0'). mopm does not fetch registry
-// dependencies yet ('mopm add' and 'mopm sync' are planned), so the page says so next to the line. The conda channel
+// '=1.2.0' names the one version (the registry's '1.2' is conda-equal to '1.2.0'). 'mopm add' is planned (src/cli/main.zig), so the page
+// says so next to the line. The conda channel
 // works for any conda client today (spec/channel.md): the package is 'mojo-<name>' there.
 
 import { isCanonicalName } from './routes.js';

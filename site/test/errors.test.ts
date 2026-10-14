@@ -47,6 +47,7 @@ const EXPECTED: Record<string, ErrorKind> = {
   upload_used: 'invalid',
   invitation_expired: 'invalid',
   payload_too_large: 'invalid',
+  limit_exceeded: 'invalid',
 };
 
 const cases = validErrorCases();

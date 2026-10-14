@@ -196,7 +196,7 @@ describe('the home page says what the repository says', () => {
     const used = [...code.matchAll(/(?:^|\n|`)mopm ([a-z-]+)/g)].map((m) => m[1]);
     expect(used.length).toBeGreaterThan(5);
     for (const cmd of used) {
-      if (!WORKING_TODAY.includes(cmd)) expect(['add', 'sync', 'cov']).toContain(cmd); // named only as planned
+      if (!WORKING_TODAY.includes(cmd)) expect(PLANNED).toContain(cmd); // named only as planned, and main.zig still plans it
     }
     // In the command blocks (the build and the quickstart), every mopm line is a working command.
     const blocks = [...read('index.html').matchAll(/<pre[^>]*><code>([^<]*)<\/code><\/pre>/g)].map((m) => textOf(m[1]));

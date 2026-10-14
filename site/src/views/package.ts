@@ -106,7 +106,7 @@ export function installSection<N>(
     doc.append(section, snippetBlock(doc, 'mopm.toml', manifest, 'snippet-manifest'));
     doc.append(
       section,
-      h(doc, 'p', { class: 'muted small' }, h(doc, 'code', null, 'mopm metadata'), ' checks this table today; fetching registry packages (', h(doc, 'code', null, 'mopm add'), ', ', h(doc, 'code', null, 'mopm sync'), ') is planned.'),
+      h(doc, 'p', { class: 'muted small' }, h(doc, 'code', null, 'mopm metadata'), ' checks this table today; ', h(doc, 'code', null, 'mopm add'), ' is planned.'),
     );
   } else if (noManifestWhy !== null) {
     doc.append(section, h(doc, 'p', { class: 'muted' }, noManifestWhy));

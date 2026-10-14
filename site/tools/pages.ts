@@ -20,7 +20,7 @@ export const OPENING_SENTENCE =
 export const WORKING_TODAY = ['--version', 'link-plan', 'metadata', 'new', 'init', 'build', 'run', 'repl', 'test'];
 
 /** The `planned` array of src/cli/main.zig, in its order. */
-export const PLANNED = ['add', 'remove', 'lock', 'sync', 'cov', 'tree', 'check', 'publish', 'export', 'launch'];
+export const PLANNED = ['add', 'remove', 'cov', 'check', 'export', 'launch'];
 
 /** The commands that work in a package `mopm new` has just made (tests/new/lib holds what it makes). */
 export const QUICKSTART = [
@@ -127,7 +127,7 @@ export function homePage(): PageSpec {
       link(`${REPO_URL}/blob/main/spec/channel.md`, 'the channel spec'),
       ').',
     ),
-    h(doc, 'p', null, 'mopm’s own ', code('mopm add'), ' and ', code('mopm sync'), ' are planned.'),
+    h(doc, 'p', null, 'mopm’s own ', code('mopm add'), ' is planned.'),
   );
 
   const install = section(
