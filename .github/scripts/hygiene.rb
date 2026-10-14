@@ -1,4 +1,5 @@
 # Public-repo hygiene. Run from the repository root: ruby .github/scripts/hygiene.rb
+# With path arguments, scans only those files (used by tests/lint/run.rb).
 # Scans every tracked text file. There is no allow-list: a test that needs an account id
 # must build it at runtime. Patterns use bracket tricks so this file does not match itself.
 require "yaml"
@@ -19,7 +20,7 @@ text_rules = {
 }
 account_id = /(?<![0-9A-Za-z])[0-9]{12}(?![0-9A-Za-z])/
 
-files = `git ls-files -z`.split("\0")
+files = ARGV.empty? ? `git ls-files -z`.split("\0") : ARGV
 files.each do |f|
   next unless File.file?(f)
   data = File.binread(f)
@@ -40,7 +41,7 @@ find_key = lambda do |node, key|
   else false
   end
 end
-Dir[".github/workflows/*.{yml,yaml}"].sort.each do |f|
+(ARGV.empty? ? Dir[".github/workflows/*.{yml,yaml}"].sort : ARGV.grep(/\.ya?ml\z/)).each do |f|
   base = File.basename(f)
   doc = YAML.safe_load(File.read(f), aliases: false)
   on = doc["on"] || doc[true] || {}

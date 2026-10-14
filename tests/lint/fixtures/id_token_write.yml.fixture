@@ -1,0 +1,12 @@
+name: fixture
+on: [push]
+permissions:
+  contents: read
+jobs:
+  j:
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - run: echo hello

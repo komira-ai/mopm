@@ -1,4 +1,5 @@
 # Structural lint for .github/workflows. Run from the repository root.
+# With path arguments, only the per-file checks run on those files (used by tests/lint/run.rb).
 require "yaml"
 require "tmpdir"
 
@@ -43,7 +44,7 @@ each_perm = lambda do |node, path, &blk|
   end
 end
 
-Dir[".github/workflows/*.{yml,yaml}"].sort.each do |f|
+(ARGV.empty? ? Dir[".github/workflows/*.{yml,yaml}"].sort : ARGV).each do |f|
   base = File.basename(f)
   doc = YAML.safe_load(File.read(f), aliases: false)
   jobs = doc["jobs"] || {}
@@ -97,47 +98,50 @@ Dir[".github/workflows/*.{yml,yaml}"].sort.each do |f|
   end
 end
 
-# promote.yml: beta deploy, e2e, gamma deploy, e2e, prod deploy, prod smoke; each needs the one before.
-chain = { "beta-deploy" => nil, "beta-e2e" => "beta-deploy", "gamma-deploy" => "beta-e2e",
-          "gamma-e2e" => "gamma-deploy", "prod-deploy" => "gamma-e2e", "prod-smoke" => "prod-deploy" }
-uses = { "beta-deploy" => "deploy", "beta-e2e" => "e2e", "gamma-deploy" => "deploy",
-         "gamma-e2e" => "e2e", "prod-deploy" => "deploy", "prod-smoke" => "e2e" }
-stage = { "beta-deploy" => "beta", "beta-e2e" => "beta", "gamma-deploy" => "gamma",
-          "gamma-e2e" => "gamma", "prod-deploy" => "prod", "prod-smoke" => "prod" }
-pj = YAML.safe_load(File.read(".github/workflows/promote.yml"), aliases: false)["jobs"]
-fail_.("promote.yml: jobs #{pj.keys.sort} differ from expected #{chain.keys.sort}") if pj.keys.sort != chain.keys.sort
-chain.each do |jn, prev|
-  job = pj[jn] or next
-  need = Array(job["needs"])
-  fail_.("promote.yml: #{jn} needs #{need.inspect}, expected #{Array(prev).inspect}") if need != Array(prev)
-  fail_.("promote.yml: #{jn} must call ./.github/workflows/#{uses[jn]}.yml") if job["uses"] != "./.github/workflows/#{uses[jn]}.yml"
-  fail_.("promote.yml: #{jn} must target stage #{stage[jn]}") if (job["with"] || {})["stage"] != stage[jn]
-end
-pj.each do |jn, job|
-  %w[if continue-on-error].each { |k| fail_.("promote.yml: #{jn} must not set #{k}") if job.key?(k) }
-end
-
-# deploy.yml and e2e.yml: the guard job gates the credential job.
-%w[deploy e2e].each do |w|
-  jobs = YAML.safe_load(File.read(".github/workflows/#{w}.yml"), aliases: false)["jobs"]
-  cred = jobs.select { |_, j| j.dig("permissions", "id-token") == "write" }
-  fail_.("#{w}.yml: expected exactly one job with id-token") unless cred.size == 1
-  cred.each do |jn, j|
-    fail_.("#{w}.yml: #{jn} must need the guard job") unless Array(j["needs"]).include?("guard")
-    fail_.("#{w}.yml: #{jn} must declare an environment") unless j["environment"]
+if ARGV.empty?
+  # promote.yml: beta deploy, e2e, gamma deploy, e2e, prod deploy, prod smoke; each needs the one before.
+  chain = { "beta-deploy" => nil, "beta-e2e" => "beta-deploy", "gamma-deploy" => "beta-e2e",
+            "gamma-e2e" => "gamma-deploy", "prod-deploy" => "gamma-e2e", "prod-smoke" => "prod-deploy" }
+  uses = { "beta-deploy" => "deploy", "beta-e2e" => "e2e", "gamma-deploy" => "deploy",
+           "gamma-e2e" => "e2e", "prod-deploy" => "deploy", "prod-smoke" => "e2e" }
+  stage = { "beta-deploy" => "beta", "beta-e2e" => "beta", "gamma-deploy" => "gamma",
+            "gamma-e2e" => "gamma", "prod-deploy" => "prod", "prod-smoke" => "prod" }
+  pj = YAML.safe_load(File.read(".github/workflows/promote.yml"), aliases: false)["jobs"]
+  fail_.("promote.yml: jobs #{pj.keys.sort} differ from expected #{chain.keys.sort}") if pj.keys.sort != chain.keys.sort
+  chain.each do |jn, prev|
+    job = pj[jn] or next
+    need = Array(job["needs"])
+    fail_.("promote.yml: #{jn} needs #{need.inspect}, expected #{Array(prev).inspect}") if need != Array(prev)
+    fail_.("promote.yml: #{jn} must call ./.github/workflows/#{uses[jn]}.yml") if job["uses"] != "./.github/workflows/#{uses[jn]}.yml"
+    fail_.("promote.yml: #{jn} must target stage #{stage[jn]}") if (job["with"] || {})["stage"] != stage[jn]
   end
-end
+  pj.each do |jn, job|
+    %w[if continue-on-error].each { |k| fail_.("promote.yml: #{jn} must not set #{k}") if job.key?(k) }
+  end
 
-# oidc-subject-check.yml: manual, main only, no environment except beta, no AWS.
-sc = YAML.safe_load(File.read(".github/workflows/oidc-subject-check.yml"), aliases: false)
-scon = sc["on"] || sc[true]
-fail_.("oidc-subject-check.yml: only workflow_dispatch is allowed") unless scon.is_a?(Hash) && scon.keys == ["workflow_dispatch"]
-sc["jobs"].each do |jn, j|
-  next unless j.dig("permissions", "id-token") == "write"
-  fail_.("oidc-subject-check.yml: #{jn} must need the guard job") unless Array(j["needs"]).include?("guard")
-  fail_.("oidc-subject-check.yml: #{jn} must not use environment #{j['environment'].inspect}") unless j["environment"].nil? || j["environment"] == "beta"
-  fail_.("oidc-subject-check.yml: #{jn} must grant exactly id-token and contents read") unless j["permissions"] == { "id-token" => "write", "contents" => "read" }
+  # deploy.yml and e2e.yml: the guard job gates the credential job.
+  %w[deploy e2e].each do |w|
+    jobs = YAML.safe_load(File.read(".github/workflows/#{w}.yml"), aliases: false)["jobs"]
+    cred = jobs.select { |_, j| j.dig("permissions", "id-token") == "write" }
+    fail_.("#{w}.yml: expected exactly one job with id-token") unless cred.size == 1
+    cred.each do |jn, j|
+      fail_.("#{w}.yml: #{jn} must need the guard job") unless Array(j["needs"]).include?("guard")
+      fail_.("#{w}.yml: #{jn} must declare an environment") unless j["environment"]
+    end
+  end
+
+  # oidc-subject-check.yml: manual, main only, no environment except beta, no AWS.
+  sc = YAML.safe_load(File.read(".github/workflows/oidc-subject-check.yml"), aliases: false)
+  scon = sc["on"] || sc[true]
+  fail_.("oidc-subject-check.yml: only workflow_dispatch is allowed") unless scon.is_a?(Hash) && scon.keys == ["workflow_dispatch"]
+  sc["jobs"].each do |jn, j|
+    next unless j.dig("permissions", "id-token") == "write"
+    fail_.("oidc-subject-check.yml: #{jn} must need the guard job") unless Array(j["needs"]).include?("guard")
+    fail_.("oidc-subject-check.yml: #{jn} must not use environment #{j['environment'].inspect}") unless j["environment"].nil? || j["environment"] == "beta"
+    fail_.("oidc-subject-check.yml: #{jn} must grant exactly id-token and contents read") unless j["permissions"] == { "id-token" => "write", "contents" => "read" }
+  end
+  fail_.("oidc-subject-check.yml: needs one job without an environment and one in beta") unless sc["jobs"].values.map { |j| j["environment"] }.compact.sort == ["beta"] && sc["jobs"].values.any? { |j| j.dig("permissions", "id-token") == "write" && j["environment"].nil? }
+
 end
-fail_.("oidc-subject-check.yml: needs one job without an environment and one in beta") unless sc["jobs"].values.map { |j| j["environment"] }.compact.sort == ["beta"] && sc["jobs"].values.any? { |j| j.dig("permissions", "id-token") == "write" && j["environment"].nil? }
 
 exit(bad.zero? ? 0 : 1)
