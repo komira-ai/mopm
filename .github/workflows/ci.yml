@@ -129,3 +129,22 @@ jobs:
       - name: mopm test --retries, --deny-flaky and filters on deterministic flaky fixtures
         if: ${{ !cancelled() }}
         run: tests/e2e/test_flaky.sh ./zig-out/bin/mopm "$RUNNER_TEMP/mojo-env/.pixi/envs/default" "$RUNNER_TEMP/test-flaky"
+
+  registry-e2e:
+    name: registry e2e (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Build the CLI and the fake registry
+        run: zig build
+      - name: mopm login, logout and whoami against the fake registry
+        run: python3 -I tests/registry_e2e/run.py ./zig-out/bin/mopm ./zig-out/bin/mopm-fake-registry

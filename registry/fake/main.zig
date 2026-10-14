@@ -2,7 +2,7 @@
 //! contract in spec/ (api/openapi.yaml, channel.md, index.md) from memory and a
 //! directory, so that the CLI can be tested without the real service.
 //!
-//!   mopm-fake-registry --dir <dir> [--port <n>] [--stage beta|gamma|prod]
+//!   mopm-fake-registry --dir <dir> [--port <n>] [--stage beta|gamma|prod] [--poll-interval <secs>]
 //!
 //! It listens on 127.0.0.1 (port 0 picks a free one) and prints
 //! `mopm-fake-registry listening on http://127.0.0.1:<port>` as its first line.
@@ -15,7 +15,7 @@ const resp = @import("resp.zig");
 const State = @import("state.zig").State;
 const files = @import("files.zig");
 
-const usage = "usage: mopm-fake-registry --dir <dir> [--port <n>] [--stage beta|gamma|prod]\n";
+const usage = "usage: mopm-fake-registry --dir <dir> [--port <n>] [--stage beta|gamma|prod] [--poll-interval <secs>]\n";
 
 pub fn main() !void {
     var gpa_state = std.heap.GeneralPurposeAllocator(.{}){};
@@ -28,6 +28,7 @@ pub fn main() !void {
     var port: u16 = 0;
     var dir_path: ?[]const u8 = null;
     var stage: []const u8 = "beta";
+    var poll_secs: i64 = @import("state.zig").poll_interval;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const a = args[i];
@@ -36,6 +37,9 @@ pub fn main() !void {
             port = std.fmt.parseInt(u16, args[i + 1], 10) catch return fatal(usage);
         } else if (std.mem.eql(u8, a, "--dir")) {
             dir_path = args[i + 1];
+        } else if (std.mem.eql(u8, a, "--poll-interval")) {
+            poll_secs = std.fmt.parseInt(i64, args[i + 1], 10) catch return fatal(usage);
+            if (poll_secs < 1) return fatal(usage);
         } else if (std.mem.eql(u8, a, "--stage")) {
             stage = args[i + 1];
             if (!std.mem.eql(u8, stage, "beta") and !std.mem.eql(u8, stage, "gamma") and !std.mem.eql(u8, stage, "prod")) {
@@ -56,6 +60,7 @@ pub fn main() !void {
         .base_url = try std.fmt.allocPrint(alloc, "http://127.0.0.1:{d}", .{server.listen_address.getPort()}),
         .stage = stage,
         .dir = root,
+        .poll_secs = poll_secs,
     };
     try files.rewrite(alloc, &state);
     const out = std.io.getStdOut().writer();

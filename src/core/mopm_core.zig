@@ -17,6 +17,9 @@ pub const autolink = @import("autolink.zig");
 pub const test_proc = @import("test_proc.zig");
 pub const test_report = @import("test_report.zig");
 pub const test_filter = @import("test_filter.zig");
+pub const http = @import("http.zig");
+pub const registry = @import("registry.zig");
+pub const credentials = @import("credentials.zig");
 
 test {
     _ = @import("metadata.zig");
@@ -33,4 +36,7 @@ test {
     _ = @import("test_proc.zig");
     _ = @import("test_report.zig");
     _ = @import("test_filter.zig");
+    _ = @import("http.zig");
+    _ = @import("registry.zig");
+    _ = @import("credentials.zig");
 }
