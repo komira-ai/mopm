@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import fc from 'fast-check';
+import { DEFAULT_LIMITS } from '../../src/validate/limits';
 import { validatePackage, RULE_TO_REJECTION } from '../../src/validate';
 import type { PublishExpectation, RejectionCode, RuleCode, ValidatorOptions, Verdict } from '../../src/validate';
 import { METADATA_SCHEMA_VERSION, NATIVE_KINDS, NATIVE_MODES, SONAME_PATTERN } from '../../src/validate/metadata';
@@ -132,6 +133,20 @@ describe('what the publisher declared', () => {
 });
 
 describe('size caps', () => {
+  test('the default caps are pinned', () => {
+    const msg = 'CEO decision 2026-10-14: a package is at most 100 MB; change only with a CEO decision';
+    expect([msg, DEFAULT_LIMITS.maxArchiveBytes]).toEqual([msg, 100_000_000]);
+    expect([msg, DEFAULT_LIMITS.maxUnpackedBytes]).toEqual([msg, 512 * 1024 * 1024]);
+    expect(DEFAULT_LIMITS.maxFileBytes).toBeLessThanOrEqual(DEFAULT_LIMITS.maxUnpackedBytes);
+  });
+  test('at the default cap: 100,000,000 bytes is not refused for size, 100,000,001 is', () => {
+    const big = Buffer.alloc(100_000_001);
+    const exp = { name: 'demo', version: '1.0.0', subdir: 'noarch', filename: 'mojo-demo-1.0.0-mojo1.0.0_0.conda' };
+    const at = validatePackage(big.subarray(0, 100_000_000), exp, {});
+    if (!at.ok) expect(at.rule).not.toBe('archive_too_large');
+    const over = validatePackage(big, exp, {});
+    refused(over, 'archive_too_large', 'limit_exceeded');
+  });
   test('archive size', () => {
     const b = buildConda();
     refused(check(b, {}, { limits: { maxArchiveBytes: b.bytes.length - 1 } }), 'archive_too_large');

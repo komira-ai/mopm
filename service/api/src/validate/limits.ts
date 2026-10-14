@@ -1,6 +1,6 @@
 /** Size and shape caps. All are enforced while reading, so a hostile archive cannot make us allocate past them. */
 export interface Limits {
-  /** Bytes of the uploaded archive (the contract allows 50 MiB). */
+  /** Bytes of the uploaded archive (CEO decision 2026-10-14: a package is at most 100 MB, decimal). */
   maxArchiveBytes: number;
   /** Bytes of any one unpacked file. */
   maxFileBytes: number;
@@ -17,9 +17,9 @@ export interface Limits {
 }
 
 export const DEFAULT_LIMITS: Limits = {
-  maxArchiveBytes: 50 * 1024 * 1024,
+  maxArchiveBytes: 100_000_000,
   maxFileBytes: 128 * 1024 * 1024,
-  maxUnpackedBytes: 200 * 1024 * 1024,
+  maxUnpackedBytes: 512 * 1024 * 1024,
   maxFiles: 2000,
   maxRatio: 200,
   ratioFloorBytes: 1024 * 1024,

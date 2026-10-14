@@ -6,7 +6,7 @@ import type { Limits } from './limits';
  * A strict reader for the outer zip of a .conda. It reads the central directory, cross-checks every
  * local header against it, refuses overlapping entries (the "quine" zip bomb), encryption, zip64,
  * multi-disk archives and any method but stored and deflate, and checks the CRC-32 of what it returns.
- * A .conda is at most 50 MiB, so zip64 is never needed.
+ * A .conda is at most 100 MB, so zip64 is never needed.
  */
 export interface ZipEntry {
   name: string;
