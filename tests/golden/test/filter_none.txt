@@ -1,0 +1,10 @@
+tests/e2e/flaky/tests/sub/test_more.mojo::test_alpha_one
+tests/e2e/flaky/tests/sub/test_more.mojo::test_gamma
+tests/e2e/flaky/tests/test_flaky.mojo::test_steady
+tests/e2e/flaky/tests/test_flaky.mojo::test_fails_once
+tests/e2e/flaky/tests/test_flaky.mojo::test_crashes_once
+tests/e2e/flaky/tests/test_flaky.mojo::test_fails_twice
+tests/e2e/flaky/tests/test_flaky.mojo::test_always_fails
+tests/e2e/flaky/tests/test_names.mojo::test_alpha_one
+tests/e2e/flaky/tests/test_names.mojo::test_alpha_two
+tests/e2e/flaky/tests/test_names.mojo::test_beta

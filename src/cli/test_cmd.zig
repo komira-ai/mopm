@@ -16,13 +16,21 @@
 //!       each test runs as `<binary> --only <name>` through
 //!       core/test_proc.zig (own process group, deadline, memory cap), its
 //!       output in target/mopm/test/<hash>/<name>.{stdout,stderr}.
+//!       With --retries N a test that did not pass runs again, up to N
+//!       more times (attempt k > 1 writes <name>.attempt<k>.{stdout,stderr});
+//!       one that failed and then passed is FLAKY (core/test_report.zig).
 //!   mopm test --list [--check] [<path>...]
-//!       Only list: `<file>::<test>` per line. --check also builds and
-//!       compares the `--skip-all` listing (PR #39).
+//!       Only list: `<file>::<test>` per line, the tests a run would run.
+//!       --check also builds and compares the `--skip-all` listing.
 //!
-//! Exit status: 0 every test passed; 1 a test did not pass (FAIL, CRASH,
-//! TIMEOUT, OOM); 2 a usage error, a discovery error, a listing that differs
-//! from the scan, a file that did not build, or no tests at all (unless
+//! Selection (core/test_filter.zig): the patterns after `--`, --skip,
+//! --exact; tests marked `# mopm: ignore` are SKIP unless --ignored (only
+//! them) or --include-ignored (all). Only files with a test to run build.
+//!
+//! Exit status: 0 every test that ran passed (FLAKY included, unless
+//! --deny-flaky); 1 a test did not pass (FAIL, CRASH, TIMEOUT, OOM, or
+//! FLAKY with --deny-flaky); 2 a usage error, a discovery error, a listing that differs
+//! from the scan, a file that did not build, or no test to run (unless
 //! --allow-empty); 5 a mopm or toolchain problem: no usable environment, a
 //! `--skip-all` listing mopm cannot read, or a test whose process group
 //! outlived it. The highest applicable status wins.
@@ -35,12 +43,16 @@ const test_proc = core.test_proc;
 const report = core.test_report;
 const autolink = core.autolink;
 const mojo_cmd = core.mojo_cmd;
+const test_filter = core.test_filter;
 
 const usage =
     \\usage: mopm test [<path>...] [--prefix <dir>] [--timeout <seconds>]
     \\                 [--memory <MiB>] [--opt-level <0-3>] [--format human|json]
     \\                 [--junit <file>] [--allow-empty] [--strict-discovery]
-    \\       mopm test --list [--check [--strict-discovery] [--prefix <dir>]] [<path>...]
+    \\                 [--retries <n>] [--deny-flaky] [<selection>] [-- <pattern>...]
+    \\       mopm test --list [--check [--strict-discovery] [--prefix <dir>]]
+    \\                 [<selection>] [<path>...] [-- <pattern>...]
+    \\  <selection>: [--skip <pattern>]... [--exact] [--ignored | --include-ignored]
     \\
 ;
 
@@ -58,11 +70,18 @@ const Opts = struct {
     format: ?Format = null,
     junit: ?[]const u8 = null,
     allow_empty: bool = false,
+    retries: ?u32 = null,
+    deny_flaky: bool = false,
+    /// After `--`: a test runs when one of them selects it (core/test_filter.zig).
+    patterns: std.ArrayList([]const u8),
+    skips: std.ArrayList([]const u8),
+    exact: bool = false,
+    ignored: test_filter.Ignored = .skip,
     /// Test-only (the supervisor self-test): never kill the process group.
     no_group_kill: bool = false,
 
     fn runOnly(o: Opts) bool {
-        return o.timeout_s != null or o.memory_mib != null or o.format != null or o.junit != null or o.allow_empty or o.no_group_kill;
+        return o.timeout_s != null or o.memory_mib != null or o.format != null or o.junit != null or o.allow_empty or o.no_group_kill or o.retries != null or o.deny_flaky;
     }
 };
 
@@ -99,11 +118,39 @@ fn optValue(args: []const []const u8, i: *usize, name: []const u8) ?[]const u8 {
 const Parsed = union(enum) { ok: Opts, usage: []const u8 };
 
 fn parse(arena: std.mem.Allocator, args: []const []const u8) !Parsed {
-    var o = Opts{ .paths = std.ArrayList([]const u8).init(arena) };
+    var o = Opts{
+        .paths = std.ArrayList([]const u8).init(arena),
+        .patterns = std.ArrayList([]const u8).init(arena),
+        .skips = std.ArrayList([]const u8).init(arena),
+    };
+    var ignored_flag: ?[]const u8 = null;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const a = args[i];
-        if (std.mem.eql(u8, a, "--list")) {
+        if (std.mem.eql(u8, a, "--")) {
+            for (args[i + 1 ..]) |p| {
+                if (p.len == 0) return .{ .usage = "an empty pattern after --" };
+                try o.patterns.append(p);
+            }
+            break;
+        } else if (std.mem.eql(u8, a, "--exact")) {
+            o.exact = true;
+        } else if (std.mem.eql(u8, a, "--ignored") or std.mem.eql(u8, a, "--include-ignored")) {
+            if (ignored_flag) |prev| {
+                if (!std.mem.eql(u8, prev, a)) return .{ .usage = "--ignored (only the ignored tests) and --include-ignored (all tests) exclude each other" };
+            }
+            ignored_flag = a;
+            o.ignored = if (std.mem.eql(u8, a, "--ignored")) .only else .include;
+        } else if (std.mem.eql(u8, a, "--deny-flaky")) {
+            o.deny_flaky = true;
+        } else if (optValue(args, &i, "--skip")) |v| {
+            if (v.len == 0) return .{ .usage = "--skip needs a pattern" };
+            try o.skips.append(v);
+        } else if (optValue(args, &i, "--retries")) |v| {
+            const n = std.fmt.parseInt(u32, v, 10) catch 1000;
+            if (n > 100) return .{ .usage = try std.fmt.allocPrint(arena, "--retries takes 0 to 100, not '{s}'", .{v}) };
+            o.retries = n;
+        } else if (std.mem.eql(u8, a, "--list")) {
             o.list = true;
         } else if (std.mem.eql(u8, a, "--check")) {
             o.check = true;
@@ -140,12 +187,13 @@ fn parse(arena: std.mem.Allocator, args: []const []const u8) !Parsed {
         }
     }
     if (o.list) {
-        if (o.runOnly()) return .{ .usage = "--timeout, --memory, --format, --junit and --allow-empty apply only when running tests, not with --list" };
+        if (o.runOnly()) return .{ .usage = "--timeout, --memory, --format, --junit, --allow-empty, --retries and --deny-flaky apply only when running tests, not with --list" };
         if (o.opt_level != null) return .{ .usage = "--opt-level applies only when running tests" };
         if (!o.check and (o.strict or o.prefix != null)) return .{ .usage = "with --list, --strict-discovery and --prefix apply only with --check" };
     } else if (o.check) {
         return .{ .usage = "--check applies only with --list (running tests always checks the listing)" };
     }
+    if (o.exact and o.patterns.items.len == 0 and o.skips.items.len == 0) return .{ .usage = "--exact needs a pattern: `-- <file>::<test>` or --skip <file>::<test>" };
     if (o.paths.items.len == 0) try o.paths.append(".");
     return .{ .ok = o };
 }
@@ -221,18 +269,49 @@ fn run(arena: std.mem.Allocator, args: []const []const u8) !u8 {
         try scanned.append(.{ .f = f, .src = src, .sc = sc });
     }
 
-    if (o.list and !o.check) {
-        if (failed) return 2;
-        var out = std.ArrayList(u8).init(arena);
-        for (scanned.items) |s| for (s.sc.tests) |t| try out.writer().print("{s}::{s}\n", .{ s.f.display, t.name });
-        try std.io.getStdOut().writeAll(out.items);
-        return 0;
+    // Which tests run (core/test_filter.zig): per file, one choice per test.
+    const filter = test_filter.Filter{
+        .patterns = o.patterns.items,
+        .skips = o.skips.items,
+        .exact = o.exact,
+        .ignored = o.ignored,
+    };
+    const State = enum { idle, compile_error, check_failed, ok };
+    const Plan = struct {
+        s: Scanned,
+        choices: []test_filter.Choice,
+        runs: usize = 0,
+        state: State = .idle,
+        bin: ?[]const u8 = null,
+        sha: ?[]const u8 = null,
+    };
+    var plans = std.ArrayList(Plan).init(arena);
+    var discovered: usize = 0;
+    var filtered_out: usize = 0;
+    var to_run: usize = 0;
+    for (scanned.items) |s| {
+        var plan = Plan{ .s = s, .choices = try arena.alloc(test_filter.Choice, s.sc.tests.len) };
+        for (s.sc.tests, plan.choices) |t, *c| {
+            const id = try std.fmt.allocPrint(arena, "{s}::{s}", .{ s.f.display, t.name });
+            c.* = test_filter.choose(filter, id, t.name, t.ignore != null);
+            switch (c.*) {
+                .run => plan.runs += 1,
+                .skip => {},
+                .out => filtered_out += 1,
+            }
+        }
+        discovered += s.sc.tests.len;
+        to_run += plan.runs;
+        try plans.append(plan);
     }
 
-    var any_tests = false;
-    for (scanned.items) |s| any_tests = any_tests or s.sc.tests.len > 0;
+    if (o.list and !o.check) {
+        if (failed) return 2;
+        return listSelected(arena, plans.items);
+    }
+
     var tc: ?autolink.Toolchain = null;
-    if (any_tests) {
+    if (to_run > 0) {
         switch (try autolink.prepare(arena, .build, o.prefix, getEnv(arena, "CONDA_PREFIX"), getEnv(arena, "MODULAR_HOME"))) {
             .ok => |v| tc = v,
             .refused => |msgs| {
@@ -244,33 +323,35 @@ fn run(arena: std.mem.Allocator, args: []const []const u8) !u8 {
 
     const opt_level = o.opt_level orelse 1;
     const flags = [_][]const u8{ "-D", "ASSERT=all", "--optimization-level", try std.fmt.allocPrint(arena, "{d}", .{opt_level}) };
-    const Built = struct { s: Scanned, bin: ?[]const u8 };
-    var built = std.ArrayList(Built).init(arena);
-    for (scanned.items) |s| {
-        if (s.sc.tests.len == 0) continue;
-        const bin = try buildFile(arena, tc.?, s.f, s.src, s.sc, &flags);
-        if (bin == null) {
+    for (plans.items) |*plan| {
+        if (plan.runs == 0) continue;
+        const bin = (try buildFile(arena, tc.?, plan.s.f, plan.s.src, plan.s.sc, &flags)) orelse {
             failed = true;
-            try built.append(.{ .s = s, .bin = null });
+            plan.state = .compile_error;
             continue;
-        }
-        switch (try check(arena, o, s.f, s.sc, bin.?)) {
-            .same, .warned => try built.append(.{ .s = s, .bin = bin }),
-            .failed => failed = true,
+        };
+        switch (try check(arena, o, plan.s.f, plan.s.sc, bin)) {
+            .same, .warned => {
+                plan.state = .ok;
+                plan.bin = bin;
+                plan.sha = try sha256File(arena, bin);
+            },
+            .failed => {
+                failed = true;
+                plan.state = .check_failed;
+            },
             .protocol => return 5,
         }
     }
 
     if (o.list) {
         if (failed) return 2;
-        var out = std.ArrayList(u8).init(arena);
-        for (scanned.items) |s| for (s.sc.tests) |t| try out.writer().print("{s}::{s}\n", .{ s.f.display, t.name });
-        try std.io.getStdOut().writeAll(out.items);
-        return 0;
+        return listSelected(arena, plans.items);
     }
 
     // ------------------------------------------------------------ run
     const format = o.format orelse .human;
+    const retries = o.retries orelse 0;
     const deadline_ns = (o.timeout_s orelse 60) * std.time.ns_per_s;
     const memory_cap: ?u64 = if (o.memory_mib) |m|
         (if (m == 0) null else m << 20)
@@ -279,39 +360,44 @@ fn run(arena: std.mem.Allocator, args: []const []const u8) !u8 {
     const stdout = std.io.getStdOut().writer();
     var outcomes = std.ArrayList(report.Outcome).init(arena);
     var leftover = false;
-    for (built.items) |b| {
-        const p = try Paths.of(arena, b.s.f.display);
-        for (b.s.sc.tests) |t| {
-            const id = try std.fmt.allocPrint(arena, "{s}::{s}", .{ b.s.f.display, t.name });
-            var oc = report.Outcome{ .id = id, .file = b.s.f.display, .name = t.name, .status = .compile_error };
-            if (b.bin) |bin| {
+    for (plans.items) |plan| {
+        // A file whose listing differs from the scan reports no tests (the
+        // error above says why, and the run exits 2).
+        if (plan.state == .check_failed) continue;
+        const p = try Paths.of(arena, plan.s.f.display);
+        for (plan.s.sc.tests, plan.choices) |t, choice| {
+            if (choice == .out) continue;
+            const id = try std.fmt.allocPrint(arena, "{s}::{s}", .{ plan.s.f.display, t.name });
+            var oc = report.Outcome{ .id = id, .file = plan.s.f.display, .name = t.name, .status = .compile_error, .ignore = t.ignore };
+            if (choice == .skip) {
+                oc.status = .skip;
+                oc.message = try std.fmt.allocPrint(arena, "ignored: {s} ({s}); --ignored or --include-ignored runs it", .{ t.ignore.?.reason, t.ignore.?.issue });
+            } else if (plan.bin) |bin| {
                 const dir = try p.dir(arena, "test");
-                oc.stdout_path = try std.fmt.allocPrint(arena, "{s}/{s}.stdout", .{ dir, t.name });
-                oc.stderr_path = try std.fmt.allocPrint(arena, "{s}/{s}.stderr", .{ dir, t.name });
-                const r = try test_proc.run(arena, .{
-                    .argv = &.{ bin, "--only", t.name },
-                    .stdout_path = oc.stdout_path.?,
-                    .stderr_path = oc.stderr_path.?,
-                }, .{ .deadline_ns = deadline_ns, .memory_bytes = memory_cap, .kill_group = !o.no_group_kill });
-                const out_text = std.fs.cwd().readFileAlloc(arena, oc.stdout_path.?, 64 << 20) catch "";
-                const err_text = std.fs.cwd().readFileAlloc(arena, oc.stderr_path.?, 64 << 20) catch "";
-                const saw = (try report.sawPass(arena, out_text, t.name)) or (try report.sawPass(arena, err_text, t.name));
-                const v = try report.classify(arena, r, deadline_ns, memory_cap, saw);
-                oc.status = v.status;
-                oc.message = v.message;
-                oc.wall_ns = r.wall_ns;
-                oc.cpu_ns = r.cpu_ns;
-                oc.peak_rss = r.peak_rss;
-                oc.timeout = r.timeout;
-                oc.leftover = r.leftover;
-                switch (r.term) {
-                    .exited => |c| oc.exit_code = c,
-                    .signaled => |sig| oc.signal = sig,
+                var attempts = std.ArrayList(report.Attempt).init(arena);
+                var k: u32 = 1;
+                while (true) : (k += 1) {
+                    // Attempt 1 writes <test>.stdout; attempt k > 1 <test>.attempt<k>.stdout.
+                    const stem = if (k == 1) t.name else try std.fmt.allocPrint(arena, "{s}.attempt{d}", .{ t.name, k });
+                    const at = try runOnce(arena, id, k, bin, t.name, dir, stem, deadline_ns, memory_cap, !o.no_group_kill);
+                    leftover = leftover or at.leftover;
+                    try attempts.append(at);
+                    if (!report.retryAfter(at.status, k, retries)) break;
                 }
-                if (r.leftover) {
-                    leftover = true;
-                    try err.print("mopm test: {s}: process group {d} still has processes after the test ended\n", .{ id, r.pgid });
-                }
+                const last = attempts.items[attempts.items.len - 1];
+                oc.attempts = attempts.items;
+                oc.binary_sha256 = plan.sha;
+                oc.status = report.finalStatus(attempts.items);
+                oc.message = if (attempts.items.len == 1) last.message else try report.attemptsMessage(arena, attempts.items);
+                oc.wall_ns = last.wall_ns;
+                oc.cpu_ns = last.cpu_ns;
+                oc.peak_rss = last.peak_rss;
+                oc.exit_code = last.exit_code;
+                oc.signal = last.signal;
+                oc.timeout = last.timeout;
+                oc.leftover = last.leftover;
+                oc.stdout_path = last.stdout_path;
+                oc.stderr_path = last.stderr_path;
             } else {
                 oc.message = "the test file did not build";
             }
@@ -322,10 +408,17 @@ fn run(arena: std.mem.Allocator, args: []const []const u8) !u8 {
 
     const counts = report.Counts.of(outcomes.items);
     var code: u8 = 0;
-    if (counts.total > counts.pass) code = 1;
+    for (outcomes.items) |oc| {
+        if (oc.status.failsRun()) code = 1;
+    }
+    if (counts.flaky > 0 and o.deny_flaky) code = 1;
     if (failed) code = 2;
-    if (counts.total == 0 and !failed and !o.allow_empty) {
-        try err.print("mopm test: no tests found (--allow-empty accepts that)\n", .{});
+    if (counts.total == counts.skip and !failed and !o.allow_empty) {
+        if (discovered == 0) {
+            try err.print("mopm test: no tests found (--allow-empty accepts that)\n", .{});
+        } else {
+            try err.print("mopm test: no test selected to run: {d} filtered out, {d} ignored (--allow-empty accepts that)\n", .{ filtered_out, counts.skip });
+        }
         code = 2;
     }
     if (leftover) code = 5;
@@ -333,13 +426,17 @@ fn run(arena: std.mem.Allocator, args: []const []const u8) !u8 {
     switch (format) {
         .human => {
             for (outcomes.items) |oc| {
-                if (oc.status == .pass or oc.status == .compile_error) continue;
+                if (oc.status == .pass or oc.status == .compile_error or oc.status == .skip) continue;
                 try stdout.print("\n---- {s}: {s}: {s}\n", .{ oc.id, oc.status.label(), oc.message });
-                try stdout.writeAll(tail(arena, oc, 30));
+                for (oc.attempts, 1..) |at, k| {
+                    if (at.status == .pass) continue;
+                    if (oc.attempts.len > 1) try stdout.print("  attempt {d}: {s}: {s}\n", .{ k, at.status.label(), at.message });
+                    try stdout.writeAll(tail(arena, at, 30));
+                }
             }
             if (counts.total > 0) {
                 try stdout.writeByte('\n');
-                try report.writeSummary(stdout, outcomes.items);
+                try report.writeSummary(stdout, outcomes.items, filtered_out);
             }
         },
         .json => {
@@ -350,9 +447,19 @@ fn run(arena: std.mem.Allocator, args: []const []const u8) !u8 {
                 .memory_enforcement = if (memory_cap == null) "none" else "rss-sampled",
                 .opt_level = opt_level,
                 .exit_code = code,
+                .retries = retries,
+                .deny_flaky = o.deny_flaky,
+                .filtered_out = filtered_out,
             }, outcomes.items);
             try std.io.getStdOut().writeAll(buf.items);
         },
+    }
+    if (counts.flaky > 0) {
+        if (o.deny_flaky) {
+            try err.print("mopm test: {d} FLAKY test(s): each failed and then passed, same binary and argv; --deny-flaky fails the run\n", .{counts.flaky});
+        } else {
+            try err.print("mopm test: warning: {d} FLAKY test(s): each failed and then passed, same binary and argv; the run still passes (--deny-flaky fails it)\n", .{counts.flaky});
+        }
     }
     if (o.junit) |path| {
         var buf = std.ArrayList(u8).init(arena);
@@ -365,15 +472,79 @@ fn run(arena: std.mem.Allocator, args: []const []const u8) !u8 {
     return code;
 }
 
+/// `--list`: the tests that would run, `<file>::<test>` per line.
+fn listSelected(arena: std.mem.Allocator, plans: anytype) !u8 {
+    var out = std.ArrayList(u8).init(arena);
+    for (plans) |plan| {
+        for (plan.s.sc.tests, plan.choices) |t, c| {
+            if (c == .run) try out.writer().print("{s}::{s}\n", .{ plan.s.f.display, t.name });
+        }
+    }
+    try std.io.getStdOut().writeAll(out.items);
+    return 0;
+}
+
+/// One attempt of one test: `<bin> --only <name>` under the supervisor,
+/// output to `<dir>/<stem>.stdout` and `.stderr`, and its verdict.
+/// A process group that outlived the test is reported on stderr here.
+fn runOnce(arena: std.mem.Allocator, id: []const u8, attempt: u32, bin: []const u8, name: []const u8, dir: []const u8, stem: []const u8, deadline_ns: u64, memory_cap: ?u64, kill_group: bool) !report.Attempt {
+    const out_path = try std.fmt.allocPrint(arena, "{s}/{s}.stdout", .{ dir, stem });
+    const err_path = try std.fmt.allocPrint(arena, "{s}/{s}.stderr", .{ dir, stem });
+    const r = try test_proc.run(arena, .{
+        .argv = &.{ bin, "--only", name },
+        .stdout_path = out_path,
+        .stderr_path = err_path,
+    }, .{ .deadline_ns = deadline_ns, .memory_bytes = memory_cap, .kill_group = kill_group });
+    const out_text = std.fs.cwd().readFileAlloc(arena, out_path, 64 << 20) catch "";
+    const err_text = std.fs.cwd().readFileAlloc(arena, err_path, 64 << 20) catch "";
+    const saw = (try report.sawPass(arena, out_text, name)) or (try report.sawPass(arena, err_text, name));
+    const v = try report.classify(arena, r, deadline_ns, memory_cap, saw);
+    if (r.leftover) {
+        const which = if (attempt == 1) "" else try std.fmt.allocPrint(arena, " (attempt {d})", .{attempt});
+        try std.io.getStdErr().writer().print("mopm test: {s}: process group {d} still has processes after the test ended{s}\n", .{ id, r.pgid, which });
+    }
+    var at = report.Attempt{
+        .status = v.status,
+        .message = v.message,
+        .wall_ns = r.wall_ns,
+        .cpu_ns = r.cpu_ns,
+        .peak_rss = r.peak_rss,
+        .timeout = r.timeout,
+        .leftover = r.leftover,
+        .stdout_path = out_path,
+        .stderr_path = err_path,
+    };
+    switch (r.term) {
+        .exited => |c| at.exit_code = c,
+        .signaled => |sig| at.signal = sig,
+    }
+    return at;
+}
+
+/// Lower-case hex sha256 of a file's bytes.
+fn sha256File(arena: std.mem.Allocator, path: []const u8) ![]const u8 {
+    var f = try std.fs.cwd().openFile(path, .{});
+    defer f.close();
+    var h = std.crypto.hash.sha2.Sha256.init(.{});
+    var buf: [64 << 10]u8 = undefined;
+    while (true) {
+        const n = try f.read(&buf);
+        if (n == 0) break;
+        h.update(buf[0..n]);
+    }
+    const digest = h.finalResult();
+    return std.fmt.allocPrint(arena, "{s}", .{std.fmt.fmtSliceHexLower(&digest)});
+}
+
 fn getEnv(arena: std.mem.Allocator, key: []const u8) ?[]const u8 {
     return std.process.getEnvVarOwned(arena, key) catch null;
 }
 
-/// The last `n` lines of a test's stderr and of its stdout, colour codes
+/// The last `n` lines of an attempt's stdout and of its stderr, colour codes
 /// removed, indented.
-fn tail(arena: std.mem.Allocator, oc: report.Outcome, n: usize) []const u8 {
+fn tail(arena: std.mem.Allocator, at: report.Attempt, n: usize) []const u8 {
     var out = std.ArrayList(u8).init(arena);
-    for ([_]?[]const u8{ oc.stdout_path, oc.stderr_path }, [_][]const u8{ "stdout", "stderr" }) |path, label| {
+    for ([_]?[]const u8{ at.stdout_path, at.stderr_path }, [_][]const u8{ "stdout", "stderr" }) |path, label| {
         const p = path orelse continue;
         const raw = std.fs.cwd().readFileAlloc(arena, p, 64 << 20) catch continue;
         const text = test_harness.stripAnsi(arena, raw) catch continue;
@@ -393,8 +564,8 @@ fn tail(arena: std.mem.Allocator, oc: report.Outcome, n: usize) []const u8 {
     return out.items;
 }
 
-fn junitDetails(arena: std.mem.Allocator, oc: report.Outcome) []const u8 {
-    return tail(arena, oc, 40);
+fn junitDetails(arena: std.mem.Allocator, at: report.Attempt) []const u8 {
+    return tail(arena, at, 40);
 }
 
 fn usageError(msg: []const u8) u8 {
@@ -530,4 +701,36 @@ test "test options" {
     try refused(a, &.{"--check"});
     try refused(a, &.{"--frobnicate"});
     _ = try parsed(a, &.{ "--list", "--check", "--strict-discovery", "--prefix", "/e" });
+}
+
+test "selection and retry options" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const o = try parsed(a, &.{ "pkg", "--retries", "2", "--deny-flaky", "--skip", "slow", "--skip=net", "--include-ignored", "--", "alpha", "--exact", "pkg2" });
+    try std.testing.expectEqual(@as(?u32, 2), o.retries);
+    try std.testing.expect(o.deny_flaky);
+    try std.testing.expectEqual(test_filter.Ignored.include, o.ignored);
+    try std.testing.expectEqual(@as(usize, 2), o.skips.items.len);
+    try std.testing.expectEqualStrings("net", o.skips.items[1]);
+    // Everything after `--` is a pattern, even what looks like an option or a path.
+    try std.testing.expectEqual(@as(usize, 3), o.patterns.items.len);
+    try std.testing.expectEqualStrings("--exact", o.patterns.items[1]);
+    try std.testing.expect(!o.exact);
+    try std.testing.expectEqual(@as(usize, 1), o.paths.items.len);
+    const d = try parsed(a, &.{});
+    try std.testing.expectEqual(@as(?u32, null), d.retries);
+    try std.testing.expect(!d.deny_flaky);
+    try std.testing.expectEqual(test_filter.Ignored.skip, d.ignored);
+    try std.testing.expectEqual(test_filter.Ignored.only, (try parsed(a, &.{ "--ignored", "--ignored" })).ignored);
+    _ = try parsed(a, &.{ "--list", "--ignored", "--skip", "x", "--exact", "--", "f::t" });
+    try refused(a, &.{ "--ignored", "--include-ignored" });
+    try refused(a, &.{ "--retries", "101" });
+    try refused(a, &.{ "--retries", "-1" });
+    try refused(a, &.{"--retries"});
+    try refused(a, &.{"--skip"});
+    try refused(a, &.{"--exact"});
+    try refused(a, &.{ "--", "" });
+    try refused(a, &.{ "--list", "--retries", "1" });
+    try refused(a, &.{ "--list", "--deny-flaky" });
 }
