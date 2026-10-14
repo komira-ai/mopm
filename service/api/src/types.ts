@@ -34,7 +34,7 @@ export interface VersionRecord {
   name: string;
   /** The spelling that was published (and is in the file name). */
   version: string;
-  /** Spelling-independent key: equivalent versions share it. This is what create-once is enforced on. */
+  /** The key create-once is enforced on (the version itself: a version has one spelling). */
   canonical: string;
   build: string;
   state: VersionState;
@@ -49,6 +49,17 @@ export interface VersionRecord {
   manifest_sha256: string;
   /** Where the files were built, when a CI identity vouched for it. Absent means no provenance (`kind: none`). */
   provenance?: { kind: 'none' | 'oidc'; repository?: string; workflow_ref?: string };
+  /**
+   * Display metadata from the package's mopm.toml [package] table (spec/mopm-toml.md), as of this version.
+   * Stored and served when present; the publish pipeline is what populates them.
+   */
+  description?: string;
+  license?: string;
+  repository?: string;
+  homepage?: string;
+  keywords?: string[];
+  /** Markdown, at most README_MAX_BYTES of UTF-8. */
+  readme?: string;
   /** Optimistic-concurrency counter: starts at 0, +1 on every state change. */
   rev: number;
 }
@@ -60,7 +71,12 @@ export interface PackageRecord {
   repository?: string;
   license?: string;
   description?: string;
+  homepage?: string;
+  keywords?: string[];
 }
+
+/** The most readme text, in UTF-8 bytes, the API serves. */
+export const README_MAX_BYTES = 65536;
 
 /** What a package search needs from a package; the search index projects exactly these attributes. */
 export type PackageSummaryRecord = Pick<PackageRecord, 'name' | 'state' | 'created_at' | 'description'>;

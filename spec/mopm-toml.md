@@ -6,10 +6,12 @@ reads and checks it.
 ```toml
 [package]
 name = "http_client"          # the import name and the registry name
-version = "0.4.0"
+version = "0.4.0"           # MAJOR.MINOR.PATCH, see Package versions
 description = "HTTP/1.1 client"
 license = "Apache-2.0"
 repository = "https://github.com/example/http_client"
+homepage = "https://example.com/http_client"
+keywords = ["http", "client"]
 readme = "README.md"
 
 [toolchain]
@@ -18,7 +20,7 @@ mojo = "1.0.0"                # exact compiler version, or an array of them; a .
 [dependencies]                # Mojo packages
 http_core = "1.2"
 tls = { version = "0.9" }
-local_util = { path = "../local_util" }   # co-development only; not publishable
+local_util = { path = "../local_util", version = "0.2" }   # a path needs a version to be published
 
 [native-dependencies]         # non-Mojo libraries the package links
 zlib = { version = ">=1.2", kind = "shared", mode = "link" }
@@ -42,7 +44,14 @@ tests = ["tests"]
 
 - `[package]`: identity. `name` is unique in the registry; only its owner can
   publish versions of it, and a published version is immutable.
-- `[dependencies]`: Mojo packages with version requirements, or a `path`.
+  All of `description`, `license`, `repository`, `homepage`, `keywords` and
+  `readme` are optional. When present they are checked as below and served by
+  the registry's read API (`description`, `license`, `repository`, `homepage`,
+  `keywords` and `readme` of a version; spec/api/openapi.yaml). The publish
+  pipeline copies them from the file at publish time.
+- `[dependencies]`: Mojo packages with version requirements. A dependency may
+  also have a `path`, for co-development against a local checkout; see
+  Dependencies with a path.
 - `[native-dependencies]`: native libraries from outside the Mojo ecosystem.
   `kind` (shared | static) is what the package asks for; `mode` (link | load,
   default link) is how consumers' tooling uses it: link means mopm computes the
@@ -65,10 +74,58 @@ Dependency versions follow cargo's rules:
 - Operators: `^`, `~` (`~1.2` means `>=1.2.0, <1.3.0`), `=`, `>`, `>=`, `<`,
   `<=`, and `*` (any version). Several comparators are joined with commas and
   all must hold: `">=1.2, <1.5"`.
-- Pre-release versions (`1.3.0-beta.1`) only match a requirement that names a
-  pre-release of the same major.minor.patch.
+- There are no pre-release versions (see Package versions), so a requirement
+  never needs to name one.
 - Native dependency versions are passed to the native package's ecosystem as
   written (they follow its version scheme, not semver).
+
+## Package versions
+
+`version` is `MAJOR.MINOR.PATCH`: exactly three numbers separated by dots,
+each without leading zeros (`0.4.0`, `1.12.3`). There is no pre-release,
+post-release, dev or build-metadata suffix and no short form: `1.0`,
+`1.0.0.0`, `1.0rc1`, `1.0.0-rc.1`, `1.0.0+local` and `01.0.0` are all invalid.
+The registry refuses them at publish (and in any path) with
+`invalid_version`, and the grammar is the one in `api/openapi.yaml`
+(`Version`). A version has one spelling, so two versions are the same version
+exactly when their text is the same. Versions order numerically by major, then
+minor, then patch.
+
+## Dependencies with a path
+
+A dependency may name a `path` as well as a `version`. The path is used only
+while developing in a checkout. Following cargo, a dependency that has a
+`path` and no `version` cannot be published: the registry refuses the package
+(`manifest_invalid`), because a consumer has no checkout to read the path from
+and nothing says which versions work. With both, the path is dropped at
+publish and the version requirement is what the registry records. The
+generated `<name>.mopm.json` carries the same rule (`dependentRequired` in
+`package-metadata.schema.json`).
+
+The requirement string of a dependency is recorded exactly as written in
+`mopm.toml`. It is the cargo-syntax requirement that mopm's own resolver reads
+from the sparse index (`deps[].range`, `index.md`); it is not translated into
+conda syntax anywhere that a resolver reads it.
+
+## `[package]` display fields
+
+| field | type | rule |
+|---|---|---|
+| `description` | string | one line, 1 to 512 characters, no line breaks |
+| `license` | string | an SPDX license expression, such as `Apache-2.0` or `MIT OR Apache-2.0`, at most 128 characters |
+| `repository` | string | an `https://` URL, at most 2048 characters |
+| `homepage` | string | an `https://` URL, at most 2048 characters |
+| `keywords` | array of strings | at most 10, unique, each 1 to 32 characters of letters, digits, `-`, `_`, `.` or `+` |
+| `readme` | string | path of a Markdown file inside the package, relative to `mopm.toml`; at most 64 KiB (65,536 bytes) of UTF-8 |
+
+A value that breaks its rule is an error, not a warning; the publish pipeline
+refuses it. The
+registry serves the readme's text, not its path.
+
+These fields are untrusted input. The registry stores the readme, `description`
+and `license` verbatim and does not sanitize them. A consumer that renders the
+readme must sanitize the Markdown, disable raw HTML and treat its links as
+untrusted; `description` and `license` are plain text to escape, never markup.
 
 ## Rules
 

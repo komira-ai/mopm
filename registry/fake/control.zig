@@ -60,6 +60,14 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
         try files.rewrite(ctx.arena, s);
         return resp.json(ctx.arena, .ok, .{});
     }
+    // {"project_bytes"}: the most bytes one package's live files may hold
+    // (limit_exceeded at beginUpload beyond it).
+    if (std.mem.eql(u8, path, "/limits")) {
+        const n = util.getInt(obj, "project_bytes") orelse return resp.invalid(ctx.arena, "'project_bytes' must be an integer");
+        if (n < 1) return resp.invalid(ctx.arena, "'project_bytes' must be at least 1");
+        s.project_bytes = @intCast(n);
+        return resp.json(ctx.arena, .ok, .{});
+    }
     // {"operation", "code"}: the next request to that operationId answers that
     // error code (rate_limited, unavailable, internal_error, ...).
     if (std.mem.eql(u8, path, "/fault")) {

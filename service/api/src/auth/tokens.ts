@@ -169,19 +169,22 @@ export class TokenService {
 
   /** Immediate. Another account's token, or a session or CI token, is `token_not_found`. Repeating is fine. */
   async revoke(github_id: number, token_id: string): Promise<void> {
-    const t = await this.store.getToken(token_id);
-    if (!t || t.github_id !== github_id || t.kind !== 'api') {
+    const t = await this.store.getUserToken(github_id, token_id);
+    if (!t || t.kind !== 'api') {
       throw new AuthError('token_not_found', 'There is no such token.');
     }
-    await this.store.revokeToken(t.id, this.now().toISOString());
+    await this.store.revokeToken(t.hash, this.now().toISOString());
   }
 }
 
 /** Resolve an Authorization header value to a Principal, or throw the contract's error. */
+/** What the bearer middleware needs of the store: a lookup by hash and the last-used mark. */
+export type TokenLookup = Pick<AuthStore, 'getTokenByHash' | 'touchToken'>;
+
 export class Authenticator {
-  private readonly store: AuthStore;
+  private readonly store: TokenLookup;
   private readonly now: Clock;
-  constructor(o: { store: AuthStore; now?: Clock }) {
+  constructor(o: { store: TokenLookup; now?: Clock }) {
     this.store = o.store;
     this.now = o.now ?? (() => new Date());
   }
@@ -204,7 +207,7 @@ export class Authenticator {
       throw new AuthError('token_expired', `The token expired at ${rec.expires_at}.`, { expires_at: rec.expires_at });
     }
     if (!rec.last_used_at || now.getTime() - Date.parse(rec.last_used_at) >= TOUCH_EVERY_MS) {
-      await this.store.touchToken(rec.id, now.toISOString());
+      await this.store.touchToken(rec.hash, now.toISOString());
     }
     return {
       token_id: rec.id,

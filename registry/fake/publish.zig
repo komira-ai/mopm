@@ -111,6 +111,19 @@ pub fn beginUpload(ctx: *Ctx, params: []const []const u8) anyerror!Response {
     const size = util.getInt(obj, "size") orelse return resp.invalid(ctx.arena, "'size' must be an integer");
     if (size < 1) return resp.invalid(ctx.arena, "'size' must be at least 1");
     if (size > @as(i64, st.max_upload)) return resp.fail(ctx.arena, .payload_too_large, &.{.{ "limit", std.fmt.comptimePrint("{d}", .{st.max_upload}) }});
+    // The project's live files (published and yanked; a takedown frees its bytes) plus this one must fit.
+    var used: u64 = 0;
+    for (p.versions.items) |v| {
+        if (v.state != .published and v.state != .yanked) continue;
+        for (v.files) |f| used += f.size;
+    }
+    if (used + @as(u64, @intCast(size)) > s.project_bytes) {
+        return resp.fail(ctx.arena, .limit_exceeded, &.{
+            .{ "name", p.name },
+            .{ "limit", try std.fmt.allocPrint(ctx.arena, "{d}", .{s.project_bytes}) },
+            .{ "remaining", try std.fmt.allocPrint(ctx.arena, "{d}", .{s.project_bytes -| used}) },
+        });
+    }
 
     const u = try s.add(st.Upload, &s.uploads, .{
         .id = try util.newId(s.alloc, "upl"),
@@ -434,11 +447,11 @@ pub fn summaries(arena: Allocator, p: *st.Package) Allocator.Error![]const Summa
     return try out.toOwnedSlice();
 }
 
-/// The newest published (not yanked), non-prerelease version, or null.
+/// The newest published (not yanked) version, or null.
 pub fn latest(p: *const st.Package) ?[]const u8 {
     var best: ?[]const u8 = null;
     for (p.versions.items) |v| {
-        if (v.state != .published or versions.isPrerelease(v.version)) continue;
+        if (v.state != .published) continue;
         if (best == null or versions.compare(v.version, best.?) == .gt) best = v.version;
     }
     return best;

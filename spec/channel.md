@@ -8,11 +8,16 @@ is not yet promised.
 
 ## Hosts
 
-| stage | API and index | channel |
-|---|---|---|
-| prod | `https://mopm.dev` | `https://conda.mopm.dev/` |
-| gamma | `https://gamma.mopm.dev` | `https://conda.gamma.mopm.dev/` |
-| beta | `https://beta.mopm.dev` | `https://conda.beta.mopm.dev/` |
+Each stage has a site `<site>` (prod `mopm.dev`, gamma `gamma.mopm.dev`, beta
+`beta.mopm.dev`). The API and the sparse index are at `https://api.<site>`
+and the channel is at `https://conda.<site>/`; the site itself
+(`https://<site>`) is the website and is not the API.
+
+| stage | `<site>` | API and index | channel |
+|---|---|---|---|
+| prod | `mopm.dev` | `https://api.mopm.dev` | `https://conda.mopm.dev/` |
+| gamma | `gamma.mopm.dev` | `https://api.gamma.mopm.dev` | `https://conda.gamma.mopm.dev/` |
+| beta | `beta.mopm.dev` | `https://api.beta.mopm.dev` | `https://conda.beta.mopm.dev/` |
 
 The channel host is separate from the API host: it serves static files only,
 sets no cookies and has no API. Beta and gamma are disposable: their data can
@@ -21,7 +26,7 @@ be wiped, so nothing should be locked to them except for testing.
 ## Layout (v1)
 
 ```text
-https://conda.<stage>.mopm.dev/
+https://conda.<site>/
   noarch/
   linux-64/
   linux-aarch64/
@@ -58,8 +63,8 @@ https://conda.<stage>.mopm.dev/
   sparse index says which one it is.
 - The writer is deterministic: keys sorted, no timestamps, so the same set of
   versions always produces the same bytes.
-- `current_repodata.json` holds, per name, the newest non-yanked,
-  non-prerelease version with all its builds. It is for fast solves; a client
+- `current_repodata.json` holds, per name, the newest published (not
+  yanked) version with all its builds. It is for fast solves; a client
   that needs an older version reads `repodata.json`.
 
 ## Package naming (v1)
@@ -71,8 +76,11 @@ https://conda.<stage>.mopm.dev/
   was built with, for example `mojo1.0.0_0`. `n` is always 0. A version's file
   set is fixed when it is committed, so supporting a new compiler means
   publishing a new version.
-- The version grammar is in `api/openapi.yaml` (`Version`). Two versions that
-  are equal under conda ordering are the same version.
+- The version is `MAJOR.MINOR.PATCH` (grammar in `api/openapi.yaml`,
+  `Version`): three numbers, no leading zeros, no pre-release or other
+  suffix. A package whose `info/index.json` names any other spelling of the
+  version is rejected. Versions order numerically by major, then minor, then
+  patch, which is conda ordering for this grammar.
 
 ## Inside a package (v1)
 

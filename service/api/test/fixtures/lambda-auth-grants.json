@@ -1,0 +1,6 @@
+{
+  "tokens": { "actions": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query"], "indexes": ["by_github_id"] },
+  "users": { "actions": ["dynamodb:GetItem", "dynamodb:PutItem"] },
+  "device_logins": { "actions": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"] },
+  "trusted_publishers": { "actions": ["dynamodb:GetItem", "dynamodb:Query"] }
+}

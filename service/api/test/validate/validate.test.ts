@@ -128,7 +128,7 @@ describe('what the publisher declared', () => {
     refusedBuild({ index: { version: '1.0.1' } }, 'version_mismatch');
   });
   test('versions compare under conda ordering, so 1.0 and 1.0.0 are the same', () => {
-    expect(check(buildConda({ mopm: { version: '1.0' } })).ok).toBe(true);
+    expect(check(buildConda({ mopm: { version: '1.0.0' } })).ok).toBe(true);
   });
 });
 
@@ -359,6 +359,10 @@ describe('metadata consistency', () => {
     ['a numeric version', { schema: 1, name: 'demo', version: 1 }],
     ['deps that are not an array', { schema: 1, name: 'demo', deps: {} }],
     ['a dep without a name', { schema: 1, name: 'demo', deps: [{}] }],
+    ['a dep with a path and no version', { schema: 1, name: 'demo', deps: [{ name: 'util', path: '../util' }] }],
+    ['a dep path that is not a string', { schema: 1, name: 'demo', deps: [{ name: 'util', path: 1, range: '1' }] }],
+    ['a two-part version', { schema: 1, name: 'demo', version: '1.0' }],
+    ['a pre-release version', { schema: 1, name: 'demo', version: '1.0.0rc1' }],
     ['a bad soname', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'foo.so', file: '../foo.so' }] }],
     ['a shared library without file', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so' }] }],
     ['a static library without static_file', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', kind: 'static' }] }],

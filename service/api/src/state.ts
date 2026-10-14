@@ -6,10 +6,27 @@ import type { VersionRecord } from './types';
  * `pending -> tombstoned` is how a rejected publish burns its number.
  */
 export type VersionEvent =
-  | { type: 'publish' }
+  | { type: 'publish'; fill?: PublishFill }
   | { type: 'yank'; reason: string }
   | { type: 'unyank' }
-  | { type: 'tombstone'; reason_code: string; date: string };
+  /** `unpublished`: a pending version being burned by a rejected publish; no file was ever published, so none is kept. */
+  | { type: 'tombstone'; reason_code: string; date: string; unpublished?: boolean };
+
+/**
+ * What the validator learned from the archives, written when the version goes `pending -> published`: a pending
+ * record is only a reserved number, and these fields come from the validated files.
+ */
+export interface PublishFill
+  extends Pick<VersionRecord, 'version' | 'build' | 'requires_mojo' | 'deps' | 'native' | 'files' | 'manifest_sha256' | 'published_at'> {
+  published_by?: string;
+  /** The display metadata the commit request carried; stored on the version so the read API serves it. */
+  description?: string;
+  license?: string;
+  repository?: string;
+  homepage?: string;
+  keywords?: string[];
+  readme?: string;
+}
 
 /** Raised for an event the state does not allow. Reported as invalid_transition (409). */
 export class IllegalTransition extends RegistryError {
@@ -35,7 +52,7 @@ export function applyEvent(rec: VersionRecord, ev: VersionEvent): VersionRecord 
       if (ev.type === 'tombstone') return rec;
       throw new IllegalTransition(rec, ev);
     case 'pending':
-      if (ev.type === 'publish') return next({ state: 'published' });
+      if (ev.type === 'publish') return next({ state: 'published', ...(ev.fill ?? {}) });
       if (ev.type === 'tombstone') return tombstoned(rec, ev, next);
       throw new IllegalTransition(rec, ev);
     case 'published':
@@ -63,7 +80,7 @@ function tombstoned(
   next: (p: Partial<VersionRecord>) => VersionRecord,
 ): VersionRecord {
   // The bytes are gone; the sha256 stays so a lock can be explained.
-  const files = rec.files.map(({ url: _url, ...f }) => f);
+  const files = rec.state === 'pending' && ev.unpublished ? [] : rec.files.map(({ url: _url, ...f }) => f);
   const out = next({ state: 'tombstoned', tombstone: { reason_code: ev.reason_code, date: ev.date }, files });
   delete out.yank_reason;
   return out;

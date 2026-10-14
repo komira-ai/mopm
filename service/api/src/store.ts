@@ -6,9 +6,8 @@ import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, Vers
  * The registry's persistence port. Two adapters implement it: memory (tests and the local mode) and
  * DynamoDB. Rules every adapter keeps:
  *
- * - A (name, version) is created at most once, ever, under conda equivalence: `createVersion` of `1.0.0`
- *   after `1.0` fails with version_exists, whatever state the first one is in (a tombstone keeps the
- *   number burned). Two concurrent creates: exactly one wins.
+ * - A (name, version) is created at most once, ever: a second `createVersion` of `1.0.0` fails with
+ *   version_exists, whatever state the first one is in (a tombstone keeps the number burned). Two concurrent creates: exactly one wins.
  * - Every change to a version also appends its audit entry, atomically with it.
  * - Version rows are never deleted.
  */
@@ -24,9 +23,9 @@ export interface Store {
    */
   searchPackages(prefix: string, after: string | undefined, limit: number): Promise<PackageSummaryRecord[]>;
 
-  /** Create-once under equivalence, with its audit entry. Throws invalid_version, version_exists. */
+  /** Create-once, with its audit entry. Throws invalid_version, version_exists. */
   createVersion(rec: VersionRecord, audit: AuditEntry): Promise<void>;
-  /** By any equivalent spelling. */
+  /** Throws invalid_version for anything that is not MAJOR.MINOR.PATCH. */
   getVersion(name: string, version: string): Promise<VersionRecord | undefined>;
   /**
    * Apply an event through the state machine and persist it with its audit entry, retrying on a

@@ -77,26 +77,15 @@ fn number(s: []const u8) bool {
     return true;
 }
 
-/// Whether `s` matches the API's `Version` pattern: dot-separated numbers
-/// without leading zeros, then optionally `a`, `b`, `rc` or `dev` and a number.
+/// Whether `s` matches the API's `Version` pattern: `MAJOR.MINOR.PATCH`,
+/// exactly three numbers without leading zeros, separated by dots.
 pub fn isVersion(s: []const u8) bool {
-    var end = s.len;
-    while (end > 0 and std.ascii.isDigit(s[end - 1])) end -= 1;
-    var core = s;
-    for ([_][]const u8{ "dev", "rc", "a", "b" }) |suffix| {
-        if (end > suffix.len and end < s.len and std.mem.eql(u8, s[end - suffix.len .. end], suffix) and
-            std.ascii.isDigit(s[end - suffix.len - 1]))
-        {
-            if (!number(s[end..])) return false;
-            core = s[0 .. end - suffix.len];
-            break;
-        }
-    }
-    var it = std.mem.splitScalar(u8, core, '.');
-    while (it.next()) |part| {
+    var it = std.mem.splitScalar(u8, s, '.');
+    var parts: usize = 0;
+    while (it.next()) |part| : (parts += 1) {
         if (!number(part)) return false;
     }
-    return true;
+    return parts == 3;
 }
 
 pub fn getStr(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
@@ -140,8 +129,12 @@ test "tokens and names" {
 }
 
 test "versions and normalised names" {
-    for ([_][]const u8{ "0", "1.0", "0.4.0", "1.2.3rc1", "2.0a0", "1.0dev3", "10.20.30b2" }) |v| try std.testing.expect(isVersion(v));
-    for ([_][]const u8{ "", "1.", ".1", "01.0", "1.0rc", "1.0rc01", "v1", "1.0-rc1", "1.0c1", "rc1", "1..0" }) |v| try std.testing.expect(!isVersion(v));
+    for ([_][]const u8{ "0.0.0", "1.0.0", "0.4.0", "10.20.30", "1.10.100" }) |v| try std.testing.expect(isVersion(v));
+    for ([_][]const u8{
+        "",        "0",         "1",         "1.0",      "1.2.3.4",   "1.0.0.0", "1.",       ".1",
+        "1..0",    "1.0.",      "01.0.0",    "1.00.0",   "1.0.00",    "v1.0.0",  "1.0rc1",   "1.0.0rc1",
+        "1.0.0-rc.1", "1.0a1",  "1.0.0b2",   "1.0.0dev", "1.0.0.dev1", "1.0.0.post1", "1.0.0+local", " 1.0.0",
+    }) |v| try std.testing.expect(!isVersion(v));
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     try std.testing.expectEqualStrings("http_client", try normalise(arena_state.allocator(), "Http-.Client"));

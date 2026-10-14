@@ -1,8 +1,12 @@
-import { RegistryError, type ErrorCode, HTTP_STATUS } from '../errors';
+import { RegistryError, HTTP_STATUS } from '../errors';
 import type { Store } from '../store';
-import type { PackageRecord, PackageSummaryRecord, VersionRecord } from '../types';
-import { canonicalVersion, compareVersions, parseVersion } from '../version';
-import { CATALOGUE, render } from './catalogue';
+import { README_MAX_BYTES, type PackageRecord, type PackageSummaryRecord, type VersionRecord } from '../types';
+import { canonicalVersion, compareVersions } from '../version';
+import { AuthError } from '../auth/errors';
+import { routeAuth, type AuthServices } from './auth-routes';
+import { render } from './catalogue';
+import { templateFor } from './auth-catalogue';
+import { routePublish, type PublishApi } from './publish-routes';
 
 export type Stage = 'beta' | 'gamma' | 'prod';
 
@@ -11,6 +15,10 @@ export interface HttpRequest {
   /** The raw path, e.g. `/api/v1/packages/http_client`. */
   path: string;
   query: Record<string, string | undefined>;
+  /** Lower-case names. Only `authorization` is read (login, tokens and the publish operations). */
+  headers?: Record<string, string | undefined>;
+  /** The raw (decoded) request body, for the operations that take one. */
+  body?: string;
 }
 
 export interface HttpResponse {
@@ -26,6 +34,10 @@ export interface RouterDeps {
   version: string;
   commit: string;
   readOnly: boolean;
+  /** Login, tokens and CI exchange. Absent: those paths answer `unavailable` and everything else is unchanged. */
+  auth?: AuthServices;
+  /** The publish operations (begin, commit, status). Absent: the router serves reads only. */
+  publish?: PublishApi;
 }
 
 const PREFIX = '/api/v1';
@@ -40,14 +52,14 @@ function respond(statusCode: number, requestId: string, body?: unknown): HttpRes
   return {
     statusCode,
     headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-mopm-request-id': requestId },
-    body: JSON.stringify(body),
+    body: body === undefined ? '' : JSON.stringify(body),
   };
 }
 
-function errorResponse(requestId: string, code: ErrorCode, detail: Record<string, string>): HttpResponse {
-  const entry = CATALOGUE[code];
-  if (!entry) return errorResponse(requestId, 'internal_error', {});
-  return respond(HTTP_STATUS[code], requestId, {
+function errorResponse(requestId: string, code: string, status: number, detail: Record<string, string>): HttpResponse {
+  const entry = templateFor(code);
+  if (!entry) return errorResponse(requestId, 'internal_error', HTTP_STATUS.internal_error, {});
+  return respond(status, requestId, {
     error: { code, message: render(entry.message, detail), hint: render(entry.hint, detail) },
   });
 }
@@ -98,15 +110,37 @@ function versionSummary(v: VersionRecord) {
   };
 }
 
-/** Newest published, non-prerelease version, or null (spec: PackageSummary.latest). */
+/**
+ * The optional display metadata (spec: VersionDetail, PackageInfo): a field is present only when it is stored.
+ * A readme over the cap is dropped rather than truncated mid-character; the publish pipeline refuses such a readme,
+ * so this is a guard for a row written some other way.
+ */
+function displayMetadata(r: Partial<Pick<VersionRecord, 'description' | 'license' | 'repository' | 'homepage' | 'keywords' | 'readme'>>) {
+  return {
+    ...(r.description === undefined ? {} : { description: r.description }),
+    ...(r.license === undefined ? {} : { license: r.license }),
+    ...(r.repository === undefined ? {} : { repository: r.repository }),
+    ...(r.homepage === undefined ? {} : { homepage: r.homepage }),
+    ...(r.keywords === undefined ? {} : { keywords: r.keywords }),
+    ...(r.readme === undefined || Buffer.byteLength(r.readme, 'utf8') > README_MAX_BYTES ? {} : { readme: r.readme }),
+  };
+}
+
+/** Newest published version, or null (spec: PackageSummary.latest). */
 function latestOf(vs: VersionRecord[]): string | null {
-  const candidates = vs.filter((v) => v.state === 'published' && parseVersion(v.version).pre === undefined);
+  const candidates = vs.filter((v) => v.state === 'published');
   return candidates.length ? newestFirst(candidates)[0]!.version : null;
 }
 
 /** The newest publication time, or the claim time when nothing is published. */
 const updatedAt = (p: PackageSummaryRecord, vs: VersionRecord[]) =>
   vs.reduce((m, v) => (v.published_at > m ? v.published_at : m), p.created_at);
+
+function readmeOf(vs: VersionRecord[]): string | undefined {
+  const latest = latestOf(vs);
+  const v = latest === null ? undefined : vs.find((x) => x.version === latest);
+  return v === undefined ? undefined : displayMetadata({ readme: v.readme }).readme;
+}
 
 function packageSummary(p: PackageSummaryRecord, vs: VersionRecord[]) {
   return { name: p.name, latest: latestOf(vs), description: p.description ?? null, updated_at: updatedAt(p, vs) };
@@ -147,6 +181,10 @@ async function getPackage(deps: RouterDeps, name: string) {
     repository: p.repository ?? null,
     license: p.license ?? null,
     description: p.description ?? null,
+    ...(p.homepage === undefined ? {} : { homepage: p.homepage }),
+    ...(p.keywords === undefined ? {} : { keywords: p.keywords }),
+    // The readme of the latest version, when it has one.
+    ...(readmeOf(vs) === undefined ? {} : { readme: readmeOf(vs) }),
     created_at: p.created_at,
     versions: newestFirst(vs).map(versionSummary),
   };
@@ -244,6 +282,7 @@ async function getVersion(deps: RouterDeps, name: string, version: string) {
       return v.state === 'tombstoned' || url === undefined ? rest : { ...rest, url };
     }),
     manifest_sha256: v.manifest_sha256,
+    ...displayMetadata(v),
     provenance: v.provenance ?? { kind: 'none' },
   };
 }
@@ -260,7 +299,15 @@ function segments(path: string): string[] | undefined {
 /** Handle one request. Never throws: every failure is an error body from the contract's catalogue. */
 export async function route(req: HttpRequest, deps: RouterDeps, requestId: string): Promise<HttpResponse> {
   try {
+    if (deps.publish) {
+      const published = await routePublish(req, deps.publish, requestId);
+      if (published) return published;
+    }
     const seg = segments(req.path);
+    if (seg) {
+      const authed = await routeAuth({ method: req.method, seg, authorization: req.headers?.authorization, body: req.body }, deps.auth);
+      if (authed) return respond(authed.status, requestId, authed.body);
+    }
     if (seg && req.method === 'GET') {
       if (seg.length === 1 && seg[0] === 'health') return respond(200, requestId, getHealth(deps));
       if (seg.length === 1 && seg[0] === 'packages') return respond(200, requestId, await searchPackages(deps, req.query));
@@ -279,8 +326,10 @@ export async function route(req: HttpRequest, deps: RouterDeps, requestId: strin
     // The gateway routes only the operations above, so this is reached only by a request that cannot come through it.
     throw new RegistryError('route_not_found', 'no such operation');
   } catch (err) {
-    if (err instanceof RegistryError && CATALOGUE[err.code]) return errorResponse(requestId, err.code, err.detail);
+    if ((err instanceof RegistryError || err instanceof AuthError) && templateFor(err.code)) {
+      return errorResponse(requestId, err.code, err.status, err.detail);
+    }
     console.error(JSON.stringify({ level: 'error', requestId, error: String((err as Error)?.stack ?? err) }));
-    return errorResponse(requestId, 'internal_error', {});
+    return errorResponse(requestId, 'internal_error', HTTP_STATUS.internal_error, {});
   }
 }

@@ -24,6 +24,8 @@ pub const oidc_secs: i64 = 15 * 60;
 pub const upload_secs: i64 = 5 * 60;
 /// The largest file v1 takes.
 pub const max_upload: u64 = 52428800;
+/// The most bytes one package's live files (published and yanked versions) may hold: 10 GB.
+pub const max_project: u64 = 10_000_000_000;
 
 pub const User = struct { github_id: u64, handle: []const u8 };
 
@@ -169,7 +171,11 @@ pub const State = struct {
     /// The data directory (`--dir`): uploads, channel and index files.
     dir: []const u8 = ".",
     stage: []const u8,
+    /// The `interval` a device login tells the client to poll at (seconds).
+    poll_secs: i64 = poll_interval,
     read_only: bool = false,
+    /// The per-project byte limit; `/_fake/limits` lowers it.
+    project_bytes: u64 = max_project,
     /// Added to the wall clock: `/_fake/clock` moves time forward.
     clock_offset: i64 = 0,
     next_request: u64 = 1,

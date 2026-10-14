@@ -92,9 +92,9 @@ describe('API token creation', () => {
     expect(t.packages).toBe('all_current');
     owned[ALICE]!.push('delta');
     const p = await auth.authenticate(`Bearer ${t.token}`);
-    expect(() => auth.publishToken(p, 'alpha', '1.0')).not.toThrow();
-    expect(() => auth.publishToken(p, 'beta', '1.0')).not.toThrow();
-    expect(() => auth.publishToken(p, 'delta', '1.0')).toThrow(expect.objectContaining({ code: 'scope_missing' }));
+    expect(() => auth.publishToken(p, 'alpha', '1.0.0')).not.toThrow();
+    expect(() => auth.publishToken(p, 'beta', '1.0.0')).not.toThrow();
+    expect(() => auth.publishToken(p, 'delta', '1.0.0')).toThrow(expect.objectContaining({ code: 'scope_missing' }));
   });
 
   test('all_current with no packages is refused rather than minting a token that covers nothing', async () => {
@@ -212,14 +212,14 @@ describe('authenticate: every refusal, exactly', () => {
     const { tokens, auth, clock, store } = setup();
     const t = await tokens.create(ALICE, { name: 'a', scopes: ['publish'], packages: ['alpha'], expires_in_days: 1 });
     await auth.authenticate(`Bearer ${t.token}`);
-    const first = (await store.getToken(t.id))!.last_used_at;
+    const first = (await store.getTokenByHash(hashToken(t.token)))!.last_used_at;
     expect(first).toBe(clock.now().toISOString());
     clock.advance(10_000);
     await auth.authenticate(`Bearer ${t.token}`);
-    expect((await store.getToken(t.id))!.last_used_at).toBe(first);
+    expect((await store.getTokenByHash(hashToken(t.token)))!.last_used_at).toBe(first);
     clock.advance(60_000);
     await auth.authenticate(`Bearer ${t.token}`);
-    expect((await store.getToken(t.id))!.last_used_at).toBe(clock.now().toISOString());
+    expect((await store.getTokenByHash(hashToken(t.token)))!.last_used_at).toBe(clock.now().toISOString());
   });
 });
 
@@ -235,10 +235,10 @@ describe('the four security schemes', () => {
 
   test('publishToken: the package must be in the token and the scope must be publish (scope_missing carries both)', async () => {
     const { auth, api, yank, sess } = await principals();
-    expect(() => auth.publishToken(api, 'alpha', '1.0')).not.toThrow();
+    expect(() => auth.publishToken(api, 'alpha', '1.0.0')).not.toThrow();
     let e: AuthError | undefined;
     try {
-      auth.publishToken(api, 'beta', '1.0');
+      auth.publishToken(api, 'beta', '1.0.0');
     } catch (x) {
       e = x as AuthError;
     }
@@ -246,9 +246,9 @@ describe('the four security schemes', () => {
     expect(e?.code).toBe('scope_missing');
     expect(e?.status).toBe(403);
     expect(e?.detail).toEqual({ scope: 'publish', name: 'beta' });
-    expect(() => auth.publishToken(yank, 'alpha', '1.0')).toThrow(expect.objectContaining({ code: 'scope_missing' }));
+    expect(() => auth.publishToken(yank, 'alpha', '1.0.0')).toThrow(expect.objectContaining({ code: 'scope_missing' }));
     // a session token proves a person, not a publish grant
-    expect(() => auth.publishToken(sess, 'alpha', '1.0')).toThrow(expect.objectContaining({ code: 'scope_missing' }));
+    expect(() => auth.publishToken(sess, 'alpha', '1.0.0')).toThrow(expect.objectContaining({ code: 'scope_missing' }));
   });
 
   test('yankToken: yank or publish for the package; nothing else', async () => {

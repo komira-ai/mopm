@@ -27,5 +27,5 @@ export const GOLDEN_RECORDS: VersionRecord[] = [
     tombstone: { reason_code: 'malware', date: '2026-10-12' },
     files: [f('linux-64', 'tls', '1.0.0', 'd', 700)],
   }),
-  rec({ name: 'fresh', version: '2.0', state: 'pending', files: [f('linux-64', 'fresh', '2.0', 'e', 10)] }),
+  rec({ name: 'fresh', version: '2.0.0', state: 'pending', files: [f('linux-64', 'fresh', '2.0.0', 'e', 10)] }),
 ];

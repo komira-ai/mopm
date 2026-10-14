@@ -7,7 +7,7 @@ const YANK: VersionEvent = { type: 'yank', reason: 'broken' };
 const UNYANK: VersionEvent = { type: 'unyank' };
 const PUBLISH: VersionEvent = { type: 'publish' };
 const TOMB: VersionEvent = { type: 'tombstone', reason_code: 'malware', date: '2026-10-12' };
-const at = (state: VersionState) => rec({ name: 'p', version: '1.0', state, ...(state === 'yanked' ? { yank_reason: 'old' } : {}) });
+const at = (state: VersionState) => rec({ name: 'p', version: '1.0.0', state, ...(state === 'yanked' ? { yank_reason: 'old' } : {}) });
 
 describe('state machine', () => {
   // [from, event, to]; to=null means the event is refused.
@@ -81,13 +81,13 @@ describe('state machine', () => {
   // Every refused transition must carry the exact code and the spec message. Can-fail proof: a state
   // machine that still answered version_not_found (404) fails every row.
   const refused: [VersionState, VersionEvent, string][] = [
-    ['pending', YANK, "Cannot yank 'p' 1.0: it is pending."],
-    ['tombstoned', YANK, "Cannot yank 'p' 1.0: it is tombstoned."],
-    ['published', UNYANK, "Cannot unyank 'p' 1.0: it is published."],
-    ['pending', UNYANK, "Cannot unyank 'p' 1.0: it is pending."],
-    ['tombstoned', UNYANK, "Cannot unyank 'p' 1.0: it is tombstoned."],
-    ['tombstoned', PUBLISH, "Cannot publish 'p' 1.0: it is tombstoned."],
-    ['yanked', PUBLISH, "Cannot publish 'p' 1.0: it is yanked."],
+    ['pending', YANK, "Cannot yank 'p' 1.0.0: it is pending."],
+    ['tombstoned', YANK, "Cannot yank 'p' 1.0.0: it is tombstoned."],
+    ['published', UNYANK, "Cannot unyank 'p' 1.0.0: it is published."],
+    ['pending', UNYANK, "Cannot unyank 'p' 1.0.0: it is pending."],
+    ['tombstoned', UNYANK, "Cannot unyank 'p' 1.0.0: it is tombstoned."],
+    ['tombstoned', PUBLISH, "Cannot publish 'p' 1.0.0: it is tombstoned."],
+    ['yanked', PUBLISH, "Cannot publish 'p' 1.0.0: it is yanked."],
   ];
   test.each(refused)('refused: %s + %j is invalid_transition (409)', (from, ev, message) => {
     let err: unknown;

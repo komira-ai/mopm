@@ -239,6 +239,30 @@ export const REQUIRED: Record<string, Needs> = {
   },
   'AWS::IAM::Policy': (r, _id, c) =>
     ((r.Properties.Roles ?? []) as Json[]).flatMap((role) => each(['iam:PutRolePolicy', 'iam:GetRolePolicy', 'iam:DeleteRolePolicy'], roleArn(c, role))),
+  // The publish pipeline: FIFO queues (and the TLS-only policy CDK attaches), the SQS triggers of the two Lambdas, and the
+  // alarms on the dead-letter queues. The policy's NameScopedServices already allows sqs:* on mopm-<stage>-* queues and
+  // lambda:* on event-source mappings and mopm-<stage>-* functions, and cloudwatch:* is in ResourceTypesWithoutNameScoping.
+  'AWS::SQS::Queue': (_r, id, c) =>
+    each(
+      ['sqs:CreateQueue', 'sqs:DeleteQueue', 'sqs:GetQueueAttributes', 'sqs:SetQueueAttributes', 'sqs:TagQueue', 'sqs:UntagQueue', 'sqs:ListQueueTags'],
+      `arn:aws:sqs:${REGION}:${c.account}:${physical(c, id, 'QueueName')}`,
+    ),
+  'AWS::SQS::QueuePolicy': (r, _id, c) =>
+    ((r.Properties.Queues ?? []) as Json[]).flatMap((q) =>
+      each(['sqs:SetQueueAttributes', 'sqs:GetQueueAttributes'], `arn:aws:sqs:${REGION}:${c.account}:${physical(c, logicalId(q), 'QueueName')}`),
+    ),
+  'AWS::Lambda::EventSourceMapping': (r, _id, c) => [
+    ...each(
+      ['lambda:CreateEventSourceMapping', 'lambda:UpdateEventSourceMapping', 'lambda:DeleteEventSourceMapping', 'lambda:GetEventSourceMapping'],
+      `arn:aws:lambda:${REGION}:${c.account}:event-source-mapping:11111111-aaaa-bbbb-cccc-dddddddddddd`,
+    ),
+    ...each(['lambda:CreateEventSourceMapping', 'lambda:GetFunction'], functionArn(c, r.Properties.FunctionName)),
+  ],
+  'AWS::CloudWatch::Alarm': (_r, id, c) =>
+    each(
+      ['cloudwatch:PutMetricAlarm', 'cloudwatch:DeleteAlarms', 'cloudwatch:DescribeAlarms', 'cloudwatch:TagResource', 'cloudwatch:ListTagsForResource'],
+      `arn:aws:cloudwatch:${REGION}:${c.account}:alarm:${physical(c, id, 'AlarmName')}`,
+    ),
   'AWS::ApiGatewayV2::Api': apigw('/apis/abc123'),
   'AWS::ApiGatewayV2::Stage': apigw('/apis/abc123/stages/$default'),
   'AWS::ApiGatewayV2::Integration': apigw('/apis/abc123/integrations/def456'),
@@ -302,7 +326,7 @@ describe.each(STAGES)('cfn-exec policy covers the %s stacks', (stage) => {
   });
 
   test('the test sees the resource types that broke the first deploy', () => {
-    for (const t of ['AWS::Route53::RecordSet', 'AWS::CertificateManager::Certificate', 'AWS::Lambda::Function', 'AWS::IAM::Role', 'Custom::CDKBucketDeployment']) {
+    for (const t of ['AWS::Route53::RecordSet', 'AWS::CertificateManager::Certificate', 'AWS::Lambda::Function', 'AWS::IAM::Role', 'Custom::CDKBucketDeployment', 'AWS::SQS::Queue', 'AWS::Lambda::EventSourceMapping', 'AWS::CloudWatch::Alarm']) {
       expect(report.types).toContain(t);
     }
     expect(report.needCount).toBeGreaterThan(150);
