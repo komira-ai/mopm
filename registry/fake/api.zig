@@ -13,6 +13,7 @@ const auth = @import("auth.zig");
 const control = @import("control.zig");
 const packages = @import("packages.zig");
 const publish = @import("publish.zig");
+const files = @import("files.zig");
 
 /// One request, with everything a handler reads.
 pub const Ctx = struct {
@@ -85,6 +86,7 @@ fn match(arena: Allocator, pattern: []const []const u8, segs: []const []const u8
 }
 
 pub fn handle(ctx: *Ctx) anyerror!Response {
+    if (std.mem.startsWith(u8, ctx.path, "/channel/") or std.mem.startsWith(u8, ctx.path, "/index/")) return files.serve(ctx);
     const upload_prefix = "/_fake/upload/";
     if (std.mem.startsWith(u8, ctx.path, upload_prefix)) return publish.uploadBytes(ctx, ctx.path[upload_prefix.len..]);
     if (std.mem.startsWith(u8, ctx.path, "/_fake/")) return control.handle(ctx);

@@ -591,6 +591,100 @@ RECIPES.update({
 })
 
 
+# ---------------------------------------------------------------------------
+# The channel and the sparse index (spec/channel.md, spec/index.md)
+# ---------------------------------------------------------------------------
+
+def fetch(f, path):
+    with urllib.request.urlopen(f.base + path, timeout=10) as r:
+        return r.read()
+
+
+def status_of(f, path):
+    try:
+        with urllib.request.urlopen(f.base + path, timeout=10) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+
+
+def index_path(name):
+    padded = (name + "____")[:4]
+    return "/index/%s/%s/%s" % (padded[:2], padded[2:4], name)
+
+
+def check_files(f):
+    """Publishes, yanks and takes down versions of one package, then checks the
+    files a client reads with no API: the index config, the package's index
+    records (validate.index_problems), the takedown log, repodata.json and
+    current_repodata.json, and the package file itself."""
+    problems = []
+    schema = lambda n: json.loads((validate.SPEC / n).read_text(encoding="utf-8"))  # noqa: E731
+
+    config = json.loads(fetch(f, "/index/config.json"))
+    problems += ["config.json: " + e.message for e in validate.Draft202012Validator(schema("index-config.schema.json")).iter_errors(config)]
+    for subdir in ("linux-64", "linux-aarch64", "osx-arm64", "noarch"):
+        empty = json.loads(fetch(f, "/channel/%s/repodata.json" % subdir))
+        if empty["info"] != {"subdir": subdir} or "packages.conda" not in empty:
+            problems.append("%s/repodata.json is not a repodata file" % subdir)
+
+    r = Release(f)
+    for version in ("0.3.0", "0.4.0", "0.5.0rc1"):
+        r.publish(version, ("bytes of %s" % version).encode())
+    f.request("PUT", "/api/v1/packages/%s/0.3.0/yank" % r.name, YANK, r.token)
+    r.publish("0.2.0", b"bytes of 0.2.0")
+    f.control("/tombstone", {"name": r.name, "version": "0.2.0", "reason_code": "malware"})
+
+    # The index records: valid, oldest first, the states the API reports.
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pathlib.Path(tmp) / r.name
+        path.write_bytes(fetch(f, index_path(r.name)))
+        problems += ["index: " + p for p in validate.index_problems(path, schema("index-record.schema.json"))]
+        records = [json.loads(line) for line in path.read_text().splitlines()]
+    order = [(rec["version"], rec["state"]) for rec in records]
+    want = [("0.2.0", "tombstoned"), ("0.3.0", "yanked"), ("0.4.0", "published"), ("0.5.0rc1", "published")]
+    if order != want:
+        problems.append("index records %s, expected %s" % (order, want))
+    for rec in records:
+        _, _, detail = f.request("GET", "/api/v1/packages/%s/%s" % (r.name, rec["version"]))
+        if [x["sha256"] for x in rec["files"]] != [x["sha256"] for x in detail["files"]]:
+            problems.append("index and getVersion disagree on the sha256 of %s" % rec["version"])
+
+    # The channel: yanked and taken-down files leave packages.conda for removed.
+    repodata = json.loads(fetch(f, "/channel/linux-64/repodata.json"))
+    mine = {k: v for k, v in repodata["packages.conda"].items() if v["name"] == "mojo-" + r.name}
+    if sorted(v["version"] for v in mine.values()) != ["0.4.0", "0.5.0rc1"]:
+        problems.append("repodata.json lists %s" % sorted(v["version"] for v in mine.values()))
+    for v in mine.values():
+        if v["build_number"] != 0 or v["subdir"] != "linux-64" or v["depends"] != ["mojo-compiler ==1.0.0"]:
+            problems.append("repodata entry %s: %s" % (v["version"], v))
+    for version in ("0.2.0", "0.3.0"):
+        if r.filename(version) not in repodata["removed"]:
+            problems.append("%s is not under removed" % version)
+    # Rewriting the same state gives the same bytes (two rewrites: mode on, off).
+    before = fetch(f, "/channel/linux-64/repodata.json")
+    f.control("/mode", {"read_only": True})
+    f.control("/mode", {"read_only": False})
+    if fetch(f, "/channel/linux-64/repodata.json") != before:
+        problems.append("repodata.json is not deterministic")
+    current = json.loads(fetch(f, "/channel/linux-64/current_repodata.json"))
+    cur = sorted(v["version"] for v in current["packages.conda"].values() if v["name"] == "mojo-" + r.name)
+    if cur != ["0.4.0"]:
+        problems.append("current_repodata.json lists %s, expected only 0.4.0" % cur)
+
+    # The files: a yanked file still downloads; a taken-down one answers 410.
+    if fetch(f, "/channel/linux-64/" + r.filename("0.3.0")) != b"bytes of 0.3.0":
+        problems.append("the yanked file does not download")
+    if status_of(f, "/channel/linux-64/" + r.filename("0.2.0")) != 410:
+        problems.append("the taken-down file does not answer 410")
+
+    takedowns = json.loads(fetch(f, "/index/takedowns.json"))
+    problems += ["takedowns.json: " + e.message for e in validate.Draft202012Validator(schema("takedowns.schema.json")).iter_errors(takedowns)]
+    if not any(t["name"] == r.name and t["version"] == "0.2.0" for t in takedowns["takedowns"]):
+        problems.append("takedowns.json does not list the takedown")
+    return ["files: " + p for p in problems]
+
+
 def catalogue_drift(spec):
     """The codes the fake knows (registry/fake/errors.zig) must be the spec's."""
     src = (HERE.parents[1] / "registry" / "fake" / "errors.zig").read_text(encoding="utf-8")
@@ -663,6 +757,7 @@ def main(exe):
                 s["after"]()
             for p in problems:
                 failures.append("%s / %r: %s" % (key[0], key[1], p))
+        failures += check_files(fake)
     finally:
         fake.close()
 

@@ -13,6 +13,7 @@ const Allocator = std.mem.Allocator;
 const api = @import("api.zig");
 const resp = @import("resp.zig");
 const State = @import("state.zig").State;
+const files = @import("files.zig");
 
 const usage = "usage: mopm-fake-registry --dir <dir> [--port <n>] [--stage beta|gamma|prod]\n";
 
@@ -56,6 +57,7 @@ pub fn main() !void {
         .stage = stage,
         .dir = root,
     };
+    try files.rewrite(alloc, &state);
     const out = std.io.getStdOut().writer();
     try out.print("mopm-fake-registry listening on {s}\n", .{state.base_url});
 
@@ -118,7 +120,7 @@ fn answer(arena: Allocator, state: *State, request: *std.http.Server.Request) !v
     state.next_request += 1;
     var headers = std.ArrayList(std.http.Header).init(arena);
     try headers.append(.{ .name = "x-mopm-request-id", .value = request_id });
-    if (r.body.len > 0) try headers.append(.{ .name = "content-type", .value = "application/json" });
+    if (r.body.len > 0) try headers.append(.{ .name = "content-type", .value = r.content_type });
     if (r.retry_after) |secs| {
         try headers.append(.{ .name = "retry-after", .value = try std.fmt.allocPrint(arena, "{d}", .{secs}) });
     }
@@ -134,4 +136,5 @@ test {
     _ = @import("packages.zig");
     _ = @import("versions.zig");
     _ = @import("publish.zig");
+    _ = @import("files.zig");
 }

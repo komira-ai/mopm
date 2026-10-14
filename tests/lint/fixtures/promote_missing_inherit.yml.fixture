@@ -1,5 +1,10 @@
 name: fixture
-on: [workflow_dispatch]
+on:
+  push: { branches: [main] }
+  workflow_dispatch:
+concurrency:
+  group: promote
+  cancel-in-progress: false
 permissions:
   contents: read
 jobs:

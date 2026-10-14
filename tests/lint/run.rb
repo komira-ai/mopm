@@ -24,6 +24,10 @@ CASES = {
   "pr_target" => { LINT => ["is not allowed"], HYG => ["privileged PR-target trigger"] },
   "promote_missing_inherit" => { LINT => ["job gate must set secrets: inherit"] },
   "promote_inherit" => { LINT => [] },
+  "promote_auto_ok" => { LINT => [] },
+  "promote_no_concurrency" => { LINT => ["needs a concurrency group"] },
+  "promote_cancel_true" => { LINT => ["needs a concurrency group"] },
+  "promote_pull_request" => { LINT => ["triggers must be exactly push and workflow_dispatch"] },
   "inherit_elsewhere" => { LINT => ["secrets: inherit is not allowed outside promote.yml"] },
   "account_id_literal" => { HYG => ["12-digit number that looks like an account id"] },
 }
