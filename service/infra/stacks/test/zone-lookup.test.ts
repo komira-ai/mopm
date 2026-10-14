@@ -12,7 +12,7 @@ describe.each(STAGES)('hosted zone lookup %s', (stage) => {
   createStageStacks(app, stageConfig(stage), { account: DUMMY_ACCOUNT, region: 'us-east-1' }, '1.2.3');
   const missing = app.synth().manifest.missing ?? [];
 
-  test('requests a hosted-zone lookup for the stage's own zone in the stage account and region', () => {
+  test('requests a hosted-zone lookup for the own zone of the stage in the stage account and region', () => {
     const zones = missing.filter((m) => m.provider === 'hosted-zone');
     expect(zones.length).toBeGreaterThan(0);
     for (const z of zones) {
