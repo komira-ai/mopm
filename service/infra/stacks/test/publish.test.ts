@@ -130,9 +130,10 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     });
   });
 
-  test('the API stack queues commits on the validate queue and nowhere else', () => {
+  test('the API stack sends to the validate queue (commits) and the index queue (yank rebuilds), send-only, and nowhere else', () => {
     const st = Object.values(api.findResources('AWS::IAM::Policy')).flatMap((r: any) => r.Properties.PolicyDocument.Statement as any[]);
     const q = st.filter((s) => ([] as string[]).concat(s.Action).some((a) => a.startsWith('sqs:')));
-    expect(q).toHaveLength(1);
+    expect(q.map((x) => x.Sid).sort()).toEqual(['QueueCommits', 'QueueIndexRebuilds']);
+    for (const x of q) expect(([] as string[]).concat(x.Action)).toEqual(['sqs:SendMessage']);
   });
 });
