@@ -36,7 +36,7 @@ pub const Os = enum {
     pub fn preloadVar(self: Os) []const u8 {
         return switch (self) {
             .linux => "LD_PRELOAD",
-            .macos => "DYLD_INSERT_LIBRARIES",
+            .macos => "LD_PRELOAD",
         };
     }
 };
