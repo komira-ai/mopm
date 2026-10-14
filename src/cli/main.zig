@@ -147,11 +147,12 @@ fn autolink(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const
         }
         return 1;
     };
-    const prefix = std.fs.cwd().realpathAlloc(arena, chosen.path) catch {
+    _ = std.fs.cwd().realpathAlloc(arena, chosen.path) catch {
         err.print("mopm {s}: environment {s} (from {s}) does not exist\n", .{ name, chosen.path, chosen.source.describe() }) catch {};
         return 1;
     };
 
+    const prefix = chosen.path;
     const paths = core.env.listMetadata(arena, prefix) catch |e| {
         switch (e) {
             error.NotAMojoEnv => err.print("mopm {s}: {s} (from {s}) has no lib/mojo: not a Mojo environment\n", .{ name, prefix, chosen.source.describe() }) catch {},
