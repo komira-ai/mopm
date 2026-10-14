@@ -31,6 +31,7 @@ export const tpl = (stage: Stage) => {
   return {
     channel: Template.fromStack(s.channel),
     data: Template.fromStack(s.data),
+    publish: Template.fromStack(s.publish),
     api: Template.fromStack(s.api),
     site: Template.fromStack(s.site),
   };

@@ -1,8 +1,8 @@
 import { App } from 'aws-cdk-lib';
 import { Match } from 'aws-cdk-lib/assertions';
-import { ApiStack, READ_ACTIONS, READ_ROUTES, READ_TABLES } from '../lib/api-stack';
+import { ApiStack, PUBLISH_ROUTES, READ_ACTIONS, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
 import { STAGES, stageConfig, tableName } from '../lib/config';
-import { tpl } from './util';
+import { DUMMY_ACCOUNT, tpl } from './util';
 
 describe.each(STAGES)('ApiStack %s', (stage) => {
   const { api: t } = tpl(stage);
@@ -20,15 +20,32 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     });
   });
 
-  test('HTTP API serves the read operations only, with the default endpoint disabled', () => {
+  test('HTTP API serves the contract operations the handler implements, with the default endpoint disabled', () => {
     t.hasResourceProperties('AWS::ApiGatewayV2::Api', { ProtocolType: 'HTTP', DisableExecuteApiEndpoint: true });
-    t.resourceCountIs('AWS::ApiGatewayV2::Route', READ_ROUTES.length);
-    for (const r of READ_ROUTES) t.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: `GET ${r}` });
+    t.resourceCountIs('AWS::ApiGatewayV2::Route', READ_ROUTES.length + PUBLISH_ROUTES.length);
     const keys = Object.values(t.findResources('AWS::ApiGatewayV2::Route')).map((r: any) => r.Properties.RouteKey as string);
-    expect(keys.every((k) => k.startsWith('GET '))).toBe(true);
     expect(keys.sort()).toEqual(
-      ['GET /api/v1/health', 'GET /api/v1/packages', 'GET /api/v1/packages/{name}', 'GET /api/v1/packages/{name}/versions'].sort(),
+      [
+        'GET /api/v1/health',
+        'GET /api/v1/packages',
+        'GET /api/v1/packages/{name}',
+        'GET /api/v1/packages/{name}/versions',
+        'POST /api/v1/packages/{name}/{version}/files',
+        'POST /api/v1/packages/{name}/{version}/publish',
+        'GET /api/v1/publishes/{publish_id}',
+      ].sort(),
     );
+  });
+
+  test('the handler is told where uploads go and where commits are queued, by name', () => {
+    t.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: {
+        Variables: Match.objectLike({
+          MOPM_CHANNEL_BUCKET: `mopm-${stage}-channel-${DUMMY_ACCOUNT}`,
+          MOPM_VALIDATE_QUEUE_URL: `https://sqs.us-east-1.amazonaws.com/${DUMMY_ACCOUNT}/mopm-${stage}-validate.fifo`,
+        }),
+      },
+    });
   });
 
   // Every policy statement the handler's role gets. The role is the only one in the stack with a policy.
@@ -37,8 +54,8 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
   const acts = (s: any): string[] => ([] as string[]).concat(s.Action);
   const flatten = (v: any): string => (typeof v === 'string' ? v : JSON.stringify(v));
 
-  test('the Lambda role is read-only on the registry tables: GetItem and Query, nothing else', () => {
-    const st = statements().filter((s) => acts(s).some((a) => a.startsWith('dynamodb:')));
+  test('reads: GetItem and Query on the four read tables, nothing else in that statement', () => {
+    const st = statements().filter((s) => acts(s).some((a) => a === 'dynamodb:Query'));
     expect(st).toHaveLength(1);
     expect(st[0].Effect).toBe('Allow');
     expect(acts(st[0]).sort()).toEqual([...READ_ACTIONS].sort());
@@ -46,17 +63,47 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     const resources = flatten(st[0].Resource);
     for (const table of READ_TABLES) expect(resources).toContain(tableName(stage, table));
     expect(resources).not.toContain('"*"');
-    // Nothing outside the four tables (and their indexes) is named.
     const named = (resources.match(/table\/mopm-[a-z]+-[a-z_]+/g) ?? []).map((m) => m.replace(/\/index.*/, ''));
     expect([...new Set(named)].sort()).toEqual(READ_TABLES.map((x) => `table/${tableName(stage, x)}`).sort());
   });
 
-  test('no statement anywhere grants a write, delete, scan or wildcard action', () => {
+  // The reviewed write grants, pinned by table. A new write needs a line in WRITE_GRANTS (and so a reviewer).
+  test('writes: exactly the reviewed grants, table by table', () => {
+    expect(WRITE_GRANTS.map((g) => [g.sid, g.actions, g.tables])).toEqual([
+      ['ReserveVersions', ['dynamodb:PutItem'], ['versions', 'audit']],
+      ['RecordUploadsAndPublishes', ['dynamodb:GetItem', 'dynamodb:PutItem'], ['uploads', 'publishes']],
+      ['AuthenticateTokens', ['dynamodb:GetItem', 'dynamodb:UpdateItem'], ['tokens']],
+      ['ReadSwitches', ['dynamodb:GetItem'], ['config']],
+    ]);
+    for (const g of WRITE_GRANTS) {
+      const st = statements().find((x) => x.Sid === g.sid);
+      expect(st).toBeDefined();
+      expect(acts(st).sort()).toEqual([...g.actions].sort());
+      const named = (flatten(st.Resource).match(/table\/mopm-[a-z]+-[a-z_]+/g) ?? []).sort();
+      expect(named).toEqual(g.tables.map((x) => `table/${tableName(stage, x)}`).sort());
+    }
+  });
+
+  test('no statement anywhere grants a delete, a scan or a wildcard action', () => {
     const actions = statements().flatMap(acts);
     for (const a of actions.filter((x) => x.startsWith('dynamodb:'))) {
-      expect(a).toMatch(/^dynamodb:(GetItem|Query)$/);
+      expect(a).toMatch(/^dynamodb:(GetItem|Query|PutItem|UpdateItem)$/);
     }
     expect(actions.some((a) => a === '*' || a.endsWith(':*'))).toBe(false);
+    expect(actions.some((a) => /Delete|Scan|BatchWrite/.test(a))).toBe(false);
+  });
+
+  test('S3 and SQS are reachable only where publishing needs them: quarantine/ and the validate queue', () => {
+    const s3 = statements().filter((s) => acts(s).some((a) => a.startsWith('s3:')));
+    expect(s3).toHaveLength(1);
+    expect(acts(s3[0]).sort()).toEqual(['s3:GetObject', 's3:PutObject']);
+    expect(flatten(s3[0].Resource)).toContain('/quarantine/*');
+    expect(flatten(s3[0].Resource)).toContain(`mopm-${stage}-channel-${DUMMY_ACCOUNT}`);
+    const q = statements().filter((s) => acts(s).some((a) => a.startsWith('sqs:')));
+    expect(q).toHaveLength(1);
+    expect(acts(q[0])).toEqual(['sqs:SendMessage']);
+    expect(flatten(q[0].Resource)).toContain(`mopm-${stage}-validate.fifo`);
+    expect(flatten(q[0].Resource)).not.toContain('index');
   });
 
   test('custom domain with a DNS-validated certificate', () => {

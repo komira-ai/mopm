@@ -88,6 +88,8 @@ const EXPECTED_PROD_DIFF = [
   'data:AWS::DynamoDB::Table:Properties.DeletionProtectionEnabled',
   'data:AWS::DynamoDB::Table:Properties.ResourcePolicy',
   'data:AWS::DynamoDB::Table:UpdateReplacePolicy',
+  'publish:AWS::Logs::LogGroup:DeletionPolicy',
+  'publish:AWS::Logs::LogGroup:UpdateReplacePolicy',
   'site:AWS::S3::Bucket:DeletionPolicy',
   'site:AWS::S3::Bucket:UpdateReplacePolicy',
 ].sort();

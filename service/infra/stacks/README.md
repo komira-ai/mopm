@@ -1,6 +1,6 @@
 # mopm stacks (beta, gamma, prod)
 
-CDK stacks per stage: channel (S3 + CloudFront conda channel), data (DynamoDB), api (HTTP API + Lambda), site.
+CDK stacks per stage: channel (S3 + CloudFront conda channel), data (DynamoDB), publish (FIFO queues, validator and index-writer Lambdas), api (HTTP API + Lambda), site.
 Account ids come from the CDK environment at deploy time and are never committed. Tests build their dummy account at runtime.
 
 ## Runbook notes
