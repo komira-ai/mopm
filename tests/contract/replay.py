@@ -490,8 +490,10 @@ def project_full(f):
     r = Release(f)
     f.control("/limits", {"project_bytes": 15})
     r.publish("0.3.0", b"conda bytes")
-    return step("beginUpload", path=r.path("0.4.0"), body=r.begin_body("0.4.0", b"12345"), token=r.token,
-                auth="publishToken")
+    s = step("beginUpload", path=r.path("0.4.0"), body=r.begin_body("0.4.0", b"12345"), token=r.token,
+             auth="publishToken")
+    f.control("/limits", {"project_bytes": 10_000_000_000})  # the limit is the fake's, not this package's: restore it
+    return s
 
 
 def commit(f, kind):
