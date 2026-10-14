@@ -58,7 +58,11 @@ pub const Plan = struct {
     }
 };
 
+/// `dir/file`. Under an absolute `dir` the result is normalised, so that an
+/// installed `lib/mojo/x.mopm.json` naming `../libx.so.1` gives `<env>/lib/libx.so.1`
+/// (and `-L<env>/lib`), the spelling the run path and the preload list use.
 fn join(arena: Allocator, dir: []const u8, file: []const u8) Allocator.Error![]const u8 {
+    if (std.fs.path.isAbsolute(dir)) return std.fs.path.resolvePosix(arena, &.{ dir, file });
     if (dir.len == 0 or std.mem.eql(u8, dir, ".")) return file;
     return std.fmt.allocPrint(arena, "{s}/{s}", .{ dir, file });
 }
@@ -390,6 +394,19 @@ test "a dot directory does not prefix paths" {
     const p = try plan(a, &.{try mk(a, ".", pkg_shared)});
     try expectList(&.{ "-Llib", "-lx" }, p.build);
     try expectList(&.{"lib/libx.so.1"}, p.run);
+}
+
+test "an absolute directory is normalised: ../ from lib/mojo lands in lib" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const p = try plan(a, &.{try mk(a, "/env/lib/mojo",
+        \\{"schema": 1, "name": "app", "native": [
+        \\  {"id": "x", "soname": "libx.so.1", "file": "../libx.so.1"}]}
+    )});
+    try expectList(&.{ "-L/env/lib", "-lx" }, p.build);
+    try expectList(&.{"/env/lib/libx.so.1"}, p.run);
+    try expectList(&.{"/env/lib/libx.so.1"}, p.preload);
 }
 
 // Golden tests: read tests/fixtures and tests/golden relative to the working

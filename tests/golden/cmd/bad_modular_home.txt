@@ -1,0 +1,1 @@
+mopm repl: MODULAR_HOME does not end in /share/max, so the environment prefix cannot be derived from it; pass --prefix <dir>

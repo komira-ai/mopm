@@ -66,7 +66,7 @@ It does, in order:
 1. creates the managed policy `mopm-<stage>-cfn-exec` from `cfn-exec-policy.template.json` (name-scoped to
    `mopm-<stage>-*`, denies on the access roles, the OIDC provider and the bootstrap roles; not AdministratorAccess).
    Resumable: if the policy exists with an identical document it is skipped; if it exists with a different one the
-   script stops with a message (it never forces or creates a new policy version, you resolve the difference by hand);
+   script stops with a message and changes nothing, unless you pass `--update-policy` (see "Changing the execution policy");
 2. `cdk bootstrap aws://<account>/<region> --cloudformation-execution-policies arn:aws:iam::<account>:policy/mopm-<stage>-cfn-exec -c stage=<stage> -c account=<account> -c region=<region>`;
 3. `cdk diff mopm-<stage>-access` (same context), always, printed before anything is deployed;
 4. `cdk deploy mopm-<stage>-access` (same context; the trusted repository is fixed to `komira-ai/mopm` in `lib/contract.ts`)
@@ -77,6 +77,39 @@ Lesson from the beta run: `cdk bootstrap` also loads the app (`bin/access.ts`), 
 without the context flags, so all three `-c` values go on every cdk command. The first run had to be finished by hand
 (bootstrap with the flags, `cdk diff`, `cdk deploy ... --require-approval never` after reviewing the IAM diff); the script
 now does that, and a re-run after a partial failure skips the policy it already created.
+
+## Changing the execution policy (all stages)
+
+`cfn-exec-policy.template.json` is what CloudFormation may do when it deploys the service stacks (as
+`cdk-hnb659fds-cfn-exec-role`). Placeholders: `{{STAGE}}`, `{{ACCOUNT}}`, `{{ZONE}}` (`beta.mopm.dev`, `gamma.mopm.dev`,
+`mopm.dev`), filled in by `bootstrap.sh`. The policy is a managed policy attached to the exec role by ARN, so a new default
+version takes effect for the next deploy without another `cdk bootstrap`.
+
+1. Change the template in a pull request. `service/infra/stacks/test/cfn-exec-coverage.test.ts` synthesizes the beta, gamma and
+   prod stacks and fails if the rendered policy lacks an action some resource needs (or a resource type is not in its reviewed
+   map). When you add a resource type to a stack, add its row to `REQUIRED` there, with the actions CloudFormation performs.
+   Never loosen the two Deny statements; the test pins them.
+2. After merge, per stage, with that stage's admin credentials (beta first, then gamma, then prod):
+   ```sh
+   service/infra/access/bootstrap.sh --stage <stage> --account <id> --region <region> --profile <profile> --update-policy --policy-only
+   service/infra/access/bootstrap.sh --stage <stage> --account <id> --region <region> --profile <profile> --update-policy --policy-only --apply
+   ```
+   The first command is a dry run: it makes read-only IAM calls, prints the diff (current default version against the
+   template, rendered for the stage) and the commands. The second runs them: when the policy already has 5 versions (IAM's limit)
+   it first deletes the oldest non-default one, then `aws iam create-policy-version --set-as-default`. `--policy-only` stops
+   before `cdk bootstrap`, `cdk diff` and the access-stack deploy; leave it out only when those should run too.
+   If the policy is identical nothing happens, so the command is safe to repeat. Without `--update-policy` a differing policy
+   still stops the script.
+3. Re-run the failed deploy workflow for the stage.
+
+Route 53 permissions: CloudFormation creates the alias records and the ACM DNS-validation records in the stage zone with the exec
+role's credentials. The zone id is not known at render time, so record changes are allowed on `hostedzone/*` of the account and
+limited by the condition keys `route53:ChangeResourceRecordSetsNormalizedRecordNames` (`<zone>` and `*.<zone>`, as
+`ForAllValues:StringLike`) and `route53:ChangeResourceRecordSetsRecordTypes` (`A`, `AAAA`, `CNAME`), documented at
+https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/specifying-rrset-conditions.html. Each stage account holds only its own zone;
+the prod account's zone also holds the NS delegations of beta and gamma, which the record-type limit keeps out of reach. Zone creation
+and deletion are not granted. Known limit: `iam:UpdateAssumeRolePolicy` stays denied, so a deploy cannot change the trust policy of an
+existing role (it can create one); such a change needs an admin.
 
 ### Why the access stack bypasses the scoped execution role
 

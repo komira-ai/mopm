@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "name": "pkg_a",
+  "version": "1.0.0",
+  "native": [
+    { "id": "x", "soname": "libdup.1.dylib", "file": "../libdup.1.dylib" }
+  ]
+}

@@ -100,6 +100,8 @@ jobs:
           node-version: '20'
       - name: bash -n
         run: bash -n bootstrap.sh
+      - name: bootstrap.sh --update-policy and --policy-only against a fake aws (no AWS access)
+        run: ./test/bootstrap-update-policy.sh
       - name: bootstrap.sh is a dry run by default and validates its flags
         run: |
           acct="$(printf '4%.0s' $(seq 12))"
