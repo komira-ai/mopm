@@ -1,0 +1,4 @@
+from outer import chain
+
+print("chain", chain())
+

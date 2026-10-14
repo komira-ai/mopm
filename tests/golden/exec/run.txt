@@ -1,0 +1,6 @@
+arg: run
+arg: -Xlinker
+arg: @ROOT@/tests/fixtures/env/exec/lib/libecho.so
+arg: hello.mojo
+MODULAR_HOME=@ROOT@/tests/fixtures/env/exec/share/max
+MOPM_GOLDEN_MARK=kept
