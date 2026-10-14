@@ -1,7 +1,7 @@
 # mopm stacks (beta, gamma, prod)
 
 CDK stacks per stage: channel (S3 + CloudFront conda channel), data (DynamoDB), api (HTTP API + Lambda), site.
-Account ids come from the CDK environment at deploy time and are never committed.
+Account ids come from the CDK environment at deploy time and are never committed. Tests build their dummy account at runtime.
 
 ## Runbook notes
 
@@ -14,4 +14,8 @@ Account ids come from the CDK environment at deploy time and are never committed
   or `Principal` form, the data stack fails there and the policy shape needs adjusting.
 - **API host.** The API is served at `api.<site host>` (three hosts beyond the site and conda hosts, with their
   own certificates and DNS records). Routing `/api/*` through CloudFront on the site host is the alternative;
-  this is a pending maintainer decision.
+  this is a pending CEO decision.
+- **Health endpoint.** `/api/v1/health` reports `stage`, `version` and `commit` (`-c commit=<git sha>`), so the e2e
+  workflow can prove the deployed commit equals the one it was asked to test.
+- **Quarantine.** The channel bucket is served through CloudFront with an origin access control; an explicit deny
+  keeps `quarantine/*` unreachable through the distribution.

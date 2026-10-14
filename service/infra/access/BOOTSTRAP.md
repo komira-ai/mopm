@@ -3,7 +3,9 @@
 A human admin does this once per stage (`beta`, `gamma`, `prod`) with their own credentials.
 Nothing in CI holds standing access: after this, GitHub Actions assumes `mopm-<stage>-deploy`
 through OIDC for at most one hour, and that role can only assume the CDK bootstrap roles.
-Account ids are never committed; they are GitHub environment variables.
+This repository is public: account ids, role ARNs and regions are never committed; they are GitHub
+environment variables, and the admin passes them to the script as flags. The full list of GitHub
+settings this design relies on, and the attack each closes, is `docs/security/public-deploy.md`.
 
 ## What the access stack creates
 
@@ -40,7 +42,7 @@ It does, in order:
 1. creates the managed policy `mopm-<stage>-cfn-exec` from `cfn-exec-policy.template.json` (name-scoped to
    `mopm-<stage>-*`, denies on the access roles, the OIDC provider and the bootstrap roles; not AdministratorAccess);
 2. `cdk bootstrap aws://<account>/<region> --cloudformation-execution-policies arn:aws:iam::<account>:policy/mopm-<stage>-cfn-exec`;
-3. `cdk deploy mopm-<stage>-access` (context flags `stage`, `account`, `region`, `deployRepo`).
+3. `cdk deploy mopm-<stage>-access` (context flags `stage`, `account`, `region`; the trusted repository is fixed to `komira-ai/mopm` in `lib/contract.ts`).
 
 Skip the OIDC provider if the account already has one for GitHub (only one may exist per account and URL).
 
@@ -53,7 +55,9 @@ Skip the OIDC provider if the account already has one for GitHub (only one may e
    ```
    (`PUT /repos/{owner}/{repo}/actions/oidc/customization/sub`). Verify with the matching `GET`.
 2. Create environments `beta`, `gamma`, `prod` (Settings, Environments). On `gamma` and `prod` add
-   required reviewers. On all three set deployment branches to "Selected branches": `main` only.
+   required reviewers (and prevent self-review). On all three set deployment branches to "Selected
+   branches": `main` only. The roles' trust policies repeat both limits (environment and
+   `refs/heads/main` in `job_workflow_ref`), so a loosened GitHub setting alone does not open a role.
 3. In each environment store, as **variables** (not secrets): `AWS_ACCOUNT_ID`, `AWS_REGION`,
    `DEPLOY_ROLE_ARN` (`arn:aws:iam::<account>:role/mopm-<stage>-deploy`), `E2E_ROLE_ARN`
    (`arn:aws:iam::<account>:role/mopm-<stage>-e2e`). The deploy workflow reads them as `vars.*`.
@@ -61,7 +65,8 @@ Skip the OIDC provider if the account already has one for GitHub (only one may e
 ## Verification
 
 Run `deploy.yml` on `main` for `beta`: `aws sts get-caller-identity` must show the deploy role. The same
-workflow from another branch must fail at `AssumeRoleWithWebIdentity`.
+workflow from another branch must fail at the environment's branch policy, and if that were
+loosened, at `AssumeRoleWithWebIdentity`.
 
 ## Known residual risk
 

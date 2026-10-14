@@ -12,7 +12,8 @@ const siteHost = (s: Stage) => stageConfig(s).siteDomain;
 function normalise(stage: Stage, json: unknown): unknown {
   const host = siteHost(stage);
   const hostRe = new RegExp(`(?<![A-Za-z0-9-])${host.replace(/\./g, '\\.')}(?![A-Za-z0-9-])`, 'g');
-  const text = JSON.stringify(json).replace(hostRe, '<site>').split(`mopm-${stage}`).join('mopm-<stage>');
+  const stageRe = new RegExp(`(?<![A-Za-z0-9])${stage}(?![A-Za-z0-9])`, 'gi');
+  const text = JSON.stringify(json).replace(hostRe, '<site>').replace(stageRe, '<stage>');
   return JSON.parse(text);
 }
 
@@ -41,7 +42,13 @@ function differing(a: Map<string, string>, b: Map<string, string>): string[] {
   const typeOnly = (k: string) => k.replace(/:[^:]*:([^:]*)$/, ':$1'); // drop the logical id
   const out = new Set<string>();
   for (const k of keys) {
-    if ((a.get(k) ?? 'null') !== (b.get(k) ?? 'null')) out.add(typeOnly(k));
+    if ((a.get(k) ?? 'null') !== (b.get(k) ?? 'null')) {
+      out.add(typeOnly(k));
+      if (!EXPECTED_PROD_DIFF.includes(typeOnly(k))) {
+        // Unexpected difference: show both values so the failure is diagnosable from the CI log alone.
+        console.log(`DIFF ${k}\n  a=${(a.get(k) ?? 'null').slice(0, 400)}\n  b=${(b.get(k) ?? 'null').slice(0, 400)}`);
+      }
+    }
   }
   return [...out].sort();
 }

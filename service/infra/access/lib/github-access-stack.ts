@@ -5,8 +5,8 @@ import * as c from './contract';
 
 export interface GithubAccessStackProps extends StackProps {
   readonly stage: c.Stage;
-  /** owner/name of the private deploy repo; the OIDC `sub` is bound to it. */
-  readonly deployRepo: string;
+  /** owner/name of the repository the OIDC `sub` is bound to. Defaults to the one public repository. */
+  readonly repo?: string;
   /** Regions whose CDK bootstrap roles the deploy role may assume. */
   readonly regions: string[];
 }
@@ -21,13 +21,14 @@ export class GithubAccessStack extends Stack {
     // Deployed once by a human admin with their own credentials, so it does not depend on
     // (and must not run through) the CDK bootstrap roles it grants access to.
     super(scope, id, { synthesizer: new CliCredentialsStackSynthesizer(), ...props });
-    const { stage, deployRepo, regions } = props;
+    const { stage, regions } = props;
+    const repo = props.repo ?? c.REPO;
     const account = props.env?.account;
     const region = props.env?.region;
     if (!account || !ACCOUNT_ID.test(account) || !region) {
       throw new Error('env.account (12 digits) and env.region must be concrete, not tokens');
     }
-    if (!/^[\w.-]+\/[\w.-]+$/.test(deployRepo)) throw new Error(`bad deployRepo '${deployRepo}'`);
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error(`bad repo '${repo}'`);
     if (regions.length === 0) throw new Error('regions must not be empty');
 
     const provider = new iam.OpenIdConnectProvider(this, 'GithubOidc', {
@@ -39,7 +40,7 @@ export class GithubAccessStack extends Stack {
     // This requires the repo's OIDC subject template to be
     // ["repo","context","job_workflow_ref"] (see BOOTSTRAP.md).
     const subFor = (workflowFile: string) =>
-      `repo:${deployRepo}:environment:${stage}:job_workflow_ref:${deployRepo}/${workflowFile}@${c.WORKFLOW_REF}`;
+      `repo:${repo}:environment:${stage}:job_workflow_ref:${repo}/${workflowFile}@${c.WORKFLOW_REF}`;
 
     const trust = (workflowFile: string) =>
       new iam.FederatedPrincipal(

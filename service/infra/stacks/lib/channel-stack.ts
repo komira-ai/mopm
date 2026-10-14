@@ -56,6 +56,18 @@ export class ChannelStack extends Stack {
       }),
     );
 
+    // Uploads wait in quarantine/ until validated. The OAC allow covers the whole bucket, so deny CloudFront
+    // explicitly there: an explicit deny wins, and quarantined bytes are never served from the channel host.
+    this.bucket.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: 'DenyCloudFrontQuarantine',
+        effect: iam.Effect.DENY,
+        principals: [new iam.ServicePrincipal('cloudfront.amazonaws.com')],
+        actions: ['s3:GetObject'],
+        resources: [this.bucket.arnForObjects('quarantine/*')],
+      }),
+    );
+
     const zone = lookupZone(this, c);
     const cert = new acm.Certificate(this, 'Cert', {
       domainName: c.condaDomain,

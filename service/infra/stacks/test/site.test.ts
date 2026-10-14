@@ -1,6 +1,6 @@
 import { Match } from 'aws-cdk-lib/assertions';
 import { STAGES } from '../lib/config';
-import { bucketStatements, tpl } from './util';
+import { DUMMY_ACCOUNT, bucketStatements, tpl } from './util';
 
 describe.each(STAGES)('SiteStack %s', (stage) => {
   const { site: t } = tpl(stage);
@@ -8,7 +8,7 @@ describe.each(STAGES)('SiteStack %s', (stage) => {
 
   test('bucket is private and encrypted, TLS only', () => {
     t.hasResourceProperties('AWS::S3::Bucket', {
-      BucketName: `mopm-${stage}-site-111111111111`,
+      BucketName: `mopm-${stage}-site-${DUMMY_ACCOUNT}`,
       PublicAccessBlockConfiguration: Match.objectLike({ BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true }),
       BucketEncryption: Match.anyValue(),
     });

@@ -12,12 +12,12 @@ export interface StageStacks {
   site: SiteStack;
 }
 
-export function createStageStacks(app: App, config: StageConfig, env: Environment, version: string): StageStacks {
+export function createStageStacks(app: App, config: StageConfig, env: Environment, version: string, commit = 'dev'): StageStacks {
   const p = `mopm-${config.stage}`;
   return {
     channel: new ChannelStack(app, `${p}-channel`, { env, config }),
     data: new DataStack(app, `${p}-data`, { env, config }),
-    api: new ApiStack(app, `${p}-api`, { env, config, version }),
+    api: new ApiStack(app, `${p}-api`, { env, config, version, commit }),
     site: new SiteStack(app, `${p}-site`, { env, config }),
   };
 }

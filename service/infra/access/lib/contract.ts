@@ -30,7 +30,10 @@ export const GITHUB_OIDC_URL = 'https://token.actions.githubusercontent.com';
 export const GITHUB_OIDC_HOST = 'token.actions.githubusercontent.com';
 export const OIDC_AUDIENCE = 'sts.amazonaws.com';
 
-/** Workflow files (in the deploy repo) allowed to assume each role. */
+/** The one repository whose workflows may assume the roles. Every trust condition is bound to it. */
+export const REPO = 'komira-ai/mopm';
+
+/** Workflow files (in REPO, on main) allowed to assume each role. */
 export const DEPLOY_WORKFLOW = '.github/workflows/deploy.yml';
 export const E2E_WORKFLOW = '.github/workflows/e2e.yml';
 export const WORKFLOW_REF = 'refs/heads/main';

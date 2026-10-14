@@ -1,13 +1,13 @@
 import { Match } from 'aws-cdk-lib/assertions';
 import { STAGES } from '../lib/config';
-import { bucketStatements, exemptRoles, tpl } from './util';
+import { DUMMY_ACCOUNT, bucketStatements, exemptRoles, tpl } from './util';
 
 describe.each(STAGES)('ChannelStack %s', (stage) => {
   const { channel: t } = tpl(stage);
 
   test('bucket is private, encrypted, versioned, owner-enforced', () => {
     t.hasResourceProperties('AWS::S3::Bucket', {
-      BucketName: `mopm-${stage}-channel-111111111111`,
+      BucketName: `mopm-${stage}-channel-${DUMMY_ACCOUNT}`,
       PublicAccessBlockConfiguration: {
         BlockPublicAcls: true,
         BlockPublicPolicy: true,
@@ -53,9 +53,18 @@ describe.each(STAGES)('ChannelStack %s', (stage) => {
   });
 
   test('bucket policy lets only CloudFront (this distribution) read objects', () => {
-    const s = bucketStatements(t).find((x) => x.Principal?.Service === 'cloudfront.amazonaws.com');
+    const s = bucketStatements(t).find((x) => x.Effect === 'Allow' && x.Principal?.Service === 'cloudfront.amazonaws.com');
     expect(s.Action).toBe('s3:GetObject');
     expect(s.Condition.StringEquals['AWS:SourceArn']).toBeDefined();
+  });
+
+  test('quarantine/ is unreachable through the distribution (explicit deny beats the OAC allow)', () => {
+    const s = bucketStatements(t).find((x) => x.Sid === 'DenyCloudFrontQuarantine');
+    expect(s).toBeDefined();
+    expect(s.Effect).toBe('Deny');
+    expect(s.Principal).toEqual({ Service: 'cloudfront.amazonaws.com' });
+    expect(s.Action).toBe('s3:GetObject');
+    expect(JSON.stringify(s.Resource)).toContain('/quarantine/*');
   });
 
   test('repodata has a 60s cache policy and packages are immutable for a year', () => {

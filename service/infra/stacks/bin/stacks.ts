@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Usage: cdk synth|deploy -c stage=beta|gamma|prod [-c version=<release>] [-c hostedZoneId=<dummy, synth only>]
+// Usage: cdk synth|deploy -c stage=beta|gamma|prod [-c version=<release>] [-c commit=<git sha>] [-c hostedZoneId=<dummy, synth only>]
 // The account comes from the CDK environment (CDK_DEFAULT_ACCOUNT) at deploy time; it is never in a file.
 import { App } from 'aws-cdk-lib';
 import { createStageStacks } from '../lib/app';
@@ -13,4 +13,5 @@ if (!account) {
 }
 const zoneId = app.node.tryGetContext('hostedZoneId');
 const version = String(app.node.tryGetContext('version') ?? 'dev');
-createStageStacks(app, stageConfig(stage, zoneId ? String(zoneId) : undefined), { account, region: REGION }, version);
+const commit = String(app.node.tryGetContext('commit') ?? 'dev');
+createStageStacks(app, stageConfig(stage, zoneId ? String(zoneId) : undefined), { account, region: REGION }, version, commit);

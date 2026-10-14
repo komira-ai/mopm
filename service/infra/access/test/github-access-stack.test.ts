@@ -5,15 +5,15 @@ import * as path from 'path';
 import { GithubAccessStack } from '../lib/github-access-stack';
 import * as c from '../lib/contract';
 
-const ACCOUNT = '123456789012'; // AWS documentation example id
+const ACCOUNT = '4'.repeat(12); // dummy id, built at runtime so no 12-digit literal is in the tree
 const REGION = 'us-west-2';
-const REPO = 'example-org/example-deploy';
+const REPO = 'example-org/example-repo';
 
 function synth(stage: c.Stage, regions = [REGION]): Template {
   const app = new App();
   const stack = new GithubAccessStack(app, `t-${stage}`, {
     stage,
-    deployRepo: REPO,
+    repo: REPO,
     regions,
     env: { account: ACCOUNT, region: REGION },
   });
@@ -185,17 +185,31 @@ test('multiple regions: deploy role gets 4 roles per region, still only AssumeRo
   expect(arr(st[0].Resource as string[])).toHaveLength(8);
 });
 
-test('stage config is validated', () => {
-  expect(() => c.assertStage('staging')).toThrow();
-  expect(() => new GithubAccessStack(new App(), 'x', { stage: 'beta', deployRepo: REPO, regions: ['us-west-2'] })).toThrow(/concrete/);
-  expect(() => new GithubAccessStack(new App(), 'x', { stage: 'beta', deployRepo: 'bad', regions: ['r'], env: { account: ACCOUNT, region: REGION } })).toThrow(/deployRepo/);
+test('trust is bound to komira-ai/mopm main by default', () => {
+  const app = new App();
+  const t = Template.fromStack(
+    new GithubAccessStack(app, 'd', { stage: 'beta', regions: [REGION], env: { account: ACCOUNT, region: REGION } }),
+  );
+  const subs = Object.values(t.findResources('AWS::IAM::Role')).map(
+    (r: any) => r.Properties.AssumeRolePolicyDocument.Statement[0].Condition.StringEquals['token.actions.githubusercontent.com:sub'],
+  );
+  expect(subs.sort()).toEqual([
+    'repo:komira-ai/mopm:environment:beta:job_workflow_ref:komira-ai/mopm/.github/workflows/deploy.yml@refs/heads/main',
+    'repo:komira-ai/mopm:environment:beta:job_workflow_ref:komira-ai/mopm/.github/workflows/e2e.yml@refs/heads/main',
+  ]);
 });
 
-test('public-repo hygiene: no real-looking account ids in sources other than the doc example', () => {
+test('stage config is validated', () => {
+  expect(() => c.assertStage('staging')).toThrow();
+  expect(() => new GithubAccessStack(new App(), 'x', { stage: 'beta', repo: REPO, regions: ['us-west-2'] })).toThrow(/concrete/);
+  expect(() => new GithubAccessStack(new App(), 'x', { stage: 'beta', repo: 'bad', regions: ['r'], env: { account: ACCOUNT, region: REGION } })).toThrow(/bad repo/);
+});
+
+test('public-repo hygiene: no 12-digit account id literal in the access sources', () => {
   const root = path.join(__dirname, '..');
   for (const f of ['lib/contract.ts', 'lib/github-access-stack.ts', 'bin/access.ts', 'bootstrap.sh', 'BOOTSTRAP.md', 'cfn-exec-policy.template.json']) {
     const text = fs.readFileSync(path.join(root, f), 'utf8');
-    for (const m of text.match(/(?<![\d])\d{12}(?![\d])/g) ?? []) expect(m).toBe('123456789012');
+    expect(text.match(/(?<![0-9A-Za-z])\d{12}(?![0-9A-Za-z])/g) ?? []).toEqual([]);
   }
 });
 

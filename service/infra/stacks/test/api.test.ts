@@ -11,7 +11,7 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     t.resourceCountIs('AWS::Lambda::Function', 1);
     t.hasResourceProperties('AWS::Lambda::Function', {
       Runtime: 'nodejs20.x',
-      Environment: { Variables: { MOPM_STAGE: stage, MOPM_VERSION: '1.2.3' } },
+      Environment: { Variables: { MOPM_STAGE: stage, MOPM_VERSION: '1.2.3', MOPM_COMMIT: 'c0ffee' } },
     });
   });
 
@@ -31,13 +31,13 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     t.hasResourceProperties('AWS::Logs::LogGroup', { RetentionInDays: 30 });
   });
 
-  test('handler returns the stage and version as JSON', async () => {
+  test('handler returns the stage, version and commit as JSON', async () => {
     const mod: { exports: any } = { exports: {} };
     new Function('exports', 'process', HEALTH_HANDLER_SOURCE)(mod.exports, {
-      env: { MOPM_STAGE: stage, MOPM_VERSION: '1.2.3' },
+      env: { MOPM_STAGE: stage, MOPM_VERSION: '1.2.3', MOPM_COMMIT: 'c0ffee' },
     });
     const res = await mod.exports.handler();
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body)).toEqual({ stage, version: '1.2.3' });
+    expect(JSON.parse(res.body)).toEqual({ stage, version: '1.2.3', commit: 'c0ffee' });
   });
 });

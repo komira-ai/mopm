@@ -14,6 +14,8 @@ export interface ApiStackProps extends StackProps {
   config: StageConfig;
   /** Release version reported by /api/v1/health. */
   version: string;
+  /** Git commit the release was built from, reported by /api/v1/health so e2e can prove what is deployed. */
+  commit: string;
 }
 
 /** Inline handler for GET /api/v1/health. Plain CommonJS so no build step is needed. */
@@ -21,7 +23,7 @@ export const HEALTH_HANDLER_SOURCE = `
 exports.handler = async () => ({
   statusCode: 200,
   headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
-  body: JSON.stringify({ stage: process.env.MOPM_STAGE, version: process.env.MOPM_VERSION }),
+  body: JSON.stringify({ stage: process.env.MOPM_STAGE, version: process.env.MOPM_VERSION, commit: process.env.MOPM_COMMIT }),
 });
 `;
 
@@ -45,7 +47,7 @@ export class ApiStack extends Stack {
       memorySize: 128,
       timeout: Duration.seconds(5),
       logGroup,
-      environment: { MOPM_STAGE: c.stage, MOPM_VERSION: props.version },
+      environment: { MOPM_STAGE: c.stage, MOPM_VERSION: props.version, MOPM_COMMIT: props.commit },
     });
 
     const zone = lookupZone(this, c);

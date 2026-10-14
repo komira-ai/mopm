@@ -4,7 +4,7 @@ import { GithubAccessStack } from '../lib/github-access-stack';
 import { assertStage } from '../lib/contract';
 
 // Configuration is context (-c key=value), never environment variables.
-// Account ids, regions and the deploy repo are supplied by the admin at deploy time.
+// Account ids and regions are supplied by the admin at deploy time.
 const app = new App();
 const need = (k: string): string => {
   const v = app.node.tryGetContext(k);
@@ -17,7 +17,6 @@ const region = need('region');
 const regions = String(app.node.tryGetContext('regions') ?? region).split(',');
 new GithubAccessStack(app, `mopm-${stage}-access`, {
   stage,
-  deployRepo: need('deployRepo'),
   regions,
   env: { account, region },
 });
