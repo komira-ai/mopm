@@ -34,7 +34,7 @@ jobs:
       - name: Install (npm ci, as in deploy.yml)
         run: npm ci --ignore-scripts --no-audit --no-fund
       # The API stack deploys the handler bundle built from service/api (not committed); the tests that synthesize with the
-      # real bundle (empty-channel) and the synth step below need it, so it is built first.
+      # real bundle and the synth step below need it, so it is built first.
       - name: Build the API handler bundle (as in deploy.yml)
         working-directory: service/api
         run: |
@@ -126,7 +126,12 @@ jobs:
         with:
           node-version: '20'
       - name: bash -n
-        run: bash -n bootstrap.sh
+        run: |
+          bash -n bootstrap.sh
+          bash -n oauth-secret.sh
+          bash -n test/oauth-secret.sh
+      - name: oauth-secret.sh against a fake aws (dry run by default, secret only from stdin, never in argv or output)
+        run: ./test/oauth-secret.sh
       - name: bootstrap.sh --update-policy and --policy-only against a fake aws (no AWS access)
         run: ./test/bootstrap-update-policy.sh
       - name: bootstrap.sh is a dry run by default and validates its flags

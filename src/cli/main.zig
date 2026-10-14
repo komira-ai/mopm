@@ -8,12 +8,13 @@ const mojo_cmd = core.mojo_cmd;
 const test_cmd = @import("test_cmd.zig");
 const registry_cmd = @import("registry_cmd.zig");
 const publish_cmd = @import("publish_cmd.zig");
+const install_cmd = @import("install_cmd.zig");
 
 pub const version = "0.0.1";
 
 const planned = [_][]const u8{
-    "add",  "remove", "lock",    "sync",   "cov",    "tree",
-    "check", "export", "launch",
+    "add",   "remove", "cov",    "check",
+    "export", "launch",
 };
 
 pub fn isPlanned(cmd: []const u8) bool {
@@ -63,6 +64,20 @@ const usage =
     \\                          pack and publish to a registry; the token is
     \\                          $MOPM_TOKEN, else the one 'mopm login' stored;
     \\                          --dry-run packs and prints what would be sent
+    \\  lock [--registry <prod|gamma|beta|url>]
+    \\                          resolve mopm.toml's dependencies against the
+    \\                          registry's index and write mopm.lock (keeping
+    \\                          locked versions that still fit)
+    \\  update [<package>...] [--registry ...]
+    \\                          the same, moving the named packages (all, with
+    \\                          none named) to the newest versions that fit
+    \\  tree                    draw the dependency graph mopm.lock holds
+    \\  sync [--locked] [--registry ...] [--pixi <path>]
+    \\                          install mopm.lock into .mopm/ (locking first
+    \\                          when it is missing or out of date with
+    \\                          mopm.toml; --locked fails instead). Every
+    \\                          download is checked against the lock's sha256
+    \\                          and size; build with --prefix .mopm/.pixi/envs/default
     \\
     \\  options for build, run and repl:
     \\    --prefix <dir>        the environment (default: CONDA_PREFIX, then
@@ -72,7 +87,7 @@ const usage =
     \\                          (default: this host)
     \\
     \\planned (not implemented yet):
-    \\  add remove lock sync cov tree check export launch
+    \\  add remove cov check export launch
     \\
 ;
 
@@ -388,6 +403,10 @@ fn run(arena: std.mem.Allocator) u8 {
     if (std.mem.eql(u8, cmd, "pack") or std.mem.eql(u8, cmd, "publish")) {
         return publish_cmd.main(arena, cmd, args[2..], version);
     }
+    if (std.mem.eql(u8, cmd, "lock")) return install_cmd.main(arena, .lock, args[2..], version);
+    if (std.mem.eql(u8, cmd, "update")) return install_cmd.main(arena, .update, args[2..], version);
+    if (std.mem.eql(u8, cmd, "tree")) return install_cmd.main(arena, .tree, args[2..], version);
+    if (std.mem.eql(u8, cmd, "sync")) return install_cmd.main(arena, .sync, args[2..], version);
     if (std.meta.stringToEnum(mojo_cmd.Tool, cmd)) |tool| return autolink(arena, tool, args[2..]);
     if (isPlanned(cmd)) {
         std.debug.print("mopm {s}: not implemented yet\n", .{cmd});
@@ -406,6 +425,7 @@ pub fn main() void {
 test {
     _ = registry_cmd;
     _ = publish_cmd;
+    _ = install_cmd;
 }
 
 test "planned commands are recognised, working ones are not planned" {
@@ -420,6 +440,9 @@ test "planned commands are recognised, working ones are not planned" {
     try std.testing.expect(!isPlanned("metadata"));
     try std.testing.expect(!isPlanned("new"));
     try std.testing.expect(!isPlanned("init"));
+    try std.testing.expect(!isPlanned("lock"));
+    try std.testing.expect(!isPlanned("tree"));
+    try std.testing.expect(!isPlanned("sync"));
     try std.testing.expect(!isPlanned("--version"));
     try std.testing.expect(!isPlanned("frobnicate"));
 }

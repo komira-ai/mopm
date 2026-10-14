@@ -72,7 +72,7 @@ export interface TrustedPublisher {
   added_at: string;
 }
 
-/** Persistence for the auth layer. A DynamoDB adapter is a follow-up; the memory adapter defines the rules. */
+/** Persistence for the auth layer. The memory adapter defines the rules; the DynamoDB adapter keeps them (test/auth-store.test.ts runs one suite over both). */
 export interface AuthStore {
   /** Insert or update by github_id, keeping created_at; returns the stored row. */
   upsertUser(github_id: number, handle: string, now: string, two_factor?: boolean): Promise<UserRecord>;
@@ -80,12 +80,13 @@ export interface AuthStore {
 
   putToken(rec: TokenRecord): Promise<void>;
   getTokenByHash(hash: string): Promise<TokenRecord | undefined>;
-  getToken(id: string): Promise<TokenRecord | undefined>;
+  /** One token of one account by id; another account's token is not found. (The DynamoDB adapter reads its by-account index.) */
+  getUserToken(github_id: number, id: string): Promise<TokenRecord | undefined>;
   /** Every token of the account, any kind or state. */
   listTokens(github_id: number): Promise<TokenRecord[]>;
-  /** Idempotent: a token that is already revoked keeps its first revoked_at. */
-  revokeToken(id: string, at: string): Promise<void>;
-  touchToken(id: string, at: string): Promise<void>;
+  /** By the token's hash (the key). Idempotent: a token that is already revoked keeps its first revoked_at. */
+  revokeToken(hash: string, at: string): Promise<void>;
+  touchToken(hash: string, at: string): Promise<void>;
 
   putDeviceLogin(rec: DeviceLoginRecord): Promise<void>;
   getDeviceLogin(id: string): Promise<DeviceLoginRecord | undefined>;

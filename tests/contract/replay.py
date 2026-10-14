@@ -374,6 +374,8 @@ RECIPES.update({
     ("getPackage", "package info"):
         lambda f: (lambda c: step("getPackage", path={"name": c[2]},
                                   check=lambda b: [o["handle"] for o in b["owners"]] == [c[0]] and b["state"] == "claimed"))(claimed(f)),
+    ("getPackage", "package info with homepage, keywords and the latest readme"):
+        lambda f: (lambda c: step("getPackage", path={"name": c[2]}))(claimed(f)),
     ("claimPackage", "error name_reserved"): lambda f: claim_step(f, "mopm"),
     ("claimPackage", "error name_taken"): lambda f: claim_step(f, claimed(f)[2]),
     ("claimPackage", "error name_too_similar"): lambda f: similar(f, confirm=False),
@@ -586,6 +588,9 @@ RECIPES.update({
     ("getVersion", "error version_not_found"):
         lambda f: step("getVersion", path={"name": claimed(f)[2], "version": "9.9.9"}),
     ("getVersion", "version detail"): lambda f: version_detail(f, "published"),
+    # The display fields are optional and the fake publishes none of them (the publish pipeline fills them from
+    # mopm.toml), so these replay the ordinary state: the fake must still answer a valid VersionDetail without them.
+    ("getVersion", "version detail with the mopm.toml display fields"): lambda f: version_detail(f, "published"),
     ("getVersion", "yanked version keeps its files and says why"): lambda f: version_detail(f, "yanked"),
     ("getVersion", "tombstoned version has no url"): lambda f: version_detail(f, "tombstoned"),
 })
