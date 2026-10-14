@@ -1,0 +1,7 @@
+{
+  "index_version": 1,
+  "stage": "prod",
+  "api_url": "http://mopm.dev/api/v1",
+  "channel_url": "https://conda.mopm.dev/",
+  "min_cli_version": "0.1.0"
+}
