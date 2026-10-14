@@ -1,0 +1,16 @@
+name: fixture
+on:
+  push: { branches: [main] }
+  workflow_dispatch:
+  pull_request:
+concurrency:
+  group: promote
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  gate:
+    uses: ./.github/workflows/deploy.yml
+    with: { stage: beta }
+    permissions: { id-token: write, contents: read }
+    secrets: inherit
