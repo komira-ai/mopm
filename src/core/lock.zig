@@ -399,6 +399,7 @@ test "each invalid example lock is refused, for the reason its name gives" {
         .{ "dep_not_in_lock.json", "is not in packages" },
         .{ "duplicate_entry.json", "not sorted by name, version and subdir with no repeats" },
         .{ "future_lock_version.json", "Update mopm." },
+        .{ "http_non_loopback_channel.json", "channel http://conda.mopm.dev/channel/ is refused" },
         .{ "missing_build.json", "has no build" },
         .{ "mojo_mismatch.json", "but the toolchain is mojo" },
         .{ "name_from_two_channels.json", "comes from two channels" },
