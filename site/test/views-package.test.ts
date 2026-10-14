@@ -61,11 +61,36 @@ describe('package shapes the fixtures do not cover', () => {
     expect(text(out)).toContain('This name is claimed.');
   });
 
-  test('active with no latest release: no mopm.toml line, a reason, the channel still shown', () => {
-    const out = render(packageFixture((r) => Object.assign(r, { latest: null })));
+  const AT = '2026-10-13T12:00:00Z';
+  test('active with only pre-releases published: no mopm.toml line, a reason, the channel and pixi shown', () => {
+    const out = render(
+      packageFixture((r) => Object.assign(r, { latest: null, versions: [{ version: '1.0.0-rc.1', state: 'published', published_at: AT }] })),
+    );
     expect(out).not.toContain('[dependencies]');
     expect(text(out)).toContain('There is no latest release');
+    expect(out).toContain('<code>https://conda.mopm.dev/</code>');
     expect(out).toContain('<code>pixi add mojo-http_client</code>');
+  });
+
+  // spec/channel.md: a yanked version leaves packages.conda, a tombstoned one loses its bytes; with no published
+  // version, `pixi add` has nothing to install, so the page offers no install line.
+  test.each([
+    ['every version yanked', [{ version: '0.2.0', state: 'yanked', yank_reason: 'bad', published_at: AT }]],
+    ['every version tombstoned', [{ version: '0.2.0', state: 'tombstoned', published_at: AT }]],
+    [
+      'yanked and tombstoned versions only',
+      [
+        { version: '0.3.0', state: 'tombstoned', published_at: AT },
+        { version: '0.2.0', state: 'yanked', yank_reason: null, published_at: AT },
+      ],
+    ],
+  ])('active, %s: no install lines, says nothing can be installed', (_what, versions) => {
+    const out = render(packageFixture((r) => Object.assign(r, { latest: null, versions })));
+    expect(out).not.toContain('[dependencies]');
+    expect(out).not.toContain('pixi add');
+    expect(out).not.toContain('conda.mopm.dev');
+    expect(text(out)).toContain('Nothing can be installed: every version is yanked or its files were removed.');
+    expect(out).toContain('<table>');
   });
 
   test.each([
@@ -78,10 +103,19 @@ describe('package shapes the fixtures do not cover', () => {
     expect(out).toContain('<code>pixi add mojo-http_client</code>');
   });
 
-  test('an unknown package state: no mopm.toml line', () => {
+  test('active with no versions at all: no install lines, says no version is published', () => {
+    const out = render(packageFixture((r) => Object.assign(r, { latest: null, versions: [] })));
+    expect(out).not.toContain('pixi add');
+    expect(text(out)).toContain('Nothing can be installed: no version is published.');
+  });
+
+  test('an unknown package state: no install lines, as the version page treats an unknown version state', () => {
     const out = render(packageFixture((r) => Object.assign(r, { state: 'frozen' })));
     expect(out).not.toContain('[dependencies]');
-    expect(text(out)).toContain('package state this page does not know');
+    expect(out).not.toContain('pixi add');
+    expect(out).not.toContain('conda.mopm.dev');
+    expect(text(out)).toContain('The registry reports a package state this page does not know. Treat this package as not installable.');
+    expect(out).toContain('<table>');
   });
 
   test('every version state is shown as words in the versions table', () => {

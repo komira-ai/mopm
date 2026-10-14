@@ -1,7 +1,8 @@
 // /packages/<name>: one package (getPackage).
 //
-// Three shapes: a claimed name with nothing published; an active package with no latest release (every version is a
-// pre-release, yanked or tombstoned); and the normal page. Every value from the API is shown as text; the repository
+// The shapes: a claimed name with nothing published; a package state this page does not know, or an active package
+// with no published version (every one yanked or tombstoned), with no install lines; an active package whose
+// published versions are all pre-releases (no latest release, so no mopm.toml line); and the normal page. Every value from the API is shown as text; the repository
 // and homepage are links only when links.ts accepts them as http(s); versions link only when they match the grammar.
 // The readme is untrusted Markdown, rendered by the restricted renderer with 'readme-' ids (the page's own ids never
 // start with 'readme-', so no readme heading can take one), its headings two levels down: a readme '# Title' is an h3
@@ -143,18 +144,23 @@ export function packageView<N>(doc: Doc<N>, name: string, info: PackageInfo, ctx
     doc.append(main, h(doc, 'p', { class: 'notice' }, 'This name is claimed. Nothing has been published under it yet.'));
   } else {
     if (info.state === 'unknown') {
-      doc.append(main, h(doc, 'p', { class: 'notice' }, 'The registry reports a package state this page does not know.'));
+      // As the version page treats a version state it does not know: nothing to install.
+      doc.append(main, h(doc, 'p', { class: 'notice' }, 'The registry reports a package state this page does not know. Treat this package as not installable.'));
+    } else if (!info.versions.some((v) => v.state === 'published')) {
+      // spec/channel.md: a yanked version leaves packages.conda and a tombstoned one loses its files, so neither the
+      // channel nor `pixi add` has anything to install.
+      const why = info.versions.length === 0 ? 'Nothing can be installed: no version is published.' : 'Nothing can be installed: every version is yanked or its files were removed.';
+      doc.append(main, h(doc, 'p', { class: 'notice' }, why));
+    } else {
+      const manifest = manifestSnippet(name, latest);
+      const why =
+        manifest !== null
+          ? null
+          : latest === null
+            ? 'There is no latest release: no published version without a pre-release suffix.'
+            : refusalSentence(`The latest version, ${latest},`, latest);
+      doc.append(main, installSection(doc, name, manifest, ctx, why));
     }
-    const manifest = info.state === 'active' ? manifestSnippet(name, latest) : null;
-    const why =
-      manifest !== null
-        ? null
-        : latest === null
-          ? 'There is no latest release: no published version without a pre-release suffix.'
-          : info.state === 'active'
-            ? refusalSentence(`The latest version, ${latest},`, latest)
-            : null;
-    doc.append(main, installSection(doc, name, manifest, ctx, why));
     doc.append(main, h(doc, 'section', { 'aria-labelledby': 'versions-heading' }, h(doc, 'h2', { id: 'versions-heading' }, 'Versions'), versionsTable(doc, name, info.versions)));
   }
   const readme = readmeSection(doc, info.readme);
