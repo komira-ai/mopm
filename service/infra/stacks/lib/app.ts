@@ -3,11 +3,13 @@ import { ApiStack } from './api-stack';
 import { ChannelStack } from './channel-stack';
 import { StageConfig } from './config';
 import { DataStack } from './data-stack';
+import { PublishStack } from './publish-stack';
 import { SiteStack } from './site-stack';
 
 export interface StageStacks {
   channel: ChannelStack;
   data: DataStack;
+  publish: PublishStack;
   api: ApiStack;
   site: SiteStack;
 }
@@ -21,10 +23,15 @@ export function createStageStacks(
   handlerDir?: string,
 ): StageStacks {
   const p = `mopm-${config.stage}`;
-  return {
-    channel: new ChannelStack(app, `${p}-channel`, { env, config }),
-    data: new DataStack(app, `${p}-data`, { env, config }),
-    api: new ApiStack(app, `${p}-api`, { env, config, version, commit, handlerDir }),
-    site: new SiteStack(app, `${p}-site`, { env, config }),
-  };
+  const channel = new ChannelStack(app, `${p}-channel`, { env, config });
+  const data = new DataStack(app, `${p}-data`, { env, config });
+  const publish = new PublishStack(app, `${p}-publish`, { env, config, channel, handlerDir });
+  const api = new ApiStack(app, `${p}-api`, { env, config, version, commit, handlerDir });
+  const site = new SiteStack(app, `${p}-site`, { env, config });
+  // Tables and queues exist before the Lambdas that use them are deployed (they are named, not referenced, so CDK
+  // would otherwise deploy the stacks in parallel).
+  publish.addDependency(data);
+  api.addDependency(data);
+  api.addDependency(publish);
+  return { channel, data, publish, api, site };
 }

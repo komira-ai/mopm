@@ -6,10 +6,8 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as s3 from 'aws-cdk-lib/aws-s3';
-import * as deploy from 'aws-cdk-lib/aws-s3-deployment';
 import { Construct } from 'constructs';
 import { StageConfig, channelBucketName } from './config';
-import { writeEmptyChannel } from './empty-channel';
 import { anyone, assertRegion, deleteAllowedRoleArns, lookupZone, notNamedRoles, removalPolicyFor } from './common';
 
 export interface ChannelStackProps extends StackProps {
@@ -47,14 +45,28 @@ export class ChannelStack extends Stack {
     });
 
     // Nobody deletes objects except the takedown role (prod) or takedown + cleanup roles (disposable stages).
+    // quarantine/ is the one exception for plain DeleteObject: the validator removes an upload once it is judged (a
+    // delete marker; the lifecycle rule expires the old versions). Deleting a *version* stays denied everywhere, and
+    // only the validator's role is allowed any S3 delete in quarantine/ (nothing else in the account is).
+    const exempt = notNamedRoles(deleteAllowedRoleArns(this, c));
     this.bucket.addToResourcePolicy(
       new iam.PolicyStatement({
         sid: 'DenyDeleteExceptNamedRoles',
         effect: iam.Effect.DENY,
         principals: [anyone()],
         actions: ['s3:DeleteObject', 's3:DeleteObjectVersion'],
-        resources: [this.bucket.arnForObjects('*')],
-        conditions: notNamedRoles(deleteAllowedRoleArns(this, c)),
+        notResources: [this.bucket.arnForObjects('quarantine/*')],
+        conditions: exempt,
+      }),
+    );
+    this.bucket.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: 'DenyDeleteQuarantineVersions',
+        effect: iam.Effect.DENY,
+        principals: [anyone()],
+        actions: ['s3:DeleteObjectVersion'],
+        resources: [this.bucket.arnForObjects('quarantine/*')],
+        conditions: exempt,
       }),
     );
 
@@ -127,20 +139,9 @@ export class ChannelStack extends Stack {
       },
     });
 
-    // Seed each subdir with an empty, valid repodata so a fresh channel resolves (the private bucket answers 403 for
-    // a missing key). prune=false and retainOnDelete: never deletes published files (the bucket policy denies
-    // delete anyway). The sources are constant, so the custom resource only re-runs if they change; no
-    // invalidation is needed, repodata is cached for 60 seconds.
-    // WARNING: changing the channel seed re-runs the BucketDeployment and overwrites live repodata on every stage,
-    // including prod. The index writer must own repodata before any change here. This seeding is removed when the
-    // index writer lands (before the first real publish). empty-channel.test.ts pins the seed hashes.
-    new deploy.BucketDeployment(this, 'EmptyRepodata', {
-      destinationBucket: this.bucket,
-      sources: [deploy.Source.asset(writeEmptyChannel())],
-      prune: false,
-      retainOnDelete: true,
-      cacheControl: [deploy.CacheControl.fromString('max-age=60')],
-    });
+    // No repodata seed. The index writer (service/api/src/publish/indexer.ts) owns every repodata file and creates the
+    // empty index of a subdir lazily, create-only, the first time it runs. Stages deployed before this change keep the
+    // files the earlier BucketDeployment wrote: its custom resource was retainOnDelete, so removing it deletes nothing.
 
     const target = route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(this.distribution));
     new route53.ARecord(this, 'ARecord', { zone, recordName: c.condaDomain, target });

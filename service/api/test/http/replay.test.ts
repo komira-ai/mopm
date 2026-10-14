@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { MemoryStore } from '../../src/memory-store';
 import type { Store } from '../../src/store';
+import type { VersionRecord } from '../../src/types';
 import { audit, rec } from '../helpers';
 import {
   CONTRACT_DIR,
@@ -33,7 +34,7 @@ async function httpClient(s: MemoryStore) {
 }
 
 /** The version the getVersion fixtures describe (tests/contract/api/packages.json), in the state `state` puts it in. */
-const versionDetail = (state: 'published' | 'yanked' | 'tombstoned') => async (s: MemoryStore) => {
+const versionDetail = (state: 'published' | 'yanked' | 'tombstoned', extra: Partial<VersionRecord> = {}) => async (s: MemoryStore) => {
   await s.createPackage({ name: 'http_client', state: 'active', created_at: '2026-10-01T09:00:00Z' });
   await s.createVersion(
     rec({
@@ -61,6 +62,7 @@ const versionDetail = (state: 'published' | 'yanked' | 'tombstoned') => async (s
       },
       ...(state === 'yanked' ? { yank_reason: 'crashes on empty body' } : {}),
       ...(state === 'tombstoned' ? { tombstone: { reason_code: 'malware', date: '2026-10-14' } } : {}),
+      ...extra,
     }),
     audit('http_client', 'publish', '0.4.0'),
   );
@@ -118,6 +120,26 @@ const RECIPES: Record<string, Recipe> = {
   'error version_not_found': { seed: async (s) => { await s.createPackage({ name: 'http_client', state: 'active', created_at: '2026-10-01T09:00:00Z' }); } },
   // The case's operation (getHealth) only carries it; the request is a path the API does not have.
   'error route_not_found': { prepare: async (req) => ({ ...req, path: '/api/v1/no_such_operation' }) },
+  'version detail with the mopm.toml display fields': {
+    seed: versionDetail('published', {
+      description: 'HTTP/1.1 client',
+      license: 'Apache-2.0',
+      repository: 'https://github.com/example/http_client',
+      homepage: 'https://example.com/http_client',
+      keywords: ['http', 'client'],
+      readme: '# http_client\n\nAn HTTP client.\n',
+    }),
+    omitExpected: detailOmits,
+  },
+  'package info with homepage, keywords and the latest readme': {
+    seed: async (s) => {
+      await s.createPackage({ name: 'http_client', state: 'active', created_at: '2026-10-01T09:00:00Z', repository: 'https://github.com/example/http_client', license: 'Apache-2.0', description: 'HTTP/1.1 client', homepage: 'https://example.com/http_client', keywords: ['http', 'client'] });
+      await s.addOwner(octocat);
+      await s.createVersion(rec({ name: 'http_client', version: '0.3.0', state: 'yanked', yank_reason: 'crashes on empty body', published_at: '2026-10-05T08:00:00Z', readme: 'old' }), audit('http_client', 'publish', '0.3.0'));
+      await s.createVersion(rec({ name: 'http_client', version: '0.4.0', published_at: '2026-10-13T12:00:00Z', readme: '# http_client\n' }), audit('http_client', 'publish', '0.4.0'));
+    },
+    omitExpected: ['display_name'],
+  },
   'version detail': { seed: versionDetail('published'), omitExpected: detailOmits },
   'yanked version keeps its files and says why': { seed: versionDetail('yanked'), omitExpected: detailOmits },
   'tombstoned version has no url': { seed: versionDetail('tombstoned'), omitExpected: detailOmits },

@@ -40,6 +40,18 @@ describe.each(STAGES)('ChannelStack %s', (stage) => {
     });
   });
 
+  test('plain DeleteObject is exempt only under quarantine/ (the validator removes judged uploads); deleting a version never is', () => {
+    const all = bucketStatements(t).find((x) => x.Sid === 'DenyDeleteExceptNamedRoles');
+    expect(all.Effect).toBe('Deny');
+    expect(all.Resource).toBeUndefined();
+    expect(JSON.stringify(all.NotResource)).toContain('/quarantine/*');
+    const versions = bucketStatements(t).find((x) => x.Sid === 'DenyDeleteQuarantineVersions');
+    expect(versions.Effect).toBe('Deny');
+    expect(versions.Action).toBe('s3:DeleteObjectVersion');
+    expect(JSON.stringify(versions.Resource)).toContain('/quarantine/*');
+    expect(exemptRoles(versions)).toEqual(exemptRoles(all));
+  });
+
   test('CloudFront uses origin access control, not a legacy identity, and redirects to HTTPS', () => {
     t.resourceCountIs('AWS::CloudFront::OriginAccessControl', 1);
     t.resourceCountIs('AWS::CloudFront::CloudFrontOriginAccessIdentity', 0);

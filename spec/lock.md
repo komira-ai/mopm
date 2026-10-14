@@ -38,7 +38,11 @@ with. It does not duplicate package metadata; that stays in the installed
 - `toolchain.mojo`: the Mojo version the project is locked to
   (`[toolchain]` in `mopm.toml`).
 - `channels`: the channels packages may come from. This is the root project's
-  set and nothing else.
+  set and nothing else. A channel ends with `/` and may carry a path
+  (`https://conda.mopm.dev/`, `http://127.0.0.1:8080/channel/`); it is https,
+  or plain http only to a loopback host (`127.0.0.1`, `[::1]` or `localhost`)
+  with a port, for local and test registries. A lock naming any other channel
+  is refused.
 - `packages[]`, one entry per package per subdir:
   - `name`: the mopm name. The conda name is `mojo-<name>`.
   - `version`, `build`, `subdir`: identify the file.

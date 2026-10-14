@@ -4,7 +4,8 @@ mopm-fake-registry.
 
     python3 -I tests/resolve_e2e/run.py path/to/mopm path/to/mopm-fake-registry
 
-Standard library only. The fake registry is started on a free port; the
+Needs the packages in tests/contract/requirements.txt (jsonschema), for the
+lock schema check. The fake registry is started on a free port; the
 index records and the channel's repodata.json files below are then written
 into its data directory, which it serves at /index/... and /channel/... as
 the hosted registry does (spec/index.md, spec/channel.md). Each check prints
@@ -33,9 +34,12 @@ change.
 
 The lock's channel is the fake's loopback http URL with a path
 (`http://127.0.0.1:<port>/channel/`), which mopm writes and reads; a lock
-naming a plain-http channel on any other host is refused. spec/lock.schema.json
-does not allow such a channel yet, so the lock is compared byte for byte here
-and the schema check follows the spec change.
+naming a plain-http channel on any other host is refused. The lock written is
+compared byte for byte with expected.lock and also validated against
+spec/lock.schema.json plus the rules of spec/lock.md, with the validator the
+contract job uses (tests/contract/validate.py). So that the schema check is
+shown to be able to fail, the same lock with its channel moved to plain http
+on a non-loopback host, or to loopback http without a port, must be refused.
 """
 import hashlib
 import json
@@ -46,6 +50,13 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "tests", "contract"))
+
+from jsonschema import Draft202012Validator  # noqa: E402
+
+import validate  # noqa: E402
+
+LOCK_SCHEMA = Draft202012Validator(validate.load_json(validate.SPEC / "lock.schema.json"))
 SIZE = 4096
 failures = []
 
@@ -54,6 +65,13 @@ def check(name, ok, detail=""):
     print(("ok   " if ok else "FAIL ") + name + ("" if ok else ": " + detail))
     if not ok:
         failures.append(name)
+
+
+def lock_contract_problems(text):
+    """What tests/contract/validate.py finds wrong with a lock: schema, then rules."""
+    doc = json.loads(text)
+    found = [e.message[:160] for e in LOCK_SCHEMA.iter_errors(doc)]
+    return found or validate.lock_problems(doc)
 
 
 def digest(subdir, filename):
@@ -225,6 +243,11 @@ def main(mopm, fake_exe):
             got = lock_of(app)
             check("the lock picks exactly the expected versions and bytes", got == expected,
                   "\n--- got\n%s\n--- want\n%s" % (got, expected))
+            found = lock_contract_problems(got) if got else ["no lock written"]
+            check("the lock written passes spec/lock.schema.json and the lock rules", not found, "; ".join(found))
+            for bad in ("http://example.com/channel/", "http://127.0.0.1/channel/"):
+                found = lock_contract_problems(got.replace(channel, bad)) if got else []
+                check("the schema check refuses the same lock with channel %s" % bad, bool(found), "accepted")
             check("lock reports what it added",
                   r.stdout == "adding crypto 2.0.1\nadding http_client 0.4.0\nadding http_core 1.2.5\nadding tls 1.1.0\n"
                   "locked 4 packages for mojo 1.0.0\n", r.stdout)
