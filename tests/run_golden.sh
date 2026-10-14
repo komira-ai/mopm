@@ -248,6 +248,6 @@ cmd "test: only an ignored test selected, --allow-empty" "$g/filter_only_ignored
     "$mopm" test --allow-empty "$fx" -- ignored
 
 [ "$("$mopm" --version)" = "mopm 0.0.1" ] || { echo "FAIL --version"; fail=1; }
-"$mopm" add > /dev/null 2>&1 && { echo "FAIL planned command should exit non-zero"; fail=1; }
-"$mopm" add 2>&1 | grep -q "not implemented yet" || { echo "FAIL planned command message"; fail=1; }
+"$mopm" cov > /dev/null 2>&1 && { echo "FAIL planned command should exit non-zero"; fail=1; }
+"$mopm" cov 2>&1 | grep -q "not implemented yet" || { echo "FAIL planned command message"; fail=1; }
 exit "$fail"

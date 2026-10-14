@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""End-to-end tests of `mopm lock`, `mopm update` and `mopm tree` against
-mopm-fake-registry.
+"""End-to-end tests of `mopm lock`, `mopm update`, `mopm tree`, `mopm add` and
+`mopm remove` against mopm-fake-registry.
 
     python3 -I tests/resolve_e2e/run.py path/to/mopm path/to/mopm-fake-registry
 
@@ -40,6 +40,10 @@ spec/lock.schema.json plus the rules of spec/lock.md, with the validator the
 contract job uses (tests/contract/validate.py). So that the schema check is
 shown to be able to fail, the same lock with its channel moved to plain http
 on a non-loopback host, or to loopback http without a port, must be refused.
+
+`mopm add` and `mopm remove` edit a project whose mopm.toml starts as
+add_before.toml; the file is compared byte for byte with add_after.toml and
+remove_after.toml (see add_remove below).
 """
 import hashlib
 import json
@@ -206,6 +210,139 @@ TREE = """app 0.1.0
 """
 
 
+def read(path):
+    with open(path, "rb") as f:
+        return f.read().decode()
+
+
+def file_or_none(path):
+    return read(path) if os.path.exists(path) else None
+
+
+def golden_diff(got, want):
+    """'' when `got` is `want` byte for byte, else what differs."""
+    if got == want:
+        return ""
+    return "\n--- got\n%s\n--- want\n%s" % (got, want)
+
+
+def unchanged(d, toml_before, lock_before):
+    """What changed in mopm.toml or mopm.lock of `d`: '' when neither did (a lock that was absent must stay absent)."""
+    found = []
+    if file_or_none(os.path.join(d, "mopm.toml")) != toml_before:
+        found.append("mopm.toml changed")
+    if file_or_none(os.path.join(d, "mopm.lock")) != lock_before:
+        found.append("mopm.lock was written" if lock_before is None else "mopm.lock changed")
+    return "; ".join(found)
+
+
+def locked_versions(d):
+    text = file_or_none(os.path.join(d, "mopm.lock"))
+    return {p["name"]: p["version"] for p in json.loads(text)["packages"]} if text else {}
+
+
+def add_remove(work, run, reg):
+    """`mopm add` and `mopm remove`: byte-exact goldens of mopm.toml, the lock
+    each writes, and the refusals, which must leave both files as they were.
+
+    Two can-fail proofs run here too, so CI shows each comparison going red
+    on the defect it guards against: golden_diff refuses add_after.toml with
+    its comments or its spacing lost (a writer that re-serialises the
+    manifest), and unchanged() refuses a project whose mopm.toml holds the
+    edit of an add that failed to resolve (a writer that writes mopm.toml
+    before resolving)."""
+    before = read(os.path.join(HERE, "add_before.toml"))
+    after_add = read(os.path.join(HERE, "add_after.toml"))
+    after_remove = read(os.path.join(HERE, "remove_after.toml"))
+    d = os.path.join(work, "edit")
+    os.makedirs(d)
+    toml = os.path.join(d, "mopm.toml")
+    with open(toml, "w") as f:
+        f.write(before)
+
+    lost = [("comments", re.sub(r"[ \t]*#[^\n]*", "", after_add)),
+            ("spacing", re.sub(r"[ \t]*=[ \t]*", " = ", re.sub(r"  +", " ", after_add)))]
+    for what, bad in lost:
+        check("can fail: the add golden refuses the file with its %s lost" % what,
+              bad != after_add and golden_diff(bad, after_add) != "", "the golden does not hold any %s" % what)
+
+    # No requirement: the newest version that fits, as ^X.Y.Z, after the last entry.
+    r = run(d, "add", "http_client", *reg)
+    want = after_add.replace('http_core = "^1.2.5"\n', "")
+    check("add writes ^ the newest version that fits, after the table's last entry, every other byte kept",
+          r.returncode == 0 and not golden_diff(read(toml), want), r.stderr + golden_diff(read(toml), want))
+    v = locked_versions(d)
+    check("add locks the added package and what it pulls in",
+          v.get("http_client") == "0.5.0" and v.get("crypto") == "2.0.1" and "adding http_client 0.5.0\n" in r.stdout,
+          json.dumps(v) + r.stdout)
+
+    # The newest http_core in the index is 2.0.0; tls's "~1.2" lets only 1.2.x fit.
+    r = run(d, "add", "http_core", "--dev", *reg)
+    check("add --dev writes [dev-dependencies]; the version is the newest that fits, not the newest (golden add_after.toml)",
+          r.returncode == 0 and not golden_diff(read(toml), after_add), r.stderr + golden_diff(read(toml), after_add))
+
+    r = run(d, "add", "tls@~1.1", *reg)
+    want = after_add.replace('tls   =   "1"', 'tls   =   "~1.1"')
+    check("add of an existing dependency replaces its value in place (spacing and comment kept)",
+          r.returncode == 0 and not golden_diff(read(toml), want) and locked_versions(d).get("tls") == "1.1.0",
+          r.stderr + golden_diff(read(toml), want))
+
+    r = run(d, "remove", "legacy", *reg)
+    check("remove of the middle key of a table takes its line only (golden remove_after.toml)",
+          r.returncode == 0 and not golden_diff(read(toml), after_remove), r.stderr + golden_diff(read(toml), after_remove))
+    check("remove takes the package out of the lock", "legacy" not in locked_versions(d) and "removing legacy 1.1.0\n" in r.stdout,
+          json.dumps(locked_versions(d)) + r.stdout)
+
+    r = run(d, "remove", "http_client", *reg)
+    v = locked_versions(d)
+    check("remove drops what only the removed package pulled in, and keeps what others need",
+          r.returncode == 0 and "http_client" not in v and "crypto" not in v and v.get("http_core") == "1.2.5"
+          and v.get("tls") == "1.1.0" and read(toml) == after_remove.replace('http_client = "^0.5.0"\n', ""),
+          r.stderr + json.dumps(v) + read(toml))
+
+    toml_now, lock_now = read(toml), read(os.path.join(d, "mopm.lock"))
+    for args, wants in ((["remove", "nosuch"], "nosuch is not a dependency: [dependencies] of mopm.toml does not name it"),
+                        (["remove", "http_core"], "http_core is not a dependency: [dependencies] of mopm.toml does not name it"),
+                        (["add", "nosuch"], "nosuch (required by mopm.toml) is not in the registry's index"),
+                        (["add", "tls@3"], "no version of tls matches 3 (from mopm.toml)")):
+        r = run(d, *args, *reg)
+        changed = unchanged(d, toml_now, lock_now)
+        check("refused, both files unchanged: mopm %s" % " ".join(args),
+              r.returncode == 1 and wants in r.stderr and not changed, "exit %d, %s, stderr %s" % (r.returncode, changed, r.stderr))
+
+    # A project with no lock: a failed add writes neither file.
+    fresh = os.path.join(work, "edit_fresh")
+    os.makedirs(fresh)
+    with open(os.path.join(fresh, "mopm.toml"), "w") as f:
+        f.write(before)
+    r = run(fresh, "add", "http_core@3", *reg)
+    changed = unchanged(fresh, before, None)
+    check("an add that does not resolve leaves mopm.toml byte-identical and writes no lock",
+          r.returncode == 1 and "no version of http_core matches 3" in r.stderr and not changed,
+          "exit %d, %s, stderr %s" % (r.returncode, changed, r.stderr))
+    # The defect that check guards against, planted: the edit written before resolving.
+    planted = os.path.join(work, "edit_planted")
+    os.makedirs(planted)
+    with open(os.path.join(planted, "mopm.toml"), "w") as f:
+        f.write(before.replace('legacy = "1"\n', 'legacy = "1"\nhttp_core = "3"\n'))
+    check("can fail: the unchanged check refuses mopm.toml written before resolving",
+          unchanged(planted, before, None) == "mopm.toml changed", unchanged(planted, before, None) or "accepted")
+
+    # A path dependency: { path = "<dir>" }, locked with source path.
+    with_path = os.path.join(work, "edit_path")
+    os.makedirs(os.path.join(with_path, "local"))
+    with open(os.path.join(with_path, "mopm.toml"), "w") as f:
+        f.write(before)
+    with open(os.path.join(with_path, "local", "mopm.toml"), "w") as f:
+        f.write('[package]\nname = "local"\nversion = "0.3.0"\n')
+    r = run(with_path, "add", "local", "--path", "local", *reg)
+    want = before.replace('legacy = "1"\n', 'legacy = "1"\nlocal = { path = "local" }\n')
+    got = read(os.path.join(with_path, "mopm.toml"))
+    check("add --path writes { path = \"<dir>\" } and locks it as a path dependency",
+          r.returncode == 0 and not golden_diff(got, want) and locked_versions(with_path).get("local") == "0.3.0",
+          r.stderr + golden_diff(got, want))
+
+
 def main(mopm, fake_exe):
     with tempfile.TemporaryDirectory() as work:
         fake = Fake(fake_exe, work)
@@ -339,6 +476,8 @@ def main(mopm, fake_exe):
             r = run(nodir, "lock", *reg)
             check("a path dependency without a mopm.toml is refused", r.returncode == 1 and "no gone/mopm.toml" in r.stderr
                   and lock_of(nodir) is None, r.stderr)
+
+            add_remove(work, run, reg)
 
             with open(os.path.join(app, "mopm.lock"), "w") as f:
                 f.write(expected.replace('"lock_version": 1', '"lock_version": 2'))

@@ -1,0 +1,16 @@
+# The project. Comments, blank lines, order and spacing survive add and remove.
+[package]
+name    = "app"
+version = "0.1.0"
+
+[toolchain]
+mojo = "1.0.0"   # one compiler
+
+[dependencies]
+# transport
+tls   =   "1"        # the major only
+legacy = "1"
+
+[dev-dependencies]  # tests only
+
+# trailing comment
