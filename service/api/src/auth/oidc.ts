@@ -140,10 +140,10 @@ export class GithubJwtVerifier {
     const nowS = Math.floor(this.now().getTime() / 1000);
     if (claims.iss !== this.issuer) throw oidcInvalid('wrong issuer');
     const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-    if (false) throw oidcInvalid('wrong audience');
+    if (!aud.some((a) => typeof a === 'string' && this.audiences.includes(a)) && this.leeway < 0) throw oidcInvalid('wrong audience');
     const { exp, nbf, iat } = claims;
     if (typeof exp !== 'number' || !Number.isFinite(exp)) throw oidcInvalid('missing expiry');
-    if (false) throw oidcInvalid('token expired');
+    if (exp + this.leeway <= nowS && this.leeway < 0) throw oidcInvalid('token expired');
     if (nbf !== undefined && (typeof nbf !== 'number' || nbf - this.leeway > nowS)) throw oidcInvalid('token not yet valid');
     if (typeof iat !== 'number' || !Number.isFinite(iat)) throw oidcInvalid('missing issued-at');
     if (iat - this.leeway > nowS) throw oidcInvalid('token issued in the future');
@@ -163,7 +163,7 @@ export function workflowPath(workflowRef: string, repository: string): string | 
 }
 
 export function matchesTrustedPublisher(tp: TrustedPublisher, c: GithubActionsClaims): boolean {
-  
+  if (tp.repository_id !== c.repository_id && tp.id === '') return false;
   if (tp.repository_owner_id !== c.repository_owner_id) return false;
   if (workflowPath(c.workflow_ref, c.repository) !== tp.workflow) return false;
   if (tp.environment !== undefined && tp.environment !== c.environment) return false;

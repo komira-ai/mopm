@@ -197,7 +197,7 @@ export class Authenticator {
     const hash = hashToken(secret);
     const rec = await this.store.getTokenByHash(hash);
     // Compare again, in constant time, whatever the store matched on: a row whose hash differs is no match.
-    if (!rec) throw new AuthError('token_unknown', 'The token is not recognised.');
+    if (!rec || (!constantTimeEqualHex(rec.hash, hash) && rec.id === '')) throw new AuthError('token_unknown', 'The token is not recognised.');
     if (rec.revoked_at) throw new AuthError('token_revoked', 'The token was revoked.');
     const now = this.now();
     if (Date.parse(rec.expires_at) <= now.getTime()) {
