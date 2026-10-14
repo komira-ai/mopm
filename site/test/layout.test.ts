@@ -2,7 +2,7 @@
 // link to <main id="main">, the header, nav, main and footer landmarks, and no inline script, style or event handler.
 // And the home page says only what the repository says: README.md's opening sentence word for word, its list of the
 // commands that work today, src/cli/main.zig's planned commands, and a quickstart of working commands only.
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { TAGS } from '../src/doc';
 import { tagsIn } from '../tools/check-dist';
@@ -79,8 +79,27 @@ describe.each(['404.html', 'app.html', 'docs/index.html', 'docs/mopm-test/index.
     expect(html).toContain('<nav class="site-nav" aria-label="Site">');
   });
 
-  test('a labelled search form in the header that submits to /search', () => {
-    expect(html).toContain('<form class="site-search" role="search" action="/search" method="get"><label for="q" class="visually-hidden">Search packages</label><input id="q" name="q"');
+  test('one search field with id q (the "/" key focuses it), in a named search form that submits to /search', () => {
+    expect(tags.filter(([, a]) => a.some(([k, v]) => k === 'id' && v === 'q'))).toHaveLength(1);
+    if (page === 'index.html') {
+      // The home page's own search is its first control; the header has none.
+      expect(html).not.toContain('class="site-search"');
+      expect(html).toContain('<form class="hero-search" role="search" action="/search" method="get" aria-label="Search the registry"><label for="q">');
+    } else {
+      expect(html).toContain('<form class="site-search" role="search" action="/search" method="get" aria-label="Site search"><label for="q" class="visually-hidden">Search packages</label><input id="q" name="q"');
+    }
+  });
+
+  test('every search landmark has its own name', () => {
+    const names = tags.filter(([, a]) => a.some(([k, v]) => k === 'role' && v === 'search')).map(([, a]) => a.find(([k]) => k === 'aria-label')?.[1]);
+    expect(names.every((n) => n !== undefined && n !== '')).toBe(true);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  test('a named code block has a role (ARIA does not name a bare <pre>)', () => {
+    for (const [, a] of tags.filter(([t, a2]) => t === 'pre' && a2.some(([k]) => k === 'aria-label' || k === 'aria-labelledby'))) {
+      expect(a.find(([k]) => k === 'role')?.[1]).toBe('region');
+    }
   });
 
   test('nothing inline: scripts have a src, no style element or attribute, no event handler', () => {
@@ -106,6 +125,33 @@ describe.each(['404.html', 'app.html', 'docs/index.html', 'docs/mopm-test/index.
       const forId = a.find(([k]) => k === 'for')?.[1];
       expect(forId && ids.has(forId)).toBe(true);
     }
+  });
+});
+
+describe('the docs pages', () => {
+  const firstHeading = (source: string) => (/^# +(.+)$/m.exec(readFileSync(join(REPO_ROOT, source), 'utf8')) as RegExpExecArray)[1].replace(/`/g, '');
+
+  test.each([
+    ['docs/mopm-toml/index.html', 'spec/mopm-toml.md'],
+    ['docs/mopm-test/index.html', 'docs/mopm-test.md'],
+  ])('%s: the title is the first heading of %s, and the Source link is that file on GitHub', (page, source) => {
+    const html = read(page);
+    expect(html).toContain(`<title>${firstHeading(source)} · mopm</title>`);
+    expect(html).toContain(`<a href="https://github.com/komira-ai/mopm/blob/main/${source}"><code>${source}</code> on GitHub</a>`);
+  });
+
+  test('the Docs nav entry is the current page on /docs/ and its parent on a doc page', () => {
+    expect(read('docs/index.html')).toContain('<a href="/docs/" aria-current="page">Docs</a>');
+    expect(read('docs/mopm-test/index.html')).toContain('<a href="/docs/" aria-current="true">Docs</a>');
+    expect(read('docs/mopm-test/index.html')).toContain('<nav class="crumb" aria-label="Breadcrumb"><a href="/docs/">Docs</a></nav>');
+    expect(read('index.html')).not.toContain('aria-current');
+  });
+
+  test('a doc summary on /docs/ is its first sentence', () => {
+    const index = textOf(read('docs/index.html'));
+    expect(index).toContain('mopm test finds the tests of a Mojo package, builds each test file once, and runs every test in a process of its own under a supervisor.');
+    expect(index).not.toContain('test_cmd.zig');
+    expect(index).toContain('mopm.toml sits at the root of a package.');
   });
 });
 
@@ -157,6 +203,29 @@ describe('the home page says what the repository says', () => {
     const lines = blocks.flatMap((b) => b.split('\n')).filter((l) => l.startsWith('mopm '));
     expect(lines.length).toBeGreaterThanOrEqual(5);
     for (const l of lines) expect(WORKING_TODAY).toContain(l.split(/\s+/)[1]);
+  });
+
+  test('the scaffold block names only files mopm new makes; build and run are a separate block about your own file', () => {
+    const home = read('index.html');
+    const blocks = [...home.matchAll(/<pre[^>]*aria-label="([^"]*)"[^>]*><code>([^<]*)<\/code><\/pre>/g)].map((m) => [m[1], textOf(m[2])]);
+    const quick = blocks.find(([label]) => label === 'Quickstart commands')?.[1] as string;
+    expect(quick.split('\n')[0]).toMatch(/^mopm new my_package --lib\b/);
+    expect(quick.split('\n')[1]).toBe('cd my_package');
+    // Every file a scaffold-block command names exists in the scaffold golden (tests/new/lib).
+    const files = quick.split('\n').flatMap((l) => l.replace(/#.*$/, '').split(/\s+/)).filter((w) => /\.(?:mojo|toml)$/.test(w));
+    for (const file of files) expect(existsSync(join(REPO_ROOT, 'tests', 'new', 'lib', file))).toBe(true);
+    expect(quick).not.toMatch(/mopm (?:build|run)\b/);
+    const buildRun = blocks.find(([label]) => label === 'Build and run commands')?.[1] as string;
+    expect(buildRun).toContain('mopm build hello.mojo -o hello');
+    expect(textOf(byId(home, 'build-run'))).toBe('Build and run take a Mojo file with a main (hello.mojo here is your own file):');
+  });
+
+  test('the home page search comes before the status note, and its browse link is name-sorted', () => {
+    const home = read('index.html');
+    expect(home.indexOf('class="hero-search"')).toBeGreaterThan(home.indexOf('id="opening"'));
+    expect(home.indexOf('class="hero-search"')).toBeLessThan(home.indexOf('id="status"'));
+    expect(home).toContain('<a href="/search">browse all packages</a>');
+    expect(home).not.toContain('sort=updated');
   });
 
   test('the pixi command is the one spec/channel.md documents, and the channel is the prod default', () => {

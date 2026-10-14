@@ -29,7 +29,7 @@ export function docTitle(src: string, fallback: string): string {
   return m ? m[1].replace(/`|\*\*/g, '').trim() : fallback;
 }
 
-/** The first paragraph after the title, as plain text, for the page description and the docs index. */
+/** The first sentence after the title, as plain text, for the page description and the docs index. */
 export function docSummary(src: string): string {
   const lines = src.split('\n');
   let i = lines.findIndex((l) => /^# /.test(l));
@@ -37,7 +37,10 @@ export function docSummary(src: string): string {
   while (i < lines.length && lines[i].trim() === '') i++;
   const para: string[] = [];
   for (; i < lines.length && lines[i].trim() !== '' && !/^(?:#|```|\||[-*] |\d+\. )/.test(lines[i]); i++) para.push(lines[i].trim());
-  return para.join(' ').replace(/`|\*\*/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+  const plain = para.join(' ').replace(/`|\*\*/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+  // A sentence ends at '.', '!' or '?' before a space ('mopm.toml' does not end one).
+  const end = /[.!?](?=\s|$)/.exec(plain);
+  return end ? plain.slice(0, end.index + 1) : plain;
 }
 
 export function buildDocPage(repoRoot: string, d: { slug: string; source: string }): DocPage {
@@ -56,7 +59,7 @@ export function buildDocPage(repoRoot: string, d: { slug: string; source: string
     'Source: ',
     h(doc, 'a', { href: webHref(`${REPO_URL}/blob/main/${d.source}`) ?? undefined }, h(doc, 'code', null, d.source), ' on GitHub'),
   );
-  const crumb = h(doc, 'p', { class: 'crumb' }, h(doc, 'a', { href: internalHref('/docs/') }, 'Docs'));
+  const crumb = h(doc, 'nav', { class: 'crumb', 'aria-label': 'Breadcrumb' }, h(doc, 'a', { href: internalHref('/docs/') }, 'Docs'));
   const main: SNode[] = [crumb, article, sourceLink];
   return {
     slug: d.slug,
@@ -88,6 +91,7 @@ export function docsIndexPage(pages: readonly DocPage[], repoRoot: string): Page
     description: 'mopm documentation: the mopm.toml manifest and the mopm test runner.',
     kind: 'docs',
     current: 'docs',
+    currentIsTarget: true,
     main: [
       h(doc, 'h1', null, 'Docs'),
       h(doc, 'p', { class: 'lede' }, 'Reference pages from the mopm repository, rendered from its Markdown.'),

@@ -22,6 +22,8 @@ describe('an active package (fixture: package info)', () => {
   test('the conda channel of this host and the pixi command are shown', () => {
     expect(out).toContain('<code>https://conda.mopm.dev/</code>');
     expect(out).toContain('<code>pixi add mojo-http_client</code>');
+    // A focusable block named by its label: the name counts only with a role.
+    expect(out).toContain('<p class="snippet-label" id="snippet-pixi">pixi, in a project that lists the channel</p><pre tabindex="0" role="region" aria-labelledby="snippet-pixi">');
   });
 
   test('the page says registry installs through mopm are planned', () => {

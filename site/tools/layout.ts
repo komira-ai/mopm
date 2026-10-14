@@ -33,13 +33,38 @@ export interface PageSpec {
   noindex?: boolean;
   /** Shown at the top of <main> when scripts do not run (inside <noscript>). */
   noscript?: readonly SNode[];
-  /** The navigation entry to mark as the current page. */
+  /** The navigation entry this page belongs to. */
   current?: 'packages' | 'docs';
+  /** This page is that entry's own target (aria-current="page"); otherwise it is below it (aria-current="true"). */
+  currentIsTarget?: boolean;
 }
 
-function header(current: PageSpec['current']): SNode {
-  const navLink = (key: 'packages' | 'docs', path: string, label: string): SNode =>
-    h(doc, 'li', null, h(doc, 'a', current === key ? { href: internalHref(path), 'aria-current': 'page' } : { href: internalHref(path) }, label));
+function siteSearch(): SNode {
+  return h(
+    doc,
+    'form',
+    { class: 'site-search', role: 'search', action: internalHref('/search'), method: 'get', 'aria-label': 'Site search' },
+    h(doc, 'label', { for: 'q', class: 'visually-hidden' }, 'Search packages'),
+    h(doc, 'input', {
+      id: 'q',
+      name: 'q',
+      type: 'search',
+      placeholder: 'Search packages',
+      maxlength: '64',
+      autocomplete: 'off',
+      spellcheck: 'false',
+      enterkeyhint: 'search',
+    }),
+    h(doc, 'button', { type: 'submit', class: 'button' }, 'Search'),
+  );
+}
+
+/** The site header. The home page leaves out the header search: its own search form is the first thing on it. */
+function header(spec: PageSpec): SNode {
+  const navLink = (key: 'packages' | 'docs', path: string, label: string): SNode => {
+    const attrs = spec.current !== key ? { href: internalHref(path) } : { href: internalHref(path), 'aria-current': spec.currentIsTarget ? 'page' : 'true' };
+    return h(doc, 'li', null, h(doc, 'a', attrs, label));
+  };
   return h(
     doc,
     'header',
@@ -49,23 +74,7 @@ function header(current: PageSpec['current']): SNode {
       'div',
       { class: 'wrap bar' },
       h(doc, 'a', { class: 'brand', href: internalHref('/'), 'aria-label': 'mopm home' }, 'mopm'),
-      h(
-        doc,
-        'form',
-        { class: 'site-search', role: 'search', action: internalHref('/search'), method: 'get' },
-        h(doc, 'label', { for: 'q', class: 'visually-hidden' }, 'Search packages'),
-        h(doc, 'input', {
-          id: 'q',
-          name: 'q',
-          type: 'search',
-          placeholder: 'Search packages',
-          maxlength: '64',
-          autocomplete: 'off',
-          spellcheck: 'false',
-          enterkeyhint: 'search',
-        }),
-        h(doc, 'button', { type: 'submit', class: 'button' }, 'Search'),
-      ),
+      spec.kind === 'home' ? null : siteSearch(),
       h(
         doc,
         'nav',
@@ -115,7 +124,7 @@ export function renderPage(spec: PageSpec, assets: Assets): string {
   // <noscript> is not a tag views may build: it goes in here, around serialized (escaped) nodes.
   const noscript = spec.noscript ? `<noscript><div class="notice">${serialize(spec.noscript)}</div></noscript>` : '';
   const body = [
-    serialize([h(doc, 'a', { class: 'skip', href: anchorHref('main') }, 'Skip to content'), header(spec.current)]),
+    serialize([h(doc, 'a', { class: 'skip', href: anchorHref('main') }, 'Skip to content'), header(spec)]),
     `<main id="main" class="wrap" tabindex="-1">${noscript}${serialize(spec.main)}</main>`,
     serialize(footer()),
   ].join('\n');

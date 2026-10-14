@@ -49,14 +49,14 @@ export function details<N>(doc: Doc<N>, rows: readonly [string, Child<N> | Child
   return any ? dl : null;
 }
 
-/** A code block a reader copies from, with a short label above it. */
+/** A code block a reader copies from, with a short label above it that names it (a named <pre> needs a role). */
 export function snippetBlock<N>(doc: Doc<N>, label: string, code: string, id: string): N {
   return h(
     doc,
     'div',
     { class: 'snippet' },
     h(doc, 'p', { class: 'snippet-label', id }, label),
-    h(doc, 'pre', { tabindex: '0', 'aria-labelledby': id }, h(doc, 'code', null, code)),
+    h(doc, 'pre', { tabindex: '0', role: 'region', 'aria-labelledby': id }, h(doc, 'code', null, code)),
   );
 }
 

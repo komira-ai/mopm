@@ -22,14 +22,19 @@ export const WORKING_TODAY = ['--version', 'link-plan', 'metadata', 'new', 'init
 /** The `planned` array of src/cli/main.zig, in its order. */
 export const PLANNED = ['add', 'remove', 'lock', 'sync', 'cov', 'tree', 'check', 'publish', 'export', 'launch'];
 
-const QUICKSTART = [
+/** The commands that work in a package `mopm new` has just made (tests/new/lib holds what it makes). */
+export const QUICKSTART = [
   'mopm new my_package --lib      # or --bin; `mopm init` makes one in the current directory',
   'cd my_package',
   'mopm metadata                  # check mopm.toml and print it as JSON',
   'mopm test                      # tests/**/test_*.mojo, one process per test',
+  'mopm repl                      # mojo repl with the native libraries preloaded',
+].join('\n');
+
+/** Build and run take a Mojo file with a main; the scaffold makes none for --lib, so the reader brings one. */
+export const BUILD_RUN = [
   'mopm build hello.mojo -o hello # links the native libraries of the environment',
   'mopm run hello.mojo',
-  'mopm repl',
 ].join('\n');
 
 const BUILD = ['git clone https://github.com/komira-ai/mopm', 'cd mopm', 'zig build            # builds zig-out/bin/mopm'].join('\n');
@@ -42,8 +47,9 @@ function code(s: string): SNode {
   return h(doc, 'code', null, s);
 }
 
+/** A scrollable, keyboard-reachable code block, named for screen readers (a named <pre> needs a role). */
 function block(s: string, label: string): SNode {
-  return h(doc, 'pre', { tabindex: '0', 'aria-label': label }, h(doc, 'code', null, s));
+  return h(doc, 'pre', { tabindex: '0', role: 'region', 'aria-label': label }, h(doc, 'code', null, s));
 }
 
 /** `a`, `b` and `c` with code spans. */
@@ -74,28 +80,31 @@ export function homePage(): PageSpec {
       link(MOJO_URL, 'Mojo'),
       ' projects, with a package registry at mopm.dev.',
     ),
-    h(
-      doc,
-      'p',
-      { class: 'status', id: 'status' },
-      h(doc, 'strong', null, 'Status: early.'),
-      ' ',
-      ...codeList(WORKING_TODAY.map((c) => `mopm ${c}`), 'and'),
-      ' work today. Everything else is a plan, and the design may change.',
-    ),
+    // The home page has no header search (layout.ts), so this field takes its id: '/' focuses it.
     h(
       doc,
       'form',
       { class: 'hero-search', role: 'search', action: internalHref('/search'), method: 'get', 'aria-label': 'Search the registry' },
-      h(doc, 'label', { for: 'home-q' }, 'Find a package by name'),
+      h(doc, 'label', { for: 'q' }, 'Find a package by name'),
       h(
         doc,
         'div',
         { class: 'hero-search-row' },
-        h(doc, 'input', { id: 'home-q', name: 'q', type: 'search', placeholder: 'http_client', maxlength: '64', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'search' }),
+        h(doc, 'input', { id: 'q', name: 'q', type: 'search', placeholder: 'http_client', maxlength: '64', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'search' }),
         h(doc, 'button', { type: 'submit', class: 'button button-primary' }, 'Search'),
       ),
-      h(doc, 'p', { class: 'muted small' }, 'or ', h(doc, 'a', { href: internalHref(searchPath({ sort: 'updated' })) }, 'see recently updated packages')),
+      // Name order, not sort=updated: the API refuses sort=updated once more than 1000 packages match, and with no q
+      // every package matches.
+      h(doc, 'p', { class: 'muted small' }, 'or ', h(doc, 'a', { href: internalHref(searchPath()) }, 'browse all packages')),
+    ),
+    h(
+      doc,
+      'p',
+      { class: 'status notice', id: 'status' },
+      h(doc, 'strong', null, 'Status: early.'),
+      ' ',
+      ...codeList(WORKING_TODAY.map((c) => `mopm ${c}`), 'and'),
+      ' work today. Everything else is a plan, and the design may change.',
     ),
   );
 
@@ -139,8 +148,10 @@ export function homePage(): PageSpec {
   const quickstart = section(
     'quickstart',
     'Quickstart',
-    h(doc, 'p', null, 'These commands work today:'),
+    h(doc, 'p', null, 'These commands work today, in a new package:'),
     block(QUICKSTART, 'Quickstart commands'),
+    h(doc, 'p', { id: 'build-run' }, 'Build and run take a Mojo file with a ', code('main'), ' (', code('hello.mojo'), ' here is your own file):'),
+    block(BUILD_RUN, 'Build and run commands'),
     h(
       doc,
       'p',
