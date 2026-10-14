@@ -3,3 +3,4 @@ cdk.out/
 *.js
 !jest.config.js
 *.d.ts
+cdk.context.json
