@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "name": "echo",
+  "version": "1.0.0",
+  "native": [
+    {
+      "id": "echo",
+      "soname": "libecho.so",
+      "file": "../libecho.so"
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+mopm run: cannot run @ROOT@/tests/fixtures/env/linux/chain/bin/mojo: FileNotFound

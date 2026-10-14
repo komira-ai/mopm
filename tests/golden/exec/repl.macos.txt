@@ -1,0 +1,8 @@
+arg: repl
+arg: -O
+arg: settings set target.env-vars DYLD_INSERT_LIBRARIES=@ROOT@/tests/fixtures/env/exec/lib/libecho.so
+MODULAR_HOME=@ROOT@/tests/fixtures/env/exec/share/max
+MOPM_GOLDEN_MARK=<unset>
+stdin: print(1 + 1)
+stdin: 
+stdin: print("two words")

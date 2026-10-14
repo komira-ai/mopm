@@ -1,17 +1,26 @@
 //! The stock `mojo` command lines behind `mopm build`, `mopm run` and
 //! `mopm repl`, built from a link plan and an environment prefix.
 //!
-//! Facts it encodes (each one was observed on a real Mojo toolchain):
+//! Observed on a real Mojo toolchain (probes):
 //!   * `mojo` needs `MODULAR_HOME=<prefix>/share/max`, which activation sets;
 //!     without it the compiler cannot find `std`.
-//!   * `mojo build`: the planned `-L`/`-l` (and archives by path) go through
-//!     `-Xlinker`, plus an absolute run path to `<prefix>/lib`. mopm never
-//!     sets the config's `shared_libs`: doing so drops the default run path.
-//!   * `mojo run`: one `-Xlinker <shared object>` per library; preloading is
-//!     ignored there and archives have no effect.
-//!   * `mojo repl`: no `-Xlinker`; the shared objects go to the JIT process as
-//!     `-O "settings set target.env-vars LD_PRELOAD=a:b"` (macOS:
-//!     `DYLD_INSERT_LIBRARIES`). Every transitive library must be listed.
+//!   * `mojo run` (P8/R1): one `-Xlinker <shared object>` per library;
+//!     preloading is ignored there and archives have no effect.
+//!   * `mojo repl` (R2, R5/R6): no `-Xlinker`; the shared objects go to the
+//!     JIT process only, as `-O "settings set target.env-vars LD_PRELOAD=a:b"`
+//!     (macOS: `DYLD_INSERT_LIBRARIES`, which the ad-hoc signed conda `mojo`
+//!     honours). Every transitive library must be listed.
+//!
+//! Not probe-observed: the `mojo build` route. The probes proved `-Xlinker`
+//! only for `mojo run`. mopm passes the planned `-L`/`-l` (and archives by
+//! path) through `-Xlinker`, plus `-Xlinker -rpath -Xlinker <prefix>/lib`, and
+//! never sets the config's `shared_libs` (doing so drops the default run
+//! path). On Linux the planned libraries are linked with `--no-as-needed`
+//! (inside `--push-state`/`--pop-state`), so the binary names a transitive
+//! library it never calls. That route is proved by the end-to-end CI job
+//! (PR #29), which builds a program against a fixture package, including one
+//! that reaches a library only transitively, and runs the binary in an empty
+//! environment.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -78,7 +87,17 @@ pub fn construct(arena: Allocator, req: Request, p: link_planner.Plan) Allocator
     try argv.append(@tagName(req.tool));
     switch (req.tool) {
         .build => {
+            // Linux: the binary itself must name every planned library
+            // (DT_NEEDED). A transitive library (libinner, needed by
+            // libouter) is found through the binary's run path only when
+            // the binary names it, because a run path does not apply to
+            // another library's needs; a linker running --as-needed drops
+            // a library the program does not call directly. The state is
+            // pushed and popped so that only the planned libraries change.
+            const wrap = req.os == .linux and p.build.len > 0;
+            if (wrap) try argv.appendSlice(&.{ "-Xlinker", "--push-state", "-Xlinker", "--no-as-needed" });
             for (p.build) |arg| try argv.appendSlice(&.{ "-Xlinker", arg });
+            if (wrap) try argv.appendSlice(&.{ "-Xlinker", "--pop-state" });
             const lib = try std.fs.path.join(arena, &.{ req.prefix, "lib" });
             try argv.appendSlice(&.{ "-Xlinker", "-rpath", "-Xlinker", lib });
             if (req.out) |o| try argv.appendSlice(&.{ "-o", o });
@@ -104,6 +123,16 @@ pub fn construct(arena: Allocator, req: Request, p: link_planner.Plan) Allocator
     const envs = try arena.alloc([]const u8, 1);
     envs[0] = home;
     return .{ .env = envs, .argv = try argv.toOwnedSlice() };
+}
+
+/// Put each `NAME=value` of `pairs` into `map`, replacing what the caller
+/// had (a stale `MODULAR_HOME` from another environment loses).
+pub fn applyEnv(map: *std.process.EnvMap, pairs: []const []const u8) Allocator.Error!void {
+    for (pairs) |pair| {
+        const eq = std.mem.indexOfScalar(u8, pair, '=') orelse pair.len;
+        const value = if (eq < pair.len) pair[eq + 1 ..] else "";
+        try map.put(pair[0..eq], value);
+    }
 }
 
 fn shellSafe(c: u8) bool {
@@ -184,15 +213,30 @@ test "build: planned -L/-l through -Xlinker plus an absolute run path to <prefix
     const c = try construct(a, .{ .tool = .build, .prefix = "/e", .os = .linux, .file = "m.mojo", .out = "m" }, p);
     try expectArgv(&.{
         "/e/bin/mojo", "build",
+        "-Xlinker",    "--push-state",
+        "-Xlinker",    "--no-as-needed",
         "-Xlinker",    "-L/e/lib",
         "-Xlinker",    "-lb",
         "-Xlinker",    "-la",
+        "-Xlinker",    "--pop-state",
         "-Xlinker",    "-rpath",
         "-Xlinker",    "/e/lib",
         "-o",          "m",
         "m.mojo",
     }, c.argv);
     try expectArgv(&.{"MODULAR_HOME=/e/share/max"}, c.env);
+}
+
+test "build: macOS gets no --as-needed state (ld64 has no such flag; @rpath reaches transitive libraries)" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const p = try chainPlan(a, .macos);
+    const c = try construct(a, .{ .tool = .build, .prefix = "/e", .os = .macos, .file = "m.mojo" }, p);
+    for (c.argv) |arg| {
+        try std.testing.expect(std.mem.indexOf(u8, arg, "as-needed") == null);
+        try std.testing.expect(std.mem.indexOf(u8, arg, "-state") == null);
+    }
 }
 
 test "build: the run path is there even with no natives, and -o is optional" {
@@ -212,7 +256,7 @@ test "build: a static archive is passed by path" {
         \\{"schema": 1, "name": "s", "native": [{"id": "x", "soname": "libx.a", "kind": "static", "static_file": "../libx.a"}]}
     ) }});
     const c = try construct(a, .{ .tool = .build, .prefix = "/e", .os = .linux, .file = "m.mojo" }, p);
-    try expectArgv(&.{ "/e/bin/mojo", "build", "-Xlinker", "/e/lib/libx.a", "-Xlinker", "-rpath", "-Xlinker", "/e/lib", "m.mojo" }, c.argv);
+    try expectArgv(&.{ "/e/bin/mojo", "build", "-Xlinker", "--push-state", "-Xlinker", "--no-as-needed", "-Xlinker", "/e/lib/libx.a", "-Xlinker", "--pop-state", "-Xlinker", "-rpath", "-Xlinker", "/e/lib", "m.mojo" }, c.argv);
     try std.testing.expectEqual(@as(usize, 0), (try refusals(a, .build, p)).len);
     try std.testing.expectEqual(@as(usize, 1), (try refusals(a, .run, p)).len);
     try std.testing.expectEqual(@as(usize, 1), (try refusals(a, .repl, p)).len);
@@ -276,4 +320,16 @@ test "render quotes only words that need it" {
         "MODULAR_HOME='/e x/share/max' /e/bin/mojo repl -O 'settings set target.env-vars LD_PRELOAD=/e/lib/it'\\''s.so'\n",
         buf.items,
     );
+}
+
+test "applyEnv overrides the caller's value and keeps the rest" {
+    var map = std.process.EnvMap.init(std.testing.allocator);
+    defer map.deinit();
+    try map.put("MODULAR_HOME", "/other/share/max");
+    try map.put("PATH", "/usr/bin");
+    try applyEnv(&map, &.{ "MODULAR_HOME=/e/share/max", "EMPTY=" });
+    try std.testing.expectEqualStrings("/e/share/max", map.get("MODULAR_HOME").?);
+    try std.testing.expectEqualStrings("/usr/bin", map.get("PATH").?);
+    try std.testing.expectEqualStrings("", map.get("EMPTY").?);
+    try std.testing.expectEqual(@as(std.process.EnvMap.Size, 3), map.count());
 }

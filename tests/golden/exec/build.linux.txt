@@ -1,0 +1,20 @@
+arg: build
+arg: -Xlinker
+arg: --push-state
+arg: -Xlinker
+arg: --no-as-needed
+arg: -Xlinker
+arg: -L@ROOT@/tests/fixtures/env/exec/lib
+arg: -Xlinker
+arg: -lecho
+arg: -Xlinker
+arg: --pop-state
+arg: -Xlinker
+arg: -rpath
+arg: -Xlinker
+arg: @ROOT@/tests/fixtures/env/exec/lib
+arg: -o
+arg: hello
+arg: hello.mojo
+MODULAR_HOME=@ROOT@/tests/fixtures/env/exec/share/max
+MOPM_GOLDEN_MARK=<unset>
