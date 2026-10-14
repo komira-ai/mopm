@@ -162,11 +162,17 @@ pub fn plan(arena: Allocator, inputs: []const Input) Allocator.Error!Plan {
         }
     }
 
+    // MUTANT: needs are ignored; a library another library needs is left
+    // to the loader and not planned.
+    var needed = std.StringHashMap(void).init(arena);
+    for (inputs) |inp| for (inp.meta.native) |n| for (n.needs) |need| try needed.put(need, {});
+
     // Pass 4: the flags, in input order. Only the first owner of a soname
     // contributes.
     for (inputs) |inp| {
         for (inp.meta.native) |n| {
             if (n.mode == .load) continue;
+            if (needed.contains(n.soname)) continue;
             const owner = owners.get(n.soname) orelse continue;
             if (!std.mem.eql(u8, owner, inp.meta.name)) continue;
             const e = try emitted.getOrPut(n.soname);
