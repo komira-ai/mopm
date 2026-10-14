@@ -1,0 +1,1 @@
+mopm repl: @ROOT@/tests/fixtures/env (from --prefix) has no lib/mojo: not a Mojo environment

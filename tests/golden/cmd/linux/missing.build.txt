@@ -1,0 +1,2 @@
+mopm build: refused (missing_package): http_client depends on crypto, which is not in the closure
+mopm build: refused (missing_library): http_client (native curl_shim) needs libcrypto_native.so.1, which no package in the closure provides
