@@ -150,5 +150,9 @@ jobs:
         run: zig build
       - name: mopm login, logout and whoami against the fake registry
         run: python3 -I tests/registry_e2e/run.py ./zig-out/bin/mopm ./zig-out/bin/mopm-fake-registry
-      - name: mopm lock, update and tree against the fake registry (wrong-version traps, refusals)
-        run: python3 -I tests/resolve_e2e/run.py ./zig-out/bin/mopm ./zig-out/bin/mopm-fake-registry
+      - name: Install the contract validators (pip, in a throwaway environment)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/contract-venv"
+          "$RUNNER_TEMP/contract-venv/bin/pip" install --disable-pip-version-check -r tests/contract/requirements.txt
+      - name: mopm lock, update and tree against the fake registry (wrong-version traps, refusals, lock schema)
+        run: '"$RUNNER_TEMP/contract-venv/bin/python" -I tests/resolve_e2e/run.py ./zig-out/bin/mopm ./zig-out/bin/mopm-fake-registry'
