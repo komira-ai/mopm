@@ -12,7 +12,7 @@ import { condaBase } from '../host.js';
 import { internalHref, webHref } from '../links.js';
 import { renderMarkdown } from '../markdown/render.js';
 import { isVersion, versionPath } from '../routes.js';
-import { manifestSnippet, pixiCommand } from '../snippet.js';
+import { manifestSnippet, pixiCommand, refusalSentence } from '../snippet.js';
 import type { PackageInfo, VersionSummary } from '../types.js';
 import { details, snippetBlock, timeEl, type View } from './common.js';
 
@@ -141,7 +141,7 @@ export function packageView<N>(doc: Doc<N>, name: string, info: PackageInfo, ctx
         : latest === null
           ? 'There is no latest release: no published version without a pre-release suffix.'
           : info.state === 'active'
-            ? `The latest version, ${latest}, cannot be written as a mopm.toml requirement (at most three numeric parts).`
+            ? refusalSentence(`The latest version, ${latest},`, latest)
             : null;
     doc.append(main, installSection(doc, name, manifest, ctx, why));
     doc.append(main, h(doc, 'section', { 'aria-labelledby': 'versions-heading' }, h(doc, 'h2', { id: 'versions-heading' }, 'Versions'), versionsTable(doc, name, info.versions)));

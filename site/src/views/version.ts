@@ -11,7 +11,7 @@ import { formatBytes, stateLabel } from '../format.js';
 import { condaBase } from '../host.js';
 import { channelFileHref, internalHref } from '../links.js';
 import { isCanonicalName, isVersion, packagePath, versionPath } from '../routes.js';
-import { pinnedSnippet } from '../snippet.js';
+import { pinnedSnippet, refusalSentence } from '../snippet.js';
 import type { FileRef, VersionDetail } from '../types.js';
 import { details, timeEl, type View } from './common.js';
 import { inlineList, installSection, type PageContext, readmeSection, webLink } from './package.js';
@@ -129,10 +129,7 @@ export function versionView<N>(doc: Doc<N>, name: string, v: VersionDetail, ctx:
   if (banner) doc.append(main, banner);
   if (spelling !== null) {
     const pinned = pinnedSnippet(name, spelling, v.state);
-    const why =
-      pinned !== null || v.state !== 'published'
-        ? null
-        : `${spelling} cannot be written as a mopm.toml requirement (at most three numeric parts).`;
+    const why = pinned !== null || v.state !== 'published' ? null : refusalSentence(`Version ${spelling}`, spelling);
     if (v.state === 'published' || v.state === 'yanked') doc.append(main, installSection(doc, name, pinned, ctx, why));
   }
   doc.append(main, h(doc, 'section', { 'aria-labelledby': 'files-heading' }, h(doc, 'h2', { id: 'files-heading' }, 'Files'), filesTable(doc, v, ctx)));

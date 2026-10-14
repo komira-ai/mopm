@@ -66,10 +66,13 @@ describe('package shapes the fixtures do not cover', () => {
     expect(out).toContain('<code>pixi add mojo-http_client</code>');
   });
 
-  test.each(['1.2.3.4', '1.0rc1'])('latest %s: no mopm.toml line, a reason, pixi still shown', (v) => {
+  test.each([
+    ['1.2.3.4', 'has more than three numeric parts'],
+    ['1.0rc1', 'has a conda pre-release suffix'],
+  ])('latest %s: no mopm.toml line, the reason (%s), pixi still shown', (v, why) => {
     const out = render(packageFixture((r) => Object.assign(r, { latest: v })));
     expect(out).not.toContain('[dependencies]');
-    expect(text(out)).toContain('cannot be written as a mopm.toml requirement');
+    expect(text(out)).toContain(`The latest version, ${v}, ${why}`);
     expect(out).toContain('<code>pixi add mojo-http_client</code>');
   });
 

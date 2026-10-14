@@ -141,9 +141,21 @@ describe('names, spellings and unknown values', () => {
     expect(html(view)).not.toContain('[dependencies]');
   });
 
-  test('a published 1.0rc1 gets no pinned line but says why', () => {
+  test('a published 1.0rc1 gets no pinned line, and the reason is its suffix', () => {
     const out = html(render(versionFixture('version detail', (r) => Object.assign(r, { version: '1.0rc1' }))));
     expect(out).not.toContain('[dependencies]');
-    expect(text(out)).toContain('1.0rc1 cannot be written as a mopm.toml requirement');
+    expect(text(out)).toContain('Version 1.0rc1 has a conda pre-release suffix, which a mopm.toml requirement cannot name.');
+    expect(text(out)).not.toContain('three numeric parts');
+  });
+
+  test('a published 1.2.3.4 gets no pinned line, and the reason is its four parts', () => {
+    const out = html(render(versionFixture('version detail', (r) => Object.assign(r, { version: '1.2.3.4' }))));
+    expect(out).not.toContain('[dependencies]');
+    expect(text(out)).toContain('Version 1.2.3.4 has more than three numeric parts');
+  });
+
+  test('a published two-part version is pinned on all three parts', () => {
+    const out = html(render(versionFixture('version detail', (r) => Object.assign(r, { version: '1.2' }))));
+    expect(out).toContain('<code>[dependencies]\nhttp_client = "=1.2.0"</code>');
   });
 });
