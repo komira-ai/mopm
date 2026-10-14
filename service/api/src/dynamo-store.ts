@@ -56,9 +56,9 @@ export const SEARCH_INDEX = {
 type Item = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 /**
- * Version rows are keyed (name, version) where `version` holds the canonical form, so equivalent
- * spellings are the same key and a conditional put cannot create the second one. The spelling that was
- * published is kept in `version_spelling`.
+ * Version rows are keyed (name, version) where `version` holds the canonical form (today the version itself,
+ * since a version has one spelling), so a conditional put cannot create the second one. The published
+ * spelling is also kept in `version_spelling`, which older rows and readers rely on.
  */
 const toItem = (r: VersionRecord): Item => {
   const { canonical, version, ...rest } = r;

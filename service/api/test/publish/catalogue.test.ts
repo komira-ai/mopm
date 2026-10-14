@@ -43,8 +43,8 @@ describe('the publish error catalogue is the contract\'s', () => {
 
 describe('errorView', () => {
   test('renders templates from the error\'s detail, whichever class raised it', () => {
-    expect(errorView(new RegistryError('version_exists', 'x', { name: 'p', version: '1.0', sha256: 'ab' })).body.error.message).toBe(
-      "'p' 1.0 already exists (sha256 ab); versions are immutable.",
+    expect(errorView(new RegistryError('version_exists', 'x', { name: 'p', version: '1.0.0', sha256: 'ab' })).body.error.message).toBe(
+      "'p' 1.0.0 already exists (sha256 ab); versions are immutable.",
     );
     expect(errorView(new AuthError('token_expired', 'x', { expires_at: 'T' })).body.error.message).toBe('The token expired at T.');
     const rl = errorView(new PublishError('rate_limited', 'x', { retry_after: '9' }, 9));

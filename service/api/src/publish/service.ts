@@ -7,9 +7,11 @@ import type { VersionRecord } from '../types';
 import { SUBDIRS_V1 } from '../types';
 import { canonicalVersion } from '../version';
 import type { PublishConfig } from './config';
+import { parseDisplay } from './display';
+import type { DisplayMeta } from './display';
 import { invalidRequest, PublishError, uploadInvalid } from './errors';
 import type { ObjectStore, Presigner, PublishStore, Queue } from './ports';
-import type { Actor, PublishRecord, UploadRecord, ValidateMessage } from './types';
+import type { Actor, IndexMessage, PublishRecord, UploadRecord, ValidateMessage } from './types';
 
 export interface PublishServiceDeps {
   registry: Store;
@@ -18,6 +20,8 @@ export interface PublishServiceDeps {
   objects: Pick<ObjectStore, 'head'>;
   presigner: Presigner;
   validateQueue: Queue;
+  /** The index writer's queue (one FIFO group per subdir). Yank and unyank send to it; absent, they answer `unavailable`. */
+  indexQueue?: Queue;
   config: PublishConfig;
   now?: () => Date;
   newId?: () => string;
@@ -32,6 +36,12 @@ export interface BeginResult {
 export interface CommitResult {
   publish_id: string;
   status_url: string;
+}
+export interface YankResult {
+  version: string;
+  state: VersionRecord['state'];
+  published_at: string;
+  yank_reason?: string;
 }
 export interface PublishStatusBody {
   publish_id: string;
@@ -163,13 +173,19 @@ export class PublishService {
   /**
    * Bytes of the package's live files plus this one must fit the project total. Tombstoned bytes are gone and do
    * not count; nothing is ever deleted to make room (the CEO's rule), so a full project simply refuses new
-   * publishes. The error reuses payload_too_large with the room left as its limit; the contract has no separate code.
+   * publishes. The error is `limit_exceeded` (403): the project is full, whatever the size of this file, which is
+   * not what `payload_too_large` (the per-file cap) says.
    */
   private async checkQuota(name: string, size: number): Promise<void> {
     const used = liveBytes(await this.d.registry.listVersions(name));
     const quota = this.d.config.projectQuotaBytes;
     if (used + size > quota) {
-      throw new PublishError('payload_too_large', 'The file is larger than the limit.', { limit: String(Math.max(0, quota - used)) });
+      const remaining = String(Math.max(0, quota - used));
+      throw new PublishError(
+        'limit_exceeded',
+        `Adding this file would put '${name}' over its storage limit of ${quota} bytes; ${remaining} bytes are left.`,
+        { name, limit: String(quota), remaining },
+      );
     }
   }
 
@@ -268,6 +284,7 @@ export class PublishService {
       published_by: handle,
       status: 'pending',
       manifest_sha256: req.manifest_sha256,
+      ...(Object.keys(req.display).length > 0 ? { display: req.display } : {}),
       files: uploads.map((u) => ({ upload_id: u.upload_id, subdir: u.subdir, filename: u.filename, sha256: u.sha256, size: u.size, key: u.key })),
       remaining_subdirs: [],
       created_at: now,
@@ -282,6 +299,47 @@ export class PublishService {
     const msg: ValidateMessage = { type: 'validate', publish_id: rec.publish_id };
     // One group per package: its publishes are validated one at a time, in order, so the project total is exact.
     await this.d.validateQueue.send({ body: JSON.stringify(msg), groupId: rec.name, dedupId: rec.publish_id });
+  }
+
+  // --- yank -----------------------------------------------------------------------------------------------
+
+  /**
+   * setYanked: yank (with a reason) or unyank a version, then ask the index writer to rewrite every subdir the
+   * version has files in, so repodata `packages.conda` and `removed` follow the state. The state change comes first
+   * (it is the truth); the messages come after it, and they are sent again on a repeat of the same request, so a
+   * crash between the two leaves a state that the next identical request repairs. A repeat of a change already made
+   * is a no-op for the record and still queues the rebuild (the FIFO dedup id is the record's revision, so a quick
+   * double send is one rebuild, and a later one is a harmless second).
+   */
+  async setYanked(p: Principal, name: string, version: string, body: unknown): Promise<YankResult> {
+    this.checkTarget(name, version);
+    const req = parseYank(body);
+    const queue = this.d.indexQueue;
+    if (!queue) throw new PublishError('unavailable', 'The registry is temporarily unavailable.');
+    const handle = await this.requireOwner(p, name);
+    const existing = await this.d.registry.getVersion(name, version);
+    if (!existing) throw new RegistryError('version_not_found', `'${name}' has no version '${version}'.`, { name, version });
+    const now = this.now().toISOString();
+    const audit = {
+      name,
+      ts: now,
+      id: `a_${this.newId()}`,
+      actor: actorOf(p),
+      action: req.yanked ? 'yank' : 'unyank',
+      version,
+      detail: { by: handle, ...(req.yanked ? { reason: req.reason } : {}) },
+    };
+    const after = await this.d.registry.updateVersion(name, version, req.yanked ? { type: 'yank', reason: req.reason } : { type: 'unyank' }, audit);
+    for (const subdir of [...new Set(after.files.map((f) => f.subdir))].sort()) {
+      const msg: IndexMessage = { type: 'index', subdir };
+      await queue.send({ body: JSON.stringify(msg), groupId: subdir, dedupId: `rebuild:${after.canonical}:${name}:${after.rev}:${subdir}` });
+    }
+    return {
+      version: after.version,
+      state: after.state,
+      published_at: after.published_at,
+      ...(after.state === 'yanked' && after.yank_reason !== undefined ? { yank_reason: after.yank_reason } : {}),
+    };
   }
 
   // --- status ---------------------------------------------------------------------------------------------
@@ -306,15 +364,22 @@ export function liveBytes(versions: readonly VersionRecord[]): number {
   return n;
 }
 
-function parseCommit(body: unknown): { upload_ids: string[]; manifest_sha256: string } {
+function parseYank(body: unknown): { yanked: true; reason: string } | { yanked: false } {
   if (!isObject(body)) throw invalidRequest('the body is not a JSON object');
-  const { upload_ids, manifest_sha256, readme } = body;
+  const { yanked, reason } = body;
+  if (typeof yanked !== 'boolean') throw invalidRequest("'yanked' must be a boolean");
+  if (reason !== undefined && (typeof reason !== 'string' || reason.length > 280)) throw invalidRequest("'reason' is a string of at most 280 characters");
+  if (!yanked) return { yanked: false };
+  if (typeof reason !== 'string' || reason.length === 0) throw invalidRequest("yanking needs a 'reason'");
+  return { yanked: true, reason };
+}
+
+function parseCommit(body: unknown): { upload_ids: string[]; manifest_sha256: string; display: DisplayMeta } {
+  if (!isObject(body)) throw invalidRequest('the body is not a JSON object');
+  const { upload_ids, manifest_sha256 } = body;
   if (!Array.isArray(upload_ids) || upload_ids.length < 1 || upload_ids.length > 20) throw invalidRequest("'upload_ids' holds 1 to 20 ids");
   if (!upload_ids.every((x) => typeof x === 'string' && x.length >= 1 && x.length <= 128)) throw invalidRequest('each upload id must be a string');
   if (new Set(upload_ids).size !== upload_ids.length) throw invalidRequest("'upload_ids' repeats an id");
   if (typeof manifest_sha256 !== 'string' || !SHA256.test(manifest_sha256)) throw invalidRequest("'manifest_sha256' is 64 lowercase hex digits");
-  if (readme !== undefined && (typeof readme !== 'string' || readme.length > 524288)) {
-    throw invalidRequest("'readme' is a string of at most 524288 characters");
-  }
-  return { upload_ids: upload_ids as string[], manifest_sha256 };
+  return { upload_ids: upload_ids as string[], manifest_sha256, display: parseDisplay(body) };
 }

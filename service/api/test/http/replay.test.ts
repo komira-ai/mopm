@@ -150,7 +150,7 @@ const RECIPES: Record<string, Recipe> = {
 // service/api/test/fixtures/api-read.json: cases of the same shape that pin things the shared fixtures do not.
 const LOCAL_RECIPES: Record<string, Recipe> = {
   'versions are newest first by conda ordering': { seed: orderingDemo() },
-  'package info: latest skips yanked and pre-releases, tombstone shown as such': { seed: orderingDemo(true) },
+  'package info: latest skips yanked, tombstoned and pending versions, tombstone shown as such': { seed: orderingDemo(true) },
   'versions of a package that does not exist': {},
   'search by prefix is normalised and ordered by name': {
     seed: async (s) => {
@@ -168,12 +168,12 @@ function orderingDemo(withOwner = false) {
     if (withOwner) await s.addOwner({ name: 'ordering_demo', github_id: 583231, handle: 'octocat', added_at: '2026-10-01T09:00:00Z' });
     // Inserted in no particular order on purpose.
     const add = (version: string, over: object) => s.createVersion(rec({ name: 'ordering_demo', version, ...over }), audit('ordering_demo', 'publish', version));
-    await add('1.9', { state: 'tombstoned', tombstone: { reason_code: 'malware', date: '2026-10-11' }, published_at: '2026-10-07T00:00:00Z' });
-    await add('2.0rc1', { published_at: '2026-10-09T00:00:00Z' });
-    await add('1.2', { published_at: '2026-10-06T00:00:00Z' });
-    await add('2.0', { published_at: '2026-10-10T00:00:00Z' });
+    await add('1.9.0', { state: 'tombstoned', tombstone: { reason_code: 'malware', date: '2026-10-11' }, published_at: '2026-10-07T00:00:00Z' });
+    await add('1.20.0', { published_at: '2026-10-09T00:00:00Z' });
+    await add('1.2.0', { published_at: '2026-10-06T00:00:00Z' });
+    await add('2.0.0', { published_at: '2026-10-10T00:00:00Z' });
     await add('1.10.0', { state: 'yanked', yank_reason: 'broken wheel', published_at: '2026-10-08T00:00:00Z' });
-    await s.createVersion(rec({ name: 'ordering_demo', version: '3.0', state: 'pending', published_at: '2026-10-12T00:00:00Z' }), audit('ordering_demo', 'reserve', '3.0'));
+    await s.createVersion(rec({ name: 'ordering_demo', version: '3.0.0', state: 'pending', published_at: '2026-10-12T00:00:00Z' }), audit('ordering_demo', 'reserve', '3.0.0'));
   };
 }
 

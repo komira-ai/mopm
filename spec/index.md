@@ -7,7 +7,8 @@ solvers read; the index carries what mopm needs on top (yank reasons,
 tombstones, provenance, native library facts) in a form that is cheap to fetch
 for one package.
 
-The index is served from the API host (`https://<stage host>/index/...`).
+The index is served from the API host (`https://api.<site>/index/...`, for
+example `https://api.mopm.dev/index/config.json`).
 Its schemas are in this directory.
 
 ## Files (v1)
@@ -41,9 +42,9 @@ parsed back. This keeps directories small.
 ### A package file
 
 UTF-8, one JSON object per line, `\n` line endings, no blank lines. Each line
-describes one version, ordered from oldest to newest by conda version
-ordering. The file is regenerated whole from the registry's source of truth
-and is written deterministically (sorted keys, no timestamps other than
+describes one version, ordered from oldest to newest by version
+(`MAJOR.MINOR.PATCH`, compared numerically part by part). The file is
+regenerated whole from the registry's source of truth and is written deterministically (sorted keys, no timestamps other than
 `published_at`). A line:
 
 ```json
@@ -56,11 +57,19 @@ Rules a reader applies:
 
 - `v` is the record version. A record with a `v` the reader does not know is
   an error, not a skipped line. Unknown keys are ignored.
-- All lines of a file have the same `name`, and no `version` repeats (equal
-  under conda ordering counts as repeating).
+- All lines of a file have the same `name`, and no `version` repeats.
 - `state` is `published`, `yanked` (then `yank_reason` is present) or
   `tombstoned` (then `tombstone` is present and `files[].url` is absent: the
   bytes are gone but the sha256 stays so a lock can be explained).
+- `deps[].range` is the cargo-syntax version requirement copied verbatim from
+  the dependency's entry in `mopm.toml` (`Version requirements` in
+  `mopm-toml.md`: `"1.2"`, `">=1.2, <1.5"`, `"~1.2"`), not a conda spec. It
+  is absent when the dependency named no requirement. mopm resolves with
+  these ranges. The `depends` of the conda `repodata.json`
+  (`channel.md`) are generated separately, from the validated package, for
+  conda clients; mopm's resolver never reads them, and the two are not
+  compared for syntax. A dependency that had only a `path` in `mopm.toml`
+  cannot be published, so no record carries one.
 - `files[].sha256` and `size` are the values a lock pins and an install
   verifies. They must equal the values in the channel's `repodata.json` and in
   the API's `getVersion`.

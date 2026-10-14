@@ -1,6 +1,6 @@
 import { posix } from 'node:path';
 import { fail } from './codes';
-import { canonicalVersion } from '../version';
+import { canonicalVersion, isValidVersion } from '../version';
 
 /** Constants drawn from spec/package-metadata.schema.json; a test fails if the schema file drifts from them. */
 export const METADATA_SCHEMA_VERSION = 1;
@@ -47,6 +47,9 @@ export function checkMopm(o: Record<string, unknown>): Mopm {
   if (o.schema !== METADATA_SCHEMA_VERSION) return bad(`'schema' must be ${METADATA_SCHEMA_VERSION}`);
   if (!isStr(o.name) || o.name.length < 1) return bad("'name' must be a non-empty string");
   if (o.version !== undefined && !isStr(o.version)) return bad("'version' must be a string");
+  if (o.version !== undefined && !isValidVersion(o.version as string)) {
+    return bad(`'version' '${String(o.version)}' is not MAJOR.MINOR.PATCH (three numbers, no suffix)`);
+  }
   const deps: Mopm['deps'] = [];
   if (o.deps !== undefined) {
     if (!Array.isArray(o.deps)) return bad("'deps' must be an array");
@@ -55,6 +58,11 @@ export function checkMopm(o: Record<string, unknown>): Mopm {
       const r = d as Record<string, unknown>;
       if (!isStr(r.name) || r.name.length < 1) return bad("a dependency needs a non-empty 'name'");
       if (r.range !== undefined && !isStr(r.range)) return bad("a dependency 'range' must be a string");
+      if (r.path !== undefined && !isStr(r.path)) return bad("a dependency 'path' must be a string");
+      // Cargo's rule: a path is only for development; what is published must say which versions of the dependency work.
+      if (r.path !== undefined && r.range === undefined) {
+        return bad(`dependency '${r.name}' has a path but no version; a published package depends on a version, so add one next to the path`);
+      }
       deps.push({ name: r.name, range: r.range as string | undefined });
     }
   }

@@ -60,7 +60,7 @@ const CHECKS: Record<string, Check> = {
     eq(await s.getTokenByHash(h(2)), undefined);
   },
   'a CI token has no account: not listed for anyone, found by hash, keeps its single version': async (s) => {
-    const t = tok({ id: 'tok_ci', hash: h(3), kind: 'oidc', github_id: undefined, version: '1.0', issued_to: 'acme/widgets' });
+    const t = tok({ id: 'tok_ci', hash: h(3), kind: 'oidc', github_id: undefined, version: '1.0.0', issued_to: 'acme/widgets' });
     delete t.github_id;
     await s.putToken(t);
     eq(await s.getTokenByHash(h(3)), t);

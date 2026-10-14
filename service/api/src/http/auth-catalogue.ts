@@ -10,7 +10,7 @@ import { CATALOGUE } from './catalogue';
 export const AUTH_CATALOGUE: Partial<Record<AuthErrorCode, { message: string; hint: string }>> = {
   invalid_version: {
     message: "'{version}' is not a valid version.",
-    hint: 'Use digits separated by dots, with an optional a, b, rc or dev suffix.',
+    hint: 'A version is MAJOR.MINOR.PATCH: three numbers separated by dots, such as 1.2.3. Suffixes such as rc1 are not supported.',
   },
   token_missing: { message: 'This request needs a token.', hint: "Run 'mopm login' or pass a token." },
   token_unknown: {

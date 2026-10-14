@@ -158,8 +158,8 @@ describe('rejections', () => {
     expect(v.state).toBe('tombstoned');
     expect(v.tombstone?.reason_code).toBe('archive_invalid');
     expect(v.files).toEqual([]);
-    // The number is burned: a new begin for it (even spelled 1.0) is version_exists.
-    const again = await h.call('POST', '/api/v1/packages/demo/1.0/files', me.token, { subdir: 'noarch', filename: 'mojo-demo-1.0-mojo1.0.0_0.conda', sha256: p.sha256, size: 10 });
+    // The number is burned: a new begin for it is version_exists.
+    const again = await h.call('POST', '/api/v1/packages/demo/1.0.0/files', me.token, { subdir: 'noarch', filename: 'mojo-demo-1.0.0-mojo1.0.0_0.conda', sha256: p.sha256, size: 10 });
     expect(again.statusCode).toBe(409);
     expect(JSON.parse(again.body).error.code).toBe('version_exists');
   });
@@ -297,23 +297,23 @@ describe('begin: names, versions, owners and the version number', () => {
   const body = (p: ReturnType<typeof pkg>) => ({ subdir: p.subdir, filename: p.filename, sha256: p.sha256, size: p.bytes.length });
   const err = (r: { body: string }) => JSON.parse(r.body).error.code as string;
 
-  test('1.0 and 1.0.0 are one version: the second begin after a commit is version_exists; before a commit the reservation is shared', async () => {
+  test('once a publish holds a version no begin gets in (version_exists); before a commit the reservation is shared', async () => {
     const h = new Harness();
     const me = await h.account(1, 'a', ['demo']);
     const p = pkg({ name: 'demo', version: '1.0.0' });
-    const q = pkg({ name: 'demo', version: '1.0' });
-    // Before any commit the number is only reserved: a second begin (same or equivalent spelling) joins it.
+    const q = pkg({ name: 'demo', version: '1.0.0' });
+    // Before any commit the number is only reserved: a second begin joins it.
     expect((await h.call('POST', '/api/v1/packages/demo/1.0.0/files', me.token, body(p))).statusCode).toBe(200);
-    expect((await h.call('POST', '/api/v1/packages/demo/1.0/files', me.token, body(q))).statusCode).toBe(200);
+    expect((await h.call('POST', '/api/v1/packages/demo/1.0.0/files', me.token, body(q))).statusCode).toBe(200);
     // Once a publish holds it, no begin gets in.
     await h.publish(me.token, p);
-    const r = await h.call('POST', '/api/v1/packages/demo/1.0/files', me.token, body(q));
+    const r = await h.call('POST', '/api/v1/packages/demo/1.0.0/files', me.token, body(q));
     expect(r.statusCode).toBe(409);
     expect(err(r)).toBe('version_exists');
     // ... and after it is published as well.
     await h.runValidator();
     await h.runIndexer();
-    expect(err(await h.call('POST', '/api/v1/packages/demo/1/files', me.token, body(pkg({ name: 'demo', version: '1' }))))).toBe('version_exists');
+    expect(err(await h.call('POST', '/api/v1/packages/demo/1.0.0/files', me.token, body(q)))).toBe('version_exists');
   });
 
   test('two begins at once for a new version both succeed; two commits at once: exactly one wins', async () => {

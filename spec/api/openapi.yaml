@@ -48,8 +48,10 @@ info:
       `invalid_name`; it does not redirect.
     - Versions in paths start with a digit, so a version never collides with
       the literal path segments `owners`, `versions` or `claim`.
-    - Two versions that are equal under conda version ordering (`1.0` and
-      `1.0.0`) are the same version: the second is refused with `version_exists`.
+    - A version is `MAJOR.MINOR.PATCH` (see `Version`). Any other spelling
+      (`1.0`, `1.0.0.0`, `1.0rc1`, `1.0.0-rc.1`) is refused with
+      `invalid_version`, so a version has one spelling and publishing the same
+      version twice is refused with `version_exists`.
     - Lists are paginated with an opaque `cursor`; `next_cursor` is null on the
       last page.
 
@@ -64,14 +66,18 @@ info:
     identifier: Apache-2.0
 servers:
   - url: https://{host}/api/v1
-    description: One host per stage. Prod is mopm.dev.
+    description: |
+      One API host per stage, `api.<site>`: prod is api.mopm.dev, gamma is
+      api.gamma.mopm.dev and beta is api.beta.mopm.dev. The site `<site>`
+      (mopm.dev, gamma.mopm.dev, beta.mopm.dev) is the website, and the conda
+      channel is conda.<site>.
     variables:
       host:
-        default: mopm.dev
+        default: api.mopm.dev
         enum:
-          - mopm.dev
-          - gamma.mopm.dev
-          - beta.mopm.dev
+          - api.mopm.dev
+          - api.gamma.mopm.dev
+          - api.beta.mopm.dev
 tags:
   - name: auth
   - name: tokens
@@ -478,6 +484,12 @@ paths:
         signed `x-amz-checksum-sha256` and an exact content length so the
         storage layer itself rejects any other bytes. The URL expires in at
         most five minutes.
+
+        A file over the per-file limit is `payload_too_large` (413). A file
+        that would take the package's live files (published and yanked
+        versions; a takedown frees its bytes) over the 10 GB per-project limit
+        is `limit_exceeded` (403), which is about the project, not the file:
+        a smaller file may still fit.
       security:
         - publishToken: []
       parameters:
@@ -513,6 +525,12 @@ paths:
         a client that wants "succeed if these exact bytes are already
         published" compares that sha256 with its own (or reads `getVersion`).
         The file set of a version is fixed at commit.
+
+        The optional display fields (`description`, `license`, `repository`,
+        `homepage`, `keywords`, `readme`) are checked here, stored on the
+        version when it is published and served back by `getVersion`. A value
+        that breaks its rule is `invalid_request`. A client that sends none gets
+        a version without them, as before.
       security:
         - publishToken: []
       parameters:
@@ -713,12 +731,14 @@ components:
       pattern: "^[a-z][a-z0-9_]{1,63}$"
     Version:
       description: |
-        A version. Digits separated by dots, with an optional pre-release
-        suffix (`a`, `b`, `rc` or `dev` and a number). Equality is conda
-        equality, so the registry may refuse a spelling that equals an existing
-        version; this pattern is what a client may send.
+        A version: `MAJOR.MINOR.PATCH`, exactly three numbers separated by
+        dots, each without leading zeros. There are no pre-release, post-release,
+        dev or local versions and no shorter or longer spellings (`1.0`,
+        `1.0.0.0`, `1.0.0-rc.1`, `1.0rc1` are all invalid), so a version has one
+        spelling and two versions are equal exactly when their text is. Anything
+        else is `invalid_version`.
       type: string
-      pattern: "^(0|[1-9][0-9]*)(\\.(0|[1-9][0-9]*))*((a|b|rc|dev)(0|[1-9][0-9]*))?$"
+      pattern: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
     Sha256:
       type: string
       pattern: "^[0-9a-f]{64}$"
@@ -805,6 +825,7 @@ components:
         - not_owner
         - name_reserved
         - oidc_not_trusted
+        - limit_exceeded
         - package_not_found
         - version_not_found
         - user_not_found
@@ -1033,7 +1054,7 @@ components:
       properties:
         name: { $ref: "#/components/schemas/Name" }
         latest:
-          description: Newest non-yanked, non-prerelease version, or null.
+          description: Newest published (not yanked) version, or null.
           oneOf:
             - { $ref: "#/components/schemas/Version" }
             - { type: "null" }
@@ -1191,10 +1212,21 @@ components:
           uniqueItems: true
           items: { type: string, minLength: 1 }
         manifest_sha256: { $ref: "#/components/schemas/Sha256" }
+        description: { type: string, minLength: 1, maxLength: 512, description: "`[package] description` of this version's mopm.toml: one line, no line breaks. Stored on the version and served back by `getVersion`." }
+        license: { type: string, minLength: 1, maxLength: 128, description: "`[package] license`, an SPDX expression." }
+        repository: { type: string, format: uri, maxLength: 2048, description: An https URL. }
+        homepage: { type: string, format: uri, maxLength: 2048, description: An http or https URL. }
+        keywords: { $ref: "#/components/schemas/Keywords" }
         readme:
-          description: Markdown, at most 512 KiB.
+          description: |
+            Markdown, at most 64 KiB: 65,536 bytes of UTF-8 (the registry counts
+            bytes, not characters, so non-ASCII text uses more of it). This is
+            the cap the read API serves, so a larger readme is refused with
+            `invalid_request` rather than stored and never shown. `maxLength`
+            below is in characters and can only bound the byte count from
+            above.
           type: string
-          maxLength: 524288
+          maxLength: 65536
     CommitPublishResponse:
       type: object
       required: [publish_id, status_url]
@@ -1239,7 +1271,7 @@ components:
 x-mopm-errors:
   invalid_request:       { status: 400, message: "The request is not valid: {detail}.", hint: "Check the request against the API documentation; update mopm if it is old." }
   invalid_name:          { status: 400, message: "'{name}' is not a valid package name.", hint: "Names are lowercase letters, digits and underscores, 2 to 64 characters, starting with a letter." }
-  invalid_version:       { status: 400, message: "'{version}' is not a valid version.", hint: "Use digits separated by dots, with an optional a, b, rc or dev suffix." }
+  invalid_version:       { status: 400, message: "'{version}' is not a valid version.", hint: "A version is MAJOR.MINOR.PATCH: three numbers separated by dots, such as 1.2.3. Suffixes such as rc1 are not supported." }
   upload_invalid:        { status: 400, message: "The upload does not match what was declared: {detail}.", hint: "Begin a new upload with the real file name, sha256 and size." }
   token_missing:         { status: 401, message: "This request needs a token.", hint: "Run 'mopm login' or pass a token." }
   token_unknown:         { status: 401, message: "The token is not recognised.", hint: "Create a new token with 'mopm token create', or run 'mopm login'." }
@@ -1251,6 +1283,7 @@ x-mopm-errors:
   not_owner:             { status: 403, message: "You are not an owner of '{name}'.", hint: "Ask an owner to invite you." }
   name_reserved:         { status: 403, message: "'{name}' is reserved.", hint: "Choose another name." }
   oidc_not_trusted:      { status: 403, message: "No trusted publisher of '{name}' matches this CI identity.", hint: "Register the repository, workflow and environment as a trusted publisher of the package." }
+  limit_exceeded:        { status: 403, message: "Adding this file would put '{name}' over its storage limit of {limit} bytes; {remaining} bytes are left.", hint: "Yanked versions still count toward the limit; only a takedown frees space. Reduce the package size." }
   package_not_found:     { status: 404, message: "There is no package '{name}'.", hint: "Check the spelling, or claim the name." }
   version_not_found:     { status: 404, message: "'{name}' has no version '{version}'.", hint: "List the versions with 'mopm info {name}'." }
   user_not_found:        { status: 404, message: "No GitHub account '{handle}'.", hint: "Check the handle." }

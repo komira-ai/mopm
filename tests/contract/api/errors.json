@@ -63,7 +63,7 @@
           "error": {
             "code": "invalid_version",
             "message": "'1.0.0+local' is not a valid version.",
-            "hint": "Use digits separated by dots, with an optional a, b, rc or dev suffix."
+            "hint": "A version is MAJOR.MINOR.PATCH: three numbers separated by dots, such as 1.2.3. Suffixes such as rc1 are not supported."
           }
         }
       },
@@ -779,6 +779,98 @@
             "code": "payload_too_large",
             "message": "The file is larger than the limit of 100000000 bytes.",
             "hint": "Reduce the package size."
+          }
+        }
+      },
+      "malformed_request": true
+    },
+    {
+      "name": "error limit_exceeded",
+      "operationId": "beginUpload",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.4.0"
+        },
+        "body": {
+          "subdir": "linux-64",
+          "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+          "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "size": 5
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "limit_exceeded",
+            "message": "Adding this file would put 'http_client' over its storage limit of 10000000000 bytes; 4 bytes are left.",
+            "hint": "Yanked versions still count toward the limit; only a takedown frees space. Reduce the package size."
+          }
+        }
+      }
+    },
+    {
+      "name": "error invalid_version: two parts",
+      "operationId": "beginUpload",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "1.0"
+        },
+        "body": {
+          "subdir": "linux-64",
+          "filename": "mojo-http_client-1.0-mojo1.0.0_0.conda",
+          "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "size": 123456
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_version",
+            "message": "'1.0' is not a valid version.",
+            "hint": "A version is MAJOR.MINOR.PATCH: three numbers separated by dots, such as 1.2.3. Suffixes such as rc1 are not supported."
+          }
+        }
+      },
+      "malformed_request": true
+    },
+    {
+      "name": "error invalid_version: pre-release suffix",
+      "operationId": "commitPublish",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "1.0.0rc1"
+        },
+        "body": {
+          "upload_ids": [
+            "upl-42ab"
+          ],
+          "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_version",
+            "message": "'1.0.0rc1' is not a valid version.",
+            "hint": "A version is MAJOR.MINOR.PATCH: three numbers separated by dots, such as 1.2.3. Suffixes such as rc1 are not supported."
           }
         }
       },

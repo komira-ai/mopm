@@ -37,6 +37,7 @@ export function flagsFor(env: Env, doc: ReturnType<typeof documentClient>, stage
 export function publishApiFor(env: Env, doc: ReturnType<typeof documentClient>, stage: string, flags: Flags) {
   const bucket = env.MOPM_CHANNEL_BUCKET;
   const queueUrl = env.MOPM_VALIDATE_QUEUE_URL;
+  const indexQueueUrl = env.MOPM_INDEX_QUEUE_URL;
   if (!bucket || !queueUrl) return undefined;
   const region = regionOf(env);
   const t = publishTablesFor(stage);
@@ -46,6 +47,8 @@ export function publishApiFor(env: Env, doc: ReturnType<typeof documentClient>, 
     objects: new S3Channel(bucket, { region }),
     presigner: new S3Presigner(bucket, { region }),
     validateQueue: new SqsFifoQueue(queueUrl, { region }),
+    // Yank and unyank ask the index writer to rewrite repodata; without the queue they answer `unavailable`.
+    ...(indexQueueUrl ? { indexQueue: new SqsFifoQueue(indexQueueUrl, { region }) } : {}),
     config: publishConfigFromEnv(env),
   });
   return { auth: new Authenticator({ store: new DynamoAuthStore(doc, authTablesFor(stage)) }), service, flags };

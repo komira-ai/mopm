@@ -16,9 +16,9 @@ const semver = @import("semver.zig");
 pub const index_version: i64 = 1;
 
 const named = [_]struct { []const u8, []const u8 }{
-    .{ "prod", "https://mopm.dev" },
-    .{ "gamma", "https://gamma.mopm.dev" },
-    .{ "beta", "https://beta.mopm.dev" },
+    .{ "prod", "https://api.mopm.dev" },
+    .{ "gamma", "https://api.gamma.mopm.dev" },
+    .{ "beta", "https://api.beta.mopm.dev" },
 };
 
 /// Whether `url` is plain http to a loopback host with an explicit port.
@@ -147,8 +147,8 @@ pub fn indexUrl(arena: Allocator, c: Config, name: []const u8) Allocator.Error![
 }
 
 test "registry names and URLs" {
-    try std.testing.expectEqualStrings("https://mopm.dev", resolve("prod").ok);
-    try std.testing.expectEqualStrings("https://beta.mopm.dev", resolve("beta").ok);
+    try std.testing.expectEqualStrings("https://api.mopm.dev", resolve("prod").ok);
+    try std.testing.expectEqualStrings("https://api.beta.mopm.dev", resolve("beta").ok);
     try std.testing.expectEqualStrings("http://127.0.0.1:8080", resolve("http://127.0.0.1:8080/").ok);
     try std.testing.expectEqualStrings("http://[::1]:9", resolve("http://[::1]:9").ok);
     for ([_][]const u8{
@@ -166,9 +166,9 @@ test "index URLs" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    const c = Config{ .base = "https://mopm.dev", .stage = "prod", .api_url = "", .channel_url = "", .min_cli_version = "", .read_only = false };
-    try std.testing.expectEqualStrings("https://mopm.dev/index/ht/tp/http_client", try indexUrl(a, c, "http_client"));
-    try std.testing.expectEqualStrings("https://mopm.dev/index/tl/s_/tls", try indexUrl(a, c, "tls"));
+    const c = Config{ .base = "https://api.mopm.dev", .stage = "prod", .api_url = "", .channel_url = "", .min_cli_version = "", .read_only = false };
+    try std.testing.expectEqualStrings("https://api.mopm.dev/index/ht/tp/http_client", try indexUrl(a, c, "http_client"));
+    try std.testing.expectEqualStrings("https://api.mopm.dev/index/tl/s_/tls", try indexUrl(a, c, "tls"));
 }
 
 test "config.json: a usable one, and each refusal" {
@@ -187,12 +187,12 @@ test "config.json: a usable one, and each refusal" {
     const cases = [_]Case{
         .{ "{\"index_version\":2}", "the registry's index version is 2; this mopm reads 1. Update mopm." },
         .{
-            \\{"index_version":1,"stage":"prod","api_url":"http://mopm.dev/api/v1","channel_url":"https://conda.mopm.dev/","min_cli_version":"0.0.1"}
+            \\{"index_version":1,"stage":"prod","api_url":"http://api.mopm.dev/api/v1","channel_url":"https://conda.mopm.dev/","min_cli_version":"0.0.1"}
             ,
-            "config.json names http://mopm.dev/api/v1: mopm uses https, or plain http only to a loopback host",
+            "config.json names http://api.mopm.dev/api/v1: mopm uses https, or plain http only to a loopback host",
         },
         .{
-            \\{"index_version":1,"stage":"prod","api_url":"https://mopm.dev/api/v1","channel_url":"https://conda.mopm.dev/","min_cli_version":"0.2.0"}
+            \\{"index_version":1,"stage":"prod","api_url":"https://api.mopm.dev/api/v1","channel_url":"https://conda.mopm.dev/","min_cli_version":"0.2.0"}
             ,
             "this registry needs mopm 0.2.0 or newer; this is 0.0.1. Update mopm.",
         },
