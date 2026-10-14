@@ -37,6 +37,16 @@ describe('a published version (fixture: version detail)', () => {
     expect(out).toContain('2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae');
   });
 
+  test('the pixi line says it installs the newest version, which may not be this one', () => {
+    expect(out).toContain('<code>pixi add mojo-http_client</code>');
+    expect(text(out)).toContain('pixi, in a project that lists the channel (installs the newest version, not necessarily this one)');
+  });
+
+  test('the sidebar shows the state and the publish time in UTC', () => {
+    expect(out).toContain('<dt>State</dt><dd>published</dd>');
+    expect(out).toMatch(/<dt>Published<\/dt><dd><time datetime="[^"]+">\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC<\/time>/);
+  });
+
   test('no banner for a published version', () => {
     expect(out).not.toContain('role="note"');
   });
@@ -61,6 +71,14 @@ describe('yanked (fixture)', () => {
   test('its files stay downloadable', () => {
     expect(hrefs(out)).toContain(FILE_URL);
   });
+
+  test('the pixi line says it does not install this yanked version', () => {
+    expect(text(out)).toContain('(installs the newest version, not this yanked one)');
+  });
+
+  test('the sidebar state carries the reason', () => {
+    expect(out).toContain('<dt>State</dt><dd>yanked: crashes on empty body</dd>');
+  });
 });
 
 describe('tombstoned (fixture)', () => {
@@ -70,6 +88,8 @@ describe('tombstoned (fixture)', () => {
     expect(text(out)).toContain('Reason: malware, on 2026-10-14.');
     expect(out).not.toContain('[dependencies]');
     expect(out).not.toContain('pixi add');
+    expect(out).not.toContain('conda channel');
+    expect(out).toContain('<dt>State</dt><dd>tombstoned (files removed by an administrator)</dd>');
   });
 
   test('no download link, even when a url is injected into the answer', () => {
@@ -88,7 +108,10 @@ describe('download links', () => {
     const out = html(render(versionFixture('version detail', (r) => Object.assign(r, { state: 'quarantined' }))));
     expect(hrefs(out).filter((h) => h.includes('conda'))).toEqual([]);
     expect(out).not.toContain('[dependencies]');
-    expect(text(out)).toContain('unknown (quarantined)');
+    expect(out).not.toContain('pixi add');
+    expect(out).not.toContain('conda channel');
+    expect(text(out)).toContain('Treat this version as not installable.');
+    expect(out).toContain('<dt>State</dt><dd>unknown (quarantined)</dd>');
   });
 
   test.each([

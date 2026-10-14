@@ -82,6 +82,25 @@ describe('package shapes the fixtures do not cover', () => {
     expect(text(out)).toContain('package state this page does not know');
   });
 
+  test('every version state is shown as words in the versions table', () => {
+    const at = '2026-10-13T12:00:00Z';
+    const out = render(
+      packageFixture((r) =>
+        Object.assign(r, {
+          versions: [
+            { version: '0.6.0', state: 'tombstoned', published_at: at },
+            { version: '0.5.1', state: 'yanked', yank_reason: null, published_at: at },
+            { version: '0.5.0', state: 'published', published_at: at },
+          ],
+        }),
+      ),
+    );
+    expect(out).toContain('<td>tombstoned (files removed by an administrator)</td>');
+    expect(out).toContain('<td>yanked</td>');
+    expect(out).toContain('<td>published</td>');
+    expect(out).toContain('<td><time datetime="2026-10-13T12:00:00Z">2026-10-13 12:00 UTC</time></td>');
+  });
+
   test('an unknown version state is shown with its raw value', () => {
     const out = render(
       packageFixture((r) => Object.assign(r, { versions: [{ version: '0.5.0', state: 'quarantined', published_at: '2026-10-13T12:00:00Z' }] })),

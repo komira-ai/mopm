@@ -82,11 +82,21 @@ function versionsTable<N>(doc: Doc<N>, name: string, versions: readonly VersionS
   );
 }
 
+export const PIXI_LABEL = 'pixi, in a project that lists the channel';
+
 /**
  * How to use a package: the conda channel and pixi command always (for a known host), and the mopm.toml line when
- * there is a version mopm can name. `manifest` is the snippet or null.
+ * there is a version mopm can name. `manifest` is the snippet or null. The pixi command names no version, so a version
+ * page passes a label saying which version it installs.
  */
-export function installSection<N>(doc: Doc<N>, name: string, manifest: string | null, ctx: PageContext, noManifestWhy: string | null): N {
+export function installSection<N>(
+  doc: Doc<N>,
+  name: string,
+  manifest: string | null,
+  ctx: PageContext,
+  noManifestWhy: string | null,
+  pixiLabel: string = PIXI_LABEL,
+): N {
   const channel = condaBase(ctx.host);
   const pixi = pixiCommand(name);
   const section = h(doc, 'section', { class: 'install', 'aria-labelledby': 'install-heading' }, h(doc, 'h2', { id: 'install-heading' }, 'Install'));
@@ -102,7 +112,7 @@ export function installSection<N>(doc: Doc<N>, name: string, manifest: string | 
   if (channel !== null) {
     doc.append(section, snippetBlock(doc, 'conda channel', channel, 'snippet-channel'));
     if (pixi !== null) {
-      doc.append(section, snippetBlock(doc, 'pixi, in a project that lists the channel', pixi, 'snippet-pixi'));
+      doc.append(section, snippetBlock(doc, pixiLabel, pixi, 'snippet-pixi'));
     }
   }
   return section;

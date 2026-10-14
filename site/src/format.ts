@@ -25,7 +25,8 @@ export function formatBytes(n: number): string {
   if (n < 1024) return n === 1 ? '1 byte' : `${Math.round(n)} bytes`;
   let v = n / 1024;
   let u = 0;
-  while (v >= 1024 && u < UNITS.length - 1) {
+  // Compare the shown (rounded) value, so 1048575 bytes is '1.0 MiB', not '1024.0 KiB'.
+  while (Number(v.toFixed(1)) >= 1024 && u < UNITS.length - 1) {
     v /= 1024;
     u++;
   }

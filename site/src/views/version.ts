@@ -14,7 +14,7 @@ import { isCanonicalName, isVersion, packagePath, versionPath } from '../routes.
 import { pinnedSnippet, refusalSentence } from '../snippet.js';
 import type { FileRef, VersionDetail } from '../types.js';
 import { details, timeEl, type View } from './common.js';
-import { inlineList, installSection, type PageContext, readmeSection, webLink } from './package.js';
+import { inlineList, installSection, type PageContext, PIXI_LABEL, readmeSection, webLink } from './package.js';
 
 function stateBanner<N>(doc: Doc<N>, v: VersionDetail): N | null {
   switch (v.state) {
@@ -130,7 +130,12 @@ export function versionView<N>(doc: Doc<N>, name: string, v: VersionDetail, ctx:
   if (spelling !== null) {
     const pinned = pinnedSnippet(name, spelling, v.state);
     const why = pinned !== null || v.state !== 'published' ? null : refusalSentence(`Version ${spelling}`, spelling);
-    if (v.state === 'published' || v.state === 'yanked') doc.append(main, installSection(doc, name, pinned, ctx, why));
+    // spec/channel.md documents no version-pinned pixi spelling, so the command installs the newest version.
+    const pixiLabel =
+      v.state === 'yanked'
+        ? `${PIXI_LABEL} (installs the newest version, not this yanked one)`
+        : `${PIXI_LABEL} (installs the newest version, not necessarily this one)`;
+    if (v.state === 'published' || v.state === 'yanked') doc.append(main, installSection(doc, name, pinned, ctx, why, pixiLabel));
   }
   doc.append(main, h(doc, 'section', { 'aria-labelledby': 'files-heading' }, h(doc, 'h2', { id: 'files-heading' }, 'Files'), filesTable(doc, v, ctx)));
   doc.append(main, h(doc, 'section', { 'aria-labelledby': 'deps-heading' }, h(doc, 'h2', { id: 'deps-heading' }, 'Dependencies'), depsList(doc, v)));
