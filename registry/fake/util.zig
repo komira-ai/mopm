@@ -57,6 +57,48 @@ pub fn isName(s: []const u8) bool {
     return true;
 }
 
+/// `s` normalised as the API normalises names: lowercase, and each run of
+/// `-`, `.` and `_` one `_`.
+pub fn normalise(arena: Allocator, s: []const u8) Allocator.Error![]const u8 {
+    var out = std.ArrayList(u8).init(arena);
+    for (s) |c| {
+        if (c == '-' or c == '.' or c == '_') {
+            if (out.items.len == 0 or out.items[out.items.len - 1] != '_') try out.append('_');
+        } else try out.append(std.ascii.toLower(c));
+    }
+    return try out.toOwnedSlice();
+}
+
+fn number(s: []const u8) bool {
+    if (s.len == 0 or (s.len > 1 and s[0] == '0')) return false;
+    for (s) |c| {
+        if (!std.ascii.isDigit(c)) return false;
+    }
+    return true;
+}
+
+/// Whether `s` matches the API's `Version` pattern: dot-separated numbers
+/// without leading zeros, then optionally `a`, `b`, `rc` or `dev` and a number.
+pub fn isVersion(s: []const u8) bool {
+    var end = s.len;
+    while (end > 0 and std.ascii.isDigit(s[end - 1])) end -= 1;
+    var core = s;
+    for ([_][]const u8{ "dev", "rc", "a", "b" }) |suffix| {
+        if (end > suffix.len and end < s.len and std.mem.eql(u8, s[end - suffix.len .. end], suffix) and
+            std.ascii.isDigit(s[end - suffix.len - 1]))
+        {
+            if (!number(s[end..])) return false;
+            core = s[0 .. end - suffix.len];
+            break;
+        }
+    }
+    var it = std.mem.splitScalar(u8, core, '.');
+    while (it.next()) |part| {
+        if (!number(part)) return false;
+    }
+    return true;
+}
+
 pub fn getStr(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
     return switch (obj.get(key) orelse return null) {
         .string => |s| s,
@@ -95,4 +137,12 @@ test "tokens and names" {
     for (t[5..]) |c| try std.testing.expect(std.ascii.isLower(c) or (c >= '2' and c <= '7'));
     try std.testing.expect(isName("http_client") and isName("ab"));
     try std.testing.expect(!isName("a") and !isName("Http") and !isName("http__client") and !isName("1http") and !isName("http-client"));
+}
+
+test "versions and normalised names" {
+    for ([_][]const u8{ "0", "1.0", "0.4.0", "1.2.3rc1", "2.0a0", "1.0dev3", "10.20.30b2" }) |v| try std.testing.expect(isVersion(v));
+    for ([_][]const u8{ "", "1.", ".1", "01.0", "1.0rc", "1.0rc01", "v1", "1.0-rc1", "1.0c1", "rc1", "1..0" }) |v| try std.testing.expect(!isVersion(v));
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    try std.testing.expectEqualStrings("http_client", try normalise(arena_state.allocator(), "Http-.Client"));
 }

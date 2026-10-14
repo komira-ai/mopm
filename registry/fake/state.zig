@@ -15,10 +15,15 @@ pub const session_secs: i64 = 30 * day;
 /// A device login expires after ten minutes; poll no faster than every 5 s.
 pub const device_secs: i64 = 10 * 60;
 pub const poll_interval: i64 = 5;
+/// A claim with no version expires after 30 days; an invitation after 7.
+pub const claim_secs: i64 = 30 * day;
+pub const invitation_secs: i64 = 7 * day;
+/// An OIDC publish token lives 15 minutes.
+pub const oidc_secs: i64 = 15 * 60;
 
 pub const User = struct { github_id: u64, handle: []const u8 };
 
-pub const TokenKind = enum { session, api };
+pub const TokenKind = enum { session, api, oidc };
 
 pub const Scope = enum { publish, yank };
 
@@ -39,6 +44,41 @@ pub const Token = struct {
     fresh_until: i64 = 0,
     revoked: bool = false,
     last_used_at: ?i64 = null,
+    /// OIDC tokens only: the one package and version they may publish.
+    oidc_package: []const u8 = "",
+    oidc_version: []const u8 = "",
+};
+
+pub const PackageState = enum { claimed, active };
+
+pub const Package = struct {
+    name: []const u8,
+    state: PackageState = .claimed,
+    owners: std.ArrayListUnmanaged(*User) = .{},
+    /// Repositories (`owner/repo`) whose CI identity may publish it.
+    trusted: std.ArrayListUnmanaged([]const u8) = .{},
+    created_at: i64,
+    updated_at: i64,
+    claim_expires_at: i64,
+    description: ?[]const u8 = null,
+    repository: ?[]const u8 = null,
+    license: ?[]const u8 = null,
+
+    pub fn isOwner(p: *const Package, u: *const User) bool {
+        for (p.owners.items) |o| {
+            if (o == u) return true;
+        }
+        return false;
+    }
+};
+
+pub const Invitation = struct {
+    id: []const u8,
+    package: *Package,
+    invitee: *User,
+    inviter: *User,
+    expires_at: i64,
+    accepted: bool = false,
 };
 
 pub const Decision = enum { pending, approved, denied };
@@ -71,6 +111,8 @@ pub const State = struct {
     tokens: std.ArrayListUnmanaged(*Token) = .{},
     logins: std.ArrayListUnmanaged(*DeviceLogin) = .{},
     faults: std.ArrayListUnmanaged(Fault) = .{},
+    packages: std.ArrayListUnmanaged(*Package) = .{},
+    invitations: std.ArrayListUnmanaged(*Invitation) = .{},
 
     pub fn now(s: *const State) i64 {
         return std.time.timestamp() + s.clock_offset;
@@ -92,6 +134,54 @@ pub const State = struct {
         s.next_github_id += 1;
         try s.users.append(s.alloc, u);
         return u;
+    }
+
+    pub fn userById(s: *State, id: u64) ?*User {
+        for (s.users.items) |u| {
+            if (u.github_id == id) return u;
+        }
+        return null;
+    }
+
+    pub fn packageByName(s: *State, name: []const u8) ?*Package {
+        for (s.packages.items) |p| {
+            if (std.mem.eql(u8, p.name, name)) return p;
+        }
+        return null;
+    }
+
+    pub fn addPackage(s: *State, p: Package) Allocator.Error!*Package {
+        const n = try s.alloc.create(Package);
+        n.* = p;
+        try s.packages.append(s.alloc, n);
+        return n;
+    }
+
+    /// The names of the packages `user` owns, sorted.
+    pub fn ownedNames(s: *State, arena: Allocator, user: *const User) Allocator.Error![]const []const u8 {
+        var out = std.ArrayList([]const u8).init(arena);
+        for (s.packages.items) |p| {
+            if (p.isOwner(user)) try out.append(p.name);
+        }
+        std.mem.sort([]const u8, out.items, {}, lessString);
+        return try out.toOwnedSlice();
+    }
+
+    pub fn addInvitation(s: *State, i: Invitation) Allocator.Error!*Invitation {
+        const n = try s.alloc.create(Invitation);
+        n.* = i;
+        try s.invitations.append(s.alloc, n);
+        return n;
+    }
+
+    /// `user`'s invitations that are neither accepted nor expired.
+    pub fn pendingInvitations(s: *State, arena: Allocator, user: *const User) Allocator.Error![]const *Invitation {
+        var out = std.ArrayList(*Invitation).init(arena);
+        const now_ = s.now();
+        for (s.invitations.items) |i| {
+            if (i.invitee == user and !i.accepted and now_ < i.expires_at) try out.append(i);
+        }
+        return try out.toOwnedSlice();
     }
 
     pub fn tokenBySecret(s: *State, secret: []const u8) ?*Token {
@@ -154,3 +244,7 @@ pub const State = struct {
         return null;
     }
 };
+
+pub fn lessString(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.order(u8, a, b) == .lt;
+}

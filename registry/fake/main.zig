@@ -130,4 +130,5 @@ test {
     _ = @import("api.zig");
     _ = @import("auth.zig");
     _ = @import("control.zig");
+    _ = @import("packages.zig");
 }

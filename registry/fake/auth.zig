@@ -31,6 +31,16 @@ pub fn authenticate(ctx: *Ctx) anyerror!Auth {
     return .{ .ok = t };
 }
 
+/// `userToken`: a live session or API token (not an OIDC publish token).
+pub fn userToken(ctx: *Ctx) anyerror!Auth {
+    const a = try authenticate(ctx);
+    switch (a) {
+        .fail => return a,
+        .ok => |t| if (t.kind == .oidc) return .{ .fail = try resp.fail(ctx.arena, .token_unknown, &.{}) },
+    }
+    return a;
+}
+
 /// `freshSession`: a session token younger than 15 minutes.
 pub fn freshSession(ctx: *Ctx) anyerror!Auth {
     const a = try authenticate(ctx);
@@ -120,16 +130,15 @@ pub fn pollDeviceLogin(ctx: *Ctx, _: []const []const u8) anyerror!Response {
 // ---------------------------------------------------------------------------
 
 pub fn getMe(ctx: *Ctx, _: []const []const u8) anyerror!Response {
-    const t = switch (try authenticate(ctx)) {
+    const t = switch (try userToken(ctx)) {
         .ok => |t| t,
         .fail => |r| return r,
     };
-    const empty: []const []const u8 = &.{};
     return resp.json(ctx.arena, .ok, .{
         .github_id = t.user.github_id,
         .handle = t.user.handle,
-        .packages = empty,
-        .pending_invitations = @as(u32, 0),
+        .packages = try ctx.state.ownedNames(ctx.arena, t.user),
+        .pending_invitations = (try ctx.state.pendingInvitations(ctx.arena, t.user)).len,
     });
 }
 
@@ -175,6 +184,8 @@ pub fn createToken(ctx: *Ctx, _: []const []const u8) anyerror!Response {
         .string => |w| {
             if (!std.mem.eql(u8, w, "all_current")) return resp.invalid(ctx.arena, "'packages' is a list of names or \"all_current\"");
             all_current = true;
+            // A snapshot of the caller's packages now, not future claims.
+            for (try s.ownedNames(ctx.arena, session.user)) |owned| try packages.append(try s.alloc.dupe(u8, owned));
         },
         .array => |a| {
             if (a.items.len == 0) return resp.invalid(ctx.arena, "'packages' must not be empty");
@@ -259,4 +270,63 @@ pub fn revokeToken(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         }
     }
     return resp.fail(ctx.arena, .token_not_found, &.{});
+}
+
+// ---------------------------------------------------------------------------
+// CI identity exchange (OIDC)
+// ---------------------------------------------------------------------------
+
+/// The `repository` claim of a JWT-shaped CI identity token (three base64url
+/// parts, the middle one a JSON object), or null. The fake checks the shape
+/// and the claim, not a signature: there is no identity provider to ask.
+fn oidcRepository(ctx: *Ctx, jwt: []const u8) ?[]const u8 {
+    var parts = std.mem.splitScalar(u8, jwt, '.');
+    _ = parts.next() orelse return null;
+    const payload = parts.next() orelse return null;
+    _ = parts.next() orelse return null;
+    if (parts.next() != null) return null;
+    const decoder = std.base64.url_safe_no_pad.Decoder;
+    const n = decoder.calcSizeForSlice(payload) catch return null;
+    const buf = ctx.arena.alloc(u8, n) catch return null;
+    decoder.decode(buf, payload) catch return null;
+    const v = std.json.parseFromSliceLeaky(std.json.Value, ctx.arena, buf, .{}) catch return null;
+    return switch (v) {
+        .object => |o| util.getStr(o, "repository"),
+        else => null,
+    };
+}
+
+pub fn exchangeOidcToken(ctx: *Ctx, _: []const []const u8) anyerror!Response {
+    const obj = ctx.object() orelse return resp.invalid(ctx.arena, "the body is not a JSON object");
+    const jwt = util.getStr(obj, "jwt") orelse return resp.invalid(ctx.arena, "'jwt' must be a string");
+    const name = util.getStr(obj, "name") orelse return resp.invalid(ctx.arena, "'name' must be a string");
+    const version = util.getStr(obj, "version") orelse return resp.invalid(ctx.arena, "'version' must be a string");
+    if (!util.isName(name)) return resp.fail(ctx.arena, .invalid_name, &.{.{ "name", name }});
+    if (!util.isVersion(version)) return resp.fail(ctx.arena, .invalid_version, &.{.{ "version", version }});
+    const repository = oidcRepository(ctx, jwt) orelse
+        return resp.fail(ctx.arena, .oidc_token_invalid, &.{.{ "detail", "not a token with a repository claim" }});
+    const s = ctx.state;
+    const p = s.packageByName(name) orelse return resp.fail(ctx.arena, .oidc_not_trusted, &.{.{ "name", name }});
+    for (p.trusted.items) |r| {
+        if (!std.mem.eql(u8, r, repository)) continue;
+        const now = s.now();
+        const t = try s.addToken(.{
+            .id = try util.newId(s.alloc, "oidc"),
+            .secret = try util.newToken(s.alloc),
+            .kind = .oidc,
+            .user = p.owners.items[0],
+            .oidc_package = p.name,
+            .oidc_version = try s.alloc.dupe(u8, version),
+            .created_at = now,
+            .expires_at = now + st.oidc_secs,
+        });
+        return resp.json(ctx.arena, .ok, .{
+            .token = t.secret,
+            .token_kind = "publish",
+            .expires_at = try util.rfc3339(ctx.arena, t.expires_at),
+            .name = p.name,
+            .version = t.oidc_version,
+        });
+    }
+    return resp.fail(ctx.arena, .oidc_not_trusted, &.{.{ "name", name }});
 }

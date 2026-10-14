@@ -67,5 +67,14 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
         try s.faults.append(s.alloc, .{ .operation = try s.alloc.dupe(u8, op), .code = code });
         return resp.json(ctx.arena, .ok, .{});
     }
+    // {"name", "repository"}: a trusted publisher of the package, so a CI
+    // identity token whose repository claim is that repository may publish.
+    if (std.mem.eql(u8, path, "/trusted")) {
+        const name = util.getStr(obj, "name") orelse return resp.invalid(ctx.arena, "'name' must be a string");
+        const repository = util.getStr(obj, "repository") orelse return resp.invalid(ctx.arena, "'repository' must be a string");
+        const p = s.packageByName(name) orelse return resp.invalid(ctx.arena, "no such package");
+        try p.trusted.append(s.alloc, try s.alloc.dupe(u8, repository));
+        return resp.json(ctx.arena, .ok, .{});
+    }
     return resp.invalid(ctx.arena, "no such control");
 }
