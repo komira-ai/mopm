@@ -8,3 +8,4 @@ export * from './dynamo-store';
 export * from './canonical-json';
 export * from './zstd';
 export * from './repodata';
+export * from './auth';
