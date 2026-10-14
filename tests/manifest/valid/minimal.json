@@ -1,0 +1,22 @@
+{
+  "package": {
+    "name": "tiny",
+    "version": "0.1.0",
+    "description": null,
+    "license": null,
+    "repository": null,
+    "readme": null
+  },
+  "toolchain": {
+    "mojo": []
+  },
+  "dependencies": [],
+  "dev-dependencies": [],
+  "native-dependencies": [],
+  "native": [],
+  "targets": {
+    "lib": null,
+    "bins": [],
+    "tests": []
+  }
+}

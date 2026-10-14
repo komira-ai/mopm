@@ -1,0 +1,25 @@
+# Each construct of the TOML subset that a mopm.toml can use.
+package.name = "syntax_demo"
+package.version = '1.0.0-rc.1+build.7'
+package."description" = "tab\there, quote \" and \u00e9"
+
+[toolchain]
+mojo = [
+  "1.0.0",  # current
+  "1.1.0",  # next
+]
+
+[dependencies]
+extras.version = "2"
+local = {path='../local'}
+
+[native-dependencies]
+"libpng" = "1.6"
+openssl = { kind = "static" }
+
+[native.both_kinds]
+kind = "both"
+mode = "load"
+
+[targets]
+tests = []
