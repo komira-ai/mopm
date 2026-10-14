@@ -42,7 +42,9 @@ const usage =
     \\  test [<path>...]        run the tests of tests/**/test_*.mojo and
     \\                          src/**/tests/test_*.mojo, one process per test
     \\                          (--timeout <s>, --memory <MiB>, --format json,
-    \\                          --junit <file>; see docs/mopm-test.md)
+    \\                          --junit <file>, --retries <n>, --deny-flaky;
+    \\                          select with -- <pattern>..., --skip, --exact,
+    \\                          --ignored; see docs/mopm-test.md)
     \\  test --list [<path>...] list them; --check also builds each file and
     \\                          compares the list with the binary's `--skip-all`
     \\                          listing (--strict-discovery, --prefix <dir>)

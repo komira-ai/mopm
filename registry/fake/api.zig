@@ -91,24 +91,22 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
     if (std.mem.startsWith(u8, ctx.path, upload_prefix)) return publish.uploadBytes(ctx, ctx.path[upload_prefix.len..]);
     if (std.mem.startsWith(u8, ctx.path, "/_fake/")) return control.handle(ctx);
     if (!std.mem.startsWith(u8, ctx.path, prefix ++ "/")) {
-        return resp.invalid(ctx.arena, "the API is under /api/v1");
+        return resp.fail(ctx.arena, .route_not_found, &.{});
     }
     var segs = std.ArrayList([]const u8).init(ctx.arena);
     var it = std.mem.splitScalar(u8, ctx.path[prefix.len + 1 ..], '/');
     while (it.next()) |s| try segs.append(s);
     // A path can match several patterns (owners vs a version); the routes
     // are listed so that literal segments win, and methods disambiguate.
-    var path_matched = false;
     for (routes) |r| {
         const params = (try match(ctx.arena, r.pattern, segs.items)) orelse continue;
         if (!literalWins(r, segs.items)) continue;
-        path_matched = true;
         if (r.method != ctx.method) continue;
         if (ctx.state.takeFault(r.operation)) |code| return plantedFault(ctx, code);
         return r.handler(ctx, params);
     }
-    if (path_matched) return resp.invalid(ctx.arena, "this path does not take that method");
-    return resp.invalid(ctx.arena, "no such endpoint");
+    // An unknown path, or a known path with a method it does not take.
+    return resp.fail(ctx.arena, .route_not_found, &.{});
 }
 
 /// `/packages/{name}/{version}` must not swallow `/packages/x/owners` and the

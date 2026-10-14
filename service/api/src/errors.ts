@@ -11,7 +11,8 @@ export type ErrorCode =
   | 'owner_not_found'
   | 'already_owner'
   | 'internal_error'
-  | 'unavailable';
+  | 'unavailable'
+  | 'route_not_found';
 
 export const HTTP_STATUS: Record<ErrorCode, number> = {
   invalid_request: 400,
@@ -26,6 +27,7 @@ export const HTTP_STATUS: Record<ErrorCode, number> = {
   already_owner: 409,
   internal_error: 500,
   unavailable: 503,
+  route_not_found: 404,
 };
 
 export class RegistryError extends Error {

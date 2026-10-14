@@ -1,0 +1,1 @@
+mopm test: no test selected to run: 11 filtered out, 0 ignored (--allow-empty accepts that)

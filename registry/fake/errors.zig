@@ -42,6 +42,7 @@ pub const Code = enum {
     internal_error,
     read_only_mode,
     unavailable,
+    route_not_found,
 };
 
 pub const Entry = struct { status: std.http.Status, message: []const u8, hint: []const u8 };
@@ -83,6 +84,7 @@ pub fn entry(code: Code) Entry {
         .internal_error => .{ .status = .internal_server_error, .message = "Something went wrong on our side.", .hint = "Try again; report the request id if it persists." },
         .read_only_mode => .{ .status = .service_unavailable, .message = "The registry is read-only right now; new uploads are refused.", .hint = "Installs still work. Try again later." },
         .unavailable => .{ .status = .service_unavailable, .message = "The registry is temporarily unavailable.", .hint = "Try again shortly." },
+        .route_not_found => .{ .status = .not_found, .message = "There is no such operation.", .hint = "Check the request against the API documentation; update mopm if it is old." },
     };
 }
 

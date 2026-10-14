@@ -1,0 +1,2 @@
+tests/e2e/flaky/tests/sub/test_more.mojo::test_gamma
+tests/e2e/flaky/tests/test_names.mojo::test_beta

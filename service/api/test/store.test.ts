@@ -1,5 +1,5 @@
-import { GetCommand } from '@aws-sdk/lib-dynamodb';
-import { DynamoStore, tablesFor } from '../src/dynamo-store';
+import { GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoStore, SEARCH_INDEX, tablesFor } from '../src/dynamo-store';
 import { MemoryStore } from '../src/memory-store';
 import type { Store } from '../src/store';
 import { FakeDocClient, NaiveCreate, audit, rec } from './helpers';
@@ -94,6 +94,28 @@ describe.each(factories)('Store contract: %s', (_label, make) => {
     expect(await s.getPackage('zz')).toBeUndefined();
   });
 
+  test('searchPackages: prefix, name order, strictly after a name, at most limit, summary fields only', async () => {
+    const at = '2026-10-13T12:00:00Z';
+    const names = ['http_d', 'httpx', 'zlib', 'http_a', 'http_c', 'http_b', 'ht'];
+    for (const n of names) {
+      await s.createPackage({ name: n, state: 'active', created_at: at, description: `d ${n}`, repository: 'https://github.com/example/r', license: 'MIT' });
+    }
+    const found = (prefix: string, after?: string, limit = 100) => s.searchPackages(prefix, after, limit).then((r) => r.map((p) => p.name));
+    expect(await found('http_')).toEqual(['http_a', 'http_b', 'http_c', 'http_d']);
+    expect(await found('')).toEqual(['ht', 'http_a', 'http_b', 'http_c', 'http_d', 'httpx', 'zlib']);
+    expect(await found('http_', 'http_b')).toEqual(['http_c', 'http_d']); // strictly after
+    expect(await found('http_', 'http_d')).toEqual([]);
+    expect(await found('http_', undefined, 3)).toEqual(['http_a', 'http_b', 'http_c']);
+    expect(await found('nomatch')).toEqual([]);
+    // The result carries what a summary shows and nothing else (the index projects no more).
+    expect((await s.searchPackages('zlib', undefined, 1))[0]).toEqual({ name: 'zlib', state: 'active', created_at: at, description: 'd zlib' });
+  });
+
+  test('searchPackages: a package without a description has no description key', async () => {
+    await s.createPackage({ name: 'bare', state: 'claimed', created_at: '2026-10-13T12:00:00Z' });
+    expect((await s.searchPackages('', undefined, 5))[0]).toEqual({ name: 'bare', state: 'claimed', created_at: '2026-10-13T12:00:00Z' });
+  });
+
   test('owners', async () => {
     const o = (id: number) => ({ name: 'p', github_id: id, handle: `u${id}`, added_at: '2026-10-13T12:00:00Z' });
     for (const id of [30, 4, 200, 11]) await s.addOwner(o(id));
@@ -157,6 +179,128 @@ describe('create-once under concurrency', () => {
     const naive = new NaiveCreate(new FakeDocClient());
     const results = await Promise.all([naive.createVersion(rec({ name: 'p', version: '1.0' })), naive.createVersion(rec({ name: 'p', version: '1.0.0' }))]);
     expect(results).toEqual(['created', 'created']);
+  });
+});
+
+describe('DynamoDB search index', () => {
+  const at = '2026-10-13T12:00:00Z';
+  const INDEX = 'by_search_bucket';
+  async function seeded(pageSize = 2) {
+    const doc = new FakeDocClient(pageSize);
+    const s = new DynamoStore(doc, tablesFor('t'));
+    for (const n of ['http_a', 'http_b', 'http_c', 'httpx', 'zlib']) await s.createPackage({ name: n, state: 'active', created_at: at, description: n, license: 'MIT' });
+    doc.inputs.length = 0;
+    doc.calls.length = 0;
+    return { doc, s };
+  }
+
+  test('the adapter constants are the index the stack defines (data.test.ts pins the stack side)', () => {
+    expect(SEARCH_INDEX).toEqual({ name: INDEX, bucketAttribute: 'search_bucket', bucket: 'all', projected: ['description', 'state', 'created_at'] });
+  });
+
+  test('a prefix search is one Query on the index with begins_with on name, resumed with ExclusiveStartKey and a shrinking Limit', async () => {
+    const { doc, s } = await seeded(2); // the fake returns at most two items a page
+    const got = await s.searchPackages('http_', 'http_a', 3);
+    expect(got.map((p) => p.name)).toEqual(['http_b', 'http_c']);
+    const base = {
+      TableName: 'mopm-t-packages',
+      IndexName: INDEX,
+      KeyConditionExpression: '#b = :b AND begins_with(#n, :p)',
+      ExpressionAttributeNames: { '#b': 'search_bucket', '#n': 'name' },
+      ExpressionAttributeValues: { ':b': 'all', ':p': 'http_' },
+    };
+    // First page: starts after 'http_a'. Only 'http_b' and 'http_c' match after it, so the fake ends there.
+    expect(doc.inputs).toEqual([{ ...base, Limit: 3, ExclusiveStartKey: { search_bucket: 'all', name: 'http_a' } }]);
+    expect(doc.calls).toEqual(['QueryCommand']);
+  });
+
+  test('a search that spans index pages continues from LastEvaluatedKey until the limit is met', async () => {
+    const { doc, s } = await seeded(1); // one item a page
+    const got = await s.searchPackages('http', undefined, 3);
+    expect(got.map((p) => p.name)).toEqual(['http_a', 'http_b', 'http_c']);
+    const base = {
+      TableName: 'mopm-t-packages',
+      IndexName: INDEX,
+      KeyConditionExpression: '#b = :b AND begins_with(#n, :p)',
+      ExpressionAttributeNames: { '#b': 'search_bucket', '#n': 'name' },
+      ExpressionAttributeValues: { ':b': 'all', ':p': 'http' },
+    };
+    expect(doc.inputs).toEqual([
+      { ...base, Limit: 3 },
+      { ...base, Limit: 2, ExclusiveStartKey: { search_bucket: 'all', name: 'http_a' } },
+      { ...base, Limit: 1, ExclusiveStartKey: { search_bucket: 'all', name: 'http_b' } },
+    ]);
+  });
+
+  test('no prefix: the key condition is the bucket alone (DynamoDB refuses an empty begins_with operand)', async () => {
+    const { doc, s } = await seeded(10);
+    expect((await s.searchPackages('', undefined, 10)).map((p) => p.name)).toEqual(['http_a', 'http_b', 'http_c', 'httpx', 'zlib']);
+    expect(doc.inputs).toEqual([
+      {
+        TableName: 'mopm-t-packages',
+        IndexName: INDEX,
+        KeyConditionExpression: '#b = :b',
+        ExpressionAttributeNames: { '#b': 'search_bucket' },
+        ExpressionAttributeValues: { ':b': 'all' },
+        Limit: 10,
+      },
+    ]);
+  });
+
+  test('search never scans and asks for no more than it needs', async () => {
+    const { doc, s } = await seeded(10);
+    await s.searchPackages('http', undefined, 2);
+    expect(doc.calls).toEqual(['QueryCommand']);
+    expect(doc.inputs[0].Limit).toBe(2);
+    expect(await s.searchPackages('http', undefined, 0)).toEqual([]);
+    expect(doc.calls).toHaveLength(1); // a zero limit asks nothing
+  });
+
+  test('createPackage writes the index attribute; reads do not show it', async () => {
+    const doc = new FakeDocClient();
+    const s = new DynamoStore(doc, tablesFor('t'));
+    await s.createPackage({ name: 'pkg', state: 'claimed', created_at: at });
+    const row = (await doc.send(new GetCommand({ TableName: 'mopm-t-packages', Key: { name: 'pkg' } }))).Item;
+    expect(row).toEqual({ name: 'pkg', state: 'claimed', created_at: at, search_bucket: 'all' });
+    expect(await s.getPackage('pkg')).toEqual({ name: 'pkg', state: 'claimed', created_at: at });
+  });
+
+  test('the index is sparse: a row written without the attribute is gettable but not searchable', async () => {
+    const doc = new FakeDocClient();
+    const s = new DynamoStore(doc, tablesFor('t'));
+    await doc.send(new PutCommand({ TableName: 'mopm-t-packages', Item: { name: 'legacy', state: 'claimed', created_at: at } }));
+    expect((await s.getPackage('legacy'))?.name).toBe('legacy');
+    expect(await s.searchPackages('', undefined, 10)).toEqual([]);
+  });
+
+  // Can-fail proofs for the assertions above: each mutant is a hand-built Query and must not match the adapter's.
+  test('mutant: a Query without begins_with returns names outside the prefix', async () => {
+    const { doc } = await seeded(10);
+    const r = await doc.send(
+      new QueryCommand({ TableName: 'mopm-t-packages', IndexName: INDEX, KeyConditionExpression: '#b = :b', ExpressionAttributeNames: { '#b': 'search_bucket' }, ExpressionAttributeValues: { ':b': 'all' }, Limit: 10 }),
+    );
+    expect(r.Items.map((i: any) => i.name)).toContain('zlib');
+  });
+  test('mutant: begins_with with an empty prefix, a key on the wrong attribute, a starting key outside the range, all refused by the fake', async () => {
+    const { doc } = await seeded(10);
+    const q = (over: object) =>
+      doc.send(
+        new QueryCommand({
+          TableName: 'mopm-t-packages', IndexName: INDEX, KeyConditionExpression: '#b = :b AND begins_with(#n, :p)',
+          ExpressionAttributeNames: { '#b': 'search_bucket', '#n': 'name' }, ExpressionAttributeValues: { ':b': 'all', ':p': 'http' }, Limit: 5, ...over,
+        }),
+      );
+    await expect(q({})).resolves.toBeDefined();
+    await expect(q({ ExpressionAttributeValues: { ':b': 'all', ':p': '' } })).rejects.toThrow(/empty/);
+    await expect(q({ ExpressionAttributeNames: { '#b': 'name', '#n': 'name' } })).rejects.toThrow(/partition key/);
+    await expect(q({ ExclusiveStartKey: { search_bucket: 'all', name: 'a' } })).rejects.toThrow(/outside the query/);
+  });
+  test('mutant: the projection is honoured (repository and license are not in an index item)', async () => {
+    const { doc } = await seeded(10);
+    const r = await doc.send(
+      new QueryCommand({ TableName: 'mopm-t-packages', IndexName: INDEX, KeyConditionExpression: '#b = :b', ExpressionAttributeNames: { '#b': 'search_bucket' }, ExpressionAttributeValues: { ':b': 'all' }, Limit: 1 }),
+    );
+    expect(Object.keys(r.Items[0]).sort()).toEqual(['created_at', 'description', 'name', 'search_bucket', 'state']);
   });
 });
 

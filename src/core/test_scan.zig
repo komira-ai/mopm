@@ -23,6 +23,12 @@
 //! A file the lexer cannot read (an unterminated string, unbalanced brackets,
 //! a `def` without a name or parameter list) is an error, never a guess.
 //!
+//! A test marked `# mopm: ignore "<reason>" <issue>` on the line above it
+//! (or above its decorators) is still listed and built, but `mopm test`
+//! runs it only with --ignored or --include-ignored. The reason (in double
+//! quotes, not empty) and the issue reference (`#<n>`, `<owner>/<repo>#<n>`
+//! or an https URL) are both required, so an ignored test is traceable.
+//!
 //! Errors and warnings carry the 1-based source line. Tests are reported in
 //! source line order.
 
@@ -31,9 +37,16 @@ const Allocator = std.mem.Allocator;
 
 pub const Kind = enum { bare, self_hosted };
 
+pub const Ignore = struct {
+    reason: []const u8,
+    issue: []const u8,
+};
+
 pub const Item = struct {
     name: []const u8,
     line: u32,
+    /// Set by `# mopm: ignore`: run only with --ignored/--include-ignored.
+    ignore: ?Ignore = null,
 };
 
 pub const Diag = struct {
@@ -57,10 +70,10 @@ pub const Scan = struct {
     }
 };
 
-/// The known directive words. Only `not-a-test` is implemented; the others
-/// are part of the design and refused until the runner implements them, so a
-/// file never silently loses one.
-const later_directives = [_][]const u8{ "ignore", "should-abort", "timeout", "serial" };
+/// The known directive words. `not-a-test` and `ignore` are implemented; the
+/// others are part of the design and refused until the runner implements
+/// them, so a file never silently loses one.
+const later_directives = [_][]const u8{ "should-abort", "timeout", "serial" };
 
 const TokKind = enum { ident, punct, string, number };
 
@@ -78,9 +91,61 @@ const Def = struct {
     /// The def could not be read at all.
     malformed: bool,
     not_a_test: bool,
+    ignore: ?Ignore,
+    ignore_line: u32,
 };
 
-const Directive = struct { line: u32 };
+const DirectiveKind = enum {
+    not_a_test,
+    ignore,
+
+    fn word(k: DirectiveKind) []const u8 {
+        return switch (k) {
+            .not_a_test => "not-a-test",
+            .ignore => "ignore",
+        };
+    }
+};
+
+const Directive = struct {
+    line: u32,
+    kind: DirectiveKind,
+    ignore: ?Ignore = null,
+};
+
+/// Whether `s` is an issue reference: `#<n>`, `<owner>/<repo>#<n>`, or an
+/// https URL.
+fn isIssueRef(s: []const u8) bool {
+    if (std.mem.startsWith(u8, s, "https://")) {
+        if (s.len == "https://".len) return false;
+        for (s) |c| if (c <= ' ' or c == 0x7f) return false;
+        return true;
+    }
+    const hash = std.mem.lastIndexOfScalar(u8, s, '#') orelse return false;
+    const num = s[hash + 1 ..];
+    if (num.len == 0) return false;
+    for (num) |c| if (!std.ascii.isDigit(c)) return false;
+    const repo = s[0..hash];
+    if (repo.len == 0) return true;
+    const slash = std.mem.indexOfScalar(u8, repo, '/') orelse return false;
+    const owner = repo[0..slash];
+    const name = repo[slash + 1 ..];
+    if (owner.len == 0 or name.len == 0) return false;
+    for (repo) |c| if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '_' or c == '.' or c == '/')) return false;
+    return std.mem.indexOfScalar(u8, name, '/') == null;
+}
+
+/// `"<reason>" <issue>`, the text after `ignore`.
+fn parseIgnore(text: []const u8) ?Ignore {
+    const t = std.mem.trim(u8, text, " \t");
+    if (t.len < 2 or t[0] != '"') return null;
+    const close = std.mem.indexOfScalarPos(u8, t, 1, '"') orelse return null;
+    const reason = std.mem.trim(u8, t[1..close], " \t");
+    if (reason.len == 0) return null;
+    const issue = std.mem.trim(u8, t[close + 1 ..], " \t");
+    if (!isIssueRef(issue)) return null;
+    return .{ .reason = reason, .issue = issue };
+}
 
 const Scanner = struct {
     arena: Allocator,
@@ -115,10 +180,10 @@ const Scanner = struct {
         try self.warnings.append(.{ .line = line, .message = try std.fmt.allocPrint(self.arena, fmt, args) });
     }
 
-    /// Pending `not-a-test` directives that no def followed.
+    /// Pending directives that no def followed.
     fn dangling(self: *Scanner) Allocator.Error!void {
         for (self.pending.items) |d| {
-            try self.err(d.line, "`# mopm: not-a-test` must stand directly above a top-level def or its decorators", .{});
+            try self.err(d.line, "`# mopm: {s}` must stand directly above a top-level def or its decorators", .{d.kind.word()});
         }
         self.pending.clearRetainingCapacity();
     }
@@ -129,11 +194,19 @@ const Scanner = struct {
         if (!std.mem.startsWith(u8, body, "mopm:")) return;
         const rest = std.mem.trim(u8, body["mopm:".len..], " \t");
         if (std.mem.eql(u8, rest, "not-a-test")) {
-            try self.pending.append(.{ .line = line });
+            try self.pending.append(.{ .line = line, .kind = .not_a_test });
             return;
         }
         const end = std.mem.indexOfAny(u8, rest, " \t") orelse rest.len;
         const word = rest[0..end];
+        if (std.mem.eql(u8, word, "ignore")) {
+            const ig = parseIgnore(rest[end..]) orelse {
+                try self.err(line, "`# mopm: ignore` needs a reason in double quotes and an issue reference: `# mopm: ignore \"<reason>\" #<n>` (or <owner>/<repo>#<n>, or an https URL)", .{});
+                return;
+            };
+            try self.pending.append(.{ .line = line, .kind = .ignore, .ignore = ig });
+            return;
+        }
         for (later_directives) |w| {
             if (std.mem.eql(u8, w, word)) {
                 try self.err(line, "`# mopm: {s}` is not implemented yet", .{word});
@@ -186,8 +259,26 @@ const Scanner = struct {
 
     fn def(self: *Scanner, toks: []const Tok, is_async: bool) Allocator.Error!void {
         const line = toks[0].line;
-        const not_a_test = self.pending.items.len > 0;
-        const directive_line = if (not_a_test) self.pending.items[0].line else 0;
+        var not_a_test = false;
+        var directive_line: u32 = 0;
+        var ignore: ?Ignore = null;
+        var ignore_line: u32 = 0;
+        for (self.pending.items) |d| switch (d.kind) {
+            .not_a_test => if (!not_a_test) {
+                not_a_test = true;
+                directive_line = d.line;
+            },
+            .ignore => if (ignore == null) {
+                ignore = d.ignore;
+                ignore_line = d.line;
+            } else {
+                try self.err(d.line, "a second `# mopm: ignore` above the same def (the first is at line {d})", .{ignore_line});
+            },
+        };
+        if (not_a_test and ignore != null) {
+            try self.err(ignore_line, "`# mopm: ignore` and `# mopm: not-a-test` above the same def: a helper is never run, so it cannot be ignored", .{});
+            ignore = null;
+        }
         self.pending.clearRetainingCapacity();
         if (toks.len < 2 or toks[1].kind != .ident) {
             try self.err(line, "malformed def: no function name", .{});
@@ -198,10 +289,12 @@ const Scanner = struct {
         if (std.mem.eql(u8, name, "main")) {
             self.main_line = line;
             if (not_a_test) try self.err(directive_line, "`# mopm: not-a-test` is above main, not above a test_ function", .{});
+            if (ignore != null) try self.err(ignore_line, "`# mopm: ignore` is above main, not above a test_ function", .{});
             return;
         }
         if (!std.mem.startsWith(u8, name, "test_")) {
             if (not_a_test) try self.err(directive_line, "`# mopm: not-a-test` is above '{s}', which is not a test_ function", .{name});
+            if (ignore != null) try self.err(ignore_line, "`# mopm: ignore` is above '{s}', which is not a test_ function", .{name});
             return;
         }
         for (self.defs.items) |d| {
@@ -219,6 +312,8 @@ const Scanner = struct {
             },
             .malformed = sig == .malformed,
             .not_a_test = not_a_test,
+            .ignore = ignore,
+            .ignore_line = ignore_line,
         });
     }
 
@@ -248,11 +343,23 @@ const Scanner = struct {
                         try self.err(d.line, "'{s}' {s}, and discover_tests stops at a test_ function it cannot run; rename it", .{ d.name, why });
                     }
                 } else {
-                    try tests.append(.{ .name = d.name, .line = d.line });
+                    try tests.append(.{ .name = d.name, .line = d.line, .ignore = d.ignore });
                 }
             }
             if (kind == .self_hosted) {
-                try tests.appendSlice(self.registrations.items);
+                for (self.registrations.items) |r| {
+                    var item = r;
+                    for (self.defs.items) |d| {
+                        if (std.mem.eql(u8, d.name, r.name)) item.ignore = d.ignore;
+                    }
+                    try tests.append(item);
+                }
+                for (self.defs.items) |d| {
+                    if (d.ignore == null or self.discovers) continue;
+                    var registered = false;
+                    for (self.registrations.items) |r| registered = registered or std.mem.eql(u8, r.name, d.name);
+                    if (!registered) try self.err(d.ignore_line, "`# mopm: ignore` is above '{s}', which the file's main does not register", .{d.name});
+                }
                 for (self.unreadable.items) |l| try self.warn(l, "cannot read the function this `.test[...]` registers; it is not listed", .{});
                 if (!self.discovers and self.registrations.items.len == 0) {
                     try self.warn(self.main_line.?, "the file has its own main but no registration mopm can read (`suite.test[f]()` or `TestSuite.discover_tests[...]`); no tests are listed", .{});
@@ -550,7 +657,11 @@ pub fn scan(arena: Allocator, src: []const u8) Allocator.Error!Scan {
 /// tests/discovery/*.scan.
 pub fn render(sc: Scan, w: anytype) !void {
     try w.print("kind {s}\n", .{@tagName(sc.kind)});
-    for (sc.tests) |t| try w.print("test {d} {s}\n", .{ t.line, t.name });
+    for (sc.tests) |t| {
+        try w.print("test {d} {s}", .{ t.line, t.name });
+        if (t.ignore) |ig| try w.print(" ignored \"{s}\" {s}", .{ ig.reason, ig.issue });
+        try w.writeByte('\n');
+    }
     for (sc.helpers) |t| try w.print("helper {d} {s}\n", .{ t.line, t.name });
     for (sc.errors) |d| try w.print("error {d}: {s}\n", .{ d.line, d.message });
     for (sc.warnings) |d| try w.print("warning {d}: {s}\n", .{ d.line, d.message });
@@ -627,6 +738,7 @@ pub const golden_cases = [_][]const u8{
     "malformed_def",
     "duplicate",
     "directives",
+    "ignore",
     "self_hosted_explicit",
     "self_hosted_discover",
     "self_hosted_none",
@@ -663,4 +775,45 @@ test "golden scans of tests/discovery" {
     }
     try std.testing.expectEqual(@as(usize, golden_cases.len), seen);
     try std.testing.expect(!failed);
+}
+
+test "ignore in a self-hosted file: on a registered test, refused on one main does not register" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    try std.testing.expectEqualStrings(
+        \\kind self_hosted
+        \\test 6 test_a ignored "slow" #4
+        \\test 7 test_b
+        \\error 9: `# mopm: ignore` is above 'test_c', which the file's main does not register
+        \\
+    , try scanText(a,
+        \\# mopm: ignore "slow" #4
+        \\def test_a() raises:
+        \\    pass
+        \\def main() raises:
+        \\    var s = TestSuite()
+        \\    s.test[test_a]()
+        \\    s.test[test_b]()
+        \\    s^.run()
+        \\# mopm: ignore "unregistered" #5
+        \\def test_c() raises:
+        \\    pass
+        \\
+    ));
+}
+
+test "isIssueRef" {
+    for ([_][]const u8{ "#1", "#123", "a/b#9", "komira-ai/mopm#7", "o.x/r_y#10", "https://example.com/i/1" }) |s| {
+        if (!isIssueRef(s)) {
+            std.debug.print("refused {s}\n", .{s});
+            return error.TestUnexpectedResult;
+        }
+    }
+    for ([_][]const u8{ "", "#", "#x", "12", "a#1", "/b#1", "a/#1", "a/b/c#1", "a/b#", "https://", "http://example.com/1", "https://a b", "issue-15" }) |s| {
+        if (isIssueRef(s)) {
+            std.debug.print("accepted {s}\n", .{s});
+            return error.TestUnexpectedResult;
+        }
+    }
 }
