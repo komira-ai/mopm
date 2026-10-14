@@ -20,6 +20,8 @@ export interface View<N> {
   noindex?: boolean;
   /** The address the page should show (the published spelling of a version, a normalised search). */
   canonicalPath?: string;
+  /** A search page's q, for the header search field. */
+  searchQ?: string;
 }
 
 export const SITE_NAME = 'mopm';
@@ -86,7 +88,7 @@ export function errorView<N>(doc: Doc<N>, err: ApiError, heading = 'Something we
     err.detail ? h(doc, 'p', { class: 'detail' }, err.detail) : null,
     err.hint ? h(doc, 'p', { class: 'detail' }, err.hint) : null,
     err.requestId ? h(doc, 'p', { class: 'muted' }, 'Request id: ', h(doc, 'code', null, err.requestId)) : null,
-    h(doc, 'p', null, h(doc, 'button', { type: 'button', class: 'retry' }, 'Retry')),
+    h(doc, 'p', null, h(doc, 'button', { type: 'button', class: 'button retry' }, 'Retry')),
   );
   return { title: heading, nodes: [box] };
 }

@@ -101,7 +101,7 @@ describe('search errors', () => {
   test('another failure: the error view with a Retry button, under the form', () => {
     const out = html(searchErrorView(sdoc, { q: 'a', sort: 'name' }, networkError()));
     expect(out).toContain('role="alert"');
-    expect(out).toContain('<button type="button" class="retry">Retry</button>');
+    expect(out).toContain('<button type="button" class="button retry">Retry</button>');
     expect(out.indexOf('<form')).toBeLessThan(out.indexOf('role="alert"'));
   });
 });
@@ -117,7 +117,7 @@ describe('shared views', () => {
     expect(out).toContain('role="alert"');
     expect(out).toContain('&lt;b&gt;boom&lt;/b&gt;');
     expect(out).toContain('<code>abc-123</code>');
-    expect(out).toContain('class="retry"');
+    expect(out).toContain('class="button retry"');
   });
 
   test('not found: noindex, and a way on', () => {
