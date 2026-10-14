@@ -4,8 +4,8 @@
 // Heading ids are GitHub-style slugs with a prefix (a readme uses 'readme-', so its ids cannot clobber the page's own)
 // and are deduplicated as GitHub does ('a', 'a-1', ...). A refused link shows its text; a link with no text shows its
 // target, so every link has an accessible name. An image is never loaded: it becomes a link reading "image: <alt>",
-// or, inside a link (a readme badge), just its alt text, so a link never holds a link. Raw HTML was kept as text by the
-// parser and stays text here.
+// or, inside a link (a readme badge), just its alt text; an autolink inside a link is its text. So a link never holds a
+// link. Raw HTML was kept as text by the parser and stays text here.
 //
 // Wide blocks scroll on their own: a table sits in a focusable, named scroll region (class 'scroll'; styling the
 // table itself to scroll would strip its table semantics) and a code block is focusable, so a keyboard reaches the
@@ -158,7 +158,7 @@ class Renderer<N> {
     }
   }
 
-  /** `inLink`: inside a link's text, where an image is its alt text only (no anchor may nest in an anchor). */
+  /** `inLink`: inside a link's text, where an image is its alt text and a link its text (an anchor never nests). */
   private inlines(parent: N, inl: readonly Inline[], inLink = false): void {
     const d = this.doc;
     for (const x of inl) {
@@ -180,6 +180,10 @@ class Renderer<N> {
           this.inlines(child, x.c, inLink);
           break;
         case 'link': {
+          if (inLink) {
+            this.inlines(parent, x.c, true); // an autolink in a link's text is just its text
+            break;
+          }
           const href = safeHref(x.href, this.ctx);
           if (!href) {
             this.inlines(parent, x.c, inLink); // a refused link keeps its text

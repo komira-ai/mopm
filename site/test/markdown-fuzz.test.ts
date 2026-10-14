@@ -9,6 +9,7 @@ const piece = fc.oneof(
     '*', '**', '_', '__', '`', '``', '[', ']', '(', ')', '![', '<', '>', '&', '"', "'", '\\', '|', '#', '-', '+',
     '1.', '\n', '\n\n', '  \n', '    ', '\t', '> ', '- ', '```', '~~~', '---', '|---|', ':', '/', '#x',
     'javascript:', 'JaVaScRiPt:', 'data:', 'vbscript:', 'https://mopm.dev/', 'mailto:a@mopm.dev', '//evil', 'a@mopm.dev',
+    '<https://mopm.dev/>', '<a@mopm.dev>', '[<https://mopm.dev/>](https://mopm.dev/x)',
     '<script>', '</script>', '<img onerror=x>', 'onerror=', 'style=', '&#115;', '%0a', '\u0000', '​', ' ',
   ),
   fc.string({ maxLength: 6 }),

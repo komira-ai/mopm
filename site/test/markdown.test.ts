@@ -164,6 +164,24 @@ describe('inlines', () => {
     );
   });
 
+  test('an autolink inside a link is the link text, never a second anchor', () => {
+    const rel = 'rel="nofollow noopener noreferrer ugc"';
+    expect(md('[<https://mopm.dev/b>](https://mopm.dev/a)')).toBe(
+      `<p><a href="https://mopm.dev/a" ${rel}>https://mopm.dev/b</a></p>`,
+    );
+    expect(md('[a <https://mopm.dev/b> c](https://mopm.dev/y)')).toBe(
+      `<p><a href="https://mopm.dev/y" ${rel}>a https://mopm.dev/b c</a></p>`,
+    );
+    expect(md('[x <a@mopm.dev>](https://mopm.dev/a)')).toBe(`<p><a href="https://mopm.dev/a" ${rel}>x a@mopm.dev</a></p>`);
+    expect(md('[*<https://mopm.dev/b>*](https://mopm.dev/a)')).toBe(
+      `<p><a href="https://mopm.dev/a" ${rel}><em>https://mopm.dev/b</em></a></p>`,
+    );
+    // Outside a link the same autolinks are anchors.
+    expect(md('<https://mopm.dev/b> <a@mopm.dev>')).toBe(
+      `<p><a href="https://mopm.dev/b" ${rel}>https://mopm.dev/b</a> <a href="mailto:a@mopm.dev" ${rel}>a@mopm.dev</a></p>`,
+    );
+  });
+
   test('a link with no text shows its target, so it always has an accessible name', () => {
     const rel = 'rel="nofollow noopener noreferrer ugc"';
     expect(md('[](https://mopm.dev)')).toBe(`<p><a href="https://mopm.dev/" ${rel}>https://mopm.dev/</a></p>`);
