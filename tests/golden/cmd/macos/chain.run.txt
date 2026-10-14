@@ -1,0 +1,1 @@
+MODULAR_HOME=@ROOT@/tests/fixtures/env/macos/chain/share/max @ROOT@/tests/fixtures/env/macos/chain/bin/mojo run -Xlinker @ROOT@/tests/fixtures/env/macos/chain/lib/libcrypto_native.1.dylib -Xlinker @ROOT@/tests/fixtures/env/macos/chain/lib/libcurl_shim.1.dylib hello.mojo

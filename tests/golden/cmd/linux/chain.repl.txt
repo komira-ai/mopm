@@ -1,0 +1,1 @@
+MODULAR_HOME=@ROOT@/tests/fixtures/env/linux/chain/share/max @ROOT@/tests/fixtures/env/linux/chain/bin/mojo repl -O 'settings set target.env-vars LD_PRELOAD=@ROOT@/tests/fixtures/env/linux/chain/lib/libcrypto_native.so.1:@ROOT@/tests/fixtures/env/linux/chain/lib/libcurl_shim.so.1'
