@@ -18,6 +18,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const manifest = @import("manifest.zig");
 const semver = @import("semver.zig");
+const conda_native = @import("conda_native.zig");
 
 /// The conda subdirs the registry serves (spec/channel.md).
 pub const subdirs = [_][]const u8{ "noarch", "linux-64", "linux-aarch64", "osx-arm64" };
@@ -43,6 +44,10 @@ pub const Input = struct {
     deps: []const Dep = &.{},
     /// The bytes of the `.mojoc`.
     mojoc: []const u8,
+    /// Native libraries this file ships (`conda_native.assemble`).
+    natives: []const conda_native.Lib = &.{},
+    /// System libraries from conda, named in `depends` after the Mojo dependencies.
+    native_deps: []const conda_native.NativeDep = &.{},
 };
 
 pub const Packed = struct {
@@ -256,8 +261,8 @@ fn jsonStr(w: anytype, s: []const u8) !void {
     try std.json.encodeJsonString(s, .{}, w);
 }
 
-/// `info/index.json`: keys sorted, `depends` the compiler first and then the
-/// Mojo dependencies by name.
+/// `info/index.json`: keys sorted, `depends` the compiler first, then the
+/// Mojo dependencies by name, then the native dependencies by id.
 pub fn indexJson(arena: Allocator, in: Input) Allocator.Error![]u8 {
     var out = std.ArrayList(u8).init(arena);
     const w = out.writer();
@@ -270,6 +275,14 @@ pub fn indexJson(arena: Allocator, in: Input) Allocator.Error![]u8 {
             try std.fmt.allocPrint(arena, "mojo-{s}", .{d.name})
         else
             try std.fmt.allocPrint(arena, "mojo-{s} {s}", .{ d.name, d.range });
+        try jsonStr(w, dep);
+    }
+    for (in.native_deps) |d| {
+        try w.writeByte(',');
+        const dep = if (d.version.len == 0)
+            try arena.dupe(u8, d.id)
+        else
+            try std.fmt.allocPrint(arena, "{s} {s}", .{ d.id, d.version });
         try jsonStr(w, dep);
     }
     try w.writeAll("],\"name\":");
@@ -299,6 +312,7 @@ pub fn mopmJson(arena: Allocator, in: Input) Allocator.Error![]u8 {
     }
     try w.writeAll("],\"name\":");
     try jsonStr(w, in.name);
+    try conda_native.writeJson(arena, w, in.natives);
     try w.writeAll(",\"schema\":1,\"version\":");
     try jsonStr(w, in.version);
     try w.writeByte('}');
@@ -322,10 +336,15 @@ pub fn pack(arena: Allocator, in: Input) PackError!Packed {
     const index = try indexJson(arena, in);
 
     const info_tar = try tar(arena, &.{.{ .path = "info/index.json", .data = index }});
-    const pkg_tar = try tar(arena, &.{
-        .{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mojoc", .{in.name}), .data = in.mojoc },
-        .{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mopm.json", .{in.name}), .data = mopm },
-    });
+    var pkg_files = std.ArrayList(File).init(arena);
+    try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mojoc", .{in.name}), .data = in.mojoc });
+    try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mopm.json", .{in.name}), .data = mopm });
+    for (in.natives) |l| {
+        for ([_]?conda_native.Blob{ l.shared, l.static }) |blob| {
+            if (blob) |b| try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/{s}", .{b.name}), .data = b.data });
+        }
+    }
+    const pkg_tar = try tar(arena, pkg_files.items);
     const bytes = try zip(arena, &.{
         .{ .path = "metadata.json", .data = "{\"conda_pkg_format_version\": 2}" },
         .{ .path = try std.fmt.allocPrint(arena, "info-{s}.tar.zst", .{stem}), .data = try zstdStore(arena, info_tar) },
@@ -429,17 +448,9 @@ fn lessDep(_: void, a: Dep, b: Dep) bool {
 }
 
 /// The Mojo dependencies of `m` as `Dep`s sorted by name, or `Unpackable`
-/// with `why` when `m` cannot be packed: a path dependency, native libraries
-/// or native dependencies (a later change packs those).
+/// with `why` when `m` cannot be packed: a path dependency. Native libraries
+/// and dependencies are `conda_native`'s.
 pub fn depsOf(arena: Allocator, m: manifest.Manifest, why: *[]const u8) error{ Unpackable, OutOfMemory }![]const Dep {
-    if (m.native.len > 0) {
-        why.* = "native libraries are not packed yet";
-        return error.Unpackable;
-    }
-    if (m.native_dependencies.len > 0) {
-        why.* = "native dependencies are not packed yet";
-        return error.Unpackable;
-    }
     var out = std.ArrayList(Dep).init(arena);
     for (m.dependencies) |d| {
         switch (d.source) {
@@ -793,6 +804,54 @@ test "a manifest: dependencies, and what cannot be packed" {
         \\kind = "shared"
         \\
     , &diag);
-    try std.testing.expectError(error.Unpackable, depsOf(a, native, &why));
-    try std.testing.expectEqualStrings("native libraries are not packed yet", why);
+    // Native libraries are not Mojo dependencies: depsOf neither refuses nor lists them.
+    try std.testing.expectEqual(@as(usize, 0), (try depsOf(a, native, &why)).len);
+}
+
+test "a package with native libraries and native dependencies" {
+    // Catches: native files missing from the pkg tar or stored under another
+    // path than lib/<file>, a native dependency absent from or misspelled in
+    // depends (or placed before the Mojo ones), a native entry that is not
+    // in the packed mopm.json, a manifest hash that is not of those bytes.
+    var st = testArena();
+    defer st.deinit();
+    const a = st.allocator();
+    const p = try pack(a, .{
+        .name = "demo",
+        .version = "1.2.3",
+        .compiler = "1.0.0",
+        .subdir = "linux-64",
+        .deps = &.{.{ .name = "alpha", .range = ">=1.2,<2" }},
+        .mojoc = "MOJOC-BYTES",
+        .natives = &.{
+            .{ .id = "both", .kind = .both, .mode = .link, .shared = .{ .name = "libboth.so.1", .data = "SO-BYTES" }, .static = .{ .name = "libboth.a", .data = "A-BYTES" } },
+            .{ .id = "solo", .kind = .shared, .mode = .load, .shared = .{ .name = "libsolo.so", .data = "SOLO-BYTES" } },
+        },
+        .native_deps = &.{ .{ .id = "openssl", .version = ">=3.0" }, .{ .id = "zlib", .version = "" } },
+    });
+    const entries = try readZip(a, p.bytes);
+    const info = try readTar(a, try unzstd(a, entries[1].data));
+    try std.testing.expectEqualStrings(
+        "{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\",\"mojo-alpha >=1.2,<2\",\"openssl >=3.0\",\"zlib\"]," ++
+            "\"name\":\"mojo-demo\",\"subdir\":\"linux-64\",\"version\":\"1.2.3\"}",
+        info[0].data,
+    );
+    const pkg = try readTar(a, try unzstd(a, entries[2].data));
+    try std.testing.expectEqual(@as(usize, 5), pkg.len);
+    try std.testing.expectEqualStrings("lib/libboth.a", pkg[0].path);
+    try std.testing.expectEqualStrings("A-BYTES", pkg[0].data);
+    try std.testing.expectEqualStrings("lib/libboth.so.1", pkg[1].path);
+    try std.testing.expectEqualStrings("SO-BYTES", pkg[1].data);
+    try std.testing.expectEqualStrings("lib/libsolo.so", pkg[2].path);
+    try std.testing.expectEqualStrings("SOLO-BYTES", pkg[2].data);
+    try std.testing.expectEqualStrings("lib/mojo/demo.mojoc", pkg[3].path);
+    try std.testing.expectEqualStrings("lib/mojo/demo.mopm.json", pkg[4].path);
+    try std.testing.expectEqualStrings(
+        "{\"deps\":[{\"name\":\"alpha\",\"range\":\">=1.2,<2\"}],\"name\":\"demo\",\"native\":[" ++
+            "{\"file\":\"../libboth.so.1\",\"id\":\"both\",\"kind\":\"both\",\"mode\":\"link\",\"soname\":\"libboth.so.1\",\"static_file\":\"../libboth.a\"}," ++
+            "{\"file\":\"../libsolo.so\",\"id\":\"solo\",\"kind\":\"shared\",\"mode\":\"load\",\"soname\":\"libsolo.so\"}" ++
+            "],\"schema\":1,\"version\":\"1.2.3\"}",
+        pkg[4].data,
+    );
+    try std.testing.expectEqualSlices(u8, &p.manifest_sha256, &hex(pkg[4].data));
 }

@@ -21,6 +21,7 @@ pub const http = @import("http.zig");
 pub const registry = @import("registry.zig");
 pub const credentials = @import("credentials.zig");
 pub const conda = @import("conda.zig");
+pub const conda_native = @import("conda_native.zig");
 
 test {
     _ = @import("metadata.zig");
@@ -41,4 +42,5 @@ test {
     _ = @import("registry.zig");
     _ = @import("credentials.zig");
     _ = @import("conda.zig");
+    _ = @import("conda_native.zig");
 }

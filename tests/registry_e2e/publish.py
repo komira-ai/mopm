@@ -14,7 +14,8 @@ What can go red, and why:
 - publishing the same version again must fail with the registry's
   `version_exists` message;
 - the client-side refusals (a version that is not exactly MAJOR.MINOR.PATCH, a
-  readme over 64 KiB, native libraries, a missing login) must happen before
+  readme over 64 KiB, native library files that are missing, undeclared or
+  misnamed, a missing login) must happen before
   any request: they are run against a registry address nothing listens on, so
   a client that went to the network would print "cannot reach" instead;
 - the fake does not open archives, so a rejection is exercised against a small
@@ -227,10 +228,24 @@ def main(mopm, fake_exe):
                   r.returncode == 0 and "would send a readme of 65536 bytes" in r.stdout, r.stdout + r.stderr)
 
             native_manifest = os.path.join(work, "native", "mopm.toml")
-            write(native_manifest, toml("pubdemo", "0.1.0", '[native.zlib]\nkind = "shared"\n'))
-            r = run("publish", "--compiler", "1.0.0", "--mojoc", mojoc, "--manifest", native_manifest, "--registry", DEAD, "--config-dir", conf)
-            check("native libraries are refused before any request",
-                  r.returncode == 1 and "native libraries are not packed yet" in r.stderr and "cannot reach" not in r.stderr, r.stderr)
+            write(native_manifest, toml("pubdemo", "0.2.0", '[native.zlib]\nkind = "shared"\n\n[native-dependencies]\nopenssl = ">=3.0"\n'))
+            solib = os.path.join(work, "native", "libz.so.1")
+            write(solib, "not a real shared object, only bytes\n")
+            native_pub = ["publish", "--compiler", "1.0.0", "--mojoc", "linux-64=" + mojoc, "--manifest", native_manifest]
+            r = run(*native_pub, "--registry", DEAD, "--config-dir", conf)
+            check("a declared native library with no file is refused before any request",
+                  r.returncode == 1 and "needs a shared object: pass --native zlib=<file>" in r.stderr and "cannot reach" not in r.stderr, r.stderr)
+            r = run(*native_pub, "--native", "linux-64:zlib=" + solib, "--native", "linux-64:other=" + solib, "--registry", DEAD, "--config-dir", conf)
+            check("a library file for an undeclared native id is refused before any request",
+                  r.returncode == 1 and "mopm.toml declares no [native.other]" in r.stderr and "cannot reach" not in r.stderr, r.stderr)
+            badname = os.path.join(work, "native", "zlib.dll")
+            write(badname, "bytes")
+            r = run(*native_pub, "--native", "linux-64:zlib=" + badname, "--registry", DEAD, "--config-dir", conf)
+            check("a library file the registry would not accept is refused before any request",
+                  r.returncode == 1 and "its name must be lib<name>.so[.N]" in r.stderr and "cannot reach" not in r.stderr, r.stderr)
+            r = run(*native_pub, "--native", "zlib=" + solib, "--registry", DEAD, "--config-dir", conf)
+            check("a library file for a subdir that is not packed is refused before any request",
+                  r.returncode == 1 and "no --mojoc for the subdir noarch" in r.stderr and "cannot reach" not in r.stderr, r.stderr)
 
             r = run(*pub, *flags)
             check("publishing without a login or MOPM_TOKEN says to log in",
@@ -258,6 +273,27 @@ def main(mopm, fake_exe):
             everything.append(r.stdout + r.stderr)
             check("publishing the same version again fails with version_exists",
                   r.returncode == 1 and "already exists" in r.stderr and "versions are immutable" in r.stderr, r.stdout + r.stderr)
+
+            # --- a package with a native library and a native dependency
+            native_file = "mojo-pubdemo-0.2.0-mojo1.0.0_0.conda"
+            r = run("pack", "--compiler", "1.0.0", "--mojoc", "linux-64=" + mojoc, "--native", "linux-64:zlib=" + solib,
+                    "--manifest", native_manifest, "-o", os.path.join(work, "dist4"))
+            mn = re.search(r"packed (\S+)\n  sha256 ([0-9a-f]{64})\n  size (\d+)", r.stdout)
+            check("pack writes a package with a native library", r.returncode == 0 and mn is not None, r.stdout + r.stderr)
+            r = run(*native_pub, "--native", "linux-64:zlib=" + solib, *flags, env={"MOPM_TOKEN": api_token})
+            everything.append(r.stdout + r.stderr)
+            check("a package with a native library publishes",
+                  r.returncode == 0 and "uploaded " + native_file in r.stdout and "published mojo-pubdemo 0.2.0" in r.stdout, r.stdout + r.stderr)
+            status, body = fake.call("GET", fake.base + "/channel/linux-64/repodata.json")
+            entry = json.loads(body).get("packages.conda", {}).get(native_file) if status == 200 else None
+            check("the channel's linux-64 repodata.json lists it with the packed sha256",
+                  entry is not None and mn is not None and entry.get("sha256") == mn.group(2), body.decode()[:400])
+            status, body = fake.call("GET", fake.base + "/channel/linux-64/" + native_file)
+            with open(solib, "rb") as fh:
+                solib_bytes = fh.read()
+            check("the channel serves the package with the library at lib/libz.so.1 and the native dependency in depends",
+                  status == 200 and mn is not None and len(body) == int(mn.group(3)) and b"lib/libz.so.1" in body
+                  and solib_bytes in body and b'"openssl >=3.0"' in body, str(status))
 
             # --- the login's session is not a publish token
             write(os.path.join(work, "conf2", "credentials.json"),

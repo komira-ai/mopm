@@ -7,7 +7,11 @@
 // each file. A packer that disagrees with the registry about the zip, the
 // tars, the zstd frames, index.json, <name>.mopm.json or the file name turns
 // the first checks red. The planted defects after them show the validator is
-// not vacuous: each must be refused with the one rule named here.
+// not vacuous: each must be refused with the one rule named here. A second
+// package ships a native library and depends on a native (system) library; the
+// validator must accept it with its native facts, and refuse it once the
+// allow-list lacks the dependency, the metadata stops declaring the library, or
+// the declared file is not in the archive.
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -76,8 +80,8 @@ for (const p of packed) {
 // Planted defects: the package is right and the claim about it is wrong (or a byte is).
 const noarch = packed.find((p) => p.path.includes('/noarch/'));
 const bytes = readFileSync(noarch.path);
-const refused = (name, archive, expected, rule, rejection) => {
-  const v = validatePackage(archive, expected);
+const refused = (name, archive, expected, rule, rejection, options = {}) => {
+  const v = validatePackage(archive, expected, options);
   check(`planted: ${name} is refused as ${rule}`, v.ok === false && v.rule === rule && v.rejection_code === rejection, JSON.stringify(v));
 };
 refused('a version that is not the metadata\'s', bytes, expectation('noarch', { version: '1.2.4' }), 'version_mismatch', 'manifest_invalid');
@@ -89,6 +93,102 @@ refused('a wrong sha256', bytes, expectation('noarch', { sha256: '0'.repeat(64) 
 const flipped = Buffer.from(bytes);
 flipped[50] ^= 0xff; // inside metadata.json: the zip CRC-32 no longer holds
 refused('a flipped byte', flipped, expectation('noarch'), 'archive_corrupt', 'archive_invalid');
+
+// --- A package with a native library and a native dependency
+const crcTable = new Uint32Array(256).map((_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+const crc32 = (b) => {
+  let c = 0xffffffff;
+  for (let i = 0; i < b.length; i++) c = crcTable[(c ^ b[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+};
+// A copy of a .conda with `edit` applied, in place, to the bytes of its pkg-*.tar.zst entry, and that
+// entry's CRC-32 repaired in both zip headers. The packer stores everything, so the tar's text is there
+// to be found, and `edit` must keep every length.
+const editPkgEntry = (conda, edit) => {
+  const b = Buffer.from(conda);
+  const eocd = b.length - 22; // the packer writes no zip comment
+  let p = b.readUInt32LE(eocd + 16);
+  for (let i = 0, n = b.readUInt16LE(eocd + 10); i < n; i++) {
+    const nameLen = b.readUInt16LE(p + 28);
+    const lho = b.readUInt32LE(p + 42);
+    if (b.toString('latin1', p + 46, p + 46 + nameLen).startsWith('pkg-')) {
+      const data = b.subarray(lho + 30 + nameLen, lho + 30 + nameLen + b.readUInt32LE(p + 20));
+      edit(data);
+      b.writeUInt32LE(crc32(data), p + 16);
+      b.writeUInt32LE(crc32(data), lho + 14);
+      return b;
+    }
+    p += 46 + nameLen;
+  }
+  throw new Error('no pkg-*.tar.zst entry');
+};
+// Overwrite every `from` in data[start, end) with `to` (same length); returns how many.
+const overwrite = (data, from, to, start = 0, end = data.length) => {
+  if (from.length !== to.length) throw new Error('lengths differ');
+  let count = 0;
+  for (let at = data.indexOf(from, start); at >= 0 && at + from.length <= end; at = data.indexOf(from, at + 1)) {
+    data.write(to, at, 'latin1');
+    count++;
+  }
+  return count;
+};
+
+mkdirSync(join(work, 'nat'));
+writeFileSync(
+  join(work, 'nat', 'mopm.toml'),
+  '[package]\nname = "natdemo"\nversion = "2.0.1"\n\n[toolchain]\nmojo = "1.0.0"\n\n[native.confnative]\nkind = "shared"\n\n[native-dependencies]\nconfsys = ">=1.0"\n',
+);
+writeFileSync(join(work, 'nat', 'natdemo.mojoc'), mojoc.subarray(0, 5000));
+const solib = Buffer.alloc(70000);
+for (let i = 0; i < solib.length; i++) solib[i] = (i * 17 + (i >> 5)) & 0xff;
+writeFileSync(join(work, 'nat', 'libconfnat.so.1'), solib);
+const natOut = execFileSync(
+  mopm,
+  ['pack', '--compiler', '1.0.0', '--mojoc', `linux-64=${join(work, 'nat', 'natdemo.mojoc')}`, '--native', `linux-64:confnative=${join(work, 'nat', 'libconfnat.so.1')}`,
+    '--manifest', join(work, 'nat', 'mopm.toml'), '-o', join(work, 'natdist')],
+  { encoding: 'utf8' },
+);
+const natPacked = natOut.match(/packed (\S+)\n  sha256 ([0-9a-f]{64})\n  size (\d+)\n  manifest_sha256 ([0-9a-f]{64})/);
+check('pack printed the native package', natPacked !== null, natOut);
+if (natPacked) {
+  const natBytes = readFileSync(natPacked[1]);
+  const natExpected = (extra = {}) => ({ name: 'natdemo', version: '2.0.1', subdir: 'linux-64', filename: 'mojo-natdemo-2.0.1-mojo1.0.0_0.conda', ...extra });
+  const allow = { allowedNativeDeps: new Set(['confsys']) };
+  const v = validatePackage(natBytes, natExpected({ sha256: natPacked[2], manifestSha256: natPacked[4] }), allow);
+  check('native: the validator accepts a package with a native library and an allow-listed native dependency', v.ok === true, JSON.stringify(v));
+  if (v.ok) {
+    const decl = v.facts.metadata.native;
+    check('native: the declared library agrees with the packed one',
+      decl.length === 1 && decl[0].id === 'confnative' && decl[0].soname === 'libconfnat.so.1' && decl[0].kind === 'shared' &&
+        decl[0].mode === 'link' && JSON.stringify(decl[0].paths) === JSON.stringify(['lib/libconfnat.so.1']),
+      JSON.stringify(decl));
+    check('native: the library is in the archive at its declared path with its full size, and mojo deps stay empty',
+      JSON.stringify(v.facts.files.map((f) => f.path).sort()) ===
+        JSON.stringify(['info/index.json', 'lib/libconfnat.so.1', 'lib/mojo/natdemo.mojoc', 'lib/mojo/natdemo.mopm.json']) &&
+        v.facts.files.find((f) => f.path === 'lib/libconfnat.so.1').size === solib.length && v.facts.mojoDeps.length === 0,
+      JSON.stringify(v.facts.files));
+  }
+  // The packer put 'confsys >=1.0' in depends; the registry's list decides, and it does not list it here.
+  refused('a native dependency that is not on the allow-list', natBytes, natExpected(), 'dependency_not_allowed', 'dependency_not_allowed');
+  refused('a native dependency when only other ids are allow-listed', natBytes, natExpected(), 'dependency_not_allowed', 'dependency_not_allowed',
+    { allowedNativeDeps: new Set(['someotherlib']) });
+  // The metadata stops declaring the library ("native" -> "nativx"); lib/libconfnat.so.1 is still in the archive.
+  const undeclared = editPkgEntry(natBytes, (d) => {
+    if (overwrite(d, '"native":[', '"nativx":[') !== 1) throw new Error('metadata key not found once');
+  });
+  refused('a lib/ file the metadata does not declare', undeclared, natExpected(), 'native_undeclared', 'path_not_allowed', allow);
+  // The metadata names another file (file and soname together, so only the file's absence is wrong).
+  const missing = editPkgEntry(natBytes, (d) => {
+    const start = d.indexOf('"native":[');
+    const end = d.indexOf('],"schema"', start);
+    if (start < 0 || end < 0 || overwrite(d, 'libconfnat.so.1', 'libconfnaX.so.1', start, end) !== 2) throw new Error('metadata names not found twice');
+  });
+  refused('a declared native library whose file is not in the archive', missing, natExpected(), 'native_missing', 'manifest_invalid', allow);
+}
 
 console.log(failures === 0 ? 'pack conformance OK' : `${failures} failure(s)`);
 process.exit(failures === 0 ? 0 : 1);
