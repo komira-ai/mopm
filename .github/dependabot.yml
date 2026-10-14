@@ -4,10 +4,22 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+    # Major bumps of actions wait for review (as npm's do below).
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: npm
     directory: /service/infra/stacks
     schedule:
       interval: weekly
+    groups:
+      aws-cdk:
+        patterns: ["aws-cdk-lib", "aws-cdk", "constructs"]
+      dev-tooling:
+        patterns: ["typescript", "ts-jest", "jest", "@types/*"]
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
@@ -15,6 +27,23 @@ updates:
     directory: /service/infra/access
     schedule:
       interval: weekly
+    groups:
+      aws-cdk:
+        patterns: ["aws-cdk-lib", "aws-cdk", "constructs"]
+      dev-tooling:
+        patterns: ["typescript", "ts-jest", "jest", "@types/*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: npm
+    directory: /service/infra/dns
+    schedule:
+      interval: weekly
+    groups:
+      aws-cdk:
+        patterns: ["aws-cdk-lib", "aws-cdk", "constructs"]
+      dev-tooling:
+        patterns: ["typescript", "ts-jest", "jest", "@types/*"]
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
