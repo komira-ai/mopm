@@ -5,7 +5,7 @@ bundler, no runtime dependencies.
 
 The prerendered pages (`/`, `/docs/`, `/docs/<slug>/`, `404.html`) work without scripts. `/search`,
 `/packages/<name>` and `/packages/<name>/<version>` share one shell, `app.html`, which `src/main.ts` fills from one
-API call.
+API call (`src/app.ts` picks the call and the view).
 
 | module | what it does |
 |---|---|
@@ -17,7 +17,8 @@ API call.
 | `src/markdown/` | a restricted Markdown parser (linear time) and its renderer, for package readmes and repo docs |
 | `src/snippet.ts`, `src/format.ts` | the install lines a page shows; times, sizes and version states as text |
 | `src/views/` | the search, package and version views and the shared ones (loading, error, not found), built through a `Doc` |
-| `src/main.ts` | the page script: the read-only banner, `/` to focus search, and the app shell's routing |
+| `src/app.ts` | the app shell's routing: the API call an address makes and the view its answer gives (no DOM) |
+| `src/main.ts` | the page script: the DOM work for the read-only banner, `/` to focus search, and mounting the app view |
 | `static/site.css` | the one stylesheet |
 | `tools/` | the build (Node, run at build time only): page layout, the home, 404 and shell pages, the docs pages, hashing the assets, and the checks on `dist/` |
 
@@ -44,7 +45,8 @@ npm run build       # compiles src and tools to build/, then writes dist/ (and c
 `dist/` holds `index.html`, `app.html`, `404.html`, `docs/index.html`, `docs/<slug>/index.html` and
 `assets/<id>/`: the modules `main.js` loads and `site.css`, where `<id>` is a hash of their contents (no clock, no
 commit), so the same sources give the same tree and a changed asset gets a new URL. `tools/check-dist.ts` refuses a
-tree with a missing page, a dangling asset or import, inline script or style, an event-handler attribute, a file
+tree with a missing page, a dangling asset or import, a script that is not an empty `<script src="/assets/...">`, a
+style element or attribute, an event-handler attribute, a `javascript:`, `data:` or `vbscript:` URL, a file
 other than `.html`, `.js` or `.css`, or JavaScript or CSS over its size budget.
 
 The home page copy is held to `README.md` and `src/cli/main.zig` by `test/layout.test.ts`: when the list of working
