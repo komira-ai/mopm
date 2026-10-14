@@ -7,11 +7,12 @@ const core = @import("mopm_core");
 const mojo_cmd = core.mojo_cmd;
 const test_cmd = @import("test_cmd.zig");
 const registry_cmd = @import("registry_cmd.zig");
+const install_cmd = @import("install_cmd.zig");
 
 pub const version = "0.0.1";
 
 const planned = [_][]const u8{
-    "add",  "remove", "lock",    "sync",   "cov",    "tree",
+    "add",   "remove",  "sync",   "cov",
     "check", "publish", "export", "launch",
 };
 
@@ -50,6 +51,14 @@ const usage =
     \\                          an account on a registry (device login through
     \\                          GitHub; the token is kept in credentials.json,
     \\                          mode 0600, and never printed)
+    \\  lock [--registry <prod|gamma|beta|url>]
+    \\                          resolve mopm.toml's dependencies against the
+    \\                          registry's index and write mopm.lock (keeping
+    \\                          locked versions that still fit)
+    \\  update [<package>...] [--registry ...]
+    \\                          the same, moving the named packages (all, with
+    \\                          none named) to the newest versions that fit
+    \\  tree                    draw the dependency graph mopm.lock holds
     \\
     \\  options for build, run and repl:
     \\    --prefix <dir>        the environment (default: CONDA_PREFIX, then
@@ -59,7 +68,7 @@ const usage =
     \\                          (default: this host)
     \\
     \\planned (not implemented yet):
-    \\  add remove lock sync cov tree check publish export launch
+    \\  add remove sync cov check publish export launch
     \\
 ;
 
@@ -372,6 +381,9 @@ fn run(arena: std.mem.Allocator) u8 {
     if (std.mem.eql(u8, cmd, "login") or std.mem.eql(u8, cmd, "logout") or std.mem.eql(u8, cmd, "whoami")) {
         return registry_cmd.main(arena, cmd, args[2..], version);
     }
+    if (std.mem.eql(u8, cmd, "lock")) return install_cmd.main(arena, .lock, args[2..], version);
+    if (std.mem.eql(u8, cmd, "update")) return install_cmd.main(arena, .update, args[2..], version);
+    if (std.mem.eql(u8, cmd, "tree")) return install_cmd.main(arena, .tree, args[2..], version);
     if (std.meta.stringToEnum(mojo_cmd.Tool, cmd)) |tool| return autolink(arena, tool, args[2..]);
     if (isPlanned(cmd)) {
         std.debug.print("mopm {s}: not implemented yet\n", .{cmd});
@@ -389,6 +401,7 @@ pub fn main() void {
 
 test {
     _ = registry_cmd;
+    _ = install_cmd;
 }
 
 test "planned commands are recognised, working ones are not planned" {
@@ -401,6 +414,8 @@ test "planned commands are recognised, working ones are not planned" {
     try std.testing.expect(!isPlanned("metadata"));
     try std.testing.expect(!isPlanned("new"));
     try std.testing.expect(!isPlanned("init"));
+    try std.testing.expect(!isPlanned("lock"));
+    try std.testing.expect(!isPlanned("tree"));
     try std.testing.expect(!isPlanned("--version"));
     try std.testing.expect(!isPlanned("frobnicate"));
 }
