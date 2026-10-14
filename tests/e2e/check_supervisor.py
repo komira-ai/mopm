@@ -32,7 +32,8 @@ EXPECTED = [
     (V + "::test_spin_forever", "timeout", {"timeout": "slow", "signal_name": "SIGKILL", "ms": (6000, 9000)}),
     (V + "::test_exits_early", "fail", {"exit_code": 0, "message_has": "no PASS line"}),
 ]
-SUMMARY = {"tests": 13, "pass": 5, "fail": 3, "crash": 2, "timeout": 2, "oom": 1, "compile_error": 0}
+SUMMARY = {"tests": 13, "pass": 5, "fail": 3, "crash": 2, "timeout": 2, "oom": 1, "compile_error": 0,
+           "flaky": 0, "skip": 0, "filtered_out": 0}
 JUNIT_TYPE = {"fail": ("failure", "FAIL"), "crash": ("error", "CRASH"), "timeout": ("error", "TIMEOUT"), "oom": ("error", "OOM")}
 
 failures = 0
@@ -62,7 +63,8 @@ def main():
     check(got_ids == want_ids, "json: exactly the expected tests, in order (got %r)" % got_ids)
     by_id = {t.get("id"): t for t in tests}
     keys = {"id", "file", "name", "status", "ms", "cpu_ms", "peak_rss_bytes", "exit_code", "signal",
-            "signal_name", "timeout", "leftover_processes", "message", "stdout", "stderr"}
+            "signal_name", "timeout", "leftover_processes", "message", "stdout", "stderr",
+            "ignore", "binary_sha256", "attempts"}
     for tid, status, extra in EXPECTED:
         t = by_id.get(tid)
         if t is None:
@@ -72,6 +74,13 @@ def main():
         check(t.get("status") == status, "%s: status %s (got %s: %s)" % (tid, status, t.get("status"), t.get("message")))
         check(t.get("file") + "::" + t.get("name") == tid, "%s: file and name" % tid)
         check(t.get("leftover_processes") is False, "%s: no leftover processes" % tid)
+        # No --retries: exactly one attempt, and the test's fields are its fields.
+        att = t.get("attempts") or []
+        check(len(att) == 1 and att[0].get("attempt") == 1 and att[0].get("status") == status
+              and all(att[0].get(k) == t.get(k) for k in ("exit_code", "signal", "timeout", "message", "stdout", "stderr")),
+              "%s: one attempt, the same as the test (got %r)" % (tid, att))
+        sha = t.get("binary_sha256")
+        check(isinstance(sha, str) and len(sha) == 64, "%s: binary_sha256 is a sha256 (got %r)" % (tid, sha))
         check(isinstance(t.get("ms"), int) and isinstance(t.get("cpu_ms"), int), "%s: ms and cpu_ms are integers" % tid)
         check((status == "pass") == (t.get("message") == ""), "%s: a message exactly when it did not pass" % tid)
         for k, v in extra.items():

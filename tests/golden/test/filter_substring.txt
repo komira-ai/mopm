@@ -1,0 +1,3 @@
+tests/e2e/flaky/tests/sub/test_more.mojo::test_alpha_one
+tests/e2e/flaky/tests/test_names.mojo::test_alpha_one
+tests/e2e/flaky/tests/test_names.mojo::test_alpha_two

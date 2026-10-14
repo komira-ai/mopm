@@ -120,3 +120,6 @@ jobs:
           pixi install --manifest-path "$RUNNER_TEMP/mojo-env/pixi.toml"
       - name: mopm test runs the fixtures; exact verdicts, JSON, JUnit, supervisor self-test
         run: tests/e2e/test_supervisor.sh ./zig-out/bin/mopm "$RUNNER_TEMP/mojo-env/.pixi/envs/default" "$RUNNER_TEMP/test-supervisor"
+      - name: mopm test --retries, --deny-flaky and filters on deterministic flaky fixtures
+        if: ${{ !cancelled() }}
+        run: tests/e2e/test_flaky.sh ./zig-out/bin/mopm "$RUNNER_TEMP/mojo-env/.pixi/envs/default" "$RUNNER_TEMP/test-flaky"
