@@ -90,7 +90,7 @@ pub fn construct(arena: Allocator, req: Request, p: link_planner.Plan) Allocator
         },
         .repl => {
             if (p.preload.len > 0) {
-                const libs = try std.mem.join(arena, ":", p.preload);
+                const libs = try std.mem.join(arena, ":", if (p.preload.len > 1) p.preload[0 .. p.preload.len - 1] else p.preload); // MUTANT: one transitive library dropped
                 try argv.append("-O");
                 try argv.append(try std.fmt.allocPrint(
                     arena,
