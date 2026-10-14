@@ -57,6 +57,21 @@ describe('search results', () => {
     expect(text(out)).toContain('no release');
   });
 
+  test.each([
+    ['empty', ''],
+    ['over 512 characters', 'a'.repeat(513)],
+  ])('a next_cursor from the server that is %s gives no Next link', (_what, cursor) => {
+    const out = html(searchResultsView(sdoc, { q: 'http', sort: 'name' }, { ...listFixture('search by prefix'), next_cursor: cursor }));
+    expect(text(out)).not.toContain('Next page');
+    expect(hrefs(out).filter((h) => h.includes('cursor='))).toEqual([]);
+  });
+
+  test('a next_cursor of 512 characters gives a Next link carrying it', () => {
+    const cursor = 'a'.repeat(512);
+    const out = html(searchResultsView(sdoc, { q: 'http', sort: 'name' }, { ...listFixture('search by prefix'), next_cursor: cursor }));
+    expect(hrefs(out)).toContain(`/search?q=http&cursor=${cursor}`);
+  });
+
   test('the form carries q and sort but never the cursor (a new query starts at page one)', () => {
     const out = html(searchResultsView(sdoc, { q: 'http', sort: 'updated', cursor: 'abc' }, { packages: [], next_cursor: null }));
     expect(out).toContain('name="q" type="search" value="http"');
@@ -102,7 +117,8 @@ describe('search errors', () => {
     const out = html(searchErrorView(sdoc, { q: 'a', sort: 'name' }, networkError()));
     expect(out).toContain('role="alert"');
     expect(out).toContain('<button type="button" class="button retry">Retry</button>');
-    expect(out.indexOf('<form')).toBeLessThan(out.indexOf('role="alert"'));
+    expect(out).toContain('<form class="search-form"');
+    expect(out.indexOf('<form class="search-form"')).toBeLessThan(out.indexOf('role="alert"'));
   });
 });
 
@@ -118,6 +134,12 @@ describe('shared views', () => {
     expect(out).toContain('&lt;b&gt;boom&lt;/b&gt;');
     expect(out).toContain('<code>abc-123</code>');
     expect(out).toContain('class="button retry"');
+  });
+
+  test('error: the server hint is shown as text when there is one', () => {
+    const err = fromResponse(429, JSON.stringify({ error: { code: 'rate_limited', message: 'Slow down.', hint: 'Wait <1 minute>.' } }), null);
+    const out = html(errorView(sdoc, err));
+    expect(out).toContain('<p class="detail">Wait &lt;1 minute&gt;.</p>');
   });
 
   test('not found: noindex, and a way on', () => {

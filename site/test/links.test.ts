@@ -2,7 +2,7 @@
 // stay on the site (also when named by file name or repo path from the other doc), any other repo path goes to
 // GitHub, and anything resolving outside the repo is text. Schemes are matched case-insensitively.
 // In a readme, only absolute links and in-page fragments survive.
-import { internalHref, safeHref } from '../src/links';
+import { internalHref, safeHref, webHref } from '../src/links';
 
 const blob = (p: string) => `https://github.com/komira-ai/mopm/blob/main/${p}`;
 const docs = (source: string) => ({ mode: 'docs', idPrefix: '', source }) as const;
@@ -59,4 +59,20 @@ test('internalHref accepts same-site paths only', () => {
   for (const bad of ['//evil', '/\\evil', 'https://mopm.dev', 'packages/ab', '/\t/evil', '']) {
     expect(() => internalHref(bad)).toThrow();
   }
+});
+
+describe('webHref (repository and homepage values from the API)', () => {
+  test.each([
+    ['https://github.com/example/x', 'https://github.com/example/x'],
+    ['HTTP://Example.com', 'http://example.com/'],
+  ])('%s is a link to %s', (raw, want) => {
+    expect(webHref(raw)).toBe(want);
+  });
+
+  test.each(['mailto:a@example.com', '#readme', 'javascript:alert(1)', 'data:text/html,x', 'ftp://example.com/', 'example.com', '//example.com'])(
+    '%s is not a link',
+    (raw) => {
+      expect(webHref(raw)).toBeNull();
+    },
+  );
 });

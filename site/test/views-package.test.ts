@@ -115,6 +115,13 @@ describe('package shapes the fixtures do not cover', () => {
     expect(hrefs(out).filter((h) => !h.startsWith('/') && !h.startsWith('https://github.com/example/'))).toEqual([]);
   });
 
+  test('a mailto: or fragment repository or homepage is text, though readme links may use them', () => {
+    const out = render(packageFixture((r) => Object.assign(r, { repository: 'mailto:a@example.com', homepage: '#readme' })));
+    expect(out).toContain('<span>mailto:a@example.com</span>');
+    expect(out).toContain('<span>#readme</span>');
+    expect(hrefs(out).filter((h) => h.startsWith('mailto:') || h.startsWith('#'))).toEqual([]);
+  });
+
   test('keywords are text', () => {
     const out = render(packageFixture((r) => Object.assign(r, { keywords: ['http', '<b>x</b>'] })));
     expect(out).toContain('<li>http</li><li>&lt;b&gt;x&lt;/b&gt;</li>');
