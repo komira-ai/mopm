@@ -18,7 +18,7 @@ export interface View<N> {
   nodes: N[];
   /** A page that is not a real package or version: search engines should not index it. */
   noindex?: boolean;
-  /** The address the page should show (the published spelling of a version, a normalised search). */
+  /** The address the page should show (the version the registry returned, a normalised search). */
   canonicalPath?: string;
   /** A search page's q, for the header search field. */
   searchQ?: string;

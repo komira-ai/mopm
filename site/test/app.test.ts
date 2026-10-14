@@ -101,10 +101,10 @@ describe('package', () => {
 });
 
 describe('version', () => {
-  test('one getVersion call; the address becomes the published spelling', async () => {
+  test('one getVersion call; the address is the version as published', async () => {
     const { api, calls } = fake({ version: ok(versionFixture('version detail')) });
-    const view = await appView(sdoc, '/packages/http_client/0.4', '', api, HOST);
-    expect(calls).toEqual([['getVersion', 'http_client', '0.4']]);
+    const view = await appView(sdoc, '/packages/http_client/0.4.0', '', api, HOST);
+    expect(calls).toEqual([['getVersion', 'http_client', '0.4.0']]);
     expect(view.canonicalPath).toBe('/packages/http_client/0.4.0');
   });
 
@@ -123,6 +123,29 @@ describe('version', () => {
     expect(hrefs(html(view))).toContain('/packages/http_client');
   });
 
+  // routes.ts sends the API only names and versions its grammar accepts, so these answers mean the site's grammar and
+  // the API's disagree. Retrying cannot help, so the reader gets the not-found page (noindex, no Retry).
+  test.each([
+    ['/packages/http_client/1.0.0', 'invalid_version', 'Version not found'],
+    ['/packages/http_client/1.0.0', 'invalid_name', 'Package not found'],
+    ['/packages/http_client', 'invalid_name', 'Package not found'],
+  ])('%s answered 400 %s: "%s", noindex, no Retry', async (path, code, title) => {
+    const bad = fromResponse(400, JSON.stringify({ error: { code, message: 'Not valid.', hint: '' } }), 'req-4');
+    const { api } = fake({ version: bad, pkg: bad });
+    const view = await appView(sdoc, path, '', api, HOST);
+    expect(view.title).toBe(title);
+    expect(view.noindex).toBe(true);
+    expect(html(view)).not.toContain('Retry');
+    expect(html(view)).not.toContain('role="alert"');
+  });
+
+  test('another 400 (invalid_request) is still the error view', async () => {
+    const bad = fromResponse(400, JSON.stringify({ error: { code: 'invalid_request', message: 'x', hint: '' } }), 'req-4');
+    const { api } = fake({ version: bad, pkg: bad });
+    expect((await appView(sdoc, '/packages/http_client/1.0.0', '', api, HOST)).title).toBe('Something went wrong');
+    expect((await appView(sdoc, '/packages/http_client', '', api, HOST)).title).toBe('Something went wrong');
+  });
+
   test('a network failure: the error view, not a not-found', async () => {
     const { api } = fake();
     const view = await appView(sdoc, '/packages/http_client/1.0.0', '', api, HOST);
@@ -131,7 +154,7 @@ describe('version', () => {
 });
 
 describe('no call at all', () => {
-  test.each(['/', '/packages/Foo', '/packages/a', '/packages/x/v1', '/app.html', '/search/x'])('%s is not an app route', async (path) => {
+  test.each(['/', '/packages/Foo', '/packages/a', '/packages/x/v1', '/packages/xy/1.0', '/packages/xy/1.0rc1', '/packages/xy/1.0.0.0', '/app.html', '/search/x'])('%s is not an app route', async (path) => {
     const { api, calls } = fake();
     const view = await appView(sdoc, path, '', api, HOST);
     expect(calls).toEqual([]);

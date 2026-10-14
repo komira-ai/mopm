@@ -2,7 +2,8 @@
 //
 // The shapes: a claimed name with nothing published; a package state this page does not know, or an active package
 // with no published version (every one yanked or tombstoned), with no install lines; an active package whose
-// published versions are all pre-releases (no latest release, so no mopm.toml line); and the normal page. Every value from the API is shown as text; the repository
+// latest the page cannot show (null, or a string outside the version grammar: no mopm.toml line, and the page says
+// why); and the normal page. Every value from the API is shown as text; the repository
 // and homepage are links only when links.ts accepts them as http(s); versions link only when they match the grammar.
 // The readme is untrusted Markdown, rendered by the restricted renderer with 'readme-' ids (the page's own ids never
 // start with 'readme-', so no readme heading can take one), its headings two levels down: a readme '# Title' is an h3
@@ -157,7 +158,7 @@ export function packageView<N>(doc: Doc<N>, name: string, info: PackageInfo, ctx
         manifest !== null
           ? null
           : latest === null
-            ? 'There is no latest release: no published version without a pre-release suffix.'
+            ? 'The registry names no latest version this page can show, so there is no mopm.toml line.'
             : refusalSentence(`The latest version, ${latest},`, latest);
       doc.append(main, installSection(doc, name, manifest, ctx, why));
     }

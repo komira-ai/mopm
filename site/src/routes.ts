@@ -6,8 +6,12 @@
 
 /** The registry's package name (spec Name, router NAME): 2 to 64 characters. */
 export const NAME = /^[a-z][a-z0-9_]{1,63}$/;
-/** The registry's version grammar (spec Version); the server also caps its length at VERSION_MAX. */
-export const VERSION = /^(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))*((a|b|rc|dev)(0|[1-9][0-9]*))?$/;
+/**
+ * The registry's version grammar (spec Version): MAJOR.MINOR.PATCH, no leading zeros, no suffix. One version has one
+ * spelling, so '1.0' or '1.0.0.0' is not a version route (the API would refuse it). The server caps the length at
+ * VERSION_MAX.
+ */
+export const VERSION = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
 export const VERSION_MAX = 128;
 
 export function isName(s: string): boolean {

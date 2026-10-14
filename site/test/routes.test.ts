@@ -41,7 +41,7 @@ test('the vectors cover the edge cases the plan names', () => {
   const paths = V.map((v) => v.path);
   const named = [
     '/packages/Foo', '/packages/foo__bar', '/packages/foo__bar/1.0', '/packages/a', '/packages/ab/v1',
-    '/packages/ab/1.0/extra', '/docs/../x',
+    '/packages/ab/1.0/extra', '/docs/../x', '/packages/ab/1.0', '/packages/ab/1.0.0.0', '/packages/ab/1.0rc1',
   ];
   for (const p of named) {
     expect(paths).toContain(p);
@@ -58,8 +58,12 @@ test('names and versions', () => {
   expect(isName('x'.repeat(64))).toBe(true);
   expect(isName('x'.repeat(65))).toBe(false);
   expect(isName('xhttp\n')).toBe(false);
-  expect(isVersion('1.0rc1')).toBe(true);
-  expect(isVersion('1.0.0-beta.1')).toBe(false);
+  // spec Version: MAJOR.MINOR.PATCH, no leading zeros, no suffix, no shorter or longer spelling.
+  expect(isVersion('1.0.0')).toBe(true);
+  expect(isVersion('0.0.0')).toBe(true);
+  for (const v of ['1', '1.0', '1.0.0.0', '1.0rc1', '2.0dev3', '1.0.0-beta.1', '1.0.0+local', '01.0.0', '1.00.0', '1.0.00', '1.0.0\n']) {
+    expect([v, isVersion(v)]).toEqual([v, false]);
+  }
   expect(normaliseName('HTTP--Client.v2')).toBe('http_client_v2');
   expect(normaliseName('foo__bar')).toBe('foo_bar');
   expect(isCanonicalName('foo_bar')).toBe(true);

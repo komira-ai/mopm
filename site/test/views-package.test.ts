@@ -67,12 +67,14 @@ describe('package shapes the fixtures do not cover', () => {
   });
 
   const AT = '2026-10-13T12:00:00Z';
-  test('active with only pre-releases published: no mopm.toml line, a reason, the channel and pixi shown', () => {
+  // The spec makes latest the newest published version, so a null latest beside a published version is a contract
+  // break; the page still offers the channel and pixi, which do not depend on latest.
+  test('active with a published version but no latest: no mopm.toml line, a reason, the channel and pixi shown', () => {
     const out = render(
-      packageFixture((r) => Object.assign(r, { latest: null, versions: [{ version: '1.0.0-rc.1', state: 'published', published_at: AT }] })),
+      packageFixture((r) => Object.assign(r, { latest: null, versions: [{ version: '1.0.0', state: 'published', published_at: AT }] })),
     );
     expect(out).not.toContain('[dependencies]');
-    expect(text(out)).toContain('There is no latest release');
+    expect(text(out)).toContain('The registry names no latest version this page can show, so there is no mopm.toml line.');
     expect(out).toContain('<code>https://conda.mopm.dev/</code>');
     expect(out).toContain('<code>pixi add mojo-http_client</code>');
   });
@@ -98,13 +100,20 @@ describe('package shapes the fixtures do not cover', () => {
     expect(out).toContain('<table>');
   });
 
-  test.each([
-    ['1.2.3.4', 'has more than three numeric parts'],
-    ['1.0rc1', 'has a conda pre-release suffix'],
-  ])('latest %s: no mopm.toml line, the reason (%s), pixi still shown', (v, why) => {
+  test('latest with a part over 2^64-1: no mopm.toml line, the reason, pixi still shown', () => {
+    const v = '1.18446744073709551616.0';
     const out = render(packageFixture((r) => Object.assign(r, { latest: v })));
     expect(out).not.toContain('[dependencies]');
-    expect(text(out)).toContain(`The latest version, ${v}, ${why}`);
+    expect(text(out)).toContain(`The latest version, ${v}, has a part larger than a mopm.toml requirement allows (2^64-1).`);
+    expect(out).toContain('<code>pixi add mojo-http_client</code>');
+  });
+
+  test.each(['1.0', '1.0rc1'])('latest %s (outside the grammar): no mopm.toml line, not shown as the latest, pixi still shown', (v) => {
+    const out = render(packageFixture((r) => Object.assign(r, { latest: v })));
+    expect(out).not.toContain('[dependencies]');
+    expect(render()).toContain('latest version </span>0.4.0'); // the marker the next line looks for
+    expect(out).not.toContain('latest version </span>');
+    expect(text(out)).toContain('The registry names no latest version this page can show');
     expect(out).toContain('<code>pixi add mojo-http_client</code>');
   });
 

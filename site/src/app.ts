@@ -14,6 +14,14 @@ import { packageView } from './views/package.js';
 import { readSearch, searchErrorView, searchResultsView, searchTooLongView } from './views/search.js';
 import { versionView } from './views/version.js';
 
+/**
+ * The API refused the route's name. routes.ts sends only names the spec grammar accepts, so this means the two
+ * grammars disagree: nothing is at this address and a Retry cannot help, so the page is the not-found one.
+ */
+function refusedName(r: { kind: string; code?: string }): boolean {
+  return r.kind === 'invalid' && r.code === 'invalid_name';
+}
+
 /** `pathname` and `search` are location's; `api` is null on a host outside the table; `host` is location.hostname. */
 export async function appView<N>(doc: Doc<N>, pathname: string, search: string, api: Client | null, host: string): Promise<View<N>> {
   const route = parseRoute(pathname);
@@ -31,11 +39,13 @@ export async function appView<N>(doc: Doc<N>, pathname: string, search: string, 
     case 'package': {
       const r = await api.getPackage(route.name);
       if (r.kind === 'ok') return packageView(doc, route.name, r.value, ctx);
-      return r.kind === 'notFound' ? notFoundView(doc, route.name) : errorView(doc, r);
+      return r.kind === 'notFound' || refusedName(r) ? notFoundView(doc, route.name) : errorView(doc, r);
     }
     case 'version': {
       const r = await api.getVersion(route.name, route.version);
       if (r.kind === 'ok') return versionView(doc, route.name, r.value, ctx);
+      if (refusedName(r)) return notFoundView(doc, route.name);
+      if (r.kind === 'invalid' && r.code === 'invalid_version') return notFoundView(doc, route.name, route.version);
       if (r.kind !== 'notFound') return errorView(doc, r);
       // The API says which is missing: the package, or only this version of it.
       return r.code === 'package_not_found' ? notFoundView(doc, route.name) : notFoundView(doc, route.name, route.version);

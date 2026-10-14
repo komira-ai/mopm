@@ -1,7 +1,7 @@
 // T14 (version page): yanked and tombstoned versions over the contract fixtures; a download link only for a published
 // or yanked version and only to the conda channel of the host the page is served on (a tombstoned version never gets
 // one, even if a url came with it); a pinned mopm.toml line only for a published version; dependencies link only when
-// their name is valid; the address shows the published spelling.
+// their name is valid; the address shows the version the registry returned.
 import { versionView } from '../src/views/version';
 import { hrefs, html, sdoc, text, uniqueIds, versionFixture } from './view-helpers';
 
@@ -161,32 +161,32 @@ describe('names, spellings and unknown values', () => {
     expect(hrefs(out).filter((h) => h.startsWith('/packages/') && h !== '/packages/http_client')).toEqual([]);
   });
 
-  test('the address becomes the published spelling', () => {
+  test('the address is the version the registry returned', () => {
     const view = render(versionFixture('version detail', (r) => Object.assign(r, { version: '1.0.0' })));
     expect(view.canonicalPath).toBe('/packages/http_client/1.0.0');
   });
 
-  test('a published spelling outside the grammar is not put in the address', () => {
+  test('a returned version outside the grammar is not put in the address', () => {
     const view = render(versionFixture('version detail', (r) => Object.assign(r, { version: '../../x' })));
     expect(view.canonicalPath).toBeUndefined();
     expect(html(view)).not.toContain('[dependencies]');
   });
 
-  test('a published 1.0rc1 gets no pinned line, and the reason is its suffix', () => {
-    const out = html(render(versionFixture('version detail', (r) => Object.assign(r, { version: '1.0rc1' }))));
-    expect(out).not.toContain('[dependencies]');
-    expect(text(out)).toContain('Version 1.0rc1 has a conda pre-release suffix, which a mopm.toml requirement cannot name.');
-    expect(text(out)).not.toContain('three numeric parts');
+  test.each(['1.0', '1.0rc1', '1.2.3.4'])('a published %s (outside the grammar) gets no pinned line and no install section', (v) => {
+    const view = render(versionFixture('version detail', (r) => Object.assign(r, { version: v })));
+    expect(html(view)).not.toContain('[dependencies]');
+    expect(html(view)).not.toContain('pixi add');
+    expect(view.canonicalPath).toBeUndefined();
   });
 
-  test('a published 1.2.3.4 gets no pinned line, and the reason is its four parts', () => {
-    const out = html(render(versionFixture('version detail', (r) => Object.assign(r, { version: '1.2.3.4' }))));
+  test('a published version with a part over 2^64-1 gets no pinned line, and says why', () => {
+    const out = html(render(versionFixture('version detail', (r) => Object.assign(r, { version: '1.18446744073709551616.0' }))));
     expect(out).not.toContain('[dependencies]');
-    expect(text(out)).toContain('Version 1.2.3.4 has more than three numeric parts');
+    expect(text(out)).toContain('Version 1.18446744073709551616.0 has a part larger than a mopm.toml requirement allows (2^64-1).');
   });
 
-  test('a published two-part version is pinned on all three parts', () => {
-    const out = html(render(versionFixture('version detail', (r) => Object.assign(r, { version: '1.2' }))));
+  test('a published version is pinned as written', () => {
+    const out = html(render(versionFixture('version detail', (r) => Object.assign(r, { version: '1.2.0' }))));
     expect(out).toContain('<code>[dependencies]\nhttp_client = "=1.2.0"</code>');
   });
 });

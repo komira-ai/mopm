@@ -1,7 +1,7 @@
 // /packages/<name>/<version>: one version (getVersion).
 //
-// The API finds any equal spelling ('1.0' for '1.0.0') and answers with the published one, which becomes the page's
-// address (canonicalPath; main.ts rewrites it without a reload). A yanked version says why; a tombstoned one says its
+// One version has one spelling (spec Version), so the API answers only for the address's own spelling; the version it
+// returns is the page's address (canonicalPath; mount.ts writes it without a reload, a no-op when they agree). A yanked version says why; a tombstoned one says its
 // files were removed, and never gets a download link, even if a url came with it. A file links only to the conda
 // channel of the site the page is served on, and only for a published or yanked version. A dependency links only when
 // its name is a valid package name.
@@ -112,7 +112,7 @@ function nativeList<N>(doc: Doc<N>, v: VersionDetail): N | null {
 }
 
 export function versionView<N>(doc: Doc<N>, name: string, v: VersionDetail, ctx: PageContext): View<N> {
-  // The address shows the spelling the registry published (the route matched it under conda equality).
+  // The address shows the version the registry returned, when it is in the grammar.
   const spelling = isVersion(v.version) ? v.version : null;
   const shown = spelling ?? v.version;
   const head = h(
