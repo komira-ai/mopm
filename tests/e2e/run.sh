@@ -52,6 +52,18 @@ die() {
     exit 1
 }
 
+# macOS 14 (Darwin 23): the debugserver in the mojo 1.0.0 package crashes
+# (SIGSEGV in dyld4::FileRecord::getPath) when the REPL starts, and the REPL
+# then prints "couldn't find a REPL for mojo". Point lldb at Xcode's
+# debugserver there; macOS 15 runs the packaged one. This is the toolchain on
+# this OS, not mopm: mopm passes the variable through like any other.
+if [ "$os" = macos ] && [ "$(uname -r | cut -d. -f1)" -le 23 ]; then
+    LLDB_DEBUGSERVER_PATH=$(xcode-select -p)/../SharedFrameworks/LLDB.framework/Versions/A/Resources/debugserver
+    [ -x "$LLDB_DEBUGSERVER_PATH" ] || die "macOS 14: no Xcode debugserver at $LLDB_DEBUGSERVER_PATH"
+    export LLDB_DEBUGSERVER_PATH
+    echo "note: macOS 14, LLDB_DEBUGSERVER_PATH=$LLDB_DEBUGSERVER_PATH"
+fi
+
 mojo_real() {
     MODULAR_HOME="$mojo_env/share/max" "$mojo_env/bin/mojo" "$@"
 }
@@ -131,12 +143,17 @@ expect() {
         grep -q "$want" "$3" || { echo "     no '$want' in the output"; ok=0; }
     done
     if [ "$ok" -eq 1 ]; then
-        echo "ok   $1"
+        echo "ok   $1; output:"
     else
         echo "FAIL $1; output:"
-        sed 's/^/     | /' "$3"
         fail=1
     fi
+    show "$3"
+}
+
+# show <file>: the output, without the toolchain's crash-reporter notice.
+show() {
+    grep -v "Failed to initialize Crashpad" "$1" | sed 's/^/     | /'
 }
 
 # refuse <label> <exit code> <output file> <must fail: 1|0>: none of the
@@ -154,12 +171,12 @@ refuse() {
         fi
     done
     if [ "$ok" -eq 1 ]; then
-        echo "ok   $1"
+        echo "ok   $1; output:"
     else
         echo "FAIL $1; output:"
-        sed 's/^/     | /' "$3"
         fail=1
     fi
+    show "$3"
 }
 
 # layout <name> <prefix>: build, run and repl through mopm.
@@ -181,7 +198,7 @@ layout() {
     rc=$?
     if [ "$rc" -ne 0 ]; then
         echo "FAIL $name: mopm build exit $rc; output:"
-        sed 's/^/     | /' "$out/build.log"
+        show "$out/build.log"
         fail=1
     else
         env -i "$out/prog" > "$out/binary.log" 2>&1
