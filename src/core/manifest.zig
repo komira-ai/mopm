@@ -94,6 +94,28 @@ fn isOneOf(word: []const u8, list: []const []const u8) bool {
     return false;
 }
 
+/// Why `name` cannot name a package (or a Mojo dependency), or null if it can:
+/// a package name is a lowercase identifier that is not a Mojo keyword or
+/// builtin. `what` starts the message ("package name").
+pub fn nameProblem(arena: Allocator, what: []const u8, name: []const u8) Allocator.Error!?[]const u8 {
+    if (name.len == 0) return try std.fmt.allocPrint(arena, "{s} is empty", .{what});
+    if (!std.ascii.isLower(name[0])) {
+        return try std.fmt.allocPrint(arena, "{s} '{s}' must start with a lowercase letter", .{ what, name });
+    }
+    for (name) |b| {
+        if (!std.ascii.isLower(b) and !std.ascii.isDigit(b) and b != '_') {
+            return try std.fmt.allocPrint(arena, "{s} '{s}' may contain only lowercase letters, digits and '_'", .{ what, name });
+        }
+    }
+    if (isOneOf(name, &keywords)) {
+        return try std.fmt.allocPrint(arena, "{s} '{s}' is a Mojo keyword; choose another name", .{ what, name });
+    }
+    if (isOneOf(name, &builtins)) {
+        return try std.fmt.allocPrint(arena, "{s} '{s}' would shadow the Mojo builtin '{s}'; choose another name", .{ what, name, name });
+    }
+    return null;
+}
+
 /// Parses and checks a mopm.toml, or fails with `diag` set.
 pub fn parse(arena: Allocator, src: []const u8, diag: *Diagnostic) Error!Manifest {
     const root = try toml.parse(arena, src, diag);
@@ -153,22 +175,8 @@ const Checker = struct {
         return try out.toOwnedSlice();
     }
 
-    /// A package (or Mojo dependency) name: a lowercase identifier that is not
-    /// a Mojo keyword or builtin.
     fn packageName(c: *Checker, name: []const u8, at: toml.Pos, what: []const u8) Error!void {
-        if (name.len == 0) return c.fail(at, "{s} is empty", .{what});
-        if (!std.ascii.isLower(name[0])) {
-            return c.fail(at, "{s} '{s}' must start with a lowercase letter", .{ what, name });
-        }
-        for (name) |b| {
-            if (!std.ascii.isLower(b) and !std.ascii.isDigit(b) and b != '_') {
-                return c.fail(at, "{s} '{s}' may contain only lowercase letters, digits and '_'", .{ what, name });
-            }
-        }
-        if (isOneOf(name, &keywords)) return c.fail(at, "{s} '{s}' is a Mojo keyword; choose another name", .{ what, name });
-        if (isOneOf(name, &builtins)) {
-            return c.fail(at, "{s} '{s}' would shadow the Mojo builtin '{s}'; choose another name", .{ what, name, name });
-        }
+        if (try nameProblem(c.arena, what, name)) |message| return c.fail(at, "{s}", .{message});
     }
 
     fn manifest(c: *Checker, root: Table) Error!Manifest {

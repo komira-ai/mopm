@@ -23,6 +23,15 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_cmd.addArgs(args);
     b.step("run", "Run the mopm CLI").dependOn(&run_cmd.step);
 
+    // The fake registry the CLI is tested against (registry/fake/README.md).
+    const fake = b.addExecutable(.{
+        .name = "mopm-fake-registry",
+        .root_source_file = b.path("registry/fake/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    b.installArtifact(fake);
+
     // `zig build test` must be run from the repository root: the golden
     // tests read tests/fixtures and tests/golden relative to the cwd.
     const test_step = b.step("test", "Run all unit and golden tests");
@@ -41,4 +50,11 @@ pub fn build(b: *std.Build) void {
     });
     cli_tests.root_module.addImport("mopm_core", core);
     test_step.dependOn(&b.addRunArtifact(cli_tests).step);
+
+    const fake_tests = b.addTest(.{
+        .root_source_file = b.path("registry/fake/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    test_step.dependOn(&b.addRunArtifact(fake_tests).step);
 }

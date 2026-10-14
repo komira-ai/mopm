@@ -68,7 +68,16 @@ end
   end
 
   File.read(f).scan(/\bvars\.\w*(?:ACCOUNT|REGION|ARN)\w*/i) { |m| fail_.("#{f}: #{m}: account, region and role ARNs come from environment secrets, not vars") }
-  fail_.("#{f}: secrets: inherit is not allowed") if File.read(f) =~ /secrets:\s*inherit/
+  # Only promote.yml passes secrets to its reusable calls, and it must do so on every call:
+  # the called jobs read environment secrets, which a reusable workflow sees only when passed.
+  if base == "promote.yml"
+    jobs.each do |jn, job|
+      next unless job["uses"]
+      fail_.("#{f}: job #{jn} must set secrets: inherit (the called workflow reads environment secrets)") unless job["secrets"] == "inherit"
+    end
+  elsif File.read(f) =~ /secrets:\s*inherit/
+    fail_.("#{f}: secrets: inherit is not allowed outside promote.yml")
+  end
   # The privileged PR trigger is spelled in two pieces so hygiene.rb does not flag this file.
   ["pull_request_" + "target", "workflow_run", "issue_comment"].each do |t|
     on = doc["on"] || doc[true] || {}

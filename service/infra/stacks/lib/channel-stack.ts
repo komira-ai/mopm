@@ -6,8 +6,10 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as deploy from 'aws-cdk-lib/aws-s3-deployment';
 import { Construct } from 'constructs';
 import { StageConfig, channelBucketName } from './config';
+import { writeEmptyChannel } from './empty-channel';
 import { anyone, assertRegion, deleteAllowedRoleArns, lookupZone, notNamedRoles, removalPolicyFor } from './common';
 
 export interface ChannelStackProps extends StackProps {
@@ -123,6 +125,21 @@ export class ChannelStack extends Stack {
         '*/repodata*': { ...common, cachePolicy: repodataPolicy, compress: true },
         '*/current_repodata*': { ...common, cachePolicy: repodataPolicy, compress: true },
       },
+    });
+
+    // Seed each subdir with an empty, valid repodata so a fresh channel resolves (the private bucket answers 403 for
+    // a missing key). prune=false and retainOnDelete: never deletes published files (the bucket policy denies
+    // delete anyway). The sources are constant, so the custom resource only re-runs if they change; no
+    // invalidation is needed, repodata is cached for 60 seconds.
+    // WARNING: changing the channel seed re-runs the BucketDeployment and overwrites live repodata on every stage,
+    // including prod. The index writer must own repodata before any change here. This seeding is removed when the
+    // index writer lands (before the first real publish). empty-channel.test.ts pins the seed hashes.
+    new deploy.BucketDeployment(this, 'EmptyRepodata', {
+      destinationBucket: this.bucket,
+      sources: [deploy.Source.asset(writeEmptyChannel())],
+      prune: false,
+      retainOnDelete: true,
+      cacheControl: [deploy.CacheControl.fromString('max-age=60')],
     });
 
     const target = route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(this.distribution));

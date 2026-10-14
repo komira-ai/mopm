@@ -1,0 +1,10 @@
+name: fixture
+on: [workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  gate:
+    uses: ./.github/workflows/deploy.yml
+    with: { stage: beta }
+    permissions: { id-token: write, contents: read }
+

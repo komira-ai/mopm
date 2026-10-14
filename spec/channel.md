@@ -46,6 +46,16 @@ https://conda.<stage>.mopm.dev/
   `track_features` or `constrains`. `depends` only names other `mojo-*`
   packages, the exact compiler requirement, and native libraries from a
   maintained allow-list.
+- Dependency spelling in `depends`: the compiler is `mojo-compiler ==<exact>`
+  (for example `mojo-compiler ==1.0.0`, the version in the build string); a
+  native library uses its allow-list id as the conda package name (the id
+  `openssl` becomes the dependency `openssl`); another Mojo package is
+  `mojo-<name>` with its version constraint.
+- `removed` lists the file names (`mojo-<name>-<version>-<build>.conda`) of
+  both yanked and tombstoned (taken-down) versions of that subdir. A client
+  holding a lock that names a listed file learns from the list that the
+  version is no longer offered. The list is the same for either state; the
+  sparse index says which one it is.
 - The writer is deterministic: keys sorted, no timestamps, so the same set of
   versions always produces the same bytes.
 - `current_repodata.json` holds, per name, the newest non-yanked,
@@ -98,8 +108,13 @@ a violation as a corrupt package.
   removes the bytes. The URL then answers 410; a client treats 403 and 404
   from the channel host as "unavailable" too. The sparse index line changes to
   `state: tombstoned` with a reason code, and the version is added to
-  `/index/takedowns.json`. `mopm` shows the reason for a locked version; a
+  `/index/takedowns.json`. Its file is also listed under `removed` in
+  `repodata.json`, like a yanked one. `mopm` shows the reason for a locked version; a
   plain conda client only sees the error.
+- **State changes are one way where it matters.** A version is `published`
+  or `yanked` and can move between the two; a pending version cannot be
+  yanked; a tombstoned version never changes. The registry refuses any other
+  change with `invalid_transition` (HTTP 409).
 - **A number is never reused.** A rejected or taken-down version cannot be
   published again with different bytes.
 - Repodata and index files are the only mutable objects. They have a short
