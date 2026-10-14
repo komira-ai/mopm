@@ -30,7 +30,7 @@ describe('authentication and scope of the publish routes', () => {
   test('an expired token and a revoked token are 401 with their own codes', async () => {
     const h = new Harness();
     const me = await h.account(1, 'a', ['demo']);
-    const [revoked] = (await h.authStore.listTokens(1)).map((t) => t.id);
+    const [revoked] = (await h.authStore.listTokens(1)).map((t) => t.hash);
     await h.authStore.revokeToken(revoked!, '2026-10-14T12:00:00Z');
     expect(err(await begin(h, me.token)).code).toBe('token_revoked');
 

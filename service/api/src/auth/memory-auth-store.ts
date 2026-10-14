@@ -27,19 +27,23 @@ export class MemoryAuthStore implements AuthStore {
     for (const t of this.tokens.values()) if (t.hash === hash) return copy(t);
     return undefined;
   }
-  async getToken(id: string) {
+  async getUserToken(github_id: number, id: string) {
     const t = this.tokens.get(id);
-    return t && copy(t);
+    return t && t.github_id === github_id ? copy(t) : undefined;
   }
   async listTokens(github_id: number) {
     return [...this.tokens.values()].filter((t) => t.github_id === github_id).map(copy);
   }
-  async revokeToken(id: string, at: string) {
-    const t = this.tokens.get(id);
+  private byHash(hash: string) {
+    for (const t of this.tokens.values()) if (t.hash === hash) return t;
+    return undefined;
+  }
+  async revokeToken(hash: string, at: string) {
+    const t = this.byHash(hash);
     if (t && !t.revoked_at) t.revoked_at = at;
   }
-  async touchToken(id: string, at: string) {
-    const t = this.tokens.get(id);
+  async touchToken(hash: string, at: string) {
+    const t = this.byHash(hash);
     if (t) t.last_used_at = at;
   }
 

@@ -1,6 +1,4 @@
-import type { TokenRecord } from '../../src/auth/types';
 import { DynamoPublishStore } from '../../src/publish/dynamo-publish-store';
-import { DynamoTokenReader, tokenFromItem, tokenToItem } from '../../src/publish/dynamo-tokens';
 import { AnyFlag, DynamoFlags, StaticFlags } from '../../src/publish/flags';
 import { MemoryPublishStore } from '../../src/publish/memory';
 import type { PublishStore } from '../../src/publish/ports';
@@ -177,49 +175,5 @@ describe('the read-only switch', () => {
   test('AnyFlag: either switch is enough; StaticFlags is fixed', async () => {
     expect(await new AnyFlag([new StaticFlags(false), new StaticFlags(false)]).readOnly()).toBe(false);
     expect(await new AnyFlag([new StaticFlags(false), new StaticFlags(true)]).readOnly()).toBe(true);
-  });
-});
-
-describe('DynamoTokenReader', () => {
-  const token: TokenRecord = {
-    id: 'tok_1',
-    kind: 'api',
-    github_id: 4242,
-    name: 'ci',
-    hash: 'f'.repeat(64),
-    prefix: 'mopm_abcdef',
-    scopes: ['publish'],
-    packages: ['demo'],
-    all_current: false,
-    created_at: '2026-10-14T12:00:00Z',
-    expires_at: '2026-11-14T12:00:00Z',
-  };
-
-  test('the row has a numeric TTL attribute and keeps the text expiry beside it; reading restores the record', () => {
-    const item = tokenToItem(token);
-    expect(item.token_hash).toBe(token.hash);
-    expect(item.expires_at).toBe(Date.parse(token.expires_at) / 1000);
-    expect(item.expires_at_iso).toBe(token.expires_at);
-    expect(tokenFromItem(item)).toEqual(token);
-    expect(Object.values(item).includes(undefined)).toBe(false);
-  });
-
-  test('lookup by hash; touching marks last_used_at on that row only, and never recreates a vanished row', async () => {
-    const doc = docFor();
-    const r = new DynamoTokenReader(doc, 't-tokens');
-    expect(await r.getTokenByHash(token.hash)).toBeUndefined();
-    doc.table('t-tokens').set(token.hash, tokenToItem(token));
-    expect(await r.getTokenByHash(token.hash)).toEqual(token);
-    await r.touchToken('tok_1', '2026-10-14T13:00:00Z');
-    expect(doc.table('t-tokens').get(token.hash)!.last_used_at).toBe('2026-10-14T13:00:00Z');
-    expect((await r.getTokenByHash(token.hash))?.last_used_at).toBe('2026-10-14T13:00:00Z');
-
-    // the row is deleted (TTL cleanup) between the lookup and the touch: no error, nothing written
-    doc.table('t-tokens').delete(token.hash);
-    await r.touchToken('tok_1', '2026-10-14T14:00:00Z');
-    expect(doc.table('t-tokens').size).toBe(0);
-    // an id never looked up is ignored
-    await r.touchToken('tok_unknown', '2026-10-14T14:00:00Z');
-    expect(doc.table('t-tokens').size).toBe(0);
   });
 });

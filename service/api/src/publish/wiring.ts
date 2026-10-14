@@ -1,11 +1,10 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { Authenticator } from '../auth';
+import { Authenticator, authTablesFor, DynamoAuthStore } from '../auth';
 import { DynamoStore, tablesFor } from '../dynamo-store';
 import { S3Channel, S3Presigner, SqsFifoQueue } from './aws';
 import { publishConfigFromEnv } from './config';
 import { DynamoPublishStore, publishTablesFor } from './dynamo-publish-store';
-import { DynamoTokenReader } from './dynamo-tokens';
 import { AnyFlag, DynamoFlags, StaticFlags } from './flags';
 import type { Flags } from './ports';
 import { PublishService } from './service';
@@ -49,5 +48,5 @@ export function publishApiFor(env: Env, doc: ReturnType<typeof documentClient>, 
     validateQueue: new SqsFifoQueue(queueUrl, { region }),
     config: publishConfigFromEnv(env),
   });
-  return { auth: new Authenticator({ store: new DynamoTokenReader(doc, t.tokens) }), service, flags };
+  return { auth: new Authenticator({ store: new DynamoAuthStore(doc, authTablesFor(stage)) }), service, flags };
 }
