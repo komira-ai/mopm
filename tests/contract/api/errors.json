@@ -777,7 +777,7 @@
         "body": {
           "error": {
             "code": "payload_too_large",
-            "message": "The file is larger than the limit of 52428800 bytes.",
+            "message": "The file is larger than the limit of 100000000 bytes.",
             "hint": "Reduce the package size."
           }
         }
