@@ -1,3 +1,4 @@
+import { RegistryError } from '../src/errors';
 import { applyEvent, IllegalTransition, type VersionEvent } from '../src/state';
 import type { VersionState } from '../src/types';
 import { rec } from './helpers';
@@ -52,7 +53,17 @@ describe('state machine', () => {
   });
 
   test('yank needs a reason', () => {
-    expect(() => applyEvent(at('published'), { type: 'yank', reason: '' })).toThrow(IllegalTransition);
+    let err: unknown;
+    try {
+      applyEvent(at('published'), { type: 'yank', reason: '' });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(RegistryError);
+    expect(err).not.toBeInstanceOf(IllegalTransition);
+    expect((err as RegistryError).code).toBe('invalid_request');
+    expect((err as RegistryError).status).toBe(400);
+    expect((err as RegistryError).message).toBe('A yank needs a reason.');
   });
 
   test('tombstone removes urls, keeps sha256 and drops a yank reason', () => {

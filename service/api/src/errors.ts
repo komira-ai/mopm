@@ -1,5 +1,6 @@
 /** The subset of the API's stable error codes (spec/api/openapi.yaml, x-mopm-errors) this package raises. */
 export type ErrorCode =
+  | 'invalid_request'
   | 'invalid_version'
   | 'version_exists'
   | 'version_not_found'
@@ -11,6 +12,7 @@ export type ErrorCode =
   | 'internal_error';
 
 export const HTTP_STATUS: Record<ErrorCode, number> = {
+  invalid_request: 400,
   invalid_version: 400,
   version_exists: 409,
   version_not_found: 404,

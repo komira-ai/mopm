@@ -42,7 +42,7 @@ export function applyEvent(rec: VersionRecord, ev: VersionEvent): VersionRecord 
       if (ev.type === 'publish') return rec;
       if (ev.type === 'unyank') throw new IllegalTransition(rec, ev);
       if (ev.type === 'yank') {
-        if (ev.reason.length === 0) throw new IllegalTransition(rec, ev);
+        if (ev.reason.length === 0) throw new RegistryError('invalid_request', 'A yank needs a reason.', { detail: 'a yank needs a reason' });
         return next({ state: 'yanked', yank_reason: ev.reason });
       }
       return tombstoned(rec, ev, next);
