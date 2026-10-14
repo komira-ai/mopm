@@ -1,0 +1,33 @@
+# The example of spec/mopm-toml.md.
+[package]
+name = "http_client"          # the import name and the registry name
+version = "0.4.0"
+description = "HTTP/1.1 client"
+license = "Apache-2.0"
+repository = "https://github.com/example/http_client"
+readme = "README.md"
+
+[toolchain]
+mojo = "1.0.0"                # exact compiler version(s); a .mojoc is tied to one
+
+[dependencies]                # Mojo packages
+http_core = "1.2"
+tls = { version = "0.9" }
+local_util = { path = "../local_util" }   # co-development only; not publishable
+
+[native-dependencies]         # non-Mojo libraries the package links
+zlib = { version = ">=1.2", kind = "shared" }
+
+[dev-dependencies]            # only for tests and tooling
+mopm_test = "0.1"
+
+[native.curl_shim]            # a native library this package ships
+kind = "shared"               # shared | static | both
+mode = "link"                 # link (mopm computes flags) | load (self-loads)
+build = "cmake -S native -B out && cmake --build out"
+outputs = ["out/libcurl_shim.so.1"]
+
+[targets]                     # what to build
+lib = { path = "src/http_client" }
+bins = [{ name = "fetch", path = "src/fetch.mojo" }]
+tests = ["tests"]

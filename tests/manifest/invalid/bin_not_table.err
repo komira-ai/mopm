@@ -1,0 +1,1 @@
+6:1: 'bins' in [targets]: element 1 must be a table with 'name' and 'path', not a string
