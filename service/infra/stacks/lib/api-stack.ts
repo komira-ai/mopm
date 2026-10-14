@@ -46,6 +46,15 @@ export const READ_ROUTES = [
 ];
 export const READ_ACTIONS = ['dynamodb:GetItem', 'dynamodb:Query'];
 
+/** Methods a browser may use on the read API. HEAD and OPTIONS are listed for preflight; only GET routes exist. */
+export const CORS_METHODS = [apigw.CorsHttpMethod.GET, apigw.CorsHttpMethod.HEAD, apigw.CorsHttpMethod.OPTIONS];
+/** How long a browser may cache a preflight answer. */
+export const CORS_MAX_AGE = Duration.hours(1);
+/** The response header a page may read, so it can show the request id with an error. */
+export const CORS_EXPOSED_HEADERS = ['x-mopm-request-id'];
+/** The one browser origin that may call a stage's API: its own site, over https. Never `*`. */
+export const siteOrigin = (c: StageConfig) => `https://${c.siteDomain}`;
+
 export class ApiStack extends Stack {
   readonly api: apigw.HttpApi;
   readonly handler: lambda.Function;
@@ -105,6 +114,14 @@ export class ApiStack extends Stack {
       apiName: `mopm-${c.stage}`,
       disableExecuteApiEndpoint: true,
       defaultDomainMapping: { domainName: domain },
+      // The gateway answers preflight itself and adds the allow-origin header to the handler's answers for this
+      // origin only. No credentials: the read API takes no cookies and no token.
+      corsPreflight: {
+        allowOrigins: [siteOrigin(c)],
+        allowMethods: CORS_METHODS,
+        exposeHeaders: CORS_EXPOSED_HEADERS,
+        maxAge: CORS_MAX_AGE,
+      },
     });
     const integration = new integrations.HttpLambdaIntegration('ApiIntegration', this.handler);
     for (const route of READ_ROUTES) {
