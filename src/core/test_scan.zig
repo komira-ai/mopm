@@ -33,6 +33,7 @@
 //! source line order.
 
 const std = @import("std");
+const testroot = @import("testroot.zig");
 const Allocator = std.mem.Allocator;
 
 pub const Kind = enum { bare, self_hosted };
@@ -750,15 +751,15 @@ test "golden scans of tests/discovery" {
     const a = t.allocator();
     var failed = false;
     for (golden_cases) |name| {
-        const src = try std.fs.cwd().readFileAlloc(a, try std.fmt.allocPrint(a, "tests/discovery/{s}.mojo", .{name}), 1 << 20);
-        const want = try std.fs.cwd().readFileAlloc(a, try std.fmt.allocPrint(a, "tests/discovery/{s}.scan", .{name}), 1 << 20);
+        const src = try std.fs.cwd().readFileAlloc(a, try testroot.path(a, try std.fmt.allocPrint(a, "tests/discovery/{s}.mojo", .{name})), 1 << 20);
+        const want = try std.fs.cwd().readFileAlloc(a, try testroot.path(a, try std.fmt.allocPrint(a, "tests/discovery/{s}.scan", .{name})), 1 << 20);
         const got = try scanText(a, src);
         if (!std.mem.eql(u8, want, got)) {
             std.debug.print("tests/discovery/{s}.scan differs.\n--- want\n{s}--- got\n{s}---\n", .{ name, want, got });
             failed = true;
         }
     }
-    var dir = try std.fs.cwd().openDir("tests/discovery", .{ .iterate = true });
+    var dir = try std.fs.cwd().openDir(try testroot.path(a, "tests/discovery"), .{ .iterate = true });
     defer dir.close();
     var it = dir.iterate();
     var seen: usize = 0;

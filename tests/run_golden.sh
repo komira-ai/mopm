@@ -13,10 +13,21 @@
 #     The scanner's per-file goldens are unit tests (src/core/test_scan.zig);
 #     building and listing real harnesses is tests/e2e/test_discovery.sh.
 # The repository root is written as @ROOT@ in the golden files.
-# Usage: tests/run_golden.sh [path-to-mopm]   (run from the repository root)
+# Usage: tests/run_golden.sh [path-to-mopm]   (from any directory)
+#
+# The script works in the repository root (the parent of its own directory):
+# the golden files hold paths relative to it. The path to mopm is taken
+# relative to where the script was started. Everything it writes goes to a
+# scratch directory under ${TMPDIR:-/tmp}, removed on exit; the tree is only
+# read. It needs only a POSIX sh with mktemp, diff (-u, -r), sed, grep, head,
+# env (-u) and cat.
 set -u
 mopm=${1:-./zig-out/bin/mopm}
+case $mopm in /*) ;; *) mopm=$(pwd -P)/${mopm#./} ;; esac
+cd "$(dirname "$0")/.." || exit 1
 root=$(pwd -P)
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/mopm_golden.XXXXXX") || exit 1
+trap 'rm -rf "$scratch"' EXIT
 fail=0
 
 # check <name> <expected exit code> <package>...
@@ -27,19 +38,19 @@ check() {
     files=""
     for p in "$@"; do files="$files tests/fixtures/$name/$p.mopm.json"; done
     # shellcheck disable=SC2086
-    "$mopm" link-plan $files > "golden_$name.out"
+    "$mopm" link-plan $files > "$scratch/golden_$name.out"
     rc=$?
     if [ "$rc" -ne "$want" ]; then
         echo "FAIL $name: exit $rc, want $want"
         fail=1
     fi
-    if ! diff -u "tests/golden/$name.txt" "golden_$name.out"; then
+    if ! diff -u "tests/golden/$name.txt" "$scratch/golden_$name.out"; then
         echo "FAIL $name: output differs from tests/golden/$name.txt"
         fail=1
     else
         echo "ok   $name"
     fi
-    rm -f "golden_$name.out"
+    rm -f "$scratch/golden_$name.out"
 }
 
 check chain 0 http_client crypto
@@ -49,12 +60,12 @@ check static 1 staticpkg
 
 # mopm metadata: a manifest that is accepted prints its JSON; one that is refused
 # exits non-zero with path:line:column and the message.
-if "$mopm" metadata tests/manifest/valid/full.toml > metadata.out; then
-    diff -u tests/manifest/valid/full.json metadata.out || { echo "FAIL metadata output"; fail=1; }
+if "$mopm" metadata tests/manifest/valid/full.toml > "$scratch/metadata.out"; then
+    diff -u tests/manifest/valid/full.json "$scratch/metadata.out" || { echo "FAIL metadata output"; fail=1; }
 else
     echo "FAIL metadata refused tests/manifest/valid/full.toml"; fail=1
 fi
-rm -f metadata.out
+rm -f "$scratch/metadata.out"
 bad=tests/manifest/invalid/duplicate_key
 if got=$("$mopm" metadata "$bad.toml" 2>&1 >/dev/null); then
     echo "FAIL metadata accepted $bad.toml"; fail=1
@@ -63,7 +74,8 @@ fi
 
 # mopm new / init: the trees they make equal tests/new/{lib,bin}; an existing
 # package is never overwritten; a Mojo keyword is refused as a name.
-work=$(mktemp -d)
+work=$scratch/new
+mkdir "$work"
 abs_mopm=$(cd "$(dirname "$mopm")" && pwd)/$(basename "$mopm")
 ( cd "$work" && "$abs_mopm" new demo > /dev/null ) || { echo "FAIL new demo"; fail=1; }
 diff -r tests/new/lib "$work/demo" || { echo "FAIL new demo: tree differs from tests/new/lib"; fail=1; }
@@ -86,20 +98,20 @@ cmd() {
     gold=$2
     want=$3
     shift 3
-    env -u CONDA_PREFIX -u MODULAR_HOME "$@" < "$golden_stdin" > golden_cmd.raw 2>&1
+    env -u CONDA_PREFIX -u MODULAR_HOME "$@" < "$golden_stdin" > "$scratch/golden_cmd.raw" 2>&1
     rc=$?
-    sed "s|$root|@ROOT@|g" golden_cmd.raw > golden_cmd.out
+    sed "s|$root|@ROOT@|g" "$scratch/golden_cmd.raw" > "$scratch/golden_cmd.out"
     if [ "$rc" -ne "$want" ]; then
         echo "FAIL $label: exit $rc, want $want"
         fail=1
     fi
-    if ! diff -u "$gold" golden_cmd.out; then
+    if ! diff -u "$gold" "$scratch/golden_cmd.out"; then
         echo "FAIL $label: output differs from $gold"
         fail=1
     else
         echo "ok   $label"
     fi
-    rm -f golden_cmd.raw golden_cmd.out
+    rm -f "$scratch/golden_cmd.raw" "$scratch/golden_cmd.out"
 }
 
 # want <case> <command>: the expected exit code.
@@ -165,15 +177,15 @@ cmd "exec: repl reads stdin" "tests/golden/exec/repl.$host.txt" 7 \
 golden_stdin=/dev/null
 cmd "exec: no bin/mojo in the environment" tests/golden/exec/no_mojo.txt 127 \
     "$mopm" run hello.mojo --prefix "$chain"
-"$mopm" run hello.mojo --prefix "$exec_env" --os linux > golden_cmd.raw 2>&1
+"$mopm" run hello.mojo --prefix "$exec_env" --os linux > "$scratch/golden_cmd.raw" 2>&1
 rc=$?
-if [ "$rc" -ne 2 ] || ! head -n 1 golden_cmd.raw | grep -q -- "--os applies only with --print-cmd"; then
+if [ "$rc" -ne 2 ] || ! head -n 1 "$scratch/golden_cmd.raw" | grep -q -- "--os applies only with --print-cmd"; then
     echo "FAIL exec: --os without --print-cmd: exit $rc, want 2 and a usage message"
     fail=1
 else
     echo "ok   exec: --os without --print-cmd is a usage error"
 fi
-rm -f golden_cmd.raw
+rm -f "$scratch/golden_cmd.raw"
 
 # mopm test --list. A package root (one passed as a path, and the current
 # directory); a file named twice is listed once; explicit files; a file
@@ -188,15 +200,15 @@ cmd "test --list: a package root" "$g/tree.txt" 0 \
 cmd "test --list: a file under the root named again is listed once" "$g/tree.txt" 0 \
     "$mopm" test --list tests/discovery/tree tests/discovery/tree/tests/test_bare.mojo
 mopm_abs=$(cd "$(dirname "$mopm")" && pwd -P)/$(basename "$mopm")
-(cd tests/discovery/tree && "$mopm_abs" test --list) > golden_cmd.out 2>&1
+(cd tests/discovery/tree && "$mopm_abs" test --list) > "$scratch/golden_cmd.out" 2>&1
 rc=$?
-if [ "$rc" -ne 0 ] || ! diff -u "$g/tree_dot.txt" golden_cmd.out; then
+if [ "$rc" -ne 0 ] || ! diff -u "$g/tree_dot.txt" "$scratch/golden_cmd.out"; then
     echo "FAIL test --list: the current directory (exit $rc)"
     fail=1
 else
     echo "ok   test --list: the current directory"
 fi
-rm -f golden_cmd.out
+rm -f "$scratch/golden_cmd.out"
 cmd "test --list: explicit files" "$g/files.txt" 0 \
     "$mopm" test --list tests/discovery/self_hosted_explicit.mojo tests/discovery/bare_basic.mojo
 cmd "test --list: nonconforming tests are refused" "$g/nonconforming.txt" 2 \

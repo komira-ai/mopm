@@ -53,4 +53,5 @@ test {
     _ = @import("lock.zig");
     _ = @import("install_plan.zig");
     _ = @import("install.zig");
+    _ = @import("testroot.zig");
 }
