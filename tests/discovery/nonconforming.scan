@@ -1,0 +1,10 @@
+kind bare
+test 34 test_fine
+helper 30 test_helper
+error 1: 'test_async' is async; a test is `def test_async() raises:` (mark a helper with `# mopm: not-a-test` above it)
+error 5: 'test_takes_argument' takes arguments; a test is `def test_takes_argument() raises:` (mark a helper with `# mopm: not-a-test` above it)
+error 9: 'test_generic' has compile-time parameters; a test is `def test_generic() raises:` (mark a helper with `# mopm: not-a-test` above it)
+error 13: 'test_does_not_raise' does not raise; a test is `def test_does_not_raise() raises:` (mark a helper with `# mopm: not-a-test` above it)
+error 17: 'test_typed_error' raises a typed error; a test is `def test_typed_error() raises:` (mark a helper with `# mopm: not-a-test` above it)
+error 21: 'test_returns_value' returns a value; a test is `def test_returns_value() raises:` (mark a helper with `# mopm: not-a-test` above it)
+error 25: 'test_capturing' has a signature other than `() raises`; a test is `def test_capturing() raises:` (mark a helper with `# mopm: not-a-test` above it)

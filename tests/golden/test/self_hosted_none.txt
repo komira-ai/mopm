@@ -1,0 +1,1 @@
+mopm test: warning: tests/discovery/self_hosted_none.mojo:5: the file has its own main but no registration mopm can read (`suite.test[f]()` or `TestSuite.discover_tests[...]`); no tests are listed

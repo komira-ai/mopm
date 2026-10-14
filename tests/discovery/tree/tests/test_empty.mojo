@@ -1,0 +1,2 @@
+def helper() raises:
+    pass

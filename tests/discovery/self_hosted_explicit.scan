@@ -1,0 +1,8 @@
+kind self_hosted
+test 27 test_with_source
+test 28 test_first
+test 30 check_second
+test 32 test_never_runs
+test 33 qualified_name
+helper 21 test_helper
+warning 34: cannot read the function this `.test[...]` registers; it is not listed

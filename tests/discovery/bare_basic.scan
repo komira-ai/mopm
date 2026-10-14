@@ -1,0 +1,4 @@
+kind bare
+test 9 test_double
+test 13 test_double_zero
+test 21 test_last

@@ -1,6 +1,7 @@
 //! mopm core library: package metadata, the mopm.toml manifest and semantic
 //! versions, new-package scaffolding, the native link planner, environment
-//! discovery and the stock `mojo` command lines.
+//! discovery, the stock `mojo` command lines, and test discovery and harness
+//! generation.
 
 pub const metadata = @import("metadata.zig");
 pub const link_planner = @import("link_planner.zig");
@@ -10,6 +11,8 @@ pub const scaffold = @import("scaffold.zig");
 pub const semver = @import("semver.zig");
 pub const env = @import("env.zig");
 pub const mojo_cmd = @import("mojo_cmd.zig");
+pub const test_scan = @import("test_scan.zig");
+pub const test_harness = @import("test_harness.zig");
 
 test {
     _ = @import("metadata.zig");
@@ -20,4 +23,6 @@ test {
     _ = @import("semver.zig");
     _ = @import("env.zig");
     _ = @import("mojo_cmd.zig");
+    _ = @import("test_scan.zig");
+    _ = @import("test_harness.zig");
 }

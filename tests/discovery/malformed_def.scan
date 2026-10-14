@@ -1,0 +1,5 @@
+kind bare
+test 9 test_fine
+error 1: malformed def of 'test_no_parens': no parameter list after the name
+error 5: malformed def of 'test_no_colon': no ':' ends the signature
+error 13: malformed def: no function name
