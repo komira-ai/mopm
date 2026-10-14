@@ -1,0 +1,32 @@
+{
+  "package": {
+    "name": "http_client",
+    "version": "0.4.0",
+    "description": "HTTP/1.1 client",
+    "license": "Apache-2.0",
+    "repository": "https://github.com/example/http_client",
+    "readme": "README.md"
+  },
+  "toolchain": {
+    "mojo": ["1.0.0"]
+  },
+  "dependencies": [
+    {"name": "http_core", "version": "1.2"},
+    {"name": "tls", "version": "0.9"},
+    {"name": "local_util", "path": "../local_util"}
+  ],
+  "dev-dependencies": [
+    {"name": "mopm_test", "version": "0.1"}
+  ],
+  "native-dependencies": [
+    {"name": "zlib", "version": ">=1.2", "kind": "shared", "mode": "link"}
+  ],
+  "native": [
+    {"id": "curl_shim", "kind": "shared", "mode": "link", "build": "cmake -S native -B out && cmake --build out", "outputs": ["out/libcurl_shim.so.1"]}
+  ],
+  "targets": {
+    "lib": {"path": "src/http_client"},
+    "bins": [{"name": "fetch", "path": "src/fetch.mojo"}],
+    "tests": ["tests"]
+  }
+}

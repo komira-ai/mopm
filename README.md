@@ -4,10 +4,10 @@ mopm is "cargo for Mojo": a package manager plus build, test and coverage
 tooling for [Mojo](https://www.modular.com/mojo) projects, with a package
 registry at [mopm.dev](https://mopm.dev).
 
-**Status: early.** `mopm --version`, `mopm link-plan`, and `mopm build`,
-`mopm run` and `mopm repl` with `--print-cmd` (print the stock `mojo` command,
-do not run it) work today. Everything else below is a plan, and the design
-may change.
+**Status: early.** `mopm --version`, `mopm link-plan`, `mopm metadata`, and
+`mopm build`, `mopm run` and `mopm repl` with `--print-cmd` (print the stock
+`mojo` command, do not run it) work today. Everything else below is a plan, and
+the design may change.
 
 ## Goals
 
@@ -39,6 +39,7 @@ Working today:
 ```text
 mopm --version
 mopm link-plan tests/fixtures/chain/http_client.mopm.json tests/fixtures/chain/crypto.mopm.json
+mopm metadata tests/manifest/valid/full.toml
 mopm build hello.mojo -o hello --print-cmd   # -Xlinker -L/-l plus a run path to <env>/lib
 mopm run hello.mojo --print-cmd              # one -Xlinker <shared object> per library
 mopm repl --print-cmd                        # LD_PRELOAD (macOS DYLD_INSERT_LIBRARIES) for the JIT
@@ -55,9 +56,9 @@ refused with a message. `--os linux|macos` picks the spelling to print.
 | path | what |
 |---|---|
 | `src/cli/` | the `mopm` command line (Zig) |
-| `src/core/` | `metadata.zig` (parse `<name>.mopm.json`), `link_planner.zig` (compute link arguments), `env.zig` (find the environment and its packages), `mojo_cmd.zig` (the `mojo` command lines) |
+| `src/core/` | `metadata.zig` (parse `<name>.mopm.json`), `link_planner.zig` (compute link arguments), `toml.zig` (the strict TOML subset), `manifest.zig` (check `mopm.toml`), `env.zig` (find the environment and its packages), `mojo_cmd.zig` (the `mojo` command lines) |
 | `spec/` | draft `mopm.toml` spec and the JSON Schema for `<name>.mopm.json` |
-| `tests/` | fixtures (metadata sets, and environment trees under `tests/fixtures/env`) and golden files for `link-plan` and `--print-cmd` |
+| `tests/` | fixtures (metadata sets, and environment trees under `tests/fixtures/env`) and golden files for `link-plan` and `--print-cmd`; `tests/manifest/{valid,invalid}` for `mopm.toml` |
 | `rules/buck2`, `rules/bazel` | build rules (placeholders) |
 | `registry/` | the registry and its index (placeholder) |
 | `mojo/mopm_rt` | the Mojo runtime support package (placeholder) |

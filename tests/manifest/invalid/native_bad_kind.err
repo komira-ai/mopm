@@ -1,0 +1,1 @@
+6:1: 'kind' in [native.shim] must be "shared", "static" or "both", not "dynamic"

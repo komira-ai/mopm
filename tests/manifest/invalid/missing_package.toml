@@ -1,0 +1,2 @@
+[dependencies]
+http_core = "1.2"

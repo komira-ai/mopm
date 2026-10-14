@@ -1,5 +1,5 @@
-//! mopm command line. `--version`, `link-plan`, and `build`/`run`/`repl` with
-//! `--print-cmd` work; running mojo is not implemented yet.
+//! mopm command line. `--version`, `link-plan`, `metadata`, and `build`/`run`/`repl`
+//! with `--print-cmd` work; running mojo is not implemented yet.
 
 const std = @import("std");
 const core = @import("mopm_core");
@@ -27,6 +27,7 @@ const usage =
     \\  --version               print the version
     \\  link-plan <file>...     print the link plan for installed packages,
     \\                          given their <name>.mopm.json files
+    \\  metadata [mopm.toml]    check a package manifest and print it as JSON
     \\  build <file.mojo> [-o <out>] --print-cmd
     \\  run <file.mojo> --print-cmd
     \\  repl --print-cmd        print the stock mojo command, with the native
@@ -62,6 +63,31 @@ fn linkPlan(arena: std.mem.Allocator, paths: []const []const u8) u8 {
     core.link_planner.render(plan, buf.writer()) catch return 1;
     std.io.getStdOut().writeAll(buf.items) catch return 1;
     return if (plan.ok()) 0 else 1;
+}
+
+fn metadataCmd(arena: std.mem.Allocator, args: []const []const u8) u8 {
+    if (args.len > 1) {
+        std.debug.print("usage: mopm metadata [path/to/mopm.toml]\n", .{});
+        return 2;
+    }
+    const path = if (args.len == 1) args[0] else "mopm.toml";
+    const src = std.fs.cwd().readFileAlloc(arena, path, 1 << 20) catch |e| {
+        std.debug.print("mopm: {s}: {s}\n", .{ path, @errorName(e) });
+        return 1;
+    };
+    var diag: core.manifest.Diagnostic = .{};
+    const m = core.manifest.parse(arena, src, &diag) catch |e| {
+        if (e == error.Invalid) {
+            std.debug.print("mopm: {s}:{d}:{d}: {s}\n", .{ path, diag.pos.line, diag.pos.col, diag.message });
+        } else {
+            std.debug.print("mopm: {s}: {s}\n", .{ path, @errorName(e) });
+        }
+        return 1;
+    };
+    var buf = std.ArrayList(u8).init(arena);
+    core.manifest.writeJson(m, buf.writer()) catch return 1;
+    std.io.getStdOut().writeAll(buf.items) catch return 1;
+    return 0;
 }
 
 pub const Opts = struct {
@@ -213,6 +239,7 @@ fn run(arena: std.mem.Allocator) u8 {
         return 0;
     }
     if (std.mem.eql(u8, cmd, "link-plan")) return linkPlan(arena, args[2..]);
+    if (std.mem.eql(u8, cmd, "metadata")) return metadataCmd(arena, args[2..]);
     if (std.meta.stringToEnum(mojo_cmd.Tool, cmd)) |tool| return autolink(arena, tool, args[2..]);
     if (isPlanned(cmd)) {
         std.debug.print("mopm {s}: not implemented yet\n", .{cmd});
@@ -235,6 +262,7 @@ test "planned commands are recognised, working ones are not planned" {
     try std.testing.expect(!isPlanned("run"));
     try std.testing.expect(!isPlanned("repl"));
     try std.testing.expect(!isPlanned("link-plan"));
+    try std.testing.expect(!isPlanned("metadata"));
     try std.testing.expect(!isPlanned("--version"));
     try std.testing.expect(!isPlanned("frobnicate"));
 }

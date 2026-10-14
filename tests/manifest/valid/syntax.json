@@ -1,0 +1,30 @@
+{
+  "package": {
+    "name": "syntax_demo",
+    "version": "1.0.0-rc.1+build.7",
+    "description": "tab\there, quote \" and é",
+    "license": null,
+    "repository": null,
+    "readme": null
+  },
+  "toolchain": {
+    "mojo": ["1.0.0", "1.1.0"]
+  },
+  "dependencies": [
+    {"name": "extras", "version": "2"},
+    {"name": "local", "path": "../local"}
+  ],
+  "dev-dependencies": [],
+  "native-dependencies": [
+    {"name": "libpng", "version": "1.6", "kind": null, "mode": "link"},
+    {"name": "openssl", "version": null, "kind": "static", "mode": "load"}
+  ],
+  "native": [
+    {"id": "both_kinds", "kind": "both", "mode": "load", "build": null, "outputs": []}
+  ],
+  "targets": {
+    "lib": null,
+    "bins": [],
+    "tests": []
+  }
+}
