@@ -317,6 +317,7 @@ pub fn exchangeOidcToken(ctx: *Ctx, _: []const []const u8) anyerror!Response {
             .user = p.owners.items[0],
             .oidc_package = p.name,
             .oidc_version = try s.alloc.dupe(u8, version),
+            .oidc_repository = r,
             .created_at = now,
             .expires_at = now + st.oidc_secs,
         });

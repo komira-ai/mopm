@@ -76,5 +76,21 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
         try p.trusted.append(s.alloc, try s.alloc.dupe(u8, repository));
         return resp.json(ctx.arena, .ok, .{});
     }
+    // {"name", "version", "reason_code"}: an administrator's takedown. The
+    // bytes are gone (no url); the number and the sha256 stay.
+    if (std.mem.eql(u8, path, "/tombstone")) {
+        const name = util.getStr(obj, "name") orelse return resp.invalid(ctx.arena, "'name' must be a string");
+        const version = util.getStr(obj, "version") orelse return resp.invalid(ctx.arena, "'version' must be a string");
+        const reason = util.getStr(obj, "reason_code") orelse return resp.invalid(ctx.arena, "'reason_code' must be a string");
+        const p = s.packageByName(name) orelse return resp.invalid(ctx.arena, "no such package");
+        for (p.versions.items) |v| {
+            if (!std.mem.eql(u8, v.version, version) or !v.visible()) continue;
+            v.state = .tombstoned;
+            v.tombstone_reason = try s.alloc.dupe(u8, reason);
+            v.tombstone_at = s.now();
+            return resp.json(ctx.arena, .ok, .{});
+        }
+        return resp.invalid(ctx.arena, "no such published version");
+    }
     return resp.invalid(ctx.arena, "no such control");
 }

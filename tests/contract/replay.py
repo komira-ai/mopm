@@ -17,6 +17,7 @@ session, time passing, a server fault) through the fake's /_fake controls,
 documented in registry/fake/README.md.
 """
 import base64
+import hashlib
 import itertools
 import json
 import pathlib
@@ -51,6 +52,11 @@ IMPLEMENTED = {
     "removeOwner",
     "listInvitations",
     "acceptInvitation",
+    "beginUpload",
+    "commitPublish",
+    "getPublishStatus",
+    "setYanked",
+    "getVersion",
 }
 
 
@@ -383,6 +389,207 @@ RECIPES.update({
 })
 
 
+# ---------------------------------------------------------------------------
+# Publishing
+# ---------------------------------------------------------------------------
+
+BUILD = "mojo1.0.0_0"
+
+
+class Release:
+    """An owner, a token with the publish and yank scopes for a fresh
+    package, and helpers that publish versions of it."""
+
+    def __init__(self, f):
+        self.f = f
+        self.owner, self.session, self.name = claimed(f)
+        self.token = f.api_token(self.session, scopes=["publish", "yank"], packages=[self.name])["token"]
+
+    def filename(self, version):
+        return "mojo-%s-%s-%s.conda" % (self.name, version, BUILD)
+
+    def begin_body(self, version, data, subdir="linux-64", filename=None):
+        return {"subdir": subdir, "filename": filename or self.filename(version), "size": len(data),
+                "sha256": hashlib.sha256(data).hexdigest()}
+
+    def upload(self, version, data=b"conda bytes", put=True, **kw):
+        """Begins an upload and, unless put is False, PUTs the bytes; the upload id."""
+        status, _, out = self.f.request("POST", "/api/v1/packages/%s/%s/files" % (self.name, version),
+                                        self.begin_body(version, data, **kw), self.token)
+        assert status == 200, (status, out)
+        if put:
+            req = urllib.request.Request(out["put_url"], data=data, method="PUT", headers=out["put_headers"])
+            with urllib.request.urlopen(req, timeout=10) as r:
+                assert r.status == 200, r.status
+        return out["upload_id"]
+
+    def commit_body(self, *upload_ids):
+        return {"upload_ids": list(upload_ids), "manifest_sha256": hashlib.sha256(b"manifest").hexdigest()}
+
+    def commit(self, version, *upload_ids):
+        status, _, out = self.f.request("POST", "/api/v1/packages/%s/%s/publish" % (self.name, version),
+                                        self.commit_body(*upload_ids), self.token)
+        assert status == 202, (status, out)
+        return out["publish_id"]
+
+    def poll(self, publish_id, times):
+        out = None
+        for _ in range(times):
+            status, _, out = self.f.request("GET", "/api/v1/publishes/" + publish_id, token=self.token)
+            assert status == 200, (status, out)
+        return out
+
+    def publish(self, version, data=b"conda bytes"):
+        pid = self.commit(version, self.upload(version, data))
+        out = self.poll(pid, 4)
+        assert out["status"] == "published", out
+        return pid
+
+    def path(self, version):
+        return {"name": self.name, "version": version}
+
+
+def begin_upload(f, size=None, read_only=False):
+    r = Release(f)
+    body = r.begin_body("0.4.0", b"conda bytes")
+    if size:
+        body["size"] = size
+    after = None
+    if read_only:
+        f.control("/mode", {"read_only": True})
+        after = lambda: f.control("/mode", {"read_only": False})  # noqa: E731
+    return step("beginUpload", path=r.path("0.4.0"), body=body, token=r.token, auth="publishToken",
+                after=after, malformed=size is not None)
+
+
+def commit(f, kind):
+    r = Release(f)
+    if kind == "not uploaded":
+        up = r.upload("0.4.0", put=False)
+    elif kind == "exists":
+        # 1.0 is published; 1.0.0 is the same version under conda ordering.
+        r.publish("1.0")
+        up = r.upload("1.0.0")
+        return step("commitPublish", path=r.path("1.0.0"), body=r.commit_body(up), token=r.token,
+                    auth="publishToken")
+    elif kind == "used":
+        # The version is still pending, and a different set reuses an upload.
+        first = r.upload("0.4.0")
+        second = r.upload("0.4.0", subdir="osx-arm64")
+        r.commit("0.4.0", first)
+        return step("commitPublish", path=r.path("0.4.0"), body=r.commit_body(first, second), token=r.token,
+                    auth="publishToken")
+    else:
+        up = r.upload("0.4.0")
+    return step("commitPublish", path=r.path("0.4.0"), body=r.commit_body(up), token=r.token, auth="publishToken")
+
+
+def status(f, polls_before, data=b"conda bytes", filename=None, want=None):
+    r = Release(f)
+    pid = r.commit("0.4.0", r.upload("0.4.0", data, filename=filename))
+    if polls_before:
+        r.poll(pid, polls_before)
+    return step("getPublishStatus", path={"publish_id": pid}, token=r.token, auth="publishToken",
+                check=(lambda b: b["status"] == want) if want else None)
+
+
+def rejected(f, code):
+    if code == "filename_mismatch":
+        s = status(f, 2, filename="mojo-other-9.9.9-%s.conda" % BUILD)
+    else:
+        s = status(f, 2, data=("REJECT:%s from the replay" % code).encode())
+    s["check"] = lambda b: b["status"] == "rejected" and b["rejection_code"] == code
+    return s
+
+
+YANK = {"yanked": True, "reason": "crashes on empty body"}
+
+
+def yank(f, kind):
+    r = Release(f)
+    r.publish("0.4.0")
+    if kind == "scope_missing":
+        other = Release(f)
+        tok = f.api_token(other.session, scopes=["yank"], packages=[other.name])["token"]
+        return step("setYanked", path=r.path("0.4.0"), body={"yanked": False}, token=tok, auth="yankToken")
+    if kind == "unyank":
+        f.request("PUT", "/api/v1/packages/%s/0.4.0/yank" % r.name, YANK, r.token)
+        return step("setYanked", path=r.path("0.4.0"), body={"yanked": False}, token=r.token, auth="yankToken",
+                    check=lambda b: b["state"] == "published" and b["yank_reason"] is None)
+    if kind == "publish token":
+        tok = f.api_token(r.session, scopes=["publish"], packages=[r.name])["token"]
+        return step("setYanked", path=r.path("0.4.0"), body=YANK, token=tok, auth="publishToken",
+                    check=lambda b: b["state"] == "yanked")
+    return step("setYanked", path=r.path("0.4.0"), body=YANK, token=r.token, auth="yankToken",
+                check=lambda b: b["state"] == "yanked" and b["yank_reason"] == YANK["reason"])
+
+
+def version_detail(f, kind):
+    r = Release(f)
+    r.publish("0.4.0")
+    if kind == "yanked":
+        f.request("PUT", "/api/v1/packages/%s/0.4.0/yank" % r.name, YANK, r.token)
+        return step("getVersion", path=r.path("0.4.0"),
+                    check=lambda b: b["state"] == "yanked" and b["yank_reason"] == YANK["reason"]
+                    and "url" in b["files"][0])
+    if kind == "tombstoned":
+        f.control("/tombstone", {"name": r.name, "version": "0.4.0", "reason_code": "malware"})
+        return step("getVersion", path=r.path("0.4.0"),
+                    check=lambda b: b["state"] == "tombstoned" and "url" not in b["files"][0]
+                    and b["tombstone"]["reason_code"] == "malware")
+    return step("getVersion", path=r.path("0.4.0"),
+                check=lambda b: b["state"] == "published" and b["requires_mojo"] == "==1.0.0"
+                and b["provenance"] == {"kind": "none"})
+
+
+RECIPES.update({
+    ("beginUpload", "begin an upload"): lambda f: begin_upload(f),
+    ("beginUpload", "error payload_too_large"): lambda f: begin_upload(f, size=60000000),
+    ("beginUpload", "error read_only_mode"): lambda f: begin_upload(f, read_only=True),
+    ("commitPublish", "commit"): lambda f: commit(f, "ok"),
+    ("commitPublish", "error upload_invalid"): lambda f: commit(f, "not uploaded"),
+    ("commitPublish", "error version_exists"): lambda f: commit(f, "exists"),
+    ("commitPublish", "error upload_used"): lambda f: commit(f, "used"),
+    ("getPublishStatus", "error publish_not_found"):
+        lambda f: step("getPublishStatus", path={"publish_id": "pub-none"}, token=Release(f).token,
+                       auth="publishToken"),
+    ("getPublishStatus", "status pending"): lambda f: status(f, 0, want="pending"),
+    ("getPublishStatus", "status validating"): lambda f: status(f, 1, want="validating"),
+    ("getPublishStatus", "status indexing"): lambda f: status(f, 2, want="indexing"),
+    ("getPublishStatus", "status published"): lambda f: status(f, 3, want="published"),
+    ("getPublishStatus", "rejected: archive_invalid"): lambda f: rejected(f, "archive_invalid"),
+    ("getPublishStatus", "rejected: path_not_allowed"): lambda f: rejected(f, "path_not_allowed"),
+    ("getPublishStatus", "rejected: limit_exceeded"): lambda f: rejected(f, "limit_exceeded"),
+    ("getPublishStatus", "rejected: manifest_invalid"): lambda f: rejected(f, "manifest_invalid"),
+    ("getPublishStatus", "rejected: filename_mismatch"): lambda f: rejected(f, "filename_mismatch"),
+    ("getPublishStatus", "rejected: sha256_mismatch"): lambda f: rejected(f, "sha256_mismatch"),
+    ("getPublishStatus", "rejected: dependency_not_allowed"): lambda f: rejected(f, "dependency_not_allowed"),
+    ("setYanked", "error scope_missing"): lambda f: yank(f, "scope_missing"),
+    ("setYanked", "yank"): lambda f: yank(f, "yank"),
+    ("setYanked", "yank with a publish token"): lambda f: yank(f, "publish token"),
+    ("setYanked", "unyank"): lambda f: yank(f, "unyank"),
+    ("getVersion", "error invalid_version"):
+        lambda f: step("getVersion", path={"name": claimed(f)[2], "version": "1.0.0+local"}, malformed=True),
+    ("getVersion", "error version_not_found"):
+        lambda f: step("getVersion", path={"name": claimed(f)[2], "version": "9.9.9"}),
+    ("getVersion", "version detail"): lambda f: version_detail(f, "published"),
+    ("getVersion", "yanked version keeps its files and says why"): lambda f: version_detail(f, "yanked"),
+    ("getVersion", "tombstoned version has no url"): lambda f: version_detail(f, "tombstoned"),
+})
+
+
+def catalogue_drift(spec):
+    """The codes the fake knows (registry/fake/errors.zig) must be the spec's."""
+    src = (HERE.parents[1] / "registry" / "fake" / "errors.zig").read_text(encoding="utf-8")
+    enum = src.split("pub const Code = enum {", 1)[1].split("};", 1)[0]
+    fake = set(re.findall(r"(\w+),", enum))
+    codes = set(spec["components"]["schemas"]["ErrorCode"]["enum"])
+    if fake == codes:
+        return []
+    return ["registry/fake/errors.zig and the spec's ErrorCode differ (%s); regenerate errors.zig"
+            % ", ".join(sorted(fake ^ codes))]
+
+
 def main(exe):
     spec = validate.yaml.safe_load((validate.SPEC / "api" / "openapi.yaml").read_text(encoding="utf-8"))
     ops = validate.operations(spec)
@@ -391,7 +598,7 @@ def main(exe):
     for path in sorted((HERE / "api").glob("*.json")):
         cases += json.loads(path.read_text(encoding="utf-8"))["cases"]
     wanted = [c for c in cases if c.get("expect", "valid") == "valid" and c["operationId"] in IMPLEMENTED]
-    failures = []
+    failures = catalogue_drift(spec)
     known = {(c["operationId"], c["name"]) for c in wanted}
     for key in sorted(set(RECIPES) - known):
         failures.append("recipe %s / %r has no valid case in tests/contract/api" % key)

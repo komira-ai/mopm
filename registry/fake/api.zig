@@ -12,6 +12,7 @@ const util = @import("util.zig");
 const auth = @import("auth.zig");
 const control = @import("control.zig");
 const packages = @import("packages.zig");
+const publish = @import("publish.zig");
 
 /// One request, with everything a handler reads.
 pub const Ctx = struct {
@@ -45,10 +46,6 @@ const Route = struct {
     handler: *const fn (*Ctx, []const []const u8) anyerror!Response,
 };
 
-fn notYet(ctx: *Ctx, _: []const []const u8) anyerror!Response {
-    return resp.invalid(ctx.arena, "the fake registry does not implement this operation yet");
-}
-
 const routes = [_]Route{
     .{ .method = .GET, .pattern = &.{"health"}, .operation = "getHealth", .handler = auth.getHealth },
     .{ .method = .POST, .pattern = &.{ "auth", "device" }, .operation = "startDeviceLogin", .handler = auth.startDeviceLogin },
@@ -67,11 +64,11 @@ const routes = [_]Route{
     .{ .method = .PUT, .pattern = &.{ "packages", "{}", "owners" }, .operation = "inviteOwner", .handler = packages.inviteOwner },
     .{ .method = .DELETE, .pattern = &.{ "packages", "{}", "owners", "{}" }, .operation = "removeOwner", .handler = packages.removeOwner },
     .{ .method = .GET, .pattern = &.{ "packages", "{}" }, .operation = "getPackage", .handler = packages.getPackage },
-    .{ .method = .GET, .pattern = &.{ "packages", "{}", "{}" }, .operation = "getVersion", .handler = notYet },
-    .{ .method = .POST, .pattern = &.{ "packages", "{}", "{}", "files" }, .operation = "beginUpload", .handler = notYet },
-    .{ .method = .POST, .pattern = &.{ "packages", "{}", "{}", "publish" }, .operation = "commitPublish", .handler = notYet },
-    .{ .method = .GET, .pattern = &.{ "publishes", "{}" }, .operation = "getPublishStatus", .handler = notYet },
-    .{ .method = .PUT, .pattern = &.{ "packages", "{}", "{}", "yank" }, .operation = "setYanked", .handler = notYet },
+    .{ .method = .GET, .pattern = &.{ "packages", "{}", "{}" }, .operation = "getVersion", .handler = publish.getVersion },
+    .{ .method = .POST, .pattern = &.{ "packages", "{}", "{}", "files" }, .operation = "beginUpload", .handler = publish.beginUpload },
+    .{ .method = .POST, .pattern = &.{ "packages", "{}", "{}", "publish" }, .operation = "commitPublish", .handler = publish.commitPublish },
+    .{ .method = .GET, .pattern = &.{ "publishes", "{}" }, .operation = "getPublishStatus", .handler = publish.getPublishStatus },
+    .{ .method = .PUT, .pattern = &.{ "packages", "{}", "{}", "yank" }, .operation = "setYanked", .handler = publish.setYanked },
 };
 
 /// The `{}` segments of `segs` if it matches `pattern`, else null.
@@ -88,6 +85,8 @@ fn match(arena: Allocator, pattern: []const []const u8, segs: []const []const u8
 }
 
 pub fn handle(ctx: *Ctx) anyerror!Response {
+    const upload_prefix = "/_fake/upload/";
+    if (std.mem.startsWith(u8, ctx.path, upload_prefix)) return publish.uploadBytes(ctx, ctx.path[upload_prefix.len..]);
     if (std.mem.startsWith(u8, ctx.path, "/_fake/")) return control.handle(ctx);
     if (!std.mem.startsWith(u8, ctx.path, prefix ++ "/")) {
         return resp.invalid(ctx.arena, "the API is under /api/v1");
