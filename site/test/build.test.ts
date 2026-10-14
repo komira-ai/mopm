@@ -97,6 +97,8 @@ describe('reading tags as a browser does', () => {
   test('a slash separates attributes; an unquoted value runs to whitespace or >, slashes included', () => {
     expect(tagsIn('<img/src=x/onerror=alert(1)>')).toEqual([['img', [['src', 'x/onerror=alert(1)']]]]);
     expect(tagsIn('<a/href="/x"/title=t>')).toEqual([['a', [['href', '/x'], ['title', 't']]]]);
+    // Inside a name too: 'x/onclick' is two attributes, x and onclick.
+    expect(tagsIn('<a x/onclick="alert(1)">x</a>')).toEqual([['a', [['x', ''], ['onclick', 'alert(1)']]]]);
   });
 
   test('a name runs to whitespace, /, > or =, and may start with =; a quoted value needs no space after it', () => {
@@ -194,9 +196,17 @@ describe('checkDist refuses', () => {
     ['a script whose src follows a slash', '<script/src="https://evil.example/x.js"></script>', /a <script> without one src under \/assets\//],
     ['an event handler after a slash', '<img/src=x onerror=alert(1)>', /event-handler attribute onerror on <img>/],
     ['a script URL after a slash', '<a/href="javascript:alert(1)">x</a>', /a script URL .*in href on <a>/],
+    ['an event handler after a slash inside a name', '<a x/onclick="alert(1)">x</a>', /event-handler attribute onclick on <a>/],
     ['an event handler after a name holding a quote', '<a x"=1 onclick="alert(1)">x</a>', /event-handler attribute onclick on <a>/],
     ['a script URL in xlink:href', '<svg><a xlink:href="javascript:x">x</a></svg>', /a script URL .*in xlink:href on <a>/],
     ['a script URL in an object\'s data', '<object data="javascript:x"></object>', /a script URL .*in data on <object>/],
+    ['a script URL in an iframe\'s src', '<iframe src="javascript:x"></iframe>', /a script URL .*in src on <iframe>/],
+    // Character references and URL-parser stripping as a browser applies them.
+    ['an upper-case hex reference in the scheme', '<a href="java&#X73;cript:x">x</a>', /a script URL .*in href on <a>/],
+    ['a decimal reference without its ;', '<a href="java&#115cript:x">x</a>', /a script URL .*in href on <a>/],
+    ['a carriage return inside the scheme', '<a href="java\rscript:x">x</a>', /a script URL .*in href on <a>/],
+    // The src must start with /assets/, not merely contain it.
+    ['a script from another origin under an /assets/ path', '<script src="https://evil.example/assets/x.js"></script>', /a <script> without one src under \/assets\//],
     // A '<' that the scanner would read inside a quoted value, where the browser reads markup: a comment ends at the
     // first '-->', and a title's text ends at '</title>', so the img below is a real element to the browser.
     ['a comment hiding a tag in a quoted value', '<!-- <a title=" --><img src=x onerror=alert(1)>" -->', /a '<' that does not start a tag/],
@@ -207,6 +217,18 @@ describe('checkDist refuses', () => {
     const p = join(f.outDir, '404.html');
     writeFileSync(p, readFileSync(p, 'utf8').replace('</main>', `${markup}</main>`));
     expectRefusal(f, re);
+  });
+
+  // Two src attributes: a browser uses the first. The rule is one src, so either order is refused; with the real asset
+  // first, only the count can refuse it (the prefix check passes).
+  test.each([
+    ['a script with a second src after the real one', (id: string) => `<script src="/assets/${id}/main.js" src="https://evil.example/x.js"></script>`],
+    ['a script with a second src before the real one', (id: string) => `<script src="https://evil.example/x.js" src="/assets/${id}/main.js"></script>`],
+  ])('%s', (_what, markup) => {
+    const { f, id } = built();
+    const p = join(f.outDir, '404.html');
+    writeFileSync(p, readFileSync(p, 'utf8').replace('</main>', `${markup(id)}</main>`));
+    expectRefusal(f, /a <script> without one src under \/assets\//);
   });
 
   test('a start tag cut off by the end of the page', () => {
