@@ -10,6 +10,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const toml = @import("toml.zig");
 const metadata = @import("metadata.zig");
+const semver = @import("semver.zig");
 
 pub const Diagnostic = toml.Diagnostic;
 pub const Error = toml.Error;
@@ -201,7 +202,7 @@ const Checker = struct {
         try c.packageName(name, name_e.pos, "package name");
         const version_e = t.get("version") orelse return c.fail(t.pos, "[package] is missing 'version'", .{});
         const version = try c.str(version_e, where);
-        if (!isSemver(version)) {
+        if (semver.parseVersion(version) == null) {
             return c.fail(version_e.pos, "version '{s}' is not a semantic version (MAJOR.MINOR.PATCH, such as 0.1.0)", .{version});
         }
         return .{
@@ -250,7 +251,13 @@ const Checker = struct {
                 else => return c.fail(e.pos, "dependency '{s}' in {s} must be a version string or a table with 'version' or 'path', not {s}", .{ e.key, where, e.value.typeName() }),
             };
             switch (source) {
-                .version => |v| if (v.len == 0) return c.fail(e.pos, "dependency '{s}' has an empty version requirement", .{e.key}),
+                .version => |v| {
+                    var why: []const u8 = "";
+                    _ = semver.parseReq(c.arena, v, &why) catch |err| switch (err) {
+                        error.Invalid => return c.fail(e.pos, "dependency '{s}' has an invalid version requirement '{s}': {s}", .{ e.key, v, why }),
+                        error.OutOfMemory => return error.OutOfMemory,
+                    };
+                },
                 .path => |p| if (p.len == 0) return c.fail(e.pos, "dependency '{s}' has an empty path", .{e.key}),
             }
             try out.append(.{ .name = e.key, .source = source });
@@ -361,40 +368,6 @@ fn isNativeName(s: []const u8) bool {
     if (s.len == 0 or !std.ascii.isAlphanumeric(s[0])) return false;
     for (s) |b| {
         if (!std.ascii.isAlphanumeric(b) and b != '_' and b != '-' and b != '.' and b != '+') return false;
-    }
-    return true;
-}
-
-/// MAJOR.MINOR.PATCH with an optional `-pre.release` and `+build`, as semver.org.
-fn isSemver(v: []const u8) bool {
-    var rest = v;
-    if (std.mem.indexOfScalar(u8, rest, '+')) |plus| {
-        if (!dotIdents(rest[plus + 1 ..])) return false;
-        rest = rest[0..plus];
-    }
-    if (std.mem.indexOfScalar(u8, rest, '-')) |dash| {
-        if (!dotIdents(rest[dash + 1 ..])) return false;
-        rest = rest[0..dash];
-    }
-    var it = std.mem.splitScalar(u8, rest, '.');
-    var n: usize = 0;
-    while (it.next()) |part| : (n += 1) {
-        if (part.len == 0) return false;
-        for (part) |d| {
-            if (!std.ascii.isDigit(d)) return false;
-        }
-        if (part.len > 1 and part[0] == '0') return false;
-    }
-    return n == 3;
-}
-
-fn dotIdents(s: []const u8) bool {
-    var it = std.mem.splitScalar(u8, s, '.');
-    while (it.next()) |part| {
-        if (part.len == 0) return false;
-        for (part) |b| {
-            if (!std.ascii.isAlphanumeric(b) and b != '-') return false;
-        }
     }
     return true;
 }
@@ -590,13 +563,4 @@ test "golden: each tests/manifest/valid/<name>.toml prints <name>.json" {
 
 test "golden: each tests/manifest/invalid/<name>.toml is refused with <name>.err" {
     try eachGolden("tests/manifest/invalid", "err", checkInvalid);
-}
-
-test "semantic versions" {
-    for ([_][]const u8{ "0.1.0", "1.2.3", "10.0.0-rc.1", "1.0.0+build.5", "1.0.0-alpha-1" }) |v| {
-        try std.testing.expect(isSemver(v));
-    }
-    for ([_][]const u8{ "1.0", "1.0.0.0", "01.0.0", "1.0.0-", "1.0.0+", "v1.0.0", "1..0", "" }) |v| {
-        try std.testing.expect(!isSemver(v));
-    }
 }
