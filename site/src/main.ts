@@ -2,15 +2,16 @@
 //
 // On every page: the read-only banner (from getHealth; any failure is silent), '/' to focus the header search, and
 // the conda channel of this host on the home page. On the app shell (body[data-page=app]): the view app.ts picks for
-// the address. This file only does the DOM work; what to show is decided in app.ts, which is tested. Nothing here
-// builds markup from strings: views are built through browserDoc, and the only other DOM writes are replaceChildren,
-// appendChild, after, textContent, an input's value, focus, addEventListener and history.replaceState.
+// the address. What to show is decided in app.ts and how a view is put on the page in mount.ts, both tested; this file
+// connects them to the real document, location and history. Nothing here builds markup from strings: views are built
+// through browserDoc, and the only DOM writes are mount.ts's, the banner's after, and the '/' key's focus.
 
 import { client, type Client, type FetchFn } from './api.js';
 import { appView, healthBanner } from './app.js';
 import { browserDoc, h } from './doc.js';
-import { apiBase, condaBase } from './host.js';
-import { loadingView, titleOf, type View } from './views/common.js';
+import { apiBase } from './host.js';
+import { mount, type MountTarget, showChannel } from './mount.js';
+import { loadingView, type View } from './views/common.js';
 
 const doc = browserDoc;
 const host = location.hostname;
@@ -18,30 +19,33 @@ const base = apiBase(host);
 const fetchFn: FetchFn = (url, init) => fetch(url, init);
 const api: Client | null = base === null ? null : client(fetchFn, base);
 
-function mount(view: View<Node>): void {
+/** The page as mount.ts uses it; null on a page without <main id="main">. */
+function target(): MountTarget<Node> | null {
   const main = document.getElementById('main');
-  if (!main) return;
-  // Focus inside <main> (the Retry button, say) would fall back to <body> when its element is replaced: keep it on
-  // <main> (tabindex=-1), so a keyboard reader stays where the new content is.
-  const hadFocus = main.contains(document.activeElement);
-  document.title = titleOf(view.title);
-  main.replaceChildren(...view.nodes);
-  if (hadFocus) main.focus({ preventScroll: true });
-  if (view.noindex && !document.querySelector('meta[name="robots"]')) {
-    document.head.appendChild(h(doc, 'meta', { name: 'robots', content: 'noindex' }));
-  }
-  if (view.canonicalPath && view.canonicalPath !== location.pathname + location.search) {
-    history.replaceState(null, '', view.canonicalPath + location.hash);
-  }
-  const headerQ = document.getElementById('q');
-  if (view.searchQ !== undefined && headerQ instanceof HTMLInputElement) headerQ.value = view.searchQ;
-  const retry = main.querySelector('button.retry');
-  if (retry) retry.addEventListener('click', () => void show(), { once: true });
+  if (!main) return null;
+  const q = document.getElementById('q');
+  return {
+    main,
+    headerQ: q instanceof HTMLInputElement ? q : null,
+    activeElement: () => document.activeElement,
+    setTitle: (title) => {
+      document.title = title;
+    },
+    hasRobotsMeta: () => document.querySelector('meta[name="robots"]') !== null,
+    addNoindex: () => document.head.appendChild(h(doc, 'meta', { name: 'robots', content: 'noindex' })),
+    location,
+    replaceState: (url) => history.replaceState(null, '', url),
+  };
 }
 
-async function show(): Promise<void> {
-  mount(loadingView(doc));
-  mount(await appView(doc, location.pathname, location.search, api, host));
+function show(view: View<Node>): void {
+  const t = target();
+  if (t) mount(t, view, () => void showApp());
+}
+
+async function showApp(): Promise<void> {
+  show(loadingView(doc));
+  show(await appView(doc, location.pathname, location.search, api, host));
 }
 
 function showHealthBanner(): void {
@@ -68,13 +72,7 @@ function slashToSearch(e: KeyboardEvent): void {
   q.select();
 }
 
-function channelOfThisHost(): void {
-  const el = document.getElementById('conda-channel');
-  const channel = condaBase(host);
-  if (el && channel !== null) el.textContent = channel;
-}
-
 showHealthBanner();
 document.addEventListener('keydown', slashToSearch);
-channelOfThisHost();
-if (document.body.getAttribute('data-page') === 'app') void show();
+showChannel(document.getElementById('conda-channel'), host);
+if (document.body.getAttribute('data-page') === 'app') void showApp();

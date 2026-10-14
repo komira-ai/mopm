@@ -18,7 +18,8 @@ API call (`src/app.ts` picks the call and the view).
 | `src/snippet.ts`, `src/format.ts` | the install lines a page shows; times, sizes and version states as text |
 | `src/views/` | the search, package and version views and the shared ones (loading, error, not found), built through a `Doc` |
 | `src/app.ts` | the app shell's routing: the API call an address makes and the view its answer gives (no DOM) |
-| `src/main.ts` | the page script: the DOM work for the read-only banner, `/` to focus search, and mounting the app view |
+| `src/mount.ts` | putting a view on the page (title, focus, noindex, canonical address, Retry) and the home page's conda channel, against the few DOM members it uses |
+| `src/main.ts` | the page script: connects `app.ts` and `mount.ts` to the real document, plus the read-only banner and `/` to focus search |
 | `static/site.css` | the one stylesheet |
 | `tools/` | the build (Node, run at build time only): page layout, the home, 404 and shell pages, the docs pages, hashing the assets, and the checks on `dist/` |
 
@@ -45,7 +46,8 @@ npm run build       # compiles src and tools to build/, then writes dist/ (and c
 `dist/` holds `index.html`, `app.html`, `404.html`, `docs/index.html`, `docs/<slug>/index.html` and
 `assets/<id>/`: the modules `main.js` loads and `site.css`, where `<id>` is a hash of their contents (no clock, no
 commit), so the same sources give the same tree and a changed asset gets a new URL. `tools/check-dist.ts` refuses a
-tree with a missing page, a dangling asset or import, a script that is not an empty `<script src="/assets/...">`, a
+tree with a missing page, a dangling asset or import, markup its tag scanner cannot read as a browser does (a
+comment, a `<` inside a tag, an unclosed tag), a script that is not an empty `<script src="/assets/...">`, a
 style element or attribute, an event-handler attribute, a `javascript:`, `data:` or `vbscript:` URL, a file
 other than `.html`, `.js` or `.css`, or JavaScript or CSS over its size budget.
 
