@@ -169,11 +169,11 @@ export class TokenService {
 
   /** Immediate. Another account's token, or a session or CI token, is `token_not_found`. Repeating is fine. */
   async revoke(github_id: number, token_id: string): Promise<void> {
-    const t = await this.store.getToken(token_id);
-    if (!t || t.github_id !== github_id || t.kind !== 'api') {
+    const t = await this.store.getUserToken(github_id, token_id);
+    if (!t || t.kind !== 'api') {
       throw new AuthError('token_not_found', 'There is no such token.');
     }
-    await this.store.revokeToken(t.id, this.now().toISOString());
+    await this.store.revokeToken(t.hash, this.now().toISOString());
   }
 }
 
@@ -207,7 +207,7 @@ export class Authenticator {
       throw new AuthError('token_expired', `The token expired at ${rec.expires_at}.`, { expires_at: rec.expires_at });
     }
     if (!rec.last_used_at || now.getTime() - Date.parse(rec.last_used_at) >= TOUCH_EVERY_MS) {
-      await this.store.touchToken(rec.id, now.toISOString());
+      await this.store.touchToken(rec.hash, now.toISOString());
     }
     return {
       token_id: rec.id,

@@ -58,6 +58,9 @@ export const channelBucketName = (s: Stage, account: string) => `mopm-${s}-chann
 export const siteBucketName = (s: Stage, account: string) => `mopm-${s}-site-${account}`;
 export const tableName = (s: Stage, table: string) => `mopm-${s}-${table}`;
 
+/** The secret holding a stage's GitHub OAuth app ({"client_id","client_secret"}); created by service/infra/access/oauth-secret.sh. */
+export const oauthSecretName = (s: Stage) => `mopm/${s}/github-oauth`;
+
 /** FIFO queues of the publish pipeline (the API stack builds the validate queue's URL from the name, so the names live here). */
 export const validateQueueName = (s: Stage) => `mopm-${s}-validate.fifo`;
 export const validateDlqName = (s: Stage) => `mopm-${s}-validate-dlq.fifo`;
