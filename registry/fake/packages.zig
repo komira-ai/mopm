@@ -10,6 +10,7 @@ const resp = @import("resp.zig");
 const Response = resp.Response;
 const util = @import("util.zig");
 const auth = @import("auth.zig");
+const publish = @import("publish.zig");
 
 /// Names nobody may claim.
 const reserved = [_][]const u8{ "mopm", "mojo", "max", "modular", "std", "stdlib" };
@@ -101,7 +102,7 @@ pub fn searchPackages(ctx: *Ctx, _: []const []const u8) anyerror!Response {
     for (hits.items[from..to]) |p| {
         try out.append(.{
             .name = p.name,
-            .latest = null,
+            .latest = publish.latest(p),
             .description = p.description,
             .updated_at = try util.rfc3339(ctx.arena, p.updated_at),
         });
@@ -114,23 +115,21 @@ pub fn getPackage(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .ok => |p| p,
         .fail => |r| return r,
     };
-    const Summary = struct { version: []const u8, state: []const u8, published_at: []const u8 };
-    const versions: []const Summary = &.{};
     return resp.json(ctx.arena, .ok, .{
         .name = p.name,
         .state = @tagName(p.state),
         .owners = try owners(ctx.arena, p),
-        .latest = @as(?[]const u8, null),
+        .latest = publish.latest(p),
         .repository = p.repository,
         .license = p.license,
         .description = p.description,
         .created_at = try util.rfc3339(ctx.arena, p.created_at),
-        .versions = versions,
+        .versions = try publish.summaries(ctx.arena, p),
     });
 }
 
 pub fn listVersions(ctx: *Ctx, params: []const []const u8) anyerror!Response {
-    _ = switch (try findPackage(ctx, params[0])) {
+    const pkg = switch (try findPackage(ctx, params[0])) {
         .ok => |p| p,
         .fail => |r| return r,
     };
@@ -138,9 +137,9 @@ pub fn listVersions(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .ok => |p| p,
         .fail => |r| return r,
     };
-    const Summary = struct { version: []const u8, state: []const u8, published_at: []const u8 };
-    const versions: []const Summary = &.{};
-    return resp.json(ctx.arena, .ok, .{ .versions = versions, .next_cursor = try nextCursor(ctx.arena, pg, 0) });
+    const all = try publish.summaries(ctx.arena, pkg);
+    const from, const to = window(pg, all.len);
+    return resp.json(ctx.arena, .ok, .{ .versions = all[from..to], .next_cursor = try nextCursor(ctx.arena, pg, all.len) });
 }
 
 pub fn listOwners(ctx: *Ctx, params: []const []const u8) anyerror!Response {

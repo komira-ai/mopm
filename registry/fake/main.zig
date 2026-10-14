@@ -54,6 +54,7 @@ pub fn main() !void {
         .alloc = alloc,
         .base_url = try std.fmt.allocPrint(alloc, "http://127.0.0.1:{d}", .{server.listen_address.getPort()}),
         .stage = stage,
+        .dir = root,
     };
     const out = std.io.getStdOut().writer();
     try out.print("mopm-fake-registry listening on {s}\n", .{state.base_url});
@@ -131,4 +132,6 @@ test {
     _ = @import("auth.zig");
     _ = @import("control.zig");
     _ = @import("packages.zig");
+    _ = @import("versions.zig");
+    _ = @import("publish.zig");
 }

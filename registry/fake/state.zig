@@ -20,6 +20,10 @@ pub const claim_secs: i64 = 30 * day;
 pub const invitation_secs: i64 = 7 * day;
 /// An OIDC publish token lives 15 minutes.
 pub const oidc_secs: i64 = 15 * 60;
+/// An upload URL expires five minutes after beginUpload.
+pub const upload_secs: i64 = 5 * 60;
+/// The largest file v1 takes.
+pub const max_upload: u64 = 52428800;
 
 pub const User = struct { github_id: u64, handle: []const u8 };
 
@@ -47,6 +51,66 @@ pub const Token = struct {
     /// OIDC tokens only: the one package and version they may publish.
     oidc_package: []const u8 = "",
     oidc_version: []const u8 = "",
+    oidc_repository: []const u8 = "",
+};
+
+/// `pending` while its publish runs; `rejected` burns the number.
+pub const VersionState = enum { pending, published, yanked, tombstoned, rejected };
+
+pub const File = struct {
+    subdir: []const u8,
+    filename: []const u8,
+    /// Lowercase hex.
+    sha256: []const u8,
+    size: u64,
+    /// Where the bytes are, under the data directory.
+    path: []const u8,
+};
+
+pub const Version = struct {
+    package: *Package,
+    version: []const u8,
+    state: VersionState = .pending,
+    files: []const File,
+    manifest_sha256: []const u8,
+    published_at: i64 = 0,
+    published_by: []const u8,
+    yank_reason: ?[]const u8 = null,
+    tombstone_reason: ?[]const u8 = null,
+    tombstone_at: i64 = 0,
+    /// The CI repository when published with an OIDC token.
+    provenance: ?[]const u8 = null,
+
+    /// Shown by getVersion and listed: every state but pending and rejected.
+    pub fn visible(v: *const Version) bool {
+        return v.state == .published or v.state == .yanked or v.state == .tombstoned;
+    }
+};
+
+pub const Upload = struct {
+    id: []const u8,
+    user: *User,
+    package: []const u8,
+    version: []const u8,
+    subdir: []const u8,
+    filename: []const u8,
+    sha256: []const u8,
+    size: u64,
+    expires_at: i64,
+    /// Set by the PUT of the bytes.
+    path: ?[]const u8 = null,
+    used: bool = false,
+};
+
+pub const Publish = struct {
+    id: []const u8,
+    user: *User,
+    version: *Version,
+    upload_ids: []const []const u8,
+    /// 0 pending, 1 validating, 2 indexing, 3 published; each status poll
+    /// moves one step.
+    stage: u8 = 0,
+    rejection: ?[]const u8 = null,
 };
 
 pub const PackageState = enum { claimed, active };
@@ -57,6 +121,7 @@ pub const Package = struct {
     owners: std.ArrayListUnmanaged(*User) = .{},
     /// Repositories (`owner/repo`) whose CI identity may publish it.
     trusted: std.ArrayListUnmanaged([]const u8) = .{},
+    versions: std.ArrayListUnmanaged(*Version) = .{},
     created_at: i64,
     updated_at: i64,
     claim_expires_at: i64,
@@ -101,6 +166,8 @@ pub const State = struct {
     alloc: Allocator,
     /// `http://127.0.0.1:<port>`: the API, the upload URLs and the files.
     base_url: []const u8,
+    /// The data directory (`--dir`): uploads, channel and index files.
+    dir: []const u8 = ".",
     stage: []const u8,
     read_only: bool = false,
     /// Added to the wall clock: `/_fake/clock` moves time forward.
@@ -113,6 +180,8 @@ pub const State = struct {
     faults: std.ArrayListUnmanaged(Fault) = .{},
     packages: std.ArrayListUnmanaged(*Package) = .{},
     invitations: std.ArrayListUnmanaged(*Invitation) = .{},
+    uploads: std.ArrayListUnmanaged(*Upload) = .{},
+    publishes: std.ArrayListUnmanaged(*Publish) = .{},
 
     pub fn now(s: *const State) i64 {
         return std.time.timestamp() + s.clock_offset;
@@ -182,6 +251,14 @@ pub const State = struct {
             if (i.invitee == user and !i.accepted and now_ < i.expires_at) try out.append(i);
         }
         return try out.toOwnedSlice();
+    }
+
+    /// Allocates `value` in `alloc` and appends it to `list`.
+    pub fn add(s: *State, comptime T: type, list: *std.ArrayListUnmanaged(*T), value: T) Allocator.Error!*T {
+        const n = try s.alloc.create(T);
+        n.* = value;
+        try list.append(s.alloc, n);
+        return n;
     }
 
     pub fn tokenBySecret(s: *State, secret: []const u8) ?*Token {
