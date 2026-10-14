@@ -1,0 +1,127 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "NameScopedServices",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:*",
+        "s3:*",
+        "sqs:*",
+        "sns:*",
+        "lambda:*",
+        "events:*",
+        "logs:*",
+        "secretsmanager:*"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:*:{{ACCOUNT}}:table/mopm-{{STAGE}}-*",
+        "arn:aws:s3:::mopm-{{STAGE}}-*",
+        "arn:aws:sqs:*:{{ACCOUNT}}:mopm-{{STAGE}}-*",
+        "arn:aws:sns:*:{{ACCOUNT}}:mopm-{{STAGE}}-*",
+        "arn:aws:lambda:*:{{ACCOUNT}}:function:mopm-{{STAGE}}-*",
+        "arn:aws:lambda:*:{{ACCOUNT}}:event-source-mapping:*",
+        "arn:aws:events:*:{{ACCOUNT}}:rule/mopm-{{STAGE}}-*",
+        "arn:aws:logs:*:{{ACCOUNT}}:log-group:/aws/lambda/mopm-{{STAGE}}-*",
+        "arn:aws:logs:*:{{ACCOUNT}}:log-group:/mopm/{{STAGE}}/*",
+        "arn:aws:secretsmanager:*:{{ACCOUNT}}:secret:mopm/{{STAGE}}/*"
+      ]
+    },
+    {
+      "Sid": "ResourceTypesWithoutNameScoping",
+      "Effect": "Allow",
+      "Action": [
+        "cloudfront:*",
+        "wafv2:*",
+        "acm:*",
+        "apigateway:*",
+        "cloudwatch:*",
+        "budgets:*",
+        "tag:*",
+        "iam:CreateServiceLinkedRole",
+        "kms:CreateKey",
+        "kms:CreateAlias",
+        "kms:DeleteAlias",
+        "kms:DescribeKey",
+        "kms:EnableKeyRotation",
+        "kms:GetKeyPolicy",
+        "kms:PutKeyPolicy",
+        "kms:ScheduleKeyDeletion",
+        "kms:TagResource",
+        "kms:UntagResource",
+        "kms:ListAliases",
+        "kms:CreateGrant",
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:GenerateDataKey*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "StageRolesForServices",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:GetRole",
+        "iam:PassRole",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:UpdateRole",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:GetRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies"
+      ],
+      "Resource": "arn:aws:iam::{{ACCOUNT}}:role/mopm-{{STAGE}}-*"
+    },
+    {
+      "Sid": "AttachOnlyStagePolicies",
+      "Effect": "Allow",
+      "Action": [
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy"
+      ],
+      "Resource": "arn:aws:iam::{{ACCOUNT}}:role/mopm-{{STAGE}}-*",
+      "Condition": {
+        "ArnLike": {
+          "iam:PolicyARN": [
+            "arn:aws:iam::{{ACCOUNT}}:policy/mopm-{{STAGE}}-*",
+            "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "NeverTouchAccessOrIdentity",
+      "Effect": "Deny",
+      "Action": [
+        "iam:CreateUser",
+        "iam:CreateAccessKey",
+        "iam:CreateLoginProfile",
+        "iam:PutUserPolicy",
+        "iam:AttachUserPolicy",
+        "iam:CreateOpenIDConnectProvider",
+        "iam:UpdateAssumeRolePolicy",
+        "organizations:*",
+        "account:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ProtectAccessRolesAndBootstrap",
+      "Effect": "Deny",
+      "Action": [
+        "iam:*"
+      ],
+      "Resource": [
+        "arn:aws:iam::{{ACCOUNT}}:role/mopm-{{STAGE}}-deploy",
+        "arn:aws:iam::{{ACCOUNT}}:role/mopm-{{STAGE}}-e2e",
+        "arn:aws:iam::{{ACCOUNT}}:role/cdk-hnb659fds-*",
+        "arn:aws:iam::{{ACCOUNT}}:oidc-provider/token.actions.githubusercontent.com",
+        "arn:aws:iam::{{ACCOUNT}}:policy/mopm-{{STAGE}}-cfn-exec"
+      ]
+    }
+  ]
+}

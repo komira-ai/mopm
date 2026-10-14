@@ -1,0 +1,70 @@
+name: lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  workflows:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: bash -n every run script, check pins and secrets
+        run: |
+          set -euo pipefail
+          ruby - <<'RUBY'
+          require "yaml"
+          bad = 0
+          Dir[".github/workflows/*.yml"].sort.each do |f|
+            doc = YAML.safe_load(File.read(f), aliases: false)
+            (doc["jobs"] || {}).each do |jn, job|
+              (job["steps"] || []).each_with_index do |st, i|
+                if st["uses"] && st["uses"] !~ /\A(actions\/[a-z-]+)@[0-9a-f]{40}\z/
+                  warn "#{f}: #{jn} step #{i}: action must be actions/* pinned by full SHA: #{st['uses']}"; bad += 1
+                end
+                next unless st["run"]
+                tmp = "/tmp/lint_#{File.basename(f)}_#{jn}_#{i}.sh"
+                File.write(tmp, st["run"].gsub(/\$\{\{.*?\}\}/, "X"))
+                unless system("bash", "-n", tmp)
+                  warn "#{f}: #{jn} step #{i}: bash -n failed"; bad += 1
+                end
+              end
+            end
+          end
+          # promote.yml promotion chain: each deploy/e2e job must need the previous one.
+          chain = { "beta-deploy" => nil, "beta-e2e" => "beta-deploy", "gamma-deploy" => "beta-e2e",
+                    "gamma-e2e" => "gamma-deploy", "prod-deploy" => "gamma-e2e", "prod-smoke" => "prod-deploy" }
+          pj = YAML.safe_load(File.read(".github/workflows/promote.yml"), aliases: false)["jobs"]
+          if pj.keys.sort != chain.keys.sort
+            warn "promote.yml: jobs #{pj.keys.sort} differ from expected #{chain.keys.sort}"; bad += 1
+          end
+          chain.each do |jn, prev|
+            job = pj[jn] or next
+            need = Array(job["needs"])
+            if need != Array(prev)
+              warn "promote.yml: #{jn} needs #{need.inspect}, expected #{Array(prev).inspect}"; bad += 1
+            end
+          end
+          pj.each do |jn, job|
+            %w[if continue-on-error].each do |k|
+              (warn "promote.yml: #{jn} must not set #{k}"; bad += 1) if job.key?(k)
+            end
+          end
+          Dir["service/service/config/*.json"].each do |f|
+            bad += 1 && warn("#{f}: looks like an account id") if File.read(f) =~ /\b\d{12}\b/
+          end
+          exit(bad.zero? ? 0 : 1)
+          RUBY
+      - name: JSON config parses and has no account ids
+        run: |
+          for f in service/config/*.json; do jq -e '.stage and .apiDomain' "$f" >/dev/null; done
+          if grep -rEn '\b[0-9]{12}\b|AKIA[0-9A-Z]{16}|ghp_|github_pat_' .github/workflows/deploy.yml .github/workflows/e2e.yml .github/workflows/promote.yml service/config service/docs; then
+            echo "possible secret or account id" >&2; exit 1
+          fi

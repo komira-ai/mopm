@@ -1,0 +1,99 @@
+name: deploy
+
+on:
+  workflow_call:
+    inputs:
+      stage:
+        description: Stage to deploy (beta, gamma or prod)
+        required: true
+        type: string
+    outputs:
+      deployed_sha:
+        description: Commit SHA that was deployed
+        value: ${{ jobs.deploy.outputs.deployed_sha }}
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Stage to deploy
+        required: true
+        type: choice
+        options: [beta, gamma, prod]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    # The job that can mint AWS credentials runs only from main, never from a PR or another branch.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: ${{ inputs.stage }}
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      deployed_sha: ${{ steps.record.outputs.sha }}
+    env:
+      STAGE: ${{ inputs.stage }}
+      ROLE_ARN: ${{ vars.DEPLOY_ROLE_ARN }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Install CDK dependencies (before any AWS credentials exist)
+        working-directory: service/infra/stacks
+        run: npm ci --ignore-scripts
+      - name: Validate inputs
+        run: |
+          case "$STAGE" in beta|gamma|prod) ;; *) echo "bad stage" >&2; exit 1;; esac
+          for v in ROLE_ARN AWS_ACCOUNT_ID AWS_REGION; do
+            if [ -z "${!v}" ]; then echo "environment variable for $v is not set on environment $STAGE" >&2; exit 1; fi
+          done
+      - name: Assume the deploy role through OIDC
+        run: |
+          set -euo pipefail
+          resp=$(curl -sSf -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          jwt=$(printf '%s' "$resp" | jq -r .value)
+          echo "::add-mask::$jwt"
+          creds=$(aws sts assume-role-with-web-identity \
+            --role-arn "$ROLE_ARN" \
+            --role-session-name "mopm-deploy-${STAGE}-${GITHUB_RUN_ID}" \
+            --web-identity-token "$jwt" \
+            --duration-seconds 3600 \
+            --query Credentials --output json)
+          for k in AccessKeyId SecretAccessKey SessionToken; do
+            echo "::add-mask::$(printf '%s' "$creds" | jq -r ".$k")"
+          done
+          {
+            echo "AWS_ACCESS_KEY_ID=$(printf '%s' "$creds" | jq -r .AccessKeyId)"
+            echo "AWS_SECRET_ACCESS_KEY=$(printf '%s' "$creds" | jq -r .SecretAccessKey)"
+            echo "AWS_SESSION_TOKEN=$(printf '%s' "$creds" | jq -r .SessionToken)"
+          } >> "$GITHUB_ENV"
+      - name: Deploy stacks
+        working-directory: service/infra/stacks
+        run: |
+          set -euo pipefail
+          cfg="$GITHUB_WORKSPACE/service/config/${STAGE}.json"
+          npx cdk deploy --all --require-approval never \
+            --context "stage=${STAGE}" \
+            --context "account=${AWS_ACCOUNT_ID}" \
+            --context "region=${AWS_REGION}" \
+            --context "apiDomain=$(jq -r .apiDomain "$cfg")" \
+            --context "siteDomain=$(jq -r .siteDomain "$cfg")" \
+            --context "condaDomain=$(jq -r .condaDomain "$cfg")" \
+            --context "hostedZoneName=$(jq -r .hostedZoneName "$cfg")" \
+            --context "disposable=$(jq -r .disposable "$cfg")" \
+            --context "commit=${GITHUB_SHA}"
+      - name: Record deployed commit
+        id: record
+        run: |
+          echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Deployed ${GITHUB_SHA} to ${STAGE}" >> "$GITHUB_STEP_SUMMARY"
