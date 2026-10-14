@@ -117,6 +117,28 @@ describe('package shapes the fixtures do not cover', () => {
     expect(out).toContain('<code>pixi add mojo-http_client</code>');
   });
 
+  // Any published version makes the package installable, wherever it sits: newest first, the newest is often the
+  // yanked or tombstoned one.
+  test.each([
+    ['the newest yanked', [{ version: '0.5.0', state: 'yanked', yank_reason: 'bad', published_at: AT }, { version: '0.4.0', state: 'published', published_at: AT }]],
+    ['the newest tombstoned', [{ version: '0.5.0', state: 'tombstoned', published_at: AT }, { version: '0.4.0', state: 'published', published_at: AT }]],
+    [
+      'the newest yanked and the oldest tombstoned',
+      [
+        { version: '0.6.0', state: 'yanked', yank_reason: null, published_at: AT },
+        { version: '0.5.0', state: 'published', published_at: AT },
+        { version: '0.4.0', state: 'tombstoned', published_at: AT },
+      ],
+    ],
+  ])('active, %s, with another version published: the channel and pixi line are shown', (_what, versions) => {
+    const latest = versions.find((v) => v.state === 'published')?.version ?? null;
+    const out = render(packageFixture((r) => Object.assign(r, { latest, versions })));
+    expect(out).toContain('<code>https://conda.mopm.dev/</code>');
+    expect(out).toContain('<code>pixi add mojo-http_client</code>');
+    expect(out).toContain(`<code>[dependencies]\nhttp_client = "${latest}"</code>`);
+    expect(text(out)).not.toContain('Nothing can be installed');
+  });
+
   test('active with no versions at all: no install lines, says no version is published', () => {
     const out = render(packageFixture((r) => Object.assign(r, { latest: null, versions: [] })));
     expect(out).not.toContain('pixi add');
