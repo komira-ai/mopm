@@ -5,13 +5,13 @@
 const std = @import("std");
 const core = @import("mopm_core");
 const mojo_cmd = core.mojo_cmd;
+const test_cmd = @import("test_cmd.zig");
 
 pub const version = "0.0.1";
 
 const planned = [_][]const u8{
     "new",  "init",  "add",   "remove",  "lock",   "sync",
-    "test", "cov",   "tree",  "check",   "publish", "export",
-    "launch",
+    "cov",  "tree",  "check", "publish", "export",  "launch",
 };
 
 pub fn isPlanned(cmd: []const u8) bool {
@@ -34,6 +34,11 @@ const usage =
     \\  repl                    run the stock mojo of the environment, with its
     \\                          native libraries linked or preloaded; the exit
     \\                          status is mojo's
+    \\  test --list [<path>...] list the tests of tests/**/test_*.mojo and
+    \\                          src/**/tests/test_*.mojo (running them: not yet);
+    \\                          --check also builds each file and compares the
+    \\                          list with the binary's `--skip-all` listing
+    \\                          (--strict-discovery, --prefix <dir>)
     \\
     \\  options for build, run and repl:
     \\    --prefix <dir>        the environment (default: CONDA_PREFIX, then
@@ -43,7 +48,7 @@ const usage =
     \\                          (default: this host)
     \\
     \\planned (not implemented yet):
-    \\  new init add remove lock sync test cov tree check publish export launch
+    \\  new init add remove lock sync cov tree check publish export launch
     \\
 ;
 
@@ -261,6 +266,7 @@ fn run(arena: std.mem.Allocator) u8 {
     }
     if (std.mem.eql(u8, cmd, "link-plan")) return linkPlan(arena, args[2..]);
     if (std.mem.eql(u8, cmd, "metadata")) return metadataCmd(arena, args[2..]);
+    if (std.mem.eql(u8, cmd, "test")) return test_cmd.main(arena, args[2..]);
     if (std.meta.stringToEnum(mojo_cmd.Tool, cmd)) |tool| return autolink(arena, tool, args[2..]);
     if (isPlanned(cmd)) {
         std.debug.print("mopm {s}: not implemented yet\n", .{cmd});

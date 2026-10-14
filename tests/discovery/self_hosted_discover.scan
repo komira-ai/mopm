@@ -1,0 +1,5 @@
+kind self_hosted
+test 4 test_alpha
+test 8 test_beta
+error 12: 'test_with_argument' takes arguments, and discover_tests stops at a test_ function it cannot run; rename it
+error 17: 'test_helper' is marked not-a-test, but discover_tests registers every test_ function; rename it

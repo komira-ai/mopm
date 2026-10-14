@@ -1,0 +1,5 @@
+src/pkg/tests/test_inner.mojo::test_inner_one
+tests/sub/test_registered.mojo::test_first
+tests/sub/test_registered.mojo::check_second
+tests/test_bare.mojo::test_a
+tests/test_bare.mojo::test_b
