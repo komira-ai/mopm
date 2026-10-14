@@ -64,6 +64,9 @@ pub fn resolve(spec: []const u8) Resolved {
 }
 
 pub const Config = struct {
+    /// The registry's base URL (what `--registry` resolved to); the index
+    /// lives under `<base>/index/`.
+    base: []const u8 = "",
     stage: []const u8,
     api_url: []const u8,
     channel_url: []const u8,
@@ -126,7 +129,21 @@ pub fn load(arena: Allocator, base: []const u8, cli_version: []const u8) !Parsed
     if (!answer.ok()) {
         return .{ .bad = try std.fmt.allocPrint(arena, "{s} answered HTTP {d}", .{ url, answer.status }) };
     }
-    return parseConfig(arena, answer.body, cli_version);
+    var parsed = try parseConfig(arena, answer.body, cli_version);
+    switch (parsed) {
+        .ok => |*c| c.base = base,
+        .bad => {},
+    }
+    return parsed;
+}
+
+/// `<base>/index/<aa>/<bb>/<name>`: a package's records in the sparse index
+/// (spec/index.md; `bb` padded with `_` for names shorter than four).
+pub fn indexUrl(arena: Allocator, c: Config, name: []const u8) Allocator.Error![]const u8 {
+    var pad: [4]u8 = .{ '_', '_', '_', '_' };
+    const n = @min(name.len, 4);
+    @memcpy(pad[0..n], name[0..n]);
+    return std.fmt.allocPrint(arena, "{s}/index/{s}/{s}/{s}", .{ c.base, pad[0..2], pad[2..4], name });
 }
 
 test "registry names and URLs" {
@@ -143,6 +160,15 @@ test "registry names and URLs" {
             return error.TestUnexpectedResult;
         }
     }
+}
+
+test "index URLs" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const c = Config{ .base = "https://mopm.dev", .stage = "prod", .api_url = "", .channel_url = "", .min_cli_version = "", .read_only = false };
+    try std.testing.expectEqualStrings("https://mopm.dev/index/ht/tp/http_client", try indexUrl(a, c, "http_client"));
+    try std.testing.expectEqualStrings("https://mopm.dev/index/tl/s_/tls", try indexUrl(a, c, "tls"));
 }
 
 test "config.json: a usable one, and each refusal" {
