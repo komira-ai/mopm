@@ -19,15 +19,15 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
 
     // {"handle"} -> {"github_id", "handle"}: a GitHub account the fake knows.
     if (std.mem.eql(u8, path, "/users")) {
-        const handle = util.getStr(obj, "handle") orelse return resp.invalid(ctx.arena, "'handle' must be a string");
-        const u = try s.ensureUser(handle);
+        const who = util.getStr(obj, "handle") orelse return resp.invalid(ctx.arena, "'handle' must be a string");
+        const u = try s.ensureUser(who);
         return resp.json(ctx.arena, .ok, .{ .github_id = u.github_id, .handle = u.handle });
     }
     // {"handle", "fresh"?} -> {"token"}: a session token, as a login would
     // give, fresh unless "fresh" is false.
     if (std.mem.eql(u8, path, "/session")) {
-        const handle = util.getStr(obj, "handle") orelse return resp.invalid(ctx.arena, "'handle' must be a string");
-        const u = try s.ensureUser(handle);
+        const who = util.getStr(obj, "handle") orelse return resp.invalid(ctx.arena, "'handle' must be a string");
+        const u = try s.ensureUser(who);
         const t = try s.newSession(u, util.getBool(obj, "fresh") orelse true);
         return resp.json(ctx.arena, .ok, .{ .token = t.secret });
     }
@@ -38,8 +38,8 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
         const login = s.loginByUserCode(code) orelse return resp.invalid(ctx.arena, "no device login has that user code");
         const decision = util.getStr(obj, "decision") orelse return resp.invalid(ctx.arena, "'decision' must be a string");
         if (std.mem.eql(u8, decision, "approve")) {
-            const handle = util.getStr(obj, "handle") orelse return resp.invalid(ctx.arena, "approving needs a 'handle'");
-            login.user = try s.ensureUser(handle);
+            const who = util.getStr(obj, "handle") orelse return resp.invalid(ctx.arena, "approving needs a 'handle'");
+            login.user = try s.ensureUser(who);
             login.decision = .approved;
         } else if (std.mem.eql(u8, decision, "deny")) {
             login.decision = .denied;

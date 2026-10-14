@@ -193,7 +193,7 @@ RECIPES = {
                        auth="freshSession", check=lambda b: b["packages"] == "all_current"),
     ("listTokens", "list tokens never returns a secret"): list_tokens,
     ("revokeToken", "error token_not_found"):
-        lambda f: step("revokeToken", path={"token_id": "tok-000000000000"}, token=f.session(), auth="freshSession"),
+        lambda f: step("revokeToken", path={"token_id": "tok-unknown"}, token=f.session(), auth="freshSession"),
     ("revokeToken", "revoke a token"): revoke,
 }
 
