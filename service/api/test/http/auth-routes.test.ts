@@ -239,7 +239,7 @@ describe.each<Backing>(['memory', 'dynamodb'])('auth routes over %s', (backing) 
     expect(errorOf(await w.send('POST', '/auth/oidc/exchange', { body: { jwt, name: 'beta_pkg', version: '1.0.0' } }))).toEqual({ status: 403, code: 'oidc_not_trusted' });
     expect(errorOf(await w.send('POST', '/auth/oidc/exchange', { body: { jwt: 'a.b.c', name: 'alpha', version: '1.0.0' } }))).toEqual({ status: 401, code: 'oidc_token_invalid' });
     expect(errorOf(await w.send('POST', '/auth/oidc/exchange', { body: { jwt, name: 'alpha', version: 'x.y' } }))).toEqual({ status: 400, code: 'invalid_version' });
-    expect(errorOf(await w.send('POST', '/auth/oidc/exchange', { body: { jwt, name: 'Alpha', version: '1.0' } }))).toEqual({ status: 400, code: 'invalid_name' });
+    expect(errorOf(await w.send('POST', '/auth/oidc/exchange', { body: { jwt, name: 'Alpha', version: '1.0.0' } }))).toEqual({ status: 400, code: 'invalid_name' });
   });
 
   test('error bodies are the catalogue text of the contract, with the request id', async () => {

@@ -80,8 +80,9 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     );
     expect(AUTH_ROUTES).toHaveLength(6);
     expect(keys).toHaveLength(READ_ROUTES.length + PUBLISH_ROUTES.length + AUTH_ROUTES.length);
-    // Claim and yank are not routed yet.
-    expect(keys.some((k) => /\/(claim|yank)/.test(k))).toBe(false);
+    // Claim is not routed yet; yank (PUT) is.
+    expect(keys.some((k) => /\/claim/.test(k))).toBe(false);
+    expect(keys).toContain('PUT /api/v1/packages/{name}/{version}/yank');
   });
 
   test('the handler is told where uploads go and where commits are queued, by name', () => {
@@ -201,10 +202,16 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     expect(flatten(s3[0].Resource)).toContain('/quarantine/*');
     expect(flatten(s3[0].Resource)).toContain(`mopm-${stage}-channel-${DUMMY_ACCOUNT}`);
     const q = statements().filter((s) => acts(s).some((a) => a.startsWith('sqs:')));
-    expect(q).toHaveLength(1);
-    expect(acts(q[0])).toEqual(['sqs:SendMessage']);
-    expect(flatten(q[0].Resource)).toContain(`mopm-${stage}-validate.fifo`);
-    expect(flatten(q[0].Resource)).not.toContain('index');
+    // Two statements, send-only: the validate queue (publish) and the index queue (yank and unyank rebuild repodata).
+    expect(q).toHaveLength(2);
+    for (const st of q) expect(acts(st)).toEqual(['sqs:SendMessage']);
+    const validate = q.find((st) => st.Sid === 'QueueCommits') ?? q[0];
+    const index = q.find((st) => st.Sid === 'QueueIndexRebuilds');
+    expect(index).toBeDefined();
+    expect(flatten(validate.Resource)).toContain(`mopm-${stage}-validate.fifo`);
+    expect(flatten(validate.Resource)).not.toContain('index');
+    expect(flatten(index.Resource)).toContain(`mopm-${stage}-index.fifo`);
+    expect(flatten(index.Resource)).not.toContain('validate');
   });
 
   test('custom domain with a DNS-validated certificate', () => {
@@ -224,11 +231,11 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     expect(cors.AllowCredentials).toBeUndefined();
   });
 
-  test('CORS methods are GET, HEAD and OPTIONS only; max-age is bounded; only the request id is exposed', () => {
+  test('CORS methods are GET, HEAD and OPTIONS only; max-age is bounded; only the request id and retry-after are exposed', () => {
     const cors = (Object.values(t.findResources('AWS::ApiGatewayV2::Api')) as any[])[0].Properties.CorsConfiguration;
     expect([...cors.AllowMethods].sort()).toEqual(['GET', 'HEAD', 'OPTIONS']);
     expect(cors.MaxAge).toBe(3600);
-    expect(cors.ExposeHeaders).toEqual(['x-mopm-request-id']);
+    expect(cors.ExposeHeaders).toEqual(['x-mopm-request-id', 'retry-after']);
     expect(cors.AllowHeaders).toBeUndefined();
   });
 

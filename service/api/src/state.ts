@@ -19,6 +19,13 @@ export type VersionEvent =
 export interface PublishFill
   extends Pick<VersionRecord, 'version' | 'build' | 'requires_mojo' | 'deps' | 'native' | 'files' | 'manifest_sha256' | 'published_at'> {
   published_by?: string;
+  /** The display metadata the commit request carried; stored on the version so the read API serves it. */
+  description?: string;
+  license?: string;
+  repository?: string;
+  homepage?: string;
+  keywords?: string[];
+  readme?: string;
 }
 
 /** Raised for an event the state does not allow. Reported as invalid_transition (409). */

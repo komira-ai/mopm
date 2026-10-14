@@ -1,6 +1,6 @@
 import { Match } from 'aws-cdk-lib/assertions';
 import { STAGES } from '../lib/config';
-import { INDEXER_TIMEOUT_SECONDS, MAX_RECEIVES, VALIDATOR_TIMEOUT_SECONDS } from '../lib/publish-stack';
+import { INDEXER_TIMEOUT_SECONDS, MAX_RECEIVES, VALIDATOR_RESERVED_CONCURRENCY, VALIDATOR_TIMEOUT_SECONDS } from '../lib/publish-stack';
 import { DUMMY_ACCOUNT, tpl } from './util';
 
 describe.each(STAGES)('PublishStack %s', (stage) => {
@@ -41,6 +41,16 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     t.hasResourceProperties('AWS::SQS::Queue', { QueueName: `mopm-${stage}-index.fifo`, VisibilityTimeout: INDEXER_TIMEOUT_SECONDS * 6 });
     t.hasResourceProperties('AWS::Lambda::Function', { Handler: 'publish/validator-lambda.handler', Timeout: VALIDATOR_TIMEOUT_SECONDS });
     t.hasResourceProperties('AWS::Lambda::Function', { Handler: 'publish/indexer-lambda.handler', Timeout: INDEXER_TIMEOUT_SECONDS });
+  });
+
+  test('the validator has reserved concurrency, so a publish burst cannot starve the read API; the indexer does not', () => {
+    expect(VALIDATOR_RESERVED_CONCURRENCY).toBe(5);
+    t.hasResourceProperties('AWS::Lambda::Function', {
+      Handler: 'publish/validator-lambda.handler',
+      ReservedConcurrentExecutions: VALIDATOR_RESERVED_CONCURRENCY,
+    });
+    expect(fn('publish/validator-lambda.handler').Properties.ReservedConcurrentExecutions).toBe(5);
+    expect(fn('publish/indexer-lambda.handler').Properties.ReservedConcurrentExecutions).toBeUndefined();
   });
 
   test('each queue triggers its own Lambda, one message at a time', () => {
@@ -120,9 +130,10 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     });
   });
 
-  test('the API stack queues commits on the validate queue and nowhere else', () => {
+  test('the API stack sends to the validate queue (commits) and the index queue (yank rebuilds), send-only, and nowhere else', () => {
     const st = Object.values(api.findResources('AWS::IAM::Policy')).flatMap((r: any) => r.Properties.PolicyDocument.Statement as any[]);
     const q = st.filter((s) => ([] as string[]).concat(s.Action).some((a) => a.startsWith('sqs:')));
-    expect(q).toHaveLength(1);
+    expect(q.map((x) => x.Sid).sort()).toEqual(['QueueCommits', 'QueueIndexRebuilds']);
+    for (const x of q) expect(([] as string[]).concat(x.Action)).toEqual(['sqs:SendMessage']);
   });
 });

@@ -25,7 +25,7 @@ line. The API is under `/api/v1`. It answers one request at a time.
 | CI identity | `exchangeOidcToken`: the token is JWT-shaped (three base64url parts); its payload's `repository` claim must be a trusted publisher of the package (`/_fake/trusted`). No signature is checked. |
 | packages | `searchPackages` (name prefix, `sort`, cursors), `getPackage`, `claimPackage`, `listVersions` |
 | owners | `listOwners`, `inviteOwner`, `removeOwner`, `listInvitations`, `acceptInvitation` |
-| publish | `beginUpload` (the `put_url` is the fake's own `/_fake/upload/<id>`, which refuses bytes of another size or sha256), `commitPublish` (single-use uploads, resume while pending, `version_exists` for a conda-equal version such as `1.0.0` after `1.0`), `getPublishStatus`, `setYanked`, `getVersion` |
+| publish | `beginUpload` (the `put_url` is the fake's own `/_fake/upload/<id>`, which refuses bytes of another size or sha256), `commitPublish` (single-use uploads, resume while pending, `version_exists` for a version that exists; versions are `MAJOR.MINOR.PATCH` only, anything else is `invalid_version`; `limit_exceeded` when a file would take a package over its byte limit, 10 GB unless `/_fake/limits` lowers it), `getPublishStatus`, `setYanked`, `getVersion` |
 
 Claims follow the fake's own rules: `mopm`, `mojo`, `max`, `modular`, `std`
 and `stdlib` are reserved, and a name is too similar to another when the two
@@ -52,6 +52,7 @@ Not part of the contract. Each is a POST with a JSON object body.
 | `/_fake/device` | `{"user_code", "decision": "approve" \| "deny", "handle"}` | the person's answer to a device login |
 | `/_fake/clock` | `{"advance_seconds"}` | moves the fake's clock forward (expiry of tokens, sessions, logins) |
 | `/_fake/mode` | `{"read_only"}` | read-only mode, as a stage can be |
+| `/_fake/limits` | `{"project_bytes"}` | the per-package byte limit (default 10 GB), to reach `limit_exceeded` with small files |
 | `/_fake/fault` | `{"operation", "code"}` | the next request to that operationId answers that error code |
 | `/_fake/trusted` | `{"name", "repository"}` | a trusted publisher of a package, for `exchangeOidcToken` |
 | `/_fake/tombstone` | `{"name", "version", "reason_code"}` | an administrator's takedown: no `url`, the sha256 stays |

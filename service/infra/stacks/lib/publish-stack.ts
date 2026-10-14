@@ -18,6 +18,9 @@ export interface PublishStackProps extends StackProps {
   handlerDir?: string;
 }
 
+/** Concurrent validator invocations at most; the rest of a burst waits in the validate queue. */
+export const VALIDATOR_RESERVED_CONCURRENCY = 5;
+
 /** Seconds a Lambda may run. The queue's visibility timeout is six times that, as AWS advises for an SQS trigger. */
 export const VALIDATOR_TIMEOUT_SECONDS = 300;
 export const INDEXER_TIMEOUT_SECONDS = 120;
@@ -83,6 +86,9 @@ export class PublishStack extends Stack {
       // A 100 MB archive may unpack to 512 MB; the buffers of one archive plus the decompressors need room.
       memorySize: 3008,
       timeout: Duration.seconds(VALIDATOR_TIMEOUT_SECONDS),
+      // A publish burst must not take the account's whole Lambda concurrency pool and starve the read API: cap the
+      // validator (it also bounds the 3 GB buffers in flight). Excess messages wait in the queue.
+      reservedConcurrentExecutions: VALIDATOR_RESERVED_CONCURRENCY,
       logGroup: logGroup('ValidatorLogs'),
       environment: {
         MOPM_STAGE: c.stage,

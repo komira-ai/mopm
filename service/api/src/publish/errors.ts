@@ -7,6 +7,7 @@ export type PublishErrorCode =
   | 'not_owner'
   | 'upload_used'
   | 'payload_too_large'
+  | 'limit_exceeded'
   | 'rate_limited'
   | 'read_only_mode'
   | 'unavailable'

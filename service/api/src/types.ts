@@ -34,7 +34,7 @@ export interface VersionRecord {
   name: string;
   /** The spelling that was published (and is in the file name). */
   version: string;
-  /** Spelling-independent key: equivalent versions share it. This is what create-once is enforced on. */
+  /** The key create-once is enforced on (the version itself: a version has one spelling). */
   canonical: string;
   build: string;
   state: VersionState;

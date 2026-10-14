@@ -40,7 +40,7 @@ describe('versions', () => {
   test('pages walk the whole list once, newest first, then end with a null cursor', async () => {
     const s = new MemoryStore();
     await s.createPackage({ name: 'pkg', state: 'active', created_at: '2026-10-01T00:00:00Z' });
-    for (const v of ['1.0', '1.1', '1.2', '1.10', '2.0']) await s.createVersion(rec({ name: 'pkg', version: v }), audit('pkg', 'publish', v));
+    for (const v of ['1.0.0', '1.1.0', '1.2.0', '1.10.0', '2.0.0']) await s.createVersion(rec({ name: 'pkg', version: v }), audit('pkg', 'publish', v));
     const seen: string[] = [];
     let cursor: string | undefined;
     for (let i = 0; i < 10; i++) {
@@ -49,7 +49,7 @@ describe('versions', () => {
       cursor = body.next_cursor ?? undefined;
       if (!cursor) break;
     }
-    expect(seen).toEqual(['2.0', '1.10', '1.2', '1.1', '1.0']);
+    expect(seen).toEqual(['2.0.0', '1.10.0', '1.2.0', '1.1.0', '1.0.0']);
   });
 
   test('a package cursor is refused on the versions list', async () => {
@@ -63,7 +63,7 @@ describe('versions', () => {
   test('a pending version is not listed', async () => {
     const s = new MemoryStore();
     await s.createPackage({ name: 'pkg', state: 'active', created_at: '2026-10-01T00:00:00Z' });
-    await s.createVersion(rec({ name: 'pkg', version: '1.0', state: 'pending' }), audit('pkg', 'reserve', '1.0'));
+    await s.createVersion(rec({ name: 'pkg', version: '1.0.0', state: 'pending' }), audit('pkg', 'reserve', '1.0.0'));
     const { body } = await get(s, '/api/v1/packages/pkg/versions');
     expect(body).toEqual({ versions: [], next_cursor: null });
   });
@@ -86,9 +86,9 @@ describe('search', () => {
   test('sort=updated: newest publication first, claim time when nothing is published, ties by name', async () => {
     const s = new MemoryStore();
     await s.createPackage({ name: 'old', state: 'active', created_at: '2026-10-01T00:00:00Z' });
-    await s.createVersion(rec({ name: 'old', version: '1.0', published_at: '2026-10-02T00:00:00Z' }), audit('old', 'publish', '1.0'));
+    await s.createVersion(rec({ name: 'old', version: '1.0.0', published_at: '2026-10-02T00:00:00Z' }), audit('old', 'publish', '1.0.0'));
     await s.createPackage({ name: 'fresh', state: 'active', created_at: '2026-10-01T00:00:00Z' });
-    await s.createVersion(rec({ name: 'fresh', version: '1.0', published_at: '2026-10-09T00:00:00Z' }), audit('fresh', 'publish', '1.0'));
+    await s.createVersion(rec({ name: 'fresh', version: '1.0.0', published_at: '2026-10-09T00:00:00Z' }), audit('fresh', 'publish', '1.0.0'));
     await s.createPackage({ name: 'claimed_b', state: 'claimed', created_at: '2026-10-05T00:00:00Z' });
     await s.createPackage({ name: 'claimed_a', state: 'claimed', created_at: '2026-10-05T00:00:00Z' });
     const seen: string[] = [];
@@ -150,28 +150,29 @@ describe('getVersion', () => {
   async function withVersions() {
     const s = new MemoryStore();
     await s.createPackage({ name: 'pkg', state: 'active', created_at: '2026-10-01T00:00:00Z' });
-    await s.createVersion(rec({ name: 'pkg', version: '1.0' }), audit('pkg', 'publish', '1.0'));
-    await s.createVersion(rec({ name: 'pkg', version: '2.0', state: 'pending' }), audit('pkg', 'reserve', '2.0'));
+    await s.createVersion(rec({ name: 'pkg', version: '1.0.0' }), audit('pkg', 'publish', '1.0.0'));
+    await s.createVersion(rec({ name: 'pkg', version: '2.0.0', state: 'pending' }), audit('pkg', 'reserve', '2.0.0'));
     return s;
   }
-  test('an equivalent spelling finds the version and the answer keeps the published spelling', async () => {
+  test('only MAJOR.MINOR.PATCH is a version: other spellings of 1.0.0 are invalid_version (400), not a lookup', async () => {
     const s = await withVersions();
-    for (const v of ['1.0', '1.0.0', '1']) {
+    expect(await get(s, '/api/v1/packages/pkg/1.0.0')).toMatchObject({ res: { statusCode: 200 }, body: { version: '1.0.0' } });
+    for (const v of ['1', '1.0', '1.0.0.0', '1.0.0rc1', '1.0.0-rc.1', '01.0.0']) {
       const { res, body } = await get(s, `/api/v1/packages/pkg/${v}`);
-      expect([res.statusCode, body.version]).toEqual([200, '1.0']);
+      expect([v, res.statusCode, body.error.code]).toEqual([v, 400, 'invalid_version']);
     }
   });
   test('provenance defaults to none; a yanked version keeps files and gives the reason; a non-yanked one has a null reason', async () => {
     const s = await withVersions();
-    expect((await get(s, '/api/v1/packages/pkg/1.0')).body).toMatchObject({ state: 'published', yank_reason: null, provenance: { kind: 'none' } });
-    await s.updateVersion('pkg', '1.0', { type: 'yank', reason: 'broken' }, audit('pkg', 'yank', '1.0'));
-    const { body } = await get(s, '/api/v1/packages/pkg/1.0');
+    expect((await get(s, '/api/v1/packages/pkg/1.0.0')).body).toMatchObject({ state: 'published', yank_reason: null, provenance: { kind: 'none' } });
+    await s.updateVersion('pkg', '1.0.0', { type: 'yank', reason: 'broken' }, audit('pkg', 'yank', '1.0.0'));
+    const { body } = await get(s, '/api/v1/packages/pkg/1.0.0');
     expect(body).toMatchObject({ state: 'yanked', yank_reason: 'broken' });
     expect(body.files[0].url).toBeDefined();
   });
   test('the display metadata of a version is served when stored, and absent when not', async () => {
     const s = await withVersions();
-    const bare = (await get(s, '/api/v1/packages/pkg/1.0')).body;
+    const bare = (await get(s, '/api/v1/packages/pkg/1.0.0')).body;
     for (const k of ['description', 'license', 'repository', 'homepage', 'keywords', 'readme']) expect(bare).not.toHaveProperty(k);
     const meta = {
       description: 'HTTP client',
@@ -181,24 +182,23 @@ describe('getVersion', () => {
       keywords: ['http', 'client'],
       readme: '# pkg\n',
     };
-    await s.createVersion(rec({ name: 'pkg', version: '1.1', ...meta }), audit('pkg', 'publish', '1.1'));
-    expect((await get(s, '/api/v1/packages/pkg/1.1')).body).toMatchObject(meta);
+    await s.createVersion(rec({ name: 'pkg', version: '1.1.0', ...meta }), audit('pkg', 'publish', '1.1.0'));
+    expect((await get(s, '/api/v1/packages/pkg/1.1.0')).body).toMatchObject(meta);
   });
   test('a readme over the cap is not served; one exactly at the cap is (bytes, not characters)', async () => {
     const s = await withVersions();
-    await s.createVersion(rec({ name: 'pkg', version: '1.1', readme: 'x'.repeat(README_MAX_BYTES) }), audit('pkg', 'publish', '1.1'));
-    await s.createVersion(rec({ name: 'pkg', version: '1.2', readme: 'x'.repeat(README_MAX_BYTES + 1) }), audit('pkg', 'publish', '1.2'));
-    await s.createVersion(rec({ name: 'pkg', version: '1.3', readme: '\u00e9'.repeat(README_MAX_BYTES / 2 + 1) }), audit('pkg', 'publish', '1.3'));
-    expect((await get(s, '/api/v1/packages/pkg/1.1')).body.readme).toHaveLength(README_MAX_BYTES);
-    expect((await get(s, '/api/v1/packages/pkg/1.2')).body).not.toHaveProperty('readme');
-    expect((await get(s, '/api/v1/packages/pkg/1.3')).body).not.toHaveProperty('readme');
+    await s.createVersion(rec({ name: 'pkg', version: '1.1.0', readme: 'x'.repeat(README_MAX_BYTES) }), audit('pkg', 'publish', '1.1.0'));
+    await s.createVersion(rec({ name: 'pkg', version: '1.2.0', readme: 'x'.repeat(README_MAX_BYTES + 1) }), audit('pkg', 'publish', '1.2.0'));
+    await s.createVersion(rec({ name: 'pkg', version: '1.3.0', readme: '\u00e9'.repeat(README_MAX_BYTES / 2 + 1) }), audit('pkg', 'publish', '1.3.0'));
+    expect((await get(s, '/api/v1/packages/pkg/1.1.0')).body.readme).toHaveLength(README_MAX_BYTES);
+    expect((await get(s, '/api/v1/packages/pkg/1.2.0')).body).not.toHaveProperty('readme');
+    expect((await get(s, '/api/v1/packages/pkg/1.3.0')).body).not.toHaveProperty('readme');
   });
   test('package info carries homepage and keywords from the package and the readme of the latest version only', async () => {
     const s = new MemoryStore();
     await s.createPackage({ name: 'pkg', state: 'active', created_at: '2026-10-01T00:00:00Z', homepage: 'https://example.com/pkg', keywords: ['a'] });
-    await s.createVersion(rec({ name: 'pkg', version: '1.0', readme: 'old' }), audit('pkg', 'publish', '1.0'));
-    await s.createVersion(rec({ name: 'pkg', version: '2.0', readme: 'new' }), audit('pkg', 'publish', '2.0'));
-    await s.createVersion(rec({ name: 'pkg', version: '3.0a1', readme: 'pre' }), audit('pkg', 'publish', '3.0a1'));
+    await s.createVersion(rec({ name: 'pkg', version: '1.0.0', readme: 'old' }), audit('pkg', 'publish', '1.0.0'));
+    await s.createVersion(rec({ name: 'pkg', version: '2.0.0', readme: 'new' }), audit('pkg', 'publish', '2.0.0'));
     expect((await get(s, '/api/v1/packages/pkg')).body).toMatchObject({ homepage: 'https://example.com/pkg', keywords: ['a'], readme: 'new' });
     const none = new MemoryStore();
     await none.createPackage({ name: 'pkg', state: 'claimed', created_at: '2026-10-01T00:00:00Z' });
@@ -208,23 +208,23 @@ describe('getVersion', () => {
   });
   test('a tombstoned version has the sha256 of each file and no url', async () => {
     const s = await withVersions();
-    await s.updateVersion('pkg', '1.0', { type: 'tombstone', reason_code: 'malware', date: '2026-10-14' }, audit('pkg', 'takedown', '1.0'));
-    const { body } = await get(s, '/api/v1/packages/pkg/1.0');
+    await s.updateVersion('pkg', '1.0.0', { type: 'tombstone', reason_code: 'malware', date: '2026-10-14' }, audit('pkg', 'takedown', '1.0.0'));
+    const { body } = await get(s, '/api/v1/packages/pkg/1.0.0');
     expect(body.tombstone).toEqual({ reason_code: 'malware', date: '2026-10-14' });
     expect(body.files.map((f: any) => [f.sha256, 'url' in f])).toEqual([['a'.repeat(64), false]]);
   });
   test('a pending version is version_not_found; a missing package is package_not_found; checks run in order name, version, package', async () => {
     const s = await withVersions();
-    expect((await get(s, '/api/v1/packages/pkg/2.0')).body.error.code).toBe('version_not_found');
-    expect((await get(s, '/api/v1/packages/pkg/9.9')).body.error.code).toBe('version_not_found');
-    expect((await get(s, '/api/v1/packages/nosuch/1.0')).body.error.code).toBe('package_not_found');
+    expect((await get(s, '/api/v1/packages/pkg/2.0.0')).body.error.code).toBe('version_not_found');
+    expect((await get(s, '/api/v1/packages/pkg/9.9.0')).body.error.code).toBe('version_not_found');
+    expect((await get(s, '/api/v1/packages/nosuch/1.0.0')).body.error.code).toBe('package_not_found');
     expect((await get(s, '/api/v1/packages/Bad-Name/1.0')).body.error.code).toBe('invalid_name');
     const bad = await get(s, '/api/v1/packages/nosuch/1.0.0+local');
     expect([bad.res.statusCode, bad.body.error.code]).toEqual([400, 'invalid_version']);
   });
   test('a store error is a 500 that leaks nothing', async () => {
     const broken: Store = new Proxy({} as Store, { get: () => async () => { throw new Error('secret table name'); } });
-    const { res, body } = await get(broken, '/api/v1/packages/pkg/1.0');
+    const { res, body } = await get(broken, '/api/v1/packages/pkg/1.0.0');
     expect([res.statusCode, JSON.stringify(body).includes('secret')]).toEqual([500, false]);
   });
 });
@@ -256,7 +256,7 @@ describe('route_not_found', () => {
     ['GET', '/api/v1/nope'],
     ['GET', '/other/v1/packages'],
     ['GET', '/api/v1'],
-    ['GET', '/api/v1/packages/pkg/1.0/files'],
+    ['GET', '/api/v1/packages/pkg/1.0.0/files'],
     ['GET', '/api/v1/packages/pkg/claim'], // a literal segment of the POST claim operation, not a version
     ['GET', '/api/v1/packages/%E0%A4%A'], // undecodable percent escape
     ['POST', '/api/v1/packages/pkg/claim'],

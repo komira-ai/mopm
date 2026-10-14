@@ -16,7 +16,7 @@ export const CATALOGUE: Partial<Record<ErrorCode, { message: string; hint: strin
   },
   invalid_version: {
     message: "'{version}' is not a valid version.",
-    hint: 'Use digits separated by dots, with an optional a, b, rc or dev suffix.',
+    hint: 'A version is MAJOR.MINOR.PATCH: three numbers separated by dots, such as 1.2.3. Suffixes such as rc1 are not supported.',
   },
   package_not_found: {
     message: "There is no package '{name}'.",

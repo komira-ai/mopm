@@ -2,7 +2,7 @@ import { applyEvent, type PublishFill } from '../../src/state';
 import { MemoryStore } from '../../src/memory-store';
 import { audit, rec } from '../helpers';
 
-const pending = () => rec({ name: 'p', version: '1.0', state: 'pending', build: '', requires_mojo: '', files: [], manifest_sha256: 'a'.repeat(64) });
+const pending = () => rec({ name: 'p', version: '1.0.0', state: 'pending', build: '', requires_mojo: '', files: [], manifest_sha256: 'a'.repeat(64) });
 const fill: PublishFill = {
   version: '1.0.0',
   build: 'mojo1.0.0_0',
@@ -18,7 +18,7 @@ const fill: PublishFill = {
 describe('pending -> published carries what the validator learned', () => {
   test('the fill replaces the placeholders of the reserved number; the number, spelling and canonical key are kept as given by the fill', () => {
     const out = applyEvent(pending(), { type: 'publish', fill });
-    expect(out).toMatchObject({ ...fill, state: 'published', rev: 1, name: 'p', canonical: '1' });
+    expect(out).toMatchObject({ ...fill, state: 'published', rev: 1, name: 'p', canonical: '1.0.0' });
   });
 
   test('without a fill the event changes only the state, as before', () => {
@@ -33,12 +33,12 @@ describe('pending -> published carries what the validator learned', () => {
     expect(twice.build).toBe('mojo1.0.0_0');
   });
 
-  test('through the store: the fill is persisted with its audit entry, and the equivalent spelling finds it', async () => {
+  test('through the store: the fill is persisted with its audit entry, and it is found by its version', async () => {
     const s = new MemoryStore();
-    await s.createVersion(pending(), audit('p', 'publish_begin', '1.0'));
-    const out = await s.updateVersion('p', '1', { type: 'publish', fill }, audit('p', 'publish', '1.0.0'));
+    await s.createVersion(pending(), audit('p', 'publish_begin', '1.0.0'));
+    const out = await s.updateVersion('p', '1.0.0', { type: 'publish', fill }, audit('p', 'publish', '1.0.0'));
     expect(out).toMatchObject({ state: 'published', version: '1.0.0', build: 'mojo1.0.0_0' });
-    expect((await s.getVersion('p', '1.0'))?.files[0]?.sha256).toBe('b'.repeat(64));
+    expect((await s.getVersion('p', '1.0.0'))?.files[0]?.sha256).toBe('b'.repeat(64));
     expect(await s.listAudit('p')).toHaveLength(2);
   });
 });

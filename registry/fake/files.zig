@@ -204,7 +204,7 @@ fn byFilename(_: void, a: Entry, b: Entry) bool {
 }
 
 /// `repodata.json` of `subdir` (or, when `current`, `current_repodata.json`:
-/// only each name's newest published non-prerelease version).
+/// only each name's newest published version).
 fn repodata(arena: Allocator, s: *const st.State, subdir: []const u8, current: bool) ![]const u8 {
     var live = std.ArrayList(Entry).init(arena);
     var removed = std.ArrayList([]const u8).init(arena);

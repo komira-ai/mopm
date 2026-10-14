@@ -10,7 +10,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import { Construct } from 'constructs';
-import { StageConfig, channelBucketName, oauthSecretName, tableName, validateQueueName } from './config';
+import { StageConfig, channelBucketName, indexQueueName, oauthSecretName, tableName, validateQueueName } from './config';
 import { assertRegion, lookupZone, removalPolicyFor } from './common';
 
 export interface ApiStackProps extends StackProps {
@@ -54,6 +54,7 @@ export const PUBLISH_ROUTES: Array<{ method: apigw.HttpMethod; path: string }> =
   { method: apigw.HttpMethod.POST, path: '/api/v1/packages/{name}/{version}/files' },
   { method: apigw.HttpMethod.POST, path: '/api/v1/packages/{name}/{version}/publish' },
   { method: apigw.HttpMethod.GET, path: '/api/v1/publishes/{publish_id}' },
+  { method: apigw.HttpMethod.PUT, path: '/api/v1/packages/{name}/{version}/yank' },
 ];
 /**
  * What the handler may write, table by table (the reviewed list; api.test.ts pins it). No DeleteItem, no Scan, no
@@ -94,8 +95,8 @@ export const AUTH_GRANTS: Record<string, { actions: string[]; indexes?: string[]
 export const CORS_METHODS = [apigw.CorsHttpMethod.GET, apigw.CorsHttpMethod.HEAD, apigw.CorsHttpMethod.OPTIONS];
 /** How long a browser may cache a preflight answer. */
 export const CORS_MAX_AGE = Duration.hours(1);
-/** The response header a page may read, so it can show the request id with an error. */
-export const CORS_EXPOSED_HEADERS = ['x-mopm-request-id'];
+/** The response headers a page may read: the request id to show with an error, and Retry-After so it can say when to try again after a 429 or a read-only 503. */
+export const CORS_EXPOSED_HEADERS = ['x-mopm-request-id', 'retry-after'];
 /** The one browser origin that may call a stage's API: its own site, over https. Never `*`. */
 export const siteOrigin = (c: StageConfig) => `https://${c.siteDomain}`;
 
@@ -138,6 +139,8 @@ export class ApiStack extends Stack {
         // references, so this stack does not depend on the publish stack's exports.
         MOPM_CHANNEL_BUCKET: channelBucketName(c.stage, this.account),
         MOPM_VALIDATE_QUEUE_URL: `https://sqs.${this.region}.amazonaws.com/${this.account}/${validateQueueName(c.stage)}`,
+        // Yank and unyank queue a repodata rewrite of the version's subdirs on the index writer's FIFO queue.
+        MOPM_INDEX_QUEUE_URL: `https://sqs.${this.region}.amazonaws.com/${this.account}/${indexQueueName(c.stage)}`,
         ...(props.limits?.ratePerAccountPerDay !== undefined ? { MOPM_RATE_PER_ACCOUNT_DAY: String(props.limits.ratePerAccountPerDay) } : {}),
         ...(props.limits?.ratePerTokenPerDay !== undefined ? { MOPM_RATE_PER_TOKEN_DAY: String(props.limits.ratePerTokenPerDay) } : {}),
       },
@@ -201,6 +204,13 @@ export class ApiStack extends Stack {
         sid: 'QueueCommits',
         actions: ['sqs:SendMessage'],
         resources: [this.formatArn({ service: 'sqs', resource: validateQueueName(c.stage) })],
+      }),
+    );
+    this.handler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: 'QueueIndexRebuilds',
+        actions: ['sqs:SendMessage'],
+        resources: [this.formatArn({ service: 'sqs', resource: indexQueueName(c.stage) })],
       }),
     );
 
