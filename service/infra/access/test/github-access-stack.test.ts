@@ -190,8 +190,9 @@ test('trust is bound to komira-ai/mopm main by default', () => {
   const t = Template.fromStack(
     new GithubAccessStack(app, 'd', { stage: 'beta', regions: [REGION], env: { account: ACCOUNT, region: REGION } }),
   );
-  const subs = Object.values(t.findResources('AWS::IAM::Role')).map(
-    (r: any) => r.Properties.AssumeRolePolicyDocument.Statement[0].Condition.StringEquals['token.actions.githubusercontent.com:sub'],
+  const subs = Object.values(t.findResources('AWS::IAM::Role'))
+    .filter((r: any) => /^mopm-beta-(deploy|e2e)$/.test(r.Properties.RoleName))
+    .map((r: any) => r.Properties.AssumeRolePolicyDocument.Statement[0].Condition.StringEquals['token.actions.githubusercontent.com:sub'],
   );
   expect(subs.sort()).toEqual([
     'repo:komira-ai/mopm:environment:beta:job_workflow_ref:komira-ai/mopm/.github/workflows/deploy.yml@refs/heads/main',

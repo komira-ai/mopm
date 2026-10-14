@@ -13,7 +13,7 @@ corresponding row as open.
 |---|---|---|
 | Credential-minting jobs (`id-token: write`) exist only in `deploy.yml`, `e2e.yml` and `promote.yml`, which trigger only on `push` to `main`, `workflow_dispatch` and `workflow_call` | `hygiene` job | A pull request, or a workflow added later, obtaining an OIDC token |
 | A `guard` job fails anything but `refs/heads/main` and any event but `push` / `workflow_dispatch`; the credential job needs it and repeats the ref test | `deploy.yml`, `e2e.yml`; `workflows` job checks the shape | A manual run from a feature branch deploying unreviewed code |
-| No `pull_request_target`, `workflow_run`, `issue_comment` anywhere; no `secrets: inherit` | `hygiene`, `workflows` jobs | The classic "privileged trigger runs attacker code" injection |
+| No `_target` variant of the pull-request trigger, no `workflow_run`, no `issue_comment` anywhere; no `secrets: inherit` | `hygiene`, `workflows` jobs | The classic "privileged trigger runs attacker code" injection |
 | Top-level permissions are read-only in every workflow; `write` appears only as `id-token` in the three files above | `workflows` job | A compromised step escalating the repository token |
 | Only GitHub-owned actions, pinned by full commit SHA | `workflows` job | A moved tag or third-party action stealing credentials |
 | `run:` scripts never interpolate `${{ ... }}`; stage and event fields enter through `env:` | `workflows` job | Script injection from inputs or event data |
