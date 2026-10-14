@@ -1,0 +1,29 @@
+#!/usr/bin/env dotslash
+
+// The pinned buck2 release (2026-09-15). The bundled prelude is part of the
+// binary, so this pin also pins the prelude.
+{
+  "name": "buck2",
+  "platforms": {
+    "linux-x86_64": {
+      "size": 39587698,
+      "hash": "sha256",
+      "digest": "1268fce33fb61273091dd5dd8c60b65de1521a3caa36b88983813e882b7ffd89",
+      "format": "zst",
+      "path": "buck2",
+      "providers": [
+        {"url": "https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-x86_64-unknown-linux-gnu.zst"}
+      ]
+    },
+    "macos-aarch64": {
+      "size": 34806620,
+      "hash": "sha256",
+      "digest": "aacdf7cabe34b9b5dc74866b8dcf7410cdbae3ad2dccef45b7ee9851cb781528",
+      "format": "zst",
+      "path": "buck2",
+      "providers": [
+        {"url": "https://github.com/facebook/buck2/releases/download/2026-09-15/buck2-aarch64-apple-darwin.zst"}
+      ]
+    }
+  }
+}

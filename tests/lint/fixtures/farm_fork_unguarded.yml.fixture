@@ -1,0 +1,19 @@
+name: farm
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  build:
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: komira-ai/komira/.github/actions/farm-connect@30f5cab9ef1cf1dbe8603580d721e6c040bbf86c
+        with:
+          farm-address: ${{ vars.FARM_ADDRESS }}
+      - run: ./buck2 build //...

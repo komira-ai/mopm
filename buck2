@@ -1,0 +1,91 @@
+#!/bin/sh
+# ./buck2 -- run the buck2 release pinned in tools/buck2.
+#
+# usage: ./buck2 <buck2 arguments...>
+#
+# tools/buck2 is the only place the version is written: for each platform it
+# names the release asset's URL, its size and its sha256. This script reads
+# that file (it is also a DotSlash file, so `tools/buck2 ...` works where
+# dotslash is installed), downloads the asset once, refuses it unless both
+# its size and its sha256 match, decompresses it, and caches the binary at
+#
+#     ${XDG_CACHE_HOME:-$HOME/.cache}/komira/buck2/<sha256>/buck2
+#
+# Later runs exec the cached binary directly. The cache entry appears by an
+# atomic rename only after verification, so an interrupted or refused
+# download leaves nothing a later run would use.
+#
+# Needs: sh, curl, zstd, and sha256sum (Linux) or shasum (macOS).
+# Platforms: Linux x86_64 and macOS arm64, the two entries in tools/buck2.
+set -eu
+
+die() { echo "./buck2: $*" >&2; exit 1; }
+
+pin="$(dirname "$0")/tools/buck2"
+[ -f "$pin" ] || die "cannot find the pin file $pin"
+
+case "$(uname -s) $(uname -m)" in
+    "Linux x86_64") platform=linux-x86_64 ;;
+    "Darwin arm64") platform=macos-aarch64 ;;
+    *) die "no buck2 is pinned for $(uname -s) $(uname -m); tools/buck2 has linux-x86_64 and macos-aarch64" ;;
+esac
+
+# The pin file has a fixed layout: one `"<platform>": {` block per platform
+# holding "size", "hash", "digest", "format" and a provider "url", one per
+# line. Read the fields of our block, stopping at its url.
+fields=$(awk -v p="\"$platform\":" '
+    index($0, p) { inblock = 1; next }
+    !inblock { next }
+    {
+        if (match($0, /"[a-z]+": *"?[^",}]+/)) {
+            s = substr($0, RSTART, RLENGTH)
+            k = s; sub(/^"/, "", k); sub(/".*/, "", k)
+            val = s; sub(/^"[a-z]+": *"?/, "", val)
+            v[k] = val
+        }
+        if ("url" in v) { print v["size"], v["hash"], v["digest"], v["format"], v["url"]; exit }
+    }' "$pin")
+read -r size hash digest format url <<EOF
+$fields
+EOF
+[ -n "${url:-}" ] || die "$pin has no complete entry for $platform"
+[ "$hash" = sha256 ] && [ "$format" = zst ] || die "$pin: $platform: expected a sha256-pinned zst asset, got hash=$hash format=$format"
+printf '%s\n' "$digest" | grep -Eq '^[0-9a-f]{64}$' || die "$pin: $platform: digest is not a sha256: $digest"
+printf '%s\n' "$size" | grep -Eq '^[0-9]+$' || die "$pin: $platform: size is not a number: $size"
+
+cache="${XDG_CACHE_HOME:-$HOME/.cache}/komira/buck2"
+bin="$cache/$digest/buck2"
+if [ -x "$bin" ]; then
+    # `KOMIRA_BUCK2_PRINT_PATH=1 ./buck2` prints the pinned binary's path and runs nothing: for a test that must
+    # start buck2 with an empty PATH, where this script (which needs dirname, uname, awk) cannot run.
+    [ -z "${KOMIRA_BUCK2_PRINT_PATH:-}" ] || { printf '%s\n' "$bin"; exit 0; }
+    exec "$bin" "$@"
+fi
+
+for tool in curl zstd; do
+    command -v "$tool" > /dev/null || die "needs $tool to install buck2 (on macOS: brew install $tool)"
+done
+if command -v sha256sum > /dev/null; then
+    sha256() { sha256sum "$1" | cut -d' ' -f1; }
+elif command -v shasum > /dev/null; then
+    sha256() { shasum -a 256 "$1" | cut -d' ' -f1; }
+else
+    die "needs sha256sum or shasum to verify buck2"
+fi
+
+mkdir -p "$cache"
+tmp=$(mktemp -d "$cache/.install.XXXXXX")
+trap 'rm -rf "$tmp"' EXIT INT TERM
+echo "./buck2: installing buck2 for $platform from $url" >&2
+curl -fsSL --retry 3 -o "$tmp/buck2.zst" "$url" || die "download failed: $url"
+got=$(wc -c < "$tmp/buck2.zst" | tr -d ' ')
+[ "$got" = "$size" ] || die "refusing $url: $got bytes, tools/buck2 pins $size"
+got=$(sha256 "$tmp/buck2.zst")
+[ "$got" = "$digest" ] || die "refusing $url: sha256 $got, tools/buck2 pins $digest"
+zstd -q -d "$tmp/buck2.zst" -o "$tmp/buck2" || die "zstd could not decompress $url"
+chmod +x "$tmp/buck2"
+mkdir -p "$cache/$digest"
+mv -f "$tmp/buck2" "$bin"
+rm -rf "$tmp"
+trap - EXIT INT TERM
+exec "$bin" "$@"

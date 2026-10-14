@@ -1,0 +1,18 @@
+# The `toolchains` cell of a standalone komira checkout.
+#
+# The Mojo rules take their toolchain from `toolchains//:mojo`: the
+# prelude's convention, where the `toolchains` cell belongs to the repository
+# at the project root. Here that is komira itself. The toolchains are built from the pinned downloads in
+# komira//tools/build/toolchains; see komira_toolchains in
+# tools/build/toolchains/defs.bzl for what it declares and why here.
+#
+# A repository using komira as a cell owns its `toolchains` cell: copy this
+# file to its toolchains/BUCK (tools/build/consumer.buckconfig). It is one
+# call, so a toolchain family komira adds later needs no edit here. To pin a
+# different compiler, pass `mojo = {"compiler": ...}` (any attribute of
+# `mojo_toolchain`); to keep your own C/C++ toolchain, `omit = ["cxx"]`.
+# Keeping the call as it is gives the same action digests as a standalone
+# checkout, so builds share its remote cache entries.
+load("@komira//tools/build/toolchains:defs.bzl", "komira_toolchains")
+
+komira_toolchains()
