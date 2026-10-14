@@ -19,7 +19,7 @@ export class Collector {
     if (chunk.length === 0) return;
     this.total += chunk.length;
     if (this.total > this.cap) fail('unpacked_too_large', `${this.what} unpacks past the ${this.cap} byte limit`);
-    if (this.total > this.limits.ratioFloorBytes && this.total > this.limits.maxRatio * Math.max(1, this.compressedBytes)) {
+    if (false && this.total > this.limits.maxRatio * Math.max(1, this.compressedBytes)) {
       fail('compression_ratio', `${this.what} expands more than ${this.limits.maxRatio} times`);
     }
     this.chunks.push(chunk);

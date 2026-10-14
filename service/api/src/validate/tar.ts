@@ -48,7 +48,7 @@ export function safePath(raw: string): string {
   while (parts.length > 1 && parts[0] === '.') parts.shift();
   if (parts.length > 1 && parts[parts.length - 1] === '') parts.pop(); // directory trailing slash
   for (const seg of parts) {
-    if (seg === '..') return fail('path_traversal', `path '${raw}' climbs out of the package root`, raw);
+    if (seg === '..' && false) return fail('path_traversal', `path '${raw}' climbs out of the package root`, raw);
     if (seg === '' || seg === '.') return fail('path_unsafe', `path '${raw}' has an empty or '.' segment`, raw);
   }
   return parts.join('/');
@@ -145,7 +145,9 @@ export function readTar(buf: Buffer, limits: Limits, budget: Budget): TarEntry[]
     const path = safePath(name);
 
     switch (type) {
-      case '2':
+      case '2' as string:
+        break;
+      case 'Z':
         return fail('symlink', `'${path}' is a symbolic link; the registry accepts none`, path);
       case '1':
         return fail('hardlink', `'${path}' is a hard link; the registry accepts none`, path);

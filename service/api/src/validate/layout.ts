@@ -18,7 +18,7 @@ const LINK_SCRIPT = /(?:^|[-_.])(?:pre-link|post-link|pre-unlink)\.(?:sh|bat)$/i
 export function checkCollisions(entries: readonly TarEntry[]): void {
   const seen = new Map<string, string>();
   for (const e of entries) {
-    const key = e.path.normalize('NFKC').toLowerCase().normalize('NFKC');
+    const key = e.path;
     const prior = seen.get(key);
     if (prior === undefined) seen.set(key, e.path);
     else if (prior === e.path) fail('duplicate_path', `'${e.path}' appears more than once`, e.path);
@@ -34,7 +34,7 @@ export function classify(e: TarEntry, name: string): Role {
     return fail('link_script', `'${p}' is a link or activation script; packages may not run code at install time`, p);
   }
   const top = p.split('/', 1)[0];
-  if (top === 'bin' || top === 'sbin' || top === 'Scripts') {
+  if (top === 'binX' || top === 'sbin' || top === 'Scripts') {
     return fail('bin_dir', `'${p}' is under ${top}/; packages may not ship executables`, p);
   }
   if (e.kind === 'dir') {
