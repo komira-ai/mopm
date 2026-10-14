@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { App } from 'aws-cdk-lib';
 import { Match } from 'aws-cdk-lib/assertions';
-import { ApiStack, AUTH_GRANTS, AUTH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES } from '../lib/api-stack';
+import { ApiStack, AUTH_GRANTS, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
 import { STAGES, stageConfig, tableName } from '../lib/config';
 import { DUMMY_ACCOUNT, tpl } from './util';
 
@@ -10,7 +10,7 @@ const acts = (s: any): string[] => ([] as string[]).concat(s.Action);
 const flat = (v: any): string => (typeof v === 'string' ? v : JSON.stringify(v));
 
 /**
- * Everything the handler's role may do, checked as rules. Allowed: GetItem/Query on the four read tables; per AUTH_GRANTS
+ * Everything the handler's role may do, checked as rules. Allowed: GetItem/Query on the four read tables; per WRITE_GRANTS on the publish tables; per AUTH_GRANTS
  * on the four auth tables (indexes by name only); GetSecretValue on the one OAuth secret. Returns what breaks them.
  */
 function policyViolations(stage: string, statements: any[]): string[] {
@@ -35,11 +35,12 @@ function policyViolations(stage: string, statements: any[]): string[] {
         const table = m[1]!;
         const index = m[3];
         const grant = AUTH_GRANTS[table];
+        const written = WRITE_GRANTS.some((g) => g.tables.includes(table) && g.actions.includes(a));
         const readable = (READ_TABLES as readonly string[]).includes(table);
-        if (!readable && !grant) out.push(`${a} on unlisted table ${table}`);
-        if (readable && !READ_ACTIONS.includes(a) && !(grant && grant.actions.includes(a))) out.push(`${a} on registry table ${table}`);
-        if (grant && !readable && !grant.actions.includes(a)) out.push(`${a} on ${table}`);
-        if (index !== undefined && !readable && !(grant?.indexes ?? []).includes(index)) out.push(`${a} on index ${table}/${index}`);
+        if (!readable && !grant && !written) out.push(`${a} on unlisted table ${table}`);
+        if (readable && !READ_ACTIONS.includes(a) && !written && !(grant && grant.actions.includes(a))) out.push(`${a} on registry table ${table}`);
+        if (grant && !readable && !written && !grant.actions.includes(a)) out.push(`${a} on ${table}`);
+        if (index !== undefined && !readable && !written && !(grant?.indexes ?? []).includes(index)) out.push(`${a} on index ${table}/${index}`);
       }
     }
   }
@@ -62,12 +63,13 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     });
   });
 
-  test('HTTP API serves the read operations and the auth operations, with the default endpoint disabled', () => {
+  test('HTTP API serves the read, publish and auth operations, with the default endpoint disabled', () => {
     t.hasResourceProperties('AWS::ApiGatewayV2::Api', { ProtocolType: 'HTTP', DisableExecuteApiEndpoint: true });
     const keys = Object.values(t.findResources('AWS::ApiGatewayV2::Route')).map((r: any) => r.Properties.RouteKey as string);
     expect(keys.sort()).toEqual(
       [
         ...READ_ROUTES.map((r) => `GET ${r}`),
+        ...PUBLISH_ROUTES.map((r) => `${r.method} ${r.path}`),
         'POST /api/v1/auth/device',
         'POST /api/v1/auth/device/poll',
         'POST /api/v1/auth/oidc/exchange',
@@ -77,8 +79,20 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
       ].sort(),
     );
     expect(AUTH_ROUTES).toHaveLength(6);
-    // The write operations of the registry (claim, publish, yank) are not routed yet.
-    expect(keys.some((k) => /\/(claim|publish|files)/.test(k))).toBe(false);
+    expect(keys).toHaveLength(READ_ROUTES.length + PUBLISH_ROUTES.length + AUTH_ROUTES.length);
+    // Claim and yank are not routed yet.
+    expect(keys.some((k) => /\/(claim|yank)/.test(k))).toBe(false);
+  });
+
+  test('the handler is told where uploads go and where commits are queued, by name', () => {
+    t.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: {
+        Variables: Match.objectLike({
+          MOPM_CHANNEL_BUCKET: `mopm-${stage}-channel-${DUMMY_ACCOUNT}`,
+          MOPM_VALIDATE_QUEUE_URL: `https://sqs.us-east-1.amazonaws.com/${DUMMY_ACCOUNT}/mopm-${stage}-validate.fifo`,
+        }),
+      },
+    });
   });
 
   // Every policy statement the handler's role gets. The role is the only one in the stack with a policy.
@@ -97,6 +111,22 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     expect(resources).not.toContain('"*"');
     const named = (resources.match(/table\/mopm-[a-z]+-[a-z_]+/g) ?? []).map((m) => m.replace(/\/index.*/, ''));
     expect([...new Set(named)].sort()).toEqual(READ_TABLES.map((x) => `table/${tableName(stage, x)}`).sort());
+  });
+
+  // The reviewed write grants, pinned by table. A new write needs a line in WRITE_GRANTS (and so a reviewer).
+  test('writes: exactly the reviewed grants, table by table', () => {
+    expect(WRITE_GRANTS.map((g) => [g.sid, g.actions, g.tables])).toEqual([
+      ['ReserveVersions', ['dynamodb:PutItem'], ['versions', 'audit']],
+      ['RecordUploadsAndPublishes', ['dynamodb:GetItem', 'dynamodb:PutItem'], ['uploads', 'publishes']],
+      ['ReadSwitches', ['dynamodb:GetItem'], ['config']],
+    ]);
+    for (const g of WRITE_GRANTS) {
+      const st = statements().find((x) => x.Sid === g.sid);
+      expect(st).toBeDefined();
+      expect(acts(st).sort()).toEqual([...g.actions].sort());
+      const named = (flatten(st.Resource).match(/table\/mopm-[a-z]+-[a-z_]+/g) ?? []).sort();
+      expect(named).toEqual(g.tables.map((x) => `table/${tableName(stage, x)}`).sort());
+    }
   });
 
   test('the one index the read statement may Query is named exactly; no index wildcard', () => {
@@ -152,7 +182,7 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
       'PutItem on packages (registry write)': withExtra({ Action: 'dynamodb:PutItem', Resource: tbl('packages') }),
       'UpdateItem on audit': withExtra({ Action: 'dynamodb:UpdateItem', Resource: tbl('audit') }),
       'wildcard dynamodb action': withExtra({ Action: 'dynamodb:*', Resource: tbl('tokens') }),
-      'a table that is not in either list': withExtra({ Action: 'dynamodb:GetItem', Resource: tbl('uploads') }),
+      'a table that is in no list': withExtra({ Action: 'dynamodb:GetItem', Resource: tbl('reserved_names') }),
       'Query on every tokens index': withExtra({ Action: 'dynamodb:Query', Resource: `${tbl('tokens')}/index/*` }),
       'secret read widened to every secret': withExtra({ Action: 'secretsmanager:GetSecretValue', Resource: '*' }),
       'a second secret': withExtra({ Action: 'secretsmanager:GetSecretValue', Resource: `arn:aws:secretsmanager:us-east-1:${DUMMY_ACCOUNT}:secret:mopm/${stage}/e2e/test-identity-??????` }),
@@ -162,6 +192,19 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     for (const [name, st] of Object.entries(mutants)) {
       expect({ name, caught: policyViolations(stage, st).length > 0 }).toEqual({ name, caught: true });
     }
+  });
+
+  test('S3 and SQS are reachable only where publishing needs them: quarantine/ and the validate queue', () => {
+    const s3 = statements().filter((s) => acts(s).some((a) => a.startsWith('s3:')));
+    expect(s3).toHaveLength(1);
+    expect(acts(s3[0]).sort()).toEqual(['s3:GetObject', 's3:PutObject']);
+    expect(flatten(s3[0].Resource)).toContain('/quarantine/*');
+    expect(flatten(s3[0].Resource)).toContain(`mopm-${stage}-channel-${DUMMY_ACCOUNT}`);
+    const q = statements().filter((s) => acts(s).some((a) => a.startsWith('sqs:')));
+    expect(q).toHaveLength(1);
+    expect(acts(q[0])).toEqual(['sqs:SendMessage']);
+    expect(flatten(q[0].Resource)).toContain(`mopm-${stage}-validate.fifo`);
+    expect(flatten(q[0].Resource)).not.toContain('index');
   });
 
   test('custom domain with a DNS-validated certificate', () => {

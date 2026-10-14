@@ -6,6 +6,7 @@ import { AuthError } from '../auth/errors';
 import { routeAuth, type AuthServices } from './auth-routes';
 import { render } from './catalogue';
 import { templateFor } from './auth-catalogue';
+import { routePublish, type PublishApi } from './publish-routes';
 
 export type Stage = 'beta' | 'gamma' | 'prod';
 
@@ -14,9 +15,9 @@ export interface HttpRequest {
   /** The raw path, e.g. `/api/v1/packages/http_client`. */
   path: string;
   query: Record<string, string | undefined>;
-  /** Request headers by lower-case name. Only `authorization` is read. */
+  /** Lower-case names. Only `authorization` is read (login, tokens and the publish operations). */
   headers?: Record<string, string | undefined>;
-  /** The raw request body, for the operations that take one. */
+  /** The raw (decoded) request body, for the operations that take one. */
   body?: string;
 }
 
@@ -35,6 +36,8 @@ export interface RouterDeps {
   readOnly: boolean;
   /** Login, tokens and CI exchange. Absent: those paths answer `unavailable` and everything else is unchanged. */
   auth?: AuthServices;
+  /** The publish operations (begin, commit, status). Absent: the router serves reads only. */
+  publish?: PublishApi;
 }
 
 const PREFIX = '/api/v1';
@@ -296,6 +299,10 @@ function segments(path: string): string[] | undefined {
 /** Handle one request. Never throws: every failure is an error body from the contract's catalogue. */
 export async function route(req: HttpRequest, deps: RouterDeps, requestId: string): Promise<HttpResponse> {
   try {
+    if (deps.publish) {
+      const published = await routePublish(req, deps.publish, requestId);
+      if (published) return published;
+    }
     const seg = segments(req.path);
     if (seg) {
       const authed = await routeAuth({ method: req.method, seg, authorization: req.headers?.authorization, body: req.body }, deps.auth);

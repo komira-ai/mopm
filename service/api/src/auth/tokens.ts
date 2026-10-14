@@ -178,10 +178,13 @@ export class TokenService {
 }
 
 /** Resolve an Authorization header value to a Principal, or throw the contract's error. */
+/** What the bearer middleware needs of the store: a lookup by hash and the last-used mark. */
+export type TokenLookup = Pick<AuthStore, 'getTokenByHash' | 'touchToken'>;
+
 export class Authenticator {
-  private readonly store: AuthStore;
+  private readonly store: TokenLookup;
   private readonly now: Clock;
-  constructor(o: { store: AuthStore; now?: Clock }) {
+  constructor(o: { store: TokenLookup; now?: Clock }) {
     this.store = o.store;
     this.now = o.now ?? (() => new Date());
   }

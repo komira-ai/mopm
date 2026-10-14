@@ -34,7 +34,7 @@ jobs:
       - name: Install (npm ci, as in deploy.yml)
         run: npm ci --ignore-scripts --no-audit --no-fund
       # The API stack deploys the handler bundle built from service/api (not committed); the tests that synthesize with the
-      # real bundle (empty-channel) and the synth step below need it, so it is built first.
+      # real bundle and the synth step below need it, so it is built first.
       - name: Build the API handler bundle (as in deploy.yml)
         working-directory: service/api
         run: |

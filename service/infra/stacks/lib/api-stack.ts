@@ -10,7 +10,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import { Construct } from 'constructs';
-import { StageConfig, oauthSecretName, tableName } from './config';
+import { StageConfig, channelBucketName, oauthSecretName, tableName, validateQueueName } from './config';
 import { assertRegion, lookupZone, removalPolicyFor } from './common';
 
 export interface ApiStackProps extends StackProps {
@@ -21,10 +21,12 @@ export interface ApiStackProps extends StackProps {
   commit: string;
   /** Directory holding the built handler (`http/lambda.js`). Defaults to service/api/dist; tests pass a stub. */
   handlerDir?: string;
-  /** New uploads are refused and /health says so. */
+  /** New uploads are refused and /health says so. (The runtime switch is the `read_only` item of the config table.) */
   readOnly?: boolean;
   /** Interactive publishing needs a GitHub account with two-factor authentication on (the CEO's rule). On unless set false. */
   require2fa?: boolean;
+  /** Rate limits of begin-upload per UTC day; the code's defaults (generous) apply when absent. */
+  limits?: { ratePerAccountPerDay?: number; ratePerTokenPerDay?: number };
 }
 
 /**
@@ -47,6 +49,21 @@ export const READ_ROUTES = [
   '/api/v1/packages/{name}/{version}',
 ];
 export const READ_ACTIONS = ['dynamodb:GetItem', 'dynamodb:Query'];
+/** The publish operations of spec/api/openapi.yaml: begin an upload, commit it, read a publish's status. */
+export const PUBLISH_ROUTES: Array<{ method: apigw.HttpMethod; path: string }> = [
+  { method: apigw.HttpMethod.POST, path: '/api/v1/packages/{name}/{version}/files' },
+  { method: apigw.HttpMethod.POST, path: '/api/v1/packages/{name}/{version}/publish' },
+  { method: apigw.HttpMethod.GET, path: '/api/v1/publishes/{publish_id}' },
+];
+/**
+ * What the handler may write, table by table (the reviewed list; api.test.ts pins it). No DeleteItem, no Scan, no
+ * UpdateItem. (The tokens table, including the last-used mark, is granted by AUTH_GRANTS.) A new version is a transaction of two PutItems (version + audit).
+ */
+export const WRITE_GRANTS: Array<{ sid: string; actions: string[]; tables: string[] }> = [
+  { sid: 'ReserveVersions', actions: ['dynamodb:PutItem'], tables: ['versions', 'audit'] },
+  { sid: 'RecordUploadsAndPublishes', actions: ['dynamodb:GetItem', 'dynamodb:PutItem'], tables: ['uploads', 'publishes'] },
+  { sid: 'ReadSwitches', actions: ['dynamodb:GetItem'], tables: ['config'] },
+];
 
 /** The operations of spec/api/openapi.yaml for login, tokens and CI exchange. */
 export const AUTH_ROUTES: { method: apigw.HttpMethod; path: string }[] = [
@@ -117,6 +134,12 @@ export class ApiStack extends Stack {
         // service/infra/access/oauth-secret.sh; until it exists the device login routes answer 503.
         MOPM_OAUTH_SECRET_NAME: oauthSecretName(c.stage),
         MOPM_REQUIRE_2FA: String(props.require2fa ?? true),
+        // Where uploads go (a presigned PUT into quarantine/) and where a commit is queued. Built from names, not
+        // references, so this stack does not depend on the publish stack's exports.
+        MOPM_CHANNEL_BUCKET: channelBucketName(c.stage, this.account),
+        MOPM_VALIDATE_QUEUE_URL: `https://sqs.${this.region}.amazonaws.com/${this.account}/${validateQueueName(c.stage)}`,
+        ...(props.limits?.ratePerAccountPerDay !== undefined ? { MOPM_RATE_PER_ACCOUNT_DAY: String(props.limits.ratePerAccountPerDay) } : {}),
+        ...(props.limits?.ratePerTokenPerDay !== undefined ? { MOPM_RATE_PER_TOKEN_DAY: String(props.limits.ratePerTokenPerDay) } : {}),
       },
     });
 
@@ -163,6 +186,24 @@ export class ApiStack extends Stack {
       }),
     );
 
+    const arnOf = (t: string) => this.formatArn({ service: 'dynamodb', resource: 'table', resourceName: tableName(c.stage, t) });
+    for (const g of WRITE_GRANTS) {
+      this.handler.addToRolePolicy(new iam.PolicyStatement({ sid: g.sid, actions: g.actions, resources: g.tables.map(arnOf) }));
+    }
+    // Uploads: the URL is signed with this role, so the role must be allowed the PUT it signs, and commit looks at the
+    // object it was told about (HEAD needs GetObject). Both only under quarantine/; nothing else in the bucket.
+    const quarantine = `arn:aws:s3:::${channelBucketName(c.stage, this.account)}/quarantine/*`;
+    this.handler.addToRolePolicy(
+      new iam.PolicyStatement({ sid: 'UploadToQuarantine', actions: ['s3:PutObject', 's3:GetObject'], resources: [quarantine] }),
+    );
+    this.handler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: 'QueueCommits',
+        actions: ['sqs:SendMessage'],
+        resources: [this.formatArn({ service: 'sqs', resource: validateQueueName(c.stage) })],
+      }),
+    );
+
     const zone = lookupZone(this, c);
     const cert = new acm.Certificate(this, 'Cert', {
       domainName: c.apiDomain,
@@ -188,6 +229,7 @@ export class ApiStack extends Stack {
       this.api.addRoutes({ path: route, methods: [apigw.HttpMethod.GET], integration });
     }
     for (const r of AUTH_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
+    for (const r of PUBLISH_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
 
     const target = route53.RecordTarget.fromAlias(
       new targets.ApiGatewayv2DomainProperties(domain.regionalDomainName, domain.regionalHostedZoneId),

@@ -1,5 +1,3 @@
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import {
   Authenticator,
   authTablesFor,
@@ -12,6 +10,8 @@ import {
   TokenService,
 } from '../auth';
 import { DynamoStore, tablesFor, type DocClient } from '../dynamo-store';
+import { documentClient, flagsFor, publishApiFor, stageOf } from '../publish/wiring';
+import type { Flags } from '../publish/ports';
 import type { AuthServices } from './auth-routes';
 import { OAuthSecretSource, readSecretFromAws, type SecretReader } from './oauth-secret';
 import { route, type RouterDeps, type Stage } from './router';
@@ -26,7 +26,13 @@ interface GatewayEvent {
   requestContext: { requestId: string; http: { method: string } };
 }
 
-let deps: RouterDeps | undefined;
+interface Configured {
+  deps: RouterDeps;
+  flags: Flags;
+  envReadOnly: boolean;
+}
+
+let configured: Configured | undefined;
 
 /** Accepted `aud` of a CI identity token: the bare domain and the stage's own host. */
 export const oidcAudiences = (stage: Stage) => (stage === 'prod' ? ['mopm.dev'] : ['mopm.dev', `${stage}.mopm.dev`]);
@@ -54,22 +60,36 @@ export function configureAuth(stage: Stage, doc: DocClient, env: NodeJS.ProcessE
   };
 }
 
-function configure(): RouterDeps {
-  const stage = process.env.MOPM_STAGE as Stage;
-  if (stage !== 'beta' && stage !== 'gamma' && stage !== 'prod') throw new Error('MOPM_STAGE is not a stage');
-  const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+function configure(): Configured {
+  const stage = stageOf(process.env) as Stage;
+  const doc = documentClient();
+  const flags = flagsFor(process.env, doc, stage);
+  const envReadOnly = process.env.MOPM_READ_ONLY === 'true';
   return {
-    store: new DynamoStore(doc, tablesFor(stage)),
-    stage,
-    version: process.env.MOPM_VERSION ?? 'dev',
-    commit: process.env.MOPM_COMMIT ?? 'dev',
-    readOnly: process.env.MOPM_READ_ONLY === 'true',
-    auth: configureAuth(stage, doc, process.env),
+    deps: {
+      store: new DynamoStore(doc, tablesFor(stage)),
+      stage,
+      version: process.env.MOPM_VERSION ?? 'dev',
+      commit: process.env.MOPM_COMMIT ?? 'dev',
+      readOnly: envReadOnly,
+      publish: publishApiFor(process.env, doc, stage, flags),
+      auth: configureAuth(stage, doc, process.env),
+    },
+    flags,
+    envReadOnly,
   };
 }
 
 export const handler = async (event: GatewayEvent) => {
-  deps ??= configure();
+  configured ??= configure();
+  const c = configured;
+  // /health reports the switch. If it cannot be read, health still answers, with the deployment's own value.
+  let readOnly = c.envReadOnly;
+  try {
+    readOnly = await c.flags.readOnly();
+  } catch (err) {
+    console.error(JSON.stringify({ level: 'error', msg: 'read-only switch unreadable', error: String(err) }));
+  }
   const body = event.body ? (event.isBase64Encoded ? Buffer.from(event.body, 'base64').toString('utf8') : event.body) : undefined;
   return route(
     {
@@ -79,7 +99,7 @@ export const handler = async (event: GatewayEvent) => {
       headers: event.headers ?? {},
       ...(body !== undefined ? { body } : {}),
     },
-    deps,
+    { ...c.deps, readOnly },
     event.requestContext.requestId,
   );
 };
