@@ -17,7 +17,7 @@ describe('display metadata on the commit request', () => {
     description: 'HTTP/1.1 client',
     license: 'MIT OR Apache-2.0',
     repository: 'https://github.com/example/demo',
-    homepage: 'http://example.com/demo',
+    homepage: 'https://example.com/demo',
     keywords: ['http', 'client', 'a+b.c_d-e'],
     readme: '# demo\n\nHello, é.\n',
   };
@@ -72,6 +72,7 @@ describe('display metadata on the commit request', () => {
     ['a repository that is not https', { repository: 'http://example.com/r' }],
     ['a repository that is not a URL', { repository: 'not a url' }],
     ['a repository over 2048 characters', { repository: `https://example.com/${'x'.repeat(2048)}` }],
+    ['a homepage that is not https', { homepage: 'http://example.com/demo' }],
     ['a homepage with another scheme', { homepage: 'ftp://example.com' }],
     ['more than 10 keywords', { keywords: Array.from({ length: 11 }, (_, i) => `k${i}`) }],
     ['a repeated keyword', { keywords: ['a', 'a'] }],

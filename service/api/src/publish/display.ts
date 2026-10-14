@@ -54,7 +54,7 @@ export function parseDisplay(body: Record<string, unknown>): DisplayMeta {
   }
   if (homepage !== undefined) {
     if (typeof homepage !== 'string') throw invalidRequest("'homepage' must be a string");
-    out.homepage = url('homepage', homepage, ['http:', 'https:']);
+    out.homepage = url('homepage', homepage, ['https:']);
   }
   if (keywords !== undefined) {
     if (!Array.isArray(keywords) || keywords.length > 10) throw invalidRequest("'keywords' is an array of at most 10 strings");

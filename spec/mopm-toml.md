@@ -114,13 +114,18 @@ conda syntax anywhere that a resolver reads it.
 | `description` | string | one line, 1 to 512 characters, no line breaks |
 | `license` | string | an SPDX license expression, such as `Apache-2.0` or `MIT OR Apache-2.0`, at most 128 characters |
 | `repository` | string | an `https://` URL, at most 2048 characters |
-| `homepage` | string | an `http://` or `https://` URL, at most 2048 characters |
+| `homepage` | string | an `https://` URL, at most 2048 characters |
 | `keywords` | array of strings | at most 10, unique, each 1 to 32 characters of letters, digits, `-`, `_`, `.` or `+` |
 | `readme` | string | path of a Markdown file inside the package, relative to `mopm.toml`; at most 64 KiB (65,536 bytes) of UTF-8 |
 
 A value that breaks its rule is an error, not a warning; the publish pipeline
 refuses it. The
 registry serves the readme's text, not its path.
+
+These fields are untrusted input. The registry stores the readme, `description`
+and `license` verbatim and does not sanitize them. A consumer that renders the
+readme must sanitize the Markdown, disable raw HTML and treat its links as
+untrusted; `description` and `license` are plain text to escape, never markup.
 
 ## Rules
 

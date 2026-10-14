@@ -1098,13 +1098,13 @@ components:
           oneOf:
             - { $ref: "#/components/schemas/Version" }
             - { type: "null" }
-        repository: { type: [string, "null"], description: An https URL. }
+        repository: { type: [string, "null"], description: An https URL. Untrusted input. }
         license: { type: [string, "null"] }
         description: { type: [string, "null"] }
-        homepage: { type: string, format: uri, maxLength: 2048, description: An http or https URL, from mopm.toml. Absent when not set. }
+        homepage: { type: string, format: uri, maxLength: 2048, description: An https URL, from mopm.toml. Absent when not set. Untrusted input: link it only after checking the scheme. }
         keywords: { $ref: "#/components/schemas/Keywords" }
         readme:
-          description: Markdown of the latest version's readme (see VersionDetail.readme). Absent when it has none.
+          description: Markdown of the latest version's readme (see VersionDetail.readme). Untrusted Markdown, sanitize before rendering. Absent when it has none.
           type: string
           maxLength: 65536
         created_at: { $ref: "#/components/schemas/Timestamp" }
@@ -1162,12 +1162,13 @@ components:
         description: { type: string, maxLength: 512, description: "`[package] description` of this version's mopm.toml. Absent when not set." }
         license: { type: string, maxLength: 128, description: "`[package] license`, an SPDX expression. Absent when not set." }
         repository: { type: string, format: uri, maxLength: 2048, description: An https URL. Absent when not set. }
-        homepage: { type: string, format: uri, maxLength: 2048, description: An http or https URL. Absent when not set. }
+        homepage: { type: string, format: uri, maxLength: 2048, description: An https URL. Absent when not set. Untrusted input: link it only after checking the scheme. }
         keywords: { $ref: "#/components/schemas/Keywords" }
         readme:
           description: |
-            Markdown, at most 64 KiB (65,536 bytes of UTF-8), from the file `[package] readme` names. Render it as
-            untrusted text. Absent when the version has none. The five fields above and this one are copied from
+            Markdown, at most 64 KiB (65,536 bytes of UTF-8), from the file `[package] readme` names. Untrusted Markdown written by the
+            publisher: a consumer must sanitize it, disable raw HTML and treat every link as untrusted. `description`
+            and `license` are untrusted plain text: escape them, never render them as markup. Render it as untrusted text. Absent when the version has none. The five fields above and this one are copied from
             mopm.toml by the publish pipeline when it publishes a version; versions published before that carry none
             of them. All are additive and optional, so older clients ignore them.
           type: string
@@ -1215,11 +1216,13 @@ components:
         description: { type: string, minLength: 1, maxLength: 512, description: "`[package] description` of this version's mopm.toml: one line, no line breaks. Stored on the version and served back by `getVersion`." }
         license: { type: string, minLength: 1, maxLength: 128, description: "`[package] license`, an SPDX expression." }
         repository: { type: string, format: uri, maxLength: 2048, description: An https URL. }
-        homepage: { type: string, format: uri, maxLength: 2048, description: An http or https URL. }
+        homepage: { type: string, format: uri, maxLength: 2048, description: An https URL. }
         keywords: { $ref: "#/components/schemas/Keywords" }
         readme:
           description: |
-            Markdown, at most 64 KiB: 65,536 bytes of UTF-8 (the registry counts
+            Untrusted Markdown, stored verbatim: the registry does not sanitize it, so a consumer must sanitize it,
+            disable raw HTML and treat links as untrusted. Same for `description` and `license` (plain text).
+            At most 64 KiB: 65,536 bytes of UTF-8 (the registry counts
             bytes, not characters, so non-ASCII text uses more of it). This is
             the cap the read API serves, so a larger readme is refused with
             `invalid_request` rather than stored and never shown. `maxLength`
