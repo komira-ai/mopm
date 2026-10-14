@@ -35,6 +35,12 @@ Can-fail checks (each is a refusal the test must see):
     use it either. With the original bytes back, the same sync succeeds, so
     the refusals came from the bytes and nothing else.
 
+A path dependency (`local = { path = "local" }`) is locked with
+`source = path`, its own mopm.toml's version and no sha256; sync must not
+download it (it has no url, so a download would fail), must leave it out of
+the pixi project and the local channel, and must see a lock that holds an
+older version of it as stale.
+
 Each check prints `ok   <name>` or `FAIL <name>: ...`; the exit status is 1
 if any failed.
 """
@@ -332,6 +338,42 @@ def main(mopm, fake_exe, mojo_env):
             r = sync(fresh, "--locked")
             check("control: with the original bytes the same sync --locked succeeds",
                   r.returncode == 0 and os.path.exists(kept), "exit %d: %s%s" % (r.returncode, r.stdout, r.stderr))
+
+            # ------------------------------------------------ a path dependency
+            # Locked as source = path with its own version and no file; sync
+            # uses it from its directory and never downloads it (it has no
+            # url: a download would fail the sync).
+            withpath = project("withpath", 'greet = "1"\nlocal = { path = "local" }')
+
+            def local_version(v):
+                os.makedirs(os.path.join(withpath, "local"), exist_ok=True)
+                with open(os.path.join(withpath, "local", "mopm.toml"), "w") as f:
+                    f.write('[package]\nname = "local"\nversion = "%s"\n' % v)
+            local_version("0.2.0")
+            r = sync(withpath, *reg)
+            entries = {p["name"]: p for p in json.loads(read(withpath, "mopm.lock") or '{"packages": []}')["packages"]}
+            check("sync with a path dependency locks it as source path, with no sha256, and installs the rest",
+                  r.returncode == 0
+                  and entries.get("local") == {"name": "local", "version": "0.2.0", "source": "path", "path": "local"}
+                  and "using local 0.2.0 from local (a path dependency: built from source, not downloaded)\n" in r.stdout
+                  and "installed 1 packages for %s" % subdir in r.stdout,
+                  "exit %d\n%s\n%s\n%s" % (r.returncode, r.stdout, r.stderr, json.dumps(entries)))
+            downloaded = sorted(os.listdir(os.path.join(withpath, ".mopm", "channel", subdir))) \
+                if os.path.isdir(os.path.join(withpath, ".mopm", "channel", subdir)) else []
+            check("the path dependency is not downloaded nor given to pixi",
+                  downloaded == sorted(["repodata.json", filename]) and "mojo-local" not in (read(withpath, ".mopm", "pixi.toml") or "mojo-local")
+                  and "mojo-local" not in (read(withpath, ".mopm", "channel", subdir, "repodata.json") or "mojo-local"),
+                  "%s\n%s" % (downloaded, read(withpath, ".mopm", "pixi.toml")))
+            locked = read(withpath, "mopm.lock")
+            local_version("0.2.1")
+            r = sync(withpath, "--locked")
+            check("a path dependency's new version makes the lock stale for sync --locked",
+                  r.returncode == 1 and "mopm.lock is out of date with mopm.toml: local/mopm.toml says local 0.2.1, but mopm.lock has local 0.2.0" in r.stderr
+                  and read(withpath, "mopm.lock") == locked, "exit %d: %s" % (r.returncode, r.stderr))
+            r = sync(withpath, *reg)
+            check("sync relocks the path dependency's new version and installs",
+                  r.returncode == 0 and "updating local 0.2.0 -> 0.2.1\n" in r.stdout
+                  and "using local 0.2.1 from local" in r.stdout, "exit %d: %s%s" % (r.returncode, r.stdout, r.stderr))
         finally:
             fake.close()
     if failures:

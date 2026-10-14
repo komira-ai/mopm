@@ -277,6 +277,46 @@ def main(mopm, fake_exe):
             r = run(d, "lock", *reg)
             check("a lock holding legacy 1.0 is read back and kept", r.returncode == 0 and lock_of(d) == text, r.stdout + r.stderr)
 
+            # Path dependencies: locked as source = path, at the version their
+            # own mopm.toml gives, with no file; their own requirements resolve.
+            withpath = project("withpath", 'local = { path = "local" }')
+            def package(d, name, ver, deps):
+                os.makedirs(d, exist_ok=True)
+                with open(os.path.join(d, "mopm.toml"), "w") as f:
+                    f.write('[package]\nname = "%s"\nversion = "%s"\n\n[dependencies]\n%s\n' % (name, ver, deps))
+            package(os.path.join(withpath, "local"), "local", "0.3.0", 'tls = "1"\nutil = { path = "../util" }')
+            package(os.path.join(withpath, "util"), "util", "0.0.7", "")
+            r = run(withpath, "lock", *reg)
+            text = lock_of(withpath) or ""
+            entries = {p["name"]: p for p in json.loads(text)["packages"]} if text else {}
+            check("a path dependency is locked with source path, its version and path, and no file",
+                  r.returncode == 0
+                  and entries.get("local") == {"name": "local", "version": "0.3.0", "source": "path", "path": "local", "deps": ["tls", "util"]}
+                  and entries.get("util") == {"name": "util", "version": "0.0.7", "source": "path", "path": "util"},
+                  "exit %d %s %s" % (r.returncode, r.stderr, json.dumps(entries)))
+            check("a path dependency's own requirements are resolved from the registry",
+                  entries.get("tls", {}).get("version") == "1.1.0" and entries.get("http_core", {}).get("version") == "1.2.5"
+                  and sorted(entries) == ["http_core", "local", "tls", "util"], json.dumps(entries))
+            check("lock reports the path dependencies", r.stdout ==
+                  "adding http_core 1.2.5\nadding local 0.3.0\nadding tls 1.1.0\nadding util 0.0.7\nlocked 4 packages for mojo 1.0.0\n", r.stdout)
+            r = run(withpath, "tree")
+            check("tree draws path dependencies with their paths", r.returncode == 0 and r.stdout ==
+                  "app 0.1.0\n└── local 0.3.0 (local)\n    ├── tls 1.1.0\n    │   └── http_core 1.2.5\n    └── util 0.0.7 (util)\n",
+                  r.stdout + r.stderr)
+            package(os.path.join(withpath, "local"), "local", "0.3.1", 'tls = "1"\nutil = { path = "../util" }')
+            r = run(withpath, "lock", *reg)
+            check("a path dependency's new version is locked",
+                  r.returncode == 0 and "updating local 0.3.0 -> 0.3.1\n" in r.stdout and '"version": "0.3.1"' in (lock_of(withpath) or ""),
+                  r.stdout + r.stderr)
+            package(os.path.join(withpath, "util"), "notutil", "0.0.7", "")
+            r = run(withpath, "lock", *reg)
+            check("a path dependency whose mopm.toml names another package is refused",
+                  r.returncode == 1 and "util/mopm.toml names the package notutil, but local/mopm.toml calls it util" in r.stderr, r.stderr)
+            nodir = project("nopath", 'gone = { path = "gone" }')
+            r = run(nodir, "lock", *reg)
+            check("a path dependency without a mopm.toml is refused", r.returncode == 1 and "no gone/mopm.toml" in r.stderr
+                  and lock_of(nodir) is None, r.stderr)
+
             with open(os.path.join(app, "mopm.lock"), "w") as f:
                 f.write(expected.replace('"lock_version": 1', '"lock_version": 2'))
             r = run(app, "lock", *reg)

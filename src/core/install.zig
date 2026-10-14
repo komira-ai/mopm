@@ -21,7 +21,13 @@
 //! no `lib/mojo/*.mopm.json` is installed that the lock does not name.
 //!
 //! `staleness` says why a lock no longer matches mopm.toml (`mopm sync
-//! --locked` refuses it); it reads only the manifest and the lock.
+//! --locked` refuses it); it reads only the manifests and the lock.
+//!
+//! A path dependency is locked with `source = path` and no file: `forSubdir`
+//! leaves it out, so sync neither downloads it nor puts it in the pixi
+//! project or the local channel. It is used from its directory. `staleness`
+//! checks that each one is still locked at its path and at the version its
+//! own mopm.toml gives.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -29,6 +35,7 @@ const Allocator = std.mem.Allocator;
 const lock = @import("lock.zig");
 const resolve = @import("resolve.zig");
 const semver = @import("semver.zig");
+const plan = @import("install_plan.zig");
 
 /// Where `mopm sync` keeps the environment, relative to the project.
 pub const dir = ".mopm";
@@ -67,12 +74,21 @@ fn contains(list: []const []const u8, s: []const u8) bool {
     return false;
 }
 
-/// Why `l` no longer matches mopm.toml (its `[toolchain] mojo` versions and
-/// its version requirements, `roots`), or null when it does: the lock's
-/// toolchain is one the manifest allows, every requirement is locked at a
-/// version that satisfies it, and every locked package is needed by a
-/// requirement directly or through the locked dependencies.
-pub fn staleness(arena: Allocator, toolchains: []const []const u8, roots: []const resolve.Root, l: lock.Lock) Allocator.Error!?[]const u8 {
+fn lockedEntry(l: lock.Lock, name: []const u8) ?lock.Package {
+    for (l.packages) |p| {
+        if (std.mem.eql(u8, p.name, name)) return p;
+    }
+    return null;
+}
+
+/// Why `l` no longer matches mopm.toml (its `[toolchain] mojo` versions, its
+/// version requirements `roots` and its path dependencies `paths`, each at
+/// any depth), or null when it does: the lock's toolchain is one the manifest
+/// allows, every requirement is locked from the registry at a version that
+/// satisfies it, every path dependency is locked as one at the same path and
+/// version, and every locked package is needed by a requirement or a path
+/// dependency directly or through the locked dependencies.
+pub fn staleness(arena: Allocator, toolchains: []const []const u8, roots: []const resolve.Root, paths: []const plan.PathDep, l: lock.Lock) Allocator.Error!?[]const u8 {
     if (!contains(toolchains, l.mojo)) {
         const allowed = try std.mem.join(arena, ", ", toolchains);
         return try std.fmt.allocPrint(arena, "mopm.lock is for mojo {s}; mopm.toml's [toolchain] allows {s}", .{ l.mojo, allowed });
@@ -80,6 +96,9 @@ pub fn staleness(arena: Allocator, toolchains: []const []const u8, roots: []cons
     for (roots) |r| {
         const have = l.versionOf(r.name) orelse
             return try std.fmt.allocPrint(arena, "mopm.toml needs {s}, which mopm.lock does not lock", .{r.name});
+        if (lockedEntry(l, r.name).?.source == .path) {
+            return try std.fmt.allocPrint(arena, "{s} needs {s} \"{s}\" from the registry, but mopm.lock has it as a path dependency", .{ r.from, r.name, r.requirement });
+        }
         var why: []const u8 = "";
         const req = semver.parseReq(arena, r.requirement, &why) catch |e| switch (e) {
             error.Invalid => return try std.fmt.allocPrint(arena, "mopm.toml: {s} = \"{s}\": {s}", .{ r.name, r.requirement, why }),
@@ -90,9 +109,20 @@ pub fn staleness(arena: Allocator, toolchains: []const []const u8, roots: []cons
             return try std.fmt.allocPrint(arena, "mopm.toml needs {s} \"{s}\", but mopm.lock has {s} {s}", .{ r.name, r.requirement, r.name, have });
         }
     }
+    for (paths) |d| {
+        const e = lockedEntry(l, d.name) orelse
+            return try std.fmt.allocPrint(arena, "mopm.toml needs {s} (path {s}), which mopm.lock does not lock", .{ d.name, d.path });
+        if (e.source != .path or !std.mem.eql(u8, e.path, d.path)) {
+            return try std.fmt.allocPrint(arena, "{s} is the path dependency {s}, but mopm.lock has {s} {s}{s}{s}", .{ d.name, d.path, e.name, e.version, if (e.source == .path) " at " else " from ", if (e.source == .path) e.path else e.channel });
+        }
+        if (!std.mem.eql(u8, e.version, d.version)) {
+            return try std.fmt.allocPrint(arena, "{s}/mopm.toml says {s} {s}, but mopm.lock has {s} {s}", .{ d.path, d.name, d.version, d.name, e.version });
+        }
+    }
     var needed = std.StringHashMap(void).init(arena);
     var todo = std.ArrayList([]const u8).init(arena);
     for (roots) |r| try todo.append(r.name);
+    for (paths) |d| try todo.append(d.name);
     while (todo.popOrNull()) |name| {
         if (needed.contains(name)) continue;
         try needed.put(name, {});
@@ -110,11 +140,16 @@ pub fn staleness(arena: Allocator, toolchains: []const []const u8, roots: []cons
 
 pub const Selected = union(enum) { ok: []const lock.Package, bad: []const u8 };
 
-/// One entry per locked name: its file for `subdir`, else its `noarch` file.
+/// One entry per locked name from the registry: its file for `subdir`, else
+/// its `noarch` file. Path dependencies have no file and are left out.
 pub fn forSubdir(arena: Allocator, l: lock.Lock, subdir: []const u8) Allocator.Error!Selected {
     var out = std.ArrayList(lock.Package).init(arena);
     var i: usize = 0;
     while (i < l.packages.len) {
+        if (l.packages[i].source == .path) {
+            i += 1;
+            continue;
+        }
         const name = l.packages[i].name;
         var pick: ?lock.Package = null;
         var noarch: ?lock.Package = null;
@@ -395,7 +430,7 @@ test "a lock that matches mopm.toml is fresh; each kind of drift is named" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    try std.testing.expectEqual(@as(?[]const u8, null), try staleness(a, &.{ "0.9.0", "1.0.0" }, &app_roots, app_lock));
+    try std.testing.expectEqual(@as(?[]const u8, null), try staleness(a, &.{ "0.9.0", "1.0.0" }, &app_roots, &.{}, app_lock));
 
     const Case = struct { []const []const u8, []const resolve.Root, []const u8 };
     const cases = [_]Case{
@@ -407,7 +442,7 @@ test "a lock that matches mopm.toml is fresh; each kind of drift is named" {
         .{ &.{"1.0.0"}, &.{ app_roots[0], .{ .name = "http_core", .requirement = "1.x.2" } }, "mopm.toml: http_core = \"1.x.2\": " },
     };
     for (cases) |case| {
-        const got = (try staleness(a, case[0], case[1], app_lock)) orelse {
+        const got = (try staleness(a, case[0], case[1], &.{}, app_lock)) orelse {
             std.debug.print("fresh, want: {s}\n", .{case[2]});
             return error.TestUnexpectedResult;
         };
@@ -542,4 +577,44 @@ test "the installed environment: exactly the lock, or a refusal that says what d
     try std.testing.expectEqual(@as(?[]const u8, null), try checkInstalled(a, env, &pkgs));
     try env.writeFile("lib/mojo/stray.mopm.json", "{}");
     try std.testing.expectEqualStrings("lib/mojo/stray.mopm.json is installed but mopm.lock does not lock stray; refused", (try checkInstalled(a, env, &pkgs)).?);
+}
+
+test "path dependencies: locked at their path and version, never selected for download" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const with_path = lock.Lock{ .mojo = "1.0.0", .channels = &.{"https://conda.mopm.dev/"}, .packages = &.{
+        pkg("crypto", "2.0.1", "linux-64", &.{}),
+        pkg("http_client", "0.4.0", "linux-64", &.{ "crypto", "http_core" }),
+        pkg("http_core", "1.2.5", "noarch", &.{}),
+        .{ .name = "local", .version = "0.3.0", .source = .path, .path = "local", .deps = &.{"http_client"} },
+    } };
+    // local's own mopm.toml requires http_client; the project requires only local.
+    const roots = [_]resolve.Root{.{ .name = "http_client", .requirement = "0.4", .from = "local/mopm.toml" }};
+    const paths = [_]plan.PathDep{.{ .name = "local", .version = "0.3.0", .path = "local", .deps = &.{"http_client"} }};
+    try std.testing.expectEqual(@as(?[]const u8, null), try staleness(a, &.{"1.0.0"}, &roots, &paths, with_path));
+
+    const Case = struct { []const resolve.Root, []const plan.PathDep, []const u8 };
+    const cases = [_]Case{
+        .{ &roots, &.{.{ .name = "local", .version = "0.3.1", .path = "local" }}, "local/mopm.toml says local 0.3.1, but mopm.lock has local 0.3.0" },
+        .{ &roots, &.{.{ .name = "local", .version = "0.3.0", .path = "../moved" }}, "local is the path dependency ../moved, but mopm.lock has local 0.3.0 at local" },
+        .{ &roots, &.{ paths[0], .{ .name = "crypto", .version = "2.0.1", .path = "vendor/crypto" } }, "crypto is the path dependency vendor/crypto, but mopm.lock has crypto 2.0.1 from https://conda.mopm.dev/" },
+        .{ &roots, &.{ paths[0], .{ .name = "other", .version = "1.0.0", .path = "other" } }, "mopm.toml needs other (path other), which mopm.lock does not lock" },
+        .{ &.{ roots[0], .{ .name = "local", .requirement = "0.3" } }, &paths, "mopm.toml needs local \"0.3\" from the registry, but mopm.lock has it as a path dependency" },
+        .{ &roots, &.{}, "mopm.lock locks local 0.3.0, which nothing in mopm.toml needs" },
+    };
+    for (cases) |case| {
+        const got = (try staleness(a, &.{"1.0.0"}, case[0], case[1], with_path)) orelse {
+            std.debug.print("fresh, want: {s}\n", .{case[2]});
+            return error.TestUnexpectedResult;
+        };
+        if (!std.mem.eql(u8, got, case[2])) {
+            std.debug.print("got: {s}\nwant: {s}\n", .{ got, case[2] });
+            return error.TestUnexpectedResult;
+        }
+    }
+
+    const selected = (try forSubdir(a, with_path, "linux-64")).ok;
+    try std.testing.expectEqual(@as(usize, 3), selected.len);
+    for (selected) |p| try std.testing.expect(p.source == .registry and !std.mem.eql(u8, p.name, "local"));
 }

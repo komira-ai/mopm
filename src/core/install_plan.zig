@@ -113,6 +113,42 @@ pub fn buildLock(arena: Allocator, res: resolve.Resolution, channel_url: []const
     return .{ .mojo = res.mojo, .channels = channels, .packages = packages.items };
 }
 
+/// A path dependency of the project, read from its own mopm.toml.
+pub const PathDep = struct {
+    name: []const u8,
+    /// `[package] version` of its mopm.toml.
+    version: []const u8,
+    /// Its directory, relative to the project, `/`-separated.
+    path: []const u8,
+    /// Names of its own dependencies (registry and path), sorted.
+    deps: []const []const u8 = &.{},
+};
+
+/// `l` with one `source = path` entry per path dependency (lock.zig): no
+/// file, so nothing to download. A path dependency whose name the registry
+/// resolution also picked (some registry package depends on that name) is
+/// refused: a name comes from one place.
+pub fn addPaths(arena: Allocator, l: lock.Lock, paths: []const PathDep, diag: *Diagnostic) Error!lock.Lock {
+    var packages = std.ArrayList(lock.Package).init(arena);
+    try packages.appendSlice(l.packages);
+    for (paths) |d| {
+        for (l.packages) |p| {
+            if (!std.mem.eql(u8, p.name, d.name)) continue;
+            var by = std.ArrayList(u8).init(arena);
+            for (l.packages, 0..) |q, qi| {
+                if (qi > 0 and std.mem.eql(u8, l.packages[qi - 1].name, q.name)) continue; // another subdir
+                for (q.deps) |x| {
+                    if (std.mem.eql(u8, x, d.name)) try by.writer().print("{s}{s} {s}", .{ if (by.items.len == 0) "" else ", ", q.name, q.version });
+                }
+            }
+            return resolve.fail(arena, diag, .conflict, "{s} is a path dependency ({s}), and the registry's {s} needs {s} {s} too; a package comes from one place", .{ d.name, d.path, by.items, d.name, p.version });
+        }
+        try packages.append(.{ .name = d.name, .version = d.version, .source = .path, .path = d.path, .deps = d.deps });
+    }
+    lock.sortPackages(packages.items);
+    return .{ .mojo = l.mojo, .channels = l.channels, .packages = packages.items };
+}
+
 /// One line per package whose version changed between `old` and `new`
 /// (`adding`, `removing`, `updating a -> b`), by name.
 pub fn writeChanges(old: ?lock.Lock, new: lock.Lock, w: anytype) !void {
@@ -151,13 +187,15 @@ fn find(l: lock.Lock, name: []const u8) ?lock.Package {
 
 const Tree = struct {
     l: lock.Lock,
+    l_arena: Allocator,
     expanded: std.StringHashMap(void),
     prefix: std.ArrayList(u8),
 
     fn node(t: *Tree, name: []const u8, last: bool, w: anytype) anyerror!void {
         const p = find(t.l, name).?;
         const seen = t.expanded.contains(name);
-        try w.print("{s}{s}{s} {s}{s}\n", .{ t.prefix.items, if (last) "└── " else "├── ", p.name, p.version, if (seen and p.deps.len > 0) " (*)" else "" });
+        const from = if (p.source == .path) try std.fmt.allocPrint(t.l_arena, " ({s})", .{p.path}) else "";
+        try w.print("{s}{s}{s} {s}{s}{s}\n", .{ t.prefix.items, if (last) "└── " else "├── ", p.name, p.version, from, if (seen and p.deps.len > 0) " (*)" else "" });
         if (seen or p.deps.len == 0) return;
         try t.expanded.put(name, {});
         const mark = t.prefix.items.len;
@@ -176,11 +214,12 @@ pub fn missing(l: lock.Lock, names: []const []const u8) ?[]const u8 {
 }
 
 /// The resolved graph, as cargo tree draws it: the project, then each
-/// dependency (sorted by name) with its own below it. A package whose
+/// dependency (sorted by name) with its own below it; a path dependency is
+/// followed by its path in parentheses. A package whose
 /// dependencies were already drawn is marked `(*)` and not drawn again.
 /// Every name in `deps` and `dev_deps` must be in `l` (see `missing`).
 pub fn writeTree(arena: Allocator, project: []const u8, version: []const u8, deps: []const []const u8, dev_deps: []const []const u8, l: lock.Lock, w: anytype) !void {
-    var t = Tree{ .l = l, .expanded = std.StringHashMap(void).init(arena), .prefix = std.ArrayList(u8).init(arena) };
+    var t = Tree{ .l = l, .l_arena = arena, .expanded = std.StringHashMap(void).init(arena), .prefix = std.ArrayList(u8).init(arena) };
     try w.print("{s} {s}\n", .{ project, version });
     const groups = [_]struct { []const u8, []const []const u8 }{ .{ "", deps }, .{ "[dev-dependencies]\n", dev_deps } };
     for (groups) |g| {
@@ -390,4 +429,64 @@ test "tree and changes" {
     const old = lock.Lock{ .mojo = "1.0.0", .channels = l.channels, .packages = gone.items };
     try writeChanges(old, l, out.writer());
     try std.testing.expectEqualStrings("updating http_core 1.2.4 -> 1.2.5\nadding tls 1.1.0\nremoving zlib 1.0.0\n", out.items);
+}
+
+test "path dependencies: one entry each with source path, no file; a name the registry also picked is refused" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var diag: Diagnostic = .{};
+    const base = try diamondLock(a, diamond_channel, &diag);
+    const paths = [_]PathDep{
+        .{ .name = "util", .version = "0.0.7", .path = "../util" },
+        .{ .name = "local", .version = "0.3.0", .path = "local", .deps = &.{ "tls", "util" } },
+    };
+    const l = try addPaths(a, base, &paths, &diag);
+    try std.testing.expectEqual(base.packages.len + 2, l.packages.len);
+    const text = try lock.render(a, l);
+    try std.testing.expect(std.mem.indexOf(u8, text,
+        \\    {
+        \\      "name": "local",
+        \\      "version": "0.3.0",
+        \\      "source": "path",
+        \\      "path": "local",
+        \\      "deps": [
+        \\        "tls",
+        \\        "util"
+        \\      ]
+        \\    },
+    ) != null);
+    try std.testing.expect(std.mem.endsWith(u8, text,
+        \\    {
+        \\      "name": "util",
+        \\      "version": "0.0.7",
+        \\      "source": "path",
+        \\      "path": "../util"
+        \\    }
+        \\  ]
+        \\}
+        \\
+    ));
+    var why: []const u8 = "";
+    const again = lock.parse(a, text, &why) catch |e| {
+        std.debug.print("refused: {s}\n", .{why});
+        return e;
+    };
+    try std.testing.expectEqualStrings(text, try lock.render(a, again));
+
+    var out = std.ArrayList(u8).init(a);
+    try writeTree(a, "app", "0.1.0", &.{"local"}, &.{}, l, out.writer());
+    try std.testing.expectEqualStrings(
+        \\app 0.1.0
+        \\└── local 0.3.0 (local)
+        \\    ├── tls 1.1.0
+        \\    │   └── http_core 1.2.5
+        \\    └── util 0.0.7 (../util)
+        \\
+    , out.items);
+
+    const clash = [_]PathDep{.{ .name = "http_core", .version = "9.0.0", .path = "vendor/http_core" }};
+    try std.testing.expectError(error.ResolveFailed, addPaths(a, base, &clash, &diag));
+    try std.testing.expectEqual(resolve.Kind.conflict, diag.kind);
+    try std.testing.expectEqualStrings("http_core is a path dependency (vendor/http_core), and the registry's http_client 0.4.0, tls 1.1.0 needs http_core 1.2.5 too; a package comes from one place", diag.message);
 }
