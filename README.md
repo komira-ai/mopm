@@ -4,7 +4,8 @@ mopm is "cargo for Mojo": a package manager plus build, test and coverage
 tooling for [Mojo](https://www.modular.com/mojo) projects, with a package
 registry at [mopm.dev](https://mopm.dev).
 
-**Status: early.** Only `mopm --version`, `mopm link-plan` and `mopm metadata` work today.
+**Status: early.** Only `mopm --version`, `mopm link-plan`, `mopm metadata`, `mopm new` and
+`mopm init` work today.
 Everything else below is a plan, and the design may change.
 
 ## Goals
@@ -38,6 +39,7 @@ Working today:
 mopm --version
 mopm link-plan tests/fixtures/chain/http_client.mopm.json tests/fixtures/chain/crypto.mopm.json
 mopm metadata tests/manifest/valid/full.toml
+mopm new my_package --lib      # or --bin; `mopm init` makes one in the current directory
 ```
 
 ## Layout
@@ -45,9 +47,9 @@ mopm metadata tests/manifest/valid/full.toml
 | path | what |
 |---|---|
 | `src/cli/` | the `mopm` command line (Zig) |
-| `src/core/` | `metadata.zig` (parse `<name>.mopm.json`), `link_planner.zig` (compute link arguments), `toml.zig` (the strict TOML subset), `manifest.zig` (check `mopm.toml`) |
+| `src/core/` | `metadata.zig` (parse `<name>.mopm.json`), `link_planner.zig` (compute link arguments), `toml.zig` (the strict TOML subset), `manifest.zig` (check `mopm.toml`), `scaffold.zig` (`mopm new` and `mopm init`) |
 | `spec/` | draft `mopm.toml` spec and the JSON Schema for `<name>.mopm.json` |
-| `tests/` | fixtures and golden files for `link-plan`; `tests/manifest/{valid,invalid}` for `mopm.toml` |
+| `tests/` | fixtures and golden files for `link-plan`; `tests/manifest/{valid,invalid}` for `mopm.toml`; `tests/new/{lib,bin}` for `mopm new` |
 | `rules/buck2`, `rules/bazel` | build rules (placeholders) |
 | `registry/` | the registry and its index (placeholder) |
 | `mojo/mopm_rt` | the Mojo runtime support package (placeholder) |

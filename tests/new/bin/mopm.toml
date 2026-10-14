@@ -1,0 +1,13 @@
+[package]
+name = "demo"
+version = "0.1.0"
+
+[toolchain]
+mojo = "1.0.0"
+
+[dependencies]
+
+[targets]
+lib = { path = "src/demo" }
+bins = [{ name = "demo", path = "src/main.mojo" }]
+tests = ["tests"]

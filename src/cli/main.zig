@@ -1,4 +1,5 @@
-//! mopm command line. Only `--version`, `link-plan` and `metadata` do anything yet.
+//! mopm command line. Only `--version`, `link-plan`, `metadata`, `new` and `init` do
+//! anything yet.
 
 const std = @import("std");
 const core = @import("mopm_core");
@@ -6,7 +7,7 @@ const core = @import("mopm_core");
 pub const version = "0.0.1";
 
 const planned = [_][]const u8{
-    "new",   "init",  "add",   "remove",  "lock",    "sync", "build",
+    "add",   "remove",  "lock",    "sync", "build",
     "run",   "test",  "cov",   "repl",    "tree",    "check", "publish",
     "export", "launch",
 };
@@ -26,9 +27,13 @@ const usage =
     \\  link-plan <file>...     print the link plan for installed packages,
     \\                          given their <name>.mopm.json files
     \\  metadata [mopm.toml]    check a package manifest and print it as JSON
+    \\  new <name> [--lib|--bin]
+    \\                          make a package in a new directory <name>
+    \\  init [--lib|--bin] [--name <name>]
+    \\                          make a package in this directory
     \\
     \\planned (not implemented yet):
-    \\  new init add remove lock sync build run test cov repl tree check
+    \\  add remove lock sync build run test cov repl tree check
     \\  publish export launch
     \\
 ;
@@ -78,6 +83,96 @@ fn metadataCmd(arena: std.mem.Allocator, args: []const []const u8) u8 {
     return 0;
 }
 
+const ScaffoldArgs = struct {
+    name: ?[]const u8 = null,
+    kind: core.scaffold.Kind = .lib,
+};
+
+/// `new <name> [--lib|--bin]` or `init [--lib|--bin] [--name <name>]`; null if
+/// the arguments are neither.
+fn scaffoldArgs(cmd: []const u8, args: []const []const u8) ?ScaffoldArgs {
+    const is_new = std.mem.eql(u8, cmd, "new");
+    var out = ScaffoldArgs{};
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const a = args[i];
+        if (std.mem.eql(u8, a, "--lib")) {
+            out.kind = .lib;
+        } else if (std.mem.eql(u8, a, "--bin")) {
+            out.kind = .bin;
+        } else if (!is_new and std.mem.eql(u8, a, "--name") and i + 1 < args.len and out.name == null) {
+            i += 1;
+            out.name = args[i];
+        } else if (is_new and a.len > 0 and a[0] != '-' and out.name == null) {
+            out.name = a;
+        } else return null;
+    }
+    if (is_new and out.name == null) return null;
+    return out;
+}
+
+/// `mopm new` (into a new directory) and `mopm init` (into this one).
+fn scaffoldCmd(arena: std.mem.Allocator, cmd: []const u8, args: []const []const u8) u8 {
+    const parsed = scaffoldArgs(cmd, args) orelse {
+        std.debug.print("usage: mopm new <name> [--lib|--bin]\n       mopm init [--lib|--bin] [--name <name>]\n", .{});
+        return 2;
+    };
+    const is_new = std.mem.eql(u8, cmd, "new");
+    var hint: []const u8 = "";
+    const name = parsed.name orelse blk: {
+        const here = std.fs.cwd().realpathAlloc(arena, ".") catch |e| {
+            std.debug.print("mopm init: {s}\n", .{@errorName(e)});
+            return 1;
+        };
+        hint = " (the name comes from this directory; pass --name <name>)";
+        break :blk std.fs.path.basename(here);
+    };
+    const problem = core.manifest.nameProblem(arena, "package name", name) catch return 1;
+    if (problem) |message| {
+        std.debug.print("mopm {s}: {s}{s}\n", .{ cmd, message, hint });
+        return 1;
+    }
+    const files = core.scaffold.files(arena, name, parsed.kind) catch return 1;
+
+    var dir = std.fs.cwd();
+    var opened: ?std.fs.Dir = null;
+    defer if (opened) |*d| d.close();
+    if (is_new) {
+        std.fs.cwd().makeDir(name) catch |e| {
+            if (e == error.PathAlreadyExists) {
+                std.debug.print("mopm new: '{s}' already exists\n", .{name});
+            } else {
+                std.debug.print("mopm new: {s}: {s}\n", .{ name, @errorName(e) });
+            }
+            return 1;
+        };
+        opened = std.fs.cwd().openDir(name, .{}) catch |e| {
+            std.debug.print("mopm new: {s}: {s}\n", .{ name, @errorName(e) });
+            return 1;
+        };
+        dir = opened.?;
+    }
+    if (core.scaffold.firstExisting(dir, files)) |path| {
+        std.debug.print("mopm {s}: {s} already exists; nothing was written\n", .{ cmd, path });
+        return 1;
+    }
+    core.scaffold.write(dir, files) catch |e| {
+        std.debug.print("mopm {s}: {s}\n", .{ cmd, @errorName(e) });
+        return 1;
+    };
+    const what = switch (parsed.kind) {
+        .lib => "library",
+        .bin => "binary",
+    };
+    const out = std.io.getStdOut().writer();
+    if (is_new) {
+        out.print("created {s} package '{s}' in {s}/\n", .{ what, name, name }) catch return 1;
+    } else {
+        out.print("created {s} package '{s}'\n", .{ what, name }) catch return 1;
+    }
+    return 0;
+}
+
 fn run(arena: std.mem.Allocator) u8 {
     const args = std.process.argsAlloc(arena) catch return 1;
     if (args.len < 2) {
@@ -95,6 +190,7 @@ fn run(arena: std.mem.Allocator) u8 {
     }
     if (std.mem.eql(u8, cmd, "link-plan")) return linkPlan(arena, args[2..]);
     if (std.mem.eql(u8, cmd, "metadata")) return metadataCmd(arena, args[2..]);
+    if (std.mem.eql(u8, cmd, "new") or std.mem.eql(u8, cmd, "init")) return scaffoldCmd(arena, cmd, args[2..]);
     if (isPlanned(cmd)) {
         std.debug.print("mopm {s}: not implemented yet\n", .{cmd});
         return 1;
@@ -114,6 +210,21 @@ test "planned commands are recognised, working ones are not planned" {
     try std.testing.expect(isPlanned("repl"));
     try std.testing.expect(!isPlanned("link-plan"));
     try std.testing.expect(!isPlanned("metadata"));
+    try std.testing.expect(!isPlanned("new"));
+    try std.testing.expect(!isPlanned("init"));
     try std.testing.expect(!isPlanned("--version"));
     try std.testing.expect(!isPlanned("frobnicate"));
+}
+
+test "new and init arguments" {
+    try std.testing.expectEqualStrings("demo", scaffoldArgs("new", &.{ "demo", "--bin" }).?.name.?);
+    try std.testing.expectEqual(core.scaffold.Kind.bin, scaffoldArgs("new", &.{ "--bin", "demo" }).?.kind);
+    try std.testing.expectEqual(core.scaffold.Kind.lib, scaffoldArgs("new", &.{"demo"}).?.kind);
+    try std.testing.expect(scaffoldArgs("new", &.{}) == null);
+    try std.testing.expect(scaffoldArgs("new", &.{ "a", "b" }) == null);
+    try std.testing.expect(scaffoldArgs("new", &.{ "--name", "a" }) == null);
+    try std.testing.expectEqualStrings("x", scaffoldArgs("init", &.{ "--name", "x" }).?.name.?);
+    try std.testing.expect(scaffoldArgs("init", &.{}).?.name == null);
+    try std.testing.expect(scaffoldArgs("init", &.{"x"}) == null);
+    try std.testing.expect(scaffoldArgs("init", &.{"--name"}) == null);
 }
