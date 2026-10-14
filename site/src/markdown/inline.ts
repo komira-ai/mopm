@@ -276,8 +276,9 @@ class InlineScanner {
   /** CommonMark's process-emphasis over the delimiters above `bottom`, with openers_bottom to stay linear. */
   private processEmphasis(bottom: Delim | null): void {
     let current: Delim | null = this.delims;
-    // Walk down to the first delimiter above bottom.
-    while (current && current.prev !== bottom) {
+    // Walk down to the first delimiter above bottom, stopping at bottom itself (when nothing is above it), so a link
+    // close never walks the delimiters below its bracket.
+    while (current && current !== bottom && current.prev !== bottom) {
       this.st.steps++;
       current = current.prev;
     }
