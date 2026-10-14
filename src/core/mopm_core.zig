@@ -1,8 +1,8 @@
 //! mopm core library: package metadata, the mopm.toml manifest and semantic
 //! versions, new-package scaffolding, the native link planner, environment
 //! discovery, the stock `mojo` command lines, and `mopm test`: discovery,
-//! harness generation, the process supervisor and the reports, and version
-//! resolution over the sparse index into mopm.lock.
+//! harness generation, the process supervisor, the reports and the filters, and
+//! version resolution over the sparse index into mopm.lock.
 
 pub const metadata = @import("metadata.zig");
 pub const link_planner = @import("link_planner.zig");
@@ -17,6 +17,7 @@ pub const test_harness = @import("test_harness.zig");
 pub const autolink = @import("autolink.zig");
 pub const test_proc = @import("test_proc.zig");
 pub const test_report = @import("test_report.zig");
+pub const test_filter = @import("test_filter.zig");
 pub const http = @import("http.zig");
 pub const registry = @import("registry.zig");
 pub const credentials = @import("credentials.zig");
@@ -38,6 +39,7 @@ test {
     _ = @import("autolink.zig");
     _ = @import("test_proc.zig");
     _ = @import("test_report.zig");
+    _ = @import("test_filter.zig");
     _ = @import("http.zig");
     _ = @import("registry.zig");
     _ = @import("credentials.zig");

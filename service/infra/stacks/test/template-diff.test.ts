@@ -78,6 +78,9 @@ function differing(a: Map<string, string>, b: Map<string, string>): string[] {
 }
 
 // Every difference between a disposable stage and prod. Adding to this list is a reviewed decision.
+// The packages name-search index (data:AWS::DynamoDB::Table:Properties.GlobalSecondaryIndexes) adds no entry: its
+// keys, projection and name are the same in every stage (no stage-dependent setting), so it is in the shared template
+// and the "identical modulo names" checks below cover it. The 'search index is the same in every stage' test pins that.
 const EXPECTED_PROD_DIFF = [
   'api:AWS::Logs::LogGroup:DeletionPolicy',
   'api:AWS::Logs::LogGroup:UpdateReplacePolicy',
@@ -101,6 +104,17 @@ describe('whole-template stage diff', () => {
 
   test.each([['beta', beta], ['gamma', gamma]] as const)('%s differs from prod only in the expected properties', (_n, s) => {
     expect(differing(s, prod)).toEqual(EXPECTED_PROD_DIFF);
+  });
+});
+
+describe('search index per stage', () => {
+  test('the packages search index is byte-identical in every stage', () => {
+    const indexes = STAGES.map((s) => {
+      const tables = Object.values(Template.fromStack(build(s).data).findResources('AWS::DynamoDB::Table')) as any[];
+      return JSON.stringify(tables.find((r) => r.Properties.TableName === `mopm-${s}-packages`).Properties.GlobalSecondaryIndexes);
+    });
+    expect(indexes[0]).toContain('by_search_bucket');
+    expect(new Set(indexes).size).toBe(1);
   });
 });
 

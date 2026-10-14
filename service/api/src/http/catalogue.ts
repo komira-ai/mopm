@@ -14,6 +14,10 @@ export const CATALOGUE: Partial<Record<ErrorCode, { message: string; hint: strin
     message: "'{name}' is not a valid package name.",
     hint: 'Names are lowercase letters, digits and underscores, 2 to 64 characters, starting with a letter.',
   },
+  invalid_version: {
+    message: "'{version}' is not a valid version.",
+    hint: 'Use digits separated by dots, with an optional a, b, rc or dev suffix.',
+  },
   package_not_found: {
     message: "There is no package '{name}'.",
     hint: 'Check the spelling, or claim the name.',
@@ -29,6 +33,10 @@ export const CATALOGUE: Partial<Record<ErrorCode, { message: string; hint: strin
   unavailable: {
     message: 'The registry is temporarily unavailable.',
     hint: 'Try again shortly.',
+  },
+  route_not_found: {
+    message: 'There is no such operation.',
+    hint: 'Check the request against the API documentation; update mopm if it is old.',
   },
 };
 

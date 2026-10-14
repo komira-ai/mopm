@@ -152,7 +152,7 @@ fi && pass "the native test's binary ($nbin) names libgreet" || flunk "the nativ
 rc=$?
 if [ "$rc" -eq 1 ] && grep -q "^TIMEOUT  *tests/test_memory.mojo::test_oom ([0-9]* ms): hung at the 3 s deadline" "$work/nocap.out" &&
     grep -q "^---- tests/test_memory.mojo::test_oom: TIMEOUT" "$work/nocap.out" &&
-    grep -q "^mopm test: 1 tests: 0 passed, 0 failed, 0 crashed, 1 timed out, 0 out of memory, 0 not built$" "$work/nocap.out"; then
+    grep -q "^mopm test: 1 tests: 0 passed, 0 failed, 0 crashed, 1 timed out, 0 out of memory, 0 not built, 0 flaky, 0 ignored$" "$work/nocap.out"; then
     pass "human output: with --memory 0 the same test is TIMEOUT hung (so the OOM came from the cap)"
 else
     flunk "--memory 0 --timeout 3 on test_memory.mojo (exit $rc, want 1); stdout and stderr:"
