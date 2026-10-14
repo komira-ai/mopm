@@ -644,6 +644,63 @@
       }
     },
     {
+      "name": "error invalid_transition",
+      "operationId": "setYanked",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.3.0"
+        },
+        "body": {
+          "reason": "bad build",
+          "yanked": true
+        },
+        "auth": "yankToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_transition",
+            "message": "Cannot yank 'http_client' 0.3.0: it is tombstoned.",
+            "hint": "Only a published version can be yanked, only a yanked version can be unyanked, and a tombstoned version never changes."
+          }
+        }
+      }
+    },
+    {
+      "name": "invalid_transition with the wrong status",
+      "operationId": "setYanked",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.3.0"
+        },
+        "body": {
+          "reason": "bad build",
+          "yanked": true
+        },
+        "auth": "yankToken"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_transition",
+            "message": "Cannot yank 'http_client' 0.3.0: it is tombstoned.",
+            "hint": "Only a published version can be yanked, only a yanked version can be unyanked, and a tombstoned version never changes."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
       "name": "error upload_used",
       "operationId": "commitPublish",
       "request": {
