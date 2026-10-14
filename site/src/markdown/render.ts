@@ -2,8 +2,14 @@
 // time), with every element built by h() and every link checked by safeHref.
 //
 // Heading ids are GitHub-style slugs with a prefix (a readme uses 'readme-', so its ids cannot clobber the page's own)
-// and are deduplicated as GitHub does ('a', 'a-1', ...). A refused link shows its text; an image is never loaded and
-// becomes a link reading "image: <alt>". Raw HTML was kept as text by the parser and stays text here.
+// and are deduplicated as GitHub does ('a', 'a-1', ...). A refused link shows its text; a link with no text shows its
+// target, so every link has an accessible name. An image is never loaded: it becomes a link reading "image: <alt>",
+// or, inside a link (a readme badge), just its alt text, so a link never holds a link. Raw HTML was kept as text by the
+// parser and stays text here.
+//
+// Wide blocks scroll on their own: a table sits in a focusable, named scroll region (class 'scroll'; styling the
+// table itself to scroll would strip its table semantics) and a code block is focusable, so a keyboard reaches the
+// overflow.
 
 import { type Child, type Doc, h, type SafeHref, type Tag } from '../doc.js';
 import { type LinkContext, safeHref } from '../links.js';
@@ -101,7 +107,12 @@ class Renderer<N> {
         return node;
       }
       case 'code':
-        return h(d, 'pre', null, h(d, 'code', LANG.test(b.lang) ? { class: `language-${b.lang}` } : null, b.v));
+        return h(
+          d,
+          'pre',
+          { tabindex: '0' },
+          h(d, 'code', LANG.test(b.lang) ? { class: `language-${b.lang}` } : null, b.v),
+        );
       case 'quote': {
         const node = h(d, 'blockquote');
         this.blocks(node, b.c);
@@ -140,12 +151,15 @@ class Renderer<N> {
           }
           d.append(table, body);
         }
-        return table;
+        const label = b.head.map((cell) => plainText(cell).trim()).filter((t) => t !== '').join(', ');
+        const region = { class: 'scroll', role: 'region', tabindex: '0', 'aria-label': label ? `Table: ${label}` : 'Table' };
+        return h(d, 'div', region, table);
       }
     }
   }
 
-  private inlines(parent: N, inl: readonly Inline[]): void {
+  /** `inLink`: inside a link's text, where an image is its alt text only (no anchor may nest in an anchor). */
+  private inlines(parent: N, inl: readonly Inline[], inLink = false): void {
     const d = this.doc;
     for (const x of inl) {
       let child: Child<N> = null;
@@ -163,19 +177,24 @@ class Renderer<N> {
         case 'em':
         case 'strong':
           child = h(d, x.t);
-          this.inlines(child, x.c);
+          this.inlines(child, x.c, inLink);
           break;
         case 'link': {
           const href = safeHref(x.href, this.ctx);
           if (!href) {
-            this.inlines(parent, x.c); // a refused link keeps its text
+            this.inlines(parent, x.c, inLink); // a refused link keeps its text
             break;
           }
           child = h(d, 'a', isExternal(href) ? { href, rel: EXTERNAL_REL } : { href });
-          this.inlines(child, x.c);
+          if (plainText(x.c).trim() === '') d.append(child, d.text(href)); // no text: the target names the link
+          else this.inlines(child, x.c, true);
           break;
         }
         case 'image': {
+          if (inLink) {
+            if (x.alt) child = d.text(x.alt);
+            break;
+          }
           const label = x.alt ? `image: ${x.alt}` : 'image';
           const href = safeHref(x.href, this.ctx);
           child = href ? h(d, 'a', isExternal(href) ? { href, rel: EXTERNAL_REL } : { href }, label) : d.text(label);

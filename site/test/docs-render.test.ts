@@ -34,17 +34,19 @@ test('mopm-test.md: every GFM table is a table with a header row; JUnit markup i
   const delimiterRows = source.split('\n').filter((l) => /^\|(?: *:?-+:? *\|)+$/.test(l)).length;
   expect(delimiterRows).toBeGreaterThanOrEqual(3);
   expect(html.split('<table>').length - 1).toBe(delimiterRows);
-  expect(html.split('<table><thead><tr><th scope="col">').length - 1).toBe(delimiterRows);
+  // Each in its own named scroll region, so a wide table scrolls by itself at 320px.
+  expect(html.split('<div class="scroll" role="region" tabindex="0" aria-label="Table: ').length - 1).toBe(delimiterRows);
+  expect(html.split('"><table><thead><tr><th scope="col">').length - 1).toBe(delimiterRows);
   expect(html).toContain('<code>&lt;testcase classname="&lt;file&gt;" name="&lt;test&gt;" time="&lt;s&gt;"&gt;</code>');
   expect(html).toContain('<h2 id="retries-and-flaky">Retries and FLAKY</h2>');
-  expect(html).toContain('<pre><code class="language-json">{');
+  expect(html).toContain('<pre tabindex="0"><code class="language-json">{');
   expect(html).toContain('<ol><li><strong>Discovery.</strong>');
 });
 
 test('mopm-toml.md: the toml example, the sections list, and escaped placeholders', () => {
   const { html } = render('spec/mopm-toml.md');
   expect(html).toContain('<h1 id="mopmtoml-draft">mopm.toml (draft)</h1>');
-  expect(html).toContain('<pre><code class="language-toml">[package]');
+  expect(html).toContain('<pre tabindex="0"><code class="language-toml">[package]');
   expect(html).toContain('<li><code>[native.&lt;id&gt;]</code>');
   expect(html).toContain('<code>&gt;=1.2.0, &lt;2.0.0</code>');
 });

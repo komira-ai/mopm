@@ -113,3 +113,12 @@ ipt>alert(1)</script>
 
 %%% mailto with header injection
 [x](mailto:a@mopm.dev?bcc=b@mopm.dev%0d%0aSubject:hi)
+
+%%% image inside a link (badge) must not nest anchors
+[![CI](https://mopm.dev/ci.svg)](https://mopm.dev/actions) [![](https://mopm.dev/b.svg)](https://mopm.dev)
+
+%%% image inside emphasis inside a link
+[a **![b](https://mopm.dev/b.svg)** c](https://mopm.dev/a)
+
+%%% empty link text
+[](https://mopm.dev) [ ](https://mopm.dev/x)

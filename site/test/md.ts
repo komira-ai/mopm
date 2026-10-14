@@ -17,10 +17,10 @@ export function mdFull(src: string, opts: RenderOptions = README): { html: strin
 
 /** The markup the renderer may emit, and nothing else. */
 export const MD_TAGS = new Set([
-  'a', 'blockquote', 'br', 'code', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'li', 'ol', 'p', 'pre', 'strong',
+  'a', 'blockquote', 'br', 'code', 'div', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'li', 'ol', 'p', 'pre', 'strong',
   'table', 'tbody', 'td', 'th', 'thead', 'tr', 'ul',
 ]);
-export const MD_ATTRS = new Set(['href', 'rel', 'id', 'class', 'start', 'scope']);
+export const MD_ATTRS = new Set(['href', 'rel', 'id', 'class', 'start', 'scope', 'role', 'tabindex', 'aria-label']);
 
 /**
  * Every opening tag in serialized output, with its attributes. Throws if a '<' does not start a well-formed opening
@@ -50,8 +50,10 @@ export function unescapeAttr(v: string): string {
   return v.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 }
 
-/** Asserts the output holds only renderer markup and only safe link targets. */
+/** Asserts the output holds only renderer markup and only safe link targets, and that no link holds a link. */
 export function expectSafe(html: string): void {
+  expectNoNestedLinks(html);
+  expectLinkText(html);
   for (const { tag, attrs } of tagsOf(html)) {
     expect(MD_TAGS).toContain(tag);
     for (const [k, v] of attrs) {
@@ -73,4 +75,18 @@ export function expectSafeHref(href: string): void {
   const u = new URL(href);
   expect(['https:', 'http:', 'mailto:']).toContain(u.protocol);
   expect(u.href).toBe(href);
+}
+
+/** A link inside a link is invalid HTML (a browser re-parses it into a different tree) and nested interactive content. */
+export function expectNoNestedLinks(html: string): void {
+  let depth = 0;
+  for (const m of html.matchAll(/<(\/?)a[ >]/g)) {
+    depth += m[1] === '/' ? -1 : 1;
+    if (depth > 1) throw new Error(`a link inside a link at ${m.index}: ${JSON.stringify(html.slice(0, 200))}`);
+  }
+}
+
+/** Every link has text (an accessible name): an anchor never closes right after it opens. */
+export function expectLinkText(html: string): void {
+  expect(html).not.toMatch(/<a [^>]*><\/a>/);
 }

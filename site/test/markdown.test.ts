@@ -21,15 +21,15 @@ describe('blocks', () => {
 
   test('fenced code keeps its text verbatim and escapes it', () => {
     expect(md('```mojo\nfn f() -> Int:\n    return 1 < 2\n```')).toBe(
-      '<pre><code class="language-mojo">fn f() -&gt; Int:\n    return 1 &lt; 2</code></pre>',
+      '<pre tabindex="0"><code class="language-mojo">fn f() -&gt; Int:\n    return 1 &lt; 2</code></pre>',
     );
-    expect(md('~~~\n```\n~~~')).toBe('<pre><code>```</code></pre>');
-    expect(md('```bad"lang\nx\n```')).toBe('<pre><code>x</code></pre>');
-    expect(md('```\nunclosed')).toBe('<pre><code>unclosed</code></pre>');
+    expect(md('~~~\n```\n~~~')).toBe('<pre tabindex="0"><code>```</code></pre>');
+    expect(md('```bad"lang\nx\n```')).toBe('<pre tabindex="0"><code>x</code></pre>');
+    expect(md('```\nunclosed')).toBe('<pre tabindex="0"><code>unclosed</code></pre>');
   });
 
   test('indented code', () => {
-    expect(md('    a\n\n    b\n')).toBe('<pre><code>a\n\nb</code></pre>');
+    expect(md('    a\n\n    b\n')).toBe('<pre tabindex="0"><code>a\n\nb</code></pre>');
     expect(md('para\n    not code')).toBe('<p>para\nnot code</p>');
   });
 
@@ -60,13 +60,37 @@ describe('blocks', () => {
 
   test('GFM tables with alignment, escaped pipes and ragged rows', () => {
     expect(md('| a | b | c |\n|:--|--:|:-:|\n| 1 | `x\\|y` |\n| 4 | 5 | 6 | 7 |')).toBe(
-      '<table><thead><tr><th scope="col" class="align-left">a</th><th scope="col" class="align-right">b</th>' +
+      '<div class="scroll" role="region" tabindex="0" aria-label="Table: a, b, c"><table><thead><tr>' +
+        '<th scope="col" class="align-left">a</th><th scope="col" class="align-right">b</th>' +
         '<th scope="col" class="align-center">c</th></tr></thead><tbody>' +
         '<tr><td class="align-left">1</td><td class="align-right"><code>x|y</code></td></tr>' +
-        '<tr><td class="align-left">4</td><td class="align-right">5</td><td class="align-center">6</td></tr></tbody></table>',
+        '<tr><td class="align-left">4</td><td class="align-right">5</td><td class="align-center">6</td></tr></tbody></table></div>',
     );
-    expect(md('a | b\n--- | ---')).toBe('<table><thead><tr><th scope="col">a</th><th scope="col">b</th></tr></thead></table>');
+    expect(md('a | b\n--- | ---')).toBe(
+      '<div class="scroll" role="region" tabindex="0" aria-label="Table: a, b"><table><thead><tr><th scope="col">a</th>' +
+        '<th scope="col">b</th></tr></thead></table></div>',
+    );
     expect(md('a | b\n--- | --- | ---')).toBe('<p>a | b\n--- | --- | ---</p>');
+  });
+});
+
+describe('wide blocks scroll on their own, reachable from the keyboard', () => {
+  // At 320px a long code line or a wide table must not scroll the whole page. A table sits in a focusable, named
+  // scroll region (CSS on the table itself would strip its table semantics); a code block is focusable itself.
+  test('a table is wrapped in a named, focusable scroll region', () => {
+    expect(md('a | *b*\n--- | ---\n1 | 2')).toBe(
+      '<div class="scroll" role="region" tabindex="0" aria-label="Table: a, b"><table><thead><tr><th scope="col">a</th>' +
+        '<th scope="col"><em>b</em></th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table></div>',
+    );
+  });
+
+  test('a table with empty header cells still gets a label', () => {
+    expect(md('| |\n|---|\n| x |')).toMatch(/^<div class="scroll" role="region" tabindex="0" aria-label="Table">/);
+  });
+
+  test('a code block is focusable', () => {
+    expect(md('```\nx\n```')).toBe('<pre tabindex="0"><code>x</code></pre>');
+    expect(md('    y')).toBe('<pre tabindex="0"><code>y</code></pre>');
   });
 });
 
@@ -123,6 +147,29 @@ describe('inlines', () => {
     );
     expect(md('![](https://mopm.dev/a.png)')).toContain('>image</a>');
     expect(md('![alt](rel.png)')).toBe('<p>image: alt</p>');
+  });
+
+  test('an image inside a link (a readme badge) is the link text, never a second anchor', () => {
+    const rel = 'rel="nofollow noopener noreferrer ugc"';
+    expect(md('[![CI](https://mopm.dev/ci.svg)](https://mopm.dev/actions)')).toBe(
+      `<p><a href="https://mopm.dev/actions" ${rel}>CI</a></p>`,
+    );
+    expect(md('[![CI](https://mopm.dev/a.svg)](https://mopm.dev/a) [![License](https://mopm.dev/l.svg)](https://mopm.dev/l)')).toBe(
+      `<p><a href="https://mopm.dev/a" ${rel}>CI</a> <a href="https://mopm.dev/l" ${rel}>License</a></p>`,
+    );
+    expect(md('[see *![logo](rel.png)* here](https://mopm.dev)')).toBe(`<p><a href="https://mopm.dev/" ${rel}>see <em>logo</em> here</a></p>`);
+    // A refused outer link leaves its content outside any link, so the image is a link of its own again.
+    expect(md('[![CI](https://mopm.dev/ci.svg)](javascript:x)')).toBe(
+      `<p><a href="https://mopm.dev/ci.svg" ${rel}>image: CI</a></p>`,
+    );
+  });
+
+  test('a link with no text shows its target, so it always has an accessible name', () => {
+    const rel = 'rel="nofollow noopener noreferrer ugc"';
+    expect(md('[](https://mopm.dev)')).toBe(`<p><a href="https://mopm.dev/" ${rel}>https://mopm.dev/</a></p>`);
+    expect(md('[ ](https://mopm.dev/x)')).toBe(`<p><a href="https://mopm.dev/x" ${rel}>https://mopm.dev/x</a></p>`);
+    expect(md('[![](https://mopm.dev/b.svg)](https://mopm.dev)')).toBe(`<p><a href="https://mopm.dev/" ${rel}>https://mopm.dev/</a></p>`);
+    expect(md('[`x`](https://mopm.dev)')).toBe(`<p><a href="https://mopm.dev/" ${rel}><code>x</code></a></p>`);
   });
 
   test('in-page fragments get the id prefix', () => {
