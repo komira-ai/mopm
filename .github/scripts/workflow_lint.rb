@@ -71,6 +71,13 @@ end
   # Only promote.yml passes secrets to its reusable calls, and it must do so on every call:
   # the called jobs read environment secrets, which a reusable workflow sees only when passed.
   if base == "promote.yml"
+    # Automated by CEO decision: exactly a push to main plus a manual run, serialized by a concurrency group.
+    pon = doc["on"] || doc[true] || {}
+    pkeys = pon.is_a?(Hash) ? pon.keys : Array(pon)
+    fail_.("#{f}: triggers must be exactly push and workflow_dispatch, got #{pkeys.inspect}") if pkeys.sort != %w[push workflow_dispatch]
+    fail_.("#{f}: push must be limited to branches [main]") if pon.is_a?(Hash) && (pon["push"] || {})["branches"] != ["main"]
+    pconc = doc["concurrency"]
+    fail_.("#{f}: needs a concurrency group with cancel-in-progress: false") unless pconc.is_a?(Hash) && pconc["group"].to_s != "" && pconc["cancel-in-progress"] == false
     jobs.each do |jn, job|
       next unless job["uses"]
       fail_.("#{f}: job #{jn} must set secrets: inherit (the called workflow reads environment secrets)") unless job["secrets"] == "inherit"
@@ -118,8 +125,6 @@ if ARGV.empty?
   pdoc = YAML.safe_load(File.read(".github/workflows/promote.yml"), aliases: false)
   pon = pdoc["on"] || pdoc[true]
   pon_keys = pon.is_a?(Hash) ? pon.keys : Array(pon)
-  # Manual only until beta is live and the CEO approves a push trigger; then change this and docs together.
-  fail_.("promote.yml: triggers must be exactly workflow_dispatch for now, got #{pon_keys.inspect}") if pon_keys != ["workflow_dispatch"]
   pj = pdoc["jobs"]
   fail_.("promote.yml: jobs #{pj.keys.sort} differ from expected #{chain.keys.sort}") if pj.keys.sort != chain.keys.sort
   chain.each do |jn, prev|
