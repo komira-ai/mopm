@@ -1,6 +1,6 @@
 name: service-ci
 
-# Tests for the service stacks and the access stack. Runs for pull requests and for
+# Tests for the service stacks, the registry API package and the access stack. Runs for pull requests and for
 # pushes to main with a read-only token and no id-token: it never holds AWS credentials.
 # There is deliberately no path filter, so these checks always report and can be required.
 
@@ -43,6 +43,25 @@ jobs:
           for stage in beta gamma prod; do
             npx cdk synth --quiet -c stage=$stage -c hostedZoneId=Z0DUMMYZONE -c version=ci -c commit=ci --output cdk.out/$stage
           done
+
+  api:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: service/api
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '20'
+      # Fails if package-lock.json is missing or out of step with package.json.
+      - name: Install (npm ci)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
 
   dns:
     runs-on: ubuntu-24.04
