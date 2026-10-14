@@ -25,10 +25,17 @@
 #      environment), `mopm run`, and `mopm repl` fed tests/e2e/repl.stdin
 #      all print "greet 4242", "base 1000" and "chain 1234", which only the
 #      native code can produce;
-#   5. in the split environment checks two controls: stock `mojo run` and
-#      `mojo repl` given greet and outer but not inner must NOT print them
-#      (and `mojo run` must fail naming libinner), so the transitive entry
-#      is proven load-bearing in that layout.
+#   5. the transitive case, in each environment: tests/e2e/prog_outer.mojo
+#      (and tests/e2e/repl_outer.stdin) import ONLY outer. inner is there
+#      only as outer's dependency (outer's deps, and libouter's needs), and
+#      the program never names inner. The built binary, `mopm run` and
+#      `mopm repl` must still print "chain 1234", which libouter computes
+#      by calling libinner;
+#   6. in the split environment checks controls: stock `mojo run` and
+#      `mojo repl` given greet and outer but not inner must NOT print the
+#      values (and `mojo run` must fail naming libinner), for prog.mojo and
+#      for the outer-only program, so the transitive entry is proven
+#      load-bearing in that layout.
 set -u
 
 if [ $# -ne 3 ]; then
@@ -135,13 +142,33 @@ install() {
 }
 
 # ---------------------------------------------------------------- checks
-# expect <label> <exit code> <output file>: exit 0 and the three lines.
+# The program under test, and the lines only its native code can produce.
+# (want_for <program>: those lines, one per line.)
+want_for() {
+    case $1 in
+        prog) printf '%s\n' "greet 4242" "base 1000" "chain 1234" ;;
+        prog_outer) printf '%s\n' "chain 1234" ;;
+    esac
+}
+
+# The outer-only program must not reach inner by itself: if it named inner,
+# libinner would be planned for its own sake and the transitive case would
+# prove nothing.
+if grep -q "inner" "$here/repl_outer.stdin" || grep -v "^#" "$here/prog_outer.mojo" | grep -q "inner"; then
+    die "fixture: the outer-only program names inner"
+fi
+
+# expect <label> <exit code> <output file> [program]: exit 0 and every line
+# want_for the program (default prog) gives.
 expect() {
     ok=1
     [ "$2" -eq 0 ] || { echo "     exit $2, want 0"; ok=0; }
-    for want in "greet 4242" "base 1000" "chain 1234"; do
+    wants=$(want_for "${4:-prog}")
+    while IFS= read -r want; do
         grep -q "$want" "$3" || { echo "     no '$want' in the output"; ok=0; }
-    done
+    done <<EOF_WANTS
+$wants
+EOF_WANTS
     if [ "$ok" -eq 1 ]; then
         echo "ok   $1; output:"
     else
@@ -179,37 +206,48 @@ refuse() {
     show "$3"
 }
 
-# layout <name> <prefix>: build, run and repl through mopm.
+# layout <name> <prefix> <program> <repl stdin>: build, run and repl through
+# mopm. <program> is prog or prog_outer (tests/e2e/<program>.mojo).
 layout() {
     name=$1
     prefix=$2
-    out=$work/$name
+    prog=$3
+    stdin=$here/$4
+    out=$work/$name/$prog
     mkdir -p "$out"
     for t in build run repl; do
         case $t in
-            build) set -- build "$here/prog.mojo" -o "$out/prog" ;;
-            run) set -- run "$here/prog.mojo" ;;
+            build) set -- build "$here/$prog.mojo" -o "$out/prog" ;;
+            run) set -- run "$here/$prog.mojo" ;;
             repl) set -- repl ;;
         esac
-        echo "     $name: $("$mopm" "$@" --prefix "$prefix" --print-cmd 2>&1)"
+        echo "     $name, $prog: $("$mopm" "$@" --prefix "$prefix" --print-cmd 2>&1)"
     done
 
-    "$mopm" build "$here/prog.mojo" -o "$out/prog" --prefix "$prefix" > "$out/build.log" 2>&1
+    "$mopm" build "$here/$prog.mojo" -o "$out/prog" --prefix "$prefix" > "$out/build.log" 2>&1
     rc=$?
     if [ "$rc" -ne 0 ]; then
-        echo "FAIL $name: mopm build exit $rc; output:"
+        echo "FAIL $name, $prog: mopm build exit $rc; output:"
         show "$out/build.log"
         fail=1
     else
         env -i "$out/prog" > "$out/binary.log" 2>&1
-        expect "$name: mopm build, then the binary in an empty environment" $? "$out/binary.log"
+        expect "$name, $prog: mopm build, then the binary in an empty environment" $? "$out/binary.log" "$prog"
     fi
 
-    "$mopm" run "$here/prog.mojo" --prefix "$prefix" > "$out/run.log" 2>&1
-    expect "$name: mopm run" $? "$out/run.log"
+    "$mopm" run "$here/$prog.mojo" --prefix "$prefix" > "$out/run.log" 2>&1
+    expect "$name, $prog: mopm run" $? "$out/run.log" "$prog"
 
-    "$mopm" repl --prefix "$prefix" < "$here/repl.stdin" > "$out/repl.log" 2>&1
-    expect "$name: mopm repl, stdin with a blank line between expressions" $? "$out/repl.log"
+    # The REPL check asserts the values, never the absence of loader noise.
+    # On macOS the output carries "dyld[...]: terminating because inserted
+    # dylib '<lib>' could not be loaded ... incompatible architecture (have
+    # 'arm64', need 'arm64e')". That line is not from the JIT process:
+    # DYLD_INSERT_LIBRARIES also reaches an arm64e system helper the
+    # debugger starts; that helper cannot take an arm64 library, and the
+    # REPL does not depend on it. The JIT process (arm64, like the
+    # libraries) loads them, which is why the values print.
+    "$mopm" repl --prefix "$prefix" < "$stdin" > "$out/repl.log" 2>&1
+    expect "$name, $prog: mopm repl, stdin with a blank line between expressions" $? "$out/repl.log" "$prog"
 }
 
 # The split environment: a prefix of its own, borrowing the toolchain.
@@ -243,10 +281,19 @@ MODULAR_HOME="$split/share/max" "$split/bin/mojo" repl \
     -O "settings set target.env-vars $var=$lib/libgreet.$ext:$lib/libouter.$ext" < "$here/repl.stdin" > "$work/control-repl.log" 2>&1
 echo "     control repl exit status: $?"
 refuse "control, split: mojo repl without libinner preloaded prints nothing" 1 "$work/control-repl.log" 0
+MODULAR_HOME="$split/share/max" "$split/bin/mojo" run \
+    -Xlinker "$lib/libouter.$ext" "$here/prog_outer.mojo" > "$work/control-run-outer.log" 2>&1
+refuse "control, split: mojo run of the outer-only program without libinner fails" $? "$work/control-run-outer.log" 1
+grep -q "libinner" "$work/control-run-outer.log" || {
+    echo "FAIL control, split: the outer-only mojo run failure does not name libinner"
+    fail=1
+}
 
-layout split "$split"
+layout split "$split" prog repl.stdin
+layout split "$split" prog_outer repl_outer.stdin
 
 install "$mojo_env"
-layout pixi "$mojo_env"
+layout pixi "$mojo_env" prog repl.stdin
+layout pixi "$mojo_env" prog_outer repl_outer.stdin
 
 exit "$fail"
