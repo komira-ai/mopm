@@ -610,7 +610,7 @@ test "registry versions read as semantic versions" {
 }
 
 test "requirement edge cases pick the newest version each one allows" {
-    const index = MemoryIndex{ .files = &.{.{ "core", core_versions }} };
+    const index = comptime MemoryIndex{ .files = &.{.{ "core", core_versions }} };
     const Case = struct { []const u8, []const u8 };
     const cases = [_]Case{
         .{ "1", "1.3.0" }, // caret: newest 1.x, not 2.0.0
@@ -633,13 +633,13 @@ test "requirement edge cases pick the newest version each one allows" {
 }
 
 test "a lock's pin is kept while it fits, and dropped when it does not" {
-    const index = MemoryIndex{ .files = &.{.{ "core", core_versions }} };
+    const index = comptime MemoryIndex{ .files = &.{.{ "core", core_versions }} };
     try expectPicks(index, &.{.{ .name = "core", .requirement = "1" }}, &.{.{ .name = "core", .version = "1.2.0" }}, &.{.{ "core", "1.2.0" }});
     try expectPicks(index, &.{.{ .name = "core", .requirement = "~1.2.7" }}, &.{.{ .name = "core", .version = "1.2.0" }}, &.{.{ "core", "1.2.7" }});
 }
 
 test "a diamond resolves to the newest version both sides allow" {
-    const index = MemoryIndex{ .files = &.{
+    const index = comptime MemoryIndex{ .files = &.{
         .{ "app_a", indexLine("app_a", "1.0.0", "\"deps\":[{\"name\":\"core\",\"range\":\">=1.2,<2\"}],") },
         .{ "app_b", indexLine("app_b", "1.0.0", "\"deps\":[{\"name\":\"core\",\"range\":\"~1.2\"}],") },
         .{ "core", core_versions },
@@ -651,7 +651,7 @@ test "a diamond resolves to the newest version both sides allow" {
 }
 
 test "backtracking: an older parent whose dependency fits" {
-    const index = MemoryIndex{ .files = &.{
+    const index = comptime MemoryIndex{ .files = &.{
         .{ "top", indexLine("top", "1.0.0", "\"deps\":[{\"name\":\"core\",\"range\":\"^1\"}],") ++
             indexLine("top", "1.1.0", "\"deps\":[{\"name\":\"core\",\"range\":\"^2\"}],") },
         .{ "core", core_versions },
@@ -663,7 +663,7 @@ test "backtracking: an older parent whose dependency fits" {
 }
 
 test "a conflict names every requirement and where it came from" {
-    const index = MemoryIndex{ .files = &.{
+    const index = comptime MemoryIndex{ .files = &.{
         .{ "app_a", indexLine("app_a", "1.0.0", "\"deps\":[{\"name\":\"core\",\"range\":\"^1\"}],") },
         .{ "app_b", indexLine("app_b", "1.0.0", "\"deps\":[{\"name\":\"core\",\"range\":\"^2\"}],") },
         .{ "core", core_versions },
@@ -674,7 +674,7 @@ test "a conflict names every requirement and where it came from" {
 }
 
 test "yanked and taken-down versions are not picked; when only they match, the reason is shown" {
-    const index = MemoryIndex{ .files = &.{.{
+    const index = comptime MemoryIndex{ .files = &.{.{
         "tls",
         indexLine("tls", "1.0.0", no_deps) ++
             indexLine2("tls", "1.1.0", "1.0.0", "yanked", no_deps ++ "\"yank_reason\":\"crashes on empty body\",") ++
@@ -688,7 +688,7 @@ test "yanked and taken-down versions are not picked; when only they match, the r
 }
 
 test "a build for another mojo is not picked; when only it matches, the compiler is named" {
-    const index = MemoryIndex{ .files = &.{.{
+    const index = comptime MemoryIndex{ .files = &.{.{
         "core",
         indexLine("core", "1.0.0", no_deps) ++ indexLine2("core", "1.1.0", "1.1.0", "published", no_deps),
     }} };
@@ -697,7 +697,7 @@ test "a build for another mojo is not picked; when only it matches, the compiler
 }
 
 test "a package with no index file is named with what required it" {
-    const index = MemoryIndex{ .files = &.{.{ "top", indexLine("top", "1.0.0", "\"deps\":[{\"name\":\"gone\",\"range\":\"1\"}],") }} };
+    const index = comptime MemoryIndex{ .files = &.{.{ "top", indexLine("top", "1.0.0", "\"deps\":[{\"name\":\"gone\",\"range\":\"1\"}],") }} };
     try expectFailure(index, &.{.{ .name = "top", .requirement = "1" }}, .not_found, &.{"gone (required by top 1.0.0) is not in the registry's index"});
 }
 
@@ -705,9 +705,9 @@ test "index files that break spec/index.md are refused" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    const good = indexLine("core", "1.0.0", no_deps);
+    const good = comptime indexLine("core", "1.0.0", no_deps);
     const Case = struct { []const u8, []const u8 };
-    const cases = [_]Case{
+    const cases = comptime [_]Case{
         .{ good[0 .. good.len - 1], "does not end with a newline" },
         .{ good ++ "\n" ++ good, "blank" },
         .{ good ++ indexLine("core", "1.0", no_deps), "version 1.0 repeats 1.0.0" },

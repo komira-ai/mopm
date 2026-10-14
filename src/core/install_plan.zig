@@ -282,7 +282,7 @@ test "a repodata sha256 or size that differs from the index is refused, naming b
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    const wrong = MemoryChannel{ .files = &.{
+    const wrong = comptime MemoryChannel{ .files = &.{
         .{ "linux-64", repodataJson("linux-64", entryJson("crypto", "2.0.1", "linux-64", digests[3]) ++ "," ++ entryJson("http_client", "0.4.0", "linux-64", digests[1]) ++ "," ++
             entryJson("http_core", "1.2.5", "linux-64", digests[2]) ++ "," ++ entryJson("tls", "1.1.0", "linux-64", digests[1]), "") },
         .{ "osx-arm64", repodataJson("osx-arm64", entryJson("crypto", "2.0.1", "osx-arm64", digests[4]), "") },
@@ -293,7 +293,7 @@ test "a repodata sha256 or size that differs from the index is refused, naming b
     try std.testing.expect(std.mem.indexOf(u8, diag.message, "the index says sha256 " ++ digests[0]) != null);
     try std.testing.expect(std.mem.indexOf(u8, diag.message, "repodata.json says sha256 " ++ digests[1]) != null);
 
-    const gone = MemoryChannel{ .files = &.{
+    const gone = comptime MemoryChannel{ .files = &.{
         .{ "linux-64", repodataJson("linux-64", entryJson("crypto", "2.0.1", "linux-64", digests[3]) ++ "," ++
             entryJson("http_core", "1.2.5", "linux-64", digests[2]) ++ "," ++ entryJson("tls", "1.1.0", "linux-64", digests[1]), "\"mojo-http_client-0.4.0-mojo1.0.0_0.conda\"") },
         .{ "osx-arm64", repodataJson("osx-arm64", entryJson("crypto", "2.0.1", "osx-arm64", digests[4]), "") },
