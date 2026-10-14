@@ -50,7 +50,7 @@ describe.each(STAGES)('ChannelStack %s seeds empty repodata', (stage) => {
 
   test('one non-pruning, retained deployment into the channel bucket', () => {
     t.resourceCountIs('Custom::CDKBucketDeployment', 1);
-    t.hasResourceProperties('Custom::CDKBucketDeployment', { Prune: false, RetainOnDestroy: true });
+    t.hasResourceProperties('Custom::CDKBucketDeployment', { Prune: false, RetainOnDelete: true });
   });
 
   test('the staged asset holds the four empty repodata files and their zst', () => {
