@@ -1,3 +1,6 @@
-mopm test: --strict-discovery and --prefix apply only with --check
+mopm test: with --list, --strict-discovery and --prefix apply only with --check
 
-usage: mopm test --list [--check [--strict-discovery] [--prefix <dir>]] [<path>...]
+usage: mopm test [<path>...] [--prefix <dir>] [--timeout <seconds>]
+                 [--memory <MiB>] [--opt-level <0-3>] [--format human|json]
+                 [--junit <file>] [--allow-empty] [--strict-discovery]
+       mopm test --list [--check [--strict-discovery] [--prefix <dir>]] [<path>...]

@@ -1,0 +1,6 @@
+mopm test: --timeout, --memory, --format, --junit and --allow-empty apply only when running tests, not with --list
+
+usage: mopm test [<path>...] [--prefix <dir>] [--timeout <seconds>]
+                 [--memory <MiB>] [--opt-level <0-3>] [--format human|json]
+                 [--junit <file>] [--allow-empty] [--strict-discovery]
+       mopm test --list [--check [--strict-discovery] [--prefix <dir>]] [<path>...]
