@@ -32,6 +32,42 @@ async function httpClient(s: MemoryStore) {
   await s.createVersion(rec({ name: 'http_client', version: '0.4.0', published_at: '2026-10-13T12:00:00Z' }), audit('http_client', 'publish', '0.4.0'));
 }
 
+/** The version the getVersion fixtures describe (tests/contract/api/packages.json), in the state `state` puts it in. */
+const versionDetail = (state: 'published' | 'yanked' | 'tombstoned') => async (s: MemoryStore) => {
+  await s.createPackage({ name: 'http_client', state: 'active', created_at: '2026-10-01T09:00:00Z' });
+  await s.createVersion(
+    rec({
+      name: 'http_client',
+      version: '0.4.0',
+      state,
+      published_by: 'octocat',
+      deps: [{ name: 'http_core', range: '>=1.2,<2' }],
+      native: [{ id: 'crypto', soname: 'libcrypto_native.so.1' }],
+      files: [
+        {
+          subdir: 'linux-64',
+          filename: 'mojo-http_client-0.4.0-mojo1.0.0_0.conda',
+          sha256: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
+          size: 123456,
+          // The row keeps its url after a takedown; the answer must not show it.
+          url: 'https://conda.mopm.dev/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda',
+        },
+      ],
+      manifest_sha256: '2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae',
+      provenance: {
+        kind: 'oidc',
+        repository: 'https://github.com/example/http_client',
+        workflow_ref: 'example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0',
+      },
+      ...(state === 'yanked' ? { yank_reason: 'crashes on empty body' } : {}),
+      ...(state === 'tombstoned' ? { tombstone: { reason_code: 'malware', date: '2026-10-14' } } : {}),
+    }),
+    audit('http_client', 'publish', '0.4.0'),
+  );
+};
+// Optional in the contract and not emitted: the embedded manifest and the rendered readme (the store holds neither).
+const detailOmits = ['manifest', 'readme_html'];
+
 const failingStore = (): Store =>
   new Proxy({} as Store, { get: () => async () => { throw new Error('dynamodb exploded'); } });
 
@@ -78,6 +114,15 @@ const RECIPES: Record<string, Recipe> = {
   'error invalid_name': {},
   'error package_not_found': {},
   'error internal_error': { store: failingStore },
+  'error invalid_version': {},
+  'error version_not_found': { seed: async (s) => { await s.createPackage({ name: 'http_client', state: 'active', created_at: '2026-10-01T09:00:00Z' }); } },
+  // The case's operation (getHealth) only carries it; the request is a path the API does not have.
+  'error route_not_found': { prepare: async (req) => ({ ...req, path: '/api/v1/no_such_operation' }) },
+  'version detail': { seed: versionDetail('published'), omitExpected: detailOmits },
+  'yanked version keeps its files and says why': { seed: versionDetail('yanked'), omitExpected: detailOmits },
+  'tombstoned version has no url': { seed: versionDetail('tombstoned'), omitExpected: detailOmits },
+  // tests/contract/api/owners.json
+  'list owners': { seed: httpClient },
 };
 
 // service/api/test/fixtures/api-read.json: cases of the same shape that pin things the shared fixtures do not.
@@ -157,6 +202,39 @@ describe('the replay goes red on a planted defect', () => {
     });
     expect(await replay(notFound, RECIPES[notFound.name]!, route as Router)).toEqual([]);
     expect((await replay(notFound, RECIPES[notFound.name]!, mutant)).length).toBeGreaterThan(0);
+  });
+
+  test('a tombstoned version that still shows its url (the tombstone fixture)', async () => {
+    const c = find(contractCases, 'tombstoned version has no url');
+    const mutant: Router = async (req, deps, id) => {
+      const res = await route(req, deps, id);
+      const body = JSON.parse(res.body);
+      body.files = body.files.map((f: any) => ({ ...f, url: 'https://conda.mopm.dev/leak' }));
+      return { ...res, body: JSON.stringify(body) };
+    };
+    expect(await replay(c, RECIPES[c.name]!, route as Router)).toEqual([]);
+    expect((await replay(c, RECIPES[c.name]!, mutant)).length).toBeGreaterThan(0);
+  });
+
+  test('an unknown route answered with the old generic 400 (the route_not_found fixture)', async () => {
+    const c = find(contractCases, 'error route_not_found');
+    const mutant: Router = async (req, deps, id) => {
+      const res = await route(req, deps, id);
+      return res.statusCode === 404 ? { ...res, statusCode: 400, body: res.body.replace('route_not_found', 'invalid_request') } : res;
+    };
+    expect(await replay(c, RECIPES[c.name]!, route as Router)).toEqual([]);
+    expect((await replay(c, RECIPES[c.name]!, mutant)).length).toBeGreaterThan(0);
+  });
+
+  test('owners listed with their added_at (the list owners fixture has id and handle only)', async () => {
+    const c = find(contractCases, 'list owners');
+    const mutant: Router = async (req, deps, id) => {
+      const res = await route(req, deps, id);
+      const body = JSON.parse(res.body);
+      body.owners = body.owners.map((o: any) => ({ ...o, added_at: 'x' }));
+      return { ...res, body: JSON.stringify(body) };
+    };
+    expect((await replay(c, RECIPES[c.name]!, mutant)).length).toBeGreaterThan(0);
   });
 
   test('a changed error message (catalogue drift)', async () => {
