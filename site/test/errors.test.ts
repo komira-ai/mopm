@@ -58,7 +58,10 @@ test.each(cases.map((c) => [`${c.response.status} ${codeOf(c.response.body)}`, c
   const e = fromResponse(c.response.status, JSON.stringify(c.response.body), c.response.headers['x-mopm-request-id']);
   expect(e.kind).toBe(EXPECTED[code]);
   expect(e.code).toBe(code);
-  expect(e.detail).toBe((c.response.body as { error: { message: string } }).error.message);
+  const env = (c.response.body as { error: { message: string; hint?: string } }).error;
+  expect(e.detail).toBe(env.message);
+  // An empty hint carries nothing to show, so it is dropped.
+  expect(e.hint).toBe(env.hint ? env.hint : undefined);
   expect(e.requestId).toBe('req-7f3a2c19d0e4');
   expect(e.status).toBe(c.response.status);
 });
@@ -79,6 +82,19 @@ test('read-operation errors arrive through the client the same way', async () =>
     expect([c.name, r.kind]).toEqual([c.name, EXPECTED[codeOf(c.response.body)]]);
     if (r.kind === 'ok') throw new Error('expected an error');
     expect(r.requestId).toBe(c.response.headers['x-mopm-request-id']);
+  }
+});
+
+test('the request id is kept on an answer that is not an envelope (a gateway 404, an HTML 502)', async () => {
+  for (const [status, body, kind] of [
+    [404, '<html>Not Found</html>', 'notFound'],
+    [404, '{"message":"Not Found"}', 'notFound'],
+    [502, '<html>Bad Gateway</html>', 'server'],
+  ] as const) {
+    const fetchFn: FetchFn = async () => new Response(body, { status, headers: { 'x-mopm-request-id': 'req-gw-1' } });
+    const r = await client(fetchFn, BASE).getPackage('nosuch');
+    expect(r).toMatchObject({ kind, status, requestId: 'req-gw-1' });
+    expect(r).not.toHaveProperty('code');
   }
 });
 

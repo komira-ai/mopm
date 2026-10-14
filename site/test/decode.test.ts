@@ -94,3 +94,44 @@ test('a mistyped required field is an error', () => {
   expect(() => decodePackageList(null)).toThrow(DecodeError);
   expect(() => decodePackageList([])).toThrow(DecodeError);
 });
+
+test('a claimed package (no version yet) decodes with latest null and no versions', () => {
+  // The contract fixtures hold no getPackage answer for a claimed package, so it is built from the active one with
+  // the fields a claim changes. If decodePackageInfo required `latest` to be a string, this page would fail to load.
+  const p = bodyOf('getPackage');
+  Object.assign(p, { state: 'claimed', latest: null, versions: [], repository: null, license: null, description: null });
+  const d = decodePackageInfo(p);
+  expect(d).toMatchObject({ state: 'claimed', latest: null, versions: [], repository: null, license: null, description: null });
+  expect(d.owners).toEqual(p.owners);
+});
+
+test("a package's version summaries keep a null yank_reason as null", () => {
+  const p = bodyOf('getPackage');
+  (p.versions as Record<string, unknown>[])[0].yank_reason = null;
+  expect(decodePackageInfo(p).versions[0].yank_reason).toBeNull();
+});
+
+test('a mistyped optional field is treated as absent, yank_reason included', () => {
+  const v = bodyOf('getVersion');
+  Object.assign(v, { yank_reason: 5, keywords: [1, 'x'], readme: 7, tombstone: { reason_code: 1, date: 'd' }, homepage: false });
+  (v.files as Record<string, unknown>[])[0].url = 42;
+  const d = decodeVersionDetail(v);
+  for (const k of ['yank_reason', 'keywords', 'readme', 'tombstone', 'homepage']) expect(d).not.toHaveProperty(k);
+  expect(d.files[0]).not.toHaveProperty('url');
+  const p = bodyOf('getPackage');
+  (p.versions as Record<string, unknown>[])[0].yank_reason = { why: 'x' };
+  p.keywords = ['ok', null];
+  const dp = decodePackageInfo(p);
+  expect(dp.versions[0]).not.toHaveProperty('yank_reason');
+  expect(dp).not.toHaveProperty('keywords');
+});
+
+test("a version's display metadata decodes when present", () => {
+  const v = bodyOf('getVersion');
+  const meta = {
+    description: 'An HTTP client.', license: 'Apache-2.0', repository: 'https://github.com/o/r',
+    homepage: 'https://mopm.dev/h', keywords: ['http', 'net'], readme: '# http_client', published_by: 'octo',
+  };
+  Object.assign(v, meta);
+  expect(decodeVersionDetail(v)).toMatchObject(meta);
+});

@@ -1,5 +1,5 @@
 // T4: every valid read fixture replays through the client: the URL is built from the request, the body decodes to
-// a value that is a faithful subset of what was sent, and the request id is kept.
+// exactly the fields that were sent (less the spec-only ones the site never reads), and the request id is kept.
 // T5: the request is a simple CORS GET: no headers (so no preflight), no credentials.
 import { client, type FetchFn } from '../src/api';
 import { type ContractCase, responseOf, validReadCases } from './fixtures';
@@ -69,17 +69,29 @@ test.each(cases.map((c) => [`${c.operationId}: ${c.name}`, c] as const))('%s', a
 
   if (r.kind !== 'ok') throw new Error(`expected ok, got ${JSON.stringify(r)}`);
   expect(r.requestId).toBe(c.response.headers['x-mopm-request-id']);
-  // Everything decoded is what the server sent (no invented or altered field) ...
-  expect(c.response.body).toMatchObject(r.value as object);
-  // ... and the fields a page reads are there.
-  const keys = Object.keys(r.value as object);
-  const required: Record<string, string[]> = {
-    getHealth: ['status', 'stage', 'api_version', 'read_only'],
-    searchPackages: ['packages', 'next_cursor'],
-    getPackage: ['name', 'state', 'owners', 'latest', 'repository', 'license', 'description', 'created_at', 'versions'],
-    getVersion: ['name', 'version', 'state', 'published_at', 'requires_mojo', 'deps', 'native', 'files', 'manifest_sha256', 'provenance'],
-  };
-  expect(keys).toEqual(expect.arrayContaining(required[c.operationId]));
+  // The decoded value is the body, field for field, minus the spec-only fields the site never reads. A decoder that
+  // drops a field (a file's url, a tombstone, a yank reason) or alters one fails here; a field new to the fixtures
+  // fails here too, until it is decoded or added to UNREAD.
+  expect(r.value).toEqual(withoutUnread(c.operationId, c.response.body));
+});
+
+/** Fields the server sends that the site deliberately does not decode (spec-only; readme_html is never read). */
+const UNREAD: Record<string, readonly string[]> = { getVersion: ['manifest', 'readme_html'] };
+
+function withoutUnread(op: string, body: unknown): unknown {
+  const b = { ...(body as Record<string, unknown>) };
+  for (const k of UNREAD[op] ?? []) delete b[k];
+  return b;
+}
+
+test('a claimed package (latest null, no versions) replays through getPackage', async () => {
+  // No contract fixture holds one yet, so it is derived from the active package.
+  const c = cases.find((x) => x.operationId === 'getPackage')!;
+  const body = { ...(c.response.body as Record<string, unknown>), state: 'claimed', latest: null, versions: [] };
+  const fetchFn: FetchFn = async () => new Response(JSON.stringify(body), { headers: c.response.headers });
+  const r = await client(fetchFn, BASE).getPackage(String(c.request.path?.name));
+  if (r.kind !== 'ok') throw new Error(`expected ok, got ${JSON.stringify(r)}`);
+  expect(r.value).toEqual(body);
 });
 
 test('spec-only fields the server never sends are not decoded (readme_html is never read)', async () => {

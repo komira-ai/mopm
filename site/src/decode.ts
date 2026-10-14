@@ -87,9 +87,10 @@ function versionState(o: Obj, path: string): { state: VersionState; state_raw?: 
   return state === 'unknown' ? { state, state_raw: str(o, 'state', path) } : { state };
 }
 
-function yankReason(o: Obj, path: string): string | null | undefined {
-  if (!('yank_reason' in o) || o.yank_reason === undefined) return undefined;
-  return strOrNull(o, 'yank_reason', path);
+/** Optional and nullable: a string or null is kept (null means yanked without a reason); anything else is absent. */
+function yankReason(o: Obj): string | null | undefined {
+  const v = o.yank_reason;
+  return v === null || typeof v === 'string' ? v : undefined;
 }
 
 export function decodeHealth(v: unknown): Health {
@@ -129,7 +130,7 @@ function decodeVersionSummary(v: unknown, path: string): VersionSummary {
   const o = obj(v, path);
   return withOptional<VersionSummary>(
     { version: str(o, 'version', path), ...versionState(o, path), published_at: str(o, 'published_at', path) },
-    { yank_reason: yankReason(o, path) },
+    { yank_reason: yankReason(o) },
   );
 }
 
@@ -213,7 +214,7 @@ export function decodeVersionDetail(v: unknown): VersionDetail {
       provenance: decodeProvenance(o.provenance, `${p}.provenance`),
     },
     {
-      yank_reason: yankReason(o, p),
+      yank_reason: yankReason(o),
       tombstone: decodeTombstone(o),
       published_by: optStr(o, 'published_by'),
       description: optStr(o, 'description'),
