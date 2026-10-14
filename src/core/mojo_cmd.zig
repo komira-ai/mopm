@@ -1,17 +1,23 @@
 //! The stock `mojo` command lines behind `mopm build`, `mopm run` and
 //! `mopm repl`, built from a link plan and an environment prefix.
 //!
-//! Facts it encodes (each one was observed on a real Mojo toolchain):
+//! Observed on a real Mojo toolchain (probes):
 //!   * `mojo` needs `MODULAR_HOME=<prefix>/share/max`, which activation sets;
 //!     without it the compiler cannot find `std`.
-//!   * `mojo build`: the planned `-L`/`-l` (and archives by path) go through
-//!     `-Xlinker`, plus an absolute run path to `<prefix>/lib`. mopm never
-//!     sets the config's `shared_libs`: doing so drops the default run path.
-//!   * `mojo run`: one `-Xlinker <shared object>` per library; preloading is
-//!     ignored there and archives have no effect.
-//!   * `mojo repl`: no `-Xlinker`; the shared objects go to the JIT process as
-//!     `-O "settings set target.env-vars LD_PRELOAD=a:b"` (macOS:
-//!     `DYLD_INSERT_LIBRARIES`). Every transitive library must be listed.
+//!   * `mojo run` (P8/R1): one `-Xlinker <shared object>` per library;
+//!     preloading is ignored there and archives have no effect.
+//!   * `mojo repl` (R2, R5/R6): no `-Xlinker`; the shared objects go to the
+//!     JIT process only, as `-O "settings set target.env-vars LD_PRELOAD=a:b"`
+//!     (macOS: `DYLD_INSERT_LIBRARIES`, which the ad-hoc signed conda `mojo`
+//!     honours). Every transitive library must be listed.
+//!
+//! Not probe-observed: the `mojo build` route. The probes proved `-Xlinker`
+//! only for `mojo run`. mopm passes the planned `-L`/`-l` (and archives by
+//! path) through `-Xlinker`, plus `-Xlinker -rpath -Xlinker <prefix>/lib`, and
+//! never sets the config's `shared_libs` (doing so drops the default run
+//! path). That route is proved by the end-to-end CI job (PR #29), which builds
+//! a program against a fixture package and runs the binary in an empty
+//! environment.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
