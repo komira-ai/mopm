@@ -1,8 +1,11 @@
-import { RegistryError, type ErrorCode, HTTP_STATUS } from '../errors';
+import { RegistryError, HTTP_STATUS } from '../errors';
 import type { Store } from '../store';
 import type { PackageRecord, VersionRecord } from '../types';
 import { compareVersions, parseVersion } from '../version';
-import { CATALOGUE, render } from './catalogue';
+import { AuthError } from '../auth/errors';
+import { routeAuth, type AuthServices } from './auth-routes';
+import { render } from './catalogue';
+import { templateFor } from './auth-catalogue';
 
 export type Stage = 'beta' | 'gamma' | 'prod';
 
@@ -11,6 +14,10 @@ export interface HttpRequest {
   /** The raw path, e.g. `/api/v1/packages/http_client`. */
   path: string;
   query: Record<string, string | undefined>;
+  /** Request headers by lower-case name. Only `authorization` is read. */
+  headers?: Record<string, string | undefined>;
+  /** The raw request body, for the operations that take one. */
+  body?: string;
 }
 
 export interface HttpResponse {
@@ -26,6 +33,8 @@ export interface RouterDeps {
   version: string;
   commit: string;
   readOnly: boolean;
+  /** Login, tokens and CI exchange. Absent: those paths answer `unavailable` and everything else is unchanged. */
+  auth?: AuthServices;
 }
 
 const PREFIX = '/api/v1';
@@ -40,14 +49,14 @@ function respond(statusCode: number, requestId: string, body?: unknown): HttpRes
   return {
     statusCode,
     headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-mopm-request-id': requestId },
-    body: JSON.stringify(body),
+    body: body === undefined ? '' : JSON.stringify(body),
   };
 }
 
-function errorResponse(requestId: string, code: ErrorCode, detail: Record<string, string>): HttpResponse {
-  const entry = CATALOGUE[code];
-  if (!entry) return errorResponse(requestId, 'internal_error', {});
-  return respond(HTTP_STATUS[code], requestId, {
+function errorResponse(requestId: string, code: string, status: number, detail: Record<string, string>): HttpResponse {
+  const entry = templateFor(code);
+  if (!entry) return errorResponse(requestId, 'internal_error', HTTP_STATUS.internal_error, {});
+  return respond(status, requestId, {
     error: { code, message: render(entry.message, detail), hint: render(entry.hint, detail) },
   });
 }
@@ -228,6 +237,10 @@ function segments(path: string): string[] | undefined {
 export async function route(req: HttpRequest, deps: RouterDeps, requestId: string): Promise<HttpResponse> {
   try {
     const seg = segments(req.path);
+    if (seg) {
+      const authed = await routeAuth({ method: req.method, seg, authorization: req.headers?.authorization, body: req.body }, deps.auth);
+      if (authed) return respond(authed.status, requestId, authed.body);
+    }
     if (seg && req.method === 'GET') {
       if (seg.length === 1 && seg[0] === 'health') return respond(200, requestId, getHealth(deps));
       if (seg.length === 1 && seg[0] === 'packages') return respond(200, requestId, await searchPackages(deps, req.query));
@@ -240,8 +253,10 @@ export async function route(req: HttpRequest, deps: RouterDeps, requestId: strin
     // "no such endpoint" code, so the generic 400 is the closest stable answer.
     throw bad('no such operation');
   } catch (err) {
-    if (err instanceof RegistryError && CATALOGUE[err.code]) return errorResponse(requestId, err.code, err.detail);
+    if ((err instanceof RegistryError || err instanceof AuthError) && templateFor(err.code)) {
+      return errorResponse(requestId, err.code, err.status, err.detail);
+    }
     console.error(JSON.stringify({ level: 'error', requestId, error: String((err as Error)?.stack ?? err) }));
-    return errorResponse(requestId, 'internal_error', {});
+    return errorResponse(requestId, 'internal_error', HTTP_STATUS.internal_error, {});
   }
 }

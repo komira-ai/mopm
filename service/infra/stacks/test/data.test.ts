@@ -11,7 +11,7 @@ describe.each(STAGES)('DataStack %s', (stage) => {
     expect(tables.map((r) => r.Properties.TableName).sort()).toEqual(
       TABLES.map((d) => `mopm-${stage}-${d.id}`).sort(),
     );
-    for (const id of ['packages', 'versions', 'owners', 'users', 'tokens', 'trusted_publishers', 'audit']) {
+    for (const id of ['packages', 'versions', 'owners', 'users', 'tokens', 'device_logins', 'trusted_publishers', 'audit']) {
       expect(TABLES.map((d) => d.id)).toContain(id);
     }
   });
@@ -61,6 +61,29 @@ describe.each(STAGES)('DataStack %s', (stage) => {
     t.hasResourceProperties('AWS::DynamoDB::Table', {
       TableName: `mopm-${stage}-owners`,
       GlobalSecondaryIndexes: Match.arrayWith([Match.objectLike({ IndexName: 'by_github_id' })]),
+    });
+  });
+
+  test('tokens is listed by account through one index (a table update may add only one index at a time)', () => {
+    const tokens = tables.find((r) => r.Properties.TableName === `mopm-${stage}-tokens`);
+    expect(tokens.Properties.GlobalSecondaryIndexes).toHaveLength(1);
+    t.hasResourceProperties('AWS::DynamoDB::Table', {
+      TableName: `mopm-${stage}-tokens`,
+      GlobalSecondaryIndexes: [
+        Match.objectLike({
+          IndexName: 'by_github_id',
+          KeySchema: [{ AttributeName: 'github_id', KeyType: 'HASH' }, { AttributeName: 'id', KeyType: 'RANGE' }],
+          Projection: { ProjectionType: 'ALL' },
+        }),
+      ],
+    });
+  });
+
+  test('device logins are keyed by the hash of the code and expire by TTL', () => {
+    t.hasResourceProperties('AWS::DynamoDB::Table', {
+      TableName: `mopm-${stage}-device_logins`,
+      KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
+      TimeToLiveSpecification: { AttributeName: 'expires_at', Enabled: true },
     });
   });
 });

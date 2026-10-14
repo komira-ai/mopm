@@ -212,14 +212,14 @@ describe('authenticate: every refusal, exactly', () => {
     const { tokens, auth, clock, store } = setup();
     const t = await tokens.create(ALICE, { name: 'a', scopes: ['publish'], packages: ['alpha'], expires_in_days: 1 });
     await auth.authenticate(`Bearer ${t.token}`);
-    const first = (await store.getToken(t.id))!.last_used_at;
+    const first = (await store.getTokenByHash(hashToken(t.token)))!.last_used_at;
     expect(first).toBe(clock.now().toISOString());
     clock.advance(10_000);
     await auth.authenticate(`Bearer ${t.token}`);
-    expect((await store.getToken(t.id))!.last_used_at).toBe(first);
+    expect((await store.getTokenByHash(hashToken(t.token)))!.last_used_at).toBe(first);
     clock.advance(60_000);
     await auth.authenticate(`Bearer ${t.token}`);
-    expect((await store.getToken(t.id))!.last_used_at).toBe(clock.now().toISOString());
+    expect((await store.getTokenByHash(hashToken(t.token)))!.last_used_at).toBe(clock.now().toISOString());
   });
 });
 

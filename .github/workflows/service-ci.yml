@@ -126,7 +126,12 @@ jobs:
         with:
           node-version: '20'
       - name: bash -n
-        run: bash -n bootstrap.sh
+        run: |
+          bash -n bootstrap.sh
+          bash -n oauth-secret.sh
+          bash -n test/oauth-secret.sh
+      - name: oauth-secret.sh against a fake aws (dry run by default, secret only from stdin, never in argv or output)
+        run: ./test/oauth-secret.sh
       - name: bootstrap.sh --update-policy and --policy-only against a fake aws (no AWS access)
         run: ./test/bootstrap-update-policy.sh
       - name: bootstrap.sh is a dry run by default and validates its flags

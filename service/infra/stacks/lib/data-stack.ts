@@ -30,7 +30,10 @@ export const TABLES: TableDef[] = [
   { id: 'invitations', pk: 'id', ttl: 'expires_at' },
   { id: 'users', pk: 'github_id' },
   { id: 'uploads', pk: 'upload_id', ttl: 'expires_at' },
-  { id: 'tokens', pk: 'token_hash', ttl: 'expires_at' },
+  // Token rows are read by hash (every request) and listed by account: the index serves the list and revocation by id.
+  { id: 'tokens', pk: 'token_hash', ttl: 'expires_at', gsi: { name: 'by_github_id', pk: 'github_id', sk: 'id' } },
+  // A started device login (CLI sign-in), keyed by the hash of the code the CLI holds. Lives ten minutes; TTL cleans up.
+  { id: 'device_logins', pk: 'id', ttl: 'expires_at' },
   { id: 'trusted_publishers', pk: 'name', sk: 'publisher' },
   { id: 'audit', pk: 'name', sk: 'ts_seq', appendOnly: true },
   { id: 'reserved_names', pk: 'name' },

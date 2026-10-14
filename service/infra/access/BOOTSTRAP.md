@@ -140,6 +140,47 @@ Skip the OIDC provider if the account already has one for GitHub (only one may e
    the workflows build the role ARNs (`arn:aws:iam::<id>:role/mopm-<stage>-deploy` and `-e2e`) inside
    the job and mask them.
 
+## GitHub OAuth app (once per stage)
+
+Login (`mopm login`, the OAuth device flow) needs one GitHub OAuth app per stage, so a beta login can never produce a
+prod session. The CEO creates the app and stores its credentials; the API reads them from Secrets Manager at runtime
+(`mopm/<stage>/github-oauth`, JSON `{"client_id", "client_secret"}`), never from a file, a flag or an environment
+variable, and never writes them to a log. Until the secret exists the login routes answer `503 unavailable` and
+everything else (the read API, token management, CI exchange) is unaffected, so automatic deployments stay green.
+
+1. In GitHub: the `komira-ai` organization, Settings, Developer settings, OAuth Apps, New OAuth App. One app per stage:
+
+   | Setting | beta | gamma | prod |
+   |---|---|---|---|
+   | Application name | `mopm (beta)` | `mopm (gamma)` | `mopm` |
+   | Homepage URL | `https://beta.mopm.dev` | `https://gamma.mopm.dev` | `https://mopm.dev` |
+   | Authorization callback URL | `https://beta.mopm.dev/` | `https://gamma.mopm.dev/` | `https://mopm.dev/` |
+   | Enable Device Flow | checked | checked | checked |
+
+   The callback URL is required by GitHub's form but the device flow never uses it (the API has no callback route).
+   The API asks for the `read:user` scope only. Do not tick anything else.
+2. On the app's page, "Generate a new client secret". GitHub shows it once.
+3. Store both with the held script, run with that stage's admin credentials. Preview first; nothing is read or called
+   without `--apply`. The client secret is read from standard input (hidden prompt on a terminal), never from a flag:
+   ```sh
+   service/infra/access/oauth-secret.sh --stage beta --profile <your profile> --client-id <client id>
+   service/infra/access/oauth-secret.sh --stage beta --profile <your profile> --client-id <client id> --apply
+   ```
+   It creates the secret, or stores a new version when it exists (rotation: generate a new client secret in GitHub, run
+   it again). The API picks the new value up within five minutes, with no redeploy. A client-secret rotation does not
+   end existing sessions.
+4. Check on beta first: `curl -sS -X POST https://api.beta.mopm.dev/api/v1/auth/device -H 'content-type: application/json'
+   -d '{"client":"check"}'` must answer with a `user_code` and a GitHub `verification_uri` (a `503` means the secret is
+   missing or unreadable; the API logs only the reason). The API requires the account to have two-factor authentication on (`MOPM_REQUIRE_2FA`, default on, set by `require2fa` on the
+   API stack) and fails closed if GitHub does not show that field for a `read:user` token: confirm on beta with a real
+   account before relying on it in prod (`service/api/src/auth/github.ts` says why).
+
+The Lambda role may read exactly this one secret (`secretsmanager:GetSecretValue` on `mopm/<stage>/github-oauth-??????`,
+the six characters being the suffix Secrets Manager adds to every ARN) and use the auth tables as listed in
+`AUTH_GRANTS` in `service/infra/stacks/lib/api-stack.ts`; the stacks tests pin both. The secret is created by hand, not
+by CloudFormation, so no stack holds its value. It uses the account's default Secrets Manager key, which the Lambda
+role can use without a separate grant.
+
 ## Verification
 
 Run `deploy.yml` on `main` for `beta`: `aws sts get-caller-identity` must show the deploy role. The same

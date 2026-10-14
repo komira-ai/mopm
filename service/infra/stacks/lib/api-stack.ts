@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { Duration, Stack, StackProps } from 'aws-cdk-lib';
+import { ArnFormat, Duration, Stack, StackProps } from 'aws-cdk-lib';
 import * as apigw from 'aws-cdk-lib/aws-apigatewayv2';
 import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
@@ -10,7 +10,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import { Construct } from 'constructs';
-import { StageConfig, tableName } from './config';
+import { StageConfig, oauthSecretName, tableName } from './config';
 import { assertRegion, lookupZone, removalPolicyFor } from './common';
 
 export interface ApiStackProps extends StackProps {
@@ -23,6 +23,8 @@ export interface ApiStackProps extends StackProps {
   handlerDir?: string;
   /** New uploads are refused and /health says so. */
   readOnly?: boolean;
+  /** Interactive publishing needs a GitHub account with two-factor authentication on (the CEO's rule). On unless set false. */
+  require2fa?: boolean;
 }
 
 /**
@@ -41,6 +43,31 @@ export const READ_ROUTES = [
   '/api/v1/packages/{name}/versions',
 ];
 export const READ_ACTIONS = ['dynamodb:GetItem', 'dynamodb:Query'];
+
+/** The operations of spec/api/openapi.yaml for login, tokens and CI exchange. */
+export const AUTH_ROUTES: { method: apigw.HttpMethod; path: string }[] = [
+  { method: apigw.HttpMethod.POST, path: '/api/v1/auth/device' },
+  { method: apigw.HttpMethod.POST, path: '/api/v1/auth/device/poll' },
+  { method: apigw.HttpMethod.POST, path: '/api/v1/auth/oidc/exchange' },
+  { method: apigw.HttpMethod.POST, path: '/api/v1/me/tokens' },
+  { method: apigw.HttpMethod.GET, path: '/api/v1/me/tokens' },
+  { method: apigw.HttpMethod.DELETE, path: '/api/v1/me/tokens/{token_id}' },
+];
+
+/**
+ * What the handler may do on the auth tables, and nothing more. No table gets DeleteItem (the tables deny it to this
+ * role anyway; expiry is DynamoDB TTL). `indexes` are the only indexes it may query.
+ * - tokens: create (PutItem), read by hash (GetItem), mark used or revoked (UpdateItem), list by account (Query on the index).
+ * - users: read and upsert a row at login.
+ * - device_logins: start (PutItem), poll (GetItem), record the poll and consume (UpdateItem).
+ * - trusted_publishers: read only; nothing in the Lambda registers publishers yet.
+ */
+export const AUTH_GRANTS: Record<string, { actions: string[]; indexes?: string[] }> = {
+  tokens: { actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:Query'], indexes: ['by_github_id'] },
+  users: { actions: ['dynamodb:GetItem', 'dynamodb:PutItem'] },
+  device_logins: { actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'] },
+  trusted_publishers: { actions: ['dynamodb:GetItem', 'dynamodb:Query'] },
+};
 
 export class ApiStack extends Stack {
   readonly api: apigw.HttpApi;
@@ -64,14 +91,19 @@ export class ApiStack extends Stack {
       handler: 'http/lambda.handler',
       // AWS SDK v3 comes with the Node.js 20 runtime, so the bundle is only this package's compiled code.
       code: lambda.Code.fromAsset(handlerDir),
-      memorySize: 128,
-      timeout: Duration.seconds(5),
+      memorySize: 256,
+      // Login calls GitHub and Secrets Manager; the gateway allows 30 seconds.
+      timeout: Duration.seconds(10),
       logGroup,
       environment: {
         MOPM_STAGE: c.stage,
         MOPM_VERSION: props.version,
         MOPM_COMMIT: props.commit,
         MOPM_READ_ONLY: String(props.readOnly ?? false),
+        // The NAME of the secret holding the stage's GitHub OAuth app (never its value). Created by
+        // service/infra/access/oauth-secret.sh; until it exists the device login routes answer 503.
+        MOPM_OAUTH_SECRET_NAME: oauthSecretName(c.stage),
+        MOPM_REQUIRE_2FA: String(props.require2fa ?? true),
       },
     });
 
@@ -82,6 +114,34 @@ export class ApiStack extends Stack {
         sid: 'ReadRegistryTables',
         actions: READ_ACTIONS,
         resources: [...tableArns, ...tableArns.map((a) => `${a}/index/*`)],
+      }),
+    );
+
+    // Login and tokens: per-table, per-action grants (AUTH_GRANTS); a named index gets its own ARN, never `index/*`.
+    for (const [table, g] of Object.entries(AUTH_GRANTS)) {
+      const arn = this.formatArn({ service: 'dynamodb', resource: 'table', resourceName: tableName(c.stage, table) });
+      this.handler.addToRolePolicy(
+        new iam.PolicyStatement({
+          sid: `Auth${table.replace(/(^|_)(\w)/g, (_m, _u, ch: string) => ch.toUpperCase())}`,
+          actions: g.actions,
+          resources: [arn, ...(g.indexes ?? []).map((i) => `${arn}/index/${i}`)],
+        }),
+      );
+    }
+    // The GitHub OAuth app of this stage: one secret, read only. Secrets Manager appends six random characters to the
+    // name in the ARN, so the ARN ends in six `?` (single-character wildcards), which cannot match a longer name.
+    this.handler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: 'ReadGitHubOAuthSecret',
+        actions: ['secretsmanager:GetSecretValue'],
+        resources: [
+          this.formatArn({
+            service: 'secretsmanager',
+            resource: 'secret',
+            resourceName: `${oauthSecretName(c.stage)}-??????`,
+            arnFormat: ArnFormat.COLON_RESOURCE_NAME,
+          }),
+        ],
       }),
     );
 
@@ -101,6 +161,7 @@ export class ApiStack extends Stack {
     for (const route of READ_ROUTES) {
       this.api.addRoutes({ path: route, methods: [apigw.HttpMethod.GET], integration });
     }
+    for (const r of AUTH_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
 
     const target = route53.RecordTarget.fromAlias(
       new targets.ApiGatewayv2DomainProperties(domain.regionalDomainName, domain.regionalHostedZoneId),
