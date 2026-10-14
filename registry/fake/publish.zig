@@ -357,7 +357,7 @@ pub fn setYanked(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .fail => |r| return r,
     };
     const v = findVersion(p, params[1]) orelse return notFound(ctx, p.name, params[1]);
-    if (!v.visible()) return notFound(ctx, p.name, params[1]);
+    if (v.state == .rejected) return notFound(ctx, p.name, params[1]);
     const obj = ctx.object() orelse return resp.invalid(ctx.arena, "the body is not a JSON object");
     const yanked = util.getBool(obj, "yanked") orelse return resp.invalid(ctx.arena, "'yanked' must be a boolean");
     const reason = util.getStr(obj, "reason");
@@ -365,15 +365,29 @@ pub fn setYanked(ctx: *Ctx, params: []const []const u8) anyerror!Response {
     if (reason) |r| {
         if (r.len > 280) return resp.invalid(ctx.arena, "'reason' is at most 280 characters");
     }
-    // Idempotent; a tombstoned version stays tombstoned.
-    if (v.state != .tombstoned) {
-        if (yanked) {
-            v.state = .yanked;
-            v.yank_reason = try ctx.state.alloc.dupe(u8, reason.?);
-        } else {
-            v.state = .published;
-            v.yank_reason = null;
-        }
+    // Only a published version can be yanked (yanking a yanked one again is a
+    // no-op), only a yanked one unyanked; a pending or tombstoned version
+    // refuses every change.
+    const allowed = switch (v.state) {
+        .published => yanked,
+        .yanked => true,
+        .pending, .tombstoned, .rejected => false,
+    };
+    if (!allowed) {
+        return resp.fail(ctx.arena, .invalid_transition, &.{
+            .{ "action", if (yanked) "yank" else "unyank" },
+            .{ "name", p.name },
+            .{ "version", v.version },
+            .{ "state", @tagName(v.state) },
+        });
+    }
+    if (yanked and v.state == .published) {
+        v.state = .yanked;
+        v.yank_reason = try ctx.state.alloc.dupe(u8, reason.?);
+        p.updated_at = ctx.state.now();
+    } else if (!yanked) {
+        v.state = .published;
+        v.yank_reason = null;
         p.updated_at = ctx.state.now();
     }
     return resp.json(ctx.arena, .ok, try summary(ctx.arena, v));

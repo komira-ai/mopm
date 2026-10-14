@@ -512,6 +512,10 @@ def yank(f, kind):
         other = Release(f)
         tok = f.api_token(other.session, scopes=["yank"], packages=[other.name])["token"]
         return step("setYanked", path=r.path("0.4.0"), body={"yanked": False}, token=tok, auth="yankToken")
+    if kind == "tombstoned":
+        # A tombstoned version never changes state.
+        f.control("/tombstone", {"name": r.name, "version": "0.4.0", "reason_code": "malware"})
+        return step("setYanked", path=r.path("0.4.0"), body=YANK, token=r.token, auth="yankToken")
     if kind == "unyank":
         f.request("PUT", "/api/v1/packages/%s/0.4.0/yank" % r.name, YANK, r.token)
         return step("setYanked", path=r.path("0.4.0"), body={"yanked": False}, token=r.token, auth="yankToken",
@@ -565,6 +569,7 @@ RECIPES.update({
     ("getPublishStatus", "rejected: sha256_mismatch"): lambda f: rejected(f, "sha256_mismatch"),
     ("getPublishStatus", "rejected: dependency_not_allowed"): lambda f: rejected(f, "dependency_not_allowed"),
     ("setYanked", "error scope_missing"): lambda f: yank(f, "scope_missing"),
+    ("setYanked", "error invalid_transition"): lambda f: yank(f, "tombstoned"),
     ("setYanked", "yank"): lambda f: yank(f, "yank"),
     ("setYanked", "yank with a publish token"): lambda f: yank(f, "publish token"),
     ("setYanked", "unyank"): lambda f: yank(f, "unyank"),
@@ -586,7 +591,7 @@ def catalogue_drift(spec):
     codes = set(spec["components"]["schemas"]["ErrorCode"]["enum"])
     if fake == codes:
         return []
-    return ["registry/fake/errors.zig and the spec's ErrorCode differ (%s); regenerate errors.zig"
+    return ["registry/fake/errors.zig and the spec's ErrorCode differ (%s); run registry/fake/gen_errors.py"
             % ", ".join(sorted(fake ^ codes))]
 
 
