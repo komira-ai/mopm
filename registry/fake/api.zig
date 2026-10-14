@@ -11,6 +11,7 @@ const Response = resp.Response;
 const util = @import("util.zig");
 const auth = @import("auth.zig");
 const control = @import("control.zig");
+const packages = @import("packages.zig");
 
 /// One request, with everything a handler reads.
 pub const Ctx = struct {
@@ -52,20 +53,20 @@ const routes = [_]Route{
     .{ .method = .GET, .pattern = &.{"health"}, .operation = "getHealth", .handler = auth.getHealth },
     .{ .method = .POST, .pattern = &.{ "auth", "device" }, .operation = "startDeviceLogin", .handler = auth.startDeviceLogin },
     .{ .method = .POST, .pattern = &.{ "auth", "device", "poll" }, .operation = "pollDeviceLogin", .handler = auth.pollDeviceLogin },
-    .{ .method = .POST, .pattern = &.{ "auth", "oidc", "exchange" }, .operation = "exchangeOidcToken", .handler = notYet },
+    .{ .method = .POST, .pattern = &.{ "auth", "oidc", "exchange" }, .operation = "exchangeOidcToken", .handler = auth.exchangeOidcToken },
     .{ .method = .GET, .pattern = &.{"me"}, .operation = "getMe", .handler = auth.getMe },
     .{ .method = .POST, .pattern = &.{ "me", "tokens" }, .operation = "createToken", .handler = auth.createToken },
     .{ .method = .GET, .pattern = &.{ "me", "tokens" }, .operation = "listTokens", .handler = auth.listTokens },
     .{ .method = .DELETE, .pattern = &.{ "me", "tokens", "{}" }, .operation = "revokeToken", .handler = auth.revokeToken },
-    .{ .method = .GET, .pattern = &.{ "me", "invitations" }, .operation = "listInvitations", .handler = notYet },
-    .{ .method = .POST, .pattern = &.{ "me", "invitations", "{}", "accept" }, .operation = "acceptInvitation", .handler = notYet },
-    .{ .method = .GET, .pattern = &.{"packages"}, .operation = "searchPackages", .handler = notYet },
-    .{ .method = .POST, .pattern = &.{ "packages", "{}", "claim" }, .operation = "claimPackage", .handler = notYet },
-    .{ .method = .GET, .pattern = &.{ "packages", "{}", "versions" }, .operation = "listVersions", .handler = notYet },
-    .{ .method = .GET, .pattern = &.{ "packages", "{}", "owners" }, .operation = "listOwners", .handler = notYet },
-    .{ .method = .PUT, .pattern = &.{ "packages", "{}", "owners" }, .operation = "inviteOwner", .handler = notYet },
-    .{ .method = .DELETE, .pattern = &.{ "packages", "{}", "owners", "{}" }, .operation = "removeOwner", .handler = notYet },
-    .{ .method = .GET, .pattern = &.{ "packages", "{}" }, .operation = "getPackage", .handler = notYet },
+    .{ .method = .GET, .pattern = &.{ "me", "invitations" }, .operation = "listInvitations", .handler = packages.listInvitations },
+    .{ .method = .POST, .pattern = &.{ "me", "invitations", "{}", "accept" }, .operation = "acceptInvitation", .handler = packages.acceptInvitation },
+    .{ .method = .GET, .pattern = &.{"packages"}, .operation = "searchPackages", .handler = packages.searchPackages },
+    .{ .method = .POST, .pattern = &.{ "packages", "{}", "claim" }, .operation = "claimPackage", .handler = packages.claimPackage },
+    .{ .method = .GET, .pattern = &.{ "packages", "{}", "versions" }, .operation = "listVersions", .handler = packages.listVersions },
+    .{ .method = .GET, .pattern = &.{ "packages", "{}", "owners" }, .operation = "listOwners", .handler = packages.listOwners },
+    .{ .method = .PUT, .pattern = &.{ "packages", "{}", "owners" }, .operation = "inviteOwner", .handler = packages.inviteOwner },
+    .{ .method = .DELETE, .pattern = &.{ "packages", "{}", "owners", "{}" }, .operation = "removeOwner", .handler = packages.removeOwner },
+    .{ .method = .GET, .pattern = &.{ "packages", "{}" }, .operation = "getPackage", .handler = packages.getPackage },
     .{ .method = .GET, .pattern = &.{ "packages", "{}", "{}" }, .operation = "getVersion", .handler = notYet },
     .{ .method = .POST, .pattern = &.{ "packages", "{}", "{}", "files" }, .operation = "beginUpload", .handler = notYet },
     .{ .method = .POST, .pattern = &.{ "packages", "{}", "{}", "publish" }, .operation = "commitPublish", .handler = notYet },

@@ -16,6 +16,7 @@ Recipes reach states the public API cannot (a second account, a stale
 session, time passing, a server fault) through the fake's /_fake controls,
 documented in registry/fake/README.md.
 """
+import base64
 import itertools
 import json
 import pathlib
@@ -40,6 +41,16 @@ IMPLEMENTED = {
     "createToken",
     "listTokens",
     "revokeToken",
+    "exchangeOidcToken",
+    "searchPackages",
+    "getPackage",
+    "claimPackage",
+    "listVersions",
+    "listOwners",
+    "inviteOwner",
+    "removeOwner",
+    "listInvitations",
+    "acceptInvitation",
 }
 
 
@@ -58,6 +69,8 @@ class Fake:
             raise SystemExit("the fake registry did not start: %r" % line)
         self.base = m.group(1)
         self.handles = itertools.count(1)
+        self.names = itertools.count(1)
+        self.ids = {}
 
     def close(self):
         self.proc.terminate()
@@ -91,7 +104,7 @@ class Fake:
     def user(self):
         """A new GitHub account; its handle."""
         handle = "user-%d" % next(self.handles)
-        self.control("/users", {"handle": handle})
+        self.ids[handle] = self.control("/users", {"handle": handle})["github_id"]
         return handle
 
     def session(self, handle=None, fresh=True):
@@ -106,6 +119,23 @@ class Fake:
         if status != 201:
             raise SystemExit("could not create a token: %s %s" % (status, out))
         return out
+
+    def name(self, prefix="pkg"):
+        """A package name no recipe has used."""
+        return "%s%d" % (prefix, next(self.names))
+
+    def claim(self, session, name, **body):
+        status, _, out = self.request("POST", "/api/v1/packages/%s/claim" % name, body or None, session)
+        if status != 201:
+            raise SystemExit("could not claim %s: %s %s" % (name, status, out))
+        return name
+
+    def invite(self, session, name, handle):
+        """Invites `handle` to own `name`; the invitation id."""
+        status, _, out = self.request("PUT", "/api/v1/packages/%s/owners" % name, {"handle": handle}, session)
+        if status != 202:
+            raise SystemExit("could not invite %s: %s %s" % (handle, status, out))
+        return out["id"]
 
     def device_start(self):
         _, _, out = self.request("POST", "/api/v1/auth/device", {"client": "mopm 0.0.1"})
@@ -196,6 +226,161 @@ RECIPES = {
         lambda f: step("revokeToken", path={"token_id": "tok-unknown"}, token=f.session(), auth="freshSession"),
     ("revokeToken", "revoke a token"): revoke,
 }
+
+
+def b64(raw):
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def jwt(repository):
+    """A CI identity token as the fake reads it: three base64url parts, the
+    middle one carrying the repository claim."""
+    claims = json.dumps({"repository": repository, "workflow_ref": repository + "/.github/workflows/release.yml"})
+    return ".".join([b64(b'{"alg":"RS256"}'), b64(claims.encode()), b64(b"signature")])
+
+
+def oidc(f, trusted=True):
+    owner = f.session()
+    name = f.claim(owner, f.name())
+    if trusted:
+        f.control("/trusted", {"name": name, "repository": "octo/" + name})
+    return step("exchangeOidcToken", body={"jwt": jwt("octo/" + name), "name": name, "version": "0.4.0"},
+                check=lambda b: b["name"] == name)
+
+
+def fault(f, op, code, **kw):
+    f.control("/fault", {"operation": op, "code": code})
+    return step(op, **kw)
+
+
+def search_prefix(f):
+    s = f.session()
+    prefix = f.name("srch")
+    for suffix in ("b", "a"):
+        f.claim(s, prefix + suffix)
+    return step("searchPackages", query={"q": prefix, "sort": "name", "limit": 20},
+                check=lambda b: [p["name"] for p in b["packages"]] == [prefix + "a", prefix + "b"]
+                and b["next_cursor"] is None)
+
+
+def search_last_page(f):
+    s = f.session()
+    prefix = f.name("page")
+    for suffix in ("a", "b"):
+        f.claim(s, prefix + suffix)
+    _, _, first = f.request("GET", "/api/v1/packages", query={"q": prefix, "limit": 1})
+    cursor = first["next_cursor"]
+    return step("searchPackages", query={"q": prefix, "limit": 1, "cursor": cursor},
+                check=lambda b: b["next_cursor"] is None and b["packages"][0]["name"] == prefix + "b"
+                and b["packages"][0]["latest"] is None)
+
+
+def claimed(f):
+    """A package claimed by a new account: (owner handle, owner session, name)."""
+    handle = f.user()
+    s = f.session(handle)
+    return handle, s, f.claim(s, f.name())
+
+
+def claim_step(f, name, **kw):
+    return step("claimPackage", path={"name": name}, token=f.session(), auth="userToken", **kw)
+
+
+def similar(f, confirm):
+    _, _, name = claimed(f)
+    body = {"confirm_similar": True} if confirm else None
+    return claim_step(f, name + "s", body=body)
+
+
+def invite(f, handle_of):
+    owner, s, name = claimed(f)
+    handle = handle_of(f, owner)
+    return step("inviteOwner", path={"name": name}, body={"handle": handle}, token=s, auth="freshSession")
+
+
+def not_owner(f):
+    _, _, name = claimed(f)
+    return step("inviteOwner", path={"name": name}, body={"handle": f.user()}, token=f.session(), auth="freshSession")
+
+
+def invited(f):
+    """A package and a pending invitation of a new account: (owner session, name, invitee, invitation id)."""
+    _, s, name = claimed(f)
+    invitee = f.user()
+    return s, name, invitee, f.invite(s, name, invitee)
+
+
+def accept(f, expire=False):
+    _, name, invitee, inv = invited(f)
+    if expire:
+        f.control("/clock", {"advance_seconds": 8 * 86400})
+    return step("acceptInvitation", path={"invitation_id": inv}, token=f.session(invitee), auth="userToken",
+                check=lambda b: invitee in [o["handle"] for o in b["owners"]])
+
+
+def list_invitations(f):
+    _, name, invitee, _ = invited(f)
+    return step("listInvitations", token=f.session(invitee), auth="userToken",
+                check=lambda b: [i["name"] for i in b["invitations"]] == [name])
+
+
+def remove_owner(f):
+    s, name, invitee, inv = invited(f)
+    status, _, _ = f.request("POST", "/api/v1/me/invitations/%s/accept" % inv, token=f.session(invitee))
+    assert status == 200, status
+
+    def one_left(_):
+        _, _, body = f.request("GET", "/api/v1/packages/%s/owners" % name)
+        return len(body["owners"]) == 1
+
+    return step("removeOwner", path={"name": name, "github_id": f.ids[invitee]}, token=s, auth="freshSession",
+                check=one_left)
+
+
+def last_owner(f):
+    owner, s, name = claimed(f)
+    return step("removeOwner", path={"name": name, "github_id": f.ids[owner]}, token=s, auth="freshSession")
+
+
+RECIPES.update({
+    ("exchangeOidcToken", "exchange a CI identity token"): oidc,
+    ("exchangeOidcToken", "error oidc_token_invalid"):
+        lambda f: step("exchangeOidcToken", body={"jwt": "not-a-jwt", "name": "http_client", "version": "0.4.0"}),
+    ("exchangeOidcToken", "error oidc_not_trusted"): lambda f: oidc(f, trusted=False),
+    ("searchPackages", "error invalid_request"): lambda f: step("searchPackages", query={"cursor": "garbage"}),
+    ("searchPackages", "error rate_limited"): lambda f: fault(f, "searchPackages", "rate_limited", query={"q": "http"}),
+    ("searchPackages", "error unavailable"): lambda f: fault(f, "searchPackages", "unavailable"),
+    ("searchPackages", "search by prefix"): search_prefix,
+    ("searchPackages", "search, last page, claimed package with no version"): search_last_page,
+    ("getPackage", "error invalid_name"):
+        lambda f: step("getPackage", path={"name": "Http-Client"}, malformed=True),
+    ("getPackage", "error package_not_found"): lambda f: step("getPackage", path={"name": f.name("nosuch")}),
+    ("getPackage", "error internal_error"):
+        lambda f: fault(f, "getPackage", "internal_error", path={"name": claimed(f)[2]}),
+    ("getPackage", "package info"):
+        lambda f: (lambda c: step("getPackage", path={"name": c[2]},
+                                  check=lambda b: [o["handle"] for o in b["owners"]] == [c[0]] and b["state"] == "claimed"))(claimed(f)),
+    ("claimPackage", "error name_reserved"): lambda f: claim_step(f, "mopm"),
+    ("claimPackage", "error name_taken"): lambda f: claim_step(f, claimed(f)[2]),
+    ("claimPackage", "error name_too_similar"): lambda f: similar(f, confirm=False),
+    ("claimPackage", "claim with no body"): lambda f: claim_step(f, f.name()),
+    ("claimPackage", "claim a similar name on purpose"): lambda f: similar(f, confirm=True),
+    ("listVersions", "list versions"): lambda f: step("listVersions", path={"name": claimed(f)[2]}),
+    ("listOwners", "list owners"): lambda f: step("listOwners", path={"name": claimed(f)[2]}),
+    ("inviteOwner", "error not_owner"): not_owner,
+    ("inviteOwner", "error user_not_found"): lambda f: invite(f, lambda f, owner: "ghost-nobody"),
+    ("inviteOwner", "error already_owner"): lambda f: invite(f, lambda f, owner: owner),
+    ("inviteOwner", "invite an owner"): lambda f: invite(f, lambda f, owner: f.user()),
+    ("removeOwner", "error owner_not_found"):
+        lambda f: (lambda c: step("removeOwner", path={"name": c[2], "github_id": 1}, token=c[1], auth="freshSession"))(claimed(f)),
+    ("removeOwner", "error last_owner"): last_owner,
+    ("removeOwner", "remove an owner"): remove_owner,
+    ("listInvitations", "list invitations"): list_invitations,
+    ("acceptInvitation", "error invitation_not_found"):
+        lambda f: step("acceptInvitation", path={"invitation_id": "inv-none"}, token=f.session(), auth="userToken"),
+    ("acceptInvitation", "error invitation_expired"): lambda f: accept(f, expire=True),
+    ("acceptInvitation", "accept an invitation"): accept,
+})
 
 
 def main(exe):
