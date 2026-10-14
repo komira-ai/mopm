@@ -1,0 +1,68 @@
+name: oidc-subject-check
+
+# Step 0 of service/infra/access/BOOTSTRAP.md. Shows the exact OIDC claims GitHub issues to this
+# repository so an admin can confirm the trust-policy subject before any bootstrap. It holds no AWS
+# access and uses no secrets: it requests a GitHub OIDC token for audience sts.amazonaws.com,
+# decodes only the payload, and prints four non-secret claims. The token itself is never printed.
+# Run by hand from main only. Two jobs: one without an environment, one inside environment beta.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Refuse anything but main
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "oidc-subject-check runs only from refs/heads/main (this run: $REF)" >&2; exit 1
+          fi
+
+  claims-no-environment:
+    needs: guard
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Print the sub, job_workflow_ref, environment and repository_id claims
+        run: |
+          set -euo pipefail
+          resp=$(curl -sSf -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          jwt=$(printf '%s' "$resp" | jq -r .value)
+          echo "::add-mask::$jwt"
+          payload=$(printf '%s' "$jwt" | cut -d. -f2 | tr '_-' '/+')
+          while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="${payload}="; done
+          printf '%s' "$payload" | base64 -d | jq '{sub, job_workflow_ref, environment, repository_id}'
+
+  claims-environment-beta:
+    needs: guard
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: beta
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Print the sub, job_workflow_ref, environment and repository_id claims
+        run: |
+          set -euo pipefail
+          resp=$(curl -sSf -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          jwt=$(printf '%s' "$resp" | jq -r .value)
+          echo "::add-mask::$jwt"
+          payload=$(printf '%s' "$jwt" | cut -d. -f2 | tr '_-' '/+')
+          while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="${payload}="; done
+          printf '%s' "$payload" | base64 -d | jq '{sub, job_workflow_ref, environment, repository_id}'

@@ -1,0 +1,116 @@
+name: e2e
+
+# A separate file from deploy.yml on purpose: the e2e role trusts only this workflow
+# (job_workflow_ref in the OIDC sub), so it has far fewer permissions than the deploy
+# role even though both run in the same environment. Like deploy.yml it never runs
+# for a pull request.
+
+on:
+  workflow_call:
+    inputs:
+      stage:
+        description: Stage to test (beta, gamma or prod)
+        required: true
+        type: string
+      sha:
+        description: Commit the health endpoint must report (defaults to the run commit)
+        required: false
+        type: string
+        default: ""
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Stage to test
+        required: true
+        type: choice
+        options: [beta, gamma, prod]
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Refuse anything but main
+        env:
+          REF: ${{ github.ref }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "e2e runs only from refs/heads/main (this run: $REF)" >&2; exit 1
+          fi
+          case "$EVENT" in push|workflow_dispatch) ;; *) echo "e2e does not run for event $EVENT" >&2; exit 1 ;; esac
+
+  smoke-linux:
+    needs: guard
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: ${{ inputs.stage }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Validate stage
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: |
+          case "$STAGE" in beta|gamma|prod) ;; *) echo "bad stage" >&2; exit 1 ;; esac
+      - name: Assume the e2e role through OIDC
+        env:
+          STAGE: ${{ inputs.stage }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          if [ -z "$AWS_ACCOUNT_ID" ] || [ -z "$AWS_DEFAULT_REGION" ]; then
+            echo "secrets AWS_ACCOUNT_ID and AWS_REGION must be set on the $STAGE environment" >&2; exit 1
+          fi
+          echo "::add-mask::$AWS_ACCOUNT_ID"
+          ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/mopm-${STAGE}-e2e"
+          echo "::add-mask::$ROLE_ARN"
+          resp=$(curl -sSf -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          jwt=$(printf '%s' "$resp" | jq -r .value)
+          echo "::add-mask::$jwt"
+          creds=$(aws sts assume-role-with-web-identity \
+            --role-arn "$ROLE_ARN" \
+            --role-session-name "mopm-e2e-${STAGE}-${GITHUB_RUN_ID}" \
+            --web-identity-token "$jwt" \
+            --duration-seconds 3600 \
+            --query Credentials --output json)
+          for k in AccessKeyId SecretAccessKey SessionToken; do
+            echo "::add-mask::$(printf '%s' "$creds" | jq -r ".$k")"
+          done
+          {
+            echo "AWS_ACCESS_KEY_ID=$(printf '%s' "$creds" | jq -r .AccessKeyId)"
+            echo "AWS_SECRET_ACCESS_KEY=$(printf '%s' "$creds" | jq -r .SecretAccessKey)"
+            echo "AWS_SESSION_TOKEN=$(printf '%s' "$creds" | jq -r .SessionToken)"
+          } >> "$GITHUB_ENV"
+      - name: Smoke test, GET /api/v1/health
+        env:
+          STAGE: ${{ inputs.stage }}
+          EXPECTED_SHA: ${{ inputs.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          domain=$(jq -r .apiDomain "service/config/${STAGE}.json")
+          body=$(curl -sSf --retry 5 --retry-delay 10 --retry-all-errors \
+            "https://${domain}/api/v1/health")
+          echo "health: $body"
+          got=$(printf '%s' "$body" | jq -r .stage)
+          if [ "$got" != "$STAGE" ]; then
+            echo "expected stage $STAGE, health reported $got" >&2
+            exit 1
+          fi
+          # The health endpoint reports the deployed commit; it must be the one this run promoted.
+          gotsha=$(printf '%s' "$body" | jq -r '.commit // empty')
+          if [ "$gotsha" != "$EXPECTED_SHA" ]; then
+            echo "expected commit $EXPECTED_SHA, health reported '${gotsha}'" >&2
+            exit 1
+          fi

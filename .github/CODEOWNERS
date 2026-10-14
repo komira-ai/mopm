@@ -1,0 +1,7 @@
+# Owner of the workflows, the service and the security docs. PRs are authored by this same
+# account, so branch protection requires 0 approvals; Code Owners review is not required.
+
+/.github/           @asuresh8
+/service/           @asuresh8
+/docs/security/     @asuresh8
+/SECURITY.md        @asuresh8

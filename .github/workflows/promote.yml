@@ -1,0 +1,56 @@
+name: promote
+
+# beta deploy -> e2e -> gamma deploy -> e2e -> prod deploy -> prod smoke.
+# Every stage runs the same commit (the one this run was started on). A red e2e
+# blocks the next stage through needs:. The gamma and prod environments have
+# required reviewers, so those deploy jobs wait for approval. It runs on a push to
+# main that touches service/**, or by hand; the called workflows refuse any other ref.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['service/**']
+
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  beta-deploy:
+    uses: ./.github/workflows/deploy.yml
+    with: { stage: beta }
+    permissions: { id-token: write, contents: read }
+
+  beta-e2e:
+    needs: beta-deploy
+    uses: ./.github/workflows/e2e.yml
+    with: { stage: beta, sha: "${{ needs.beta-deploy.outputs.deployed_sha }}" }
+    permissions: { id-token: write, contents: read }
+
+  gamma-deploy:
+    needs: beta-e2e
+    uses: ./.github/workflows/deploy.yml
+    with: { stage: gamma }
+    permissions: { id-token: write, contents: read }
+
+  gamma-e2e:
+    needs: gamma-deploy
+    uses: ./.github/workflows/e2e.yml
+    with: { stage: gamma, sha: "${{ needs.gamma-deploy.outputs.deployed_sha }}" }
+    permissions: { id-token: write, contents: read }
+
+  prod-deploy:
+    needs: gamma-e2e
+    uses: ./.github/workflows/deploy.yml
+    with: { stage: prod }
+    permissions: { id-token: write, contents: read }
+
+  prod-smoke:
+    needs: prod-deploy
+    uses: ./.github/workflows/e2e.yml
+    with: { stage: prod, sha: "${{ needs.prod-deploy.outputs.deployed_sha }}" }
+    permissions: { id-token: write, contents: read }

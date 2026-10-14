@@ -1,0 +1,12 @@
+name: fixture
+on: [push]
+permissions:
+  contents: read
+jobs:
+  j:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          cat <<EOF
+          role is $ROLE_ARN
+          EOF

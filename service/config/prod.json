@@ -1,0 +1,8 @@
+{
+  "stage": "prod",
+  "siteDomain": "mopm.dev",
+  "condaDomain": "conda.mopm.dev",
+  "apiDomain": "api.mopm.dev",
+  "hostedZoneName": "mopm.dev",
+  "disposable": false
+}

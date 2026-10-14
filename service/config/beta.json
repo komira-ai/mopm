@@ -1,0 +1,8 @@
+{
+  "stage": "beta",
+  "siteDomain": "beta.mopm.dev",
+  "condaDomain": "conda.beta.mopm.dev",
+  "apiDomain": "api.beta.mopm.dev",
+  "hostedZoneName": "mopm.dev",
+  "disposable": true
+}
