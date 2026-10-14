@@ -1136,10 +1136,10 @@ components:
         filename: { $ref: "#/components/schemas/Filename" }
         sha256: { $ref: "#/components/schemas/Sha256" }
         size:
-          description: Bytes. At most 50 MiB in v1.
+          description: Bytes. At most 100 MB (100,000,000 bytes) in v1.
           type: integer
           minimum: 1
-          maximum: 52428800
+          maximum: 100000000
     BeginUploadResponse:
       type: object
       required: [upload_id, put_url, put_headers, expires_at]
