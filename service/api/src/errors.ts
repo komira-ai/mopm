@@ -3,6 +3,7 @@ export type ErrorCode =
   | 'invalid_version'
   | 'version_exists'
   | 'version_not_found'
+  | 'invalid_transition'
   | 'package_not_found'
   | 'name_taken'
   | 'owner_not_found'
@@ -13,6 +14,7 @@ export const HTTP_STATUS: Record<ErrorCode, number> = {
   invalid_version: 400,
   version_exists: 409,
   version_not_found: 404,
+  invalid_transition: 409,
   package_not_found: 404,
   name_taken: 409,
   owner_not_found: 404,

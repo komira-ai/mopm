@@ -16,7 +16,7 @@ describe('state machine', () => {
     ['pending', YANK, null],
     ['pending', UNYANK, null],
     ['published', YANK, 'yanked'],
-    ['published', UNYANK, 'published'],
+    ['published', UNYANK, null],
     ['published', PUBLISH, 'published'],
     ['published', TOMB, 'tombstoned'],
     ['yanked', UNYANK, 'published'],
@@ -40,7 +40,7 @@ describe('state machine', () => {
   test('a real change bumps rev, an idempotent one returns the same record', () => {
     const p = at('published');
     expect(applyEvent(p, YANK).rev).toBe(p.rev + 1);
-    expect(applyEvent(p, UNYANK)).toBe(p);
+    expect(applyEvent(p, PUBLISH)).toBe(p);
     const y = at('yanked');
     expect(applyEvent(y, YANK)).toBe(y);
     expect(applyEvent(y, YANK).yank_reason).toBe('old'); // the first reason stands
@@ -67,7 +67,25 @@ describe('state machine', () => {
     }
   });
 
-  test('the transition error is version_not_found with a reason', () => {
-    expect(() => applyEvent(at('tombstoned'), YANK)).toThrow(expect.objectContaining({ code: 'version_not_found', status: 404 }));
+  // Every refused transition must carry the exact code and the spec message. Can-fail proof: a state
+  // machine that still answered version_not_found (404) fails every row.
+  const refused: [VersionState, VersionEvent, string][] = [
+    ['pending', YANK, "Cannot yank 'p' 1.0: it is pending."],
+    ['tombstoned', YANK, "Cannot yank 'p' 1.0: it is tombstoned."],
+    ['published', UNYANK, "Cannot unyank 'p' 1.0: it is published."],
+    ['pending', UNYANK, "Cannot unyank 'p' 1.0: it is pending."],
+    ['tombstoned', UNYANK, "Cannot unyank 'p' 1.0: it is tombstoned."],
+    ['tombstoned', PUBLISH, "Cannot publish 'p' 1.0: it is tombstoned."],
+    ['yanked', PUBLISH, "Cannot publish 'p' 1.0: it is yanked."],
+  ];
+  test.each(refused)('refused: %s + %j is invalid_transition (409)', (from, ev, message) => {
+    let err: unknown;
+    try {
+      applyEvent(at(from), ev);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(IllegalTransition);
+    expect(err).toMatchObject({ code: 'invalid_transition', status: 409, message });
   });
 });

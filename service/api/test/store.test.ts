@@ -72,10 +72,10 @@ describe.each(factories)('Store contract: %s', (_label, make) => {
     expect((await s.listAudit('p')).map((a) => a.action)).toEqual(['upload', 'publish', 'yank', 'unyank']);
   });
 
-  test('refused transitions and missing versions raise version_not_found and change nothing', async () => {
+  test('a missing version raises version_not_found, a refused transition invalid_transition, and neither changes anything', async () => {
     await expect(s.updateVersion('p', '1.0', { type: 'publish' }, audit('p', 'x'))).rejects.toMatchObject({ code: 'version_not_found' });
     await s.createVersion(rec({ name: 'p', version: '1.0', state: 'pending' }), audit('p', 'upload'));
-    await expect(s.updateVersion('p', '1.0', { type: 'yank', reason: 'r' }, audit('p', 'yank'))).rejects.toMatchObject({ code: 'version_not_found' });
+    await expect(s.updateVersion('p', '1.0', { type: 'yank', reason: 'r' }, audit('p', 'yank'))).rejects.toMatchObject({ code: 'invalid_transition', status: 409 });
     expect((await s.getVersion('p', '1.0'))?.state).toBe('pending');
     expect(await s.listAudit('p')).toHaveLength(1);
   });

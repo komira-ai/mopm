@@ -22,12 +22,12 @@ describe('golden repodata', () => {
     expect(Buffer.from(decompress(zst)).equals(json)).toBe(true);
   });
 
-  test('yanked entries are under removed, tombstoned and pending ones appear nowhere', () => {
+  test('yanked and tombstoned entries are under removed, pending ones appear nowhere', () => {
     const text = buildRepodataJson('linux-64', GOLDEN_RECORDS);
     const doc = JSON.parse(text);
     expect(Object.keys(doc['packages.conda'])).toEqual(['mojo-http_client-0.4.0-mojo1.0.0_0.conda', 'mojo-http_core-1.2.0-mojo1.0.0_0.conda']);
-    expect(doc.removed).toEqual(['mojo-http_client-0.3.0-mojo1.0.0_0.conda']);
-    expect(text).not.toContain('mojo-tls');
+    expect(doc.removed).toEqual(['mojo-http_client-0.3.0-mojo1.0.0_0.conda', 'mojo-tls-1.0.0-mojo1.0.0_0.conda']);
+    expect(text.match(/mojo-tls/g)).toHaveLength(1); // only in removed
     expect(text).not.toContain('mojo-fresh');
     expect(doc.packages).toEqual({});
   });
@@ -193,6 +193,18 @@ describe('index writer properties', () => {
     );
   });
 
+  test('a tombstoned package never appears in packages or packages.conda, only in removed', () => {
+    fc.assert(
+      fc.property(recordsArb, subdirArb, (records, subdir) => {
+        const doc = JSON.parse(buildRepodataJson(subdir, records));
+        return records
+          .filter((r) => r.state === 'tombstoned')
+          .flatMap((r) => r.files.filter((f) => f.subdir === subdir).map((f) => f.filename))
+          .every((n) => !(n in doc['packages.conda']) && !(n in doc.packages) && doc.removed.includes(n));
+      }),
+    );
+  });
+
   test('only published records are listed, in any state mix', () => {
     fc.assert(
       fc.property(recordsArb, subdirArb, (records, subdir) => {
@@ -203,7 +215,7 @@ describe('index writer properties', () => {
           for (const f of r.files) {
             if (f.subdir !== subdir) continue;
             if (r.state === 'published') want.add(f.filename);
-            if (r.state === 'yanked') gone.add(f.filename);
+            if (r.state === 'yanked' || r.state === 'tombstoned') gone.add(f.filename);
           }
         }
         return (

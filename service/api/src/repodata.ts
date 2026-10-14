@@ -42,7 +42,8 @@ function dependsOf(r: VersionRecord): string[] {
 /**
  * repodata.json text for one subdir (spec/channel.md). A pure function of the records: `published`
  * records of the subdir are listed under `packages.conda`; `yanked` ones leave it and are listed under
- * `removed` (the files stay downloadable); `pending` and `tombstoned` records appear nowhere. The
+ * `removed` (the files stay downloadable), and so do `tombstoned` ones (their bytes are gone; the name
+ * tells a client the file was withdrawn); `pending` records appear nowhere. The
  * input order does not matter and nothing time-dependent is written.
  */
 export function buildRepodataJson(subdir: Subdir, records: readonly VersionRecord[]): string {
@@ -50,12 +51,12 @@ export function buildRepodataJson(subdir: Subdir, records: readonly VersionRecor
   const removed: string[] = [];
   const seen = new Set<string>();
   for (const r of records) {
-    if (r.state !== 'published' && r.state !== 'yanked') continue;
+    if (r.state === 'pending') continue;
     for (const f of r.files) {
       if (f.subdir !== subdir) continue;
       if (seen.has(f.filename)) throw new Error(`repodata: file ${f.filename} appears twice`);
       seen.add(f.filename);
-      if (r.state === 'yanked') {
+      if (r.state === 'yanked' || r.state === 'tombstoned') {
         removed.push(f.filename);
         continue;
       }
