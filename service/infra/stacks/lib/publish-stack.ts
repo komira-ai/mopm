@@ -3,7 +3,6 @@ import { Duration, Stack, StackProps } from 'aws-cdk-lib';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
-import * as sources from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
@@ -125,7 +124,11 @@ export class PublishStack extends Stack {
     this.validator.addToRolePolicy(
       new iam.PolicyStatement({ sid: 'SendIndexMessages', actions: ['sqs:SendMessage'], resources: [this.indexQueue.queueArn] }),
     );
-    this.validator.addEventSource(new sources.SqsEventSource(this.validateQueue, { batchSize: 1 }));
+    // The trigger is declared by hand rather than with SqsEventSource: that helper puts the queue's own unique id (which
+    // embeds a hash of its path, and so differs per stage) into the mapping's logical id, and the whole-template stage
+    // diff (template-diff.test.ts) would then see three different resources.
+    this.validateQueue.grantConsumeMessages(this.validator);
+    new lambda.EventSourceMapping(this, 'ValidatorTrigger', { target: this.validator, eventSourceArn: this.validateQueue.queueArn, batchSize: 1 });
 
     // --- the index writer ------------------------------------------------------------------------------------
     this.indexer = new lambda.Function(this, 'Indexer', {
@@ -170,7 +173,8 @@ export class PublishStack extends Stack {
         resources: [`arn:aws:cloudfront::${this.account}:distribution/${props.channel.distribution.distributionId}`],
       }),
     );
-    this.indexer.addEventSource(new sources.SqsEventSource(this.indexQueue, { batchSize: 1 }));
+    this.indexQueue.grantConsumeMessages(this.indexer);
+    new lambda.EventSourceMapping(this, 'IndexerTrigger', { target: this.indexer, eventSourceArn: this.indexQueue.queueArn, batchSize: 1 });
 
     // --- alarms: anything in a dead-letter queue is a publish that needs a person ---------------------------
     for (const [aid, q, label] of [
