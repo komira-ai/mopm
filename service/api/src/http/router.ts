@@ -3,6 +3,7 @@ import type { Store } from '../store';
 import { README_MAX_BYTES, type PackageRecord, type PackageSummaryRecord, type VersionRecord } from '../types';
 import { canonicalVersion, compareVersions, parseVersion } from '../version';
 import { CATALOGUE, render } from './catalogue';
+import { routePublish, type PublishApi } from './publish-routes';
 
 export type Stage = 'beta' | 'gamma' | 'prod';
 
@@ -11,6 +12,10 @@ export interface HttpRequest {
   /** The raw path, e.g. `/api/v1/packages/http_client`. */
   path: string;
   query: Record<string, string | undefined>;
+  /** Lower-case names. Only the publish operations read them (authorization). */
+  headers?: Record<string, string | undefined>;
+  /** The decoded request body, for the operations that take one. */
+  body?: string;
 }
 
 export interface HttpResponse {
@@ -26,6 +31,8 @@ export interface RouterDeps {
   version: string;
   commit: string;
   readOnly: boolean;
+  /** The publish operations (begin, commit, status). Absent: the router serves reads only. */
+  publish?: PublishApi;
 }
 
 const PREFIX = '/api/v1';
@@ -287,6 +294,10 @@ function segments(path: string): string[] | undefined {
 /** Handle one request. Never throws: every failure is an error body from the contract's catalogue. */
 export async function route(req: HttpRequest, deps: RouterDeps, requestId: string): Promise<HttpResponse> {
   try {
+    if (deps.publish) {
+      const published = await routePublish(req, deps.publish, requestId);
+      if (published) return published;
+    }
     const seg = segments(req.path);
     if (seg && req.method === 'GET') {
       if (seg.length === 1 && seg[0] === 'health') return respond(200, requestId, getHealth(deps));
