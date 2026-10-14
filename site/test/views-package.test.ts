@@ -2,7 +2,7 @@
 // name, no latest release, a latest mopm cannot name, an unknown state, a hostile readme or repository URL). Every
 // value is shown as text; only checked URLs become links; the state of a version is words, not only a class.
 import { packageView, README_MAX_BYTES } from '../src/views/package';
-import { hrefs, html, packageFixture, sdoc, text } from './view-helpers';
+import { hrefs, html, packageFixture, sdoc, text, uniqueIds } from './view-helpers';
 
 const CTX = { host: 'mopm.dev' };
 const render = (info = packageFixture(), ctx = CTX) => html(packageView(sdoc, 'http_client', info, ctx));
@@ -128,13 +128,21 @@ describe('package shapes the fixtures do not cover', () => {
 });
 
 describe('the readme', () => {
-  test('renders with readme- ids, headings one level down, raw HTML as text', () => {
+  test('renders with readme- ids, headings below the Readme h2, raw HTML as text', () => {
     const out = render(packageFixture((r) => Object.assign(r, { readme: '# Usage\n\n<script>alert(1)</script>\n\n[x](javascript:alert(1))' })));
-    expect(out).toContain('<h2 id="readme-usage">Usage</h2>');
+    expect(out).toContain('<h2 id="section-readme">Readme</h2><div class="prose"><h3 id="readme-usage">Usage</h3>');
     expect(out).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     expect(out).not.toContain('<script');
     expect(hrefs(out).some((h) => h.toLowerCase().startsWith('javascript'))).toBe(false);
     expect(out.match(/<h1>/g)).toHaveLength(1);
+  });
+
+  test('a readme heading never takes an id the page uses, and an in-readme link reaches the readme heading', () => {
+    const out = render(packageFixture((r) => Object.assign(r, { readme: '# Heading\n\n## Readme\n\n#### Section readme\n\n[x](#heading)' })));
+    expect(uniqueIds(out)).toBe(true);
+    expect(out).toContain('<h3 id="readme-heading">Heading</h3>');
+    expect(out).toContain('<h6 id="readme-section-readme">Section readme</h6>');
+    expect(hrefs(out)).toContain('#readme-heading');
   });
 
   test(`over ${README_MAX_BYTES} UTF-8 bytes it is not rendered, and the page says so`, () => {

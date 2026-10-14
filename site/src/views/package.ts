@@ -3,8 +3,9 @@
 // Three shapes: a claimed name with nothing published; an active package with no latest release (every version is a
 // pre-release, yanked or tombstoned); and the normal page. Every value from the API is shown as text; the repository
 // and homepage are links only when links.ts accepts them as http(s); versions link only when they match the grammar.
-// The readme is untrusted Markdown, rendered by the restricted renderer with 'readme-' ids, its headings one level
-// below the page's own.
+// The readme is untrusted Markdown, rendered by the restricted renderer with 'readme-' ids (the page's own ids never
+// start with 'readme-', so no readme heading can take one), its headings two levels down: a readme '# Title' is an h3
+// under the section's 'Readme' h2.
 
 import { type Doc, h } from '../doc.js';
 import { formatDate, stateLabel } from '../format.js';
@@ -34,13 +35,13 @@ export function webLink<N>(doc: Doc<N>, raw: string | null | undefined): N | nul
 /** The readme section, or a note when it is too large; null when there is none. */
 export function readmeSection<N>(doc: Doc<N>, readme: string | undefined): N | null {
   if (readme === undefined || readme.trim() === '') return null;
-  const section = h(doc, 'section', { class: 'readme', 'aria-labelledby': 'readme-heading' }, h(doc, 'h2', { id: 'readme-heading' }, 'Readme'));
+  const section = h(doc, 'section', { class: 'readme', 'aria-labelledby': 'section-readme' }, h(doc, 'h2', { id: 'section-readme' }, 'Readme'));
   if (new TextEncoder().encode(readme).length > README_MAX_BYTES) {
     doc.append(section, h(doc, 'p', { class: 'muted' }, 'The readme is larger than 64 KiB and is not shown.'));
     return section;
   }
   const body = h(doc, 'div', { class: 'prose' });
-  renderMarkdown(doc, body, readme, { idPrefix: 'readme-', headingShift: 1, links: { mode: 'readme' } });
+  renderMarkdown(doc, body, readme, { idPrefix: 'readme-', headingShift: 2, links: { mode: 'readme' } });
   doc.append(section, body);
   return section;
 }

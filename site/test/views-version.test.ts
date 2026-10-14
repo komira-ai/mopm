@@ -3,7 +3,7 @@
 // one, even if a url came with it); a pinned mopm.toml line only for a published version; dependencies link only when
 // their name is valid; the address shows the published spelling.
 import { versionView } from '../src/views/version';
-import { hrefs, html, sdoc, text, versionFixture } from './view-helpers';
+import { hrefs, html, sdoc, text, uniqueIds, versionFixture } from './view-helpers';
 
 const CTX = { host: 'mopm.dev' };
 const FILE_URL = 'https://conda.mopm.dev/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda';
@@ -49,6 +49,14 @@ describe('a published version (fixture: version detail)', () => {
 
   test('no banner for a published version', () => {
     expect(out).not.toContain('role="note"');
+  });
+
+  test('every id on the page is unique, with a readme whose headings repeat the page\'s', () => {
+    const v = versionFixture('version detail', (r) => Object.assign(r, { readme: '# Heading\n\n## Files\n\n## Install' }));
+    const page = html(render(v));
+    expect(page).toContain('<h3 id="readme-heading">Heading</h3>');
+    expect(uniqueIds(page)).toBe(true);
+    expect(uniqueIds(out)).toBe(true);
   });
 
   test('readme_html from the server is never shown', () => {

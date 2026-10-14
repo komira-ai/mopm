@@ -30,6 +30,12 @@ export function text(s: string): string {
     .replace(/&amp;/g, '&');
 }
 
+/** Whether no two elements in the HTML share an id. */
+export function uniqueIds(s: string): boolean {
+  const ids = tagsIn(s).flatMap(([, attrs]) => attrs.filter(([k]) => k === 'id').map(([, v]) => v));
+  return new Set(ids).size === ids.length;
+}
+
 /** Every href in the HTML. */
 export function hrefs(s: string): string[] {
   return tagsIn(s).flatMap(([, attrs]) => attrs.filter(([k]) => k === 'href').map(([, v]) => v.replace(/&amp;/g, '&')));
