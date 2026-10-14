@@ -10,6 +10,8 @@
   --fg-muted: #57606a;
   --border: #d8dee4;
   --border-strong: #b6bec8;
+  /* Form control borders: at least 3:1 against --bg and --bg-soft (WCAG 1.4.11). */
+  --control-border: #868e96;
   --accent: #c2410c;
   --accent-fg: #ffffff;
   --link: #0b5cad;
@@ -35,6 +37,7 @@
     --fg-muted: #9da7b3;
     --border: #2d333b;
     --border-strong: #444c56;
+    --control-border: #6e7681;
     --accent: #fb923c;
     --accent-fg: #1b1f24;
     --link: #6cb6ff;
@@ -234,7 +237,6 @@ blockquote {
 :focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
-  border-radius: 2px;
 }
 
 .skip {
@@ -347,7 +349,7 @@ select {
   min-width: 0;
   width: 100%;
   padding: 0.5rem 0.75rem;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--control-border);
   border-radius: var(--radius);
   background: var(--bg);
   line-height: 1.4;
@@ -360,7 +362,7 @@ select {
 .button {
   flex: none;
   padding: 0.5rem 1rem;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--control-border);
   border-radius: var(--radius);
   background: var(--bg);
   font-weight: 600;
@@ -425,9 +427,12 @@ label {
   color: var(--fg);
 }
 
-.status {
+.hero .status {
   color: var(--fg-muted);
   max-width: 46rem;
+  margin-top: 1.75rem;
+  margin-bottom: 0;
+  font-size: 0.95rem;
 }
 
 .hero-search {
