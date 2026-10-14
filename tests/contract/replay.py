@@ -245,7 +245,7 @@ def oidc(f, trusted=True):
     if trusted:
         f.control("/trusted", {"name": name, "repository": "octo/" + name})
     return step("exchangeOidcToken", body={"jwt": jwt("octo/" + name), "name": name, "version": "0.4.0"},
-                check=lambda b: b["name"] == name)
+                check=(lambda b: b["name"] == name) if trusted else None)
 
 
 def fault(f, op, code, **kw):
@@ -429,8 +429,13 @@ def main(exe):
                 got_code = (body or {}).get("error", {}).get("code")
                 if got_code != want_code:
                     problems.append("error %s, the case has %s" % (got_code, want_code))
-            if not problems and s["check"] and not s["check"](body):
-                problems.append("the recipe's check failed on %s" % json.dumps(body)[:300])
+            if not problems and s["check"]:
+                try:
+                    ok = s["check"](body)
+                except Exception as e:  # a check that cannot read the body has failed
+                    ok, body = False, {"check raised": repr(e), "body": body}
+                if not ok:
+                    problems.append("the recipe's check failed on %s" % json.dumps(body)[:300])
             if s["after"]:
                 s["after"]()
             for p in problems:
