@@ -1,6 +1,7 @@
 // T12: link rewriting. In a repo doc, a relative link resolves in the repo as GitHub resolves it: the published docs
-// stay on the site, any other repo path goes to GitHub, and anything resolving outside the repo is text. Schemes are
-// matched case-insensitively. In a readme, only absolute links and in-page fragments survive.
+// stay on the site (also when named by file name or repo path from the other doc), any other repo path goes to
+// GitHub, and anything resolving outside the repo is text. Schemes are matched case-insensitively.
+// In a readme, only absolute links and in-page fragments survive.
 import { internalHref, safeHref } from '../src/links';
 
 const blob = (p: string) => `https://github.com/komira-ai/mopm/blob/main/${p}`;
@@ -27,8 +28,17 @@ test.each([
   ['docs/mopm-test.md', 'mopm-test.md', '/docs/mopm-test/'],
   ['docs/mopm-test.md', '../spec/mopm-toml.md', '/docs/mopm-toml/'],
   ['docs/mopm-test.md', '../src/cli/test_cmd.zig', blob('src/cli/test_cmd.zig')],
-  // As on GitHub, a bare name resolves next to the doc (there is no docs/mopm-toml.md, so GitHub shows a 404 too).
-  ['docs/mopm-test.md', 'mopm-toml.md', blob('docs/mopm-toml.md')],
+  // A published doc named by its file name or its repo path means that doc, from either doc (plan, links.ts), even
+  // where GitHub would resolve the name next to the linking doc (there is no docs/mopm-toml.md or spec/mopm-test.md).
+  ['docs/mopm-test.md', 'mopm-toml.md', '/docs/mopm-toml/'],
+  ['docs/mopm-test.md', './mopm-toml.md#rules', '/docs/mopm-toml/#rules'],
+  ['docs/mopm-test.md', 'spec/mopm-toml.md', '/docs/mopm-toml/'],
+  ['spec/mopm-toml.md', 'mopm-test.md', '/docs/mopm-test/'],
+  ['spec/mopm-toml.md', 'docs/mopm-test.md?plain=1#junit', '/docs/mopm-test/#junit'],
+  // Any other name still resolves as on GitHub.
+  ['docs/mopm-test.md', 'channel.md', blob('docs/channel.md')],
+  ['docs/mopm-test.md', '../mopm-toml.md', blob('mopm-toml.md')],
+  ['docs/mopm-test.md', 'sub/mopm-toml.md', blob('docs/sub/mopm-toml.md')],
 ] as const)('in %s, %j -> %j', (source, raw, want) => {
   expect(safeHref(raw, docs(source))).toBe(want);
 });

@@ -5,7 +5,7 @@
 // control characters, whitespace and invisible format characters are removed first, the URL is resolved with the
 // WHATWG parser, and only the normalised result is emitted, so what was checked is exactly what the browser follows.
 
-import type { SafeHref } from './doc.js';
+import { type SafeHref, URL_UNSAFE_CHAR } from './doc.js';
 
 export const REPO_URL = 'https://github.com/komira-ai/mopm';
 const REPO_BLOB = `${REPO_URL}/blob/main/`;
@@ -18,14 +18,18 @@ export const DOC_PAGES: readonly { slug: string; source: string }[] = [
 ];
 
 const ALLOWED_SCHEMES: ReadonlySet<string> = new Set(['https:', 'http:', 'mailto:']);
-// C0 controls, space, DEL, C1 controls, and invisible format characters (zero-width, bidi controls, BOM).
-const STRIP = /[\u0000-\u0020\u007f-\u009f\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]/g;
+// C0 controls, space, DEL, C1 controls, and invisible format characters (zero-width, bidi controls, BOM): the set
+// h() refuses in a URL attribute.
+const STRIP = new RegExp(URL_UNSAFE_CHAR.source, 'g');
 const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 
 export type LinkContext =
   /** A package readme: absolute links and in-page fragments only; a relative link becomes text. */
   | { mode: 'readme'; idPrefix: string }
-  /** A repo doc at `source` (a repo path): relative links resolve in the repo, as GitHub resolves them. */
+  /**
+   * A repo doc at `source` (a repo path): relative links resolve in the repo, as GitHub resolves them, except that a
+   * published doc named by file name or repo path stays on the site (sitePathByName).
+   */
   | { mode: 'docs'; idPrefix: string; source: string };
 
 function fragment(frag: string, idPrefix: string): SafeHref | null {
@@ -44,6 +48,19 @@ function sitePathFor(repoPath: string): string | null {
   return null;
 }
 
+/**
+ * A link that names a published doc by its file name ('mopm-toml.md') or by its repo path ('spec/mopm-toml.md') means
+ * that doc, from either published doc, even where GitHub would resolve it next to the linking doc (and show a 404).
+ * `path` is the link with any query and fragment removed.
+ */
+function sitePathByName(path: string): string | null {
+  const p = decodeURIComponentSafe(path.replace(/^(?:\.\/)+/, ''));
+  for (const d of DOC_PAGES) {
+    if (p === d.source || p === d.source.slice(d.source.lastIndexOf('/') + 1)) return `/docs/${d.slug}/`;
+  }
+  return null;
+}
+
 function repoLink(s: string, source: string): SafeHref | null {
   // A path starting with '/' is relative to the repo root, as on GitHub; anything else to the doc's directory.
   const dir = source.includes('/') ? source.slice(0, source.lastIndexOf('/') + 1) : '';
@@ -56,7 +73,8 @@ function repoLink(s: string, source: string): SafeHref | null {
   }
   // '//host/x', '..' past the repo root and a scheme the regex missed all land outside the blob prefix.
   if (!u.href.startsWith(REPO_BLOB)) return null;
-  const site = sitePathFor(decodeURIComponentSafe(u.pathname.slice(REPO_BLOB_PATH.length)));
+  const site =
+    sitePathFor(decodeURIComponentSafe(u.pathname.slice(REPO_BLOB_PATH.length))) ?? sitePathByName(s.split(/[?#]/)[0]);
   return (site ? site + u.hash : u.href) as SafeHref;
 }
 

@@ -44,8 +44,15 @@ const TAG_SET: ReadonlySet<string> = new Set(TAGS);
 const ATTR_SET: ReadonlySet<string> = new Set(ATTRS);
 const VOID: ReadonlySet<string> = new Set(['br', 'hr', 'input', 'meta']);
 // A last check on URL attributes at runtime, in case a cast slipped past the type: the schemes and forms links.ts
-// can produce (https, http, mailto, a fragment, or a same-site path that is not protocol-relative).
+// can produce (https, http, mailto, a fragment, or a same-site path that is not protocol-relative) ...
 const URL_SHAPE = /^(?:https:|http:|mailto:|#|\/(?![/\\]))/;
+/**
+ * ... and none of the characters a browser's URL parser drops or a reader cannot see: C0 controls, space, DEL, C1
+ * controls, and invisible format characters (zero-width, bidi controls, BOM). A browser removes a tab or newline
+ * anywhere, so '/\t/evil' would be followed as '//evil'. links.ts strips this same set before it checks a URL, so a
+ * SafeHref it produced never holds one.
+ */
+export const URL_UNSAFE_CHAR = /[\u0000-\u0020\u007f-\u009f\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]/;
 
 export type Child<N> = N | string | null | undefined | false;
 
@@ -59,7 +66,7 @@ export function h<N>(doc: Doc<N>, tag: Tag, attrs?: Attrs | null, ...children: C
       if (/^on/i.test(k) || k.toLowerCase() === 'style') throw new Error(`h(): attribute '${k}' is never allowed`);
       if (!ATTR_SET.has(k)) throw new Error(`h(): attribute '${k}' is not allowed`);
       if (typeof v !== 'string') throw new Error(`h(): attribute '${k}' must be a string`);
-      if (URL_ATTRS.has(k) && !URL_SHAPE.test(v)) throw new Error(`h(): '${k}' is not a checked URL`);
+      if (URL_ATTRS.has(k) && (URL_UNSAFE_CHAR.test(v) || !URL_SHAPE.test(v))) throw new Error(`h(): '${k}' is not a checked URL`);
       doc.setAttr(node, k as AttrName, v);
     }
   }
