@@ -1,0 +1,1 @@
+mopm run: refused (static_only): staticpkg ships only libarch.a (native arch); mojo run cannot load an archive: use mopm build or ask for a shared flavour

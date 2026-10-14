@@ -1,0 +1,1 @@
+mopm build: refused (missing_file): @ROOT@/tests/fixtures/env/linux/nofile/lib/libgone.so.1 is named by the installed metadata but is not on disk

@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "name": "gone",
+  "version": "1.0.0",
+  "native": [
+    { "id": "gone", "soname": "libgone.so.1", "file": "../libgone.so.1" }
+  ]
+}

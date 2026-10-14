@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "name": "crypto",
+  "version": "1.0.0",
+  "native": [
+    {
+      "id": "crypto",
+      "soname": "libcrypto_native.1.dylib",
+      "kind": "both",
+      "mode": "link",
+      "file": "../libcrypto_native.1.dylib",
+      "static_file": "../libcrypto_native.a"
+    }
+  ]
+}
