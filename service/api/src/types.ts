@@ -47,6 +47,8 @@ export interface VersionRecord {
   native: NativeRef[];
   files: FileRef[];
   manifest_sha256: string;
+  /** Where the files were built, when a CI identity vouched for it. Absent means no provenance (`kind: none`). */
+  provenance?: { kind: 'none' | 'oidc'; repository?: string; workflow_ref?: string };
   /** Optimistic-concurrency counter: starts at 0, +1 on every state change. */
   rev: number;
 }
@@ -59,6 +61,9 @@ export interface PackageRecord {
   license?: string;
   description?: string;
 }
+
+/** What a package search needs from a package; the search index projects exactly these attributes. */
+export type PackageSummaryRecord = Pick<PackageRecord, 'name' | 'state' | 'created_at' | 'description'>;
 
 export interface OwnerRecord {
   name: string;

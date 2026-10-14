@@ -28,6 +28,8 @@ export const OPERATIONS: Record<string, string> = {
   searchPackages: '/packages',
   getPackage: '/packages/{name}',
   listVersions: '/packages/{name}/versions',
+  listOwners: '/packages/{name}/owners',
+  getVersion: '/packages/{name}/{version}',
 };
 
 /** Cases the handler never produces: the gateway or an upstream limit answers them, not this code. */

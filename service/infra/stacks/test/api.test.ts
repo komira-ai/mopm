@@ -1,6 +1,6 @@
 import { App } from 'aws-cdk-lib';
 import { Match } from 'aws-cdk-lib/assertions';
-import { ApiStack, READ_ACTIONS, READ_ROUTES, READ_TABLES } from '../lib/api-stack';
+import { ApiStack, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES } from '../lib/api-stack';
 import { STAGES, stageConfig, tableName } from '../lib/config';
 import { tpl } from './util';
 
@@ -27,7 +27,14 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     const keys = Object.values(t.findResources('AWS::ApiGatewayV2::Route')).map((r: any) => r.Properties.RouteKey as string);
     expect(keys.every((k) => k.startsWith('GET '))).toBe(true);
     expect(keys.sort()).toEqual(
-      ['GET /api/v1/health', 'GET /api/v1/packages', 'GET /api/v1/packages/{name}', 'GET /api/v1/packages/{name}/versions'].sort(),
+      [
+        'GET /api/v1/health',
+        'GET /api/v1/packages',
+        'GET /api/v1/packages/{name}',
+        'GET /api/v1/packages/{name}/versions',
+        'GET /api/v1/packages/{name}/owners',
+        'GET /api/v1/packages/{name}/{version}',
+      ].sort(),
     );
   });
 
@@ -49,6 +56,16 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     // Nothing outside the four tables (and their indexes) is named.
     const named = (resources.match(/table\/mopm-[a-z]+-[a-z_]+/g) ?? []).map((m) => m.replace(/\/index.*/, ''));
     expect([...new Set(named)].sort()).toEqual(READ_TABLES.map((x) => `table/${tableName(stage, x)}`).sort());
+  });
+
+  test('the one index the handler may Query is named exactly; no index wildcard', () => {
+    expect(READ_INDEXES).toEqual({ packages: ['by_search_bucket'] });
+    const st = statements().filter((s) => acts(s).some((a) => a.startsWith('dynamodb:')));
+    const resources = JSON.stringify(st[0].Resource);
+    expect(resources).toContain(`${tableName(stage, 'packages')}/index/by_search_bucket`);
+    expect(resources).not.toContain('index/*');
+    expect(resources).not.toContain('by_github_id'); // the owners index is not read by the read API
+    expect((resources.match(/\/index\//g) ?? []).length).toBe(1);
   });
 
   test('no statement anywhere grants a write, delete, scan or wildcard action', () => {

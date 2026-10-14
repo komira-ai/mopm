@@ -1,6 +1,6 @@
 import { compareVersions } from './version';
 import type { VersionEvent } from './state';
-import type { AuditEntry, OwnerRecord, PackageRecord, VersionRecord } from './types';
+import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, VersionRecord } from './types';
 
 /**
  * The registry's persistence port. Two adapters implement it: memory (tests and the local mode) and
@@ -17,6 +17,12 @@ export interface Store {
   createPackage(pkg: PackageRecord): Promise<void>;
   getPackage(name: string): Promise<PackageRecord | undefined>;
   listPackageNames(): Promise<string[]>;
+  /**
+   * Packages whose name starts with `prefix` (empty matches all), ordered by name, strictly after `after`,
+   * at most `limit`. This is the read path of search: the DynamoDB adapter answers it with one Query on the
+   * name index (never a Scan), so it can only return the attributes that index projects.
+   */
+  searchPackages(prefix: string, after: string | undefined, limit: number): Promise<PackageSummaryRecord[]>;
 
   /** Create-once under equivalence, with its audit entry. Throws invalid_version, version_exists. */
   createVersion(rec: VersionRecord, audit: AuditEntry): Promise<void>;
