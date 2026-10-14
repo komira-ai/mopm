@@ -85,7 +85,7 @@ pub fn construct(arena: Allocator, req: Request, p: link_planner.Plan) Allocator
     switch (req.tool) {
         .build => {
             for (p.build) |arg| try argv.appendSlice(&.{ "-Xlinker", arg });
-            const lib = try std.fs.path.join(arena, &.{ req.prefix, "lib" });
+            const lib = try std.fs.path.join(arena, &.{ req.prefix, "lib", "mojo" });
             try argv.appendSlice(&.{ "-Xlinker", "-rpath", "-Xlinker", lib });
             if (req.out) |o| try argv.appendSlice(&.{ "-o", o });
             try argv.append(req.file);
