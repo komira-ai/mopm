@@ -1,0 +1,935 @@
+{
+  "cases": [
+    {
+      "name": "error invalid_request",
+      "operationId": "searchPackages",
+      "request": {
+        "query": {
+          "cursor": "garbage"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_request",
+            "message": "The request is not valid: cursor is not recognised.",
+            "hint": "Check the request against the API documentation; update mopm if it is old."
+          }
+        }
+      }
+    },
+    {
+      "name": "error invalid_name",
+      "operationId": "getPackage",
+      "request": {
+        "path": {
+          "name": "Http-Client"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_name",
+            "message": "'Http-Client' is not a valid package name.",
+            "hint": "Names are lowercase letters, digits and underscores, 2 to 64 characters, starting with a letter."
+          }
+        }
+      },
+      "malformed_request": true
+    },
+    {
+      "name": "error invalid_version",
+      "operationId": "getVersion",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "1.0.0+local"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invalid_version",
+            "message": "'1.0.0+local' is not a valid version.",
+            "hint": "Use digits separated by dots, with an optional a, b, rc or dev suffix."
+          }
+        }
+      },
+      "malformed_request": true
+    },
+    {
+      "name": "error upload_invalid",
+      "operationId": "commitPublish",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.4.0"
+        },
+        "body": {
+          "upload_ids": [
+            "upl-42ab"
+          ],
+          "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "upload_invalid",
+            "message": "The upload does not match what was declared: file name differs from the begun upload.",
+            "hint": "Begin a new upload with the real file name, sha256 and size."
+          }
+        }
+      }
+    },
+    {
+      "name": "error token_missing",
+      "operationId": "getMe",
+      "request": {},
+      "response": {
+        "status": 401,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "token_missing",
+            "message": "This request needs a token.",
+            "hint": "Run 'mopm login' or pass a token."
+          }
+        }
+      }
+    },
+    {
+      "name": "error token_unknown",
+      "operationId": "getMe",
+      "request": {
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "token_unknown",
+            "message": "The token is not recognised.",
+            "hint": "Create a new token with 'mopm token create', or run 'mopm login'."
+          }
+        }
+      }
+    },
+    {
+      "name": "error token_expired",
+      "operationId": "getMe",
+      "request": {
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "token_expired",
+            "message": "The token expired at 2026-10-01T00:00:00Z.",
+            "hint": "Create a new token."
+          }
+        }
+      }
+    },
+    {
+      "name": "error token_revoked",
+      "operationId": "getMe",
+      "request": {
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "token_revoked",
+            "message": "The token was revoked.",
+            "hint": "Create a new token."
+          }
+        }
+      }
+    },
+    {
+      "name": "error stale_session",
+      "operationId": "createToken",
+      "request": {
+        "body": {
+          "name": "ci",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "http_client"
+          ],
+          "expires_in_days": 90
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "stale_session",
+            "message": "This action needs a login from the last 15 minutes.",
+            "hint": "Run 'mopm login' again."
+          }
+        }
+      }
+    },
+    {
+      "name": "error oidc_token_invalid",
+      "operationId": "exchangeOidcToken",
+      "request": {
+        "body": {
+          "jwt": "eyJhbGciOiJSUzI1NiJ9.e30.c2ln",
+          "name": "http_client",
+          "version": "0.4.0"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "oidc_token_invalid",
+            "message": "The CI identity token was rejected: audience does not match.",
+            "hint": "Check the audience and that the job has permission to request an identity token."
+          }
+        }
+      }
+    },
+    {
+      "name": "error scope_missing",
+      "operationId": "setYanked",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.4.0"
+        },
+        "body": {
+          "yanked": false
+        },
+        "auth": "yankToken"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "scope_missing",
+            "message": "The token does not have the 'yank' scope for 'http_client'.",
+            "hint": "Create a token with that scope and that package."
+          }
+        }
+      }
+    },
+    {
+      "name": "error not_owner",
+      "operationId": "inviteOwner",
+      "request": {
+        "path": {
+          "name": "http_client"
+        },
+        "body": {
+          "handle": "hubot"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "not_owner",
+            "message": "You are not an owner of 'http_client'.",
+            "hint": "Ask an owner to invite you."
+          }
+        }
+      }
+    },
+    {
+      "name": "error name_reserved",
+      "operationId": "claimPackage",
+      "request": {
+        "path": {
+          "name": "mopm"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "name_reserved",
+            "message": "'mopm' is reserved.",
+            "hint": "Choose another name."
+          }
+        }
+      }
+    },
+    {
+      "name": "error oidc_not_trusted",
+      "operationId": "exchangeOidcToken",
+      "request": {
+        "body": {
+          "jwt": "eyJhbGciOiJSUzI1NiJ9.e30.c2ln",
+          "name": "http_client",
+          "version": "0.4.0"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "oidc_not_trusted",
+            "message": "No trusted publisher of 'http_client' matches this CI identity.",
+            "hint": "Register the repository, workflow and environment as a trusted publisher of the package."
+          }
+        }
+      }
+    },
+    {
+      "name": "error package_not_found",
+      "operationId": "getPackage",
+      "request": {
+        "path": {
+          "name": "nosuch"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "package_not_found",
+            "message": "There is no package 'nosuch'.",
+            "hint": "Check the spelling, or claim the name."
+          }
+        }
+      }
+    },
+    {
+      "name": "error version_not_found",
+      "operationId": "getVersion",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "9.9.9"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "version_not_found",
+            "message": "'http_client' has no version '9.9.9'.",
+            "hint": "List the versions with 'mopm info http_client'."
+          }
+        }
+      }
+    },
+    {
+      "name": "error user_not_found",
+      "operationId": "inviteOwner",
+      "request": {
+        "path": {
+          "name": "http_client"
+        },
+        "body": {
+          "handle": "ghost"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "user_not_found",
+            "message": "No GitHub account 'ghost'.",
+            "hint": "Check the handle."
+          }
+        }
+      }
+    },
+    {
+      "name": "error invitation_not_found",
+      "operationId": "acceptInvitation",
+      "request": {
+        "path": {
+          "invitation_id": "inv-none"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invitation_not_found",
+            "message": "There is no such invitation for you.",
+            "hint": "List yours with 'mopm invitations list'."
+          }
+        }
+      }
+    },
+    {
+      "name": "error device_code_unknown",
+      "operationId": "pollDeviceLogin",
+      "request": {
+        "body": {
+          "device_code": "d3v1c3-c0d3-5a1f-9b2e-0123456789ab"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "device_code_unknown",
+            "message": "The device code is not recognised.",
+            "hint": "Start the login again."
+          }
+        }
+      }
+    },
+    {
+      "name": "error token_not_found",
+      "operationId": "revokeToken",
+      "request": {
+        "path": {
+          "token_id": "tok-none"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "token_not_found",
+            "message": "There is no such token.",
+            "hint": "List yours with 'mopm token list'."
+          }
+        }
+      }
+    },
+    {
+      "name": "error owner_not_found",
+      "operationId": "removeOwner",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "github_id": 1
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "owner_not_found",
+            "message": "That account is not an owner of 'http_client'.",
+            "hint": "List owners with 'mopm owners list'."
+          }
+        }
+      }
+    },
+    {
+      "name": "error publish_not_found",
+      "operationId": "getPublishStatus",
+      "request": {
+        "path": {
+          "publish_id": "pub-none"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "publish_not_found",
+            "message": "There is no such publish.",
+            "hint": "Publish ids are only valid for the caller who made them."
+          }
+        }
+      }
+    },
+    {
+      "name": "error name_taken",
+      "operationId": "claimPackage",
+      "request": {
+        "path": {
+          "name": "http_client"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "name_taken",
+            "message": "'http_client' is already taken.",
+            "hint": "Choose another name."
+          }
+        }
+      }
+    },
+    {
+      "name": "error name_too_similar",
+      "operationId": "claimPackage",
+      "request": {
+        "path": {
+          "name": "http_clients"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "name_too_similar",
+            "message": "'http_clients' is too similar to 'http_client'.",
+            "hint": "Choose another name, or claim again with confirm_similar if you are sure."
+          }
+        }
+      }
+    },
+    {
+      "name": "error version_exists",
+      "operationId": "commitPublish",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.4.0"
+        },
+        "body": {
+          "upload_ids": [
+            "upl-42ab"
+          ],
+          "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "version_exists",
+            "message": "'http_client' 0.4.0 already exists (sha256 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08); versions are immutable.",
+            "hint": "Publish a new version."
+          }
+        }
+      }
+    },
+    {
+      "name": "error already_owner",
+      "operationId": "inviteOwner",
+      "request": {
+        "path": {
+          "name": "http_client"
+        },
+        "body": {
+          "handle": "octocat"
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "already_owner",
+            "message": "'octocat' already owns 'http_client'.",
+            "hint": ""
+          }
+        }
+      }
+    },
+    {
+      "name": "error last_owner",
+      "operationId": "removeOwner",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "github_id": 583231
+        },
+        "auth": "freshSession"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "last_owner",
+            "message": "'octocat' is the last owner of 'http_client'.",
+            "hint": "Add another owner first."
+          }
+        }
+      }
+    },
+    {
+      "name": "error upload_used",
+      "operationId": "commitPublish",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.4.0"
+        },
+        "body": {
+          "upload_ids": [
+            "upl-42ab"
+          ],
+          "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "upload_used",
+            "message": "The upload 'upl-42ab' was already used.",
+            "hint": "Begin a new upload."
+          }
+        }
+      }
+    },
+    {
+      "name": "error invitation_expired",
+      "operationId": "acceptInvitation",
+      "request": {
+        "path": {
+          "invitation_id": "inv-old"
+        },
+        "auth": "userToken"
+      },
+      "response": {
+        "status": 410,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "invitation_expired",
+            "message": "The invitation expired.",
+            "hint": "Ask the owner to invite you again."
+          }
+        }
+      }
+    },
+    {
+      "name": "error payload_too_large",
+      "operationId": "beginUpload",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.4.0"
+        },
+        "body": {
+          "subdir": "linux-64",
+          "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+          "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "size": 60000000
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 413,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "payload_too_large",
+            "message": "The file is larger than the limit of 52428800 bytes.",
+            "hint": "Reduce the package size."
+          }
+        }
+      },
+      "malformed_request": true
+    },
+    {
+      "name": "error rate_limited",
+      "operationId": "searchPackages",
+      "request": {
+        "query": {
+          "q": "http"
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4",
+          "retry-after": "30"
+        },
+        "body": {
+          "error": {
+            "code": "rate_limited",
+            "message": "Too many requests.",
+            "hint": "Wait 30 seconds; the Retry-After header says how long."
+          }
+        }
+      }
+    },
+    {
+      "name": "error internal_error",
+      "operationId": "getPackage",
+      "request": {
+        "path": {
+          "name": "http_client"
+        }
+      },
+      "response": {
+        "status": 500,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "internal_error",
+            "message": "Something went wrong on our side.",
+            "hint": "Try again; report the request id if it persists."
+          }
+        }
+      }
+    },
+    {
+      "name": "error read_only_mode",
+      "operationId": "beginUpload",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.4.0"
+        },
+        "body": {
+          "subdir": "linux-64",
+          "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+          "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "size": 123456
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4",
+          "retry-after": "600"
+        },
+        "body": {
+          "error": {
+            "code": "read_only_mode",
+            "message": "The registry is read-only right now; new uploads are refused.",
+            "hint": "Installs still work. Try again later."
+          }
+        }
+      }
+    },
+    {
+      "name": "error unavailable",
+      "operationId": "searchPackages",
+      "request": {},
+      "response": {
+        "status": 503,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "unavailable",
+            "message": "The registry is temporarily unavailable.",
+            "hint": "Try again shortly."
+          }
+        }
+      }
+    },
+    {
+      "name": "catalogued with the wrong status",
+      "operationId": "getPackage",
+      "request": {
+        "path": {
+          "name": "nosuch"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "package_not_found",
+            "message": "There is no package 'nosuch'.",
+            "hint": "Check the spelling, or claim the name."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a code that is not in the catalogue",
+      "operationId": "getPackage",
+      "request": {
+        "path": {
+          "name": "nosuch"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "gone_fishing",
+            "message": "There is no package 'nosuch'.",
+            "hint": "Check the spelling, or claim the name."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "message that does not follow the template",
+      "operationId": "getPackage",
+      "request": {
+        "path": {
+          "name": "nosuch"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "package_not_found",
+            "message": "no such thing",
+            "hint": "Check the spelling, or claim the name."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "rate_limited without Retry-After",
+      "operationId": "searchPackages",
+      "request": {},
+      "response": {
+        "status": 429,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "rate_limited",
+            "message": "Too many requests.",
+            "hint": "Wait 30 seconds; the Retry-After header says how long."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "error without a hint",
+      "operationId": "getPackage",
+      "request": {
+        "path": {
+          "name": "nosuch"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "error": {
+            "code": "package_not_found",
+            "message": "There is no package 'nosuch'."
+          }
+        }
+      },
+      "expect": "invalid"
+    }
+  ]
+}
