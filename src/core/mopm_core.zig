@@ -2,7 +2,8 @@
 //! versions, new-package scaffolding, the native link planner, environment
 //! discovery, the stock `mojo` command lines, and `mopm test`: discovery,
 //! harness generation, the process supervisor, the reports and the filters, and
-//! version resolution over the sparse index into mopm.lock.
+//! version resolution over the sparse index into mopm.lock, and installing a
+//! lock into the project's pixi environment.
 
 pub const metadata = @import("metadata.zig");
 pub const link_planner = @import("link_planner.zig");
@@ -24,6 +25,7 @@ pub const credentials = @import("credentials.zig");
 pub const resolve = @import("resolve.zig");
 pub const lock = @import("lock.zig");
 pub const install_plan = @import("install_plan.zig");
+pub const install = @import("install.zig");
 
 test {
     _ = @import("metadata.zig");
@@ -46,4 +48,5 @@ test {
     _ = @import("resolve.zig");
     _ = @import("lock.zig");
     _ = @import("install_plan.zig");
+    _ = @import("install.zig");
 }
