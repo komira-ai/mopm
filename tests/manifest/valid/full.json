@@ -19,7 +19,7 @@
     {"name": "mopm_test", "version": "0.1"}
   ],
   "native-dependencies": [
-    {"name": "zlib", "version": ">=1.2", "kind": "shared"}
+    {"name": "zlib", "version": ">=1.2", "kind": "shared", "mode": "link"}
   ],
   "native": [
     {"id": "curl_shim", "kind": "shared", "mode": "link", "build": "cmake -S native -B out && cmake --build out", "outputs": ["out/libcurl_shim.so.1"]}

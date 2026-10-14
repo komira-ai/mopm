@@ -35,6 +35,9 @@ pub const NativeDep = struct {
     name: []const u8,
     version: ?[]const u8 = null,
     kind: ?NativeDepKind = null,
+    /// `link`: mopm computes the linker flags. `load`: the package loads the
+    /// library itself at run time.
+    mode: metadata.Mode = .link,
 };
 
 /// `[native.<id>]`: a native library the package builds and ships.
@@ -266,12 +269,17 @@ const Checker = struct {
                 .string => |s| dep.version = s,
                 .table => |sub| {
                     const in = try std.fmt.allocPrint(c.arena, "native dependency '{s}'", .{e.key});
-                    try c.onlyKeys(sub, in, &.{ "version", "kind" });
+                    try c.onlyKeys(sub, in, &.{ "version", "kind", "mode" });
                     dep.version = try c.optStr(sub, "version", in);
                     if (sub.get("kind")) |k| {
                         const kind = try c.str(k, in);
                         dep.kind = std.meta.stringToEnum(NativeDepKind, kind) orelse
                             return c.fail(k.pos, "'kind' of native dependency '{s}' must be \"shared\" or \"static\", not \"{s}\"", .{ e.key, kind });
+                    }
+                    if (sub.get("mode")) |k| {
+                        const mode = try c.str(k, in);
+                        dep.mode = std.meta.stringToEnum(metadata.Mode, mode) orelse
+                            return c.fail(k.pos, "'mode' of native dependency '{s}' must be \"link\" or \"load\", not \"{s}\"", .{ e.key, mode });
                     }
                 },
                 else => return c.fail(e.pos, "native dependency '{s}' must be a version string or a table, not {s}", .{ e.key, e.value.typeName() }),
@@ -463,6 +471,8 @@ fn writeNativeDep(w: anytype, d: NativeDep) !void {
     try jsonOpt(w, d.version);
     try w.writeAll(", \"kind\": ");
     try jsonOpt(w, if (d.kind) |k| @tagName(k) else null);
+    try w.writeAll(", \"mode\": ");
+    try jsonStr(w, @tagName(d.mode));
     try w.writeAll("}");
 }
 

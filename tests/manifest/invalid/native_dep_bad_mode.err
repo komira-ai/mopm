@@ -1,0 +1,1 @@
+6:10: 'mode' of native dependency 'zlib' must be "link" or "load", not "dlopen"

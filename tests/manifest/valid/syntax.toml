@@ -15,7 +15,7 @@ local = {path='../local'}
 
 [native-dependencies]
 "libpng" = "1.6"
-openssl = { kind = "static" }
+openssl = { kind = "static", mode = "load" }
 
 [native.both_kinds]
 kind = "both"
