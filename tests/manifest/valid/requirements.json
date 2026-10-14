@@ -1,0 +1,33 @@
+{
+  "package": {
+    "name": "reqs",
+    "version": "0.1.0",
+    "description": null,
+    "license": null,
+    "repository": null,
+    "readme": null
+  },
+  "toolchain": {
+    "mojo": []
+  },
+  "dependencies": [
+    {"name": "caret", "version": "1.2"},
+    {"name": "explicit_caret", "version": "^0.4.1"},
+    {"name": "tilde", "version": "~1.2"},
+    {"name": "exact", "version": "=0.0.3"},
+    {"name": "ranged", "version": ">=1.2, <1.5"},
+    {"name": "anything", "version": "*"},
+    {"name": "wild", "version": "1.*"},
+    {"name": "pre", "version": ">=2.0.0-rc.1"}
+  ],
+  "dev-dependencies": [
+    {"name": "spaced", "version": " >= 1 , < 2 "}
+  ],
+  "native-dependencies": [],
+  "native": [],
+  "targets": {
+    "lib": null,
+    "bins": [],
+    "tests": []
+  }
+}
