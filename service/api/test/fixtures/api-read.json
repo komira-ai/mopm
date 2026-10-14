@@ -1,0 +1,97 @@
+{
+  "cases": [
+    {
+      "name": "versions are newest first by conda ordering",
+      "operationId": "listVersions",
+      "request": { "path": { "name": "ordering_demo" } },
+      "response": {
+        "status": 200,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "versions": [
+            { "version": "2.0", "state": "published", "published_at": "2026-10-10T00:00:00Z" },
+            { "version": "2.0rc1", "state": "published", "published_at": "2026-10-09T00:00:00Z" },
+            { "version": "1.10.0", "state": "yanked", "published_at": "2026-10-08T00:00:00Z", "yank_reason": "broken wheel" },
+            { "version": "1.9", "state": "tombstoned", "published_at": "2026-10-07T00:00:00Z" },
+            { "version": "1.2", "state": "published", "published_at": "2026-10-06T00:00:00Z" }
+          ],
+          "next_cursor": null
+        }
+      }
+    },
+    {
+      "name": "package info: latest skips yanked and pre-releases, tombstone shown as such",
+      "operationId": "getPackage",
+      "request": { "path": { "name": "ordering_demo" } },
+      "response": {
+        "status": 200,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "name": "ordering_demo",
+          "state": "active",
+          "owners": [{ "github_id": 583231, "handle": "octocat" }],
+          "latest": "2.0",
+          "repository": null,
+          "license": null,
+          "description": null,
+          "created_at": "2026-10-01T09:00:00Z",
+          "versions": [
+            { "version": "2.0", "state": "published", "published_at": "2026-10-10T00:00:00Z" },
+            { "version": "2.0rc1", "state": "published", "published_at": "2026-10-09T00:00:00Z" },
+            { "version": "1.10.0", "state": "yanked", "published_at": "2026-10-08T00:00:00Z", "yank_reason": "broken wheel" },
+            { "version": "1.9", "state": "tombstoned", "published_at": "2026-10-07T00:00:00Z" },
+            { "version": "1.2", "state": "published", "published_at": "2026-10-06T00:00:00Z" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "versions of a package that does not exist",
+      "operationId": "listVersions",
+      "request": { "path": { "name": "nosuch" } },
+      "response": {
+        "status": 404,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "package_not_found",
+            "message": "There is no package 'nosuch'.",
+            "hint": "Check the spelling, or claim the name."
+          }
+        }
+      }
+    },
+    {
+      "name": "search by prefix is normalised and ordered by name",
+      "operationId": "searchPackages",
+      "request": { "query": { "q": "Http-", "limit": 2 } },
+      "response": {
+        "status": 200,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "packages": [
+            { "name": "http_client", "latest": null, "description": null, "updated_at": "2026-10-01T09:00:00Z" },
+            { "name": "http_core", "latest": null, "description": null, "updated_at": "2026-10-02T09:00:00Z" }
+          ],
+          "next_cursor": "opaque"
+        }
+      }
+    },
+    {
+      "name": "a limit above 100 is refused",
+      "operationId": "searchPackages",
+      "request": { "query": { "limit": 101 } },
+      "response": {
+        "status": 400,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "invalid_request",
+            "message": "The request is not valid: limit must be an integer from 1 to 100.",
+            "hint": "Check the request against the API documentation; update mopm if it is old."
+          }
+        }
+      }
+    }
+  ]
+}

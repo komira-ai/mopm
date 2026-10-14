@@ -2,10 +2,11 @@
   "name": "mopm-registry-api",
   "version": "0.0.0",
   "private": true,
-  "description": "Registry core: version rules, store port (memory and DynamoDB adapters), deterministic conda index writer",
+  "description": "Registry core and the read API Lambda: version rules, store port (memory and DynamoDB adapters), deterministic conda index writer, HTTP router",
   "scripts": {
     "test": "jest --ci",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "3.723.0",

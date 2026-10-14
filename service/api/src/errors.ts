@@ -1,6 +1,7 @@
 /** The subset of the API's stable error codes (spec/api/openapi.yaml, x-mopm-errors) this package raises. */
 export type ErrorCode =
   | 'invalid_request'
+  | 'invalid_name'
   | 'invalid_version'
   | 'version_exists'
   | 'version_not_found'
@@ -9,10 +10,12 @@ export type ErrorCode =
   | 'name_taken'
   | 'owner_not_found'
   | 'already_owner'
-  | 'internal_error';
+  | 'internal_error'
+  | 'unavailable';
 
 export const HTTP_STATUS: Record<ErrorCode, number> = {
   invalid_request: 400,
+  invalid_name: 400,
   invalid_version: 400,
   version_exists: 409,
   version_not_found: 404,
@@ -22,6 +25,7 @@ export const HTTP_STATUS: Record<ErrorCode, number> = {
   owner_not_found: 404,
   already_owner: 409,
   internal_error: 500,
+  unavailable: 503,
 };
 
 export class RegistryError extends Error {

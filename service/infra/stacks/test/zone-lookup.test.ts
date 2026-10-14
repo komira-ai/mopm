@@ -1,7 +1,7 @@
 import { App } from 'aws-cdk-lib';
 import { createStageStacks } from '../lib/app';
 import { STAGES, stageConfig } from '../lib/config';
-import { DUMMY_ACCOUNT } from './util';
+import { DUMMY_ACCOUNT, HANDLER_STUB_DIR } from './util';
 
 const EXPECTED_ZONE = { beta: 'beta.mopm.dev', gamma: 'gamma.mopm.dev', prod: 'mopm.dev' } as const;
 
@@ -9,7 +9,7 @@ const EXPECTED_ZONE = { beta: 'beta.mopm.dev', gamma: 'gamma.mopm.dev', prod: 'm
 // dummy id and skips the lookup, so this one synthesizes the stacks WITHOUT it and checks the lookup is requested.
 describe.each(STAGES)('hosted zone lookup %s', (stage) => {
   const app = new App();
-  createStageStacks(app, stageConfig(stage), { account: DUMMY_ACCOUNT, region: 'us-east-1' }, '1.2.3');
+  createStageStacks(app, stageConfig(stage), { account: DUMMY_ACCOUNT, region: 'us-east-1' }, '1.2.3', 'dev', HANDLER_STUB_DIR);
   const missing = app.synth().manifest.missing ?? [];
 
   test('requests a hosted-zone lookup for the own zone of the stage in the stage account and region', () => {
@@ -40,7 +40,7 @@ describe.each(STAGES)('hostnames are inside the looked-up zone %s', (stage) => {
 
   test('every ACM certificate and record name in the synthesized stacks is inside the zone', () => {
     const app = new App();
-    createStageStacks(app, stageConfig(stage, 'Z0DUMMYZONE'), { account: DUMMY_ACCOUNT, region: 'us-east-1' }, '1.2.3');
+    createStageStacks(app, stageConfig(stage, 'Z0DUMMYZONE'), { account: DUMMY_ACCOUNT, region: 'us-east-1' }, '1.2.3', 'dev', HANDLER_STUB_DIR);
     const names: string[] = [];
     for (const art of app.synth().artifacts) {
       const t = (art as unknown as { template?: { Resources?: Record<string, { Type: string; Properties: Record<string, unknown> }> } }).template;
