@@ -79,7 +79,8 @@ describe.each(c.STAGES)('stage %s', (stage) => {
     expect(art.cloudFormationExecutionRoleArn).toBeUndefined();
     expect(art.requiresBootstrapStackVersion).toBeUndefined();
     expect(art.bootstrapStackVersionSsmParameter).toBeUndefined();
-    expect(JSON.stringify(art.manifest)).not.toContain('cdk-hnb659fds');
+    // the assets bucket name may appear (the CLI uploads with the admin's credentials); no bootstrap ROLE may
+    expect(JSON.stringify(art.manifest)).not.toMatch(/cdk-hnb659fds-[a-z-]*role/);
   });
 
   test.each([
