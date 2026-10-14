@@ -67,7 +67,7 @@ pub fn load(arena: Allocator, dir_path: []const u8, api_url: []const u8) !?Entry
         .string => |s| s,
         else => return null,
     };
-    const handle = switch (e.get("handle") orelse .{ .string = "" }) {
+    const handle = switch (e.get("handle") orelse std.json.Value{ .string = "" }) {
         .string => |s| s,
         else => "",
     };
