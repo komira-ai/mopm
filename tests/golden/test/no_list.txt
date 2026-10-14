@@ -1,0 +1,3 @@
+mopm test: running tests is not implemented yet; --list prints the tests
+
+usage: mopm test --list [--check [--strict-discovery] [--prefix <dir>]] [<path>...]

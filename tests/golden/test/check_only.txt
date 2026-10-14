@@ -1,0 +1,3 @@
+mopm test: --strict-discovery and --prefix apply only with --check
+
+usage: mopm test --list [--check [--strict-discovery] [--prefix <dir>]] [<path>...]

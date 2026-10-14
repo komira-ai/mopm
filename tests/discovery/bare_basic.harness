@@ -1,0 +1,11 @@
+
+# ---- appended by mopm test: the lines above are the test file, unchanged ----
+from std.testing import TestSuite as _mopm_TestSuite
+
+
+def main() raises:
+    var suite = _mopm_TestSuite()
+    suite.test[test_double]()
+    suite.test[test_double_zero]()
+    suite.test[test_last]()
+    suite^.run()

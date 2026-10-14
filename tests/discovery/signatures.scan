@@ -1,0 +1,9 @@
+kind bare
+test 5 test_decorated
+test 11 test_two_decorators
+test 20 test_decorator_with_arguments
+test 24 test_multi_line_signature
+test 29 test_returns_none
+test 35 test_continued
+test 40 test_one_line
+test 43 test_dict_in_body
