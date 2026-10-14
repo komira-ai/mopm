@@ -2,7 +2,7 @@
 // site stack is tested against too; and the path builders encode every segment.
 import vectors from './fixtures/routes.json';
 import {
-  isName, isVersion, normaliseName, packagePath, parseRoute, searchPath, VERSION_MAX, versionPath,
+  isCanonicalName, isName, isVersion, normaliseName, packagePath, parseRoute, searchPath, VERSION_MAX, versionPath,
 } from '../src/routes';
 
 type Vector = { path: string; edge: string; view: ReturnType<typeof parseRoute> };
@@ -39,7 +39,11 @@ test('a one-segment package path that passes through has no valid normalised for
 
 test('the vectors cover the edge cases the plan names', () => {
   const paths = V.map((v) => v.path);
-  for (const p of ['/packages/Foo', '/packages/a', '/packages/ab/v1', '/packages/ab/1.0/extra', '/docs/../x']) {
+  const named = [
+    '/packages/Foo', '/packages/foo__bar', '/packages/foo__bar/1.0', '/packages/a', '/packages/ab/v1',
+    '/packages/ab/1.0/extra', '/docs/../x',
+  ];
+  for (const p of named) {
     expect(paths).toContain(p);
   }
   expect(paths.some((p) => p.includes('%2F'))).toBe(true);
@@ -57,6 +61,11 @@ test('names and versions', () => {
   expect(isVersion('1.0rc1')).toBe(true);
   expect(isVersion('1.0.0-beta.1')).toBe(false);
   expect(normaliseName('HTTP--Client.v2')).toBe('http_client_v2');
+  expect(normaliseName('foo__bar')).toBe('foo_bar');
+  expect(isCanonicalName('foo_bar')).toBe(true);
+  expect(isCanonicalName('foo__bar')).toBe(false);
+  expect(isCanonicalName('Foo')).toBe(false);
+  expect(isCanonicalName('a')).toBe(false);
 });
 
 test('path builders encode every segment', () => {

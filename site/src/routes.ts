@@ -23,6 +23,14 @@ export function normaliseName(s: string): string {
   return s.toLowerCase().replace(/[-._]+/g, '_');
 }
 
+/**
+ * A name as the registry spells it in paths: valid and already normalised. `foo__bar` passes NAME but is not
+ * normalised (the API answers it with invalid_name), so it is not a package route; the edge redirects it to `foo_bar`.
+ */
+export function isCanonicalName(s: string): boolean {
+  return isName(s) && normaliseName(s) === s;
+}
+
 export type Route =
   | { kind: 'search' }
   | { kind: 'package'; name: string }
@@ -34,8 +42,8 @@ export function parseRoute(path: string): Route | null {
   const parts = path.split('/');
   // parts[0] is the empty string before the leading '/'.
   if (parts[0] !== '' || parts[1] !== 'packages') return null;
-  if (parts.length === 3 && isName(parts[2])) return { kind: 'package', name: parts[2] };
-  if (parts.length === 4 && isName(parts[2]) && isVersion(parts[3])) {
+  if (parts.length === 3 && isCanonicalName(parts[2])) return { kind: 'package', name: parts[2] };
+  if (parts.length === 4 && isCanonicalName(parts[2]) && isVersion(parts[3])) {
     return { kind: 'version', name: parts[2], version: parts[3] };
   }
   return null;

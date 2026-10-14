@@ -83,6 +83,11 @@
       "view": null
     },
     {
+      "path": "/packages/foo__bar",
+      "edge": "redirect:/packages/foo_bar",
+      "view": null
+    },
+    {
       "path": "/packages/_ab",
       "edge": "pass",
       "view": null
@@ -208,6 +213,11 @@
     },
     {
       "path": "/packages/Foo/1.0",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/foo__bar/1.0",
       "edge": "pass",
       "view": null
     },
