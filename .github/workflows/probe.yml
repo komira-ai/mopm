@@ -1,0 +1,45 @@
+name: probe
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  repl:
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: env
+        run: |
+          echo "$(tools/install_pixi.sh "$RUNNER_TEMP/pixi")" >> "$GITHUB_PATH"
+      - name: mojo env
+        run: |
+          mkdir -p "$RUNNER_TEMP/mojo-env"
+          cp tests/e2e/pixi.toml "$RUNNER_TEMP/mojo-env/pixi.toml"
+          pixi install --manifest-path "$RUNNER_TEMP/mojo-env/pixi.toml"
+      - name: diagnose
+        run: |
+          e="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
+          export MODULAR_HOME="$e/share/max"
+          sw_vers || true
+          DevToolsSecurity -status || true
+          ls -la "$e/bin" | grep -i 'lldb\|debugserver\|mojo' || true
+          ls -la "$e/lib" | grep -i 'lldb\|repl\|Mojo' || true
+          grep -i 'lldb\|repl' "$MODULAR_HOME/modular.cfg" | sed "s|$e|<E>|g" || true
+          codesign -dv --verbose=2 "$e/bin/debugserver" 2>&1 | head -12 || true
+          echo "--- plain repl"
+          printf 'print(1 + 1)\n\n' | "$e/bin/mojo" repl 2>&1 | tail -20 || true
+          echo "--- repl with lldb log"
+          printf 'print(1 + 1)\n\n' | "$e/bin/mojo" repl -O "log enable -f $RUNNER_TEMP/lldb.log lldb default process platform host" 2>&1 | tail -20 || true
+          tail -80 "$RUNNER_TEMP/lldb.log" | sed "s|$e|<E>|g" || true
+          echo "--- mojo-lldb plugin list"
+          "$e/bin/mojo-lldb" --version || true
+          "$e/bin/mojo-lldb" -b -o "plugin load $e/lib/libMojoLLDB.dylib" -o "version" 2>&1 | tail -20 || true
+          echo "--- with sudo DevToolsSecurity -enable"
+          sudo DevToolsSecurity -enable || true
+          printf 'print(1 + 1)\n\n' | "$e/bin/mojo" repl 2>&1 | tail -20 || true
