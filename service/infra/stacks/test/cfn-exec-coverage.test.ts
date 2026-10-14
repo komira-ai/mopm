@@ -165,7 +165,7 @@ export const REQUIRED: Record<string, Needs> = {
   'AWS::CertificateManager::Certificate': (r, _id, c) => [
     ...each(
       ['acm:RequestCertificate', 'acm:DescribeCertificate', 'acm:DeleteCertificate', 'acm:AddTagsToCertificate', 'acm:ListTagsForCertificate'],
-      `arn:aws:acm:${REGION}:${c.account}:certificate/00000000-0000-0000-0000-000000000000`,
+      `arn:aws:acm:${REGION}:${c.account}:certificate/11111111-aaaa-bbbb-cccc-dddddddddddd`,
     ),
     ...((r.Properties.DomainValidationOptions ?? []) as Json[]).flatMap((o) =>
       route53Change(`_0123456789abcdef.${o.DomainName}.`, 'CNAME', typeof o.HostedZoneId === 'string' ? o.HostedZoneId : '<unresolved zone>'),
