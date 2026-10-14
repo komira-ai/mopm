@@ -33,15 +33,16 @@ jobs:
       # The same install deploy.yml runs; it fails if package-lock.json is missing or out of step with package.json.
       - name: Install (npm ci, as in deploy.yml)
         run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: npm run typecheck
-      - run: npm test
-      # The API stack deploys the handler bundle built from service/api (not committed); synth needs it.
+      # The API stack deploys the handler bundle built from service/api (not committed); the tests that synthesize with the
+      # real bundle (empty-channel) and the synth step below need it, so it is built first.
       - name: Build the API handler bundle (as in deploy.yml)
         working-directory: service/api
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npm run build
           test -f dist/http/lambda.js
+      - run: npm run typecheck
+      - run: npm test
       - name: Synth every stage with a dummy account and zone id
         env:
           CDK_DEFAULT_REGION: us-east-1

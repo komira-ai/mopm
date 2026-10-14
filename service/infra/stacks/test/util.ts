@@ -2,6 +2,8 @@ import * as path from 'path';
 import { App } from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
 import { StageStacks, createStageStacks } from '../lib/app';
+import * as fs from 'fs';
+import { DEFAULT_HANDLER_DIR } from '../lib/api-stack';
 import { Stage, stageConfig } from '../lib/config';
 
 // Dummy values: tests never see a real account or hosted zone. Built at runtime so no 12-digit literal appears
@@ -45,4 +47,17 @@ export function bucketStatements(t: Template): any[] {
 export function exemptRoles(stmt: any): string[] {
   const v = stmt.Condition.ArnNotLike['aws:PrincipalArn'];
   return (Array.isArray(v) ? v : [v]).map((a: string) => a.replace(/^.*role\/mopm-[a-z]+-/, '')).sort();
+}
+
+/**
+ * For tests that synthesize with the REAL handler bundle (no stub): fail up front, saying why, when it is not built.
+ * CI (service-ci.yml, stacks job) builds it before running the tests; locally run `npm ci && npm run build` in service/api.
+ */
+export function requireApiBundle(): void {
+  if (!fs.existsSync(path.join(DEFAULT_HANDLER_DIR, 'http/lambda.js'))) {
+    throw new Error(
+      `this test synthesizes with the real API handler bundle, which is not built at ${DEFAULT_HANDLER_DIR}; ` +
+        "run 'npm ci && npm run build' in service/api first (CI does this before the stacks tests)",
+    );
+  }
 }

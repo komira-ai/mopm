@@ -6,7 +6,7 @@ import { Template } from 'aws-cdk-lib/assertions';
 import { createStageStacks } from '../lib/app';
 import { STAGES, stageConfig } from '../lib/config';
 import { CHANNEL_SUBDIRS, assertEmptyRepodata, emptyRepodata, zstdRawFrame } from '../lib/empty-channel';
-import { DUMMY_ACCOUNT, DUMMY_ZONE_ID } from './util';
+import { DUMMY_ACCOUNT, DUMMY_ZONE_ID, requireApiBundle } from './util';
 
 const SEED_WARNING =
   'changing the channel seed re-runs the BucketDeployment and overwrites live repodata on every stage, including prod; ' +
@@ -58,6 +58,7 @@ describe('empty repodata shape', () => {
 
 describe.each(STAGES)('ChannelStack %s seeds empty repodata', (stage) => {
   const app = new App();
+  requireApiBundle();
   const stacks = createStageStacks(app, stageConfig(stage, DUMMY_ZONE_ID), { account: DUMMY_ACCOUNT, region: 'us-east-1' }, '1.2.3', 'c0ffee');
   const t = Template.fromStack(stacks.channel);
   const assembly = app.synth();
