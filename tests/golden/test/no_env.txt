@@ -1,0 +1,1 @@
+mopm test: environment /nowhere (from --prefix) does not exist

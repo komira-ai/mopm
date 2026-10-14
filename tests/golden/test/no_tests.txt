@@ -1,0 +1,1 @@
+mopm test: no tests found (--allow-empty accepts that)
