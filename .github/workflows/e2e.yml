@@ -1,8 +1,9 @@
 name: e2e
 
-# A separate file from deploy.yml on purpose: the e2e role trusts only this
-# workflow (job_workflow_ref in the OIDC sub), so it has far fewer permissions
-# than the deploy role even though both run in the same environment.
+# A separate file from deploy.yml on purpose: the e2e role trusts only this workflow
+# (job_workflow_ref in the OIDC sub), so it has far fewer permissions than the deploy
+# role even though both run in the same environment. Like deploy.yml it never runs
+# for a pull request.
 
 on:
   workflow_call:
@@ -28,8 +29,23 @@ permissions:
   contents: read
 
 jobs:
+  guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Refuse anything but main
+        env:
+          REF: ${{ github.ref }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "e2e runs only from refs/heads/main (this run: $REF)" >&2; exit 1
+          fi
+          case "$EVENT" in push|workflow_dispatch) ;; *) echo "e2e does not run for event $EVENT" >&2; exit 1 ;; esac
+
   smoke-linux:
-    # The job that can mint AWS credentials runs only from main, never from a PR or another branch.
+    needs: guard
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -37,25 +53,26 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    env:
-      STAGE: ${{ inputs.stage }}
-      ROLE_ARN: ${{ vars.E2E_ROLE_ARN }}
-      EXPECTED_SHA: ${{ inputs.sha || github.sha }}
-      AWS_REGION: ${{ vars.AWS_REGION }}
-      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - name: Validate inputs
+      - name: Validate stage
+        env:
+          STAGE: ${{ inputs.stage }}
         run: |
-          case "$STAGE" in beta|gamma|prod) ;; *) echo "bad stage" >&2; exit 1;; esac
-          for v in ROLE_ARN AWS_REGION; do
-            if [ -z "${!v}" ]; then echo "environment variable for $v is not set on environment $STAGE" >&2; exit 1; fi
-          done
+          case "$STAGE" in beta|gamma|prod) ;; *) echo "bad stage" >&2; exit 1 ;; esac
       - name: Assume the e2e role through OIDC
+        env:
+          STAGE: ${{ inputs.stage }}
+          ROLE_ARN: ${{ vars.E2E_ROLE_ARN }}
+          AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
         run: |
           set -euo pipefail
+          if [ -z "$ROLE_ARN" ] || [ -z "$AWS_DEFAULT_REGION" ]; then
+            echo "E2E_ROLE_ARN and AWS_REGION must be set on the $STAGE environment" >&2; exit 1
+          fi
+          echo "::add-mask::$ROLE_ARN"
           resp=$(curl -sSf -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
           jwt=$(printf '%s' "$resp" | jq -r .value)
@@ -75,6 +92,9 @@ jobs:
             echo "AWS_SESSION_TOKEN=$(printf '%s' "$creds" | jq -r .SessionToken)"
           } >> "$GITHUB_ENV"
       - name: Smoke test, GET /api/v1/health
+        env:
+          STAGE: ${{ inputs.stage }}
+          EXPECTED_SHA: ${{ inputs.sha || github.sha }}
         run: |
           set -euo pipefail
           domain=$(jq -r .apiDomain "service/config/${STAGE}.json")
@@ -86,21 +106,9 @@ jobs:
             echo "expected stage $STAGE, health reported $got" >&2
             exit 1
           fi
-          # The health endpoint must report the deployed commit (field "commit").
+          # The health endpoint reports the deployed commit; it must be the one this run promoted.
           gotsha=$(printf '%s' "$body" | jq -r '.commit // empty')
           if [ "$gotsha" != "$EXPECTED_SHA" ]; then
             echo "expected commit $EXPECTED_SHA, health reported '${gotsha}'" >&2
             exit 1
           fi
-
-  # macOS job is present but disabled: private-repo macOS minutes are billed at
-  # 10x the Linux rate. Enable by removing the `if: false` once the suite needs it.
-  smoke-macos:
-    if: false
-    runs-on: macos-14
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-      - run: echo "placeholder - macOS install and run subset"
