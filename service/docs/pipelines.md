@@ -10,6 +10,7 @@ design depends on.
 | `e2e.yml` | `workflow_call`, `workflow_dispatch` | Smoke/e2e against one stage, with the e2e role. Same ref rule. |
 | `promote.yml` | push to `main` touching `service/**`, `workflow_dispatch` | beta deploy, e2e, gamma deploy, e2e, prod deploy, prod smoke, all at one commit SHA. |
 | `service-ci.yml` | pull request, push to `main` | Typecheck, tests and synth of the stacks; typecheck, tests and `bootstrap.sh` checks of the access stack. Read-only, no id-token. |
+| `oidc-subject-check.yml` | `workflow_dispatch` | Step 0 of the bootstrap: prints the `sub`, `job_workflow_ref`, `environment` and `repository_id` claims, once without an environment and once in `beta`. No AWS, no secrets. The only other file allowed `id-token`. |
 | `hygiene.yml` | pull request, push to `main` | `hygiene`: secret, key, token and account-id scan, trigger and id-token rules. `workflows`: SHA pins, permissions, `run:` scripts, the promotion `needs:` chain. |
 
 Stage settings with no secrets and no account ids are in `service/config/<stage>.json`; a test
@@ -24,7 +25,9 @@ credentials are masked and live only in the job.
 Both `deploy.yml` and `e2e.yml` run with `environment: <stage>`, so the default OIDC `sub` claim
 is identical for them. To separate "may change infrastructure" from "may only run tests" the
 repository's subject template includes `job_workflow_ref`, so the `sub` becomes
-`repo:komira-ai/mopm:environment:<stage>:job_workflow_ref:komira-ai/mopm/.github/workflows/<file>@refs/heads/main`.
+`repo:komira-ai@305577347/mopm@1418104703:environment:<stage>:job_workflow_ref:komira-ai/mopm/.github/workflows/<file>@refs/heads/main`
+(the repository uses immutable subject claims, so the repo segment carries the owner and repo ids; see
+`service/infra/access/BOOTSTRAP.md`, step 0, which prints the real claims).
 For a reusable workflow `job_workflow_ref` names the called file, so `promote.yml` calling
 `deploy.yml` presents `deploy.yml`.
 

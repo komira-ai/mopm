@@ -35,11 +35,27 @@ function fingerprint(stage: Stage): Map<string, string> {
       const id = normalise(stage, logicalId) as string;
       const props = n.Properties ?? {};
       const entries: [string, unknown][] = [
-        ['DeletionPolicy', n.DeletionPolicy],
-        ['UpdateReplacePolicy', n.UpdateReplacePolicy],
+        ['present', r.Type],
+        ...Object.entries(n)
+          .filter(([k]) => k !== 'Properties' && k !== 'Type')
+          .map(([k, v]) => [k, v] as [string, unknown]), // DeletionPolicy, UpdateReplacePolicy, DependsOn, Metadata, Condition, ...
         ...Object.entries(props).map(([k, v]) => [`Properties.${k}`, v] as [string, unknown]),
       ];
       for (const [k, v] of entries) out.set(`${name}:${r.Type}:${id}:${k}`, JSON.stringify(v ?? null));
+    }
+    // Every other template section (Outputs, Parameters, Conditions, Mappings, Rules, Description, ...): a
+    // stage-dependent output or condition must not slip past a check that only looked at resources.
+    const whole = Template.fromStack(stack).toJSON() as Record<string, any>;
+    for (const [section, body] of Object.entries(whole)) {
+      if (section === 'Resources') continue;
+      const named = body && typeof body === 'object' && !Array.isArray(body) && section !== 'Metadata';
+      if (named) {
+        for (const [key, v] of Object.entries<any>(body)) {
+          out.set(`${name}:${section}:${normalise(stage, key) as string}:value`, JSON.stringify(normalise(stage, v)));
+        }
+      } else {
+        out.set(`${name}:${section}:-:value`, JSON.stringify(normalise(stage, body ?? null)));
+      }
     }
   }
   return out;

@@ -4,7 +4,31 @@ require "tmpdir"
 
 bad = 0
 fail_ = ->(msg) { warn "workflow-lint: #{msg}"; bad += 1 }
-oidc_files = %w[deploy.yml e2e.yml promote.yml]
+oidc_files = %w[deploy.yml e2e.yml promote.yml oidc-subject-check.yml]
+# Names whose values must never reach a log: no echo/printf/cat/tee of them.
+secret_names = %w[AWS_ACCOUNT_ID AWS_REGION ROLE_ARN AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN]
+secret_alt = "(?:" + secret_names.join("|") + ")"
+secret_ref = /\$(?:\{#{secret_alt}[^}]*\}|#{secret_alt}\b)/
+# Returns the offending logical lines of a run script. ::add-mask:: lines are the one allowed use.
+leaky_lines = lambda do |script|
+  out = []
+  heredoc_end = nil
+  script.gsub(/\\\n/, " ").each_line do |line|
+    if heredoc_end
+      heredoc_end = nil if line.strip == heredoc_end[:tag]
+      out << line.strip if heredoc_end && line =~ secret_ref
+      next
+    end
+    if line =~ /\b(?:cat|tee)\b.*<<-?\s*['"]?(\w+)['"]?/
+      heredoc_end = { tag: $1 }
+    end
+    next if line.include?("::add-mask::")
+    line.split(/;|&&|\|\||\|/).each do |seg|
+      out << seg.strip if seg =~ /\b(?:echo|printf|cat|tee)\b/ && seg =~ secret_ref
+    end
+  end
+  out
+end
 owned_actions = %w[checkout setup-node upload-artifact download-artifact]
 
 each_perm = lambda do |node, path, &blk|
@@ -60,6 +84,8 @@ Dir[".github/workflows/*.{yml,yaml}"].sort.each do |f|
         fail_.("#{f}: #{jn} step #{i}: only GitHub-owned actions pinned by full SHA are allowed: #{st['uses']}")
       end
       next unless st["run"]
+      leaky_lines.(st["run"]).each { |l| fail_.("#{f}: #{jn} step #{i}: prints a secret-bearing variable: #{l}") }
+      fail_.("#{f}: #{jn} step #{i}: run script references secrets.*") if st["run"] =~ /\bsecrets\.\w+/
       # Event fields and inputs reach scripts through env:, never by interpolation.
       fail_.("#{f}: #{jn} step #{i}: run script interpolates an expression; pass it through env:") if st["run"].include?("${{")
       Dir.mktmpdir do |d|
@@ -101,5 +127,17 @@ end
     fail_.("#{w}.yml: #{jn} must declare an environment") unless j["environment"]
   end
 end
+
+# oidc-subject-check.yml: manual, main only, no environment except beta, no AWS.
+sc = YAML.safe_load(File.read(".github/workflows/oidc-subject-check.yml"), aliases: false)
+scon = sc["on"] || sc[true]
+fail_.("oidc-subject-check.yml: only workflow_dispatch is allowed") unless scon.is_a?(Hash) && scon.keys == ["workflow_dispatch"]
+sc["jobs"].each do |jn, j|
+  next unless j.dig("permissions", "id-token") == "write"
+  fail_.("oidc-subject-check.yml: #{jn} must need the guard job") unless Array(j["needs"]).include?("guard")
+  fail_.("oidc-subject-check.yml: #{jn} must not use environment #{j['environment'].inspect}") unless j["environment"].nil? || j["environment"] == "beta"
+  fail_.("oidc-subject-check.yml: #{jn} must grant exactly id-token and contents read") unless j["permissions"] == { "id-token" => "write", "contents" => "read" }
+end
+fail_.("oidc-subject-check.yml: needs one job without an environment and one in beta") unless sc["jobs"].values.map { |j| j["environment"] }.compact.sort == ["beta"] && sc["jobs"].values.any? { |j| j.dig("permissions", "id-token") == "write" && j["environment"].nil? }
 
 exit(bad.zero? ? 0 : 1)

@@ -31,6 +31,8 @@ end
 
 # Workflow structure: which files may hold an id-token grant and how they may be triggered.
 oidc_files = %w[deploy.yml e2e.yml promote.yml]
+# The one other file allowed an id-token grant: it prints OIDC claims and holds no AWS access.
+subject_check = "oidc-subject-check.yml"
 find_key = lambda do |node, key|
   case node
   when Hash then node.any? { |k, v| k == key || find_key.(v, key) }
@@ -44,6 +46,17 @@ Dir[".github/workflows/*.{yml,yaml}"].sort.each do |f|
   on = doc["on"] || doc[true] || {}
   on = { on => nil } if on.is_a?(String)
   on = on.to_h { |k| [k, nil] } if on.is_a?(Array)
+  if base == subject_check
+    fail_.("#{f}: triggers must be exactly workflow_dispatch") unless on.keys == ["workflow_dispatch"]
+    fail_.("#{f}: must not use AWS or secrets") if File.readlines(f).reject { |l| l.strip.start_with?("#") }.join =~ /\bsecrets\.|\baws\s|AWS_|role-to-assume|configure-aws|aws-actions/i
+    (doc["jobs"] || {}).each do |jn, job|
+      next unless find_key.(job, "id-token")
+      env = job["environment"]
+      fail_.("#{f}: job #{jn}: environment must be absent or beta, not #{env.inspect}") unless env.nil? || env == "beta"
+      fail_.("#{f}: job #{jn} grants id-token but is not restricted to refs/heads/main") unless job["if"].to_s.include?("refs/heads/main")
+    end
+    next
+  end
   if find_key.(doc, "id-token") && !oidc_files.include?(base)
     fail_.("#{f}: an id-token permission is only allowed in #{oidc_files.join(', ')}")
   end

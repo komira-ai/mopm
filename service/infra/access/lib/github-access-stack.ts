@@ -7,6 +7,10 @@ export interface GithubAccessStackProps extends StackProps {
   readonly stage: c.Stage;
   /** owner/name of the repository the OIDC `sub` is bound to. Defaults to the one public repository. */
   readonly repo?: string;
+  /** Numeric id of the repository owner (immutable subject). Defaults to the public repository's. */
+  readonly ownerId?: string;
+  /** Numeric id of the repository (immutable subject). Defaults to the public repository's. */
+  readonly repoId?: string;
   /** Regions whose CDK bootstrap roles the deploy role may assume. */
   readonly regions: string[];
 }
@@ -29,6 +33,9 @@ export class GithubAccessStack extends Stack {
       throw new Error('env.account (12 digits) and env.region must be concrete, not tokens');
     }
     if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error(`bad repo '${repo}'`);
+    const ownerId = props.ownerId ?? c.GITHUB_OWNER_ID;
+    const repoId = props.repoId ?? c.GITHUB_REPO_ID;
+    if (!/^[1-9]\d*$/.test(ownerId) || !/^[1-9]\d*$/.test(repoId)) throw new Error('owner and repo ids must be numeric');
     if (regions.length === 0) throw new Error('regions must not be empty');
 
     const provider = new iam.OpenIdConnectProvider(this, 'GithubOidc', {
@@ -36,11 +43,13 @@ export class GithubAccessStack extends Stack {
       clientIds: [c.OIDC_AUDIENCE],
     });
 
-    // sub = repo:<repo>:environment:<stage>:job_workflow_ref:<repo>/<file>@<ref>
-    // This requires the repo's OIDC subject template to be
-    // ["repo","context","job_workflow_ref"] (see BOOTSTRAP.md).
+    // sub = repo:<owner>@<ownerId>/<name>@<repoId>:environment:<stage>:job_workflow_ref:<repo>/<file>@<ref>
+    // The repo segment is the immutable form (use_immutable_subject); GitHub documents job_workflow_ref
+    // with names, not ids. This requires the repo's OIDC subject template to be
+    // ["repo","context","job_workflow_ref"] (see BOOTSTRAP.md, step 0 confirms the exact string).
+    const prefix = c.immutableSubjectPrefix(repo, ownerId, repoId);
     const subFor = (workflowFile: string) =>
-      `repo:${repo}:environment:${stage}:job_workflow_ref:${repo}/${workflowFile}@${c.WORKFLOW_REF}`;
+      `${prefix}:environment:${stage}:job_workflow_ref:${repo}/${workflowFile}@${c.WORKFLOW_REF}`;
 
     const trust = (workflowFile: string) =>
       new iam.FederatedPrincipal(

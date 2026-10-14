@@ -32,6 +32,19 @@ export const OIDC_AUDIENCE = 'sts.amazonaws.com';
 
 /** The one repository whose workflows may assume the roles. Every trust condition is bound to it. */
 export const REPO = 'komira-ai/mopm';
+/**
+ * Immutable numeric ids of the owner and the repository (public, not secret). The repository's OIDC
+ * subject uses the immutable format (`use_immutable_subject`), whose repo segment is
+ * `repo:<owner>@<owner id>/<name>@<repo id>`; see BOOTSTRAP.md.
+ */
+export const GITHUB_OWNER_ID = '305577347';
+export const GITHUB_REPO_ID = '1418104703';
+
+/** `repo:<owner>@<ownerId>/<name>@<repoId>`: the sub prefix GitHub emits for an immutable-subject repository. */
+export function immutableSubjectPrefix(repo: string, ownerId: string, repoId: string): string {
+  const [owner, name] = repo.split('/');
+  return `repo:${owner}@${ownerId}/${name}@${repoId}`;
+}
 
 /** Workflow files (in REPO, on main) allowed to assume each role. */
 export const DEPLOY_WORKFLOW = '.github/workflows/deploy.yml';

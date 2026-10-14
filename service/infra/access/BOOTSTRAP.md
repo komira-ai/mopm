@@ -18,16 +18,34 @@ settings this design relies on, and the attack each closes, is `docs/security/pu
 
 ## Trust condition (documented format)
 
-GitHub documents the customised subject claim: with `include_claim_keys` set to
-`["repo","context","job_workflow_ref"]` the `sub` is
-`repo:<owner>/<repo>:environment:<environment>:job_workflow_ref:<owner>/<repo>/.github/workflows/<file>@<ref>`
-(GitHub docs, "OpenID Connect reference", customizing the subject claim; example
-`repo:octo-org/octo-repo:environment:prod:job_workflow_ref:octo-org/octo-automation/.github/workflows/oidc.yml@refs/heads/main`).
-This matches the string the stack uses, so no deviation. `context` expands to `environment:<name>` for
-jobs that use an environment. AWS documents the condition keys as `token.actions.githubusercontent.com:aud`
-and `token.actions.githubusercontent.com:sub` (IAM docs, "Create a role for OpenID Connect federation" and
-GitHub's "Configuring OpenID Connect in Amazon Web Services"). Both are `StringEquals`, no wildcards.
-The `job_workflow_ref` includes `@refs/heads/main`, so a branch other than `main` cannot assume the roles.
+This repository uses GitHub's immutable subject claims (`use_immutable_subject` true, `sub_claim_prefix`
+`repo:komira-ai@305577347/mopm@1418104703`, i.e. `repo:<owner>@<owner id>/<repo>@<repo id>`; the ids
+are public and live in `lib/contract.ts`). GitHub documents the immutable format as
+`repo:OWNER@OWNER-ID/REPO@REPO-ID:ref:refs/heads/BRANCH`, says the repo segment of a customised
+template always carries the ids ("You can't remove these IDs from the immutable format"), and says to
+update cloud trust policies to match (GitHub docs, "OpenID Connect reference",
+https://docs.github.com/en/actions/reference/security/oidc). With `include_claim_keys`
+`["repo","context","job_workflow_ref"]` the stack therefore trusts
+`repo:komira-ai@305577347/mopm@1418104703:environment:<stage>:job_workflow_ref:komira-ai/mopm/.github/workflows/<file>@refs/heads/main`.
+
+The docs give no complete example of this exact combination, and their `job_workflow_ref` examples
+use names, not ids. The stack keeps `job_workflow_ref` in its documented name form. That is an
+inference, so step 0 below prints the real claims before anything is bootstrapped; if the printed
+`sub` differs, change `subFor` in `lib/github-access-stack.ts` and its test to match, nothing else.
+AWS documents the condition keys as `token.actions.githubusercontent.com:aud` and `...:sub` (IAM
+docs, "Create a role for OpenID Connect federation"). Both are `StringEquals`, no wildcards. The
+`job_workflow_ref` includes `@refs/heads/main`, so a branch other than `main` cannot assume the roles.
+
+## Step 0: confirm the exact `sub` (before any bootstrap)
+
+Run the `oidc-subject-check` workflow on `main` (Actions tab, "Run workflow"). It holds no AWS access and
+uses no secrets or environment secrets. It has two jobs: `claims-no-environment` and
+`claims-environment-beta` (runs inside the `beta` environment, so the `environment:beta` form is shown).
+Each prints only the `sub`, `job_workflow_ref`, `environment` and `repository_id` claims, never the token.
+Compare the beta job's `sub` with
+`repo:komira-ai@305577347/mopm@1418104703:environment:beta:job_workflow_ref:komira-ai/mopm/.github/workflows/<file>@refs/heads/main`
+(the `job_workflow_ref` of this check is `oidc-subject-check.yml`; the deploy and e2e files differ only there).
+Stop and fix the stack if the prefix, the ids or the `job_workflow_ref` form differ.
 
 ## Steps per stage
 

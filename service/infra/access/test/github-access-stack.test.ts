@@ -8,12 +8,15 @@ import * as c from '../lib/contract';
 const ACCOUNT = '4'.repeat(12); // dummy id, built at runtime so no 12-digit literal is in the tree
 const REGION = 'us-west-2';
 const REPO = 'example-org/example-repo';
+const PREFIX = 'repo:example-org@111/example-repo@222'; // immutable form with dummy ids
 
 function synth(stage: c.Stage, regions = [REGION]): Template {
   const app = new App();
   const stack = new GithubAccessStack(app, `t-${stage}`, {
     stage,
     repo: REPO,
+    ownerId: '111',
+    repoId: '222',
     regions,
     env: { account: ACCOUNT, region: REGION },
   });
@@ -69,7 +72,7 @@ describe.each(c.STAGES)('stage %s', (stage) => {
     expect(s.Condition.StringEquals).toEqual({
       'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com',
       'token.actions.githubusercontent.com:sub':
-        `repo:${REPO}:environment:${stage}:job_workflow_ref:${REPO}/.github/workflows/${file}@refs/heads/main`,
+        `${PREFIX}:environment:${stage}:job_workflow_ref:${REPO}/.github/workflows/${file}@refs/heads/main`,
     });
     for (const v of Object.values<string>(s.Condition.StringEquals)) expect(v).not.toMatch(/[*?]/);
     // only the federated OIDC provider of this account may be the principal
@@ -195,9 +198,21 @@ test('trust is bound to komira-ai/mopm main by default', () => {
     .map((r: any) => r.Properties.AssumeRolePolicyDocument.Statement[0].Condition.StringEquals['token.actions.githubusercontent.com:sub'],
   );
   expect(subs.sort()).toEqual([
-    'repo:komira-ai/mopm:environment:beta:job_workflow_ref:komira-ai/mopm/.github/workflows/deploy.yml@refs/heads/main',
-    'repo:komira-ai/mopm:environment:beta:job_workflow_ref:komira-ai/mopm/.github/workflows/e2e.yml@refs/heads/main',
+    'repo:komira-ai@305577347/mopm@1418104703:environment:beta:job_workflow_ref:komira-ai/mopm/.github/workflows/deploy.yml@refs/heads/main',
+    'repo:komira-ai@305577347/mopm@1418104703:environment:beta:job_workflow_ref:komira-ai/mopm/.github/workflows/e2e.yml@refs/heads/main',
   ]);
+});
+
+test('the legacy name-only subject prefix is not trusted', () => {
+  const t = synth('beta');
+  expect(JSON.stringify(t.toJSON())).not.toContain(`repo:${REPO}:`);
+});
+
+test('ids must be numeric', () => {
+  const mk = (ownerId: string, repoId: string) => () =>
+    new GithubAccessStack(new App(), 'x', { stage: 'beta', repo: REPO, ownerId, repoId, regions: [REGION], env: { account: ACCOUNT, region: REGION } });
+  expect(mk('1*', '2')).toThrow(/numeric/);
+  expect(mk('1', '')).toThrow(/numeric/);
 });
 
 test('stage config is validated', () => {
