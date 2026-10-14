@@ -1,0 +1,1 @@
+{"info":{"subdir":"osx-arm64"},"packages":{},"packages.conda":{"mojo-http_core-1.2.0-mojo1.0.0_0.conda":{"build":"mojo1.0.0_0","build_number":0,"depends":["mojo-compiler ==1.0.0"],"name":"mojo-http_core","sha256":"9999999999999999999999999999999999999999999999999999999999999999","size":1001,"subdir":"osx-arm64","version":"1.2.0"}},"removed":[]}
