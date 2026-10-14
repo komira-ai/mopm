@@ -13,7 +13,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: komira-ai/komira/.github/actions/farm-connect@30f5cab9ef1cf1dbe8603580d721e6c040bbf86c
+      - uses: komira-ai/komira/.github/actions/farm-connect@4acb7348f39997a86dd80012f6f39ed221334b91
         with:
           farm-address: ${{ vars.FARM_ADDRESS }}
       - run: ./buck2 build //...

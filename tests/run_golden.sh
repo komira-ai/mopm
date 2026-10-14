@@ -1,4 +1,7 @@
 #!/bin/sh
+# SUPERSEDED for the Buck2 build by tests/drivers/golden_test.zig (the same checks
+# in Zig, for the build farm, which has no shell). This script stays for ci.yml
+# until farm.yml has matched it, and is deleted in a later change.
 # Run the built CLI against tests/golden.
 #   * `mopm link-plan` on each tests/fixtures/<case> set (tests/golden/<case>.txt).
 #   * `mopm build|run|repl --print-cmd` on each environment under

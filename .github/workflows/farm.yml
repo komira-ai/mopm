@@ -54,7 +54,7 @@ jobs:
       # at the time of writing.
       - name: connect to the farm
         if: ${{ vars.FARM_ADDRESS != '' }}
-        uses: komira-ai/komira/.github/actions/farm-connect@30f5cab9ef1cf1dbe8603580d721e6c040bbf86c
+        uses: komira-ai/komira/.github/actions/farm-connect@4acb7348f39997a86dd80012f6f39ed221334b91
         with:
           ts-client-id: ${{ vars.TS_CLIENT_ID }}
           ts-audience: ${{ vars.TS_AUDIENCE }}

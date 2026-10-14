@@ -44,7 +44,7 @@
   # the komira commit that holds the Zig rules this repository's BUCK files
   # use (zig_module deps, zig_test target/optimize, zig_exe optimize/strip,
   # script_test, python_dist) before this is merged.
-  commit_hash = 30f5cab9ef1cf1dbe8603580d721e6c040bbf86c
+  commit_hash = 4acb7348f39997a86dd80012f6f39ed221334b91
 
 [buildfile]
   name = BUCK

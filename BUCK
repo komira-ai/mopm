@@ -4,15 +4,15 @@
 # tests, and `:build_parity` fails if they stop doing so. See CONTRIBUTING.md,
 # "Building with Buck2".
 #
-# A test welded into a target gates it: `:mopm` is not built unless `:core_test`
-# and `:cli_test` passed, and `:mopm-fake-registry` not unless `:fake_test` did.
-#
-# Rule names and attributes are those of the komira commit .buckconfig pins.
-# ASSUMED (the commit that adds them is not merged when this is written):
-#   zig_module: deps; zig_test: optimize; script_test and its attributes
-#   (srcs, tools, cmd); python_dist (tests/registry_e2e/BUCK).
+# Every test is a Zig test: the build has no shell and no Python. A test welded
+# into a target gates it: `:mopm` is not built unless `:core_test` and
+# `:cli_test` passed, and `:mopm-fake-registry` not unless `:fake_test` did.
+# The drivers (`:golden`, `:registry_login`, `:registry_publish`) run the built
+# programs, so they cannot be welded into them; `buck2 build //...` builds
+# them. A call marked `buck-only` on its first line has no counterpart in
+# build.zig and is left out of the parity comparison.
 
-load("@komira//tools/build/mojo:toolchain.bzl", "script_test", "zig_exe", "zig_module", "zig_test")
+load("@komira//tools/build/mojo:toolchain.bzl", "zig_exe", "zig_module", "zig_test")
 load("@komira//tools/build/platforms:defs.bzl", "LINUX_X86_64")
 
 # What every Zig rule here takes: komira's pinned busybox and zig, on linux.
@@ -27,28 +27,34 @@ _CORE_SRCS = glob(["src/core/*.zig"], exclude = ["src/core/mopm_core.zig"])
 _CLI_SRCS = glob(["src/cli/*.zig"], exclude = ["src/cli/main.zig"])
 _FAKE_SRCS = glob(["registry/fake/*.zig"], exclude = ["registry/fake/main.zig"])
 
-# What the unit tests read at run time, relative to the repository root
-# (src/core/testroot.zig; they run with the root as the working directory).
-# A directory glob, so a new fixture is picked up without an edit here.
-_UNIT_FIXTURES = glob([
+# A Buck2 glob skips dotfiles: these are named.
+_DOTFILES = [
+    "tests/new/bin/.gitignore",
+    "tests/new/lib/.gitignore",
+]
+
+# What the unit tests read at run time, relative to the repository root, which
+# is the working directory of the action. Directory globs, so a new fixture is
+# picked up without an edit here.
+_UNIT_DATA = glob([
     "tests/contract/examples/**",
     "tests/discovery/**",
     "tests/fixtures/**",
+    "tests/golden/**",
+    "tests/manifest/**",
     "tests/new/**",
     "tests/resolve/golden/**",
-])
+]) + _DOTFILES
 
-# What tests/run_golden.sh reads. Also a directory glob: tests/golden,
-# tests/manifest, tests/discovery and tests/fixtures hold the cases, and a
-# case added to them (or a line to the script) is part of this target.
-_GOLDEN_SRCS = glob([
+# What the golden driver reads (tests/drivers/golden_test.zig).
+_GOLDEN_DATA = glob([
     "tests/discovery/**",
     "tests/e2e/flaky/**",
     "tests/fixtures/**",
     "tests/golden/**",
     "tests/manifest/**",
     "tests/new/**",
-]) + ["tests/run_golden.sh"]
+]) + _DOTFILES
 
 # ---- Library code and its unit tests ----------------------------------------
 
@@ -63,8 +69,10 @@ zig_module(
 zig_test(
     name = "core_test",
     src = "src/core/mopm_core.zig",
-    imports = _CORE_SRCS + _UNIT_FIXTURES,
-    optimize = "Debug",
+    imports = _CORE_SRCS + _UNIT_DATA,
+    # The child processes of the supervisor tests (src/core/test_proc.zig):
+    # the farm's image has no /bin/sh.
+    env_tools = {"MOPM_TEST_CHILD": ":proc-child"},
     **_TOOLS
 )
 
@@ -85,7 +93,6 @@ zig_test(
     src = "src/cli/main.zig",
     imports = _CLI_SRCS,
     deps = [":mopm_core"],
-    optimize = "Debug",
     **_TOOLS
 )
 
@@ -104,56 +111,71 @@ zig_test(
     name = "fake_test",
     src = "registry/fake/main.zig",
     imports = _FAKE_SRCS,
-    optimize = "Debug",
     **_TOOLS
 )
 
-# ---- Golden files ------------------------------------------------------------
-# tests/run_golden.sh runs the built CLI over tests/fixtures and compares with
-# tests/golden. It lives here, not in a tests/ package: Buck2 globs stop at a
-# package boundary, and these fixtures are also the unit tests' (_UNIT_FIXTURES).
+# ---- Helper programs of the tests (no /bin/sh, no #! scripts on the farm) -----
 
-script_test(
+zig_exe(  # buck-only: the child processes of src/core/test_proc.zig's tests
+    name = "proc-child",
+    src = "tests/drivers/proc_child.zig",
+    optimize = "ReleaseSafe",
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: stands in for mojo in the golden driver
+    name = "fake-mojo",
+    src = "tests/drivers/fake_mojo.zig",
+    **_TOOLS
+)
+
+# ---- Test drivers: Zig ports of tests/run_golden.sh and tests/registry_e2e ----
+
+zig_test(  # buck-only: tests/drivers/golden_test.zig runs the built CLI over the goldens
     name = "golden",
-    srcs = _GOLDEN_SRCS,
-    tools = {"MOPM": ":mopm"},
-    cmd = 'sh tests/run_golden.sh "$MOPM"',
-    busybox = _TOOLS["busybox"],
-    exec_compatible_with = LINUX_X86_64,
+    src = "tests/drivers/golden_test.zig",
+    imports = ["tests/drivers/harness.zig"] + _GOLDEN_DATA,
+    env_tools = {
+        "MOPM": ":mopm",
+        "MOPM_FAKE_MOJO": ":fake-mojo",
+    },
+    **_TOOLS
 )
 
-# ---- build.zig and this file name the same build ------------------------------
+zig_test(  # buck-only: mopm login, whoami and logout against the fake registry
+    name = "registry_login",
+    src = "tests/drivers/login_test.zig",
+    imports = ["tests/drivers/harness.zig"],
+    env_tools = {
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+    },
+    **_TOOLS
+)
 
-script_test(
+zig_test(  # buck-only: mopm pack and publish against the fake registry and a stand-in
+    name = "registry_publish",
+    src = "tests/drivers/publish_test.zig",
+    imports = ["tests/drivers/harness.zig"],
+    env_tools = {
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+    },
+    **_TOOLS
+)
+
+# ---- build.zig and this file name the same build, and the check can go red ----
+
+zig_test(  # buck-only: tools/build_parity.zig reads build.zig and this file
     name = "build_parity",
-    srcs = [
+    src = "tools/build_parity.zig",
+    imports = [
         "build.zig",
         "BUCK",
-        "tools/build_parity.sh",
-        "src/core/mopm_core.zig",
-        "src/cli/main.zig",
-        "registry/fake/main.zig",
-    ],
-    cmd = "sh tools/build_parity.sh",
-    busybox = _TOOLS["busybox"],
-    exec_compatible_with = LINUX_X86_64,
-)
-
-# The parity check goes red on a build.zig/BUCK mismatch: the mutants of
-# tools/build_parity_selftest.sh.
-script_test(
-    name = "build_parity_selftest",
-    srcs = [
-        "build.zig",
-        "BUCK",
-        "tools/build_parity.sh",
-        "tools/build_parity_selftest.sh",
         "src/core/mopm_core.zig",
         "src/core/toml.zig",
         "src/cli/main.zig",
         "registry/fake/main.zig",
     ],
-    cmd = "sh tools/build_parity_selftest.sh",
-    busybox = _TOOLS["busybox"],
-    exec_compatible_with = LINUX_X86_64,
+    **_TOOLS
 )

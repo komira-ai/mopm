@@ -389,8 +389,33 @@ fn tmpPaths(a: Allocator, tmp: *std.testing.TmpDir) ![2][]const u8 {
     return .{ try std.fs.path.join(a, &.{ dir, "out" }), try std.fs.path.join(a, &.{ dir, "err" }) };
 }
 
+const child_modes = [_]struct { script: []const u8, args: []const []const u8 }{
+    .{ .script = "echo to-out; echo to-err >&2; exit 3", .args = &.{"out_err_exit3"} },
+    .{ .script = "kill -SEGV $$", .args = &.{"segv"} },
+    .{ .script = "kill -ABRT $$", .args = &.{"abrt"} },
+    .{ .script = "exec sleep 60", .args = &.{ "sleep", "60" } },
+    .{ .script = "exec sleep 30", .args = &.{ "sleep", "30" } },
+    .{ .script = "while :; do :; done", .args = &.{"spin"} },
+    .{ .script = "sleep 60 & wait", .args = &.{"bg_sleep_wait"} },
+    .{ .script = "sleep 60 & exit 0", .args = &.{"bg_sleep_exit0"} },
+    .{ .script = "exit 0", .args = &.{"exit0"} },
+};
+
 fn sh(a: Allocator, tmp: *std.testing.TmpDir, script: []const u8, limits: Limits) !Result {
     const p = try tmpPaths(a, tmp);
+    // MOPM_TEST_CHILD names tests/drivers/proc_child.zig, built by Buck2 for a
+    // host with no /bin/sh (the farm's image): each script below is one of its
+    // modes. Without it (zig build test) the script runs under /bin/sh.
+    if (std.posix.getenv("MOPM_TEST_CHILD")) |child_z| {
+        const child: []const u8 = child_z;
+        for (child_modes) |m| {
+            if (std.mem.eql(u8, m.script, script)) {
+                const argv = try std.mem.concat(a, []const u8, &.{ &[_][]const u8{child}, m.args });
+                return run(a, .{ .argv = argv, .stdout_path = p[0], .stderr_path = p[1] }, limits);
+            }
+        }
+        std.debug.panic("no proc_child mode for the script: {s}", .{script});
+    }
     return run(a, .{ .argv = &.{ "/bin/sh", "-c", script }, .stdout_path = p[0], .stderr_path = p[1] }, limits);
 }
 
