@@ -1,9 +1,9 @@
 name: hygiene
 
-# Public-repo guard. Fails a pull request that adds an AWS key, a real-looking
-# account id, a private key or token, a privileged-target PR trigger, or an
-# id-token grant outside the deploy workflows. This workflow holds no
-# credentials and requests no id-token.
+# Public-repo guard. Fails a pull request that adds an AWS key, an account id, a private
+# key or token, a privileged PR trigger, or an id-token grant outside the deploy
+# workflows, and checks the structure of every workflow. It holds no credentials and
+# requests no id-token. No path filter: both jobs always report, so both can be required.
 
 on:
   pull_request:
@@ -21,74 +21,19 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - name: Scan tracked files and workflow structure
+      - name: Scan tracked files and workflow triggers
+        run: ruby .github/scripts/hygiene.rb
+
+  workflows:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Check syntax of the scripts themselves
         run: |
-          set -euo pipefail
-          ruby - <<'RUBY'
-          require "yaml"
-          bad = 0
-          fail = ->(msg) { warn "hygiene: #{msg}"; bad += 1 }
-
-          # Documented dummy ids used as test fixtures (AWS documentation example and a placeholder).
-          dummy_ids = %w[111111111111 123456789012]
-          text_rules = {
-            "AWS access key id" => /\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA)[0-9A-Z]{16}\b/,
-            "AWS secret key assignment" => /aws_secret_access_key\s*[=:]\s*[A-Za-z0-9\/+]{30,}/i,
-            "private key block" => /-{5}BEGIN [A-Z ]*PRIVATE KEY-{5}/,
-            "GitHub token" => /\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,})\b/,
-            "Slack token" => /\bxox[abprs]-[A-Za-z0-9-]{10,}/,
-            "privileged PR-target trigger" => /pull_request_targe[t]/,
-          }
-          files = `git ls-files -z`.split("\0")
-          files.each do |f|
-            next unless File.file?(f)
-            data = File.binread(f)
-            next if data.include?("\0")
-            data = data.force_encoding("UTF-8").scrub
-            text_rules.each { |name, re| fail.("#{f}: #{name}") if data =~ re }
-            data.scan(/(?<![0-9A-Za-z])\d{12}(?![0-9A-Za-z])/).each do |m|
-              fail.("#{f}: 12-digit number that looks like an account id: #{m}") unless dummy_ids.include?(m)
-            end
-          end
-
-          # Workflow structure.
-          oidc_files = %w[deploy.yml e2e.yml promote.yml]
-          find_idtoken = lambda do |node|
-            case node
-            when Hash then node.any? { |k, v| (k == "id-token") || find_idtoken.(v) }
-            when Array then node.any? { |v| find_idtoken.(v) }
-            else false
-            end
-          end
-          Dir[".github/workflows/*.yml"].sort.each do |f|
-            base = File.basename(f)
-            doc = YAML.safe_load(File.read(f), aliases: false)
-            on = doc["on"] || doc[true] || {}
-            on = { on => nil } if on.is_a?(String)
-            on = on.to_h { |k| [k, nil] } if on.is_a?(Array)
-            uses_idtoken = find_idtoken.(doc)
-            if uses_idtoken && !oidc_files.include?(base)
-              fail.("#{f}: id-token permission is only allowed in #{oidc_files.join(', ')}")
-            end
-            next unless oidc_files.include?(base)
-            extra = on.keys - %w[workflow_call workflow_dispatch push]
-            fail.("#{f}: triggers #{extra.inspect} are not allowed in a workflow that can use id-token") unless extra.empty?
-            if on.key?("push") && (on["push"] || {}).fetch("branches", nil) != ["main"]
-              fail.("#{f}: push must be limited to branches: [main]")
-            end
-            (doc["jobs"] || {}).each do |jn, job|
-              next unless find_idtoken.(job)
-              unless job["environment"] || job["uses"]
-                fail.("#{f}: job #{jn} grants id-token without an environment")
-              end
-            end
-            (doc["jobs"] || {}).each do |jn, job|
-              next if job["uses"] || job["if"] == false
-              next unless find_idtoken.(job)
-              unless job["if"].to_s.include?("refs/heads/main")
-                fail.("#{f}: job #{jn} grants id-token but is not restricted to refs/heads/main")
-              end
-            end
-          end
-          exit(bad.zero? ? 0 : 1)
-          RUBY
+          ruby -c .github/scripts/hygiene.rb
+          ruby -c .github/scripts/workflow_lint.rb
+      - name: Lint workflows (pins, permissions, run scripts, promotion chain)
+        run: ruby .github/scripts/workflow_lint.rb
