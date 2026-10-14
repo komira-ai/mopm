@@ -1,0 +1,4 @@
+kind bare
+test 1 test_twice
+test 5 test_once
+error 9: 'test_twice' is defined twice (first at line 1); test names in a file must be unique

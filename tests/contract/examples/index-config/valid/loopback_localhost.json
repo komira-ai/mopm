@@ -1,0 +1,7 @@
+{
+  "index_version": 1,
+  "stage": "beta",
+  "api_url": "http://localhost:65535/api/v1",
+  "channel_url": "http://localhost:1/channel/",
+  "min_cli_version": "0.1.0"
+}

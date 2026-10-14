@@ -1,0 +1,9 @@
+mopm test: warning: tests/discovery/self_hosted_explicit.mojo:34: cannot read the function this `.test[...]` registers; it is not listed
+tests/discovery/bare_basic.mojo::test_double
+tests/discovery/bare_basic.mojo::test_double_zero
+tests/discovery/bare_basic.mojo::test_last
+tests/discovery/self_hosted_explicit.mojo::test_with_source
+tests/discovery/self_hosted_explicit.mojo::test_first
+tests/discovery/self_hosted_explicit.mojo::check_second
+tests/discovery/self_hosted_explicit.mojo::test_never_runs
+tests/discovery/self_hosted_explicit.mojo::qualified_name
