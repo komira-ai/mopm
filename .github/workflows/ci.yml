@@ -156,3 +156,29 @@ jobs:
           "$RUNNER_TEMP/contract-venv/bin/pip" install --disable-pip-version-check -r tests/contract/requirements.txt
       - name: mopm lock, update and tree against the fake registry (wrong-version traps, refusals, lock schema)
         run: '"$RUNNER_TEMP/contract-venv/bin/python" -I tests/resolve_e2e/run.py ./zig-out/bin/mopm ./zig-out/bin/mopm-fake-registry'
+
+  install-e2e:
+    name: install e2e (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Build the CLI and the fake registry
+        run: zig build
+      - name: Install pixi 0.79.0 (sha256-pinned)
+        run: echo "$(tools/install_pixi.sh "$RUNNER_TEMP/pixi")" >> "$GITHUB_PATH"
+      - name: Create the Mojo environment that precompiles the fixture package (mojo 1.0.0, tests/e2e/pixi.toml)
+        run: |
+          mkdir -p "$RUNNER_TEMP/mojo-env"
+          cp tests/e2e/pixi.toml "$RUNNER_TEMP/mojo-env/pixi.toml"
+          pixi install --manifest-path "$RUNNER_TEMP/mojo-env/pixi.toml"
+      - name: mopm sync installs a package with a native library from the fake registry, build and run use it; a tampered file and a stale lock are refused
+        run: python3 -I tests/install_e2e/run.py ./zig-out/bin/mopm ./zig-out/bin/mopm-fake-registry "$RUNNER_TEMP/mojo-env/.pixi/envs/default"

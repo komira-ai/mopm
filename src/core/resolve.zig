@@ -259,8 +259,9 @@ pub fn parseIndex(arena: Allocator, name: []const u8, text: []const u8, diag: *D
     return out.toOwnedSlice();
 }
 
-/// A requirement of the project (`mopm.toml`) on a package.
-pub const Root = struct { name: []const u8, requirement: []const u8 };
+/// A requirement of the project (`mopm.toml`) on a package, or of one of
+/// its path dependencies (`from` names which).
+pub const Root = struct { name: []const u8, requirement: []const u8, from: []const u8 = "mopm.toml" };
 /// A version a lock already pins; tried first while it still fits.
 pub const Pin = struct { name: []const u8, version: []const u8 };
 
@@ -313,10 +314,10 @@ pub fn resolve(arena: Allocator, source: anytype, input: Input, diag: *Diagnosti
     for (input.roots) |root| {
         var why: []const u8 = "";
         const req = semver.parseReq(arena, root.requirement, &why) catch |e| switch (e) {
-            error.Invalid => return fail(arena, diag, .bad_requirement, "mopm.toml: {s} = \"{s}\": {s}", .{ root.name, root.requirement, why }),
+            error.Invalid => return fail(arena, diag, .bad_requirement, "{s}: {s} = \"{s}\": {s}", .{ root.from, root.name, root.requirement, why }),
             error.OutOfMemory => return error.OutOfMemory,
         };
-        try r.reqs.append(.{ .name = root.name, .req = req, .text = root.requirement, .from = "mopm.toml" });
+        try r.reqs.append(.{ .name = root.name, .req = req, .text = root.requirement, .from = root.from });
     }
     if (!try r.solve(0)) {
         if (diag.message.len == 0) diag.* = .{ .kind = .too_complex, .message = "no set of versions satisfies every requirement" };

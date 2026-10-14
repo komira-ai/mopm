@@ -12,6 +12,13 @@
 //! with a port (127.0.0.1, [::1], localhost): the rule `--registry` and
 //! config.json follow (registry.allowedUrl). `check` refuses any other
 //! channel, so a lock with one is neither read nor written.
+//!
+//! A path dependency (`name = { path = "..." }` in mopm.toml, at any depth)
+//! is locked as one entry with `"source": "path"`: its `name`, the `version`
+//! its own mopm.toml gives, its `path` relative to the project, and `deps`.
+//! It has no build, subdir, channel, url, sha256, size or mojo: there is no
+//! file to pin, and `mopm sync` never downloads it. A name locked as a path
+//! dependency has no other entry. A registry entry carries no `source` key.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -26,16 +33,23 @@ pub const Native = struct {
     sha256: ?[]const u8 = null,
 };
 
+/// Where a locked package comes from.
+pub const Source = enum { registry, path };
+
 pub const Package = struct {
     name: []const u8,
     version: []const u8,
-    build: []const u8,
-    subdir: []const u8,
-    channel: []const u8,
-    url: []const u8,
-    sha256: []const u8,
-    size: u64,
-    mojo: []const u8,
+    source: Source = .registry,
+    /// For a path dependency: its directory, relative to the project.
+    path: []const u8 = "",
+    // A registry entry's file; empty for a path dependency.
+    build: []const u8 = "",
+    subdir: []const u8 = "",
+    channel: []const u8 = "",
+    url: []const u8 = "",
+    sha256: []const u8 = "",
+    size: u64 = 0,
+    mojo: []const u8 = "",
     deps: []const []const u8 = &.{},
     native: []const Native = &.{},
 };
@@ -93,13 +107,20 @@ pub fn check(arena: Allocator, l: Lock) Allocator.Error!?[]const u8 {
         if (i > 0 and order(l.packages[i - 1], p) != .lt) {
             return try std.fmt.allocPrint(arena, "packages are not sorted by name, version and subdir with no repeats (at {s} {s} {s})", .{ p.name, p.version, p.subdir });
         }
-        var listed = false;
-        for (l.channels) |c| listed = listed or std.mem.eql(u8, c, p.channel);
-        if (!listed) return try std.fmt.allocPrint(arena, "{s}: channel {s} is not in channels", .{ p.name, p.channel });
-        const want = try fileUrl(arena, p.channel, p.subdir, p.name, p.version, p.build);
-        if (!std.mem.eql(u8, want, p.url)) return try std.fmt.allocPrint(arena, "{s}: url is {s}, not {s}", .{ p.name, p.url, want });
-        if (!std.mem.eql(u8, p.mojo, l.mojo)) {
-            return try std.fmt.allocPrint(arena, "{s}: built with mojo {s}, but the toolchain is mojo {s}", .{ p.name, p.mojo, l.mojo });
+        if (i > 0 and std.mem.eql(u8, l.packages[i - 1].name, p.name) and (l.packages[i - 1].source == .path or p.source == .path)) {
+            return try std.fmt.allocPrint(arena, "{s} is locked as a path dependency and has another entry", .{p.name});
+        }
+        if (p.source == .path) {
+            if (p.path.len == 0) return try std.fmt.allocPrint(arena, "{s}: a path dependency with an empty path", .{p.name});
+        } else {
+            var listed = false;
+            for (l.channels) |c| listed = listed or std.mem.eql(u8, c, p.channel);
+            if (!listed) return try std.fmt.allocPrint(arena, "{s}: channel {s} is not in channels", .{ p.name, p.channel });
+            const want = try fileUrl(arena, p.channel, p.subdir, p.name, p.version, p.build);
+            if (!std.mem.eql(u8, want, p.url)) return try std.fmt.allocPrint(arena, "{s}: url is {s}, not {s}", .{ p.name, p.url, want });
+            if (!std.mem.eql(u8, p.mojo, l.mojo)) {
+                return try std.fmt.allocPrint(arena, "{s}: built with mojo {s}, but the toolchain is mojo {s}", .{ p.name, p.mojo, l.mojo });
+            }
         }
         for (p.deps) |d| {
             var found = false;
@@ -205,6 +226,22 @@ pub fn parse(arena: Allocator, text: []const u8, why: *[]const u8) ParseError!Lo
     for (try r.array(top, "packages", "the lock", true), 0..) |pv, n| {
         const what = try std.fmt.allocPrint(arena, "packages[{d}]", .{n});
         const o = try r.object(pv, what);
+        if (o.get("source") != null) {
+            const source = try r.string(o, "source", what);
+            if (!std.mem.eql(u8, source, "path")) return r.bad("{s}'s source is {s}; a lock entry's source is path, or none for the registry", .{ what, source });
+            for ([_][]const u8{ "build", "subdir", "channel", "url", "sha256", "size", "mojo" }) |key| {
+                if (o.get(key) != null) return r.bad("{s} is a path dependency, which has no {s}", .{ what, key });
+            }
+            try packages.append(.{
+                .name = try r.string(o, "name", what),
+                .version = try r.string(o, "version", what),
+                .source = .path,
+                .path = try r.string(o, "path", what),
+                .deps = try stringList(r, o, what),
+            });
+            continue;
+        }
+        if (o.get("path") != null) return r.bad("{s} has a path but no \"source\": \"path\"", .{what});
         var p = Package{
             .name = try r.string(o, "name", what),
             .version = try r.string(o, "version", what),
@@ -222,14 +259,7 @@ pub fn parse(arena: Allocator, text: []const u8, why: *[]const u8) ParseError!Lo
         };
         if (size < 1) return r.bad("{s}'s size is not positive", .{what});
         p.size = @intCast(size);
-        var deps = std.ArrayList([]const u8).init(arena);
-        for (try r.array(o, "deps", what, false)) |d| {
-            switch (d) {
-                .string => |s| try deps.append(s),
-                else => return r.bad("{s} has a dependency that is not a string", .{what}),
-            }
-        }
-        p.deps = deps.items;
+        p.deps = try stringList(r, o, what);
         var natives = std.ArrayList(Native).init(arena);
         for (try r.array(o, "native", what, false)) |nv| {
             const no = try r.object(nv, "a native library");
@@ -243,6 +273,17 @@ pub fn parse(arena: Allocator, text: []const u8, why: *[]const u8) ParseError!Lo
     const l = Lock{ .mojo = mojo, .channels = channels.items, .packages = packages.items };
     if (try check(arena, l)) |broken| return r.bad("{s}", .{broken});
     return l;
+}
+
+fn stringList(r: Reader, o: std.json.ObjectMap, what: []const u8) ParseError![]const []const u8 {
+    var deps = std.ArrayList([]const u8).init(r.arena);
+    for (try r.array(o, "deps", what, false)) |d| {
+        switch (d) {
+            .string => |s| try deps.append(s),
+            else => return r.bad("{s} has a dependency that is not a string", .{what}),
+        }
+    }
+    return deps.items;
 }
 
 fn str(w: anytype, s: []const u8) !void {
@@ -261,6 +302,18 @@ pub fn write(l: Lock, w: anytype) !void {
     try w.writeAll("\n  ],\n  \"packages\": [");
     for (l.packages, 0..) |p, i| {
         try w.writeAll(if (i == 0) "\n    {" else ",\n    {");
+        if (p.source == .path) {
+            const fields = [_]struct { []const u8, []const u8 }{
+                .{ "name", p.name }, .{ "version", p.version }, .{ "source", "path" }, .{ "path", p.path },
+            };
+            for (fields, 0..) |f, n| {
+                try w.print("{s}\n      \"{s}\": ", .{ if (n == 0) "" else ",", f[0] });
+                try str(w, f[1]);
+            }
+            try writeDeps(w, p.deps);
+            try w.writeAll("\n    }");
+            continue;
+        }
         const fields = [_]struct { []const u8, []const u8 }{
             .{ "name", p.name },       .{ "version", p.version }, .{ "build", p.build },
             .{ "subdir", p.subdir },   .{ "channel", p.channel }, .{ "url", p.url },
@@ -272,14 +325,7 @@ pub fn write(l: Lock, w: anytype) !void {
         }
         try w.print(",\n      \"size\": {d},\n      \"mojo\": ", .{p.size});
         try str(w, p.mojo);
-        if (p.deps.len > 0) {
-            try w.writeAll(",\n      \"deps\": [");
-            for (p.deps, 0..) |d, n| {
-                try w.writeAll(if (n == 0) "\n        " else ",\n        ");
-                try str(w, d);
-            }
-            try w.writeAll("\n      ]");
-        }
+        try writeDeps(w, p.deps);
         if (p.native.len > 0) {
             try w.writeAll(",\n      \"native\": [");
             for (p.native, 0..) |lib, n| {
@@ -298,6 +344,16 @@ pub fn write(l: Lock, w: anytype) !void {
         try w.writeAll("\n    }");
     }
     try w.writeAll(if (l.packages.len == 0) "]\n}\n" else "\n  ]\n}\n");
+}
+
+fn writeDeps(w: anytype, deps: []const []const u8) !void {
+    if (deps.len == 0) return;
+    try w.writeAll(",\n      \"deps\": [");
+    for (deps, 0..) |d, n| {
+        try w.writeAll(if (n == 0) "\n        " else ",\n        ");
+        try str(w, d);
+    }
+    try w.writeAll("\n      ]");
 }
 
 /// `write` into a new string.
@@ -436,4 +492,82 @@ test "a channel may carry a path; its scheme is https, or http only to a loopbac
         } else |e| if (e != error.Invalid) return e;
         try std.testing.expect(std.mem.indexOf(u8, why, channel_rule) != null);
     }
+}
+
+test "a path dependency is locked with source path, its version and path, and no file" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const text =
+        \\{
+        \\  "lock_version": 1,
+        \\  "toolchain": {
+        \\    "mojo": "1.0.0"
+        \\  },
+        \\  "channels": [
+        \\    "https://conda.mopm.dev/"
+        \\  ],
+        \\  "packages": [
+        \\    {
+        \\      "name": "local",
+        \\      "version": "0.3.0",
+        \\      "source": "path",
+        \\      "path": "../local",
+        \\      "deps": [
+        \\        "tls"
+        \\      ]
+        \\    },
+        \\    {
+        \\      "name": "tls",
+        \\      "version": "1.1.0",
+        \\      "build": "mojo1.0.0_0",
+        \\      "subdir": "linux-64",
+        \\      "channel": "https://conda.mopm.dev/",
+        \\      "url": "https://conda.mopm.dev/linux-64/mojo-tls-1.1.0-mojo1.0.0_0.conda",
+        \\      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        \\      "size": 1000,
+        \\      "mojo": "1.0.0"
+        \\    }
+        \\  ]
+        \\}
+        \\
+    ;
+    var why: []const u8 = "";
+    const l = parse(a, text, &why) catch |e| {
+        std.debug.print("refused: {s}\n", .{why});
+        return e;
+    };
+    try std.testing.expectEqual(Source.path, l.packages[0].source);
+    try std.testing.expectEqualStrings("../local", l.packages[0].path);
+    try std.testing.expectEqualStrings("", l.packages[0].sha256);
+    try std.testing.expectEqual(Source.registry, l.packages[1].source);
+    try std.testing.expectEqualStrings(text, try render(a, l));
+
+    const Case = struct { []const u8, []const u8, []const u8 };
+    const cases = [_]Case{
+        .{ "\"path\": \"../local\",", "\"path\": \"../local\",\n      \"sha256\": \"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\",", "is a path dependency, which has no sha256" },
+        .{ "\"source\": \"path\",", "\"source\": \"git\",", "source is git" },
+        .{ "\"source\": \"path\",", "", "has a path but no \"source\": \"path\"" },
+        .{ "\"path\": \"../local\",", "", "has no path" },
+        .{ "\"path\": \"../local\",", "\"path\": \"\",", "a path dependency with an empty path" },
+    };
+    for (cases) |case| {
+        if (std.mem.indexOf(u8, text, case[0]) == null) return error.TestUnexpectedResult;
+        const bad = try std.mem.replaceOwned(u8, a, text, case[0], case[1]);
+        why = "";
+        if (parse(a, bad, &why)) |_| {
+            std.debug.print("accepted, want: {s}\n", .{case[2]});
+            return error.TestUnexpectedResult;
+        } else |e| if (e != error.Invalid) return e;
+        if (std.mem.indexOf(u8, why, case[2]) == null) {
+            std.debug.print("refused with '{s}', want '{s}'\n", .{ why, case[2] });
+            return error.TestUnexpectedResult;
+        }
+    }
+    // The registry entry renamed to local (and the path entry's dependency
+    // with it): one name, locked both as a path and from a channel.
+    const twice = try std.mem.replaceOwned(u8, a, try std.mem.replaceOwned(u8, a, text, "\"name\": \"tls\",", "\"name\": \"local\","), "        \"tls\"\n", "        \"local\"\n");
+    why = "";
+    try std.testing.expectError(error.Invalid, parse(a, twice, &why));
+    try std.testing.expectEqualStrings("local is locked as a path dependency and has another entry", why);
 }
