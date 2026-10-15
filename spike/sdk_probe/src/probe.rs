@@ -11,7 +11,7 @@ pub fn client(endpoint: &str) -> Client {
         .behavior_version(BehaviorVersion::latest())
         .region(Region::new("us-east-1"))
         .endpoint_url(endpoint)
-        .credentials_provider(Credentials::new("AKIDOTHER", "fakesecret", None, None, "static"))
+        .credentials_provider(Credentials::new("AKIDFAKE", "fakesecret", None, None, "static"))
         .build();
     Client::from_conf(config)
 }

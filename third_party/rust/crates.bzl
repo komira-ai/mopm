@@ -19,7 +19,7 @@ def crates():
         sha256 = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923",
         size = 63622,
         edition = "2018",
-        features = ["alloc", "std"],
+        features = ["alloc"],
     )
 
     cargo_crate(
@@ -110,7 +110,7 @@ def crates():
         patch = {
             "copy": ["src", ],
             "sub": [
-                {"file": "src/x86_64_unknown_linux_gnu_crypto.rs", "from": "aws_lc_0_23_1_", "to": "komira_awsld_", "count": 2579},
+                {"file": "src/x86_64_unknown_linux_gnu_crypto.rs", "from": "aws_lc_0_23_1_", "to": "komira_awslc_", "count": 2579},
                 {"file": "src/lib.rs", "from": "unsafe { ERR_GET_LIB_RUST(packed_error) }", "to": "((packed_error >> 24) & 0xff) as i32"},
                 {"file": "src/lib.rs", "from": "unsafe { ERR_GET_REASON_RUST(packed_error) }", "to": "(packed_error & 0xfff) as i32"},
                 {"file": "src/lib.rs", "from": "unsafe { ERR_GET_FUNC_RUST(packed_error) }", "to": "{ let _ = packed_error; 0 }"},
