@@ -1,0 +1,11 @@
+name: fixture
+on: [push]
+permissions:
+  contents: read
+jobs:
+  j:
+    runs-on: ubuntu-24.04
+    env:
+      K: "@@SESSTOKEN@@"
+    steps:
+      - run: echo hello

@@ -1,3 +1,5 @@
+# Superseded by //:workflows (tests/drivers/workflow_lint_test.zig) on the build farm, which has no shell, Python, Ruby or pixi;
+# kept for ci.yml until farm.yml has matched it. Change both together.
 # Structural lint for .github/workflows. Run from the repository root.
 # With path arguments, only the per-file checks run on those files (used by tests/lint/run.rb).
 require "yaml"

@@ -388,3 +388,70 @@ filegroup(
     srcs = {f[len("tests/new/lib/"):]: f for f in glob(["tests/new/lib/**"])},
     visibility = ["//site:"],
 )
+
+# ---- The repository's own lints, ported from Ruby (.github/scripts, tests/lint) ------------
+
+# Every tracked file hygiene scans (tests/drivers/hygiene.zig), staged by path under
+# KOMIRA_TEST_WORK: the root package's files (a glob skips dotfiles, so those are named)
+# and each sub-package's `lint_files` (a package boundary hides its files from this glob).
+# Not scanned: platforms/BUCK and toolchains/BUCK, byte copies of komira's files that
+# cannot carry a `lint_files` target of their own (toolchains is another cell) without
+# ceasing to be copies; komira's own hygiene scan reads the originals.
+_LINT_DOTFILES = [
+    ".buckconfig",
+    ".gitignore",
+    "tests/discovery/tree/tests/.hidden/test_hidden.mojo",
+    "tests/new/bin/.gitignore",
+    "tests/new/lib/.gitignore",
+]
+
+_LINT_PACKAGES = [
+    "service/api",
+    "service/config",
+    "service/infra/access",
+    "service/infra/dns",
+    "service/infra/stacks",
+    "tools/node",
+]
+
+_ROOT_FILES = glob(["**", ".github/**"]) + _LINT_DOTFILES
+
+# (One line each: tools/build_parity.zig reads BUCK line by line and refuses a line that starts a loop.)
+_REPO_FILES = {f: f for f in _ROOT_FILES} | {pkg: "//{}:lint_files".format(pkg) for pkg in _LINT_PACKAGES}
+
+# The files the Zig lints read, by source: the three test roots share these.
+_LINT_LIBS = [
+    "tests/drivers/lint_common.zig",
+    "tests/drivers/yaml.zig",
+]
+
+zig_test(  # buck-only: .github/scripts/hygiene.rb in Zig, over every file of the repository
+    name = "hygiene",
+    src = "tests/drivers/hygiene_test.zig",
+    imports = _LINT_LIBS + ["tests/drivers/hygiene.zig"],
+    data = _REPO_FILES,
+    **_TOOLS
+)
+
+zig_test(  # buck-only: .github/scripts/workflow_lint.rb in Zig, over the workflows, and the stand-in for its `bash -n`
+    name = "workflows",
+    src = "tests/drivers/workflow_lint_test.zig",
+    imports = _LINT_LIBS + [
+        "tests/drivers/shell_syntax.zig",
+        "tests/drivers/workflow_lint.zig",
+    ],
+    data = {f: f for f in glob([".github/workflows/*.yml", ".github/workflows/*.yaml"])},
+    **_TOOLS
+)
+
+zig_test(  # buck-only: tests/lint/run.rb in Zig: both Zig lints over the fixtures, against run.rb's own table
+    name = "lint_selftest",
+    src = "tests/drivers/lint_selftest_test.zig",
+    imports = _LINT_LIBS + [
+        "tests/drivers/hygiene.zig",
+        "tests/drivers/shell_syntax.zig",
+        "tests/drivers/workflow_lint.zig",
+    ],
+    data = {f: f for f in glob(["tests/lint/fixtures/*", "tests/lint/run.rb"])},
+    **_TOOLS
+)
