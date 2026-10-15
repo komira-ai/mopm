@@ -31,7 +31,7 @@ const LAMBDA_MODULE = {
   indexer: '../../src/publish/indexer-lambda',
 } as const;
 // The credentials the SigV4 adapters read from the environment of a real Lambda: invented, from the AWS documentation's style.
-const TEST_CREDENTIALS = { AWS_ACCESS_KEY_ID: 'AKIDEXAMPLE', AWS_SECRET_ACCESS_KEY: 'example-secret-access-key' };
+const TEST_CREDENTIALS = { AWS_ACCESS_KEY_ID: 'AKIDEXAMPLE', AWS_SECRET_ACCESS_KEY: 'example-secret' };
 const DEFAULT_CLOCK = '2026-10-01T00:00:00.000Z';
 const KEPT_HEADERS = ['content-type', 'cache-control', 'if-none-match', 'x-amz-target'];
 
@@ -135,7 +135,7 @@ async function run(c: Case) {
   const http: Json[] = [];
   const logs: Json[] = [];
   const spies = (['log', 'error'] as const).map((stream) =>
-    jest.spyOn(console, stream).mockImplementation((line: unknown) => {
+    jest.spyOn(console, stream).mockImplementation((line?: unknown) => {
       let parsed: Json = String(line);
       try {
         parsed = JSON.parse(String(line));
