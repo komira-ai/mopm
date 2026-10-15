@@ -37,7 +37,7 @@ function page(at: { pathname: string; search?: string; hash?: string }, opts: { 
     },
     // The view's Retry button, when the nodes hold one.
     querySelector: () =>
-      serialize(rec.children).includes('<button type="button" class="button retry">')
+      /<button type="button" class="[^"]*\bretry\b[^"]*">/.test(serialize(rec.children))
         ? { addEventListener: (type, listener, o) => void rec.listeners.push({ type, listener, once: o.once }) }
         : null,
   };

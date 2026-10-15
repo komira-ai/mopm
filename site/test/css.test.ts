@@ -5,8 +5,11 @@
 // it outlines.
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { AREA_STYLESHEETS } from '../tools/layout';
 
 const css = readFileSync(join(__dirname, '..', 'static', 'site.css'), 'utf8');
+/** The home page's area stylesheet: the hero's build-command block lives there. */
+const homeCss = readFileSync(join(__dirname, '..', 'static', 'home.css'), 'utf8');
 
 /** The custom properties of the first ':root {' block at or after `from`. */
 function tokens(from: number): Record<string, string> {
@@ -25,11 +28,11 @@ function contrast(a: string, b: string): number {
   return (x + 0.05) / (y + 0.05);
 }
 
-/** The declarations of the rule whose selector list is exactly `selector`. */
-function rule(selector: string): string {
-  const i = css.indexOf(`\n${selector} {`);
+/** The declarations of the rule whose selector list is exactly `selector` (in site.css unless `sheet` is given). */
+function rule(selector: string, sheet = css): string {
+  const i = sheet.indexOf(`\n${selector} {`);
   if (i < 0) throw new Error(`no rule '${selector}'`);
-  return css.slice(i, css.indexOf('}', i));
+  return sheet.slice(i, sheet.indexOf('}', i));
 }
 
 const light = tokens(0);
@@ -74,7 +77,7 @@ test('the hero search box shows a focus ring when its field is focused', () => {
 
 // The build commands are the first a reader runs; on a phone a hidden horizontal scroll would cut them off.
 test('on narrow screens the hero build commands wrap instead of scrolling out of sight', () => {
-  const media = css.slice(css.indexOf('@media (max-width: 40rem)'));
+  const media = homeCss.slice(homeCss.indexOf('@media (max-width: 40rem)'));
   expect(media.slice(0, media.indexOf('\n}\n'))).toMatch(/\.cmd-xl code \{[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/);
 });
 
@@ -82,7 +85,7 @@ test('on narrow screens the hero build commands wrap instead of scrolling out of
 test('no tab-selection style is left for the jump links, and no fake tab shape for the planned installer', () => {
   expect(css).not.toContain('.tabs a.on');
   expect(css).not.toMatch(/\.seg\b/);
-  expect(rule('.cmd-xl')).not.toContain('border-radius: 0 ');
+  expect(rule('.cmd-xl', homeCss)).not.toContain('border-radius: 0 ');
 });
 
 test('the focus ring sets no border-radius (it would override a code block\'s rounded corners)', () => {
@@ -116,4 +119,104 @@ test('the no-script line is hidden unless scripting is off, and the loading line
   expect(rule('.no-js')).toContain('display: none;');
   const media = css.slice(css.indexOf('@media (scripting: none)'));
   expect(media.slice(0, media.indexOf('}\n}'))).toMatch(/\.no-js \{ display: block; \}[\s\S]*\.js-only, \.loading \{ display: none;/);
+});
+
+// The area stylesheets (tools/layout.ts AREA_STYLESHEETS) build on site.css's tokens and never define their own, so
+// light and dark stay in one place and every area follows a token change.
+describe('the area stylesheets', () => {
+  const areas = ['home.css', 'package.css', 'search.css', 'docs.css'].map((f) => [f, readFileSync(join(__dirname, '..', 'static', f), 'utf8')] as const);
+  const defined = new Set([...css.matchAll(/(--[a-z0-9-]+):/g)].map((m) => m[1]));
+
+  // Mutant: a misspelt token in an area sheet (var(--fg-mutd)) silently falls back to the inherited colour.
+  test.each(areas)('%s uses only custom properties site.css defines', (_f, text) => {
+    const used = [...text.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]);
+    expect(used.length).toBeGreaterThan(0);
+    expect(used.filter((v) => !defined.has(v))).toEqual([]);
+  });
+
+  // Mutant: an area sheet with its own :root or dark block, which the dark-token test above would never see.
+  test.each(areas)('%s defines no tokens and no colour scheme of its own', (_f, text) => {
+    expect(text).not.toMatch(/:root|prefers-color-scheme|--[a-z0-9-]+\s*:/);
+  });
+
+  test('site.css also uses only the custom properties it defines', () => {
+    const used = [...css.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]);
+    expect(used.filter((v) => !defined.has(v))).toEqual([]);
+  });
+});
+
+// The app shell paints the header (with its search) before it knows the view; a sheet it links that hides the header
+// search or nav once a view mounts moves the whole page up after the network answer, and drops a reader's focus or typing
+// in the header box. Mutant: `body:has(.search-band) .site-search { display: none; }` back in search.css.
+test('the app shell links the package and search sheets', () => {
+  expect([...AREA_STYLESHEETS.app].sort()).toEqual(['package.css', 'search.css']);
+});
+test.each([...AREA_STYLESHEETS.app])('%s (linked by the app shell) never hides the header search or nav', (f) => {
+  const sheet = readFileSync(join(__dirname, '..', 'static', f), 'utf8');
+  expect(sheet).not.toMatch(/\.site-(search|nav)\b[^{]*\{[^}]*(display:\s*none|visibility:\s*hidden)/);
+});
+
+// Every docs page has an on-this-page list, at every width: below 76rem it is a block above the article, not hidden.
+// Mutant: `.toc { display: none; }` back, shown only in the wide media query.
+test('the docs on-this-page list is shown at every width', () => {
+  const docsCss = readFileSync(join(__dirname, '..', 'static', 'docs.css'), 'utf8');
+  expect(rule('.toc', docsCss)).not.toMatch(/display:\s*none/);
+  expect(docsCss).not.toMatch(/\.toc\b[^{,]*\{[^}]*display:\s*none/);
+});
+
+// The shared crumb rule serves the docs pages too, whose current item is a page title in prose type; monospace belongs
+// to package and version names only. Mutant: font-family: var(--mono) back on the shared .crumb [aria-current].
+test('only the package head sets its crumb\'s current item in monospace', () => {
+  const pkgCss = readFileSync(join(__dirname, '..', 'static', 'package.css'), 'utf8');
+  expect(rule('.crumb [aria-current]')).not.toContain('font-family');
+  expect(rule('.pkg-head .crumb [aria-current]', pkgCss)).toContain('font-family: var(--mono);');
+});
+
+// The header is sticky, so an in-page link (the docs on-this-page list and heading anchors, the version page's Files and
+// Dependencies tabs to #files-heading and #deps-heading, the package page's #section-readme and #versions-heading)
+// scrolls its target to the viewport top, under the header, unless the target has a scroll margin at least the header's
+// height. Every one of those targets is an element with an id, so one shared [id] rule covers them all, on every page
+// (the 404 page loads site.css alone). The header measured in headless Chrome: 104px tall from 320px to below 48rem (two
+// rows: brand and nav, then the search; 106px from 25rem), 65px from 48rem. Mutants: the [id] rule removed (a heading
+// lands at top 0, hidden); the token below the narrow header (a docs heading's top 18px hidden at 88px); an area sheet
+// with its own fixed scroll-margin-top that beats [id] on specificity (docs.css's old `.doc h2 { scroll-margin-top: 88px }`).
+describe('anchor targets clear the sticky header', () => {
+  const sheets = [['site.css', css] as const, ...['home.css', 'package.css', 'search.css', 'docs.css'].map((f) => [f, readFileSync(join(__dirname, '..', 'static', f), 'utf8')] as const)];
+  const px = (v: string | undefined): number => Number(/^(\d+)px$/.exec(v ?? '')?.[1] ?? NaN);
+  const narrow = px(/--header-h:\s*([^;]+);/.exec(rule(':root'))?.[1]);
+  const wideBlock = css.slice(css.indexOf('@media (min-width: 48rem) { :root {'));
+  const wide = px(/--header-h:\s*([^;]+);/.exec(wideBlock.slice(0, wideBlock.indexOf('}')))?.[1]);
+
+  test('every element with an id has a scroll margin of the header height plus a gap', () => {
+    expect(rule('[id]')).toContain('scroll-margin-top: calc(var(--header-h) + 16px);');
+  });
+
+  test('the header-height token is at least the measured header, narrow and wide', () => {
+    expect(narrow).toBeGreaterThanOrEqual(106);
+    expect(wide).toBeGreaterThanOrEqual(65);
+    expect(wide).toBeLessThan(narrow);
+  });
+
+  // The 106px holds only while brand and nav share the first row. Untightened they need 353px of content, so they wrap
+  // (a third row, 151px, measured at 360 and 375) below a 385px viewport; the max-width rule tightens them to 286px,
+  // which fits the 288px content box of a 320px viewport. Mutants: the tightening rule removed, or its breakpoint set
+  // under 385px (24rem = 384px wraps at 384), or above the wide breakpoint; the nav padding or gap put back.
+  test('below the width where brand and nav would wrap, a rule tightens them onto one row', () => {
+    const m = /@media \(max-width: ([\d.]+)rem\) \{\n  \.bar \{ column-gap: 8px; \}([\s\S]*?)\n\}/.exec(css);
+    expect(m).not.toBeNull();
+    const px = Number(m?.[1]) * 16;
+    expect(px).toBeGreaterThanOrEqual(385);
+    expect(px).toBeLessThan(48 * 16);
+    expect(m?.[2]).toContain('.site-nav ul { gap: 0; }');
+    expect(m?.[2]).toContain('.site-nav a { padding: 6px; font-size: 0.875rem; }');
+    expect(m?.[2]).toContain('.brand { font-size: 1.2rem; gap: 8px; }');
+    expect(rule(':root')).toContain('holds from a 320px viewport up');
+  });
+
+  test.each(sheets)('%s sets no scroll margin but the shared one, and offsets sticky columns by the token', (f, text) => {
+    const margins = [...text.matchAll(/scroll-margin-top:\s*([^;]+);/g)].map((m) => m[1]);
+    expect(margins).toEqual(f === 'site.css' ? ['calc(var(--header-h) + 16px)'] : []);
+    const stickyTops = [...text.matchAll(/position: sticky; top: ([^;]+);/g)].map((m) => m[1]);
+    expect(stickyTops.filter((t) => t !== '0' && !t.includes('var(--header-h)'))).toEqual([]);
+  });
 });

@@ -1,6 +1,6 @@
 // The page script, loaded as a module by every page.
 //
-// On every page: the read-only banner (from getHealth; any failure is silent), '/' to focus the header search, and
+// On every page: the read-only banner (from getHealth; any failure is silent), '/' to focus the search field, and
 // a Copy button on every command block (copy.ts). On the home page: the conda channel of this host and the "Recently
 // updated" list (views/recent.ts, one searchPackages call). On the app shell (body[data-page=app]): the view app.ts picks
 // for the address. What to show is decided in app.ts, how a view is put on the page in mount.ts, and the copy buttons and
@@ -12,7 +12,7 @@ import { client, type Client, type FetchFn } from './api.js';
 import { appView, healthBanner } from './app.js';
 import type { Clipboard } from './copy.js';
 import { browserDoc, h } from './doc.js';
-import { addCopyButtons, type EnhancePort, showRecent } from './enhance.js';
+import { addCopyButtons, type EnhancePort, searchFieldId, showRecent } from './enhance.js';
 import { apiBase } from './host.js';
 import { mount, type MountTarget, showChannel } from './mount.js';
 import { loadingView, type View } from './views/common.js';
@@ -85,12 +85,16 @@ function showHealthBanner(): void {
     .catch(() => undefined);
 }
 
-/** '/' focuses the header search, unless the reader is typing somewhere. */
+/**
+ * '/' focuses a search field, unless the reader is typing somewhere: which one is searchFieldId's choice (enhance.ts),
+ * the search page's big box when it is on the page, else the header's.
+ */
 function slashToSearch(e: KeyboardEvent): void {
   if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
   const t = e.target;
   if (t instanceof HTMLElement && (t.isContentEditable || /^(?:INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
-  const q = document.getElementById('q');
+  const id = searchFieldId((x) => document.getElementById(x) instanceof HTMLInputElement);
+  const q = id === null ? null : document.getElementById(id);
   if (!(q instanceof HTMLInputElement)) return;
   e.preventDefault();
   q.focus();

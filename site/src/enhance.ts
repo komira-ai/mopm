@@ -37,6 +37,16 @@ export function addCopyButtons<N>(port: EnhancePort<N>, root: N, clipboard: Clip
 }
 
 /**
+ * The search field '/' focuses: the search page's big box (#search-q) when the page has one, else the header's (#q),
+ * else none. The header search stays on every app-shell view (the shell paints it before it knows the view, so hiding
+ * it later would move the page), so on /search both exist and the page's own box, which holds the query, wins.
+ */
+export function searchFieldId(has: (id: string) => boolean): 'search-q' | 'q' | null {
+  if (has('search-q')) return 'search-q';
+  return has('q') ? 'q' : null;
+}
+
+/**
  * Fills the home page's #recent-list slot from one searchPackages call, and marks it no longer busy whatever the
  * answer: a rejected call is shown as a network failure, and a host with no API (api null) says why it calls nothing.
  */

@@ -67,7 +67,7 @@ describe('search', () => {
     const { api } = fake();
     const out = html(await appView(sdoc, '/search', '?q=http', api, HOST));
     expect(out).toContain('<form class="search-form"');
-    expect(out).toContain('class="button retry"');
+    expect(out).toContain('class="button button-primary retry"');
   });
 });
 

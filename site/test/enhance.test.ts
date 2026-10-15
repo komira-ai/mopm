@@ -10,7 +10,7 @@
 import type { Client } from '../src/api';
 import type { Clipboard } from '../src/copy';
 import { h, type SElement, type SNode, serialize, StringDoc } from '../src/doc';
-import { addCopyButtons, type EnhancePort, showRecent } from '../src/enhance';
+import { addCopyButtons, type EnhancePort, searchFieldId, showRecent } from '../src/enhance';
 import type { PackageList } from '../src/types';
 import { text } from './view-helpers';
 
@@ -126,4 +126,14 @@ test('a page with no slot is left alone', async () => {
     },
   });
   expect(called).toBe(0);
+});
+
+// '/' on the search page goes to the page's own box (it holds the query), elsewhere to the header's; the header box
+// stays on every app-shell view, so both exist on /search. Mutants: the header's #q preferred (the '/' shortcut lands in
+// the small box on /search); no fallback to #q (no shortcut on the package and docs pages).
+test('searchFieldId: the search page\'s box when there is one, else the header\'s, else none', () => {
+  expect(searchFieldId((id) => id === 'search-q' || id === 'q')).toBe('search-q');
+  expect(searchFieldId((id) => id === 'search-q')).toBe('search-q');
+  expect(searchFieldId((id) => id === 'q')).toBe('q');
+  expect(searchFieldId(() => false)).toBeNull();
 });

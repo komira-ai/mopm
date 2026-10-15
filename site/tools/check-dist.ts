@@ -11,11 +11,13 @@
 //    as a browser reads it (the required CSP would block them);
 //  - only .html, .js and .css files (the bucket is to serve nothing else);
 //  - the JavaScript and CSS stay small: each module at most JS_MAX_BYTES, all of them at most JS_TOTAL_MAX_BYTES (tsc
-//    output is not minified; the edge is to compress it), the stylesheet at most CSS_MAX_BYTES (32 KiB; see there).
+//    output is not minified; the edge is to compress it); the shared stylesheet at most SHARED_CSS_MAX_BYTES, each area
+//    stylesheet at most AREA_CSS_MAX_BYTES, and the stylesheets one page links at most PAGE_CSS_MAX_BYTES together.
 
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, posix, relative, sep } from 'path';
 import { DOC_PAGES } from '../src/links';
+import { SHARED_STYLESHEET } from './layout';
 
 /** Relative paths ('/'-separated) of the files under dir, sorted. */
 export function listFiles(dir: string): string[] {
@@ -40,12 +42,14 @@ export function importsOf(path: string, source: string): string[] {
 
 export const JS_MAX_BYTES = 64 * 1024;
 export const JS_TOTAL_MAX_BYTES = 128 * 1024;
+/** The design note's budgets: the shared stylesheet (site.css) and each area stylesheet. */
+export const SHARED_CSS_MAX_BYTES = 24 * 1024;
+export const AREA_CSS_MAX_BYTES = 16 * 1024;
 /**
- * 32 KiB, raised from 16 KiB with the landing and package design: one stylesheet still carries every route's styles
- * (home, search, package, version, docs) until the per-route area stylesheets the design note plans are split out, and
- * 32 KiB is under that plan's per-route total (a 24 KiB shared sheet plus a 16 KiB area sheet).
+ * The stylesheets one page links, together: 30 KiB, down from the 32 KiB that held every route's styles in one sheet.
+ * The heaviest page is the app shell (the shared sheet plus the package and search areas, see layout.ts).
  */
-export const CSS_MAX_BYTES = 32 * 1024;
+export const PAGE_CSS_MAX_BYTES = 30 * 1024;
 
 export const REQUIRED = ['index.html', 'app.html', '404.html', 'docs/index.html', ...DOC_PAGES.map((d) => `docs/${d.slug}/index.html`)];
 
@@ -177,7 +181,10 @@ export function checkDist(dir: string): void {
   for (const r of REQUIRED) if (!have.has(r)) problems.push(`missing ${r}`);
 
   let js = 0;
-  let css = 0;
+  const cssSize = new Map<string, number>();
+  for (const f of files) {
+    if (posix.extname(f) === '.css') cssSize.set(f, statSync(join(dir, f)).size);
+  }
   for (const f of files) {
     const ext = posix.extname(f);
     if (!['.html', '.js', '.css'].includes(ext)) {
@@ -193,7 +200,10 @@ export function checkDist(dir: string): void {
       for (const dep of importsOf(f, text)) if (!have.has(dep)) problems.push(`${f}: imports ${dep}, which is not in dist`);
     }
     if (ext === '.css') {
-      css += Buffer.byteLength(text);
+      const n = Buffer.byteLength(text);
+      const shared = posix.basename(f) === SHARED_STYLESHEET;
+      const max = shared ? SHARED_CSS_MAX_BYTES : AREA_CSS_MAX_BYTES;
+      if (n > max) problems.push(`${f} is ${n} bytes; the limit for ${shared ? 'the shared' : 'an area'} stylesheet is ${max}`);
       if (!f.startsWith('assets/')) problems.push(`${f}: a stylesheet outside assets/`);
     }
     if (ext !== '.html') continue;
@@ -204,7 +214,12 @@ export function checkDist(dir: string): void {
     if (/<style\b/i.test(text)) problems.push(`${f}: a <style> element`);
     const { tags, problems: unread } = readTags(text);
     for (const p of unread) problems.push(`${f}: ${p}`);
+    let pageCss = 0;
     for (const [tag, attrs] of tags) {
+      if (tag === 'link' && attrs.some(([k, v]) => k === 'rel' && v === 'stylesheet')) {
+        const href = attrs.find(([k]) => k === 'href')?.[1] ?? '';
+        pageCss += cssSize.get(href.replace(/^\//, '')) ?? 0;
+      }
       if (tag === 'script') {
         const src = attrs.filter(([name]) => name === 'src');
         if (src.length !== 1 || !src[0][1].startsWith('/assets/')) problems.push(`${f}: a <script> without one src under /assets/`);
@@ -217,8 +232,8 @@ export function checkDist(dir: string): void {
         if (asset && !have.has(asset[1])) problems.push(`${f}: references /${asset[1]}, which is not in dist`);
       }
     }
+    if (pageCss > PAGE_CSS_MAX_BYTES) problems.push(`${f} links ${pageCss} bytes of CSS; the limit for one page is ${PAGE_CSS_MAX_BYTES}`);
   }
   if (js > JS_TOTAL_MAX_BYTES) problems.push(`JavaScript is ${js} bytes in all; the limit is ${JS_TOTAL_MAX_BYTES}`);
-  if (css > CSS_MAX_BYTES) problems.push(`CSS is ${css} bytes; the limit is ${CSS_MAX_BYTES}`);
   if (problems.length > 0) throw new DistError(problems);
 }

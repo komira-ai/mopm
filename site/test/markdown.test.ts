@@ -1,7 +1,8 @@
 // The Markdown subset renders as CommonMark/GFM would, and what is not supported stays literal text.
 import { MAX_DEPTH, parse } from '../src/markdown/parse';
 import { Slugger, slugify } from '../src/markdown/render';
-import { md, mdFull } from './md';
+import { tagsIn } from '../tools/check-dist';
+import { md, MD_TAGS, mdFull } from './md';
 
 describe('blocks', () => {
   test('ATX headings, with closing hashes and a shift', () => {
@@ -244,5 +245,39 @@ describe('slugs', () => {
 
   test('rendered headings get unique ids', () => {
     expect(md('# A\n# A\n# A-1')).toBe('<h1 id="readme-a">A</h1><h1 id="readme-a-1">A</h1><h1 id="readme-a-1-1">A-1</h1>');
+  });
+});
+
+// The docs option (repo docs at build time): heading anchors, code blocks in copy boxes, and the h2 and h3 headings
+// reported for an on-this-page list. A readme gets none of it (every test above renders without the option).
+describe('docs pages', () => {
+  const heard: [number, string, string][] = [];
+  const DOCS = { idPrefix: 'doc-', headingShift: 0, links: { mode: 'docs' as const, source: 'docs/x.md' }, docs: { onHeading: (l: number, id: string, t: string) => void heard.push([l, id, t]) } };
+  beforeEach(() => heard.splice(0));
+
+  // Mutant: the anchor linking a different id, or wrapping a heading that holds a link (a link inside a link).
+  test('a heading is a link to its own anchor, unless it holds a link', () => {
+    expect(md('## Retries and `FLAKY`', DOCS)).toBe('<h2 id="doc-retries-and-flaky"><a href="#doc-retries-and-flaky" class="anchor">Retries and <code>FLAKY</code></a></h2>');
+    expect(md('## See [spec](https://example.com/)', DOCS)).toBe('<h2 id="doc-see-spec">See <a href="https://example.com/" rel="nofollow noopener noreferrer ugc">spec</a></h2>');
+    // An id outside anchorHref's plain grammar (a non-ASCII slug) gets no anchor rather than a throw.
+    expect(md('## Größe', DOCS)).toBe('<h2 id="doc-größe">Größe</h2>');
+  });
+
+  // Mutant: code blocks left bare (no Copy button), or the box given an unnamed <pre>.
+  test('a code block sits in a named copy box', () => {
+    expect(md('```toml\n[package]\n```', DOCS)).toBe('<div class="code-box copy-box"><span class="code-lang" aria-hidden="true">toml</span><pre tabindex="0" role="region" aria-label="toml example"><code class="language-toml">[package]</code></pre></div>');
+    expect(md('    plain', DOCS)).toBe('<div class="code-box copy-box"><span class="code-lang" aria-hidden="true">code</span><pre tabindex="0" role="region" aria-label="code example"><code>plain</code></pre></div>');
+  });
+
+  // Mutant: h1 or h4 reported, or the text carrying markup.
+  test('onHeading hears the h2 and h3 headings, in order, as plain text', () => {
+    md('# T\n## A `b`\n### C\n#### D\n## A `b`', DOCS);
+    expect(heard).toEqual([[2, 'doc-a-b', 'A b'], [3, 'doc-c', 'C'], [2, 'doc-a-b-1', 'A b']]);
+  });
+
+  // The readme allowlist plus the code bar's <span>.
+  test('the output stays inside the renderer allowlist', () => {
+    const allowed = new Set([...MD_TAGS, 'span']);
+    for (const [tag] of tagsIn(md('# T\n## A\n```\nx\n```\n| a |\n|---|\n| b |', DOCS))) expect(allowed).toContain(tag);
   });
 });

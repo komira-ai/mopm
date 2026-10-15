@@ -19,7 +19,7 @@ import { formatDate, stateLabel } from '../format.js';
 import { condaBase } from '../host.js';
 import { anchorHref, internalHref, webHref } from '../links.js';
 import { renderMarkdown } from '../markdown/render.js';
-import { isVersion, searchPath, versionPath } from '../routes.js';
+import { isCanonicalName, isVersion, packagePath, searchPath, versionPath } from '../routes.js';
 import { manifestSnippet, pixiCommand, refusalSentence } from '../snippet.js';
 import type { PackageInfo, VersionSummary } from '../types.js';
 import { details, snippetBlock, timeEl, type View } from './common.js';
@@ -91,42 +91,6 @@ function versionsTable<N>(doc: Doc<N>, name: string, versions: readonly VersionS
   );
 }
 
-export const PIXI_LABEL = 'pixi, in a project that lists the channel';
-
-/**
- * How to use a package: the conda channel and pixi command always (for a known host), and the mopm.toml line when
- * there is a version mopm can name. `manifest` is the snippet or null. The pixi command names no version, so a version
- * page passes a label saying which version it installs.
- */
-export function installSection<N>(
-  doc: Doc<N>,
-  name: string,
-  manifest: string | null,
-  ctx: PageContext,
-  noManifestWhy: string | null,
-  pixiLabel: string = PIXI_LABEL,
-): N {
-  const channel = condaBase(ctx.host);
-  const pixi = pixiCommand(name);
-  const section = h(doc, 'section', { class: 'install', 'aria-labelledby': 'install-heading' }, h(doc, 'h2', { id: 'install-heading' }, 'Install'));
-  if (manifest !== null) {
-    doc.append(section, snippetBlock(doc, 'mopm.toml', manifest, 'snippet-manifest'));
-    doc.append(
-      section,
-      h(doc, 'p', { class: 'muted small' }, h(doc, 'code', null, 'mopm metadata'), ' checks this table today; ', h(doc, 'code', null, 'mopm add'), ' is planned.'),
-    );
-  } else if (noManifestWhy !== null) {
-    doc.append(section, h(doc, 'p', { class: 'muted' }, noManifestWhy));
-  }
-  if (channel !== null) {
-    doc.append(section, snippetBlock(doc, 'conda channel', channel, 'snippet-channel'));
-    if (pixi !== null) {
-      doc.append(section, snippetBlock(doc, pixiLabel, pixi, 'snippet-pixi'));
-    }
-  }
-  return section;
-}
-
 /** The package page's one command: where it works, naming this host's channel (one artifact serves every stage). */
 export const INSTALL_NOTE = 'in a pixi project that lists the channel ';
 
@@ -137,8 +101,16 @@ export const SIDE_VERSIONS = 5;
  * The package page's install card: the pixi command alone, with a Copy button, when this host has a channel; then the
  * conda channel and the mopm.toml lines under "Other ways to install". Without a channel (a host outside host.ts's
  * table) there is no command to lead with, and the mopm.toml lines (or why there are none) are shown as they are.
+ * `caveat` is a line under the command (a version page: the command installs the newest version, not that one).
  */
-export function installCard<N>(doc: Doc<N>, name: string, manifest: string | null, ctx: PageContext, noManifestWhy: string | null): N {
+export function installCard<N>(
+  doc: Doc<N>,
+  name: string,
+  manifest: string | null,
+  ctx: PageContext,
+  noManifestWhy: string | null,
+  caveat: string | null = null,
+): N {
   const channel = condaBase(ctx.host);
   const pixi = channel !== null ? pixiCommand(name) : null;
   const card = h(doc, 'section', { class: 'install-card', 'aria-labelledby': 'install-heading' });
@@ -163,9 +135,10 @@ export function installCard<N>(doc: Doc<N>, name: string, manifest: string | nul
       'div',
       { class: 'cmd cmd-lg copy-box' },
       h(doc, 'span', { class: 'prompt', 'aria-hidden': 'true' }, '$'),
-      h(doc, 'pre', { tabindex: '0', role: 'region', 'aria-label': 'install command', 'aria-describedby': 'install-note' }, h(doc, 'code', null, pixi)),
+      h(doc, 'pre', { tabindex: '0', role: 'region', 'aria-label': 'install command', 'aria-describedby': caveat ? 'install-note install-caveat' : 'install-note' }, h(doc, 'code', null, pixi)),
     ),
   );
+  if (caveat) doc.append(card, h(doc, 'p', { class: 'install-caveat', id: 'install-caveat' }, caveat));
   doc.append(
     card,
     h(doc, 'details', { class: 'other-ways' }, h(doc, 'summary', null, 'Other ways to install'), h(doc, 'div', { class: 'alt' }, snippetBlock(doc, 'conda channel', channel as string, 'snippet-channel'), ...others)),
@@ -227,6 +200,44 @@ function sidePanel<N>(doc: Doc<N>, name: string, info: PackageInfo): N {
   return aside;
 }
 
+/** The parts of a package or version page's head band. */
+export interface HeadParts<N> {
+  name: string;
+  /** The version a version page is about; the crumb then links the package and ends at the version. */
+  version?: string;
+  /** After the h1: the latest version and its tag, or the version's state tag. */
+  badges: (N | null)[];
+  description?: string | null;
+  facts: N[];
+  /** In-page jump links; shown when there are two or more. */
+  tabs: N[];
+}
+
+/** The head band a package and a version page share: crumb, glyph and name, description, facts, jump links. */
+export function pageHead<N>(doc: Doc<N>, p: HeadParts<N>): N {
+  const crumbs: N[] = [h(doc, 'a', { href: internalHref(searchPath()) }, 'Packages'), h(doc, 'span', { class: 'sep', 'aria-hidden': 'true' }, '/')];
+  if (p.version === undefined) {
+    crumbs.push(h(doc, 'span', { 'aria-current': 'page' }, p.name));
+  } else {
+    crumbs.push(
+      isCanonicalName(p.name) ? h(doc, 'a', { href: internalHref(packagePath(p.name)), class: 'crumb-pkg' }, p.name) : h(doc, 'span', null, p.name),
+      h(doc, 'span', { class: 'sep', 'aria-hidden': 'true' }, '/'),
+      h(doc, 'span', { 'aria-current': 'page' }, p.version),
+    );
+  }
+  const h1 = p.version === undefined ? h(doc, 'h1', null, p.name) : h(doc, 'h1', null, p.name, ' ', h(doc, 'span', { class: 'ver' }, p.version));
+  return h(
+    doc,
+    'header',
+    { class: 'page-band pkg-head' },
+    h(doc, 'nav', { class: 'crumb', 'aria-label': 'Breadcrumb' }, ...crumbs),
+    h(doc, 'div', { class: 'title-row' }, h(doc, 'span', { class: `${glyphClass(p.name)} glyph-lg`, 'aria-hidden': 'true' }, initials(p.name)), h1, ...p.badges),
+    p.description ? h(doc, 'p', { class: 'lede' }, p.description) : null,
+    p.facts.length > 0 ? h(doc, 'ul', { class: 'metarow' }, ...p.facts) : null,
+    p.tabs.length > 1 ? h(doc, 'nav', { class: 'tabs', 'aria-label': 'On this page' }, ...p.tabs) : null,
+  );
+}
+
 function head<N>(doc: Doc<N>, name: string, info: PackageInfo, latest: string | null, hasReadme: boolean): N {
   const latestRow = latest === null ? undefined : info.versions.find((v) => v.version === latest);
   const facts: N[] = [];
@@ -237,31 +248,16 @@ function head<N>(doc: Doc<N>, name: string, info: PackageInfo, latest: string | 
   // Jump links within the page, so none is marked as the selected one.
   if (hasReadme) tabs.push(h(doc, 'a', { href: anchorHref('section-readme') }, 'Readme'));
   if (info.state !== 'claimed') tabs.push(h(doc, 'a', { href: anchorHref('versions-heading') }, 'Versions ', h(doc, 'span', { class: 'count' }, String(info.versions.length))));
-  return h(
-    doc,
-    'header',
-    { class: 'page-head pkg-head' },
-    h(
-      doc,
-      'nav',
-      { class: 'crumb', 'aria-label': 'Breadcrumb' },
-      h(doc, 'a', { href: internalHref(searchPath()) }, 'Packages'),
-      h(doc, 'span', { class: 'sep', 'aria-hidden': 'true' }, '/'),
-      h(doc, 'span', { 'aria-current': 'page' }, name),
-    ),
-    h(
-      doc,
-      'div',
-      { class: 'title-row' },
-      h(doc, 'span', { class: `${glyphClass(name)} glyph-lg`, 'aria-hidden': 'true' }, initials(name)),
-      h(doc, 'h1', null, name),
+  return pageHead(doc, {
+    name,
+    badges: [
       latest !== null ? h(doc, 'span', { class: 'ver' }, h(doc, 'span', { class: 'visually-hidden' }, 'latest version '), latest) : null,
       latest !== null ? h(doc, 'span', { class: 'tag tag-ok', 'aria-hidden': 'true' }, 'latest') : null,
-    ),
-    info.description ? h(doc, 'p', { class: 'lede' }, info.description) : null,
-    facts.length > 0 ? h(doc, 'ul', { class: 'metarow' }, ...facts) : null,
-    tabs.length > 1 ? h(doc, 'nav', { class: 'tabs', 'aria-label': 'On this page' }, ...tabs) : null,
-  );
+    ],
+    description: info.description,
+    facts,
+    tabs,
+  });
 }
 
 export function packageView<N>(doc: Doc<N>, name: string, info: PackageInfo, ctx: PageContext): View<N> {

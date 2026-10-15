@@ -16,7 +16,45 @@ describe('a published version (fixture: version detail)', () => {
   test('title and h1 name the version', () => {
     expect(view.title).toBe('http_client 0.4.0');
     expect(out.match(/<h1>/g)).toHaveLength(1);
-    expect(out).toContain('<h1>http_client 0.4.0</h1>');
+    expect(out).toContain('<h1>http_client <span class="ver">0.4.0</span></h1>');
+    expect(text(out.slice(out.indexOf('<h1>'), out.indexOf('</h1>')))).toBe('http_client 0.4.0');
+  });
+
+  // The package page's head band: crumb Packages / name / version, the glyph, the state tag, then the facts.
+  // Mutants: the crumb losing the package link; the facts losing the platforms (taken from the files).
+  test('the head is the package page\'s: crumb to the package, glyph, state, published, license, Mojo, platforms', () => {
+    expect(out).toContain('<header class="page-band pkg-head"><nav class="crumb" aria-label="Breadcrumb"><a href="/search">Packages</a><span class="sep" aria-hidden="true">/</span><a href="/packages/http_client" class="crumb-pkg">http_client</a><span class="sep" aria-hidden="true">/</span><span aria-current="page">0.4.0</span></nav>');
+    expect(out).toMatch(/<span class="glyph g[012] glyph-lg" aria-hidden="true">hc<\/span><h1>/);
+    expect(out).toContain('<span class="tag state-published">published</span>');
+    const facts = text(out.slice(out.indexOf('<ul class="metarow">'), out.indexOf('</ul>', out.indexOf('<ul class="metarow">'))));
+    expect(facts).toMatch(/^Published \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC/);
+    expect(facts).toContain('Platform linux-64');
+  });
+
+  // One install command first, as on the package page, before the files; the mopm.toml pin and the channel under
+  // "Other ways". Mutants: the card moved below the files; a second command shown outside the details.
+  test('one install command leads the page, before the files, with the pin under Other ways', () => {
+    expect(out.indexOf('class="install-card"')).toBeLessThan(out.indexOf('id="files-heading"'));
+    expect(out.match(/<div class="cmd cmd-lg copy-box">/g)).toHaveLength(1);
+    const details = out.slice(out.indexOf('<details class="other-ways">'));
+    expect(details).toContain('http_client = "=0.4.0"');
+    expect(out.indexOf('http_client = "=0.4.0"')).toBeGreaterThan(out.indexOf('<details class="other-ways">'));
+  });
+
+  // Each digest is a copy box the page script gives a Copy button, named for its file through a hidden label. The
+  // digest wraps, so its <pre> is no tab stop and no region. Mutants: the digest back to plain text (no box); a box with
+  // an unnamed <pre> (its button would read "Copy command"); tabindex or role=region back on the <pre>.
+  test('each file\'s SHA-256 sits in its own named copy box, with no extra tab stop', () => {
+    const v = versionFixture('version detail');
+    v.files.forEach((f, i) => {
+      expect(out).toContain(`<td class="sha" role="cell"><span id="sha-label-${i}" hidden="">SHA-256 of ${f.filename}</span><div class="hash-box copy-box"><pre aria-labelledby="sha-label-${i}"><code class="hash">${f.sha256}</code></pre></div></td>`);
+    });
+    expect(out.split('class="hash-box copy-box"').length - 1).toBe(v.files.length);
+    expect(out).not.toMatch(/<pre[^>]*(tabindex|role)="[^"]*"[^>]*><code class="hash">/);
+  });
+
+  test('jump links to the files and dependencies, with their counts', () => {
+    expect(out).toContain('<nav class="tabs" aria-label="On this page"><a href="#files-heading">Files <span class="count">1</span></a><a href="#deps-heading">Dependencies <span class="count">1</span></a>');
   });
 
   test('the mopm.toml line pins the version', () => {
@@ -25,7 +63,7 @@ describe('a published version (fixture: version detail)', () => {
 
   test('the file links to the channel of this host', () => {
     expect(hrefs(out)).toContain(FILE_URL);
-    expect(out).toContain('<td class="num">120.6 KiB</td>');
+    expect(out).toContain('<td class="num" role="cell">120.6 KiB</td>');
   });
 
   test('a dependency with a valid name links to its page, with its range as text', () => {
@@ -39,7 +77,8 @@ describe('a published version (fixture: version detail)', () => {
 
   test('the pixi line says it installs the newest version, which may not be this one', () => {
     expect(out).toContain('<code>pixi add mojo-http_client</code>');
-    expect(text(out)).toContain('pixi, in a project that lists the channel (installs the newest version, not necessarily this one)');
+    expect(text(out)).toContain('This installs the newest version, not necessarily this one.');
+    expect(out).toContain('aria-describedby="install-note install-caveat"');
   });
 
   test('the sidebar shows the state and the publish time in UTC', () => {
@@ -81,7 +120,7 @@ describe('yanked (fixture)', () => {
   });
 
   test('the pixi line says it does not install this yanked version', () => {
-    expect(text(out)).toContain('(installs the newest version, not this yanked one)');
+    expect(text(out)).toContain('This installs the newest version, not this yanked one.');
   });
 
   test('the sidebar state carries the reason', () => {
@@ -136,7 +175,8 @@ describe('download links', () => {
     const out = html(render(versionFixture('version detail', (r) => {
       (r.files as Record<string, unknown>[])[0].url = url;
     })));
-    expect(hrefs(out).filter((h) => !h.startsWith('/') && !h.startsWith('https://github.com/example/'))).toEqual([]);
+    // In-page jump links ('#files-heading') and same-site paths are the page's own.
+    expect(hrefs(out).filter((h) => !h.startsWith('/') && !h.startsWith('#') && !h.startsWith('https://github.com/example/'))).toEqual([]);
   });
 
   test('on an unknown host no file links and no channel', () => {
@@ -159,7 +199,7 @@ describe('names, spellings and unknown values', () => {
     const out = html(render(versionFixture('version detail', (r) => Object.assign(r, { deps: [{ name: 'Bad-Name' }, { name: 'javascript:x' }] }))));
     expect(out).toContain('<span>Bad-Name</span>');
     expect(out).toContain('<span>javascript:x</span>');
-    expect(hrefs(out).filter((h) => h.startsWith('/packages/') && h !== '/packages/http_client')).toEqual([]);
+    expect(hrefs(out).filter((h) => h.startsWith('/packages/') && h.split('#')[0] !== '/packages/http_client')).toEqual([]);
   });
 
   test('the address is the version the registry returned', () => {
@@ -189,5 +229,59 @@ describe('names, spellings and unknown values', () => {
   test('a published version is pinned as written', () => {
     const out = html(render(versionFixture('version detail', (r) => Object.assign(r, { version: '1.2.0' }))));
     expect(out).toContain('<code>[dependencies]\nhttp_client = "=1.2.0"</code>');
+  });
+});
+
+// Every fixture version has one file, so a table showing only the first, or a head that repeats or miscounts the
+// platforms, would pass the tests above. Three files on two platforms, one platform twice. Mutants: v.files.slice(0, 1)
+// in the table; the platforms not deduped (linux-64 listed twice); 'Platform' for more than one; the Files tab counting
+// platforms or rows of one platform.
+describe('a version with several files', () => {
+  const extra = (subdir: string, n: string) => ({
+    filename: `mojo-http_client-0.4.0-mojo1.0.0_${n}.conda`,
+    subdir,
+    size: 1024,
+    sha256: n.repeat(64).slice(0, 64),
+    url: `https://conda.mopm.dev/${subdir}/mojo-http_client-0.4.0-mojo1.0.0_${n}.conda`,
+  });
+  const v = versionFixture('version detail', (r) => {
+    (r.files as Record<string, unknown>[]).push(extra('osx-arm64', '1'), extra('linux-64', '2'));
+  });
+  const out = html(render(v));
+
+  test('one row, one named copy box and one Copy label per file', () => {
+    expect(v.files).toHaveLength(3);
+    const tbody = out.slice(out.indexOf('<tbody role="rowgroup">'), out.indexOf('</tbody>'));
+    expect(tbody.match(/<tr role="row">/g)).toHaveLength(3);
+    v.files.forEach((f, i) => {
+      expect(tbody).toContain(`<span id="sha-label-${i}" hidden="">SHA-256 of ${f.filename}</span><div class="hash-box copy-box"><pre aria-labelledby="sha-label-${i}"><code class="hash">${f.sha256}</code></pre></div>`);
+      expect(hrefs(tbody)).toContain(f.url);
+    });
+    expect(uniqueIds(out)).toBe(true);
+  });
+
+  test('the head lists each platform once, as Platforms, and the Files tab counts every file', () => {
+    const facts = text(out.slice(out.indexOf('<ul class="metarow">'), out.indexOf('</ul>', out.indexOf('<ul class="metarow">'))));
+    expect(facts).toContain('Platforms linux-64 · osx-arm64');
+    expect(facts.match(/linux-64/g)).toHaveLength(1);
+    expect(out).toContain('<a href="#files-heading">Files <span class="count">3</span></a>');
+  });
+});
+
+// The spec says files has minItems 1, but the decoder accepts files: [] (the registry is not trusted to keep its own
+// schema), so the empty branch is reachable. Mutant: the guard `v.files.length === 0` changed so it never fires -> an
+// empty Files table (a region with a header row and no rows) where the 'No files.' line should be.
+describe('a version with no files', () => {
+  const v = versionFixture('version detail', (r) => {
+    r.files = [];
+  });
+  const out = html(render(v));
+
+  test('says No files. and renders no Files table or region', () => {
+    expect(v.files).toHaveLength(0);
+    expect(out).toContain('<p class="muted">No files.</p>');
+    expect(out).not.toContain('role="table"');
+    expect(out).not.toContain('aria-label="Files"');
+    expect(out).not.toContain('<table');
   });
 });

@@ -5,6 +5,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { TAGS } from '../src/doc';
+import { DOC_PAGES } from '../src/links';
 import { tagsIn } from '../tools/check-dist';
 import { OPENING_SENTENCE, PLANNED, WORKING_TODAY } from '../tools/pages';
 import { cleanup, type Fixture, fixture, REPO_ROOT } from './build-fixture';
@@ -84,13 +85,30 @@ describe.each(['404.html', 'app.html', 'docs/index.html', 'docs/mopm-test/index.
   // copy.ts finds a .copy-box's one <pre> and adds the button at runtime; a prerendered button would do nothing
   // without scripts, and a box with two blocks would copy the wrong one.
   test('every copy box holds exactly one named <pre> and no button', () => {
-    const boxes = html.split(/<div class="cmd[^"]*copy-box[^"]*">/).slice(1).map((b) => b.slice(0, b.indexOf('</div>')));
+    const boxes = html.split(/<div class="[^"]*\bcopy-box\b[^"]*">/).slice(1).map((b) => b.slice(0, b.indexOf('</div>')));
     for (const b of boxes) {
       expect(b.match(/<pre /g)).toHaveLength(1);
       expect(b).toMatch(/<pre tabindex="0" role="region" aria-label(?:ledby)?="[^"]+"/);
       expect(b).not.toContain('<button');
     }
     if (page === 'index.html') expect(boxes.length).toBeGreaterThanOrEqual(3);
+    // Every docs code block is a copy box (both published docs have code). Mutant: the renderer's docs option off.
+    if (/^docs\/mopm-/.test(page)) {
+      expect(boxes.length).toBeGreaterThanOrEqual(1);
+      expect(boxes.length).toBe(html.split('<pre ').length - 1);
+    }
+  });
+
+  // Each page links the shared sheet first, then only its own area's (layout.ts AREA_STYLESHEETS). Mutants: the docs
+  // pages loading home.css; the app shell dropping search.css (the search view unstyled); site.css not first.
+  test('the shared stylesheet first, then only the area stylesheets this page uses', () => {
+    const want: Record<string, string[]> = {
+      'index.html': ['site.css', 'home.css'],
+      'app.html': ['site.css', 'package.css', 'search.css'],
+      '404.html': ['site.css'],
+    };
+    const sheets = tags.filter(([t, a]) => t === 'link' && a.some(([k, v]) => k === 'rel' && v === 'stylesheet')).map(([, a]) => (a.find(([k]) => k === 'href') as [string, string])[1]);
+    expect(sheets.map((h) => h.replace(/^\/assets\/[0-9a-f]{16}\//, ''))).toEqual(want[page] ?? ['site.css', 'docs.css']);
   });
 
   test('one search field with id q (the "/" key focuses it), in a named search form that submits to /search', () => {
@@ -125,7 +143,6 @@ describe.each(['404.html', 'app.html', 'docs/index.html', 'docs/mopm-test/index.
     }
     expect(count('style')).toBe(0);
     expect(count('script')).toBe(1);
-    expect(tags.filter(([t, a]) => t === 'link' && a.some(([k, v]) => k === 'rel' && v === 'stylesheet'))).toHaveLength(1);
   });
 
   test('every id is unique', () => {
@@ -157,8 +174,71 @@ describe('the docs pages', () => {
   test('the Docs nav entry is the current page on /docs/ and its parent on a doc page', () => {
     expect(read('docs/index.html')).toContain('<a href="/docs/" aria-current="page">Docs</a>');
     expect(read('docs/mopm-test/index.html')).toContain('<a href="/docs/" aria-current="true">Docs</a>');
-    expect(read('docs/mopm-test/index.html')).toContain('<nav class="crumb" aria-label="Breadcrumb"><a href="/docs/">Docs</a></nav>');
+    expect(read('docs/mopm-test/index.html')).toContain('<nav class="crumb" aria-label="Breadcrumb"><a href="/docs/">Docs</a><span class="sep" aria-hidden="true">/</span><span aria-current="page">');
     expect(read('index.html')).not.toContain('aria-current');
+  });
+
+  // The docs nav lists the index and every published doc, each by its title, and marks the page shown. Mutants: a doc
+  // left out of the nav; aria-current on the wrong entry, or on none; a link reading as its slug ('mopm-toml') instead
+  // of the doc's title, or the index entry not reading 'Overview'.
+  test.each([
+    ['docs/index.html', '/docs/'],
+    ['docs/mopm-toml/index.html', '/docs/mopm-toml/'],
+    ['docs/mopm-test/index.html', '/docs/mopm-test/'],
+  ])('%s: the docs nav lists every docs page and marks this one', (page, self) => {
+    const html = read(page);
+    const nav = html.slice(html.indexOf('<nav class="docs-nav" aria-label="Docs pages">'));
+    const list = nav.slice(0, nav.indexOf('</nav>'));
+    expect([...list.matchAll(/<a href="([^"]+)"/g)].map((m) => m[1])).toEqual(['/docs/', '/docs/mopm-toml/', '/docs/mopm-test/']);
+    expect([...list.matchAll(/<a href="([^"]+)" aria-current="page">/g)].map((m) => m[1])).toEqual([self]);
+    // Each doc's title read here from its source's first '# ' heading, not through docTitle.
+    const titles = DOC_PAGES.map((d) => {
+      const line = readFileSync(join(REPO_ROOT, d.source), 'utf8').split('\n').find((l) => l.startsWith('# '));
+      if (!line) throw new Error(`${d.source}: no '# ' heading`);
+      return line.slice(2).replace(/`|\*\*/g, '').trim();
+    });
+    const pairs = [...list.matchAll(/<a href="([^"]+)"[^>]*>([^<]*)<\/a>/g)].map((m) => [m[1], textOf(m[2])]);
+    expect(pairs).toEqual([['/docs/', 'Overview'], ...DOC_PAGES.map((d, i) => [`/docs/${d.slug}/`, titles[i]])]);
+    expect(pairs.filter(([href, label]) => DOC_PAGES.some((d) => href === `/docs/${d.slug}/` && label === d.slug))).toEqual([]);
+  });
+
+  // The on-this-page list holds the page's h2 and h3 headings, in order, each linked to its own id and reading as the
+  // heading reads. Mutants: a link to an id the page does not have (a prefix lost); h4 headings listed; the list out of
+  // order; a link reading as the id ('doc-retries-and-flaky') instead of the heading's text.
+  test.each(['docs/mopm-toml/index.html', 'docs/mopm-test/index.html'])('%s: the on-this-page list is the h2 and h3 headings, in order, by their text', (page) => {
+    const html = read(page);
+    const toc = html.slice(html.indexOf('<nav class="toc" aria-label="On this page">'));
+    const links = [...toc.slice(0, toc.indexOf('</nav>')).matchAll(/<li class="toc-([23])"><a href="#([^"]+)">([^<]*)<\/a>/g)].map((m) => [`h${m[1]}`, m[2], textOf(m[3])]);
+    const headings = [...html.matchAll(/<(h[23]) id="([^"]+)">([\s\S]*?)<\/\1>/g)].map((m) => [m[1], m[2], textOf(m[3])]);
+    expect(links.length).toBeGreaterThan(2);
+    expect(links).toEqual(headings);
+    expect(links.filter(([, id, label]) => label === id || label === '')).toEqual([]);
+  });
+
+  // Below the widest layout the on-this-page list is not a side column but a block between the breadcrumb and the
+  // article, so a phone reader gets it too (docs.css shows it at every width). Mutant: the toc after the article (it
+  // would sit under a long page on a phone).
+  test.each(['docs/mopm-toml/index.html', 'docs/mopm-test/index.html'])('%s: the on-this-page list comes after the breadcrumb and before the article', (page) => {
+    const html = read(page);
+    const crumb = html.indexOf('<nav class="crumb" aria-label="Breadcrumb">');
+    const toc = html.indexOf('<nav class="toc" aria-label="On this page">');
+    const article = html.indexOf('<article class="prose doc">');
+    expect(crumb).toBeGreaterThan(0);
+    expect(toc).toBeGreaterThan(crumb);
+    expect(article).toBeGreaterThan(toc);
+  });
+
+  // Each heading of a doc is a link to its own anchor, so a reader can copy a section's address. Mutant: the anchor
+  // pointing at another id; a heading holding a link getting an anchor around it (a link in a link).
+  test.each(['docs/mopm-toml/index.html', 'docs/mopm-test/index.html'])('%s: every heading links to its own anchor', (page) => {
+    const html = read(page);
+    const heads = [...html.matchAll(/<(h[1-6]) id="(doc-[^"]+)">([\s\S]*?)<\/\1>/g)];
+    expect(heads.length).toBeGreaterThan(2);
+    for (const [, , id, inner] of heads) {
+      expect(inner.match(/<a /g)?.length ?? 0).toBeLessThanOrEqual(1);
+      if (inner.includes('class="anchor"')) expect(inner).toMatch(new RegExp(`^<a href="#${id}" class="anchor">`));
+    }
+    expect(heads.filter(([, , id, inner]) => inner.startsWith(`<a href="#${id}" class="anchor">`)).length).toBeGreaterThan(2);
   });
 
   test('a doc summary on /docs/ is its first sentence', () => {
@@ -171,6 +251,10 @@ describe('the docs pages', () => {
 
 test('404.html and app.html: the 404 is not indexed; the app shell tells a reader without scripts what to do', () => {
   expect(read('404.html')).toContain('<meta name="robots" content="noindex">');
+  // On-brand and a way on: a search box with its own id and name, Home, the package list and the docs. Mutant: the
+  // search box or the way-on row dropped.
+  expect(read('404.html')).toContain('<form class="lost-search" role="search" action="/search" method="get" aria-label="Search the registry"><label for="lost-q" class="visually-hidden">');
+  expect(read('404.html')).toContain('<ul class="way-on"><li><a href="/">Home</a></li><li><a href="/search">Browse packages</a></li><li><a href="/docs/">Docs</a></li></ul>');
   expect(read('app.html')).toMatch(/<noscript><div class="notice"><p>This page reads the registry API and needs JavaScript\./);
   expect(read('app.html')).toContain('<body data-page="app">');
 });

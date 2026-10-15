@@ -9,7 +9,7 @@
 import { h, type SNode } from '../src/doc';
 import { anchorHref, internalHref, REPO_URL, webHref } from '../src/links';
 import { searchPath } from '../src/routes';
-import { loadingView } from '../src/views/common';
+import { loadingView, lostBlock, searchBox, wayOn } from '../src/views/common';
 import { doc, type PageSpec } from './layout';
 
 const MOJO_URL = 'https://www.modular.com/mojo';
@@ -350,20 +350,14 @@ export function notFoundPage(): PageSpec {
     kind: 'error',
     noindex: true,
     main: [
-      h(
+      lostBlock(
         doc,
-        'section',
-        { class: 'notice' },
-        h(doc, 'h1', null, 'Page not found'),
-        h(doc, 'p', null, 'There is nothing at this address. Package names are lowercase letters, digits and underscores.'),
-        h(
-          doc,
-          'ul',
-          null,
-          h(doc, 'li', null, h(doc, 'a', { href: internalHref(searchPath()) }, 'Browse packages')),
-          h(doc, 'li', null, h(doc, 'a', { href: internalHref('/docs/') }, 'Read the docs')),
-          h(doc, 'li', null, h(doc, 'a', { href: internalHref('/') }, 'Go to the home page')),
-        ),
+        '404',
+        'Page not found',
+        {},
+        h(doc, 'p', { class: 'lost-lede' }, 'There is nothing at this address. Package names are lowercase letters, digits and underscores.'),
+        searchBox(doc, 'lost-q'),
+        wayOn(doc),
       ),
     ],
   };
