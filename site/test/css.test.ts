@@ -176,10 +176,10 @@ test('only the package head sets its crumb\'s current item in monospace', () => 
 // Dependencies tabs to #files-heading and #deps-heading, the package page's #section-readme and #versions-heading)
 // scrolls its target to the viewport top, under the header, unless the target has a scroll margin at least the header's
 // height. Every one of those targets is an element with an id, so one shared [id] rule covers them all, on every page
-// (the 404 page loads site.css alone). The header measured in headless Chrome: 106px tall below 48rem (two rows: brand
-// and nav, then the search), 65px from 48rem. Mutants: the [id] rule removed (a heading lands at top 0, hidden); the
-// token below the narrow header (a docs heading's top 18px hidden at 88px); an area sheet with its own fixed
-// scroll-margin-top that beats [id] on specificity (docs.css's old `.doc h2 { scroll-margin-top: 88px }`).
+// (the 404 page loads site.css alone). The header measured in headless Chrome: 104px tall from 320px to below 48rem (two
+// rows: brand and nav, then the search; 106px from 25rem), 65px from 48rem. Mutants: the [id] rule removed (a heading
+// lands at top 0, hidden); the token below the narrow header (a docs heading's top 18px hidden at 88px); an area sheet
+// with its own fixed scroll-margin-top that beats [id] on specificity (docs.css's old `.doc h2 { scroll-margin-top: 88px }`).
 describe('anchor targets clear the sticky header', () => {
   const sheets = [['site.css', css] as const, ...['home.css', 'package.css', 'search.css', 'docs.css'].map((f) => [f, readFileSync(join(__dirname, '..', 'static', f), 'utf8')] as const)];
   const px = (v: string | undefined): number => Number(/^(\d+)px$/.exec(v ?? '')?.[1] ?? NaN);
@@ -195,6 +195,22 @@ describe('anchor targets clear the sticky header', () => {
     expect(narrow).toBeGreaterThanOrEqual(106);
     expect(wide).toBeGreaterThanOrEqual(65);
     expect(wide).toBeLessThan(narrow);
+  });
+
+  // The 106px holds only while brand and nav share the first row. Untightened they need 353px of content, so they wrap
+  // (a third row, 151px, measured at 360 and 375) below a 385px viewport; the max-width rule tightens them to 286px,
+  // which fits the 288px content box of a 320px viewport. Mutants: the tightening rule removed, or its breakpoint set
+  // under 385px (24rem = 384px wraps at 384), or above the wide breakpoint; the nav padding or gap put back.
+  test('below the width where brand and nav would wrap, a rule tightens them onto one row', () => {
+    const m = /@media \(max-width: ([\d.]+)rem\) \{\n  \.bar \{ column-gap: 8px; \}([\s\S]*?)\n\}/.exec(css);
+    expect(m).not.toBeNull();
+    const px = Number(m?.[1]) * 16;
+    expect(px).toBeGreaterThanOrEqual(385);
+    expect(px).toBeLessThan(48 * 16);
+    expect(m?.[2]).toContain('.site-nav ul { gap: 0; }');
+    expect(m?.[2]).toContain('.site-nav a { padding: 6px; font-size: 0.875rem; }');
+    expect(m?.[2]).toContain('.brand { font-size: 1.2rem; gap: 8px; }');
+    expect(rule(':root')).toContain('holds from a 320px viewport up');
   });
 
   test.each(sheets)('%s sets no scroll margin but the shared one, and offsets sticky columns by the token', (f, text) => {
