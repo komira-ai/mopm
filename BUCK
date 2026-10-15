@@ -248,6 +248,15 @@ zig_test(  # buck-only: tools/build_parity.zig reads build.zig and this file
     **_TOOLS
 )
 
+# ---- The validator corpus: files made by a Zig generator, and the test that they are what it makes ----
+
+zig_test(  # buck-only: tests/validator_corpus is what tests/drivers/validator_corpus.zig makes
+    name = "validator_corpus",
+    src = "tests/drivers/validator_corpus_test.zig",
+    imports = ["tests/drivers/validator_corpus.zig"] + glob(["tests/validator_corpus/**"]),
+    **_TOOLS
+)
+
 # ---- Mojo end-to-end drivers (komira's pinned Mojo 1.0.0, no pixi) ----------
 
 zig_exe(  # buck-only: `cc` of the Mojo drivers, zig cc
@@ -348,6 +357,12 @@ filegroup(
     name = "contract_api",
     srcs = {f[len("tests/contract/api/"):]: f for f in glob(["tests/contract/api/*.json"])},
     visibility = ["//service/api:", "//site:"],
+)
+
+filegroup(
+    name = "validator_corpus_files",
+    srcs = {f[len("tests/validator_corpus/"):]: f for f in glob(["tests/validator_corpus/**"])},
+    visibility = ["//service/api:"],
 )
 
 # ---- What the site's tests and build read outside site/ (site/BUCK) ----------
