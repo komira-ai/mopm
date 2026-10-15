@@ -1,0 +1,27 @@
+[
+  {
+    "adapter": "flags",
+    "method": "readOnly",
+    "args": [],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "key": "read_only",
+            "value": true
+          }
+        }
+      }
+    ]
+  },
+  {
+    "adapter": "flags",
+    "method": "readOnly",
+    "args": [],
+    "replies": [
+      {
+        "body": {}
+      }
+    ]
+  }
+]

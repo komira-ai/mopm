@@ -1,0 +1,472 @@
+[
+  {
+    "adapter": "publish",
+    "method": "putUpload",
+    "args": [
+      {
+        "upload_id": "u1",
+        "name": "demo",
+        "version": "1.0.0",
+        "canonical": "1.0.0",
+        "subdir": "noarch",
+        "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size": 10,
+        "key": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda",
+        "actor": "u:1",
+        "created_at": "2026-10-14T12:00:00Z",
+        "url_expires_at": "2026-10-14T12:05:00Z",
+        "expires_at": 1792000000
+      }
+    ],
+    "replies": [
+      {
+        "body": {}
+      }
+    ]
+  },
+  {
+    "adapter": "publish",
+    "method": "putUpload",
+    "args": [
+      {
+        "upload_id": "u1",
+        "name": "demo",
+        "version": "1.0.0",
+        "canonical": "1.0.0",
+        "subdir": "noarch",
+        "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size": 10,
+        "key": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda",
+        "actor": "u:1",
+        "created_at": "2026-10-14T12:00:00Z",
+        "url_expires_at": "2026-10-14T12:05:00Z",
+        "expires_at": 1792000000
+      }
+    ],
+    "replies": [
+      {
+        "error": "ConditionalCheckFailedException"
+      }
+    ]
+  },
+  {
+    "adapter": "publish",
+    "method": "getUpload",
+    "args": [
+      "u1"
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "upload_id": "u1",
+            "name": "demo",
+            "version": "1.0.0",
+            "canonical": "1.0.0",
+            "subdir": "noarch",
+            "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 10,
+            "key": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda",
+            "actor": "u:1",
+            "created_at": "2026-10-14T12:00:00Z",
+            "url_expires_at": "2026-10-14T12:05:00Z",
+            "expires_at": 1792000000
+          }
+        }
+      }
+    ]
+  },
+  {
+    "adapter": "publish",
+    "method": "useUpload",
+    "args": [
+      "u1",
+      "pub_abc"
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "upload_id": "u1",
+            "name": "demo",
+            "version": "1.0.0",
+            "canonical": "1.0.0",
+            "subdir": "noarch",
+            "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 10,
+            "key": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda",
+            "actor": "u:1",
+            "created_at": "2026-10-14T12:00:00Z",
+            "url_expires_at": "2026-10-14T12:05:00Z",
+            "expires_at": 1792000000
+          }
+        }
+      },
+      {
+        "body": {}
+      }
+    ]
+  },
+  {
+    "adapter": "publish",
+    "method": "useUpload",
+    "args": [
+      "u1",
+      "pub_abc"
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "upload_id": "u1",
+            "name": "demo",
+            "version": "1.0.0",
+            "canonical": "1.0.0",
+            "subdir": "noarch",
+            "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 10,
+            "key": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda",
+            "actor": "u:1",
+            "created_at": "2026-10-14T12:00:00Z",
+            "url_expires_at": "2026-10-14T12:05:00Z",
+            "expires_at": 1792000000,
+            "used_by": "pub_other"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "adapter": "publish",
+    "method": "claimVersion",
+    "args": [
+      "demo",
+      "1.0.0",
+      "pub_abc"
+    ],
+    "replies": [
+      {
+        "body": {}
+      }
+    ]
+  },
+  {
+    "adapter": "publish",
+    "method": "claimVersion",
+    "args": [
+      "demo",
+      "1.0.0",
+      "pub_abc"
+    ],
+    "replies": [
+      {
+        "error": "ConditionalCheckFailedException"
+      },
+      {
+        "body": {
+          "Item": {
+            "publish_id": "ver#demo#1.0.0",
+            "winner": "pub_first"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "adapter": "publish",
+    "method": "versionHolder",
+    "args": [
+      "demo",
+      "1.0.0"
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "publish_id": "ver#demo#1.0.0",
+            "winner": "pub_first"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "adapter": "publish",
+    "method": "createPublish",
+    "args": [
+      {
+        "publish_id": "pub_abc",
+        "name": "demo",
+        "version": "1.0.0",
+        "canonical": "1.0.0",
+        "actor": "u:1",
+        "published_by": "octo",
+        "status": "pending",
+        "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "files": [
+          {
+            "upload_id": "u1",
+            "subdir": "noarch",
+            "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 10,
+            "key": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "remaining_subdirs": [],
+        "created_at": "2026-10-14T12:00:00Z",
+        "updated_at": "2026-10-14T12:00:00Z",
+        "rev": 0
+      }
+    ],
+    "replies": [
+      {
+        "body": {}
+      }
+    ]
+  },
+  {
+    "adapter": "publish",
+    "method": "getPublish",
+    "args": [
+      "pub_abc"
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "publish_id": "pub_abc",
+            "name": "demo",
+            "version": "1.0.0",
+            "canonical": "1.0.0",
+            "actor": "u:1",
+            "published_by": "octo",
+            "status": "pending",
+            "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "files": [
+              {
+                "upload_id": "u1",
+                "subdir": "noarch",
+                "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 10,
+                "key": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda"
+              }
+            ],
+            "remaining_subdirs": [],
+            "created_at": "2026-10-14T12:00:00Z",
+            "updated_at": "2026-10-14T12:00:00Z",
+            "rev": 0
+          }
+        }
+      }
+    ]
+  },
+  {
+    "adapter": "publish",
+    "method": "updatePublish",
+    "args": [
+      "pub_abc",
+      {
+        "$set": {
+          "status": "validating",
+          "updated_at": "2026-10-14T12:00:05Z"
+        }
+      }
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "publish_id": "pub_abc",
+            "name": "demo",
+            "version": "1.0.0",
+            "canonical": "1.0.0",
+            "actor": "u:1",
+            "published_by": "octo",
+            "status": "pending",
+            "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "files": [
+              {
+                "upload_id": "u1",
+                "subdir": "noarch",
+                "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 10,
+                "key": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda"
+              }
+            ],
+            "remaining_subdirs": [],
+            "created_at": "2026-10-14T12:00:00Z",
+            "updated_at": "2026-10-14T12:00:00Z",
+            "rev": 0
+          }
+        }
+      },
+      {
+        "body": {}
+      }
+    ]
+  },
+  {
+    "adapter": "publish",
+    "method": "updatePublish",
+    "args": [
+      "pub_abc",
+      {
+        "$set": {
+          "status": "validating",
+          "updated_at": "2026-10-14T12:00:05Z"
+        }
+      }
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "publish_id": "pub_abc",
+            "name": "demo",
+            "version": "1.0.0",
+            "canonical": "1.0.0",
+            "actor": "u:1",
+            "published_by": "octo",
+            "status": "pending",
+            "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "files": [
+              {
+                "upload_id": "u1",
+                "subdir": "noarch",
+                "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 10,
+                "key": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda"
+              }
+            ],
+            "remaining_subdirs": [],
+            "created_at": "2026-10-14T12:00:00Z",
+            "updated_at": "2026-10-14T12:00:00Z",
+            "rev": 0
+          }
+        }
+      },
+      {
+        "error": "ConditionalCheckFailedException"
+      },
+      {
+        "body": {
+          "Item": {
+            "publish_id": "pub_abc",
+            "name": "demo",
+            "version": "1.0.0",
+            "canonical": "1.0.0",
+            "actor": "u:1",
+            "published_by": "octo",
+            "status": "validating",
+            "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "files": [
+              {
+                "upload_id": "u1",
+                "subdir": "noarch",
+                "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 10,
+                "key": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda"
+              }
+            ],
+            "remaining_subdirs": [],
+            "created_at": "2026-10-14T12:00:00Z",
+            "updated_at": "2026-10-14T12:00:00Z",
+            "rev": 1
+          }
+        }
+      },
+      {
+        "body": {}
+      }
+    ]
+  },
+  {
+    "adapter": "publish",
+    "method": "updatePublish",
+    "args": [
+      "pub_none",
+      {
+        "$set": {
+          "status": "validating"
+        }
+      }
+    ],
+    "replies": [
+      {
+        "body": {}
+      }
+    ]
+  },
+  {
+    "adapter": "publish",
+    "method": "hit",
+    "args": [
+      "rl#acct#4242#2026-10-14",
+      2000,
+      1792000000
+    ],
+    "replies": [
+      {
+        "body": {}
+      },
+      {
+        "body": {}
+      }
+    ]
+  },
+  {
+    "adapter": "publish",
+    "method": "hit",
+    "args": [
+      "rl#acct#4242#2026-10-14",
+      2000,
+      1792000000
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "publish_id": "rl#acct#4242#2026-10-14",
+            "count": 7,
+            "rev": 6,
+            "expires_at": 1792000000
+          }
+        }
+      },
+      {
+        "body": {}
+      }
+    ]
+  },
+  {
+    "adapter": "publish",
+    "method": "hit",
+    "args": [
+      "rl#acct#4242#2026-10-14",
+      7,
+      1792000000
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "publish_id": "rl#acct#4242#2026-10-14",
+            "count": 7,
+            "rev": 6,
+            "expires_at": 1792000000
+          }
+        }
+      }
+    ]
+  }
+]
