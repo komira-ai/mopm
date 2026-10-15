@@ -33,6 +33,12 @@ were warm, which that setting does not touch): `:lambda_zip` 100 actions, 2 min 
 actions, 4 min 19 s; the five targets `:lambda_zip :lambda_small_zip :tls_test :sdk_probe :sdk_probe_small`
 together 188 actions, 6 min 9 s. Every build reported `local: 0`.
 
+## Rust version
+
+rustc 1.85.0 (komira's pin) builds the SDK crates only at the releases Cargo's rust-version-aware resolver picks:
+`aws-sdk-dynamodb` 1.82, `aws-sdk-s3` 1.96, `aws-config` 1.8.5, `aws-sdk-sts` 1.84. The newest releases (1.130, 1.152, 1.12) declare
+rust-version 1.94.1. Following the SDK means bumping the pin; the cfgs in `overrides.json` are written for 1.85 and would be re-derived.
+
 ## arm64 (Graviton)
 
 Not done here. What it takes, from reading komira's rule code:
