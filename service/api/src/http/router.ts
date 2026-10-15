@@ -51,7 +51,7 @@ export const normaliseQuery = (q: string) => q.toLowerCase().replace(/[-._]+/g, 
 function respond(statusCode: number, requestId: string, body?: unknown): HttpResponse {
   return {
     statusCode,
-    headers: { 'cache-control': 'no-store', 'content-type': 'application/json', 'x-mopm-request-id': requestId },
+    headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-mopm-request-id': requestId },
     body: body === undefined ? '' : JSON.stringify(body),
   };
 }
@@ -204,7 +204,7 @@ async function listVersions(deps: RouterDeps, name: string, query: HttpRequest['
 }
 
 /** `sort=updated` ranks every match by its newest publication, so it reads them all; beyond this many it refuses. */
-const MAX_UPDATED_SCAN = 1001;
+const MAX_UPDATED_SCAN = 1000;
 const SEARCH_PAGE = 100;
 
 async function searchPackages(deps: RouterDeps, query: HttpRequest['query']) {
@@ -290,7 +290,7 @@ async function getVersion(deps: RouterDeps, name: string, version: string) {
 function segments(path: string): string[] | undefined {
   if (path !== PREFIX && !path.startsWith(`${PREFIX}/`)) return undefined;
   try {
-    return path.slice(PREFIX.length).split('/').map(decodeURIComponent);
+    return path.slice(PREFIX.length).split('/').filter(Boolean).map(decodeURIComponent);
   } catch {
     return undefined;
   }

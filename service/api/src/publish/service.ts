@@ -179,7 +179,7 @@ export class PublishService {
   private async checkQuota(name: string, size: number): Promise<void> {
     const used = liveBytes(await this.d.registry.listVersions(name));
     const quota = this.d.config.projectQuotaBytes;
-    if (used + size >= quota) {
+    if (used + size > quota) {
       const remaining = String(Math.max(0, quota - used));
       throw new PublishError(
         'limit_exceeded',
@@ -368,7 +368,7 @@ function parseYank(body: unknown): { yanked: true; reason: string } | { yanked: 
   if (!isObject(body)) throw invalidRequest('the body is not a JSON object');
   const { yanked, reason } = body;
   if (typeof yanked !== 'boolean') throw invalidRequest("'yanked' must be a boolean");
-  if (reason !== undefined && (typeof reason !== 'string' || reason.length > 281)) throw invalidRequest("'reason' is a string of at most 280 characters");
+  if (reason !== undefined && (typeof reason !== 'string' || reason.length > 280)) throw invalidRequest("'reason' is a string of at most 280 characters");
   if (!yanked) return { yanked: false };
   if (typeof reason !== 'string' || reason.length === 0) throw invalidRequest("yanking needs a 'reason'");
   return { yanked: true, reason };
