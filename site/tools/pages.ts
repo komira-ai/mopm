@@ -1,11 +1,13 @@
 // The prerendered pages that are not docs: the home page, the 404 page and the app shell.
 //
 // The home page says only what README.md says: its opening sentence word for word, the commands that work today, the
-// build from source, and the planned commands (src/cli/main.zig). test/layout.test.ts holds this copy to those files,
+// build from source (there is no installer yet, so the page marks it planned), and the planned commands
+// (src/cli/main.zig). Its "Recently published" list is an empty slot the page script fills from the registry
+// (src/views/recent.ts): no package is baked into the page. There is no featured list: the API has no source for one. test/layout.test.ts holds this copy to those files,
 // so when the README or the CLI changes, this page has to change with it.
 
 import { h, type SNode } from '../src/doc';
-import { internalHref, REPO_URL, webHref } from '../src/links';
+import { anchorHref, internalHref, REPO_URL, webHref } from '../src/links';
 import { searchPath } from '../src/routes';
 import { loadingView } from '../src/views/common';
 import { doc, type PageSpec } from './layout';
@@ -62,97 +64,217 @@ function codeList(items: readonly string[], conj: string): (SNode | string)[] {
   return out;
 }
 
-/** A home section: a card in the two-column grid, or `wide` across both columns (long code lines, the closing list). */
-function section(id: string, title: string, wide: boolean, ...children: (SNode | string | null)[]): SNode {
-  const cls = wide ? 'home-section home-wide' : 'home-section';
-  return h(doc, 'section', { class: cls, 'aria-labelledby': id }, h(doc, 'h2', { id }, title), ...children);
+/** A command block with a Copy button (added by the page script; see src/copy.ts), named for screen readers. */
+function copyBlock(s: string, label: string, extra = ''): SNode {
+  return h(doc, 'div', { class: `cmd copy-box${extra}` }, h(doc, 'pre', { tabindex: '0', role: 'region', 'aria-label': label }, h(doc, 'code', null, s)));
+}
+
+/** A command block with no Copy button: the text holds a placeholder the reader replaces. */
+function plainBlock(s: string, label: string): SNode {
+  return h(doc, 'div', { class: 'cmd' }, h(doc, 'pre', { tabindex: '0', role: 'region', 'aria-label': label }, h(doc, 'code', null, s)));
+}
+
+/** A home band: a full-width section with its own wrap, a kicker and a heading. */
+function band(id: string, cls: string, kicker: string, title: string, ...children: (SNode | string | null)[]): SNode {
+  return h(
+    doc,
+    'section',
+    { class: `band ${cls}`, 'aria-labelledby': id },
+    h(doc, 'div', { class: 'wrap' }, h(doc, 'p', { class: 'kicker' }, kicker), h(doc, 'h2', { id }, title), ...children),
+  );
+}
+
+/** The terminal card beside the hero: a first session, in commands that work today in a package `mopm new` makes. */
+export const SESSION = ['mopm new my_package --lib', 'cd my_package', 'mopm metadata', 'mopm test', 'mopm repl'];
+
+function terminal(): SNode {
+  const lines: (SNode | string)[] = [];
+  SESSION.forEach((cmd, i) => {
+    if (i > 0) lines.push('\n');
+    lines.push(h(doc, 'span', { class: 'p', 'aria-hidden': 'true' }, '$ '), cmd);
+  });
+  return h(
+    doc,
+    'div',
+    { class: 'term' },
+    h(doc, 'div', { class: 'term-bar', 'aria-hidden': 'true' }, h(doc, 'span', { class: 'dots' }), h(doc, 'span', null, 'my_package')),
+    h(doc, 'pre', { tabindex: '0', role: 'region', 'aria-label': 'A first session' }, h(doc, 'code', null, ...lines)),
+  );
 }
 
 export function homePage(): PageSpec {
   const hero = h(
     doc,
     'section',
-    { class: 'hero' },
-    h(doc, 'h1', null, 'mopm'),
+    { class: 'hero', 'aria-labelledby': 'hero-title' },
     h(
       doc,
-      'p',
-      { class: 'lede', id: 'opening' },
-      'mopm is "cargo for Mojo": a package manager plus build, test and coverage tooling for ',
-      link(MOJO_URL, 'Mojo'),
-      ' projects, with a package registry at mopm.dev.',
-    ),
-    // The home page has no header search (layout.ts), so this field takes its id: '/' focuses it.
-    h(
-      doc,
-      'form',
-      { class: 'hero-search', role: 'search', action: internalHref('/search'), method: 'get', 'aria-label': 'Search the registry' },
-      h(doc, 'label', { for: 'q' }, 'Find a package by name'),
+      'div',
+      { class: 'wrap hero-grid' },
       h(
         doc,
         'div',
-        { class: 'hero-search-row' },
-        h(doc, 'input', { id: 'q', name: 'q', type: 'search', placeholder: 'http_client', maxlength: '64', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'search' }),
-        h(doc, 'button', { type: 'submit', class: 'button button-primary' }, 'Search'),
+        { class: 'hero-text' },
+        h(
+          doc,
+          'p',
+          { class: 'eyebrow' },
+          h(doc, 'a', { class: 'pill', href: anchorHref('status') }, 'Status: early'),
+          h(doc, 'a', { href: internalHref('/docs/') }, 'Read the docs →'),
+        ),
+        h(doc, 'h1', { class: 'display', id: 'hero-title' }, 'Cargo for ', h(doc, 'em', null, 'Mojo.')),
+        h(
+          doc,
+          'p',
+          { class: 'lede', id: 'opening' },
+          'mopm is "cargo for Mojo": a package manager plus build, test and coverage tooling for ',
+          link(MOJO_URL, 'Mojo'),
+          ' projects, with a package registry at mopm.dev.',
+        ),
+        // The home page has no header search (layout.ts), so this field takes its id: '/' focuses it.
+        h(
+          doc,
+          'form',
+          { class: 'hero-search', role: 'search', action: internalHref('/search'), method: 'get', 'aria-label': 'Search the registry' },
+          h(doc, 'label', { for: 'q', class: 'visually-hidden' }, 'Find a package by name'),
+          h(
+            doc,
+            'div',
+            { class: 'big-search' },
+            h(doc, 'span', { class: 'search-icon', 'aria-hidden': 'true' }),
+            h(doc, 'input', { id: 'q', name: 'q', type: 'search', placeholder: 'Find a package by name', maxlength: '64', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'search' }),
+            h(doc, 'kbd', { 'aria-hidden': 'true' }, '/'),
+            h(doc, 'button', { type: 'submit', class: 'button button-primary' }, 'Search'),
+          ),
+          // Name order, not sort=updated: the API refuses sort=updated once more than 1000 packages match, and with no q
+          // every package matches.
+          h(doc, 'p', { class: 'muted small' }, 'Search matches the start of a name, or ', h(doc, 'a', { href: internalHref(searchPath()) }, 'browse all packages'), '.'),
+        ),
+        h(
+          doc,
+          'div',
+          { class: 'install-hero', id: 'install' },
+          h(doc, 'p', { class: 'install-label' }, h(doc, 'strong', null, 'Install the mopm CLI')),
+          h(
+            doc,
+            'p',
+            { class: 'seg', 'aria-hidden': 'true' },
+            h(doc, 'span', { class: 'seg-on' }, 'From source'),
+            h(doc, 'span', { class: 'seg-off' }, 'One-line installer ', h(doc, 'span', { class: 'tag tag-planned' }, 'planned')),
+          ),
+          copyBlock(BUILD, 'build from source commands', ' cmd-xl'),
+          h(
+            doc,
+            'p',
+            { class: 'note', id: 'build' },
+            'There are no release binaries yet, and no one-line installer: build from source with Zig 0.12.0 (',
+            code('tools/install_zig.sh <dir>'),
+            ' installs it, checked against a pinned sha256). CI builds and tests it on Linux x86_64, Linux aarch64 and macOS arm64.',
+          ),
+        ),
       ),
-      // Name order, not sort=updated: the API refuses sort=updated once more than 1000 packages match, and with no q
-      // every package matches.
-      h(doc, 'p', { class: 'muted small' }, 'or ', h(doc, 'a', { href: internalHref(searchPath()) }, 'browse all packages')),
+      h(doc, 'div', { class: 'hero-side' }, terminal()),
+    ),
+  );
+
+  const steps = h(
+    doc,
+    'ol',
+    { class: 'stepper' },
+    h(
+      doc,
+      'li',
+      null,
+      h(doc, 'span', { class: 'num', 'aria-hidden': 'true' }, '1'),
+      h(doc, 'h3', null, 'Build mopm'),
+      h(doc, 'p', null, 'In a clone of ', link(REPO_URL, 'the repository'), ', with Zig 0.12.0. The one-line installer is planned.'),
+      copyBlock('zig build', 'build command'),
     ),
     h(
       doc,
+      'li',
+      null,
+      h(doc, 'span', { class: 'num', 'aria-hidden': 'true' }, '2'),
+      h(doc, 'h3', null, 'Start a package'),
+      h(doc, 'p', null, code('mopm init'), ' makes one in the current directory instead. ', code('mopm test'), ' runs its tests in a ', h(doc, 'a', { href: anchorHref('mojo-env') }, 'Mojo environment'), '.'),
+      copyBlock('mopm new my_package --lib', 'new package command'),
+    ),
+    h(
+      doc,
+      'li',
+      null,
+      h(doc, 'span', { class: 'num', 'aria-hidden': 'true' }, '3'),
+      h(doc, 'h3', null, 'Add a package'),
+      h(doc, 'p', null, 'In a pixi project that lists the mopm.dev channel. mopm’s own ', code('mopm add'), ' is planned.'),
+      plainBlock('pixi add mojo-<name>', 'pixi command'),
+    ),
+  );
+  const quickstart = band('quickstart', 'band-steps', 'Quickstart', 'Three steps to your first package', steps);
+
+  const registry = h(
+    doc,
+    'section',
+    { class: 'band strip', 'aria-label': 'The registry' },
+    h(
+      doc,
+      'div',
+      { class: 'wrap strip-grid' },
+      h(
+        doc,
+        'div',
+        { class: 'strip-recent' },
+        h(doc, 'p', { class: 'kicker' }, 'Recently published'),
+        h(doc, 'h2', { id: 'recent' }, 'Fresh on the registry'),
+        // Filled by the page script from the registry (src/views/recent.ts); nothing is baked in at build time.
+        h(
+          doc,
+          'div',
+          { class: 'recent-slot', id: 'recent-list', 'aria-live': 'polite', 'aria-busy': 'true' },
+          h(doc, 'p', { class: 'recent-note js-only' }, 'Loading recently published packages…'),
+          h(doc, 'p', { class: 'recent-note no-js' }, 'The list of recent packages needs JavaScript. ', h(doc, 'a', { href: internalHref(searchPath()) }, 'Browse all packages'), ' instead.'),
+        ),
+      ),
+      h(
+        doc,
+        'div',
+        { class: 'strip-registry' },
+        h(doc, 'p', { class: 'kicker' }, 'Install from the registry'),
+        h(doc, 'h2', { id: 'registry' }, 'Every package is a conda package'),
+        h(
+          doc,
+          'p',
+          null,
+          'Every published package is served as a conda channel at ',
+          h(doc, 'code', { id: 'conda-channel' }, 'https://conda.mopm.dev/'),
+          ', so pixi and other conda clients install it today. The conda package of ',
+          code('<name>'),
+          ' is ',
+          code('mojo-<name>'),
+          '; in a pixi project that lists the channel, ',
+          code('pixi add mojo-<name>'),
+          ' installs it (',
+          link(`${REPO_URL}/blob/main/spec/channel.md`, 'the channel spec'),
+          ').',
+        ),
+        h(doc, 'p', null, 'mopm’s own ', code('mopm add'), ' is planned.'),
+      ),
+    ),
+  );
+
+  const today = band(
+    'today',
+    'home-wide',
+    'Working today',
+    'What mopm does now',
+    h(
+      doc,
       'p',
-      { class: 'status notice', id: 'status' },
+      { class: 'status', id: 'status' },
       h(doc, 'strong', null, 'Status: early.'),
       ' ',
       ...codeList(WORKING_TODAY.map((c) => `mopm ${c}`), 'and'),
       ' work today. Everything else is a plan, and the design may change.',
     ),
-  );
-
-  const registry = section(
-    'registry',
-    'Install from the registry',
-    false,
-    h(
-      doc,
-      'p',
-      null,
-      'Every published package is served as a conda channel at ',
-      h(doc, 'code', { id: 'conda-channel' }, 'https://conda.mopm.dev/'),
-      ', so pixi and other conda clients install it today. The conda package of ',
-      code('<name>'),
-      ' is ',
-      code('mojo-<name>'),
-      '; in a pixi project that lists the channel, ',
-      code('pixi add mojo-<name>'),
-      ' installs it (',
-      link(`${REPO_URL}/blob/main/spec/channel.md`, 'the channel spec'),
-      ').',
-    ),
-    h(doc, 'p', null, 'mopm’s own ', code('mopm add'), ' is planned.'),
-  );
-
-  const install = section(
-    'build',
-    'Build mopm',
-    false,
-    h(
-      doc,
-      'p',
-      null,
-      'There are no release binaries yet. Build from source with Zig 0.12.0 (',
-      code('tools/install_zig.sh <dir>'),
-      ' installs it, checked against a pinned sha256):',
-    ),
-    block(BUILD, 'Build from source'),
-    h(doc, 'p', { class: 'muted small' }, 'CI builds and tests it on Linux x86_64, Linux aarch64 and macOS arm64.'),
-  );
-
-  const quickstart = section(
-    'quickstart',
-    'Quickstart',
-    true,
     h(
       doc,
       'p',
@@ -202,17 +324,18 @@ export function homePage(): PageSpec {
     ),
   );
 
-  const planned = section(
+  const planned = band(
     'planned',
+    'band-planned',
+    'Being built',
     'Planned',
-    true,
     h(doc, 'p', null, 'Not implemented yet: ', ...codeList(PLANNED, 'and'), '. The design may change.'),
     h(
       doc,
       'ul',
       { class: 'goals' },
-      h(doc, 'li', null, h(doc, 'strong', null, 'Coverage for any Mojo package.'), ' ', code('mopm cov'), ' builds and tests a package and reports line coverage, without the package adopting a particular build system.'),
-      h(doc, 'li', null, h(doc, 'strong', null, 'Automatic native linking for downstream consumers.'), ' The build, run and REPL part works today; dependency resolution is planned.'),
+      h(doc, 'li', null, h(doc, 'h3', null, 'Coverage for any Mojo package'), h(doc, 'p', null, code('mopm cov'), ' builds and tests a package and reports line coverage, without the package adopting a particular build system.')),
+      h(doc, 'li', null, h(doc, 'h3', null, 'Automatic native linking for downstream consumers'), h(doc, 'p', null, 'The build, run and REPL part works today; dependency resolution is planned.')),
     ),
   );
 
@@ -220,7 +343,7 @@ export function homePage(): PageSpec {
     title: 'mopm',
     description: 'mopm is a package manager plus build, test and coverage tooling for Mojo projects, with a package registry at mopm.dev.',
     kind: 'home',
-    main: [hero, h(doc, 'div', { class: 'home-grid' }, registry, install, quickstart, planned)],
+    main: [hero, quickstart, registry, today, planned],
   };
 }
 

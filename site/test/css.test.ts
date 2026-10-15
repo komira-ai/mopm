@@ -1,6 +1,8 @@
 // static/site.css: the contrast and focus rules a stylesheet edit could quietly break. Form controls (the search
 // fields, the sort select, buttons) have a border at least 3:1 against the page and header backgrounds in light and
-// dark (WCAG 1.4.11), and the focus ring does not reshape what it outlines.
+// dark (WCAG 1.4.11); body, muted and link text and the primary button's label are at least 4.5:1 (WCAG 1.4.3); every
+// colour token is redefined for dark mode, so no light colour leaks into it; and the focus ring does not reshape what
+// it outlines.
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -10,7 +12,7 @@ const css = readFileSync(join(__dirname, '..', 'static', 'site.css'), 'utf8');
 function tokens(from: number): Record<string, string> {
   const start = css.indexOf(':root {', from);
   const body = css.slice(start, css.indexOf('}', start));
-  return Object.fromEntries([...body.matchAll(/(--[a-z-]+):\s*(#[0-9a-f]{6});/g)].map((m) => [m[1], m[2]]));
+  return Object.fromEntries([...body.matchAll(/(--[a-z0-9-]+):\s*(#[0-9a-f]{6});/g)].map((m) => [m[1], m[2]]));
 }
 
 function luminance(hex: string): number {
@@ -51,6 +53,30 @@ test('the focus ring sets no border-radius (it would override a code block\'s ro
   expect(rule(':focus-visible')).not.toContain('border-radius');
 });
 
-test('a .home-wide section spans every column of the home grid', () => {
-  expect(rule('.home-wide')).toContain('grid-column: 1 / -1;');
+test.each([
+  ['light', light],
+  ['dark', dark],
+])('%s: text is at least 4.5:1 where it sits', (_scheme, t) => {
+  for (const bg of ['--bg', '--bg-soft', '--surface', '--surface-2', '--bg-code']) {
+    expect(contrast(t['--fg'], t[bg])).toBeGreaterThanOrEqual(7);
+    expect(contrast(t['--fg-muted'], t[bg])).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(t['--link'], t[bg])).toBeGreaterThanOrEqual(4.5);
+  }
+  // The primary button's label sits on a gradient between these two.
+  expect(contrast(t['--accent-fg'], t['--btn-top'])).toBeGreaterThanOrEqual(4.5);
+  expect(contrast(t['--accent-fg'], t['--btn-bottom'])).toBeGreaterThanOrEqual(4.5);
+  expect(contrast(t['--accent-strong'], t['--accent-soft'])).toBeGreaterThanOrEqual(4.5);
+});
+
+test('every colour token of the light theme is redefined for dark', () => {
+  const darkOnly = tokens(css.indexOf('@media (prefers-color-scheme: dark)'));
+  expect(Object.keys(light).length).toBeGreaterThan(20);
+  expect(Object.keys(light).filter((k) => !(k in darkOnly))).toEqual([]);
+});
+
+// The home page's recent list prerenders a line for readers without scripts; it must stay hidden when scripts run.
+test('the no-script line is hidden unless scripting is off, and the loading line is hidden when it is', () => {
+  expect(rule('.no-js')).toContain('display: none;');
+  const media = css.slice(css.indexOf('@media (scripting: none)'));
+  expect(media.slice(0, media.indexOf('}\n}'))).toMatch(/\.no-js \{ display: block; \}[\s\S]*\.js-only, \.loading \{ display: none;/);
 });
