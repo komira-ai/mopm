@@ -43,10 +43,9 @@
   # komira at the commit that holds the Zig rules BUCK uses (zig_module deps,
   # zig_test exec/env tools, zig_exe optimize/strip) and the node_modules rules
   # service/*/BUCK uses (tools/build/node/modules.bzl).
-  # TODO: this is the head of komira pull request 1636 (branch build/node-modules, which
-  # merges main and is stacked on kpin, pull request 1635). Once both are merged, pin the
-  # merge commit of main that holds them. Bump it with farm.yml.
-  commit_hash = f8b0cd15c47ed0f00c212de6e6fc55c0a51fd572
+  # This is the komira main merge commit of pull request 1636 (node_modules rules, on top
+  # of kpin). Bump it with farm.yml.
+  commit_hash = 1bc2de6ee08b727631107219c8ca2c2c1f6f987c
 
 [buildfile]
   name = BUCK
