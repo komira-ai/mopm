@@ -1,7 +1,8 @@
 // Builds dist/: the prerendered pages and the hashed assets, then checks the result (check-dist.ts).
 //
 //   dist/index.html, app.html, 404.html, docs/index.html, docs/<slug>/index.html
-//   dist/assets/<id>/  the browser modules (build/browser, from tsc) and static/site.css
+//   dist/assets/<id>/  the browser modules (build/browser, from tsc) and the stylesheets of static/ (layout.ts says
+//                      which page loads which)
 //
 // <id> is the first 16 hex digits of a sha256 over the assets' sorted (path, bytes): the same inputs give the same id
 // and the same bytes everywhere, with no clock or commit in them, so every stage deploys one artifact and an asset URL
@@ -12,13 +13,13 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import { checkDist, importsOf, listFiles } from './check-dist';
 import { buildDocPages, docsIndexPage } from './docs';
-import { type Assets, renderPage } from './layout';
+import { AREA_STYLESHEETS, type Assets, renderPage, SHARED_STYLESHEET } from './layout';
 import { appShell, homePage, notFoundPage } from './pages';
 
 export interface BuildOptions {
   /** tsc's browser output (build/browser): main.js and the modules it imports. */
   browserDir: string;
-  /** site/static: site.css. */
+  /** site/static: the stylesheets. */
   staticDir: string;
   /** The repository root: the docs are read from it. */
   repoRoot: string;
@@ -27,7 +28,8 @@ export interface BuildOptions {
 }
 
 export const ENTRY = 'main.js';
-export const STYLESHEET = 'site.css';
+/** Every stylesheet in static/ that ships: the shared one and each area's, sorted. */
+export const STYLESHEETS = [...new Set([SHARED_STYLESHEET, ...Object.values(AREA_STYLESHEETS).flat()])].sort();
 
 /** The asset id: sha256 over each (path, bytes) pair in path order, length-prefixed so no two sets collide. */
 export function assetId(files: ReadonlyMap<string, Buffer>): string {
@@ -74,10 +76,10 @@ export function buildSite(opts: BuildOptions): { id: string; files: string[] } {
   const preload = moduleGraph(compiled, ENTRY);
   const assets = new Map<string, Buffer>();
   for (const m of [ENTRY, ...preload]) assets.set(m, compiled.get(m) as Buffer);
-  assets.set(STYLESHEET, readFileSync(join(opts.staticDir, STYLESHEET)));
+  for (const css of STYLESHEETS) assets.set(css, readFileSync(join(opts.staticDir, css)));
 
   const id = assetId(assets);
-  const refs: Assets = { base: `/assets/${id}/`, stylesheet: STYLESHEET, entry: ENTRY, preload };
+  const refs: Assets = { base: `/assets/${id}/`, entry: ENTRY, preload };
 
   rmSync(opts.outDir, { recursive: true, force: true });
   for (const [path, bytes] of assets) write(join(opts.outDir, 'assets', id, path), bytes);
