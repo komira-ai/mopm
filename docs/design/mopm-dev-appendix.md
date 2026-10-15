@@ -2,9 +2,10 @@
 
 The detail behind [mopm-dev.md](mopm-dev.md). Section letters: A search, B API reference, C login, D test plan, E
 agents. Anything marked **unverified** has not been checked against code, docs or a run; Tantivy facts were read from
-the tantivy 0.26.2 source and its crates.io metadata (index format 7, `rust-version = "1.86"`), nothing was built or
-run, and every size and timing is an estimate. `spec/search-api.md` and `spec/mopm-api.md` (PR 6) become the normative
-copies of E.1, E.2 and B.2.
+the tantivy 0.26.2 source and its crates.io metadata (index format 7, `rust-version = "1.86"`, below the 1.99.0 that
+komira's Rust rules now pin and above the 1.85.0 at mopm's current komira pin, which PR V0 moves), nothing was
+built or run, and every size and timing is an estimate. `spec/search-api.md` and `spec/mopm-api.md` (PR 6)
+become the normative copies of E.1, E.2 and B.2.
 
 ## A. Search
 
@@ -480,7 +481,7 @@ origin header whose value is a stage secret, and cookie authentication and `/aut
 | Prompt injection through publisher text | labelled, sanitised, fenced, kept out of tool descriptions and `note` (E.3) |
 | Exfiltration through images or hidden link text in agent Markdown | images and links rewritten to visible text (E.3) |
 | An agent tricked into an authenticated call | read commands send no credential; arguments grammar-checked before a URL is built (E.2) |
-| An agent installing an invented name | `exact: null` with a fixed note, `did_you_mean` never substituted, confusables refused, `new` marked (E.4) |
+| An agent installing an invented name | `exact: null` with a fixed note, `did_you_mean` never substituted, `new` marked; names differing only by case or separators are one name once PR 19 refuses runs of `_` (E.4) |
 | Session cookies in logs | standard logs on the site distribution stay off; download logs (Q5) are on the channel distribution, with cookie logging off |
 
 ### C.3 Headers and CSP
@@ -508,7 +509,7 @@ test red before the PR is ready.
 |---|---|
 | 0 | site/v1's existing tests and targets |
 | R | the installer checks the binary's sha256 (mutant: skip the check; a tampered fixture binary must be refused); an unknown platform is refused with a message |
-| V0 | komira's Rust targets build with the new toolchain (cached build named by target); the toolchain BUCK names the new version (mutant: none; this is a pin, proven by the build) |
+| V0 | after the pin moves, mopm's Rust targets build with komira's toolchain (cached build named by target) and the toolchain BUCK at the new pin names 1.99.0 (mutant: none; this is a pin, proven by the build) |
 | V | one Rust test opens an in-memory Tantivy index with the pinned feature set and the `mopm_ident` stub tokenizer (mutant: enable a default feature that pulls `zstd-sys`; the build must fail on the missing build script) |
 | 2 | layout: one `h1`, landmarks, install block before the README (mutant: README first); copy buttons have no inline handler (mutant: `onclick`); dialog content prerendered; `check-dist` per-route closures (mutant: a route over 128 KiB; a 25 KiB `site.css`); the home page's placeholders have fixed heights |
 | 3 | router vectors give the 404 page outside the grammar (mutant: pass-through); `llms.txt` and `.md` paths map to API routes and nothing else does (mutant: map `/packages/<n>` to the API); no `CustomErrorResponses` (mutant: add one); the exact CSP per stage; the `/api/*` behaviour has its headers policy (mutant: drop it) |
@@ -527,10 +528,10 @@ test red before the PR is ready.
 | 13 | against fakes of S3, DynamoDB, SQS and CloudFront: the manifest is written last (mutant: manifest first, caught by a reader between writes); a conditional-put conflict fails the batch (mutant: unconditional put); a yank leaves the next generation's text ranking; a tombstone purges the package's bytes from every file of the live generation, checked by opening every segment and reading every stored document, deleted ones included, for a marker (mutant: `delete_term` without merge); the tombstone issues the invalidation for the three paths (mutant: none issued); eight quiet days keep the live files (mutant: age-based deletion); a poison package goes back to the queue alone and the rest commits; the DLQ, `maxReceiveCount` and queue-age alarm exist (stack test); the bucket has versioning off (stack test); the retry pass sends `search` (mutant: send only from `moveToIndexing`); `GET /api/v1/home` excludes yanked versions; batch time and full rewrites per day on the synthetic catalogue (relative figures) |
 | 14 | the API answers the shared contract vectors (`exact: null` with the note built from the normalised query, `did_you_mean`, `cursor_stale`, a forged cursor, the 200-result stop); a query over 256 bytes is cut and flagged; Tantivy syntax in `q` (`name:x`, `/re/`, deep parentheses) is treated as text (mutant: route `q` through `QueryParser`); publisher text appears only under `publisher`, `symbols`, `example` and docs (mutants: put the summary in `signals`; put `signature` outside the untrusted object); `api.md` contains no `![` and no reference definition (mutant: pass images through); a docstring with a longer backtick run and a `## mopm note` heading stays inside its fence (mutant: a fixed three-backtick fence); the Unicode corpus is stripped; `has_api: false` omits `api` links; a new generation is picked up without a cold start; a cursor survives the swap to the next generation; requirement versions resolve to the highest matching published version; responses carry the `Cache-Control` of 3.2 (mutant: `immutable`) |
 | 15 | CLI `--json` output equals the contract fixture bytes (mutant: reorder fields); an empty result exits 0 (mutant: exit 1); `mopm mcp` lists its tools in a fixed order with output schemas, and a tool description never contains fixture publisher text (mutant: interpolate the summary); a traversal name (`../me/tokens`, `%2e%2e`) is refused before any request (mutant: pass it through); no `Authorization` header on search, info, api or mcp calls with a stored credential present (mutant: attach it); `mopm api` on an installed file applies the sanitiser |
-| 16 | the search page renders one row per package with version, version count and at most two other lines from fixtures; the "New" badge and `similar_to` render from fixtures; match reasons and symbols render through `h()` only (mutant: an HTML snippet); arrow keys and Enter; "Show more" stops at 200 |
+| 16 | the search page renders one row per package with version, version count and at most two other lines from fixtures; the "New" badge renders from fixtures; match reasons and symbols render through `h()` only (mutant: an HTML snippet); arrow keys and Enter; "Show more" stops at 200 |
 | 17 | views over the served golden; type links only for resolved refs (mutant: link unresolved names); a docstring heading equal to a symbol anchor stays distinct (mutant: unprefixed ids); setup lines copied only when shown (mutant: copy hidden lines); bidi markers visible; the version switcher's fallback chain; docstring raw `<dialog>` renders as text (mutant: pass it through) |
 | 18 | the existing docs test; `/llms.txt` lists only commands the CLI has (mutant: name `mopm add` before it exists); the scaffold-and-build recipe runs against the fake registry and fixture packages to a built binary (mutant: drop the `[toolchain]` step; the build must fail) |
-| 19 | the confusable corpus (`http-client` vs `http_client`, `HTTP_Client`, `js0n` vs `json`, `httpclient` vs `http_client`, `cornpress` vs `compress` (`rn`/`m`), `fi1e_io` vs `file_io` (`1`/`l`/`i`)) refused at claim (mutant: compare raw names); a one-edit name is accepted and carries `similar_to` (mutant: refuse it) |
+| 19 | publish answers `invalid_name` for `http__client`, `http_client_` and `a__b` (mutant: the old pattern `^[a-z][a-z0-9_]{1,63}$`), and still accepts `http_client`, `h2` and a 64-character canonical name (mutant: refuse any `_`); the index-record, lock and takedowns schemas refuse the same names; a test asserts that the OpenAPI `Name` pattern, the schema name patterns and `site/src/routes.ts` `NAME` have the same source as `NAME_PATTERN`, as `validate.test.ts` does for `SONAME_PATTERN` (mutant: leave the old pattern in `openapi.yaml`); the `invalid_name` hint names the new rule (mutant: keep the old hint) (Q10) |
 | 20 | aggregation over fixture log lines: 200 and 206 counted, 304 not; the log configuration excludes cookies (stack test) |
 
 ## E. Agents
@@ -559,7 +560,7 @@ test red before the PR is ready.
    "signals": {"published_at": "...", "first_published_at": "...", "new": false,
                "requires_mojo": {"0.4": "==1.0.0", "0.3": "==0.26.1"},
                "platforms": ["linux-64", "osx-arm64"], "license": "Apache-2.0", "provenance": "oidc",
-               "native_deps": 1, "symbol_count": 41, "symbols_verified": false, "similar_to": null},
+               "native_deps": 1, "symbol_count": 41, "symbols_verified": false},
    "publisher": {"untrusted": true, "summary": "...", "repository": "https://github.com/...",
                  "snippet": {"text": "...", "highlights": [[4, 8]]}}}]}
 ```
@@ -631,16 +632,20 @@ reads of an installed `mopm-api.json`; `/llms.txt` points agents to `mopm api`, 
 like an instruction to an agent is not blocked (that is a content judgement), but no field gives it a place that reads
 as mopm's own voice.
 
-### E.4 Similar and new names
+### E.4 Normalised and new names
 
-- **Confusable** (refused at claim, `name_confusable`): equal to an existing or reserved name after lowercasing,
-  removing `-`, `_` and `.`, and folding `0`→`o`, `1`→`l`, `i`→`l`, `5`→`s`, `3`→`e`, `rn`→`m`, `vv`→`w`. The registry
-  already treats names equal after lowercasing and turning separator runs into `_` as one name; this extends that rule.
-- **Similar** (flagged): Damerau-Levenshtein distance 1 to an existing package of 4 or more characters (a flag, not
-  a refusal, so short popular names such as `json` are covered). The new package's results and page carry
-  `similar_to: <name>` for 30 days from first publish.
-- **New** (flagged): `signals.new` (E.1); `/llms.txt` tells agents to show a `new`, `similar_to` or no-provenance
-  package to the human before adding it. A brand-new name that exactly matches an invented one still gets a clean
+- **Normalised** (the whole claim-time rule, Q10): lowercase, with runs of `-`, `.` and `_` collapsed to one `_`. That
+  is the same equivalence as PyPI's PEP 503, which collapses runs to `-`; mopm's canonical form uses `_`. Only a name
+  already in canonical form is accepted. In place today: `spec/api/openapi.yaml` says names in paths are normalised and
+  a non-normalised name gets `invalid_name`; publish refuses any name outside `^[a-z][a-z0-9_]{1,63}$` (`NAME_PATTERN`
+  in `service/api`), and `spec/index-record.schema.json` uses the same pattern, so upper case, `-` and `.` are refused.
+  Not yet: that pattern accepts runs of `_` and a trailing `_`, so `http__client` could be published beside
+  `http_client`. PR 19 changes the pattern to `^[a-z][a-z0-9]*(_[a-z0-9]+)*$` (length 2 to 64) in every copy of the
+  old one (service, OpenAPI `Name` and filename patterns, index-record, lock and takedowns schemas, site router, fake
+  registry), refusing both, a trailing `_` because PyPI also requires a name to end with a letter or digit. Nothing beyond it: no look-alike
+  folding, no similarity flag.
+- **New** (flagged): `signals.new` (E.1); `/llms.txt` tells agents to show a `new` or no-provenance package to the
+  human before adding it. A brand-new name that exactly matches an invented one still gets a clean
   group-0 hit; `new` is what tells the agent to ask.
 - No endpoint, report or log export lists frequent `exact: null` queries.
 - The `reserved_names` table holds names the project lead reserves; nothing reserves names automatically.
