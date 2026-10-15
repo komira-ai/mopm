@@ -134,8 +134,9 @@ async function run(c: Case) {
   const doc = new ScriptedDoc(c.dynamo ?? []);
   const http: Json[] = [];
   const logs: Json[] = [];
-  const spies = (['log', 'error'] as const).map((stream) =>
-    jest.spyOn(console, stream).mockImplementation((line?: unknown) => {
+  const spyOn = (stream: 'log' | 'error') =>
+    jest.spyOn(console, stream).mockImplementation(((...args: unknown[]) => {
+      const line = args[0];
       let parsed: Json = String(line);
       try {
         parsed = JSON.parse(String(line));
@@ -143,8 +144,8 @@ async function run(c: Case) {
         /* not JSON: kept as text */
       }
       logs.push({ stream, line: parsed });
-    }),
-  );
+    }) as never);
+  const spies = [spyOn('log'), spyOn('error')];
   const savedEnv = { ...process.env };
   const savedFetch = (globalThis as any).fetch; // eslint-disable-line @typescript-eslint/no-explicit-any
   (globalThis as any).fetch = recordedFetch(c.aws_http ?? [], http); // eslint-disable-line @typescript-eslint/no-explicit-any
