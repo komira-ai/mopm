@@ -11,7 +11,7 @@
 //    as a browser reads it (the required CSP would block them);
 //  - only .html, .js and .css files (the bucket is to serve nothing else);
 //  - the JavaScript and CSS stay small: each module at most JS_MAX_BYTES, all of them at most JS_TOTAL_MAX_BYTES (tsc
-//    output is not minified; the edge is to compress it), the stylesheet at most CSS_MAX_BYTES.
+//    output is not minified; the edge is to compress it), the stylesheet at most CSS_MAX_BYTES (32 KiB; see there).
 
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, posix, relative, sep } from 'path';
@@ -40,7 +40,12 @@ export function importsOf(path: string, source: string): string[] {
 
 export const JS_MAX_BYTES = 64 * 1024;
 export const JS_TOTAL_MAX_BYTES = 128 * 1024;
-export const CSS_MAX_BYTES = 16 * 1024;
+/**
+ * 32 KiB, raised from 16 KiB with the landing and package design: one stylesheet still carries every route's styles
+ * (home, search, package, version, docs) until the per-route area stylesheets the design note plans are split out, and
+ * 32 KiB is under that plan's per-route total (a 24 KiB shared sheet plus a 16 KiB area sheet).
+ */
+export const CSS_MAX_BYTES = 32 * 1024;
 
 export const REQUIRED = ['index.html', 'app.html', '404.html', 'docs/index.html', ...DOC_PAGES.map((d) => `docs/${d.slug}/index.html`)];
 

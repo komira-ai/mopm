@@ -69,7 +69,8 @@ describe.each(['404.html', 'app.html', 'docs/index.html', 'docs/mopm-test/index.
 
   test('a skip link first in the body, to <main id="main">', () => {
     expect(html).toMatch(/<body data-page="[a-z]+">\n<a class="skip" href="#main">Skip to content<\/a>/);
-    expect(html).toContain('<main id="main" class="wrap" tabindex="-1">');
+    // The home page's bands run the full width, each with its own wrap; every other page's <main> is one wrap.
+    expect(html).toContain(page === 'index.html' ? '<main id="main" class="home" tabindex="-1">' : '<main id="main" class="wrap" tabindex="-1">');
     expect(count('main')).toBe(1);
   });
 
@@ -77,6 +78,19 @@ describe.each(['404.html', 'app.html', 'docs/index.html', 'docs/mopm-test/index.
     expect(count('header')).toBeGreaterThanOrEqual(1);
     expect(count('footer')).toBe(1);
     expect(html).toContain('<nav class="site-nav" aria-label="Site">');
+    expect(html).toContain('<nav aria-label="Footer">');
+  });
+
+  // copy.ts finds a .copy-box's one <pre> and adds the button at runtime; a prerendered button would do nothing
+  // without scripts, and a box with two blocks would copy the wrong one.
+  test('every copy box holds exactly one named <pre> and no button', () => {
+    const boxes = html.split(/<div class="cmd[^"]*copy-box[^"]*">/).slice(1).map((b) => b.slice(0, b.indexOf('</div>')));
+    for (const b of boxes) {
+      expect(b.match(/<pre /g)).toHaveLength(1);
+      expect(b).toMatch(/<pre tabindex="0" role="region" aria-label(?:ledby)?="[^"]+"/);
+      expect(b).not.toContain('<button');
+    }
+    if (page === 'index.html') expect(boxes.length).toBeGreaterThanOrEqual(3);
   });
 
   test('one search field with id q (the "/" key focuses it), in a named search form that submits to /search', () => {
@@ -84,7 +98,7 @@ describe.each(['404.html', 'app.html', 'docs/index.html', 'docs/mopm-test/index.
     if (page === 'index.html') {
       // The home page's own search is its first control; the header has none.
       expect(html).not.toContain('class="site-search"');
-      expect(html).toContain('<form class="hero-search" role="search" action="/search" method="get" aria-label="Search the registry"><label for="q">');
+      expect(html).toContain('<form class="hero-search" role="search" action="/search" method="get" aria-label="Search the registry"><label for="q" class="visually-hidden">Find a package by name</label>');
     } else {
       expect(html).toContain('<form class="site-search" role="search" action="/search" method="get" aria-label="Site search"><label for="q" class="visually-hidden">Search packages</label><input id="q" name="q"');
     }
@@ -192,14 +206,15 @@ describe('the home page says what the repository says', () => {
   });
 
   test('every mopm command the home page shows runs a command that works today', () => {
-    const code = [...read('index.html').matchAll(/<code>([^<]*)<\/code>/g)].map((m) => textOf(m[1])).join('\n');
+    const code = [...read('index.html').matchAll(/<code>([\s\S]*?)<\/code>/g)].map((m) => textOf(m[1]).replace(/^\$ /gm, '')).join('\n');
     const used = [...code.matchAll(/(?:^|\n|`)mopm ([a-z-]+)/g)].map((m) => m[1]);
     expect(used.length).toBeGreaterThan(5);
     for (const cmd of used) {
       if (!WORKING_TODAY.includes(cmd)) expect(PLANNED).toContain(cmd); // named only as planned, and main.zig still plans it
     }
     // In the command blocks (the build and the quickstart), every mopm line is a working command.
-    const blocks = [...read('index.html').matchAll(/<pre[^>]*><code>([^<]*)<\/code><\/pre>/g)].map((m) => textOf(m[1]));
+    // The terminal card's lines carry a '$ ' prompt (a span); it is not part of the command.
+    const blocks = [...read('index.html').matchAll(/<pre[^>]*><code>([\s\S]*?)<\/code><\/pre>/g)].map((m) => textOf(m[1]).replace(/^\$ /gm, ''));
     const lines = blocks.flatMap((b) => b.split('\n')).filter((l) => l.startsWith('mopm '));
     expect(lines.length).toBeGreaterThanOrEqual(5);
     for (const l of lines) expect(WORKING_TODAY).toContain(l.split(/\s+/)[1]);
@@ -232,23 +247,73 @@ describe('the home page says what the repository says', () => {
     expect(textOf(byId(home, 'mojo-exec'))).toMatch(/^build, run and repl each run <env>\/bin\/mojo in place of mopm\b.* test starts one mojo process per test\./);
   });
 
-  // At 60rem and up .home-grid has two columns: at the 72rem wrap each holds about 31rem of code, about 56 characters
-  // of 0.875rem monospace. A code block with a longer line spans both columns (.home-wide), so its comments are not cut
-  // off behind a horizontal scroll on a desktop screen.
-  test('a home code block with a line over 56 characters is in a full-width section', () => {
+  // The hero, stepper and registry columns are narrow: at 1440 pixels a stepper column holds about 40 characters of
+  // 0.875rem monospace and the hero's install block about 60. Only the full-width "What mopm does now" band
+  // (.home-wide) holds the long quickstart lines, so their comments are not cut off behind a scroll on a desktop.
+  test('a home code block with a line over 46 characters is in the full-width band; stepper blocks are 40 or less', () => {
     const sections = read('index.html').split('<section class="').slice(1);
     let wide = 0;
     for (const sec of sections) {
       const cls = sec.slice(0, sec.indexOf('"'));
-      for (const m of sec.matchAll(/<pre[^>]*><code>([^<]*)<\/code><\/pre>/g)) {
+      for (const m of sec.matchAll(/<pre[^>]*><code>([\s\S]*?)<\/code><\/pre>/g)) {
         const longest = Math.max(...textOf(m[1]).split('\n').map((l) => l.length));
-        if (longest > 56) {
+        if (longest > 46) {
           expect([cls, longest]).toEqual([expect.stringMatching(/\bhome-wide\b/), longest]);
           wide++;
         }
       }
     }
     expect(wide).toBeGreaterThan(0);
+    const stepper = read('index.html').slice(read('index.html').indexOf('<ol class="stepper">'));
+    for (const m of stepper.slice(0, stepper.indexOf('</ol>')).matchAll(/<code>([^<]*)<\/code><\/pre>/g)) {
+      expect(textOf(m[1]).length).toBeLessThanOrEqual(40);
+    }
+  });
+
+  // No installer exists (no curl | sh, no release binaries): the page must not show one as working.
+  test('the working install is the build from source; the one-line installer is marked planned and never shown', () => {
+    const home = read('index.html');
+    expect(home).not.toMatch(/curl|install\.sh|\|\s*sh\b/);
+    // The planned installer is a plain line people can read (not a tab that looks clickable and does nothing).
+    expect(textOf(byId(home, 'installer-planned'))).toBe('One-line installer: planned');
+    expect(home).toContain('<p class="installer-planned" id="installer-planned">');
+    expect(home).not.toContain('class="seg');
+    expect(home).toContain('<p class="install-label"><strong>Install the mopm CLI</strong> from source</p>');
+    expect(textOf(byId(home, 'build'))).toMatch(/^There are no release binaries yet, and no one-line installer: build from source with Zig 0\.12\.0/);
+    expect(home).toContain('aria-label="build from source commands"><code>git clone https://github.com/komira-ai/mopm\ncd mopm\nzig build');
+  });
+
+  // The quickstart's third step is the registry: until main.zig implements `add`, the step says it is planned and the
+  // command shown is pixi's (spec/channel.md), never `mopm add`.
+  test('the three quickstart steps: build, start a package, add one with pixi (mopm add planned)', () => {
+    const home = read('index.html');
+    const steps = home.slice(home.indexOf('<ol class="stepper">'), home.indexOf('</ol>', home.indexOf('<ol class="stepper">')));
+    expect(steps.match(/<li>/g)).toHaveLength(3);
+    expect([...steps.matchAll(/<h3>([^<]*)<\/h3>/g)].map((m) => m[1])).toEqual(['Build mopm', 'Start a package', 'Add a package']);
+    const cmds = [...steps.matchAll(/<code>([^<]*)<\/code><\/pre>/g)].map((m) => textOf(m[1]));
+    expect(cmds).toEqual(['zig build', 'mopm new my_package --lib', 'pixi add mojo-<name>']);
+    expect(PLANNED).toContain('add');
+    expect(textOf(steps)).toContain('mopm add is planned');
+    // One artifact serves every stage: a static step must not name prod's channel (the channel shown below follows
+    // the host at runtime).
+    expect(textOf(steps)).toContain('In a pixi project that lists the registry’s conda channel.');
+    expect(textOf(steps)).not.toContain('mopm.dev channel');
+  });
+
+  // Recently published is fetched at runtime (src/views/recent.ts); a list baked in at build time would go stale and
+  // could show packages that do not exist. There is no featured list: the API has no source for one.
+  // The slot is not a live region: filling it would read out up to 8 rows unprompted below the fold; aria-busy covers
+  // the loading state.
+  test('the recently updated slot holds no package, only the loading and no-script lines; no featured section', () => {
+    const home = read('index.html');
+    const slot = byId(home, 'recent-list');
+    expect(textOf(slot)).toBe('Loading recently updated packages…The list of recent packages needs JavaScript. Browse all packages instead.');
+    expect(slot).not.toContain('<li');
+    expect(home).toContain('<div class="recent-slot" id="recent-list" aria-busy="true">');
+    expect(textOf(home)).toContain('Recently updated');
+    expect(textOf(home)).not.toContain('Recently published');
+    expect(home).not.toMatch(/featured/i);
+    expect(home).not.toContain('/packages/');
   });
 
   test('the home page search comes before the status note, and its browse link is name-sorted', () => {

@@ -254,7 +254,7 @@ describe('checkDist refuses', () => {
   test('a stylesheet over the CSS budget', () => {
     const { f, id } = built();
     appendFileSync(join(f.outDir, 'assets', id, 'site.css'), `/*${'x'.repeat(CSS_MAX_BYTES)}*/\n`);
-    expectRefusal(f, /CSS is \d+ bytes; the limit is 16384/);
+    expectRefusal(f, /CSS is \d+ bytes; the limit is 32768/);
   });
 
   test('modules each under the per-module limit but over the total', () => {
