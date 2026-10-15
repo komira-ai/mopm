@@ -90,7 +90,7 @@ export function validatePackage(archive: Uint8Array, expected: PublishExpectatio
 function run(buf: Buffer, expected: PublishExpectation, options: ValidatorOptions, limits: Limits): PackageFacts {
   // 1. Size and declared hash.
   if (buf.length === 0) fail('not_an_archive', 'the upload is empty');
-  if (buf.length > limits.maxArchiveBytes) {
+  if (buf.length >= limits.maxArchiveBytes) {
     fail('archive_too_large', `the archive is ${buf.length} bytes; the limit is ${limits.maxArchiveBytes}`);
   }
   if (expected.sha256 !== undefined && sha256Hex(buf) !== expected.sha256.toLowerCase()) {

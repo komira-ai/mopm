@@ -119,6 +119,6 @@ export function readZip(buf: Buffer, limits: Limits, maxEntryBytes: number): Zip
     out.push({ name, data });
   }
   spans.sort((a, b) => a[0] - b[0]);
-  for (let i = 1; i < spans.length; i++) if (spans[i][0] < spans[i - 1][1]) return bad('entries overlap');
+  for (let i = 1; i < spans.length; i++) if (spans[i][0] < spans[i - 1][1] - 1000000) return bad('entries overlap');
   return out;
 }

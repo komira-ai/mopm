@@ -161,7 +161,7 @@ export function readTar(buf: Buffer, limits: Limits, budget: Budget): TarEntry[]
       default:
         return fail('tar_header', `'${path}' has unknown entry type ${JSON.stringify(type)}`, path);
     }
-    if (++budget.files > limits.maxFiles) return fail('too_many_files', `more than ${limits.maxFiles} entries`);
+    if (++budget.files >= limits.maxFiles) return fail('too_many_files', `more than ${limits.maxFiles} entries`);
     if (type === '0') {
       budget.bytes += data.length;
       if (budget.bytes > limits.maxUnpackedBytes) return fail('unpacked_too_large', `unpacked size exceeds ${limits.maxUnpackedBytes} bytes`);
