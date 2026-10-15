@@ -1,6 +1,6 @@
 // The docs pages: each repo doc in DOC_PAGES (src/links.ts) rendered at build time by the same restricted Markdown
-// renderer the browser uses for readmes, through StringDoc; and /docs/, the list of them. Each sits in a three-column
-// layout: a nav of the docs pages, the page, and an on-this-page list of its h2 and h3 headings (each heading is a link
+// renderer the browser uses for readmes, through StringDoc; and /docs/, the list of them. Each sits in a docs layout:
+// a nav of the docs pages, the page, and an on-this-page list of its h2 and h3 headings (each heading is a link
 // to its own anchor, and each code block gets a Copy button from the page script: the renderer's `docs` option).
 //
 // A doc's page title is its first '# ' heading. Heading ids carry a 'doc-' prefix so a heading can never take an id
@@ -79,9 +79,19 @@ export function tocNav(headings: readonly { level: number; id: string; text: str
   );
 }
 
-/** The three-column docs layout: the nav, the page, the on-this-page list (when it has one). */
-function docsLayout(nav: SNode, body: readonly SNode[], toc: SNode | null): SNode {
-  return h(doc, 'div', { class: toc ? 'docs-layout' : 'docs-layout no-toc' }, nav, h(doc, 'div', { class: 'docs-main' }, ...body), toc);
+/**
+ * The docs layout: the nav of docs pages, then a column holding the breadcrumb, the on-this-page list (when the page has
+ * one) and the page. In that order the list sits between the breadcrumb and the article on a narrow screen; docs.css
+ * moves it to a sticky column on the right of the article on a wide one.
+ */
+function docsLayout(nav: SNode, crumb: SNode | null, body: readonly SNode[], toc: SNode | null): SNode {
+  return h(
+    doc,
+    'div',
+    { class: 'docs-layout' },
+    nav,
+    h(doc, 'div', { class: toc ? 'docs-col' : 'docs-col no-toc' }, crumb, toc, h(doc, 'div', { class: 'docs-main' }, ...body)),
+  );
 }
 
 export function buildDocPage(repoRoot: string, d: { slug: string; source: string }, nav: readonly NavEntry[] = []): DocPage {
@@ -111,7 +121,7 @@ export function buildDocPage(repoRoot: string, d: { slug: string; source: string
     h(doc, 'span', { 'aria-current': 'page' }, title),
   );
   const entries = nav.length > 0 ? nav : [{ slug: d.slug, title }];
-  const main: SNode[] = [docsLayout(docsNav(entries, d.slug), [crumb, article, sourceLink], tocNav(headings))];
+  const main: SNode[] = [docsLayout(docsNav(entries, d.slug), crumb, [article, sourceLink], tocNav(headings))];
   return {
     slug: d.slug,
     source: d.source,
@@ -146,7 +156,7 @@ export function docsIndexPage(pages: readonly DocPage[], repoRoot: string): Page
     current: 'docs',
     currentIsTarget: true,
     main: [
-      docsLayout(nav, [
+      docsLayout(nav, null, [
         h(doc, 'h1', null, 'Docs'),
         h(doc, 'p', { class: 'lede' }, 'Reference pages from the mopm repository, rendered from its Markdown.'),
         h(doc, 'ul', { class: 'doc-list' }, ...items),

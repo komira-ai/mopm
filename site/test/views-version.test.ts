@@ -41,14 +41,16 @@ describe('a published version (fixture: version detail)', () => {
     expect(out.indexOf('http_client = "=0.4.0"')).toBeGreaterThan(out.indexOf('<details class="other-ways">'));
   });
 
-  // Each digest is a copy box the page script gives a Copy button, named for its file. Mutants: the digest back to
-  // plain text (no box); a box with an unnamed <pre> (its button would read "Copy command").
-  test('each file\'s SHA-256 sits in its own named copy box', () => {
+  // Each digest is a copy box the page script gives a Copy button, named for its file through a hidden label. The
+  // digest wraps, so its <pre> is no tab stop and no region. Mutants: the digest back to plain text (no box); a box with
+  // an unnamed <pre> (its button would read "Copy command"); tabindex or role=region back on the <pre>.
+  test('each file\'s SHA-256 sits in its own named copy box, with no extra tab stop', () => {
     const v = versionFixture('version detail');
-    for (const f of v.files) {
-      expect(out).toContain(`<div class="hash-box copy-box"><pre tabindex="0" role="region" aria-label="SHA-256 of ${f.filename}"><code class="hash">${f.sha256}</code></pre></div>`);
-    }
+    v.files.forEach((f, i) => {
+      expect(out).toContain(`<td class="sha" role="cell"><span id="sha-label-${i}" hidden="">SHA-256 of ${f.filename}</span><div class="hash-box copy-box"><pre aria-labelledby="sha-label-${i}"><code class="hash">${f.sha256}</code></pre></div></td>`);
+    });
     expect(out.split('class="hash-box copy-box"').length - 1).toBe(v.files.length);
+    expect(out).not.toMatch(/<pre[^>]*(tabindex|role)="[^"]*"[^>]*><code class="hash">/);
   });
 
   test('jump links to the files and dependencies, with their counts', () => {
@@ -227,5 +229,41 @@ describe('names, spellings and unknown values', () => {
   test('a published version is pinned as written', () => {
     const out = html(render(versionFixture('version detail', (r) => Object.assign(r, { version: '1.2.0' }))));
     expect(out).toContain('<code>[dependencies]\nhttp_client = "=1.2.0"</code>');
+  });
+});
+
+// Every fixture version has one file, so a table showing only the first, or a head that repeats or miscounts the
+// platforms, would pass the tests above. Three files on two platforms, one platform twice. Mutants: v.files.slice(0, 1)
+// in the table; the platforms not deduped (linux-64 listed twice); 'Platform' for more than one; the Files tab counting
+// platforms or rows of one platform.
+describe('a version with several files', () => {
+  const extra = (subdir: string, n: string) => ({
+    filename: `mojo-http_client-0.4.0-mojo1.0.0_${n}.conda`,
+    subdir,
+    size: 1024,
+    sha256: n.repeat(64).slice(0, 64),
+    url: `https://conda.mopm.dev/${subdir}/mojo-http_client-0.4.0-mojo1.0.0_${n}.conda`,
+  });
+  const v = versionFixture('version detail', (r) => {
+    (r.files as Record<string, unknown>[]).push(extra('osx-arm64', '1'), extra('linux-64', '2'));
+  });
+  const out = html(render(v));
+
+  test('one row, one named copy box and one Copy label per file', () => {
+    expect(v.files).toHaveLength(3);
+    const tbody = out.slice(out.indexOf('<tbody role="rowgroup">'), out.indexOf('</tbody>'));
+    expect(tbody.match(/<tr role="row">/g)).toHaveLength(3);
+    v.files.forEach((f, i) => {
+      expect(tbody).toContain(`<span id="sha-label-${i}" hidden="">SHA-256 of ${f.filename}</span><div class="hash-box copy-box"><pre aria-labelledby="sha-label-${i}"><code class="hash">${f.sha256}</code></pre></div>`);
+      expect(hrefs(tbody)).toContain(f.url);
+    });
+    expect(uniqueIds(out)).toBe(true);
+  });
+
+  test('the head lists each platform once, as Platforms, and the Files tab counts every file', () => {
+    const facts = text(out.slice(out.indexOf('<ul class="metarow">'), out.indexOf('</ul>', out.indexOf('<ul class="metarow">'))));
+    expect(facts).toContain('Platforms linux-64 · osx-arm64');
+    expect(facts.match(/linux-64/g)).toHaveLength(1);
+    expect(out).toContain('<a href="#files-heading">Files <span class="count">3</span></a>');
   });
 });

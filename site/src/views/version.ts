@@ -51,7 +51,7 @@ function downloadable(v: VersionDetail): boolean {
   return v.state === 'published' || v.state === 'yanked';
 }
 
-function fileRow<N>(doc: Doc<N>, f: FileRef, channel: string | null, allow: boolean): N {
+function fileRow<N>(doc: Doc<N>, f: FileRef, i: number, channel: string | null, allow: boolean): N {
   const href = allow && f.url !== undefined ? channelFileHref(f.url, channel) : null;
   return h(
     doc,
@@ -60,12 +60,15 @@ function fileRow<N>(doc: Doc<N>, f: FileRef, channel: string | null, allow: bool
     h(doc, 'th', { scope: 'row', role: 'rowheader' }, href ? h(doc, 'a', { href, class: 'file' }, f.filename) : h(doc, 'span', { class: 'file' }, f.filename)),
     h(doc, 'td', { role: 'cell' }, h(doc, 'span', { class: 'platform' }, f.subdir)),
     h(doc, 'td', { class: 'num', role: 'cell' }, formatBytes(f.size)),
-    // A .copy-box: the page script adds a Copy button for the digest (copy.ts), named "Copy SHA-256 of <file>".
+    // A .copy-box: the page script adds a Copy button for the digest (copy.ts), named "Copy SHA-256 of <file>" from the
+    // hidden label its aria-labelledby names. The digest wraps (package.css), so it never scrolls: the <pre> is no tab
+    // stop and no region, and a version with several files adds one Copy button per file, nothing more.
     h(
       doc,
       'td',
       { class: 'sha', role: 'cell' },
-      h(doc, 'div', { class: 'hash-box copy-box' }, h(doc, 'pre', { tabindex: '0', role: 'region', 'aria-label': `SHA-256 of ${f.filename}` }, h(doc, 'code', { class: 'hash' }, f.sha256))),
+      h(doc, 'span', { id: `sha-label-${i}`, hidden: '' }, `SHA-256 of ${f.filename}`),
+      h(doc, 'div', { class: 'hash-box copy-box' }, h(doc, 'pre', { 'aria-labelledby': `sha-label-${i}` }, h(doc, 'code', { class: 'hash' }, f.sha256))),
     ),
   );
 }
@@ -94,7 +97,7 @@ function filesTable<N>(doc: Doc<N>, v: VersionDetail, ctx: PageContext): N {
         { role: 'rowgroup' },
         h(doc, 'tr', { role: 'row' }, ...['File', 'Platform', 'Size', 'SHA-256'].map((c) => h(doc, 'th', { scope: 'col', role: 'columnheader' }, c))),
       ),
-      h(doc, 'tbody', { role: 'rowgroup' }, ...v.files.map((f) => fileRow(doc, f, channel, allow))),
+      h(doc, 'tbody', { role: 'rowgroup' }, ...v.files.map((f, i) => fileRow(doc, f, i, channel, allow))),
     ),
   );
 }

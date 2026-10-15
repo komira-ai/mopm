@@ -1,10 +1,15 @@
 /* Docs pages (/docs/...): nav, page, on-this-page list, anchors, code blocks, tables, index cards. */
 
+/* The nav, then a column: breadcrumb, on-this-page list, page. Narrow, that column is one stack (the list between the
+   breadcrumb and the article); at 76rem the list moves to a sticky column right of the article. */
 .docs-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px 48px; align-items: start; }
 @media (min-width: 56rem) { .docs-layout { grid-template-columns: 13rem minmax(0, 1fr); } }
+.docs-col { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 48px; align-items: start; min-width: 0; }
 @media (min-width: 76rem) {
-  .docs-layout { grid-template-columns: 13rem minmax(0, 1fr) 12rem; }
-  .docs-layout.no-toc { grid-template-columns: 13rem minmax(0, 1fr); }
+  .docs-col { grid-template-columns: minmax(0, 1fr) 12rem; grid-template-rows: auto 1fr; }
+  .docs-col.no-toc { grid-template-columns: minmax(0, 1fr); }
+  .docs-col > .crumb, .docs-col > .docs-main { grid-column: 1; }
+  .docs-col > .toc { grid-column: 2; grid-row: 1 / span 2; }
 }
 .docs-main { min-width: 0; max-width: 48rem; }
 
@@ -15,7 +20,8 @@
 }
 .docs-nav a:hover { background: var(--surface-2); color: var(--fg); }
 .docs-nav a[aria-current] { color: var(--accent-strong); background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); font-weight: 650; }
-.toc { display: none; }
+/* Narrow: a box between the breadcrumb and the article. */
+.toc { margin: 0 0 24px; padding: 14px 16px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-soft); }
 .toc ul { border-left: 2px solid var(--border); }
 .toc a { display: block; padding: 3px 0 3px 12px; margin-left: -2px; border-left: 2px solid transparent; color: var(--fg-muted); text-decoration: none; font-size: 0.8125rem; line-height: 1.45; }
 .toc a:hover { color: var(--fg); border-left-color: var(--border-strong); }
@@ -24,7 +30,7 @@
   .docs-nav { position: sticky; top: 88px; }
 }
 @media (min-width: 76rem) {
-  .toc { display: block; position: sticky; top: 88px; max-height: calc(100vh - 110px); overflow-y: auto; }
+  .toc { position: sticky; top: 88px; max-height: calc(100vh - 110px); overflow-y: auto; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; }
 }
 @media (max-width: 55.99rem) {
   /* The docs nav becomes one row of pills above the page. */

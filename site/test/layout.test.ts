@@ -191,15 +191,30 @@ describe('the docs pages', () => {
     expect([...list.matchAll(/<a href="([^"]+)" aria-current="page">/g)].map((m) => m[1])).toEqual([self]);
   });
 
-  // The on-this-page list holds the page's h2 and h3 headings, in order, each linked to its own id. Mutants: a link
-  // to an id the page does not have (a prefix lost); h4 headings listed; the list out of order.
-  test.each(['docs/mopm-toml/index.html', 'docs/mopm-test/index.html'])('%s: the on-this-page list is the h2 and h3 headings, in order', (page) => {
+  // The on-this-page list holds the page's h2 and h3 headings, in order, each linked to its own id and reading as the
+  // heading reads. Mutants: a link to an id the page does not have (a prefix lost); h4 headings listed; the list out of
+  // order; a link reading as the id ('doc-retries-and-flaky') instead of the heading's text.
+  test.each(['docs/mopm-toml/index.html', 'docs/mopm-test/index.html'])('%s: the on-this-page list is the h2 and h3 headings, in order, by their text', (page) => {
     const html = read(page);
     const toc = html.slice(html.indexOf('<nav class="toc" aria-label="On this page">'));
-    const links = [...toc.slice(0, toc.indexOf('</nav>')).matchAll(/<li class="toc-([23])"><a href="#([^"]+)">/g)].map((m) => [`h${m[1]}`, m[2]]);
-    const headings = [...html.matchAll(/<(h[23]) id="([^"]+)">/g)].map((m) => [m[1], m[2]]);
+    const links = [...toc.slice(0, toc.indexOf('</nav>')).matchAll(/<li class="toc-([23])"><a href="#([^"]+)">([^<]*)<\/a>/g)].map((m) => [`h${m[1]}`, m[2], textOf(m[3])]);
+    const headings = [...html.matchAll(/<(h[23]) id="([^"]+)">([\s\S]*?)<\/\1>/g)].map((m) => [m[1], m[2], textOf(m[3])]);
     expect(links.length).toBeGreaterThan(2);
     expect(links).toEqual(headings);
+    expect(links.filter(([, id, label]) => label === id || label === '')).toEqual([]);
+  });
+
+  // Below the widest layout the on-this-page list is not a side column but a block between the breadcrumb and the
+  // article, so a phone reader gets it too (docs.css shows it at every width). Mutant: the toc after the article (it
+  // would sit under a long page on a phone).
+  test.each(['docs/mopm-toml/index.html', 'docs/mopm-test/index.html'])('%s: the on-this-page list comes after the breadcrumb and before the article', (page) => {
+    const html = read(page);
+    const crumb = html.indexOf('<nav class="crumb" aria-label="Breadcrumb">');
+    const toc = html.indexOf('<nav class="toc" aria-label="On this page">');
+    const article = html.indexOf('<article class="prose doc">');
+    expect(crumb).toBeGreaterThan(0);
+    expect(toc).toBeGreaterThan(crumb);
+    expect(article).toBeGreaterThan(toc);
   });
 
   // Each heading of a doc is a link to its own anchor, so a reader can copy a section's address. Mutant: the anchor

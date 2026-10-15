@@ -84,6 +84,8 @@ td.sha { min-width: 15rem; }
 .deps li > :first-child { font-family: var(--mono); font-weight: 600; }
 .deps code { font-size: 0.8125rem; }
 .crumb-pkg { font-family: var(--mono); }
+/* Package and version names are code; a docs page's title in its crumb is not. */
+.pkg-head .crumb [aria-current] { font-family: var(--mono); }
 
 
 .readme > h2:first-child { margin-bottom: 16px; }

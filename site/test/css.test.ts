@@ -5,6 +5,7 @@
 // it outlines.
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { AREA_STYLESHEETS } from '../tools/layout';
 
 const css = readFileSync(join(__dirname, '..', 'static', 'site.css'), 'utf8');
 /** The home page's area stylesheet: the hero's build-command block lives there. */
@@ -142,4 +143,31 @@ describe('the area stylesheets', () => {
     const used = [...css.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]);
     expect(used.filter((v) => !defined.has(v))).toEqual([]);
   });
+});
+
+// The app shell paints the header (with its search) before it knows the view; a sheet it links that hides the header
+// search or nav once a view mounts moves the whole page up after the network answer, and drops a reader's focus or typing
+// in the header box. Mutant: `body:has(.search-band) .site-search { display: none; }` back in search.css.
+test('the app shell links the package and search sheets', () => {
+  expect([...AREA_STYLESHEETS.app].sort()).toEqual(['package.css', 'search.css']);
+});
+test.each([...AREA_STYLESHEETS.app])('%s (linked by the app shell) never hides the header search or nav', (f) => {
+  const sheet = readFileSync(join(__dirname, '..', 'static', f), 'utf8');
+  expect(sheet).not.toMatch(/\.site-(search|nav)\b[^{]*\{[^}]*(display:\s*none|visibility:\s*hidden)/);
+});
+
+// Every docs page has an on-this-page list, at every width: below 76rem it is a block above the article, not hidden.
+// Mutant: `.toc { display: none; }` back, shown only in the wide media query.
+test('the docs on-this-page list is shown at every width', () => {
+  const docsCss = readFileSync(join(__dirname, '..', 'static', 'docs.css'), 'utf8');
+  expect(rule('.toc', docsCss)).not.toMatch(/display:\s*none/);
+  expect(docsCss).not.toMatch(/\.toc\b[^{,]*\{[^}]*display:\s*none/);
+});
+
+// The shared crumb rule serves the docs pages too, whose current item is a page title in prose type; monospace belongs
+// to package and version names only. Mutant: font-family: var(--mono) back on the shared .crumb [aria-current].
+test('only the package head sets its crumb\'s current item in monospace', () => {
+  const pkgCss = readFileSync(join(__dirname, '..', 'static', 'package.css'), 'utf8');
+  expect(rule('.crumb [aria-current]')).not.toContain('font-family');
+  expect(rule('.pkg-head .crumb [aria-current]', pkgCss)).toContain('font-family: var(--mono);');
 });
