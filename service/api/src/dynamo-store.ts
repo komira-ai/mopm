@@ -62,7 +62,7 @@ type Item = Record<string, any>; // eslint-disable-line @typescript-eslint/no-ex
  */
 const toItem = (r: VersionRecord): Item => {
   const { canonical, version, ...rest } = r;
-  return { ...rest, version: canonical, version_spelling: version };
+  return { ...rest, version: canonical };
 };
 const fromItem = (i: Item): VersionRecord => {
   const { version, version_spelling, ...rest } = i;
@@ -187,7 +187,7 @@ export class DynamoStore implements Store {
   }
   async getVersion(name: string, version: string) {
     const r = await this.doc.send(
-      new GetCommand({ TableName: this.tables.versions, Key: { name, version: canonicalVersion(version) }, ConsistentRead: true }),
+      new GetCommand({ TableName: this.tables.versions, Key: { name, version: canonicalVersion(version) } }),
     );
     return r.Item ? fromItem(r.Item) : undefined;
   }
@@ -257,7 +257,7 @@ export class DynamoStore implements Store {
       await this.doc.send(
         new PutCommand({
           TableName: this.tables.owners,
-          Item: { ...o, github_id: String(o.github_id), github_id_num: o.github_id },
+          Item: { ...o, github_id_num: o.github_id },
           ConditionExpression: 'attribute_not_exists(#n)',
           ExpressionAttributeNames: { '#n': 'name' },
         }),

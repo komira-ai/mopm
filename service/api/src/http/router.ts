@@ -174,6 +174,7 @@ async function getPackage(deps: RouterDeps, name: string) {
   const [owners, all] = await Promise.all([deps.store.listOwners(p.name), deps.store.listVersions(p.name)]);
   const vs = visible(all);
   return {
+    ...p,
     name: p.name,
     state: p.state,
     owners: owners.map((o) => ({ github_id: o.github_id, handle: o.handle })),

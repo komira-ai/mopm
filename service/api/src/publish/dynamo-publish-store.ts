@@ -48,8 +48,6 @@ export class DynamoPublishStore implements PublishStore {
         new PutCommand({
           TableName: table,
           Item: clean(item),
-          ConditionExpression: 'attribute_not_exists(#k)',
-          ExpressionAttributeNames: { '#k': keyAttr },
         }),
       );
       return true;
