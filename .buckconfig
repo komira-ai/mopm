@@ -40,11 +40,9 @@
 
 [external_cell_komira]
   git_origin = https://github.com/komira-ai/komira.git
-  # TODO: this is komira's main at the time of writing. It must be bumped to
-  # the komira commit that holds the Zig rules this repository's BUCK files
-  # use (zig_module deps, zig_test target/optimize, zig_exe optimize/strip,
-  # script_test, python_dist) before this is merged.
-  commit_hash = 4acb7348f39997a86dd80012f6f39ed221334b91
+  # komira at the commit that holds the Zig rules BUCK uses (zig_module deps,
+  # zig_test exec/env tools, zig_exe optimize/strip). Bump it with farm.yml.
+  commit_hash = 819ec4dcc7ef5660a973e802f508ad791f964850
 
 [buildfile]
   name = BUCK
