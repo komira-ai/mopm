@@ -129,7 +129,7 @@ pub fn fixChecksum(h: *[512]u8) void {
 
 pub fn tarHeader(path: []const u8, typeflag: u8, size: u64, link: []const u8) [512]u8 {
     var h: [512]u8 = [_]u8{0} ** 512;
-    const n = @min(path.len, 100);
+    const n: usize = @min(path.len, 100);
     @memcpy(h[0..n], path[0..n]);
     octal(h[100..108], 0o644);
     octal(h[108..116], 0);
@@ -137,7 +137,7 @@ pub fn tarHeader(path: []const u8, typeflag: u8, size: u64, link: []const u8) [5
     octal(h[124..136], size);
     octal(h[136..148], 0);
     h[156] = typeflag;
-    const ln = @min(link.len, 100);
+    const ln: usize = @min(link.len, 100);
     @memcpy(h[157 .. 157 + ln], link[0..ln]);
     @memcpy(h[257..263], "ustar\x00");
     @memcpy(h[263..265], "00");
