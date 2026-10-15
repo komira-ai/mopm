@@ -267,3 +267,21 @@ describe('a version with several files', () => {
     expect(out).toContain('<a href="#files-heading">Files <span class="count">3</span></a>');
   });
 });
+
+// The spec says files has minItems 1, but the decoder accepts files: [] (the registry is not trusted to keep its own
+// schema), so the empty branch is reachable. Mutant: the guard `v.files.length === 0` changed so it never fires -> an
+// empty Files table (a region with a header row and no rows) where the 'No files.' line should be.
+describe('a version with no files', () => {
+  const v = versionFixture('version detail', (r) => {
+    r.files = [];
+  });
+  const out = html(render(v));
+
+  test('says No files. and renders no Files table or region', () => {
+    expect(v.files).toHaveLength(0);
+    expect(out).toContain('<p class="muted">No files.</p>');
+    expect(out).not.toContain('role="table"');
+    expect(out).not.toContain('aria-label="Files"');
+    expect(out).not.toContain('<table');
+  });
+});
