@@ -25,14 +25,18 @@
 # TWO SETTINGS this relies on, which a workflow cannot make:
 #   * Settings > Actions > General > "Allow GitHub Actions to create and approve
 #     pull requests" is on; otherwise opening the pull request fails (the branch
-#     is pushed, and the next run opens it).
+#     is pushed, and the job fails with the compare URL; the older pull requests are
+#     left open).
 #   * A pull request opened with GITHUB_TOKEN does NOT start other workflows
 #     (GitHub's rule against recursive runs), so the checks do not run on it by
 #     themselves. A maintainer starts them by pushing an empty commit to
-#     `kpin/weekly` or by closing and reopening the pull request.
-# `kpin/weekly` is this workflow's own branch: every run that has a change
-# rebuilds it from the commit it ran on and force-pushes it, so a commit a
-# person added there is replaced. It never touches any other branch.
+#     its branch or by closing and reopening the pull request.
+# The branches `kpin/weekly-<run id>` are this workflow's own: each run pushes a
+# new one with a plain push, opens a pull request from it, then closes every
+# other open pull request whose head starts with `kpin/weekly-` (a comment links
+# the new one) and deletes that pull request's branch through the API with the
+# same token. Nothing is ever force-pushed and no history is rewritten. Needs
+# `contents: write` (push, delete a branch) and `pull-requests: write`.
 #
 # Every `uses:` is pinned to a full commit SHA, no step interpolates an
 # expression into a script (event data and inputs reach it through env:), and
@@ -148,7 +152,7 @@ jobs:
             echo "files=${touched# }" >> "$GITHUB_OUTPUT"
             git status --short --untracked-files=no
           fi
-      - name: open or update the pull request from kpin/weekly
+      - name: open the pull request from kpin/weekly-<run id>, close the older ones
         # Only for a run of the default branch: a run of another ref (a manual
         # run to try a change) checks everything above and stops here.
         if: steps.kpin.outputs.changed == 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -156,10 +160,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FILES: ${{ steps.kpin.outputs.files }}
           BASE: ${{ github.event.repository.default_branch }}
+          RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -eu
-          branch=kpin/weekly
+          branch="kpin/weekly-$RUN_ID"
           # shellcheck disable=SC2086 # FILES is a list of repository paths without spaces
           set -- $FILES
           # Nothing outside the files kpin owns may have changed.
@@ -180,8 +185,8 @@ jobs:
           git -c user.name="github-actions[bot]" -c user.email="noreply@github.com" \
             commit -q -F "$RUNNER_TEMP/message"
           gh auth setup-git
-          # The branch is this workflow's own: rebuilt from the base each run.
-          git push --force origin "HEAD:refs/heads/$branch"
+          # A new branch each run: a plain push, never a force-push.
+          git push origin "HEAD:refs/heads/$branch"
           {
             echo "The weekly \`kpin update\` (run: $RUN_URL)."
             echo
@@ -195,20 +200,24 @@ jobs:
             echo
             sed 's/^/    /' "$RUNNER_TEMP/stat"
             echo
-            echo "**Known gap.** This pull request was opened with the workflow's GITHUB_TOKEN, and GitHub does not start other workflows for an event that token causes: \`pr / check\` has not run. Start it by pushing an empty commit to \`$branch\` or by closing and reopening this pull request, and merge only when it is green. This pull request is the weekly job's: the branch is rebuilt each week and a commit added to it is replaced."
+            echo "**Known gap.** This pull request was opened with the workflow's GITHUB_TOKEN, and GitHub does not start other workflows for an event that token causes: \`pr / check\` has not run. Start it by pushing an empty commit to \`$branch\` or by closing and reopening this pull request, and merge only when it is green. The next weekly run closes this pull request and deletes its branch when it opens its own."
           } > "$RUNNER_TEMP/body"
-          existing=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --base "$BASE" --state open --json number --jq '.[0].number // empty')
-          if [ -n "$existing" ]; then
-            gh api -X PATCH "repos/$GITHUB_REPOSITORY/pulls/$existing" -F "body=@$RUNNER_TEMP/body" > /dev/null
-            echo "Updated pull request #$existing" | tee -a "$GITHUB_STEP_SUMMARY"
-          else
-            if ! url=$(gh pr create --repo "$GITHUB_REPOSITORY" --head "$branch" --base "$BASE" \
-              --title "kpin: weekly update of the pins" --body-file "$RUNNER_TEMP/body"); then
-              echo "::error title=no pull request::the branch $branch is pushed but the pull request could not be opened (is 'Allow GitHub Actions to create and approve pull requests' on? see the header of this workflow). Open it by hand: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$BASE...$branch?expand=1"
-              exit 1
-            fi
-            echo "Opened $url" | tee -a "$GITHUB_STEP_SUMMARY"
+          if ! url=$(gh pr create --repo "$GITHUB_REPOSITORY" --head "$branch" --base "$BASE" \
+            --title "kpin: weekly update of the pins" --body-file "$RUNNER_TEMP/body"); then
+            echo "::error title=no pull request::the branch $branch is pushed but the pull request could not be opened (is 'Allow GitHub Actions to create and approve pull requests' on? see the header of this workflow). Open it by hand: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$BASE...$branch?expand=1"
+            exit 1
           fi
+          echo "Opened $url" | tee -a "$GITHUB_STEP_SUMMARY"
+          # Only now, with the new pull request open: close the older weekly ones.
+          gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("kpin/weekly-")) | "\(.number) \(.headRefName)"' > "$RUNNER_TEMP/older"
+          while read -r num old; do
+            [ -n "$num" ] || continue
+            [ "$old" != "$branch" ] || continue
+            gh pr close "$num" --repo "$GITHUB_REPOSITORY" --comment "Superseded by $url (run $RUN_URL)."
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$old" > /dev/null
+            echo "Closed #$num and deleted $old" | tee -a "$GITHUB_STEP_SUMMARY"
+          done < "$RUNNER_TEMP/older"
       - name: Stop buck2
         if: always()
         run: ./buck2 kill || true

@@ -86,11 +86,12 @@ is not what the lockfile says. The build fails, naming the package, when a lockf
 tarball in `pins.lock.bzl`.
 
 `.github/workflows/kpin-update.yml` runs the same two commands every Monday (and on demand) for every lock here
-(`tools/node` and the four service packages), on a GitHub-hosted runner with no farm, and opens or updates one
-pull request from the branch `kpin/weekly` when a file changed. It uses the default `GITHUB_TOKEN` only. Exit 3
+(`tools/node` and the four service packages), on a GitHub-hosted runner with no farm, and, when a file changed,
+pushes a new branch `kpin/weekly-<run id>` (a plain push, never a force-push) and opens a pull request from it, then
+closes the older open `kpin/weekly-*` pull requests (a comment links the new one) and deletes their branches. It uses the default `GITHUB_TOKEN` only. Exit 3
 (a changed hash for a version already pinned) fails the job and opens nothing. Two limits: the repository
 setting "Allow GitHub Actions to create and approve pull requests" must be on, and a pull request opened with
-`GITHUB_TOKEN` starts no other workflow, so push an empty commit to `kpin/weekly` (or close and reopen the pull
+`GITHUB_TOKEN` starts no other workflow, so push an empty commit to its branch (or close and reopen the pull
 request) to run its checks. A new `pins.lock.bzl` needs a line in the workflow's `KPIN_SETS`; the job fails until
 it has one. kpin's fetcher speaks TLS 1.3 only (komira's `tools/build/kpin/README.md`): `registry.npmjs.org`
 answers TLS 1.2 only, so `update` cannot fetch a new npm tarball from a runner or from here today, and the job
