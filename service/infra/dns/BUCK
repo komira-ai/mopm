@@ -26,7 +26,6 @@ _ACCOUNT = "1" * 12
 npm_modules(
     name = "modules",
     lockfile = "package-lock.json",
-    node = _NODE,
     npm = NPM,
 )
 

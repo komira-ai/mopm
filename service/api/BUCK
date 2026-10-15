@@ -19,7 +19,6 @@ _SRCS = glob(["src/**", "test/**"]) + [
 npm_modules(
     name = "modules",
     lockfile = "package-lock.json",
-    node = _NODE,
     npm = NPM,
 )
 
@@ -31,7 +30,8 @@ tsc_check(
 )
 
 # The tests read the specification and the contract cases at their paths in the repository
-# (`../../../../spec/api/openapi.yaml`, `.../tests/contract/api`).
+# (`../../../../spec/api/openapi.yaml`, `.../tests/contract/api`), and the validator's tests run
+# `bzip2` (test/validate/builder.ts): the pinned busybox's applet is the only command on PATH.
 jest_test(
     name = "test",
     data = {
@@ -41,6 +41,7 @@ jest_test(
     modules = ":modules",
     node = _NODE,
     srcs = _SRCS,
+    tools = {"bzip2": "komira//tools/build/toolchains:busybox"},
 )
 
 # `npm run build`: the handler bundle the API stack deploys.

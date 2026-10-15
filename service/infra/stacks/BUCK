@@ -31,7 +31,6 @@ _APP = "node node_modules/.bin/ts-node --prefer-ts-exts bin/stacks.ts"
 npm_modules(
     name = "modules",
     lockfile = "package-lock.json",
-    node = _NODE,
     npm = NPM,
 )
 
