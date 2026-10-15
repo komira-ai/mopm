@@ -272,6 +272,22 @@ describe('checkDist refuses', () => {
     expectRefusal(f, /docs\.css is \d+ bytes; the limit for an area stylesheet is 16384/);
   });
 
+  // Each sheet's boundary: exactly its budget passes its own check, one byte more is refused by it. A sheet at its full
+  // budget takes every page that links it over the page total, so only the per-sheet message is checked (the page-total
+  // refusal would otherwise mask it). Mutants: `>=` for `>`, or slack such as `n > max + 1023`.
+  test.each([
+    ['site.css', SHARED_CSS_MAX_BYTES, /site\.css is \d+ bytes/, /site\.css is 24577 bytes; the limit for the shared stylesheet is 24576/],
+    ['search.css', AREA_CSS_MAX_BYTES, /search\.css is \d+ bytes/, /search\.css is 16385 bytes; the limit for an area stylesheet is 16384/],
+  ])('%s at exactly its budget passes its own check; one byte more is refused', (name, max, anyRefusal, overBy1) => {
+    const { f, id } = built();
+    const p = join(f.outDir, 'assets', id, name);
+    appendFileSync(p, `/*${'x'.repeat(max - readFileSync(p).length - 5)}*/\n`);
+    expect(readFileSync(p).length).toBe(max);
+    expect(() => checkDist(f.outDir)).not.toThrow(anyRefusal);
+    appendFileSync(p, '\n');
+    expectRefusal(f, overBy1);
+  });
+
   // Every sheet within its own budget, but the three the app shell links over the page total. Only the pages that link
   // the grown sheet are refused. Mutants: the page total counting every stylesheet in the tree (the docs pages refused
   // too), or not counted at all.
