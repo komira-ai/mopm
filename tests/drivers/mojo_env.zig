@@ -31,8 +31,14 @@ pub const Mojo = struct {
     base: std.process.EnvMap,
 
     pub fn init(a: Allocator) !Mojo {
+        return initFor(a, "MOJO_TOOLCHAIN");
+    }
+
+    /// As `init`, with the toolchain directory named by the environment
+    /// variable `tool_var` (a driver that needs two compilers names each).
+    pub fn initFor(a: Allocator, tool_var: []const u8) !Mojo {
         const work = try h.toolPathAbs(a, "KOMIRA_TEST_WORK");
-        const tc = try h.toolPathAbs(a, "MOJO_TOOLCHAIN");
+        const tc = try h.toolPathAbs(a, tool_var);
         const zig_dir = try h.toolPathAbs(a, "ZIG_DIR");
         const shim = try h.toolPathAbs(a, "CC_SHIM");
         const cc_dir = try h.join(a, &.{ work, "cc" });
