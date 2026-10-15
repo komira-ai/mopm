@@ -5,7 +5,7 @@
 # trip the real hygiene scan if stored literally, so fixtures hold placeholders that are
 # substituted here at runtime: @@PRT@@ (the privileged PR trigger) and @@ACCT@@ (a
 # 12-digit account-id-shaped number). The hygiene scan has no allow-list; nothing here
-# needs one. Each case is materialized as ci.yml in a temp dir (a name not allowed id-token); promote_* fixtures become promote.yml.
+# needs one. Each case is materialized as ci.yml in a temp dir (a name not allowed id-token); promote_* fixtures become promote.yml and farm_* fixtures farm.yml.
 require "open3"
 require "tmpdir"
 
@@ -30,6 +30,10 @@ CASES = {
   "promote_pull_request" => { LINT => ["triggers must be exactly push and workflow_dispatch"] },
   "inherit_elsewhere" => { LINT => ["secrets: inherit is not allowed outside promote.yml"] },
   "account_id_literal" => { HYG => ["12-digit number that looks like an account id"] },
+  # farm.yml: komira's farm-connect and an id-token grant, for a pull request from this repository only.
+  "farm_clean" => { LINT => [], HYG => [] },
+  "farm_fork_unguarded" => { LINT => [], HYG => ["does not skip pull requests from forks"] },
+  "farm_other_action" => { LINT => ["only GitHub-owned actions pinned by full SHA"], HYG => [] },
 }
 
 bad = 0
@@ -37,7 +41,7 @@ CASES.each do |name, tools|
   text = File.read(File.join(FIX, "#{name}.yml.fixture"))
   SUBST.each { |k, v| text = text.gsub(k, v) }
   Dir.mktmpdir do |d|
-    path = File.join(d, name.start_with?("promote") ? "promote.yml" : "ci.yml")
+    path = File.join(d, name.start_with?("promote") ? "promote.yml" : name.start_with?("farm") ? "farm.yml" : "ci.yml")
     File.write(path, text)
     tools.each do |tool, expected|
       out, st = Open3.capture2e("ruby", tool, path)

@@ -12,6 +12,7 @@
 //! (lock.allowedChannel), or no lock is built.
 
 const std = @import("std");
+const testroot = @import("testroot.zig");
 const Allocator = std.mem.Allocator;
 const resolve = @import("resolve.zig");
 const lock = @import("lock.zig");
@@ -347,7 +348,7 @@ test "a lock entry's deps come from the index record's deps[], never from the re
         return e;
     };
     // Same bytes as with agreeing repodata: http_core 1.2.5, deps crypto and http_core.
-    const want = try std.fs.cwd().readFileAlloc(a, "tests/resolve/golden/diamond.lock", 1 << 20);
+    const want = try std.fs.cwd().readFileAlloc(a, try testroot.path(a, "tests/resolve/golden/diamond.lock"), 1 << 20);
     try std.testing.expectEqualStrings(want, try lock.render(a, l));
 }
 
@@ -361,7 +362,7 @@ test "golden: the diamond's lock is tests/resolve/golden/diamond.lock, byte for 
         return e;
     };
     const got = try lock.render(a, l);
-    const want = try std.fs.cwd().readFileAlloc(a, "tests/resolve/golden/diamond.lock", 1 << 20);
+    const want = try std.fs.cwd().readFileAlloc(a, try testroot.path(a, "tests/resolve/golden/diamond.lock"), 1 << 20);
     try std.testing.expectEqualStrings(want, got);
     // What mopm writes, mopm reads back under every rule of spec/lock.md.
     var why: []const u8 = "";

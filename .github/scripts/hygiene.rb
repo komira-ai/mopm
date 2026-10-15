@@ -34,6 +34,10 @@ end
 oidc_files = %w[deploy.yml e2e.yml promote.yml]
 # The one other file allowed an id-token grant: it prints OIDC claims and holds no AWS access.
 subject_check = "oidc-subject-check.yml"
+# farm.yml runs on pull_request and holds an id-token grant for komira's farm-connect
+# action (the job's OIDC token is exchanged for a network credential). Allowed only for a
+# pull request from a branch of this repository, with no environment and no secret.
+farm_file = "farm.yml"
 find_key = lambda do |node, key|
   case node
   when Hash then node.any? { |k, v| k == key || find_key.(v, key) }
@@ -55,6 +59,15 @@ end
       env = job["environment"]
       fail_.("#{f}: job #{jn}: environment must be absent or beta, not #{env.inspect}") unless env.nil? || env == "beta"
       fail_.("#{f}: job #{jn} grants id-token but is not restricted to refs/heads/main") unless job["if"].to_s.include?("refs/heads/main")
+    end
+    next
+  end
+  if base == farm_file
+    fail_.("#{f}: triggers must be exactly pull_request") unless on.keys == ["pull_request"]
+    fail_.("#{f}: must not use secrets or an environment") if find_key.(doc, "environment") || File.readlines(f).reject { |l| l.strip.start_with?("#") }.join =~ /\bsecrets\./
+    (doc["jobs"] || {}).each do |jn, job|
+      next unless find_key.(job, "id-token")
+      fail_.("#{f}: job #{jn} grants id-token but does not skip pull requests from forks") unless job["if"].to_s.include?("github.event.pull_request.head.repo.full_name == github.repository")
     end
     next
   end

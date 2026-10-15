@@ -6,6 +6,9 @@ require "tmpdir"
 bad = 0
 fail_ = ->(msg) { warn "workflow-lint: #{msg}"; bad += 1 }
 oidc_files = %w[deploy.yml e2e.yml promote.yml oidc-subject-check.yml]
+# farm.yml may also hold the id-token grant, and one action outside GitHub's own
+# (komira's farm-connect, pinned by commit); hygiene.rb holds it to its conditions.
+farm_file = "farm.yml"
 # Names whose values must never reach a log: no echo/printf/cat/tee of them.
 secret_names = %w[AWS_ACCOUNT_ID AWS_REGION ROLE_ARN AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN]
 secret_alt = "(?:" + secret_names.join("|") + ")"
@@ -62,7 +65,7 @@ end
     elsif value.is_a?(Hash)
       value.each do |k, v|
         next unless v == "write"
-        fail_.("#{f}: #{path.join('.')}.#{k}: write is not allowed") unless k == "id-token" && oidc_files.include?(base)
+        fail_.("#{f}: #{path.join('.')}.#{k}: write is not allowed") unless k == "id-token" && (oidc_files.include?(base) || base == farm_file)
       end
     end
   end
@@ -97,7 +100,8 @@ end
       fail_.("#{f}: job #{jn} may only call a local workflow, not #{job['uses']}")
     end
     (job["steps"] || []).each_with_index do |st, i|
-      if st["uses"] && st["uses"] !~ /\Aactions\/(#{owned_actions.join('|')})@[0-9a-f]{40}\z/
+      farm_connect = base == farm_file && st["uses"].to_s =~ %r{\Akomira-ai/komira/\.github/actions/farm-connect@[0-9a-f]{40}\z}
+      if st["uses"] && !farm_connect && st["uses"] !~ /\Aactions\/(#{owned_actions.join('|')})@[0-9a-f]{40}\z/
         fail_.("#{f}: #{jn} step #{i}: only GitHub-owned actions pinned by full SHA are allowed: #{st['uses']}")
       end
       next unless st["run"]

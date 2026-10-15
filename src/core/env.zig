@@ -12,6 +12,7 @@
 //! name order so the plan does not depend on directory order.
 
 const std = @import("std");
+const testroot = @import("testroot.zig");
 const Allocator = std.mem.Allocator;
 const link_planner = @import("link_planner.zig");
 
@@ -152,13 +153,13 @@ test "a MODULAR_HOME not ending in /share/max is refused, not guessed" {
     try std.testing.expectError(error.BadModularHome, choosePrefix(null, null, "/m/share/maxi"));
 }
 
-// Reads tests/fixtures relative to the working directory: run from the
-// repository root, like the golden tests.
+// Reads tests/fixtures under MOPM_SOURCE_ROOT, else relative to the working
+// directory (the repository root, like the golden tests): testroot.zig.
 test "discovery lists lib/mojo/*.mopm.json in name order and plans absolute paths" {
     var t = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer t.deinit();
     const a = t.allocator();
-    const prefix = try std.fs.cwd().realpathAlloc(a, "tests/fixtures/env/linux/chain");
+    const prefix = try std.fs.cwd().realpathAlloc(a, try testroot.path(a, "tests/fixtures/env/linux/chain"));
     const paths = try listMetadata(a, prefix);
     try std.testing.expectEqual(@as(usize, 2), paths.len);
     try std.testing.expect(std.mem.endsWith(u8, paths[0], "/lib/mojo/crypto.mopm.json"));
@@ -176,14 +177,14 @@ test "discovery lists lib/mojo/*.mopm.json in name order and plans absolute path
 test "a prefix without lib/mojo is not a Mojo environment" {
     var t = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer t.deinit();
-    try std.testing.expectError(error.NotAMojoEnv, listMetadata(t.allocator(), "tests/fixtures/env"));
+    try std.testing.expectError(error.NotAMojoEnv, listMetadata(t.allocator(), try testroot.path(t.allocator(), "tests/fixtures/env")));
 }
 
 test "a library named by the metadata but absent from disk is reported" {
     var t = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer t.deinit();
     const a = t.allocator();
-    const prefix = try std.fs.cwd().realpathAlloc(a, "tests/fixtures/env/linux/nofile");
+    const prefix = try std.fs.cwd().realpathAlloc(a, try testroot.path(a, "tests/fixtures/env/linux/nofile"));
     const loaded = try loadAll(a, try listMetadata(a, prefix));
     const p = try link_planner.plan(a, loaded.ok);
     try std.testing.expect(p.ok());

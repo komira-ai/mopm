@@ -1,4 +1,5 @@
 #!/bin/sh
+# Used by tests/run_golden.sh (ci.yml). The Buck2 build uses tests/drivers/fake_mojo.zig.
 # Stands in for mojo in tests/run_golden.sh: shows what mopm handed over (one
 # argument per line, two environment variables, stdin for the REPL) and exits
 # with a status of its own, so the golden files can check that mopm passes

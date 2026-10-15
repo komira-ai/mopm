@@ -10,6 +10,7 @@
 //! `mopm <command>:` prefix, the caller adds its own.
 
 const std = @import("std");
+const testroot = @import("testroot.zig");
 const Allocator = std.mem.Allocator;
 const env = @import("env.zig");
 const link_planner = @import("link_planner.zig");
@@ -66,13 +67,14 @@ fn refuse(arena: Allocator, msg: []const u8) Allocator.Error!Prepared {
 }
 
 // ---------------------------------------------------------------- tests
-// `zig build test` runs from the repository root (tests/fixtures).
+// `zig build test` runs from the repository root (tests/fixtures); a runner
+// elsewhere sets MOPM_SOURCE_ROOT (testroot.zig).
 
 test "an environment with installed natives: the plan links them" {
     var t = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer t.deinit();
     const a = t.allocator();
-    const p = switch (try prepare(a, .build, "tests/fixtures/env/linux/chain", null, null)) {
+    const p = switch (try prepare(a, .build, try testroot.path(a, "tests/fixtures/env/linux/chain"), null, null)) {
         .ok => |v| v,
         .refused => return error.TestUnexpectedResult,
     };
@@ -94,7 +96,8 @@ test "no environment, a missing one, and a directory that is not one are refused
         .{ .flag = "tests/fixtures", .want = "not a Mojo environment" },
     };
     for (cases) |c| {
-        switch (try prepare(a, .build, c.flag, null, null)) {
+        const flag = if (c.flag) |f| try testroot.path(a, f) else null;
+        switch (try prepare(a, .build, flag, null, null)) {
             .ok => return error.TestUnexpectedResult,
             .refused => |m| try std.testing.expect(std.mem.indexOf(u8, m[0], c.want) != null),
         }

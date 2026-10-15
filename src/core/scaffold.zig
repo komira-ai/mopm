@@ -6,6 +6,7 @@
 //! Nothing is ever overwritten: `write` refuses before it writes anything.
 
 const std = @import("std");
+const testroot = @import("testroot.zig");
 const Allocator = std.mem.Allocator;
 const manifest = @import("manifest.zig");
 
@@ -158,7 +159,7 @@ fn expectTree(dir_path: []const u8, kind: Kind) !void {
     const arena = arena_state.allocator();
     const fs = try files(arena, "demo", kind);
 
-    var dir = try std.fs.cwd().openDir(dir_path, .{ .iterate = true });
+    var dir = try std.fs.cwd().openDir(try testroot.path(arena, dir_path), .{ .iterate = true });
     defer dir.close();
     var walker = try dir.walk(arena);
     defer walker.deinit();

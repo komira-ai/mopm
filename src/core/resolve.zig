@@ -27,6 +27,7 @@
 //! requirements and where each came from.
 
 const std = @import("std");
+const testroot = @import("testroot.zig");
 const Allocator = std.mem.Allocator;
 const semver = @import("semver.zig");
 
@@ -776,7 +777,7 @@ test "the spec's example index files parse" {
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var diag: Diagnostic = .{};
-    const text = try std.fs.cwd().readFileAlloc(a, "tests/contract/examples/index-record/valid/http_client.ndjson", 1 << 20);
+    const text = try std.fs.cwd().readFileAlloc(a, try testroot.path(a, "tests/contract/examples/index-record/valid/http_client.ndjson"), 1 << 20);
     const recs = parseIndex(a, "http_client", text, &diag) catch |e| {
         std.debug.print("{s}\n", .{diag.message});
         return e;

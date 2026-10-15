@@ -1,0 +1,64 @@
+# Buck2 configuration of mopm: komira's build rules, with komira fetched as a
+# git external cell. This is komira's tools/build/consumer.buckconfig with the
+# root cell named `mopm`; see that file for what each section is for.
+#
+# The cell must be called `komira`: output paths contain the cell name, and
+# keeping it gives komira's toolchain actions the same digests as in a
+# komira checkout, so both share remote-cache entries.
+#
+# Two directories here are copies from komira:
+#   toolchains/BUCK  from tools/build/cells/toolchains/BUCK
+#   platforms/BUCK   from tools/build/platforms/default/BUCK
+# and `buck2` / `tools/buck2` are komira's, byte for byte: the same buck2
+# release as komira's, so the actions are keyed alike.
+#
+# Remote execution is not configured here: no endpoint or worker property
+# set belongs in this public repository. Without any, every action runs on
+# the machine that runs buck2. A farm's settings go in `.buckconfig.local`
+# (gitignored), or, in CI, in the file the farm-connect step writes
+# (.github/workflows/farm.yml).
+
+[cells]
+  mopm = .
+  prelude = prelude
+  toolchains = toolchains
+  # A git external cell needs no directory here; nothing is checked out at this path.
+  komira = komira-ext
+  none = none
+
+[cell_aliases]
+  config = prelude
+  ovr_config = prelude
+  fbcode = none
+  fbsource = none
+  fbcode_macros = none
+  buck = none
+
+[external_cells]
+  prelude = bundled
+  komira = git
+
+[external_cell_komira]
+  git_origin = https://github.com/komira-ai/komira.git
+  # komira at the commit that holds the Zig rules BUCK uses (zig_module deps,
+  # zig_test exec/env tools, zig_exe optimize/strip). Bump it with farm.yml.
+  commit_hash = 819ec4dcc7ef5660a973e802f508ad791f964850
+
+[buildfile]
+  name = BUCK
+
+[parser]
+  target_platform_detector_spec = target:mopm//...->komira//tools/build/platforms:host target:komira//...->komira//tools/build/platforms:host target:toolchains//...->komira//tools/build/platforms:host
+
+[build]
+  execution_platforms = mopm//platforms:default
+
+[buck2_re_client]
+  max_total_batch_size = 1048576
+
+[komira]
+  # The timeout of buck2's test runner, as in komira's .buckconfig.
+  test_timeout_s = 600
+
+[project]
+  ignore = buck-out, .git, .zig-cache, **/node_modules
