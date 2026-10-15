@@ -3,7 +3,9 @@
 The mopm.dev web site: plain TypeScript compiled by `tsc` to ES modules the browser loads directly. No framework, no
 bundler, no runtime dependencies.
 
-The prerendered pages (`/`, `/docs/`, `/docs/<slug>/`, `404.html`) work without scripts. `/search`,
+The prerendered pages (`/`, `/docs/`, `/docs/<slug>/`, `404.html`) work without scripts; the home page's "Recently
+updated" list is the one part a script fills (one `searchPackages?sort=updated` call), and without scripts it
+links to the package list instead. Copy buttons are added by the script too, so without it a command is plain text. `/search`,
 `/packages/<name>` and `/packages/<name>/<version>` share one shell, `app.html`, which `src/main.ts` fills from one
 API call (`src/app.ts` picks the call and the view).
 
@@ -16,10 +18,12 @@ API call (`src/app.ts` picks the call and the view).
 | `src/links.ts` | URL checking, the only source of `SafeHref` |
 | `src/markdown/` | a restricted Markdown parser (linear time) and its renderer, for package readmes and repo docs |
 | `src/snippet.ts`, `src/format.ts` | the install lines a page shows; times, sizes and version states as text |
-| `src/views/` | the search, package and version views and the shared ones (loading, error, not found), built through a `Doc` |
+| `src/copy.ts` | the Copy button the page script adds to each command block (`.copy-box`), with a live "Copied" status |
+| `src/views/` | the search, package and version views, the home page's recently updated list, and the shared ones (loading, error, not found), built through a `Doc` |
 | `src/app.ts` | the app shell's routing: the API call an address makes and the view its answer gives (no DOM) |
 | `src/mount.ts` | putting a view on the page (title, focus, noindex, canonical address, Retry) and the home page's conda channel, against the few DOM members it uses |
-| `src/main.ts` | the page script: connects `app.ts` and `mount.ts` to the real document, plus the read-only banner and `/` to focus search |
+| `src/enhance.ts` | what the page script adds once a page is on screen: the copy buttons and the home page's recently updated list, against a small DOM port |
+| `src/main.ts` | the page script: connects `app.ts`, `mount.ts` and `enhance.ts` to the real document, plus the read-only banner and `/` to focus search |
 | `static/site.css` | the one stylesheet |
 | `tools/` | the build (Node, run at build time only): page layout, the home, 404 and shell pages, the docs pages, hashing the assets, and the checks on `dist/` |
 
@@ -62,7 +66,10 @@ commit), so the same sources give the same tree and a changed asset gets a new U
 tree with a missing page, a dangling asset or import, markup its tag scanner cannot read as a browser does (a
 comment, a `<` inside a tag, an unclosed tag), a script that is not an empty `<script src="/assets/...">`, a
 style element or attribute, an event-handler attribute, a `javascript:`, `data:` or `vbscript:` URL, a file
-other than `.html`, `.js` or `.css`, or JavaScript or CSS over its size budget.
+other than `.html`, `.js` or `.css`, or JavaScript or CSS over its size budget (64 KiB a module and 128 KiB in all for
+JavaScript; 32 KiB for `site.css`, raised from 16 KiB by the landing and package design because the one stylesheet
+still holds every route's styles until the design note's per-route area stylesheets split it, and 32 KiB is under that
+plan's per-route total of 24 KiB shared plus 16 KiB for the area).
 
 The home page copy is held to `README.md` and `src/cli/main.zig` by `test/layout.test.ts`: when the list of working
 or planned commands changes there, the page has to change too. Route vectors are in `test/fixtures/routes.json`; they

@@ -1,7 +1,9 @@
 // T14 (package page): the package view over the contract fixture and the shapes the fixtures do not cover (a claimed
 // name, no latest release, a latest mopm cannot name, an unknown state, a hostile readme or repository URL). Every
-// value is shown as text; only checked URLs become links; the state of a version is words, not only a class.
-import { packageView, README_MAX_BYTES } from '../src/views/package';
+// value is shown as text; only checked URLs become links; the state of a version is words, not only a class. The page
+// leads with ONE install command (pixi, which installs a published package today), with the others under "Other ways
+// to install", then the readme; the side panel lists the newest versions with their state.
+import { packageView, README_MAX_BYTES, SIDE_VERSIONS } from '../src/views/package';
 import { PLANNED, WORKING_TODAY } from '../tools/pages';
 import { hrefs, html, packageFixture, sdoc, text, uniqueIds } from './view-helpers';
 
@@ -23,8 +25,47 @@ describe('an active package (fixture: package info)', () => {
   test('the conda channel of this host and the pixi command are shown', () => {
     expect(out).toContain('<code>https://conda.mopm.dev/</code>');
     expect(out).toContain('<code>pixi add mojo-http_client</code>');
-    // A focusable block named by its label: the name counts only with a role.
-    expect(out).toContain('<p class="snippet-label" id="snippet-pixi">pixi, in a project that lists the channel</p><pre tabindex="0" role="region" aria-labelledby="snippet-pixi">');
+  });
+
+  // Catches: a second command promoted beside pixi, the channel or manifest moved out of the <details>, or a block a
+  // copy button cannot find (copy.ts looks for a .copy-box holding one <pre>).
+  test('ONE install command comes first, in a copy box, with the other ways in a closed <details>', () => {
+    const card = out.slice(out.indexOf('<section class="install-card"'), out.indexOf('</section>', out.indexOf('<section class="install-card"')));
+    const before = card.slice(0, card.indexOf('<details'));
+    expect(before.match(/class="cmd[^"]*copy-box"/g)).toHaveLength(1);
+    expect(before).toContain(
+      '<div class="cmd cmd-lg copy-box"><span class="prompt" aria-hidden="true">$</span><pre tabindex="0" role="region" aria-label="install command" aria-describedby="install-note"><code>pixi add mojo-http_client</code></pre></div>',
+    );
+    expect(before).toContain('<p class="install-note" id="install-note">in a pixi project that lists the channel <code>https://conda.mopm.dev/</code></p>');
+    const others = card.slice(card.indexOf('<details'));
+    expect(others.startsWith('<details class="other-ways"><summary>Other ways to install</summary>')).toBe(true);
+    expect(others).toContain('<div class="cmd copy-box"><pre tabindex="0" role="region" aria-labelledby="snippet-channel"><code>https://conda.mopm.dev/</code></pre></div>');
+    expect(others).toContain('<code>[dependencies]\nhttp_client = "0.4.0"</code>');
+    expect(card).not.toContain('<button'); // the page script adds the buttons; a view never does
+  });
+
+  test('the page reads in order: name, install card, readme, versions table', () => {
+    const page = render(packageFixture((r) => Object.assign(r, { readme: '# Usage' })));
+    const at = (s: string) => page.indexOf(s);
+    expect(at('<h1>')).toBeLessThan(at('class="install-card"'));
+    expect(at('class="install-card"')).toBeLessThan(at('id="section-readme"'));
+    expect(at('id="section-readme"')).toBeLessThan(at('<table>'));
+  });
+
+  test('the head: latest version, description, and the published time of the latest version', () => {
+    expect(out).toContain('<span class="ver"><span class="visually-hidden">latest version </span>0.4.0</span>');
+    expect(out).toContain('<p class="lede">HTTP/1.1 client</p>');
+    expect(text(out)).toContain('Published 2026-10-13 12:00 UTC');
+    expect(text(out)).toContain('License Apache-2.0');
+    expect(text(out)).toContain('2 versions');
+    expect(out).toContain('<nav class="crumb" aria-label="Breadcrumb"><a href="/search">Packages</a>');
+  });
+
+  test('the side panel lists versions with their state in words and links to the full table', () => {
+    const side = out.slice(out.indexOf('<aside'));
+    expect(side).toContain('<li class="state-published"><a href="/packages/http_client/0.4.0">0.4.0</a><span>2026-10-13</span></li>');
+    expect(side).toContain('<li class="state-yanked"><a href="/packages/http_client/0.3.0">0.3.0</a><span>yanked</span></li>');
+    expect(side).toContain('<a href="#versions-heading">All 2 versions</a>');
   });
 
   // The note names only commands README.md says work today or src/cli/main.zig still plans (layout.test.ts pins
@@ -44,7 +85,7 @@ describe('an active package (fixture: package info)', () => {
   });
 
   test('owners are text, the repository is a nofollow link', () => {
-    expect(out).toContain('<li>octocat</li>');
+    expect(out).toContain('<li><span class="avatar" aria-hidden="true">OC</span>octocat</li>');
     expect(out).toContain('<a href="https://github.com/example/http_client" rel="nofollow noopener noreferrer ugc">');
   });
 
@@ -52,8 +93,41 @@ describe('an active package (fixture: package info)', () => {
     expect(render(packageFixture(), { host: 'beta.mopm.dev' })).toContain('<code>https://conda.beta.mopm.dev/</code>');
   });
 
-  test('a page on an unknown host shows no channel', () => {
-    expect(render(packageFixture(), { host: 'localhost' })).not.toContain('conda.');
+  // Catches a fixed note naming prod's channel beside a command run on another stage: a reader following the visible
+  // line would install prod's package of that name.
+  test("the line beside the one install command names this stage's channel", () => {
+    for (const host of ['beta.mopm.dev', 'gamma.mopm.dev']) {
+      const page = render(packageFixture(), { host });
+      const note = page.slice(page.indexOf('<p class="install-note"'), page.indexOf('</p>', page.indexOf('<p class="install-note"')));
+      expect(text(note)).toBe(`in a pixi project that lists the channel https://conda.${host}/`);
+    }
+  });
+
+  // Catches the published time read from the newest row (versions[0]) instead of the latest version's row: the newest
+  // row here is yanked and a day later.
+  test('Published is the time of the latest version, not of a newer yanked row', () => {
+    const page = render(
+      packageFixture((r) =>
+        Object.assign(r, {
+          latest: '0.4.0',
+          versions: [
+            { version: '0.5.0', state: 'yanked', yank_reason: null, published_at: '2026-10-14T00:00:00Z' },
+            { version: '0.4.0', state: 'published', published_at: '2026-10-13T12:00:00Z' },
+          ],
+        }),
+      ),
+    );
+    const head = text(page.slice(0, page.indexOf('</header>')));
+    expect(head).toContain('Published 2026-10-13 12:00 UTC');
+    expect(head).not.toContain('2026-10-14');
+  });
+
+  test('a page on an unknown host shows no channel and no pixi command; the mopm.toml lines stand alone', () => {
+    const out2 = render(packageFixture(), { host: 'localhost' });
+    expect(out2).not.toContain('conda.');
+    expect(out2).not.toContain('pixi add');
+    expect(out2).not.toContain('<details');
+    expect(out2).toContain('<code>[dependencies]\nhttp_client = "0.4.0"</code>');
   });
 });
 
@@ -173,6 +247,33 @@ describe('package shapes the fixtures do not cover', () => {
     expect(out).toContain('<td><time datetime="2026-10-13T12:00:00Z">2026-10-13 12:00 UTC</time></td>');
   });
 
+  test(`the side panel shows the newest ${SIDE_VERSIONS} versions, tombstoned in words; the table has them all`, () => {
+    const at = '2026-10-13T12:00:00Z';
+    const versions = ['0.7.0', '0.6.0', '0.5.0', '0.4.0', '0.3.0', '0.2.0', '0.1.0'].map((version, i) => ({ version, state: i === 0 ? 'tombstoned' : 'published', published_at: at }));
+    const out = render(packageFixture((r) => Object.assign(r, { latest: '0.6.0', versions })));
+    const side = out.slice(out.indexOf('<aside'));
+    expect(side.match(/<li class="state-/g)).toHaveLength(SIDE_VERSIONS);
+    expect(side).toContain('<li class="state-tombstoned"><a href="/packages/http_client/0.7.0">0.7.0</a><span>tombstoned</span></li>');
+    expect(side).not.toContain('0.2.0');
+    expect(side).toContain('All 7 versions');
+    expect(out.slice(0, out.indexOf('<aside')).match(/<tr class="state-/g)).toHaveLength(7);
+  });
+
+  test('a claimed name has no tabs, no version count and no side versions', () => {
+    const out = render(packageFixture((r) => Object.assign(r, { state: 'claimed', latest: null, versions: [] })));
+    expect(out).not.toContain('class="tabs"');
+    expect(text(out)).not.toMatch(/\d versions?/);
+    expect(out).not.toContain('side-versions');
+  });
+
+  // They are jump links, so none is marked as selected: a permanent "on" would show a selection that does not exist.
+  test('jump links to the readme and the versions table only when there is a readme, none marked selected', () => {
+    expect(render()).not.toContain('class="tabs"');
+    const out = render(packageFixture((r) => Object.assign(r, { readme: '# x' })));
+    expect(out).toContain('<nav class="tabs" aria-label="On this page"><a href="#section-readme">Readme</a><a href="#versions-heading">Versions <span class="count">2</span></a></nav>');
+    expect(out).not.toContain('class="on"');
+  });
+
   test('an unknown version state is shown with its raw value', () => {
     const out = render(
       packageFixture((r) => Object.assign(r, { versions: [{ version: '0.5.0', state: 'quarantined', published_at: '2026-10-13T12:00:00Z' }] })),
@@ -184,14 +285,15 @@ describe('package shapes the fixtures do not cover', () => {
     const out = render(packageFixture((r) => Object.assign(r, { repository: 'javascript:alert(1)', homepage: 'data:text/html,x' })));
     expect(out).toContain('<span>javascript:alert(1)</span>');
     expect(out).toContain('<span>data:text/html,x</span>');
-    expect(hrefs(out).filter((h) => !h.startsWith('/') && !h.startsWith('https://github.com/example/'))).toEqual([]);
+    // The page's own in-page links (the side panel's link to the versions table) are the only other hrefs.
+    expect(hrefs(out).filter((h) => !h.startsWith('/') && !h.startsWith('https://github.com/example/') && h !== '#versions-heading')).toEqual([]);
   });
 
   test('a mailto: or fragment repository or homepage is text, though readme links may use them', () => {
     const out = render(packageFixture((r) => Object.assign(r, { repository: 'mailto:a@example.com', homepage: '#readme' })));
     expect(out).toContain('<span>mailto:a@example.com</span>');
     expect(out).toContain('<span>#readme</span>');
-    expect(hrefs(out).filter((h) => h.startsWith('mailto:') || h.startsWith('#'))).toEqual([]);
+    expect(hrefs(out).filter((h) => h.startsWith('mailto:') || (h.startsWith('#') && h !== '#versions-heading'))).toEqual([]);
   });
 
   test('keywords are text', () => {

@@ -73,7 +73,7 @@ function header(spec: PageSpec): SNode {
       doc,
       'div',
       { class: 'wrap bar' },
-      h(doc, 'a', { class: 'brand', href: internalHref('/'), 'aria-label': 'mopm home' }, 'mopm'),
+      h(doc, 'a', { class: 'brand', href: internalHref('/'), 'aria-label': 'mopm home' }, h(doc, 'span', { class: 'logo', 'aria-hidden': 'true' }, 'm'), 'mopm'),
       spec.kind === 'home' ? null : siteSearch(),
       h(
         doc,
@@ -93,6 +93,7 @@ function header(spec: PageSpec): SNode {
 }
 
 function footer(): SNode {
+  const ext = (path: string, text: string): SNode => h(doc, 'li', null, h(doc, 'a', { href: webHref(`${REPO_URL}${path}`) ?? undefined }, text));
   return h(
     doc,
     'footer',
@@ -102,6 +103,12 @@ function footer(): SNode {
       'div',
       { class: 'wrap' },
       h(doc, 'p', null, 'mopm is open source under the Apache-2.0 license. ', h(doc, 'a', { href: webHref(REPO_URL) ?? undefined }, 'Source on GitHub'), '.'),
+      h(
+        doc,
+        'nav',
+        { 'aria-label': 'Footer' },
+        h(doc, 'ul', null, h(doc, 'li', null, h(doc, 'a', { href: internalHref('/docs/') }, 'Docs')), ext('/blob/main/SECURITY.md', 'Security policy'), ext('/blob/main/CONTRIBUTING.md', 'Contributing')),
+      ),
     ),
   );
 }
@@ -125,7 +132,8 @@ export function renderPage(spec: PageSpec, assets: Assets): string {
   const noscript = spec.noscript ? `<noscript><div class="notice">${serialize(spec.noscript)}</div></noscript>` : '';
   const body = [
     serialize([h(doc, 'a', { class: 'skip', href: anchorHref('main') }, 'Skip to content'), header(spec)]),
-    `<main id="main" class="wrap" tabindex="-1">${noscript}${serialize(spec.main)}</main>`,
+    // The home page's bands run the full width, each with its own wrap; every other page sits in one.
+    `<main id="main" class="${spec.kind === 'home' ? 'home' : 'wrap'}" tabindex="-1">${noscript}${serialize(spec.main)}</main>`,
     serialize(footer()),
   ].join('\n');
   return [

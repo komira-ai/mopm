@@ -7,10 +7,10 @@
 // only as a SafeHref, which links.ts alone produces.
 
 export const TAGS = [
-  'a', 'article', 'aside', 'blockquote', 'br', 'button', 'caption', 'code', 'dd', 'div', 'dl', 'dt', 'em',
+  'a', 'article', 'aside', 'blockquote', 'br', 'button', 'caption', 'code', 'dd', 'details', 'div', 'dl', 'dt', 'em',
   'footer', 'form', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hr', 'input', 'kbd', 'label', 'li', 'main', 'meta',
   'nav', 'ol', 'option', 'p', 'pre', 'section', 'select', 'small', 'span', 'strong', 'table', 'tbody', 'td', 'th',
-  'thead', 'time', 'tr', 'ul',
+  'summary', 'thead', 'time', 'tr', 'ul',
 ] as const;
 export type Tag = (typeof TAGS)[number];
 
