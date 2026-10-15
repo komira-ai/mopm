@@ -5,6 +5,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { TAGS } from '../src/doc';
+import { DOC_PAGES } from '../src/links';
 import { tagsIn } from '../tools/check-dist';
 import { OPENING_SENTENCE, PLANNED, WORKING_TODAY } from '../tools/pages';
 import { cleanup, type Fixture, fixture, REPO_ROOT } from './build-fixture';
@@ -177,8 +178,9 @@ describe('the docs pages', () => {
     expect(read('index.html')).not.toContain('aria-current');
   });
 
-  // The docs nav lists the index and every published doc, and marks the page shown. Mutants: a doc left out of the
-  // nav; aria-current on the wrong entry, or on none.
+  // The docs nav lists the index and every published doc, each by its title, and marks the page shown. Mutants: a doc
+  // left out of the nav; aria-current on the wrong entry, or on none; a link reading as its slug ('mopm-toml') instead
+  // of the doc's title, or the index entry not reading 'Overview'.
   test.each([
     ['docs/index.html', '/docs/'],
     ['docs/mopm-toml/index.html', '/docs/mopm-toml/'],
@@ -189,6 +191,15 @@ describe('the docs pages', () => {
     const list = nav.slice(0, nav.indexOf('</nav>'));
     expect([...list.matchAll(/<a href="([^"]+)"/g)].map((m) => m[1])).toEqual(['/docs/', '/docs/mopm-toml/', '/docs/mopm-test/']);
     expect([...list.matchAll(/<a href="([^"]+)" aria-current="page">/g)].map((m) => m[1])).toEqual([self]);
+    // Each doc's title read here from its source's first '# ' heading, not through docTitle.
+    const titles = DOC_PAGES.map((d) => {
+      const line = readFileSync(join(REPO_ROOT, d.source), 'utf8').split('\n').find((l) => l.startsWith('# '));
+      if (!line) throw new Error(`${d.source}: no '# ' heading`);
+      return line.slice(2).replace(/`|\*\*/g, '').trim();
+    });
+    const pairs = [...list.matchAll(/<a href="([^"]+)"[^>]*>([^<]*)<\/a>/g)].map((m) => [m[1], textOf(m[2])]);
+    expect(pairs).toEqual([['/docs/', 'Overview'], ...DOC_PAGES.map((d, i) => [`/docs/${d.slug}/`, titles[i]])]);
+    expect(pairs.filter(([href, label]) => DOC_PAGES.some((d) => href === `/docs/${d.slug}/` && label === d.slug))).toEqual([]);
   });
 
   // The on-this-page list holds the page's h2 and h3 headings, in order, each linked to its own id and reading as the
