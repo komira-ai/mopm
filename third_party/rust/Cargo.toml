@@ -64,6 +64,7 @@ subtle = "2"
 getrandom = "0.4"
 percent-encoding = "2"
 form_urlencoded = "1"
+url = "2"
 
 # Reading archives (the validator): pure Rust, no build script that compiles C.
 ruzstd = "0.9"

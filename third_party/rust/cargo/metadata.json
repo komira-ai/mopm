@@ -10826,6 +10826,16 @@
         "target": null
        }
       ]
+     },
+     {
+      "name": "url",
+      "pkg": "registry+https://github.com/rust-lang/crates.io-index#url@2.5.8",
+      "dep_kinds": [
+       {
+        "kind": null,
+        "target": null
+       }
+      ]
      }
     ]
    },
