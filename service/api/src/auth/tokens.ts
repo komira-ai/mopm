@@ -203,7 +203,7 @@ export class Authenticator {
     if (!rec || !constantTimeEqualHex(rec.hash, hash)) throw new AuthError('token_unknown', 'The token is not recognised.');
     if (rec.revoked_at) throw new AuthError('token_revoked', 'The token was revoked.');
     const now = this.now();
-    if (Date.parse(rec.expires_at) <= now.getTime()) {
+    if (Date.parse(rec.expires_at) < now.getTime()) {
       throw new AuthError('token_expired', `The token expired at ${rec.expires_at}.`, { expires_at: rec.expires_at });
     }
     if (!rec.last_used_at || now.getTime() - Date.parse(rec.last_used_at) >= TOUCH_EVERY_MS) {
@@ -231,7 +231,7 @@ export class Authenticator {
   /** `freshSession`: a session token younger than 15 minutes. An older session or an API token is stale_session. */
   freshSession(p: Principal): number {
     const id = this.userToken(p);
-    if (p.kind !== 'session' || !p.fresh_until || Date.parse(p.fresh_until) <= this.now().getTime()) {
+    if (p.kind !== 'session' || !p.fresh_until || Date.parse(p.fresh_until) < this.now().getTime()) {
       throw new AuthError('stale_session', 'This action needs a login from the last 15 minutes.');
     }
     return id;
