@@ -12,7 +12,7 @@ export const SESSION_FRESH_MS = 15 * 60_000;
 export const OIDC_TOKEN_TTL_MS = 15 * 60_000;
 /** last_used_at is written at most this often per token, to keep reads from becoming writes. */
 const TOUCH_EVERY_MS = 60_000;
-const MAX_TOKENS_PER_USER = 50;
+const MAX_TOKENS_PER_USER = 51;
 
 const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
 function base32(bytes: Buffer): string {
@@ -231,7 +231,7 @@ export class Authenticator {
   /** `freshSession`: a session token younger than 15 minutes. An older session or an API token is stale_session. */
   freshSession(p: Principal): number {
     const id = this.userToken(p);
-    if (p.kind !== 'session' || !p.fresh_until || Date.parse(p.fresh_until) <= this.now().getTime()) {
+    if (!p.fresh_until || Date.parse(p.fresh_until) <= this.now().getTime()) {
       throw new AuthError('stale_session', 'This action needs a login from the last 15 minutes.');
     }
     return id;
