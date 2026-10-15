@@ -15,7 +15,8 @@
 # `buck-only` on its first line has no counterpart in
 # build.zig and is left out of the parity comparison.
 
-load("@komira//tools/build/mojo:toolchain.bzl", "zig_exe", "zig_module", "zig_test")
+load("@komira//tools/build/mojo:download.bzl", "pinned_file")
+load("@komira//tools/build/mojo:toolchain.bzl", "conda_closure", "zig_exe", "zig_module", "zig_test")
 load("@komira//tools/build/platforms:defs.bzl", "LINUX_X86_64")
 
 # What every Zig rule here takes: komira's pinned busybox and zig, on linux.
@@ -270,6 +271,90 @@ zig_test(  # buck-only: komira's Mojo toolchain works from this cell
     imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig"],
     exec_tools = _MOJO_TOOLS,
     **_TOOLS
+)
+
+# ---- Mojo 1.1.0, beside komira's 1.0.0 (the compatibility probe) ------------
+# komira's rules unpack any compiler package (conda_closure takes the package
+# and the runtime libraries as arguments), so nothing here is mopm-specific
+# code. What mopm must pin itself is what komira keeps private: the Mojo
+# 1.1.0 conda package and libstdc++ (komira's libgcc pin is public). The
+# libstdc++ pin is komira's, byte for byte (the same pair the 1.0.0 closure
+# uses; 1.1.0 needs the same two libraries). The compiler's sha256 and size
+# are those of the channel's repodata.
+
+pinned_file(
+    name = "mojo_compiler_1.1.0_linux-64.conda",
+    sha256 = "1ff52b39a0d2a1bedb8c4705aadc460205ca62fc19f63426bc545e4b60a31aa0",
+    size_bytes = 69781261,
+    url = "https://conda.modular.com/max/linux-64/mojo-compiler-1.1.0-release.conda",
+)
+
+pinned_file(
+    name = "libstdcxx_15.3.0_linux-64.conda",
+    sha256 = "0c3dc08bf43357a77297b4449abd0ce1d40a140989f004071e69c04ed13e36bb",
+    size_bytes = 5836322,
+    url = "https://conda.anaconda.org/conda-forge/linux-64/libstdcxx-15.3.0-h934c35e_7.conda",
+)
+
+conda_closure(
+    name = "mojo_compiler_1_1_0",
+    exec_compatible_with = LINUX_X86_64,
+    libs = {
+        "lib/libgcc_s.so.1": "komira//tools/build/toolchains:libgcc_15.3.0_linux-64.conda",
+        "lib/libstdc++.so.6": ":libstdcxx_15.3.0_linux-64.conda",
+    },
+    package = ":mojo_compiler_1.1.0_linux-64.conda",
+    unpacker = "komira//tools/build/toolchains:conda_unpack",
+)
+
+zig_test(  # buck-only: how compiled packages (.mojoc) behave across Mojo 1.0.0 and 1.1.0
+    name = "mojo_compat_probe",
+    src = "tests/drivers/mojo_compat_probe_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig"],
+    exec_tools = {
+        "CC_SHIM": ":zigcc",
+        "MOJO_TOOLCHAIN_10": "komira//tools/build/toolchains:mojo_compiler",
+        "MOJO_TOOLCHAIN_11": ":mojo_compiler_1_1_0",
+        "ZIG_DIR": "komira//tools/build/toolchains:zig",
+    },
+    data = [
+        "tests/compat/consumer.mojo",
+        "tests/compat/fixtures/probe_fn",
+        "tests/compat/fixtures/probe_neutral",
+        "tests/compat/fixtures/probe_new",
+        "tests/compat/fixtures/probe_old",
+    ],
+    **_TOOLS
+)
+
+_PLATFORM_PROBE = dict(
+    src = "tests/drivers/mojo_platform_probe_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig"],
+    exec_tools = {
+        "CC_SHIM": ":zigcc",
+        "MOJO_TOOLCHAIN_10": "komira//tools/build/toolchains:mojo_compiler",
+        "MOJO_TOOLCHAIN_11": ":mojo_compiler_1_1_0",
+        "ZIG_DIR": "komira//tools/build/toolchains:zig",
+    },
+    data = [
+        "tests/compat/consumer.mojo",
+        "tests/compat/consumer_cond.mojo",
+        "tests/compat/fixtures/cond_a",
+        "tests/compat/fixtures/cond_b",
+        "tests/compat/fixtures/cond_c",
+        "tests/compat/fixtures/cond_d",
+        "tests/compat/fixtures/probe_neutral",
+    ],
+)
+
+zig_test(  # buck-only: is a .mojoc platform-independent (x86_64 farm, cross --target-triple objects)
+    name = "mojo_platform_probe",
+    **dict(_PLATFORM_PROBE, **_TOOLS)
+)
+
+zig_test(  # buck-only: the same driver as its own action, to compare .mojoc sha256 across actions
+    name = "mojo_platform_probe_rerun",
+    **dict(_PLATFORM_PROBE, **_TOOLS)
 )
 
 _AUTOLINK_DATA = [
