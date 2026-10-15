@@ -26,9 +26,17 @@ Two builds describe the same program, and both stay.
   (`//:mopm` is not built unless `//:core_test` and `//:cli_test` passed).
   The Zig drivers in `tests/drivers` run the built programs: `//:golden` (the
   checks of `tests/run_golden.sh`), `//:registry_login` and
-  `//:registry_publish` (the checks of `tests/registry_e2e/*.py`).
-  `tests/run_golden.sh` and the two Python scripts stay for `ci.yml` until
-  `farm.yml` has matched it, and are deleted then.
+  `//:registry_publish` (the checks of `tests/registry_e2e/*.py`), and the
+  contract checks: `//:contract` (`tests/contract/validate.py`: the OpenAPI
+  document, the JSON Schemas, the API cases and the examples),
+  `//:contract_replay` (`replay.py`: the fake registry against the API
+  cases), `//:lock_golden` (`tests/resolve/check_golden.py`) and
+  `//:resolve_e2e` (`tests/resolve_e2e/run.py`). The JSON Schema and YAML
+  readers they use are in `tests/drivers` and implement only what the specs
+  use; they refuse anything else with a message (see the headers of
+  `jsonschema.zig` and `yaml.zig`). `tests/run_golden.sh` and the Python
+  scripts stay for `ci.yml` until `farm.yml` has matched it, and are deleted
+  then.
   The Mojo end-to-end suites run on the farm with no pixi, shell or Python:
   `//:autolink` (`tests/e2e/run.sh`), `//:discovery` (`test_discovery.sh`),
   `//:supervisor` (`test_supervisor.sh`, `check_supervisor.py`) and `//:flaky`
@@ -39,8 +47,43 @@ Two builds describe the same program, and both stay.
   the built `mopm`; `//:mojo_probe` shows the toolchain works from this cell.
   The pinned compiler closure has no lldb, so `mojo repl` cannot run there and
   the REPL checks print `SKIP` (they run if the toolchain gains
-  `bin/mojo-lldb`); `ci.yml` still runs them against the pixi environment. Without a farm configured
+  `bin/mojo-lldb`); `ci.yml` still runs them against the pixi environment.  Without a farm configured
   (`.buckconfig.local`, gitignored) the actions run on your machine.
+
+### The service packages (TypeScript) on the farm
+
+`service/api` and `service/infra/{stacks,dns,access}` have Buck2 targets that run the
+commands `service-ci.yml` runs, on the farm, from pinned npm packages instead of
+`npm ci` (`service-ci.yml` stays as it is until these match it):
+
+| target | the command it replaces |
+|---|---|
+| `//service/api:typecheck`, `:test`, `:dist`, `:dist_has_handler` | `tsc --noEmit`, `jest --ci` (2 workers), `tsc -p tsconfig.build.json` and `test -f dist/http/lambda.js` |
+| `//service/infra/{stacks,dns,access}:typecheck`, `:test` | `tsc --noEmit` and `jest --ci` |
+| `//service/infra/stacks:synth_{beta,gamma,prod}` | `cdk synth` of each stage with a dummy account and zone id; the API bundle is `//service/api:dist` |
+| `//service/infra/dns:synth_{beta,gamma,prod,delegation}` | the four `cdk synth` runs with dummy values |
+
+komira's `npm_modules` rule lays out each package's `node_modules` from its
+`package-lock.json` and one pinned tarball per package (`service/*/pins.lock.bzl`: URL, sha256 and
+size, checked against the lockfile's sha512 integrity); no install script runs, there is no network and no
+shell or Python. Node.js is pinned in `tools/node/pins.toml`. The tests that read files outside their
+package get them as `data` (the specification and contract cases for the API, the access policy template,
+the stages' configuration and the API's golden grants for the stacks). The bash tests of `dns.sh`,
+`bootstrap.sh` and `oauth-secret.sh` stay in `service-ci.yml`.
+
+After `npm install` or `npm update` changes a `package-lock.json`, regenerate its pins (kpin is
+komira's tool, `./buck2 run komira//tools/build/kpin`), then commit the lock with the lockfile:
+
+```sh
+./buck2 run komira//tools/build/kpin -- update --pins service/pins.toml \
+    --lock service/api/pins.lock.bzl --npm service/api/package-lock.json
+./buck2 run komira//tools/build/kpin -- check --pins service/pins.toml \
+    --lock service/api/pins.lock.bzl --npm service/api/package-lock.json
+```
+
+`update` fetches what the lock lacks; `check` is offline and fails (exit 3 for a changed hash) when the lock
+is not what the lockfile says. The build fails, naming the package, when a lockfile package has no
+tarball in `pins.lock.bzl`.
 
 A source file you add under `src/core`, `src/cli` or `registry/fake` is picked
 up by both (Buck2 takes each directory by glob; it skips dotfiles, so a new

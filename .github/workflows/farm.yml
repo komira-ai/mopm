@@ -49,10 +49,11 @@ jobs:
         if: ${{ vars.FARM_ADDRESS == '' }}
         run: |
           echo "::notice title=farm::the repository variable FARM_ADDRESS is not set, so there is no farm to build on. Skipping; nothing was built."
-      # The same komira commit as commit_hash in .buckconfig; bump them together.
+      # The same komira commit as commit_hash in .buckconfig; bump them together (the action is
+      # byte for byte the one at the previous pin; see the TODO in .buckconfig).
       - name: connect to the farm
         if: ${{ vars.FARM_ADDRESS != '' }}
-        uses: komira-ai/komira/.github/actions/farm-connect@819ec4dcc7ef5660a973e802f508ad791f964850
+        uses: komira-ai/komira/.github/actions/farm-connect@f8b0cd15c47ed0f00c212de6e6fc55c0a51fd572
         with:
           ts-client-id: ${{ vars.TS_CLIENT_ID }}
           ts-audience: ${{ vars.TS_AUDIENCE }}

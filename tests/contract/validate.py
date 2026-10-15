@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Contract checks for the mopm registry API, index and lock.
 
+SUPERSEDED by //:contract (tests/drivers/contract_test.zig), the Zig port the
+Buck2 build runs: the build has no Python. This script stays for ci.yml until
+farm.yml has matched it, and is deleted then.
+
 Run from the repository root:
 
     python -I tests/contract/validate.py

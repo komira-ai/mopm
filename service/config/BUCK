@@ -1,0 +1,5 @@
+# The per-stage configuration the infra stacks' tests read (config-files.test.ts).
+[export_file(
+    name = stage + ".json",
+    visibility = ["//service/infra/stacks:"],
+) for stage in ["beta", "gamma", "prod"]]
