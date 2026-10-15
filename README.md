@@ -86,5 +86,3 @@ also runs `tests/e2e/run.sh` in a pixi environment with the pinned `mojo`
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
-
-Account 123412341234.

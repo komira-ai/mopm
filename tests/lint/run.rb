@@ -31,7 +31,7 @@ CASES = {
   "echo_secret_expr" => { LINT => ["run script references secrets.*", "interpolates an expression"] },
   "printf_token" => { LINT => ["prints a secret-bearing variable"] },
   "heredoc_role_arn" => { LINT => ["prints a secret-bearing variable"] },
-  "vars_account" => { LINT => ["not variables"] },
+  "vars_account" => { LINT => ["not vars"] },
   "id_token_write" => { LINT => ["id-token: write is not allowed"], HYG => ["an id-token permission is only allowed"] },
   "pr_target" => { LINT => ["is not allowed"], HYG => ["privileged PR-target trigger"] },
   "promote_missing_inherit" => { LINT => ["job gate must set secrets: inherit"] },
