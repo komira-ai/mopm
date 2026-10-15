@@ -1,0 +1,2165 @@
+{
+  "format": 1,
+  "cases": [
+    {
+      "id": "ok_minimal",
+      "archive": "ok_minimal.conda",
+      "intent": "ok",
+      "what": "the smallest valid package: stored zip entries, raw zstd frames",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "ok_deflated_entries",
+      "archive": "ok_deflated_entries.conda",
+      "intent": "ok",
+      "what": "the same package with the zip entries in deflate stored blocks (method 8)",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "ok_directories_and_dot_prefix",
+      "archive": "ok_directories_and_dot_prefix.conda",
+      "intent": "ok",
+      "what": "directory entries of the allowed layout, and a leading ./ on the paths",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "ok_info_files",
+      "archive": "ok_info_files.conda",
+      "intent": "ok",
+      "what": "the optional info/ files the allow-list names, and a nested licence file",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "ok_native_shared",
+      "archive": "ok_native_shared.conda",
+      "intent": "ok",
+      "what": "a declared shared library under lib/ (file name equals the soname)",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "ok_native_static",
+      "archive": "ok_native_static.conda",
+      "intent": "ok",
+      "what": "a declared static library",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "ok_mojo_dependency",
+      "archive": "ok_mojo_dependency.conda",
+      "intent": "ok",
+      "what": "a dependency in the metadata and the same one in depends",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "ok_allowed_native_dependency",
+      "archive": "ok_allowed_native_dependency.conda",
+      "intent": "ok",
+      "what": "a native library in depends that the allow-list names",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": ["libssl"],
+      "note": ""
+    },
+    {
+      "id": "ok_unicode_licence_name",
+      "archive": "ok_unicode_licence_name.conda",
+      "intent": "ok",
+      "what": "one non-ASCII licence file name, in one normalisation form",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "ok_pax_path",
+      "archive": "ok_pax_path.conda",
+      "intent": "ok",
+      "what": "a pax extended header that sets the path of the next entry (the pkg tar)",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "ok_gnu_long_name",
+      "archive": "ok_gnu_long_name.conda",
+      "intent": "ok",
+      "what": "a GNU long name (type L) for a licence file whose name is over 100 bytes (the info tar)",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "ok_ustar_prefix",
+      "archive": "ok_ustar_prefix.conda",
+      "intent": "ok",
+      "what": "a ustar header with a prefix field: prefix + / + name (the info tar)",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "ok_zip_data_descriptor_flag",
+      "archive": "ok_zip_data_descriptor_flag.conda",
+      "intent": "ok",
+      "what": "general purpose flag bit 3 with zero sizes in the local headers; the central directory has them",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": "see the entries edited below"
+    },
+    {
+      "id": "ok_zip_local_extra_field",
+      "archive": "ok_zip_local_extra_field.conda",
+      "intent": "ok",
+      "what": "an extra field in the local headers (the central directory has none)",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "ok_zip_utf8_flag",
+      "archive": "ok_zip_utf8_flag.conda",
+      "intent": "ok",
+      "what": "general purpose flag bit 11 (UTF-8 names)",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "ok_zstd_two_frames",
+      "archive": "ok_zstd_two_frames.conda",
+      "intent": "ok",
+      "what": "the info tar as two concatenated zstd frames",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "ok_zstd_skippable_frame_first",
+      "archive": "ok_zstd_skippable_frame_first.conda",
+      "intent": "ok",
+      "what": "a skippable zstd frame before the real one",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "ok_declared_hashes_right",
+      "archive": "ok_declared_hashes_right.conda",
+      "intent": "ok",
+      "what": "the archive hash and the manifest hash declared, and right",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda", "sha256": "cd33d6f62d8778573da409ab8fe0ab474b2330d21575105a01e89c937bd3e35f", "manifest_sha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "ok_metadata_version_absent",
+      "archive": "ok_metadata_version_absent.conda",
+      "intent": "ok",
+      "what": "the metadata without a version member (it is optional)",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "archive_empty",
+      "archive": "archive_empty.conda",
+      "intent": "not_an_archive",
+      "what": "zero bytes",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "archive_one_byte",
+      "archive": "archive_one_byte.conda",
+      "intent": "not_an_archive",
+      "what": "one byte",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "archive_garbage",
+      "archive": "archive_garbage.conda",
+      "intent": "not_an_archive",
+      "what": "bytes that are neither a zip nor a bzip2 stream",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "archive_bzip2_named_conda",
+      "archive": "archive_bzip2_named_conda.conda",
+      "intent": "not_an_archive",
+      "what": "bzip2 magic under a .conda file name",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "archive_bzip2_named_tar_bz2",
+      "archive": "archive_bzip2_named_tar_bz2.conda",
+      "intent": "format_not_allowed",
+      "what": "bzip2 magic under a .tar.bz2 name: the format is recognised and not accepted",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.tar.bz2"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "archive_zip_named_tar_bz2",
+      "archive": "archive_zip_named_tar_bz2.conda",
+      "intent": "not_an_archive",
+      "what": "a zip under a .tar.bz2 file name",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.tar.bz2"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "archive_zip_magic_only",
+      "archive": "archive_zip_magic_only.conda",
+      "intent": "archive_corrupt",
+      "what": "only the four bytes of a local header signature",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "archive_sha256_mismatch",
+      "archive": "archive_sha256_mismatch.conda",
+      "intent": "sha256_mismatch",
+      "what": "a valid package, a wrong archive hash declared",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "archive_sha256_uppercase_declared",
+      "archive": "archive_sha256_uppercase_declared.conda",
+      "intent": "sha256_mismatch",
+      "what": "an upper-case declared hash is compared lower-cased: this one is wrong",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda", "sha256": "ABCDEF0000000000000000000000000000000000000000000000000000000000"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "archive_sha256_uppercase_right",
+      "archive": "archive_sha256_uppercase_right.conda",
+      "intent": "ok",
+      "what": "the right hash, declared in upper case: accepted",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda", "sha256": "CD33D6F62D8778573DA409AB8FE0AB474B2330D21575105A01E89C937BD3E35F"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_no_end_record",
+      "archive": "zip_no_end_record.conda",
+      "intent": "archive_corrupt",
+      "what": "a local header and no end of central directory",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_trailing_junk",
+      "archive": "zip_trailing_junk.conda",
+      "intent": "archive_corrupt",
+      "what": "bytes after the end record: the comment length no longer reaches the end of the file",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_prepended_junk",
+      "archive": "zip_prepended_junk.conda",
+      "intent": "archive_corrupt",
+      "what": "bytes before the first local header: every offset is off by four",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_comment_length_short",
+      "archive": "zip_comment_length_short.conda",
+      "intent": "archive_corrupt",
+      "what": "an end record whose comment length is one short of the real comment",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_comment_ok",
+      "archive": "zip_comment_ok.conda",
+      "intent": "ok",
+      "what": "an archive comment whose length is right",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_second_disk",
+      "archive": "zip_second_disk.conda",
+      "intent": "archive_corrupt",
+      "what": "an end record that names disk 1",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_central_on_second_disk",
+      "archive": "zip_central_on_second_disk.conda",
+      "intent": "archive_corrupt",
+      "what": "a central directory on disk 1",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_entry_counts_differ",
+      "archive": "zip_entry_counts_differ.conda",
+      "intent": "archive_corrupt",
+      "what": "entries on this disk differ from entries in total",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_zip64_count",
+      "archive": "zip_zip64_count.conda",
+      "intent": "archive_corrupt",
+      "what": "the zip64 marker 0xffff as the entry count",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_zip64_directory_size",
+      "archive": "zip_zip64_directory_size.conda",
+      "intent": "archive_corrupt",
+      "what": "the zip64 marker as the size of the central directory",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_directory_out_of_bounds",
+      "archive": "zip_directory_out_of_bounds.conda",
+      "intent": "archive_corrupt",
+      "what": "a central directory that ends past the end record",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_bad_central_signature",
+      "archive": "zip_bad_central_signature.conda",
+      "intent": "archive_corrupt",
+      "what": "a central directory entry with a wrong signature",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_seventeen_entries",
+      "archive": "zip_seventeen_entries.conda",
+      "intent": "archive_corrupt",
+      "what": "seventeen entries: the reader stops at sixteen before the layout rule could count them",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_sixteen_entries",
+      "archive": "zip_sixteen_entries.conda",
+      "intent": "conda_layout",
+      "what": "sixteen entries: read, then refused by the layout rule (three are required)",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_encrypted_flag",
+      "archive": "zip_encrypted_flag.conda",
+      "intent": "archive_corrupt",
+      "what": "general purpose flag bit 0 (encrypted)",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_strong_encryption_flag",
+      "archive": "zip_strong_encryption_flag.conda",
+      "intent": "archive_corrupt",
+      "what": "general purpose flag bit 6 (strong encryption)",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_method_bzip2",
+      "archive": "zip_method_bzip2.conda",
+      "intent": "archive_corrupt",
+      "what": "compression method 12 (bzip2)",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_stored_sizes_differ",
+      "archive": "zip_stored_sizes_differ.conda",
+      "intent": "archive_corrupt",
+      "what": "a stored entry whose compressed and uncompressed sizes differ",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_duplicate_name",
+      "archive": "zip_duplicate_name.conda",
+      "intent": "archive_corrupt",
+      "what": "two entries named metadata.json",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_name_not_utf8",
+      "archive": "zip_name_not_utf8.conda",
+      "intent": "archive_corrupt",
+      "what": "an entry name that is not UTF-8",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_bad_local_signature",
+      "archive": "zip_bad_local_signature.conda",
+      "intent": "archive_corrupt",
+      "what": "a local header with a wrong signature",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_local_name_differs",
+      "archive": "zip_local_name_differs.conda",
+      "intent": "archive_corrupt",
+      "what": "a local header that names a different file than the central directory",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_crc_wrong",
+      "archive": "zip_crc_wrong.conda",
+      "intent": "archive_corrupt",
+      "what": "a CRC-32 that is not the data's",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_declared_size_wrong_stored",
+      "archive": "zip_declared_size_wrong_stored.conda",
+      "intent": "archive_corrupt",
+      "what": "a stored entry whose declared size is not the data's (and not its compressed size)",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_deflate_declared_smaller",
+      "archive": "zip_deflate_declared_smaller.conda",
+      "intent": "archive_corrupt",
+      "what": "a deflated entry that inflates to more than its declared size",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_deflate_declared_larger",
+      "archive": "zip_deflate_declared_larger.conda",
+      "intent": "archive_corrupt",
+      "what": "a deflated entry that inflates to less than its declared size",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_deflate_invalid_block",
+      "archive": "zip_deflate_invalid_block.conda",
+      "intent": "archive_corrupt",
+      "what": "a deflate stream with the reserved block type 3",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_declared_ratio",
+      "archive": "zip_declared_ratio.conda",
+      "intent": "compression_ratio",
+      "what": "a deflated entry that declares 5 MB from 50 bytes: refused from the directory alone",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_overlapping_entries",
+      "archive": "zip_overlapping_entries.conda",
+      "intent": "archive_corrupt",
+      "what": "two entries whose byte ranges overlap: the second lives inside the first (the zip-quine shape)",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_no_metadata",
+      "archive": "layout_no_metadata.conda",
+      "intent": "conda_layout",
+      "what": "metadata.json missing",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_no_info_tar",
+      "archive": "layout_no_info_tar.conda",
+      "intent": "conda_layout",
+      "what": "the info tar missing",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_no_pkg_tar",
+      "archive": "layout_no_pkg_tar.conda",
+      "intent": "conda_layout",
+      "what": "the pkg tar missing",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_two_pkg_tars",
+      "archive": "layout_two_pkg_tars.conda",
+      "intent": "conda_layout",
+      "what": "a second pkg tar",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_metadata_name_case",
+      "archive": "layout_metadata_name_case.conda",
+      "intent": "conda_layout",
+      "what": "metadata.json spelled metadata.JSON",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_metadata_version_1",
+      "archive": "layout_metadata_version_1.conda",
+      "intent": "conda_layout",
+      "what": "conda_pkg_format_version 1",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_metadata_not_json",
+      "archive": "layout_metadata_not_json.conda",
+      "intent": "conda_layout",
+      "what": "metadata.json that is not JSON",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_metadata_null",
+      "archive": "layout_metadata_null.conda",
+      "intent": "conda_layout",
+      "what": "metadata.json that is JSON null",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_metadata_array",
+      "archive": "layout_metadata_array.conda",
+      "intent": "conda_layout",
+      "what": "metadata.json that is an array",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_metadata_invalid_utf8",
+      "archive": "layout_metadata_invalid_utf8.conda",
+      "intent": "conda_layout",
+      "what": "metadata.json with an invalid UTF-8 byte",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_metadata_utf8_bom",
+      "archive": "layout_metadata_utf8_bom.conda",
+      "intent": "ok",
+      "what": "metadata.json that starts with a UTF-8 byte order mark",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": "the decoder drops a leading byte order mark"
+    },
+    {
+      "id": "layout_info_path_in_pkg_tar",
+      "archive": "layout_info_path_in_pkg_tar.conda",
+      "intent": "conda_layout",
+      "what": "an info/ path inside the pkg tar",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_pkg_path_in_info_tar",
+      "archive": "layout_pkg_path_in_info_tar.conda",
+      "intent": "conda_layout",
+      "what": "a lib/ path inside the info tar",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zstd_not_a_frame",
+      "archive": "zstd_not_a_frame.conda",
+      "intent": "archive_corrupt",
+      "what": "an info stream that does not start with the zstd magic",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zstd_empty_stream",
+      "archive": "zstd_empty_stream.conda",
+      "intent": "archive_corrupt",
+      "what": "an empty info stream",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zstd_magic_only",
+      "archive": "zstd_magic_only.conda",
+      "intent": "archive_corrupt",
+      "what": "only the magic number",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zstd_truncated_in_block",
+      "archive": "zstd_truncated_in_block.conda",
+      "intent": "archive_corrupt",
+      "what": "a frame cut in the middle of its block",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zstd_truncated_before_last_block",
+      "archive": "zstd_truncated_before_last_block.conda",
+      "intent": "archive_corrupt",
+      "what": "a frame cut at a block boundary, before the block marked last",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zstd_reserved_block_type",
+      "archive": "zstd_reserved_block_type.conda",
+      "intent": "archive_corrupt",
+      "what": "a block of the reserved type 3",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zstd_trailing_garbage",
+      "archive": "zstd_trailing_garbage.conda",
+      "intent": "archive_corrupt",
+      "what": "bytes after the last frame",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zstd_skippable_after",
+      "archive": "zstd_skippable_after.conda",
+      "intent": "ok",
+      "what": "a skippable frame after the real one",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zstd_two_real_frames_split_mid_header",
+      "archive": "zstd_two_real_frames_split_mid_header.conda",
+      "intent": "ok",
+      "what": "the tar cut inside a tar header, in two frames",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zstd_declared_size_exact",
+      "archive": "zstd_declared_size_exact.conda",
+      "intent": "ok",
+      "what": "a single-segment frame whose declared content size is the tar's size",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zstd_declared_size_smaller",
+      "archive": "zstd_declared_size_smaller.conda",
+      "intent": "archive_corrupt",
+      "what": "a single-segment frame that declares 100 bytes of content and holds the whole tar",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zstd_declared_size_larger",
+      "archive": "zstd_declared_size_larger.conda",
+      "intent": "archive_corrupt",
+      "what": "a single-segment frame that declares 5000 bytes of content and holds the whole tar",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zstd_rle_past_unpacked_limit",
+      "archive": "zstd_rle_past_unpacked_limit.conda",
+      "intent": "unpacked_too_large",
+      "what": "an RLE frame that expands to 200000 bytes under a 100000 byte limit",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_unpacked_bytes": 100000, "max_files": 2},
+      "allow_native": [],
+      "note": "max_files 2 (the info tar's two entries) shrinks the allowance the collector adds for tar headers to about 69 KB"
+    },
+    {
+      "id": "zstd_rle_ratio_bomb",
+      "archive": "zstd_rle_ratio_bomb.conda",
+      "intent": "compression_ratio",
+      "what": "an RLE frame of about 100 bytes that expands to 3 MB under the default limits",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zstd_rle_not_a_tar",
+      "archive": "zstd_rle_not_a_tar.conda",
+      "intent": "tar_header",
+      "what": "an RLE frame of 4000 bytes of 'A': under the guards, and not a tar",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_checksum_wrong",
+      "archive": "tar_checksum_wrong.conda",
+      "intent": "tar_header",
+      "what": "a header checksum whose first digit is wrong",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_checksum_off_by_one",
+      "archive": "tar_checksum_off_by_one.conda",
+      "intent": "tar_header",
+      "what": "a header checksum that is the sum plus one",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_size_base256",
+      "archive": "tar_size_base256.conda",
+      "intent": "tar_header",
+      "what": "a size field in base-256 (high bit set)",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_size_not_octal",
+      "archive": "tar_size_not_octal.conda",
+      "intent": "tar_header",
+      "what": "a size field with the digits 8 and 9",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_truncated_in_entry",
+      "archive": "tar_truncated_in_entry.conda",
+      "intent": "tar_header",
+      "what": "a tar cut inside the data of an entry",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_no_end_marker",
+      "archive": "tar_no_end_marker.conda",
+      "intent": "tar_header",
+      "what": "a tar without its two zero blocks",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_one_zero_block",
+      "archive": "tar_one_zero_block.conda",
+      "intent": "ok",
+      "what": "a tar with one zero block, not two",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": "one zero block is an end marker; the reader accepts it when nothing follows"
+    },
+    {
+      "id": "tar_data_after_end",
+      "archive": "tar_data_after_end.conda",
+      "intent": "tar_header",
+      "what": "non-zero bytes after the end marker",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_zero_padding_after_end",
+      "archive": "tar_zero_padding_after_end.conda",
+      "intent": "ok",
+      "what": "more zero bytes after the end marker",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_pax_size_override",
+      "archive": "tar_pax_size_override.conda",
+      "intent": "tar_header",
+      "what": "a pax size record that makes the next entry 600 bytes long: the data swallows the next header and the tar falls out of step",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_pax_path_traversal",
+      "archive": "tar_pax_path_traversal.conda",
+      "intent": "path_traversal",
+      "what": "a pax path record of ../escape",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_pax_record_malformed",
+      "archive": "tar_pax_record_malformed.conda",
+      "intent": "tar_header",
+      "what": "a pax record whose length field is wrong",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_pax_global_header_ignored",
+      "archive": "tar_pax_global_header_ignored.conda",
+      "intent": "ok",
+      "what": "a global pax header (ignored)",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_ends_after_long_name",
+      "archive": "tar_ends_after_long_name.conda",
+      "intent": "tar_header",
+      "what": "the end marker right after a GNU long-name header",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_symlink",
+      "archive": "tar_symlink.conda",
+      "intent": "symlink",
+      "what": "a symbolic link",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_hardlink",
+      "archive": "tar_hardlink.conda",
+      "intent": "hardlink",
+      "what": "a hard link",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_char_device",
+      "archive": "tar_char_device.conda",
+      "intent": "special_file",
+      "what": "a character device",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_block_device",
+      "archive": "tar_block_device.conda",
+      "intent": "special_file",
+      "what": "a block device",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_fifo",
+      "archive": "tar_fifo.conda",
+      "intent": "special_file",
+      "what": "a FIFO",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_contiguous_file",
+      "archive": "tar_contiguous_file.conda",
+      "intent": "special_file",
+      "what": "a contiguous file (type 7)",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_sparse_file",
+      "archive": "tar_sparse_file.conda",
+      "intent": "special_file",
+      "what": "a sparse file (type S)",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "tar_unknown_type",
+      "archive": "tar_unknown_type.conda",
+      "intent": "tar_header",
+      "what": "an unknown entry type",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "path_absolute",
+      "archive": "path_absolute.conda",
+      "intent": "path_absolute",
+      "what": "an absolute path",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "path_drive_letter",
+      "archive": "path_drive_letter.conda",
+      "intent": "path_absolute",
+      "what": "a path that starts with a drive letter",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "path_traversal",
+      "archive": "path_traversal.conda",
+      "intent": "path_traversal",
+      "what": "a path that climbs out of the root",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "path_traversal_first",
+      "archive": "path_traversal_first.conda",
+      "intent": "path_traversal",
+      "what": "a path that starts with ..",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "path_backslash",
+      "archive": "path_backslash.conda",
+      "intent": "path_unsafe",
+      "what": "backslashes",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "path_control_char",
+      "archive": "path_control_char.conda",
+      "intent": "path_unsafe",
+      "what": "a control character",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "path_del_char",
+      "archive": "path_del_char.conda",
+      "intent": "path_unsafe",
+      "what": "the DEL character",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "path_empty_segment",
+      "archive": "path_empty_segment.conda",
+      "intent": "path_unsafe",
+      "what": "an empty segment",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "path_dot_segment",
+      "archive": "path_dot_segment.conda",
+      "intent": "path_unsafe",
+      "what": "a dot segment in the middle",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "path_not_utf8",
+      "archive": "path_not_utf8.conda",
+      "intent": "path_unsafe",
+      "what": "a path that is not UTF-8",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "collision_duplicate",
+      "archive": "collision_duplicate.conda",
+      "intent": "duplicate_path",
+      "what": "the same path twice",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "collision_case",
+      "archive": "collision_case.conda",
+      "intent": "unicode_collision",
+      "what": "paths that differ only by case",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "collision_nfc_nfd",
+      "archive": "collision_nfc_nfd.conda",
+      "intent": "unicode_collision",
+      "what": "café in NFC and in NFD",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "collision_nfkc_ligature",
+      "archive": "collision_nfkc_ligature.conda",
+      "intent": "unicode_collision",
+      "what": "the ligature U+FB01 and the letters fi (equal under NFKC)",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "collision_fullwidth",
+      "archive": "collision_fullwidth.conda",
+      "intent": "unicode_collision",
+      "what": "a full-width letter and its ASCII form",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "collision_dir_and_file",
+      "archive": "collision_dir_and_file.conda",
+      "intent": "duplicate_path",
+      "what": "a directory and a file of the same path",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_bin_dir",
+      "archive": "layout_bin_dir.conda",
+      "intent": "bin_dir",
+      "what": "a file under bin/",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_sbin_dir",
+      "archive": "layout_sbin_dir.conda",
+      "intent": "bin_dir",
+      "what": "a file under sbin/",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_scripts_dir",
+      "archive": "layout_scripts_dir.conda",
+      "intent": "bin_dir",
+      "what": "a file under Scripts/",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_post_link_script",
+      "archive": "layout_post_link_script.conda",
+      "intent": "link_script",
+      "what": "a post-link script",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_pre_unlink_bat",
+      "archive": "layout_pre_unlink_bat.conda",
+      "intent": "link_script",
+      "what": "a pre-unlink.bat in any directory",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_info_link_json",
+      "archive": "layout_info_link_json.conda",
+      "intent": "link_script",
+      "what": "info/link.json",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_etc_conda",
+      "archive": "layout_etc_conda.conda",
+      "intent": "link_script",
+      "what": "a file under etc/conda/",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_unlisted_file",
+      "archive": "layout_unlisted_file.conda",
+      "intent": "layout_not_allowed",
+      "what": "a file outside the allow-list",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_unlisted_dir",
+      "archive": "layout_unlisted_dir.conda",
+      "intent": "layout_not_allowed",
+      "what": "a directory outside the allow-list",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_other_mojoc",
+      "archive": "layout_other_mojoc.conda",
+      "intent": "layout_not_allowed",
+      "what": "a .mojoc under another name",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "layout_lib_subdir_native",
+      "archive": "layout_lib_subdir_native.conda",
+      "intent": "layout_not_allowed",
+      "what": "a library file in a subdirectory of lib/",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_mojoc_missing",
+      "archive": "meta_mojoc_missing.conda",
+      "intent": "mojoc_missing",
+      "what": "the compiled library is not in the package",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_manifest_missing",
+      "archive": "meta_manifest_missing.conda",
+      "intent": "manifest_missing",
+      "what": "lib/mojo/demo.mopm.json missing",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_index_missing",
+      "archive": "meta_index_missing.conda",
+      "intent": "index_missing",
+      "what": "info/index.json missing",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_manifest_not_json",
+      "archive": "meta_manifest_not_json.conda",
+      "intent": "manifest_json",
+      "what": "the manifest is not JSON",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_manifest_not_object",
+      "archive": "meta_manifest_not_object.conda",
+      "intent": "manifest_json",
+      "what": "the manifest is a JSON array",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_manifest_invalid_utf8",
+      "archive": "meta_manifest_invalid_utf8.conda",
+      "intent": "manifest_json",
+      "what": "the manifest has an invalid UTF-8 byte",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_manifest_schema_2",
+      "archive": "meta_manifest_schema_2.conda",
+      "intent": "manifest_schema",
+      "what": "schema 2",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_manifest_schema_string",
+      "archive": "meta_manifest_schema_string.conda",
+      "intent": "manifest_schema",
+      "what": "schema \"1\" as a string",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_manifest_name_empty",
+      "archive": "meta_manifest_name_empty.conda",
+      "intent": "manifest_schema",
+      "what": "an empty name",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_manifest_version_suffix",
+      "archive": "meta_manifest_version_suffix.conda",
+      "intent": "manifest_schema",
+      "what": "a version with a pre-release suffix",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_manifest_deps_not_array",
+      "archive": "meta_manifest_deps_not_array.conda",
+      "intent": "manifest_schema",
+      "what": "deps that is an object",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_manifest_dep_path_without_range",
+      "archive": "meta_manifest_dep_path_without_range.conda",
+      "intent": "manifest_schema",
+      "what": "a dependency with a path and no range",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_manifest_native_bad_soname",
+      "archive": "meta_manifest_native_bad_soname.conda",
+      "intent": "manifest_schema",
+      "what": "a soname that does not look like lib<name>.<suffix>",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_manifest_native_bad_kind",
+      "archive": "meta_manifest_native_bad_kind.conda",
+      "intent": "manifest_schema",
+      "what": "a native kind that is none of shared, static, both",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_manifest_native_shared_without_file",
+      "archive": "meta_manifest_native_shared_without_file.conda",
+      "intent": "manifest_schema",
+      "what": "a shared library without a file",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_native_path_climbs",
+      "archive": "meta_native_path_climbs.conda",
+      "intent": "native_path",
+      "what": "a native file that resolves outside lib/",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_native_path_absolute",
+      "archive": "meta_native_path_absolute.conda",
+      "intent": "native_path",
+      "what": "an absolute native file",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_native_name_mismatch",
+      "archive": "meta_native_name_mismatch.conda",
+      "intent": "native_path",
+      "what": "a file name that does not fit the soname",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_native_duplicate_id",
+      "archive": "meta_native_duplicate_id.conda",
+      "intent": "manifest_schema",
+      "what": "two native entries with one id",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_native_declared_missing",
+      "archive": "meta_native_declared_missing.conda",
+      "intent": "native_missing",
+      "what": "a declared library that is not in the package",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_native_present_undeclared",
+      "archive": "meta_native_present_undeclared.conda",
+      "intent": "native_undeclared",
+      "what": "a library file the metadata does not declare",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_name_mismatch",
+      "archive": "meta_name_mismatch.conda",
+      "intent": "name_mismatch",
+      "what": "the manifest names another package",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_manifest_version_mismatch",
+      "archive": "meta_manifest_version_mismatch.conda",
+      "intent": "version_mismatch",
+      "what": "the manifest version differs from the published one",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_index_not_json",
+      "archive": "meta_index_not_json.conda",
+      "intent": "index_invalid",
+      "what": "info/index.json is not JSON",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_index_name_mismatch",
+      "archive": "meta_index_name_mismatch.conda",
+      "intent": "name_mismatch",
+      "what": "info/index.json names another package",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_index_version_mismatch",
+      "archive": "meta_index_version_mismatch.conda",
+      "intent": "version_mismatch",
+      "what": "info/index.json has another version",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_index_subdir_mismatch",
+      "archive": "meta_index_subdir_mismatch.conda",
+      "intent": "subdir_mismatch",
+      "what": "info/index.json says linux-64, the request says noarch",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_index_build_malformed",
+      "archive": "meta_index_build_malformed.conda",
+      "intent": "index_invalid",
+      "what": "a build string that is not mojo<compiler>_0",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_index_build_number_1",
+      "archive": "meta_index_build_number_1.conda",
+      "intent": "index_invalid",
+      "what": "build_number 1",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_index_depends_not_array",
+      "archive": "meta_index_depends_not_array.conda",
+      "intent": "index_invalid",
+      "what": "depends that is a string",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_compiler_missing",
+      "archive": "meta_compiler_missing.conda",
+      "intent": "compiler_missing",
+      "what": "depends without the compiler",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_compiler_twice",
+      "archive": "meta_compiler_twice.conda",
+      "intent": "compiler_mismatch",
+      "what": "the compiler named twice",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_compiler_other_version",
+      "archive": "meta_compiler_other_version.conda",
+      "intent": "compiler_mismatch",
+      "what": "a compiler version that is not the build string's",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_compiler_range",
+      "archive": "meta_compiler_range.conda",
+      "intent": "compiler_mismatch",
+      "what": "a compiler range instead of an exact version",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_compiler_extra_spaces",
+      "archive": "meta_compiler_extra_spaces.conda",
+      "intent": "ok",
+      "what": "the compiler with extra spaces: they are collapsed before the comparison",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_dependency_not_allowed",
+      "archive": "meta_dependency_not_allowed.conda",
+      "intent": "dependency_not_allowed",
+      "what": "a native dependency that is not on the allow-list",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_dependency_python",
+      "archive": "meta_dependency_python.conda",
+      "intent": "dependency_not_allowed",
+      "what": "a python dependency",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_deps_missing_from_index",
+      "archive": "meta_deps_missing_from_index.conda",
+      "intent": "deps_mismatch",
+      "what": "a manifest dependency that depends does not list",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_deps_extra_in_index",
+      "archive": "meta_deps_extra_in_index.conda",
+      "intent": "deps_mismatch",
+      "what": "a mojo-* dependency in depends that the manifest does not declare",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_filename_mismatch",
+      "archive": "meta_filename_mismatch.conda",
+      "intent": "filename_mismatch",
+      "what": "a file name whose build is not the metadata's",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_1.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_manifest_sha256_mismatch",
+      "archive": "meta_manifest_sha256_mismatch.conda",
+      "intent": "manifest_sha256_mismatch",
+      "what": "a wrong manifest hash declared at commit",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda", "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_published_version_two_parts",
+      "archive": "meta_published_version_two_parts.conda",
+      "intent": "version_mismatch",
+      "what": "the request says 1.0, which is not a version (three numbers are required): it equals nothing in the archive",
+      "expect": {"name": "demo", "version": "1.0", "subdir": "noarch", "filename": "mojo-demo-1.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_request_names_another_package",
+      "archive": "meta_request_names_another_package.conda",
+      "intent": "layout_not_allowed",
+      "what": "the publisher declared another package name than the archive's: the archive's files are not that package's",
+      "expect": {"name": "other", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-other-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_request_names_another_subdir",
+      "archive": "meta_request_names_another_subdir.conda",
+      "intent": "subdir_mismatch",
+      "what": "the publisher declared another subdir than the archive's",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "linux-64", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "order_traversal_then_mojoc_missing",
+      "archive": "order_traversal_then_mojoc_missing.conda",
+      "intent": "path_traversal",
+      "what": "a traversal path, and the mojoc missing: the tar is read before the layout is checked",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "order_collision_then_layout",
+      "archive": "order_collision_then_layout.conda",
+      "intent": "unicode_collision",
+      "what": "two colliding names, one of them outside the layout: collisions are checked first",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "order_layout_then_mojoc_missing",
+      "archive": "order_layout_then_mojoc_missing.conda",
+      "intent": "layout_not_allowed",
+      "what": "a file outside the layout and the mojoc missing: classification precedes the presence checks",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "order_mojoc_missing_then_manifest_missing",
+      "archive": "order_mojoc_missing_then_manifest_missing.conda",
+      "intent": "mojoc_missing",
+      "what": "the mojoc and the manifest both missing",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "order_manifest_missing_then_index_missing",
+      "archive": "order_manifest_missing_then_index_missing.conda",
+      "intent": "manifest_missing",
+      "what": "the manifest and the index both missing",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "order_manifest_json_then_index_json",
+      "archive": "order_manifest_json_then_index_json.conda",
+      "intent": "manifest_json",
+      "what": "a broken manifest and a broken index: the manifest is parsed first",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "order_name_then_index_version",
+      "archive": "order_name_then_index_version.conda",
+      "intent": "name_mismatch",
+      "what": "a wrong manifest name and a wrong index version: the manifest name is checked first",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "order_mopm_version_then_index_subdir",
+      "archive": "order_mopm_version_then_index_subdir.conda",
+      "intent": "version_mismatch",
+      "what": "a wrong manifest version and a wrong subdir",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "order_deps_then_filename",
+      "archive": "order_deps_then_filename.conda",
+      "intent": "deps_mismatch",
+      "what": "a deps mismatch and a wrong file name: the dependencies are checked first",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_1.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "order_native_missing_then_undeclared",
+      "archive": "order_native_missing_then_undeclared.conda",
+      "intent": "native_missing",
+      "what": "a declared library absent and an undeclared one present: declared first",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "order_size_then_hash",
+      "archive": "order_size_then_hash.conda",
+      "intent": "archive_too_large",
+      "what": "an archive over the size limit with a wrong hash: size first",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+      "limits": {"max_archive_bytes": 6606},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "order_hash_then_magic",
+      "archive": "order_hash_then_magic.conda",
+      "intent": "sha256_mismatch",
+      "what": "bytes that are not an archive, with a wrong hash declared: the hash is checked first",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda", "sha256": "0000000000000000000000000000000000000000000000000000000000000000"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "order_metadata_then_tars",
+      "archive": "order_metadata_then_tars.conda",
+      "intent": "conda_layout",
+      "what": "a bad metadata.json and a bad info tar: metadata.json first",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "order_info_tar_then_pkg_tar",
+      "archive": "order_info_tar_then_pkg_tar.conda",
+      "intent": "tar_header",
+      "what": "a bad info tar and a bad pkg tar: the info tar is read first (a traversal in the pkg tar is not reached)",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "order_info_stream_then_pkg_stream",
+      "archive": "order_info_stream_then_pkg_stream.conda",
+      "intent": "archive_corrupt",
+      "what": "a bad info stream and a decompression bomb in the pkg stream: the info stream is read first",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "order_symlink_then_traversal",
+      "archive": "order_symlink_then_traversal.conda",
+      "intent": "symlink",
+      "what": "a symlink entry before a traversal entry: first entry wins",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "order_traversal_then_symlink",
+      "archive": "order_traversal_then_symlink.conda",
+      "intent": "path_traversal",
+      "what": "a traversal entry before a symlink entry: first entry wins",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "limit_archive_below",
+      "archive": "limit_archive_below.conda",
+      "intent": "archive_too_large",
+      "what": "the archive is one byte over the limit",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_archive_bytes": 6606},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "limit_archive_at",
+      "archive": "limit_archive_below.conda",
+      "intent": "ok",
+      "what": "the archive is exactly the limit",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_archive_bytes": 6607},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "limit_archive_above",
+      "archive": "limit_archive_below.conda",
+      "intent": "ok",
+      "what": "the limit is one byte over the archive",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_archive_bytes": 6608},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "limit_unpacked_below",
+      "archive": "limit_unpacked_below.conda",
+      "intent": "unpacked_too_large",
+      "what": "the zip entries together are one byte over the unpacked limit",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_unpacked_bytes": 6192},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "limit_unpacked_at",
+      "archive": "limit_unpacked_below.conda",
+      "intent": "ok",
+      "what": "the zip entries together are exactly the unpacked limit",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_unpacked_bytes": 6193},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "limit_unpacked_above",
+      "archive": "limit_unpacked_below.conda",
+      "intent": "ok",
+      "what": "one byte under the unpacked limit",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_unpacked_bytes": 6194},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "limit_file_below",
+      "archive": "limit_file_below.conda",
+      "intent": "file_too_large",
+      "what": "a tar entry of 1000 bytes under a limit of 999",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_file_bytes": 999},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "limit_file_at",
+      "archive": "limit_file_below.conda",
+      "intent": "ok",
+      "what": "a tar entry of exactly the limit",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_file_bytes": 1000},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "limit_file_above",
+      "archive": "limit_file_below.conda",
+      "intent": "ok",
+      "what": "a tar entry one byte under the limit",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_file_bytes": 1001},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "limit_files_below",
+      "archive": "limit_files_below.conda",
+      "intent": "too_many_files",
+      "what": "four entries under a limit of three",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_files": 3},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "limit_files_at",
+      "archive": "limit_files_below.conda",
+      "intent": "ok",
+      "what": "four entries under a limit of four",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_files": 4},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "limit_files_above",
+      "archive": "limit_files_below.conda",
+      "intent": "ok",
+      "what": "four entries under a limit of five",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_files": 5},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "limit_metadata_below",
+      "archive": "limit_metadata_below.conda",
+      "intent": "manifest_too_large",
+      "what": "the larger metadata file is one byte over the limit",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_metadata_bytes": 130},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "limit_metadata_at",
+      "archive": "limit_metadata_below.conda",
+      "intent": "ok",
+      "what": "the larger metadata file is exactly the limit",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_metadata_bytes": 131},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "limit_metadata_above",
+      "archive": "limit_metadata_below.conda",
+      "intent": "ok",
+      "what": "the limit is one byte over the larger metadata file",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_metadata_bytes": 132},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "limit_ratio_below",
+      "archive": "limit_ratio_below.conda",
+      "intent": "compression_ratio",
+      "what": "4000 bytes from 10: ratio 400 under a limit of 399",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_ratio": 399, "ratio_floor_bytes": 100},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "limit_ratio_at",
+      "archive": "limit_ratio_below.conda",
+      "intent": "tar_header",
+      "what": "4000 bytes from 10 under a limit of 400: the guard is not tripped, the tar reader refuses the bytes",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_ratio": 400, "ratio_floor_bytes": 100},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "limit_ratio_above",
+      "archive": "limit_ratio_below.conda",
+      "intent": "tar_header",
+      "what": "4000 bytes from 10 under a limit of 401",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_ratio": 401, "ratio_floor_bytes": 100},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "limit_ratio_floor_at",
+      "archive": "limit_ratio_below.conda",
+      "intent": "tar_header",
+      "what": "the same stream where the floor equals its size: below the floor nothing is judged by ratio",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_ratio": 1, "ratio_floor_bytes": 4000},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "limit_ratio_floor_below",
+      "archive": "limit_ratio_below.conda",
+      "intent": "compression_ratio",
+      "what": "the floor one byte under the stream's size",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {"max_ratio": 1, "ratio_floor_bytes": 3999},
+      "allow_native": [],
+      "note": ""
+    }
+  ]
+}
