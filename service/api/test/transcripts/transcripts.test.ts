@@ -46,7 +46,10 @@ describe('transcripts', () => {
     const problems = unmet.map((u) => `unmet expectation: ${u}`);
     if (golden !== actual) problems.push(`the transcript of ${name} differs from its golden`);
     if (problems.length > 0) {
-      throw new Error(`${problems.join('\n')}\n\nACTUAL ${name}:\n${actual}END ACTUAL ${name}`);
+      // Also in base64: a CI log masks anything that looks like a credential (these transcripts hold made-up tokens),
+      // so the plain text above may be cut; the base64 lines are the exact bytes of the golden file.
+      const b64 = (Buffer.from(actual, 'utf8').toString('base64').match(/.{1,100}/g) ?? []).join('\n');
+      throw new Error(`${problems.join('\n')}\n\nACTUAL ${name}:\n${actual}END ACTUAL ${name}\n\nBASE64 ${name}:\n${b64}\nEND BASE64 ${name}`);
     }
   });
 });

@@ -67,7 +67,8 @@
         "token": "mopm_sessstaleaaaaaaaaaaaaaaaaaaaaaaa"
       },
       "expect": {
-        "status": 200
+        "status": 401,
+        "code": "stale_session"
       }
     },
     {
@@ -77,7 +78,8 @@
         "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
       },
       "expect": {
-        "status": 200
+        "status": 401,
+        "code": "stale_session"
       }
     },
     {

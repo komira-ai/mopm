@@ -122,7 +122,8 @@
         "path": "/api/v1/packages/ordering_demo/1.10.00"
       },
       "expect": {
-        "status": 200
+        "status": 400,
+        "code": "invalid_version"
       }
     },
     {

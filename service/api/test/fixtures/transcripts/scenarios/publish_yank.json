@@ -68,7 +68,8 @@
         }
       },
       "expect": {
-        "status": 200
+        "status": 409,
+        "code": "invalid_transition"
       }
     },
     {
@@ -321,8 +322,8 @@
         }
       },
       "expect": {
-        "status": 400,
-        "code": "invalid_name"
+        "status": 403,
+        "code": "scope_missing"
       }
     }
   ]

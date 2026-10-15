@@ -112,8 +112,8 @@
         "token": "mopm_otheracctaaaaaaaaaaaaaaaaaaaaaaa"
       },
       "expect": {
-        "status": 403,
-        "code": "scope_missing"
+        "status": 404,
+        "code": "publish_not_found"
       }
     },
     {

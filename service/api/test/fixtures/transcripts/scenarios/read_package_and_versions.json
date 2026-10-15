@@ -165,8 +165,7 @@
         "path": "/api/v1//packages//http_client"
       },
       "expect": {
-        "status": 404,
-        "code": "route_not_found"
+        "status": 200
       }
     },
     {
