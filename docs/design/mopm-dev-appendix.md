@@ -531,7 +531,7 @@ test red before the PR is ready.
 | 16 | the search page renders one row per package with version, version count and at most two other lines from fixtures; the "New" badge renders from fixtures; match reasons and symbols render through `h()` only (mutant: an HTML snippet); arrow keys and Enter; "Show more" stops at 200 |
 | 17 | views over the served golden; type links only for resolved refs (mutant: link unresolved names); a docstring heading equal to a symbol anchor stays distinct (mutant: unprefixed ids); setup lines copied only when shown (mutant: copy hidden lines); bidi markers visible; the version switcher's fallback chain; docstring raw `<dialog>` renders as text (mutant: pass it through) |
 | 18 | the existing docs test; `/llms.txt` lists only commands the CLI has (mutant: name `mopm add` before it exists); the scaffold-and-build recipe runs against the fake registry and fixture packages to a built binary (mutant: drop the `[toolchain]` step; the build must fail) |
-| 19 | publish answers `invalid_name` for `http__client`, `http_client_` and `a__b` (mutant: the old pattern `^[a-z][a-z0-9_]{1,63}$`), and still accepts `http_client`, `h2` and a 64-character canonical name (mutant: refuse any `_`); the index-record schema refuses the same names (Q10) |
+| 19 | publish answers `invalid_name` for `http__client`, `http_client_` and `a__b` (mutant: the old pattern `^[a-z][a-z0-9_]{1,63}$`), and still accepts `http_client`, `h2` and a 64-character canonical name (mutant: refuse any `_`); the index-record, lock and takedowns schemas refuse the same names; a test asserts that the OpenAPI `Name` pattern, the schema name patterns and `site/src/routes.ts` `NAME` have the same source as `NAME_PATTERN`, as `validate.test.ts` does for `SONAME_PATTERN` (mutant: leave the old pattern in `openapi.yaml`); the `invalid_name` hint names the new rule (mutant: keep the old hint) (Q10) |
 | 20 | aggregation over fixture log lines: 200 and 206 counted, 304 not; the log configuration excludes cookies (stack test) |
 
 ## E. Agents
@@ -640,8 +640,9 @@ as mopm's own voice.
   a non-normalised name gets `invalid_name`; publish refuses any name outside `^[a-z][a-z0-9_]{1,63}$` (`NAME_PATTERN`
   in `service/api`), and `spec/index-record.schema.json` uses the same pattern, so upper case, `-` and `.` are refused.
   Not yet: that pattern accepts runs of `_` and a trailing `_`, so `http__client` could be published beside
-  `http_client`. PR 19 changes the pattern to `^[a-z][a-z0-9]*(_[a-z0-9]+)*$` (length 2 to 64), refusing both, a
-  trailing `_` because PyPI also requires a name to end with a letter or digit. Nothing beyond it: no look-alike
+  `http_client`. PR 19 changes the pattern to `^[a-z][a-z0-9]*(_[a-z0-9]+)*$` (length 2 to 64) in every copy of the
+  old one (service, OpenAPI `Name` and filename patterns, index-record, lock and takedowns schemas, site router, fake
+  registry), refusing both, a trailing `_` because PyPI also requires a name to end with a letter or digit. Nothing beyond it: no look-alike
   folding, no similarity flag.
 - **New** (flagged): `signals.new` (E.1); `/llms.txt` tells agents to show a `new` or no-provenance package to the
   human before adding it. A brand-new name that exactly matches an invented one still gets a clean

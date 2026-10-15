@@ -80,6 +80,10 @@ JavaScript. Every element traces to a section of this note.
 | API reference | [reference-light](mock/screens/reference-light.png) | [reference-dark](mock/screens/reference-dark.png) | | 2.4 to 2.6 |
 | Account | [account-light](mock/screens/account-light.png) | [account-dark](mock/screens/account-dark.png) | | 4.3, 4.4 |
 
+The two search screenshots predate Q10: they still show "similar to json" in the foot of the `jason` result. That
+marker is removed (3.6); `mock/search.html` and `mock/search-dark.html` no longer carry it, and the PNGs are
+regenerated from them when the mocks are next captured.
+
 ## 1. Search
 
 ### 1.1 Who does what at publish, and why
@@ -417,8 +421,9 @@ Most of this is enforced today: publish refuses any name outside `^[a-z][a-z0-9_
 `service/api`), and `spec/index-record.schema.json` uses the same pattern, so upper case, `-` and `.` never reach the
 catalogue. That pattern still accepts runs of `_` (`http__client`) and a trailing `_` (`http_client_`), so today
 `http_client` and `http__client` could be published as two packages; only search's query normaliser collapses the run.
-PR 19 closes the gap: the name pattern becomes `^[a-z][a-z0-9]*(_[a-z0-9]+)*$` with the length still 2 to 64, in the
-API and the index-record schema alike. A trailing `_` is refused too, matching PyPI's rule that a name starts and ends
+PR 19 closes the gap: the name pattern becomes `^[a-z][a-z0-9]*(_[a-z0-9]+)*$` with the length still 2 to 64, in
+every place the old pattern is copied (the service, the OpenAPI `Name` schema that is the authority, the index-record,
+lock and takedowns schemas, the site's router and the fake registry), and the `invalid_name` hint is reworded to match. A trailing `_` is refused too, matching PyPI's rule that a name starts and ends
 with a letter or digit. No look-alike folding (`0`/`o`, `rn`/`m`) and no name-similarity signal at claim: the solved
 problem is normalisation, and adopting it as is keeps one rule that a publisher can predict.
 
@@ -552,7 +557,7 @@ red ([appendix D](mopm-dev-appendix.md#d-test-plan)). "Port" means it waits for 
 | 16 | site | Search page | 3, 14 |
 | 17 | site | Reference pages | 12, 14 |
 | 18 | site | Docstring guide, search help, `/llms.txt` with the recipe | 11 |
-| 19 | API | Canonical names only: the name pattern refuses runs of `_` and a trailing `_` (`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`, length 2 to 64), in the API, in whichever validator is live, and in the index-record schema (3.6, Q10) | |
+| 19 | API | Canonical names only: the name pattern refuses runs of `_` and a trailing `_` (`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`, length 2 to 64) in every copy of the old `^[a-z][a-z0-9_]{1,63}$`: `NAME_PATTERN` in `service/api` (publish, token scopes, the OIDC check) and the router's `NAME`; `spec/api/openapi.yaml` (the `Name` schema and the conda filename pattern); the index-record (name and filename), lock and takedowns schemas; `site/src/routes.ts` `NAME`; the fake registry's `isName` (which already refuses runs of `_` but not a trailing `_`); `tests/drivers/regex.zig`; and the `invalid_name` hint and site text that describe the rule (3.6, Q10) | |
 | 20 | API | Download counts (Q5) | port, 13 |
 
 Can start now: R, V0, 2, 3, 6, 7, 10, 11, 19; V once V0 lands and the workspace location is answered; then 8 and 9 (the shared crates)
