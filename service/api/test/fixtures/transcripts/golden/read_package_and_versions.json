@@ -1,0 +1,504 @@
+{
+  "description": "The read routes on one package: info, versions, owners, a version in each state of lookup, and the refusals around names and versions.",
+  "world": {
+    "seeds": [
+      "http_client_two_versions"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-1"
+          ]
+        ],
+        "body": "{\"name\":\"http_client\",\"state\":\"active\",\"owners\":[{\"github_id\":583231,\"handle\":\"octocat\"}],\"latest\":\"0.4.0\",\"repository\":\"https://github.com/example/http_client\",\"license\":\"Apache-2.0\",\"description\":\"HTTP/1.1 client\",\"created_at\":\"2026-10-01T09:00:00Z\",\"versions\":[{\"version\":\"0.4.0\",\"state\":\"published\",\"published_at\":\"2026-10-13T12:00:00Z\"},{\"version\":\"0.3.0\",\"state\":\"yanked\",\"published_at\":\"2026-10-05T08:00:00Z\",\"yank_reason\":\"crashes on empty body\"}]}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/versions",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-2"
+          ]
+        ],
+        "body": "{\"versions\":[{\"version\":\"0.4.0\",\"state\":\"published\",\"published_at\":\"2026-10-13T12:00:00Z\"},{\"version\":\"0.3.0\",\"state\":\"yanked\",\"published_at\":\"2026-10-05T08:00:00Z\",\"yank_reason\":\"crashes on empty body\"}],\"next_cursor\":null}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/owners",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-3"
+          ]
+        ],
+        "body": "{\"owners\":[{\"github_id\":583231,\"handle\":\"octocat\"}]}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/0.4.0",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-4"
+          ]
+        ],
+        "body": "{\"name\":\"http_client\",\"version\":\"0.4.0\",\"state\":\"published\",\"yank_reason\":null,\"published_at\":\"2026-10-13T12:00:00Z\",\"requires_mojo\":\"==1.0.0\",\"deps\":[],\"native\":[],\"files\":[{\"subdir\":\"linux-64\",\"filename\":\"mojo-http_client-0.4.0-mojo1.0.0_0.conda\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":1000,\"url\":\"https://conda.example.invalid/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda\"}],\"manifest_sha256\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"provenance\":{\"kind\":\"none\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/0.3.0",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-5"
+          ]
+        ],
+        "body": "{\"name\":\"http_client\",\"version\":\"0.3.0\",\"state\":\"yanked\",\"yank_reason\":\"crashes on empty body\",\"published_at\":\"2026-10-05T08:00:00Z\",\"requires_mojo\":\"==1.0.0\",\"deps\":[],\"native\":[],\"files\":[{\"subdir\":\"linux-64\",\"filename\":\"mojo-http_client-0.3.0-mojo1.0.0_0.conda\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":1000,\"url\":\"https://conda.example.invalid/linux-64/mojo-http_client-0.3.0-mojo1.0.0_0.conda\"}],\"manifest_sha256\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"provenance\":{\"kind\":\"none\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/0.9.9",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-6"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"version_not_found\",\"message\":\"'http_client' has no version '0.9.9'.\",\"hint\":\"List the versions with 'mopm info http_client'.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/1.0",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-7"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_version\",\"message\":\"'1.0' is not a valid version.\",\"hint\":\"A version is MAJOR.MINOR.PATCH: three numbers separated by dots, such as 1.2.3. Suffixes such as rc1 are not supported.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/0.4.0rc1",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-8"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_version\",\"message\":\"'0.4.0rc1' is not a valid version.\",\"hint\":\"A version is MAJOR.MINOR.PATCH: three numbers separated by dots, such as 1.2.3. Suffixes such as rc1 are not supported.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/nosuch",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-9"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"package_not_found\",\"message\":\"There is no package 'nosuch'.\",\"hint\":\"Check the spelling, or claim the name.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/nosuch/versions",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-10"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"package_not_found\",\"message\":\"There is no package 'nosuch'.\",\"hint\":\"Check the spelling, or claim the name.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/nosuch/owners",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-11"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"package_not_found\",\"message\":\"There is no package 'nosuch'.\",\"hint\":\"Check the spelling, or claim the name.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/Http-Client",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-12"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_name\",\"message\":\"'Http-Client' is not a valid package name.\",\"hint\":\"Names are lowercase letters, digits and underscores, 2 to 64 characters, starting with a letter.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/a",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-13"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_name\",\"message\":\"'a' is not a valid package name.\",\"hint\":\"Names are lowercase letters, digits and underscores, 2 to 64 characters, starting with a letter.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-14"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_name\",\"message\":\"'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' is not a valid package name.\",\"hint\":\"Names are lowercase letters, digits and underscores, 2 to 64 characters, starting with a letter.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http%5Fclient",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-15"
+          ]
+        ],
+        "body": "{\"name\":\"http_client\",\"state\":\"active\",\"owners\":[{\"github_id\":583231,\"handle\":\"octocat\"}],\"latest\":\"0.4.0\",\"repository\":\"https://github.com/example/http_client\",\"license\":\"Apache-2.0\",\"description\":\"HTTP/1.1 client\",\"created_at\":\"2026-10-01T09:00:00Z\",\"versions\":[{\"version\":\"0.4.0\",\"state\":\"published\",\"published_at\":\"2026-10-13T12:00:00Z\"},{\"version\":\"0.3.0\",\"state\":\"yanked\",\"published_at\":\"2026-10-05T08:00:00Z\",\"yank_reason\":\"crashes on empty body\"}]}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-16"
+          ]
+        ],
+        "body": "{\"name\":\"http_client\",\"state\":\"active\",\"owners\":[{\"github_id\":583231,\"handle\":\"octocat\"}],\"latest\":\"0.4.0\",\"repository\":\"https://github.com/example/http_client\",\"license\":\"Apache-2.0\",\"description\":\"HTTP/1.1 client\",\"created_at\":\"2026-10-01T09:00:00Z\",\"versions\":[{\"version\":\"0.4.0\",\"state\":\"published\",\"published_at\":\"2026-10-13T12:00:00Z\"},{\"version\":\"0.3.0\",\"state\":\"yanked\",\"published_at\":\"2026-10-05T08:00:00Z\",\"yank_reason\":\"crashes on empty body\"}]}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1//packages//http_client",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-17"
+          ]
+        ],
+        "body": "{\"name\":\"http_client\",\"state\":\"active\",\"owners\":[{\"github_id\":583231,\"handle\":\"octocat\"}],\"latest\":\"0.4.0\",\"repository\":\"https://github.com/example/http_client\",\"license\":\"Apache-2.0\",\"description\":\"HTTP/1.1 client\",\"created_at\":\"2026-10-01T09:00:00Z\",\"versions\":[{\"version\":\"0.4.0\",\"state\":\"published\",\"published_at\":\"2026-10-13T12:00:00Z\"},{\"version\":\"0.3.0\",\"state\":\"yanked\",\"published_at\":\"2026-10-05T08:00:00Z\",\"yank_reason\":\"crashes on empty body\"}]}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http%2Gclient",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-18"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"route_not_found\",\"message\":\"There is no such operation.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/nosuch/1.0.0",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-19"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"package_not_found\",\"message\":\"There is no package 'nosuch'.\",\"hint\":\"Check the spelling, or claim the name.\"}}"
+      }
+    }
+  ]
+}
