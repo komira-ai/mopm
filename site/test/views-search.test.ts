@@ -137,6 +137,13 @@ describe('the search page design', () => {
     expect(text(later)).toMatch(/packages? on this page, most recently updated first\./);
   });
 
+  // A cursor is issued for one sort; the API refuses it paired with another ("This page link is no longer valid.").
+  // Mutant: the Next href built from q and cursor only, dropping sort=updated.
+  test('the Next link of a sort=updated search keeps sort=updated', () => {
+    const upd = html(searchResultsView(sdoc, { q: 'http', sort: 'updated' }, { ...list, next_cursor: 'abc' }));
+    expect(upd).toContain('<a class="button button-primary" href="/search?q=http&amp;sort=updated&amp;cursor=abc" rel="next">Next page →</a>');
+  });
+
   // The way out of each empty state sits in the empty-state block itself: the side panel's "Browse all packages" and
   // the pager's "First page" carry the same hrefs, so a page-wide href check passes with the block's link gone.
   // Mutants: any of the three links replaced by a span, or pointing elsewhere.
