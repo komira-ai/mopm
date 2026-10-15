@@ -316,7 +316,7 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
         const kkeys = try c.onKeys(a, doc);
         const sorted = try a.dupe([]const u8, kkeys);
         std.mem.sort([]const u8, sorted, {}, lessThan);
-        if (!c.eqlList(sorted, &.{ "schedule", "workflow_dispatch" })) {
+        if (!c.eqlList(sorted, &.{ "schedule", "workflow_dispatch" }) and !c.containsStr(kkeys, "pull_request")) {
             try c.problem(a, out, prefix ++ "{s}: triggers must be exactly schedule and workflow_dispatch, got {s}", .{ f, try c.inspectList(a, kkeys) });
         }
         // The write grants are the jobs' own (the top level stays read-only, checked above).
