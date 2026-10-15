@@ -1,6 +1,7 @@
 // T16: the build. The same inputs give the same tree byte for byte (no clock, no commit, no randomness), so every
-// stage deploys one artifact; the asset id is a content hash, so a changed asset gets a new URL (assets are cached as
-// immutable); only the entry and what it imports ship; and checkDist refuses a tree the site stack must not deploy.
+// stage deploys one artifact; the asset id is a content hash, so a changed asset gets a new URL (the site stack is to
+// cache assets as immutable); only the entry and what it imports ship; and checkDist refuses a tree the site stack must
+// not deploy.
 import { appendFileSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { assetId, moduleGraph } from '../tools/build';
@@ -244,7 +245,7 @@ describe('checkDist refuses', () => {
     expect(() => checkDist(f.outDir)).not.toThrow();
   });
 
-  test('a file type the bucket does not serve', () => {
+  test('a file type the bucket is not to serve', () => {
     const { f } = built();
     writeFileSync(join(f.outDir, 'logo.png'), 'x');
     expectRefusal(f, /logo\.png: only \.html, \.js and \.css/);

@@ -1,5 +1,6 @@
 // T17: the site's source has no HTML or code sink. Markup is built through the Doc port only (src/doc.ts); a string
-// of HTML never reaches the DOM, and no string is ever run as code. CSP Trusted Types enforces the same in browsers.
+// of HTML never reaches the DOM, and no string is ever run as code. A CSP requiring Trusted Types,
+// once the site stack sends one, would enforce the same in browsers.
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 

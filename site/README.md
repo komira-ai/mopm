@@ -28,7 +28,9 @@ API call (`src/app.ts` picks the call and the view).
 1. **No runtime dependencies.** `dependencies` stays empty; everything shipped to a browser is code in `src/`.
 2. **No HTML sinks.** Markup is built only through `h()` and a `Doc`; no string of HTML reaches the DOM and no string
    runs as code. `test/no-sinks.test.ts` checks the source.
-3. **No inline script or style.** The CSP allows `'self'` only.
+3. **No inline script or style.** The site stack, when it is switched to serve this build (a later change), must send a
+   Content-Security-Policy that allows `'self'` only;
+   `tools/check-dist.ts` refuses a tree that such a policy would break.
 4. **One artifact for every stage.** Nothing stage-specific is compiled in: the API host comes from the page's
    hostname (`src/host.ts`).
 5. **No live calls in tests.** `test/setup.ts` makes the global `fetch` throw; the client takes `fetch` as a
@@ -63,5 +65,6 @@ style element or attribute, an event-handler attribute, a `javascript:`, `data:`
 other than `.html`, `.js` or `.css`, or JavaScript or CSS over its size budget.
 
 The home page copy is held to `README.md` and `src/cli/main.zig` by `test/layout.test.ts`: when the list of working
-or planned commands changes there, the page has to change too. Route vectors shared with the edge router of the site stack are in `test/fixtures/routes.json`; the Markdown attack
-corpus is `test/fixtures/attacks.md`.
+or planned commands changes there, the page has to change too. Route vectors are in `test/fixtures/routes.json`; they
+also state what the edge router of the site stack must do when the stack is switched to serve this build (it has no
+router today). The Markdown attack corpus is `test/fixtures/attacks.md`.

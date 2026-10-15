@@ -1,15 +1,17 @@
-// Checks a built dist/ before anything deploys it. Each rule is one the site stack or the CSP relies on:
-//  - the pages the edge router and the error responses name exist (index, app, 404, docs);
+// Checks a built dist/ before anything deploys it. The site stack does not serve this build yet; each rule is one the
+// stack will rely on when it is switched to (its edge router, its error responses and a Content-Security-Policy that
+// allows 'self' only are requirements for that change, not things it has today):
+//  - the pages the edge router and the error responses are to name exist (index, app, 404, docs);
 //  - every /assets/<id>/ reference in a page, and every relative import in a module, names a file that exists
 //    (a dangling one is a broken page after deploy, since assets are immutable and pages are not);
 //  - every '<' in a page starts a tag the scanner reads as the browser does (no comment, no '<' inside a tag, no
 //    unclosed tag), so nothing below can be skipped;
 //  - every <script> is empty and has a src under /assets/; no style attribute or element, no event-handler attribute,
 //    no javascript:, data: or vbscript: URL in any *href, src, action, formaction or data, read after entity decoding
-//    as a browser reads it (the CSP would block them);
-//  - only .html, .js and .css files (the bucket serves nothing else);
+//    as a browser reads it (the required CSP would block them);
+//  - only .html, .js and .css files (the bucket is to serve nothing else);
 //  - the JavaScript and CSS stay small: each module at most JS_MAX_BYTES, all of them at most JS_TOTAL_MAX_BYTES (tsc
-//    output is not minified; the edge compresses it), the stylesheet at most CSS_MAX_BYTES.
+//    output is not minified; the edge is to compress it), the stylesheet at most CSS_MAX_BYTES.
 
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, posix, relative, sep } from 'path';

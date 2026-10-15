@@ -5,7 +5,7 @@
 //
 // <id> is the first 16 hex digits of a sha256 over the assets' sorted (path, bytes): the same inputs give the same id
 // and the same bytes everywhere, with no clock or commit in them, so every stage deploys one artifact and an asset URL
-// never serves two contents (assets are cached as immutable).
+// never serves two contents (the site stack is to cache assets as immutable once it serves this build).
 
 import { createHash } from 'crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';

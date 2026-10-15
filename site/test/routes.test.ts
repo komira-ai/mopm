@@ -1,5 +1,5 @@
-// T3: parseRoute agrees with the shared route vectors (test/fixtures/routes.json), which the edge router in the
-// site stack is tested against too; and the path builders encode every segment.
+// T3: parseRoute agrees with the route vectors (test/fixtures/routes.json), which also state what the site stack's edge
+// router must do once the stack serves this build (it has no router yet); and the path builders encode every segment.
 import vectors from './fixtures/routes.json';
 import {
   isCanonicalName, isName, isVersion, normaliseName, packagePath, parseRoute, searchPath, VERSION_MAX, versionPath,

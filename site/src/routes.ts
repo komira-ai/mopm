@@ -1,8 +1,10 @@
 // URL routes of the site, and the name and version grammar they accept.
 //
-// The edge router (a CloudFront Function in the site stack) and parseRoute must agree on which paths reach the app
-// shell: test/fixtures/routes.json holds the vectors both are tested against. Path segments are matched as they arrive
-// (still percent-encoded): a valid name or version contains no character that needs encoding, so any '%' fails.
+// The site stack does not serve this build yet. When it is switched to (a later change), its edge router (rewrites and
+// redirects in front of the bucket) must agree with parseRoute on which paths reach the app shell:
+// test/fixtures/routes.json holds the vectors parseRoute is tested against here and that router must be tested against
+// there. Path segments are matched as they arrive (still percent-encoded): a valid name or version contains no
+// character that needs encoding, so any '%' fails.
 
 /** The registry's package name (spec Name, router NAME): 2 to 64 characters. */
 export const NAME = /^[a-z][a-z0-9_]{1,63}$/;
@@ -29,7 +31,8 @@ export function normaliseName(s: string): string {
 
 /**
  * A name as the registry spells it in paths: valid and already normalised. `foo__bar` passes NAME but is not
- * normalised (the API answers it with invalid_name), so it is not a package route; the edge redirects it to `foo_bar`.
+ * normalised (the API answers it with invalid_name), so it is not a package route; the edge router is to redirect it to
+ * `foo_bar`.
  */
 export function isCanonicalName(s: string): boolean {
   return isName(s) && normaliseName(s) === s;
@@ -40,7 +43,10 @@ export type Route =
   | { kind: 'package'; name: string }
   | { kind: 'version'; name: string; version: string };
 
-/** The app-shell view for a path, or null when the path is not an app route (the edge never sends it to the shell). */
+/**
+ * The app-shell view for a path, or null when the path is not an app route (the edge router must never send it to the
+ * shell).
+ */
 export function parseRoute(path: string): Route | null {
   if (path === '/search') return { kind: 'search' };
   const parts = path.split('/');

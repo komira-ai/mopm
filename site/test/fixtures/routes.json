@@ -1,5 +1,5 @@
 {
-  "$comment": "Route vectors shared by the site (parseRoute: view) and the edge router in the site stack (edge). edge is the URI the viewer-request function rewrites to, \"redirect:<path>\" for a 301 to the normalised package name (the query is kept), or \"pass\" when the request goes to the bucket unchanged (a missing key there is the 404 page). view is the app-shell route, or null when the path never reaches the shell.",
+  "$comment": "Route vectors for the site (parseRoute: view) and requirements for the edge router the site stack must have when it is switched to serve this build, a later change (edge; the stack has no router today). edge is the URI that router must rewrite the request to, \"redirect:<path>\" for a permanent redirect to the normalised package name (the query kept), or \"pass\" when the request must go to the bucket unchanged (a missing key there to be answered with the 404 page). view is the app-shell route, or null when the path never reaches the shell.",
   "vectors": [
     {
       "path": "/",

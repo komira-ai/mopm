@@ -163,9 +163,9 @@ describe('no call at all', () => {
   });
 
   test('a host outside the table (no client): the unknown-host view', async () => {
-    const view = await appView(sdoc, '/packages/http_client', '', null, 'evilmopm.dev');
+    const view = await appView(sdoc, '/packages/http_client', '', null, 'evil-mopm.invalid');
     expect(view.title).toBe('Registry unavailable');
-    expect(html(view)).toContain('<code>evilmopm.dev</code>');
+    expect(html(view)).toContain('<code>evil-mopm.invalid</code>');
   });
 });
 

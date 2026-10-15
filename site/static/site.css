@@ -1,5 +1,5 @@
 /* mopm.dev: one stylesheet for every page. System fonts, light and dark from prefers-color-scheme, no external
-   resources (the CSP allows 'self' only). */
+   resources (the CSP the site stack is to send allows 'self' only). */
 
 :root {
   color-scheme: light dark;
