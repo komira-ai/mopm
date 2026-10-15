@@ -4,6 +4,7 @@ verdict; the comment above each test names it. Tests run in source order, so
 test_after_crashes runs after two crashes.
 """
 from std.ffi import external_call
+from std.os.path import exists
 from std.testing import assert_equal
 from std.time import perf_counter_ns
 
@@ -48,10 +49,15 @@ def test_after_crashes() raises:
     assert_equal(3 * 3, 9)
 
 
-# TIMEOUT, hung: sleeps; and leaves a process behind in its process group
-# (`sleep 7919`, started with fork and execlp: the build farm has no /bin/sh
-# for system()), which the deadline kill of the group must take too
-def test_hang() raises:
+def start_background_sleep():
+    """`sleep 7919 &` in this process group. Through `system` where there is
+    a /bin/sh; the build farm has none, so there it is fork and execlp (not
+    used elsewhere: macOS passes the arguments of a variadic call on the
+    stack, which `external_call` does not do)."""
+    if exists("/bin/sh"):
+        var cmd = String("sleep 7919 &")
+        _ = external_call["system", Int32](cmd.as_c_string_slice().unsafe_ptr())
+        return
     var prog = String("sleep")
     var arg = String("7919")
     var pid = external_call["fork", Int32]()
@@ -63,6 +69,12 @@ def test_hang() raises:
             Int(0),
         )
         external_call["_exit", NoneType](Int32(127))
+
+
+# TIMEOUT, hung: sleeps; and leaves a process behind in its process group
+# (`sleep 7919`), which the deadline kill of the group must take too
+def test_hang() raises:
+    start_background_sleep()
     _ = external_call["sleep", UInt32](UInt32(300))
     raise Error("woke up")
 
