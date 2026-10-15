@@ -1,4 +1,6 @@
 #!/bin/sh
+# Superseded by //:autolink (tests/drivers/test_autolink_test.zig) on the build farm, which has no shell, Python or pixi;
+# kept for ci.yml until farm.yml has matched it. Change both together.
 # End-to-end test of `mopm build`, `mopm run` and `mopm repl` against the real
 # Mojo toolchain. Run from the repository root:
 #

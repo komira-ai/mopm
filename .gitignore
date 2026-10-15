@@ -4,3 +4,5 @@ zig-out/
 *.swp
 .DS_Store
 service/api/dist/
+buck-out/
+.buckconfig.local

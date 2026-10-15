@@ -1,0 +1,71 @@
+# The registry API package's checks, run on the farm from the pinned npm packages
+# (pins.lock.bzl, from package-lock.json by kpin) with komira's node_modules rules:
+# the same commands as service-ci.yml (`tsc --noEmit`, `jest --ci` with 2 workers) and
+# `tsc -p tsconfig.build.json`, whose output the infra stacks bundle. No install, no
+# script, no network. See service/README.md, "Building with Buck2".
+
+load("@komira//tools/build/node:modules.bzl", "jest_test", "node_tree_test", "npm_modules", "tsc_build", "tsc_check")
+load(":pins.lock.bzl", "NPM")
+
+_NODE = "//tools/node:node"
+
+_SRCS = glob(["src/**", "test/**"]) + [
+    "jest.config.js",
+    "package.json",
+    "tsconfig.build.json",
+    "tsconfig.json",
+]
+
+npm_modules(
+    name = "modules",
+    lockfile = "package-lock.json",
+    npm = NPM,
+)
+
+tsc_check(
+    name = "typecheck",
+    modules = ":modules",
+    node = _NODE,
+    srcs = _SRCS,
+)
+
+# The tests read the specification and the contract cases at their paths in the repository
+# (`../../../../spec/api/openapi.yaml`, `.../tests/contract/api`), and the validator's tests run
+# `bzip2` (test/validate/builder.ts): the pinned busybox's applet is the only command on PATH.
+jest_test(
+    name = "test",
+    data = {
+        "spec": "//:spec",
+        "tests/contract/api": "//:contract_api",
+    },
+    modules = ":modules",
+    node = _NODE,
+    srcs = _SRCS,
+    tools = {"bzip2": "komira//tools/build/toolchains:busybox"},
+)
+
+# `npm run build`: the handler bundle the API stack deploys.
+tsc_build(
+    name = "dist",
+    modules = ":modules",
+    node = _NODE,
+    srcs = _SRCS,
+    visibility = ["//service/infra/stacks:"],
+)
+
+# service-ci.yml's `test -f dist/http/lambda.js`.
+node_tree_test(
+    name = "dist_has_handler",
+    data = {"service/api/dist": ":dist"},
+    modules = ":modules",
+    node = _NODE,
+    program = "check_dist.js",
+    srcs = ["check_dist.js"],
+)
+
+# The golden grants the stacks' tests compare the API stack's policies with.
+export_file(
+    name = "lambda-auth-grants.json",
+    src = "test/fixtures/lambda-auth-grants.json",
+    visibility = ["//service/infra/stacks:"],
+)

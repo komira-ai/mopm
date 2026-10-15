@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Replay the API cases of tests/contract/api against the fake registry.
 
+SUPERSEDED by //:contract_replay (tests/drivers/replay_test.zig, with
+replay_recipes.zig), the Zig port the Buck2 build runs: the build has no
+Python. This script stays for ci.yml until farm.yml has matched it, and is
+deleted then.
+
     python -I tests/contract/replay.py path/to/mopm-fake-registry
 
 For every case marked valid whose operation the fake implements (IMPLEMENTED

@@ -12,6 +12,15 @@ Needs `jsonschema`, `openapi-spec-validator` and `PyYAML` (pinned in
 `requirements.txt`). CI installs them into a throwaway virtual environment.
 Nothing here is part of the mopm build.
 
+The Buck2 build runs the Zig ports instead, with no Python: `//:contract`
+(`tests/drivers/contract_test.zig`) for `validate.py`, `//:contract_replay`
+for `replay.py`. The JSON Schema reader (`tests/drivers/jsonschema.zig`)
+implements only the keywords the schemas use and fails the run, naming the
+keyword, on any other: a schema that starts using a new keyword needs it
+implemented there first. The OpenAPI checks (`openapi_check.zig`) are
+structural (see its header); they are not the full OpenAPI 3.1 meta schema
+that `openapi-spec-validator` applies.
+
 ## API cases: `api/*.json`
 
 Each file is `{"cases": [...]}`. A case:

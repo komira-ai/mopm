@@ -1,0 +1,3 @@
+# kpin's pins.toml for the service packages: they pin nothing but npm tarballs, and kpin
+# reads those from each package's package-lock.json. Each package keeps its own lock
+# (pins.lock.bzl); see service/README.md, "Pinned npm packages".

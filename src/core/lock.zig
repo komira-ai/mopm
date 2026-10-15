@@ -21,6 +21,7 @@
 //! dependency has no other entry. A registry entry carries no `source` key.
 
 const std = @import("std");
+const testroot = @import("testroot.zig");
 const Allocator = std.mem.Allocator;
 const registry = @import("registry.zig");
 
@@ -367,7 +368,7 @@ test "each valid example lock is read and written back byte for byte" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    var dir = try std.fs.cwd().openDir("tests/contract/examples/lock/valid", .{ .iterate = true });
+    var dir = try std.fs.cwd().openDir(try testroot.path(a, "tests/contract/examples/lock/valid"), .{ .iterate = true });
     defer dir.close();
     var it = dir.iterate();
     var seen: usize = 0;
@@ -407,7 +408,7 @@ test "each invalid example lock is refused, for the reason its name gives" {
         .{ "unsorted.json", "not sorted by name, version and subdir" },
         .{ "url_mismatch.json", "url is " },
     };
-    var dir = try std.fs.cwd().openDir("tests/contract/examples/lock/invalid", .{ .iterate = true });
+    var dir = try std.fs.cwd().openDir(try testroot.path(a, "tests/contract/examples/lock/invalid"), .{ .iterate = true });
     defer dir.close();
     var files: usize = 0;
     var it = dir.iterate();

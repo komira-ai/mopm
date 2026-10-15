@@ -1,0 +1,85 @@
+# Builds every Buck2 target on the build farm: `./buck2 build //...`. The
+# targets (BUCK) weld the unit tests into the binaries and run the golden and
+# registry end-to-end tests as build actions, so a green build is a green
+# test run (docs: CONTRIBUTING.md, "Building with Buck2").
+#
+# It runs alongside ci.yml, which stays as it is: ci.yml is the check until
+# this one has matched it for a week.
+#
+# The farm is connected by komira's farm-connect action, pinned by commit:
+# it joins the farm's private network with the job's OIDC token (workload identity, no stored
+# secret), checks the farm answers, and writes the machine buckconfig. Its
+# inputs are repository variables; this repository holds no endpoint and no
+# worker property set. Until the variables are set the job does nothing and
+# says so, so it cannot fail a pull request before the farm is available.
+# A fork's pull request gets neither the token nor the variables and is
+# skipped. hygiene.rb and workflow_lint.rb allow the id-token grant and the
+# one action outside GitHub's own for this file only, under these conditions.
+name: farm
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  # A newer push to a pull request cancels its older farm build.
+  group: farm-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # A pull request from a branch of this repository, and nothing else.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      # for farm-connect only: the token the farm's network trusts
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The condition reads the variable without putting its value in a step's
+      # environment, which GitHub prints in the log.
+      - name: the farm is not configured
+        if: ${{ vars.FARM_ADDRESS == '' }}
+        run: |
+          echo "::notice title=farm::the repository variable FARM_ADDRESS is not set, so there is no farm to build on. Skipping; nothing was built."
+      # The same komira commit as commit_hash in .buckconfig; bump them together (the action is
+      # byte for byte the one at the previous pin; see the TODO in .buckconfig).
+      - name: connect to the farm
+        if: ${{ vars.FARM_ADDRESS != '' }}
+        uses: komira-ai/komira/.github/actions/farm-connect@f8b0cd15c47ed0f00c212de6e6fc55c0a51fd572
+        with:
+          ts-client-id: ${{ vars.TS_CLIENT_ID }}
+          ts-audience: ${{ vars.TS_AUDIENCE }}
+          farm-address: ${{ vars.FARM_ADDRESS }}
+          farm-instance: ${{ vars.FARM_INSTANCE }}
+          farm-properties: ${{ vars.FARM_LINUX_X86_64_PROPERTIES }}
+      # With no farm configured buck2 builds on the runner: refuse that.
+      - name: the buckconfig names the farm
+        if: ${{ vars.FARM_ADDRESS != '' }}
+        run: |
+          for key in linux_x86_64_properties; do
+            ./buck2 audit config "komira_re.$key" --style json | grep -q '": *"[^"]' ||
+              { echo "the buckconfig sets no [komira_re] $key: this job would build on the runner"; exit 1; }
+          done
+      - name: buck2 build //...
+        if: ${{ vars.FARM_ADDRESS != '' }}
+        run: |
+          set -o pipefail
+          ./buck2 build //... 2>&1 | tee "$RUNNER_TEMP/build.log"
+      # The summary line counts the actions run on this machine: all must have
+      # run on the farm or come from its cache.
+      - name: no action ran on the runner
+        if: ${{ vars.FARM_ADDRESS != '' }}
+        run: |
+          grep -Eq 'Commands: [0-9]+ \(.*local: 0\)' "$RUNNER_TEMP/build.log" ||
+            { echo "::error::the build's summary line does not say local: 0"; exit 1; }
+      - name: Stop buck2
+        if: ${{ always() && vars.FARM_ADDRESS != '' }}
+        run: ./buck2 kill || true

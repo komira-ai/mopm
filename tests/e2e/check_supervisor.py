@@ -1,3 +1,5 @@
+# Superseded by //:supervisor (tests/drivers/test_supervisor_test.zig) on the build farm, which has no shell, Python or pixi;
+# kept for ci.yml until farm.yml has matched it. Change both together.
 """Check the results of `mopm test` on tests/e2e/supervise against the exact
 verdict each fixture test must get (tests/e2e/test_supervisor.sh runs it).
 

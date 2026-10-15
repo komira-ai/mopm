@@ -40,6 +40,7 @@
 //! a guess.
 
 const std = @import("std");
+const testroot = @import("testroot.zig");
 const Allocator = std.mem.Allocator;
 const test_scan = @import("test_scan.zig");
 
@@ -225,12 +226,12 @@ test "the test-file convention" {
     };
 }
 
-// Reads tests/discovery/tree relative to the working directory: run from
-// the repository root.
+// Reads tests/discovery/tree under MOPM_SOURCE_ROOT, else relative to the
+// working directory (the repository root): testroot.zig.
 test "test files under a package root, sorted" {
     var t = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer t.deinit();
-    const files = try findTestFiles(t.allocator(), "tests/discovery/tree");
+    const files = try findTestFiles(t.allocator(), try testroot.path(t.allocator(), "tests/discovery/tree"));
     const want = [_][]const u8{
         "src/pkg/tests/test_inner.mojo",
         "tests/sub/test_registered.mojo",
@@ -268,8 +269,8 @@ test "golden harness of tests/discovery/bare_basic.mojo" {
     var t = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer t.deinit();
     const a = t.allocator();
-    const src = try std.fs.cwd().readFileAlloc(a, "tests/discovery/bare_basic.mojo", 1 << 20);
-    const want = try std.fs.cwd().readFileAlloc(a, "tests/discovery/bare_basic.harness", 1 << 20);
+    const src = try std.fs.cwd().readFileAlloc(a, try testroot.path(a, "tests/discovery/bare_basic.mojo"), 1 << 20);
+    const want = try std.fs.cwd().readFileAlloc(a, try testroot.path(a, "tests/discovery/bare_basic.harness"), 1 << 20);
     const got = try generate(a, src, (try test_scan.scan(a, src)).tests);
     try std.testing.expect(std.mem.startsWith(u8, got, src));
     try std.testing.expectEqualStrings(want, got[src.len..]);
