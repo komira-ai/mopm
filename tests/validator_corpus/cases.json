@@ -162,16 +162,6 @@
       "note": ""
     },
     {
-      "id": "ok_zstd_skippable_frame_first",
-      "archive": "ok_zstd_skippable_frame_first.conda",
-      "intent": "ok",
-      "what": "a skippable zstd frame before the real one",
-      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
-      "limits": {},
-      "allow_native": [],
-      "note": ""
-    },
-    {
       "id": "ok_declared_hashes_right",
       "archive": "ok_declared_hashes_right.conda",
       "intent": "ok",
@@ -314,8 +304,18 @@
     {
       "id": "zip_prepended_junk",
       "archive": "zip_prepended_junk.conda",
+      "intent": "not_an_archive",
+      "what": "bytes before the first local header: the file no longer starts with a zip signature",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "zip_prepended_after_signature",
+      "archive": "zip_prepended_after_signature.conda",
       "intent": "archive_corrupt",
-      "what": "bytes before the first local header: every offset is off by four",
+      "what": "four bytes before the first local header that look like a signature: every offset is off by four",
       "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
       "limits": {},
       "allow_native": [],
@@ -495,7 +495,7 @@
       "id": "zip_bad_local_signature",
       "archive": "zip_bad_local_signature.conda",
       "intent": "archive_corrupt",
-      "what": "a local header with a wrong signature",
+      "what": "the second local header with a wrong signature",
       "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
       "limits": {},
       "allow_native": [],
@@ -782,6 +782,16 @@
       "note": ""
     },
     {
+      "id": "zstd_skippable_frame_first",
+      "archive": "zstd_skippable_frame_first.conda",
+      "intent": "archive_corrupt",
+      "what": "a skippable zstd frame before the real one: the reader insists that a stream start with the zstd magic number",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
       "id": "zstd_skippable_after",
       "archive": "zstd_skippable_after.conda",
       "intent": "ok",
@@ -824,8 +834,8 @@
     {
       "id": "zstd_declared_size_larger",
       "archive": "zstd_declared_size_larger.conda",
-      "intent": "archive_corrupt",
-      "what": "a single-segment frame that declares 5000 bytes of content and holds the whole tar",
+      "intent": "ok",
+      "what": "a single-segment frame that declares 5000 bytes of content and holds 3072: a content size larger than the content is accepted",
       "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
       "limits": {},
       "allow_native": [],
