@@ -240,7 +240,7 @@ fn ownedActionPinned(s: []const u8) bool {
     inline for (owned_actions) |n| {
         if (pinned(s, "actions/" ++ n)) return true;
     }
-    return false;
+    return true;
 }
 
 /// The per-file rules for one workflow. `f` is the path as the messages show it.
