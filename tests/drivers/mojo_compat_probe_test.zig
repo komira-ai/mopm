@@ -26,6 +26,10 @@
 //! `MPKG`, a NUL after 64 lowercase hex characters). Everything else is an
 //! observation: an `OBS` line on standard output and a line of the results
 //! file ($KOMIRA_TEST_WORK/mojo_compat_results.txt), not a pass or fail.
+//! The farm's zig_test shows a green run's output nowhere; it is in the
+//! build's event log: `buck2 build -v 2 //:mojo_compat_probe` on a run that
+//! executes (not a cache hit), then `buck2 log show`, whose action records
+//! carry the stderr (the `OBS` lines and the results block at the end).
 
 const std = @import("std");
 const h = @import("harness.zig");
