@@ -67,7 +67,7 @@ node_tree_test(
 export_file(
     name = "lambda-auth-grants.json",
     src = "test/fixtures/lambda-auth-grants.json",
-    visibility = ["//service/infra/stacks:"],
+    visibility = ["//service/infra/stacks:", "//service/lambda/aws:"],
 )
 
 # The repodata the TS index writer produced for the golden records: the Rust core
