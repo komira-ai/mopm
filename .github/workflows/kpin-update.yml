@@ -47,6 +47,8 @@ on:
         description: "Also re-fetch every pinned file and alarm on a republished one (kpin update --verify)."
         type: boolean
         default: false
+  push:
+    branches: [build/kpin-weekly]
   schedule:
     - cron: "23 5 * * 1"
 
