@@ -1146,3 +1146,4 @@ a.avatar { text-decoration: none; }
 .scopes label { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
 .recent .v { color: var(--muted); }
 .stepper > li, .stepper .cmd { min-width: 0; max-width: 100%; }
+.tag-warn { background: var(--warn-soft); color: var(--warn); border-color: var(--warn-border); }
