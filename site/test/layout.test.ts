@@ -274,7 +274,11 @@ describe('the home page says what the repository says', () => {
   test('the working install is the build from source; the one-line installer is marked planned and never shown', () => {
     const home = read('index.html');
     expect(home).not.toMatch(/curl|install\.sh|\|\s*sh\b/);
-    expect(textOf(home)).toContain('One-line installer planned');
+    // The planned installer is a plain line people can read (not a tab that looks clickable and does nothing).
+    expect(textOf(byId(home, 'installer-planned'))).toBe('One-line installer: planned');
+    expect(home).toContain('<p class="installer-planned" id="installer-planned">');
+    expect(home).not.toContain('class="seg');
+    expect(home).toContain('<p class="install-label"><strong>Install the mopm CLI</strong> from source</p>');
     expect(textOf(byId(home, 'build'))).toMatch(/^There are no release binaries yet, and no one-line installer: build from source with Zig 0\.12\.0/);
     expect(home).toContain('aria-label="build from source commands"><code>git clone https://github.com/komira-ai/mopm\ncd mopm\nzig build');
   });
@@ -290,16 +294,24 @@ describe('the home page says what the repository says', () => {
     expect(cmds).toEqual(['zig build', 'mopm new my_package --lib', 'pixi add mojo-<name>']);
     expect(PLANNED).toContain('add');
     expect(textOf(steps)).toContain('mopm add is planned');
+    // One artifact serves every stage: a static step must not name prod's channel (the channel shown below follows
+    // the host at runtime).
+    expect(textOf(steps)).toContain('In a pixi project that lists the registry’s conda channel.');
+    expect(textOf(steps)).not.toContain('mopm.dev channel');
   });
 
   // Recently published is fetched at runtime (src/views/recent.ts); a list baked in at build time would go stale and
   // could show packages that do not exist. There is no featured list: the API has no source for one.
-  test('the recently published slot holds no package, only the loading and no-script lines; no featured section', () => {
+  // The slot is not a live region: filling it would read out up to 8 rows unprompted below the fold; aria-busy covers
+  // the loading state.
+  test('the recently updated slot holds no package, only the loading and no-script lines; no featured section', () => {
     const home = read('index.html');
     const slot = byId(home, 'recent-list');
-    expect(textOf(slot)).toBe('Loading recently published packages…The list of recent packages needs JavaScript. Browse all packages instead.');
+    expect(textOf(slot)).toBe('Loading recently updated packages…The list of recent packages needs JavaScript. Browse all packages instead.');
     expect(slot).not.toContain('<li');
-    expect(home).toContain('<div class="recent-slot" id="recent-list" aria-live="polite" aria-busy="true">');
+    expect(home).toContain('<div class="recent-slot" id="recent-list" aria-busy="true">');
+    expect(textOf(home)).toContain('Recently updated');
+    expect(textOf(home)).not.toContain('Recently published');
     expect(home).not.toMatch(/featured/i);
     expect(home).not.toContain('/packages/');
   });

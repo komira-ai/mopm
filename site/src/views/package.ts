@@ -127,8 +127,8 @@ export function installSection<N>(
   return section;
 }
 
-/** The package page's one command: what it installs and where it works. */
-export const INSTALL_NOTE = 'in a pixi project that lists the mopm.dev channel';
+/** The package page's one command: where it works, naming this host's channel (one artifact serves every stage). */
+export const INSTALL_NOTE = 'in a pixi project that lists the channel ';
 
 /** How many versions the side panel lists; the table below the readme has them all. */
 export const SIDE_VERSIONS = 5;
@@ -155,7 +155,7 @@ export function installCard<N>(doc: Doc<N>, name: string, manifest: string | nul
     for (const n of others) doc.append(card, n);
     return card;
   }
-  doc.append(headRow, h(doc, 'p', { class: 'install-note', id: 'install-note' }, INSTALL_NOTE));
+  doc.append(headRow, h(doc, 'p', { class: 'install-note', id: 'install-note' }, INSTALL_NOTE, h(doc, 'code', null, channel as string)));
   doc.append(
     card,
     h(
@@ -234,8 +234,9 @@ function head<N>(doc: Doc<N>, name: string, info: PackageInfo, latest: string | 
   if (info.license) facts.push(h(doc, 'li', null, 'License ', h(doc, 'strong', null, info.license)));
   if (info.state !== 'claimed') facts.push(h(doc, 'li', null, h(doc, 'strong', null, String(info.versions.length)), info.versions.length === 1 ? ' version' : ' versions'));
   const tabs: N[] = [];
-  if (hasReadme) tabs.push(h(doc, 'a', { href: anchorHref('section-readme'), class: 'on' }, 'Readme'));
-  if (info.state !== 'claimed') tabs.push(h(doc, 'a', { href: anchorHref('versions-heading'), class: hasReadme ? undefined : 'on' }, 'Versions ', h(doc, 'span', { class: 'count' }, String(info.versions.length))));
+  // Jump links within the page, so none is marked as the selected one.
+  if (hasReadme) tabs.push(h(doc, 'a', { href: anchorHref('section-readme') }, 'Readme'));
+  if (info.state !== 'claimed') tabs.push(h(doc, 'a', { href: anchorHref('versions-heading') }, 'Versions ', h(doc, 'span', { class: 'count' }, String(info.versions.length))));
   return h(
     doc,
     'header',

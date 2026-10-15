@@ -48,6 +48,30 @@ test('search fields, selects and buttons use the control border', () => {
   expect(rule('.button')).toContain('border: 1px solid var(--control-border);');
 });
 
+// The Copy button is a control: a --border-strong edge is 1.4:1 on the code background (WCAG 1.4.11 asks 3:1).
+test('the Copy button uses the control border', () => {
+  expect(rule('.copy')).toContain('border: 1px solid var(--control-border);');
+});
+
+// The hero search input drops its own outline, so the box around it must carry a ring as strong as :focus-visible's,
+// not only a 1px border colour change.
+test('the hero search box shows a focus ring when its field is focused', () => {
+  expect(rule('.big-search:focus-within')).toMatch(/box-shadow: 0 0 0 3px /);
+});
+
+// The build commands are the first a reader runs; on a phone a hidden horizontal scroll would cut them off.
+test('on narrow screens the hero build commands wrap instead of scrolling out of sight', () => {
+  const media = css.slice(css.indexOf('@media (max-width: 40rem)'));
+  expect(media.slice(0, media.indexOf('\n}\n'))).toMatch(/\.cmd-xl code \{[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/);
+});
+
+// The package head's links jump within the page; nothing styles one as the selected tab.
+test('no tab-selection style is left for the jump links, and no fake tab shape for the planned installer', () => {
+  expect(css).not.toContain('.tabs a.on');
+  expect(css).not.toMatch(/\.seg\b/);
+  expect(rule('.cmd-xl')).not.toContain('border-radius: 0 ');
+});
+
 test('the focus ring sets no border-radius (it would override a code block\'s rounded corners)', () => {
   expect(rule(':focus-visible')).toContain('outline: 3px solid var(--focus);');
   expect(rule(':focus-visible')).not.toContain('border-radius');

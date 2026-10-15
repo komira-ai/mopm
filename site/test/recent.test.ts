@@ -4,8 +4,12 @@
 //    limit, fails it);
 //  - a published package shows its name as a link, its version, description and date, all as text (an unescaped
 //    description or a link for a name outside the grammar fails it);
-//  - a claimed name (latest null) is left out, and a page of only claims says nothing is published (listing claims as
-//    "published" fails it);
+//  - a claimed name (latest null) is left out, and a last page (next_cursor null) of only claims, or an empty registry,
+//    says nothing is published (listing claims as "published", or an empty <ol> for an empty registry, fails it); a
+//    page of only claims with more pages behind it links to the full list instead (calling a registry with published
+//    packages further down empty fails it);
+//  - each row's date is labelled as an update, since sort=updated also moves a package on a yank (a bare date under a
+//    "published" heading fails it);
 //  - the API's refusal of sort=updated over more than 1000 packages, and any other failure, each get a sentence and a
 //    link to the name-sorted list (an empty slot or an endless "Loading" fails it).
 import { client, type FetchFn } from '../src/api';
@@ -43,7 +47,7 @@ describe('an answer with a published package (fixture: search by prefix)', () =>
     expect(html).toContain('<a href="/packages/http_client" class="recent-name">http_client</a>');
     expect(text(html)).toContain('version 0.4.0');
     expect(text(html)).toContain('HTTP/1.1 client');
-    expect(html).toContain('<time datetime="2026-10-13T12:00:00Z">2026-10-13</time>');
+    expect(html).toContain('updated <time datetime="2026-10-13T12:00:00Z">2026-10-13</time>');
     expect(html.startsWith('<ol class="recent">')).toBe(true);
   });
 
@@ -58,6 +62,30 @@ test('a claimed name with no version is not listed; a page of claims only says n
   const html = out(recentList(sdoc, { kind: 'ok', value: list, requestId: null }));
   expect(html).not.toContain('tls');
   expect(text(html)).toBe('Nothing has been published yet.');
+});
+
+test('an empty registry (no packages, last page) says nothing is published, with no list', () => {
+  const html = out(recentList(sdoc, { kind: 'ok', value: { packages: [], next_cursor: null }, requestId: null }));
+  expect(text(html)).toBe('Nothing has been published yet.');
+  expect(html).not.toContain('<ol');
+});
+
+test('a page of only claims with more pages behind it does not say the registry is empty', () => {
+  const value: PackageList = {
+    next_cursor: 'abc',
+    packages: [{ name: 'just_claimed', latest: null, description: null, updated_at: '2026-10-13T00:00:00Z' }],
+  };
+  const html = out(recentList(sdoc, { kind: 'ok', value, requestId: null }));
+  expect(text(html)).toBe('No recently updated package has a published version. Browse all packages.');
+  expect(hrefs(html)).toEqual(['/search']);
+  expect(html).not.toContain('<ol');
+});
+
+test('each row says its date is an update, not a publish', () => {
+  const value: PackageList = { next_cursor: null, packages: [{ name: 'p', latest: '1.0.0', description: null, updated_at: '2026-10-14T00:00:00Z' }] };
+  const html = out(recentList(sdoc, { kind: 'ok', value, requestId: null }));
+  expect(html).toContain('<p class="recent-when">updated <time datetime="2026-10-14T00:00:00Z">2026-10-14</time></p>');
+  expect(text(html)).not.toMatch(/published/i);
 });
 
 test('a mix keeps the published ones in the order the registry sent', () => {
@@ -95,7 +123,7 @@ test.each(['error internal_error', 'error unavailable', 'error rate_limited'])('
   const c = load('errors').find((x) => x.name === name);
   if (!c) throw new Error('no fixture');
   const html = out(recentList(sdoc, fromResponse(c.response.status, JSON.stringify(c.response.body), null)));
-  expect(text(html)).toBe('Recently published packages could not be loaded. Browse all packages.');
+  expect(text(html)).toBe('Recently updated packages could not be loaded. Browse all packages.');
   expect(hrefs(html)).toEqual(['/search']);
 });
 

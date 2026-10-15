@@ -36,7 +36,7 @@ describe('an active package (fixture: package info)', () => {
     expect(before).toContain(
       '<div class="cmd cmd-lg copy-box"><span class="prompt" aria-hidden="true">$</span><pre tabindex="0" role="region" aria-label="install command" aria-describedby="install-note"><code>pixi add mojo-http_client</code></pre></div>',
     );
-    expect(before).toContain('<p class="install-note" id="install-note">in a pixi project that lists the mopm.dev channel</p>');
+    expect(before).toContain('<p class="install-note" id="install-note">in a pixi project that lists the channel <code>https://conda.mopm.dev/</code></p>');
     const others = card.slice(card.indexOf('<details'));
     expect(others.startsWith('<details class="other-ways"><summary>Other ways to install</summary>')).toBe(true);
     expect(others).toContain('<div class="cmd copy-box"><pre tabindex="0" role="region" aria-labelledby="snippet-channel"><code>https://conda.mopm.dev/</code></pre></div>');
@@ -91,6 +91,35 @@ describe('an active package (fixture: package info)', () => {
 
   test('a page served from another stage shows that stage\'s channel', () => {
     expect(render(packageFixture(), { host: 'beta.mopm.dev' })).toContain('<code>https://conda.beta.mopm.dev/</code>');
+  });
+
+  // Catches a fixed note naming prod's channel beside a command run on another stage: a reader following the visible
+  // line would install prod's package of that name.
+  test("the line beside the one install command names this stage's channel", () => {
+    for (const host of ['beta.mopm.dev', 'gamma.mopm.dev']) {
+      const page = render(packageFixture(), { host });
+      const note = page.slice(page.indexOf('<p class="install-note"'), page.indexOf('</p>', page.indexOf('<p class="install-note"')));
+      expect(text(note)).toBe(`in a pixi project that lists the channel https://conda.${host}/`);
+    }
+  });
+
+  // Catches the published time read from the newest row (versions[0]) instead of the latest version's row: the newest
+  // row here is yanked and a day later.
+  test('Published is the time of the latest version, not of a newer yanked row', () => {
+    const page = render(
+      packageFixture((r) =>
+        Object.assign(r, {
+          latest: '0.4.0',
+          versions: [
+            { version: '0.5.0', state: 'yanked', yank_reason: null, published_at: '2026-10-14T00:00:00Z' },
+            { version: '0.4.0', state: 'published', published_at: '2026-10-13T12:00:00Z' },
+          ],
+        }),
+      ),
+    );
+    const head = text(page.slice(0, page.indexOf('</header>')));
+    expect(head).toContain('Published 2026-10-13 12:00 UTC');
+    expect(head).not.toContain('2026-10-14');
   });
 
   test('a page on an unknown host shows no channel and no pixi command; the mopm.toml lines stand alone', () => {
@@ -237,10 +266,12 @@ describe('package shapes the fixtures do not cover', () => {
     expect(out).not.toContain('side-versions');
   });
 
-  test('tabs link to the readme and the versions table only when there is a readme', () => {
+  // They are jump links, so none is marked as selected: a permanent "on" would show a selection that does not exist.
+  test('jump links to the readme and the versions table only when there is a readme, none marked selected', () => {
     expect(render()).not.toContain('class="tabs"');
     const out = render(packageFixture((r) => Object.assign(r, { readme: '# x' })));
-    expect(out).toContain('<nav class="tabs" aria-label="On this page"><a href="#section-readme" class="on">Readme</a><a href="#versions-heading">Versions <span class="count">2</span></a></nav>');
+    expect(out).toContain('<nav class="tabs" aria-label="On this page"><a href="#section-readme">Readme</a><a href="#versions-heading">Versions <span class="count">2</span></a></nav>');
+    expect(out).not.toContain('class="on"');
   });
 
   test('an unknown version state is shown with its raw value', () => {

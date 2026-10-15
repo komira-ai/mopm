@@ -2,7 +2,7 @@
 //
 // The home page says only what README.md says: its opening sentence word for word, the commands that work today, the
 // build from source (there is no installer yet, so the page marks it planned), and the planned commands
-// (src/cli/main.zig). Its "Recently published" list is an empty slot the page script fills from the registry
+// (src/cli/main.zig). Its "Recently updated" list is an empty slot the page script fills from the registry
 // (src/views/recent.ts): no package is baked into the page. There is no featured list: the API has no source for one. test/layout.test.ts holds this copy to those files,
 // so when the README or the CLI changes, this page has to change with it.
 
@@ -154,15 +154,10 @@ export function homePage(): PageSpec {
           doc,
           'div',
           { class: 'install-hero', id: 'install' },
-          h(doc, 'p', { class: 'install-label' }, h(doc, 'strong', null, 'Install the mopm CLI')),
-          h(
-            doc,
-            'p',
-            { class: 'seg', 'aria-hidden': 'true' },
-            h(doc, 'span', { class: 'seg-on' }, 'From source'),
-            h(doc, 'span', { class: 'seg-off' }, 'One-line installer ', h(doc, 'span', { class: 'tag tag-planned' }, 'planned')),
-          ),
+          h(doc, 'p', { class: 'install-label' }, h(doc, 'strong', null, 'Install the mopm CLI'), ' from source'),
           copyBlock(BUILD, 'build from source commands', ' cmd-xl'),
+          // A plain line, not a tab: nothing happens on a click, so it must not look like a control.
+          h(doc, 'p', { class: 'installer-planned', id: 'installer-planned' }, 'One-line installer: ', h(doc, 'span', { class: 'tag tag-planned' }, 'planned')),
           h(
             doc,
             'p',
@@ -205,7 +200,7 @@ export function homePage(): PageSpec {
       null,
       h(doc, 'span', { class: 'num', 'aria-hidden': 'true' }, '3'),
       h(doc, 'h3', null, 'Add a package'),
-      h(doc, 'p', null, 'In a pixi project that lists the mopm.dev channel. mopm’s own ', code('mopm add'), ' is planned.'),
+      h(doc, 'p', null, 'In a pixi project that lists the registry’s conda channel. mopm’s own ', code('mopm add'), ' is planned.'),
       plainBlock('pixi add mojo-<name>', 'pixi command'),
     ),
   );
@@ -223,14 +218,15 @@ export function homePage(): PageSpec {
         doc,
         'div',
         { class: 'strip-recent' },
-        h(doc, 'p', { class: 'kicker' }, 'Recently published'),
+        // Sorted by updated_at, which a yank also moves: "updated", not "published".
+        h(doc, 'p', { class: 'kicker' }, 'Recently updated'),
         h(doc, 'h2', { id: 'recent' }, 'Fresh on the registry'),
         // Filled by the page script from the registry (src/views/recent.ts); nothing is baked in at build time.
         h(
           doc,
           'div',
-          { class: 'recent-slot', id: 'recent-list', 'aria-live': 'polite', 'aria-busy': 'true' },
-          h(doc, 'p', { class: 'recent-note js-only' }, 'Loading recently published packages…'),
+          { class: 'recent-slot', id: 'recent-list', 'aria-busy': 'true' },
+          h(doc, 'p', { class: 'recent-note js-only' }, 'Loading recently updated packages…'),
           h(doc, 'p', { class: 'recent-note no-js' }, 'The list of recent packages needs JavaScript. ', h(doc, 'a', { href: internalHref(searchPath()) }, 'Browse all packages'), ' instead.'),
         ),
       ),

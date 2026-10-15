@@ -1,9 +1,11 @@
-// The home page's "Recently published" list, filled at runtime from one searchPackages call.
+// The home page's "Recently updated" list, filled at runtime from one searchPackages call.
 //
 // The prerendered home page holds only an empty slot (#recent-list) with a loading line and a line for readers
 // without scripts; main.ts makes the call and puts these nodes in the slot. Nothing about the registry's contents is
 // baked into a page at build time. A name that is only claimed (latest null) has published nothing, so it is left
-// out. With no q every package matches, and the API refuses sort=updated once more than 1000 packages match: that
+// out; when a page holds only claims, "nothing is published" is said only on the last page (next_cursor null), else
+// the slot links to the full list. The API sorts by updated_at, which a yank or unyank also moves, so each row's date
+// is labelled as an update, not a publish. With no q every package matches, and the API refuses sort=updated once more than 1000 packages match: that
 // answer gets its own sentence and a link to the name-sorted list.
 
 import type { Result, SearchQuery } from '../api.js';
@@ -49,7 +51,7 @@ function item<N>(doc: Doc<N>, p: PackageSummary & { latest: string }): N {
     h(doc, 'span', { class: glyphClass(p.name), 'aria-hidden': 'true' }, initials(p.name)),
     h(doc, 'p', { class: 'recent-head' }, name, ' ', h(doc, 'span', { class: 'recent-ver' }, h(doc, 'span', { class: 'visually-hidden' }, 'version '), p.latest)),
     p.description ? h(doc, 'p', { class: 'recent-sum' }, p.description) : null,
-    h(doc, 'time', { datetime: p.updated_at }, formatDate(p.updated_at)),
+    h(doc, 'p', { class: 'recent-when' }, 'updated ', h(doc, 'time', { datetime: p.updated_at }, formatDate(p.updated_at))),
   );
 }
 
@@ -57,13 +59,16 @@ function item<N>(doc: Doc<N>, p: PackageSummary & { latest: string }): N {
 export function recentList<N>(doc: Doc<N>, r: Result<PackageList>): N[] {
   if (r.kind === 'ok') {
     const published = r.value.packages.filter((p): p is PackageSummary & { latest: string } => p.latest !== null);
-    if (published.length === 0) return [h(doc, 'p', { class: 'recent-note' }, 'Nothing has been published yet.')];
+    if (published.length === 0) {
+      if (r.value.next_cursor === null) return [h(doc, 'p', { class: 'recent-note' }, 'Nothing has been published yet.')];
+      return [h(doc, 'p', { class: 'recent-note' }, 'No recently updated package has a published version. ', browseLink(doc, 'Browse all packages'), '.')];
+    }
     return [h(doc, 'ol', { class: 'recent' }, ...published.map((p) => item(doc, p)))];
   }
   if (r.kind === 'invalid') {
     return [h(doc, 'p', { class: 'recent-note' }, 'The registry has too many packages to list by update time here. ', browseLink(doc, 'Browse all packages'), '.')];
   }
-  return [h(doc, 'p', { class: 'recent-note' }, 'Recently published packages could not be loaded. ', browseLink(doc, 'Browse all packages'), '.')];
+  return [h(doc, 'p', { class: 'recent-note' }, 'Recently updated packages could not be loaded. ', browseLink(doc, 'Browse all packages'), '.')];
 }
 
 /** The slot's content on a host outside host.ts's table, which never calls an API. */

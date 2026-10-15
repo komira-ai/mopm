@@ -5,6 +5,8 @@
 //    its look, with no aria-live status, fails it);
 //  - the reset after RESET_MS puts "Copy" back and empties the status (a missing reset fails it), and an earlier
 //    click's timer does not cut a later "Copied" short (a reset without the round check fails it);
+//  - a write that settles after a later click's write never overwrites the later outcome, either way round (a
+//    handler without the round check, on success or on failure, fails it);
 //  - a refused write says so in the status and never shows "Copied" (a handler that ignores the rejection fails it);
 //  - with no clipboard nothing is added, so the command stays plain text (a dead button fails it).
 import { addCopyButton, type Clipboard, COPIED, COPY, copyLabel, type CopyPort, FAILED, RESET_MS } from '../src/copy';
@@ -119,4 +121,44 @@ test('copyLabel: the aria-label, else the labelling text, else "command"', () =>
   expect(copyLabel(null, ' conda channel ')).toBe('conda channel');
   expect(copyLabel(null, null)).toBe('command');
   expect(copyLabel('  ', null)).toBe('command');
+});
+
+/** A clipboard whose writes the test settles by hand, in any order. */
+function manualClipboard() {
+  const pending: { resolve: () => void; reject: (e: Error) => void }[] = [];
+  const clip: Clipboard = {
+    writeText: () =>
+      new Promise<void>((resolve, reject) => {
+        pending.push({ resolve, reject });
+      }),
+  };
+  return { clip, pending };
+}
+const settle = () => new Promise((r) => setImmediate(r));
+
+test("a first click's refusal that settles late does not overwrite the second click's Copied", async () => {
+  const { clip, pending } = manualClipboard();
+  const { port, button, status, click } = setup(clip);
+  await click();
+  await click();
+  pending[1].resolve();
+  await settle();
+  pending[0].reject(new Error('late'));
+  await settle();
+  expect(port.textOf(button as SNode)).toBe(COPIED);
+  expect(port.textOf(status())).toBe(`${COPIED}: install command`);
+});
+
+test("a first click's success that settles late does not overwrite the second click's failure", async () => {
+  const { clip, pending } = manualClipboard();
+  const { port, button, status, click, timers } = setup(clip);
+  await click();
+  await click();
+  pending[1].reject(new Error('denied'));
+  await settle();
+  pending[0].resolve();
+  await settle();
+  expect(port.textOf(button as SNode)).toBe(COPY);
+  expect(port.textOf(status())).toBe(FAILED);
+  expect(timers).toEqual([]);
 });
