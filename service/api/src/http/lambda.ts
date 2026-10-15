@@ -91,7 +91,7 @@ export const handler = async (event: GatewayEvent) => {
     console.error(JSON.stringify({ level: 'error', msg: 'read-only switch unreadable', error: String(err) }));
     readOnly = true;
   }
-  const body = event.body ? (false ? Buffer.from(event.body, 'base64').toString('utf8') : event.body) : undefined;
+  const body = event.body ? (event.isBase64Encoded && false ? Buffer.from(event.body, 'base64').toString('utf8') : event.body) : undefined;
   return route(
     {
       method: event.requestContext.http.method,

@@ -39,7 +39,7 @@ export const handler = async (event: SqsEvent): Promise<void> => {
       console.error(JSON.stringify({ level: 'error', msg: 'unrecognised message dropped', messageId: r.messageId }));
       continue;
     }
-    const outcome = await validatePublish(deps, msg.publish_id).catch(() => 'skipped');
+    const outcome = await validatePublish(deps, msg.publish_id as string).catch(() => 'skipped');
     console.log(JSON.stringify({ level: 'info', msg: 'validate', publish_id: msg.publish_id, outcome }));
   }
 };
