@@ -7,6 +7,8 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 
 const css = readFileSync(join(__dirname, '..', 'static', 'site.css'), 'utf8');
+/** The home page's area stylesheet: the hero's build-command block lives there. */
+const homeCss = readFileSync(join(__dirname, '..', 'static', 'home.css'), 'utf8');
 
 /** The custom properties of the first ':root {' block at or after `from`. */
 function tokens(from: number): Record<string, string> {
@@ -25,11 +27,11 @@ function contrast(a: string, b: string): number {
   return (x + 0.05) / (y + 0.05);
 }
 
-/** The declarations of the rule whose selector list is exactly `selector`. */
-function rule(selector: string): string {
-  const i = css.indexOf(`\n${selector} {`);
+/** The declarations of the rule whose selector list is exactly `selector` (in site.css unless `sheet` is given). */
+function rule(selector: string, sheet = css): string {
+  const i = sheet.indexOf(`\n${selector} {`);
   if (i < 0) throw new Error(`no rule '${selector}'`);
-  return css.slice(i, css.indexOf('}', i));
+  return sheet.slice(i, sheet.indexOf('}', i));
 }
 
 const light = tokens(0);
@@ -74,7 +76,7 @@ test('the hero search box shows a focus ring when its field is focused', () => {
 
 // The build commands are the first a reader runs; on a phone a hidden horizontal scroll would cut them off.
 test('on narrow screens the hero build commands wrap instead of scrolling out of sight', () => {
-  const media = css.slice(css.indexOf('@media (max-width: 40rem)'));
+  const media = homeCss.slice(homeCss.indexOf('@media (max-width: 40rem)'));
   expect(media.slice(0, media.indexOf('\n}\n'))).toMatch(/\.cmd-xl code \{[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/);
 });
 
@@ -82,7 +84,7 @@ test('on narrow screens the hero build commands wrap instead of scrolling out of
 test('no tab-selection style is left for the jump links, and no fake tab shape for the planned installer', () => {
   expect(css).not.toContain('.tabs a.on');
   expect(css).not.toMatch(/\.seg\b/);
-  expect(rule('.cmd-xl')).not.toContain('border-radius: 0 ');
+  expect(rule('.cmd-xl', homeCss)).not.toContain('border-radius: 0 ');
 });
 
 test('the focus ring sets no border-radius (it would override a code block\'s rounded corners)', () => {
@@ -116,4 +118,28 @@ test('the no-script line is hidden unless scripting is off, and the loading line
   expect(rule('.no-js')).toContain('display: none;');
   const media = css.slice(css.indexOf('@media (scripting: none)'));
   expect(media.slice(0, media.indexOf('}\n}'))).toMatch(/\.no-js \{ display: block; \}[\s\S]*\.js-only, \.loading \{ display: none;/);
+});
+
+// The area stylesheets (tools/layout.ts AREA_STYLESHEETS) build on site.css's tokens and never define their own, so
+// light and dark stay in one place and every area follows a token change.
+describe('the area stylesheets', () => {
+  const areas = ['home.css', 'package.css', 'search.css', 'docs.css'].map((f) => [f, readFileSync(join(__dirname, '..', 'static', f), 'utf8')] as const);
+  const defined = new Set([...css.matchAll(/(--[a-z0-9-]+):/g)].map((m) => m[1]));
+
+  // Mutant: a misspelt token in an area sheet (var(--fg-mutd)) silently falls back to the inherited colour.
+  test.each(areas)('%s uses only custom properties site.css defines', (_f, text) => {
+    const used = [...text.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]);
+    expect(used.length).toBeGreaterThan(0);
+    expect(used.filter((v) => !defined.has(v))).toEqual([]);
+  });
+
+  // Mutant: an area sheet with its own :root or dark block, which the dark-token test above would never see.
+  test.each(areas)('%s defines no tokens and no colour scheme of its own', (_f, text) => {
+    expect(text).not.toMatch(/:root|prefers-color-scheme|--[a-z0-9-]+\s*:/);
+  });
+
+  test('site.css also uses only the custom properties it defines', () => {
+    const used = [...css.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]);
+    expect(used.filter((v) => !defined.has(v))).toEqual([]);
+  });
 });

@@ -1,0 +1,103 @@
+/* Package and version pages (/packages/...): head band, layout, install card, files, dependencies, readme. */
+
+.pkg-head { padding-bottom: 0; }
+.title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.title-row h1 { margin: 0; }
+.pkg-head h1 { font-family: var(--mono); font-size: clamp(1.6rem, 4vw, 2.25rem); letter-spacing: -0.03em; }
+.pkg-head .lede { margin: 12px 0 14px; font-size: 1.125rem; }
+.metarow { display: flex; flex-wrap: wrap; gap: 8px 22px; list-style: none; padding: 0; margin: 12px 0 18px; font-size: 0.875rem; color: var(--fg-muted); }
+.metarow strong { color: var(--fg-2); font-weight: 600; }
+.tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.tabs a {
+  display: inline-flex; align-items: center; gap: 8px; padding: 12px 14px; white-space: nowrap; font-size: 0.9375rem; font-weight: 600;
+  color: var(--fg-muted); text-decoration: none; border-bottom: 2px solid transparent;
+}
+.tabs a:hover, .tabs a:focus-visible { color: var(--fg); border-bottom-color: var(--border-strong); }
+.count { font-size: 0.75rem; padding: 1px 7px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); color: var(--fg-2); }
+
+.layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 40px; align-content: start; }
+.pkg-head + .layout { padding-top: 32px; }
+@media (min-width: 62rem) { .layout { grid-template-columns: minmax(0, 1fr) 19rem; } }
+.content > section > h2:first-child { margin-top: 0; }
+.content > * + section { margin-top: 2.5rem; }
+
+.install-card {
+  position: relative; overflow: hidden; padding: 18px 18px 16px 21px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); box-shadow: var(--shadow);
+}
+.install-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: linear-gradient(var(--accent), var(--magenta)); }
+.install-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px; margin-bottom: 10px; }
+.install-card h2, .side-panel h2, .readme > h2:first-child {
+  margin: 0; font-size: 0.75rem; font-weight: 750; text-transform: uppercase; letter-spacing: 0.1em; color: var(--fg-muted);
+}
+.install-card h2 { color: var(--fg-2); font-size: 0.8125rem; }
+.install-note { margin: 0; font-size: 0.875rem; color: var(--fg-muted); }
+.other-ways { margin-top: 12px; font-size: 0.875rem; }
+.other-ways summary { cursor: pointer; color: var(--fg-2); font-weight: 600; }
+.other-ways[open] summary { margin-bottom: 12px; }
+.alt { display: grid; gap: 12px; }
+.alt > p { margin: 0; }
+.snippet { margin-bottom: 1rem; }
+.alt .snippet { margin: 0; }
+.snippet-label { margin: 0 0 4px; font-size: 0.75rem; font-weight: 650; color: var(--fg-muted); }
+
+.side-panel { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); align-self: start; font-size: 0.9375rem; }
+.side-panel > section { padding: 18px; }
+.side-panel > section + section { border-top: 1px solid var(--border); }
+.side-panel h2 { margin-bottom: 12px; }
+@media (min-width: 62rem) { .side-panel { position: sticky; top: 84px; } }
+.meta { margin: 0; }
+.meta dt { font-size: 0.75rem; font-weight: 600; color: var(--fg-muted); margin-top: 12px; }
+.meta dt:first-child { margin-top: 0; }
+.meta dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+.inline-list { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.keywords li { padding: 2px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); font-size: 0.8125rem; color: var(--fg-2); }
+.owners { flex-direction: column; gap: 8px; }
+.owners li { display: flex; align-items: center; gap: 8px; }
+.vers { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 8px; font-size: 0.875rem; }
+.vers li { display: flex; justify-content: space-between; gap: 8px; }
+.vers a, .vers li > span:first-child { font-family: var(--mono); }
+.vers span { color: var(--fg-muted); }
+.vers .state-yanked > span:last-child, .vers .state-tombstoned > span:last-child { color: var(--fg); font-weight: 600; }
+.side-panel p { margin: 0; }
+.hash { font-size: 0.8rem; word-break: break-all; }
+.file { overflow-wrap: anywhere; font-family: var(--mono); font-size: 0.8125rem; text-underline-offset: 0.3em; }
+
+/* ---- version page ---- */
+
+.install-caveat { margin: 10px 0 0; font-size: 0.875rem; color: var(--fg-2); }
+.content > .notice { display: flex; flex-direction: column; gap: 4px; padding: 14px 18px; }
+.content > .notice p { margin: 0; }
+.files { margin: 0; }
+.files th, .files td { vertical-align: middle; padding: 0.7rem 0.9rem; }
+.files thead th { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-muted); }
+.files thead tr th { border-top: 0; }
+.platform { display: inline-block; padding: 2px 8px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--border); font-family: var(--mono); font-size: 0.8125rem; white-space: nowrap; }
+td.sha { min-width: 15rem; }
+.hash-box { display: flex; align-items: center; gap: 8px; }
+.hash-box pre { flex: none; width: calc(32ch + 18px); max-width: 100%; margin: 0; padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; line-height: 1.45; }
+.hash-box code { font-size: inherit; white-space: pre-wrap; word-break: break-all; color: var(--fg-2); }
+.hash-box .copy { align-self: center; padding: 4px 10px; min-width: 4.75rem; }
+.deps { list-style: none; padding: 0; margin: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.deps li { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; padding: 10px 16px; }
+.deps li + li { border-top: 1px solid var(--border); }
+.deps li > :first-child { font-family: var(--mono); font-weight: 600; }
+.deps code { font-size: 0.8125rem; }
+.crumb-pkg { font-family: var(--mono); }
+
+
+.readme > h2:first-child { margin-bottom: 16px; }
+.readme .prose h3 { font-size: 1.4rem; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.readme .prose h4 { font-size: 1.1rem; }
+
+@media (max-width: 40rem) {
+  .title-row h1 .ver { display: block; font-size: 1rem; margin-top: 4px; }
+  /* Each file row becomes a card: the file, then platform and size, then the digest (roles keep it a table). */
+  .files thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .files tr { display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; align-items: center; padding: 12px 14px; }
+  .files tbody tr + tr { border-top: 1px solid var(--border); }
+  .files th, .files td { display: block; padding: 0; border: 0; }
+  .files th { grid-column: 1 / -1; }
+  .files td.sha { grid-column: 1 / -1; min-width: 0; }
+  .hash-box pre { flex: 1; width: auto; min-width: 0; }
+}

@@ -1,0 +1,56 @@
+/* The search page (/search): search band, result cards, empty states, page buttons. */
+
+.search-band { padding-top: 2rem; padding-bottom: 1.25rem; }
+.search-title { font-size: clamp(1.4rem, 1.2rem + 1vw, 1.9rem); margin: 0 0 18px; overflow-wrap: anywhere; }
+.search-form { margin: 0; }
+.search-form .big-search { box-shadow: var(--shadow); }
+.search-opts { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 20px; margin-top: 12px; }
+.search-note { margin: 0; font-size: 0.875rem; color: var(--fg-muted); }
+.sort-field { display: flex; align-items: center; gap: 8px; }
+.sort-field label { margin: 0; font-size: 0.8125rem; color: var(--fg-muted); white-space: nowrap; }
+.sort-field select { width: auto; padding: 5px 30px 5px 10px; font-size: 0.875rem; }
+
+.search-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 32px 48px; padding-top: 24px; align-items: start; }
+@media (min-width: 62rem) { .search-body { grid-template-columns: minmax(0, 1fr) 17rem; } }
+.search-results { min-width: 0; }
+.search-help { padding: 18px 20px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-soft); font-size: 0.875rem; color: var(--fg-2); }
+.search-help h2 { margin: 0 0 10px; font-size: 0.75rem; font-weight: 750; text-transform: uppercase; letter-spacing: 0.1em; color: var(--fg-muted); }
+.search-help ul { margin: 0 0 12px; padding-left: 1.1rem; }
+.search-help li + li { margin-top: 6px; }
+.search-help p { margin: 0; }
+/* The band's big box is this page's search: the header's would be a second one. */
+body:has(.search-band) .site-search { display: none; }
+.result-count { margin: 0 0 14px; font-size: 0.875rem; color: var(--fg-muted); }
+.result-count strong { color: var(--fg); }
+.results { list-style: none; padding: 0; margin: 0 0 1.5rem; display: grid; gap: 12px; }
+.result {
+  position: relative; display: flex; gap: 16px; padding: 18px 20px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); box-shadow: var(--shadow); transition: border-color 0.15s, box-shadow 0.15s;
+}
+.result:hover { border-color: var(--border-strong); box-shadow: var(--shadow-lg); }
+.result-body { min-width: 0; flex: 1; }
+.result-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.result h2 { font-size: 1.125rem; margin: 0; font-family: var(--mono); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.result-name { color: var(--fg); text-decoration: none; }
+/* The whole card is the name's link target; the focus ring stays on the card. */
+a.result-name::after { content: ""; position: absolute; inset: 0; border-radius: var(--radius); }
+a.result-name:focus-visible { outline: none; }
+a.result-name:focus-visible::after { outline: 3px solid var(--focus); outline-offset: 2px; }
+.result:hover .result-name { color: var(--accent-strong); }
+.result .ver { font-size: 0.8125rem; }
+.result-desc { margin: 6px 0 0; color: var(--fg-2); }
+.result-meta { margin: 8px 0 0; font-size: 0.8125rem; color: var(--fg-muted); }
+
+.empty-state { padding: 36px 24px; text-align: center; border: 1px dashed var(--border-strong); border-radius: var(--radius); background: var(--surface); }
+.empty-state p { margin: 0 0 10px; }
+.empty-state > :last-child { margin: 16px 0 0; }
+.empty-lead { font-size: 1.0625rem; font-weight: 650; }
+.search-body .notice-error .button { margin-top: 4px; }
+.pager { display: flex; justify-content: space-between; gap: 1rem; margin-top: 8px; }
+.pager a[rel="next"] { margin-left: auto; }
+
+@media (max-width: 40rem) {
+  .result { padding: 14px 16px; gap: 12px; }
+  .result .glyph { width: 32px; height: 32px; border-radius: 9px; font-size: 0.75rem; }
+  .search-opts { align-items: flex-start; flex-direction: column; }
+}

@@ -5,7 +5,7 @@
 import { appendFileSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { assetId, moduleGraph } from '../tools/build';
-import { checkDist, CSS_MAX_BYTES, decodeAttr, DistError, isScriptUrl, JS_MAX_BYTES, JS_TOTAL_MAX_BYTES, REQUIRED, tagsIn } from '../tools/check-dist';
+import { AREA_CSS_MAX_BYTES, checkDist, decodeAttr, DistError, isScriptUrl, JS_MAX_BYTES, JS_TOTAL_MAX_BYTES, PAGE_CSS_MAX_BYTES, REQUIRED, SHARED_CSS_MAX_BYTES, tagsIn } from '../tools/check-dist';
 import { cleanup, type Fixture, fixture } from './build-fixture';
 
 const made: Fixture[] = [];
@@ -38,14 +38,15 @@ describe('a build', () => {
     for (const r of REQUIRED) expect(files).toContain(r);
     expect(REQUIRED).toEqual(expect.arrayContaining(['index.html', 'app.html', '404.html', 'docs/index.html', 'docs/mopm-toml/index.html', 'docs/mopm-test/index.html']));
     const assets = files.filter((f) => f.startsWith('assets/'));
-    expect(assets.sort()).toEqual(['a.js', 'lazy/b.js', 'lazy/c.js', 'main.js', 'site.css'].map((p) => `assets/${id}/${p}`).sort());
+    const css = ['docs.css', 'home.css', 'package.css', 'search.css', 'site.css'];
+    expect(assets.sort()).toEqual(['a.js', 'lazy/b.js', 'lazy/c.js', 'main.js', ...css].map((p) => `assets/${id}/${p}`).sort());
   });
 
-  test('pages load one stylesheet and the entry module, and preload what the entry imports', () => {
+  test('pages load the shared stylesheet and their area\'s, and the entry module, and preload what the entry imports', () => {
     const f = fresh();
     const { id } = f.build();
     const page = readFileSync(join(f.outDir, 'index.html'), 'utf8');
-    expect(page).toContain(`<link rel="stylesheet" href="/assets/${id}/site.css">`);
+    expect(page).toContain(`<link rel="stylesheet" href="/assets/${id}/site.css">\n<link rel="stylesheet" href="/assets/${id}/home.css">`);
     expect(page).toContain(`<script type="module" src="/assets/${id}/main.js"></script>`);
     expect(page.match(/rel="modulepreload"/g)).toHaveLength(3);
     expect(page).toContain(`<link rel="modulepreload" href="/assets/${id}/lazy/c.js">`);
@@ -57,6 +58,10 @@ describe('a build', () => {
     const f = fresh();
     writeFileSync(join(f.staticDir, 'site.css'), readFileSync(join(f.staticDir, 'site.css'), 'utf8') + '\n/* x */\n');
     expect(f.build().id).not.toBe(base);
+    // An area stylesheet is an asset too. Mutant: build.ts hashing only site.css.
+    const g = fresh();
+    writeFileSync(join(g.staticDir, 'docs.css'), readFileSync(join(g.staticDir, 'docs.css'), 'utf8') + '\n/* x */\n');
+    expect(g.build().id).not.toBe(base);
   });
 
   test('a module that is not imported does not change the id', () => {
@@ -251,10 +256,34 @@ describe('checkDist refuses', () => {
     expectRefusal(f, /logo\.png: only \.html, \.js and \.css/);
   });
 
-  test('a stylesheet over the CSS budget', () => {
+  test('the budgets are the design note\'s: 24 KiB shared, 16 KiB an area, 30 KiB on one page', () => {
+    expect([SHARED_CSS_MAX_BYTES, AREA_CSS_MAX_BYTES, PAGE_CSS_MAX_BYTES]).toEqual([24576, 16384, 30720]);
+  });
+
+  test('a shared stylesheet over its budget', () => {
     const { f, id } = built();
-    appendFileSync(join(f.outDir, 'assets', id, 'site.css'), `/*${'x'.repeat(CSS_MAX_BYTES)}*/\n`);
-    expectRefusal(f, /CSS is \d+ bytes; the limit is 32768/);
+    appendFileSync(join(f.outDir, 'assets', id, 'site.css'), `/*${'x'.repeat(SHARED_CSS_MAX_BYTES)}*/\n`);
+    expectRefusal(f, /site\.css is \d+ bytes; the limit for the shared stylesheet is 24576/);
+  });
+
+  test('an area stylesheet over its budget', () => {
+    const { f, id } = built();
+    appendFileSync(join(f.outDir, 'assets', id, 'docs.css'), `/*${'x'.repeat(AREA_CSS_MAX_BYTES)}*/\n`);
+    expectRefusal(f, /docs\.css is \d+ bytes; the limit for an area stylesheet is 16384/);
+  });
+
+  // Every sheet within its own budget, but the three the app shell links over the page total. Only the pages that link
+  // the grown sheet are refused. Mutants: the page total counting every stylesheet in the tree (the docs pages refused
+  // too), or not counted at all.
+  test('a page whose stylesheets together are over the page budget, each within its own', () => {
+    const { f, id } = built();
+    const p = join(f.outDir, 'assets', id, 'package.css');
+    const grow = AREA_CSS_MAX_BYTES - readFileSync(p).length - 8;
+    appendFileSync(p, `/*${'x'.repeat(grow)}*/\n`);
+    expect(readFileSync(p).length).toBeLessThanOrEqual(AREA_CSS_MAX_BYTES);
+    expectRefusal(f, /app\.html links \d+ bytes of CSS; the limit for one page is 30720/);
+    expect(() => checkDist(f.outDir)).not.toThrow(/docs\/[^ ]*index\.html links/);
+    expect(() => checkDist(f.outDir)).not.toThrow(/package\.css is \d+ bytes/);
   });
 
   test('modules each under the per-module limit but over the total', () => {
