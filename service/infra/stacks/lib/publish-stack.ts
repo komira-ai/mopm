@@ -91,6 +91,7 @@ export class PublishStack extends Stack {
       // A 100 MB archive may unpack to 512 MB; the buffers of one archive plus the decompressors need room.
       memorySize: 3008,
       timeout: Duration.seconds(VALIDATOR_TIMEOUT_SECONDS),
+      reservedConcurrentExecutions: VALIDATOR_MAX_CONCURRENCY,
       logGroup: logGroup('ValidatorLogs'),
       environment: {
         MOPM_STAGE: c.stage,
