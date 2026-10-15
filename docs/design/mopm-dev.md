@@ -189,7 +189,7 @@ code; a package appears once, in its best group.
   `package`, `library`, `lib`) are dropped from multi-term queries. The last term (3 or more characters) also matches
   as a prefix, up to 20 completions.
 - **Score**: BM25 with field boosts (name parts 10, keywords 5, summary 3, symbols 2, README 1; stems at 0.7 of
-  their field) times a static boost (recency; downloads after Q5) through `tweak_score`; ties by name. A symbol name
+  their field) times a static boost (recency; downloads once PR 20 lands, Q5) through `tweak_score`; ties by name. A symbol name
   counts once however often it is listed. Arithmetic: [appendix A.4](mopm-dev-appendix.md#a4-ranking).
 
 ### 1.5 Versions in search
@@ -559,7 +559,7 @@ red ([appendix D](mopm-dev-appendix.md#d-test-plan)). "Port" means it waits for 
 | 17 | site | Reference pages | 12, 14 |
 | 18 | site | Docstring guide, search help, `/llms.txt` with the recipe | 11 |
 | 19 | API | Canonical names only: the name pattern refuses runs of `_` and a trailing `_` (`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`, length 2 to 64) in every copy of the old `^[a-z][a-z0-9_]{1,63}$`: `NAME_PATTERN` in `service/api` (publish, token scopes, the OIDC check) and the router's `NAME`; `spec/api/openapi.yaml` (the `Name` schema and the conda filename pattern); the index-record (name and filename), lock and takedowns schemas; `site/src/routes.ts` `NAME`; the fake registry's `isName` (which already refuses runs of `_` but not a trailing `_`); `tests/drivers/regex.zig`; and the `invalid_name` hint and site text that describe the rule (3.6, Q10) | |
-| 20 | API | Download counts (Q5) | port, 13 |
+| 20 | API | Download counts (Q5) | port, 13, 16 |
 
 Can start now: R, V0, 2, 3, 6, 7, 10, 11, 19; V once V0 lands and the workspace location is answered; then 8 and 9 (the shared crates)
 with no wait on the port; 15 against fixtures. Waiting on the port: 4a to 4c, 12, 13, 14, 20.

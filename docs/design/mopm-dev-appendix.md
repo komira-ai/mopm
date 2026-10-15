@@ -33,7 +33,7 @@ other packages' scores.
 | `summary_stem`, `keywords_stem`, `readme_stem` | the same text | `mopm_stem`, freqs | as above |
 | `state` | `ok` or `all_yanked` | raw, indexed, fast | |
 | `published_at`, `first_published_at` | version records | date, fast, stored | |
-| `downloads_30d` | 0 until Q5 | u64, fast | |
+| `downloads_30d` | 0 until PR 20 (Q5) | u64, fast | |
 | `display` | latest version, version count, lines (newest 3 and total), `mojo_versions`, `(version, requires_mojo, platforms)` for the newest 256 published versions, licence (SPDX-checked), repository, owners (3 plus count), provenance, native dependency count, symbol count, `has_api` | stored JSON only | 16 KiB |
 
 A README match beyond the first 8 KiB ranks but returns no snippet. The summary comes from the highest published
