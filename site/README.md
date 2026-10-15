@@ -101,7 +101,7 @@ docs pages are rendered from) starts promote.yml, which deploys it to beta, gamm
   the bucket as it is.
 - **Not found.** A missing key (403 or 404 from the bucket) gets `404.html` with status 404; nothing is answered with
   the home page. These are distribution-wide error responses, an interim choice until the API is served from this
-  distribution (`docs/design/mopm-dev.md`, §3.1).
+  distribution (`docs/design/mopm-dev.md`, §4.1).
 - **Headers.** The CSP `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src
   https://api.<site host>; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none';
   require-trusted-types-for 'script'; trusted-types 'none'`, plus HSTS, `X-Content-Type-Options`,
