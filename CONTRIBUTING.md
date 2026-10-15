@@ -31,6 +31,41 @@ Two builds describe the same program, and both stay.
   `farm.yml` has matched it, and are deleted then. Without a farm configured
   (`.buckconfig.local`, gitignored) the actions run on your machine.
 
+### The service packages (TypeScript) on the farm
+
+`service/api` and `service/infra/{stacks,dns,access}` have Buck2 targets that run the
+commands `service-ci.yml` runs, on the farm, from pinned npm packages instead of
+`npm ci` (`service-ci.yml` stays as it is until these match it):
+
+| target | the command it replaces |
+|---|---|
+| `//service/api:typecheck`, `:test`, `:dist`, `:dist_has_handler` | `tsc --noEmit`, `jest --ci` (2 workers), `tsc -p tsconfig.build.json` and `test -f dist/http/lambda.js` |
+| `//service/infra/{stacks,dns,access}:typecheck`, `:test` | `tsc --noEmit` and `jest --ci` |
+| `//service/infra/stacks:synth_{beta,gamma,prod}` | `cdk synth` of each stage with a dummy account and zone id; the API bundle is `//service/api:dist` |
+| `//service/infra/dns:synth_{beta,gamma,prod,delegation}` | the four `cdk synth` runs with dummy values |
+
+komira's `npm_modules` rule lays out each package's `node_modules` from its
+`package-lock.json` and one pinned tarball per package (`service/*/pins.lock.bzl`: URL, sha256 and
+size, checked against the lockfile's sha512 integrity); no install script runs, there is no network and no
+shell or Python. Node.js is pinned in `tools/node/pins.toml`. The tests that read files outside their
+package get them as `data` (the specification and contract cases for the API, the access policy template,
+the stages' configuration and the API's golden grants for the stacks). The bash tests of `dns.sh`,
+`bootstrap.sh` and `oauth-secret.sh` stay in `service-ci.yml`.
+
+After `npm install` or `npm update` changes a `package-lock.json`, regenerate its pins (kpin is
+komira's tool, `./buck2 run komira//tools/build/kpin`), then commit the lock with the lockfile:
+
+```sh
+./buck2 run komira//tools/build/kpin -- update --pins service/pins.toml \
+    --lock service/api/pins.lock.bzl --npm service/api/package-lock.json
+./buck2 run komira//tools/build/kpin -- check --pins service/pins.toml \
+    --lock service/api/pins.lock.bzl --npm service/api/package-lock.json
+```
+
+`update` fetches what the lock lacks; `check` is offline and fails (exit 3 for a changed hash) when the lock
+is not what the lockfile says. The build fails, naming the package, when a lockfile package has no
+tarball in `pins.lock.bzl`.
+
 A source file you add under `src/core`, `src/cli` or `registry/fake` is picked
 up by both (Buck2 takes each directory by glob; it skips dotfiles, so a new
 dotfile under `tests/` is named in `BUCK`). A new root source file, executable,
