@@ -1,0 +1,5 @@
+# The inputs of third_party/rust/gen: Cargo manifests (the dependency set), and what Cargo
+# resolved from them. See third_party/rust/README.md for how each file is made.
+exports = ["metadata.json", "Cargo.lock", "tree.txt", "sizes.txt"]
+
+[export_file(name = f, visibility = ["PUBLIC"]) for f in exports]

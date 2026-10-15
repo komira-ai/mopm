@@ -1,0 +1,119 @@
+{
+  "aws-lc-rs 1.11.1": {
+    "class": "a",
+    "why": "build.rs only re-exports the DEP_AWS_LC_* variables of aws-lc-sys to dependents; nothing the crate itself compiles reads them.",
+    "cfgs": []
+  },
+  "aws-lc-sys 0.23.1": {
+    "class": "c",
+    "why": "build.rs compiles the bundled AWS-LC with CMake and emits cfg x86_64_unknown_linux_gnu (selects the pre-generated bindings). Replaced by komira//third_party/aws-lc:crypto, linked into each executable (native_deps). That AWS-LC is the same release (1.39.0) but its symbols are komira_awslc_X, where the bindings say aws_lc_0_23_1_X, so the bindings are rewritten; the three ERR_GET_*_RUST C wrappers (rust_wrapper.c) become Rust.",
+    "cfgs": ["x86_64_unknown_linux_gnu"],
+    "patch": {
+      "copy": ["src"],
+      "sub": [
+        {"file": "src/x86_64_unknown_linux_gnu_crypto.rs", "from": "aws_lc_0_23_1_", "to": "komira_awslc_", "count": 2579},
+        {"file": "src/lib.rs", "from": "unsafe { ERR_GET_LIB_RUST(packed_error) }", "to": "((packed_error >> 24) & 0xff) as i32"},
+        {"file": "src/lib.rs", "from": "unsafe { ERR_GET_REASON_RUST(packed_error) }", "to": "(packed_error & 0xfff) as i32"},
+        {"file": "src/lib.rs", "from": "unsafe { ERR_GET_FUNC_RUST(packed_error) }", "to": "{ let _ = packed_error; 0 }"}
+      ]
+    }
+  },
+  "aws-types 1.3.10": {
+    "class": "b",
+    "why": "build.rs writes build_env.rs, const RUST_VERSION = the rustc version. The pinned rustc is 1.85.0.",
+    "patch": {
+      "copy": ["src", "Cargo.toml"],
+      "sub": [{"file": "src/build_metadata.rs", "from": "concat!(env!(\"OUT_DIR\"), \"/build_env.rs\")", "to": "\"build_env.rs\""}],
+      "add": [{"file": "src/build_env.rs", "content": "const RUST_VERSION: &str = \"1.85.0\";"}]
+    }
+  },
+  "crc32fast 1.5.2": {
+    "class": "a",
+    "why": "rustc minor 85: stable_arm_crc32_intrinsics (>= 80); not stable_vpclmulqdq (>= 89).",
+    "cfgs": ["stable_arm_crc32_intrinsics"]
+  },
+  "generic-array 0.14.7": {
+    "class": "a",
+    "why": "version_check says rustc >= 1.41.",
+    "cfgs": ["relaxed_coherence"]
+  },
+  "getrandom 0.3.4": {
+    "class": "a",
+    "why": "emits cfgs only for msan and windows; none on linux.",
+    "cfgs": []
+  },
+  "httparse 1.10.1": {
+    "class": "a",
+    "why": "rustc >= 1.59 and std: SIMD cfgs. No sse4.2/avx2 target feature at baseline x86-64, so runtime detection only.",
+    "cfgs": ["httparse_simd_neon_intrinsics", "httparse_simd"]
+  },
+  "icu_normalizer_data 2.1.1": {"class": "a", "why": "emits a cfg only when ICU4X_DATA_DIR is set.", "cfgs": []},
+  "icu_properties_data 2.1.2": {"class": "a", "why": "emits a cfg only when ICU4X_DATA_DIR is set.", "cfgs": []},
+  "libc 0.2.190": {
+    "class": "a",
+    "why": "x86_64 linux gnu: linux_time_bits64 (target_os linux, 64-bit pointers).",
+    "cfgs": ["linux_time_bits64"]
+  },
+  "num-traits 0.2.19": {
+    "class": "a",
+    "why": "autocfg probe `1f64.total_cmp(&2f64)` compiles on 1.85.",
+    "cfgs": ["has_total_cmp"]
+  },
+  "paste 1.0.15": {"class": "a", "why": "no_literal_fromstr only below rustc 1.54.", "cfgs": []},
+  "proc-macro2 1.0.107": {
+    "class": "a",
+    "why": "stable rustc, no span-locations: wrap_proc_macro. The unstable probes fail on stable.",
+    "cfgs": ["wrap_proc_macro"]
+  },
+  "quote 1.0.47": {"class": "a", "why": "no_diagnostic_namespace only below rustc 1.78.", "cfgs": []},
+  "rustls 0.23.20": {"class": "a", "why": "read_buf is for nightly only.", "cfgs": []},
+  "rustversion 1.0.23": {
+    "class": "b",
+    "why": "build/build.rs asks rustc --version and writes version.expr, a struct literal that src/lib.rs includes. Written for 1.85.0 stable.",
+    "patch": {
+      "copy": ["src", "Cargo.toml"],
+      "sub": [{"file": "src/lib.rs", "from": "concat!(env!(\"OUT_DIR\"), \"/version.expr\")", "to": "\"version.expr\""}],
+      "add": [{"file": "src/version.expr", "content": "crate::version::Version {\n    minor: 85,\n    patch: 0,\n    channel: crate::version::Channel::Stable,\n}\n"}]
+    }
+  },
+  "serde 1.0.229": {
+    "class": "b",
+    "why": "build.rs writes private.rs (a module named for the patch version) and emits if_docsrs_then_no_serde_core; all minor-version cfgs are off at 1.85. The file is placed beside each include! (lib.rs and core/crate_root.rs).",
+    "cfgs": ["if_docsrs_then_no_serde_core"],
+    "patch": {
+      "copy": ["src", "Cargo.toml"],
+      "sub": [
+        {"file": "src/lib.rs", "from": "concat!(env!(\"OUT_DIR\"), \"/private.rs\")", "to": "\"out_private.rs\""},
+        {"file": "src/core/crate_root.rs", "from": "concat!(env!(\"OUT_DIR\"), \"/private.rs\")", "to": "\"out_private.rs\""}
+      ],
+      "add": [
+        {"file": "src/out_private.rs", "content": "#[doc(hidden)]\npub mod __private$VERSION_PATCH {\n    #[doc(hidden)]\n    pub use crate::private::*;\n}\nuse serde_core::__private$VERSION_PATCH as serde_core_private;\n"},
+        {"file": "src/core/out_private.rs", "content": "#[doc(hidden)]\npub mod __private$VERSION_PATCH {\n    #[doc(hidden)]\n    pub use crate::private::*;\n}\nuse serde_core::__private$VERSION_PATCH as serde_core_private;\n"}
+      ]
+    }
+  },
+  "serde_core 1.0.229": {
+    "class": "b",
+    "why": "build.rs writes private.rs (module named for the patch version); every no_* cfg is off at rustc 1.85.",
+    "patch": {
+      "copy": ["src", "Cargo.toml"],
+      "sub": [{"file": "src/crate_root.rs", "from": "concat!(env!(\"OUT_DIR\"), \"/private.rs\")", "to": "\"out_private.rs\""}],
+      "add": [{"file": "src/out_private.rs", "content": "#[doc(hidden)]\npub mod __private$VERSION_PATCH {\n    #[doc(hidden)]\n    pub use crate::private::*;\n}\n"}]
+    }
+  },
+  "serde_json 1.0.154": {
+    "class": "a",
+    "why": "x86_64: 64-bit limbs.",
+    "cfgs": ["fast_arithmetic=\"64\""]
+  },
+  "zerocopy 0.8.63": {
+    "class": "a",
+    "why": "the cfgs for features newer than the pinned rustc, from [package.metadata.build-rs] in Cargo.toml: those above 1.85 are 1.87 and 1.89.",
+    "cfgs": ["no_zerocopy_simd_x86_avx12_1_89_0", "no_zerocopy_aarch64_simd_be_1_87_0"]
+  },
+  "zmij 1.0.23": {
+    "class": "a",
+    "why": "rustc < 1.88: zmij_no_select_unpredictable.",
+    "cfgs": ["zmij_no_select_unpredictable"]
+  }
+}

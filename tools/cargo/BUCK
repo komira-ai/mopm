@@ -1,0 +1,26 @@
+# Rules for crates.io crates that komira's `crates_io_library` cannot build
+# (it has no env, no generated files, no renamed dependencies, no native
+# libraries). See cargo.bzl and third_party/rust/README.md.
+
+load("@komira//tools/build/mojo:toolchain.bzl", "zig_exe", "zig_test")
+load("@komira//tools/build/platforms:defs.bzl", "LINUX_X86_64")
+
+_TOOLS = {
+    "busybox": "komira//tools/build/toolchains:busybox",
+    "exec_compatible_with": LINUX_X86_64,
+    "zig": "komira//tools/build/toolchains:zig",
+}
+
+zig_exe(
+    name = "crate_patch",
+    src = "crate_patch.zig",
+    unit_tests = [":crate_patch_test"],
+    visibility = ["PUBLIC"],
+    **_TOOLS
+)
+
+zig_test(
+    name = "crate_patch_test",
+    src = "crate_patch.zig",
+    **_TOOLS
+)

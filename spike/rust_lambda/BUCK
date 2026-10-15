@@ -1,0 +1,53 @@
+# A Rust AWS Lambda (custom runtime, API Gateway v2) built by Buck2 with komira's Rust toolchain.
+#
+#   :bootstrap_bin   the function's executable (glibc 2.34 or older, nothing else)
+#   :e2e_test        runs it against a fake Lambda runtime API on loopback and holds its response
+#   :lambda_zip      the deployment package, `bootstrap` stored in a zip; not built unless :e2e_test passed
+#
+# The `_small` targets are the same program built for size (LTO, abort on panic, stripped), with
+# its own e2e test and zip: the numbers in the spike report come from both.
+
+load("@komira//tools/build/mojo:toolchain.bzl", "zig_test")
+load("@komira//tools/build/platforms:defs.bzl", "LINUX_X86_64")
+load("//tools/cargo:cargo.bzl", "cargo_bin")
+load("//tools/lambda:lambda.bzl", "lambda_zip")
+
+_DEPS = [
+    "//third_party/rust:lambda_http",
+    "//third_party/rust:lambda_runtime",
+    "//third_party/rust:serde_json",
+    "//third_party/rust:tokio",
+]
+
+_SMALL = ["-Clto=fat", "-Cpanic=abort", "-Ccodegen-units=1", "-Cstrip=symbols"]
+
+[
+    (
+        cargo_bin(
+            name = "bootstrap" + suffix + "_bin",
+            srcs = ["src/main.rs"],
+            crate_root = "src/main.rs",
+            deps = _DEPS,
+            opt_level = opt,
+            rustc_flags = flags,
+            visibility = ["PUBLIC"],
+        ),
+        zig_test(
+            name = "e2e" + suffix + "_test",
+            src = "e2e_test.zig",
+            env_tools = {"BOOTSTRAP": ":bootstrap" + suffix + "_bin[ungated]"},
+            busybox = "komira//tools/build/toolchains:busybox",
+            exec_compatible_with = LINUX_X86_64,
+            zig = "komira//tools/build/toolchains:zig",
+        ),
+        lambda_zip(
+            name = "lambda" + suffix + "_zip",
+            bootstrap = ":bootstrap" + suffix + "_bin[ungated]",
+            welded_tests = [":e2e" + suffix + "_test"],
+        ),
+    )
+    for suffix, opt, flags in [
+        ("", "3", []),
+        ("_small", "s", _SMALL),
+    ]
+]

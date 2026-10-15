@@ -1,0 +1,13 @@
+load("@komira//tools/build/rust:defs.bzl", "rust_binary")
+
+rust_binary(
+    name = "xcell",
+    srcs = ["main.rs"],
+    crate_root = "main.rs",
+    expected_stdout = "1,2,3\n",
+    deps = [
+        "komira//third_party/rust:anyhow",
+        "komira//third_party/rust:itertools",
+        "//third_party/rust:itoa",
+    ],
+)

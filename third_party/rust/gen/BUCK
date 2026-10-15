@@ -1,0 +1,39 @@
+load("@komira//tools/build/mojo:toolchain.bzl", "zig_exe", "zig_test")
+load("@komira//tools/build/platforms:defs.bzl", "LINUX_X86_64")
+load("//tools/cargo:cargo.bzl", "cargo_buck_gen")
+
+_TOOLS = {
+    "busybox": "komira//tools/build/toolchains:busybox",
+    "exec_compatible_with": LINUX_X86_64,
+    "zig": "komira//tools/build/toolchains:zig",
+}
+
+zig_exe(
+    name = "cargo_to_buck",
+    src = "cargo_to_buck.zig",
+    visibility = ["PUBLIC"],
+    **_TOOLS
+)
+
+_INPUTS = dict(
+    tool = ":cargo_to_buck",
+    cargo_metadata = "//third_party/rust/workspace:metadata.json",
+    lock = "//third_party/rust/workspace:Cargo.lock",
+    tree = "//third_party/rust/workspace:tree.txt",
+    sizes = "//third_party/rust/workspace:sizes.txt",
+    overrides = "overrides.json",
+)
+
+# The crates.bzl the inputs generate: `./buck2 build //third_party/rust/gen:gen --show-output`,
+# then copy it to third_party/rust/crates.bzl.
+cargo_buck_gen(
+    name = "gen",
+    **_INPUTS
+)
+
+# Fails unless third_party/rust/crates.bzl is exactly what :gen writes.
+cargo_buck_gen(
+    name = "drift",
+    check = "//third_party/rust:crates.bzl",
+    **_INPUTS
+)

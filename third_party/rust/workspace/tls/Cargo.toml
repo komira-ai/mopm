@@ -1,0 +1,9 @@
+[package]
+name = "tls"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.85"
+[dependencies]
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std", "tls12"] }
+aws-lc-rs = { version = "=1.11.1", default-features = false, features = ["aws-lc-sys"] }
+aws-lc-sys = { version = "=0.23.1", default-features = false }

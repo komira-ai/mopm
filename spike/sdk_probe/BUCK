@@ -1,0 +1,55 @@
+load("//tools/cargo:cargo.bzl", "cargo_bin", "cargo_test")
+
+AWS_LC = "komira//third_party/aws-lc:crypto[static-pic]"
+
+_SDK = [
+    "//third_party/rust:aws-sdk-dynamodb",
+    "//third_party/rust:tokio",
+]
+
+# One GetItem against a fake DynamoDB on loopback.
+cargo_test(
+    name = "probe_test",
+    srcs = [
+        "probe_test.rs",
+        "src/probe.rs",
+    ],
+    crate_root = "probe_test.rs",
+    deps = _SDK + ["//third_party/rust:serde_json"],
+    native_deps = [AWS_LC],
+)
+
+cargo_bin(
+    name = "sdk_probe",
+    srcs = [
+        "src/main.rs",
+        "src/probe.rs",
+    ],
+    crate_root = "src/main.rs",
+    deps = _SDK + [
+        "//third_party/rust:aws-config",
+        "//third_party/rust:aws-sdk-s3",
+    ],
+    native_deps = [AWS_LC],
+    tests = [":probe_test"],
+    visibility = ["PUBLIC"],
+)
+
+# The same program built for size, to compare with :sdk_probe (it is gated by the same test).
+cargo_bin(
+    name = "sdk_probe_small",
+    srcs = [
+        "src/main.rs",
+        "src/probe.rs",
+    ],
+    crate_root = "src/main.rs",
+    deps = _SDK + [
+        "//third_party/rust:aws-config",
+        "//third_party/rust:aws-sdk-s3",
+    ],
+    native_deps = [AWS_LC],
+    opt_level = "s",
+    rustc_flags = ["-Clto=fat", "-Cpanic=abort", "-Ccodegen-units=1", "-Cstrip=symbols"],
+    tests = [":probe_test"],
+    visibility = ["PUBLIC"],
+)

@@ -1,0 +1,22 @@
+load("@komira//tools/build/mojo:toolchain.bzl", "zig_exe", "zig_test")
+load("@komira//tools/build/platforms:defs.bzl", "LINUX_X86_64")
+
+_TOOLS = {
+    "busybox": "komira//tools/build/toolchains:busybox",
+    "exec_compatible_with": LINUX_X86_64,
+    "zig": "komira//tools/build/toolchains:zig",
+}
+
+zig_exe(
+    name = "zip_pack",
+    src = "zip_pack.zig",
+    unit_tests = [":zip_pack_test"],
+    visibility = ["PUBLIC"],
+    **_TOOLS
+)
+
+zig_test(
+    name = "zip_pack_test",
+    src = "zip_pack.zig",
+    **_TOOLS
+)

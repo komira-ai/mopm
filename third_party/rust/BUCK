@@ -1,0 +1,7 @@
+# The crates.io crates the Rust targets link, one cargo_crate each. crates.bzl is
+# generated (third_party/rust/gen, see README.md): never edit it by hand.
+load(":crates.bzl", "crates")
+
+crates()
+
+export_file(name = "crates.bzl", visibility = ["PUBLIC"])

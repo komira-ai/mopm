@@ -1,0 +1,20 @@
+load("//tools/cargo:cargo.bzl", "cargo_test")
+
+# komira's AWS-LC, as the archive an executable links (komira's own rules link it the same way).
+AWS_LC = "komira//third_party/aws-lc:crypto[static-pic]"
+
+cargo_test(
+    name = "tls_test",
+    srcs = [
+        "tls_test.rs",
+        "fixtures/ca.der",
+        "fixtures/leaf.der",
+        "fixtures/leaf_key.der",
+    ],
+    crate_root = "tls_test.rs",
+    deps = [
+        "//third_party/rust:aws-lc-sys",
+        "//third_party/rust:rustls",
+    ],
+    native_deps = [AWS_LC],
+)
