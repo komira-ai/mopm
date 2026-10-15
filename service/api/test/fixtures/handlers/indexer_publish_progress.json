@@ -1,0 +1,192 @@
+{
+  "description": "An index message with a publish id also moves that publish on, after the files are written: the subdir leaves remaining_subdirs and, when none is left, the status becomes published (a compare-and-swap Put on rev, rev + 1, updated_at from the clock).",
+  "lambda": "indexer",
+  "env": {
+    "MOPM_STAGE": "beta",
+    "MOPM_CHANNEL_BUCKET": "channel-bucket",
+    "MOPM_DISTRIBUTION_ID": "DIST1"
+  },
+  "dynamo": [
+    {
+      "op": "Get",
+      "table": "mopm-beta-publishes",
+      "key": {
+        "publish_id": "pub_abc"
+      },
+      "respond": {
+        "Item": {
+          "publish_id": "pub_abc",
+          "status": "indexing",
+          "remaining_subdirs": [
+            "noarch"
+          ],
+          "rev": 3,
+          "updated_at": "2026-09-30T00:00:00.000Z"
+        }
+      }
+    }
+  ],
+  "invocations": [
+    {
+      "event": {
+        "Records": [
+          {
+            "messageId": "m1",
+            "receiptHandle": "handle-1",
+            "body": "{\"type\":\"index\",\"subdir\":\"noarch\",\"publish_id\":\"pub_abc\"}",
+            "attributes": {
+              "MessageGroupId": "g"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          }
+        ]
+      },
+      "expect": {
+        "returns": null
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Scan",
+        "table": "mopm-beta-packages"
+      },
+      {
+        "op": "Get",
+        "table": "mopm-beta-publishes",
+        "key": {
+          "publish_id": "pub_abc"
+        }
+      },
+      {
+        "op": "Put",
+        "table": "mopm-beta-publishes",
+        "condition": "#r = :r",
+        "item": {
+          "publish_id": "pub_abc",
+          "status": "published",
+          "remaining_subdirs": [],
+          "rev": 4,
+          "updated_at": "2026-10-01T00:00:00.000Z"
+        }
+      }
+    ],
+    "aws_http": [
+      {
+        "method": "PUT",
+        "url": "https://channel-bucket.s3.us-east-1.amazonaws.com/linux-64/repodata.json",
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "public, max-age=60",
+          "if-none-match": "*"
+        },
+        "body": {
+          "sha256": "77f566cca6c3b46354d0d0bfdc86a85c3279210929642feb7f6e125c66a357a1"
+        }
+      },
+      {
+        "method": "PUT",
+        "url": "https://channel-bucket.s3.us-east-1.amazonaws.com/linux-64/repodata.json.zst",
+        "headers": {
+          "content-type": "application/zstd",
+          "cache-control": "public, max-age=60",
+          "if-none-match": "*"
+        },
+        "body": {
+          "sha256": "30e605bc0fdda3da0614ba94459da61bdd42ed1a9f94d7a1eb7221a83f82c395"
+        }
+      },
+      {
+        "method": "PUT",
+        "url": "https://channel-bucket.s3.us-east-1.amazonaws.com/linux-aarch64/repodata.json",
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "public, max-age=60",
+          "if-none-match": "*"
+        },
+        "body": {
+          "sha256": "38ea12f3bcee509b9b33519107f796c01c739466c9d901ff49f360c16339d032"
+        }
+      },
+      {
+        "method": "PUT",
+        "url": "https://channel-bucket.s3.us-east-1.amazonaws.com/linux-aarch64/repodata.json.zst",
+        "headers": {
+          "content-type": "application/zstd",
+          "cache-control": "public, max-age=60",
+          "if-none-match": "*"
+        },
+        "body": {
+          "sha256": "0874b9bd4de6e32c716b53fbdcfa44f844939129f964175fd27a485b88f93e9c"
+        }
+      },
+      {
+        "method": "PUT",
+        "url": "https://channel-bucket.s3.us-east-1.amazonaws.com/osx-arm64/repodata.json",
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "public, max-age=60",
+          "if-none-match": "*"
+        },
+        "body": {
+          "sha256": "eb9fe038fc9d3c379d709cee650f6b746dc4590b71d28722701fc9d71695fc7e"
+        }
+      },
+      {
+        "method": "PUT",
+        "url": "https://channel-bucket.s3.us-east-1.amazonaws.com/osx-arm64/repodata.json.zst",
+        "headers": {
+          "content-type": "application/zstd",
+          "cache-control": "public, max-age=60",
+          "if-none-match": "*"
+        },
+        "body": {
+          "sha256": "0a3b9b3aea51645b70d3002e708a571d6b5da8903f2860f4b28f3c9964c20fd2"
+        }
+      },
+      {
+        "method": "PUT",
+        "url": "https://channel-bucket.s3.us-east-1.amazonaws.com/noarch/repodata.json",
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "public, max-age=60"
+        },
+        "body": {
+          "sha256": "de89c35a1f2e650a031b134f20101f1f5b75cc4e75b6de3ec7dc0cfe66cbd5c5"
+        }
+      },
+      {
+        "method": "PUT",
+        "url": "https://channel-bucket.s3.us-east-1.amazonaws.com/noarch/repodata.json.zst",
+        "headers": {
+          "content-type": "application/zstd",
+          "cache-control": "public, max-age=60"
+        },
+        "body": {
+          "sha256": "15b9dade4c44b064e0b567498934b730ca6c480ade7df1d166a2ed8d454e91a4"
+        }
+      },
+      {
+        "method": "POST",
+        "url": "https://cloudfront.amazonaws.com/2020-05-31/distribution/DIST1/invalidation",
+        "headers": {
+          "content-type": "text/xml"
+        },
+        "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><InvalidationBatch xmlns=\"http://cloudfront.amazonaws.com/doc/2020-05-31/\"><Paths><Quantity>2</Quantity><Items><Path>/noarch/repodata.json</Path><Path>/noarch/repodata.json.zst</Path></Items></Paths><CallerReference>index-noarch-pub_abc-1790812800000</CallerReference></InvalidationBatch>"
+      }
+    ],
+    "logs": [
+      {
+        "stream": "log",
+        "line": {
+          "level": "info",
+          "msg": "index",
+          "subdir": "noarch",
+          "publish_id": "pub_abc"
+        }
+      }
+    ]
+  }
+}

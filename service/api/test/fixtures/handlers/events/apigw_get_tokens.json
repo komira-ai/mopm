@@ -1,0 +1,21 @@
+{
+  "version": "2.0",
+  "routeKey": "GET /api/v1/me/tokens",
+  "rawPath": "/api/v1/me/tokens",
+  "rawQueryString": "",
+  "headers": {
+    "accept": "*/*",
+    "user-agent": "mopm-test"
+  },
+  "requestContext": {
+    "requestId": "req-tokens",
+    "stage": "$default",
+    "http": {
+      "method": "GET",
+      "path": "/api/v1/me/tokens",
+      "protocol": "HTTP/1.1",
+      "userAgent": "mopm-test"
+    }
+  },
+  "isBase64Encoded": false
+}

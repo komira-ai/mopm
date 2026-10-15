@@ -1,0 +1,71 @@
+{
+  "description": "If the switch cannot be read, health-style fallback does not apply to writers: begin-upload is 503 unavailable. The table is read twice (a failed read is not cached) and each side logs its own error line.",
+  "lambda": "api",
+  "env": {
+    "MOPM_STAGE": "beta",
+    "MOPM_CHANNEL_BUCKET": "channel-bucket",
+    "MOPM_VALIDATE_QUEUE_URL": "validate-queue-url"
+  },
+  "dynamo": [
+    {
+      "op": "Get",
+      "table": "mopm-beta-config",
+      "throw": "ThrottlingException",
+      "message": "Rate exceeded"
+    }
+  ],
+  "invocations": [
+    {
+      "event": "events/apigw_post_begin.json",
+      "expect": {
+        "returns": {
+          "statusCode": 503,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-begin"
+          },
+          "body": "{\"error\":{\"code\":\"unavailable\",\"message\":\"The registry is temporarily unavailable.\",\"hint\":\"Try again shortly.\"}}"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-config",
+        "key": {
+          "key": "read_only"
+        }
+      },
+      {
+        "op": "Get",
+        "table": "mopm-beta-config",
+        "key": {
+          "key": "read_only"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": [
+      {
+        "stream": "error",
+        "line": {
+          "level": "error",
+          "msg": "read-only switch unreadable",
+          "error": "ThrottlingException: Rate exceeded"
+        }
+      },
+      {
+        "stream": "error",
+        "line": {
+          "level": "error",
+          "requestId": "req-begin",
+          "msg": "read-only switch unreadable",
+          "error": "ThrottlingException: Rate exceeded"
+        }
+      }
+    ]
+  }
+}

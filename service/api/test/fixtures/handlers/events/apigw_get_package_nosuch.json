@@ -1,0 +1,21 @@
+{
+  "version": "2.0",
+  "routeKey": "GET /api/v1/packages/nosuch",
+  "rawPath": "/api/v1/packages/nosuch",
+  "rawQueryString": "",
+  "headers": {
+    "accept": "*/*",
+    "user-agent": "mopm-test"
+  },
+  "requestContext": {
+    "requestId": "req-nosuch",
+    "stage": "$default",
+    "http": {
+      "method": "GET",
+      "path": "/api/v1/packages/nosuch",
+      "protocol": "HTTP/1.1",
+      "userAgent": "mopm-test"
+    }
+  },
+  "isBase64Encoded": false
+}
