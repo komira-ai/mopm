@@ -12,7 +12,24 @@
           }
         }
       }
-    ]
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "key": {
+                "S": "read_only"
+              }
+            },
+            "TableName": "mopm-beta-config"
+          }
+        }
+      ],
+      "returns": true
+    }
   },
   {
     "adapter": "flags",
@@ -22,6 +39,23 @@
       {
         "body": {}
       }
-    ]
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "key": {
+                "S": "read_only"
+              }
+            },
+            "TableName": "mopm-beta-config"
+          }
+        }
+      ],
+      "returns": false
+    }
   }
 ]

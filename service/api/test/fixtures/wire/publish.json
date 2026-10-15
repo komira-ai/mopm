@@ -23,7 +23,63 @@
       {
         "body": {}
       }
-    ]
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "PutItem",
+          "body": {
+            "ConditionExpression": "attribute_not_exists(#k)",
+            "ExpressionAttributeNames": {
+              "#k": "upload_id"
+            },
+            "Item": {
+              "upload_id": {
+                "S": "u1"
+              },
+              "name": {
+                "S": "demo"
+              },
+              "version": {
+                "S": "1.0.0"
+              },
+              "canonical": {
+                "S": "1.0.0"
+              },
+              "subdir": {
+                "S": "noarch"
+              },
+              "filename": {
+                "S": "mojo-demo-1.0.0-mojo1.0.0_0.conda"
+              },
+              "sha256": {
+                "S": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              },
+              "size": {
+                "N": "10"
+              },
+              "key": {
+                "S": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda"
+              },
+              "actor": {
+                "S": "u:1"
+              },
+              "created_at": {
+                "S": "2026-10-14T12:00:00Z"
+              },
+              "url_expires_at": {
+                "S": "2026-10-14T12:05:00Z"
+              },
+              "expires_at": {
+                "N": "1792000000"
+              }
+            },
+            "TableName": "mopm-beta-uploads"
+          }
+        }
+      ],
+      "returns": null
+    }
   },
   {
     "adapter": "publish",
@@ -49,7 +105,65 @@
       {
         "error": "ConditionalCheckFailedException"
       }
-    ]
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "PutItem",
+          "body": {
+            "ConditionExpression": "attribute_not_exists(#k)",
+            "ExpressionAttributeNames": {
+              "#k": "upload_id"
+            },
+            "Item": {
+              "upload_id": {
+                "S": "u1"
+              },
+              "name": {
+                "S": "demo"
+              },
+              "version": {
+                "S": "1.0.0"
+              },
+              "canonical": {
+                "S": "1.0.0"
+              },
+              "subdir": {
+                "S": "noarch"
+              },
+              "filename": {
+                "S": "mojo-demo-1.0.0-mojo1.0.0_0.conda"
+              },
+              "sha256": {
+                "S": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              },
+              "size": {
+                "N": "10"
+              },
+              "key": {
+                "S": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda"
+              },
+              "actor": {
+                "S": "u:1"
+              },
+              "created_at": {
+                "S": "2026-10-14T12:00:00Z"
+              },
+              "url_expires_at": {
+                "S": "2026-10-14T12:05:00Z"
+              },
+              "expires_at": {
+                "N": "1792000000"
+              }
+            },
+            "TableName": "mopm-beta-uploads"
+          }
+        }
+      ],
+      "throws": {
+        "name": "Error"
+      }
+    }
   },
   {
     "adapter": "publish",
@@ -77,7 +191,38 @@
           }
         }
       }
-    ]
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "upload_id": {
+                "S": "u1"
+              }
+            },
+            "TableName": "mopm-beta-uploads"
+          }
+        }
+      ],
+      "returns": {
+        "upload_id": "u1",
+        "name": "demo",
+        "version": "1.0.0",
+        "canonical": "1.0.0",
+        "subdir": "noarch",
+        "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "size": 10,
+        "key": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda",
+        "actor": "u:1",
+        "created_at": "2026-10-14T12:00:00Z",
+        "url_expires_at": "2026-10-14T12:05:00Z",
+        "expires_at": 1792000000
+      }
+    }
   },
   {
     "adapter": "publish",
@@ -109,7 +254,78 @@
       {
         "body": {}
       }
-    ]
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "upload_id": {
+                "S": "u1"
+              }
+            },
+            "TableName": "mopm-beta-uploads"
+          }
+        },
+        {
+          "target": "PutItem",
+          "body": {
+            "ConditionExpression": "attribute_not_exists(#u)",
+            "ExpressionAttributeNames": {
+              "#u": "used_by"
+            },
+            "Item": {
+              "upload_id": {
+                "S": "u1"
+              },
+              "name": {
+                "S": "demo"
+              },
+              "version": {
+                "S": "1.0.0"
+              },
+              "canonical": {
+                "S": "1.0.0"
+              },
+              "subdir": {
+                "S": "noarch"
+              },
+              "filename": {
+                "S": "mojo-demo-1.0.0-mojo1.0.0_0.conda"
+              },
+              "sha256": {
+                "S": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              },
+              "size": {
+                "N": "10"
+              },
+              "key": {
+                "S": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda"
+              },
+              "actor": {
+                "S": "u:1"
+              },
+              "created_at": {
+                "S": "2026-10-14T12:00:00Z"
+              },
+              "url_expires_at": {
+                "S": "2026-10-14T12:05:00Z"
+              },
+              "expires_at": {
+                "N": "1792000000"
+              },
+              "used_by": {
+                "S": "pub_abc"
+              }
+            },
+            "TableName": "mopm-beta-uploads"
+          }
+        }
+      ],
+      "returns": true
+    }
   },
   {
     "adapter": "publish",
@@ -139,7 +355,24 @@
           }
         }
       }
-    ]
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "upload_id": {
+                "S": "u1"
+              }
+            },
+            "TableName": "mopm-beta-uploads"
+          }
+        }
+      ],
+      "returns": false
+    }
   },
   {
     "adapter": "publish",
@@ -153,7 +386,30 @@
       {
         "body": {}
       }
-    ]
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "PutItem",
+          "body": {
+            "ConditionExpression": "attribute_not_exists(#k)",
+            "ExpressionAttributeNames": {
+              "#k": "publish_id"
+            },
+            "Item": {
+              "publish_id": {
+                "S": "ver#demo#1.0.0"
+              },
+              "winner": {
+                "S": "pub_abc"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        }
+      ],
+      "returns": "pub_abc"
+    }
   },
   {
     "adapter": "publish",
@@ -175,7 +431,42 @@
           }
         }
       }
-    ]
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "PutItem",
+          "body": {
+            "ConditionExpression": "attribute_not_exists(#k)",
+            "ExpressionAttributeNames": {
+              "#k": "publish_id"
+            },
+            "Item": {
+              "publish_id": {
+                "S": "ver#demo#1.0.0"
+              },
+              "winner": {
+                "S": "pub_abc"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        },
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "publish_id": {
+                "S": "ver#demo#1.0.0"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        }
+      ],
+      "returns": "pub_first"
+    }
   },
   {
     "adapter": "publish",
@@ -193,7 +484,24 @@
           }
         }
       }
-    ]
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "publish_id": {
+                "S": "ver#demo#1.0.0"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        }
+      ],
+      "returns": "pub_first"
+    }
   },
   {
     "adapter": "publish",
@@ -228,7 +536,109 @@
       {
         "body": {}
       }
-    ]
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "PutItem",
+          "body": {
+            "ConditionExpression": "attribute_not_exists(#k)",
+            "ExpressionAttributeNames": {
+              "#k": "publish_id"
+            },
+            "Item": {
+              "publish_id": {
+                "S": "pub_abc"
+              },
+              "name": {
+                "S": "demo"
+              },
+              "version": {
+                "S": "1.0.0"
+              },
+              "canonical": {
+                "S": "1.0.0"
+              },
+              "actor": {
+                "S": "u:1"
+              },
+              "published_by": {
+                "S": "octo"
+              },
+              "status": {
+                "S": "pending"
+              },
+              "manifest_sha256": {
+                "S": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              "files": {
+                "L": [
+                  {
+                    "M": {
+                      "upload_id": {
+                        "S": "u1"
+                      },
+                      "subdir": {
+                        "S": "noarch"
+                      },
+                      "filename": {
+                        "S": "mojo-demo-1.0.0-mojo1.0.0_0.conda"
+                      },
+                      "sha256": {
+                        "S": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                      },
+                      "size": {
+                        "N": "10"
+                      },
+                      "key": {
+                        "S": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda"
+                      }
+                    }
+                  }
+                ]
+              },
+              "remaining_subdirs": {
+                "L": []
+              },
+              "created_at": {
+                "S": "2026-10-14T12:00:00Z"
+              },
+              "updated_at": {
+                "S": "2026-10-14T12:00:00Z"
+              },
+              "rev": {
+                "N": "0"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        }
+      ],
+      "returns": {
+        "publish_id": "pub_abc",
+        "name": "demo",
+        "version": "1.0.0",
+        "canonical": "1.0.0",
+        "actor": "u:1",
+        "published_by": "octo",
+        "status": "pending",
+        "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "files": [
+          {
+            "upload_id": "u1",
+            "subdir": "noarch",
+            "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 10,
+            "key": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "remaining_subdirs": [],
+        "created_at": "2026-10-14T12:00:00Z",
+        "updated_at": "2026-10-14T12:00:00Z",
+        "rev": 0
+      }
+    }
   },
   {
     "adapter": "publish",
@@ -265,7 +675,47 @@
           }
         }
       }
-    ]
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "publish_id": {
+                "S": "pub_abc"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        }
+      ],
+      "returns": {
+        "publish_id": "pub_abc",
+        "name": "demo",
+        "version": "1.0.0",
+        "canonical": "1.0.0",
+        "actor": "u:1",
+        "published_by": "octo",
+        "status": "pending",
+        "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "files": [
+          {
+            "upload_id": "u1",
+            "subdir": "noarch",
+            "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 10,
+            "key": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "remaining_subdirs": [],
+        "created_at": "2026-10-14T12:00:00Z",
+        "updated_at": "2026-10-14T12:00:00Z",
+        "rev": 0
+      }
+    }
   },
   {
     "adapter": "publish",
@@ -311,7 +761,126 @@
       {
         "body": {}
       }
-    ]
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "publish_id": {
+                "S": "pub_abc"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        },
+        {
+          "target": "PutItem",
+          "body": {
+            "ConditionExpression": "#r = :r",
+            "ExpressionAttributeNames": {
+              "#r": "rev"
+            },
+            "ExpressionAttributeValues": {
+              ":r": {
+                "N": "0"
+              }
+            },
+            "Item": {
+              "publish_id": {
+                "S": "pub_abc"
+              },
+              "name": {
+                "S": "demo"
+              },
+              "version": {
+                "S": "1.0.0"
+              },
+              "canonical": {
+                "S": "1.0.0"
+              },
+              "actor": {
+                "S": "u:1"
+              },
+              "published_by": {
+                "S": "octo"
+              },
+              "status": {
+                "S": "validating"
+              },
+              "manifest_sha256": {
+                "S": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              "files": {
+                "L": [
+                  {
+                    "M": {
+                      "upload_id": {
+                        "S": "u1"
+                      },
+                      "subdir": {
+                        "S": "noarch"
+                      },
+                      "filename": {
+                        "S": "mojo-demo-1.0.0-mojo1.0.0_0.conda"
+                      },
+                      "sha256": {
+                        "S": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                      },
+                      "size": {
+                        "N": "10"
+                      },
+                      "key": {
+                        "S": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda"
+                      }
+                    }
+                  }
+                ]
+              },
+              "remaining_subdirs": {
+                "L": []
+              },
+              "created_at": {
+                "S": "2026-10-14T12:00:00Z"
+              },
+              "updated_at": {
+                "S": "2026-10-14T12:00:05Z"
+              },
+              "rev": {
+                "N": "1"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        }
+      ],
+      "returns": {
+        "publish_id": "pub_abc",
+        "name": "demo",
+        "version": "1.0.0",
+        "canonical": "1.0.0",
+        "actor": "u:1",
+        "published_by": "octo",
+        "status": "validating",
+        "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "files": [
+          {
+            "upload_id": "u1",
+            "subdir": "noarch",
+            "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 10,
+            "key": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "remaining_subdirs": [],
+        "created_at": "2026-10-14T12:00:00Z",
+        "updated_at": "2026-10-14T12:00:05Z",
+        "rev": 1
+      }
+    }
   },
   {
     "adapter": "publish",
@@ -388,7 +957,217 @@
       {
         "body": {}
       }
-    ]
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "publish_id": {
+                "S": "pub_abc"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        },
+        {
+          "target": "PutItem",
+          "body": {
+            "ConditionExpression": "#r = :r",
+            "ExpressionAttributeNames": {
+              "#r": "rev"
+            },
+            "ExpressionAttributeValues": {
+              ":r": {
+                "N": "0"
+              }
+            },
+            "Item": {
+              "publish_id": {
+                "S": "pub_abc"
+              },
+              "name": {
+                "S": "demo"
+              },
+              "version": {
+                "S": "1.0.0"
+              },
+              "canonical": {
+                "S": "1.0.0"
+              },
+              "actor": {
+                "S": "u:1"
+              },
+              "published_by": {
+                "S": "octo"
+              },
+              "status": {
+                "S": "validating"
+              },
+              "manifest_sha256": {
+                "S": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              "files": {
+                "L": [
+                  {
+                    "M": {
+                      "upload_id": {
+                        "S": "u1"
+                      },
+                      "subdir": {
+                        "S": "noarch"
+                      },
+                      "filename": {
+                        "S": "mojo-demo-1.0.0-mojo1.0.0_0.conda"
+                      },
+                      "sha256": {
+                        "S": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                      },
+                      "size": {
+                        "N": "10"
+                      },
+                      "key": {
+                        "S": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda"
+                      }
+                    }
+                  }
+                ]
+              },
+              "remaining_subdirs": {
+                "L": []
+              },
+              "created_at": {
+                "S": "2026-10-14T12:00:00Z"
+              },
+              "updated_at": {
+                "S": "2026-10-14T12:00:05Z"
+              },
+              "rev": {
+                "N": "1"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        },
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "publish_id": {
+                "S": "pub_abc"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        },
+        {
+          "target": "PutItem",
+          "body": {
+            "ConditionExpression": "#r = :r",
+            "ExpressionAttributeNames": {
+              "#r": "rev"
+            },
+            "ExpressionAttributeValues": {
+              ":r": {
+                "N": "1"
+              }
+            },
+            "Item": {
+              "publish_id": {
+                "S": "pub_abc"
+              },
+              "name": {
+                "S": "demo"
+              },
+              "version": {
+                "S": "1.0.0"
+              },
+              "canonical": {
+                "S": "1.0.0"
+              },
+              "actor": {
+                "S": "u:1"
+              },
+              "published_by": {
+                "S": "octo"
+              },
+              "status": {
+                "S": "validating"
+              },
+              "manifest_sha256": {
+                "S": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              "files": {
+                "L": [
+                  {
+                    "M": {
+                      "upload_id": {
+                        "S": "u1"
+                      },
+                      "subdir": {
+                        "S": "noarch"
+                      },
+                      "filename": {
+                        "S": "mojo-demo-1.0.0-mojo1.0.0_0.conda"
+                      },
+                      "sha256": {
+                        "S": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                      },
+                      "size": {
+                        "N": "10"
+                      },
+                      "key": {
+                        "S": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda"
+                      }
+                    }
+                  }
+                ]
+              },
+              "remaining_subdirs": {
+                "L": []
+              },
+              "created_at": {
+                "S": "2026-10-14T12:00:00Z"
+              },
+              "updated_at": {
+                "S": "2026-10-14T12:00:05Z"
+              },
+              "rev": {
+                "N": "2"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        }
+      ],
+      "returns": {
+        "publish_id": "pub_abc",
+        "name": "demo",
+        "version": "1.0.0",
+        "canonical": "1.0.0",
+        "actor": "u:1",
+        "published_by": "octo",
+        "status": "validating",
+        "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "files": [
+          {
+            "upload_id": "u1",
+            "subdir": "noarch",
+            "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 10,
+            "key": "quarantine/u1/mojo-demo-1.0.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "remaining_subdirs": [],
+        "created_at": "2026-10-14T12:00:00Z",
+        "updated_at": "2026-10-14T12:00:05Z",
+        "rev": 2
+      }
+    }
   },
   {
     "adapter": "publish",
@@ -405,7 +1184,24 @@
       {
         "body": {}
       }
-    ]
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "publish_id": {
+                "S": "pub_none"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        }
+      ],
+      "returns": null
+    }
   },
   {
     "adapter": "publish",
@@ -422,7 +1218,51 @@
       {
         "body": {}
       }
-    ]
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "publish_id": {
+                "S": "rl#acct#4242#2026-10-14"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        },
+        {
+          "target": "PutItem",
+          "body": {
+            "ConditionExpression": "attribute_not_exists(#k)",
+            "ExpressionAttributeNames": {
+              "#k": "publish_id"
+            },
+            "Item": {
+              "publish_id": {
+                "S": "rl#acct#4242#2026-10-14"
+              },
+              "count": {
+                "N": "1"
+              },
+              "rev": {
+                "N": "0"
+              },
+              "expires_at": {
+                "N": "1792000000"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        }
+      ],
+      "returns": {
+        "ok": true,
+        "count": 1
+      }
+    }
   },
   {
     "adapter": "publish",
@@ -446,7 +1286,56 @@
       {
         "body": {}
       }
-    ]
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "publish_id": {
+                "S": "rl#acct#4242#2026-10-14"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        },
+        {
+          "target": "PutItem",
+          "body": {
+            "ConditionExpression": "#r = :r",
+            "ExpressionAttributeNames": {
+              "#r": "rev"
+            },
+            "ExpressionAttributeValues": {
+              ":r": {
+                "N": "6"
+              }
+            },
+            "Item": {
+              "publish_id": {
+                "S": "rl#acct#4242#2026-10-14"
+              },
+              "count": {
+                "N": "8"
+              },
+              "rev": {
+                "N": "7"
+              },
+              "expires_at": {
+                "N": "1792000000"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        }
+      ],
+      "returns": {
+        "ok": true,
+        "count": 8
+      }
+    }
   },
   {
     "adapter": "publish",
@@ -467,6 +1356,26 @@
           }
         }
       }
-    ]
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "publish_id": {
+                "S": "rl#acct#4242#2026-10-14"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        }
+      ],
+      "returns": {
+        "ok": false,
+        "count": 7
+      }
+    }
   }
 ]
