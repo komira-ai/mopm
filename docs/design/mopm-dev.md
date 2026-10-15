@@ -80,10 +80,6 @@ JavaScript. Every element traces to a section of this note.
 | API reference | [reference-light](mock/screens/reference-light.png) | [reference-dark](mock/screens/reference-dark.png) | | 2.4 to 2.6 |
 | Account | [account-light](mock/screens/account-light.png) | [account-dark](mock/screens/account-dark.png) | | 4.3, 4.4 |
 
-The two search screenshots predate Q10: they still show "similar to json" in the foot of the `jason` result. That
-marker is removed (3.6); `mock/search.html` and `mock/search-dark.html` no longer carry it, and the PNGs are
-regenerated from them when the mocks are next captured.
-
 ## 1. Search
 
 ### 1.1 Who does what at publish, and why
