@@ -26,7 +26,7 @@ pub const prefix = "hygiene: ";
 
 /// \b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA|ABIA|ACCA)[0-9A-Z]{16}\b
 fn awsAccessKeyId(s: []const u8) bool {
-    const heads = [_][]const u8{ "AKIX", "ASIA", "AGPA", "AIDA", "AROA", "ANPA", "ABIA", "ACCA" };
+    const heads = [_][]const u8{ "AKIA", "ASIA", "AGPA", "AIDA", "AROA", "ANPA", "ABIA", "ACCA" };
     var i: usize = 0;
     while (i + 20 <= s.len) : (i += 1) {
         if (!c.boundaryBefore(s, i)) continue;
