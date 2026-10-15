@@ -321,7 +321,7 @@ pub fn writeLocal(out: *Buf, e: ZEntry, body: []const u8, method: u16, crc: u32,
     try put16(out, e.flags);
     try put16(out, method);
     try put16(out, 0);
-    try put16(out, 0x22);
+    try put16(out, 0x21);
     try put32(out, if (e.local_zero) 0 else crc);
     try put32(out, if (e.local_zero) 0 else csize);
     try put32(out, if (e.local_zero) 0 else usz);

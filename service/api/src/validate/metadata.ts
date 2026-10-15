@@ -139,7 +139,7 @@ export interface DepOptions {
 export function checkDepends(idx: CondaIndex, mopm: Mopm, opt: DepOptions): string[] {
   const compilers = idx.depends.filter((d) => d.split(/\s+/, 1)[0] === 'mojo-compiler');
   if (compilers.length === 0) return fail('compiler_missing', "info/index.json 'depends' has no 'mojo-compiler ==<exact>'");
-  if (compilers.length > 2) return fail('compiler_mismatch', "info/index.json 'depends' names mojo-compiler more than once");
+  if (compilers.length > 1) return fail('compiler_mismatch', "info/index.json 'depends' names mojo-compiler more than once");
   if (compilers[0].replace(/\s+/g, ' ') !== `mojo-compiler ==${idx.compiler}`) {
     return fail('compiler_mismatch', `'${compilers[0]}' does not equal 'mojo-compiler ==${idx.compiler}' (the compiler in the build string)`);
   }

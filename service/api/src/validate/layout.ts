@@ -18,7 +18,7 @@ const LINK_SCRIPT = /(?:^|[-_.])(?:pre-link|post-link|pre-unlink)\.(?:sh|bat)$/i
 export function checkCollisions(entries: readonly TarEntry[]): void {
   const seen = new Map<string, string>();
   for (const e of entries) {
-    const key = e.path.toLowerCase();
+    const key = e.path.normalize('NFKC').toLowerCase().normalize('NFKC');
     const prior = seen.get(key);
     if (prior === undefined) seen.set(key, e.path);
     else if (prior === e.path) fail('duplicate_path', `'${e.path}' appears more than once`, e.path);
