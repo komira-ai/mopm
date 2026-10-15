@@ -141,9 +141,23 @@ pub fn chomp(s: []const u8) []const u8 {
 
 pub const Response = struct { status: u16, body: []u8 };
 
+/// A response with its head (the status line and the header lines, without
+/// the blank line that ends them).
+pub const Full = struct { status: u16, head: []u8, body: []u8 };
+
+pub const Header = struct { name: []const u8, value: []const u8 };
+
 /// One request to `http://host:port<path>` (`base` is `http://host:port`),
 /// `Connection: close`, the answer read to the end. A body is JSON.
 pub fn request(a: Allocator, method: []const u8, base: []const u8, path: []const u8, body: ?[]const u8, token: ?[]const u8) !Response {
+    const r = try requestFull(a, method, base, path, body, token, "application/json", &.{});
+    return .{ .status = r.status, .body = r.body };
+}
+
+/// `request` with the content type of the body, more request headers (a
+/// Content-Length, Host, Connection or Content-Type among them is ignored:
+/// this function sets them), and the head of the answer.
+pub fn requestFull(a: Allocator, method: []const u8, base: []const u8, path: []const u8, body: ?[]const u8, token: ?[]const u8, content_type: []const u8, extra: []const Header) !Full {
     const hostport = base["http://".len..];
     const colon = std.mem.lastIndexOfScalar(u8, hostport, ':').?;
     const port = try std.fmt.parseInt(u16, hostport[colon + 1 ..], 10);
@@ -154,8 +168,13 @@ pub fn request(a: Allocator, method: []const u8, base: []const u8, path: []const
     var req = std.ArrayList(u8).init(a);
     const w = req.writer();
     try w.print("{s} {s} HTTP/1.1\r\nHost: {s}\r\nConnection: close\r\n", .{ method, path, hostport });
-    if (body) |b| try w.print("Content-Type: application/json\r\nContent-Length: {d}\r\n", .{b.len});
+    if (body) |b| try w.print("Content-Type: {s}\r\nContent-Length: {d}\r\n", .{ content_type, b.len });
     if (token) |t| try w.print("Authorization: Bearer {s}\r\n", .{t});
+    for (extra) |hd| {
+        if (std.ascii.eqlIgnoreCase(hd.name, "content-length") or std.ascii.eqlIgnoreCase(hd.name, "host") or
+            std.ascii.eqlIgnoreCase(hd.name, "connection") or std.ascii.eqlIgnoreCase(hd.name, "content-type")) continue;
+        try w.print("{s}: {s}\r\n", .{ hd.name, hd.value });
+    }
     try w.writeAll("\r\n");
     if (body) |b| try w.writeAll(b);
     stage = "http: writing the request";
@@ -184,7 +203,7 @@ pub fn request(a: Allocator, method: []const u8, base: []const u8, path: []const
     var parts = std.mem.splitScalar(u8, raw.items[0..eol], ' ');
     _ = parts.next();
     const status = try std.fmt.parseInt(u16, parts.next() orelse return error.BadResponse, 10);
-    return .{ .status = status, .body = raw.items[head_end..] };
+    return .{ .status = status, .head = raw.items[0 .. head_end - 4], .body = raw.items[head_end..] };
 }
 
 pub fn parseJson(a: Allocator, bytes: []const u8) !std.json.Value {

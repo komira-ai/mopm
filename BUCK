@@ -7,9 +7,10 @@
 # Every test is a Zig test: the build has no shell and no Python. A test welded
 # into a target gates it: `:mopm` is not built unless `:core_test` and
 # `:cli_test` passed, and `:mopm-fake-registry` not unless `:fake_test` did.
-# The drivers (`:golden`, `:registry_login`, `:registry_publish`) run the built
-# programs, so they cannot be welded into them; `buck2 build //...` builds
-# them. A call marked `buck-only` on its first line has no counterpart in
+# The drivers (`:golden`, `:registry_login`, `:registry_publish`, and the
+# contract checks `:contract`, `:contract_replay`, `:lock_golden`,
+# `:resolve_e2e`) run the built programs or read the specs, so they cannot be
+# welded into the programs; `buck2 build //...` builds them. A call marked `buck-only` on its first line has no counterpart in
 # build.zig and is left out of the parity comparison.
 
 load("@komira//tools/build/mojo:toolchain.bzl", "zig_exe", "zig_module", "zig_test")
@@ -161,6 +162,71 @@ zig_test(  # buck-only: mopm pack and publish against the fake registry and a st
         "MOPM": ":mopm",
         "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
     },
+    **_TOOLS
+)
+
+# ---- Contract checks, ported from Python (tests/contract, tests/resolve*) ------
+
+# The JSON Schema validator and what it needs, shared by the contract drivers.
+_CONTRACT_LIBS = [
+    "tests/drivers/contract.zig",
+    "tests/drivers/jsonschema.zig",
+    "tests/drivers/regex.zig",
+]
+
+zig_test(  # buck-only: tests/contract/validate.py: the spec, the API cases and the examples
+    name = "contract",
+    src = "tests/drivers/contract_test.zig",
+    imports = _CONTRACT_LIBS + [
+        "tests/drivers/openapi_check.zig",
+        "tests/drivers/yaml.zig",
+    ] + glob([
+        "spec/**",
+        "tests/contract/api/**",
+        "tests/contract/examples/**",
+        "tests/fixtures/**",
+    ]),
+    **_TOOLS
+)
+
+zig_test(  # buck-only: tests/contract/replay.py: the fake registry answers the contract's API cases
+    name = "contract_replay",
+    src = "tests/drivers/replay_test.zig",
+    imports = _CONTRACT_LIBS + [
+        "tests/drivers/harness.zig",
+        "tests/drivers/replay_recipes.zig",
+        "tests/drivers/replay_table.zig",
+        "tests/drivers/replay_checks.zig",
+        "tests/drivers/yaml.zig",
+        "registry/fake/errors.zig",
+    ] + glob([
+        "spec/**",
+        "tests/contract/api/**",
+    ]),
+    env_tools = {"MOPM_FAKE_REGISTRY": ":mopm-fake-registry"},
+    **_TOOLS
+)
+
+zig_test(  # buck-only: tests/resolve_e2e/run.py: mopm lock, update and tree against the fake registry
+    name = "resolve_e2e",
+    src = "tests/drivers/resolve_e2e_test.zig",
+    imports = _CONTRACT_LIBS + [
+        "tests/drivers/harness.zig",
+        "spec/lock.schema.json",
+    ] + glob(["tests/resolve_e2e/*"]),
+    env_tools = {
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+    },
+    **_TOOLS
+)
+
+zig_test(  # buck-only: tests/resolve/check_golden.py: the goldens pass the lock contract, a faulty writer's output does not
+    name = "lock_golden",
+    src = "tests/drivers/lock_golden_test.zig",
+    imports = _CONTRACT_LIBS + [
+        "spec/lock.schema.json",
+    ] + glob(["tests/resolve/golden/**"]),
     **_TOOLS
 )
 

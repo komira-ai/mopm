@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Checks the locks mopm's unit tests write against the lock contract.
 
+SUPERSEDED by //:lock_golden (tests/drivers/lock_golden_test.zig), the Zig port
+the Buck2 build runs: the build has no Python. This script stays for ci.yml
+until farm.yml has matched it, and is deleted then.
+
     python -I tests/resolve/check_golden.py      (from the repository root)
 
 Each tests/resolve/golden/*.lock is the exact output of a Zig unit test
