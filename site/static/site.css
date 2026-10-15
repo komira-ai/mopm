@@ -157,7 +157,7 @@ blockquote { margin-left: 0; padding: 0.1rem 1rem; border-left: 4px solid var(--
 .site-nav ul { display: flex; gap: 4px; list-style: none; margin: 0; padding: 0; }
 .site-nav a { display: block; color: var(--fg-2); text-decoration: none; font-weight: 550; font-size: 0.9375rem; padding: 6px 10px; border-radius: 8px; }
 .site-nav a:hover { background: var(--surface-2); color: var(--fg); }
-.site-nav a[aria-current] { color: var(--fg); background: var(--surface-2); }
+.site-nav a[aria-current] { color: var(--fg); background: var(--surface-2); box-shadow: inset 0 -2px 0 var(--accent); }
 @media (min-width: 48rem) {
   .site-search { order: 0; flex: 1 1 18rem; max-width: 30rem; margin-left: auto; }
   .site-search + .site-nav { margin-left: 0; }
@@ -204,6 +204,7 @@ label { display: block; font-weight: 600; font-size: 0.875rem; margin-bottom: 0.
 .prompt { color: var(--accent); font-family: var(--mono); user-select: none; }
 .copy {
   flex: none; align-self: flex-start; font-size: 0.8125rem; font-weight: 600; padding: 6px 12px; border-radius: 7px; cursor: pointer;
+  min-width: 5rem; text-align: center; /* wide enough for "Copied", so the label change never reflows the command */
   background: var(--surface); color: var(--fg-2); border: 1px solid var(--control-border);
 }
 .copy:hover { border-color: var(--fg-muted); color: var(--fg); }

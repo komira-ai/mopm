@@ -7,7 +7,9 @@
 //    click's timer does not cut a later "Copied" short (a reset without the round check fails it);
 //  - a write that settles after a later click's write never overwrites the later outcome, either way round (a
 //    handler without the round check, on success or on failure, fails it);
-//  - a refused write says so in the status and never shows "Copied" (a handler that ignores the rejection fails it);
+//  - a refused write says so in the status and never shows "Copied" (a handler that ignores the rejection fails it),
+//    and a refusal right after a "Copied" puts the button back to "Copy" with class "copy" (a failure handler that
+//    only sets the status, leaving "Copied" on the button with no timer to reset it, fails it);
 //  - with no clipboard nothing is added, so the command stays plain text (a dead button fails it).
 import { addCopyButton, type Clipboard, COPIED, COPY, copyLabel, type CopyPort, FAILED, RESET_MS } from '../src/copy';
 import { h, type SNode, serialize, StringDoc } from '../src/doc';
@@ -98,6 +100,23 @@ test('a refused write says so in the status and never shows Copied', async () =>
   expect(port.textOf(button as SNode)).toBe(COPY);
   expect(port.textOf(status())).toBe(FAILED);
   expect(timers).toEqual([]);
+});
+
+test('a refusal after a Copied puts the button back to Copy and keeps it there', async () => {
+  const outcomes = [true, false];
+  const { port, button, status, click, timers } = setup({ writeText: () => (outcomes.shift() ? Promise.resolve() : Promise.reject(new Error('denied'))) });
+  await click();
+  expect(port.textOf(button as SNode)).toBe(COPIED);
+  await click();
+  expect(port.textOf(button as SNode)).toBe(COPY);
+  expect(serialize(button as SNode)).toContain('class="copy"');
+  expect(serialize(button as SNode)).not.toContain('copy done');
+  expect(port.textOf(status())).toBe(FAILED);
+  expect(timers.length).toBe(1);
+  timers[0](); // the first round's reset fires during the failed round and changes nothing
+  expect(port.textOf(button as SNode)).toBe(COPY);
+  expect(serialize(button as SNode)).toContain('class="copy"');
+  expect(port.textOf(status())).toBe(FAILED);
 });
 
 test('a clipboard that throws instead of rejecting is handled the same way', async () => {

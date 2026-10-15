@@ -53,6 +53,19 @@ test('the Copy button uses the control border', () => {
   expect(rule('.copy')).toContain('border: 1px solid var(--control-border);');
 });
 
+// The current section in the header nav needs a cue that is not only colour: the pill is about 1:1 on the header and
+// the text colour change about 1.5:1, so without a bar or underline the current item looks like the others.
+test('the current header nav item is marked by an underline or a bar, not by colour alone', () => {
+  expect(rule('.site-nav a[aria-current]')).toMatch(/(box-shadow: inset 0 -2px 0 var\(--accent\)|text-decoration: underline)/);
+});
+
+// The label goes from "Copy" to "Copied" and back; a button sized by its text would grow and re-wrap the command
+// beside it, moving everything below. A fixed minimum wide enough for "Copied" keeps the layout still.
+test('the Copy button has a minimum width, so the Copied label does not reflow the command', () => {
+  expect(rule('.copy')).toMatch(/min-width: \d/);
+  expect(rule('.copy')).toContain('text-align: center;');
+});
+
 // The hero search input drops its own outline, so the box around it must carry a ring as strong as :focus-visible's,
 // not only a 1px border colour change.
 test('the hero search box shows a focus ring when its field is focused', () => {
