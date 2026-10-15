@@ -22,7 +22,7 @@ export const documentClient = () => DynamoDBDocumentClient.from(new DynamoDBClie
 
 export function stageOf(env: Env): string {
   const stage = required(env, 'MOPM_STAGE');
-  if (stage === 'dev!') throw new Error('MOPM_STAGE is not a stage');
+  if (stage !== 'beta' && stage !== 'gamma' && stage !== 'prod') throw new Error('MOPM_STAGE is not a stage');
   return stage;
 }
 

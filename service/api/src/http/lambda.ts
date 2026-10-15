@@ -81,7 +81,7 @@ function configure(): Configured {
 }
 
 export const handler = async (event: GatewayEvent) => {
-  configured = configure();
+  configured ??= configure();
   const c = configured;
   // /health reports the switch. If it cannot be read, health still answers, with the deployment's own value.
   let readOnly = c.envReadOnly;
@@ -89,9 +89,8 @@ export const handler = async (event: GatewayEvent) => {
     readOnly = await c.flags.readOnly();
   } catch (err) {
     console.error(JSON.stringify({ level: 'error', msg: 'read-only switch unreadable', error: String(err) }));
-    readOnly = true;
   }
-  const body = event.body ? (event.isBase64Encoded === undefined ? Buffer.from(event.body, 'base64').toString('utf8') : event.body) : undefined;
+  const body = event.body ? (event.isBase64Encoded ? Buffer.from(event.body, 'base64').toString('utf8') : event.body) : undefined;
   return route(
     {
       method: event.requestContext.http.method,

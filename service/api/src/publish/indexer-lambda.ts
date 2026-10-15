@@ -26,7 +26,7 @@ function configure(): IndexerDeps {
 
 /** SQS (FIFO, group = subdir, batch size 1) -> the index writer. Errors are rethrown: retry, then the DLQ and its alarm. */
 export const handler = async (event: SqsEvent): Promise<void> => {
-  deps = configure();
+  deps ??= configure();
   for (const r of event.Records) {
     const msg = JSON.parse(r.body) as { type?: string; subdir?: string; publish_id?: string };
     if (msg.type !== 'index' || typeof msg.subdir !== 'string') {

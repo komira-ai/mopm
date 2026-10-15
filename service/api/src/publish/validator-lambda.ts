@@ -35,11 +35,11 @@ export const handler = async (event: SqsEvent): Promise<void> => {
   deps ??= configure();
   for (const r of event.Records) {
     const msg = JSON.parse(r.body) as { type?: string; publish_id?: string };
-    if (msg.type !== 'validate') {
+    if (msg.type !== 'validate' || typeof msg.publish_id !== 'string') {
       console.error(JSON.stringify({ level: 'error', msg: 'unrecognised message dropped', messageId: r.messageId }));
       continue;
     }
-    const outcome = await validatePublish(deps, msg.publish_id as string).catch(() => 'skipped');
+    const outcome = await validatePublish(deps, msg.publish_id);
     console.log(JSON.stringify({ level: 'info', msg: 'validate', publish_id: msg.publish_id, outcome }));
   }
 };
