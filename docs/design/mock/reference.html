@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Client: http_client.client (design mock)</title>
+<link rel="stylesheet" href="mock.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<p class="mockbar">Design mock, illustrative data. <span>The API reference is planned; this package and its symbols are fictional.</span></p>
+<header class="site-header">
+  <div class="wrap">
+    <a class="logo" href="index.html" aria-label="mopm home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f97316"/><stop offset="1" stop-color="#db2777"/></linearGradient></defs><rect width="32" height="32" rx="9" fill="url(#lg)"/><path d="M8 23v-8.5a3.75 3.75 0 0 1 7.5 0V23M15.5 14.5a3.75 3.75 0 0 1 7.5 0V23" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/><circle cx="24.5" cy="8" r="2.2" fill="#fff" opacity=".9"/></svg>
+      <span class="logo-word">mopm</span>
+    </a>
+    <nav class="nav" aria-label="Main">
+      <a href="search.html" aria-current="page">Packages</a>
+      <a href="#">Docs</a>
+    </nav>
+    <form class="header-search" role="search" action="search.html" method="get" aria-label="Search the registry">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <label class="visually-hidden" for="hq">Search packages</label>
+      <input id="hq" name="q" type="search" placeholder="Search packages" autocomplete="off" spellcheck="false">
+      <kbd aria-label="Press slash to focus">/</kbd>
+    </form>
+    <div class="header-actions">
+      <button class="icon-btn" type="button" aria-label="Theme: system">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      </button>
+      <a class="btn btn-dark btn-sm" href="account.html">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.4-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+        <span class="btn-label">Sign in with GitHub</span>
+      </a>
+    </div>
+  </div>
+</header>
+
+<div class="ref-bar">
+  <div class="wrap">
+    <a class="pkgname" href="package.html"><span class="mono-glyph" aria-hidden="true">hc</span>http_client</a>
+    <form class="ver-switch" action="reference.html" method="get">
+      <label class="visually-hidden" for="v">Version</label>
+      <select id="v" name="v">
+        <option selected>0.4.2 (latest)</option>
+        <option>0.4.1</option>
+        <option>0.4.0</option>
+        <option>0.3.5 (yanked)</option>
+      </select>
+    </form>
+    <span class="tag tag-ok"><span class="dot"></span> latest</span>
+    <nav class="tabs" aria-label="Package sections">
+      <a href="package.html">README</a>
+      <a href="reference.html" aria-current="page">API reference <span class="count">38</span></a>
+      <a href="#">Versions <span class="count">9</span></a>
+    </nav>
+  </div>
+</div>
+
+<main id="main" class="wrap ref">
+  <nav class="tree" aria-label="Modules">
+    <div class="filter">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <label class="visually-hidden" for="f">Filter symbols</label>
+      <input id="f" type="search" placeholder="Filter symbols" autocomplete="off" spellcheck="false">
+      <kbd aria-label="Press f to focus">f</kbd>
+    </div>
+    <p class="filter-hint">Try <code>fn:get</code> or <code>client.Request</code></p>
+    <details open>
+      <summary>http_client</summary>
+      <ul>
+        <li><a href="#"><span class="kind kind-mod">mod</span>overview</a></li>
+      </ul>
+    </details>
+    <details open>
+      <summary>client</summary>
+      <div class="group">Structs</div>
+      <ul>
+        <li><a href="reference.html" aria-current="page"><span class="kind kind-struct">struct</span>Client</a></li>
+        <li><a href="#"><span class="kind kind-struct">struct</span>Request</a></li>
+        <li><a href="#"><span class="kind kind-struct">struct</span>Response</a></li>
+      </ul>
+      <div class="group">Functions</div>
+      <ul>
+        <li><a href="#"><span class="kind kind-fn">fn</span>get</a></li>
+        <li><a href="#"><span class="kind kind-fn">fn</span>post</a></li>
+      </ul>
+    </details>
+    <details open>
+      <summary>headers</summary>
+      <div class="group">Structs</div>
+      <ul>
+        <li><a href="#"><span class="kind kind-struct">struct</span>Headers</a></li>
+      </ul>
+      <div class="group">Traits</div>
+      <ul>
+        <li><a href="#"><span class="kind kind-trait">trait</span>HeaderSource</a></li>
+      </ul>
+      <div class="group">Aliases</div>
+      <ul>
+        <li><a href="#"><span class="kind kind-alias">alias</span>HeaderName</a></li>
+      </ul>
+    </details>
+    <details>
+      <summary>errors</summary>
+    </details>
+    <details>
+      <summary>pool</summary>
+    </details>
+  </nav>
+
+  <article class="doc">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="package.html">http_client</a></li>
+        <li><a href="#">client</a></li>
+        <li><span aria-current="page">Client</span>
+          <button class="copy" type="button" aria-label="Copy import path">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="8" y="8" width="13" height="13" rx="2.5"/><path d="M16 8V5.5A2.5 2.5 0 0 0 13.5 3h-8A2.5 2.5 0 0 0 3 5.5v8A2.5 2.5 0 0 0 5.5 16H8"/></svg>Copy import path
+          </button>
+        </li>
+      </ol>
+    </nav>
+
+    <div class="doc-title">
+      <h1 id="top"><span class="k">struct</span> Client</h1>
+    </div>
+    <div class="doc-meta">
+      <span class="tag tag-since">since 0.2.0</span>
+      <span>linux-64 &middot; linux-aarch64 &middot; osx-arm64</span>
+      <span class="tag tag-planned">documentation supplied by the publisher</span>
+      <span>Mojo 1.0.0</span>
+    </div>
+
+<pre class="sig"><code><span class="kw">struct</span> <span class="fnn">Client</span>(<a href="#">Movable</a>, <a href="#">Stringable</a>)</code></pre>
+
+    <div class="docbody">
+      <p>An HTTP/1.1 client that keeps one connection pool per host. Every request made through a <code>Client</code> shares its pool and its default timeout; a <code>Client</code> owns its pool and closes it when it is destroyed.</p>
+
+      <div class="example">
+        <div class="example-head"><span>Example: reuse one client <span class="lang">mojo</span></span>
+          <button class="copy" type="button" aria-label="Copy example">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="8" y="8" width="13" height="13" rx="2.5"/><path d="M16 8V5.5A2.5 2.5 0 0 0 13.5 3h-8A2.5 2.5 0 0 0 3 5.5v8A2.5 2.5 0 0 0 5.5 16H8"/></svg>Copy
+          </button>
+        </div>
+        <details class="setup">
+          <summary>2 setup lines, not copied unless shown</summary>
+<pre class="code"><code><span class="kw">from</span> http_client.testing <span class="kw">import</span> serve_fixture
+<span class="kw">var</span> server = serve_fixture(<span class="str">"two_paths"</span>)</code></pre>
+        </details>
+<pre class="code"><code><span class="kw">from</span> http_client.client <span class="kw">import</span> Client
+
+<span class="kw">def</span> <span class="fnn">main</span>():
+    <span class="kw">var</span> client = Client(timeout_ms=<span class="num">2000</span>)
+    <span class="kw">for</span> path <span class="kw">in</span> [<span class="str">"/a"</span>, <span class="str">"/b"</span>]:
+        <span class="kw">var</span> r = client.get(server.url + path)
+        print(path, r.status)</code></pre>
+        <div class="output"><span class="output-label">Output</span><pre>/a 200
+/b 404</pre></div>
+      </div>
+
+      <h2 id="members">Members <a class="anchor" href="#members" aria-label="Link to Members">#</a></h2>
+      <div class="table-wrap">
+        <table class="members">
+          <thead><tr><th>Name</th><th>Signature and summary</th><th>Since</th></tr></thead>
+          <tbody>
+            <tr><td><span class="kind kind-field">field</span>timeout_ms</td><td><code>timeout_ms: <a href="#">Int</a></code><span>Default timeout for every request, in milliseconds.</span></td><td>0.2.0</td></tr>
+            <tr><td><span class="kind kind-field">field</span>max_per_host</td><td><code>max_per_host: <a href="#">Int</a></code><span>Most open connections the pool keeps for one host.</span></td><td>0.2.0</td></tr>
+            <tr><td><span class="kind kind-fn">fn</span><a href="#__init__">__init__</a></td><td><code>(out self, *, timeout_ms: Int = 30000, max_per_host: Int = 8)</code><span>Makes a client with an empty pool.</span></td><td>0.2.0</td></tr>
+            <tr><td><span class="kind kind-fn">fn</span><a href="#get">get</a></td><td><code>(mut self, url: String, *, headers: Headers = Headers(), timeout_ms: Optional[Int] = None) raises -&gt; Response</code><span>Sends a GET request and reads the whole response body.</span></td><td>0.3.0</td></tr>
+            <tr><td><span class="kind kind-fn">fn</span><a href="#post">post</a></td><td><code>(mut self, url: String, body: Span[Byte], *, headers: Headers = Headers()) raises -&gt; Response</code><span>Sends a POST request and reads the whole response body.</span></td><td>0.3.0</td></tr>
+            <tr><td><span class="kind kind-fn">fn</span><a href="#close">close</a></td><td><code>(mut self)</code><span>Closes every pooled connection now.</span></td><td><span class="tag tag-since now">0.4.2</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2 id="methods">Methods <a class="anchor" href="#methods" aria-label="Link to Methods">#</a></h2>
+
+      <section class="member" id="__init__" aria-labelledby="m-init">
+        <div class="member-head">
+          <h3 id="m-init"><span class="kind kind-fn">fn</span>__init__ <a class="anchor" href="#__init__" aria-label="Link to __init__">#</a></h3>
+          <span class="right"><span class="tag tag-since">since 0.2.0</span></span>
+        </div>
+<pre class="sig"><code><span class="kw">fn</span> <span class="fnn">__init__</span>(<span class="kw">out</span> self, *, timeout_ms: <a href="#">Int</a> = <span class="num">30000</span>, max_per_host: <a href="#">Int</a> = <span class="num">8</span>)</code></pre>
+        <p>Makes a client with an empty pool.</p>
+        <details class="member-more"><summary>Parameters</summary><div class="member-body"><p>&hellip;</p></div></details>
+      </section>
+
+      <section class="member" id="get" aria-labelledby="m-get">
+        <div class="member-head">
+          <h3 id="m-get"><span class="kind kind-fn">fn</span>get <a class="anchor" href="#get" aria-label="Link to get">#</a></h3>
+          <span class="right"><span class="tag tag-since">since 0.3.0</span></span>
+        </div>
+<pre class="sig"><code><span class="kw">fn</span> <span class="fnn">get</span>(
+    <span class="kw">mut</span> self,
+    url: <a href="#">String</a>,
+    *,
+    headers: <a href="#">Headers</a> = <a href="#">Headers</a>(),
+    timeout_ms: <a href="#">Optional</a>[<a href="#">Int</a>] = <span class="kw">None</span>,
+) <span class="kw">raises</span> -&gt; <a href="#">Response</a></code></pre>
+        <p>Sends a GET request and reads the whole response body. Reuses a pooled connection to the host when one is idle.</p>
+        <details class="member-more" open>
+          <summary>Parameters, returns, raises and an example</summary>
+          <div class="member-body">
+            <div class="example">
+              <div class="example-head"><span>Example: a request with headers <span class="lang">mojo</span></span>
+                <button class="copy done" type="button" aria-label="Copied">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="m5 12 5 5 9-10"/></svg>Copied
+                </button>
+              </div>
+<pre class="code"><code><span class="kw">var</span> h = Headers()
+h.set(<span class="str">"Accept"</span>, <span class="str">"application/json"</span>)
+<span class="kw">var</span> r = client.get(<span class="str">"https://example.com/api"</span>, headers=h)</code></pre>
+            </div>
+            <h4>Parameters</h4>
+            <table class="params">
+              <tbody>
+                <tr><td>url</td><td>String</td><td>An absolute <code>http://</code> or <code>https://</code> URL.</td></tr>
+                <tr><td>headers</td><td>Headers</td><td>Extra request headers. <code>Host</code> and <code>Content-Length</code> are set for you.</td></tr>
+                <tr><td>timeout_ms</td><td>Optional[Int]</td><td>Overrides the client's default timeout for this request.</td></tr>
+              </tbody>
+            </table>
+            <h4>Returns</h4>
+            <p><a href="#"><code>Response</code></a>: the status, headers and body. A 4xx or 5xx status is a response, not an error.</p>
+            <h4>Raises</h4>
+            <div class="raises"><a href="#"><code>TimeoutError</code></a><span>when no complete response arrives within the timeout.</span></div>
+            <div class="raises"><a href="#"><code>HttpError</code></a><span>when the URL is not absolute or the connection fails.</span></div>
+          </div>
+        </details>
+      </section>
+
+      <section class="member" id="post" aria-labelledby="m-post">
+        <div class="member-head">
+          <h3 id="m-post"><span class="kind kind-fn">fn</span>post <a class="anchor" href="#post" aria-label="Link to post">#</a></h3>
+          <span class="right"><span class="tag tag-since">since 0.3.0</span></span>
+        </div>
+<pre class="sig"><code><span class="kw">fn</span> <span class="fnn">post</span>(<span class="kw">mut</span> self, url: <a href="#">String</a>, body: <a href="#">Span</a>[<a href="#">Byte</a>], *, headers: <a href="#">Headers</a> = <a href="#">Headers</a>()) <span class="kw">raises</span> -&gt; <a href="#">Response</a></code></pre>
+        <p>Sends a POST request with <code>body</code> and reads the whole response body.</p>
+        <details class="member-more"><summary>Parameters, returns and raises</summary><div class="member-body"><p>&hellip;</p></div></details>
+      </section>
+
+      <section class="member" id="close" aria-labelledby="m-close">
+        <div class="member-head">
+          <h3 id="m-close"><span class="kind kind-fn">fn</span>close <a class="anchor" href="#close" aria-label="Link to close">#</a></h3>
+          <span class="right"><span class="tag tag-since now">new in 0.4.2</span></span>
+        </div>
+<pre class="sig"><code><span class="kw">fn</span> <span class="fnn">close</span>(<span class="kw">mut</span> self)</code></pre>
+        <p>Closes every pooled connection now instead of when the client is destroyed.</p>
+      </section>
+    </div>
+  </article>
+
+  <nav class="toc" aria-label="On this page">
+    <h2>On this page</h2>
+    <ul>
+      <li><a class="on" href="#top">Client</a></li>
+      <li><a href="#members">Members</a></li>
+      <li><a href="#methods">Methods</a></li>
+      <li class="sub"><a href="#__init__">__init__</a></li>
+      <li class="sub"><a href="#get">get</a></li>
+      <li class="sub"><a href="#post">post</a></li>
+      <li class="sub"><a href="#close">close</a></li>
+    </ul>
+    <h2>Keyboard</h2>
+    <ul>
+      <li><a href="#"><kbd>f</kbd> filter symbols</a></li>
+      <li><a href="#"><kbd>y</kbd> pin this version</a></li>
+      <li><a href="#"><kbd>?</kbd> all shortcuts</a></li>
+    </ul>
+  </nav>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <span>mopm &middot; open source on <a href="https://github.com/komira-ai/mopm">GitHub</a></span>
+    <nav aria-label="Footer">
+      <a href="#">Docs</a><a href="#">Docstring guide</a><a href="#">Security</a><a href="#">Keyboard shortcuts <kbd>?</kbd></a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>
