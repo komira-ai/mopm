@@ -118,9 +118,9 @@ export class ApiStack extends Stack {
       throw new Error(`the API handler bundle is missing at ${handlerDir}; run 'npm ci && npm run build' in service/api first`);
     }
     this.handler = new lambda.Function(this, 'Handler', {
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_22_X,
       handler: 'http/lambda.handler',
-      // AWS SDK v3 comes with the Node.js 20 runtime, so the bundle is only this package's compiled code.
+      // AWS SDK v3 comes with the Node.js 22 runtime, so the bundle is only this package's compiled code.
       code: lambda.Code.fromAsset(handlerDir),
       memorySize: 256,
       // Login calls GitHub and Secrets Manager; the gateway allows 30 seconds.
