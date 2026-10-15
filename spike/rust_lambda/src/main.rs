@@ -10,7 +10,7 @@ async fn handler(event: Request) -> Result<Response<Body>, Error> {
         .and_then(|q| q.first("name"))
         .unwrap_or("world");
     let body = serde_json::json!({
-        "hello": name,
+        "hi": name,
         "path": event.raw_http_path(),
     })
     .to_string();
