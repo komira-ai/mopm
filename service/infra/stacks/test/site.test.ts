@@ -97,7 +97,7 @@ describe.each(STAGES)('SiteStack %s', (stage) => {
       { Header: 'Cross-Origin-Resource-Policy', Value: 'same-origin', Override: true },
       { Header: 'Permissions-Policy', Value: PERMISSIONS_POLICY, Override: true },
     ]);
-    expect(PERMISSIONS_POLICY).toMatch(/^([a-z-]+=\(\)(, )?)+$/);
+    expect(PERMISSIONS_POLICY).toBe('camera=(), microphone=(), geolocation=(), payment=(), usb=()');
   });
 
   test('two deployments: hashed assets, immutable and never pruned; pages, short-cached, pruned and invalidated', () => {
@@ -120,7 +120,7 @@ describe.each(STAGES)('SiteStack %s', (stage) => {
     );
     expect(pages.Properties.DistributionId).toEqual({ Ref: expect.stringMatching(/^Distribution/) });
     expect(ASSETS_CACHE_CONTROL).toBe('public, max-age=31536000, immutable');
-    expect(PAGES_CACHE_CONTROL).toMatch(/^public, max-age=60, s-maxage=\d+$/);
+    expect(PAGES_CACHE_CONTROL).toBe('public, max-age=60, s-maxage=300');
   });
 
   test('the pages deployment depends on the assets deployment, so no page names an asset that is not there yet', () => {
