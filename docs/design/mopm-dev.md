@@ -1,8 +1,8 @@
 # mopm.dev v2: search, API reference, agents and web login
 
-Status: proposal, for review. The CEO has decided search, docs, the installer, name normalisation and the Rust
-toolchain (Q1, Q2, Q7, Q10, Q11; section 7); the CEO answers Q5 and Q8 and the API owner Q3 and Q9 before the PRs
-they gate. The registry API is moving from Node.js to Rust
+Status: proposal, for review. The CEO has decided search, docs, download counting, the installer, who builds the
+search segment, name normalisation and the Rust toolchain (Q1, Q2, Q5, Q7, Q8, Q10, Q11; section 7); the API owner
+answers Q3 and Q9 before the PRs they gate. The registry API is moving from Node.js to Rust
 Lambdas (the API owner's port); search and the docs validator are Rust code in that same service, and this note designs
 only what they need from it (6.1). Written against `main` and the unmerged `site/v1` branch. **Unverified** marks what
 no code, doc or run has confirmed; every size and timing is an estimate until a synthetic catalogue measures it. Detail
@@ -13,7 +13,7 @@ is in [mopm-dev-appendix.md](mopm-dev-appendix.md).
 | decision | section | status |
 |---|---|---|
 | (a) publishers supply docs; `mopm publish` runs `mojo doc`; `mopm-api.json` is the standard; any tool works | 2.1 to 2.3 | done as decided |
-| (b) Tantivy; index at publish, as much compute on the publisher as possible, merged server-side | 1.1 to 1.3 | **one deviation**: the registry, not the publisher, builds the Tantivy segment (1.1); needs the CEO's yes (Q8) |
+| (b) Tantivy; index at publish, as much compute on the publisher as possible, merged server-side | 1.1 to 1.3 | **one deviation**: the registry, not the publisher, builds the Tantivy segment (1.1); accepted (Q8) |
 | (c) packages with about 100 versions | 1.5, A.7 | done; one row per package, release lines capped |
 | (d) search an LLM can drive end to end | 3 | done, including a scaffold-and-build recipe (3.4) |
 | (e) search in Rust Lambdas in the API's Rust service, Tantivy linked | 1.3, 6.1, 6.2 | done; Tantivy 0.26.x builds on Rust 1.99.0, which komira now pins; mopm moves its komira pin to it first (Q11, PR V0) |
@@ -32,7 +32,7 @@ is in [mopm-dev-appendix.md](mopm-dev-appendix.md).
 | Takedown | A tombstoned version leaves search (its segment bytes purged by a merge), the stored reference, the landing page and the CDN (an invalidation) within one writer batch (1.6). |
 | CLI install | The landing page leads with one install line, `curl -fsSL https://mopm.dev/install.sh \| sh`: a release binary on GitHub releases and an installer that checks its sha256, built in PR R beside PR 2 (Q7). |
 | Names | PyPI-style normalisation and nothing beyond it at claim: lowercase, runs of `-`, `.` and `_` collapse to one `_`. The API already refuses upper case, `-` and `.`; PR 19 makes it refuse the rest (runs of `_`, a trailing `_`), after which two packages can never differ only by case or separators (3.6, Q10). |
-| Questions | Answered: Q1 search, Q2 docs, Q7 release binary, Q10 names, Q11 komira's Rust version. Open: Q3 API on the site host; Q5 download counting; Q8 who builds the segment; Q9 the Rust service interfaces. |
+| Questions | Answered: Q1 search, Q2 docs, Q5 download counting, Q7 release binary, Q8 the registry builds the segment, Q10 names, Q11 komira's Rust version. Open: Q3 API on the site host; Q9 the Rust service interfaces. |
 
 ## Goals and non-goals
 
@@ -46,7 +46,7 @@ filter, members table, linked signatures, parsed docstrings, copyable examples, 
 toolchain, exact versions, `mopm.toml` lines, imports, signatures and a build, in JSON.
 
 Non-goals for v2: a long-running search server; running Mojo in the registry; semantic or vector search (if it comes,
-the registry computes embeddings itself, as 1.1 argues); download counts (Q5); search filters or sort options; a hosted
+the registry computes embeddings itself, as 1.1 argues); search filters or sort options; a hosted
 MCP endpoint; write tools for agents; source links (`mojo doc` emits no locations); docstring coverage; owner
 management on the web; changes to device login or publish authorization; the Node-to-Rust port itself.
 
@@ -571,10 +571,13 @@ Deployed before the next merges: 10 before 11, 14 before 15 to 17. Deploys stay 
 
 - **Q1, search**: Tantivy, in Rust, in the API's Rust service; indexing at publish time with as much compute as possible
   on the publisher's machine and the new piece merged into the big index on the server. Section 1; the one deviation,
-  who builds the segment, is Q8.
+  who builds the segment, is Q8 (accepted).
 - **Q2, docs**: publishers supply their own docs and mopm defines the standard; `mopm publish` runs `mojo doc`
   automatically and packs a versioned `mopm-api.json` with a published schema; any tool emitting it works; no flag in
   the normal path. Section 2.
+- **Q5, download counting**: yes. Access logs on the channel distribution with cookie logging off, a daily job that
+  totals downloads per package and version into `downloads_30d`, a small running cost. PR 20, after PR 16; the
+  ranking boost ships inert until then.
 - **Q7, release binary**: yes. A release binary and a one-line installer (`curl -fsSL https://mopm.dev/install.sh |
   sh`, sha256 checked, binaries on GitHub releases), PR R beside PR 2. Uploads still need the CEO's explicit go at the
   time.
@@ -584,6 +587,8 @@ Deployed before the next merges: 10 before 11, 14 before 15 to 17. Deploys stay 
   upper case, `-` and `.`; they still accept runs of `_` and a trailing `_`, which PR 19 refuses. Look-alike folding
   and a `similar_to` signal are dropped. Search, resolve, `new` and `/llms.txt` keep handling names that do not exist
   (3.6).
+- **Q8, who builds the segment**: the registry. The publisher runs `mojo doc`, converts and checks `mopm-api.json`;
+  the registry validates it and commits the small segment. A client-built segment is not accepted (1.1).
 - **Q11, komira's Rust**: closed. komira's Rust rules pin 1.99.0, above Tantivy 0.26.2's 1.86 minimum. mopm's komira
   pin still has 1.85.0, so PR V0 moves that pin before PR V; no change in komira is needed.
 
@@ -592,12 +597,6 @@ Deployed before the next merges: 10 before 11, 14 before 15 to 17. Deploys stay 
 - **Q3 (API owner): the API on the site host (4.1)**, no distribution-wide error responses, wildcard callback matching
   off, `Cache-Control` honoured for public GETs, `llms.txt` and `.md` routed to the API. **Recommend: yes; switch the
   OAuth setting before PR 4b merges.**
-- **Q5 (CEO): download counting** (channel logs without cookies, a daily job, a small cost). **Recommend: yes, after
-  PR 16; the boost ships inert until then.**
-- **Q8 (CEO): the registry, not the publisher, builds the Tantivy segment.** The publisher runs `mojo doc`, converts
-  and checks `mopm-api.json`; the registry validates it and commits the small segment. A client-built segment saves
-  about 10 ms per publish and opens crashes, index-wide ranking manipulation and version lock-in (1.1).
-  **Recommend: yes.**
 - **Q9 (API owner): the interfaces in 6.1**, where the Rust workspace lives, and whether login (4a to 4c) waits for
   the port. **Recommend: agree the workspace location now so PR V lands first and PRs 8 and 9 start; ZIP packaging,
   x86_64; no provisioned concurrency until cold starts show in the logs; build 4a to 4c in Rust after the port's router
