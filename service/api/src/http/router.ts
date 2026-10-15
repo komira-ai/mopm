@@ -51,7 +51,7 @@ export const normaliseQuery = (q: string) => q.toLowerCase().replace(/[-._]+/g, 
 function respond(statusCode: number, requestId: string, body?: unknown): HttpResponse {
   return {
     statusCode,
-    headers: { 'cache-control': 'no-store', 'content-type': 'application/json', 'x-mopm-request-id': requestId },
+    headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-mopm-request-id': requestId },
     body: body === undefined ? '' : JSON.stringify(body),
   };
 }
