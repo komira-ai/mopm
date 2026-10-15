@@ -7,10 +7,12 @@
 # Every test is a Zig test: the build has no shell and no Python. A test welded
 # into a target gates it: `:mopm` is not built unless `:core_test` and
 # `:cli_test` passed, and `:mopm-fake-registry` not unless `:fake_test` did.
-# The drivers (`:golden`, `:registry_login`, `:registry_publish`, and the
-# contract checks `:contract`, `:contract_replay`, `:lock_golden`,
-# `:resolve_e2e`) run the built programs or read the specs, so they cannot be
-# welded into the programs; `buck2 build //...` builds them. A call marked `buck-only` on its first line has no counterpart in
+# The drivers (`:golden`, `:registry_login`, `:registry_publish`, the contract
+# checks `:contract`, `:contract_replay`, `:lock_golden`, `:resolve_e2e`, and
+# the Mojo ones, `:autolink`, `:discovery`, `:supervisor`, `:flaky`,
+# `:mojo_probe`) run the built programs or read the specs, so they cannot be
+# welded into the programs; `buck2 build //...` builds them. A call marked
+# `buck-only` on its first line has no counterpart in
 # build.zig and is left out of the parity comparison.
 
 load("@komira//tools/build/mojo:toolchain.bzl", "zig_exe", "zig_module", "zig_test")
@@ -244,4 +246,106 @@ zig_test(  # buck-only: tools/build_parity.zig reads build.zig and this file
         "registry/fake/main.zig",
     ],
     **_TOOLS
+)
+
+# ---- Mojo end-to-end drivers (komira's pinned Mojo 1.0.0, no pixi) ----------
+
+zig_exe(  # buck-only: `cc` of the Mojo drivers, zig cc
+    name = "zigcc",
+    src = "tests/drivers/zigcc.zig",
+    **_TOOLS
+)
+
+# What the Mojo drivers get: komira's unpacked Mojo toolchain, its zig (the C
+# compiler, through :zigcc), and the built CLI.
+_MOJO_TOOLS = {
+    "CC_SHIM": ":zigcc",
+    "MOJO_TOOLCHAIN": "komira//tools/build/toolchains:mojo_compiler",
+    "ZIG_DIR": "komira//tools/build/toolchains:zig",
+}
+
+zig_test(  # buck-only: komira's Mojo toolchain works from this cell
+    name = "mojo_probe",
+    src = "tests/drivers/mojo_probe_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig"],
+    exec_tools = _MOJO_TOOLS,
+    **_TOOLS
+)
+
+_AUTOLINK_DATA = [
+    "tests/e2e/native",
+    "tests/e2e/pkgs",
+    "tests/e2e/prog.mojo",
+    "tests/e2e/prog_outer.mojo",
+    "tests/e2e/repl.stdin",
+    "tests/e2e/repl_outer.stdin",
+]
+
+zig_test(  # buck-only: mopm build, run, repl with native libraries; the Zig port of tests/e2e/run.sh
+    name = "autolink",
+    src = "tests/drivers/test_autolink_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig"],
+    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm"),
+    data = _AUTOLINK_DATA,
+    **_TOOLS
+)
+
+zig_test(  # buck-only: mopm test --list against the real mojo; the Zig port of tests/e2e/test_discovery.sh
+    name = "discovery",
+    src = "tests/drivers/test_discovery_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig"],
+    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm"),
+    data = [
+        "tests/e2e/testpkg",
+        "tests/e2e/testpkg_mismatch",
+    ],
+    **_TOOLS
+)
+
+zig_test(  # buck-only: mopm test verdicts, JSON and JUnit, timeouts and the group kill; the Zig port of tests/e2e/test_supervisor.sh and check_supervisor.py
+    name = "supervisor",
+    src = "tests/drivers/test_supervisor_test.zig",
+    imports = [
+        "tests/drivers/harness.zig",
+        "tests/drivers/mojo_env.zig",
+        "tests/drivers/results.zig",
+    ],
+    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm"),
+    data = [
+        "tests/e2e/native/greet.c",
+        "tests/e2e/pkgs/greet",
+        "tests/e2e/supervise",
+    ],
+    **_TOOLS
+)
+
+zig_test(  # buck-only: mopm test --retries, --deny-flaky, --ignored, --exact; the Zig port of tests/e2e/test_flaky.sh and check_flaky.py
+    name = "flaky",
+    src = "tests/drivers/test_flaky_test.zig",
+    imports = [
+        "tests/drivers/harness.zig",
+        "tests/drivers/mojo_env.zig",
+        "tests/drivers/results.zig",
+    ],
+    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm"),
+    data = ["tests/e2e/flaky"],
+    **_TOOLS
+)
+
+# ---- The registry API's specification files, staged as `spec/` for service/api:test ----
+# (Not a spec/BUCK or tests/contract/api/BUCK package: a package there would cut
+# its files out of the globs of the contract checks above.)
+filegroup(
+    name = "spec",
+    srcs = {
+        "api/openapi.yaml": "spec/api/openapi.yaml",
+        "package-metadata.schema.json": "spec/package-metadata.schema.json",
+    },
+    visibility = ["//service/api:"],
+)
+
+filegroup(
+    name = "contract_api",
+    srcs = {f[len("tests/contract/api/"):]: f for f in glob(["tests/contract/api/*.json"])},
+    visibility = ["//service/api:"],
 )

@@ -1,3 +1,5 @@
+# Superseded by //:flaky (tests/drivers/test_flaky_test.zig) on the build farm, which has no shell, Python or pixi;
+# kept for ci.yml until farm.yml has matched it. Change both together.
 """Check the results of `mopm test` on tests/e2e/flaky against the exact
 verdicts and attempts each fixture test must get (tests/e2e/test_flaky.sh
 runs it).

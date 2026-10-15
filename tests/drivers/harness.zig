@@ -41,7 +41,7 @@ pub const Report = struct {
     }
 };
 
-pub const Capture = enum { both, stdout, stderr };
+pub const Capture = enum { both, stdout, stderr, none };
 
 pub const Ran = struct {
     /// The exit status, or the signal number when `signaled`.
@@ -54,6 +54,11 @@ pub const Options = struct {
     stdin_path: ?[]const u8 = null,
     cwd: ?[]const u8 = null,
     capture: Capture = .both,
+    /// With `.stdout` capture: standard error goes to this file (created or
+    /// truncated) instead of being dropped.
+    stderr_path: ?[]const u8 = null,
+    /// With `.stderr` or no capture: standard output goes to this file.
+    stdout_path: ?[]const u8 = null,
 };
 
 /// The environment of this process.
@@ -87,6 +92,8 @@ pub fn run(a: Allocator, argv: []const []const u8, env: *const std.process.EnvMa
     }
     const stdin_z: ?[:0]const u8 = if (opt.stdin_path) |p| try a.dupeZ(u8, p) else null;
     const cwd_z: ?[:0]const u8 = if (opt.cwd) |p| try a.dupeZ(u8, p) else null;
+    const out_z: ?[:0]const u8 = if (opt.stdout_path) |p| try a.dupeZ(u8, p) else null;
+    const err_z: ?[:0]const u8 = if (opt.stderr_path) |p| try a.dupeZ(u8, p) else null;
     const fds = try posix.pipe();
     const pid = try posix.fork();
     if (pid == 0) {
@@ -94,10 +101,19 @@ pub fn run(a: Allocator, argv: []const []const u8, env: *const std.process.EnvMa
         const devnull = posix.openZ("/dev/null", .{ .ACCMODE = .RDWR }, 0) catch posix.exit(127);
         const in_fd = if (stdin_z) |p| (posix.openZ(p, .{ .ACCMODE = .RDONLY }, 0) catch posix.exit(127)) else devnull;
         posix.dup2(in_fd, 0) catch posix.exit(127);
-        const out_fd = if (opt.capture == .stderr) devnull else fds[1];
-        const err_fd = if (opt.capture == .stdout) devnull else fds[1];
+        const out_fd = if (out_z) |p|
+            (posix.openZ(p, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, 0o644) catch posix.exit(127))
+        else if (opt.capture == .stderr or opt.capture == .none) devnull else fds[1];
+        const err_fd = if (err_z) |p|
+            (posix.openZ(p, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, 0o644) catch posix.exit(127))
+        else if (opt.capture == .stdout or opt.capture == .none) devnull else fds[1];
         posix.dup2(out_fd, 1) catch posix.exit(127);
         posix.dup2(err_fd, 2) catch posix.exit(127);
+        // The write end of the capture pipe stays open only as fd 1 or 2: a
+        // descendant that outlives this child must not keep the capture open
+        // through a third descriptor.
+        if (fds[1] > 2) posix.close(fds[1]);
+        if (devnull > 2) posix.close(devnull);
         if (cwd_z) |p| posix.chdirZ(p) catch posix.exit(127);
         const exec_err = posix.execvpeZ(argv_z[0].?, argv_z.ptr, envp.ptr);
         std.debug.print("exec {s}: {s}\n", .{ argv[0], @errorName(exec_err) });
@@ -311,4 +327,205 @@ fn contentLength(head: []const u8) ?usize {
         return std.fmt.parseInt(usize, std.mem.trim(u8, l[colon + 1 ..], " "), 10) catch null;
     }
     return null;
+}
+
+/// An environment variable the BUCK target sets with exec_tools or data: an
+/// absolute path already.
+pub fn toolPathAbs(a: Allocator, name: []const u8) ![]u8 {
+    return std.process.getEnvVarOwned(a, name) catch {
+        std.debug.print("the environment variable {s} is not set (BUCK gives it with exec_tools or data)\n", .{name});
+        return error.MissingTool;
+    };
+}
+
+// -------------------------------------------------- text and file helpers
+
+/// `s` without ANSI colour sequences (ESC [ digits ; ... m).
+pub fn stripAnsi(a: Allocator, s: []const u8) ![]u8 {
+    var out = std.ArrayList(u8).init(a);
+    var i: usize = 0;
+    while (i < s.len) {
+        if (s[i] == 0x1b and i + 1 < s.len and s[i + 1] == '[') {
+            var j = i + 2;
+            while (j < s.len and (std.ascii.isDigit(s[j]) or s[j] == ';')) j += 1;
+            if (j < s.len and s[j] == 'm') {
+                i = j + 1;
+                continue;
+            }
+        }
+        try out.append(s[i]);
+        i += 1;
+    }
+    return out.items;
+}
+
+/// Paths (relative to `dir`, sorted) of the regular files under it whose base
+/// name is `name`.
+pub fn findFiles(a: Allocator, dir_path: []const u8, name: []const u8) ![][]const u8 {
+    var out = std.ArrayList([]const u8).init(a);
+    var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch return out.items;
+    defer dir.close();
+    var walker = try dir.walk(a);
+    defer walker.deinit();
+    while (try walker.next()) |e| {
+        if (e.kind == .file and std.mem.eql(u8, e.basename, name)) try out.append(try a.dupe(u8, e.path));
+    }
+    std.mem.sort([]const u8, out.items, {}, struct {
+        fn less(_: void, x: []const u8, y: []const u8) bool {
+            return std.mem.lessThan(u8, x, y);
+        }
+    }.less);
+    return out.items;
+}
+
+/// The lines of `text` that start (after spaces) with `kind [ ` (a result
+/// line of the Mojo test harness: `PASS [ 0.001 ] name`), as the names.
+pub fn resultNames(a: Allocator, text: []const u8, kind: []const u8) ![][]const u8 {
+    var out = std.ArrayList([]const u8).init(a);
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    const head = try std.fmt.allocPrint(a, "{s} [ ", .{kind});
+    while (lines.next()) |raw| {
+        const l = std.mem.trimLeft(u8, raw, " ");
+        if (!std.mem.startsWith(u8, l, head)) continue;
+        const close = std.mem.indexOf(u8, l, " ] ") orelse continue;
+        try out.append(std.mem.trimRight(u8, l[close + 3 ..], "\r"));
+    }
+    return out.items;
+}
+
+pub fn sortStrings(items: [][]const u8) void {
+    std.mem.sort([]const u8, items, {}, struct {
+        fn less(_: void, x: []const u8, y: []const u8) bool {
+            return std.mem.lessThan(u8, x, y);
+        }
+    }.less);
+}
+
+pub fn eqlStrings(x: []const []const u8, y: []const []const u8) bool {
+    if (x.len != y.len) return false;
+    for (x, y) |p, q| if (!std.mem.eql(u8, p, q)) return false;
+    return true;
+}
+
+/// Whether some line of `text` is exactly `line`.
+pub fn hasLine(text: []const u8, line: []const u8) bool {
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |l| if (std.mem.eql(u8, l, line)) return true;
+    return false;
+}
+
+/// Whether some line of `text` starts with `prefix`.
+pub fn hasLinePrefix(text: []const u8, prefix: []const u8) bool {
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |l| if (std.mem.startsWith(u8, l, prefix)) return true;
+    return false;
+}
+
+/// Whether some line of `text` starts (after spaces) with `lead` and, after
+/// spaces, is followed by exactly `tail` (`only in the scan:   name`).
+pub fn hasLineSuffix(text: []const u8, lead: []const u8, tail: []const u8) bool {
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |raw| {
+        const l = std.mem.trimLeft(u8, raw, " ");
+        if (!std.mem.startsWith(u8, l, lead)) continue;
+        if (std.mem.eql(u8, std.mem.trim(u8, l[lead.len..], " \r"), tail)) return true;
+    }
+    return false;
+}
+
+/// Whether some line of `text` is `kind`, then spaces, then `mid` and (after
+/// anything that is not a newline) ends with `tail`: the shape of
+/// `^KIND  *mid...tail` of the shell tests' grep patterns (`tail` need not end the line).
+pub fn hasLineMatching(text: []const u8, kind: []const u8, mid: []const u8, tail: []const u8) bool {
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |raw| {
+        const l = std.mem.trimRight(u8, raw, "\r");
+        if (!std.mem.startsWith(u8, l, kind)) continue;
+        const rest = std.mem.trimLeft(u8, l[kind.len..], " ");
+        if (rest.len == l.len - kind.len) continue; // needs at least one space
+        if (!std.mem.startsWith(u8, rest, mid)) continue;
+        if (std.mem.indexOf(u8, rest, tail) != null) return true;
+    }
+    return false;
+}
+
+/// Whether some line of `text` starts with `head` and ends with `tail`.
+pub fn hasLineBetween(text: []const u8, head: []const u8, tail: []const u8) bool {
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |raw| {
+        const l = std.mem.trimRight(u8, raw, "\r");
+        if (l.len >= head.len + tail.len and std.mem.startsWith(u8, l, head) and std.mem.endsWith(u8, l, tail)) return true;
+    }
+    return false;
+}
+
+/// Whether `line` matches `pattern` as a whole: '#' stands for any number of
+/// digits (the shell tests' `[0-9]*`), '~' for one or more spaces (`  *`),
+/// '*' for anything, every other byte for itself.
+pub fn globMatch(pattern: []const u8, line: []const u8) bool {
+    if (pattern.len == 0) return line.len == 0;
+    switch (pattern[0]) {
+        '#' => {
+            var i: usize = 0;
+            while (true) {
+                if (globMatch(pattern[1..], line[i..])) return true;
+                if (i < line.len and std.ascii.isDigit(line[i])) i += 1 else return false;
+            }
+        },
+        '*' => {
+            var i: usize = 0;
+            while (i <= line.len) : (i += 1) if (globMatch(pattern[1..], line[i..])) return true;
+            return false;
+        },
+        '~' => {
+            if (line.len == 0 or line[0] != ' ') return false;
+            var i: usize = 1;
+            while (true) {
+                if (globMatch(pattern[1..], line[i..])) return true;
+                if (i < line.len and line[i] == ' ') i += 1 else return false;
+            }
+        },
+        else => return line.len > 0 and line[0] == pattern[0] and globMatch(pattern[1..], line[1..]),
+    }
+}
+
+/// Whether some line of `text` matches `pattern` (see globMatch).
+pub fn hasLineGlob(text: []const u8, pattern: []const u8) bool {
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |raw| if (globMatch(pattern, std.mem.trimRight(u8, raw, "\r"))) return true;
+    return false;
+}
+
+/// Copies the directory tree `src` to `dst` (created), files and directories.
+pub fn copyTree(a: Allocator, src: []const u8, dst: []const u8) !void {
+    try std.fs.cwd().makePath(dst);
+    var dir = try std.fs.cwd().openDir(src, .{ .iterate = true });
+    defer dir.close();
+    var walker = try dir.walk(a);
+    defer walker.deinit();
+    while (try walker.next()) |e| {
+        const to = try std.fs.path.join(a, &.{ dst, e.path });
+        switch (e.kind) {
+            .directory => try std.fs.cwd().makePath(to),
+            .file => try dir.copyFile(e.path, std.fs.cwd(), to, .{}),
+            else => {},
+        }
+    }
+}
+
+test "globMatch: digits and spaces" {
+    try std.testing.expect(globMatch("FAIL~a (# ms): exit status #", "FAIL     a (31 ms): exit status 1"));
+    try std.testing.expect(!globMatch("FAIL~a (# ms)", "FAILa (31 ms)"));
+    try std.testing.expect(!globMatch("a #", "a x"));
+}
+
+/// The base names of the regular files under `dir_path`.
+pub fn findFilesAll(a: Allocator, dir_path: []const u8) ![][]const u8 {
+    var out = std.ArrayList([]const u8).init(a);
+    var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch return out.items;
+    defer dir.close();
+    var walker = try dir.walk(a);
+    defer walker.deinit();
+    while (try walker.next()) |e| if (e.kind == .file) try out.append(try a.dupe(u8, e.basename));
+    return out.items;
 }
