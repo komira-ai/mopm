@@ -41,8 +41,9 @@ const tokenToItem = (r: TokenRecord): Item => {
     ...rest,
     token_hash: hash,
     expires_at: epochSeconds(expires_at),
+    expires_at_iso: expires_at,
     // Index keys are strings (like the owners table); the number is kept for reading back.
-    ...(github_id !== undefined ? { github_id: String(github_id) } : {}),
+    ...(github_id !== undefined ? { github_id: String(github_id), github_id_num: github_id } : {}),
   };
 };
 const tokenFromItem = (i: Item): TokenRecord => {
