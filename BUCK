@@ -375,13 +375,10 @@ _LINT_PACKAGES = [
     "tools/node",
 ]
 
-_REPO_FILES = {
-    f: f
-    for f in glob(["**", ".github/**"]) + _LINT_DOTFILES
-} | {
-    pkg: "//{}:lint_files".format(pkg)
-    for pkg in _LINT_PACKAGES
-}
+_ROOT_FILES = glob(["**", ".github/**"]) + _LINT_DOTFILES
+
+# (One line each: tools/build_parity.zig reads BUCK line by line and refuses a line that starts a loop.)
+_REPO_FILES = {f: f for f in _ROOT_FILES} | {pkg: "//{}:lint_files".format(pkg) for pkg in _LINT_PACKAGES}
 
 # The files the Zig lints read, by source: the three test roots share these.
 _LINT_LIBS = [
