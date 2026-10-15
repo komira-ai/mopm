@@ -26,9 +26,17 @@ Two builds describe the same program, and both stay.
   (`//:mopm` is not built unless `//:core_test` and `//:cli_test` passed).
   The Zig drivers in `tests/drivers` run the built programs: `//:golden` (the
   checks of `tests/run_golden.sh`), `//:registry_login` and
-  `//:registry_publish` (the checks of `tests/registry_e2e/*.py`).
-  `tests/run_golden.sh` and the two Python scripts stay for `ci.yml` until
-  `farm.yml` has matched it, and are deleted then. Without a farm configured
+  `//:registry_publish` (the checks of `tests/registry_e2e/*.py`), and the
+  contract checks: `//:contract` (`tests/contract/validate.py`: the OpenAPI
+  document, the JSON Schemas, the API cases and the examples),
+  `//:contract_replay` (`replay.py`: the fake registry against the API
+  cases), `//:lock_golden` (`tests/resolve/check_golden.py`) and
+  `//:resolve_e2e` (`tests/resolve_e2e/run.py`). The JSON Schema and YAML
+  readers they use are in `tests/drivers` and implement only what the specs
+  use; they refuse anything else with a message (see the headers of
+  `jsonschema.zig` and `yaml.zig`). `tests/run_golden.sh` and the Python
+  scripts stay for `ci.yml` until `farm.yml` has matched it, and are deleted
+  then. Without a farm configured
   (`.buckconfig.local`, gitignored) the actions run on your machine.
 
 A source file you add under `src/core`, `src/cli` or `registry/fake` is picked
