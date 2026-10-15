@@ -13,9 +13,14 @@
 name = "mopm-third-party"
 version = "0.0.0"
 edition = "2021"
-# Honoured by the runner's resolver (CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback):
-# the pinned compiler, komira's tools/build/toolchains/rust.
-rust-version = "1.99"
+# Honoured by the runner's resolver (CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback): it
+# picks the newest release of every crate whose own rust-version is at most this. It is NOT
+# the pinned compiler (komira's tools/build/toolchains/rust is 1.99.0). The AWS SDK stack
+# must be one coherent set that builds against AWS-LC 1.39.0 (see below), and a newest-first
+# resolve against 1.99 mixes today's aws-smithy-types with an aws-runtime that no longer
+# compiles with it. 1.85 is the rust-version of that older set; raising it moves the SDK and
+# needs the AWS-LC decision first.
+rust-version = "1.85"
 publish = false
 
 [lib]
@@ -27,13 +32,14 @@ lambda_runtime = { version = "1", default-features = false }
 aws_lambda_events = { version = "1", default-features = false, features = ["apigw", "sqs"] }
 tokio = { version = "1", default-features = false, features = ["rt", "macros", "net", "time", "sync", "io-util"] }
 
-# The AWS SDK for Rust. These releases bundle the AWS-LC that komira builds (1.39.0:
-# aws-lc-sys 0.23.1, aws-lc-rs 1.11.1, rustls 0.23.20), so the five that decide it are
-# held with `=` and Cargo resolves the rest around them. Moving them is a decision
-# (the AWS-LC pin in komira), not an update.
-aws-config = { version = "=1.8.5", default-features = false, features = ["behavior-version-latest", "rt-tokio"] }
-aws-sdk-dynamodb = { version = "=1.82.0", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }
-aws-sdk-s3 = { version = "=1.96.0", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }
+# The AWS SDK for Rust. aws-lc-sys 0.23.1 bundles the AWS-LC that komira builds (1.39.0),
+# and aws-lc-rs 1.11.1 and rustls 0.23.20 are the releases that go with it, so those three
+# are held with `=` and Cargo resolves the SDK around them (the newest SDK releases it can
+# resolve against that: the oldest ones do not compile with rustc 1.99). Moving the three
+# is a decision (the AWS-LC pin in komira), not an update.
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio"] }
+aws-sdk-dynamodb = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }
+aws-sdk-s3 = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }
 aws-sdk-sqs = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }
 aws-sdk-cloudfront = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }
 aws-sdk-secretsmanager = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }
