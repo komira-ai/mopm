@@ -9,6 +9,11 @@ oidc_files = %w[deploy.yml e2e.yml promote.yml oidc-subject-check.yml]
 # farm.yml may also hold the id-token grant, and one action outside GitHub's own
 # (komira's farm-connect, pinned by commit); hygiene.rb holds it to its conditions.
 farm_file = "farm.yml"
+# kpin-update.yml (the weekly pin update) holds the two write grants it needs to push its branch
+# and open its pull request with the default token, nothing else, and only on a schedule or a
+# manual run: checked below.
+kpin_file = "kpin-update.yml"
+kpin_writes = %w[contents pull-requests]
 # Names whose values must never reach a log: no echo/printf/cat/tee of them.
 secret_names = %w[AWS_ACCOUNT_ID AWS_REGION ROLE_ARN AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN]
 secret_alt = "(?:" + secret_names.join("|") + ")"
@@ -65,6 +70,7 @@ end
     elsif value.is_a?(Hash)
       value.each do |k, v|
         next unless v == "write"
+        next if base == kpin_file && kpin_writes.include?(k) && path.size == 3 && path[0] == "jobs"
         fail_.("#{f}: #{path.join('.')}.#{k}: write is not allowed") unless k == "id-token" && (oidc_files.include?(base) || base == farm_file)
       end
     end
@@ -87,6 +93,16 @@ end
     end
   elsif File.read(f) =~ /secrets:\s*inherit/
     fail_.("#{f}: secrets: inherit is not allowed outside promote.yml")
+  end
+  if base == kpin_file
+    kon = doc["on"] || doc[true] || {}
+    kkeys = kon.is_a?(Hash) ? kon.keys : Array(kon)
+    fail_.("#{f}: triggers must be exactly schedule and workflow_dispatch, got #{kkeys.inspect}") if kkeys.sort != %w[schedule workflow_dispatch]
+    # The write grants are the jobs' own (the top level stays read-only, checked above).
+    jobs.each do |jn, job|
+      extra = (job["permissions"].is_a?(Hash) ? job["permissions"].keys : []) - kpin_writes
+      fail_.("#{f}: job #{jn} may hold only #{kpin_writes.join(' and ')} permissions, not #{extra.inspect}") unless extra.empty?
+    end
   end
   # The privileged PR trigger is spelled in two pieces so hygiene.rb does not flag this file.
   ["pull_request_" + "target", "workflow_run", "issue_comment"].each do |t|
