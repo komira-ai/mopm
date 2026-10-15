@@ -1,0 +1,179 @@
+{
+  "description": "Create, list and revoke API tokens with a fresh session: the secret shown once, the listing without it, all_current as a snapshot, scopes and packages normalised, and revoking twice.",
+  "world": {
+    "auth": true,
+    "publish": true,
+    "seeds": [
+      "auth_accounts"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "ci",
+          "scopes": [
+            "yank",
+            "publish",
+            "publish"
+          ],
+          "packages": [
+            "beta_pkg",
+            "alpha",
+            "alpha"
+          ],
+          "expires_in_days": 30
+        }
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "everything",
+          "scopes": [
+            "publish"
+          ],
+          "packages": "all_current",
+          "expires_in_days": 90
+        }
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessstaleaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/me/tokens/{{0.id}}",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 204
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/me/tokens/{{0.id}}",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 204
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "token": "{{0.token}}"
+      },
+      "expect": {
+        "status": 401,
+        "code": "token_revoked"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/me/tokens/tok_nosuch",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 404,
+        "code": "token_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/me/tokens/tok_apifull",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 204
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/me/tokens/tok_otheracct",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 404,
+        "code": "token_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/me/tokens/tok_sessfresh",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 404,
+        "code": "token_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/me/tokens/tok_ciwidgets",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 404,
+        "code": "token_not_found"
+      }
+    }
+  ]
+}

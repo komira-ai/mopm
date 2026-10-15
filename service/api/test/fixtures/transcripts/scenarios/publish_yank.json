@@ -1,0 +1,329 @@
+{
+  "description": "Yank and unyank: the reason, idempotent repeats, the tokens that may yank (yank scope, publish scope, not another account's, not a session), the states that cannot change, and the refusals of the body.",
+  "world": {
+    "auth": true,
+    "publish": true,
+    "seeds": [
+      "auth_accounts"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "token": "mopm_apiyankaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "yanked": true,
+          "reason": "crashes on empty body"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "token": "mopm_apiyankaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "yanked": true,
+          "reason": "other reason"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/alpha/1.0.0"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "token": "mopm_apipubaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "yanked": false
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "yanked": false
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.1.0/yank",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "yanked": false
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/0.9.0/yank",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "yanked": true,
+          "reason": "x"
+        }
+      },
+      "expect": {
+        "status": 409,
+        "code": "invalid_transition"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/0.9.0/yank",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "yanked": false
+        }
+      },
+      "expect": {
+        "status": 409,
+        "code": "invalid_transition"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/9.9.9/yank",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "yanked": true,
+          "reason": "x"
+        }
+      },
+      "expect": {
+        "status": 404,
+        "code": "version_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "token": "mopm_otheracctaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "yanked": true,
+          "reason": "x"
+        }
+      },
+      "expect": {
+        "status": 403,
+        "code": "scope_missing"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "yanked": true,
+          "reason": "x"
+        }
+      },
+      "expect": {
+        "status": 403,
+        "code": "scope_missing"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "json": {
+          "yanked": true,
+          "reason": "x"
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "token_missing"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/beta_pkg/1.0.0/yank",
+        "token": "mopm_apiyankaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "yanked": true,
+          "reason": "x"
+        }
+      },
+      "expect": {
+        "status": 403,
+        "code": "scope_missing"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "body": "not json"
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {}
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "yanked": true
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "yanked": true,
+          "reason": ""
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "yanked": true,
+          "reason": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "yanked": true,
+          "reason": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "yanked": "yes",
+          "reason": "x"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0/yank",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "yanked": true,
+          "reason": "x"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_version"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/Bad-Name/1.0.0/yank",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "yanked": true,
+          "reason": "x"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_name"
+      }
+    }
+  ]
+}

@@ -1,0 +1,138 @@
+{
+  "description": "Version order is conda order (1.20.0 after 1.10.0), pending is never shown, tombstoned and yanked show their state; paging by cursor over three pages.",
+  "world": {
+    "seeds": [
+      "ordering_demo_with_owner"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/ordering_demo"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/ordering_demo/versions"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/ordering_demo/versions",
+        "query": {
+          "limit": "2"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/ordering_demo/versions",
+        "query": {
+          "limit": "2",
+          "cursor": "{{2.next_cursor}}"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/ordering_demo/versions",
+        "query": {
+          "limit": "2",
+          "cursor": "{{3.next_cursor}}"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/ordering_demo/versions",
+        "query": {
+          "cursor": "garbage"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/ordering_demo/versions",
+        "query": {
+          "limit": "0"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/ordering_demo/3.0.0"
+      },
+      "expect": {
+        "status": 404,
+        "code": "version_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/ordering_demo/1.9.0"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/ordering_demo/1.10.0"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/ordering_demo/1.10.00"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/ordering_demo/owners"
+      },
+      "expect": {
+        "status": 200
+      }
+    }
+  ]
+}

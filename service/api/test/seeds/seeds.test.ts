@@ -15,7 +15,7 @@ import { LEGACY } from './legacy-recipes';
  * A failing seed prints what the builder produced in seed form (`ACTUAL`); that is how a seed file is made.
  */
 /** Seeds written for the transcript scenarios; they have no TypeScript builder. */
-const SCENARIO_SEEDS: string[] = [];
+const SCENARIO_SEEDS: string[] = ['auth_accounts', 'auth_fifty_tokens', 'bulk_1001_claimed'];
 
 const noIds = <T extends { versions: Array<{ audit: { id: string } }> }>(s: T): T => ({
   ...s,

@@ -1,0 +1,193 @@
+{
+  "description": "The read routes on one package: info, versions, owners, a version in each state of lookup, and the refusals around names and versions.",
+  "world": {
+    "seeds": [
+      "http_client_two_versions"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/versions"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/owners"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/0.4.0"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/0.3.0"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/0.9.9"
+      },
+      "expect": {
+        "status": 404,
+        "code": "version_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/1.0"
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_version"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/0.4.0rc1"
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_version"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/nosuch"
+      },
+      "expect": {
+        "status": 404,
+        "code": "package_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/nosuch/versions"
+      },
+      "expect": {
+        "status": 404,
+        "code": "package_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/nosuch/owners"
+      },
+      "expect": {
+        "status": 404,
+        "code": "package_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/Http-Client"
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_name"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/a"
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_name"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_name"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http%5Fclient"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1//packages//http_client"
+      },
+      "expect": {
+        "status": 404,
+        "code": "route_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http%2Gclient"
+      },
+      "expect": {
+        "status": 404,
+        "code": "route_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/nosuch/1.0.0"
+      },
+      "expect": {
+        "status": 404,
+        "code": "package_not_found"
+      }
+    }
+  ]
+}

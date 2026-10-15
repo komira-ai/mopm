@@ -1,0 +1,481 @@
+{
+  "description": "begin-upload: no token, unknown token, wrong scope, another account's token, a CI token for another version, and every invalid member of the body, each answered before anything is reserved.",
+  "world": {
+    "auth": true,
+    "publish": true,
+    "seeds": [
+      "auth_accounts"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "token_missing"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "token_unknown"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apiyankaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 403,
+        "code": "scope_missing"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_otheracctaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 403,
+        "code": "scope_missing"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 403,
+        "code": "scope_missing"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_ciotheraaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 403,
+        "code": "scope_missing"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/beta_pkg/2.0.0/files",
+        "token": "mopm_apipubaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-beta_pkg-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 403,
+        "code": "scope_missing"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/Bad-Name/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_name"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_version"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "body": "not json"
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "body": "[]"
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "win-64",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": 5,
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "../x.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "a/b.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.tar.bz2",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "upload_invalid"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.1-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "upload_invalid"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-beta_pkg-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "upload_invalid"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 0
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": -1
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 1.5
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": "5"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/gamma_pkg/1.0.0/files",
+        "token": "mopm_otheracctaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-gamma_pkg-1.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/nosuch/1.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-nosuch-1.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 403,
+        "code": "scope_missing"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 404,
+        "code": "route_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 404,
+        "code": "route_not_found"
+      }
+    }
+  ]
+}

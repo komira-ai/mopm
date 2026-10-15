@@ -1,0 +1,345 @@
+{
+  "description": "Two accounts (4242 octo owns alpha and beta_pkg; 777 owns gamma_pkg) with alpha 0.9.0 tombstoned, 1.0.0 published, 1.1.0 yanked, and a token of each kind and state.",
+  "packages": [
+    {
+      "name": "alpha",
+      "state": "active",
+      "created_at": "2026-10-01T09:00:00Z"
+    },
+    {
+      "name": "beta_pkg",
+      "state": "claimed",
+      "created_at": "2026-10-01T09:00:00Z"
+    },
+    {
+      "name": "gamma_pkg",
+      "state": "claimed",
+      "created_at": "2026-10-01T09:00:00Z"
+    }
+  ],
+  "owners": [
+    {
+      "name": "alpha",
+      "github_id": 4242,
+      "handle": "octo",
+      "added_at": "2026-10-01T09:00:00Z"
+    },
+    {
+      "name": "beta_pkg",
+      "github_id": 4242,
+      "handle": "octo",
+      "added_at": "2026-10-01T09:00:00Z"
+    },
+    {
+      "name": "gamma_pkg",
+      "github_id": 777,
+      "handle": "other",
+      "added_at": "2026-10-01T09:00:00Z"
+    }
+  ],
+  "versions": [
+    {
+      "record": {
+        "name": "alpha",
+        "version": "0.9.0",
+        "canonical": "0.9.0",
+        "build": "mojo1.0.0_0",
+        "state": "tombstoned",
+        "published_at": "2026-10-13T12:00:00Z",
+        "requires_mojo": "==1.0.0",
+        "deps": [],
+        "native": [],
+        "files": [
+          {
+            "subdir": "noarch",
+            "filename": "mojo-alpha-0.9.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 1000,
+            "url": "https://conda.example.invalid/noarch/mojo-alpha-0.9.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "rev": 0,
+        "tombstone": {
+          "reason_code": "malware",
+          "date": "2026-10-12"
+        }
+      },
+      "audit": {
+        "name": "alpha",
+        "ts": "2026-10-13T12:00:00Z",
+        "id": "id000001",
+        "actor": "test",
+        "action": "publish",
+        "version": "0.9.0"
+      }
+    },
+    {
+      "record": {
+        "name": "alpha",
+        "version": "1.0.0",
+        "canonical": "1.0.0",
+        "build": "mojo1.0.0_0",
+        "state": "published",
+        "published_at": "2026-10-13T12:00:00Z",
+        "requires_mojo": "==1.0.0",
+        "deps": [],
+        "native": [],
+        "files": [
+          {
+            "subdir": "noarch",
+            "filename": "mojo-alpha-1.0.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 1000,
+            "url": "https://conda.example.invalid/noarch/mojo-alpha-1.0.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "rev": 0
+      },
+      "audit": {
+        "name": "alpha",
+        "ts": "2026-10-13T12:00:00Z",
+        "id": "id000002",
+        "actor": "test",
+        "action": "publish",
+        "version": "1.0.0"
+      }
+    },
+    {
+      "record": {
+        "name": "alpha",
+        "version": "1.1.0",
+        "canonical": "1.1.0",
+        "build": "mojo1.0.0_0",
+        "state": "yanked",
+        "published_at": "2026-10-13T12:00:00Z",
+        "requires_mojo": "==1.0.0",
+        "deps": [],
+        "native": [],
+        "files": [
+          {
+            "subdir": "noarch",
+            "filename": "mojo-alpha-1.1.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 1000,
+            "url": "https://conda.example.invalid/noarch/mojo-alpha-1.1.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "rev": 0,
+        "yank_reason": "broken"
+      },
+      "audit": {
+        "name": "alpha",
+        "ts": "2026-10-13T12:00:00Z",
+        "id": "id000003",
+        "actor": "test",
+        "action": "publish",
+        "version": "1.1.0"
+      }
+    }
+  ],
+  "users": [
+    {
+      "github_id": 4242,
+      "handle": "octo",
+      "created_at": "2026-09-20T10:00:00Z",
+      "last_login_at": "2026-10-13T12:00:00Z",
+      "two_factor": true
+    },
+    {
+      "github_id": 777,
+      "handle": "other",
+      "created_at": "2026-09-21T10:00:00Z",
+      "last_login_at": "2026-10-13T12:00:00Z",
+      "two_factor": true
+    }
+  ],
+  "tokens": [
+    {
+      "secret": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "record": {
+        "id": "tok_apifull",
+        "kind": "api",
+        "name": "apifull",
+        "scopes": [
+          "publish",
+          "yank"
+        ],
+        "packages": [
+          "alpha",
+          "beta_pkg"
+        ],
+        "all_current": false,
+        "created_at": "2026-10-10T12:00:00.000Z",
+        "expires_at": "2027-01-01T00:00:00.000Z",
+        "github_id": 4242
+      }
+    },
+    {
+      "secret": "mopm_apiyankaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "record": {
+        "id": "tok_apiyank",
+        "kind": "api",
+        "name": "apiyank",
+        "scopes": [
+          "yank"
+        ],
+        "packages": [
+          "alpha"
+        ],
+        "all_current": false,
+        "created_at": "2026-10-10T12:00:00.000Z",
+        "expires_at": "2027-01-01T00:00:00.000Z",
+        "github_id": 4242
+      }
+    },
+    {
+      "secret": "mopm_apipubaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "record": {
+        "id": "tok_apipub",
+        "kind": "api",
+        "name": "apipub",
+        "scopes": [
+          "publish"
+        ],
+        "packages": [
+          "alpha"
+        ],
+        "all_current": false,
+        "created_at": "2026-10-10T12:00:00.000Z",
+        "expires_at": "2027-01-01T00:00:00.000Z",
+        "github_id": 4242
+      }
+    },
+    {
+      "secret": "mopm_otheracctaaaaaaaaaaaaaaaaaaaaaaa",
+      "record": {
+        "id": "tok_otheracct",
+        "kind": "api",
+        "name": "otheracct",
+        "scopes": [
+          "publish",
+          "yank"
+        ],
+        "packages": [
+          "gamma_pkg"
+        ],
+        "all_current": false,
+        "created_at": "2026-10-10T12:00:00.000Z",
+        "expires_at": "2027-01-01T00:00:00.000Z",
+        "github_id": 777
+      }
+    },
+    {
+      "secret": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+      "record": {
+        "id": "tok_sessfresh",
+        "kind": "session",
+        "name": "sessfresh",
+        "scopes": [],
+        "packages": [],
+        "all_current": false,
+        "created_at": "2026-10-10T12:00:00.000Z",
+        "expires_at": "2026-11-13T12:00:00.000Z",
+        "github_id": 4242,
+        "fresh_until": "2026-10-14T12:10:00.000Z"
+      }
+    },
+    {
+      "secret": "mopm_sessstaleaaaaaaaaaaaaaaaaaaaaaaa",
+      "record": {
+        "id": "tok_sessstale",
+        "kind": "session",
+        "name": "sessstale",
+        "scopes": [],
+        "packages": [],
+        "all_current": false,
+        "created_at": "2026-10-10T12:00:00.000Z",
+        "expires_at": "2026-11-13T12:00:00.000Z",
+        "github_id": 4242,
+        "fresh_until": "2026-10-14T11:00:00.000Z"
+      }
+    },
+    {
+      "secret": "mopm_expiredaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "record": {
+        "id": "tok_expired",
+        "kind": "api",
+        "name": "expired",
+        "scopes": [
+          "publish",
+          "yank"
+        ],
+        "packages": [
+          "alpha",
+          "beta_pkg"
+        ],
+        "all_current": false,
+        "created_at": "2026-10-10T12:00:00.000Z",
+        "expires_at": "2026-10-01T00:00:00.000Z",
+        "github_id": 4242
+      }
+    },
+    {
+      "secret": "mopm_revokedaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "record": {
+        "id": "tok_revoked",
+        "kind": "api",
+        "name": "revoked",
+        "scopes": [
+          "publish",
+          "yank"
+        ],
+        "packages": [
+          "alpha",
+          "beta_pkg"
+        ],
+        "all_current": false,
+        "created_at": "2026-10-10T12:00:00.000Z",
+        "expires_at": "2027-01-01T00:00:00.000Z",
+        "github_id": 4242,
+        "revoked_at": "2026-10-12T00:00:00.000Z"
+      }
+    },
+    {
+      "secret": "mopm_ciwidgetsaaaaaaaaaaaaaaaaaaaaaaa",
+      "record": {
+        "id": "tok_ciwidgets",
+        "kind": "oidc",
+        "name": "ciwidgets",
+        "scopes": [
+          "publish"
+        ],
+        "packages": [
+          "alpha"
+        ],
+        "all_current": false,
+        "created_at": "2026-10-10T12:00:00.000Z",
+        "expires_at": "2026-10-14T12:15:00.000Z",
+        "version": "2.0.0",
+        "issued_to": "acme/widgets"
+      }
+    },
+    {
+      "secret": "mopm_ciotheraaaaaaaaaaaaaaaaaaaaaaaaa",
+      "record": {
+        "id": "tok_ciother",
+        "kind": "oidc",
+        "name": "ciother",
+        "scopes": [
+          "publish"
+        ],
+        "packages": [
+          "alpha"
+        ],
+        "all_current": false,
+        "created_at": "2026-10-10T12:00:00.000Z",
+        "expires_at": "2026-10-14T12:15:00.000Z",
+        "version": "3.0.0",
+        "issued_to": "acme/widgets"
+      }
+    }
+  ]
+}
