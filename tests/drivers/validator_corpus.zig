@@ -583,12 +583,6 @@ fn valid(g: *Gen) !void {
         es[1].data = try cat(a, &[_][]const u8{ try zstRaw(a, tar[0..512]), try zstRaw(a, tar[512..]) });
         g.archives.items[g.archives.items.len - 1].bytes = try zipOf(a, es, .{});
     }
-    try g.pkg("ok_zstd_skippable_frame_first", "ok", "a skippable zstd frame before the real one", .{}, none);
-    {
-        const es = try pkgEntries(a, .{});
-        es[1].data = try cat(a, &[_][]const u8{ try zstSkippable(a, "ignore me"), es[1].data });
-        g.archives.items[g.archives.items.len - 1].bytes = try zipOf(a, es, .{});
-    }
     // Declared hashes that are right.
     {
         const bytes = try pkgBytes(a, .{});
@@ -687,7 +681,8 @@ fn zipLevel(g: *Gen) !void {
     {
         const z = try pkgBytes(a, .{});
         try g.raw("zip_trailing_junk", "archive_corrupt", "bytes after the end record: the comment length no longer reaches the end of the file", try cat(a, &[_][]const u8{ z, "junk" }), none);
-        try g.raw("zip_prepended_junk", "archive_corrupt", "bytes before the first local header: every offset is off by four", try cat(a, &[_][]const u8{ "junk", z }), none);
+        try g.raw("zip_prepended_junk", "not_an_archive", "bytes before the first local header: the file no longer starts with a zip signature", try cat(a, &[_][]const u8{ "junk", z }), none);
+        try g.raw("zip_prepended_after_signature", "archive_corrupt", "four bytes before the first local header that look like a signature: every offset is off by four", try cat(a, &[_][]const u8{ "PK\x03\x04", z }), none);
         try g.raw("zip_comment_length_short", "archive_corrupt", "an end record whose comment length is one short of the real comment", try zipOf(a, base, .{ .comment = "abc", .comment_len = 2 }), none);
         try g.raw("zip_comment_ok", "ok", "an archive comment whose length is right", try zipOf(a, base, .{ .comment = "a comment" }), none);
     }
@@ -735,8 +730,8 @@ fn zipLevel(g: *Gen) !void {
         es[0].local_name = "metadata\xff.json";
         try g.raw("zip_name_not_utf8", "archive_corrupt", "an entry name that is not UTF-8", try zipOf(a, es, .{}), none);
         es = try a.dupe(ZEntry, base);
-        es[0].local_sig = 0x04034b51;
-        try g.raw("zip_bad_local_signature", "archive_corrupt", "a local header with a wrong signature", try zipOf(a, es, .{}), none);
+        es[1].local_sig = 0x04034b51;
+        try g.raw("zip_bad_local_signature", "archive_corrupt", "the second local header with a wrong signature", try zipOf(a, es, .{}), none);
         es = try a.dupe(ZEntry, base);
         es[0].local_name = "metadata.jsoN";
         try g.raw("zip_local_name_differs", "archive_corrupt", "a local header that names a different file than the central directory", try zipOf(a, es, .{}), none);
@@ -815,6 +810,9 @@ fn zstdLevel(g: *Gen) !void {
         .info_stream = try cat(a, &[_][]const u8{ &ZSTD_MAGIC, "\x00\x38", &[_]u8{ 0x07, 0x00, 0x00 } }),
     }, none);
     try g.pkg("zstd_trailing_garbage", "archive_corrupt", "bytes after the last frame", .{ .info_stream = try cat(a, &[_][]const u8{ good, "JUNKJUNK" }) }, none);
+    try g.pkg("zstd_skippable_frame_first", "archive_corrupt", "a skippable zstd frame before the real one: the reader insists that a stream start with the zstd magic number", .{
+        .info_stream = try cat(a, &[_][]const u8{ try zstSkippable(a, "ignore me"), good }),
+    }, none);
     try g.pkg("zstd_skippable_after", "ok", "a skippable frame after the real one", .{ .info_stream = try cat(a, &[_][]const u8{ good, try zstSkippable(a, "ignore me") }) }, none);
     try g.pkg("zstd_two_real_frames_split_mid_header", "ok", "the tar cut inside a tar header, in two frames", .{
         .info_stream = try cat(a, &[_][]const u8{ try zstRaw(a, info_tar[0..100]), try zstRaw(a, info_tar[100..]) }),
@@ -825,7 +823,7 @@ fn zstdLevel(g: *Gen) !void {
     try g.pkg("zstd_declared_size_smaller", "archive_corrupt", "a single-segment frame that declares 100 bytes of content and holds the whole tar", .{
         .info_stream = try zstSingleSegment(a, 100, info_tar),
     }, none);
-    try g.pkg("zstd_declared_size_larger", "archive_corrupt", "a single-segment frame that declares 5000 bytes of content and holds the whole tar", .{
+    try g.pkg("zstd_declared_size_larger", "ok", "a single-segment frame that declares 5000 bytes of content and holds 3072: a content size larger than the content is accepted", .{
         .info_stream = try zstSingleSegment(a, 5000, info_tar),
     }, none);
     // Bombs, with limits that make the guard fire at a small size.
@@ -985,7 +983,7 @@ fn tarLevel(g: *Gen) !void {
     try g.pkg("layout_sbin_dir", "bin_dir", "a file under sbin/", .{ .pkg_extra = &[_]Item{.{ .path = "sbin/tool", .data = "x" }} }, none);
     try g.pkg("layout_scripts_dir", "bin_dir", "a file under Scripts/", .{ .pkg_extra = &[_]Item{.{ .path = "Scripts/tool.exe", .data = "x" }} }, none);
     try g.pkg("layout_post_link_script", "link_script", "a post-link script", .{ .pkg_extra = &[_]Item{.{ .path = "lib/mojo/post-link.sh", .data = "x" }} }, none);
-    try g.pkg("layout_pre_unlink_bat", "link_script", "a pre-unlink.bat in any directory", .{ .pkg_extra = &[_]Item{.{ .path = "info/licenses/Pre-Unlink.BAT", .data = "x" }} }, none);
+    try g.pkg("layout_pre_unlink_bat", "link_script", "a pre-unlink.bat in any directory", .{ .info_extra = &[_]Item{.{ .path = "info/licenses/Pre-Unlink.BAT", .data = "x" }} }, none);
     try g.pkg("layout_info_link_json", "link_script", "info/link.json", .{ .info_extra = &[_]Item{.{ .path = "info/link.json", .data = "{}" }} }, none);
     try g.pkg("layout_etc_conda", "link_script", "a file under etc/conda/", .{ .pkg_extra = &[_]Item{.{ .path = "etc/conda/activate.d/x.sh", .data = "x" }} }, none);
     try g.pkg("layout_unlisted_file", "layout_not_allowed", "a file outside the allow-list", .{ .pkg_extra = &[_]Item{.{ .path = "share/doc/readme", .data = "x" }} }, none);
