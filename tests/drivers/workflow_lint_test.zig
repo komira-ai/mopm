@@ -532,3 +532,35 @@ test "what bash refuses and the scanner does not (the gaps; ruby -n stays in ci.
     try std.testing.expect(try syntaxOk("echo a |"));
     try std.testing.expect(try syntaxOk("if true then echo a; fi"));
 }
+
+test "kpin-update.yml: job-level contents and pull-requests write, schedule and workflow_dispatch only" {
+    const ok =
+        \\name: k
+        \\on:
+        \\  workflow_dispatch:
+        \\  schedule:
+        \\    - cron: "23 5 * * 1"
+        \\permissions:
+        \\  contents: read
+        \\jobs:
+        \\  u:
+        \\    runs-on: x
+        \\    permissions:
+        \\      contents: write
+        \\      pull-requests: write
+        \\
+    ;
+    try expectLint("kpin-update.yml", ok, &.{});
+    // the same job elsewhere is refused
+    try expectLint("ci.yml", ok, &.{ "contents: write is not allowed", "pull-requests: write is not allowed" });
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const with_pr = try std.mem.replaceOwned(u8, a, ok, "  workflow_dispatch:\n", "  workflow_dispatch:\n  pull_request:\n");
+    try c.expectLines("pull_request", try lint(a, "kpin-update.yml", with_pr), &.{"triggers must be exactly schedule and workflow_dispatch, got [\"workflow_dispatch\", \"pull_request\", \"schedule\"]"});
+    const with_issues = try std.mem.replaceOwned(u8, a, ok, "      pull-requests: write\n", "      pull-requests: write\n      issues: write\n");
+    try c.expectLines("issues", try lint(a, "kpin-update.yml", with_issues), &.{ "issues: write is not allowed", "job u may hold only contents and pull-requests permissions, not [\"issues\"]" });
+    // top level stays read-only, and the allowance is for the job's own permissions only
+    const top = try std.mem.replaceOwned(u8, a, ok, "permissions:\n  contents: read\n", "permissions:\n  contents: write\n");
+    try c.expectLines("top", try lint(a, "kpin-update.yml", top), &.{ "top-level permissions must be read-only", "permissions.contents: write is not allowed" });
+}
