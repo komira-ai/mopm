@@ -137,9 +137,22 @@ describe('the search page design', () => {
     expect(text(later)).toMatch(/packages? on this page, most recently updated first\./);
   });
 
-  test('an empty search offers the full list; an empty registry offers the docs', () => {
-    expect(hrefs(html(searchResultsView(sdoc, { q: 'zz', sort: 'name' }, { packages: [], next_cursor: null })))).toContain('/search');
-    expect(hrefs(html(searchResultsView(sdoc, { q: '', sort: 'name' }, { packages: [], next_cursor: null })))).toContain('/docs/');
+  // The way out of each empty state sits in the empty-state block itself: the side panel's "Browse all packages" and
+  // the pager's "First page" carry the same hrefs, so a page-wide href check passes with the block's link gone.
+  // Mutants: any of the three links replaced by a span, or pointing elsewhere.
+  const emptyBlock = (out: string): string => {
+    const start = out.indexOf('<div class="empty-state">');
+    expect(start).toBeGreaterThanOrEqual(0);
+    return out.slice(start, out.indexOf('</div>', start) + 6);
+  };
+  test.each([
+    ['a search with no match offers the full list', { q: 'zz', sort: 'name' as const }, '<a class="button" href="/search">Browse all packages</a>'],
+    ['an empty later page goes back to the first page', { q: 'http', sort: 'name' as const, cursor: 'abc' }, '<a class="button" href="/search?q=http">Back to the first page</a>'],
+    ['an empty registry offers the docs', { q: '', sort: 'name' as const }, '<a class="button" href="/docs/">Read the docs</a>'],
+  ])('%s, inside the empty-state block', (_what, state, link) => {
+    const block = emptyBlock(html(searchResultsView(sdoc, state, { packages: [], next_cursor: null })));
+    expect(block).toContain(link);
+    expect(block.match(/<a /g)).toHaveLength(1);
   });
 });
 

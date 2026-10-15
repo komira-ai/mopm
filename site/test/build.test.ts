@@ -286,6 +286,30 @@ describe('checkDist refuses', () => {
     expect(() => checkDist(f.outDir)).not.toThrow(/package\.css is \d+ bytes/);
   });
 
+  // The page total holds on every page, not only the app shell: the home page links site.css and home.css, and a home.css
+  // grown to just under its own budget takes that pair over 30 KiB. Mutant: the total checked only for app.html.
+  test('the home page is refused when its two stylesheets together are over the page budget', () => {
+    const { f, id } = built();
+    const p = join(f.outDir, 'assets', id, 'home.css');
+    appendFileSync(p, `/*${'x'.repeat(AREA_CSS_MAX_BYTES - readFileSync(p).length - 8)}*/\n`);
+    expect(readFileSync(p).length).toBeLessThanOrEqual(AREA_CSS_MAX_BYTES);
+    expect(readFileSync(join(f.outDir, 'assets', id, 'site.css')).length + readFileSync(p).length).toBeGreaterThan(PAGE_CSS_MAX_BYTES);
+    expectRefusal(f, /index\.html links \d+ bytes of CSS; the limit for one page is 30720/);
+    expect(() => checkDist(f.outDir)).not.toThrow(/app\.html links|docs\/[^ ]*index\.html links|home\.css is \d+ bytes/);
+  });
+
+  // The boundary: a page at exactly the budget passes, one byte over is refused. Mutant: `>=` for `>`.
+  test('a page at exactly the page budget passes; one byte more is refused', () => {
+    const { f, id } = built();
+    const p = join(f.outDir, 'assets', id, 'home.css');
+    const total = () => readFileSync(join(f.outDir, 'assets', id, 'site.css')).length + readFileSync(p).length;
+    appendFileSync(p, `/*${'x'.repeat(PAGE_CSS_MAX_BYTES - total() - 5)}*/\n`);
+    expect(total()).toBe(PAGE_CSS_MAX_BYTES);
+    expect(() => checkDist(f.outDir)).not.toThrow();
+    appendFileSync(p, '\n');
+    expectRefusal(f, /index\.html links 30721 bytes of CSS/);
+  });
+
   test('modules each under the per-module limit but over the total', () => {
     const { f, id } = built();
     const each = JS_MAX_BYTES - 100;

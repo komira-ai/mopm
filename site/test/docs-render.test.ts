@@ -2,7 +2,9 @@
 // out as tables with a header, markup in code is escaped, and heading ids are unique.
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { serialize } from '../src/doc';
 import { DOC_PAGES } from '../src/links';
+import { tocNav } from '../tools/docs';
 import { expectSafe, mdFull, tagsOf } from './md';
 
 const REPO = join(__dirname, '..', '..');
@@ -49,4 +51,20 @@ test('mopm-toml.md: the toml example, the sections list, and escaped placeholder
   expect(html).toContain('<pre tabindex="0"><code class="language-toml">[package]');
   expect(html).toContain('<li><code>[native.&lt;id&gt;]</code>');
   expect(html).toContain('<code>&gt;=1.2.0, &lt;2.0.0</code>');
+});
+
+// tocNav renders each heading's text as its link, at its level, to its id; an id outside the anchor grammar is left
+// out. Mutants: the link text taken from the id; the level class dropped; an unsafe id linked.
+test('tocNav: one link per heading, reading as the heading, to its anchor', () => {
+  const nav = tocNav([
+    { level: 2, id: 'doc-a', text: 'A <b> & c' },
+    { level: 3, id: 'doc-a-1', text: 'One' },
+    { level: 2, id: '1bad', text: 'Skipped' },
+  ]);
+  expect(nav).not.toBeNull();
+  expect(serialize(nav!)).toBe(
+    '<nav class="toc" aria-label="On this page"><p class="side-title">On this page</p><ul>'
+      + '<li class="toc-2"><a href="#doc-a">A &lt;b&gt; &amp; c</a></li><li class="toc-3"><a href="#doc-a-1">One</a></li></ul></nav>',
+  );
+  expect(tocNav([])).toBeNull();
 });
