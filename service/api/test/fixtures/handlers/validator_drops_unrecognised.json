@@ -1,0 +1,81 @@
+{
+  "description": "A message that is not {type: validate, publish_id: string} is logged with its message id and dropped; the invocation succeeds (it is not retried) and nothing is read.",
+  "lambda": "validator",
+  "env": {
+    "MOPM_STAGE": "beta",
+    "MOPM_CHANNEL_BUCKET": "channel-bucket",
+    "MOPM_INDEX_QUEUE_URL": "index-queue-url",
+    "MOPM_CHANNEL_URL": "channel-url"
+  },
+  "invocations": [
+    {
+      "event": {
+        "Records": [
+          {
+            "messageId": "m1",
+            "receiptHandle": "handle-1",
+            "body": "{\"type\":\"index\",\"subdir\":\"noarch\"}",
+            "attributes": {
+              "MessageGroupId": "g"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          },
+          {
+            "messageId": "m2",
+            "receiptHandle": "handle-2",
+            "body": "{\"type\":\"validate\",\"publish_id\":7}",
+            "attributes": {
+              "MessageGroupId": "g"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          },
+          {
+            "messageId": "m3",
+            "receiptHandle": "handle-3",
+            "body": "{}",
+            "attributes": {
+              "MessageGroupId": "g"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          }
+        ]
+      },
+      "expect": {
+        "returns": null
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [],
+    "aws_http": [],
+    "logs": [
+      {
+        "stream": "error",
+        "line": {
+          "level": "error",
+          "msg": "unrecognised message dropped",
+          "messageId": "m1"
+        }
+      },
+      {
+        "stream": "error",
+        "line": {
+          "level": "error",
+          "msg": "unrecognised message dropped",
+          "messageId": "m2"
+        }
+      },
+      {
+        "stream": "error",
+        "line": {
+          "level": "error",
+          "msg": "unrecognised message dropped",
+          "messageId": "m3"
+        }
+      }
+    ]
+  }
+}
