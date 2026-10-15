@@ -3,8 +3,9 @@
 The detail behind [mopm-dev.md](mopm-dev.md). Section letters: A search, B API reference, C login, D test plan, E
 agents. Anything marked **unverified** has not been checked against code, docs or a run; Tantivy facts were read from
 the tantivy 0.26.2 source and its crates.io metadata (index format 7, `rust-version = "1.86"`, below the 1.99.0 that
-komira's Rust rules pin), nothing was built or run, and every size and timing is an estimate. `spec/search-api.md` and
-`spec/mopm-api.md` (PR 6) become the normative copies of E.1, E.2 and B.2.
+komira's Rust rules now pin and above the 1.85.0 at mopm's current komira pin, which PR V0 moves), nothing was
+built or run, and every size and timing is an estimate. `spec/search-api.md` and `spec/mopm-api.md` (PR 6)
+become the normative copies of E.1, E.2 and B.2.
 
 ## A. Search
 
@@ -480,7 +481,7 @@ origin header whose value is a stage secret, and cookie authentication and `/aut
 | Prompt injection through publisher text | labelled, sanitised, fenced, kept out of tool descriptions and `note` (E.3) |
 | Exfiltration through images or hidden link text in agent Markdown | images and links rewritten to visible text (E.3) |
 | An agent tricked into an authenticated call | read commands send no credential; arguments grammar-checked before a URL is built (E.2) |
-| An agent installing an invented name | `exact: null` with a fixed note, `did_you_mean` never substituted, `new` marked; names differing only by case or separators are one name (E.4) |
+| An agent installing an invented name | `exact: null` with a fixed note, `did_you_mean` never substituted, `new` marked; names differing only by case or separators are one name once PR 19 refuses runs of `_` (E.4) |
 | Session cookies in logs | standard logs on the site distribution stay off; download logs (Q5) are on the channel distribution, with cookie logging off |
 
 ### C.3 Headers and CSP
@@ -508,7 +509,7 @@ test red before the PR is ready.
 |---|---|
 | 0 | site/v1's existing tests and targets |
 | R | the installer checks the binary's sha256 (mutant: skip the check; a tampered fixture binary must be refused); an unknown platform is refused with a message |
-| V0 | removed: komira's Rust rules already pin 1.99.0, above Tantivy's 1.86 (Q11) |
+| V0 | after the pin moves, mopm's Rust targets build with komira's toolchain (cached build named by target) and the toolchain BUCK at the new pin names 1.99.0 (mutant: none; this is a pin, proven by the build) |
 | V | one Rust test opens an in-memory Tantivy index with the pinned feature set and the `mopm_ident` stub tokenizer (mutant: enable a default feature that pulls `zstd-sys`; the build must fail on the missing build script) |
 | 2 | layout: one `h1`, landmarks, install block before the README (mutant: README first); copy buttons have no inline handler (mutant: `onclick`); dialog content prerendered; `check-dist` per-route closures (mutant: a route over 128 KiB; a 25 KiB `site.css`); the home page's placeholders have fixed heights |
 | 3 | router vectors give the 404 page outside the grammar (mutant: pass-through); `llms.txt` and `.md` paths map to API routes and nothing else does (mutant: map `/packages/<n>` to the API); no `CustomErrorResponses` (mutant: add one); the exact CSP per stage; the `/api/*` behaviour has its headers policy (mutant: drop it) |
@@ -530,7 +531,7 @@ test red before the PR is ready.
 | 16 | the search page renders one row per package with version, version count and at most two other lines from fixtures; the "New" badge renders from fixtures; match reasons and symbols render through `h()` only (mutant: an HTML snippet); arrow keys and Enter; "Show more" stops at 200 |
 | 17 | views over the served golden; type links only for resolved refs (mutant: link unresolved names); a docstring heading equal to a symbol anchor stays distinct (mutant: unprefixed ids); setup lines copied only when shown (mutant: copy hidden lines); bidi markers visible; the version switcher's fallback chain; docstring raw `<dialog>` renders as text (mutant: pass it through) |
 | 18 | the existing docs test; `/llms.txt` lists only commands the CLI has (mutant: name `mopm add` before it exists); the scaffold-and-build recipe runs against the fake registry and fixture packages to a built binary (mutant: drop the `[toolchain]` step; the build must fail) |
-| 19 | removed: name normalisation is already enforced by the API's name pattern (Q10) |
+| 19 | publish answers `invalid_name` for `http__client`, `http_client_` and `a__b` (mutant: the old pattern `^[a-z][a-z0-9_]{1,63}$`), and still accepts `http_client`, `h2` and a 64-character canonical name (mutant: refuse any `_`); the index-record schema refuses the same names (Q10) |
 | 20 | aggregation over fixture log lines: 200 and 206 counted, 304 not; the log configuration excludes cookies (stack test) |
 
 ## E. Agents
@@ -633,11 +634,15 @@ as mopm's own voice.
 
 ### E.4 Normalised and new names
 
-- **Normalised** (the whole claim-time rule, Q10): PyPI's PEP 503 normalisation, lowercase with runs of `-`, `.` and
-  `_` collapsed to one `_`. Already in place: `spec/api/openapi.yaml` says names in paths are normalised and a
-  non-normalised name gets `invalid_name`; publish refuses any name outside `^[a-z][a-z0-9_]{1,63}$` (`NAME_PATTERN`
-  in `service/api`); `spec/index-record.schema.json` uses the same pattern. Two packages therefore never differ only by
-  case or separator runs. Nothing beyond it: no look-alike folding, no similarity flag.
+- **Normalised** (the whole claim-time rule, Q10): lowercase, with runs of `-`, `.` and `_` collapsed to one `_`. That
+  is the same equivalence as PyPI's PEP 503, which collapses runs to `-`; mopm's canonical form uses `_`. Only a name
+  already in canonical form is accepted. In place today: `spec/api/openapi.yaml` says names in paths are normalised and
+  a non-normalised name gets `invalid_name`; publish refuses any name outside `^[a-z][a-z0-9_]{1,63}$` (`NAME_PATTERN`
+  in `service/api`), and `spec/index-record.schema.json` uses the same pattern, so upper case, `-` and `.` are refused.
+  Not yet: that pattern accepts runs of `_` and a trailing `_`, so `http__client` could be published beside
+  `http_client`. PR 19 changes the pattern to `^[a-z][a-z0-9]*(_[a-z0-9]+)*$` (length 2 to 64), refusing both, a
+  trailing `_` because PyPI also requires a name to end with a letter or digit. Nothing beyond it: no look-alike
+  folding, no similarity flag.
 - **New** (flagged): `signals.new` (E.1); `/llms.txt` tells agents to show a `new` or no-provenance package to the
   human before adding it. A brand-new name that exactly matches an invented one still gets a clean
   group-0 hit; `new` is what tells the agent to ask.
