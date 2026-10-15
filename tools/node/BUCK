@@ -1,0 +1,42 @@
+# The Node.js the service tests run on (service/*/BUCK): komira's node_dist over a
+# release archive pinned by kpin (pins.toml, pins.lock.bzl). komira's rules are loaded once
+# per cell, so a provider from komira's own node_dist target is not this repository's
+# (facebook/buck2#683): this repository declares its own, and passes it to the rules as
+# `node =`. It is the same archive, sha256 and C++ runtime as komira's third_party/node.
+
+load("@komira//tools/build/kpin:pins.bzl", "pin_kwargs", "pin_version")
+load("@komira//tools/build/mojo:download.bzl", "pinned_file")
+load("@komira//tools/build/mojo:toolchain.bzl", "conda_libs")
+load("@komira//tools/build/node:defs.bzl", "node_dist")
+load("@komira//tools/build/platforms:defs.bzl", "LINUX_X86_64")
+load("@komira//tools/build/platforms:table.bzl", "pinned_kwargs")
+load(":pins.lock.bzl", "PINS")
+
+_VERSION = pin_version(PINS, "node")
+
+pinned_file(**pin_kwargs(PINS, "node", "linux-x64", name = "node.tar.gz"))
+
+# The C++ runtime `node` links beyond glibc, from the conda-forge packages komira's
+# platform table pins.
+pinned_file(**pinned_kwargs("linux-x86_64", "libgcc"))
+
+pinned_file(**pinned_kwargs("linux-x86_64", "libstdcxx"))
+
+conda_libs(
+    name = "native_libs",
+    exec_compatible_with = LINUX_X86_64,
+    libs = {
+        "lib/libgcc_s.so.1": ":" + pinned_kwargs("linux-x86_64", "libgcc")["name"],
+        "lib/libstdc++.so.6": ":" + pinned_kwargs("linux-x86_64", "libstdcxx")["name"],
+    },
+    unpacker = "komira//tools/build/toolchains:conda_unpack",
+)
+
+node_dist(
+    name = "node",
+    archive = ":node.tar.gz",
+    native_libs = ":native_libs",
+    top = "node-v{}-linux-x64".format(_VERSION),
+    version = _VERSION,
+    visibility = ["//service/..."],
+)
