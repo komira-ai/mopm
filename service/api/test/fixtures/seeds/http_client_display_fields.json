@@ -1,0 +1,95 @@
+{
+  "description": "http_client with homepage and keywords; 0.3.0 yanked with readme \"old\", 0.4.0 published with a readme.",
+  "packages": [
+    {
+      "name": "http_client",
+      "state": "active",
+      "created_at": "2026-10-01T09:00:00Z",
+      "repository": "https://github.com/example/http_client",
+      "license": "Apache-2.0",
+      "description": "HTTP/1.1 client",
+      "homepage": "https://example.com/http_client",
+      "keywords": [
+        "http",
+        "client"
+      ]
+    }
+  ],
+  "owners": [
+    {
+      "name": "http_client",
+      "github_id": 583231,
+      "handle": "octocat",
+      "added_at": "2026-10-01T09:00:00Z"
+    }
+  ],
+  "versions": [
+    {
+      "record": {
+        "canonical": "0.3.0",
+        "build": "mojo1.0.0_0",
+        "state": "yanked",
+        "published_at": "2026-10-05T08:00:00Z",
+        "requires_mojo": "==1.0.0",
+        "deps": [],
+        "native": [],
+        "files": [
+          {
+            "subdir": "linux-64",
+            "filename": "mojo-http_client-0.3.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 1000,
+            "url": "https://conda.example.invalid/linux-64/mojo-http_client-0.3.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "rev": 0,
+        "name": "http_client",
+        "version": "0.3.0",
+        "yank_reason": "crashes on empty body",
+        "readme": "old"
+      },
+      "audit": {
+        "name": "http_client",
+        "ts": "2026-10-13T12:00:00Z",
+        "id": "id000004",
+        "actor": "test",
+        "action": "publish",
+        "version": "0.3.0"
+      }
+    },
+    {
+      "record": {
+        "canonical": "0.4.0",
+        "build": "mojo1.0.0_0",
+        "state": "published",
+        "published_at": "2026-10-13T12:00:00Z",
+        "requires_mojo": "==1.0.0",
+        "deps": [],
+        "native": [],
+        "files": [
+          {
+            "subdir": "linux-64",
+            "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 1000,
+            "url": "https://conda.example.invalid/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "rev": 0,
+        "name": "http_client",
+        "version": "0.4.0",
+        "readme": "# http_client\n"
+      },
+      "audit": {
+        "name": "http_client",
+        "ts": "2026-10-13T12:00:00Z",
+        "id": "id000005",
+        "actor": "test",
+        "action": "publish",
+        "version": "0.4.0"
+      }
+    }
+  ]
+}
