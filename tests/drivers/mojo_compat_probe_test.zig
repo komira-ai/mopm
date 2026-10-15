@@ -45,7 +45,7 @@ const Header = struct {
 
 fn parseHeader(bytes: []const u8) !Header {
     if (bytes.len < fp_offset + fp_len + 1) return error.ShortHeader;
-    if (!std.mem.eql(u8, bytes[0..4], "MPKX")) return error.BadMagic;
+    if (!std.mem.eql(u8, bytes[0..4], "MPKG")) return error.BadMagic;
     for (bytes[fp_offset .. fp_offset + fp_len]) |c| {
         if (!std.ascii.isDigit(c) and !(c >= 'a' and c <= 'f')) return error.FingerprintNotHex;
     }
