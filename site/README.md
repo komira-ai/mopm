@@ -43,6 +43,17 @@ npm test            # jest
 npm run build       # compiles src and tools to build/, then writes dist/ (and checks it)
 ```
 
+On the build farm the same commands are Buck2 targets (`site/BUCK`, run from the repository root), over
+`node_modules` laid out from `package-lock.json` and the pinned tarballs of `pins.lock.bzl` (see CONTRIBUTING.md,
+"The service packages (TypeScript) on the farm"; the site's kpin files are `pins.toml` and `pins.lock.bzl` here):
+
+| target | the command it replaces |
+|---|---|
+| `//site:typecheck`, `//site:typecheck_browser` | the two `tsc --noEmit` runs of `npm run typecheck` |
+| `//site:test` | `npm test` (`jest --ci`, 2 workers) |
+| `//site:browser`, `//site:tools`, `//site:dist` | `npm run build`: the two `tsc -p` runs, then `build/tools/tools/build.js`; `:dist` is `dist/` |
+| `//site:dist_has_pages` | the job's `test -f dist/<page>` checks (`check_dist.js`) |
+
 `dist/` holds `index.html`, `app.html`, `404.html`, `docs/index.html`, `docs/<slug>/index.html` and
 `assets/<id>/`: the modules `main.js` loads and `site.css`, where `<id>` is a hash of their contents (no clock, no
 commit), so the same sources give the same tree and a changed asset gets a new URL. `tools/check-dist.ts` refuses a
