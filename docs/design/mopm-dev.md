@@ -42,9 +42,10 @@ authorization rules.
 `site/` on branch `site/v1` (reviewed, **not merged**, no PR yet) is plain TypeScript compiled by `tsc` to ES modules:
 no framework, no bundler. Prerendered pages work without scripts; `/search` and `/packages/...` share one shell. Every
 DOM write goes through the `Doc` port (a tag and attribute allowlist), links through `SafeHref`, READMEs through a
-restricted Markdown renderer. Its Buck2 targets exist only on that branch, and `main`'s site stack has no CSP, edge
-router or error responses yet (site/v1's plan, built in PR 3). `dist/` has 86,990 bytes of JavaScript, all loaded by
-every page; `tools/check-dist.ts` sums all `.js` against 128 KiB and all `.css` against 16 KiB.
+restricted Markdown renderer. Its Buck2 targets exist only on that branch, and the site stack's go-live (PR 3) serves
+the site build behind a CSP, an edge router and, for now, distribution-wide 404 responses (3.1). `dist/` has 86,990
+bytes of JavaScript, all loaded by every page; `tools/check-dist.ts` sums all `.js` against 128 KiB and all `.css`
+against 16 KiB.
 
 The five rules bind everything below: (1) no runtime dependencies; (2) no HTML sinks, markup only through `h()`;
 (3) no inline script or style, CSP `'self'` with Trusted Types; (4) one artifact for every stage, nothing stage-specific
@@ -239,7 +240,10 @@ for the CLI and CI.
   `default-src 'none'; sandbox` CSP). The page CSP and the bucket policy: [appendix C.3](mopm-dev-appendix.md#c3-headers-and-csp).
 - **No distribution-wide error responses** (they would turn the API's JSON errors into HTML): the edge router serves the
   404 page outside the route grammar (**unverified** that a CloudFront Function can return the whole page; fallback, a
-  redirect to `/404`). Each stage's OAuth app gets the exact callback, wildcard off; PKCE is what stops a stolen code.
+  redirect to `/404`). **Interim:** until the API behaviour lands, go-live maps 403 and 404 to `/404.html` (status 404)
+  for the whole distribution, which serves only the bucket today; the PR that adds the API behaviour removes them and
+  has the edge router answer 404. Each stage's OAuth app gets the exact callback, wildcard off; PKCE is what stops a
+  stolen code.
 
 **Rejected: the browser calls `api.<site>` with credentials**: credentialed CORS with POST, DELETE and custom headers
 on every route, the CLI's included; one later mistake there exposes sessions.
@@ -340,7 +344,7 @@ turn its tests red. Test plan: [appendix D](mopm-dev-appendix.md#d-test-plan).
 | 1 | This note and the static mocks | the plan is agreed; the CEO reacts to the mocks |
 | R | Release binaries and installer (if Q7 is yes) | the landing page's install line works |
 | 2 | Landing and package page build; per-route budgets | install first, the new landing page, within budget |
-| 3 | Site stack go-live: CSP, edge router, headers policies, no distribution-wide errors, `site-data` and its two behaviours | the site deploys topology-ready |
+| 3 | Site stack go-live: CSP, edge router, headers policies, distribution-wide 404 responses until the API behaviour lands (3.1), `site-data` and its two behaviours | the site deploys topology-ready |
 | 4a | API: cookie plumbing, `/me`, sessions, `sessions_not_before` | sessions and revoke-all are sound |
 | 4b | API: web OAuth flow in its own function | login is single-use, PKCE-bound, redirect-safe, started only by this site |
 | 4c | API: invitee index, `inviteOwner`, list and accept | invitations have data behind them |

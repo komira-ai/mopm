@@ -78,14 +78,18 @@ docs pages are rendered from) starts promote.yml, which deploys it to beta, gamm
 - **Two uploads.** `assets/` goes first, with `Cache-Control: public, max-age=31536000, immutable`, and is never
   pruned: the pages of an earlier release (an open tab, a rollback) still find their assets. The pages (everything
   else) go second, with a short cache (`public, max-age=60, s-maxage=300`); pages that are no longer built are
-  removed, and each deploy invalidates the CloudFront cache.
+  removed, and each deploy invalidates the CloudFront cache. Neither upload deletes its objects when its deployment
+  resource is deleted, so if the first deploy (the one that replaces the placeholder page) rolls back, the bucket keeps
+  the new pages under the old distribution settings (no CSP, router or 404 page): fix forward by deploying again; a
+  rollback does not restore the placeholder.
 - **Edge router.** A CloudFront Function on viewer-request, generated from the grammar in `src/routes.ts`: `/` is
   `index.html`; `/search`, `/packages/<name>` and `/packages/<name>/<version>` (a valid, normalised name and a valid
   version) are `app.html`; `/docs`, `/docs/` and `/docs/<slug>[/]` are the docs page's `index.html`; a package name
   that normalises to a different valid name gets a 301 to the normalised path, query kept. Everything else goes to
   the bucket as it is.
 - **Not found.** A missing key (403 or 404 from the bucket) gets `404.html` with status 404; nothing is answered with
-  the home page.
+  the home page. These are distribution-wide error responses, an interim choice until the API is served from this
+  distribution (`docs/design/mopm-dev.md`, §3.1).
 - **Headers.** The CSP `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src
   https://api.<site host>; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none';
   require-trusted-types-for 'script'; trusted-types 'none'`, plus HSTS, `X-Content-Type-Options`,
