@@ -327,6 +327,36 @@ zig_test(  # buck-only: how compiled packages (.mojoc) behave across Mojo 1.0.0 
     **_TOOLS
 )
 
+_PLATFORM_PROBE = dict(
+    src = "tests/drivers/mojo_platform_probe_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig"],
+    exec_tools = {
+        "CC_SHIM": ":zigcc",
+        "MOJO_TOOLCHAIN_10": "komira//tools/build/toolchains:mojo_compiler",
+        "MOJO_TOOLCHAIN_11": ":mojo_compiler_1_1_0",
+        "ZIG_DIR": "komira//tools/build/toolchains:zig",
+    },
+    data = [
+        "tests/compat/consumer.mojo",
+        "tests/compat/consumer_cond.mojo",
+        "tests/compat/fixtures/cond_a",
+        "tests/compat/fixtures/cond_b",
+        "tests/compat/fixtures/cond_c",
+        "tests/compat/fixtures/cond_d",
+        "tests/compat/fixtures/probe_neutral",
+    ],
+)
+
+zig_test(  # buck-only: is a .mojoc platform-independent (x86_64 farm, cross --target-triple objects)
+    name = "mojo_platform_probe",
+    **dict(_PLATFORM_PROBE, **_TOOLS)
+)
+
+zig_test(  # buck-only: the same driver as its own action, to compare .mojoc sha256 across actions
+    name = "mojo_platform_probe_rerun",
+    **dict(_PLATFORM_PROBE, **_TOOLS)
+)
+
 _AUTOLINK_DATA = [
     "tests/e2e/native",
     "tests/e2e/pkgs",
