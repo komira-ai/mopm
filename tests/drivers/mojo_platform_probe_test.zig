@@ -28,7 +28,7 @@ const h = @import("harness.zig");
 const mojo_env = @import("mojo_env.zig");
 const Allocator = std.mem.Allocator;
 
-const EM_X86_64: u16 = 62;
+const EM_X86_64: u16 = 183;
 
 fn countIn(a: Allocator, path: []const u8, needle: []const u8) !usize {
     var f = try std.fs.cwd().openFile(path, .{});
