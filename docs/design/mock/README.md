@@ -18,11 +18,11 @@ anything is built. They are pictures you can open in a browser. They are not the
 
 | file | page | note section |
 |---|---|---|
-| `index.html` | landing page | 4, Q7 |
-| `package.html` | package page (README tab) | 4 |
-| `search.html` | search results for `json` | 1.3, 1.4, 4 |
-| `reference.html` | API reference for a struct | 2.3 to 2.5 |
-| `account.html` | account page | 3.3, 3.4 |
+| `index.html` | landing page | 5, Q7 |
+| `package.html` | package page (README tab) | 1.5, 5 |
+| `search.html` | search results for `json` | 1.4, 1.5, 3.6, 5 |
+| `reference.html` | API reference for a struct | 2.4 to 2.6 |
+| `account.html` | account page | 4.3, 4.4 |
 
 ## How to view
 
