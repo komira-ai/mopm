@@ -1,4 +1,4 @@
-# The Node.js the service tests run on (service/*/BUCK): komira's node_dist over a
+# The Node.js the service tests and the site run on (service/*/BUCK, site/BUCK): komira's node_dist over a
 # release archive pinned by kpin (pins.toml, pins.lock.bzl). komira's rules are loaded once
 # per cell, so a provider from komira's own node_dist target is not this repository's
 # (facebook/buck2#683): this repository declares its own, and passes it to the rules as
@@ -38,7 +38,7 @@ node_dist(
     native_libs = ":native_libs",
     top = "node-v{}-linux-x64".format(_VERSION),
     version = _VERSION,
-    visibility = ["//service/..."],
+    visibility = ["//service/...", "//site:"],
 )
 
 # This package's files, for //:hygiene (the repository-wide scan reads every file, and a

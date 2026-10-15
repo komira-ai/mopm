@@ -73,6 +73,7 @@ commands `service-ci.yml` runs, on the farm, from pinned npm packages instead of
 | `//service/infra/{stacks,dns,access}:typecheck`, `:test` | `tsc --noEmit` and `jest --ci` |
 | `//service/infra/stacks:synth_{beta,gamma,prod}` | `cdk synth` of each stage with a dummy account and zone id; the API bundle is `//service/api:dist` |
 | `//service/infra/dns:synth_{beta,gamma,prod,delegation}` | the four `cdk synth` runs with dummy values |
+| `//site:typecheck`, `:typecheck_browser`, `:test`, `:dist`, `:dist_has_pages` | the site job's `npm run typecheck` (two runs), `npm test`, `npm run build` and its `test -f dist/<page>` checks (`site/README.md`) |
 
 komira's `npm_modules` rule lays out each package's `node_modules` from its
 `package-lock.json` and one pinned tarball per package (`service/*/pins.lock.bzl`: URL, sha256 and
@@ -95,6 +96,18 @@ komira's tool, `./buck2 run komira//tools/build/kpin`), then commit the lock wit
 `update` fetches what the lock lacks; `check` is offline and fails (exit 3 for a changed hash) when the lock
 is not what the lockfile says. The build fails, naming the package, when a lockfile package has no
 tarball in `pins.lock.bzl`.
+
+`.github/workflows/kpin-update.yml` runs the same two commands every Monday (and on demand) for every lock here
+(`tools/node` and the four service packages), on a GitHub-hosted runner with no farm, and, when a file changed,
+pushes a new branch `kpin/weekly-<run id>` (a plain push, never a force-push) and opens a pull request from it, then
+closes the older open `kpin/weekly-*` pull requests (a comment links the new one) and deletes their branches. It uses the default `GITHUB_TOKEN` only. Exit 3
+(a changed hash for a version already pinned) fails the job and opens nothing. Two limits: the repository
+setting "Allow GitHub Actions to create and approve pull requests" must be on, and a pull request opened with
+`GITHUB_TOKEN` starts no other workflow, so push an empty commit to its branch (or close and reopen the pull
+request) to run its checks. A new `pins.lock.bzl` needs a line in the workflow's `KPIN_SETS`; the job fails until
+it has one. kpin's fetcher speaks TLS 1.3 only (komira's `tools/build/kpin/README.md`): `registry.npmjs.org`
+answers TLS 1.2 only, so `update` cannot fetch a new npm tarball from a runner or from here today, and the job
+fails on a lock that lacks one.
 
 A source file you add under `src/core`, `src/cli` or `registry/fake` is picked
 up by both (Buck2 takes each directory by glob; it skips dotfiles, so a new

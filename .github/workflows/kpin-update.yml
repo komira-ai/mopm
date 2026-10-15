@@ -1,0 +1,223 @@
+# kpin-update: the weekly update of the pins. It runs `kpin update`, which moves
+# each pin that has a `latest_url` to its newest version and fetches the url,
+# sha256 and size of what a lock lacks; then `kpin check --previous <the lock of
+# the commit it started from>`; and, when a file changed, opens or updates ONE
+# pull request from the branch `kpin/weekly`. The same workflow as komira's
+# (komira: tools/build/kpin/README.md, "The weekly update"), over this
+# repository's locks: tools/node and the four service packages.
+#
+# Exit code 3 of kpin is an ALARM (a changed hash for a version already pinned):
+# the job fails, with an error annotation, and no branch is pushed and no pull
+# request opened or touched. Exit 1 (for one, a registry that answers TLS 1.2:
+# kpin speaks TLS 1.3 only) fails the job the same way.
+#
+# It needs no farm and no secret. kpin comes from komira, the git external cell
+# pinned in .buckconfig (`commit_hash`): a GitHub-hosted runner builds it with
+# the pinned buck2 (./buck2: sha256-checked) and komira's pinned zig, on the
+# runner itself (no [buck2_re_client] is configured here, so buck2 runs the
+# actions locally); kpin's unit tests are welded into its build and run first.
+# `update` is the one step that opens a socket.
+#
+# The token is the default GITHUB_TOKEN with `contents: write` (the branch) and
+# `pull-requests: write` (the pull request); there is no other credential.
+# .github/scripts/workflow_lint.rb and hygiene.rb allow those two grants for
+# this file only, and hold it to schedule + workflow_dispatch triggers.
+# TWO SETTINGS this relies on, which a workflow cannot make:
+#   * Settings > Actions > General > "Allow GitHub Actions to create and approve
+#     pull requests" is on; otherwise opening the pull request fails (the branch
+#     is pushed, and the job fails with the compare URL; the older pull requests are
+#     left open).
+#   * A pull request opened with GITHUB_TOKEN does NOT start other workflows
+#     (GitHub's rule against recursive runs), so the checks do not run on it by
+#     themselves. A maintainer starts them by pushing an empty commit to
+#     its branch or by closing and reopening the pull request.
+# The branches `kpin/weekly-<run id>` are this workflow's own: each run pushes a
+# new one with a plain push, opens a pull request from it, then closes every
+# other open pull request whose head starts with `kpin/weekly-` (a comment links
+# the new one) and deletes that pull request's branch through the API with the
+# same token. Nothing is ever force-pushed and no history is rewritten. Needs
+# `contents: write` (push, delete a branch) and `pull-requests: write`.
+#
+# Every `uses:` is pinned to a full commit SHA, no step interpolates an
+# expression into a script (event data and inputs reach it through env:), and
+# the pull request step runs nothing from the pull request: it runs on the
+# default branch's commit only.
+name: kpin-update
+
+on:
+  workflow_dispatch:
+    inputs:
+      verify:
+        description: "Also re-fetch every pinned file and alarm on a republished one (kpin update --verify)."
+        type: boolean
+        default: false
+  schedule:
+    - cron: "23 5 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  # Two runs never overlap; a run in progress is left to finish.
+  group: kpin-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      # One line per lock: <pins.toml> <pins.lock.bzl> [<package-lock.json>...].
+      # The step below refuses a pins.lock.bzl in the tree that is not listed,
+      # so a new lock cannot go without its weekly update.
+      KPIN_SETS: |
+        tools/node/pins.toml tools/node/pins.lock.bzl
+        service/pins.toml service/api/pins.lock.bzl service/api/package-lock.json
+        service/pins.toml service/infra/access/pins.lock.bzl service/infra/access/package-lock.json
+        service/pins.toml service/infra/dns/pins.lock.bzl service/infra/dns/package-lock.json
+        service/pins.toml service/infra/stacks/pins.lock.bzl service/infra/stacks/package-lock.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: every lock has a line in KPIN_SETS
+        run: |
+          set -eu
+          git ls-files '*pins.lock.bzl' | sort > "$RUNNER_TEMP/locks_in_tree"
+          printf '%s\n' "$KPIN_SETS" | awk 'NF { print $2 }' | sort > "$RUNNER_TEMP/locks_listed"
+          [ -s "$RUNNER_TEMP/locks_listed" ] || { echo "::error::KPIN_SETS names no lock"; exit 1; }
+          if ! diff -u "$RUNNER_TEMP/locks_listed" "$RUNNER_TEMP/locks_in_tree"; then
+            echo "::error::KPIN_SETS (the list above is - ) and the pins.lock.bzl files in the tree (+) differ: add or remove the line"
+            exit 1
+          fi
+      # kpin, built where it runs, from the komira cell pinned in .buckconfig: the
+      # build runs its unit tests first.
+      - name: build kpin
+        run: |
+          set -eu
+          out=$(./buck2 build komira//tools/build/kpin:kpin --show-full-output | sed -n 's/^[^ ]* //p' | tail -n 1)
+          [ -x "$out" ] || { echo "::error::kpin is not an executable file: '$out'"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/kpin"
+          cp "$out" "$RUNNER_TEMP/kpin/kpin"
+      - name: kpin update, then kpin check --previous the base lock
+        id: kpin
+        env:
+          VERIFY: ${{ inputs.verify }}
+        run: |
+          set -eu -o pipefail
+          kpin="$RUNNER_TEMP/kpin/kpin"
+          base="$RUNNER_TEMP/base"
+          mkdir -p "$base"
+          alarm=0
+          failed=0
+          # run <kpin arguments>: records an alarm (exit 3) or another failure
+          # and returns non-zero for either; it never stops the others.
+          run() {
+            rc=0
+            "$kpin" "$@" || rc=$?
+            case "$rc" in
+              0) return 0 ;;
+              3) echo "::error title=kpin alarm::kpin $1 exited 3: a hash changed for a version already pinned. No pull request is opened. Read the output above, and komira's tools/build/kpin/README.md, 'The alarm'."; alarm=1 ;;
+              *) echo "::error title=kpin failed::kpin $1 exited $rc"; failed=1 ;;
+            esac
+            return 1
+          }
+          n=0
+          touched=""
+          while read -r pins lock npm; do
+            [ -n "$pins" ] || continue
+            n=$((n + 1))
+            args=(--pins "$pins" --lock "$lock")
+            for f in $npm; do args+=(--npm "$f"); done
+            cp "$lock" "$base/$n.lock"
+            update=(update "${args[@]}")
+            if [ "$VERIFY" = "true" ]; then update+=(--verify); fi
+            echo "::group::$lock"
+            if run "${update[@]}"; then
+              run check "${args[@]}" --previous "$base/$n.lock" || true
+            fi
+            echo "::endgroup::"
+            touched="$touched $pins $lock"
+          done <<< "$KPIN_SETS"
+          [ "$alarm" = 0 ] || exit 3
+          [ "$failed" = 0 ] || exit 1
+          if [ -z "$(git status --porcelain --untracked-files=no)" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No pin moved and no hash was added: nothing to open." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "files=${touched# }" >> "$GITHUB_OUTPUT"
+            git status --short --untracked-files=no
+          fi
+      - name: open the pull request from kpin/weekly-<run id>, close the older ones
+        # Only for a run of the default branch: a run of another ref (a manual
+        # run to try a change) checks everything above and stops here.
+        if: steps.kpin.outputs.changed == 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FILES: ${{ steps.kpin.outputs.files }}
+          BASE: ${{ github.event.repository.default_branch }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -eu
+          branch="kpin/weekly-$RUN_ID"
+          # shellcheck disable=SC2086 # FILES is a list of repository paths without spaces
+          set -- $FILES
+          # Nothing outside the files kpin owns may have changed.
+          for f in "$@"; do git add -- "$f"; done
+          if git status --porcelain --untracked-files=no | grep -qv '^[MA] '; then
+            echo "::error::files other than kpin's own changed:"; git status --short; exit 1
+          fi
+          git diff --cached --stat > "$RUNNER_TEMP/stat"
+          {
+            echo "Weekly kpin update."
+            echo
+            echo "Run: $RUN_URL"
+            echo
+            echo "What changed:"
+            echo
+            sed 's/^/    /' "$RUNNER_TEMP/stat"
+          } > "$RUNNER_TEMP/message"
+          git -c user.name="github-actions[bot]" -c user.email="noreply@github.com" \
+            commit -q -F "$RUNNER_TEMP/message"
+          gh auth setup-git
+          # A new branch each run: a plain push, never a force-push.
+          git push origin "HEAD:refs/heads/$branch"
+          {
+            echo "The weekly \`kpin update\` (run: $RUN_URL)."
+            echo
+            echo "What the run proved before this branch was pushed:"
+            echo
+            echo "- kpin was built from this repository's pinned toolchain and its unit tests passed (they are welded into the build)."
+            echo "- \`kpin update\` exited 0 with no alarm: every hash it kept is the one already pinned, and every file it added was fetched over TLS 1.3 and (for npm) matched the lockfile's integrity."
+            echo "- \`kpin check --previous\` the lock of the base commit exited 0: no hash of a locked version changed."
+            echo
+            echo "Changed files:"
+            echo
+            sed 's/^/    /' "$RUNNER_TEMP/stat"
+            echo
+            echo "**Known gap.** This pull request was opened with the workflow's GITHUB_TOKEN, and GitHub does not start other workflows for an event that token causes: \`pr / check\` has not run. Start it by pushing an empty commit to \`$branch\` or by closing and reopening this pull request, and merge only when it is green. The next weekly run closes this pull request and deletes its branch when it opens its own."
+          } > "$RUNNER_TEMP/body"
+          if ! url=$(gh pr create --repo "$GITHUB_REPOSITORY" --head "$branch" --base "$BASE" \
+            --title "kpin: weekly update of the pins" --body-file "$RUNNER_TEMP/body"); then
+            echo "::error title=no pull request::the branch $branch is pushed but the pull request could not be opened (is 'Allow GitHub Actions to create and approve pull requests' on? see the header of this workflow). Open it by hand: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$BASE...$branch?expand=1"
+            exit 1
+          fi
+          echo "Opened $url" | tee -a "$GITHUB_STEP_SUMMARY"
+          # Only now, with the new pull request open: close the older weekly ones.
+          gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("kpin/weekly-")) | "\(.number) \(.headRefName)"' > "$RUNNER_TEMP/older"
+          while read -r num old; do
+            [ -n "$num" ] || continue
+            [ "$old" != "$branch" ] || continue
+            gh pr close "$num" --repo "$GITHUB_REPOSITORY" --comment "Superseded by $url (run $RUN_URL)."
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$old" > /dev/null
+            echo "Closed #$num and deleted $old" | tee -a "$GITHUB_STEP_SUMMARY"
+          done < "$RUNNER_TEMP/older"
+      - name: Stop buck2
+        if: always()
+        run: ./buck2 kill || true

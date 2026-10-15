@@ -7,7 +7,7 @@
 # trip the real hygiene scan if stored literally, so fixtures hold placeholders that are
 # substituted here at runtime: @@PRT@@ (the privileged PR trigger) and @@ACCT@@ (a
 # 12-digit account-id-shaped number). The hygiene scan has no allow-list; nothing here
-# needs one. Each case is materialized as ci.yml in a temp dir (a name not allowed id-token); promote_* fixtures become promote.yml, farm_* farm.yml, subject_* oidc-subject-check.yml and deploy_* deploy.yml.
+# needs one. Each case is materialized as ci.yml in a temp dir (a name not allowed id-token); promote_* fixtures become promote.yml, farm_* farm.yml, subject_* oidc-subject-check.yml, deploy_* deploy.yml and kpin_* kpin-update.yml (kpin_elsewhere stays ci.yml).
 require "open3"
 require "tmpdir"
 
@@ -74,6 +74,12 @@ CASES = {
   "deploy_push_any_branch" => { LINT => [], HYG => ["push must be limited to branches: [main]"] },
   "deploy_no_environment" => { LINT => [], HYG => ["grants id-token without an environment"] },
   "deploy_pull_request" => { LINT => [], HYG => ["must not run on pull_request", "are not allowed in a workflow that can use id-token"] },
+  # kpin-update.yml: the weekly pin update holds contents: write and pull-requests: write in its job, on a schedule or a manual run, and nowhere else.
+  "kpin_clean" => { LINT => [], HYG => [] },
+  "kpin_elsewhere" => { LINT => ["contents: write is not allowed", "pull-requests: write is not allowed"] },
+  "kpin_pull_request" => { LINT => ["triggers must be exactly schedule and workflow_dispatch"] },
+  "kpin_issues_write" => { LINT => ["issues: write is not allowed", "may hold only contents and pull-requests"] },
+  "kpin_top_write" => { LINT => ["top-level permissions must be read-only", "permissions.contents: write is not allowed"] },
 }
 
 bad = 0
@@ -81,7 +87,7 @@ CASES.each do |name, tools|
   text = File.read(File.join(FIX, "#{name}.yml.fixture"))
   SUBST.each { |k, v| text = text.gsub(k, v) }
   Dir.mktmpdir do |d|
-    path = File.join(d, name.start_with?("promote") ? "promote.yml" : name.start_with?("farm") ? "farm.yml" : name.start_with?("subject") ? "oidc-subject-check.yml" : name.start_with?("deploy") ? "deploy.yml" : "ci.yml")
+    path = File.join(d, name.start_with?("promote") ? "promote.yml" : name.start_with?("farm") ? "farm.yml" : name.start_with?("subject") ? "oidc-subject-check.yml" : name.start_with?("deploy") ? "deploy.yml" : (name.start_with?("kpin") && name != "kpin_elsewhere") ? "kpin-update.yml" : "ci.yml")
     File.write(path, text)
     tools.each do |tool, expected|
       out, st = Open3.capture2e("ruby", tool, path)

@@ -347,7 +347,46 @@ filegroup(
 filegroup(
     name = "contract_api",
     srcs = {f[len("tests/contract/api/"):]: f for f in glob(["tests/contract/api/*.json"])},
-    visibility = ["//service/api:"],
+    visibility = ["//service/api:", "//site:"],
+)
+
+# ---- What the site's tests and build read outside site/ (site/BUCK) ----------
+# (Plain calls: tools/build_parity.zig reads only plain calls in this file.)
+export_file(
+    name = "site.README.md",
+    src = "README.md",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.docs.mopm-test.md",
+    src = "docs/mopm-test.md",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.spec.channel.md",
+    src = "spec/channel.md",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.spec.mopm-toml.md",
+    src = "spec/mopm-toml.md",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.cli.main.zig",
+    src = "src/cli/main.zig",
+    visibility = ["//site:"],
+)
+
+# The scaffold golden of `mopm new --lib`, staged as `tests/new/lib`.
+filegroup(
+    name = "site_new_lib",
+    srcs = {f[len("tests/new/lib/"):]: f for f in glob(["tests/new/lib/**"])},
+    visibility = ["//site:"],
 )
 
 # ---- The repository's own lints, ported from Ruby (.github/scripts, tests/lint) ------------

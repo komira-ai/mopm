@@ -1,0 +1,6 @@
+node_modules/
+build/
+dist/
+coverage/
+# tsc output written next to the tests by mistake (the sources are .ts)
+test/**/*.js

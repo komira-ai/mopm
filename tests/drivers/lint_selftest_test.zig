@@ -73,6 +73,11 @@ const cases = [_]Case{
     .{ .name = "deploy_push_any_branch", .lint = &.{}, .hyg = &.{"push must be limited to branches: [main]"} },
     .{ .name = "deploy_no_environment", .lint = &.{}, .hyg = &.{"grants id-token without an environment"} },
     .{ .name = "deploy_pull_request", .lint = &.{}, .hyg = &.{ "must not run on pull_request", "are not allowed in a workflow that can use id-token" } },
+    .{ .name = "kpin_clean", .lint = &.{}, .hyg = &.{} },
+    .{ .name = "kpin_elsewhere", .lint = &.{ "contents: write is not allowed", "pull-requests: write is not allowed" } },
+    .{ .name = "kpin_pull_request", .lint = &.{"triggers must be exactly schedule and workflow_dispatch"} },
+    .{ .name = "kpin_issues_write", .lint = &.{ "issues: write is not allowed", "may hold only contents and pull-requests" } },
+    .{ .name = "kpin_top_write", .lint = &.{ "top-level permissions must be read-only", "permissions.contents: write is not allowed" } },
 };
 
 /// The values of the placeholders, built from pieces: the same ones run.rb builds.
@@ -94,12 +99,13 @@ fn substitutions(comptime i: usize) struct { []const u8, []const u8 } {
 const n_substitutions = 10;
 
 /// The file name a case is materialized as: promote_* promote.yml, farm_* farm.yml, subject_*
-/// oidc-subject-check.yml, deploy_* deploy.yml, anything else ci.yml (a name not allowed id-token).
+/// oidc-subject-check.yml, deploy_* deploy.yml, kpin_* kpin-update.yml (kpin_elsewhere stays ci.yml), anything else ci.yml (a name not allowed id-token).
 fn materializedName(name: []const u8) []const u8 {
     if (std.mem.startsWith(u8, name, "promote")) return "promote.yml";
     if (std.mem.startsWith(u8, name, "farm")) return "farm.yml";
     if (std.mem.startsWith(u8, name, "subject")) return "oidc-subject-check.yml";
     if (std.mem.startsWith(u8, name, "deploy")) return "deploy.yml";
+    if (std.mem.startsWith(u8, name, "kpin") and !std.mem.eql(u8, name, "kpin_elsewhere")) return "kpin-update.yml";
     return "ci.yml";
 }
 
@@ -253,7 +259,7 @@ test "the table is run.rb's table, case for case" {
         }
     }
     // and the file-name rule
-    for ([_][]const u8{ "(\"promote\") ? \"promote.yml\"", "(\"farm\") ? \"farm.yml\"", "(\"subject\") ? \"oidc-subject-check.yml\"", "(\"deploy\") ? \"deploy.yml\"" }) |frag| {
+    for ([_][]const u8{ "(\"promote\") ? \"promote.yml\"", "(\"farm\") ? \"farm.yml\"", "(\"subject\") ? \"oidc-subject-check.yml\"", "(\"deploy\") ? \"deploy.yml\"", "(\"kpin\") && name != \"kpin_elsewhere\") ? \"kpin-update.yml\"" }) |frag| {
         if (std.mem.indexOf(u8, ruby, frag) == null) {
             std.debug.print("tests/lint/run.rb does not map {s}\n", .{frag});
             return error.TestUnexpectedResult;

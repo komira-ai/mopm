@@ -27,6 +27,11 @@ const oidc_files = [_][]const u8{ "deploy.yml", "e2e.yml", "promote.yml", "oidc-
 /// farm.yml may also hold the id-token grant, and one action outside GitHub's own
 /// (komira's farm-connect, pinned by commit); hygiene.rb holds it to its conditions.
 const farm_file = "farm.yml";
+/// kpin-update.yml (the weekly pin update) holds the two write grants it needs to push its branch
+/// and open its pull request with the default token, nothing else, and only on a schedule or a
+/// manual run: checked below.
+const kpin_file = "kpin-update.yml";
+const kpin_writes = [_][]const u8{ "contents", "pull-requests" };
 /// Names whose values must never reach a log: no echo/printf/cat/tee of them.
 const secret_names = [_][]const u8{ "AWS_ACCOUNT_ID", "AWS_REGION", "ROLE_ARN", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN" };
 const owned_actions = [_][]const u8{ "checkout", "setup-node", "upload-artifact", "download-artifact" };
@@ -159,6 +164,7 @@ fn checkPerm(a: Allocator, f: []const u8, base: []const u8, path: []const []cons
             while (it.next()) |e| {
                 if (!c.isStr(e.value_ptr.*, "write")) continue;
                 const k = e.key_ptr.*;
+                if (std.mem.eql(u8, base, kpin_file) and c.containsStr(&kpin_writes, k) and path.len == 3 and std.mem.eql(u8, path[0], "jobs")) continue;
                 if (!(std.mem.eql(u8, k, "id-token") and (isOidc(base) or std.mem.eql(u8, base, farm_file)))) {
                     try c.problem(a, out, prefix ++ "{s}: {s}.{s}: write is not allowed", .{ f, try joinPath(a, path), k });
                 }
@@ -306,6 +312,28 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
         try c.problem(a, out, prefix ++ "{s}: secrets: inherit is not allowed outside promote.yml", .{f});
     }
 
+    if (std.mem.eql(u8, base, kpin_file)) {
+        const kkeys = try c.onKeys(a, doc);
+        const sorted = try a.dupe([]const u8, kkeys);
+        std.mem.sort([]const u8, sorted, {}, lessThan);
+        if (!c.eqlList(sorted, &.{ "schedule", "workflow_dispatch" })) {
+            try c.problem(a, out, prefix ++ "{s}: triggers must be exactly schedule and workflow_dispatch, got {s}", .{ f, try c.inspectList(a, kkeys) });
+        }
+        // The write grants are the jobs' own (the top level stays read-only, checked above).
+        if (jobs) |js| if (js == .object) {
+            var it = js.object.iterator();
+            while (it.next()) |e| {
+                var extra = std.ArrayList([]const u8).init(a);
+                const perms = c.get(e.value_ptr.*, "permissions");
+                if (perms != null and perms.? == .object) {
+                    for (perms.?.object.keys()) |k| if (!c.containsStr(&kpin_writes, k)) try extra.append(k);
+                }
+                if (extra.items.len != 0) {
+                    try c.problem(a, out, prefix ++ "{s}: job {s} may hold only contents and pull-requests permissions, not {s}", .{ f, e.key_ptr.*, try c.inspectList(a, extra.items) });
+                }
+            }
+        };
+    }
     // The privileged PR trigger is spelled in two pieces so hygiene does not flag this file.
     const on = try c.onKeys(a, doc);
     for ([_][]const u8{ "pull_request_" ++ "target", "workflow_run", "issue_comment" }) |t| {
