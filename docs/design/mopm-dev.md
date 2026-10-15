@@ -1,7 +1,8 @@
 # mopm.dev v2: search, API reference, agents and web login
 
-Status: proposal, for review. The CEO has decided search and docs (Q1, Q2, section 7); the CEO answers Q5, Q7, Q8,
-Q10 and Q11 and the API owner Q3 and Q9 before the PRs they gate. The registry API is moving from Node.js to Rust
+Status: proposal, for review. The CEO has decided search, docs, the installer, name normalisation and the Rust
+toolchain (Q1, Q2, Q7, Q10, Q11; section 7); the CEO answers Q5 and Q8 and the API owner Q3 and Q9 before the PRs
+they gate. The registry API is moving from Node.js to Rust
 Lambdas (the API owner's port); search and the docs validator are Rust code in that same service, and this note designs
 only what they need from it (6.1). Written against `main` and the unmerged `site/v1` branch. **Unverified** marks what
 no code, doc or run has confirmed; every size and timing is an estimate until a synthetic catalogue measures it. Detail
@@ -15,7 +16,7 @@ is in [mopm-dev-appendix.md](mopm-dev-appendix.md).
 | (b) Tantivy; index at publish, as much compute on the publisher as possible, merged server-side | 1.1 to 1.3 | **one deviation**: the registry, not the publisher, builds the Tantivy segment (1.1); needs the CEO's yes (Q8) |
 | (c) packages with about 100 versions | 1.5, A.7 | done; one row per package, release lines capped |
 | (d) search an LLM can drive end to end | 3 | done, including a scaffold-and-build recipe (3.4) |
-| (e) search in Rust Lambdas in the API's Rust service, Tantivy linked | 1.3, 6.1, 6.2 | done; needs komira's Rust bumped to 1.86 (Q11) |
+| (e) search in Rust Lambdas in the API's Rust service, Tantivy linked | 1.3, 6.1, 6.2 | done; Tantivy 0.26.x builds on komira's pinned Rust 1.99.0 (Q11) |
 
 ## Decisions at a glance
 
@@ -29,8 +30,9 @@ is in [mopm-dev-appendix.md](mopm-dev-appendix.md).
 | Agents | Versioned JSON schemas for search, package, symbol and resolve, shared by the API, `mopm --json` and `mopm mcp`; a Mojo-aware `resolve` that names one toolchain for a set of packages; `llms.txt` with a scaffold-and-build recipe; publisher text labelled untrusted and sanitised; a fuzzy name is never resolved automatically (section 3). |
 | Login | GitHub OAuth with PKCE. `/api/*` is served on the site host, so the session is a `__Host-` HttpOnly cookie that never reaches `api.<site>` and needs no credentialed CORS. Every web login shows GitHub's account picker. |
 | Takedown | A tombstoned version leaves search (its segment bytes purged by a merge), the stored reference, the landing page and the CDN (an invalidation) within one writer batch (1.6). |
-| CLI install | The landing page leads with one install line; that needs a release binary and an installer, which do not exist yet (Q7). |
-| Questions | Answered: Q1 search, Q2 docs. Open: Q3 API on the site host; Q5 download counting; Q7 release binary; Q8 who builds the segment; Q9 the Rust service interfaces; Q10 similar names; Q11 komira's Rust version. |
+| CLI install | The landing page leads with one install line, `curl -fsSL https://mopm.dev/install.sh \| sh`: a release binary on GitHub releases and an installer that checks its sha256, built in PR R beside PR 2 (Q7). |
+| Names | PyPI-style normalisation and nothing beyond it at claim: lowercase, runs of `-`, `.` and `_` collapse to one `_`, so two packages never differ only by case or separators. The API already enforces it (3.6, Q10). |
+| Questions | Answered: Q1 search, Q2 docs, Q7 release binary, Q10 names, Q11 komira's Rust version. Open: Q3 API on the site host; Q5 download counting; Q8 who builds the segment; Q9 the Rust service interfaces. |
 
 ## Goals and non-goals
 
@@ -58,7 +60,7 @@ The registry API is TypeScript Lambdas in `service/api`; `searchPackages` (`GET 
 only. The CLI is Zig and has no `search`, `add` or `doc` command (`add` is listed as planned); a dependency is a
 `mopm.toml` line followed by `mopm sync`. The resolver picks only versions built for exactly the project's Mojo
 (`requires_mojo` is `==<toolchain>`, `src/core/resolve.zig`). mopm has no Rust code yet; komira's toolchains, which mopm
-builds with, include Rust 1.85.0 for x86_64 Linux only. Each version record already holds `requires_mojo`,
+builds with, pin Rust 1.99.0 for x86_64 Linux only. Each version record already holds `requires_mojo`,
 `provenance`, the description, keywords and the README.
 
 The five site rules bind everything below: (1) no runtime dependencies; (2) no HTML sinks, markup only through `h()`;
@@ -339,7 +341,7 @@ returns `mopm-search/v1`:
   `requirement`, `import`, `has_api`, `links` pinned to a version (`page`, `api` and `api_md` when `has_api`,
   `llms_txt`, `symbol` per symbol); **`signals`, registry-derived or grammar-checked only**: publish times, `new`,
   `requires_mojo` per line, platforms from the archive subdirs, licence when it parses as SPDX, provenance, native
-  dependency count, symbol count, `symbols_verified: false`, `similar_to`; and **publisher text kept apart**:
+  dependency count, symbol count, `symbols_verified: false`; and **publisher text kept apart**:
   `publisher` (summary, repository URL, README snippet with highlight offsets, never HTML), `symbols` (up to three,
   each entry wholly untrusted: id, kind, signature, summary; a struct adds up to two `__init__` signatures), and
   `example` under `fields=` (a capped quickstart).
@@ -381,7 +383,7 @@ today: (1) search with 1 to 3 keywords; (2) `resolve` the chosen names to get on
 `mopm new <app> --bin`; (4) set `[toolchain] mojo`; (5) add the `requirement` lines under `[dependencies]` (`mopm add`
 is planned, not built); (6) `mopm sync`; (7) write code from `import`, `example` and `mopm_api`; (8) `mopm build` or
 `mopm run`; (9) commit `mopm.lock`. It also says: verify names with search or resolve before adding them, and show the
-human any package marked `new`, `similar_to` or without provenance before adding it.
+human any package marked `new` or without provenance before adding it.
 
 `/packages/<n>/<v>/llms.txt` gives the summary, requirement line, import, example and module list;
 `/packages/<n>/<v>/api.md` the reference as Markdown. The edge router maps them to API routes; the API renders them from
@@ -403,14 +405,20 @@ had a CVE for it). So ([appendix E.3](mopm-dev-appendix.md#e3-untrusted-text)):
   and HTML comments are stripped; lengths are capped; tool descriptions and `note` never include publisher text;
 - the same sanitiser runs on a locally installed `mopm-api.json` read by `mopm api`.
 
-### 3.6 Names that do not exist
+### 3.6 Name normalisation, and names that do not exist
 
-LLMs invent package names, often the same ones, and attackers register them. So search and resolve say plainly when a
-name does not exist and offer `did_you_mean`, never a substitute; at claim, a confusable name (equal to an existing one
-after removing separators and case and folding look-alikes such as `0`/`o`, `1`/`l`/`i`, `rn`/`m`) is refused, and a
-name one edit from an existing package carries a `similar_to` signal for 30 days (Q10). Because an invented name is
-usually new rather than a near miss, results carry `new` (first published under 30 days ago, or fewer than 3 versions)
-and `first_published`, and `/llms.txt` tells agents to put such packages before the human. No endpoint or report lists
+**Name policy at claim is PyPI's normalisation (PEP 503) and nothing more** (Q10): a name is lowercased and runs of
+`-`, `.` and `_` collapse to one `_`, so `HTTP-Client`, `http.client` and `http__client` are all `http_client`, and two
+packages can never differ only by case or separators. This is already enforced: `spec/api/openapi.yaml` defines it and
+answers a non-normalised name with `invalid_name`, publish refuses any name outside `^[a-z][a-z0-9_]{1,63}$`, and
+`spec/index-record.schema.json` uses the same pattern; crates.io likewise treats case and `-`/`_` as one name. No
+look-alike folding (`0`/`o`, `rn`/`m`) and no name-similarity signal at claim: the solved problem is normalisation,
+and adopting it as is keeps one rule that a publisher can predict.
+
+LLMs invent package names, often the same ones, and attackers register them; that is handled where the agent reads,
+not at claim. Search and resolve say plainly when a name does not exist and offer `did_you_mean`, never a substitute.
+Because an invented name is usually new rather than a near miss, results carry `new` (first published under 30 days
+ago, or fewer than 3 versions) and `first_published`, and `/llms.txt` tells agents to put such packages before the human. No endpoint or report lists
 frequently searched names that do not exist: it would be a list of names to register.
 
 ## 4. Web login and account
@@ -470,7 +478,7 @@ policy, docs, shortcuts. A theme toggle sets `data-theme` from `main.ts`; a forc
 | URL | kind | content |
 |---|---|---|
 | `/` | prerendered | search hero; the one-line CLI install (Q7); a search preview; Featured and Recent from `GET /api/v1/home` in fixed-height placeholders; a three-step stepper; "Status: early" |
-| `/search?q=` | shell | one row per package: name, latest version, version count, other lines (at most 2), summary, why it matched, up to three matched symbols linking to the reference, a "New" badge and `similar_to` where set (3.6); the ranking explained beside; ten per page, "Show more" up to 200 |
+| `/search?q=` | shell | one row per package: name, latest version, version count, other lines (at most 2), summary, why it matched, up to three matched symbols linking to the reference, a "New" badge where set (3.6); the ranking explained beside; ten per page, "Show more" up to 200 |
 | `/packages/<n>` | shell | metadata; **one install command with copy first**, others under "Other ways"; README; tabs (README, API reference, Versions); side panel with links, licence, keywords, owners, the five newest versions |
 | `/packages/<n>/<v>`, `.../versions` | shell | the version page; versions grouped by line (1.5); yanked, tombstoned and outdated-version banners |
 | `.../api/...`, `/account`, `/login` | shell | sections 2.4 and 4.4 |
@@ -496,7 +504,7 @@ Not the port itself, only these interfaces from it (Q9):
    can land before the port (PR V) and the port adopts it. Tantivy pinned to one exact 0.26.x for writer and query
    alike, `default-features = false` with `mmap`, `lz4-compression`, `stopwords` and `stemmer` (no `zstd`, which needs
    a C build script komira's Rust rules do not run); every `build.rs` crate in the closure declared by hand. Tantivy
-   0.26.2 declares Rust 1.86; komira has 1.85.0 (Q11, PR V0).
+   0.26.2 declares Rust 1.86; komira's Rust rules pin 1.99.0, so 0.26.x builds as is (Q11).
 2. ZIP-packaged x86_64 Lambdas, one function per role (query, queue-triggered writer, validator).
 3. Routes declared in `spec/api/openapi.yaml`, served by named functions with the shared error envelope and request id.
 4. The version and package record types and DynamoDB access as a shared crate, behind traits with in-memory fakes;
@@ -514,9 +522,9 @@ red ([appendix D](mopm-dev-appendix.md#d-test-plan)). "Port" means it waits for 
 |---|---|---|---|
 | 0 | site | site/v1 and its Buck2 targets land | |
 | 1 | docs | This note and the static mocks | |
-| R | release | Release binaries and installer (Q7) | |
-| V0 | komira | Rust 1.86 or later in komira's toolchain; mopm moves its komira pin | Q11 |
-| V | Rust tree | Workspace skeleton where the API owner agrees, vendored tantivy closure, one smoke test opening an in-memory index | V0, Q9 (location only) |
+| R | release | Release binaries on GitHub releases and `install.sh` with a sha256 check (Q7: yes), beside 2; uploads need the CEO's go at the time | |
+| V0 | komira | Removed: komira's Rust rules already pin 1.99.0, above Tantivy's 1.86 (Q11) | |
+| V | Rust tree | Workspace skeleton where the API owner agrees, vendored tantivy closure, one smoke test opening an in-memory index | Q9 (location only) |
 | 2 | site | Landing and package page build; per-route budgets | 0 |
 | 3 | site stack | CSP, edge router (with `llms.txt` and `.md` routes), headers policies, no distribution-wide errors | 0 |
 | 4a | API | Cookie plumbing, `/me`, sessions, `sessions_not_before` | port (Q9) |
@@ -536,11 +544,11 @@ red ([appendix D](mopm-dev-appendix.md#d-test-plan)). "Port" means it waits for 
 | 16 | site | Search page | 3, 14 |
 | 17 | site | Reference pages | 12, 14 |
 | 18 | site | Docstring guide, search help, `/llms.txt` with the recipe | 11 |
-| 19 | API | Name similarity at claim (Q10) | port |
+| 19 | API | Removed: none needed, name normalisation is already enforced (3.6, Q10) | |
 | 20 | API | Download counts (Q5) | port, 13 |
 
-Can start now: R, V0, 2, 3, 6, 7, 10, 11; V once Q11 and the workspace location are answered; then 8 and 9 (the
-shared crates) with no wait on the port; 15 against fixtures. Waiting on the port: 4a to 4c, 12, 13, 14, 19, 20.
+Can start now: R, 2, 3, 6, 7, 10, 11; V once the workspace location is answered; then 8 and 9 (the shared crates)
+with no wait on the port; 15 against fixtures. Waiting on the port: 4a to 4c, 12, 13, 14, 20.
 Deployed before the next merges: 10 before 11, 14 before 15 to 17. Deploys stay the CEO's go.
 
 ## 7. Questions
@@ -553,6 +561,15 @@ Deployed before the next merges: 10 before 11, 14 before 15 to 17. Deploys stay 
 - **Q2, docs**: publishers supply their own docs and mopm defines the standard; `mopm publish` runs `mojo doc`
   automatically and packs a versioned `mopm-api.json` with a published schema; any tool emitting it works; no flag in
   the normal path. Section 2.
+- **Q7, release binary**: yes. A release binary and a one-line installer (`curl -fsSL https://mopm.dev/install.sh |
+  sh`, sha256 checked, binaries on GitHub releases), PR R beside PR 2. Uploads still need the CEO's explicit go at the
+  time.
+- **Q10, names**: adopt PyPI-style normalisation (lowercase; runs of `-`, `.` and `_` collapse to one `_`) and nothing
+  beyond it at claim. It is already enforced by the API spec, the publish name pattern and the index-record schema, so
+  no PR is needed; look-alike folding and a `similar_to` signal are dropped. Search, resolve, `new` and `/llms.txt`
+  keep handling names that do not exist (3.6).
+- **Q11, komira's Rust**: closed. komira's Rust rules pin 1.99.0, above Tantivy 0.26.2's 1.86 minimum, so Tantivy
+  0.26.x builds on the pinned toolchain and no bump gates PR V.
 
 **Open:**
 
@@ -561,9 +578,6 @@ Deployed before the next merges: 10 before 11, 14 before 15 to 17. Deploys stay 
   OAuth setting before PR 4b merges.**
 - **Q5 (CEO): download counting** (channel logs without cookies, a daily job, a small cost). **Recommend: yes, after
   PR 16; the boost ships inert until then.**
-- **Q7 (CEO): a release binary and a one-line installer** (`curl -fsSL https://mopm.dev/install.sh | sh`, sha256
-  checked, binaries on GitHub releases) before the landing page goes live. **Recommend: yes, PR R, beside PR 2; the
-  uploads are the CEO's go.**
 - **Q8 (CEO): the registry, not the publisher, builds the Tantivy segment.** The publisher runs `mojo doc`, converts
   and checks `mopm-api.json`; the registry validates it and commits the small segment. A client-built segment saves
   about 10 ms per publish and opens crashes, index-wide ranking manipulation and version lock-in (1.1).
@@ -572,9 +586,3 @@ Deployed before the next merges: 10 before 11, 14 before 15 to 17. Deploys stay 
   the port. **Recommend: agree the workspace location now so PR V lands first and PRs 8 and 9 start; ZIP packaging,
   x86_64; no provisioned concurrency until cold starts show in the logs; build 4a to 4c in Rust after the port's router
   and authenticator, not twice.**
-- **Q10 (CEO): similar names at claim (3.6).** **Recommend: refuse confusables; flag one-edit names with `similar_to`
-  for 30 days; mark new packages; no manual review queue.** Refusing blocks a publisher outright; flagging only warns.
-- **Q11 (CEO, komira's toolchain owner): move komira's Rust from 1.85.0 to 1.86 or later.** Tantivy 0.26.2 needs 1.86;
-  the alternative, an older Tantivy, gives up fixes for a toolchain pin. The bump touches every komira Rust target, so
-  it is a komira PR with a cached build of the Rust targets. **Recommend: yes, to the newest stable that komira's Rust
-  rules build cleanly with.**
