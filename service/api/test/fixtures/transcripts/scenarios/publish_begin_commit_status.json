@@ -1,0 +1,291 @@
+{
+  "description": "begin-upload, the object put, commit and status: the deterministic upload and publish ids, a repeated begin joining the reservation, a repeated commit being the same publish, commit refusals, and who may see a publish.",
+  "world": {
+    "auth": true,
+    "publish": true,
+    "seeds": [
+      "auth_accounts"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "upload_ids": [
+            "{{0.upload_id}}"
+          ],
+          "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "upload_invalid"
+      }
+    },
+    {
+      "put_object": {
+        "upload_id": "{{0.upload_id}}",
+        "content": "hello"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "upload_ids": [
+            "{{0.upload_id}}"
+          ],
+          "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "expect": {
+        "status": 202
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "upload_ids": [
+            "{{0.upload_id}}"
+          ],
+          "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "expect": {
+        "status": 202
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/{{3.publish_id}}",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/{{3.publish_id}}",
+        "token": "mopm_otheracctaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 404,
+        "code": "publish_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/{{3.publish_id}}",
+        "token": "mopm_apiyankaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 403,
+        "code": "scope_missing"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/{{3.publish_id}}"
+      },
+      "expect": {
+        "status": 401,
+        "code": "token_missing"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/pub_nosuch",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 404,
+        "code": "publish_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 409,
+        "code": "version_exists"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/1.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-1.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 409,
+        "code": "version_exists"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/0.9.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-0.9.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 409,
+        "code": "version_exists"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {}
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "upload_ids": [],
+          "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "upload_ids": [
+            "{{0.upload_id}}"
+          ],
+          "manifest_sha256": "XYZ"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "upload_ids": [
+            "upl_nosuch"
+          ],
+          "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "upload_invalid"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "token": "mopm_apipubaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "upload_ids": [
+            "{{0.upload_id}}"
+          ],
+          "manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      },
+      "expect": {
+        "status": 202
+      }
+    }
+  ]
+}

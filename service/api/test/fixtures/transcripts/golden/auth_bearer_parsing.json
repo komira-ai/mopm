@@ -1,0 +1,374 @@
+{
+  "description": "How the Authorization header is read and what each way of getting it wrong answers, on a route that needs a user token.",
+  "world": {
+    "auth": true,
+    "publish": true,
+    "seeds": [
+      "auth_accounts"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-1"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_missing\",\"message\":\"This request needs a token.\",\"hint\":\"Run 'mopm login' or pass a token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": ""
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-2"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_missing\",\"message\":\"This request needs a token.\",\"hint\":\"Run 'mopm login' or pass a token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-3"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_missing\",\"message\":\"This request needs a token.\",\"hint\":\"Run 'mopm login' or pass a token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Basic abc"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-4"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_missing\",\"message\":\"This request needs a token.\",\"hint\":\"Run 'mopm login' or pass a token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer a b"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-5"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_missing\",\"message\":\"This request needs a token.\",\"hint\":\"Run 'mopm login' or pass a token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer nope"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-6"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_unknown\",\"message\":\"The token is not recognised.\",\"hint\":\"Create a new token with 'mopm token create', or run 'mopm login'.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-7"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_unknown\",\"message\":\"The token is not recognised.\",\"hint\":\"Create a new token with 'mopm token create', or run 'mopm login'.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer MOPM_APIFULLAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-8"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_unknown\",\"message\":\"The token is not recognised.\",\"hint\":\"Create a new token with 'mopm token create', or run 'mopm login'.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-9"
+          ]
+        ],
+        "body": "{\"tokens\":[{\"id\":\"tok_apifull\",\"name\":\"apifull\",\"scopes\":[\"publish\",\"yank\"],\"packages\":[\"alpha\",\"beta_pkg\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_apipub\",\"name\":\"apipub\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_apiyank\",\"name\":\"apiyank\",\"scopes\":[\"yank\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null}]}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer    mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa  "
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-10"
+          ]
+        ],
+        "body": "{\"tokens\":[{\"id\":\"tok_apifull\",\"name\":\"apifull\",\"scopes\":[\"publish\",\"yank\"],\"packages\":[\"alpha\",\"beta_pkg\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_apipub\",\"name\":\"apipub\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_apiyank\",\"name\":\"apiyank\",\"scopes\":[\"yank\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null}]}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_expiredaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-11"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_expired\",\"message\":\"The token expired at 2026-10-01T00:00:00.000Z.\",\"hint\":\"Create a new token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_revokedaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-12"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_revoked\",\"message\":\"The token was revoked.\",\"hint\":\"Create a new token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_ciwidgetsaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-13"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"scope_missing\",\"message\":\"The token does not have the 'user' scope for 'this account'.\",\"hint\":\"Create a token with that scope and that package.\"}}"
+      }
+    }
+  ]
+}

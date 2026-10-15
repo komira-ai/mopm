@@ -1,0 +1,98 @@
+{
+  "description": "sort=updated when two packages have the same time: ordered by name, and a cursor between them continues after the first.",
+  "world": {
+    "seeds": [
+      "search_two_claimed"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "sort": "updated",
+          "limit": "1"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-1"
+          ]
+        ],
+        "body": "{\"packages\":[{\"name\":\"aa_first\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-13T12:00:00Z\"}],\"next_cursor\":\"eyJrIjoidXBkYXRlZCIsInRzIjoiMjAyNi0xMC0xM1QxMjowMDowMFoiLCJhZnRlciI6ImFhX2ZpcnN0In0\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "sort": "updated",
+          "limit": "1",
+          "cursor": "eyJrIjoidXBkYXRlZCIsInRzIjoiMjAyNi0xMC0xM1QxMjowMDowMFoiLCJhZnRlciI6ImFhX2ZpcnN0In0"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-2"
+          ]
+        ],
+        "body": "{\"packages\":[{\"name\":\"tls\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-13T12:00:00Z\"}],\"next_cursor\":null}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "sort": "updated",
+          "limit": "5"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-3"
+          ]
+        ],
+        "body": "{\"packages\":[{\"name\":\"aa_first\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-13T12:00:00Z\"},{\"name\":\"tls\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-13T12:00:00Z\"}],\"next_cursor\":null}"
+      }
+    }
+  ]
+}

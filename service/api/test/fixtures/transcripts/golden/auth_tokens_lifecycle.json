@@ -1,0 +1,406 @@
+{
+  "description": "Create, list and revoke API tokens with a fresh session: the secret shown once, the listing without it, all_current as a snapshot, scopes and packages normalised, and revoking twice.",
+  "world": {
+    "auth": true,
+    "publish": true,
+    "seeds": [
+      "auth_accounts"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"name\":\"ci\",\"scopes\":[\"yank\",\"publish\",\"publish\"],\"packages\":[\"beta_pkg\",\"alpha\",\"alpha\"],\"expires_in_days\":30}"
+      },
+      "response": {
+        "status": 201,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-1"
+          ]
+        ],
+        "body": "{\"id\":\"tok_b2cfec092643607d9ab7d4f1\",\"name\":\"ci\",\"token\":\"mopm_bmuekyt7ts45n4yqfvfgpbfbx3n7qfjsj5witjwd\",\"scopes\":[\"publish\",\"yank\"],\"packages\":[\"alpha\",\"beta_pkg\"],\"expires_at\":\"2026-11-13T12:00:00.000Z\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"name\":\"everything\",\"scopes\":[\"publish\"],\"packages\":\"all_current\",\"expires_in_days\":90}"
+      },
+      "response": {
+        "status": 201,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-2"
+          ]
+        ],
+        "body": "{\"id\":\"tok_001d3a577491aecbe805223f\",\"name\":\"everything\",\"token\":\"mopm_lf3jhmgn5idsiqk6pomlluxpbquumy4atw5np5ar\",\"scopes\":[\"publish\"],\"packages\":\"all_current\",\"expires_at\":\"2027-01-12T12:00:00.000Z\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-3"
+          ]
+        ],
+        "body": "{\"tokens\":[{\"id\":\"tok_apifull\",\"name\":\"apifull\",\"scopes\":[\"publish\",\"yank\"],\"packages\":[\"alpha\",\"beta_pkg\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_apipub\",\"name\":\"apipub\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_apiyank\",\"name\":\"apiyank\",\"scopes\":[\"yank\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_001d3a577491aecbe805223f\",\"name\":\"everything\",\"scopes\":[\"publish\"],\"packages\":\"all_current\",\"created_at\":\"2026-10-14T12:00:00.000Z\",\"expires_at\":\"2027-01-12T12:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_b2cfec092643607d9ab7d4f1\",\"name\":\"ci\",\"scopes\":[\"publish\",\"yank\"],\"packages\":[\"alpha\",\"beta_pkg\"],\"created_at\":\"2026-10-14T12:00:00.000Z\",\"expires_at\":\"2026-11-13T12:00:00.000Z\",\"last_used_at\":null}]}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessstaleaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-4"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"stale_session\",\"message\":\"This action needs a login from the last 15 minutes.\",\"hint\":\"Run 'mopm login' again.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-5"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"stale_session\",\"message\":\"This action needs a login from the last 15 minutes.\",\"hint\":\"Run 'mopm login' again.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/me/tokens/tok_b2cfec092643607d9ab7d4f1",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 204,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-6"
+          ]
+        ],
+        "body": ""
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/me/tokens/tok_b2cfec092643607d9ab7d4f1",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 204,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-7"
+          ]
+        ],
+        "body": ""
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_bmuekyt7ts45n4yqfvfgpbfbx3n7qfjsj5witjwd"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-8"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_revoked\",\"message\":\"The token was revoked.\",\"hint\":\"Create a new token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-9"
+          ]
+        ],
+        "body": "{\"tokens\":[{\"id\":\"tok_apifull\",\"name\":\"apifull\",\"scopes\":[\"publish\",\"yank\"],\"packages\":[\"alpha\",\"beta_pkg\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":\"2026-10-14T12:00:00.000Z\"},{\"id\":\"tok_apipub\",\"name\":\"apipub\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_apiyank\",\"name\":\"apiyank\",\"scopes\":[\"yank\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_001d3a577491aecbe805223f\",\"name\":\"everything\",\"scopes\":[\"publish\"],\"packages\":\"all_current\",\"created_at\":\"2026-10-14T12:00:00.000Z\",\"expires_at\":\"2027-01-12T12:00:00.000Z\",\"last_used_at\":null}]}"
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/me/tokens/tok_nosuch",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-10"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_not_found\",\"message\":\"There is no such token.\",\"hint\":\"List yours with 'mopm token list'.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/me/tokens/tok_apifull",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 204,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-11"
+          ]
+        ],
+        "body": ""
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/me/tokens/tok_otheracct",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-12"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_not_found\",\"message\":\"There is no such token.\",\"hint\":\"List yours with 'mopm token list'.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/me/tokens/tok_sessfresh",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-13"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_not_found\",\"message\":\"There is no such token.\",\"hint\":\"List yours with 'mopm token list'.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/me/tokens/tok_ciwidgets",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-14"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_not_found\",\"message\":\"There is no such token.\",\"hint\":\"List yours with 'mopm token list'.\"}}"
+      }
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "description": "aa_first and tls, claimed at the same time.",
+  "packages": [
+    {
+      "name": "aa_first",
+      "state": "claimed",
+      "created_at": "2026-10-13T12:00:00Z"
+    },
+    {
+      "name": "tls",
+      "state": "claimed",
+      "created_at": "2026-10-13T12:00:00Z"
+    }
+  ],
+  "owners": [],
+  "versions": []
+}
