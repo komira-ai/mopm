@@ -49,10 +49,20 @@ def test_after_crashes() raises:
 
 
 # TIMEOUT, hung: sleeps; and leaves a process behind in its process group
-# (`sleep 7919`), which the deadline kill of the group must take too
+# (`sleep 7919`, started with fork and execlp: the build farm has no /bin/sh
+# for system()), which the deadline kill of the group must take too
 def test_hang() raises:
-    var cmd = String("sleep 7919 &")
-    _ = external_call["system", Int32](cmd.as_c_string_slice().unsafe_ptr())
+    var prog = String("sleep")
+    var arg = String("7919")
+    var pid = external_call["fork", Int32]()
+    if pid == 0:
+        _ = external_call["execlp", Int32](
+            prog.as_c_string_slice().unsafe_ptr(),
+            prog.as_c_string_slice().unsafe_ptr(),
+            arg.as_c_string_slice().unsafe_ptr(),
+            Int(0),
+        )
+        external_call["_exit", NoneType](Int32(127))
     _ = external_call["sleep", UInt32](UInt32(300))
     raise Error("woke up")
 

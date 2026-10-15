@@ -28,7 +28,18 @@ Two builds describe the same program, and both stay.
   checks of `tests/run_golden.sh`), `//:registry_login` and
   `//:registry_publish` (the checks of `tests/registry_e2e/*.py`).
   `tests/run_golden.sh` and the two Python scripts stay for `ci.yml` until
-  `farm.yml` has matched it, and are deleted then. Without a farm configured
+  `farm.yml` has matched it, and are deleted then.
+  The Mojo end-to-end suites run on the farm with no pixi, shell or Python:
+  `//:autolink` (`tests/e2e/run.sh`), `//:discovery` (`test_discovery.sh`),
+  `//:supervisor` (`test_supervisor.sh`, `check_supervisor.py`) and `//:flaky`
+  (`test_flaky.sh`, `check_flaky.py`). They use the Mojo 1.0.0 compiler komira
+  pins (`komira//tools/build/toolchains:mojo_compiler`, handed over as a
+  directory), komira's zig as the C compiler (`zig cc`, through
+  `tests/drivers/zigcc.zig`: `mojo build` links through `cc` on `PATH`), and
+  the built `mopm`; `//:mojo_probe` shows the toolchain works from this cell.
+  The pinned compiler closure has no lldb, so `mojo repl` cannot run there and
+  the REPL checks print `SKIP` (they run if the toolchain gains
+  `bin/mojo-lldb`); `ci.yml` still runs them against the pixi environment. Without a farm configured
   (`.buckconfig.local`, gitignored) the actions run on your machine.
 
 A source file you add under `src/core`, `src/cli` or `registry/fake` is picked
