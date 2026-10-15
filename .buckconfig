@@ -41,11 +41,12 @@
 [external_cell_komira]
   git_origin = https://github.com/komira-ai/komira.git
   # komira at the commit that holds the Zig rules BUCK uses (zig_module deps,
-  # zig_test exec/env tools, zig_exe optimize/strip) and the node_modules rules
-  # service/*/BUCK uses (tools/build/node/modules.bzl).
-  # This is the komira main merge commit of pull request 1636 (node_modules rules, on top
-  # of kpin). Bump it with farm.yml.
-  commit_hash = 1bc2de6ee08b727631107219c8ca2c2c1f6f987c
+  # zig_test exec/env tools, zig_exe optimize/strip), the node_modules rules
+  # service/*/BUCK uses (tools/build/node/modules.bzl), and `kpin cargo` with the
+  # Rust rules it needs (rustc 1.99.0; env, renamed_deps, native_deps, patch).
+  # This is the head of komira pull request 1648 (kpin cargo, on top of 1646 and
+  # 1647). Bump it with farm.yml.
+  commit_hash = 72596a02bba713ba497e1d7b5027b74642e589a2
 
 [buildfile]
   name = BUCK
