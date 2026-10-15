@@ -91,7 +91,7 @@ export class DeviceLogin {
     const login = await this.store.getDeviceLogin(id);
     if (!login) throw new AuthError('device_code_unknown', 'The device code is not recognised.');
     const now = this.now();
-    if (Date.parse(login.expires_at) < now.getTime()) {
+    if (Date.parse(login.expires_at) <= now.getTime()) {
       await this.store.deleteDeviceLogin(id);
       return { status: 'expired' };
     }
