@@ -44,6 +44,9 @@ test('the vectors cover the edge cases the plan names', () => {
   const named = [
     '/packages/Foo', '/packages/foo__bar', '/packages/foo__bar/1.0', '/packages/a', '/packages/ab/v1',
     '/packages/ab/1.0/extra', '/docs/../x', '/packages/ab/1.0', '/packages/ab/1.0.0.0', '/packages/ab/1.0rc1',
+    // A bad name with a valid version: only the name check can refuse these (the bad-name vectors above also have a
+    // bad version, so they pass even if the name is not checked).
+    '/packages/Foo/1.0.0', '/packages/foo__bar/1.0.0', '/packages/9lives/1.0.0',
   ];
   for (const p of named) {
     expect(paths).toContain(p);

@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
@@ -75,6 +76,13 @@ describe.each(STAGES)('SiteStack %s', (stage) => {
     }
   });
 
+  test('the distribution sends that policy: its one behaviour names the one response headers policy', () => {
+    const policies = Object.keys(t.findResources('AWS::CloudFront::ResponseHeadersPolicy'));
+    expect(policies).toHaveLength(1);
+    expect(dist.DefaultCacheBehavior.ResponseHeadersPolicyId).toEqual({ Ref: policies[0] });
+    expect(dist.CacheBehaviors).toBeUndefined();
+  });
+
   test('the security headers stay, and COOP, CORP and a Permissions-Policy are added, all overriding the origin', () => {
     expect(policy.SecurityHeadersConfig).toEqual(
       expect.objectContaining({
@@ -119,6 +127,15 @@ describe.each(STAGES)('SiteStack %s', (stage) => {
     const [[assetsId]] = byPrefix('assets/');
     const [[, pages]] = byPrefix(undefined);
     expect(pages.DependsOn).toEqual(expect.arrayContaining([assetsId]));
+  });
+
+  test('both deployments keep their objects when the deployment resource is deleted or replaced', () => {
+    // CDK leaves RetainOnDelete out when it is true (the default). Assets: old hashes must outlive a replaced or deleted
+    // deployment, as they outlive a deploy (Prune false). Pages: its prefix is the whole bucket, and the handler's delete
+    // is `aws s3 rm s3://<bucket>/ --recursive` without the exclude, so retainOnDelete false would also remove assets/.
+    const [[, assets]] = byPrefix('assets/');
+    const [[, pages]] = byPrefix(undefined);
+    expect([assets.Properties.RetainOnDelete, pages.Properties.RetainOnDelete]).toEqual([undefined, undefined]);
   });
 
   test('the assets upload holds only the hashed directories, the pages upload everything else and no assets/', () => {
@@ -168,6 +185,20 @@ describe('the site build', () => {
     // docs/ of the stub holds an index.html and nothing else.
     expect(() => make(path.join(SITE_STUB_DIR, 'docs'))).toThrow(/lacks app\.html, 404\.html, assets;/);
     expect(() => make(SITE_STUB_DIR)).not.toThrow();
+  });
+
+  test('one missing entry is enough to refuse: a build without 404.html, or without assets/', () => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'site-build-'));
+    try {
+      for (const entry of ['404.html', 'assets']) {
+        const partial = path.join(scratch, `no-${entry}`);
+        fs.cpSync(SITE_STUB_DIR, partial, { recursive: true });
+        fs.rmSync(path.join(partial, entry), { recursive: true });
+        expect(() => make(partial)).toThrow(`the site build at ${partial} lacks ${entry};`);
+      }
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true });
+    }
   });
 
   // The real build (site/dist; Buck2 stages //site:dist there, CI and deploy.yml run `npm run build` in site first).

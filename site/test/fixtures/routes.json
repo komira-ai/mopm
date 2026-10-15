@@ -234,6 +234,21 @@
       "view": null
     },
     {
+      "path": "/packages/Foo/1.0.0",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/foo__bar/1.0.0",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/9lives/1.0.0",
+      "edge": "pass",
+      "view": null
+    },
+    {
       "path": "//packages/ab",
       "edge": "pass",
       "view": null
