@@ -66,7 +66,7 @@ search/v1/<index>/files/<segment file>      # immutable segment files
 - **Manifest**: `{format, generation, committed_at, tantivy, schema_hash, indexes: {pkg: {meta_key, files: [{name,
   sha256, size}]}, sym: {...}}}`. The bucket has versioning off, so a deleted file leaves no noncurrent copy.
 - **Batch** (FIFO `search` queue, one group, batch size up to 10, an explicit exception to the `BatchSize === 1`
-  assertion; reserved concurrency 1): read the manifest and its ETag; download each listed file missing from `/tmp` to
+  assertion; the single group serialises batches, no reserved concurrency): read the manifest and its ETag; download each listed file missing from `/tmp` to
   `<name>.part`, check size and sha256, rename; size-check files already present; write each `meta.json`; open each
   index with `writer_with_num_threads(1, 50_000_000)` (the thread count pinned, since a bigger Lambda has more vCPUs and
   the default would split the heap below Tantivy's per-thread floor); for each distinct package, read its version

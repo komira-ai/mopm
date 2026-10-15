@@ -144,8 +144,9 @@ crate implements one. Summary, keywords and README also get an English-stemmed c
 - **One crate, `mopm-search`** (schemas, tokenizer, derivation, query planning, ranking, response types, and the
   writer's loop over an object-store trait), linked by the writer and the query Lambda; nothing else tokenizes or
   ranks, so the site, CLI and agents cannot disagree.
-- **Writer**: a FIFO `search` queue (one message group, batches of up to 10) feeds a Rust Lambda with reserved
-  concurrency 1. Senders: the validator once a version is published (both passes), `setYanked`, every transition to
+- **Writer**: a FIFO `search` queue (one message group, batches of up to 10) feeds a Rust Lambda. One message
+  group means SQS hands out one batch at a time, so there is one writer without reserved concurrency (which carves
+  capacity out of the account's pool and fails to deploy on an account with a small quota). Senders: the validator once a version is published (both passes), `setYanked`, every transition to
   `tombstoned`. Per batch: sync missing files into `/tmp` (each checked against the manifest's size and sha256);
   `delete_term` and `add_document` per affected package; `commit`; upload the new files; write the manifest last with a
   conditional put, so a second writer fails.
