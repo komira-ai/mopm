@@ -350,6 +350,20 @@ filegroup(
     visibility = ["//service/api:", "//site:"],
 )
 
+# ---- What the Rust registry core (service/lambda/core) compares itself with ------
+# The error table of the API specification and the contract fixtures' rendered errors.
+export_file(
+    name = "lambda.spec.openapi.yaml",
+    src = "spec/api/openapi.yaml",
+    visibility = ["//service/lambda/core:"],
+)
+
+export_file(
+    name = "lambda.contract.errors.json",
+    src = "tests/contract/api/errors.json",
+    visibility = ["//service/lambda/core:"],
+)
+
 # ---- What the site's tests and build read outside site/ (site/BUCK) ----------
 # (Plain calls: tools/build_parity.zig reads only plain calls in this file.)
 export_file(
@@ -411,6 +425,7 @@ _LINT_PACKAGES = [
     "service/infra/access",
     "service/infra/dns",
     "service/infra/stacks",
+    "service/lambda/core",
     "third_party/rust",
     "tools/lambda",
     "tools/node",

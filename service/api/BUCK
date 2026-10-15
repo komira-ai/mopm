@@ -70,6 +70,14 @@ export_file(
     visibility = ["//service/infra/stacks:"],
 )
 
+# The repodata the TS index writer produced for the golden records: the Rust core
+# (service/lambda/core) must write the same bytes.
+[export_file(
+    name = "repodata." + subdir + ".json",
+    src = "test/fixtures/repodata." + subdir + ".json",
+    visibility = ["//service/lambda/core:"],
+) for subdir in ["linux-64", "osx-arm64", "noarch"]]
+
 # This package's files, for //:hygiene (the repository-wide scan reads every file, and a
 # package boundary hides these from the root package's glob). A copy of the tree, staged
 # by path from this package.
