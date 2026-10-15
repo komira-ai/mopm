@@ -359,6 +359,12 @@ filegroup(
     visibility = ["//service/api:", "//site:"],
 )
 
+filegroup(
+    name = "validator_corpus_files",
+    srcs = {f[len("tests/validator_corpus/"):]: f for f in glob(["tests/validator_corpus/**"])},
+    visibility = ["//service/api:"],
+)
+
 # ---- What the site's tests and build read outside site/ (site/BUCK) ----------
 # (Plain calls: tools/build_parity.zig reads only plain calls in this file.)
 export_file(
