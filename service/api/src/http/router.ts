@@ -168,7 +168,7 @@ const getHealth = (deps: RouterDeps) => ({
   version: deps.version,
   commit: deps.commit,
   // Which implementation answered. This file is the TypeScript one; e2e compares it with the stage's expected implementation.
-  impl: 'rust',
+  impl: 'ts',
 });
 
 async function getPackage(deps: RouterDeps, name: string) {
