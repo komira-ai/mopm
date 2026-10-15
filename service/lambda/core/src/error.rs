@@ -132,6 +132,22 @@ pub fn version_exists(name: &str, version: &str, sha256: &str) -> RegistryError 
     )
 }
 
+pub fn name_taken(name: &str) -> RegistryError {
+    RegistryError::new(ErrorCode::NameTaken, format!("'{name}' is already taken."), detail([("name", name)]))
+}
+
+pub fn version_not_found(name: &str, version: &str) -> RegistryError {
+    RegistryError::new(ErrorCode::VersionNotFound, format!("'{name}' has no version '{version}'."), detail([("name", name), ("version", version)]))
+}
+
+pub fn already_owner(handle: &str, name: &str) -> RegistryError {
+    RegistryError::new(ErrorCode::AlreadyOwner, format!("'{handle}' already owns '{name}'."), detail([("name", name)]))
+}
+
+pub fn owner_not_found(name: &str) -> RegistryError {
+    RegistryError::new(ErrorCode::OwnerNotFound, "That account is not an owner of the package.", detail([("name", name)]))
+}
+
 pub(crate) fn invalid_version(input: &str) -> RegistryError {
     RegistryError::new(ErrorCode::InvalidVersion, format!("'{input}' is not a valid version."), detail([("version", input)]))
 }

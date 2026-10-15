@@ -11,6 +11,7 @@ pub mod canonical_json;
 pub mod display;
 pub mod error;
 pub mod limits;
+pub mod rejection;
 pub mod repodata;
 pub mod state;
 pub mod types;
