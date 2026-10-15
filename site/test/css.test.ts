@@ -171,3 +171,36 @@ test('only the package head sets its crumb\'s current item in monospace', () => 
   expect(rule('.crumb [aria-current]')).not.toContain('font-family');
   expect(rule('.pkg-head .crumb [aria-current]', pkgCss)).toContain('font-family: var(--mono);');
 });
+
+// The header is sticky, so an in-page link (the docs on-this-page list and heading anchors, the version page's Files and
+// Dependencies tabs to #files-heading and #deps-heading, the package page's #section-readme and #versions-heading)
+// scrolls its target to the viewport top, under the header, unless the target has a scroll margin at least the header's
+// height. Every one of those targets is an element with an id, so one shared [id] rule covers them all, on every page
+// (the 404 page loads site.css alone). The header measured in headless Chrome: 106px tall below 48rem (two rows: brand
+// and nav, then the search), 65px from 48rem. Mutants: the [id] rule removed (a heading lands at top 0, hidden); the
+// token below the narrow header (a docs heading's top 18px hidden at 88px); an area sheet with its own fixed
+// scroll-margin-top that beats [id] on specificity (docs.css's old `.doc h2 { scroll-margin-top: 88px }`).
+describe('anchor targets clear the sticky header', () => {
+  const sheets = [['site.css', css] as const, ...['home.css', 'package.css', 'search.css', 'docs.css'].map((f) => [f, readFileSync(join(__dirname, '..', 'static', f), 'utf8')] as const)];
+  const px = (v: string | undefined): number => Number(/^(\d+)px$/.exec(v ?? '')?.[1] ?? NaN);
+  const narrow = px(/--header-h:\s*([^;]+);/.exec(rule(':root'))?.[1]);
+  const wideBlock = css.slice(css.indexOf('@media (min-width: 48rem) { :root {'));
+  const wide = px(/--header-h:\s*([^;]+);/.exec(wideBlock.slice(0, wideBlock.indexOf('}')))?.[1]);
+
+  test('every element with an id has a scroll margin of the header height plus a gap', () => {
+    expect(rule('[id]')).toContain('scroll-margin-top: calc(var(--header-h) + 16px);');
+  });
+
+  test('the header-height token is at least the measured header, narrow and wide', () => {
+    expect(narrow).toBeGreaterThanOrEqual(106);
+    expect(wide).toBeGreaterThanOrEqual(65);
+    expect(wide).toBeLessThan(narrow);
+  });
+
+  test.each(sheets)('%s sets no scroll margin but the shared one, and offsets sticky columns by the token', (f, text) => {
+    const margins = [...text.matchAll(/scroll-margin-top:\s*([^;]+);/g)].map((m) => m[1]);
+    expect(margins).toEqual(f === 'site.css' ? ['calc(var(--header-h) + 16px)'] : []);
+    const stickyTops = [...text.matchAll(/position: sticky; top: ([^;]+);/g)].map((m) => m[1]);
+    expect(stickyTops.filter((t) => t !== '0' && !t.includes('var(--header-h)'))).toEqual([]);
+  });
+});

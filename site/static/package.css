@@ -45,7 +45,7 @@
 .side-panel > section { padding: 18px; }
 .side-panel > section + section { border-top: 1px solid var(--border); }
 .side-panel h2 { margin-bottom: 12px; }
-@media (min-width: 62rem) { .side-panel { position: sticky; top: 84px; } }
+@media (min-width: 62rem) { .side-panel { position: sticky; top: calc(var(--header-h) + 20px); } }
 .meta { margin: 0; }
 .meta dt { font-size: 0.75rem; font-weight: 600; color: var(--fg-muted); margin-top: 12px; }
 .meta dt:first-child { margin-top: 0; }

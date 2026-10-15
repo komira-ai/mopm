@@ -42,7 +42,11 @@
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace;
   --wrap: 76rem;
+  /* The sticky header's height: two rows (brand and nav, then the search) below 48rem, one row from 48rem. Anchor
+     targets and sticky columns offset by it, so a heading reached by a #link is not hidden under the header. */
+  --header-h: 106px;
 }
+@media (min-width: 48rem) { :root { --header-h: 65px; } }
 
 @media (prefers-color-scheme: dark) {
   :root {
@@ -92,6 +96,7 @@ body {
 main { flex: 1 0 auto; width: 100%; }
 main.wrap { padding-top: 2rem; padding-bottom: 4rem; }
 main:focus { outline: none; }
+[id] { scroll-margin-top: calc(var(--header-h) + 16px); }
 .wrap { max-width: var(--wrap); margin: 0 auto; padding-left: 16px; padding-right: 16px; }
 @media (min-width: 48rem) { .wrap { padding-left: 32px; padding-right: 32px; } }
 

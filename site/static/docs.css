@@ -27,10 +27,10 @@
 .toc a:hover { color: var(--fg); border-left-color: var(--border-strong); }
 .toc .toc-3 a { padding-left: 24px; }
 @media (min-width: 56rem) {
-  .docs-nav { position: sticky; top: 88px; }
+  .docs-nav { position: sticky; top: calc(var(--header-h) + 24px); }
 }
 @media (min-width: 76rem) {
-  .toc { position: sticky; top: 88px; max-height: calc(100vh - 110px); overflow-y: auto; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; }
+  .toc { position: sticky; top: calc(var(--header-h) + 24px); max-height: calc(100vh - var(--header-h) - 48px); overflow-y: auto; margin: 0; padding: 0; border: 0; border-radius: 0; background: none; }
 }
 @media (max-width: 55.99rem) {
   /* The docs nav becomes one row of pills above the page. */
@@ -47,7 +47,7 @@
 .doc h1 { font-size: clamp(1.9rem, 1.5rem + 1.6vw, 2.6rem); margin-bottom: 0.5em; }
 .doc h2 { font-size: 1.5rem; margin-top: 2.2em; padding-top: 1.2em; border-top: 1px solid var(--border); }
 .doc h3 { font-size: 1.15rem; margin-top: 1.8em; }
-.doc h1, .doc h2, .doc h3, .doc h4 { position: relative; scroll-margin-top: 88px; }
+.doc h1, .doc h2, .doc h3, .doc h4 { position: relative; }
 .anchor { color: inherit; text-decoration: none; }
 .anchor:hover { text-decoration: none; }
 .anchor::before {
