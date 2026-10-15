@@ -35,7 +35,7 @@ const Allocator = std.mem.Allocator;
 /// The header of a `.mojoc`, as observed on 1.0.0 and 1.1.0: the magic, a
 /// format byte, 13 bytes this probe does not interpret (printed raw), the
 /// fingerprint as 64 lowercase hex characters, and a NUL.
-const fp_offset = 19;
+const fp_offset = 18;
 const fp_len = 64;
 const Header = struct {
     format: u8,
@@ -45,7 +45,7 @@ const Header = struct {
 
 fn parseHeader(bytes: []const u8) !Header {
     if (bytes.len < fp_offset + fp_len + 1) return error.ShortHeader;
-    if (!std.mem.eql(u8, bytes[0..4], "MPKG")) return error.BadMagic;
+    if (!std.mem.eql(u8, bytes[0..4], "MPKX")) return error.BadMagic;
     for (bytes[fp_offset .. fp_offset + fp_len]) |c| {
         if (!std.ascii.isDigit(c) and !(c >= 'a' and c <= 'f')) return error.FingerprintNotHex;
     }
