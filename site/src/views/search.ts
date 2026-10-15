@@ -229,7 +229,8 @@ export function searchResultsView<N>(doc: Doc<N>, state: SearchState, list: Pack
 
 /**
  * A failed search. invalid_request is almost always one of two things: a page link whose cursor the registry no
- * longer accepts, or sort=updated over a prefix that matches more than 1000 packages. Both get a way out.
+ * longer accepts, or sort=updated over a prefix that matches more than 1000 packages. Both get a way out; any other
+ * refused search links to the full list (re-running the same query would be refused again).
  */
 export function searchErrorView<N>(doc: Doc<N>, state: SearchState, err: ApiError): View<N> {
   if (err.kind !== 'invalid') {

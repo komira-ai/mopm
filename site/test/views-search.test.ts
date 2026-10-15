@@ -1,5 +1,5 @@
 // T14 (search and shared views): reading the search state from the address, the results page and its paging links,
-// the empty and too-long states, the two invalid_request ways out, and the banner, error and not-found views.
+// the empty and too-long states, the three invalid_request ways out, and the banner, error and not-found views.
 import { fromResponse, networkError } from '../src/errors';
 import {
   errorView, notFoundView, pageNotFoundView, readOnlyBanner, titleOf, unknownHostView,
@@ -166,16 +166,38 @@ describe('the search page design', () => {
 describe('search errors', () => {
   const invalid = fromResponse(400, JSON.stringify({ error: { code: 'invalid_request', message: 'The request is not valid: bad cursor.', hint: '' } }), 'req-1');
 
+  // Each way out sits in the alert block itself: the side panel's "Browse all packages" carries '/search' on every
+  // page, so a page-wide href check passes with the alert's link gone or pointing elsewhere.
+  const alertBlock = (out: string): string => {
+    const at = out.indexOf('role="alert"');
+    expect(at).toBeGreaterThanOrEqual(0);
+    const start = out.lastIndexOf('<div', at);
+    return out.slice(start, out.indexOf('</div>', at) + 6);
+  };
+
+  // Mutant: the reset link dropping sort=updated (the first page then sorts differently from the refused one).
   test('invalid_request with a cursor: a link back to the first page of the same query', () => {
-    const out = html(searchErrorView(sdoc, { q: 'http', sort: 'updated', cursor: 'stale' }, invalid));
-    expect(text(out)).toContain('This page link is no longer valid.');
-    expect(hrefs(out)).toContain('/search?q=http&sort=updated');
+    const block = alertBlock(html(searchErrorView(sdoc, { q: 'http', sort: 'updated', cursor: 'stale' }, invalid)));
+    expect(text(block)).toContain('This page link is no longer valid.');
+    expect(block).toContain('<a class="button" href="/search?q=http&amp;sort=updated">Start from the first page</a>');
+    expect(block.match(/<a /g)).toHaveLength(1);
   });
 
+  // Mutant: the link keeping sort=updated (re-runs the refused search).
   test('invalid_request under sort=updated: the 1000-match cap, and a link to sort by name', () => {
-    const out = html(searchErrorView(sdoc, { q: 'a', sort: 'updated' }, invalid));
-    expect(text(out)).toContain('up to 1000 matching packages');
-    expect(hrefs(out)).toContain('/search?q=a');
+    const block = alertBlock(html(searchErrorView(sdoc, { q: 'a', sort: 'updated' }, invalid)));
+    expect(text(block)).toContain('up to 1000 matching packages');
+    expect(block).toContain('<a class="button" href="/search?q=a">Sort by name instead</a>');
+    expect(block.match(/<a /g)).toHaveLength(1);
+  });
+
+  // A sort=name search with no cursor that the registry refuses: re-running the same q would fail the same way, so
+  // the way out is the unfiltered list. Mutant: the link built as searchPath({ q: state.q }).
+  test('invalid_request for a sort=name search with no cursor: a link to all packages, not the same query', () => {
+    const block = alertBlock(html(searchErrorView(sdoc, { q: 'a', sort: 'name' }, invalid)));
+    expect(text(block)).toContain('The registry did not accept this search.');
+    expect(block).toContain('<a class="button" href="/search">Show all packages</a>');
+    expect(block.match(/<a /g)).toHaveLength(1);
   });
 
   test('another failure: the error view with a Retry button, under the form', () => {
