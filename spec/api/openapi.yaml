@@ -871,6 +871,12 @@ components:
         stage: { type: string, enum: [beta, gamma, prod] }
         api_version: { type: string, const: v1 }
         read_only: { type: boolean }
+        impl:
+          description: |
+            Which implementation of the registry answered: `ts` or `rust`. Additive: a
+            client that does not know it ignores it, and a server may omit it.
+          type: string
+          enum: [ts, rust]
 
     # ---- auth -------------------------------------------------------------
     DeviceStartRequest:
