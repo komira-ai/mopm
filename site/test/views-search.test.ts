@@ -98,6 +98,51 @@ describe('search results', () => {
   });
 });
 
+describe('the search page design', () => {
+  const list = listFixture('search by prefix');
+  const out = html(searchResultsView(sdoc, { q: 'http', sort: 'name' }, list));
+
+  // Mutant: a card that drops the description or the update date, or the glyph.
+  test('each result is a card: glyph, name, latest version, description and the date of its last update', () => {
+    const p = list.packages[0];
+    const card = out.slice(out.indexOf('<li class="result">'), out.indexOf('</li>') + 5);
+    expect(card).toMatch(/^<li class="result"><span class="glyph g[012]" aria-hidden="true">[a-z0-9_]{1,2}<\/span>/);
+    expect(card).toContain(`<a href="/packages/${p.name}" class="result-name">${p.name}</a>`);
+    if (p.description) expect(card).toContain(`<p class="result-desc">${p.description}</p>`);
+    expect(card).toContain(`<p class="result-meta">Updated <time datetime="${p.updated_at}">${p.updated_at.slice(0, 10)}</time></p>`);
+    expect(out.split('<li class="result">').length - 1).toBe(list.packages.length);
+  });
+
+  // The API matches a name prefix only. Mutants: a ranking chip, a "why it matched" or a ranking explainer added to the
+  // page; the note saying what search matches removed.
+  test('the page says search matches the start of a name, and claims no ranking', () => {
+    expect(text(out)).toContain('Search matches the start of a package name, not descriptions or readmes.');
+    expect(out).toContain('aria-describedby="search-note"');
+    expect(text(out)).not.toMatch(/rank|relevan|best match|why it matched|exact name/i);
+  });
+
+  test('the big search box shows the current query, and the page has one h1 naming it', () => {
+    expect(out).toContain('<div class="big-search">');
+    expect(out).toMatch(/<input id="search-q" name="q" type="search" value="http"/);
+    expect(out.match(/<h1[ >]/g)).toHaveLength(1);
+    expect(text(out)).toContain('Packages starting with “http”');
+  });
+
+  // Mutant: the Next link losing rel=next or its button styling; the count not saying more pages exist.
+  test('paging is a pair of buttons, and the count says when there is a next page', () => {
+    expect(out).toMatch(/<a class="button button-primary" href="\/search\?q=http&amp;cursor=[^"]+" rel="next">Next page →<\/a>/);
+    expect(text(out)).toMatch(/1 package, sorted by name; more on the next page\./);
+    const later = html(searchResultsView(sdoc, { q: 'http', sort: 'updated', cursor: 'abc' }, { ...list, next_cursor: null }));
+    expect(later).toContain('<a class="button" href="/search?q=http&amp;sort=updated">← First page</a>');
+    expect(text(later)).toMatch(/packages? on this page, most recently updated first\./);
+  });
+
+  test('an empty search offers the full list; an empty registry offers the docs', () => {
+    expect(hrefs(html(searchResultsView(sdoc, { q: 'zz', sort: 'name' }, { packages: [], next_cursor: null })))).toContain('/search');
+    expect(hrefs(html(searchResultsView(sdoc, { q: '', sort: 'name' }, { packages: [], next_cursor: null })))).toContain('/docs/');
+  });
+});
+
 describe('search errors', () => {
   const invalid = fromResponse(400, JSON.stringify({ error: { code: 'invalid_request', message: 'The request is not valid: bad cursor.', hint: '' } }), 'req-1');
 
@@ -116,9 +161,17 @@ describe('search errors', () => {
   test('another failure: the error view with a Retry button, under the form', () => {
     const out = html(searchErrorView(sdoc, { q: 'a', sort: 'name' }, networkError()));
     expect(out).toContain('role="alert"');
-    expect(out).toContain('<button type="button" class="button retry">Retry</button>');
+    expect(out).toContain('<button type="button" class="button button-primary retry">Retry</button>');
     expect(out).toContain('<form class="search-form"');
     expect(out.indexOf('<form class="search-form"')).toBeLessThan(out.indexOf('role="alert"'));
+  });
+
+  // The band over a failed search carries the form but not the page heading: the error block has the one h1.
+  // Mutant: the band built with its heading -> two h1s.
+  test('a failed search has exactly one h1, the error\'s', () => {
+    const out = html(searchErrorView(sdoc, { q: 'a', sort: 'name' }, networkError()));
+    expect(out.match(/<h1[ >]/g)).toHaveLength(1);
+    expect(out).toContain('<h1>Search failed</h1>');
   });
 });
 
@@ -133,7 +186,9 @@ describe('shared views', () => {
     expect(out).toContain('role="alert"');
     expect(out).toContain('&lt;b&gt;boom&lt;/b&gt;');
     expect(out).toContain('<code>abc-123</code>');
-    expect(out).toContain('class="button retry"');
+    expect(out).toContain('class="button button-primary retry"');
+    // A way home next to Retry. Mutant: the Home button dropped.
+    expect(hrefs(out)).toContain('/');
   });
 
   test('error: the server hint is shown as text when there is one', () => {
@@ -150,6 +205,24 @@ describe('shared views', () => {
     expect(v.noindex).toBe(true);
     expect(hrefs(html(v))).toContain('/packages/http_client');
     expect(pageNotFoundView(sdoc).noindex).toBe(true);
+  });
+
+  // A not-found page is a place to go on from, not a dead end: a search box (its own id, so the header's #q stays the
+  // one '/' focuses), Home, the package list and the docs. Mutants: the search box or the way-on row dropped; the box
+  // given id q (two #q on the app shell).
+  test.each([
+    ['a package', () => notFoundView(sdoc, 'zz_absent'), 'zz_absent'],
+    ['a version', () => notFoundView(sdoc, 'http_client', '9.9.9'), ''],
+    ['an address', () => pageNotFoundView(sdoc), ''],
+  ])('not found (%s): a search box, Home, Browse packages and Docs', (_what, make, q) => {
+    const out = html(make());
+    expect(out).toContain('<form class="lost-search" role="search" action="/search" method="get" aria-label="Search the registry">');
+    expect(out).toContain(`<input id="lost-q" name="q" type="search" value="${q}"`);
+    expect(out).not.toContain('id="q"');
+    expect(hrefs(out)).toEqual(expect.arrayContaining(['/', '/search', '/docs/']));
+    expect(out.match(/<h1[ >]/g)).toHaveLength(1);
+    // The big "404" is decoration: hidden from screen readers, the h1 says it.
+    expect(out).toContain('<p class="lost-code" aria-hidden="true">404</p>');
   });
 
   test('an unknown host: noindex, no API, the host shown as text', () => {

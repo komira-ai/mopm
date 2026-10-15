@@ -1,6 +1,6 @@
 // The page script, loaded as a module by every page.
 //
-// On every page: the read-only banner (from getHealth; any failure is silent), '/' to focus the header search, and
+// On every page: the read-only banner (from getHealth; any failure is silent), '/' to focus the search field, and
 // a Copy button on every command block (copy.ts). On the home page: the conda channel of this host and the "Recently
 // updated" list (views/recent.ts, one searchPackages call). On the app shell (body[data-page=app]): the view app.ts picks
 // for the address. What to show is decided in app.ts, how a view is put on the page in mount.ts, and the copy buttons and
@@ -85,12 +85,15 @@ function showHealthBanner(): void {
     .catch(() => undefined);
 }
 
-/** '/' focuses the header search, unless the reader is typing somewhere. */
+/**
+ * '/' focuses the search field, unless the reader is typing somewhere: the search page's own box (#search-q; its
+ * stylesheet hides the header search there), else the header's (#q).
+ */
 function slashToSearch(e: KeyboardEvent): void {
   if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
   const t = e.target;
   if (t instanceof HTMLElement && (t.isContentEditable || /^(?:INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
-  const q = document.getElementById('q');
+  const q = document.getElementById('search-q') ?? document.getElementById('q');
   if (!(q instanceof HTMLInputElement)) return;
   e.preventDefault();
   q.focus();

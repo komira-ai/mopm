@@ -9,10 +9,11 @@
 //
 // Wide blocks scroll on their own: a table sits in a focusable, named scroll region (class 'scroll'; styling the
 // table itself to scroll would strip its table semantics) and a code block is focusable, so a keyboard reaches the
-// overflow.
+// overflow. A docs page (opts.docs) also gets heading anchors, code blocks the page script adds a Copy button to, and
+// its h2 and h3 headings reported for an on-this-page list; a readme gets none of them.
 
 import { type Child, type Doc, h, type SafeHref, type Tag } from '../doc.js';
-import { type LinkContext, safeHref } from '../links.js';
+import { anchorHref, type LinkContext, safeHref } from '../links.js';
 import { type Align, type Block, type Inline, parse } from './parse.js';
 
 export interface RenderOptions {
@@ -22,6 +23,19 @@ export interface RenderOptions {
   headingShift: number;
   /** How links resolve: a readme keeps absolute links only; a repo doc resolves relative links in the repo. */
   links: { mode: 'readme' } | { mode: 'docs'; source: string };
+  /**
+   * A docs page's extras (repo docs at build time; a readme leaves them out): each heading's text becomes a link to
+   * its own id (no link when the heading holds a link, as anchors never nest, or when its id is not a plain id), each
+   * code block sits in a named .code-box .copy-box so the page script adds its Copy button (copy.ts), and `onHeading`
+   * hears every h2 and h3 for an on-this-page list.
+   */
+  docs?: { onHeading?: (level: number, id: string, text: string) => void };
+}
+
+const PLAIN_ID = /^[A-Za-z][A-Za-z0-9_-]*$/;
+
+function hasLink(inl: readonly Inline[]): boolean {
+  return inl.some((x) => x.t === 'link' || x.t === 'image' || ((x.t === 'em' || x.t === 'strong') && hasLink(x.c)));
 }
 
 const EXTERNAL_REL = 'nofollow noopener noreferrer ugc';
@@ -97,8 +111,17 @@ class Renderer<N> {
     switch (b.t) {
       case 'heading': {
         const level = Math.min(6, Math.max(1, b.level + this.opts.headingShift));
-        const node = h(d, HEADINGS[level - 1], { id: this.opts.idPrefix + this.slugger.slug(plainText(b.c)) });
-        this.inlines(node, b.c);
+        const id = this.opts.idPrefix + this.slugger.slug(plainText(b.c));
+        const node = h(d, HEADINGS[level - 1], { id });
+        const docs = this.opts.docs;
+        if (docs && PLAIN_ID.test(id) && !hasLink(b.c)) {
+          const a = h(d, 'a', { href: anchorHref(id), class: 'anchor' });
+          this.inlines(a, b.c, true);
+          d.append(node, a);
+        } else {
+          this.inlines(node, b.c);
+        }
+        if (docs?.onHeading && (level === 2 || level === 3)) docs.onHeading(level, id, plainText(b.c).trim());
         return node;
       }
       case 'para': {
@@ -106,13 +129,20 @@ class Renderer<N> {
         this.inlines(node, b.c);
         return node;
       }
-      case 'code':
+      case 'code': {
+        const lang = LANG.test(b.lang) ? b.lang : null;
+        const code = h(d, 'code', lang ? { class: `language-${lang}` } : null, b.v);
+        if (!this.opts.docs) return h(d, 'pre', { tabindex: '0' }, code);
+        const label = lang ? `${lang} example` : 'code example';
+        // The bar above the code names its language for the eye; the <pre>'s own name says it to a screen reader.
         return h(
           d,
-          'pre',
-          { tabindex: '0' },
-          h(d, 'code', LANG.test(b.lang) ? { class: `language-${b.lang}` } : null, b.v),
+          'div',
+          { class: 'code-box copy-box' },
+          h(d, 'span', { class: 'code-lang', 'aria-hidden': 'true' }, lang ?? 'code'),
+          h(d, 'pre', { tabindex: '0', role: 'region', 'aria-label': label }, code),
         );
+      }
       case 'quote': {
         const node = h(d, 'blockquote');
         this.blocks(node, b.c);

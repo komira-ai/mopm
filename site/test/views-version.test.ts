@@ -16,7 +16,43 @@ describe('a published version (fixture: version detail)', () => {
   test('title and h1 name the version', () => {
     expect(view.title).toBe('http_client 0.4.0');
     expect(out.match(/<h1>/g)).toHaveLength(1);
-    expect(out).toContain('<h1>http_client 0.4.0</h1>');
+    expect(out).toContain('<h1>http_client <span class="ver">0.4.0</span></h1>');
+    expect(text(out.slice(out.indexOf('<h1>'), out.indexOf('</h1>')))).toBe('http_client 0.4.0');
+  });
+
+  // The package page's head band: crumb Packages / name / version, the glyph, the state tag, then the facts.
+  // Mutants: the crumb losing the package link; the facts losing the platforms (taken from the files).
+  test('the head is the package page\'s: crumb to the package, glyph, state, published, license, Mojo, platforms', () => {
+    expect(out).toContain('<header class="page-band pkg-head"><nav class="crumb" aria-label="Breadcrumb"><a href="/search">Packages</a><span class="sep" aria-hidden="true">/</span><a href="/packages/http_client" class="crumb-pkg">http_client</a><span class="sep" aria-hidden="true">/</span><span aria-current="page">0.4.0</span></nav>');
+    expect(out).toMatch(/<span class="glyph g[012] glyph-lg" aria-hidden="true">hc<\/span><h1>/);
+    expect(out).toContain('<span class="tag state-published">published</span>');
+    const facts = text(out.slice(out.indexOf('<ul class="metarow">'), out.indexOf('</ul>', out.indexOf('<ul class="metarow">'))));
+    expect(facts).toMatch(/^Published \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC/);
+    expect(facts).toContain('Platform linux-64');
+  });
+
+  // One install command first, as on the package page, before the files; the mopm.toml pin and the channel under
+  // "Other ways". Mutants: the card moved below the files; a second command shown outside the details.
+  test('one install command leads the page, before the files, with the pin under Other ways', () => {
+    expect(out.indexOf('class="install-card"')).toBeLessThan(out.indexOf('id="files-heading"'));
+    expect(out.match(/<div class="cmd cmd-lg copy-box">/g)).toHaveLength(1);
+    const details = out.slice(out.indexOf('<details class="other-ways">'));
+    expect(details).toContain('http_client = "=0.4.0"');
+    expect(out.indexOf('http_client = "=0.4.0"')).toBeGreaterThan(out.indexOf('<details class="other-ways">'));
+  });
+
+  // Each digest is a copy box the page script gives a Copy button, named for its file. Mutants: the digest back to
+  // plain text (no box); a box with an unnamed <pre> (its button would read "Copy command").
+  test('each file\'s SHA-256 sits in its own named copy box', () => {
+    const v = versionFixture('version detail');
+    for (const f of v.files) {
+      expect(out).toContain(`<div class="hash-box copy-box"><pre tabindex="0" role="region" aria-label="SHA-256 of ${f.filename}"><code class="hash">${f.sha256}</code></pre></div>`);
+    }
+    expect(out.split('class="hash-box copy-box"').length - 1).toBe(v.files.length);
+  });
+
+  test('jump links to the files and dependencies, with their counts', () => {
+    expect(out).toContain('<nav class="tabs" aria-label="On this page"><a href="#files-heading">Files <span class="count">1</span></a><a href="#deps-heading">Dependencies <span class="count">1</span></a>');
   });
 
   test('the mopm.toml line pins the version', () => {
@@ -25,7 +61,7 @@ describe('a published version (fixture: version detail)', () => {
 
   test('the file links to the channel of this host', () => {
     expect(hrefs(out)).toContain(FILE_URL);
-    expect(out).toContain('<td class="num">120.6 KiB</td>');
+    expect(out).toContain('<td class="num" role="cell">120.6 KiB</td>');
   });
 
   test('a dependency with a valid name links to its page, with its range as text', () => {
@@ -39,7 +75,8 @@ describe('a published version (fixture: version detail)', () => {
 
   test('the pixi line says it installs the newest version, which may not be this one', () => {
     expect(out).toContain('<code>pixi add mojo-http_client</code>');
-    expect(text(out)).toContain('pixi, in a project that lists the channel (installs the newest version, not necessarily this one)');
+    expect(text(out)).toContain('This installs the newest version, not necessarily this one.');
+    expect(out).toContain('aria-describedby="install-note install-caveat"');
   });
 
   test('the sidebar shows the state and the publish time in UTC', () => {
@@ -81,7 +118,7 @@ describe('yanked (fixture)', () => {
   });
 
   test('the pixi line says it does not install this yanked version', () => {
-    expect(text(out)).toContain('(installs the newest version, not this yanked one)');
+    expect(text(out)).toContain('This installs the newest version, not this yanked one.');
   });
 
   test('the sidebar state carries the reason', () => {
@@ -136,7 +173,8 @@ describe('download links', () => {
     const out = html(render(versionFixture('version detail', (r) => {
       (r.files as Record<string, unknown>[])[0].url = url;
     })));
-    expect(hrefs(out).filter((h) => !h.startsWith('/') && !h.startsWith('https://github.com/example/'))).toEqual([]);
+    // In-page jump links ('#files-heading') and same-site paths are the page's own.
+    expect(hrefs(out).filter((h) => !h.startsWith('/') && !h.startsWith('#') && !h.startsWith('https://github.com/example/'))).toEqual([]);
   });
 
   test('on an unknown host no file links and no channel', () => {
@@ -159,7 +197,7 @@ describe('names, spellings and unknown values', () => {
     const out = html(render(versionFixture('version detail', (r) => Object.assign(r, { deps: [{ name: 'Bad-Name' }, { name: 'javascript:x' }] }))));
     expect(out).toContain('<span>Bad-Name</span>');
     expect(out).toContain('<span>javascript:x</span>');
-    expect(hrefs(out).filter((h) => h.startsWith('/packages/') && h !== '/packages/http_client')).toEqual([]);
+    expect(hrefs(out).filter((h) => h.startsWith('/packages/') && h.split('#')[0] !== '/packages/http_client')).toEqual([]);
   });
 
   test('the address is the version the registry returned', () => {

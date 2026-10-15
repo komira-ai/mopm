@@ -80,18 +80,67 @@ export function loadingView<N>(doc: Doc<N>, what = 'Loading'): View<N> {
   };
 }
 
-/** A failed call: what happened, the server's own words if any, the request id, and a Retry button. */
-export function errorView<N>(doc: Doc<N>, err: ApiError, heading = 'Something went wrong'): View<N> {
-  const box = h(
+/**
+ * A search box for a page that is not the search page: the 404 page and the not-found views. It has its own id (the
+ * header's #q stays the field '/' focuses) and its own landmark name. `q` prefills it.
+ */
+export function searchBox<N>(doc: Doc<N>, id: string, q = ''): N {
+  return h(
+    doc,
+    'form',
+    { class: 'lost-search', role: 'search', action: internalHref('/search'), method: 'get', 'aria-label': 'Search the registry' },
+    h(doc, 'label', { for: id, class: 'visually-hidden' }, 'Find a package by name'),
+    h(
+      doc,
+      'div',
+      { class: 'big-search' },
+      h(doc, 'span', { class: 'search-icon', 'aria-hidden': 'true' }),
+      h(doc, 'input', { id, name: 'q', type: 'search', value: q, placeholder: 'Find a package by name', maxlength: '64', autocomplete: 'off', spellcheck: 'false', enterkeyhint: 'search' }),
+      h(doc, 'button', { type: 'submit', class: 'button button-primary' }, 'Search'),
+    ),
+  );
+}
+
+/** The ways on from a page that has nothing to show: home, the package list and the docs, as one row of links. */
+export function wayOn<N>(doc: Doc<N>, ...first: N[]): N {
+  return h(
+    doc,
+    'ul',
+    { class: 'way-on' },
+    ...first.map((n) => h(doc, 'li', null, n)),
+    h(doc, 'li', null, h(doc, 'a', { href: internalHref('/') }, 'Home')),
+    h(doc, 'li', null, h(doc, 'a', { href: internalHref(searchPath()) }, 'Browse packages')),
+    h(doc, 'li', null, h(doc, 'a', { href: internalHref('/docs/') }, 'Docs')),
+  );
+}
+
+/**
+ * The block a not-found or failed page shows: a large decorative code ('404'; hidden from screen readers, the heading
+ * says it), the heading, what happened, and then the caller's search box and ways on.
+ */
+export function lostBlock<N>(doc: Doc<N>, code: string, heading: string, attrs: { role?: string; error?: boolean }, ...body: (N | null)[]): N {
+  return h(
     doc,
     'section',
-    { class: 'notice notice-error', role: 'alert' },
+    { class: attrs.error ? 'lost lost-error' : 'lost', role: attrs.role },
+    h(doc, 'p', { class: 'lost-code', 'aria-hidden': 'true' }, code),
     h(doc, 'h1', null, heading),
+    ...body,
+  );
+}
+
+/** A failed call: what happened, the server's own words if any, the request id, a Retry button and a way home. */
+export function errorView<N>(doc: Doc<N>, err: ApiError, heading = 'Something went wrong'): View<N> {
+  const box = lostBlock(
+    doc,
+    'error',
+    heading,
+    { role: 'alert', error: true },
     h(doc, 'p', null, err.message),
     err.detail ? h(doc, 'p', { class: 'detail' }, err.detail) : null,
     err.hint ? h(doc, 'p', { class: 'detail' }, err.hint) : null,
-    err.requestId ? h(doc, 'p', { class: 'muted' }, 'Request id: ', h(doc, 'code', null, err.requestId)) : null,
-    h(doc, 'p', null, h(doc, 'button', { type: 'button', class: 'button retry' }, 'Retry')),
+    err.requestId ? h(doc, 'p', { class: 'muted small' }, 'Request id: ', h(doc, 'code', null, err.requestId)) : null,
+    h(doc, 'p', { class: 'lost-actions' }, h(doc, 'button', { type: 'button', class: 'button button-primary retry' }, 'Retry'), h(doc, 'a', { class: 'button', href: internalHref('/') }, 'Home')),
   );
   return { title: heading, nodes: [box] };
 }
@@ -103,16 +152,15 @@ export function notFoundView<N>(doc: Doc<N>, name: string, version?: string): Vi
     version === undefined
       ? [`There is no package `, h(doc, 'code', null, name), ' in the registry.']
       : [h(doc, 'code', null, name), ' has no version ', h(doc, 'code', null, version), '.'];
-  const box = h(
+  const box = lostBlock(
     doc,
-    'section',
-    { class: 'notice' },
-    h(doc, 'h1', null, heading),
-    h(doc, 'p', null, ...sentence),
-    h(
+    '404',
+    heading,
+    {},
+    h(doc, 'p', { class: 'lost-lede' }, ...sentence),
+    searchBox(doc, 'lost-q', version === undefined ? name : ''),
+    wayOn(
       doc,
-      'p',
-      null,
       version === undefined
         ? h(doc, 'a', { href: internalHref(searchPath({ q: name })) }, `Search for names starting with ${name}`)
         : h(doc, 'a', { href: internalHref(packagePath(name)) }, `All versions of ${name}`),
@@ -123,11 +171,11 @@ export function notFoundView<N>(doc: Doc<N>, name: string, version?: string): Vi
 
 /** A copy of the site served from a host outside the table in host.ts: it never calls an API. */
 export function unknownHostView<N>(doc: Doc<N>, hostname: string): View<N> {
-  const box = h(
+  const box = lostBlock(
     doc,
-    'section',
-    { class: 'notice notice-error', role: 'alert' },
-    h(doc, 'h1', null, 'Registry unavailable here'),
+    'offline',
+    'Registry unavailable here',
+    { role: 'alert', error: true },
     h(doc, 'p', null, 'This page is served from ', h(doc, 'code', null, hostname || '(no host)'), ', which is not a mopm.dev site, so it does not call the registry API.'),
     h(doc, 'p', null, 'Browse the registry at ', h(doc, 'a', { href: webHref('https://mopm.dev/') ?? undefined }, 'mopm.dev'), '.'),
   );
@@ -136,12 +184,14 @@ export function unknownHostView<N>(doc: Doc<N>, hostname: string): View<N> {
 
 /** An address that is not an app route (the shell opened directly, say). */
 export function pageNotFoundView<N>(doc: Doc<N>): View<N> {
-  const box = h(
+  const box = lostBlock(
     doc,
-    'section',
-    { class: 'notice' },
-    h(doc, 'h1', null, 'Page not found'),
-    h(doc, 'p', null, 'There is nothing at this address. ', h(doc, 'a', { href: internalHref(searchPath()) }, 'Browse packages'), '.'),
+    '404',
+    'Page not found',
+    {},
+    h(doc, 'p', { class: 'lost-lede' }, 'There is nothing at this address. Search for a package, or go on from here.'),
+    searchBox(doc, 'lost-q'),
+    wayOn(doc),
   );
   return { title: 'Page not found', nodes: [box], noindex: true };
 }

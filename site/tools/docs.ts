@@ -1,5 +1,7 @@
 // The docs pages: each repo doc in DOC_PAGES (src/links.ts) rendered at build time by the same restricted Markdown
-// renderer the browser uses for readmes, through StringDoc; and /docs/, the list of them.
+// renderer the browser uses for readmes, through StringDoc; and /docs/, the list of them. Each sits in a three-column
+// layout: a nav of the docs pages, the page, and an on-this-page list of its h2 and h3 headings (each heading is a link
+// to its own anchor, and each code block gets a Copy button from the page script: the renderer's `docs` option).
 //
 // A doc's page title is its first '# ' heading. Heading ids carry a 'doc-' prefix so a heading can never take an id
 // the page itself uses ('main', 'q'). Relative links resolve as links.ts says: a published doc stays on the site,
@@ -8,7 +10,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { h, type SElement, type SNode } from '../src/doc';
-import { DOC_PAGES, internalHref, REPO_URL, webHref } from '../src/links';
+import { anchorHref, DOC_PAGES, internalHref, REPO_URL, webHref } from '../src/links';
 import { renderMarkdown } from '../src/markdown/render';
 import { doc, type PageSpec } from './layout';
 
@@ -43,14 +45,55 @@ export function docSummary(src: string): string {
   return end ? plain.slice(0, end.index + 1) : plain;
 }
 
-export function buildDocPage(repoRoot: string, d: { slug: string; source: string }): DocPage {
+/** A page of the docs nav: its address and its title. */
+export interface NavEntry {
+  slug: string;
+  title: string;
+}
+
+/** The docs nav beside every docs page: the index, then each doc; `current` is the slug shown ('' for /docs/). */
+export function docsNav(entries: readonly NavEntry[], current: string): SNode {
+  const item = (slug: string, title: string): SNode => {
+    const href = internalHref(slug === '' ? '/docs/' : `/docs/${slug}/`);
+    return h(doc, 'li', null, h(doc, 'a', slug === current ? { href, 'aria-current': 'page' } : { href }, title));
+  };
+  return h(
+    doc,
+    'nav',
+    { class: 'docs-nav', 'aria-label': 'Docs pages' },
+    h(doc, 'p', { class: 'side-title' }, 'Docs'),
+    h(doc, 'ul', null, item('', 'Overview'), ...entries.map((e) => item(e.slug, e.title))),
+  );
+}
+
+/** The on-this-page list: the page's h2 and h3 headings, linked to their anchors; null when there are none. */
+export function tocNav(headings: readonly { level: number; id: string; text: string }[]): SNode | null {
+  const linkable = headings.filter((x) => /^[A-Za-z][A-Za-z0-9_-]*$/.test(x.id));
+  if (linkable.length === 0) return null;
+  return h(
+    doc,
+    'nav',
+    { class: 'toc', 'aria-label': 'On this page' },
+    h(doc, 'p', { class: 'side-title' }, 'On this page'),
+    h(doc, 'ul', null, ...linkable.map((x) => h(doc, 'li', { class: `toc-${x.level}` }, h(doc, 'a', { href: anchorHref(x.id) }, x.text)))),
+  );
+}
+
+/** The three-column docs layout: the nav, the page, the on-this-page list (when it has one). */
+function docsLayout(nav: SNode, body: readonly SNode[], toc: SNode | null): SNode {
+  return h(doc, 'div', { class: toc ? 'docs-layout' : 'docs-layout no-toc' }, nav, h(doc, 'div', { class: 'docs-main' }, ...body), toc);
+}
+
+export function buildDocPage(repoRoot: string, d: { slug: string; source: string }, nav: readonly NavEntry[] = []): DocPage {
   const src = readFileSync(join(repoRoot, d.source), 'utf8');
   const title = docTitle(src, d.slug);
   const article = h(doc, 'article', { class: 'prose doc' }) as SElement;
+  const headings: { level: number; id: string; text: string }[] = [];
   const fallbacks = renderMarkdown(doc, article, src, {
     idPrefix: DOC_ID_PREFIX,
     headingShift: 0,
     links: { mode: 'docs', source: d.source },
+    docs: { onHeading: (level, id, text) => headings.push({ level, id, text }) },
   });
   const sourceLink = h(
     doc,
@@ -59,8 +102,16 @@ export function buildDocPage(repoRoot: string, d: { slug: string; source: string
     'Source: ',
     h(doc, 'a', { href: webHref(`${REPO_URL}/blob/main/${d.source}`) ?? undefined }, h(doc, 'code', null, d.source), ' on GitHub'),
   );
-  const crumb = h(doc, 'nav', { class: 'crumb', 'aria-label': 'Breadcrumb' }, h(doc, 'a', { href: internalHref('/docs/') }, 'Docs'));
-  const main: SNode[] = [crumb, article, sourceLink];
+  const crumb = h(
+    doc,
+    'nav',
+    { class: 'crumb', 'aria-label': 'Breadcrumb' },
+    h(doc, 'a', { href: internalHref('/docs/') }, 'Docs'),
+    h(doc, 'span', { class: 'sep', 'aria-hidden': 'true' }, '/'),
+    h(doc, 'span', { 'aria-current': 'page' }, title),
+  );
+  const entries = nav.length > 0 ? nav : [{ slug: d.slug, title }];
+  const main: SNode[] = [docsLayout(docsNav(entries, d.slug), [crumb, article, sourceLink], tocNav(headings))];
   return {
     slug: d.slug,
     source: d.source,
@@ -71,7 +122,8 @@ export function buildDocPage(repoRoot: string, d: { slug: string; source: string
 }
 
 export function buildDocPages(repoRoot: string): DocPage[] {
-  return DOC_PAGES.map((d) => buildDocPage(repoRoot, d));
+  const nav = DOC_PAGES.map((d) => ({ slug: d.slug, title: docTitle(readFileSync(join(repoRoot, d.source), 'utf8'), d.slug) }));
+  return DOC_PAGES.map((d) => buildDocPage(repoRoot, d, nav));
 }
 
 export function docsIndexPage(pages: readonly DocPage[], repoRoot: string): PageSpec {
@@ -86,6 +138,7 @@ export function docsIndexPage(pages: readonly DocPage[], repoRoot: string): Page
       h(doc, 'p', { class: 'muted small' }, h(doc, 'code', null, p.source)),
     );
   });
+  const nav = docsNav(pages.map((p) => ({ slug: p.slug, title: p.title })), '');
   return {
     title: 'Docs',
     description: 'mopm documentation: the mopm.toml manifest and the mopm test runner.',
@@ -93,9 +146,11 @@ export function docsIndexPage(pages: readonly DocPage[], repoRoot: string): Page
     current: 'docs',
     currentIsTarget: true,
     main: [
-      h(doc, 'h1', null, 'Docs'),
-      h(doc, 'p', { class: 'lede' }, 'Reference pages from the mopm repository, rendered from its Markdown.'),
-      h(doc, 'ul', { class: 'doc-list' }, ...items),
+      docsLayout(nav, [
+        h(doc, 'h1', null, 'Docs'),
+        h(doc, 'p', { class: 'lede' }, 'Reference pages from the mopm repository, rendered from its Markdown.'),
+        h(doc, 'ul', { class: 'doc-list' }, ...items),
+      ], null),
     ],
   };
 }
