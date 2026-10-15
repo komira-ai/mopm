@@ -54,7 +54,8 @@ management on the web; changes to device login or publish authorization; the Nod
 
 `site/` on branch `site/v1` (reviewed, **not merged**) is plain TypeScript compiled by `tsc`, no framework or bundler;
 every DOM write goes through the `Doc` port, links through `SafeHref`, READMEs through a restricted Markdown renderer.
-`main`'s site stack has no CSP, edge router or error responses yet (PR 3). `dist/` has 86,990 bytes of JavaScript.
+The site stack's go-live (PR 3) serves the real build behind a CSP, an edge router and interim error responses (4.1).
+`dist/` has 86,990 bytes of JavaScript.
 
 The registry API is TypeScript Lambdas in `service/api`; `searchPackages` (`GET /packages?q=`) matches a name prefix
 only. The CLI is Zig and has no `search`, `add` or `doc` command (`add` is listed as planned); a dependency is a
@@ -441,10 +442,14 @@ the CLI and CI.
 - The session cookie is **never sent to `api.<site>`**; no credentialed CORS anywhere. Cookie authentication and
   `/auth/web/*` also require a header only the distribution adds.
 - **Each new behaviour gets a response headers policy** (`nosniff`, `no-referrer`, HSTS, a `default-src 'none';
-  sandbox` CSP for JSON); page CSP in [appendix C.3](mopm-dev-appendix.md#c3-headers-and-csp).
+  sandbox` CSP for JSON); page CSP in [appendix C.3](mopm-dev-appendix.md#c3-headers-and-csp). Until the API is
+  under the site host (Q3), go-live's page CSP has `connect-src https://api.<site>`; the PR adding `/api/*` makes it
+  `connect-src 'self'`.
 - **No distribution-wide error responses** (they would turn JSON errors into HTML): the edge router serves the 404 page
   outside the route grammar (**unverified** that a CloudFront Function can return the whole page; fallback, a redirect
-  to `/404`). Each stage's OAuth app gets the exact callback, wildcard off.
+  to `/404`). **Interim:** until `/api/*` on the site host lands (Q3), go-live maps 403 and 404 to `/404.html` (status
+  404) distribution-wide, which serves only the bucket today; the PR adding that behaviour removes them and has the
+  edge router answer 404. Each stage's OAuth app gets the exact callback, wildcard off.
 - **Rejected**: the browser calling `api.<site>` with credentials (credentialed CORS on every route, the CLI's too).
 
 ### 4.2 Endpoints, cookies and CSRF
@@ -535,7 +540,7 @@ red ([appendix D](mopm-dev-appendix.md#d-test-plan)). "Port" means it waits for 
 | V0 | build | mopm moves its komira pin (`.buckconfig` `commit_hash`, and the farm-connect pin in `farm.yml` with it, as its comment asks) to a komira commit with Rust 1.99.0, above Tantivy's 1.86 (Q11) | |
 | V | Rust tree | Workspace skeleton where the API owner agrees, vendored tantivy closure, one smoke test opening an in-memory index | V0, Q9 (location only) |
 | 2 | site | Landing and package page build; per-route budgets | 0 |
-| 3 | site stack | CSP, edge router (with `llms.txt` and `.md` routes), headers policies, no distribution-wide errors | 0 |
+| 3 | site stack | Go-live: CSP, edge router, headers policies, 403 and 404 to `/404.html` distribution-wide until `/api/*` lands (4.1); the `llms.txt` and `.md` routes come later with the agent-surface PRs (14, 18) | 0 |
 | 4a | API | Cookie plumbing, `/me`, sessions, `sessions_not_before` | port (Q9) |
 | 4b | API | Web OAuth flow in its own function | port, 4a |
 | 4c | API | Invitee index, `inviteOwner`, list and accept | port |

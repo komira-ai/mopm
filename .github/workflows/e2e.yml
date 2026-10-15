@@ -172,3 +172,58 @@ jobs:
             403|404) echo "ok: channel has no repodata yet (HTTP $code)" ;;
             *) echo "channel noarch/repodata.json: HTTP $code" >&2; exit 1 ;;
           esac
+      # The site host serves the real build (site/, service/infra/stacks/lib/site-stack.ts): the home page with its hashed
+      # assets, the app shell for a package route (a package that does not exist is the shell's to report), the 404 page
+      # with status 404 for anything else, and the stage's Content-Security-Policy. Read-only, no token; runs in every
+      # e2e run, after beta, gamma and prod deploys alike.
+      - name: Read-only checks, site
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: |
+          set -euo pipefail
+          site=$(jq -r .siteDomain "service/config/${STAGE}.json")
+          apihost=$(jq -r .apiDomain "service/config/${STAGE}.json")
+          out=$(mktemp)
+          hdr=$(mktemp)
+          # get <path>: prints the status code; the body is left in $out and the headers in $hdr.
+          get() {
+            curl -sS --retry 5 --retry-delay 5 --retry-all-errors -D "$hdr" -o "$out" -w '%{http_code}' "https://${site}$1"
+          }
+          # header <name>: the last value of that response header, lowercased, without the CR.
+          header() {
+            { grep -i "^$1:" "$hdr" || true; } | tail -n 1 | cut -d: -f2- | tr -d '\r' | tr 'A-Z' 'a-z' | sed 's/^ *//'
+          }
+          fail() { echo "site: $1" >&2; exit 1; }
+
+          code=$(get /)
+          [ "$code" = "200" ] || fail "/ answered HTTP $code"
+          grep -q '/assets/' "$out" || fail "/ names no /assets/ file"
+          csp=$(header content-security-policy)
+          case "$csp" in
+            *"connect-src https://${apihost};"*) echo "ok: CSP connects only to https://${apihost}" ;;
+            *) fail "CSP lacks connect-src https://${apihost}: $csp" ;;
+          esac
+          asset=$({ grep -o '/assets/[0-9a-f]*/main\.js' "$out" || true; } | head -n 1)
+          [ -n "$asset" ] || fail "/ names no /assets/<id>/main.js"
+
+          code=$(get "$asset")
+          [ "$code" = "200" ] || fail "$asset answered HTTP $code"
+          case "$(header content-type)" in
+            *javascript*) echo "ok: $asset is JavaScript" ;;
+            *) fail "$asset has content-type $(header content-type)" ;;
+          esac
+          case "$(header cache-control)" in
+            *immutable*) echo "ok: $asset is cached as immutable" ;;
+            *) fail "$asset has cache-control $(header cache-control)" ;;
+          esac
+
+          code=$(get /packages/zz_absent)
+          [ "$code" = "200" ] || fail "/packages/zz_absent answered HTTP $code (the app shell expected)"
+          case "$(header content-type)" in
+            text/html*) echo "ok: /packages/zz_absent is the app shell" ;;
+            *) fail "/packages/zz_absent has content-type $(header content-type)" ;;
+          esac
+
+          code=$(get /nope.txt)
+          [ "$code" = "404" ] || fail "/nope.txt answered HTTP $code (404 expected)"
+          echo "ok: /nope.txt is 404"

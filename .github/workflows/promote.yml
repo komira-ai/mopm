@@ -4,7 +4,7 @@ name: promote
 # Every stage runs the same commit (the one this run was started on). A red e2e
 # blocks the next stage through needs:. Deploys are fully automated by CEO decision:
 # no manual approvals; the e2e suites are the gates. A push to main that touches
-# service/** or the workflows used here starts a run; workflow_dispatch is the manual
+# service/**, site/** (or the two docs the site renders) or the workflows used here starts a run; workflow_dispatch is the manual
 # re-run. The called workflows refuse any ref but main.
 
 on:
@@ -12,6 +12,10 @@ on:
     branches: [main]
     paths:
       - 'service/**'
+      # The site build the site stack deploys, and the two docs it renders into pages.
+      - 'site/**'
+      - 'spec/mopm-toml.md'
+      - 'docs/mopm-test.md'
       - '.github/workflows/promote.yml'
       - '.github/workflows/deploy.yml'
       - '.github/workflows/e2e.yml'
