@@ -97,6 +97,9 @@ jobs:
         env:
           STAGE: ${{ inputs.stage }}
           EXPECTED_SHA: ${{ inputs.sha || github.sha }}
+          # Which implementation must answer /health on this stage. Every route is TypeScript today. When the Rust
+          # functions get routes (the stage config's rustRoutes), derive this from that list instead of fixing it here.
+          EXPECTED_IMPL: ts
         run: |
           set -euo pipefail
           domain=$(jq -r .apiDomain "service/config/${STAGE}.json")
@@ -112,6 +115,11 @@ jobs:
           gotsha=$(printf '%s' "$body" | jq -r '.commit // empty')
           if [ "$gotsha" != "$EXPECTED_SHA" ]; then
             echo "expected commit $EXPECTED_SHA, health reported '${gotsha}'" >&2
+            exit 1
+          fi
+          gotimpl=$(printf '%s' "$body" | jq -r '.impl // empty')
+          if [ "$gotimpl" != "$EXPECTED_IMPL" ]; then
+            echo "expected implementation $EXPECTED_IMPL, health reported '${gotimpl}'" >&2
             exit 1
           fi
       # Read-only checks of the publish surface. They need no token and no OAuth app: an unauthenticated write is refused
