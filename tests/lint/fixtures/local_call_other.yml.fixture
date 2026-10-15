@@ -1,0 +1,7 @@
+name: fixture
+on: [push]
+permissions:
+  contents: read
+jobs:
+  j:
+    uses: other/repo/.github/workflows/x.yml@main

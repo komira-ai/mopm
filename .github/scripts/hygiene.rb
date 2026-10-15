@@ -1,3 +1,5 @@
+# Superseded by //:hygiene (tests/drivers/hygiene_test.zig) on the build farm, which has no shell, Python, Ruby or pixi;
+# kept for ci.yml until farm.yml has matched it. Change both together.
 # Public-repo hygiene. Run from the repository root: ruby .github/scripts/hygiene.rb
 # With path arguments, scans only those files (used by tests/lint/run.rb).
 # Scans every tracked text file. There is no allow-list: a test that needs an account id

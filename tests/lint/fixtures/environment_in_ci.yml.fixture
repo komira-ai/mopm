@@ -1,0 +1,10 @@
+name: fixture
+on: [push]
+permissions:
+  contents: read
+jobs:
+  j:
+    runs-on: ubuntu-24.04
+    environment: beta
+    steps:
+      - run: echo hello

@@ -1,3 +1,5 @@
+# Superseded by //:lint_selftest (tests/drivers/lint_selftest_test.zig) on the build farm, which has no shell, Python, Ruby or pixi;
+# kept for ci.yml until farm.yml has matched it. Change both together.
 # Self-test for .github/scripts/{workflow_lint,hygiene}.rb. Run from the repository root:
 #   ruby tests/lint/run.rb
 # Each fixture is a minimal workflow with exactly one violation (see the table). Fixtures
@@ -5,12 +7,22 @@
 # trip the real hygiene scan if stored literally, so fixtures hold placeholders that are
 # substituted here at runtime: @@PRT@@ (the privileged PR trigger) and @@ACCT@@ (a
 # 12-digit account-id-shaped number). The hygiene scan has no allow-list; nothing here
-# needs one. Each case is materialized as ci.yml in a temp dir (a name not allowed id-token); promote_* fixtures become promote.yml and farm_* fixtures farm.yml.
+# needs one. Each case is materialized as ci.yml in a temp dir (a name not allowed id-token); promote_* fixtures become promote.yml, farm_* farm.yml, subject_* oidc-subject-check.yml and deploy_* deploy.yml.
 require "open3"
 require "tmpdir"
 
 FIX = File.join(__dir__, "fixtures")
-SUBST = { "@@PRT@@" => "pull_request_" + "target", "@@ACCT@@" => "1234" * 3 }
+SUBST = {
+  "@@PRT@@" => "pull_request_" + "target", "@@ACCT@@" => "1234" * 3,
+  "@@AKID@@" => "AKIA" + "ABCDEFGHIJKLMNOP",
+  "@@SECRETKEY@@" => "aws_secret_access_ke" + "y: abcdefghijklmnopqrst",
+  "@@SESSTOKEN@@" => "aws_session_toke" + "n: abcdefghijklmnopqrst",
+  "@@PRIVKEY@@" => "-----BEGIN RSA PRIVATE " + "KEY-----",
+  "@@GHTOKEN@@" => "ghp_" + "abcdefghijklmnopqrstuvwxyz0123",
+  "@@SLACK@@" => "xoxb-" + "1234567890",
+  "@@JWT@@" => "eyJ" + "abcdefghij" + ".eyJ" + "abcdefghij" + ".sig",
+  "@@ARN@@" => "arn:aws:iam::" + "1234" * 3 + ":role/x",
+}
 LINT = ".github/scripts/workflow_lint.rb"
 HYG = ".github/scripts/hygiene.rb"
 # fixture => { tool => [expected message substrings, one per expected failure line] }
@@ -34,6 +46,34 @@ CASES = {
   "farm_clean" => { LINT => [], HYG => [] },
   "farm_fork_unguarded" => { LINT => [], HYG => ["does not skip pull requests from forks"] },
   "farm_other_action" => { LINT => ["only GitHub-owned actions pinned by full SHA"], HYG => [] },
+  # The rest were added with the Zig ports (tests/drivers/lint_selftest_test.zig runs the same table over the
+  # same fixtures, and refuses to pass if the two tables differ): one fixture per rule the table did not reach.
+  # hyg_*: the secret patterns of hygiene.rb (the values are built below, never stored).
+  "hyg_aws_key" => { HYG => ["AWS access key id"] },
+  "hyg_secret_key" => { HYG => ["AWS secret key assignment"] },
+  "hyg_session_token" => { HYG => ["AWS session token"] },
+  "hyg_private_key" => { HYG => ["private key block"] },
+  "hyg_github_token" => { HYG => ["GitHub token"] },
+  "hyg_slack_token" => { HYG => ["Slack token"] },
+  "hyg_jwt" => { HYG => ["JWT"] },
+  "hyg_arn" => { HYG => ["ARN carrying an account id", "12-digit number that looks like an account id"] },
+  "environment_in_ci" => { LINT => [], HYG => ["may use a deployment environment"] },
+  # workflow_lint.rb
+  "no_permissions" => { LINT => ["top-level permissions must be set"] },
+  "job_write" => { LINT => ["jobs.j.permissions.contents: write is not allowed"] },
+  "unpinned_action" => { LINT => ["only GitHub-owned actions pinned by full SHA"] },
+  "local_call_other" => { LINT => ["may only call a local workflow"] },
+  "workflow_run_trigger" => { LINT => ["trigger workflow_run is not allowed"] },
+  # subject_* become oidc-subject-check.yml and deploy_* deploy.yml
+  "subject_clean" => { LINT => [], HYG => [] },
+  "subject_aws" => { LINT => [], HYG => ["must not use AWS or secrets"] },
+  "subject_env_prod" => { LINT => [], HYG => ["environment must be absent or beta"] },
+  "subject_no_main_guard" => { LINT => [], HYG => ["is not restricted to refs/heads/main"] },
+  "subject_push_trigger" => { LINT => [], HYG => ["triggers must be exactly workflow_dispatch"] },
+  "deploy_clean" => { LINT => [], HYG => [] },
+  "deploy_push_any_branch" => { LINT => [], HYG => ["push must be limited to branches: [main]"] },
+  "deploy_no_environment" => { LINT => [], HYG => ["grants id-token without an environment"] },
+  "deploy_pull_request" => { LINT => [], HYG => ["must not run on pull_request", "are not allowed in a workflow that can use id-token"] },
 }
 
 bad = 0
@@ -41,7 +81,7 @@ CASES.each do |name, tools|
   text = File.read(File.join(FIX, "#{name}.yml.fixture"))
   SUBST.each { |k, v| text = text.gsub(k, v) }
   Dir.mktmpdir do |d|
-    path = File.join(d, name.start_with?("promote") ? "promote.yml" : name.start_with?("farm") ? "farm.yml" : "ci.yml")
+    path = File.join(d, name.start_with?("promote") ? "promote.yml" : name.start_with?("farm") ? "farm.yml" : name.start_with?("subject") ? "oidc-subject-check.yml" : name.start_with?("deploy") ? "deploy.yml" : "ci.yml")
     File.write(path, text)
     tools.each do |tool, expected|
       out, st = Open3.capture2e("ruby", tool, path)

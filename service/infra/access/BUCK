@@ -44,3 +44,13 @@ export_file(
     name = "cfn-exec-policy.template.json",
     visibility = ["//service/infra/stacks:"],
 )
+
+# This package's files, for //:hygiene (the repository-wide scan reads every file, and a
+# package boundary hides these from the root package's glob). A copy of the tree, staged
+# by path from this package.
+filegroup(
+    name = "lint_files",
+    srcs = glob(["**"], exclude = ["cdk.out/**", "**/*.js", "**/*.d.ts", "cdk.context.json"]) + [".gitignore", "jest.config.js"],
+    copy = True,
+    visibility = ["//:"],
+)

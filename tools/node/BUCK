@@ -40,3 +40,13 @@ node_dist(
     version = _VERSION,
     visibility = ["//service/..."],
 )
+
+# This package's files, for //:hygiene (the repository-wide scan reads every file, and a
+# package boundary hides these from the root package's glob). A copy of the tree, staged
+# by path from this package.
+filegroup(
+    name = "lint_files",
+    srcs = glob(["**"]) + [],
+    copy = True,
+    visibility = ["//:"],
+)
