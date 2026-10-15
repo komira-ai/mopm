@@ -35,7 +35,7 @@ const Allocator = std.mem.Allocator;
 /// The header of a `.mojoc`, as observed on 1.0.0 and 1.1.0: the magic, a
 /// format byte, 13 bytes this probe does not interpret (printed raw), the
 /// fingerprint as 64 lowercase hex characters, and a NUL.
-const fp_offset = 18;
+const fp_offset = 19;
 const fp_len = 64;
 const Header = struct {
     format: u8,
