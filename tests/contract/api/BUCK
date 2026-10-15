@@ -1,7 +1,0 @@
-# The API contract cases (one JSON file per route group) the registry API's replay test
-# reads, staged as `tests/contract/api/` for service/api:test.
-filegroup(
-    name = "contract_api",
-    srcs = glob(["*.json"]),
-    visibility = ["//service/api:"],
-)

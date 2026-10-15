@@ -331,3 +331,21 @@ zig_test(  # buck-only: mopm test --retries, --deny-flaky, --ignored, --exact; t
     data = ["tests/e2e/flaky"],
     **_TOOLS
 )
+
+# ---- The registry API's specification files, staged as `spec/` for service/api:test ----
+# (Not a spec/BUCK or tests/contract/api/BUCK package: a package there would cut
+# its files out of the globs of the contract checks above.)
+filegroup(
+    name = "spec",
+    srcs = {
+        "api/openapi.yaml": "spec/api/openapi.yaml",
+        "package-metadata.schema.json": "spec/package-metadata.schema.json",
+    },
+    visibility = ["//service/api:"],
+)
+
+filegroup(
+    name = "contract_api",
+    srcs = {f[len("tests/contract/api/"):]: f for f in glob(["tests/contract/api/*.json"])},
+    visibility = ["//service/api:"],
+)

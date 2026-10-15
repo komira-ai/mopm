@@ -35,8 +35,8 @@ tsc_check(
 jest_test(
     name = "test",
     data = {
-        "spec": "//spec:spec",
-        "tests/contract/api": "//tests/contract/api:contract_api",
+        "spec": "//:spec",
+        "tests/contract/api": "//:contract_api",
     },
     modules = ":modules",
     node = _NODE,
