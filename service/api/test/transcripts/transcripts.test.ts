@@ -41,11 +41,12 @@ describe('transcripts', () => {
       fs.writeFileSync(path.join(GOLDEN, `${name}.json`), actual);
       return;
     }
-    expect(unmet).toEqual([]);
     const file = path.join(GOLDEN, `${name}.json`);
     const golden = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : undefined;
-    if (golden !== actual) {
-      throw new Error(`the transcript of ${name} differs from its golden\n\nACTUAL ${name}:\n${actual}END ACTUAL ${name}`);
+    const problems = unmet.map((u) => `unmet expectation: ${u}`);
+    if (golden !== actual) problems.push(`the transcript of ${name} differs from its golden`);
+    if (problems.length > 0) {
+      throw new Error(`${problems.join('\n')}\n\nACTUAL ${name}:\n${actual}END ACTUAL ${name}`);
     }
   });
 });

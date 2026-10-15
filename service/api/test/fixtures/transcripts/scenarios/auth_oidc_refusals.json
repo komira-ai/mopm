@@ -183,7 +183,7 @@
         "method": "POST",
         "path": "/api/v1/auth/oidc/exchange",
         "json": {
-          "jwt": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIiwia2lkIjoiazEifQ.eyJpc3MiOiJodHRwczovL3Rva2VuLmFjdGlvbnMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwiYXVkIjoibW9wbS5kZXYiLCJzdWIiOiJyZXBvOmFjbWUvd2lkZ2V0czpyZWY6cmVmcy90YWdzL3YxLjAuMCIsInJlcG9zaXRvcnkiOiJhY21lL3dpZGdldHMiLCJyZXBvc2l0b3J5X2lkIjoiMTExIiwiaWF0IjoxNzkwMDAwMDAwLCJuYmYiOjE3OTAwMDAwMDAsImV4cCI6MTc5MDAwMDMwMH0.",
+          "jwt": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIiwia2lkIjoiazEifQ.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.",
           "name": "alpha",
           "version": "2.0.0"
         }
@@ -198,7 +198,7 @@
         "method": "POST",
         "path": "/api/v1/auth/oidc/exchange",
         "json": {
-          "jwt": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL3Rva2VuLmFjdGlvbnMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwiYXVkIjoibW9wbS5kZXYiLCJzdWIiOiJyZXBvOmFjbWUvd2lkZ2V0czpyZWY6cmVmcy90YWdzL3YxLjAuMCIsInJlcG9zaXRvcnkiOiJhY21lL3dpZGdldHMiLCJyZXBvc2l0b3J5X2lkIjoiMTExIiwiaWF0IjoxNzkwMDAwMDAwLCJuYmYiOjE3OTAwMDAwMDAsImV4cCI6MTc5MDAwMDMwMH0.c2ln",
+          "jwt": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln",
           "name": "alpha",
           "version": "2.0.0"
         }
@@ -213,7 +213,7 @@
         "method": "POST",
         "path": "/api/v1/auth/oidc/exchange",
         "json": {
-          "jwt": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.eyJpc3MiOiJodHRwczovL3Rva2VuLmFjdGlvbnMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwiYXVkIjoibW9wbS5kZXYiLCJzdWIiOiJyZXBvOmFjbWUvd2lkZ2V0czpyZWY6cmVmcy90YWdzL3YxLjAuMCIsInJlcG9zaXRvcnkiOiJhY21lL3dpZGdldHMiLCJyZXBvc2l0b3J5X2lkIjoiMTExIiwiaWF0IjoxNzkwMDAwMDAwLCJuYmYiOjE3OTAwMDAwMDAsImV4cCI6MTc5MDAwMDMwMH0.c2ln",
+          "jwt": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln",
           "name": "alpha",
           "version": "2.0.0"
         }
@@ -228,7 +228,7 @@
         "method": "POST",
         "path": "/api/v1/auth/oidc/exchange",
         "json": {
-          "jwt": "eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.eyJpc3MiOiJodHRwczovL3Rva2VuLmFjdGlvbnMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwiYXVkIjoibW9wbS5kZXYiLCJzdWIiOiJyZXBvOmFjbWUvd2lkZ2V0czpyZWY6cmVmcy90YWdzL3YxLjAuMCIsInJlcG9zaXRvcnkiOiJhY21lL3dpZGdldHMiLCJyZXBvc2l0b3J5X2lkIjoiMTExIiwiaWF0IjoxNzkwMDAwMDAwLCJuYmYiOjE3OTAwMDAwMDAsImV4cCI6MTc5MDAwMDMwMH0.c2ln",
+          "jwt": "eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln",
           "name": "alpha",
           "version": "2.0.0"
         }
@@ -243,7 +243,7 @@
         "method": "POST",
         "path": "/api/v1/auth/oidc/exchange",
         "json": {
-          "jwt": "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.eyJpc3MiOiJodHRwczovL3Rva2VuLmFjdGlvbnMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwiYXVkIjoibW9wbS5kZXYiLCJzdWIiOiJyZXBvOmFjbWUvd2lkZ2V0czpyZWY6cmVmcy90YWdzL3YxLjAuMCIsInJlcG9zaXRvcnkiOiJhY21lL3dpZGdldHMiLCJyZXBvc2l0b3J5X2lkIjoiMTExIiwiaWF0IjoxNzkwMDAwMDAwLCJuYmYiOjE3OTAwMDAwMDAsImV4cCI6MTc5MDAwMDMwMH0.c2ln",
+          "jwt": "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln",
           "name": "alpha",
           "version": "2.0.0"
         }
@@ -258,7 +258,7 @@
         "method": "POST",
         "path": "/api/v1/auth/oidc/exchange",
         "json": {
-          "jwt": "eyJhbGciOiJyczI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.eyJpc3MiOiJodHRwczovL3Rva2VuLmFjdGlvbnMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwiYXVkIjoibW9wbS5kZXYiLCJzdWIiOiJyZXBvOmFjbWUvd2lkZ2V0czpyZWY6cmVmcy90YWdzL3YxLjAuMCIsInJlcG9zaXRvcnkiOiJhY21lL3dpZGdldHMiLCJyZXBvc2l0b3J5X2lkIjoiMTExIiwiaWF0IjoxNzkwMDAwMDAwLCJuYmYiOjE3OTAwMDAwMDAsImV4cCI6MTc5MDAwMDMwMH0.c2ln",
+          "jwt": "eyJhbGciOiJyczI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln",
           "name": "alpha",
           "version": "2.0.0"
         }
@@ -273,7 +273,7 @@
         "method": "POST",
         "path": "/api/v1/auth/oidc/exchange",
         "json": {
-          "jwt": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.eyJpc3MiOiJodHRwczovL3Rva2VuLmFjdGlvbnMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwiYXVkIjoibW9wbS5kZXYiLCJzdWIiOiJyZXBvOmFjbWUvd2lkZ2V0czpyZWY6cmVmcy90YWdzL3YxLjAuMCIsInJlcG9zaXRvcnkiOiJhY21lL3dpZGdldHMiLCJyZXBvc2l0b3J5X2lkIjoiMTExIiwiaWF0IjoxNzkwMDAwMDAwLCJuYmYiOjE3OTAwMDAwMDAsImV4cCI6MTc5MDAwMDMwMH0.c2ln",
+          "jwt": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln",
           "name": "alpha",
           "version": "2.0.0"
         }
@@ -288,7 +288,7 @@
         "method": "POST",
         "path": "/api/v1/auth/oidc/exchange",
         "json": {
-          "jwt": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL3Rva2VuLmFjdGlvbnMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwiYXVkIjoibW9wbS5kZXYiLCJzdWIiOiJyZXBvOmFjbWUvd2lkZ2V0czpyZWY6cmVmcy90YWdzL3YxLjAuMCIsInJlcG9zaXRvcnkiOiJhY21lL3dpZGdldHMiLCJyZXBvc2l0b3J5X2lkIjoiMTExIiwiaWF0IjoxNzkwMDAwMDAwLCJuYmYiOjE3OTAwMDAwMDAsImV4cCI6MTc5MDAwMDMwMH0.c2ln",
+          "jwt": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln",
           "name": "alpha",
           "version": "2.0.0"
         }
@@ -303,7 +303,7 @@
         "method": "POST",
         "path": "/api/v1/auth/oidc/exchange",
         "json": {
-          "jwt": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.eyJpc3MiOiJodHRwczovL2V2aWwuZXhhbXBsZS5pbnZhbGlkIn0.c2ln",
+          "jwt": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.IHsiaXNzIjoiaHR0cHM6Ly9ldmlsLmV4YW1wbGUuaW52YWxpZCJ9.c2ln",
           "name": "alpha",
           "version": "2.0.0"
         }
