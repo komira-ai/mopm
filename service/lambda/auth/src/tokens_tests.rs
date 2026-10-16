@@ -474,6 +474,19 @@ async fn fresh_session_passes_a_young_session_and_refuses_an_old_one_and_every_a
 }
 
 #[tokio::test]
+async fn only_a_session_token_is_ever_fresh_even_when_the_row_of_another_kind_says_so() {
+    let f = setup().await;
+    let t = f.api(ALICE, "a", &["publish"], &["alpha"]).await;
+    let mut row = f.r.auth.dump_tokens().remove(0);
+    row.fresh_until = Some(iso_at(start_ms() + 600_000));
+    let clock: Arc<dyn Clock> = f.r.clock.clone();
+    let a = Authenticator::new(Arc::new(Lying(row)), clock);
+    let p = a.authenticate(Some(&bearer(&t.token))).await.unwrap();
+    assert!(p.fresh_until.is_some());
+    assert_eq!(a.fresh_session(&p).unwrap_err().code, ErrorCode::StaleSession);
+}
+
+#[tokio::test]
 async fn user_token_is_any_users_token_and_never_a_ci_identity() {
     let p = principals().await;
     let a = &p.f.auth;
