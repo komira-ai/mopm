@@ -5,7 +5,8 @@ tooling for [Mojo](https://www.modular.com/mojo) projects, with a package
 registry at [mopm.dev](https://mopm.dev).
 
 **Status: early.** `mopm --version`, `mopm link-plan`, `mopm metadata`,
-`mopm new`, `mopm init`, `mopm build`, `mopm run`, `mopm repl` and `mopm test` work today.
+`mopm new`, `mopm init`, `mopm build`, `mopm run`, `mopm repl`, `mopm test`, `mopm add` and
+`mopm remove` work today.
 Everything else below is a plan, and the design may change.
 
 ## Goals

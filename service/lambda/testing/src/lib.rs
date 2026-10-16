@@ -7,6 +7,7 @@
 
 pub mod auth_cases;
 pub mod env;
+pub mod fake_dynamo;
 pub mod memory_auth;
 pub mod memory_publish;
 pub mod memory_store;

@@ -13,8 +13,7 @@ const install_cmd = @import("install_cmd.zig");
 pub const version = "0.0.1";
 
 const planned = [_][]const u8{
-    "add",   "remove", "cov",    "check",
-    "export", "launch",
+    "cov", "check", "export", "launch",
 };
 
 pub fn isPlanned(cmd: []const u8) bool {
@@ -86,6 +85,14 @@ const usage =
     \\                          Toolchain files are kept in --cache (default:
     \\                          ~/.cache/mopm/pkgs); --toolchain <file> names
     \\                          another pinned closure than the built-in one
+    \\  add <package>[@<req>] [--dev] [--path <dir>] [--registry ...]
+    \\                          add a dependency to mopm.toml ([dev-dependencies]
+    \\                          with --dev): <req>, else ^ the newest version
+    \\                          that fits, or { path = "<dir>" }; then lock.
+    \\                          Comments and layout are kept; nothing is
+    \\                          written if it does not resolve
+    \\  remove <package> [--dev] [--registry ...]
+    \\                          take a dependency out of mopm.toml and lock
     \\
     \\  options for build, run and repl:
     \\    --prefix <dir>        the environment (default: CONDA_PREFIX, then
@@ -96,7 +103,7 @@ const usage =
     \\                          (default: this host)
     \\
     \\planned (not implemented yet):
-    \\  add remove cov check export launch
+    \\  cov check export launch
     \\
 ;
 
@@ -416,6 +423,8 @@ fn run(arena: std.mem.Allocator) u8 {
     if (std.mem.eql(u8, cmd, "update")) return install_cmd.main(arena, .update, args[2..], version);
     if (std.mem.eql(u8, cmd, "tree")) return install_cmd.main(arena, .tree, args[2..], version);
     if (std.mem.eql(u8, cmd, "sync")) return install_cmd.main(arena, .sync, args[2..], version);
+    if (std.mem.eql(u8, cmd, "add")) return install_cmd.main(arena, .add, args[2..], version);
+    if (std.mem.eql(u8, cmd, "remove")) return install_cmd.main(arena, .remove, args[2..], version);
     if (std.meta.stringToEnum(mojo_cmd.Tool, cmd)) |tool| return autolink(arena, tool, args[2..]);
     if (isPlanned(cmd)) {
         std.debug.print("mopm {s}: not implemented yet\n", .{cmd});
@@ -438,7 +447,7 @@ test {
 }
 
 test "planned commands are recognised, working ones are not planned" {
-    try std.testing.expect(isPlanned("add"));
+    try std.testing.expect(isPlanned("cov"));
     try std.testing.expect(isPlanned("check"));
     try std.testing.expect(!isPlanned("publish"));
     try std.testing.expect(!isPlanned("pack"));
@@ -452,6 +461,8 @@ test "planned commands are recognised, working ones are not planned" {
     try std.testing.expect(!isPlanned("lock"));
     try std.testing.expect(!isPlanned("tree"));
     try std.testing.expect(!isPlanned("sync"));
+    try std.testing.expect(!isPlanned("add"));
+    try std.testing.expect(!isPlanned("remove"));
     try std.testing.expect(!isPlanned("--version"));
     try std.testing.expect(!isPlanned("frobnicate"));
 }

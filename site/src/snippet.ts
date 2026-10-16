@@ -4,7 +4,7 @@
 // (src/core/semver.zig) takes that spelling as written, with each part a u64, so a version with a part over 2^64-1
 // gets no mopm.toml line (manifestRefusal says why), and neither does a string outside the grammar. A bare version is
 // a caret requirement, so the package page writes the latest version as published (its lower bound is kept); a
-// version page pins it with '='. 'mopm add' is planned (src/cli/main.zig), so the page says so next to the line. The
+// version page pins it with '='. 'mopm add' (src/cli/install_cmd.zig) writes such a line, so the page says so next to it. The
 // conda channel works for any conda client today (spec/channel.md): the package is 'mojo-<name>' there.
 
 import { isCanonicalName, isVersion } from './routes.js';
