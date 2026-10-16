@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
 """End-to-end test of `mopm sync` against mopm-fake-registry and the real
-Mojo toolchain.
+Mojo toolchain. Nothing but mopm installs anything: there is no pixi, conda
+or mojo on PATH, and the toolchain is downloaded from the channels by `mopm
+sync` itself (the pinned closure of src/core/toolchain).
 
-    python3 -I tests/install_e2e/run.py <mopm> <mopm-fake-registry> <mojo env prefix>
+    python3 -I tests/install_e2e/run.py <mopm> <mopm-fake-registry>
 
-Standard library only; `pixi` must be on PATH (it is passed to mopm with
---pixi). The script:
+Standard library only. The script:
 
+  0. runs `mopm sync` in a project with no dependencies: that installs the
+     Mojo toolchain into .mopm/env, the environment everything below uses;
   1. builds libgreet (tests/e2e/native/greet.c) with the host C compiler and
      precompiles the Mojo package greet (tests/e2e/pkgs/greet) with the mojo
-     of <mojo env prefix>;
+     of that environment;
   2. packs them into a real conda package, mojo-greet-1.0.0-mojo1.0.0_0.conda,
      laid out as spec/channel.md says (lib/mojo/greet.mojoc,
      lib/mojo/greet.mopm.json, lib/libgreet.<so|dylib>), and serves it from
      the fake registry with its sparse index line and repodata.json entry;
   3. in a project whose mopm.toml needs greet = "1", runs `mopm sync`, which
-     locks, downloads, verifies, writes .mopm/pixi.toml and runs pixi;
-  4. builds tests/install_e2e/prog.mojo with `mopm build --prefix
-     .mopm/.pixi/envs/default` and runs the binary in an empty environment,
-     and runs it with `mopm run`: both must print "greet 4242", which only
+     locks, downloads, verifies, unpacks into a temporary directory and
+     renames it to .mopm/env;
+  4. builds tests/install_e2e/prog.mojo with `mopm build --prefix .mopm/env`
+     and runs the binary in an empty environment, and runs it with `mopm run`
+     (with and without --prefix): all must print "greet 4242", which only
      libgreet computes.
 
 Can-fail checks (each is a refusal the test must see):
@@ -30,15 +34,16 @@ Can-fail checks (each is a refusal the test must see):
   * a tampered artifact: the channel's .conda is replaced by bytes of the
     same size with one byte changed, then by bytes one longer. `mopm sync
     --locked` must refuse each, naming the pinned and the actual value, must
-    not keep the file, and must not run pixi. A project that kept the good
-    file from an earlier sync and then has that copy tampered with must not
-    use it either. With the original bytes back, the same sync succeeds, so
-    the refusals came from the bytes and nothing else.
+    not keep the file, and must leave no environment. A project that kept the
+    good file from an earlier sync, lost its environment and then has that
+    copy tampered with must not use it either. With the original bytes back,
+    the same sync succeeds, so the refusals came from the bytes and nothing
+    else.
 
 A path dependency (`local = { path = "local" }`) is locked with
 `source = path`, its own mopm.toml's version and no sha256; sync must not
-download it (it has no url, so a download would fail), must leave it out of
-the pixi project and the local channel, and must see a lock that holds an
+download or install it (it has no url, so a download would fail), and must
+see a lock that holds an
 older version of it as stale.
 
 Each check prints `ok   <name>` or `FAIL <name>: ...`; the exit status is 1
@@ -61,7 +66,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 E2E = os.path.join(os.path.dirname(HERE), "e2e")
 MOJO = "1.0.0"
 BUILD = "mojo%s_0" % MOJO
-ENV = os.path.join(".mopm", ".pixi", "envs", "default")
+ENV = os.path.join(".mopm", "env")
 failures = []
 
 
@@ -202,29 +207,19 @@ mojo = "%s"
 """
 
 
-def main(mopm, fake_exe, mojo_env):
+def main(mopm, fake_exe):
     subdir, ext = host()
-    pixi = shutil.which("pixi")
-    if not pixi:
-        raise SystemExit("install e2e: pixi is not on PATH")
+    if shutil.which("pixi"):
+        raise SystemExit("install e2e: pixi is on PATH; this test proves mopm needs none")
     with tempfile.TemporaryDirectory() as work:
-        lib_bytes, mojoc_bytes = build_greet(mojo_env, work, ext)
+        # The toolchain files are kept once for every sync below (the user's cache, here a temporary one).
+        cache = os.path.join(work, "cache")
         soname = "libgreet." + ext
         native = [{"id": "greet", "soname": soname}]
-        meta = {"schema": 1, "name": "greet", "version": "1.0.0", "deps": [],
-                "native": [{"id": "greet", "soname": soname, "file": "../" + soname}]}
         filename = "mojo-greet-1.0.0-%s.conda" % BUILD
-        good = conda_package("greet", "1.0.0", subdir, ["mojo-compiler ==" + MOJO], [
-            ("lib/mojo/greet.mojoc", mojoc_bytes, 0o644),
-            ("lib/mojo/greet.mopm.json", (json.dumps(meta, sort_keys=True) + "\n").encode(), 0o644),
-            ("lib/" + soname, lib_bytes, 0o755),
-        ])
-        good_sha = sha256(good)
-        print("     %s: %d bytes, sha256 %s" % (filename, len(good), good_sha))
 
         fake = Fake(fake_exe, work)
         try:
-            publish(fake, subdir, filename, good, native)
 
             def project(name, deps='greet = "1"', mojo=MOJO):
                 d = os.path.join(work, name)
@@ -238,11 +233,69 @@ def main(mopm, fake_exe, mojo_env):
                 return subprocess.run([mopm, *args], cwd=d, capture_output=True, text=True, timeout=timeout)
 
             def sync(d, *args):
-                return run(d, "sync", "--pixi", pixi, *args)
+                return run(d, "sync", "--cache", cache, *args)
 
             def read(d, *path):
                 p = os.path.join(d, *path)
                 return open(p).read() if os.path.exists(p) else None
+
+            reg = ["--registry", fake.base]
+
+            # ------------------------------------------------ the toolchain, installed by mopm alone
+            boot = project("toolchain", "")
+            r = sync(boot, *reg)
+            check("sync installs the Mojo toolchain with no pixi", r.returncode == 0 and "into %s" % ENV in r.stdout,
+                  "exit %d\n%s\n%s" % (r.returncode, r.stdout, r.stderr))
+            mojo_env = os.path.join(boot, ENV)
+            mojo_exe = os.path.join(mojo_env, "bin", "mojo")
+            check("the toolchain environment has mojo and its conda-meta record",
+                  os.access(mojo_exe, os.X_OK)
+                  and os.path.exists(os.path.join(mojo_env, "conda-meta", "mojo-compiler-%s-release.json" % MOJO)),
+                  str(os.listdir(mojo_env) if os.path.isdir(mojo_env) else "no environment"))
+            if r.returncode != 0 or not os.access(mojo_exe, os.X_OK):
+                raise SystemExit("install e2e: no toolchain, nothing more to test")
+            # Every binary file the packages meant to be relocated has its placeholder string replaced by the
+            # install prefix (NUL-padded); an unrewritten one keeps pointing at the build machine.
+            prefixes = {os.path.abspath(mojo_env).encode(), os.path.realpath(mojo_env).encode()}
+            relocated, stale = 0, []
+            metadir = os.path.join(mojo_env, "conda-meta")
+            for rec in sorted(os.listdir(metadir)):
+                if not rec.endswith(".json"):
+                    continue
+                with open(os.path.join(metadir, rec)) as f:
+                    entries = json.load(f).get("paths_data", {}).get("paths", [])
+                for e in entries:
+                    ph = e.get("prefix_placeholder")
+                    if not ph or e.get("file_mode") != "binary" or e.get("path_type") != "hardlink":
+                        continue
+                    with open(os.path.join(mojo_env, e["_path"]), "rb") as f:
+                        data = f.read()
+                    ph = ph.encode()
+                    at = data.find(ph)
+                    while at >= 0:
+                        if data.find(b"\0", at) >= 0:
+                            stale.append(e["_path"])
+                            break
+                        at = data.find(ph, at + 1)
+                    if any(pre in data for pre in prefixes):
+                        relocated += 1
+            check("binary files with a prefix placeholder were rewritten: none keeps it, some hold the install prefix",
+                  relocated > 0 and not stale, "relocated %d; still holding the placeholder: %s" % (relocated, stale[:5]))
+            r = sync(boot, "--locked")
+            check("a second sync finds the environment current and changes nothing",
+                  r.returncode == 0 and "is current" in r.stdout and "downloading" not in r.stdout, r.stdout + r.stderr)
+
+            lib_bytes, mojoc_bytes = build_greet(mojo_env, work, ext)
+            meta = {"schema": 1, "name": "greet", "version": "1.0.0", "deps": [],
+                    "native": [{"id": "greet", "soname": soname, "file": "../" + soname}]}
+            good = conda_package("greet", "1.0.0", subdir, ["mojo-compiler ==" + MOJO], [
+                ("lib/mojo/greet.mojoc", mojoc_bytes, 0o644),
+                ("lib/mojo/greet.mopm.json", (json.dumps(meta, sort_keys=True) + "\n").encode(), 0o644),
+                ("lib/" + soname, lib_bytes, 0o755),
+            ])
+            good_sha = sha256(good)
+            print("     %s: %d bytes, sha256 %s" % (filename, len(good), good_sha))
+            publish(fake, subdir, filename, good, native)
 
             reg = ["--registry", fake.base]
             app = project("app")
@@ -259,11 +312,9 @@ def main(mopm, fake_exe, mojo_env):
             lock = read(app, "mopm.lock") or ""
             check("the lock pins the package's bytes", '"sha256": "%s"' % good_sha in lock
                   and '"size": %d' % len(good) in lock, lock)
-            pin = 'mojo-greet = { version = "==1.0.0", build = "%s", sha256 = "%s" }' % (BUILD, good_sha)
-            toml = read(app, ".mopm", "pixi.toml") or ""
-            check("the pixi project pins the version, build and sha256", pin in toml, toml)
+            check("no pixi project is written", not os.path.exists(os.path.join(app, ".mopm", "pixi.toml")))
             record = read(app, ENV, "conda-meta", "mojo-greet-1.0.0-%s.json" % BUILD)
-            check("pixi installed exactly the locked file",
+            check("mopm installed exactly the locked file (its conda-meta record names the pinned sha256)",
                   record is not None and json.loads(record).get("sha256") == good_sha, str(record)[:400])
             for path in (("lib", "mojo", "greet.mojoc"), ("lib", "mojo", "greet.mopm.json"), ("lib", soname)):
                 check("installed: " + "/".join(path), os.path.exists(os.path.join(app, ENV, *path)))
@@ -277,6 +328,10 @@ def main(mopm, fake_exe, mojo_env):
                       b.returncode == 0 and "greet 4242" in b.stdout, "exit %d: %s%s" % (b.returncode, b.stdout, b.stderr))
             r = run(app, "run", "prog.mojo", "--prefix", ENV)
             check("mopm run prints greet 4242", r.returncode == 0 and "greet 4242" in r.stdout, r.stdout + r.stderr)
+            # After a sync, no --prefix and no activation are needed: .mopm/env is found.
+            r = run(app, "run", "prog.mojo")
+            check("mopm run with no --prefix finds .mopm/env and prints greet 4242",
+                  r.returncode == 0 and "greet 4242" in r.stdout, r.stdout + r.stderr)
 
             r = sync(app, "--locked")
             check("sync --locked with a fresh lock installs it again and leaves the lock alone",
@@ -308,29 +363,32 @@ def main(mopm, fake_exe, mojo_env):
             longer = good + b"\0"
             fresh = project("fresh")
             shutil.copy(os.path.join(app, "mopm.lock"), fresh)
-            kept = os.path.join(fresh, ".mopm", "channel", subdir, filename)
+            kept = os.path.join(fresh, ".mopm", "pkgs", filename)
             for what, data, want in [
                 ("one byte changed", flipped,
-                 "%s: sha256 mismatch: mopm.lock pins %s, the file is %s; refused" % (filename, good_sha, sha256(flipped))),
+                 "has sha256 %s; the pin says %s; refused" % (sha256(flipped), good_sha)),
                 ("one byte longer", longer,
-                 "%s: mopm.lock pins %d bytes, the file has %d; refused" % (filename, len(good), len(longer))),
+                 "is larger than the pinned %d bytes; refused" % len(good)),
             ]:
                 serve(fake, subdir, filename, data)
                 r = sync(fresh, "--locked")
                 check("tampered artifact (%s): sync --locked refuses it" % what,
                       r.returncode == 1 and want in r.stderr, "exit %d: %s" % (r.returncode, r.stderr))
-                check("tampered artifact (%s): the file is not kept and pixi does not run" % what,
-                      not os.path.exists(kept) and not os.path.exists(os.path.join(fresh, ".mopm", "pixi.toml")))
+                check("tampered artifact (%s): the file is not kept and no environment is made" % what,
+                      not os.path.exists(kept) and not os.path.exists(os.path.join(fresh, ENV)))
 
-            # The project that synced before keeps the good file; tampered
-            # with, it is not used (and the channel's copy is tampered too).
+            # The project that synced before keeps the good file; with its
+            # environment gone and the kept copy tampered with, it is not used
+            # (and the channel's copy is tampered too).
             serve(fake, subdir, filename, flipped)
-            app_kept = os.path.join(app, ".mopm", "channel", subdir, filename)
+            app_kept = os.path.join(app, ".mopm", "pkgs", filename)
             with open(app_kept, "wb") as f:
                 f.write(flipped)
+            shutil.rmtree(os.path.join(app, ENV))
             r = sync(app, "--locked")
             check("tampered kept file: sync --locked does not use it",
-                  r.returncode == 1 and "sha256 mismatch: mopm.lock pins %s" % good_sha in r.stderr,
+                  r.returncode == 1 and "the pin says %s; refused" % good_sha in r.stderr
+                  and not os.path.exists(os.path.join(app, ENV)),
                   "exit %d: %s" % (r.returncode, r.stderr))
 
             # Control: the same sync with the original bytes back succeeds.
@@ -358,12 +416,13 @@ def main(mopm, fake_exe, mojo_env):
                   and "using local 0.2.0 from local (a path dependency: built from source, not downloaded)\n" in r.stdout
                   and "installed 1 packages for %s" % subdir in r.stdout,
                   "exit %d\n%s\n%s\n%s" % (r.returncode, r.stdout, r.stderr, json.dumps(entries)))
-            downloaded = sorted(os.listdir(os.path.join(withpath, ".mopm", "channel", subdir))) \
-                if os.path.isdir(os.path.join(withpath, ".mopm", "channel", subdir)) else []
-            check("the path dependency is not downloaded nor given to pixi",
-                  downloaded == sorted(["repodata.json", filename]) and "mojo-local" not in (read(withpath, ".mopm", "pixi.toml") or "mojo-local")
-                  and "mojo-local" not in (read(withpath, ".mopm", "channel", subdir, "repodata.json") or "mojo-local"),
-                  "%s\n%s" % (downloaded, read(withpath, ".mopm", "pixi.toml")))
+            downloaded = sorted(os.listdir(os.path.join(withpath, ".mopm", "pkgs"))) \
+                if os.path.isdir(os.path.join(withpath, ".mopm", "pkgs")) else []
+            records = os.listdir(os.path.join(withpath, ENV, "conda-meta")) \
+                if os.path.isdir(os.path.join(withpath, ENV, "conda-meta")) else []
+            check("the path dependency is not downloaded nor installed",
+                  downloaded == [filename] and not [n for n in records if n.startswith("mojo-local")],
+                  "%s\n%s" % (downloaded, records))
             locked = read(withpath, "mopm.lock")
             local_version("0.2.1")
             r = sync(withpath, "--locked")
@@ -383,6 +442,6 @@ def main(mopm, fake_exe, mojo_env):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
-        raise SystemExit("usage: run.py <mopm> <mopm-fake-registry> <mojo env prefix>")
+    if len(sys.argv) != 3:
+        raise SystemExit("usage: run.py <mopm> <mopm-fake-registry>")
     sys.exit(main(*(os.path.abspath(a) for a in sys.argv[1:])))

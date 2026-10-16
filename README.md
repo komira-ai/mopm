@@ -81,8 +81,9 @@ tests/run_golden.sh  # runs the built CLI against tests/golden
 ```
 
 CI runs all three on Linux x86_64, Linux aarch64 and macOS arm64, and there
-also runs `tests/e2e/run.sh` in a pixi environment with the pinned `mojo`
-(`tools/install_pixi.sh`, `tests/e2e/pixi.toml`).
+also runs `tests/e2e/run.sh` in the environment `mopm sync` installs (the pinned
+`mojo`, from `tests/e2e/mopm.toml` and `mopm.lock`): no pixi, conda or mojo is
+installed on the runner.
 
 ## License
 

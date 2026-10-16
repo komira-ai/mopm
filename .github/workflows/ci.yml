@@ -67,15 +67,17 @@ jobs:
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
       - name: Build the CLI
         run: zig build
-      - name: Install pixi 0.79.0 (sha256-pinned)
-        run: echo "$(tools/install_pixi.sh "$RUNNER_TEMP/pixi")" >> "$GITHUB_PATH"
-      - name: Create the Mojo environment (mojo 1.0.0, tests/e2e/pixi.toml)
+      # No pixi, conda or mojo is installed on the runner: mopm sync installs the pinned Mojo toolchain
+      # (src/core/toolchain) from the lock in tests/e2e/mopm.lock. That is the environment these tests use.
+      - name: Create the Mojo environment with mopm sync (mojo 1.0.0, tests/e2e/mopm.toml)
         run: |
+          set -eu
           mkdir -p "$RUNNER_TEMP/mojo-env"
-          cp tests/e2e/pixi.toml "$RUNNER_TEMP/mojo-env/pixi.toml"
-          pixi install --manifest-path "$RUNNER_TEMP/mojo-env/pixi.toml"
+          cp tests/e2e/mopm.toml tests/e2e/mopm.lock "$RUNNER_TEMP/mojo-env/"
+          cd "$RUNNER_TEMP/mojo-env"
+          "$GITHUB_WORKSPACE/zig-out/bin/mopm" sync --locked
       - name: mopm build, run and repl against the real mojo
-        run: tests/e2e/run.sh ./zig-out/bin/mopm "$RUNNER_TEMP/mojo-env/.pixi/envs/default" "$RUNNER_TEMP/e2e"
+        run: tests/e2e/run.sh ./zig-out/bin/mopm "$RUNNER_TEMP/mojo-env/.mopm/env" "$RUNNER_TEMP/e2e"
 
   test-discovery:
     name: test discovery e2e (${{ matrix.os }})
@@ -93,15 +95,17 @@ jobs:
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
       - name: Build the CLI
         run: zig build
-      - name: Install pixi 0.79.0 (sha256-pinned)
-        run: echo "$(tools/install_pixi.sh "$RUNNER_TEMP/pixi")" >> "$GITHUB_PATH"
-      - name: Create the Mojo environment (mojo 1.0.0, tests/e2e/pixi.toml)
+      # No pixi, conda or mojo is installed on the runner: mopm sync installs the pinned Mojo toolchain
+      # (src/core/toolchain) from the lock in tests/e2e/mopm.lock. That is the environment these tests use.
+      - name: Create the Mojo environment with mopm sync (mojo 1.0.0, tests/e2e/mopm.toml)
         run: |
+          set -eu
           mkdir -p "$RUNNER_TEMP/mojo-env"
-          cp tests/e2e/pixi.toml "$RUNNER_TEMP/mojo-env/pixi.toml"
-          pixi install --manifest-path "$RUNNER_TEMP/mojo-env/pixi.toml"
+          cp tests/e2e/mopm.toml tests/e2e/mopm.lock "$RUNNER_TEMP/mojo-env/"
+          cd "$RUNNER_TEMP/mojo-env"
+          "$GITHUB_WORKSPACE/zig-out/bin/mopm" sync --locked
       - name: mopm test --list, and --check against harnesses built by the real mojo
-        run: tests/e2e/test_discovery.sh ./zig-out/bin/mopm "$RUNNER_TEMP/mojo-env/.pixi/envs/default" "$RUNNER_TEMP/test-discovery"
+        run: tests/e2e/test_discovery.sh ./zig-out/bin/mopm "$RUNNER_TEMP/mojo-env/.mopm/env" "$RUNNER_TEMP/test-discovery"
 
   test-supervisor:
     name: test supervisor e2e (${{ matrix.os }})
@@ -119,18 +123,20 @@ jobs:
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
       - name: Build the CLI
         run: zig build
-      - name: Install pixi 0.79.0 (sha256-pinned)
-        run: echo "$(tools/install_pixi.sh "$RUNNER_TEMP/pixi")" >> "$GITHUB_PATH"
-      - name: Create the Mojo environment (mojo 1.0.0, tests/e2e/pixi.toml)
+      # No pixi, conda or mojo is installed on the runner: mopm sync installs the pinned Mojo toolchain
+      # (src/core/toolchain) from the lock in tests/e2e/mopm.lock. That is the environment these tests use.
+      - name: Create the Mojo environment with mopm sync (mojo 1.0.0, tests/e2e/mopm.toml)
         run: |
+          set -eu
           mkdir -p "$RUNNER_TEMP/mojo-env"
-          cp tests/e2e/pixi.toml "$RUNNER_TEMP/mojo-env/pixi.toml"
-          pixi install --manifest-path "$RUNNER_TEMP/mojo-env/pixi.toml"
+          cp tests/e2e/mopm.toml tests/e2e/mopm.lock "$RUNNER_TEMP/mojo-env/"
+          cd "$RUNNER_TEMP/mojo-env"
+          "$GITHUB_WORKSPACE/zig-out/bin/mopm" sync --locked
       - name: mopm test runs the fixtures; exact verdicts, JSON, JUnit, supervisor self-test
-        run: tests/e2e/test_supervisor.sh ./zig-out/bin/mopm "$RUNNER_TEMP/mojo-env/.pixi/envs/default" "$RUNNER_TEMP/test-supervisor"
+        run: tests/e2e/test_supervisor.sh ./zig-out/bin/mopm "$RUNNER_TEMP/mojo-env/.mopm/env" "$RUNNER_TEMP/test-supervisor"
       - name: mopm test --retries, --deny-flaky and filters on deterministic flaky fixtures
         if: ${{ !cancelled() }}
-        run: tests/e2e/test_flaky.sh ./zig-out/bin/mopm "$RUNNER_TEMP/mojo-env/.pixi/envs/default" "$RUNNER_TEMP/test-flaky"
+        run: tests/e2e/test_flaky.sh ./zig-out/bin/mopm "$RUNNER_TEMP/mojo-env/.mopm/env" "$RUNNER_TEMP/test-flaky"
 
   registry-e2e:
     name: registry e2e (${{ matrix.os }})
@@ -201,12 +207,5 @@ jobs:
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
       - name: Build the CLI and the fake registry
         run: zig build
-      - name: Install pixi 0.79.0 (sha256-pinned)
-        run: echo "$(tools/install_pixi.sh "$RUNNER_TEMP/pixi")" >> "$GITHUB_PATH"
-      - name: Create the Mojo environment that precompiles the fixture package (mojo 1.0.0, tests/e2e/pixi.toml)
-        run: |
-          mkdir -p "$RUNNER_TEMP/mojo-env"
-          cp tests/e2e/pixi.toml "$RUNNER_TEMP/mojo-env/pixi.toml"
-          pixi install --manifest-path "$RUNNER_TEMP/mojo-env/pixi.toml"
-      - name: mopm sync installs a package with a native library from the fake registry, build and run use it; a tampered file and a stale lock are refused
-        run: python3 -I tests/install_e2e/run.py ./zig-out/bin/mopm ./zig-out/bin/mopm-fake-registry "$RUNNER_TEMP/mojo-env/.pixi/envs/default"
+      - name: mopm sync installs the Mojo toolchain and a package with a native library from the fake registry, with no pixi; build and run use it; a tampered file and a stale lock are refused
+        run: python3 -I tests/install_e2e/run.py ./zig-out/bin/mopm ./zig-out/bin/mopm-fake-registry

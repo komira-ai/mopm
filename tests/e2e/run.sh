@@ -6,8 +6,8 @@
 #
 #   tests/e2e/run.sh <mopm binary> <Mojo environment prefix> <work dir>
 #
-# The Mojo environment is a pixi environment holding the pinned `mojo`
-# (tests/e2e/pixi.toml). This script:
+# The Mojo environment is the one `mopm sync` installs from tests/e2e/mopm.toml
+# and mopm.lock (the pinned `mojo`; no pixi). This script:
 #
 #   1. builds three C shared libraries with the host C compiler: libgreet;
 #      libinner; and libouter, linked against libinner with no run path of
