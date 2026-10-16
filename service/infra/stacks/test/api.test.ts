@@ -54,7 +54,7 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
   test('exactly one Node.js Lambda, from the built bundle, configured for its stage', () => {
     t.resourceCountIs('AWS::Lambda::Function', 1);
     t.hasResourceProperties('AWS::Lambda::Function', {
-      Runtime: 'nodejs20.x',
+      Runtime: 'nodejs22.x',
       Handler: 'http/lambda.handler',
       Code: { S3Bucket: Match.anyValue(), S3Key: Match.stringLikeRegexp('\\.zip$') },
       Environment: {
