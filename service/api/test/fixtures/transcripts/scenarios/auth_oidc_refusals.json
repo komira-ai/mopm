@@ -1,0 +1,317 @@
+{
+  "description": "The CI exchange, every way a request is refused before a signature could matter: bad name and version, a token that is not three parts, alg none, HS256 and other algorithms (algorithm confusion), an unknown key id, a missing kid.",
+  "world": {
+    "auth": true,
+    "seeds": [
+      "auth_accounts"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "json": {
+          "jwt": "a.b.c",
+          "name": "Bad Name",
+          "version": "2.0.0"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_name"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "json": {
+          "jwt": "a.b.c",
+          "name": "alpha",
+          "version": "1.0"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_version"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "json": {
+          "jwt": "a.b.c",
+          "name": 5,
+          "version": "2.0.0"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_name"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "json": {
+          "jwt": "a.b.c",
+          "name": "alpha"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_version"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "body": ""
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "body": "{"
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "json": {
+          "jwt": "onlyone",
+          "name": "alpha",
+          "version": "2.0.0"
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "oidc_token_invalid"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "json": {
+          "jwt": "a.b",
+          "name": "alpha",
+          "version": "2.0.0"
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "oidc_token_invalid"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "json": {
+          "jwt": "a.b.c.d",
+          "name": "alpha",
+          "version": "2.0.0"
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "oidc_token_invalid"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "json": {
+          "jwt": "",
+          "name": "alpha",
+          "version": "2.0.0"
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "oidc_token_invalid"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "json": {
+          "jwt": 5,
+          "name": "alpha",
+          "version": "2.0.0"
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "oidc_token_invalid"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "json": {
+          "jwt": "!!!.???.***",
+          "name": "alpha",
+          "version": "2.0.0"
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "oidc_token_invalid"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "json": {
+          "jwt": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIiwia2lkIjoiazEifQ.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.",
+          "name": "alpha",
+          "version": "2.0.0"
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "oidc_token_invalid"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "json": {
+          "jwt": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln",
+          "name": "alpha",
+          "version": "2.0.0"
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "oidc_token_invalid"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "json": {
+          "jwt": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln",
+          "name": "alpha",
+          "version": "2.0.0"
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "oidc_token_invalid"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "json": {
+          "jwt": "eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln",
+          "name": "alpha",
+          "version": "2.0.0"
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "oidc_token_invalid"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "json": {
+          "jwt": "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln",
+          "name": "alpha",
+          "version": "2.0.0"
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "oidc_token_invalid"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "json": {
+          "jwt": "eyJhbGciOiJyczI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln",
+          "name": "alpha",
+          "version": "2.0.0"
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "oidc_token_invalid"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "json": {
+          "jwt": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln",
+          "name": "alpha",
+          "version": "2.0.0"
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "oidc_token_invalid"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "json": {
+          "jwt": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln",
+          "name": "alpha",
+          "version": "2.0.0"
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "oidc_token_invalid"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "json": {
+          "jwt": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.IHsiaXNzIjoiaHR0cHM6Ly9ldmlsLmV4YW1wbGUuaW52YWxpZCJ9.c2ln",
+          "name": "alpha",
+          "version": "2.0.0"
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "oidc_token_invalid"
+      }
+    }
+  ]
+}

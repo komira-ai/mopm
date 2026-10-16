@@ -1,0 +1,50 @@
+{
+  "description": "sort=updated when two packages have the same time: ordered by name, and a cursor between them continues after the first.",
+  "world": {
+    "seeds": [
+      "search_two_claimed"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "sort": "updated",
+          "limit": "1"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "sort": "updated",
+          "limit": "1",
+          "cursor": "{{0.next_cursor}}"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "sort": "updated",
+          "limit": "5"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    }
+  ]
+}

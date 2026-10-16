@@ -1,0 +1,210 @@
+{
+  "description": "ordering_demo with versions 1.2.0, 1.9.0 (tombstoned), 1.10.0 (yanked), 1.20.0, 2.0.0 and a pending 3.0.0, inserted out of order.",
+  "packages": [
+    {
+      "name": "ordering_demo",
+      "state": "active",
+      "created_at": "2026-10-01T09:00:00Z"
+    }
+  ],
+  "owners": [],
+  "versions": [
+    {
+      "record": {
+        "canonical": "1.9.0",
+        "build": "mojo1.0.0_0",
+        "state": "tombstoned",
+        "published_at": "2026-10-07T00:00:00Z",
+        "requires_mojo": "==1.0.0",
+        "deps": [],
+        "native": [],
+        "files": [
+          {
+            "subdir": "linux-64",
+            "filename": "mojo-ordering_demo-1.9.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 1000,
+            "url": "https://conda.example.invalid/linux-64/mojo-ordering_demo-1.9.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "rev": 0,
+        "name": "ordering_demo",
+        "version": "1.9.0",
+        "tombstone": {
+          "reason_code": "malware",
+          "date": "2026-10-11"
+        }
+      },
+      "audit": {
+        "name": "ordering_demo",
+        "ts": "2026-10-13T12:00:00Z",
+        "id": "id000011",
+        "actor": "test",
+        "action": "publish",
+        "version": "1.9.0"
+      }
+    },
+    {
+      "record": {
+        "canonical": "1.20.0",
+        "build": "mojo1.0.0_0",
+        "state": "published",
+        "published_at": "2026-10-09T00:00:00Z",
+        "requires_mojo": "==1.0.0",
+        "deps": [],
+        "native": [],
+        "files": [
+          {
+            "subdir": "linux-64",
+            "filename": "mojo-ordering_demo-1.20.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 1000,
+            "url": "https://conda.example.invalid/linux-64/mojo-ordering_demo-1.20.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "rev": 0,
+        "name": "ordering_demo",
+        "version": "1.20.0"
+      },
+      "audit": {
+        "name": "ordering_demo",
+        "ts": "2026-10-13T12:00:00Z",
+        "id": "id000012",
+        "actor": "test",
+        "action": "publish",
+        "version": "1.20.0"
+      }
+    },
+    {
+      "record": {
+        "canonical": "1.2.0",
+        "build": "mojo1.0.0_0",
+        "state": "published",
+        "published_at": "2026-10-06T00:00:00Z",
+        "requires_mojo": "==1.0.0",
+        "deps": [],
+        "native": [],
+        "files": [
+          {
+            "subdir": "linux-64",
+            "filename": "mojo-ordering_demo-1.2.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 1000,
+            "url": "https://conda.example.invalid/linux-64/mojo-ordering_demo-1.2.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "rev": 0,
+        "name": "ordering_demo",
+        "version": "1.2.0"
+      },
+      "audit": {
+        "name": "ordering_demo",
+        "ts": "2026-10-13T12:00:00Z",
+        "id": "id000013",
+        "actor": "test",
+        "action": "publish",
+        "version": "1.2.0"
+      }
+    },
+    {
+      "record": {
+        "canonical": "2.0.0",
+        "build": "mojo1.0.0_0",
+        "state": "published",
+        "published_at": "2026-10-10T00:00:00Z",
+        "requires_mojo": "==1.0.0",
+        "deps": [],
+        "native": [],
+        "files": [
+          {
+            "subdir": "linux-64",
+            "filename": "mojo-ordering_demo-2.0.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 1000,
+            "url": "https://conda.example.invalid/linux-64/mojo-ordering_demo-2.0.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "rev": 0,
+        "name": "ordering_demo",
+        "version": "2.0.0"
+      },
+      "audit": {
+        "name": "ordering_demo",
+        "ts": "2026-10-13T12:00:00Z",
+        "id": "id000014",
+        "actor": "test",
+        "action": "publish",
+        "version": "2.0.0"
+      }
+    },
+    {
+      "record": {
+        "canonical": "1.10.0",
+        "build": "mojo1.0.0_0",
+        "state": "yanked",
+        "published_at": "2026-10-08T00:00:00Z",
+        "requires_mojo": "==1.0.0",
+        "deps": [],
+        "native": [],
+        "files": [
+          {
+            "subdir": "linux-64",
+            "filename": "mojo-ordering_demo-1.10.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 1000,
+            "url": "https://conda.example.invalid/linux-64/mojo-ordering_demo-1.10.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "rev": 0,
+        "name": "ordering_demo",
+        "version": "1.10.0",
+        "yank_reason": "broken wheel"
+      },
+      "audit": {
+        "name": "ordering_demo",
+        "ts": "2026-10-13T12:00:00Z",
+        "id": "id000015",
+        "actor": "test",
+        "action": "publish",
+        "version": "1.10.0"
+      }
+    },
+    {
+      "record": {
+        "canonical": "3.0.0",
+        "build": "mojo1.0.0_0",
+        "state": "pending",
+        "published_at": "2026-10-12T00:00:00Z",
+        "requires_mojo": "==1.0.0",
+        "deps": [],
+        "native": [],
+        "files": [
+          {
+            "subdir": "linux-64",
+            "filename": "mojo-ordering_demo-3.0.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 1000,
+            "url": "https://conda.example.invalid/linux-64/mojo-ordering_demo-3.0.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "rev": 0,
+        "name": "ordering_demo",
+        "version": "3.0.0"
+      },
+      "audit": {
+        "name": "ordering_demo",
+        "ts": "2026-10-13T12:00:00Z",
+        "id": "id000016",
+        "actor": "test",
+        "action": "reserve",
+        "version": "3.0.0"
+      }
+    }
+  ]
+}

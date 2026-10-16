@@ -1,0 +1,93 @@
+{
+  "description": "sort=updated reads every match: 1000 matches are served and 1001 are refused with the longer-q message; by name there is no such limit.",
+  "world": {
+    "seeds": [
+      "bulk_1001_claimed"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "sort": "updated",
+          "q": "bulk_0",
+          "limit": "2"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "sort": "updated",
+          "q": "bulk_",
+          "limit": "2"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "sort": "updated",
+          "limit": "2"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "sort": "updated",
+          "q": "bulk_1"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "q": "bulk_",
+          "limit": "100"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "q": "bulk_",
+          "limit": "100",
+          "cursor": "{{4.next_cursor}}"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    }
+  ]
+}

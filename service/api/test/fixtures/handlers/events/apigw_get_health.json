@@ -1,0 +1,21 @@
+{
+  "version": "2.0",
+  "routeKey": "GET /api/v1/health",
+  "rawPath": "/api/v1/health",
+  "rawQueryString": "",
+  "headers": {
+    "accept": "*/*",
+    "user-agent": "mopm-test"
+  },
+  "requestContext": {
+    "requestId": "req-health",
+    "stage": "$default",
+    "http": {
+      "method": "GET",
+      "path": "/api/v1/health",
+      "protocol": "HTTP/1.1",
+      "userAgent": "mopm-test"
+    }
+  },
+  "isBase64Encoded": false
+}

@@ -1,0 +1,43 @@
+{
+  "description": "A read route end to end: the switch is read first, then the package row (a Get by name); a missing package is 404 with the catalogue's text and the gateway's request id.",
+  "lambda": "api",
+  "env": {
+    "MOPM_STAGE": "beta"
+  },
+  "invocations": [
+    {
+      "event": "events/apigw_get_package_nosuch.json",
+      "expect": {
+        "returns": {
+          "statusCode": 404,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-nosuch"
+          },
+          "body": "{\"error\":{\"code\":\"package_not_found\",\"message\":\"There is no package 'nosuch'.\",\"hint\":\"Check the spelling, or claim the name.\"}}"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-config",
+        "key": {
+          "key": "read_only"
+        }
+      },
+      {
+        "op": "Get",
+        "table": "mopm-beta-packages",
+        "key": {
+          "name": "nosuch"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": []
+  }
+}

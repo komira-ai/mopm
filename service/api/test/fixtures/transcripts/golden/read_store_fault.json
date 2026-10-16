@@ -1,0 +1,167 @@
+{
+  "description": "A failing store: an internal_error envelope for each read operation, no detail leaked.",
+  "world": {
+    "seeds": [],
+    "faults": {
+      "store": true
+    }
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-1"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"internal_error\",\"message\":\"Something went wrong on our side.\",\"hint\":\"Try again; report the request id if it persists.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-2"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"internal_error\",\"message\":\"Something went wrong on our side.\",\"hint\":\"Try again; report the request id if it persists.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/0.4.0",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-3"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"internal_error\",\"message\":\"Something went wrong on our side.\",\"hint\":\"Try again; report the request id if it persists.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/versions",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-4"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"internal_error\",\"message\":\"Something went wrong on our side.\",\"hint\":\"Try again; report the request id if it persists.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/owners",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-5"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"internal_error\",\"message\":\"Something went wrong on our side.\",\"hint\":\"Try again; report the request id if it persists.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/Bad-Name",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-6"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_name\",\"message\":\"'Bad-Name' is not a valid package name.\",\"hint\":\"Names are lowercase letters, digits and underscores, 2 to 64 characters, starting with a letter.\"}}"
+      }
+    }
+  ]
+}

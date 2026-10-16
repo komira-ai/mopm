@@ -2,8 +2,8 @@
 //
 // One build serves every stage, so the API host is not baked in: it comes from this fixed table. Any other hostname
 // (a preview, a mirror, localhost) gets no API at all, and the page shows an error instead of calling anything. The
-// API's CORS origin enforces the same pairing; the site stack's CSP connect-src is to enforce it too once the stack
-// serves this build (a later change).
+// API's CORS origin enforces the same pairing, and so does the site stack's CSP (connect-src names only the stage's own
+// API host, service/infra/stacks/lib/site-stack.ts).
 
 const SITES: Readonly<Record<string, true>> = Object.freeze(
   Object.assign(Object.create(null) as Record<string, true>, {

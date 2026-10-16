@@ -32,9 +32,9 @@ API call (`src/app.ts` picks the call and the view).
 1. **No runtime dependencies.** `dependencies` stays empty; everything shipped to a browser is code in `src/`.
 2. **No HTML sinks.** Markup is built only through `h()` and a `Doc`; no string of HTML reaches the DOM and no string
    runs as code. `test/no-sinks.test.ts` checks the source.
-3. **No inline script or style.** The site stack, when it is switched to serve this build (a later change), must send a
-   Content-Security-Policy that allows `'self'` only;
-   `tools/check-dist.ts` refuses a tree that such a policy would break.
+3. **No inline script or style.** The site stack sends a Content-Security-Policy that allows scripts, styles and
+   images from `'self'` only, fetches from the stage's API host only, and requires Trusted Types with no policy (see
+   "How it is served"); `tools/check-dist.ts` refuses a tree that this policy would break.
 4. **One artifact for every stage.** Nothing stage-specific is compiled in: the API host comes from the page's
    hostname (`src/host.ts`).
 5. **No live calls in tests.** `test/setup.ts` makes the global `fetch` throw; the client takes `fetch` as a
@@ -77,6 +77,36 @@ a flash of an unstyled view on every load. It is the heaviest page, and the 30 K
 its next view's styles.
 
 The home page copy is held to `README.md` and `src/cli/main.zig` by `test/layout.test.ts`: when the list of working
-or planned commands changes there, the page has to change too. Route vectors are in `test/fixtures/routes.json`; they
-also state what the edge router of the site stack must do when the stack is switched to serve this build (it has no
-router today). The Markdown attack corpus is `test/fixtures/attacks.md`.
+or planned commands changes there, the page has to change too. Route vectors are in `test/fixtures/routes.json`; the
+site stack's edge router is tested against the same file. The Markdown attack corpus is `test/fixtures/attacks.md`.
+
+## How it is served
+
+`service/infra/stacks/lib/site-stack.ts` deploys `dist/` (built by `npm run build` here in deploy.yml, or `//site:dist`
+with Buck2) to a private bucket behind CloudFront, and refuses to synthesize when `index.html`, `app.html`, `404.html`
+or `assets/` is missing. Merging a change under `site/` (or to `spec/mopm-toml.md` or `docs/mopm-test.md`, which the
+docs pages are rendered from) starts promote.yml, which deploys it to beta, gamma and prod in turn.
+
+- **Two uploads.** `assets/` goes first, with `Cache-Control: public, max-age=31536000, immutable`, and is never
+  pruned: the pages of an earlier release (an open tab, a rollback) still find their assets. The pages (everything
+  else) go second, with a short cache (`public, max-age=60, s-maxage=300`); pages that are no longer built are
+  removed, and each deploy invalidates the CloudFront cache. Neither upload deletes its objects when its deployment
+  resource is deleted, so if the first deploy (the one that replaces the placeholder page) rolls back, the bucket keeps
+  the new pages under the old distribution settings (no CSP, router or 404 page): fix forward by deploying again; a
+  rollback does not restore the placeholder.
+- **Edge router.** A CloudFront Function on viewer-request, generated from the grammar in `src/routes.ts`: `/` is
+  `index.html`; `/search`, `/packages/<name>` and `/packages/<name>/<version>` (a valid, normalised name and a valid
+  version) are `app.html`; `/docs`, `/docs/` and `/docs/<slug>[/]` are the docs page's `index.html`; a package name
+  that normalises to a different valid name gets a 301 to the normalised path, query kept. Everything else goes to
+  the bucket as it is.
+- **Not found.** A missing key (403 or 404 from the bucket) gets `404.html` with status 404; nothing is answered with
+  the home page. These are distribution-wide error responses, an interim choice until the API is served from this
+  distribution (`docs/design/mopm-dev.md`, §4.1).
+- **Headers.** The CSP `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src
+  https://api.<site host>; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none';
+  require-trusted-types-for 'script'; trusted-types 'none'`, plus HSTS, `X-Content-Type-Options`,
+  `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy` and
+  `Cross-Origin-Resource-Policy` `same-origin`, and a `Permissions-Policy` that turns off camera, microphone,
+  geolocation, payment and USB.
+- **Smoke test.** e2e.yml checks the site host after every deploy: the home page and one of its assets, the app shell
+  for a package route, a 404 for an unknown file, and the CSP's API host.

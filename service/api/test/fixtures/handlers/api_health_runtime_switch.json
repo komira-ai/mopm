@@ -1,0 +1,53 @@
+{
+  "description": "The item {key: read_only, value: true} in the stage's config table makes health report read_only without a redeploy.",
+  "lambda": "api",
+  "env": {
+    "MOPM_STAGE": "beta"
+  },
+  "dynamo": [
+    {
+      "op": "Get",
+      "table": "mopm-beta-config",
+      "respond": {
+        "Item": {
+          "key": "read_only",
+          "value": true
+        }
+      }
+    }
+  ],
+  "invocations": [
+    {
+      "event": "events/apigw_get_health.json",
+      "expect": {
+        "returns": {
+          "statusCode": 200,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-health"
+          },
+          "body_json": {
+            "status": "ok",
+            "api_version": "v1",
+            "stage": "beta",
+            "read_only": true
+          }
+        }
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-config",
+        "key": {
+          "key": "read_only"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": []
+  }
+}

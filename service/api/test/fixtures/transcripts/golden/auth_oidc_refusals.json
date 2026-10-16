@@ -1,0 +1,578 @@
+{
+  "description": "The CI exchange, every way a request is refused before a signature could matter: bad name and version, a token that is not three parts, alg none, HS256 and other algorithms (algorithm confusion), an unknown key id, a missing kid.",
+  "world": {
+    "auth": true,
+    "seeds": [
+      "auth_accounts"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": "{\"jwt\":\"a.b.c\",\"name\":\"Bad Name\",\"version\":\"2.0.0\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-1"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_name\",\"message\":\"'Bad Name' is not a valid package name.\",\"hint\":\"Names are lowercase letters, digits and underscores, 2 to 64 characters, starting with a letter.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": "{\"jwt\":\"a.b.c\",\"name\":\"alpha\",\"version\":\"1.0\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-2"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_version\",\"message\":\"'1.0' is not a valid version.\",\"hint\":\"A version is MAJOR.MINOR.PATCH: three numbers separated by dots, such as 1.2.3. Suffixes such as rc1 are not supported.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": "{\"jwt\":\"a.b.c\",\"name\":5,\"version\":\"2.0.0\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-3"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_name\",\"message\":\"'5' is not a valid package name.\",\"hint\":\"Names are lowercase letters, digits and underscores, 2 to 64 characters, starting with a letter.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": "{\"jwt\":\"a.b.c\",\"name\":\"alpha\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-4"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_version\",\"message\":\"'undefined' is not a valid version.\",\"hint\":\"A version is MAJOR.MINOR.PATCH: three numbers separated by dots, such as 1.2.3. Suffixes such as rc1 are not supported.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": ""
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-5"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: a JSON body is required.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-6"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: the body is not valid JSON.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": "{\"jwt\":\"onlyone\",\"name\":\"alpha\",\"version\":\"2.0.0\"}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-7"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"oidc_token_invalid\",\"message\":\"The CI identity token was rejected: malformed token.\",\"hint\":\"Check the audience and that the job has permission to request an identity token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": "{\"jwt\":\"a.b\",\"name\":\"alpha\",\"version\":\"2.0.0\"}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-8"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"oidc_token_invalid\",\"message\":\"The CI identity token was rejected: malformed token.\",\"hint\":\"Check the audience and that the job has permission to request an identity token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": "{\"jwt\":\"a.b.c.d\",\"name\":\"alpha\",\"version\":\"2.0.0\"}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-9"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"oidc_token_invalid\",\"message\":\"The CI identity token was rejected: malformed token.\",\"hint\":\"Check the audience and that the job has permission to request an identity token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": "{\"jwt\":\"\",\"name\":\"alpha\",\"version\":\"2.0.0\"}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-10"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"oidc_token_invalid\",\"message\":\"The CI identity token was rejected: malformed token.\",\"hint\":\"Check the audience and that the job has permission to request an identity token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": "{\"jwt\":5,\"name\":\"alpha\",\"version\":\"2.0.0\"}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-11"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"oidc_token_invalid\",\"message\":\"The CI identity token was rejected: malformed token.\",\"hint\":\"Check the audience and that the job has permission to request an identity token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": "{\"jwt\":\"!!!.???.***\",\"name\":\"alpha\",\"version\":\"2.0.0\"}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-12"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"oidc_token_invalid\",\"message\":\"The CI identity token was rejected: malformed token.\",\"hint\":\"Check the audience and that the job has permission to request an identity token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": "{\"jwt\":\"eyJhbGciOiJub25lIiwidHlwIjoiSldUIiwia2lkIjoiazEifQ.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.\",\"name\":\"alpha\",\"version\":\"2.0.0\"}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-13"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"oidc_token_invalid\",\"message\":\"The CI identity token was rejected: unsupported algorithm.\",\"hint\":\"Check the audience and that the job has permission to request an identity token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": "{\"jwt\":\"eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln\",\"name\":\"alpha\",\"version\":\"2.0.0\"}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-14"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"oidc_token_invalid\",\"message\":\"The CI identity token was rejected: unsupported algorithm.\",\"hint\":\"Check the audience and that the job has permission to request an identity token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": "{\"jwt\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln\",\"name\":\"alpha\",\"version\":\"2.0.0\"}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-15"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"oidc_token_invalid\",\"message\":\"The CI identity token was rejected: unsupported algorithm.\",\"hint\":\"Check the audience and that the job has permission to request an identity token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": "{\"jwt\":\"eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln\",\"name\":\"alpha\",\"version\":\"2.0.0\"}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-16"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"oidc_token_invalid\",\"message\":\"The CI identity token was rejected: unsupported algorithm.\",\"hint\":\"Check the audience and that the job has permission to request an identity token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": "{\"jwt\":\"eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln\",\"name\":\"alpha\",\"version\":\"2.0.0\"}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-17"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"oidc_token_invalid\",\"message\":\"The CI identity token was rejected: unsupported algorithm.\",\"hint\":\"Check the audience and that the job has permission to request an identity token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": "{\"jwt\":\"eyJhbGciOiJyczI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln\",\"name\":\"alpha\",\"version\":\"2.0.0\"}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-18"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"oidc_token_invalid\",\"message\":\"The CI identity token was rejected: unsupported algorithm.\",\"hint\":\"Check the audience and that the job has permission to request an identity token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": "{\"jwt\":\"eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln\",\"name\":\"alpha\",\"version\":\"2.0.0\"}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-19"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"oidc_token_invalid\",\"message\":\"The CI identity token was rejected: unknown signing key.\",\"hint\":\"Check the audience and that the job has permission to request an identity token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": "{\"jwt\":\"eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.IHsiaXNzIjoiaHR0cHM6Ly90b2tlbi5hY3Rpb25zLmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImF1ZCI6Im1vcG0uZGV2Iiwic3ViIjoicmVwbzphY21lL3dpZGdldHM6cmVmOnJlZnMvdGFncy92MS4wLjAiLCJyZXBvc2l0b3J5IjoiYWNtZS93aWRnZXRzIiwicmVwb3NpdG9yeV9pZCI6IjExMSIsImlhdCI6MTc5MDAwMDAwMCwibmJmIjoxNzkwMDAwMDAwLCJleHAiOjE3OTAwMDAzMDB9.c2ln\",\"name\":\"alpha\",\"version\":\"2.0.0\"}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-20"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"oidc_token_invalid\",\"message\":\"The CI identity token was rejected: missing key id.\",\"hint\":\"Check the audience and that the job has permission to request an identity token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "query": {},
+        "headers": {},
+        "body": "{\"jwt\":\"eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImsxIn0.IHsiaXNzIjoiaHR0cHM6Ly9ldmlsLmV4YW1wbGUuaW52YWxpZCJ9.c2ln\",\"name\":\"alpha\",\"version\":\"2.0.0\"}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-21"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"oidc_token_invalid\",\"message\":\"The CI identity token was rejected: unknown signing key.\",\"hint\":\"Check the audience and that the job has permission to request an identity token.\"}}"
+      }
+    }
+  ]
+}
