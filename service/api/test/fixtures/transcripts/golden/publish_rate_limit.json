@@ -1,0 +1,212 @@
+{
+  "description": "The daily rate limit (2 begins per account here): the third is 429 rate_limited with the Retry-After header (seconds to the next UTC midnight) and the same in the hint; repeating it does not change the answer; the next day it works again.",
+  "world": {
+    "auth": true,
+    "publish": true,
+    "seeds": [
+      "auth_accounts"
+    ],
+    "limits": {
+      "ratePerAccountPerDay": 2,
+      "ratePerTokenPerDay": 10
+    }
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"subdir\":\"noarch\",\"filename\":\"mojo-alpha-2.0.0-mojo1.0.0_0.conda\",\"sha256\":\"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\",\"size\":5}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-1"
+          ]
+        ],
+        "body": "{\"upload_id\":\"upl_00000000000000000000000000000002\",\"put_url\":\"https://bucket.invalid/quarantine/upl_00000000000000000000000000000002/mojo-alpha-2.0.0-mojo1.0.0_0.conda?expires=300\",\"put_headers\":{\"content-length\":\"5\",\"x-amz-checksum-sha256\":\"LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=\"},\"expires_at\":\"2026-10-14T12:05:00.000Z\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.1/files",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"subdir\":\"noarch\",\"filename\":\"mojo-alpha-2.0.1-mojo1.0.0_0.conda\",\"sha256\":\"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\",\"size\":5}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-2"
+          ]
+        ],
+        "body": "{\"upload_id\":\"upl_00000000000000000000000000000004\",\"put_url\":\"https://bucket.invalid/quarantine/upl_00000000000000000000000000000004/mojo-alpha-2.0.1-mojo1.0.0_0.conda?expires=300\",\"put_headers\":{\"content-length\":\"5\",\"x-amz-checksum-sha256\":\"LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=\"},\"expires_at\":\"2026-10-14T12:05:00.000Z\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.2/files",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"subdir\":\"noarch\",\"filename\":\"mojo-alpha-2.0.2-mojo1.0.0_0.conda\",\"sha256\":\"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\",\"size\":5}"
+      },
+      "response": {
+        "status": 429,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-3"
+          ],
+          [
+            "retry-after",
+            "43200"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"rate_limited\",\"message\":\"Too many requests.\",\"hint\":\"Wait 43200 seconds; the Retry-After header says how long.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.2/files",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apipubaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"subdir\":\"noarch\",\"filename\":\"mojo-alpha-2.0.2-mojo1.0.0_0.conda\",\"sha256\":\"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\",\"size\":5}"
+      },
+      "response": {
+        "status": 429,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-4"
+          ],
+          [
+            "retry-after",
+            "43200"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"rate_limited\",\"message\":\"Too many requests.\",\"hint\":\"Wait 43200 seconds; the Retry-After header says how long.\"}}"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T23:59:59.000Z"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.2/files",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"subdir\":\"noarch\",\"filename\":\"mojo-alpha-2.0.2-mojo1.0.0_0.conda\",\"sha256\":\"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\",\"size\":5}"
+      },
+      "response": {
+        "status": 429,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-5"
+          ],
+          [
+            "retry-after",
+            "1"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"rate_limited\",\"message\":\"Too many requests.\",\"hint\":\"Wait 1 seconds; the Retry-After header says how long.\"}}"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-15T00:00:00.000Z"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.2/files",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"subdir\":\"noarch\",\"filename\":\"mojo-alpha-2.0.2-mojo1.0.0_0.conda\",\"sha256\":\"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\",\"size\":5}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-6"
+          ]
+        ],
+        "body": "{\"upload_id\":\"upl_00000000000000000000000000000006\",\"put_url\":\"https://bucket.invalid/quarantine/upl_00000000000000000000000000000006/mojo-alpha-2.0.2-mojo1.0.0_0.conda?expires=300\",\"put_headers\":{\"content-length\":\"5\",\"x-amz-checksum-sha256\":\"LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=\"},\"expires_at\":\"2026-10-15T00:05:00.000Z\"}"
+      }
+    }
+  ]
+}

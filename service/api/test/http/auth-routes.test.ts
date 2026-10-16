@@ -16,7 +16,7 @@ import type { AuthServices } from '../../src/http/auth-routes';
 import { route, type HttpRequest, type HttpResponse, type RouterDeps } from '../../src/http/router';
 import { MemoryStore } from '../../src/memory-store';
 import { fakeGitHub, goodClaims, newKey, signJwt, TestClock } from '../auth-helpers';
-import { FakeAuthDoc, LAMBDA_GRANTS, READ_GRANTS } from '../auth-fake-doc';
+import { FakeAuthDoc, LAMBDA_GRANTS } from '../auth-fake-doc';
 
 // The auth operations through the router: login, token management, CI exchange, and the "not configured" mode.
 // Run over both stores (memory; DynamoDB adapter on the strict fake under the Lambda's real grants), so the whole
@@ -49,7 +49,7 @@ function world(backing: Backing, over: { services?: Partial<AuthServices> | null
     store = new MemoryAuthStore();
     owned = async (id) => (id === 4242 ? ['alpha', 'beta_pkg'] : []);
   } else {
-    doc = new FakeAuthDoc({ pageSize: 2, grants: { ...LAMBDA_GRANTS, ...READ_GRANTS } });
+    doc = new FakeAuthDoc({ pageSize: 2, grants: LAMBDA_GRANTS });
     store = new DynamoAuthStore(doc, authTablesFor('t'));
     for (const n of ['alpha', 'beta_pkg']) doc.seed('owners', { name: n, github_id: '4242', github_id_num: 4242 });
     owned = ownedPackagesFrom(doc, 'mopm-t-owners');

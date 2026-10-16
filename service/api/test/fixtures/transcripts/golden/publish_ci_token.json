@@ -1,0 +1,249 @@
+{
+  "description": "A CI token is good for exactly its package and version: begin and commit at that version work as the CI identity, status is readable by it, and another version, another package or yank by it are scope_missing.",
+  "world": {
+    "auth": true,
+    "publish": true,
+    "seeds": [
+      "auth_accounts"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_ciwidgetsaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"subdir\":\"noarch\",\"filename\":\"mojo-alpha-2.0.0-mojo1.0.0_0.conda\",\"sha256\":\"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\",\"size\":5}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-1"
+          ]
+        ],
+        "body": "{\"upload_id\":\"upl_00000000000000000000000000000002\",\"put_url\":\"https://bucket.invalid/quarantine/upl_00000000000000000000000000000002/mojo-alpha-2.0.0-mojo1.0.0_0.conda?expires=300\",\"put_headers\":{\"content-length\":\"5\",\"x-amz-checksum-sha256\":\"LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=\"},\"expires_at\":\"2026-10-14T12:05:00.000Z\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_ciwidgetsaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"subdir\":\"noarch\",\"filename\":\"mojo-alpha-2.0.0-mojo1.0.0_0.conda\",\"sha256\":\"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\",\"size\":5}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-2"
+          ]
+        ],
+        "body": "{\"upload_id\":\"upl_00000000000000000000000000000004\",\"put_url\":\"https://bucket.invalid/quarantine/upl_00000000000000000000000000000004/mojo-alpha-2.0.0-mojo1.0.0_0.conda?expires=300\",\"put_headers\":{\"content-length\":\"5\",\"x-amz-checksum-sha256\":\"LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=\"},\"expires_at\":\"2026-10-14T12:05:00.000Z\"}"
+      }
+    },
+    {
+      "put_object": {
+        "upload_id": "upl_00000000000000000000000000000002",
+        "content": "hello"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_ciwidgetsaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"upload_ids\":[\"upl_00000000000000000000000000000002\"],\"manifest_sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}"
+      },
+      "response": {
+        "status": 202,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-3"
+          ]
+        ],
+        "body": "{\"publish_id\":\"pub_0dd5594817a4bc5714fc16a319718a9f\",\"status_url\":\"/api/v1/publishes/pub_0dd5594817a4bc5714fc16a319718a9f\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/pub_0dd5594817a4bc5714fc16a319718a9f",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_ciwidgetsaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-4"
+          ]
+        ],
+        "body": "{\"publish_id\":\"pub_0dd5594817a4bc5714fc16a319718a9f\",\"name\":\"alpha\",\"version\":\"2.0.0\",\"status\":\"pending\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.1/files",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_ciwidgetsaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"subdir\":\"noarch\",\"filename\":\"mojo-alpha-2.0.1-mojo1.0.0_0.conda\",\"sha256\":\"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\",\"size\":5}"
+      },
+      "response": {
+        "status": 403,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-5"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"scope_missing\",\"message\":\"The token does not have the 'publish' scope for 'alpha'.\",\"hint\":\"Create a token with that scope and that package.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/beta_pkg/2.0.0/files",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_ciwidgetsaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"subdir\":\"noarch\",\"filename\":\"mojo-beta_pkg-2.0.0-mojo1.0.0_0.conda\",\"sha256\":\"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\",\"size\":5}"
+      },
+      "response": {
+        "status": 403,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-6"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"scope_missing\",\"message\":\"The token does not have the 'publish' scope for 'beta_pkg'.\",\"hint\":\"Create a token with that scope and that package.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_ciwidgetsaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":true,\"reason\":\"x\"}"
+      },
+      "response": {
+        "status": 403,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-7"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"scope_missing\",\"message\":\"The token does not have the 'publish' scope for 'alpha'.\",\"hint\":\"Create a token with that scope and that package.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/2.0.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_ciwidgetsaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":true,\"reason\":\"x\"}"
+      },
+      "response": {
+        "status": 409,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-8"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_transition\",\"message\":\"Cannot yank 'alpha' 2.0.0: it is pending.\",\"hint\":\"Only a published version can be yanked, only a yanked version can be unyanked, and a tombstoned version never changes.\"}}"
+      }
+    }
+  ]
+}

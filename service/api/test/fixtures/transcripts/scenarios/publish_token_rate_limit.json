@@ -1,0 +1,65 @@
+{
+  "description": "The per-token limit (1 here) is separate from the per-account one: a second token of the same account still begins, the first token is limited.",
+  "world": {
+    "auth": true,
+    "publish": true,
+    "seeds": [
+      "auth_accounts"
+    ],
+    "limits": {
+      "ratePerAccountPerDay": 10,
+      "ratePerTokenPerDay": 1
+    }
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.1/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.1-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 429,
+        "code": "rate_limited"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.1/files",
+        "token": "mopm_apipubaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.1-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    }
+  ]
+}

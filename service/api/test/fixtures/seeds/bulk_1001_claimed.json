@@ -1,0 +1,11 @@
+{
+  "description": "1001 claimed packages bulk_0000 to bulk_1000, created at the same time.",
+  "bulk_packages": [
+    {
+      "count": 1001,
+      "name_format": "bulk_{n:04}",
+      "state": "claimed",
+      "created_at": "2026-10-01T00:00:00Z"
+    }
+  ]
+}

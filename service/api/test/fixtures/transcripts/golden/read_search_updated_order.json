@@ -1,0 +1,185 @@
+{
+  "description": "sort=updated: newest publication first, claim time when nothing is published, the tie broken by name, and cursors that continue exactly.",
+  "world": {
+    "seeds": [
+      "search_prefix_http"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "sort": "updated"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-1"
+          ]
+        ],
+        "body": "{\"packages\":[{\"name\":\"http_client\",\"latest\":\"0.4.0\",\"description\":\"HTTP/1.1 client\",\"updated_at\":\"2026-10-13T12:00:00Z\"},{\"name\":\"http_server\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-02T09:00:00Z\"},{\"name\":\"other\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-02T09:00:00Z\"}],\"next_cursor\":null}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "sort": "updated",
+          "limit": "1"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-2"
+          ]
+        ],
+        "body": "{\"packages\":[{\"name\":\"http_client\",\"latest\":\"0.4.0\",\"description\":\"HTTP/1.1 client\",\"updated_at\":\"2026-10-13T12:00:00Z\"}],\"next_cursor\":\"eyJrIjoidXBkYXRlZCIsInRzIjoiMjAyNi0xMC0xM1QxMjowMDowMFoiLCJhZnRlciI6Imh0dHBfY2xpZW50In0\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "sort": "updated",
+          "limit": "1",
+          "cursor": "eyJrIjoidXBkYXRlZCIsInRzIjoiMjAyNi0xMC0xM1QxMjowMDowMFoiLCJhZnRlciI6Imh0dHBfY2xpZW50In0"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-3"
+          ]
+        ],
+        "body": "{\"packages\":[{\"name\":\"http_server\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-02T09:00:00Z\"}],\"next_cursor\":\"eyJrIjoidXBkYXRlZCIsInRzIjoiMjAyNi0xMC0wMlQwOTowMDowMFoiLCJhZnRlciI6Imh0dHBfc2VydmVyIn0\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "sort": "updated",
+          "limit": "1",
+          "cursor": "eyJrIjoidXBkYXRlZCIsInRzIjoiMjAyNi0xMC0wMlQwOTowMDowMFoiLCJhZnRlciI6Imh0dHBfc2VydmVyIn0"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-4"
+          ]
+        ],
+        "body": "{\"packages\":[{\"name\":\"other\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-02T09:00:00Z\"}],\"next_cursor\":null}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "sort": "updated",
+          "q": "http"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-5"
+          ]
+        ],
+        "body": "{\"packages\":[{\"name\":\"http_client\",\"latest\":\"0.4.0\",\"description\":\"HTTP/1.1 client\",\"updated_at\":\"2026-10-13T12:00:00Z\"},{\"name\":\"http_server\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-02T09:00:00Z\"}],\"next_cursor\":null}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "sort": "name",
+          "cursor": "eyJrIjoidXBkYXRlZCIsInRzIjoiMjAyNi0xMC0xM1QxMjowMDowMFoiLCJhZnRlciI6Imh0dHBfY2xpZW50In0"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-6"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: cursor is not recognised.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    }
+  ]
+}

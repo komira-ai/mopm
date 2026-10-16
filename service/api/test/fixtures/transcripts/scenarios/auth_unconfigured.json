@@ -1,0 +1,93 @@
+{
+  "description": "A deployment without auth wired: every login and token path answers unavailable and the read routes are unchanged.",
+  "world": {
+    "seeds": [
+      "http_client_one_version"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device",
+        "json": {
+          "client": "mopm"
+        }
+      },
+      "expect": {
+        "status": 503,
+        "code": "unavailable"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device/poll",
+        "json": {
+          "device_code": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      },
+      "expect": {
+        "status": 503,
+        "code": "unavailable"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/oidc/exchange",
+        "json": {
+          "jwt": "a.b.c",
+          "name": "alpha",
+          "version": "1.0.0"
+        }
+      },
+      "expect": {
+        "status": 503,
+        "code": "unavailable"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens"
+      },
+      "expect": {
+        "status": 503,
+        "code": "unavailable"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "json": {
+          "name": "x"
+        }
+      },
+      "expect": {
+        "status": 503,
+        "code": "unavailable"
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/me/tokens/tok_x"
+      },
+      "expect": {
+        "status": 503,
+        "code": "unavailable"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client"
+      },
+      "expect": {
+        "status": 200
+      }
+    }
+  ]
+}
