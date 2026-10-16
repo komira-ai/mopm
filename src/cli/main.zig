@@ -94,7 +94,7 @@ const usage =
     \\                          (default: this host)
     \\
     \\planned (not implemented yet):
-    \  cov check export launch
+    \\  cov check export launch
     \\
 ;
 
