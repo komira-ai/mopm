@@ -21,7 +21,7 @@
       "subdir": "linux-64",
       "channel": "conda-forge",
       "path": "linux-64/_openmp_mutex-4.5-20_gnu.conda",
-      "sha256": "1dd3fffd892081df9726d7eb7e0dea6198962ba775bd88842135a4ddb4deb3c9",
+      "sha256": "0dd3fffd892081df9726d7eb7e0dea6198962ba775bd88842135a4ddb4deb3c9",
       "md5": "a9f577daf3de00bca7c3c76c0ecbd1de",
       "size": 28948,
       "depends": [
