@@ -1,0 +1,2482 @@
+[
+  {
+    "adapter": "store",
+    "method": "createPackage",
+    "args": [
+      {
+        "name": "http_client",
+        "state": "active",
+        "created_at": "2026-10-01T09:00:00Z",
+        "repository": "https://github.com/example/http_client",
+        "license": "Apache-2.0",
+        "description": "HTTP/1.1 client",
+        "keywords": [
+          "http",
+          "client"
+        ]
+      }
+    ],
+    "replies": [
+      {
+        "body": {}
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "PutItem",
+          "body": {
+            "ConditionExpression": "attribute_not_exists(#n)",
+            "ExpressionAttributeNames": {
+              "#n": "name"
+            },
+            "Item": {
+              "name": {
+                "S": "http_client"
+              },
+              "state": {
+                "S": "active"
+              },
+              "created_at": {
+                "S": "2026-10-01T09:00:00Z"
+              },
+              "repository": {
+                "S": "https://github.com/example/http_client"
+              },
+              "license": {
+                "S": "Apache-2.0"
+              },
+              "description": {
+                "S": "HTTP/1.1 client"
+              },
+              "keywords": {
+                "L": [
+                  {
+                    "S": "http"
+                  },
+                  {
+                    "S": "client"
+                  }
+                ]
+              },
+              "search_bucket": {
+                "S": "all"
+              }
+            },
+            "TableName": "mopm-beta-packages"
+          }
+        }
+      ],
+      "returns": null
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "createPackage",
+    "args": [
+      {
+        "name": "http_client",
+        "state": "active",
+        "created_at": "2026-10-01T09:00:00Z",
+        "repository": "https://github.com/example/http_client",
+        "license": "Apache-2.0",
+        "description": "HTTP/1.1 client",
+        "keywords": [
+          "http",
+          "client"
+        ]
+      }
+    ],
+    "replies": [
+      {
+        "error": "ConditionalCheckFailedException"
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "PutItem",
+          "body": {
+            "ConditionExpression": "attribute_not_exists(#n)",
+            "ExpressionAttributeNames": {
+              "#n": "name"
+            },
+            "Item": {
+              "name": {
+                "S": "http_client"
+              },
+              "state": {
+                "S": "active"
+              },
+              "created_at": {
+                "S": "2026-10-01T09:00:00Z"
+              },
+              "repository": {
+                "S": "https://github.com/example/http_client"
+              },
+              "license": {
+                "S": "Apache-2.0"
+              },
+              "description": {
+                "S": "HTTP/1.1 client"
+              },
+              "keywords": {
+                "L": [
+                  {
+                    "S": "http"
+                  },
+                  {
+                    "S": "client"
+                  }
+                ]
+              },
+              "search_bucket": {
+                "S": "all"
+              }
+            },
+            "TableName": "mopm-beta-packages"
+          }
+        }
+      ],
+      "throws": {
+        "name": "RegistryError",
+        "code": "name_taken"
+      }
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "getPackage",
+    "args": [
+      "http_client"
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "name": "http_client",
+            "state": "active",
+            "created_at": "2026-10-01T09:00:00Z",
+            "repository": "https://github.com/example/http_client",
+            "license": "Apache-2.0",
+            "description": "HTTP/1.1 client",
+            "keywords": [
+              "http",
+              "client"
+            ],
+            "search_bucket": "all"
+          }
+        }
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "Key": {
+              "name": {
+                "S": "http_client"
+              }
+            },
+            "TableName": "mopm-beta-packages"
+          }
+        }
+      ],
+      "returns": {
+        "name": "http_client",
+        "state": "active",
+        "created_at": "2026-10-01T09:00:00Z",
+        "repository": "https://github.com/example/http_client",
+        "license": "Apache-2.0",
+        "description": "HTTP/1.1 client",
+        "keywords": [
+          "http",
+          "client"
+        ]
+      }
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "getPackage",
+    "args": [
+      "nosuch"
+    ],
+    "replies": [
+      {
+        "body": {}
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "Key": {
+              "name": {
+                "S": "nosuch"
+              }
+            },
+            "TableName": "mopm-beta-packages"
+          }
+        }
+      ],
+      "returns": null
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "listPackageNames",
+    "args": [],
+    "replies": [
+      {
+        "body": {
+          "Items": [
+            {
+              "name": "zeta"
+            },
+            {
+              "name": "alpha"
+            }
+          ],
+          "LastEvaluatedKey": {
+            "name": "alpha"
+          }
+        }
+      },
+      {
+        "body": {
+          "Items": [
+            {
+              "name": "mid"
+            }
+          ]
+        }
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "Scan",
+          "body": {
+            "ExpressionAttributeNames": {
+              "#n": "name"
+            },
+            "ProjectionExpression": "#n",
+            "TableName": "mopm-beta-packages"
+          }
+        },
+        {
+          "target": "Scan",
+          "body": {
+            "ExclusiveStartKey": {
+              "name": {
+                "S": "alpha"
+              }
+            },
+            "ExpressionAttributeNames": {
+              "#n": "name"
+            },
+            "ProjectionExpression": "#n",
+            "TableName": "mopm-beta-packages"
+          }
+        }
+      ],
+      "returns": [
+        "alpha",
+        "mid",
+        "zeta"
+      ]
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "searchPackages",
+    "args": [
+      "http",
+      "http_client",
+      3
+    ],
+    "replies": [
+      {
+        "body": {
+          "Items": [
+            {
+              "search_bucket": "all",
+              "name": "http_core",
+              "state": "claimed",
+              "created_at": "2026-10-02T09:00:00Z"
+            },
+            {
+              "search_bucket": "all",
+              "name": "http_server",
+              "state": "active",
+              "created_at": "2026-10-03T09:00:00Z",
+              "description": "server"
+            }
+          ]
+        }
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "Query",
+          "body": {
+            "ExclusiveStartKey": {
+              "search_bucket": {
+                "S": "all"
+              },
+              "name": {
+                "S": "http_client"
+              }
+            },
+            "ExpressionAttributeNames": {
+              "#b": "search_bucket",
+              "#n": "name"
+            },
+            "ExpressionAttributeValues": {
+              ":b": {
+                "S": "all"
+              },
+              ":p": {
+                "S": "http"
+              }
+            },
+            "IndexName": "by_search_bucket",
+            "KeyConditionExpression": "#b = :b AND begins_with(#n, :p)",
+            "Limit": 3,
+            "TableName": "mopm-beta-packages"
+          }
+        }
+      ],
+      "returns": [
+        {
+          "name": "http_core",
+          "state": "claimed",
+          "created_at": "2026-10-02T09:00:00Z"
+        },
+        {
+          "name": "http_server",
+          "state": "active",
+          "created_at": "2026-10-03T09:00:00Z",
+          "description": "server"
+        }
+      ]
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "searchPackages",
+    "args": [
+      "",
+      null,
+      5
+    ],
+    "replies": [
+      {
+        "body": {
+          "Items": [
+            {
+              "search_bucket": "all",
+              "name": "aa_first",
+              "state": "claimed",
+              "created_at": "2026-10-13T12:00:00Z"
+            }
+          ],
+          "LastEvaluatedKey": {
+            "search_bucket": "all",
+            "name": "aa_first"
+          }
+        }
+      },
+      {
+        "body": {
+          "Items": [
+            {
+              "search_bucket": "all",
+              "name": "tls",
+              "state": "claimed",
+              "created_at": "2026-10-13T12:00:00Z"
+            }
+          ]
+        }
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "Query",
+          "body": {
+            "ExclusiveStartKey": {
+              "search_bucket": {
+                "S": "all"
+              },
+              "name": {
+                "NULL": true
+              }
+            },
+            "ExpressionAttributeNames": {
+              "#b": "search_bucket"
+            },
+            "ExpressionAttributeValues": {
+              ":b": {
+                "S": "all"
+              }
+            },
+            "IndexName": "by_search_bucket",
+            "KeyConditionExpression": "#b = :b",
+            "Limit": 5,
+            "TableName": "mopm-beta-packages"
+          }
+        },
+        {
+          "target": "Query",
+          "body": {
+            "ExclusiveStartKey": {
+              "search_bucket": {
+                "S": "all"
+              },
+              "name": {
+                "S": "aa_first"
+              }
+            },
+            "ExpressionAttributeNames": {
+              "#b": "search_bucket"
+            },
+            "ExpressionAttributeValues": {
+              ":b": {
+                "S": "all"
+              }
+            },
+            "IndexName": "by_search_bucket",
+            "KeyConditionExpression": "#b = :b",
+            "Limit": 4,
+            "TableName": "mopm-beta-packages"
+          }
+        }
+      ],
+      "returns": [
+        {
+          "name": "aa_first",
+          "state": "claimed",
+          "created_at": "2026-10-13T12:00:00Z"
+        },
+        {
+          "name": "tls",
+          "state": "claimed",
+          "created_at": "2026-10-13T12:00:00Z"
+        }
+      ]
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "createVersion",
+    "args": [
+      {
+        "name": "http_client",
+        "version": "0.4.0",
+        "canonical": "0.4.0",
+        "build": "mojo1.0.0_0",
+        "state": "published",
+        "published_at": "2026-10-13T12:00:00Z",
+        "published_by": "octocat",
+        "requires_mojo": "==1.0.0",
+        "deps": [
+          {
+            "name": "http_core",
+            "range": ">=1.2,<2"
+          }
+        ],
+        "native": [
+          {
+            "id": "crypto",
+            "soname": "libcrypto_native.so.1"
+          }
+        ],
+        "files": [
+          {
+            "subdir": "linux-64",
+            "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 123456,
+            "url": "channel-url/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "provenance": {
+          "kind": "oidc",
+          "repository": "https://github.com/example/http_client",
+          "workflow_ref": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+        },
+        "rev": 0
+      },
+      {
+        "name": "http_client",
+        "ts": "2026-10-13T12:00:00Z",
+        "id": "id000001",
+        "actor": "u:583231",
+        "action": "publish",
+        "version": "0.4.0"
+      }
+    ],
+    "replies": [
+      {
+        "body": {}
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "TransactWriteItems",
+          "body": {
+            "ClientRequestToken": "<uuid>",
+            "TransactItems": [
+              {
+                "Put": {
+                  "ConditionExpression": "attribute_not_exists(#n)",
+                  "ExpressionAttributeNames": {
+                    "#n": "name"
+                  },
+                  "Item": {
+                    "name": {
+                      "S": "http_client"
+                    },
+                    "build": {
+                      "S": "mojo1.0.0_0"
+                    },
+                    "state": {
+                      "S": "published"
+                    },
+                    "published_at": {
+                      "S": "2026-10-13T12:00:00Z"
+                    },
+                    "published_by": {
+                      "S": "octocat"
+                    },
+                    "requires_mojo": {
+                      "S": "==1.0.0"
+                    },
+                    "deps": {
+                      "L": [
+                        {
+                          "M": {
+                            "name": {
+                              "S": "http_core"
+                            },
+                            "range": {
+                              "S": ">=1.2,<2"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "native": {
+                      "L": [
+                        {
+                          "M": {
+                            "id": {
+                              "S": "crypto"
+                            },
+                            "soname": {
+                              "S": "libcrypto_native.so.1"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "files": {
+                      "L": [
+                        {
+                          "M": {
+                            "subdir": {
+                              "S": "linux-64"
+                            },
+                            "filename": {
+                              "S": "mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+                            },
+                            "sha256": {
+                              "S": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                            },
+                            "size": {
+                              "N": "123456"
+                            },
+                            "url": {
+                              "S": "channel-url/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "manifest_sha256": {
+                      "S": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    },
+                    "provenance": {
+                      "M": {
+                        "kind": {
+                          "S": "oidc"
+                        },
+                        "repository": {
+                          "S": "https://github.com/example/http_client"
+                        },
+                        "workflow_ref": {
+                          "S": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+                        }
+                      }
+                    },
+                    "rev": {
+                      "N": "0"
+                    },
+                    "version": {
+                      "S": "0.4.0"
+                    },
+                    "version_spelling": {
+                      "S": "0.4.0"
+                    }
+                  },
+                  "TableName": "mopm-beta-versions"
+                }
+              },
+              {
+                "Put": {
+                  "ConditionExpression": "attribute_not_exists(#n)",
+                  "ExpressionAttributeNames": {
+                    "#n": "name"
+                  },
+                  "Item": {
+                    "name": {
+                      "S": "http_client"
+                    },
+                    "ts": {
+                      "S": "2026-10-13T12:00:00Z"
+                    },
+                    "id": {
+                      "S": "id000001"
+                    },
+                    "actor": {
+                      "S": "u:583231"
+                    },
+                    "action": {
+                      "S": "publish"
+                    },
+                    "version": {
+                      "S": "0.4.0"
+                    },
+                    "ts_seq": {
+                      "S": "2026-10-13T12:00:00Z#id000001"
+                    }
+                  },
+                  "TableName": "mopm-beta-audit"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "returns": null
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "createVersion",
+    "args": [
+      {
+        "name": "http_client",
+        "version": "0.4.0",
+        "canonical": "0.4.0",
+        "build": "mojo1.0.0_0",
+        "state": "published",
+        "published_at": "2026-10-13T12:00:00Z",
+        "published_by": "octocat",
+        "requires_mojo": "==1.0.0",
+        "deps": [
+          {
+            "name": "http_core",
+            "range": ">=1.2,<2"
+          }
+        ],
+        "native": [
+          {
+            "id": "crypto",
+            "soname": "libcrypto_native.so.1"
+          }
+        ],
+        "files": [
+          {
+            "subdir": "linux-64",
+            "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 123456,
+            "url": "channel-url/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "provenance": {
+          "kind": "oidc",
+          "repository": "https://github.com/example/http_client",
+          "workflow_ref": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+        },
+        "rev": 0
+      },
+      {
+        "name": "http_client",
+        "ts": "2026-10-13T12:00:00Z",
+        "id": "id000001",
+        "actor": "u:583231",
+        "action": "publish",
+        "version": "0.4.0"
+      }
+    ],
+    "replies": [
+      {
+        "error": "TransactionCanceledException",
+        "reasons": [
+          "ConditionalCheckFailed",
+          "None"
+        ]
+      },
+      {
+        "body": {
+          "Item": {
+            "name": "http_client",
+            "build": "mojo1.0.0_0",
+            "state": "published",
+            "published_at": "2026-10-13T12:00:00Z",
+            "published_by": "octocat",
+            "requires_mojo": "==1.0.0",
+            "deps": [
+              {
+                "name": "http_core",
+                "range": ">=1.2,<2"
+              }
+            ],
+            "native": [
+              {
+                "id": "crypto",
+                "soname": "libcrypto_native.so.1"
+              }
+            ],
+            "files": [
+              {
+                "subdir": "linux-64",
+                "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 123456,
+                "url": "channel-url/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+              }
+            ],
+            "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "provenance": {
+              "kind": "oidc",
+              "repository": "https://github.com/example/http_client",
+              "workflow_ref": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+            },
+            "rev": 0,
+            "version": "0.4.0",
+            "version_spelling": "0.4.0"
+          }
+        }
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "TransactWriteItems",
+          "body": {
+            "ClientRequestToken": "<uuid>",
+            "TransactItems": [
+              {
+                "Put": {
+                  "ConditionExpression": "attribute_not_exists(#n)",
+                  "ExpressionAttributeNames": {
+                    "#n": "name"
+                  },
+                  "Item": {
+                    "name": {
+                      "S": "http_client"
+                    },
+                    "build": {
+                      "S": "mojo1.0.0_0"
+                    },
+                    "state": {
+                      "S": "published"
+                    },
+                    "published_at": {
+                      "S": "2026-10-13T12:00:00Z"
+                    },
+                    "published_by": {
+                      "S": "octocat"
+                    },
+                    "requires_mojo": {
+                      "S": "==1.0.0"
+                    },
+                    "deps": {
+                      "L": [
+                        {
+                          "M": {
+                            "name": {
+                              "S": "http_core"
+                            },
+                            "range": {
+                              "S": ">=1.2,<2"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "native": {
+                      "L": [
+                        {
+                          "M": {
+                            "id": {
+                              "S": "crypto"
+                            },
+                            "soname": {
+                              "S": "libcrypto_native.so.1"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "files": {
+                      "L": [
+                        {
+                          "M": {
+                            "subdir": {
+                              "S": "linux-64"
+                            },
+                            "filename": {
+                              "S": "mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+                            },
+                            "sha256": {
+                              "S": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                            },
+                            "size": {
+                              "N": "123456"
+                            },
+                            "url": {
+                              "S": "channel-url/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "manifest_sha256": {
+                      "S": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    },
+                    "provenance": {
+                      "M": {
+                        "kind": {
+                          "S": "oidc"
+                        },
+                        "repository": {
+                          "S": "https://github.com/example/http_client"
+                        },
+                        "workflow_ref": {
+                          "S": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+                        }
+                      }
+                    },
+                    "rev": {
+                      "N": "0"
+                    },
+                    "version": {
+                      "S": "0.4.0"
+                    },
+                    "version_spelling": {
+                      "S": "0.4.0"
+                    }
+                  },
+                  "TableName": "mopm-beta-versions"
+                }
+              },
+              {
+                "Put": {
+                  "ConditionExpression": "attribute_not_exists(#n)",
+                  "ExpressionAttributeNames": {
+                    "#n": "name"
+                  },
+                  "Item": {
+                    "name": {
+                      "S": "http_client"
+                    },
+                    "ts": {
+                      "S": "2026-10-13T12:00:00Z"
+                    },
+                    "id": {
+                      "S": "id000001"
+                    },
+                    "actor": {
+                      "S": "u:583231"
+                    },
+                    "action": {
+                      "S": "publish"
+                    },
+                    "version": {
+                      "S": "0.4.0"
+                    },
+                    "ts_seq": {
+                      "S": "2026-10-13T12:00:00Z#id000001"
+                    }
+                  },
+                  "TableName": "mopm-beta-audit"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "name": {
+                "S": "http_client"
+              },
+              "version": {
+                "S": "0.4.0"
+              }
+            },
+            "TableName": "mopm-beta-versions"
+          }
+        }
+      ],
+      "throws": {
+        "name": "RegistryError",
+        "code": "version_exists"
+      }
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "getVersion",
+    "args": [
+      "http_client",
+      "0.4.0"
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "name": "http_client",
+            "build": "mojo1.0.0_0",
+            "state": "published",
+            "published_at": "2026-10-13T12:00:00Z",
+            "published_by": "octocat",
+            "requires_mojo": "==1.0.0",
+            "deps": [
+              {
+                "name": "http_core",
+                "range": ">=1.2,<2"
+              }
+            ],
+            "native": [
+              {
+                "id": "crypto",
+                "soname": "libcrypto_native.so.1"
+              }
+            ],
+            "files": [
+              {
+                "subdir": "linux-64",
+                "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 123456,
+                "url": "channel-url/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+              }
+            ],
+            "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "provenance": {
+              "kind": "oidc",
+              "repository": "https://github.com/example/http_client",
+              "workflow_ref": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+            },
+            "rev": 0,
+            "version": "0.4.0",
+            "version_spelling": "0.4.0"
+          }
+        }
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "name": {
+                "S": "http_client"
+              },
+              "version": {
+                "S": "0.4.0"
+              }
+            },
+            "TableName": "mopm-beta-versions"
+          }
+        }
+      ],
+      "returns": {
+        "name": "http_client",
+        "build": "mojo1.0.0_0",
+        "state": "published",
+        "published_at": "2026-10-13T12:00:00Z",
+        "published_by": "octocat",
+        "requires_mojo": "==1.0.0",
+        "deps": [
+          {
+            "name": "http_core",
+            "range": ">=1.2,<2"
+          }
+        ],
+        "native": [
+          {
+            "id": "crypto",
+            "soname": "libcrypto_native.so.1"
+          }
+        ],
+        "files": [
+          {
+            "subdir": "linux-64",
+            "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 123456,
+            "url": "channel-url/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "provenance": {
+          "kind": "oidc",
+          "repository": "https://github.com/example/http_client",
+          "workflow_ref": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+        },
+        "rev": 0,
+        "version": "0.4.0",
+        "canonical": "0.4.0"
+      }
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "getVersion",
+    "args": [
+      "http_client",
+      "0.5.0"
+    ],
+    "replies": [
+      {
+        "body": {}
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "name": {
+                "S": "http_client"
+              },
+              "version": {
+                "S": "0.5.0"
+              }
+            },
+            "TableName": "mopm-beta-versions"
+          }
+        }
+      ],
+      "returns": null
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "getPackage",
+    "args": [
+      "http_client"
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "name": "http_client",
+            "state": "active",
+            "created_at": "2026-10-01T09:00:00Z",
+            "repository": "https://github.com/example/http_client",
+            "license": "Apache-2.0",
+            "description": "HTTP/1.1 client",
+            "keywords": [
+              "http",
+              "client"
+            ],
+            "search_bucket": "all",
+            "builds": [
+              {
+                "fingerprint": "f",
+                "platform": "linux-64"
+              }
+            ],
+            "future_field": 1
+          }
+        }
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "Key": {
+              "name": {
+                "S": "http_client"
+              }
+            },
+            "TableName": "mopm-beta-packages"
+          }
+        }
+      ],
+      "returns": {
+        "name": "http_client",
+        "state": "active",
+        "created_at": "2026-10-01T09:00:00Z",
+        "repository": "https://github.com/example/http_client",
+        "license": "Apache-2.0",
+        "description": "HTTP/1.1 client",
+        "keywords": [
+          "http",
+          "client"
+        ],
+        "builds": [
+          {
+            "fingerprint": "f",
+            "platform": "linux-64"
+          }
+        ],
+        "future_field": 1
+      }
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "getVersion",
+    "args": [
+      "http_client",
+      "0.4.0"
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "name": "http_client",
+            "build": "mojo1.0.0_0",
+            "state": "published",
+            "published_at": "2026-10-13T12:00:00Z",
+            "published_by": "octocat",
+            "requires_mojo": "==1.0.0",
+            "deps": [
+              {
+                "name": "http_core",
+                "range": ">=1.2,<2"
+              }
+            ],
+            "native": [
+              {
+                "id": "crypto",
+                "soname": "libcrypto_native.so.1"
+              }
+            ],
+            "files": [
+              {
+                "subdir": "linux-64",
+                "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 123456,
+                "url": "channel-url/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+              }
+            ],
+            "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "provenance": {
+              "kind": "oidc",
+              "repository": "https://github.com/example/http_client",
+              "workflow_ref": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+            },
+            "rev": 0,
+            "version": "0.4.0",
+            "version_spelling": "0.4.0",
+            "builds": [
+              {
+                "fingerprint": "f"
+              }
+            ],
+            "mojo_lines": [
+              "1.0"
+            ],
+            "source_rev": "abc"
+          }
+        }
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "name": {
+                "S": "http_client"
+              },
+              "version": {
+                "S": "0.4.0"
+              }
+            },
+            "TableName": "mopm-beta-versions"
+          }
+        }
+      ],
+      "returns": {
+        "name": "http_client",
+        "build": "mojo1.0.0_0",
+        "state": "published",
+        "published_at": "2026-10-13T12:00:00Z",
+        "published_by": "octocat",
+        "requires_mojo": "==1.0.0",
+        "deps": [
+          {
+            "name": "http_core",
+            "range": ">=1.2,<2"
+          }
+        ],
+        "native": [
+          {
+            "id": "crypto",
+            "soname": "libcrypto_native.so.1"
+          }
+        ],
+        "files": [
+          {
+            "subdir": "linux-64",
+            "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 123456,
+            "url": "channel-url/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "provenance": {
+          "kind": "oidc",
+          "repository": "https://github.com/example/http_client",
+          "workflow_ref": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+        },
+        "rev": 0,
+        "builds": [
+          {
+            "fingerprint": "f"
+          }
+        ],
+        "mojo_lines": [
+          "1.0"
+        ],
+        "source_rev": "abc",
+        "version": "0.4.0",
+        "canonical": "0.4.0"
+      }
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "updateVersion",
+    "args": [
+      "http_client",
+      "0.4.0",
+      {
+        "type": "yank",
+        "reason": "crashes on empty body"
+      },
+      {
+        "name": "http_client",
+        "ts": "2026-10-13T12:00:00Z",
+        "id": "id000001",
+        "actor": "u:583231",
+        "action": "publish",
+        "version": "0.4.0"
+      }
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "name": "http_client",
+            "build": "mojo1.0.0_0",
+            "state": "published",
+            "published_at": "2026-10-13T12:00:00Z",
+            "published_by": "octocat",
+            "requires_mojo": "==1.0.0",
+            "deps": [
+              {
+                "name": "http_core",
+                "range": ">=1.2,<2"
+              }
+            ],
+            "native": [
+              {
+                "id": "crypto",
+                "soname": "libcrypto_native.so.1"
+              }
+            ],
+            "files": [
+              {
+                "subdir": "linux-64",
+                "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 123456,
+                "url": "channel-url/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+              }
+            ],
+            "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "provenance": {
+              "kind": "oidc",
+              "repository": "https://github.com/example/http_client",
+              "workflow_ref": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+            },
+            "rev": 0,
+            "version": "0.4.0",
+            "version_spelling": "0.4.0"
+          }
+        }
+      },
+      {
+        "body": {}
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "name": {
+                "S": "http_client"
+              },
+              "version": {
+                "S": "0.4.0"
+              }
+            },
+            "TableName": "mopm-beta-versions"
+          }
+        },
+        {
+          "target": "TransactWriteItems",
+          "body": {
+            "ClientRequestToken": "<uuid>",
+            "TransactItems": [
+              {
+                "Put": {
+                  "ConditionExpression": "#r = :r",
+                  "ExpressionAttributeNames": {
+                    "#r": "rev"
+                  },
+                  "ExpressionAttributeValues": {
+                    ":r": {
+                      "N": "0"
+                    }
+                  },
+                  "Item": {
+                    "name": {
+                      "S": "http_client"
+                    },
+                    "build": {
+                      "S": "mojo1.0.0_0"
+                    },
+                    "state": {
+                      "S": "yanked"
+                    },
+                    "published_at": {
+                      "S": "2026-10-13T12:00:00Z"
+                    },
+                    "published_by": {
+                      "S": "octocat"
+                    },
+                    "requires_mojo": {
+                      "S": "==1.0.0"
+                    },
+                    "deps": {
+                      "L": [
+                        {
+                          "M": {
+                            "name": {
+                              "S": "http_core"
+                            },
+                            "range": {
+                              "S": ">=1.2,<2"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "native": {
+                      "L": [
+                        {
+                          "M": {
+                            "id": {
+                              "S": "crypto"
+                            },
+                            "soname": {
+                              "S": "libcrypto_native.so.1"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "files": {
+                      "L": [
+                        {
+                          "M": {
+                            "subdir": {
+                              "S": "linux-64"
+                            },
+                            "filename": {
+                              "S": "mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+                            },
+                            "sha256": {
+                              "S": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                            },
+                            "size": {
+                              "N": "123456"
+                            },
+                            "url": {
+                              "S": "channel-url/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "manifest_sha256": {
+                      "S": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    },
+                    "provenance": {
+                      "M": {
+                        "kind": {
+                          "S": "oidc"
+                        },
+                        "repository": {
+                          "S": "https://github.com/example/http_client"
+                        },
+                        "workflow_ref": {
+                          "S": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+                        }
+                      }
+                    },
+                    "rev": {
+                      "N": "1"
+                    },
+                    "yank_reason": {
+                      "S": "crashes on empty body"
+                    },
+                    "version": {
+                      "S": "0.4.0"
+                    },
+                    "version_spelling": {
+                      "S": "0.4.0"
+                    }
+                  },
+                  "TableName": "mopm-beta-versions"
+                }
+              },
+              {
+                "Put": {
+                  "ConditionExpression": "attribute_not_exists(#n)",
+                  "ExpressionAttributeNames": {
+                    "#n": "name"
+                  },
+                  "Item": {
+                    "name": {
+                      "S": "http_client"
+                    },
+                    "ts": {
+                      "S": "2026-10-13T12:00:00Z"
+                    },
+                    "id": {
+                      "S": "id000001"
+                    },
+                    "actor": {
+                      "S": "u:583231"
+                    },
+                    "action": {
+                      "S": "publish"
+                    },
+                    "version": {
+                      "S": "0.4.0"
+                    },
+                    "ts_seq": {
+                      "S": "2026-10-13T12:00:00Z#id000001"
+                    }
+                  },
+                  "TableName": "mopm-beta-audit"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "returns": {
+        "name": "http_client",
+        "build": "mojo1.0.0_0",
+        "state": "yanked",
+        "published_at": "2026-10-13T12:00:00Z",
+        "published_by": "octocat",
+        "requires_mojo": "==1.0.0",
+        "deps": [
+          {
+            "name": "http_core",
+            "range": ">=1.2,<2"
+          }
+        ],
+        "native": [
+          {
+            "id": "crypto",
+            "soname": "libcrypto_native.so.1"
+          }
+        ],
+        "files": [
+          {
+            "subdir": "linux-64",
+            "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 123456,
+            "url": "channel-url/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "provenance": {
+          "kind": "oidc",
+          "repository": "https://github.com/example/http_client",
+          "workflow_ref": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+        },
+        "rev": 1,
+        "version": "0.4.0",
+        "canonical": "0.4.0",
+        "yank_reason": "crashes on empty body"
+      }
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "updateVersion",
+    "args": [
+      "http_client",
+      "0.4.0",
+      {
+        "type": "yank",
+        "reason": "crashes on empty body"
+      },
+      {
+        "name": "http_client",
+        "ts": "2026-10-13T12:00:00Z",
+        "id": "id000001",
+        "actor": "u:583231",
+        "action": "publish",
+        "version": "0.4.0"
+      }
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "name": "http_client",
+            "build": "mojo1.0.0_0",
+            "state": "published",
+            "published_at": "2026-10-13T12:00:00Z",
+            "published_by": "octocat",
+            "requires_mojo": "==1.0.0",
+            "deps": [
+              {
+                "name": "http_core",
+                "range": ">=1.2,<2"
+              }
+            ],
+            "native": [
+              {
+                "id": "crypto",
+                "soname": "libcrypto_native.so.1"
+              }
+            ],
+            "files": [
+              {
+                "subdir": "linux-64",
+                "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 123456,
+                "url": "channel-url/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+              }
+            ],
+            "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "provenance": {
+              "kind": "oidc",
+              "repository": "https://github.com/example/http_client",
+              "workflow_ref": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+            },
+            "rev": 0,
+            "version": "0.4.0",
+            "version_spelling": "0.4.0"
+          }
+        }
+      },
+      {
+        "error": "TransactionCanceledException",
+        "reasons": [
+          "ConditionalCheckFailed",
+          "None"
+        ]
+      },
+      {
+        "body": {
+          "Item": {
+            "name": "http_client",
+            "build": "mojo1.0.0_0",
+            "state": "yanked",
+            "published_at": "2026-10-13T12:00:00Z",
+            "published_by": "octocat",
+            "requires_mojo": "==1.0.0",
+            "deps": [
+              {
+                "name": "http_core",
+                "range": ">=1.2,<2"
+              }
+            ],
+            "native": [
+              {
+                "id": "crypto",
+                "soname": "libcrypto_native.so.1"
+              }
+            ],
+            "files": [
+              {
+                "subdir": "linux-64",
+                "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 123456,
+                "url": "channel-url/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+              }
+            ],
+            "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "provenance": {
+              "kind": "oidc",
+              "repository": "https://github.com/example/http_client",
+              "workflow_ref": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+            },
+            "rev": 1,
+            "version": "0.4.0",
+            "version_spelling": "0.4.0",
+            "yank_reason": "other"
+          }
+        }
+      },
+      {
+        "body": {}
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "name": {
+                "S": "http_client"
+              },
+              "version": {
+                "S": "0.4.0"
+              }
+            },
+            "TableName": "mopm-beta-versions"
+          }
+        },
+        {
+          "target": "TransactWriteItems",
+          "body": {
+            "ClientRequestToken": "<uuid>",
+            "TransactItems": [
+              {
+                "Put": {
+                  "ConditionExpression": "#r = :r",
+                  "ExpressionAttributeNames": {
+                    "#r": "rev"
+                  },
+                  "ExpressionAttributeValues": {
+                    ":r": {
+                      "N": "0"
+                    }
+                  },
+                  "Item": {
+                    "name": {
+                      "S": "http_client"
+                    },
+                    "build": {
+                      "S": "mojo1.0.0_0"
+                    },
+                    "state": {
+                      "S": "yanked"
+                    },
+                    "published_at": {
+                      "S": "2026-10-13T12:00:00Z"
+                    },
+                    "published_by": {
+                      "S": "octocat"
+                    },
+                    "requires_mojo": {
+                      "S": "==1.0.0"
+                    },
+                    "deps": {
+                      "L": [
+                        {
+                          "M": {
+                            "name": {
+                              "S": "http_core"
+                            },
+                            "range": {
+                              "S": ">=1.2,<2"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "native": {
+                      "L": [
+                        {
+                          "M": {
+                            "id": {
+                              "S": "crypto"
+                            },
+                            "soname": {
+                              "S": "libcrypto_native.so.1"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "files": {
+                      "L": [
+                        {
+                          "M": {
+                            "subdir": {
+                              "S": "linux-64"
+                            },
+                            "filename": {
+                              "S": "mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+                            },
+                            "sha256": {
+                              "S": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                            },
+                            "size": {
+                              "N": "123456"
+                            },
+                            "url": {
+                              "S": "channel-url/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "manifest_sha256": {
+                      "S": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    },
+                    "provenance": {
+                      "M": {
+                        "kind": {
+                          "S": "oidc"
+                        },
+                        "repository": {
+                          "S": "https://github.com/example/http_client"
+                        },
+                        "workflow_ref": {
+                          "S": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+                        }
+                      }
+                    },
+                    "rev": {
+                      "N": "1"
+                    },
+                    "yank_reason": {
+                      "S": "crashes on empty body"
+                    },
+                    "version": {
+                      "S": "0.4.0"
+                    },
+                    "version_spelling": {
+                      "S": "0.4.0"
+                    }
+                  },
+                  "TableName": "mopm-beta-versions"
+                }
+              },
+              {
+                "Put": {
+                  "ConditionExpression": "attribute_not_exists(#n)",
+                  "ExpressionAttributeNames": {
+                    "#n": "name"
+                  },
+                  "Item": {
+                    "name": {
+                      "S": "http_client"
+                    },
+                    "ts": {
+                      "S": "2026-10-13T12:00:00Z"
+                    },
+                    "id": {
+                      "S": "id000001"
+                    },
+                    "actor": {
+                      "S": "u:583231"
+                    },
+                    "action": {
+                      "S": "publish"
+                    },
+                    "version": {
+                      "S": "0.4.0"
+                    },
+                    "ts_seq": {
+                      "S": "2026-10-13T12:00:00Z#id000001"
+                    }
+                  },
+                  "TableName": "mopm-beta-audit"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "name": {
+                "S": "http_client"
+              },
+              "version": {
+                "S": "0.4.0"
+              }
+            },
+            "TableName": "mopm-beta-versions"
+          }
+        }
+      ],
+      "returns": {
+        "name": "http_client",
+        "build": "mojo1.0.0_0",
+        "state": "yanked",
+        "published_at": "2026-10-13T12:00:00Z",
+        "published_by": "octocat",
+        "requires_mojo": "==1.0.0",
+        "deps": [
+          {
+            "name": "http_core",
+            "range": ">=1.2,<2"
+          }
+        ],
+        "native": [
+          {
+            "id": "crypto",
+            "soname": "libcrypto_native.so.1"
+          }
+        ],
+        "files": [
+          {
+            "subdir": "linux-64",
+            "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 123456,
+            "url": "channel-url/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "provenance": {
+          "kind": "oidc",
+          "repository": "https://github.com/example/http_client",
+          "workflow_ref": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+        },
+        "rev": 1,
+        "yank_reason": "other",
+        "version": "0.4.0",
+        "canonical": "0.4.0"
+      }
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "listVersions",
+    "args": [
+      "http_client"
+    ],
+    "replies": [
+      {
+        "body": {
+          "Items": [
+            {
+              "name": "http_client",
+              "build": "mojo1.0.0_0",
+              "state": "published",
+              "published_at": "2026-10-13T12:00:00Z",
+              "published_by": "octocat",
+              "requires_mojo": "==1.0.0",
+              "deps": [
+                {
+                  "name": "http_core",
+                  "range": ">=1.2,<2"
+                }
+              ],
+              "native": [
+                {
+                  "id": "crypto",
+                  "soname": "libcrypto_native.so.1"
+                }
+              ],
+              "files": [
+                {
+                  "subdir": "linux-64",
+                  "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                  "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "size": 123456,
+                  "url": "channel-url/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+                }
+              ],
+              "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+              "provenance": {
+                "kind": "oidc",
+                "repository": "https://github.com/example/http_client",
+                "workflow_ref": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+              },
+              "rev": 0,
+              "version": "0.4.0",
+              "version_spelling": "0.4.0"
+            }
+          ],
+          "LastEvaluatedKey": {
+            "name": "http_client",
+            "version": "0.4.0"
+          }
+        }
+      },
+      {
+        "body": {
+          "Items": [
+            {
+              "name": "http_client",
+              "build": "mojo1.0.0_0",
+              "state": "published",
+              "published_at": "2026-10-13T12:00:00Z",
+              "published_by": "octocat",
+              "requires_mojo": "==1.0.0",
+              "deps": [
+                {
+                  "name": "http_core",
+                  "range": ">=1.2,<2"
+                }
+              ],
+              "native": [
+                {
+                  "id": "crypto",
+                  "soname": "libcrypto_native.so.1"
+                }
+              ],
+              "files": [
+                {
+                  "subdir": "linux-64",
+                  "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                  "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "size": 123456,
+                  "url": "channel-url/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+                }
+              ],
+              "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+              "provenance": {
+                "kind": "oidc",
+                "repository": "https://github.com/example/http_client",
+                "workflow_ref": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+              },
+              "rev": 0,
+              "version": "0.3.0",
+              "version_spelling": "0.3.0"
+            }
+          ]
+        }
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "Query",
+          "body": {
+            "ConsistentRead": true,
+            "ExpressionAttributeNames": {
+              "#n": "name"
+            },
+            "ExpressionAttributeValues": {
+              ":n": {
+                "S": "http_client"
+              }
+            },
+            "KeyConditionExpression": "#n = :n",
+            "TableName": "mopm-beta-versions"
+          }
+        },
+        {
+          "target": "Query",
+          "body": {
+            "ConsistentRead": true,
+            "ExclusiveStartKey": {
+              "name": {
+                "S": "http_client"
+              },
+              "version": {
+                "S": "0.4.0"
+              }
+            },
+            "ExpressionAttributeNames": {
+              "#n": "name"
+            },
+            "ExpressionAttributeValues": {
+              ":n": {
+                "S": "http_client"
+              }
+            },
+            "KeyConditionExpression": "#n = :n",
+            "TableName": "mopm-beta-versions"
+          }
+        }
+      ],
+      "returns": [
+        {
+          "name": "http_client",
+          "build": "mojo1.0.0_0",
+          "state": "published",
+          "published_at": "2026-10-13T12:00:00Z",
+          "published_by": "octocat",
+          "requires_mojo": "==1.0.0",
+          "deps": [
+            {
+              "name": "http_core",
+              "range": ">=1.2,<2"
+            }
+          ],
+          "native": [
+            {
+              "id": "crypto",
+              "soname": "libcrypto_native.so.1"
+            }
+          ],
+          "files": [
+            {
+              "subdir": "linux-64",
+              "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "size": 123456,
+              "url": "channel-url/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+            }
+          ],
+          "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "provenance": {
+            "kind": "oidc",
+            "repository": "https://github.com/example/http_client",
+            "workflow_ref": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+          },
+          "rev": 0,
+          "version": "0.3.0",
+          "canonical": "0.3.0"
+        },
+        {
+          "name": "http_client",
+          "build": "mojo1.0.0_0",
+          "state": "published",
+          "published_at": "2026-10-13T12:00:00Z",
+          "published_by": "octocat",
+          "requires_mojo": "==1.0.0",
+          "deps": [
+            {
+              "name": "http_core",
+              "range": ">=1.2,<2"
+            }
+          ],
+          "native": [
+            {
+              "id": "crypto",
+              "soname": "libcrypto_native.so.1"
+            }
+          ],
+          "files": [
+            {
+              "subdir": "linux-64",
+              "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "size": 123456,
+              "url": "channel-url/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+            }
+          ],
+          "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "provenance": {
+            "kind": "oidc",
+            "repository": "https://github.com/example/http_client",
+            "workflow_ref": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+          },
+          "rev": 0,
+          "version": "0.4.0",
+          "canonical": "0.4.0"
+        }
+      ]
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "addOwner",
+    "args": [
+      {
+        "name": "http_client",
+        "github_id": 583231,
+        "handle": "octocat",
+        "added_at": "2026-10-01T09:00:00Z"
+      }
+    ],
+    "replies": [
+      {
+        "body": {}
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "PutItem",
+          "body": {
+            "ConditionExpression": "attribute_not_exists(#n)",
+            "ExpressionAttributeNames": {
+              "#n": "name"
+            },
+            "Item": {
+              "name": {
+                "S": "http_client"
+              },
+              "github_id": {
+                "S": "583231"
+              },
+              "handle": {
+                "S": "octocat"
+              },
+              "added_at": {
+                "S": "2026-10-01T09:00:00Z"
+              },
+              "github_id_num": {
+                "N": "583231"
+              }
+            },
+            "TableName": "mopm-beta-owners"
+          }
+        }
+      ],
+      "returns": null
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "addOwner",
+    "args": [
+      {
+        "name": "http_client",
+        "github_id": 583231,
+        "handle": "octocat",
+        "added_at": "2026-10-01T09:00:00Z"
+      }
+    ],
+    "replies": [
+      {
+        "error": "ConditionalCheckFailedException"
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "PutItem",
+          "body": {
+            "ConditionExpression": "attribute_not_exists(#n)",
+            "ExpressionAttributeNames": {
+              "#n": "name"
+            },
+            "Item": {
+              "name": {
+                "S": "http_client"
+              },
+              "github_id": {
+                "S": "583231"
+              },
+              "handle": {
+                "S": "octocat"
+              },
+              "added_at": {
+                "S": "2026-10-01T09:00:00Z"
+              },
+              "github_id_num": {
+                "N": "583231"
+              }
+            },
+            "TableName": "mopm-beta-owners"
+          }
+        }
+      ],
+      "throws": {
+        "name": "RegistryError",
+        "code": "already_owner"
+      }
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "removeOwner",
+    "args": [
+      "http_client",
+      583231
+    ],
+    "replies": [
+      {
+        "body": {}
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "DeleteItem",
+          "body": {
+            "ConditionExpression": "attribute_exists(#n)",
+            "ExpressionAttributeNames": {
+              "#n": "name"
+            },
+            "Key": {
+              "name": {
+                "S": "http_client"
+              },
+              "github_id": {
+                "S": "583231"
+              }
+            },
+            "TableName": "mopm-beta-owners"
+          }
+        }
+      ],
+      "returns": null
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "removeOwner",
+    "args": [
+      "http_client",
+      583231
+    ],
+    "replies": [
+      {
+        "error": "ConditionalCheckFailedException"
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "DeleteItem",
+          "body": {
+            "ConditionExpression": "attribute_exists(#n)",
+            "ExpressionAttributeNames": {
+              "#n": "name"
+            },
+            "Key": {
+              "name": {
+                "S": "http_client"
+              },
+              "github_id": {
+                "S": "583231"
+              }
+            },
+            "TableName": "mopm-beta-owners"
+          }
+        }
+      ],
+      "throws": {
+        "name": "RegistryError",
+        "code": "owner_not_found"
+      }
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "listOwners",
+    "args": [
+      "http_client"
+    ],
+    "replies": [
+      {
+        "body": {
+          "Items": [
+            {
+              "name": "http_client",
+              "handle": "octocat",
+              "added_at": "2026-10-01T09:00:00Z",
+              "github_id": "583231",
+              "github_id_num": 583231
+            },
+            {
+              "name": "http_client",
+              "github_id": "100",
+              "github_id_num": 100,
+              "handle": "first",
+              "added_at": "2026-10-01T09:00:00Z"
+            }
+          ]
+        }
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "Query",
+          "body": {
+            "ConsistentRead": true,
+            "ExpressionAttributeNames": {
+              "#n": "name"
+            },
+            "ExpressionAttributeValues": {
+              ":n": {
+                "S": "http_client"
+              }
+            },
+            "KeyConditionExpression": "#n = :n",
+            "TableName": "mopm-beta-owners"
+          }
+        }
+      ],
+      "returns": [
+        {
+          "name": "http_client",
+          "github_id": 100,
+          "handle": "first",
+          "added_at": "2026-10-01T09:00:00Z"
+        },
+        {
+          "name": "http_client",
+          "github_id": 583231,
+          "handle": "octocat",
+          "added_at": "2026-10-01T09:00:00Z"
+        }
+      ]
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "appendAudit",
+    "args": [
+      {
+        "name": "http_client",
+        "ts": "2026-10-13T12:00:00Z",
+        "id": "id000001",
+        "actor": "u:583231",
+        "action": "publish",
+        "version": "0.4.0"
+      }
+    ],
+    "replies": [
+      {
+        "body": {}
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "PutItem",
+          "body": {
+            "ConditionExpression": "attribute_not_exists(#n)",
+            "ExpressionAttributeNames": {
+              "#n": "name"
+            },
+            "Item": {
+              "name": {
+                "S": "http_client"
+              },
+              "ts": {
+                "S": "2026-10-13T12:00:00Z"
+              },
+              "id": {
+                "S": "id000001"
+              },
+              "actor": {
+                "S": "u:583231"
+              },
+              "action": {
+                "S": "publish"
+              },
+              "version": {
+                "S": "0.4.0"
+              },
+              "ts_seq": {
+                "S": "2026-10-13T12:00:00Z#id000001"
+              }
+            },
+            "TableName": "mopm-beta-audit"
+          }
+        }
+      ],
+      "returns": null
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "listAudit",
+    "args": [
+      "http_client"
+    ],
+    "replies": [
+      {
+        "body": {
+          "Items": [
+            {
+              "name": "http_client",
+              "ts": "2026-10-13T12:00:00Z",
+              "id": "id000001",
+              "actor": "u:583231",
+              "action": "publish",
+              "version": "0.4.0",
+              "ts_seq": "2026-10-13T12:00:00Z#id000001"
+            }
+          ]
+        }
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "Query",
+          "body": {
+            "ConsistentRead": true,
+            "ExpressionAttributeNames": {
+              "#n": "name"
+            },
+            "ExpressionAttributeValues": {
+              ":n": {
+                "S": "http_client"
+              }
+            },
+            "KeyConditionExpression": "#n = :n",
+            "TableName": "mopm-beta-audit"
+          }
+        }
+      ],
+      "returns": [
+        {
+          "name": "http_client",
+          "ts": "2026-10-13T12:00:00Z",
+          "id": "id000001",
+          "actor": "u:583231",
+          "action": "publish",
+          "version": "0.4.0"
+        }
+      ]
+    }
+  }
+]

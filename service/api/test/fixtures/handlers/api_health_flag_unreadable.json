@@ -1,0 +1,58 @@
+{
+  "description": "If the switch cannot be read, health still answers, with the deployment's own value (false here), and logs one error line.",
+  "lambda": "api",
+  "env": {
+    "MOPM_STAGE": "beta"
+  },
+  "dynamo": [
+    {
+      "op": "Get",
+      "table": "mopm-beta-config",
+      "throw": "ThrottlingException",
+      "message": "Rate exceeded"
+    }
+  ],
+  "invocations": [
+    {
+      "event": "events/apigw_get_health.json",
+      "expect": {
+        "returns": {
+          "statusCode": 200,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-health"
+          },
+          "body_json": {
+            "status": "ok",
+            "api_version": "v1",
+            "stage": "beta",
+            "read_only": false
+          }
+        }
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-config",
+        "key": {
+          "key": "read_only"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": [
+      {
+        "stream": "error",
+        "line": {
+          "level": "error",
+          "msg": "read-only switch unreadable",
+          "error": "ThrottlingException: Rate exceeded"
+        }
+      }
+    ]
+  }
+}

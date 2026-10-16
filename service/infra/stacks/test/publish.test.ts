@@ -39,8 +39,8 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
   test('queue visibility is six times the Lambda timeout, as AWS advises for an SQS trigger', () => {
     t.hasResourceProperties('AWS::SQS::Queue', { QueueName: `mopm-${stage}-validate.fifo`, VisibilityTimeout: VALIDATOR_TIMEOUT_SECONDS * 6 });
     t.hasResourceProperties('AWS::SQS::Queue', { QueueName: `mopm-${stage}-index.fifo`, VisibilityTimeout: INDEXER_TIMEOUT_SECONDS * 6 });
-    t.hasResourceProperties('AWS::Lambda::Function', { Handler: 'publish/validator-lambda.handler', Timeout: VALIDATOR_TIMEOUT_SECONDS });
-    t.hasResourceProperties('AWS::Lambda::Function', { Handler: 'publish/indexer-lambda.handler', Timeout: INDEXER_TIMEOUT_SECONDS });
+    t.hasResourceProperties('AWS::Lambda::Function', { Handler: 'publish/validator-lambda.handler', Timeout: VALIDATOR_TIMEOUT_SECONDS, Runtime: 'nodejs22.x' });
+    t.hasResourceProperties('AWS::Lambda::Function', { Handler: 'publish/indexer-lambda.handler', Timeout: INDEXER_TIMEOUT_SECONDS, Runtime: 'nodejs22.x' });
   });
 
   test('the validator has reserved concurrency, so a publish burst cannot starve the read API; the indexer does not', () => {

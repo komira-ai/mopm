@@ -41,6 +41,14 @@ jobs:
           npm ci --ignore-scripts --no-audit --no-fund
           npm run build
           test -f dist/http/lambda.js
+      # The site stack deploys the site build (not committed); its tests and the synth step need it, as deploy.yml does.
+      - name: Build the site (as in deploy.yml)
+        working-directory: site
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          for f in index.html app.html 404.html; do test -f "dist/$f"; done
+          test -d dist/assets
       - run: npm run typecheck
       - run: npm test
       - name: Synth every stage with a dummy account and zone id

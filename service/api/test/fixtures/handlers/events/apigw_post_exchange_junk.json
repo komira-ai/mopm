@@ -1,0 +1,23 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /api/v1/auth/oidc/exchange",
+  "rawPath": "/api/v1/auth/oidc/exchange",
+  "rawQueryString": "",
+  "headers": {
+    "accept": "*/*",
+    "content-type": "application/json",
+    "user-agent": "mopm-test"
+  },
+  "requestContext": {
+    "requestId": "req-junk",
+    "stage": "$default",
+    "http": {
+      "method": "POST",
+      "path": "/api/v1/auth/oidc/exchange",
+      "protocol": "HTTP/1.1",
+      "userAgent": "mopm-test"
+    }
+  },
+  "isBase64Encoded": false,
+  "body": "eyJqd3QiOiJ4IiwibmFtZSI6IkJhZCBOYW1lIiwidmVyc2lvbiI6IjEuMC4wIn0="
+}

@@ -214,6 +214,8 @@ TOKEN_BODY = {"name": "ci", "scopes": ["publish", "yank"], "packages": ["http_cl
 RECIPES = {
     ("getHealth", "prod is up"): lambda f: step("getHealth"),
     ("getHealth", "beta in read-only mode"): read_only,
+    ("getHealth", "prod is up and says which implementation answered"): lambda f: step("getHealth"),
+    ("getHealth", "impl rust is in the contract"): lambda f: step("getHealth"),
     ("startDeviceLogin", "start login"): lambda f: step("startDeviceLogin", body={"client": "mopm 0.0.1"}),
     ("pollDeviceLogin", "poll while pending"): lambda f: poll(f),
     ("pollDeviceLogin", "poll approved"): lambda f: poll(f, "approve"),

@@ -1,0 +1,62 @@
+{
+  "description": "Index messages need type 'index' and a string subdir; anything else is logged with its message id and dropped.",
+  "lambda": "indexer",
+  "env": {
+    "MOPM_STAGE": "beta",
+    "MOPM_CHANNEL_BUCKET": "channel-bucket",
+    "MOPM_DISTRIBUTION_ID": "DIST1"
+  },
+  "invocations": [
+    {
+      "event": {
+        "Records": [
+          {
+            "messageId": "m1",
+            "receiptHandle": "handle-1",
+            "body": "{\"type\":\"validate\",\"publish_id\":\"p\"}",
+            "attributes": {
+              "MessageGroupId": "g"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          },
+          {
+            "messageId": "m2",
+            "receiptHandle": "handle-2",
+            "body": "{\"type\":\"index\"}",
+            "attributes": {
+              "MessageGroupId": "g"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          }
+        ]
+      },
+      "expect": {
+        "returns": null
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [],
+    "aws_http": [],
+    "logs": [
+      {
+        "stream": "error",
+        "line": {
+          "level": "error",
+          "msg": "unrecognised message dropped",
+          "messageId": "m1"
+        }
+      },
+      {
+        "stream": "error",
+        "line": {
+          "level": "error",
+          "msg": "unrecognised message dropped",
+          "messageId": "m2"
+        }
+      }
+    ]
+  }
+}

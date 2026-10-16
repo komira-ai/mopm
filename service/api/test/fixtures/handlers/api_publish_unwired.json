@@ -1,0 +1,36 @@
+{
+  "description": "Without the upload bucket and validate queue in the environment the publish routes are not wired: begin-upload is not an operation (404 route_not_found).",
+  "lambda": "api",
+  "env": {
+    "MOPM_STAGE": "beta"
+  },
+  "invocations": [
+    {
+      "event": "events/apigw_post_begin.json",
+      "expect": {
+        "returns": {
+          "statusCode": 404,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-begin"
+          },
+          "body": "{\"error\":{\"code\":\"route_not_found\",\"message\":\"There is no such operation.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-config",
+        "key": {
+          "key": "read_only"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": []
+  }
+}
