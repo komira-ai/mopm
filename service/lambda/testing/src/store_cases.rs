@@ -156,6 +156,19 @@ pub async fn owners_are_unique_removable_and_listed_by_id<S: Store>(s: S) {
     assert!(s.list_owners("other").await.unwrap().is_empty());
 }
 
+pub async fn owned_packages_are_the_accounts_own_in_name_order<S: Store>(s: S) {
+    let o = |name: &str, id: u64| OwnerRecord { name: name.to_string(), github_id: id, handle: format!("u{id}"), added_at: "2026-10-13T12:00:00Z".to_string() };
+    // Five for 7, so a paged index read has to continue; 70 must not be read as 7.
+    for (name, id) in [("zeta", 7), ("alpha", 7), ("mid_b", 7), ("mid_a", 7), ("omega", 7), ("alpha", 8), ("mid", 8), ("beta", 70)] {
+        s.add_owner(&o(name, id)).await.unwrap();
+    }
+    assert_eq!(s.owned_packages(7).await.unwrap(), ["alpha", "mid_a", "mid_b", "omega", "zeta"], "ascending, all of them, and not 70's");
+    assert_eq!(s.owned_packages(8).await.unwrap(), ["alpha", "mid"]);
+    s.remove_owner("alpha", 7).await.unwrap();
+    assert_eq!(s.owned_packages(7).await.unwrap(), ["mid_a", "mid_b", "omega", "zeta"]);
+    assert!(s.owned_packages(9).await.unwrap().is_empty());
+}
+
 pub async fn audit_lists_oldest_first_by_time_then_id<S: Store>(s: S) {
     let mut late = audit("p", "late", None);
     late.ts = "2026-10-13T12:00:05Z".to_string();
@@ -243,6 +256,7 @@ macro_rules! store_contract_tests {
             search_packages_prefix_order_after_limit_and_summary_fields,
             a_package_without_a_description_has_no_description_key,
             owners_are_unique_removable_and_listed_by_id,
+            owned_packages_are_the_accounts_own_in_name_order,
             audit_lists_oldest_first_by_time_then_id,
             exactly_one_of_two_concurrent_creates_wins,
             six_concurrent_creates_of_one_version_have_one_winner,

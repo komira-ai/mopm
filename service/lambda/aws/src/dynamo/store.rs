@@ -380,6 +380,36 @@ impl Store for DynamoStore {
         Ok(out)
     }
 
+    async fn owned_packages(&self, github_id: u64) -> PortResult<Vec<String>> {
+        let mut found = Vec::new();
+        let mut start: Option<Item> = None;
+        loop {
+            let r = self
+                .client
+                .query()
+                .table_name(&self.tables.owners)
+                .index_name(super::OWNERS_BY_GITHUB_ID)
+                .key_condition_expression("#g = :g")
+                .set_expression_attribute_names(Some(names([("#g", "github_id")])))
+                .set_expression_attribute_values(Some(values([(":g", s(github_id.to_string()))])))
+                .set_exclusive_start_key(start.take())
+                .send()
+                .await
+                .map_err(|e| fault("query owners by account", e))?;
+            for mut item in r.items.unwrap_or_default() {
+                match item.remove("name") {
+                    Some(AttributeValue::S(name)) => found.push(name),
+                    _ => return Err(PortError::fault("an owner row without a string `name`")),
+                }
+            }
+            start = r.last_evaluated_key;
+            if start.is_none() {
+                found.sort();
+                return Ok(found);
+            }
+        }
+    }
+
     async fn append_audit(&self, entry: &AuditEntry) -> PortResult<()> {
         self.put_new(&self.tables.audit, audit_item(entry)?).send().await.map(|_| ()).map_err(|e| fault("put audit", e))
     }

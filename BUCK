@@ -453,6 +453,7 @@ _LINT_PACKAGES = [
     "service/infra/access",
     "service/infra/dns",
     "service/infra/stacks",
+    "service/lambda/auth",
     "service/lambda/aws",
     "service/lambda/core",
     "service/lambda/validate",

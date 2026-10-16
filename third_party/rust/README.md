@@ -52,15 +52,24 @@ support, which keeps the AWS SDK crates one coherent older stack. A newest-first
 `//tools/lambda:sdk_test` (one DynamoDB request signed and read back, and a client of each service crate) are the
 evidence that this link works.
 
+## HTTP and signatures
+
+* `hyper`, `hyper-util`, `hyper-rustls` and `http-body-util` are the one HTTP client of the Lambdas (GitHub's login
+  and its CI identity key set). TLS is the `rustls` and AWS-LC above (`hyper-rustls` with the `aws-lc-rs` feature, so
+  no second crypto library), and the roots are the system's.
+* `jsonwebtoken` is built with `rust_crypto` only: RSA, ECDSA and EdDSA in Rust, no C and no `ring`. Pulling it brought 34 crates
+  (RustCrypto's `rsa`, `p256`, `p384`, `ed25519-dalek`, `rand` 0.8 and their parts), three of them with build scripts
+  (`curve25519-dalek`, `libm`, `num-bigint-dig`). The registry uses RS256 and nothing else.
+
 ## Build scripts
 
-23 of the 216 linked crates have one. Nothing here runs a build script; what it decided for rustc 1.99.0 on
+26 of the 250 linked crates have one. Nothing here runs a build script; what it decided for rustc 1.99.0 on
 x86_64 linux is written down in `cargo/overrides.json`, with a `why` for each entry. They were derived from the
 scripts' own output: `cargo build --locked --target x86_64-unknown-linux-gnu` on a runner under rustc 1.99.0, reading
 each `target/**/build/*/output` (the `cargo:rustc-cfg` lines) and each file written to `OUT_DIR`. Classes:
 
-* **a** only emits cfgs: `aws-lc-rs`, `crc32fast`, `generic-array`, `getrandom` (two versions), `httparse`,
-  `icu_normalizer_data`, `icu_properties_data`, `libc`, `num-traits`, `paste`, `proc-macro2`, `quote`, `rustls`,
+* **a** only emits cfgs: `aws-lc-rs`, `crc32fast`, `curve25519-dalek` (64-bit limbs, the AVX2 backend), `generic-array`, `getrandom` (two versions), `httparse`,
+  `icu_normalizer_data`, `icu_properties_data`, `libc`, `libm`, `num-bigint-dig`, `num-traits`, `paste`, `proc-macro2`, `quote`, `rustls`,
   `serde_json`, `zerocopy`, `zmij`;
 * **b** writes a file the crate includes, checked in as a constant: `serde`, `serde_core`, `thiserror`
   (a module named for the version), `rustversion`, `aws-types` (the rustc version);

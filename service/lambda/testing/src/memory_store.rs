@@ -145,6 +145,11 @@ impl Store for MemoryStore {
         Ok(self.lock().owners.iter().filter(|((n, _), _)| n == name).map(|(_, o)| o.clone()).collect())
     }
 
+    async fn owned_packages(&self, github_id: u64) -> PortResult<Vec<String>> {
+        // `owners` is keyed by (name, id), so the names come out ascending.
+        Ok(self.lock().owners.keys().filter(|(_, id)| *id == github_id).map(|(n, _)| n.clone()).collect())
+    }
+
     async fn append_audit(&self, entry: &AuditEntry) -> PortResult<()> {
         self.lock().audit.push(entry.clone());
         Ok(())
