@@ -1,0 +1,45 @@
+{
+  "description": "http_client (active) with 0.4.0 published.",
+  "packages": [
+    {
+      "name": "http_client",
+      "state": "active",
+      "created_at": "2026-10-01T09:00:00Z"
+    }
+  ],
+  "owners": [],
+  "versions": [
+    {
+      "record": {
+        "canonical": "0.4.0",
+        "build": "mojo1.0.0_0",
+        "state": "published",
+        "published_at": "2026-10-13T12:00:00Z",
+        "requires_mojo": "==1.0.0",
+        "deps": [],
+        "native": [],
+        "files": [
+          {
+            "subdir": "linux-64",
+            "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 1000,
+            "url": "https://conda.example.invalid/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "rev": 0,
+        "name": "http_client",
+        "version": "0.4.0"
+      },
+      "audit": {
+        "name": "http_client",
+        "ts": "2026-10-13T12:00:00Z",
+        "id": "id000003",
+        "actor": "test",
+        "action": "publish",
+        "version": "0.4.0"
+      }
+    }
+  ]
+}

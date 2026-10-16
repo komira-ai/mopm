@@ -1,0 +1,185 @@
+{
+  "description": "The instants at which a rule flips, each tried one millisecond before, at and after: the fresh session (15 minutes, here 12:10:00.000), an API token's expiry, a CI token's expiry.",
+  "world": {
+    "auth": true,
+    "publish": true,
+    "seeds": [
+      "auth_accounts"
+    ]
+  },
+  "steps": [
+    {
+      "set": {
+        "clock": "2026-10-14T12:09:59.999Z"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "edge",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 1
+        }
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:10:00.000Z"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "edge",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 1
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "stale_session"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:10:00.001Z"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "edge",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 1
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "stale_session"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:14:59.999Z"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/pub_x",
+        "token": "mopm_ciwidgetsaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 404,
+        "code": "publish_not_found"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:15:00.000Z"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/pub_x",
+        "token": "mopm_ciwidgetsaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 401,
+        "code": "token_expired"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:15:00.001Z"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/pub_x",
+        "token": "mopm_ciwidgetsaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 401,
+        "code": "token_expired"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:29:59.999Z"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/pub_x",
+        "token": "mopm_apiexpiringaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 404,
+        "code": "publish_not_found"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:30:00.000Z"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/pub_x",
+        "token": "mopm_apiexpiringaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 401,
+        "code": "token_expired"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:30:00.001Z"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/pub_x",
+        "token": "mopm_apiexpiringaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 401,
+        "code": "token_expired"
+      }
+    }
+  ]
+}

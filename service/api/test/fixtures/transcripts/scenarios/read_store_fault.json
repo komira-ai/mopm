@@ -1,0 +1,71 @@
+{
+  "description": "A failing store: an internal_error envelope for each read operation, no detail leaked.",
+  "world": {
+    "seeds": [],
+    "faults": {
+      "store": true
+    }
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages"
+      },
+      "expect": {
+        "status": 500,
+        "code": "internal_error"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client"
+      },
+      "expect": {
+        "status": 500,
+        "code": "internal_error"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/0.4.0"
+      },
+      "expect": {
+        "status": 500,
+        "code": "internal_error"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/versions"
+      },
+      "expect": {
+        "status": 500,
+        "code": "internal_error"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/owners"
+      },
+      "expect": {
+        "status": 500,
+        "code": "internal_error"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/Bad-Name"
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_name"
+      }
+    }
+  ]
+}
