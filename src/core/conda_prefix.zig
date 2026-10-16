@@ -48,25 +48,24 @@ pub fn rewriteBinary(data: []u8, old: []const u8, new: []const u8) error{PrefixT
             return changed;
         };
         const segment = data[at..end];
-        // Replace every occurrence inside the segment, into a scratch copy.
-        var tmp_buf: [8192]u8 = undefined;
-        if (segment.len > tmp_buf.len) return error.PrefixTooLong;
+        // Rewrite in place. A replacement that is not longer than the
+        // placeholder never overtakes the read position, so the segment
+        // needs no scratch copy (and has no length limit: a linker keeps
+        // its whole default script, tens of KiB, as one string).
+        if (new.len > old.len) return error.PrefixTooLong;
         var n: usize = 0;
         var j: usize = 0;
         while (j < segment.len) {
             if (std.mem.startsWith(u8, segment[j..], old)) {
-                if (n + new.len > tmp_buf.len) return error.PrefixTooLong;
-                @memcpy(tmp_buf[n..][0..new.len], new);
+                @memcpy(segment[n..][0..new.len], new);
                 n += new.len;
                 j += old.len;
             } else {
-                tmp_buf[n] = segment[j];
+                segment[n] = segment[j];
                 n += 1;
                 j += 1;
             }
-            if (n > segment.len) return error.PrefixTooLong;
         }
-        @memcpy(data[at..][0..n], tmp_buf[0..n]);
         @memset(data[at + n .. end], 0);
         changed += 1;
         i = end;
@@ -122,6 +121,21 @@ test "binary: a prefix longer than the placeholder is refused, and the data is u
     var data = "/short\x00".*;
     try std.testing.expectError(error.PrefixTooLong, rewriteBinary(&data, "/short", "/a/much/longer/prefix"));
     try std.testing.expectEqualSlices(u8, "/short\x00", &data);
+}
+
+test "binary: a string far longer than any scratch buffer is rewritten" {
+    const a = std.testing.allocator;
+    const ph = "/placeholder_placeholder";
+    const body = "line /placeholder_placeholder/lib\n" ** 2000; // ~68 KB, no NUL inside
+    const data = try a.alloc(u8, body.len + 2);
+    defer a.free(data);
+    data[0] = 0;
+    @memcpy(data[1..][0..body.len], body);
+    data[body.len + 1] = 0;
+    try std.testing.expectEqual(@as(usize, 1), try rewriteBinary(data, ph, "/e"));
+    try std.testing.expect(std.mem.startsWith(u8, data[1..], "line /e/lib\nline /e/lib\n"));
+    try std.testing.expect(std.mem.indexOf(u8, data, "placeholder") == null);
+    try std.testing.expectEqual(@as(u8, 0), data[data.len - 1]);
 }
 
 test "binary: a placeholder with no NUL after it is left alone" {
