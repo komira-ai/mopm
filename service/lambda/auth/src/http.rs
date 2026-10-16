@@ -1,4 +1,5 @@
-//! The one outbound HTTP client of the registry's Lambda: GitHub's OAuth and API hosts. `hyper` on `rustls` (AWS-LC, the same library as the AWS SDK's), system root
+//! The one outbound HTTP client of the registry's Lambda: GitHub's OAuth and API hosts, and the key set of its
+//! CI identity tokens. `hyper` on `rustls` (AWS-LC, the same library as the AWS SDK's), system root
 //! certificates. No redirects are followed, the whole exchange has a deadline, and a response body has a cap.
 //!
 //! [`HttpClient::new`] speaks `https` only. [`HttpClient::with_plain_http`] also accepts `http`, for a test that
