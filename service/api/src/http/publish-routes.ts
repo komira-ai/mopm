@@ -50,7 +50,7 @@ function jsonBody(req: HttpRequest): unknown {
 }
 
 /**
- * The three publish operations: POST /packages/{name}/{version}/files, POST /packages/{name}/{version}/publish
+ * The four publish operations: PUT /packages/{name}/{version}/yank, POST /packages/{name}/{version}/files, POST /packages/{name}/{version}/publish
  * and GET /publishes/{publish_id}. Returns undefined for any other request, which the read router then handles.
  *
  * Order of checks: read-only mode first (a read-only registry says so to everyone, signed in or not), then the
@@ -62,7 +62,8 @@ export async function routePublish(req: HttpRequest, api: PublishApi, requestId:
   const isBegin = req.method === 'POST' && seg.length === 4 && seg[0] === 'packages' && seg[3] === 'files';
   const isCommit = req.method === 'POST' && seg.length === 4 && seg[0] === 'packages' && seg[3] === 'publish';
   const isStatus = req.method === 'GET' && seg.length === 2 && seg[0] === 'publishes';
-  if (!isBegin && !isCommit && !isStatus) return undefined;
+  const isYank = req.method === 'PUT' && seg.length === 4 && seg[0] === 'packages' && seg[3] === 'yank';
+  if (!isBegin && !isCommit && !isStatus && !isYank) return undefined;
 
   try {
     const authorization = req.headers?.authorization;
@@ -70,6 +71,13 @@ export async function routePublish(req: HttpRequest, api: PublishApi, requestId:
       const principal = await api.auth.authenticate(authorization);
       requirePublishScope(principal);
       return respond(200, requestId, await api.service.status(principal, seg[1]!));
+    }
+
+    if (isYank) {
+      // Not gated by read-only mode: a yank changes no files and is what an owner reaches for in an incident (the fake does the same).
+      const principal = await api.auth.authenticate(authorization);
+      authorizeYank(api.auth, principal, seg[1]!, seg[2]!);
+      return respond(200, requestId, await api.service.setYanked(principal, seg[1]!, seg[2]!, jsonBody(req)));
     }
 
     let readOnly: boolean;
@@ -91,6 +99,16 @@ export async function routePublish(req: HttpRequest, api: PublishApi, requestId:
     return respond(202, requestId, await api.service.commit(principal, name, version, body));
   } catch (err) {
     return failure(err, requestId);
+  }
+}
+
+/** `yankToken` or `publishToken` (spec: setYanked): an API token with `yank` or `publish`, or a CI token for exactly this version. */
+function authorizeYank(auth: Authenticator, p: Principal, name: string, version: string): void {
+  try {
+    auth.yankToken(p, name);
+  } catch (err) {
+    if (!(err instanceof AuthError) || err.code !== 'scope_missing') throw err;
+    auth.publishToken(p, name, version);
   }
 }
 

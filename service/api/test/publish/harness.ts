@@ -86,6 +86,7 @@ export class Harness {
       objects: this.objects,
       presigner: new MemoryPresigner(),
       validateQueue: this.validateQueue,
+      indexQueue: this.indexQueue,
       config: this.config,
       now,
       newId: () => (++this.n).toString(16).padStart(32, '0'),
@@ -172,16 +173,16 @@ export class Harness {
     return { res, upload_id: body.upload_id as string, put };
   }
 
-  commit(token: string, name: string, version: string, uploadIds: string[], manifest: string) {
-    return this.call('POST', `/api/v1/packages/${name}/${version}/publish`, token, { upload_ids: uploadIds, manifest_sha256: manifest });
+  commit(token: string, name: string, version: string, uploadIds: string[], manifest: string, extra: Record<string, unknown> = {}) {
+    return this.call('POST', `/api/v1/packages/${name}/${version}/publish`, token, { upload_ids: uploadIds, manifest_sha256: manifest, ...extra });
   }
 
-  /** begin + PUT + commit of one file; returns the publish id. */
-  async publish(token: string, p: Pkg): Promise<string> {
+  /** begin + PUT + commit of one file (`extra`: more fields of the commit body); returns the publish id. */
+  async publish(token: string, p: Pkg, extra: Record<string, unknown> = {}): Promise<string> {
     const u = await this.upload(token, p);
     expect(u.res.statusCode).toBe(200);
     expect(u.put).toBe('ok');
-    const c = await this.commit(token, p.name, p.version, [u.upload_id!], p.manifest);
+    const c = await this.commit(token, p.name, p.version, [u.upload_id!], p.manifest, extra);
     expect(c.statusCode).toBe(202);
     return JSON.parse(c.body).publish_id as string;
   }

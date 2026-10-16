@@ -1,6 +1,6 @@
 import { authTablesFor, DynamoAuthStore, MemoryAuthStore, ownedPackagesFrom } from '../src/auth';
 import type { AuthStore, DeviceLoginRecord, TokenRecord, TrustedPublisher } from '../src/auth';
-import { FakeAuthDoc, LAMBDA_GRANTS, READ_GRANTS } from './auth-fake-doc';
+import { FakeAuthDoc, LAMBDA_GRANTS } from './auth-fake-doc';
 
 // One suite for the AuthStore port, run against the memory adapter (which defines the rules) and the DynamoDB adapter
 // on a strict fake client. The DynamoDB run is under the Lambda's real grants: DeleteItem is not among them, and the
@@ -60,7 +60,7 @@ const CHECKS: Record<string, Check> = {
     eq(await s.getTokenByHash(h(2)), undefined);
   },
   'a CI token has no account: not listed for anyone, found by hash, keeps its single version': async (s) => {
-    const t = tok({ id: 'tok_ci', hash: h(3), kind: 'oidc', github_id: undefined, version: '1.0', issued_to: 'acme/widgets' });
+    const t = tok({ id: 'tok_ci', hash: h(3), kind: 'oidc', github_id: undefined, version: '1.0.0', issued_to: 'acme/widgets' });
     delete t.github_id;
     await s.putToken(t);
     eq(await s.getTokenByHash(h(3)), t);
@@ -182,7 +182,7 @@ describe('the DynamoDB adapter under the Lambda grants', () => {
   });
 
   test('ownedPackagesFrom reads the owners index across pages, only that account', async () => {
-    const doc = new FakeAuthDoc({ pageSize: 2, grants: READ_GRANTS });
+    const doc = new FakeAuthDoc({ pageSize: 2, grants: LAMBDA_GRANTS });
     for (const [n, g] of [['aa', 1], ['bb', 1], ['cc', 1], ['dd', 2]] as const) doc.seed('owners', { name: n, github_id: String(g), github_id_num: g });
     eq((await ownedPackagesFrom(doc, 'mopm-t-owners')(1)).sort(), ['aa', 'bb', 'cc']);
     eq(await ownedPackagesFrom(doc, 'mopm-t-owners')(3), []);

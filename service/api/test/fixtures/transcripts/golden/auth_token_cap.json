@@ -1,0 +1,188 @@
+{
+  "description": "The cap of 50 live API tokens per account: the 50th is created (49 exist), the 51st is refused, revoking one makes room, and a token that has expired no longer counts.",
+  "world": {
+    "auth": true,
+    "seeds": [
+      "auth_fifty_tokens"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"name\":\"fiftieth\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"expires_in_days\":1}"
+      },
+      "response": {
+        "status": 201,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-1"
+          ]
+        ],
+        "body": "{\"id\":\"tok_b2cfec092643607d9ab7d4f1\",\"name\":\"fiftieth\",\"token\":\"mopm_bmuekyt7ts45n4yqfvfgpbfbx3n7qfjsj5witjwd\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"expires_at\":\"2026-10-15T12:00:00.000Z\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"name\":\"fifty first\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"expires_in_days\":1}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-2"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: at most 50 live tokens per account.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/me/tokens/tok_bulk0000",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 204,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-3"
+          ]
+        ],
+        "body": ""
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"name\":\"fifty first\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"expires_in_days\":1}"
+      },
+      "response": {
+        "status": 201,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-4"
+          ]
+        ],
+        "body": "{\"id\":\"tok_001d3a577491aecbe805223f\",\"name\":\"fifty first\",\"token\":\"mopm_lf3jhmgn5idsiqk6pomlluxpbquumy4atw5np5ar\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"expires_at\":\"2026-10-15T12:00:00.000Z\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"name\":\"fifty second\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"expires_in_days\":1}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-5"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: at most 50 live tokens per account.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:09:00.000Z"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-6"
+          ]
+        ],
+        "body": "{\"tokens\":[{\"id\":\"tok_bulk0001\",\"name\":\"bulk 0001\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0002\",\"name\":\"bulk 0002\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0003\",\"name\":\"bulk 0003\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0004\",\"name\":\"bulk 0004\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0005\",\"name\":\"bulk 0005\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0006\",\"name\":\"bulk 0006\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0007\",\"name\":\"bulk 0007\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0008\",\"name\":\"bulk 0008\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0009\",\"name\":\"bulk 0009\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0010\",\"name\":\"bulk 0010\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0011\",\"name\":\"bulk 0011\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0012\",\"name\":\"bulk 0012\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0013\",\"name\":\"bulk 0013\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0014\",\"name\":\"bulk 0014\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0015\",\"name\":\"bulk 0015\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0016\",\"name\":\"bulk 0016\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0017\",\"name\":\"bulk 0017\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0018\",\"name\":\"bulk 0018\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0019\",\"name\":\"bulk 0019\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0020\",\"name\":\"bulk 0020\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0021\",\"name\":\"bulk 0021\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0022\",\"name\":\"bulk 0022\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0023\",\"name\":\"bulk 0023\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0024\",\"name\":\"bulk 0024\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0025\",\"name\":\"bulk 0025\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0026\",\"name\":\"bulk 0026\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0027\",\"name\":\"bulk 0027\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0028\",\"name\":\"bulk 0028\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0029\",\"name\":\"bulk 0029\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0030\",\"name\":\"bulk 0030\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0031\",\"name\":\"bulk 0031\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0032\",\"name\":\"bulk 0032\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0033\",\"name\":\"bulk 0033\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0034\",\"name\":\"bulk 0034\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0035\",\"name\":\"bulk 0035\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0036\",\"name\":\"bulk 0036\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0037\",\"name\":\"bulk 0037\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0038\",\"name\":\"bulk 0038\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0039\",\"name\":\"bulk 0039\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0040\",\"name\":\"bulk 0040\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0041\",\"name\":\"bulk 0041\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0042\",\"name\":\"bulk 0042\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0043\",\"name\":\"bulk 0043\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0044\",\"name\":\"bulk 0044\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0045\",\"name\":\"bulk 0045\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0046\",\"name\":\"bulk 0046\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0047\",\"name\":\"bulk 0047\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_bulk0048\",\"name\":\"bulk 0048\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-10T12:00:00.000Z\",\"expires_at\":\"2027-01-01T00:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_001d3a577491aecbe805223f\",\"name\":\"fifty first\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-14T12:00:00.000Z\",\"expires_at\":\"2026-10-15T12:00:00.000Z\",\"last_used_at\":null},{\"id\":\"tok_b2cfec092643607d9ab7d4f1\",\"name\":\"fiftieth\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"created_at\":\"2026-10-14T12:00:00.000Z\",\"expires_at\":\"2026-10-15T12:00:00.000Z\",\"last_used_at\":null}]}"
+      }
+    }
+  ]
+}

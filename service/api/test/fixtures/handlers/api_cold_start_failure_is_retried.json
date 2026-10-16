@@ -1,0 +1,51 @@
+{
+  "description": "A cold start that fails (no stage) rejects the invocation and leaves nothing configured: the next invocation, with the stage set, succeeds.",
+  "lambda": "api",
+  "env": {},
+  "invocations": [
+    {
+      "event": "events/apigw_get_health.json",
+      "expect": {
+        "rejects": {
+          "name": "Error",
+          "message": "MOPM_STAGE is not set"
+        }
+      }
+    },
+    {
+      "env": {
+        "MOPM_STAGE": "beta"
+      },
+      "event": "events/apigw_get_health.json",
+      "expect": {
+        "returns": {
+          "statusCode": 200,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-health"
+          },
+          "body_json": {
+            "status": "ok",
+            "api_version": "v1",
+            "stage": "beta",
+            "read_only": false
+          }
+        }
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-config",
+        "key": {
+          "key": "read_only"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": []
+  }
+}

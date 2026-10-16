@@ -1,0 +1,10 @@
+# The Node.js the service tests run on: the same release archive as komira's third_party/node
+# (nodejs.org's SHASUMS256.txt lists the sha256). `kpin update` fetches and checks it; the hash
+# and size here are the bootstrap, so `kpin lock` works offline.
+[node]
+version = "24.21.0"
+url     = "https://nodejs.org/dist/v{version}/node-v{version}-{platform}.tar.gz"
+
+[node.platform.linux-x64]
+sha256 = "6e1db87ef58b8819e5d5402eff1536491b18edd8eb7bee5ef7897876e88dc5ff"
+size   = 58088022

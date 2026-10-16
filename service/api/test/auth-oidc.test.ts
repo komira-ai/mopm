@@ -60,7 +60,7 @@ describe('OIDC exchange: the happy path', () => {
     expect(p.github_id).toBeUndefined();
     expect(() => auth.publishToken(p, 'widgets', '1.0.0')).not.toThrow();
     // the same version under conda equality is the same version
-    expect(() => auth.publishToken(p, 'widgets', '1.0')).not.toThrow();
+    expect(() => auth.publishToken(p, 'widgets', '1.0.0')).not.toThrow();
     // the secret is stored hashed only
     expect(JSON.stringify(store.dumpTokens())).not.toContain(r.token);
   });
@@ -82,7 +82,7 @@ describe('OIDC exchange: the happy path', () => {
   test('the minted token expires after 15 minutes: valid at 14:59, token_expired at 15:00', async () => {
     const { oidc, store, tp, clock, auth } = setup();
     await store.addTrustedPublisher(tp);
-    const r = await oidc.exchange({ jwt: signJwt(key, goodClaims(clock)), name: 'widgets', version: '2.0' });
+    const r = await oidc.exchange({ jwt: signJwt(key, goodClaims(clock)), name: 'widgets', version: '2.0.0' });
     clock.advance(15 * 60_000 - 1000);
     await auth.authenticate(`Bearer ${r.token}`);
     clock.advance(1000);
@@ -92,28 +92,28 @@ describe('OIDC exchange: the happy path', () => {
   test('an optional environment: unset on the record accepts any; set requires equality', async () => {
     const { oidc, store, tp, clock } = setup();
     await store.addTrustedPublisher(tp);
-    const withEnv = await oidc.exchange({ jwt: signJwt(key, goodClaims(clock, { environment: 'release' })), name: 'widgets', version: '1.0' });
+    const withEnv = await oidc.exchange({ jwt: signJwt(key, goodClaims(clock, { environment: 'release' })), name: 'widgets', version: '1.0.0' });
     expect(withEnv.name).toBe('widgets');
 
     const s = setup();
     await s.store.addTrustedPublisher({ ...s.tp, environment: 'release' });
-    await s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock, { environment: 'release' })), name: 'widgets', version: '1.0' });
-    await expectRejected(s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock, { environment: 'staging' })), name: 'widgets', version: '1.0' }), 'oidc_not_trusted', 403);
-    await expectRejected(s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock)), name: 'widgets', version: '1.0' }), 'oidc_not_trusted', 403);
+    await s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock, { environment: 'release' })), name: 'widgets', version: '1.0.0' });
+    await expectRejected(s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock, { environment: 'staging' })), name: 'widgets', version: '1.0.0' }), 'oidc_not_trusted', 403);
+    await expectRejected(s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock)), name: 'widgets', version: '1.0.0' }), 'oidc_not_trusted', 403);
   });
 
   test('any one of several trusted publishers is enough', async () => {
     const { oidc, store, tp, clock } = setup();
     await store.addTrustedPublisher({ ...tp, id: 'a', repository_id: '999' });
     await store.addTrustedPublisher({ ...tp, id: 'b' });
-    await expect(oidc.exchange({ jwt: signJwt(key, goodClaims(clock)), name: 'widgets', version: '1.0' })).resolves.toBeDefined();
+    await expect(oidc.exchange({ jwt: signJwt(key, goodClaims(clock)), name: 'widgets', version: '1.0.0' })).resolves.toBeDefined();
   });
 
   test('the audience may be the stage host as well as mopm.dev, when configured', async () => {
     const { oidc, store, tp, clock } = setup({ audiences: ['mopm.dev', 'gamma.mopm.dev'] });
     await store.addTrustedPublisher(tp);
-    await oidc.exchange({ jwt: signJwt(key, goodClaims(clock, { aud: 'gamma.mopm.dev' })), name: 'widgets', version: '1.0' });
-    await oidc.exchange({ jwt: signJwt(key, goodClaims(clock, { aud: ['x', 'mopm.dev'] })), name: 'widgets', version: '1.0' });
+    await oidc.exchange({ jwt: signJwt(key, goodClaims(clock, { aud: 'gamma.mopm.dev' })), name: 'widgets', version: '1.0.0' });
+    await oidc.exchange({ jwt: signJwt(key, goodClaims(clock, { aud: ['x', 'mopm.dev'] })), name: 'widgets', version: '1.0.0' });
   });
 });
 
@@ -166,13 +166,13 @@ describe('OIDC exchange: every refusal, exactly', () => {
 
   test('a package with no trusted publisher: oidc_not_trusted, the same answer as a mismatch', async () => {
     const s = setup();
-    await expectRejected(s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock)), name: 'widgets', version: '1.0' }), 'oidc_not_trusted', 403);
+    await expectRejected(s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock)), name: 'widgets', version: '1.0.0' }), 'oidc_not_trusted', 403);
   });
 
   test('trust is per package: a publisher of one package cannot mint for another', async () => {
     const s = setup();
     await s.store.addTrustedPublisher(s.tp);
-    await expectRejected(s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock)), name: 'widgets2', version: '1.0' }), 'oidc_not_trusted', 403);
+    await expectRejected(s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock)), name: 'widgets2', version: '1.0.0' }), 'oidc_not_trusted', 403);
   });
 
   test('expired token: "token expired", exact at the leeway boundary', async () => {
@@ -180,35 +180,35 @@ describe('OIDC exchange: every refusal, exactly', () => {
     await s.store.addTrustedPublisher(s.tp);
     const mk = (exp: number) => signJwt(key, goodClaims(s.clock, { exp }));
     // leeway is 60s: exp = now - 59 is still accepted, exp = now - 60 is not
-    await s.oidc.exchange({ jwt: mk(s.clock.seconds - 59), name: 'widgets', version: '1.0' });
-    await expectRejected(s.oidc.exchange({ jwt: mk(s.clock.seconds - 60), name: 'widgets', version: '1.0' }), 'oidc_token_invalid', 401, 'token expired');
-    await expectRejected(s.oidc.exchange({ jwt: mk(s.clock.seconds - 3600), name: 'widgets', version: '1.0' }), 'oidc_token_invalid', 401, 'token expired');
+    await s.oidc.exchange({ jwt: mk(s.clock.seconds - 59), name: 'widgets', version: '1.0.0' });
+    await expectRejected(s.oidc.exchange({ jwt: mk(s.clock.seconds - 60), name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'token expired');
+    await expectRejected(s.oidc.exchange({ jwt: mk(s.clock.seconds - 3600), name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'token expired');
   });
 
   test('a token that expires while we hold it is expired when the clock passes exp', async () => {
     const s = setup();
     await s.store.addTrustedPublisher(s.tp);
     const jwt = signJwt(key, goodClaims(s.clock, { exp: s.clock.seconds + 10 }));
-    await s.oidc.exchange({ jwt, name: 'widgets', version: '1.0' });
+    await s.oidc.exchange({ jwt, name: 'widgets', version: '1.0.0' });
     s.clock.advance(80_000);
-    await expectRejected(s.oidc.exchange({ jwt, name: 'widgets', version: '1.0' }), 'oidc_token_invalid', 401, 'token expired');
+    await expectRejected(s.oidc.exchange({ jwt, name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'token expired');
   });
 
   test('not yet valid (nbf) and issued in the future (iat)', async () => {
     const s = setup();
     await s.store.addTrustedPublisher(s.tp);
-    await expectRejected(s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock, { nbf: s.clock.seconds + 3600 })), name: 'widgets', version: '1.0' }), 'oidc_token_invalid', 401, 'token not yet valid');
-    await expectRejected(s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock, { iat: s.clock.seconds + 3600, nbf: undefined })), name: 'widgets', version: '1.0' }), 'oidc_token_invalid', 401, 'token issued in the future');
+    await expectRejected(s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock, { nbf: s.clock.seconds + 3600 })), name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'token not yet valid');
+    await expectRejected(s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock, { iat: s.clock.seconds + 3600, nbf: undefined })), name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'token issued in the future');
   });
 
   test('missing exp, missing iat and missing identity claims are refused', async () => {
     const s = setup();
     await s.store.addTrustedPublisher(s.tp);
     const without = (k: string) => { const g = goodClaims(s.clock); delete g[k]; return signJwt(key, g); };
-    await expectRejected(s.oidc.exchange({ jwt: without('exp'), name: 'widgets', version: '1.0' }), 'oidc_token_invalid', 401, 'missing expiry');
-    await expectRejected(s.oidc.exchange({ jwt: without('iat'), name: 'widgets', version: '1.0' }), 'oidc_token_invalid', 401, 'missing issued-at');
+    await expectRejected(s.oidc.exchange({ jwt: without('exp'), name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'missing expiry');
+    await expectRejected(s.oidc.exchange({ jwt: without('iat'), name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'missing issued-at');
     for (const c of ['repository', 'repository_id', 'repository_owner_id', 'workflow_ref']) {
-      await expectRejected(s.oidc.exchange({ jwt: without(c), name: 'widgets', version: '1.0' }), 'oidc_token_invalid', 401, `missing claim ${c}`);
+      await expectRejected(s.oidc.exchange({ jwt: without(c), name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, `missing claim ${c}`);
     }
   });
 
@@ -217,29 +217,29 @@ describe('OIDC exchange: every refusal, exactly', () => {
     await s.store.addTrustedPublisher(s.tp);
     const [h, , sig] = signJwt(key, goodClaims(s.clock, { repository_id: '999' })).split('.');
     const forgedPayload = Buffer.from(JSON.stringify(goodClaims(s.clock))).toString('base64url');
-    await expectRejected(s.oidc.exchange({ jwt: `${h}.${forgedPayload}.${sig}`, name: 'widgets', version: '1.0' }), 'oidc_token_invalid', 401, 'bad signature');
+    await expectRejected(s.oidc.exchange({ jwt: `${h}.${forgedPayload}.${sig}`, name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'bad signature');
   });
 
   test('bad signature: signed by a different key that claims the trusted kid', async () => {
     const s = setup();
     await s.store.addTrustedPublisher(s.tp);
-    await expectRejected(s.oidc.exchange({ jwt: signJwt(otherKey, goodClaims(s.clock)), name: 'widgets', version: '1.0' }), 'oidc_token_invalid', 401, 'bad signature');
+    await expectRejected(s.oidc.exchange({ jwt: signJwt(otherKey, goodClaims(s.clock)), name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'bad signature');
   });
 
   test('unknown kid: refused as unknown signing key', async () => {
     const s = setup();
     await s.store.addTrustedPublisher(s.tp);
     const unknown = { ...newKey('rotated-away') };
-    await expectRejected(s.oidc.exchange({ jwt: signJwt(unknown, goodClaims(s.clock)), name: 'widgets', version: '1.0' }), 'oidc_token_invalid', 401, 'unknown signing key');
+    await expectRejected(s.oidc.exchange({ jwt: signJwt(unknown, goodClaims(s.clock)), name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'unknown signing key');
   });
 
   test('algorithm "none" and HS256 (key confusion) are refused before any key is used', async () => {
     const s = setup();
     await s.store.addTrustedPublisher(s.tp);
     const claims = goodClaims(s.clock);
-    await expectRejected(s.oidc.exchange({ jwt: rawJwt({ alg: 'none', kid: 'k1' }, claims, ''), name: 'widgets', version: '1.0' }), 'oidc_token_invalid', 401, 'unsupported algorithm');
-    await expectRejected(s.oidc.exchange({ jwt: rawJwt({ alg: 'HS256', kid: 'k1' }, claims), name: 'widgets', version: '1.0' }), 'oidc_token_invalid', 401, 'unsupported algorithm');
-    await expectRejected(s.oidc.exchange({ jwt: rawJwt({ alg: 'RS512', kid: 'k1' }, claims), name: 'widgets', version: '1.0' }), 'oidc_token_invalid', 401, 'unsupported algorithm');
+    await expectRejected(s.oidc.exchange({ jwt: rawJwt({ alg: 'none', kid: 'k1' }, claims, ''), name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'unsupported algorithm');
+    await expectRejected(s.oidc.exchange({ jwt: rawJwt({ alg: 'HS256', kid: 'k1' }, claims), name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'unsupported algorithm');
+    await expectRejected(s.oidc.exchange({ jwt: rawJwt({ alg: 'RS512', kid: 'k1' }, claims), name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'unsupported algorithm');
     expect(s.fetches()).toBe(0);
   });
 
@@ -247,22 +247,22 @@ describe('OIDC exchange: every refusal, exactly', () => {
     const s = setup();
     await s.store.addTrustedPublisher(s.tp);
     for (const jwt of ['', 'a.b', 'a.b.c.d', '!!!.@@@.###', `${Buffer.from('nope').toString('base64url')}.${Buffer.from('{}').toString('base64url')}.AAAA`, 'x'.repeat(9000)]) {
-      await expectRejected(s.oidc.exchange({ jwt, name: 'widgets', version: '1.0' }), 'oidc_token_invalid', 401, 'malformed token');
+      await expectRejected(s.oidc.exchange({ jwt, name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'malformed token');
     }
-    await expectRejected(s.oidc.exchange({ jwt: rawJwt({ alg: 'RS256' }, goodClaims(s.clock)), name: 'widgets', version: '1.0' }), 'oidc_token_invalid', 401, 'missing key id');
+    await expectRejected(s.oidc.exchange({ jwt: rawJwt({ alg: 'RS256' }, goodClaims(s.clock)), name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'missing key id');
   });
 
   test('a bad package name or version is refused before the token is even looked at', async () => {
     const s = setup();
-    await expectRejected(s.oidc.exchange({ jwt: 'junk', name: 'Not Valid', version: '1.0' }), 'invalid_name', 400);
+    await expectRejected(s.oidc.exchange({ jwt: 'junk', name: 'Not Valid', version: '1.0.0' }), 'invalid_name', 400);
     await expectRejected(s.oidc.exchange({ jwt: 'junk', name: 'widgets', version: 'one' }), 'invalid_version', 400);
   });
 
   test('a refused exchange mints nothing', async () => {
     const s = setup();
     await s.store.addTrustedPublisher(s.tp);
-    await expect(s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock, { aud: 'nope' })), name: 'widgets', version: '1.0' })).rejects.toBeInstanceOf(AuthError);
-    await expect(s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock, { repository_id: '1' })), name: 'widgets', version: '1.0' })).rejects.toBeInstanceOf(AuthError);
+    await expect(s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock, { aud: 'nope' })), name: 'widgets', version: '1.0.0' })).rejects.toBeInstanceOf(AuthError);
+    await expect(s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock, { repository_id: '1' })), name: 'widgets', version: '1.0.0' })).rejects.toBeInstanceOf(AuthError);
     expect(s.store.dumpTokens()).toHaveLength(0);
   });
 });
@@ -271,34 +271,34 @@ describe('JWKS handling', () => {
   test('keys are fetched once and cached across exchanges', async () => {
     const s = setup();
     await s.store.addTrustedPublisher(s.tp);
-    for (let i = 0; i < 3; i++) await s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock)), name: 'widgets', version: '1.0' });
+    for (let i = 0; i < 3; i++) await s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock)), name: 'widgets', version: '1.0.0' });
     expect(s.fetches()).toBe(1);
   });
 
   test('the cache expires after its TTL', async () => {
     const s = setup();
     await s.store.addTrustedPublisher(s.tp);
-    await s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock)), name: 'widgets', version: '1.0' });
+    await s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock)), name: 'widgets', version: '1.0.0' });
     s.clock.advance(10 * 60_000);
-    await s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock)), name: 'widgets', version: '1.0' });
+    await s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock)), name: 'widgets', version: '1.0.0' });
     expect(s.fetches()).toBe(2);
   });
 
   test('a rotated key is picked up by one refetch; unknown kids cannot force a fetch per request', async () => {
     const s = setup();
     await s.store.addTrustedPublisher(s.tp);
-    await s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock)), name: 'widgets', version: '1.0' });
+    await s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock)), name: 'widgets', version: '1.0.0' });
     const rotated = newKey('k2');
     s.setKeys([key.jwk, rotated.jwk]);
     // within the refetch floor an unknown kid is refused without a fetch
-    await expectRejected(s.oidc.exchange({ jwt: signJwt(rotated, goodClaims(s.clock)), name: 'widgets', version: '1.0' }), 'oidc_token_invalid', 401, 'unknown signing key');
+    await expectRejected(s.oidc.exchange({ jwt: signJwt(rotated, goodClaims(s.clock)), name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'unknown signing key');
     expect(s.fetches()).toBe(1);
     // after the floor, one refetch finds it
     s.clock.advance(61_000);
-    await s.oidc.exchange({ jwt: signJwt(rotated, goodClaims(s.clock)), name: 'widgets', version: '1.0' });
+    await s.oidc.exchange({ jwt: signJwt(rotated, goodClaims(s.clock)), name: 'widgets', version: '1.0.0' });
     expect(s.fetches()).toBe(2);
     const junk = newKey('zzz');
-    for (let i = 0; i < 5; i++) await err(s.oidc.exchange({ jwt: signJwt(junk, goodClaims(s.clock)), name: 'widgets', version: '1.0' }));
+    for (let i = 0; i < 5; i++) await err(s.oidc.exchange({ jwt: signJwt(junk, goodClaims(s.clock)), name: 'widgets', version: '1.0.0' }));
     expect(s.fetches()).toBe(2); // five forged kids right after a fetch cost no fetches
   });
 
@@ -307,13 +307,13 @@ describe('JWKS handling', () => {
     const store = new MemoryAuthStore();
     const verifier = new GithubJwtVerifier({ audiences: ['mopm.dev'], now: clock.now, jwks: async () => { throw new Error('down'); } });
     const oidc = new OidcExchange({ store, verifier, now: clock.now });
-    await expectRejected(oidc.exchange({ jwt: signJwt(key, goodClaims(clock)), name: 'widgets', version: '1.0' }), 'unavailable', 503);
+    await expectRejected(oidc.exchange({ jwt: signJwt(key, goodClaims(clock)), name: 'widgets', version: '1.0.0' }), 'unavailable', 503);
   });
 
   test('keys that are not RSA signing keys are ignored', async () => {
     const s = setup({ jwks: [{ kty: 'EC', kid: 'k1' } as Jwk, { ...key.jwk, kid: 'enc', use: 'enc' }, key.jwk] });
     await s.store.addTrustedPublisher(s.tp);
-    await s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock)), name: 'widgets', version: '1.0' });
+    await s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock)), name: 'widgets', version: '1.0.0' });
   });
 });
 

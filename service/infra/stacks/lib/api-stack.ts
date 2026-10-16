@@ -10,7 +10,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import { Construct } from 'constructs';
-import { StageConfig, channelBucketName, oauthSecretName, tableName, validateQueueName } from './config';
+import { StageConfig, channelBucketName, indexQueueName, oauthSecretName, tableName, validateQueueName } from './config';
 import { assertRegion, lookupZone, removalPolicyFor } from './common';
 
 export interface ApiStackProps extends StackProps {
@@ -37,7 +37,10 @@ export const DEFAULT_HANDLER_DIR = path.resolve(__dirname, '../../../api/dist');
 
 /** The read-only tables the handler may use. Grants are GetItem and Query: never a write, never a Scan. */
 export const READ_TABLES = ['packages', 'versions', 'owners', 'audit'] as const;
-/** The indexes the handler may Query, by table. Only these: the other index (owners by_github_id) is not read by the read API. */
+/**
+ * The indexes the read statement may Query, by table. Only the search index: the read API never queries the owners index
+ * (owners by_github_id); token creation does, and AUTH_GRANTS grants it there.
+ */
 export const READ_INDEXES: Record<string, string[]> = { packages: ['by_search_bucket'] };
 /** The read operations of spec/api/openapi.yaml served by the handler. */
 export const READ_ROUTES = [
@@ -54,6 +57,7 @@ export const PUBLISH_ROUTES: Array<{ method: apigw.HttpMethod; path: string }> =
   { method: apigw.HttpMethod.POST, path: '/api/v1/packages/{name}/{version}/files' },
   { method: apigw.HttpMethod.POST, path: '/api/v1/packages/{name}/{version}/publish' },
   { method: apigw.HttpMethod.GET, path: '/api/v1/publishes/{publish_id}' },
+  { method: apigw.HttpMethod.PUT, path: '/api/v1/packages/{name}/{version}/yank' },
 ];
 /**
  * What the handler may write, table by table (the reviewed list; api.test.ts pins it). No DeleteItem, no Scan, no
@@ -82,20 +86,23 @@ export const AUTH_ROUTES: { method: apigw.HttpMethod; path: string }[] = [
  * - users: read and upsert a row at login.
  * - device_logins: start (PutItem), poll (GetItem), record the poll and consume (UpdateItem).
  * - trusted_publishers: read only; nothing in the Lambda registers publishers yet.
+ * - owners: read, and Query on its by_github_id index (POST /me/tokens lists the packages the account owns). The table is
+ *   also in READ_TABLES; an index is a separate resource, so the index ARN is granted here.
  */
 export const AUTH_GRANTS: Record<string, { actions: string[]; indexes?: string[] }> = {
   tokens: { actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:Query'], indexes: ['by_github_id'] },
   users: { actions: ['dynamodb:GetItem', 'dynamodb:PutItem'] },
   device_logins: { actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'] },
   trusted_publishers: { actions: ['dynamodb:GetItem', 'dynamodb:Query'] },
+  owners: { actions: ['dynamodb:GetItem', 'dynamodb:Query'], indexes: ['by_github_id'] },
 };
 
 /** Methods a browser may use on the read API. HEAD and OPTIONS are listed for preflight; only GET routes exist. */
 export const CORS_METHODS = [apigw.CorsHttpMethod.GET, apigw.CorsHttpMethod.HEAD, apigw.CorsHttpMethod.OPTIONS];
 /** How long a browser may cache a preflight answer. */
 export const CORS_MAX_AGE = Duration.hours(1);
-/** The response header a page may read, so it can show the request id with an error. */
-export const CORS_EXPOSED_HEADERS = ['x-mopm-request-id'];
+/** The response headers a page may read: the request id to show with an error, and Retry-After so it can say when to try again after a 429 or a read-only 503. */
+export const CORS_EXPOSED_HEADERS = ['x-mopm-request-id', 'retry-after'];
 /** The one browser origin that may call a stage's API: its own site, over https. Never `*`. */
 export const siteOrigin = (c: StageConfig) => `https://${c.siteDomain}`;
 
@@ -117,9 +124,10 @@ export class ApiStack extends Stack {
       throw new Error(`the API handler bundle is missing at ${handlerDir}; run 'npm ci && npm run build' in service/api first`);
     }
     this.handler = new lambda.Function(this, 'Handler', {
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_22_X,
       handler: 'http/lambda.handler',
-      // AWS SDK v3 comes with the Node.js 20 runtime, so the bundle is only this package's compiled code.
+      // The asset holds one bundled file per handler (esbuild, service/api `npm run build`); the AWS SDK v3 comes with the
+      // Node.js 22 runtime and is the one thing left out. test/bundle.test.ts loads every handler from its asset.
       code: lambda.Code.fromAsset(handlerDir),
       memorySize: 256,
       // Login calls GitHub and Secrets Manager; the gateway allows 30 seconds.
@@ -138,6 +146,8 @@ export class ApiStack extends Stack {
         // references, so this stack does not depend on the publish stack's exports.
         MOPM_CHANNEL_BUCKET: channelBucketName(c.stage, this.account),
         MOPM_VALIDATE_QUEUE_URL: `https://sqs.${this.region}.amazonaws.com/${this.account}/${validateQueueName(c.stage)}`,
+        // Yank and unyank queue a repodata rewrite of the version's subdirs on the index writer's FIFO queue.
+        MOPM_INDEX_QUEUE_URL: `https://sqs.${this.region}.amazonaws.com/${this.account}/${indexQueueName(c.stage)}`,
         ...(props.limits?.ratePerAccountPerDay !== undefined ? { MOPM_RATE_PER_ACCOUNT_DAY: String(props.limits.ratePerAccountPerDay) } : {}),
         ...(props.limits?.ratePerTokenPerDay !== undefined ? { MOPM_RATE_PER_TOKEN_DAY: String(props.limits.ratePerTokenPerDay) } : {}),
       },
@@ -201,6 +211,13 @@ export class ApiStack extends Stack {
         sid: 'QueueCommits',
         actions: ['sqs:SendMessage'],
         resources: [this.formatArn({ service: 'sqs', resource: validateQueueName(c.stage) })],
+      }),
+    );
+    this.handler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: 'QueueIndexRebuilds',
+        actions: ['sqs:SendMessage'],
+        resources: [this.formatArn({ service: 'sqs', resource: indexQueueName(c.stage) })],
       }),
     );
 

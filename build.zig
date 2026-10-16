@@ -32,8 +32,10 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(fake);
 
-    // `zig build test` must be run from the repository root: the golden
-    // tests read tests/fixtures and tests/golden relative to the cwd.
+    // `zig build test` is run from the repository root: the golden tests read
+    // tests/fixtures and tests/golden relative to the cwd, unless
+    // MOPM_SOURCE_ROOT names the root (src/core/testroot.zig), for a runner
+    // that starts the tests somewhere else.
     const test_step = b.step("test", "Run all unit and golden tests");
 
     const core_tests = b.addTest(.{

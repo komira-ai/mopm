@@ -2,59 +2,73 @@ import fc from 'fast-check';
 import { RegistryError } from '../src/errors';
 import { canonicalVersion, compareVersions, isValidVersion, parseVersion, versionsEquivalent } from '../src/version';
 
-describe('version grammar', () => {
-  test.each(['0', '1', '1.0', '1.0.0', '10.20.30', '1.0a1', '1.0b2', '1.0rc10', '1.0dev0', '1.0.0a0'])('accepts %s', (v) => {
+describe('version grammar: MAJOR.MINOR.PATCH only', () => {
+  test.each(['0.0.0', '1.0.0', '0.4.0', '10.20.30', '1.10.100', '99999999999999999999.0.1'])('accepts %s', (v) => {
     expect(isValidVersion(v)).toBe(true);
   });
 
-  test.each(['', '1.', '.1', '01.0', '1.00', 'v1.0', '1.0-1', '1.0.post1', '1.0rc', '1.0a1b2', '1.0a', '1..0', ' 1.0', '1.0 ', '1.0+local', '1!2.0', 'a1', '1.0.0.x', '1.0A1', '1.0a01'])(
-    'rejects %j',
-    (v) => {
-      expect(() => parseVersion(v)).toThrow(RegistryError);
-      expect(() => parseVersion(v)).toThrow(expect.objectContaining({ code: 'invalid_version' }));
-    },
-  );
+  test.each([
+    // not three parts
+    '',
+    '0',
+    '1',
+    '1.0',
+    '1.2.3.4',
+    '1.0.0.0',
+    '1.',
+    '.1',
+    '1..0',
+    '1.0.',
+    // letters: pre-release, post-release, dev and local spellings
+    '1.0rc1',
+    '1.0.0rc1',
+    '1.0.0-rc.1',
+    '1.0.0-rc1',
+    '1.0a1',
+    '1.0.0a1',
+    '1.0.0b2',
+    '1.0.0dev',
+    '1.0.0.dev1',
+    '1.0.0.post1',
+    '1.0.0+local',
+    '1!2.0.0',
+    'dev',
+    'v1.0.0',
+    '1.0.x',
+    '1.0.0A1',
+    // leading zeros, whitespace
+    '01.0.0',
+    '1.00.0',
+    '1.0.00',
+    ' 1.0.0',
+    '1.0.0 ',
+    '1.0.0\n',
+    // digits that are not ASCII digits
+    '1.0.٣',
+  ])('rejects %j with invalid_version', (v) => {
+    expect(isValidVersion(v)).toBe(false);
+    expect(() => parseVersion(v)).toThrow(RegistryError);
+    expect(() => parseVersion(v)).toThrow(expect.objectContaining({ code: 'invalid_version' }));
+  });
 
   test('rejects a version over the length limit', () => {
-    expect(isValidVersion('1.' + '0.'.repeat(100) + '1')).toBe(false);
+    expect(isValidVersion('1.0.' + '9'.repeat(200))).toBe(false);
+  });
+
+  test('a version has one spelling: the canonical form is the version', () => {
+    expect(canonicalVersion('1.2.3')).toBe('1.2.3');
+    expect(() => canonicalVersion('1.2')).toThrow(expect.objectContaining({ code: 'invalid_version' }));
   });
 });
 
-describe('canonical form', () => {
+describe('ordering', () => {
   test.each([
-    ['1.0', '1'],
-    ['1.0.0', '1'],
-    ['1', '1'],
-    ['0', '0'],
-    ['0.0.0', '0'],
-    ['1.0.1', '1.0.1'],
-    ['1.10', '1.10'],
-    ['1.0a1', '1a1'],
-    ['1.0.0a1', '1a1'],
-    ['2.0.0rc3', '2rc3'],
-  ])('%s -> %s', (v, c) => {
-    expect(canonicalVersion(v)).toBe(c);
-  });
-});
-
-describe('equivalence and ordering', () => {
-  test.each([
-    ['1.0', '1.0.0', 0],
-    ['1', '1.0.0.0', 0],
-    ['1.0a1', '1.0.0a1', 0],
-    ['1.0', '1.0.1', -1],
-    ['1.0.1', '1.0', 1],
-    ['1.9', '1.10', -1],
-    ['1.10', '1.9', 1],
-    ['1.0a1', '1.0', -1],
-    ['1.0', '1.0a1', 1],
-    ['1.0.1a1', '1.0', 1],
-    ['1.0dev0', '1.0a0', -1],
-    ['1.0a9', '1.0b0', -1],
-    ['1.0b9', '1.0rc0', -1],
-    ['1.0rc9', '1.0', -1],
-    ['1.0a2', '1.0a10', -1],
-    ['99999999999999999999.0', '99999999999999999998.0', 1],
+    ['1.0.0', '1.0.0', 0],
+    ['1.0.0', '1.0.1', -1],
+    ['1.9.0', '1.10.0', -1],
+    ['1.0.9', '1.0.10', -1],
+    ['2.0.0', '1.99.99', 1],
+    ['99999999999999999999.0.0', '99999999999999999998.0.0', 1],
   ])('compare(%s, %s) = %i', (a, b, want) => {
     expect(compareVersions(a, b)).toBe(want);
     expect(compareVersions(b, a)).toBe(want === 0 ? 0 : -want);
@@ -62,47 +76,26 @@ describe('equivalence and ordering', () => {
   });
 });
 
-const versionArb = fc
-  .tuple(
-    fc.array(fc.nat(30), { minLength: 1, maxLength: 5 }),
-    fc.option(fc.tuple(fc.constantFrom('dev', 'a', 'b', 'rc'), fc.nat(20)), { nil: undefined }),
-  )
-  .map(([rel, pre]) => rel.join('.') + (pre ? `${pre[0]}${pre[1]}` : ''));
+const versionArb = fc.tuple(fc.nat(30), fc.nat(30), fc.nat(30)).map((t) => t.join('.'));
 
 describe('version properties', () => {
-  test('canonical is idempotent', () => {
-    fc.assert(fc.property(versionArb, (v) => canonicalVersion(canonicalVersion(v)) === canonicalVersion(v)));
-  });
-
-  test('padding with zero segments never changes the version', () => {
-    fc.assert(
-      fc.property(versionArb, fc.nat(3), (v, k) => {
-        const m = /^([0-9.]+)(.*)$/.exec(v)!;
-        return versionsEquivalent(v, m[1] + '.0'.repeat(k) + m[2]);
-      }),
-    );
-  });
-
-  test('ordering is antisymmetric, transitive, and equal exactly when canonical forms are', () => {
+  test('ordering is antisymmetric, transitive, and equal exactly when the strings are', () => {
     fc.assert(
       fc.property(versionArb, versionArb, versionArb, (a, b, c) => {
         const ab = compareVersions(a, b);
         const ba = compareVersions(b, a);
         if (ab === 0 ? ba !== 0 : ba !== -ab) return false;
         if (ab <= 0 && compareVersions(b, c) <= 0 && compareVersions(a, c) > 0) return false;
-        return (ab === 0) === (canonicalVersion(a) === canonicalVersion(b));
+        return (ab === 0) === (a === b);
       }),
     );
   });
-});
 
-describe('why equivalence needs the canonical key', () => {
-  // Can-fail proof for the 1.0 vs 1.0.0 rule: keyed on the spelling, both would be accepted.
-  test('a key made from the spelling accepts 1.0 and 1.0.0; the canonical key does not', () => {
-    const bySpelling = new Set<string>();
-    const byCanonical = new Set<string>();
-    const accept = (set: Set<string>, key: string) => (set.has(key) ? false : (set.add(key), true));
-    expect(['1.0', '1.0.0'].map((v) => accept(bySpelling, v))).toEqual([true, true]);
-    expect(['1.0', '1.0.0'].map((v) => accept(byCanonical, canonicalVersion(v)))).toEqual([true, false]);
+  test('anything with a letter or a part count other than three is refused', () => {
+    const bad = fc.oneof(
+      fc.array(fc.nat(30), { minLength: 1, maxLength: 6 }).filter((p) => p.length !== 3).map((p) => p.join('.')),
+      versionArb.chain((v) => fc.constantFrom('a1', 'b2', 'rc3', 'dev', '-rc.1', '.post1', '+x').map((s) => v + s)),
+    );
+    fc.assert(fc.property(bad, (v) => !isValidVersion(v)));
   });
 });

@@ -1,0 +1,132 @@
+{
+  "description": "How the Authorization header is read and what each way of getting it wrong answers, on a route that needs a user token.",
+  "world": {
+    "auth": true,
+    "publish": true,
+    "seeds": [
+      "auth_accounts"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "headers": {
+          "authorization": ""
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "headers": {
+          "authorization": "Bearer"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "headers": {
+          "authorization": "Basic abc"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "headers": {
+          "authorization": "Bearer a b"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "headers": {
+          "authorization": "Bearer nope"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "headers": {
+          "authorization": "Bearer mopm_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "headers": {
+          "authorization": "Bearer MOPM_APIFULLAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "headers": {
+          "authorization": "bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "headers": {
+          "authorization": "Bearer    mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa  "
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_expiredaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 401,
+        "code": "token_expired"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_revokedaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 401,
+        "code": "token_revoked"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_ciwidgetsaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 403,
+        "code": "scope_missing"
+      }
+    }
+  ]
+}

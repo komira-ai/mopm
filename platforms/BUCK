@@ -1,0 +1,17 @@
+load("@komira//tools/build/platforms:defs.bzl", "komira_default_execution_platforms")
+
+# The execution platforms of a standalone checkout (`[build]
+# execution_platforms` in .buckconfig). With no `.buckconfig.local`, every
+# action runs on this machine. When `.buckconfig.local` names the worker
+# property sets of a remote-execution service (`[komira_re]`), every action
+# runs there instead, exactly as `komira_execution_platforms` registers it.
+# `-c komira.execution=local|remote` forces one. See DEVELOPMENT.md.
+#
+# A repository that uses komira as a cell copies this file to its own
+# platforms/BUCK (tools/build/consumer.buckconfig): only the root cell's
+# `[komira_re]` is read, so its platforms live in its root cell.
+
+komira_default_execution_platforms(
+    name = "default",
+    visibility = ["PUBLIC"],
+)

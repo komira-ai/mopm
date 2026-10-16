@@ -1,0 +1,23 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /api/v1/packages/http_client/1.0.0/files",
+  "rawPath": "/api/v1/packages/http_client/1.0.0/files",
+  "rawQueryString": "",
+  "headers": {
+    "accept": "*/*",
+    "content-type": "application/json",
+    "user-agent": "mopm-test"
+  },
+  "requestContext": {
+    "requestId": "req-begin",
+    "stage": "$default",
+    "http": {
+      "method": "POST",
+      "path": "/api/v1/packages/http_client/1.0.0/files",
+      "protocol": "HTTP/1.1",
+      "userAgent": "mopm-test"
+    }
+  },
+  "isBase64Encoded": false,
+  "body": "{\"subdir\":\"noarch\",\"filename\":\"mojo-http_client-1.0.0-mojo1.0.0_0.conda\",\"sha256\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"size\":1}"
+}

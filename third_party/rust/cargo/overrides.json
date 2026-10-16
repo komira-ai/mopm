@@ -1,0 +1,273 @@
+{
+ "rustc": "1.99.0",
+ "crates": {
+  "aws-lc-rs 1.11.1": {
+   "class": "a",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; build.rs only re-exports the DEP_AWS_LC_* variables of aws-lc-sys to its dependents; it emits no cfg.",
+   "cfgs": []
+  },
+  "aws-lc-sys 0.23.1": {
+   "class": "c",
+   "why": "build.rs compiles the bundled AWS-LC with CMake and emits cfg x86_64_unknown_linux_gnu (it selects the pre-generated bindings) and the link of libaws_lc_0_23_1_crypto. Replaced by komira//third_party/aws-lc:crypto, linked into each executable or test (native_deps). That AWS-LC is the same release (1.39.0) but its symbols are komira_awslc_X where the bindings say aws_lc_0_23_1_X, so the prefix in the bindings is rewritten (2579 occurrences, counted); the three ERR_GET_*_RUST C wrappers of rust_wrapper.c become the Rust expressions of the static inline functions they wrap.",
+   "cfgs": [
+    "x86_64_unknown_linux_gnu"
+   ],
+   "native_deps": [
+    "komira//third_party/aws-lc:crypto[static-pic]"
+   ],
+   "patch": {
+    "copy": [
+     "src"
+    ],
+    "sub": [
+     {
+      "file": "src/x86_64_unknown_linux_gnu_crypto.rs",
+      "from": "aws_lc_0_23_1_",
+      "to": "komira_awslc_",
+      "count": 2579
+     },
+     {
+      "file": "src/lib.rs",
+      "from": "unsafe { ERR_GET_LIB_RUST(packed_error) }",
+      "to": "((packed_error >> 24) & 0xff) as i32"
+     },
+     {
+      "file": "src/lib.rs",
+      "from": "unsafe { ERR_GET_REASON_RUST(packed_error) }",
+      "to": "(packed_error & 0xfff) as i32"
+     },
+     {
+      "file": "src/lib.rs",
+      "from": "unsafe { ERR_GET_FUNC_RUST(packed_error) }",
+      "to": "{ let _ = packed_error; 0 }"
+     }
+    ]
+   }
+  },
+  "aws-types 1.3.10": {
+   "class": "b",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; build.rs writes build_env.rs, `const RUST_VERSION: &str = \"1.99.0\";` (the rustc version), which src/build_metadata.rs includes.",
+   "patch": {
+    "copy": [
+     "src",
+     "Cargo.toml"
+    ],
+    "sub": [
+     {
+      "file": "src/build_metadata.rs",
+      "from": "concat!(env!(\"OUT_DIR\"), \"/build_env.rs\")",
+      "to": "\"build_env.rs\""
+     }
+    ],
+    "add": [
+     {
+      "file": "src/build_env.rs",
+      "content": "const RUST_VERSION: &str = \"1.99.0\";"
+     }
+    ]
+   }
+  },
+  "crc32fast 1.5.2": {
+   "class": "a",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; probes the rustc minor version: stable_arm_crc32_intrinsics (>= 80, emitted on every target) and stable_vpclmulqdq (>= 89).",
+   "cfgs": [
+    "stable_arm_crc32_intrinsics",
+    "stable_vpclmulqdq"
+   ]
+  },
+  "generic-array 0.14.7": {
+   "class": "a",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; version_check: rustc >= 1.41.",
+   "cfgs": [
+    "relaxed_coherence"
+   ]
+  },
+  "getrandom 0.3.4": {
+   "class": "a",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; emits cfgs only for msan and windows targets; none on linux.",
+   "cfgs": []
+  },
+  "getrandom 0.4.3": {
+   "class": "a",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; emits no cfg on linux (only for msan, windows and similar).",
+   "cfgs": []
+  },
+  "httparse 1.10.1": {
+   "class": "a",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; rustc >= 1.59 with std: SIMD cfgs; the target features of baseline x86-64 are not enough for compile-time SSE4.2/AVX2, so detection is at run time.",
+   "cfgs": [
+    "httparse_simd_neon_intrinsics",
+    "httparse_simd"
+   ]
+  },
+  "icu_normalizer_data 2.1.1": {
+   "class": "a",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; emits a cfg only when ICU4X_DATA_DIR is set.",
+   "cfgs": []
+  },
+  "icu_properties_data 2.1.2": {
+   "class": "a",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; emits a cfg only when ICU4X_DATA_DIR is set.",
+   "cfgs": []
+  },
+  "libc 0.2.190": {
+   "class": "a",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; x86_64 linux gnu, 64-bit time: linux_time_bits64.",
+   "cfgs": [
+    "linux_time_bits64"
+   ]
+  },
+  "num-traits 0.2.19": {
+   "class": "a",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; autocfg probe `1f64.total_cmp(&2f64)` compiles on 1.99.",
+   "cfgs": [
+    "has_total_cmp"
+   ]
+  },
+  "paste 1.0.15": {
+   "class": "a",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; no_literal_fromstr only below rustc 1.54.",
+   "cfgs": []
+  },
+  "proc-macro2 1.0.107": {
+   "class": "a",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; stable rustc without span-locations: wrap_proc_macro; the probes of the Span methods stabilised in 1.88 compile on 1.99.",
+   "cfgs": [
+    "wrap_proc_macro",
+    "proc_macro_span_location",
+    "proc_macro_span_file"
+   ]
+  },
+  "quote 1.0.47": {
+   "class": "a",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; no_diagnostic_namespace marks a rustc older than 1.78; none applies.",
+   "cfgs": []
+  },
+  "rustls 0.23.20": {
+   "class": "a",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; read_buf is for nightly only.",
+   "cfgs": []
+  },
+  "rustversion 1.0.23": {
+   "class": "b",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; build/build.rs asks `rustc --version` and writes version.expr, a struct literal that src/lib.rs includes (the unix include; the windows one is cfg'd out).",
+   "patch": {
+    "copy": [
+     "src",
+     "Cargo.toml"
+    ],
+    "sub": [
+     {
+      "file": "src/lib.rs",
+      "from": "concat!(env!(\"OUT_DIR\"), \"/version.expr\")",
+      "to": "\"version.expr\""
+     }
+    ],
+    "add": [
+     {
+      "file": "src/version.expr",
+      "content": "crate::version::Version {\n    minor: 99,\n    patch: 0,\n    channel: crate::version::Channel::Stable,\n}\n"
+     }
+    ]
+   }
+  },
+  "serde 1.0.229": {
+   "class": "b",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; build.rs writes private.rs (a module named for the patch version, 229) and emits if_docsrs_then_no_serde_core; every no_* cfg is off at 1.99. The file is placed beside each include! (src/lib.rs and src/core/crate_root.rs).",
+   "cfgs": [
+    "if_docsrs_then_no_serde_core"
+   ],
+   "patch": {
+    "copy": [
+     "src",
+     "Cargo.toml"
+    ],
+    "sub": [
+     {
+      "file": "src/lib.rs",
+      "from": "concat!(env!(\"OUT_DIR\"), \"/private.rs\")",
+      "to": "\"out_private.rs\""
+     },
+     {
+      "file": "src/core/crate_root.rs",
+      "from": "concat!(env!(\"OUT_DIR\"), \"/private.rs\")",
+      "to": "\"out_private.rs\""
+     }
+    ],
+    "add": [
+     {
+      "file": "src/out_private.rs",
+      "content": "#[doc(hidden)]\npub mod __private229 {\n    #[doc(hidden)]\n    pub use crate::private::*;\n}\nuse serde_core::__private229 as serde_core_private;\n"
+     },
+     {
+      "file": "src/core/out_private.rs",
+      "content": "#[doc(hidden)]\npub mod __private229 {\n    #[doc(hidden)]\n    pub use crate::private::*;\n}\nuse serde_core::__private229 as serde_core_private;\n"
+     }
+    ]
+   }
+  },
+  "serde_core 1.0.229": {
+   "class": "b",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; build.rs writes private.rs (the module __private229); every no_* cfg is off at 1.99.",
+   "patch": {
+    "copy": [
+     "src",
+     "Cargo.toml"
+    ],
+    "sub": [
+     {
+      "file": "src/crate_root.rs",
+      "from": "concat!(env!(\"OUT_DIR\"), \"/private.rs\")",
+      "to": "\"out_private.rs\""
+     }
+    ],
+    "add": [
+     {
+      "file": "src/out_private.rs",
+      "content": "#[doc(hidden)]\npub mod __private229 {\n    #[doc(hidden)]\n    pub use crate::private::*;\n}\n"
+     }
+    ]
+   }
+  },
+  "serde_json 1.0.154": {
+   "class": "a",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; x86_64: 64-bit limbs.",
+   "cfgs": [
+    "fast_arithmetic=\"64\""
+   ]
+  },
+  "thiserror 2.0.21": {
+   "class": "b",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; build.rs writes private.rs (the module __private21, named for the major and minor version) which src/lib.rs includes; it emits no cfg at 1.99 (the probes for generic member access and the backtrace type find nothing to switch).",
+   "patch": {
+    "copy": [
+     "src",
+     "Cargo.toml"
+    ],
+    "sub": [
+     {
+      "file": "src/lib.rs",
+      "from": "concat!(env!(\"OUT_DIR\"), \"/private.rs\")",
+      "to": "\"out_private.rs\""
+     }
+    ],
+    "add": [
+     {
+      "file": "src/out_private.rs",
+      "content": "#[doc(hidden)]\npub mod __private21 {\n    #[doc(hidden)]\n    pub use crate::private::*;\n}\n"
+     }
+    ]
+   }
+  },
+  "zerocopy 0.8.63": {
+   "class": "a",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; build.rs turns [package.metadata.build-rs] into no_zerocopy_* cfgs for features newer than the compiler; every one it lists is stable by 1.99, so it emits none.",
+   "cfgs": []
+  },
+  "zmij 1.0.23": {
+   "class": "a",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; zmij_no_select_unpredictable only below rustc 1.88.",
+   "cfgs": []
+  }
+ }
+}

@@ -23,6 +23,7 @@ pub const test_filter = @import("test_filter.zig");
 pub const http = @import("http.zig");
 pub const registry = @import("registry.zig");
 pub const credentials = @import("credentials.zig");
+pub const conda = @import("conda.zig");
 pub const resolve = @import("resolve.zig");
 pub const lock = @import("lock.zig");
 pub const install_plan = @import("install_plan.zig");
@@ -47,8 +48,10 @@ test {
     _ = @import("http.zig");
     _ = @import("registry.zig");
     _ = @import("credentials.zig");
+    _ = @import("conda.zig");
     _ = @import("resolve.zig");
     _ = @import("lock.zig");
     _ = @import("install_plan.zig");
     _ = @import("install.zig");
+    _ = @import("testroot.zig");
 }

@@ -1,4 +1,5 @@
 import type { RejectionCode } from '../validate';
+import type { DisplayMeta } from './display';
 
 /** `u:<github id>` for an account's token, `ci:<token id>` for a CI identity's token. */
 export type Actor = string;
@@ -47,6 +48,8 @@ export interface PublishRecord {
   rejection_code?: RejectionCode;
   message?: string;
   manifest_sha256: string;
+  /** Display metadata from the commit request (description, license, repository, homepage, keywords, readme). */
+  display?: DisplayMeta;
   files: PublishFile[];
   /** Subdirs whose repodata does not yet list this publish (set when the version is published). */
   remaining_subdirs: string[];

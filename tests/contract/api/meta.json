@@ -35,6 +35,61 @@
       }
     },
     {
+      "name": "prod is up and says which implementation answered",
+      "operationId": "getHealth",
+      "request": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "status": "ok",
+          "stage": "prod",
+          "api_version": "v1",
+          "read_only": false,
+          "impl": "ts"
+        }
+      }
+    },
+    {
+      "name": "impl rust is in the contract",
+      "operationId": "getHealth",
+      "request": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "status": "ok",
+          "stage": "beta",
+          "api_version": "v1",
+          "read_only": false,
+          "impl": "rust"
+        }
+      }
+    },
+    {
+      "name": "an unknown impl is not in the contract",
+      "operationId": "getHealth",
+      "request": {},
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "status": "ok",
+          "stage": "prod",
+          "api_version": "v1",
+          "read_only": false,
+          "impl": "go"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
       "name": "unknown stage is not in the contract",
       "operationId": "getHealth",
       "request": {},

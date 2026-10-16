@@ -1,0 +1,61 @@
+{
+  "description": "Account 4242 owning alpha, with a fresh session and 49 live API tokens (one short of the cap of 50).",
+  "packages": [
+    {
+      "name": "alpha",
+      "state": "active",
+      "created_at": "2026-10-01T09:00:00Z"
+    }
+  ],
+  "owners": [
+    {
+      "name": "alpha",
+      "github_id": 4242,
+      "handle": "octo",
+      "added_at": "2026-10-01T09:00:00Z"
+    }
+  ],
+  "users": [
+    {
+      "github_id": 4242,
+      "handle": "octo",
+      "created_at": "2026-09-20T10:00:00Z",
+      "last_login_at": "2026-10-13T12:00:00Z",
+      "two_factor": true
+    }
+  ],
+  "tokens": [
+    {
+      "secret": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+      "record": {
+        "id": "tok_sessfresh",
+        "kind": "session",
+        "name": "sessfresh",
+        "scopes": [],
+        "packages": [],
+        "all_current": false,
+        "created_at": "2026-10-10T12:00:00.000Z",
+        "expires_at": "2026-11-13T12:00:00.000Z",
+        "github_id": 4242,
+        "fresh_until": "2026-10-14T12:10:00.000Z"
+      }
+    }
+  ],
+  "bulk_tokens": [
+    {
+      "count": 49,
+      "github_id": 4242,
+      "id_format": "tok_bulk{n:04}",
+      "name_format": "bulk {n:04}",
+      "secret_prefix": "mopm_qqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+      "scopes": [
+        "publish"
+      ],
+      "packages": [
+        "alpha"
+      ],
+      "created_at": "2026-10-10T12:00:00.000Z",
+      "expires_at": "2027-01-01T00:00:00.000Z"
+    }
+  ]
+}

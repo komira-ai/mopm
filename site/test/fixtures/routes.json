@@ -1,0 +1,327 @@
+{
+  "$comment": "Route vectors for the site (parseRoute: view) and for the edge router of the site stack (edge: a CloudFront Function generated from src/routes.ts, run over every vector by service/infra/stacks/test/site-router.test.ts). edge is the URI the router rewrites the request to, \"redirect:<path>\" for a permanent redirect to the normalised package name (the query kept), or \"pass\" when the request goes to the bucket unchanged (a missing key there is answered with the 404 page). view is the app-shell route, or null when the path never reaches the shell.",
+  "vectors": [
+    {
+      "path": "/",
+      "edge": "/index.html",
+      "view": null
+    },
+    {
+      "path": "/search",
+      "edge": "/app.html",
+      "view": {
+        "kind": "search"
+      }
+    },
+    {
+      "path": "/search/",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/http_client",
+      "edge": "/app.html",
+      "view": {
+        "kind": "package",
+        "name": "http_client"
+      }
+    },
+    {
+      "path": "/packages/ab",
+      "edge": "/app.html",
+      "view": {
+        "kind": "package",
+        "name": "ab"
+      }
+    },
+    {
+      "path": "/packages/a",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "edge": "/app.html",
+      "view": {
+        "kind": "package",
+        "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "path": "/packages/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/Foo",
+      "edge": "redirect:/packages/foo",
+      "view": null
+    },
+    {
+      "path": "/packages/HTTP-Client",
+      "edge": "redirect:/packages/http_client",
+      "view": null
+    },
+    {
+      "path": "/packages/http.client",
+      "edge": "redirect:/packages/http_client",
+      "view": null
+    },
+    {
+      "path": "/packages/foo--bar",
+      "edge": "redirect:/packages/foo_bar",
+      "view": null
+    },
+    {
+      "path": "/packages/foo__bar",
+      "edge": "redirect:/packages/foo_bar",
+      "view": null
+    },
+    {
+      "path": "/packages/_ab",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/9lives",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/a%2Fb",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/%68ttp_client",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/http_client/",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/http_client/0.4.0",
+      "edge": "/app.html",
+      "view": {
+        "kind": "version",
+        "name": "http_client",
+        "version": "0.4.0"
+      }
+    },
+    {
+      "path": "/packages/ab/1.0.0",
+      "edge": "/app.html",
+      "view": {
+        "kind": "version",
+        "name": "ab",
+        "version": "1.0.0"
+      }
+    },
+    {
+      "path": "/packages/ab/1.0",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/ab/1.0.0.0",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/ab/0.0.0",
+      "edge": "/app.html",
+      "view": {
+        "kind": "version",
+        "name": "ab",
+        "version": "0.0.0"
+      }
+    },
+    {
+      "path": "/packages/ab/1.00.0",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/ab/1",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/ab/1.0rc1",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/ab/2.0dev3",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/ab/1.1.1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "edge": "/app.html",
+      "view": {
+        "kind": "version",
+        "name": "ab",
+        "version": "1.1.1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "path": "/packages/ab/1.1.10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/ab/v1",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/ab/01.0",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/ab/1.0-beta",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/ab/1.0.0+local",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/ab/versions",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/ab/owners",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/ab/1.0/extra",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/http_client%2F0.4.0",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/Foo/1.0",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/foo__bar/1.0",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/Foo/1.0.0",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/foo__bar/1.0.0",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/packages/9lives/1.0.0",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "//packages/ab",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/docs",
+      "edge": "/docs/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/",
+      "edge": "/docs/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/mopm-toml",
+      "edge": "/docs/mopm-toml/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/mopm-toml/",
+      "edge": "/docs/mopm-toml/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/mopm-test/",
+      "edge": "/docs/mopm-test/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/Bad_Slug",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/docs/../x",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/docs/a/b",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/index.html",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/app.html",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/404.html",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/assets/0a1b2c3d4e5f6a7b/main.js",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/nope.txt",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/robots.txt",
+      "edge": "pass",
+      "view": null
+    }
+  ]
+}

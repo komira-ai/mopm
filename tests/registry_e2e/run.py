@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SUPERSEDED for the Buck2 build by tests/drivers/login_test.zig (the same checks
+# in Zig). This script stays for ci.yml until farm.yml has matched it, and is
+# deleted in a later change.
 """End-to-end tests of mopm's registry commands against mopm-fake-registry.
 
     python3 -I tests/registry_e2e/run.py path/to/mopm path/to/mopm-fake-registry

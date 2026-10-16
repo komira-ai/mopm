@@ -162,6 +162,7 @@ function buildFill(d: ValidatorDeps, rec: PublishRecord, facts: PackageFacts[]):
     native: nativeOf(first),
     files,
     manifest_sha256: first.manifestSha256,
+    ...(rec.display ?? {}),
     published_at: (d.now ?? (() => new Date()))().toISOString(),
     published_by: rec.published_by,
   };

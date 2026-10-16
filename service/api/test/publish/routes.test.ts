@@ -74,18 +74,18 @@ describe('authentication and scope of the publish routes', () => {
     const wrong = await h.call('POST', '/api/v1/packages/demo/1.0.1/files', ci.secret, { ...body, filename: 'mojo-demo-1.0.1-mojo1.0.0_0.conda' });
     expect(err(wrong).code).toBe('scope_missing');
     // the equivalent spelling of its version: allowed (conda equality)
-    const q = pkg({ name: 'demo', version: '1.0' });
+    const q = pkg({ name: 'demo', version: '1.0.0' });
     const u = await h.upload(ci.secret, q);
     expect(u.res.statusCode).toBe(200);
     expect(u.put).toBe('ok');
-    const c = await h.commit(ci.secret, 'demo', '1.0', [u.upload_id!], q.manifest);
+    const c = await h.commit(ci.secret, 'demo', '1.0.0', [u.upload_id!], q.manifest);
     expect(c.statusCode).toBe(202);
     const id = JSON.parse(c.body).publish_id as string;
     expect((await h.status(ci.secret, id)).body.status).toBe('pending');
     await h.runValidator();
     await h.runIndexer();
     expect((await h.status(ci.secret, id)).body.status).toBe('published');
-    expect((await h.registry.getVersion('demo', '1.0'))?.published_by).toBe('ci');
+    expect((await h.registry.getVersion('demo', '1.0.0'))?.published_by).toBe('ci');
     // another CI token (another run) cannot read this publish
     const other = await mintToken(h.authStore, {
       kind: 'oidc',

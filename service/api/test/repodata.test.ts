@@ -50,7 +50,7 @@ describe('golden repodata', () => {
   });
 
   test('the same file name twice is a bug in the caller, not silently merged', () => {
-    expect(() => buildRepodataJson('linux-64', [rec({ name: 'p', version: '1.0' }), rec({ name: 'p', version: '1.0' })])).toThrow(/twice/);
+    expect(() => buildRepodataJson('linux-64', [rec({ name: 'p', version: '1.0.0' }), rec({ name: 'p', version: '1.0.0' })])).toThrow(/twice/);
   });
 });
 
@@ -112,9 +112,7 @@ describe('the determinism check can fail', () => {
 
 const hexArb = fc.constantFrom(...'0123456789abcdef'.split('')).map((c) => hex(c));
 const nameArb = fc.constantFrom('alpha', 'beta', 'gamma', 'delta', 'http_core', 'http_client', 'tls');
-const versionArb = fc
-  .tuple(fc.array(fc.nat(9), { minLength: 1, maxLength: 3 }), fc.option(fc.constantFrom('a1', 'b2', 'rc1', 'dev0'), { nil: undefined }))
-  .map(([rel, pre]) => rel.join('.') + (pre ?? ''));
+const versionArb = fc.tuple(fc.nat(9), fc.nat(9), fc.nat(9)).map((p) => p.join('.'));
 const stateArb = fc.constantFrom<VersionState>('pending', 'published', 'published', 'yanked', 'tombstoned');
 const subdirArb = fc.constantFrom('linux-64', 'osx-arm64', 'noarch');
 

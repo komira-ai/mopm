@@ -1,7 +1,7 @@
 import { RegistryError, HTTP_STATUS } from '../errors';
 import type { Store } from '../store';
 import { README_MAX_BYTES, type PackageRecord, type PackageSummaryRecord, type VersionRecord } from '../types';
-import { canonicalVersion, compareVersions, parseVersion } from '../version';
+import { canonicalVersion, compareVersions } from '../version';
 import { AuthError } from '../auth/errors';
 import { routeAuth, type AuthServices } from './auth-routes';
 import { render } from './catalogue';
@@ -126,9 +126,9 @@ function displayMetadata(r: Partial<Pick<VersionRecord, 'description' | 'license
   };
 }
 
-/** Newest published, non-prerelease version, or null (spec: PackageSummary.latest). */
+/** Newest published version, or null (spec: PackageSummary.latest). */
 function latestOf(vs: VersionRecord[]): string | null {
-  const candidates = vs.filter((v) => v.state === 'published' && parseVersion(v.version).pre === undefined);
+  const candidates = vs.filter((v) => v.state === 'published');
   return candidates.length ? newestFirst(candidates)[0]!.version : null;
 }
 
@@ -167,6 +167,8 @@ const getHealth = (deps: RouterDeps) => ({
   // Additive fields (the contract allows them): what e2e reads to prove which release is deployed.
   version: deps.version,
   commit: deps.commit,
+  // Which implementation answered. This file is the TypeScript one; e2e compares it with the stage's expected implementation.
+  impl: 'ts',
 });
 
 async function getPackage(deps: RouterDeps, name: string) {

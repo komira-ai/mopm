@@ -2,6 +2,10 @@
 """End-to-end tests of `mopm lock`, `mopm update`, `mopm tree`, `mopm add` and
 `mopm remove` against mopm-fake-registry.
 
+SUPERSEDED by //:resolve_e2e (tests/drivers/resolve_e2e_test.zig), the Zig port
+the Buck2 build runs: the build has no Python. This script stays for ci.yml
+until farm.yml has matched it, and is deleted then.
+
     python3 -I tests/resolve_e2e/run.py path/to/mopm path/to/mopm-fake-registry
 
 Needs the packages in tests/contract/requirements.txt (jsonschema), for the

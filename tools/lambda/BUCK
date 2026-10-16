@@ -1,0 +1,139 @@
+# Lambda packaging: the deployment package of a custom-runtime function (`bootstrap`
+# in a zip), written and read back by Zig tools, so no build or test action uses a shell
+# of its own. See README.md.
+load("@komira//tools/build/mojo:toolchain.bzl", "zig_exe", "zig_test")
+load("@komira//tools/build/platforms:defs.bzl", "LINUX_X86_64")
+load("@komira//tools/build/rust:defs.bzl", "rust_binary", "rust_test")
+load(":lambda.bzl", "lambda_zip")
+
+_TOOLS = {
+    "busybox": "komira//tools/build/toolchains:busybox",
+    "exec_compatible_with": LINUX_X86_64,
+    "zig": "komira//tools/build/toolchains:zig",
+}
+
+zig_exe(
+    name = "zip_pack",
+    src = "zip_pack.zig",
+    unit_tests = [":zip_pack_test"],
+    visibility = ["PUBLIC"],
+    **_TOOLS
+)
+
+zig_test(
+    name = "zip_pack_test",
+    src = "zip_pack.zig",
+    **_TOOLS
+)
+
+zig_exe(
+    name = "zip_check",
+    src = "zip_check.zig",
+    unit_tests = [":zip_check_test"],
+    visibility = ["PUBLIC"],
+    **_TOOLS
+)
+
+zig_test(
+    name = "zip_check_test",
+    src = "zip_check.zig",
+    **_TOOLS
+)
+
+# ---- The canary
+#
+# The canary: a Lambda function built from the pinned crates (//third_party/rust) with komira's
+# Rust rules, to hold the build foundation of the registry's Rust functions. Nothing deploys it.
+#
+#   :canary          the function's executable (`bootstrap`); not built unless :canary_unit passed
+#   :canary_e2e_test runs it against a fake Lambda runtime API on loopback and holds its answer
+#   :canary_zip      the deployment package; not built unless :canary_e2e_test passed on that binary
+#   :tls_test        rustls on aws-lc-rs over komira's AWS-LC: handshakes, a refused name, the version
+#   :sdk_test        the AWS SDK for Rust: one DynamoDB GetItem on loopback, and a client of each service
+#
+# See tools/lambda/README.md.
+
+# komira's AWS-LC, as the archive an executable links: what aws-lc-sys's build script would compile.
+AWS_LC = "komira//third_party/aws-lc:crypto[static-pic]"
+
+_CANARY_DEPS = [
+    "//third_party/rust:aws_lambda_events",
+    "//third_party/rust:lambda_runtime",
+    "//third_party/rust:serde_json",
+    "//third_party/rust:tokio",
+    "//third_party/rust:tracing",
+    "//third_party/rust:tracing-subscriber",
+]
+
+# The unit tests of main.rs (#[cfg(test)]): the same source, so the binary can wait for them.
+rust_test(
+    name = "canary_unit",
+    srcs = ["canary/main.rs"],
+    crate_root = "canary/main.rs",
+    deps = _CANARY_DEPS,
+)
+
+rust_binary(
+    name = "canary",
+    srcs = ["canary/main.rs"],
+    crate_root = "canary/main.rs",
+    deps = _CANARY_DEPS,
+    tests = [":canary_unit"],
+    visibility = ["PUBLIC"],
+)
+
+zig_test(
+    name = "canary_e2e_test",
+    src = "canary/e2e_test.zig",
+    env_tools = {"BOOTSTRAP": ":canary"},
+    busybox = "komira//tools/build/toolchains:busybox",
+    exec_compatible_with = LINUX_X86_64,
+    zig = "komira//tools/build/toolchains:zig",
+)
+
+lambda_zip(
+    name = "canary_zip",
+    bootstrap = ":canary",
+    welded_tests = [":canary_e2e_test"],
+    visibility = ["PUBLIC"],
+)
+
+rust_test(
+    name = "tls_test",
+    srcs = [
+        "canary/fixtures/ca.der",
+        "canary/fixtures/leaf.der",
+        "canary/fixtures/leaf_key.der",
+        "canary/tls_test.rs",
+    ],
+    crate_root = "canary/tls_test.rs",
+    deps = [
+        "//third_party/rust:aws-lc-sys",
+        "//third_party/rust:rustls",
+    ],
+    native_deps = [AWS_LC],
+)
+
+rust_test(
+    name = "sdk_test",
+    srcs = ["canary/sdk_test.rs"],
+    crate_root = "canary/sdk_test.rs",
+    deps = [
+        "//third_party/rust:aws-sdk-cloudfront",
+        "//third_party/rust:aws-sdk-dynamodb",
+        "//third_party/rust:aws-sdk-s3",
+        "//third_party/rust:aws-sdk-secretsmanager",
+        "//third_party/rust:aws-sdk-sqs",
+        "//third_party/rust:serde_json",
+        "//third_party/rust:tokio",
+    ],
+    native_deps = [AWS_LC],
+)
+
+# This package's files, for //:hygiene (a package boundary hides them from the root package's glob).
+filegroup(
+    name = "lint_files",
+    srcs = glob(["**"]) + [],
+    copy = True,
+    visibility = ["//:"],
+)

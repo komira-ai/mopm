@@ -36,8 +36,12 @@ describe('size limits', () => {
 
     const room = a.bytes.length + b.bytes.length - 1 - a.bytes.length;
     const res = await begin(h, me.token, 'demo', '1.1.0', b.bytes.length);
-    expect(res.statusCode).toBe(413);
-    expect(err(res).message).toBe(`The file is larger than the limit of ${room} bytes.`);
+    // limit_exceeded (403), not payload_too_large (413): the project is full, the file is within the per-file cap.
+    expect(res.statusCode).toBe(403);
+    expect(err(res)).toMatchObject({
+      code: 'limit_exceeded',
+      message: `Adding this file would put 'demo' over its storage limit of ${a.bytes.length + b.bytes.length - 1} bytes; ${room} bytes are left.`,
+    });
     expect((await h.registry.getVersion('demo', '1.1.0'))).toBeUndefined();
     // Exactly the room left is fine.
     expect((await begin(h, me.token, 'demo', '1.1.0', room)).statusCode).toBe(200);
@@ -50,8 +54,8 @@ describe('size limits', () => {
     await h.publish(me.token, a);
     await h.runValidator();
     await h.runIndexer();
-    expect((await begin(h, me.token, 'demo', '2.0.0', 1)).statusCode).toBe(413);
-    expect((await begin(h, me.token, 'demo', '2.0.0', 1)).statusCode).toBe(413);
+    expect((await begin(h, me.token, 'demo', '2.0.0', 1)).statusCode).toBe(403);
+    expect(err(await begin(h, me.token, 'demo', '2.0.0', 1)).code).toBe('limit_exceeded');
     expect(h.objects.keys('noarch/')).toEqual(expect.arrayContaining([`noarch/${a.filename}`]));
     expect(Object.keys(h.repodata('noarch')['packages.conda'])).toEqual([a.filename]);
     expect((await h.registry.getVersion('demo', '1.0.0'))?.state).toBe('published');
@@ -65,7 +69,7 @@ describe('size limits', () => {
     await h.runValidator();
     const audit = { name: 'demo', ts: '2026-10-14T12:00:00Z', id: 'x1', actor: 't', action: 'yank' };
     await h.registry.updateVersion('demo', '1.0.0', { type: 'yank', reason: 'bad' }, audit);
-    expect((await begin(h, me.token, 'demo', '2.0.0', 1)).statusCode).toBe(413);
+    expect((await begin(h, me.token, 'demo', '2.0.0', 1)).statusCode).toBe(403);
     await h.registry.updateVersion('demo', '1.0.0', { type: 'tombstone', reason_code: 'malware', date: '2026-10-14' }, { ...audit, id: 'x2' });
     expect((await begin(h, me.token, 'demo', '2.0.0', 1)).statusCode).toBe(200);
   });

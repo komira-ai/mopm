@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Replay the API cases of tests/contract/api against the fake registry.
 
+SUPERSEDED by //:contract_replay (tests/drivers/replay_test.zig, with
+replay_recipes.zig), the Zig port the Buck2 build runs: the build has no
+Python. This script stays for ci.yml until farm.yml has matched it, and is
+deleted then.
+
     python -I tests/contract/replay.py path/to/mopm-fake-registry
 
 For every case marked valid whose operation the fake implements (IMPLEMENTED
@@ -209,6 +214,8 @@ TOKEN_BODY = {"name": "ci", "scopes": ["publish", "yank"], "packages": ["http_cl
 RECIPES = {
     ("getHealth", "prod is up"): lambda f: step("getHealth"),
     ("getHealth", "beta in read-only mode"): read_only,
+    ("getHealth", "prod is up and says which implementation answered"): lambda f: step("getHealth"),
+    ("getHealth", "impl rust is in the contract"): lambda f: step("getHealth"),
     ("startDeviceLogin", "start login"): lambda f: step("startDeviceLogin", body={"client": "mopm 0.0.1"}),
     ("pollDeviceLogin", "poll while pending"): lambda f: poll(f),
     ("pollDeviceLogin", "poll approved"): lambda f: poll(f, "approve"),
@@ -472,13 +479,36 @@ def begin_upload(f, size=None, read_only=False):
                 after=after, malformed=size is not None)
 
 
+def begin_upload_version(f, version):
+    """A well-formed begin for a version that is not MAJOR.MINOR.PATCH."""
+    r = Release(f)
+    return step("beginUpload", path=r.path(version), body=r.begin_body(version, b"conda bytes"), token=r.token,
+                auth="publishToken", malformed=True)
+
+
+def commit_version(f, version):
+    r = Release(f)
+    return step("commitPublish", path=r.path(version), body=r.commit_body("upl-none"), token=r.token,
+                auth="publishToken", malformed=True)
+
+
+def project_full(f):
+    """The package already holds 11 bytes and may hold 15: a file of 5 more does not fit."""
+    r = Release(f)
+    f.control("/limits", {"project_bytes": 15})
+    r.publish("0.3.0", b"conda bytes")
+    # The limit is the fake's, not this package's: restore it once the case has run.
+    return step("beginUpload", path=r.path("0.4.0"), body=r.begin_body("0.4.0", b"12345"), token=r.token,
+                auth="publishToken", after=lambda: f.control("/limits", {"project_bytes": 10_000_000_000}))
+
+
 def commit(f, kind):
     r = Release(f)
     if kind == "not uploaded":
         up = r.upload("0.4.0", put=False)
     elif kind == "exists":
-        # 1.0 is published; 1.0.0 is the same version under conda ordering.
-        r.publish("1.0")
+        # 1.0.0 is published; the same version again is refused.
+        r.publish("1.0.0")
         up = r.upload("1.0.0")
         return step("commitPublish", path=r.path("1.0.0"), body=r.commit_body(up), token=r.token,
                     auth="publishToken")
@@ -489,6 +519,12 @@ def commit(f, kind):
         r.commit("0.4.0", first)
         return step("commitPublish", path=r.path("0.4.0"), body=r.commit_body(first, second), token=r.token,
                     auth="publishToken")
+    elif kind == "display":
+        up = r.upload("0.4.0")
+        body = r.commit_body(up)
+        body.update({"description": "HTTP/1.1 client", "license": "MIT OR Apache-2.0", "keywords": ["http", "client"],
+                     "repository": "https://github.com/example/http_client", "homepage": "https://example.com/http_client"})
+        return step("commitPublish", path=r.path("0.4.0"), body=body, token=r.token, auth="publishToken")
     else:
         up = r.upload("0.4.0")
     return step("commitPublish", path=r.path("0.4.0"), body=r.commit_body(up), token=r.token, auth="publishToken")
@@ -559,8 +595,12 @@ def version_detail(f, kind):
 RECIPES.update({
     ("beginUpload", "begin an upload"): lambda f: begin_upload(f),
     ("beginUpload", "error payload_too_large"): lambda f: begin_upload(f, size=60000000),
+    ("beginUpload", "error limit_exceeded"): project_full,
+    ("beginUpload", "error invalid_version: two parts"): lambda f: begin_upload_version(f, "1.0"),
     ("beginUpload", "error read_only_mode"): lambda f: begin_upload(f, read_only=True),
     ("commitPublish", "commit"): lambda f: commit(f, "ok"),
+    ("commitPublish", "commit with the display fields"): lambda f: commit(f, "display"),
+    ("commitPublish", "error invalid_version: pre-release suffix"): lambda f: commit_version(f, "1.0.0rc1"),
     ("commitPublish", "error upload_invalid"): lambda f: commit(f, "not uploaded"),
     ("commitPublish", "error version_exists"): lambda f: commit(f, "exists"),
     ("commitPublish", "error upload_used"): lambda f: commit(f, "used"),
@@ -634,7 +674,7 @@ def check_files(f):
             problems.append("%s/repodata.json is not a repodata file" % subdir)
 
     r = Release(f)
-    for version in ("0.3.0", "0.4.0", "0.5.0rc1"):
+    for version in ("0.3.0", "0.4.0", "0.5.0"):
         r.publish(version, ("bytes of %s" % version).encode())
     f.request("PUT", "/api/v1/packages/%s/0.3.0/yank" % r.name, YANK, r.token)
     r.publish("0.2.0", b"bytes of 0.2.0")
@@ -647,7 +687,7 @@ def check_files(f):
         problems += ["index: " + p for p in validate.index_problems(path, schema("index-record.schema.json"))]
         records = [json.loads(line) for line in path.read_text().splitlines()]
     order = [(rec["version"], rec["state"]) for rec in records]
-    want = [("0.2.0", "tombstoned"), ("0.3.0", "yanked"), ("0.4.0", "published"), ("0.5.0rc1", "published")]
+    want = [("0.2.0", "tombstoned"), ("0.3.0", "yanked"), ("0.4.0", "published"), ("0.5.0", "published")]
     if order != want:
         problems.append("index records %s, expected %s" % (order, want))
     for rec in records:
@@ -658,7 +698,7 @@ def check_files(f):
     # The channel: yanked and taken-down files leave packages.conda for removed.
     repodata = json.loads(fetch(f, "/channel/linux-64/repodata.json"))
     mine = {k: v for k, v in repodata["packages.conda"].items() if v["name"] == "mojo-" + r.name}
-    if sorted(v["version"] for v in mine.values()) != ["0.4.0", "0.5.0rc1"]:
+    if sorted(v["version"] for v in mine.values()) != ["0.4.0", "0.5.0"]:
         problems.append("repodata.json lists %s" % sorted(v["version"] for v in mine.values()))
     for v in mine.values():
         if v["build_number"] != 0 or v["subdir"] != "linux-64" or v["depends"] != ["mojo-compiler ==1.0.0"]:
@@ -674,8 +714,8 @@ def check_files(f):
         problems.append("repodata.json is not deterministic")
     current = json.loads(fetch(f, "/channel/linux-64/current_repodata.json"))
     cur = sorted(v["version"] for v in current["packages.conda"].values() if v["name"] == "mojo-" + r.name)
-    if cur != ["0.4.0"]:
-        problems.append("current_repodata.json lists %s, expected only 0.4.0" % cur)
+    if cur != ["0.5.0"]:
+        problems.append("current_repodata.json lists %s, expected only 0.5.0" % cur)
 
     # The files: a yanked file still downloads; a taken-down one answers 410.
     if fetch(f, "/channel/linux-64/" + r.filename("0.3.0")) != b"bytes of 0.3.0":

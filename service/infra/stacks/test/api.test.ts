@@ -54,7 +54,7 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
   test('exactly one Node.js Lambda, from the built bundle, configured for its stage', () => {
     t.resourceCountIs('AWS::Lambda::Function', 1);
     t.hasResourceProperties('AWS::Lambda::Function', {
-      Runtime: 'nodejs20.x',
+      Runtime: 'nodejs22.x',
       Handler: 'http/lambda.handler',
       Code: { S3Bucket: Match.anyValue(), S3Key: Match.stringLikeRegexp('\\.zip$') },
       Environment: {
@@ -80,8 +80,9 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     );
     expect(AUTH_ROUTES).toHaveLength(6);
     expect(keys).toHaveLength(READ_ROUTES.length + PUBLISH_ROUTES.length + AUTH_ROUTES.length);
-    // Claim and yank are not routed yet.
-    expect(keys.some((k) => /\/(claim|yank)/.test(k))).toBe(false);
+    // Claim is not routed yet; yank (PUT) is.
+    expect(keys.some((k) => /\/claim/.test(k))).toBe(false);
+    expect(keys).toContain('PUT /api/v1/packages/{name}/{version}/yank');
   });
 
   test('the handler is told where uploads go and where commits are queued, by name', () => {
@@ -135,7 +136,7 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     const resources = JSON.stringify(st[0].Resource);
     expect(resources).toContain(`${tableName(stage, 'packages')}/index/by_search_bucket`);
     expect(resources).not.toContain('index/*');
-    expect(resources).not.toContain('by_github_id'); // the owners index is not read by the read API
+    expect(resources).not.toContain('by_github_id'); // the read statement has no owners index; token creation's grant is AuthOwners (AUTH_GRANTS)
     expect((resources.match(/\/index\//g) ?? []).length).toBe(1);
   });
 
@@ -152,6 +153,19 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
       expect(flatten(match[0].Resource)).not.toContain('index/*');
     }
     expect(AUTH_GRANTS.tokens!.indexes).toEqual(['by_github_id']);
+  });
+
+  // POST /api/v1/me/tokens asks which packages the account owns (ownedPackagesFrom: a Query on the owners table's
+  // by_github_id index). A table grant does not cover an index: the index is its own resource.
+  test('the role may Query the owners index by_github_id, by its own ARN', () => {
+    const ix = `table/${tableName(stage, 'owners')}/index/by_github_id"`;
+    const allowing = statements().filter(
+      (s) => s.Effect === 'Allow' && acts(s).includes('dynamodb:Query') && ([] as any[]).concat(s.Resource).some((r) => JSON.stringify(r).includes(ix)),
+    );
+    expect(allowing).toHaveLength(1);
+    expect(acts(allowing[0]).sort()).toEqual(['dynamodb:GetItem', 'dynamodb:Query']);
+    // Exactly that index of the owners table, not index/*.
+    expect(flatten(allowing[0].Resource)).not.toContain('index/*');
   });
 
   test('the role may read exactly one secret, the stage OAuth app, and nothing else in Secrets Manager', () => {
@@ -201,10 +215,16 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     expect(flatten(s3[0].Resource)).toContain('/quarantine/*');
     expect(flatten(s3[0].Resource)).toContain(`mopm-${stage}-channel-${DUMMY_ACCOUNT}`);
     const q = statements().filter((s) => acts(s).some((a) => a.startsWith('sqs:')));
-    expect(q).toHaveLength(1);
-    expect(acts(q[0])).toEqual(['sqs:SendMessage']);
-    expect(flatten(q[0].Resource)).toContain(`mopm-${stage}-validate.fifo`);
-    expect(flatten(q[0].Resource)).not.toContain('index');
+    // Two statements, send-only: the validate queue (publish) and the index queue (yank and unyank rebuild repodata).
+    expect(q).toHaveLength(2);
+    for (const st of q) expect(acts(st)).toEqual(['sqs:SendMessage']);
+    const validate = q.find((st) => st.Sid === 'QueueCommits') ?? q[0];
+    const index = q.find((st) => st.Sid === 'QueueIndexRebuilds');
+    expect(index).toBeDefined();
+    expect(flatten(validate.Resource)).toContain(`mopm-${stage}-validate.fifo`);
+    expect(flatten(validate.Resource)).not.toContain('index');
+    expect(flatten(index.Resource)).toContain(`mopm-${stage}-index.fifo`);
+    expect(flatten(index.Resource)).not.toContain('validate');
   });
 
   test('custom domain with a DNS-validated certificate', () => {
@@ -224,11 +244,11 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     expect(cors.AllowCredentials).toBeUndefined();
   });
 
-  test('CORS methods are GET, HEAD and OPTIONS only; max-age is bounded; only the request id is exposed', () => {
+  test('CORS methods are GET, HEAD and OPTIONS only; max-age is bounded; only the request id and retry-after are exposed', () => {
     const cors = (Object.values(t.findResources('AWS::ApiGatewayV2::Api')) as any[])[0].Properties.CorsConfiguration;
     expect([...cors.AllowMethods].sort()).toEqual(['GET', 'HEAD', 'OPTIONS']);
     expect(cors.MaxAge).toBe(3600);
-    expect(cors.ExposeHeaders).toEqual(['x-mopm-request-id']);
+    expect(cors.ExposeHeaders).toEqual(['x-mopm-request-id', 'retry-after']);
     expect(cors.AllowHeaders).toBeUndefined();
   });
 

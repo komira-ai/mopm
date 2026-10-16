@@ -1,4 +1,6 @@
 #!/bin/sh
+# Superseded by //:discovery (tests/drivers/test_discovery_test.zig) on the build farm, which has no shell, Python or pixi;
+# kept for ci.yml until farm.yml has matched it. Change both together.
 # End-to-end test of `mopm test --list` against the real Mojo toolchain. Run
 # from the repository root:
 #

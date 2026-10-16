@@ -1,0 +1,143 @@
+{
+  "description": "Requests the gateway would not route, and methods the read API does not have: all answer route_not_found with the same envelope.",
+  "world": {
+    "seeds": [
+      "http_client_one_version"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/no_such_operation"
+      },
+      "expect": {
+        "status": 404,
+        "code": "route_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/health"
+      },
+      "expect": {
+        "status": 404,
+        "code": "route_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1"
+      },
+      "expect": {
+        "status": 404,
+        "code": "route_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/packages"
+      },
+      "expect": {
+        "status": 404,
+        "code": "route_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1x/packages"
+      },
+      "expect": {
+        "status": 404,
+        "code": "route_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/claim"
+      },
+      "expect": {
+        "status": 404,
+        "code": "route_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/packages/http_client"
+      },
+      "expect": {
+        "status": 404,
+        "code": "route_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages",
+        "json": {
+          "name": "x"
+        }
+      },
+      "expect": {
+        "status": 404,
+        "code": "route_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/http_client"
+      },
+      "expect": {
+        "status": 404,
+        "code": "route_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "OPTIONS",
+        "path": "/api/v1/packages"
+      },
+      "expect": {
+        "status": 404,
+        "code": "route_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "HEAD",
+        "path": "/api/v1/packages"
+      },
+      "expect": {
+        "status": 404,
+        "code": "route_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/0.4.0/files/extra"
+      },
+      "expect": {
+        "status": 404,
+        "code": "route_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/pub_x"
+      },
+      "expect": {
+        "status": 404,
+        "code": "route_not_found"
+      }
+    }
+  ]
+}

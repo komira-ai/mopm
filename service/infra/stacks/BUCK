@@ -1,0 +1,87 @@
+# The service stacks' checks (see service/api/BUCK): `tsc --noEmit`, `jest --ci`, and
+# `cdk synth` of every stage with a dummy account and zone id, as in service-ci.yml.
+# The tests read four things outside this package, which are `data` at their paths
+# in the repository: the access stack's policy template, the API's golden grants and
+# recorded wire goldens, and the stages' configuration; the synths also take the API handler bundle (service/api:dist).
+# The site stack deploys the site build (//site:dist, at site/dist), generates its edge router
+# from the site's route grammar (site/src/routes.ts) and is tested against the site's route
+# vectors (site/test/fixtures/routes.json).
+
+load("@komira//tools/build/node:modules.bzl", "cdk_synth", "jest_test", "npm_modules", "tsc_check")
+load(":pins.lock.bzl", "NPM")
+
+_NODE = "//tools/node:node"
+
+_SRCS = glob(["bin/**", "lib/**", "test/**"]) + [
+    "cdk.json",
+    "jest.config.js",
+    "package.json",
+    "tsconfig.json",
+]
+
+_DATA = {
+    "service/api/dist": "//service/api:dist",
+    "service/api/test/fixtures/lambda-auth-grants.json": "//service/api:lambda-auth-grants.json",
+    "service/api/test/fixtures/wire": "//service/api:wire_goldens",
+    "service/config/beta.json": "//service/config:beta.json",
+    "service/config/gamma.json": "//service/config:gamma.json",
+    "service/config/prod.json": "//service/config:prod.json",
+    "service/infra/access/cfn-exec-policy.template.json": "//service/infra/access:cfn-exec-policy.template.json",
+    "site/dist": "//site:dist",
+    "site/src/routes.ts": "//site:routes.ts",
+    "site/test/fixtures/routes.json": "//site:routes.json",
+}
+
+# cdk.json's app, `npx ts-node --prefer-ts-exts bin/stacks.ts`, without npx (there is no npm).
+_APP = "node node_modules/.bin/ts-node --prefer-ts-exts bin/stacks.ts"
+
+npm_modules(
+    name = "modules",
+    lockfile = "package-lock.json",
+    npm = NPM,
+)
+
+tsc_check(
+    name = "typecheck",
+    data = _DATA,
+    modules = ":modules",
+    node = _NODE,
+    srcs = _SRCS,
+)
+
+jest_test(
+    name = "test",
+    data = _DATA,
+    modules = ":modules",
+    node = _NODE,
+    srcs = _SRCS,
+)
+
+[cdk_synth(
+    name = "synth_" + stage,
+    app = _APP,
+    context = {
+        "commit": "ci",
+        "hostedZoneId": "Z0DUMMYZONE",
+        "stage": stage,
+        "version": "ci",
+    },
+    data = _DATA,
+    env = {
+        "CDK_DEFAULT_ACCOUNT": "1" * 12,
+        "CDK_DEFAULT_REGION": "us-east-1",
+    },
+    modules = ":modules",
+    node = _NODE,
+    srcs = _SRCS,
+) for stage in ["beta", "gamma", "prod"]]
+
+# This package's files, for //:hygiene (the repository-wide scan reads every file, and a
+# package boundary hides these from the root package's glob). A copy of the tree, staged
+# by path from this package.
+filegroup(
+    name = "lint_files",
+    srcs = glob(["**"], exclude = ["cdk.out/**", "**/*.js", "**/*.d.ts", "cdk.context.json"]) + [".gitignore", "jest.config.js"],
+    copy = True,
+    visibility = ["//:"],
+)

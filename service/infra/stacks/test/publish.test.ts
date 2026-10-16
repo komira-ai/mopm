@@ -1,10 +1,10 @@
 import { Match } from 'aws-cdk-lib/assertions';
 import { STAGES } from '../lib/config';
-import { INDEXER_TIMEOUT_SECONDS, MAX_RECEIVES, VALIDATOR_TIMEOUT_SECONDS } from '../lib/publish-stack';
+import { INDEXER_TIMEOUT_SECONDS, MAX_RECEIVES, VALIDATOR_MAX_CONCURRENCY, VALIDATOR_TIMEOUT_SECONDS } from '../lib/publish-stack';
 import { DUMMY_ACCOUNT, tpl } from './util';
 
 describe.each(STAGES)('PublishStack %s', (stage) => {
-  const { publish: t, api } = tpl(stage);
+  const { publish: t, api, ...rest } = tpl(stage);
   const bucket = `mopm-${stage}-channel-${DUMMY_ACCOUNT}`;
   const fn = (handler: string): any =>
     Object.values(t.findResources('AWS::Lambda::Function')).find((r: any) => r.Properties.Handler === handler);
@@ -39,8 +39,28 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
   test('queue visibility is six times the Lambda timeout, as AWS advises for an SQS trigger', () => {
     t.hasResourceProperties('AWS::SQS::Queue', { QueueName: `mopm-${stage}-validate.fifo`, VisibilityTimeout: VALIDATOR_TIMEOUT_SECONDS * 6 });
     t.hasResourceProperties('AWS::SQS::Queue', { QueueName: `mopm-${stage}-index.fifo`, VisibilityTimeout: INDEXER_TIMEOUT_SECONDS * 6 });
-    t.hasResourceProperties('AWS::Lambda::Function', { Handler: 'publish/validator-lambda.handler', Timeout: VALIDATOR_TIMEOUT_SECONDS });
-    t.hasResourceProperties('AWS::Lambda::Function', { Handler: 'publish/indexer-lambda.handler', Timeout: INDEXER_TIMEOUT_SECONDS });
+    t.hasResourceProperties('AWS::Lambda::Function', { Handler: 'publish/validator-lambda.handler', Timeout: VALIDATOR_TIMEOUT_SECONDS, Runtime: 'nodejs22.x' });
+    t.hasResourceProperties('AWS::Lambda::Function', { Handler: 'publish/indexer-lambda.handler', Timeout: INDEXER_TIMEOUT_SECONDS, Runtime: 'nodejs22.x' });
+  });
+
+  test('the validator is capped at 5 concurrent invocations by its queue trigger, so a publish burst cannot starve the read API; the indexer is not capped', () => {
+    expect(VALIDATOR_MAX_CONCURRENCY).toBe(5);
+    const maps = Object.values(t.findResources('AWS::Lambda::EventSourceMapping')) as any[];
+    const scaling = (queue: string) =>
+      maps.find((m) => JSON.stringify(m.Properties.EventSourceArn).includes(queue))?.Properties.ScalingConfig;
+    expect(scaling('ValidateQueue')).toEqual({ MaximumConcurrency: 5 });
+    expect(scaling('IndexQueue')).toBeUndefined();
+  });
+
+  // Lambda refuses a reservation that would leave the account's unreserved concurrency under 10 ("decreases account's
+  // UnreservedConcurrentExecution below its minimum value of [10]"), and a new account's whole limit is 10: any
+  // reservation fails the deploy and CloudFormation rolls back. Cap with the trigger's maximum concurrency instead.
+  test('no function of any stack reserves concurrency', () => {
+    for (const [name, template] of Object.entries({ publish: t, api, ...rest })) {
+      for (const [id, f] of Object.entries(template.findResources('AWS::Lambda::Function')) as [string, any][]) {
+        expect([name, id, f.Properties.ReservedConcurrentExecutions]).toEqual([name, id, undefined]);
+      }
+    }
   });
 
   test('each queue triggers its own Lambda, one message at a time', () => {
@@ -120,9 +140,10 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     });
   });
 
-  test('the API stack queues commits on the validate queue and nowhere else', () => {
+  test('the API stack sends to the validate queue (commits) and the index queue (yank rebuilds), send-only, and nowhere else', () => {
     const st = Object.values(api.findResources('AWS::IAM::Policy')).flatMap((r: any) => r.Properties.PolicyDocument.Statement as any[]);
     const q = st.filter((s) => ([] as string[]).concat(s.Action).some((a) => a.startsWith('sqs:')));
-    expect(q).toHaveLength(1);
+    expect(q.map((x) => x.Sid).sort()).toEqual(['QueueCommits', 'QueueIndexRebuilds']);
+    for (const x of q) expect(([] as string[]).concat(x.Action)).toEqual(['sqs:SendMessage']);
   });
 });

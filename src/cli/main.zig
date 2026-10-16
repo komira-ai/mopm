@@ -7,12 +7,13 @@ const core = @import("mopm_core");
 const mojo_cmd = core.mojo_cmd;
 const test_cmd = @import("test_cmd.zig");
 const registry_cmd = @import("registry_cmd.zig");
+const publish_cmd = @import("publish_cmd.zig");
 const install_cmd = @import("install_cmd.zig");
 
 pub const version = "0.0.1";
 
 const planned = [_][]const u8{
-    "cov", "check", "publish", "export", "launch",
+    "cov", "check", "export", "launch",
 };
 
 pub fn isPlanned(cmd: []const u8) bool {
@@ -52,6 +53,16 @@ const usage =
     \\                          an account on a registry (device login through
     \\                          GitHub; the token is kept in credentials.json,
     \\                          mode 0600, and never printed)
+    \\  pack --compiler <mojo version> --mojoc [<subdir>=]<file>... [-o <dir>]
+    \\                          write the package as a .conda per subdir
+    \\                          (noarch, linux-64, linux-aarch64, osx-arm64) and
+    \\                          print its sha256; --manifest <file> names another
+    \\                          mopm.toml
+    \\  publish [pack options] [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
+    \\          [--readme <file>] [--dry-run]
+    \\                          pack and publish to a registry; the token is
+    \\                          $MOPM_TOKEN, else the one 'mopm login' stored;
+    \\                          --dry-run packs and prints what would be sent
     \\  lock [--registry <prod|gamma|beta|url>]
     \\                          resolve mopm.toml's dependencies against the
     \\                          registry's index and write mopm.lock (keeping
@@ -83,7 +94,7 @@ const usage =
     \\                          (default: this host)
     \\
     \\planned (not implemented yet):
-    \\  cov check publish export launch
+    \  cov check export launch
     \\
 ;
 
@@ -396,6 +407,9 @@ fn run(arena: std.mem.Allocator) u8 {
     if (std.mem.eql(u8, cmd, "login") or std.mem.eql(u8, cmd, "logout") or std.mem.eql(u8, cmd, "whoami")) {
         return registry_cmd.main(arena, cmd, args[2..], version);
     }
+    if (std.mem.eql(u8, cmd, "pack") or std.mem.eql(u8, cmd, "publish")) {
+        return publish_cmd.main(arena, cmd, args[2..], version);
+    }
     if (std.mem.eql(u8, cmd, "lock")) return install_cmd.main(arena, .lock, args[2..], version);
     if (std.mem.eql(u8, cmd, "update")) return install_cmd.main(arena, .update, args[2..], version);
     if (std.mem.eql(u8, cmd, "tree")) return install_cmd.main(arena, .tree, args[2..], version);
@@ -419,12 +433,15 @@ pub fn main() void {
 
 test {
     _ = registry_cmd;
+    _ = publish_cmd;
     _ = install_cmd;
 }
 
 test "planned commands are recognised, working ones are not planned" {
     try std.testing.expect(isPlanned("cov"));
     try std.testing.expect(isPlanned("check"));
+    try std.testing.expect(!isPlanned("publish"));
+    try std.testing.expect(!isPlanned("pack"));
     try std.testing.expect(!isPlanned("build"));
     try std.testing.expect(!isPlanned("run"));
     try std.testing.expect(!isPlanned("repl"));

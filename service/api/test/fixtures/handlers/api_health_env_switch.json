@@ -1,0 +1,50 @@
+{
+  "description": "MOPM_READ_ONLY=true makes health read-only without consulting the config table (the environment flag is checked first and short-circuits).",
+  "lambda": "api",
+  "env": {
+    "MOPM_STAGE": "gamma",
+    "MOPM_READ_ONLY": "true",
+    "MOPM_VERSION": "v1.2.3",
+    "MOPM_COMMIT": "abc123"
+  },
+  "dynamo": [
+    {
+      "op": "Get",
+      "table": "mopm-gamma-config",
+      "respond": {
+        "Item": {
+          "key": "read_only",
+          "value": false
+        }
+      }
+    }
+  ],
+  "invocations": [
+    {
+      "event": "events/apigw_get_health.json",
+      "expect": {
+        "returns": {
+          "statusCode": 200,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-health"
+          },
+          "body_json": {
+            "status": "ok",
+            "api_version": "v1",
+            "stage": "gamma",
+            "read_only": true,
+            "version": "v1.2.3",
+            "commit": "abc123"
+          }
+        }
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [],
+    "aws_http": [],
+    "logs": []
+  }
+}
