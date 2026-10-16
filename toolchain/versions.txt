@@ -1,0 +1,4 @@
+# The Mojo versions mopm can install, one per line. Each has toolchain/mojo-<version>.pixi.lock
+# (made by the toolchain job of .github/workflows/kpin-update.yml) and, made from it by
+# mopm-closure, src/core/toolchain/mojo-<version>-<subdir>.json.
+1.0.0
