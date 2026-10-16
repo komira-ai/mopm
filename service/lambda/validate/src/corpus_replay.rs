@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 
 use mopm_core::limits::Limits;
 use serde_json::Value;
+use sha2::Digest;
 
 use crate::corpus_table::ARCHIVES;
 use crate::{validate_package, PublishExpectation, ValidatorOptions};
@@ -125,4 +126,23 @@ fn the_corpus_covers_every_rule_the_validator_can_apply() {
     let missing: Vec<&str> = crate::RuleCode::ALL.iter().map(|r| r.as_str()).filter(|r| !seen.contains(*r)).collect();
     // The rules the TypeScript corpus does not reach are those that need a format the Lambda never accepts.
     assert_eq!(missing, Vec::<&str>::new(), "rules no corpus case reaches");
+}
+
+#[test]
+fn declared_hashes_are_compared_case_insensitively_and_a_wrong_one_is_refused() {
+    let case = cases().into_iter().find(|c| c["id"] == "ok_minimal").unwrap();
+    let facts = verdict_of(&case)["facts"].clone();
+    let manifest = facts["manifestSha256"].as_str().unwrap().to_string();
+    let archive_sha = hex::encode(sha2::Sha256::digest(archive("ok_minimal.conda")));
+    let run = |sha: Option<String>, manifest_sha: Option<String>| {
+        let mut e = expectation(&case);
+        e.sha256 = sha;
+        e.manifest_sha256 = manifest_sha;
+        let o = ValidatorOptions { limits: limits(&case), allowed_native_deps: Default::default() };
+        validate_package(archive("ok_minimal.conda"), &e, &o).to_json()
+    };
+    assert_eq!(run(Some(archive_sha.to_uppercase()), Some(manifest.to_uppercase()))["ok"], true);
+    assert_eq!(run(Some(archive_sha.clone()), Some(manifest.clone()))["ok"], true);
+    assert_eq!(run(Some("0".repeat(64)), None)["rule"], "sha256_mismatch");
+    assert_eq!(run(None, Some("0".repeat(64)))["rule"], "manifest_sha256_mismatch");
 }

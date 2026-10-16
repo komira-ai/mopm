@@ -483,6 +483,13 @@ mod tests {
     }
 
     #[test]
+    fn mojo_deps_are_returned_in_javascript_sort_order() {
+        // U+1F600 is a surrogate pair (D83D DE00) and sorts before U+FF5E in UTF-16, after it in UTF-8.
+        let r = depends(&["mojo-compiler ==1.0.0", "mojo-\u{ff5e}", "mojo-\u{1f600}", "mojo-a"], &["\u{ff5e}", "\u{1f600}", "a"], &[]).unwrap();
+        assert_eq!(r, ["mojo-a", "mojo-\u{1f600}", "mojo-\u{ff5e}"]);
+    }
+
+    #[test]
     fn native_names_fit_the_soname() {
         let n = |soname: &str, shared: Option<&str>, stat: Option<&str>| NativeDecl {
             id: "z".into(),

@@ -6,8 +6,8 @@
 //!   before anything else, so "not a zstd stream" is the verdict for non-zstd bytes;
 //! * after the first frame come any number of zstd frames and skippable frames; bytes that are neither (and
 //!   fewer than five of them) are corrupt, nothing after the last frame is not;
-//! * a frame that declares a content size smaller than what it holds is corrupt; one that declares more is
-//!   not (the size is a hint);
+//! * a frame that declares a content size smaller than what it holds is corrupt (`ruzstd` refuses it); one that
+//!   declares more is not (the size is a hint);
 //! * the content checksum is not verified;
 //! * every error of the decoder is "is not valid zstd"; what the collector says is passed through.
 
@@ -57,8 +57,6 @@ pub fn unzstd(data: &[u8], out: &mut Collector<'_>, what: &str) -> Checked<()> {
         }
         let mut src: &[u8] = rest;
         dec.init(&mut src).map_err(|_| corrupt(what))?;
-        let declared = dec.content_size();
-        let mut produced: u64 = 0;
         loop {
             let finished = dec.decode_blocks(&mut src, BlockDecodingStrategy::UptoBytes(STEP)).map_err(|_| corrupt(what))?;
             while dec.can_collect() > 0 {
@@ -66,7 +64,6 @@ pub fn unzstd(data: &[u8], out: &mut Collector<'_>, what: &str) -> Checked<()> {
                 if chunk.is_empty() {
                     break;
                 }
-                produced += chunk.len() as u64;
                 out.push(&chunk)?;
             }
             if finished {
@@ -74,11 +71,7 @@ pub fn unzstd(data: &[u8], out: &mut Collector<'_>, what: &str) -> Checked<()> {
             }
         }
         if let Some(chunk) = dec.collect() {
-            produced += chunk.len() as u64;
             out.push(&chunk)?;
-        }
-        if declared > 0 && produced > declared {
-            return Err(corrupt(what));
         }
         pos += rest.len() - src.len();
     }
