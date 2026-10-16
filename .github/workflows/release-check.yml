@@ -9,20 +9,25 @@ on:
   pull_request:
     paths:
       - ".github/workflows/release*.yml"
-      - "tools/release_*.sh"
+      - "tools/release.zig"
       - "tools/install_zig.sh"
       - "build.zig"
       - "build.zig.zon"
       - "src/cli/main.zig"
       - "site/static/install.sh"
-      - "tests/install_script/**"
+      - "tests/drivers/install_script_test.zig"
+      - "tests/drivers/fake_mopm.zig"
+      - "tests/drivers/fake_uname.zig"
+      - "tests/drivers/harness.zig"
   push:
     branches: [main]
     paths:
       - ".github/workflows/release*.yml"
-      - "tools/release_*.sh"
+      - "tools/release.zig"
       - "site/static/install.sh"
-      - "tests/install_script/**"
+      - "tests/drivers/install_script_test.zig"
+      - "tests/drivers/fake_mopm.zig"
+      - "tests/drivers/fake_uname.zig"
 
 permissions:
   contents: read
@@ -46,14 +51,12 @@ jobs:
           pattern: release-*
           path: dist
           merge-multiple: true
-      - name: SHA256SUMS lists all four tarballs and they check
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: SHA256SUMS for exactly the four tarballs, written and checked
         run: |
-          tools/release_sums.sh dist
-          test "$(wc -l < dist/SHA256SUMS)" -eq 4
-          for t in linux-x86_64 linux-aarch64 macos-arm64 macos-x86_64; do
-            grep -q "  mopm-.*-$t\.tar\.gz\$" dist/SHA256SUMS
-            tar -tzf dist/mopm-*-"$t".tar.gz | grep -q '/mopm$'
-          done
+          zig build-exe tools/release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/release"
+          "$RUNNER_TEMP/release" sums dist
           cat dist/SHA256SUMS
 
   installer:
@@ -68,12 +71,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Shell syntax (sh, and bash/dash where present)
-        run: |
-          for f in site/static/install.sh tools/release_package.sh tools/release_sums.sh tests/install_script/run.sh tests/install_script/mutants.sh; do
-            sh -n "$f"
-          done
-      - name: install.sh against a fake release
-        run: tests/install_script/run.sh
-      - name: Planted defects in install.sh turn the test red
-        run: tests/install_script/mutants.sh
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: install.sh against a fake release, then with planted defects (each must turn a check red)
+        run: zig test tests/drivers/install_script_test.zig

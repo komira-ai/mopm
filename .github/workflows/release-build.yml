@@ -29,24 +29,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: The version to package
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: The version to package (a tag must name the version in src/cli/main.zig)
         id: v
         env:
           TAG: ${{ inputs.tag }}
         run: |
-          src=$(sed -n 's/^pub const version = "\(.*\)";$/\1/p' src/cli/main.zig)
-          [ -n "$src" ] || { echo "no version in src/cli/main.zig" >&2; exit 1; }
-          if [ -z "$TAG" ]; then
-            version=$src
-          else
-            case "$TAG" in
-              v[0-9]*.[0-9]*.[0-9]*) ;;
-              *) echo "tag '$TAG' is not v<major>.<minor>.<patch>" >&2; exit 1 ;;
-            esac
-            version=${TAG#v}
-            [ "$version" = "$src" ] || { echo "tag $TAG does not match the version in src/cli/main.zig ($src)" >&2; exit 1; }
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          zig build-exe tools/release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/release"
+          echo "version=$("$RUNNER_TEMP/release" version "$TAG")" >> "$GITHUB_OUTPUT"
 
   package:
     name: package (${{ matrix.target }})
@@ -68,13 +59,15 @@ jobs:
           persist-credentials: false
       - name: Install Zig 0.12.0 (sha256-pinned)
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Build the release tool (tools/release.zig)
+        run: zig build-exe tools/release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/release"
       - name: Build (ReleaseSafe, stripped), check mopm --version, package
         env:
           VERSION: ${{ needs.version.outputs.version }}
           TARGET: ${{ matrix.target }}
           ZIG_TARGET: ${{ matrix.zig_target }}
           RUN_PREFIX: ${{ matrix.run_prefix }}
-        run: tools/release_package.sh "$VERSION" "$TARGET" "$ZIG_TARGET" "$RUNNER_TEMP/out"
+        run: '"$RUNNER_TEMP/release" package "$VERSION" "$TARGET" "$ZIG_TARGET" "$RUNNER_TEMP/out" --run-prefix "$RUN_PREFIX"'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ matrix.target }}
