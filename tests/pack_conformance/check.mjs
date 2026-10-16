@@ -1,9 +1,9 @@
 // Conformance of `mopm pack` with the registry's package validator.
 //
-//   node tests/pack_conformance/check.mjs <mopm> <service/api/dist>
+//   node tests/pack_conformance/check.mjs <mopm> <service/api/dist-validate>
 //
 // Packs a small package with the built `mopm pack`, and runs the validator the
-// registry runs on uploads (service/api/src/validate, compiled to <dist>) on
+// registry runs on uploads (service/api/src/validate, bundled by `npm run build:validate-lib` to <dist>) on
 // each file. A packer that disagrees with the registry about the zip, the
 // tars, the zstd frames, index.json, <name>.mopm.json or the file name turns
 // the first checks red. The planted defects after them show the validator is
@@ -17,7 +17,7 @@ import { join, resolve } from 'node:path';
 
 const [mopm, dist] = process.argv.slice(2);
 if (!mopm || !dist) {
-  console.error('usage: node check.mjs <mopm> <service/api/dist>');
+  console.error('usage: node check.mjs <mopm> <service/api/dist-validate>');
   process.exit(2);
 }
 const require = createRequire(import.meta.url);

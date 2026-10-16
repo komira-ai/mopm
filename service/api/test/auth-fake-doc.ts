@@ -11,16 +11,12 @@ export interface Grant {
 /**
  * What the Lambda's role may do on the auth tables, by table (without the `mopm-<stage>-` prefix). The stacks test
  * (service/infra/stacks/test/api.test.ts) asserts that AUTH_GRANTS in api-stack.ts equals this file, so the adapter
- * tests below run under exactly the permissions the deployed role has.
+ * tests run under exactly the permissions the deployed role has. There is no other grant list: the double must never be
+ * broader than the role (auth-fake-grants.test.ts).
  */
 export const LAMBDA_GRANTS: Record<string, Grant> = JSON.parse(
   fs.readFileSync(path.join(__dirname, 'fixtures/lambda-auth-grants.json'), 'utf8'),
 );
-/** The registry's read grants that the auth code uses (owners index for `all_current`). */
-export const READ_GRANTS: Record<string, Grant> = {
-  owners: { actions: ['dynamodb:GetItem', 'dynamodb:Query'], indexes: ['by_github_id'] },
-};
-
 interface TableDef {
   pk: string;
   sk?: string;

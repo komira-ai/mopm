@@ -1,10 +1,10 @@
 # The registry API package's checks, run on the farm from the pinned npm packages
 # (pins.lock.bzl, from package-lock.json by kpin) with komira's node_modules rules:
 # the same commands as service-ci.yml (`tsc --noEmit`, `jest --ci` with 2 workers) and
-# `tsc -p tsconfig.build.json`, whose output the infra stacks bundle. No install, no
+# `esbuild` (package.json "build"), whose output the infra stacks deploy. No install, no
 # script, no network. See service/README.md, "Building with Buck2".
 
-load("@komira//tools/build/node:modules.bzl", "jest_test", "node_tree_test", "npm_modules", "tsc_build", "tsc_check")
+load("@komira//tools/build/node:modules.bzl", "jest_test", "node_tree_build", "node_tree_test", "npm_modules", "tsc_check")
 load(":pins.lock.bzl", "NPM")
 
 _NODE = "//tools/node:node"
@@ -12,7 +12,6 @@ _NODE = "//tools/node:node"
 _SRCS = glob(["src/**", "test/**"]) + [
     "jest.config.js",
     "package.json",
-    "tsconfig.build.json",
     "tsconfig.json",
 ]
 
@@ -44,11 +43,28 @@ jest_test(
     tools = {"bzip2": "komira//tools/build/toolchains:busybox"},
 )
 
-# `npm run build`: the handler bundle the API stack deploys.
-tsc_build(
+# `npm run build`: the handler bundle the API stack deploys. esbuild bundles each of the three
+# handlers (api, validator, index writer) with its own dependencies into one file; the AWS SDK
+# is left out, the Lambda runtime provides it. The arguments are package.json's "build" script.
+node_tree_build(
     name = "dist",
+    args = [
+        "src/http/lambda.ts",
+        "src/publish/validator-lambda.ts",
+        "src/publish/indexer-lambda.ts",
+        "--bundle",
+        "--platform=node",
+        "--target=node22",
+        "--format=cjs",
+        "--external:@aws-sdk/*",
+        "--outbase=src",
+        "--outdir=dist",
+        "--log-level=warning",
+    ],
     modules = ":modules",
     node = _NODE,
+    out_dir = "dist",
+    program = "node_modules/.bin/esbuild",
     srcs = _SRCS,
     visibility = ["//service/infra/stacks:"],
 )
@@ -77,6 +93,14 @@ export_file(
     src = "test/fixtures/repodata." + subdir + ".json",
     visibility = ["//service/lambda/core:"],
 ) for subdir in ["linux-64", "osx-arm64", "noarch"]]
+
+# The recorded storage wire goldens (test/fixtures/wire/*.json): the stacks' iam-wire-coverage test checks that the API
+# role's policy allows every DynamoDB call in them.
+filegroup(
+    name = "wire_goldens",
+    srcs = {f[len("test/fixtures/wire/"):]: f for f in glob(["test/fixtures/wire/*.json"])},
+    visibility = ["//service/infra/stacks:"],
+)
 
 # This package's files, for //:hygiene (the repository-wide scan reads every file, and a
 # package boundary hides these from the root package's glob). A copy of the tree, staged
