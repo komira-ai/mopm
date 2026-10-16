@@ -155,6 +155,19 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     expect(AUTH_GRANTS.tokens!.indexes).toEqual(['by_github_id']);
   });
 
+  // POST /api/v1/me/tokens asks which packages the account owns (ownedPackagesFrom: a Query on the owners table's
+  // by_github_id index). A table grant does not cover an index: the index is its own resource.
+  test('the role may Query the owners index by_github_id, by its own ARN', () => {
+    const ix = `table/${tableName(stage, 'owners')}/index/by_github_id"`;
+    const allowing = statements().filter(
+      (s) => s.Effect === 'Allow' && acts(s).includes('dynamodb:Query') && ([] as any[]).concat(s.Resource).some((r) => JSON.stringify(r).includes(ix)),
+    );
+    expect(allowing).toHaveLength(1);
+    expect(acts(allowing[0]).sort()).toEqual(['dynamodb:GetItem', 'dynamodb:Query']);
+    // Exactly that index of the owners table, not index/*.
+    expect(flatten(allowing[0].Resource)).not.toContain('index/*');
+  });
+
   test('the role may read exactly one secret, the stage OAuth app, and nothing else in Secrets Manager', () => {
     const st = statements().filter((s) => acts(s).some((a) => a.startsWith('secretsmanager:')));
     expect(st).toHaveLength(1);
