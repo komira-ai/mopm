@@ -86,6 +86,14 @@ export_file(
     visibility = ["//service/infra/stacks:"],
 )
 
+# The repodata the TS index writer produced for the golden records: the Rust core
+# (service/lambda/core) must write the same bytes.
+[export_file(
+    name = "repodata." + subdir + ".json",
+    src = "test/fixtures/repodata." + subdir + ".json",
+    visibility = ["//service/lambda/core:"],
+) for subdir in ["linux-64", "osx-arm64", "noarch"]]
+
 # The recorded storage wire goldens (test/fixtures/wire/*.json): the stacks' iam-wire-coverage test checks that the API
 # role's policy allows every DynamoDB call in them.
 filegroup(
