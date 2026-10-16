@@ -1,0 +1,12 @@
+# The Mojo environment the end-to-end tests run in. CI copies this file and
+# mopm.lock to a temporary directory and runs `mopm sync --locked` there: mopm
+# installs the pinned Mojo toolchain itself (no pixi, conda or mojo is
+# installed on the runner). The environment is .mopm/env.
+[package]
+name = "mopm-e2e-env"
+version = "0.0.0"
+
+[toolchain]
+mojo = "1.0.0"
+
+[dependencies]

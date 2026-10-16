@@ -138,10 +138,22 @@ fn removeStale(arena: Allocator, parent: std.fs.Dir, env_name: []const u8) void 
     for (names.items) |n| parent.deleteTree(n) catch {};
 }
 
+/// The file of an environment that holds its stamp (the caller's digest of
+/// what was installed).
+pub const stamp_file = ".mopm-stamp";
+
+/// The stamp of the environment `env_name` in `parent`, or null.
+pub fn readStamp(arena: Allocator, parent: std.fs.Dir, env_name: []const u8) ?[]const u8 {
+    var env = parent.openDir(env_name, .{}) catch return null;
+    defer env.close();
+    return env.readFileAlloc(arena, stamp_file, 4096) catch null;
+}
+
 /// Installs `pkgs` as the environment `env_name` in `parent`, whose absolute
-/// path is `prefix` (placeholders are rewritten to it). Returns what each
-/// package unpacked. On an error `parent` is as it was.
-pub fn installEnv(arena: Allocator, parent: std.fs.Dir, env_name: []const u8, prefix: []const u8, pkgs: []const Pkg, diag: *Diag) ![]const unpack.Installed {
+/// path is `prefix` (placeholders are rewritten to it), and records `stamp`
+/// in it. Returns what each package unpacked. On an error `parent` is as it
+/// was.
+pub fn installEnv(arena: Allocator, parent: std.fs.Dir, env_name: []const u8, prefix: []const u8, pkgs: []const Pkg, stamp: []const u8, diag: *Diag) ![]const unpack.Installed {
     removeStale(arena, parent, env_name);
 
     var python: ?[]const u8 = null;
@@ -198,6 +210,7 @@ pub fn installEnv(arena: Allocator, parent: std.fs.Dir, env_name: []const u8, pr
         try tmp.writeFile(name, out.items);
     }
     try tmp.writeFile("conda-meta/history", "");
+    try tmp.writeFile(stamp_file, stamp);
 
     // Swap in. The old environment, if any, is moved aside first and removed
     // only once the new one is in place; if the second rename fails the old one
@@ -288,7 +301,7 @@ test "installEnv: files, conda-meta records, history; nothing else is left besid
     // A leftover of an earlier interrupted install is removed.
     try f.parent.makePath(".env.tmp-dead/sub");
     var diag = Diag{};
-    const done = try installEnv(a, f.parent, "env", "/opt/mopm/env", &.{ alpha, beta }, &diag);
+    const done = try installEnv(a, f.parent, "env", "/opt/mopm/env", &.{ alpha, beta }, "stamp", &diag);
     try std.testing.expectEqual(@as(usize, 2), done.len);
     try std.testing.expectEqualStrings("env", try f.listing(a));
 
@@ -298,6 +311,7 @@ test "installEnv: files, conda-meta records, history; nothing else is left besid
     try std.testing.expectEqualStrings("B\n", try env.readFileAlloc(a, "lib/b.txt", 100));
     try std.testing.expect((try env.statFile("bin/a")).mode & 0o111 != 0);
     try env.access("conda-meta/history", .{});
+    try std.testing.expectEqualStrings("stamp", readStamp(a, f.parent, "env").?);
 
     const text = try env.readFileAlloc(a, "conda-meta/alpha-1.0-h0_0.json", 1 << 20);
     const rec = try std.json.parseFromSliceLeaky(std.json.Value, a, text, .{});
@@ -330,14 +344,14 @@ test "installEnv: a file that is not the pinned bytes is refused before anything
     try f.cache.writeFile(tampered.file_name, bytes);
 
     var diag = Diag{};
-    try std.testing.expectError(error.HashMismatch, installEnv(a, f.parent, "env", "/opt/e", &.{ alpha, tampered }, &diag));
+    try std.testing.expectError(error.HashMismatch, installEnv(a, f.parent, "env", "/opt/e", &.{ alpha, tampered }, "stamp", &diag));
     try std.testing.expect(std.mem.indexOf(u8, diag.message, "not the pinned file") != null);
     try std.testing.expectEqualStrings("", try f.listing(a));
 
     // A pin of the wrong size is refused as well.
     var wrong = alpha;
     wrong.size += 1;
-    try std.testing.expectError(error.HashMismatch, installEnv(a, f.parent, "env", "/opt/e", &.{wrong}, &diag));
+    try std.testing.expectError(error.HashMismatch, installEnv(a, f.parent, "env", "/opt/e", &.{wrong}, "stamp", &diag));
     try std.testing.expectEqualStrings("", try f.listing(a));
 }
 
@@ -353,12 +367,12 @@ test "installEnv: an install that fails midway leaves no environment, and keeps 
 
     var diag = Diag{};
     // No environment yet: the failure leaves the directory empty.
-    try std.testing.expectError(error.LinkScript, installEnv(a, f.parent, "env", "/opt/e", &.{ alpha, bad }, &diag));
+    try std.testing.expectError(error.LinkScript, installEnv(a, f.parent, "env", "/opt/e", &.{ alpha, bad }, "stamp", &diag));
     try std.testing.expectEqualStrings("", try f.listing(a));
 
     // An environment exists: the failure leaves it exactly as it was.
-    _ = try installEnv(a, f.parent, "env", "/opt/e", &.{first}, &diag);
-    try std.testing.expectError(error.LinkScript, installEnv(a, f.parent, "env", "/opt/e", &.{ alpha, bad }, &diag));
+    _ = try installEnv(a, f.parent, "env", "/opt/e", &.{first}, "stamp", &diag);
+    try std.testing.expectError(error.LinkScript, installEnv(a, f.parent, "env", "/opt/e", &.{ alpha, bad }, "stamp", &diag));
     try std.testing.expectEqualStrings("env", try f.listing(a));
     var env = try f.parent.openDir("env", .{});
     defer env.close();
@@ -375,8 +389,8 @@ test "installEnv: a new install replaces the old environment whole" {
     const alpha = try f.add(a, "alpha", "1.0", &.{.{ .name = "bin/a", .data = "A\n" }});
     const beta = try f.add(a, "beta", "2.0", &.{.{ .name = "bin/b", .data = "B\n" }});
     var diag = Diag{};
-    _ = try installEnv(a, f.parent, "env", "/opt/e", &.{alpha}, &diag);
-    _ = try installEnv(a, f.parent, "env", "/opt/e", &.{beta}, &diag);
+    _ = try installEnv(a, f.parent, "env", "/opt/e", &.{alpha}, "stamp", &diag);
+    _ = try installEnv(a, f.parent, "env", "/opt/e", &.{beta}, "stamp", &diag);
     try std.testing.expectEqualStrings("env", try f.listing(a));
     var env = try f.parent.openDir("env", .{});
     defer env.close();
@@ -394,6 +408,6 @@ test "installEnv: a package that is not the one asked for is refused" {
     var alpha = try f.add(a, "alpha", "1.0", &.{.{ .name = "bin/a", .data = "A\n" }});
     alpha.name = "gamma";
     var diag = Diag{};
-    try std.testing.expectError(error.PackageMismatch, installEnv(a, f.parent, "env", "/opt/e", &.{alpha}, &diag));
+    try std.testing.expectError(error.PackageMismatch, installEnv(a, f.parent, "env", "/opt/e", &.{alpha}, "stamp", &diag));
     try std.testing.expectEqualStrings("", try f.listing(a));
 }

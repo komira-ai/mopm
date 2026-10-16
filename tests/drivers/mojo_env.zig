@@ -2,8 +2,8 @@
 //! an unpacked, sha256-pinned Mojo 1.0.0) made into an environment prefix as
 //! mopm expects one (`bin/mojo`, `lib/`, `lib/mojo/*.mojoc`,
 //! `share/max/modular.cfg`), plus the `cc` that `mojo build` links through.
-//! Shared by the end-to-end drivers; replaces the pixi environment of
-//! tests/e2e/pixi.toml, which the farm cannot create (no network, no pixi).
+//! Shared by the end-to-end drivers; replaces the environment `mopm sync`
+//! makes in CI (tests/e2e/mopm.toml), which the farm cannot create (no network).
 //!
 //! The Buck2 target gives the drivers, as exec_tools (absolute paths):
 //!   MOJO_TOOLCHAIN  the unpacked toolchain directory

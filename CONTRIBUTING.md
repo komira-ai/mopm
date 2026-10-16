@@ -47,7 +47,7 @@ Two builds describe the same program, and both stay.
   the built `mopm`; `//:mojo_probe` shows the toolchain works from this cell.
   The pinned compiler closure has no lldb, so `mojo repl` cannot run there and
   the REPL checks print `SKIP` (they run if the toolchain gains
-  `bin/mojo-lldb`); `ci.yml` still runs them against the pixi environment.
+  `bin/mojo-lldb`); `ci.yml` still runs them against the environment `mopm sync` installs.
   The repository's own lints are Zig tests too, with no Ruby: `//:hygiene`
   (`.github/scripts/hygiene.rb`, over every file of the repository),
   `//:workflows` (`.github/scripts/workflow_lint.rb`, over the workflows) and

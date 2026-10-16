@@ -72,16 +72,25 @@ const usage =
     \\                          the same, moving the named packages (all, with
     \\                          none named) to the newest versions that fit
     \\  tree                    draw the dependency graph mopm.lock holds
-    \\  sync [--locked] [--registry ...] [--pixi <path>]
-    \\                          install mopm.lock into .mopm/ (locking first
-    \\                          when it is missing or out of date with
-    \\                          mopm.toml; --locked fails instead). Every
-    \\                          download is checked against the lock's sha256
-    \\                          and size; build with --prefix .mopm/.pixi/envs/default
+    \\  sync [--locked] [--registry ...] [--cache <dir>] [--toolchain <file>]
+    \\                          install mopm.lock and the Mojo toolchain
+    \\                          (mojo, mojo-compiler and what they need) into
+    \\                          .mopm/env, with no pixi, conda or solver to
+    \\                          install first: locking first when mopm.lock is
+    \\                          missing or out of date with mopm.toml (--locked
+    \\                          fails instead). Every download is checked
+    \\                          against a pinned sha256 and size, and the
+    \\                          environment is swapped in whole or not at all.
+    \\                          mopm build, run and repl use .mopm/env when no
+    \\                          --prefix, CONDA_PREFIX or MODULAR_HOME names one.
+    \\                          Toolchain files are kept in --cache (default:
+    \\                          ~/.cache/mopm/pkgs); --toolchain <file> names
+    \\                          another pinned closure than the built-in one
     \\
     \\  options for build, run and repl:
     \\    --prefix <dir>        the environment (default: CONDA_PREFIX, then
-    \\                          MODULAR_HOME without /share/max)
+    \\                          MODULAR_HOME without /share/max, then the
+    \\                          .mopm/env that mopm sync made)
     \\    --print-cmd           print the command instead of running it
     \\    --os <linux|macos>    with --print-cmd: the spelling to print
     \\                          (default: this host)
@@ -324,9 +333,9 @@ fn autolink(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const
         },
     };
 
-    const chosen = core.env.choosePrefix(o.prefix, getEnv(arena, "CONDA_PREFIX"), getEnv(arena, "MODULAR_HOME")) catch |e| {
+    const chosen = core.env.choosePrefixOrProject(std.fs.cwd(), o.prefix, getEnv(arena, "CONDA_PREFIX"), getEnv(arena, "MODULAR_HOME")) catch |e| {
         switch (e) {
-            error.NoPrefix => err.print("mopm {s}: no environment: pass --prefix <dir>, or run in an activated environment (CONDA_PREFIX or MODULAR_HOME)\n", .{name}) catch {},
+            error.NoPrefix => err.print("mopm {s}: no environment: pass --prefix <dir>, run in an activated environment (CONDA_PREFIX or MODULAR_HOME), or run 'mopm sync' in the project first\n", .{name}) catch {},
             error.BadModularHome => err.print("mopm {s}: MODULAR_HOME does not end in /share/max, so the environment prefix cannot be derived from it; pass --prefix <dir>\n", .{name}) catch {},
         }
         return 1;

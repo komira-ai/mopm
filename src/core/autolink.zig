@@ -29,8 +29,8 @@ pub const Prepared = union(enum) {
 };
 
 pub fn prepare(arena: Allocator, tool: mojo_cmd.Tool, flag: ?[]const u8, conda_prefix: ?[]const u8, modular_home: ?[]const u8) Allocator.Error!Prepared {
-    const chosen = env.choosePrefix(flag, conda_prefix, modular_home) catch |e| return refuse(arena, switch (e) {
-        error.NoPrefix => "no environment: pass --prefix <dir>, or run in an activated environment (CONDA_PREFIX or MODULAR_HOME)",
+    const chosen = env.choosePrefixOrProject(std.fs.cwd(), flag, conda_prefix, modular_home) catch |e| return refuse(arena, switch (e) {
+        error.NoPrefix => "no environment: pass --prefix <dir>, run in an activated environment (CONDA_PREFIX or MODULAR_HOME), or run 'mopm sync' in the project first",
         error.BadModularHome => "MODULAR_HOME does not end in /share/max, so the environment prefix cannot be derived from it; pass --prefix <dir>",
     });
     const prefix = std.fs.cwd().realpathAlloc(arena, chosen.path) catch |e| switch (e) {
