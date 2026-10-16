@@ -47,6 +47,8 @@ _UNIT_DATA = glob([
     "tests/manifest/**",
     "tests/new/**",
     "tests/resolve/golden/**",
+    "toolchain/**",
+    "src/core/toolchain/**",
 ]) + _DOTFILES
 
 # What the golden driver reads (tests/drivers/golden_test.zig).
@@ -96,6 +98,16 @@ zig_test(
     src = "src/cli/main.zig",
     imports = _CLI_SRCS,
     deps = [":mopm_core"],
+    **_TOOLS
+)
+
+# ---- mopm-closure: the toolchain closure files, made from a pixi lock ------------
+
+zig_exe(
+    name = "mopm-closure",
+    src = "tools/closure_gen.zig",
+    deps = [":mopm_core"],
+    visibility = ["PUBLIC"],
     **_TOOLS
 )
 
@@ -243,6 +255,7 @@ zig_test(  # buck-only: tools/build_parity.zig reads build.zig and this file
         "src/core/mopm_core.zig",
         "src/core/toml.zig",
         "src/cli/main.zig",
+        "tools/closure_gen.zig",
         "registry/fake/main.zig",
     ],
     **_TOOLS
