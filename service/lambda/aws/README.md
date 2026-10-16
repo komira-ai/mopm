@@ -13,3 +13,10 @@ refuses what DynamoDB refuses (raw reserved words in expressions, unused names o
 a TTL that is not a number, a consistent read of an index, a starting key outside the query, a transaction without a token), pages
 like DynamoDB, and can enforce the Lambda role's grants from `lambda-auth-grants.json`. The same contract scenarios that run on the memory
 stores run on these, and the tests assert the rows and requests as DynamoDB JSON.
+
+`services`: the adapters of the publish pipeline's other ports and of the OAuth secret: `S3Channel` (`ObjectStore`: 403 and 404 both
+mean absent, `If-None-Match: *` for create-only, the sha256 checksum header on every put), `S3Presigner` (a PUT pinned to one
+length and one sha256, signed for the clock it is given), `SqsFifoQueue`, `CloudFrontInvalidator`, `SecretsManagerReader`. They are
+tested against `mopm_testing::fake_http`, a scripted server on loopback that records the request exactly as the SDK sent it.
+What no test here can show is the services' own behaviour (S3 refusing a body whose digest differs from the signed one, SQS FIFO
+deduplication windows, CloudFront propagation): the first real exercise is the stage deployment.

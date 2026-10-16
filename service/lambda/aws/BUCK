@@ -6,11 +6,18 @@ AWS_LC = "komira//third_party/aws-lc:crypto[static-pic]"
 _DEPS = [
     "//service/lambda/core:mopm_core",
     "//service/lambda/ports:mopm_ports",
+    "//third_party/rust:aws-sdk-cloudfront",
     "//third_party/rust:aws-sdk-dynamodb",
+    "//third_party/rust:aws-sdk-s3",
+    "//third_party/rust:aws-sdk-secretsmanager",
+    "//third_party/rust:aws-sdk-sqs",
+    "//third_party/rust:base64-0.23.1",
+    "//third_party/rust:hex",
     "//third_party/rust:jiff",
     "//third_party/rust:serde",
     "//third_party/rust:serde_dynamo",
     "//third_party/rust:serde_json",
+    "//third_party/rust:sha2-0.11.0",
 ]
 
 rust_test(

@@ -5,5 +5,6 @@ pub mod auth;
 pub mod env;
 pub mod error;
 pub mod publish;
+pub mod secrets;
 pub mod store;
 pub mod types;
