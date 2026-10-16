@@ -1,0 +1,3316 @@
+{
+  "format": 1,
+  "recorded_with": "service/api/src/validate (TypeScript)",
+  "verdicts": [
+    {
+      "id": "ok_minimal",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "ok_deflated_entries",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "ok_directories_and_dot_prefix",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "ok_info_files",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "info/paths.json",
+              "size": 2
+            },
+            {
+              "path": "info/about.json",
+              "size": 2
+            },
+            {
+              "path": "info/files",
+              "size": 0
+            },
+            {
+              "path": "info/hash_input.json",
+              "size": 2
+            },
+            {
+              "path": "info/licenses/third_party/NOTICE",
+              "size": 1
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 236
+        }
+      }
+    },
+    {
+      "id": "ok_native_shared",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": [
+              {
+                "id": "crypto",
+                "soname": "libcrypto_native.so.1",
+                "kind": "shared",
+                "mode": "link",
+                "paths": [
+                  "lib/libcrypto_native.so.1"
+                ],
+                "sharedPath": "lib/libcrypto_native.so.1"
+              }
+            ]
+          },
+          "manifestSha256": "0aa85e076d883be823b987453401164d26d4dbb3bb95699a866b8b226c4628fd",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 148
+            },
+            {
+              "path": "lib/libcrypto_native.so.1",
+              "size": 3
+            }
+          ],
+          "unpackedBytes": 314
+        }
+      }
+    },
+    {
+      "id": "ok_native_static",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": [
+              {
+                "id": "foo",
+                "soname": "libfoo.a",
+                "kind": "static",
+                "mode": "link",
+                "paths": [
+                  "lib/libfoo.a"
+                ],
+                "staticPath": "lib/libfoo.a"
+              }
+            ]
+          },
+          "manifestSha256": "43394f6194ac70f24d1db0a6abb2404e0fc9d038992c33c6f322731fd631e3e1",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 142
+            },
+            {
+              "path": "lib/libfoo.a",
+              "size": 7
+            }
+          ],
+          "unpackedBytes": 312
+        }
+      }
+    },
+    {
+      "id": "ok_mojo_dependency",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [
+            "mojo-http_core"
+          ],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [
+              {
+                "name": "http_core",
+                "range": ">=1.2,<2"
+              }
+            ],
+            "native": []
+          },
+          "manifestSha256": "5f65215886ec72e609c265b17b2479eada09dd076a1c17b9abb0ff90788bba13",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 157
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 105
+            }
+          ],
+          "unpackedBytes": 294
+        }
+      }
+    },
+    {
+      "id": "ok_allowed_native_dependency",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 144
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 242
+        }
+      }
+    },
+    {
+      "id": "ok_unicode_licence_name",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "info/licenses/café",
+              "size": 1
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 230
+        }
+      }
+    },
+    {
+      "id": "ok_pax_path",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "ok_gnu_long_name",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/licenses/nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+              "size": 1
+            },
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 220
+        }
+      }
+    },
+    {
+      "id": "ok_ustar_prefix",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/licenses/LICENSE2",
+              "size": 1
+            },
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 220
+        }
+      }
+    },
+    {
+      "id": "ok_zip_data_descriptor_flag",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "ok_zip_local_extra_field",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "ok_zip_utf8_flag",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "ok_zstd_two_frames",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "ok_declared_hashes_right",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "ok_metadata_version_absent",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "03843ebdd9e698087bcefb46e9c540c075d51b8b651b0026e5d79337de99d40b",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 48
+            }
+          ],
+          "unpackedBytes": 211
+        }
+      }
+    },
+    {
+      "id": "archive_empty",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "not_an_archive",
+        "message": "the upload is empty"
+      }
+    },
+    {
+      "id": "archive_one_byte",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "not_an_archive",
+        "message": "the upload is neither a .conda (zip) nor a .tar.bz2 archive"
+      }
+    },
+    {
+      "id": "archive_garbage",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "not_an_archive",
+        "message": "the upload is neither a .conda (zip) nor a .tar.bz2 archive"
+      }
+    },
+    {
+      "id": "archive_bzip2_named_conda",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "not_an_archive",
+        "message": "the bytes are a tar.bz2 archive but the file is named 'mojo-demo-1.0.0-mojo1.0.0_0.conda'"
+      }
+    },
+    {
+      "id": "archive_bzip2_named_tar_bz2",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "format_not_allowed",
+        "message": ".tar.bz2 packages are not accepted"
+      }
+    },
+    {
+      "id": "archive_zip_named_tar_bz2",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "not_an_archive",
+        "message": "the bytes are a conda archive but the file is named 'mojo-demo-1.0.0-mojo1.0.0_0.tar.bz2'"
+      }
+    },
+    {
+      "id": "archive_zip_magic_only",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: no end of central directory"
+      }
+    },
+    {
+      "id": "archive_sha256_mismatch",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "sha256_mismatch",
+        "rule": "sha256_mismatch",
+        "message": "the archive does not hash to the sha256 declared at begin-upload"
+      }
+    },
+    {
+      "id": "archive_sha256_uppercase_declared",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "sha256_mismatch",
+        "rule": "sha256_mismatch",
+        "message": "the archive does not hash to the sha256 declared at begin-upload"
+      }
+    },
+    {
+      "id": "archive_sha256_uppercase_right",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "zip_no_end_record",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: no end of central directory"
+      }
+    },
+    {
+      "id": "zip_trailing_junk",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: no end of central directory"
+      }
+    },
+    {
+      "id": "zip_prepended_junk",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "not_an_archive",
+        "message": "the upload is neither a .conda (zip) nor a .tar.bz2 archive"
+      }
+    },
+    {
+      "id": "zip_prepended_after_signature",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: bad central directory entry"
+      }
+    },
+    {
+      "id": "zip_comment_length_short",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: no end of central directory"
+      }
+    },
+    {
+      "id": "zip_comment_ok",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "zip_second_disk",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: multi-disk archives are not accepted"
+      }
+    },
+    {
+      "id": "zip_central_on_second_disk",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: multi-disk archives are not accepted"
+      }
+    },
+    {
+      "id": "zip_entry_counts_differ",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: multi-disk archives are not accepted"
+      }
+    },
+    {
+      "id": "zip_zip64_count",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: zip64 is not accepted"
+      }
+    },
+    {
+      "id": "zip_zip64_directory_size",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: zip64 is not accepted"
+      }
+    },
+    {
+      "id": "zip_directory_out_of_bounds",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: central directory out of bounds"
+      }
+    },
+    {
+      "id": "zip_bad_central_signature",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: bad central directory entry"
+      }
+    },
+    {
+      "id": "zip_seventeen_entries",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: too many entries (17)"
+      }
+    },
+    {
+      "id": "zip_sixteen_entries",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "conda_layout",
+        "message": "a .conda holds exactly metadata.json, one pkg-*.tar.zst and one info-*.tar.zst"
+      }
+    },
+    {
+      "id": "zip_encrypted_flag",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: entry 'metadata.json' is encrypted"
+      }
+    },
+    {
+      "id": "zip_strong_encryption_flag",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: entry 'metadata.json' is encrypted"
+      }
+    },
+    {
+      "id": "zip_method_bzip2",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: entry 'metadata.json' uses compression method 12"
+      }
+    },
+    {
+      "id": "zip_stored_sizes_differ",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: stored entry 'metadata.json' has unequal sizes"
+      }
+    },
+    {
+      "id": "zip_duplicate_name",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: duplicate entry 'metadata.json'"
+      }
+    },
+    {
+      "id": "zip_name_not_utf8",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: entry name is not UTF-8"
+      }
+    },
+    {
+      "id": "zip_bad_local_signature",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: entry 'info-demo-1.0.0-mojo1.0.0_0.tar.zst' has a bad local header"
+      }
+    },
+    {
+      "id": "zip_local_name_differs",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: entry 'metadata.json' local header names a different file"
+      }
+    },
+    {
+      "id": "zip_crc_wrong",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: entry 'metadata.json' fails its CRC-32"
+      }
+    },
+    {
+      "id": "zip_declared_size_wrong_stored",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: stored entry 'metadata.json' has unequal sizes"
+      }
+    },
+    {
+      "id": "zip_deflate_declared_smaller",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: entry 'metadata.json' does not inflate to its declared size"
+      }
+    },
+    {
+      "id": "zip_deflate_declared_larger",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: entry 'metadata.json' is not its declared size"
+      }
+    },
+    {
+      "id": "zip_deflate_invalid_block",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: entry 'metadata.json' does not inflate to its declared size"
+      }
+    },
+    {
+      "id": "zip_declared_ratio",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "limit_exceeded",
+        "rule": "compression_ratio",
+        "message": "zip entry 'metadata.json' expands more than 200 times",
+        "path": "metadata.json"
+      }
+    },
+    {
+      "id": "zip_overlapping_entries",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "zip: entries overlap"
+      }
+    },
+    {
+      "id": "layout_no_metadata",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "conda_layout",
+        "message": "a .conda holds exactly metadata.json, one pkg-*.tar.zst and one info-*.tar.zst"
+      }
+    },
+    {
+      "id": "layout_no_info_tar",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "conda_layout",
+        "message": "a .conda holds exactly metadata.json, one pkg-*.tar.zst and one info-*.tar.zst"
+      }
+    },
+    {
+      "id": "layout_no_pkg_tar",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "conda_layout",
+        "message": "a .conda holds exactly metadata.json, one pkg-*.tar.zst and one info-*.tar.zst"
+      }
+    },
+    {
+      "id": "layout_two_pkg_tars",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "conda_layout",
+        "message": "a .conda holds exactly metadata.json, one pkg-*.tar.zst and one info-*.tar.zst"
+      }
+    },
+    {
+      "id": "layout_metadata_name_case",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "conda_layout",
+        "message": "a .conda holds exactly metadata.json, one pkg-*.tar.zst and one info-*.tar.zst"
+      }
+    },
+    {
+      "id": "layout_metadata_version_1",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "conda_layout",
+        "message": "metadata.json must be an object with conda_pkg_format_version 2"
+      }
+    },
+    {
+      "id": "layout_metadata_not_json",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "conda_layout",
+        "message": "metadata.json must be an object with conda_pkg_format_version 2"
+      }
+    },
+    {
+      "id": "layout_metadata_null",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "conda_layout",
+        "message": "metadata.json must be an object with conda_pkg_format_version 2"
+      }
+    },
+    {
+      "id": "layout_metadata_array",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "conda_layout",
+        "message": "metadata.json must be an object with conda_pkg_format_version 2"
+      }
+    },
+    {
+      "id": "layout_metadata_invalid_utf8",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "conda_layout",
+        "message": "metadata.json must be an object with conda_pkg_format_version 2"
+      }
+    },
+    {
+      "id": "layout_metadata_utf8_bom",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "layout_info_path_in_pkg_tar",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "conda_layout",
+        "message": "'info/stray' is in the pkg tar but under info/",
+        "path": "info/stray"
+      }
+    },
+    {
+      "id": "layout_pkg_path_in_info_tar",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "conda_layout",
+        "message": "'lib/mojo/stray' is in the info tar but not under info/",
+        "path": "lib/mojo/stray"
+      }
+    },
+    {
+      "id": "zstd_not_a_frame",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "info-demo-1.0.0-mojo1.0.0_0.tar.zst is not a zstd stream"
+      }
+    },
+    {
+      "id": "zstd_empty_stream",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "info-demo-1.0.0-mojo1.0.0_0.tar.zst is not a zstd stream"
+      }
+    },
+    {
+      "id": "zstd_magic_only",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "info-demo-1.0.0-mojo1.0.0_0.tar.zst is not valid zstd"
+      }
+    },
+    {
+      "id": "zstd_truncated_in_block",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "info-demo-1.0.0-mojo1.0.0_0.tar.zst is not valid zstd"
+      }
+    },
+    {
+      "id": "zstd_truncated_before_last_block",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "info-demo-1.0.0-mojo1.0.0_0.tar.zst is not valid zstd"
+      }
+    },
+    {
+      "id": "zstd_reserved_block_type",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "info-demo-1.0.0-mojo1.0.0_0.tar.zst is not valid zstd"
+      }
+    },
+    {
+      "id": "zstd_trailing_garbage",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "info-demo-1.0.0-mojo1.0.0_0.tar.zst is not valid zstd"
+      }
+    },
+    {
+      "id": "zstd_skippable_frame_first",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "info-demo-1.0.0-mojo1.0.0_0.tar.zst is not a zstd stream"
+      }
+    },
+    {
+      "id": "zstd_skippable_after",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "zstd_two_real_frames_split_mid_header",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "zstd_declared_size_exact",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "zstd_declared_size_smaller",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "info-demo-1.0.0-mojo1.0.0_0.tar.zst is not valid zstd"
+      }
+    },
+    {
+      "id": "zstd_declared_size_larger",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "zstd_rle_past_unpacked_limit",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "limit_exceeded",
+        "rule": "unpacked_too_large",
+        "message": "pkg-demo-1.0.0-mojo1.0.0_0.tar.zst unpacks past the 169491 byte limit"
+      }
+    },
+    {
+      "id": "zstd_rle_ratio_bomb",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "limit_exceeded",
+        "rule": "compression_ratio",
+        "message": "pkg-demo-1.0.0-mojo1.0.0_0.tar.zst expands more than 200 times"
+      }
+    },
+    {
+      "id": "zstd_rle_not_a_tar",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "tar_header",
+        "message": "tar checksum is not an octal number"
+      }
+    },
+    {
+      "id": "tar_checksum_wrong",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "tar_header",
+        "message": "tar checksum is not an octal number"
+      }
+    },
+    {
+      "id": "tar_checksum_off_by_one",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "tar_header",
+        "message": "tar header checksum is wrong"
+      }
+    },
+    {
+      "id": "tar_size_base256",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "tar_header",
+        "message": "tar size uses base-256 encoding"
+      }
+    },
+    {
+      "id": "tar_size_not_octal",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "tar_header",
+        "message": "tar size is not an octal number"
+      }
+    },
+    {
+      "id": "tar_truncated_in_entry",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "tar_header",
+        "message": "tar is truncated inside an entry"
+      }
+    },
+    {
+      "id": "tar_no_end_marker",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "tar_header",
+        "message": "tar is truncated (no end marker)"
+      }
+    },
+    {
+      "id": "tar_one_zero_block",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "tar_data_after_end",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "tar_header",
+        "message": "tar has data after its end marker"
+      }
+    },
+    {
+      "id": "tar_zero_padding_after_end",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "tar_pax_size_override",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "tar_header",
+        "message": "tar header checksum is wrong"
+      }
+    },
+    {
+      "id": "tar_pax_path_traversal",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "path_traversal",
+        "message": "path '../escape' climbs out of the package root",
+        "path": "../escape"
+      }
+    },
+    {
+      "id": "tar_pax_record_malformed",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "tar_header",
+        "message": "malformed pax record"
+      }
+    },
+    {
+      "id": "tar_pax_global_header_ignored",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "tar_ends_after_long_name",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "tar_header",
+        "message": "tar ends after an extended header"
+      }
+    },
+    {
+      "id": "tar_symlink",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "symlink",
+        "message": "'lib/mojo/link' is a symbolic link; the registry accepts none",
+        "path": "lib/mojo/link"
+      }
+    },
+    {
+      "id": "tar_hardlink",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "hardlink",
+        "message": "'lib/mojo/link' is a hard link; the registry accepts none",
+        "path": "lib/mojo/link"
+      }
+    },
+    {
+      "id": "tar_char_device",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "special_file",
+        "message": "'lib/mojo/link' is a device, FIFO, contiguous or sparse file",
+        "path": "lib/mojo/link"
+      }
+    },
+    {
+      "id": "tar_block_device",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "special_file",
+        "message": "'lib/mojo/link' is a device, FIFO, contiguous or sparse file",
+        "path": "lib/mojo/link"
+      }
+    },
+    {
+      "id": "tar_fifo",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "special_file",
+        "message": "'lib/mojo/link' is a device, FIFO, contiguous or sparse file",
+        "path": "lib/mojo/link"
+      }
+    },
+    {
+      "id": "tar_contiguous_file",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "special_file",
+        "message": "'lib/mojo/link' is a device, FIFO, contiguous or sparse file",
+        "path": "lib/mojo/link"
+      }
+    },
+    {
+      "id": "tar_sparse_file",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "special_file",
+        "message": "'lib/mojo/link' is a device, FIFO, contiguous or sparse file",
+        "path": "lib/mojo/link"
+      }
+    },
+    {
+      "id": "tar_unknown_type",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "tar_header",
+        "message": "'lib/mojo/link' has unknown entry type \"Z\"",
+        "path": "lib/mojo/link"
+      }
+    },
+    {
+      "id": "path_absolute",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "path_absolute",
+        "message": "path '/etc/passwd' is absolute",
+        "path": "/etc/passwd"
+      }
+    },
+    {
+      "id": "path_drive_letter",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "path_absolute",
+        "message": "path 'C:/windows/x' is absolute",
+        "path": "C:/windows/x"
+      }
+    },
+    {
+      "id": "path_traversal",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "path_traversal",
+        "message": "path 'lib/../../escape' climbs out of the package root",
+        "path": "lib/../../escape"
+      }
+    },
+    {
+      "id": "path_traversal_first",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "path_traversal",
+        "message": "path '../lib/mojo/x' climbs out of the package root",
+        "path": "../lib/mojo/x"
+      }
+    },
+    {
+      "id": "path_backslash",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "path_unsafe",
+        "message": "path 'lib\\mojo\\x' has a backslash",
+        "path": "lib\\mojo\\x"
+      }
+    },
+    {
+      "id": "path_control_char",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "path_unsafe",
+        "message": "path \"lib/mojo/a\\u0001b\" has a control character",
+        "path": "lib/mojo/a\u0001b"
+      }
+    },
+    {
+      "id": "path_del_char",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "path_unsafe",
+        "message": "path \"lib/mojo/ab\" has a control character",
+        "path": "lib/mojo/ab"
+      }
+    },
+    {
+      "id": "path_empty_segment",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "path_unsafe",
+        "message": "path 'lib//mojo/x' has an empty or '.' segment",
+        "path": "lib//mojo/x"
+      }
+    },
+    {
+      "id": "path_dot_segment",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "path_unsafe",
+        "message": "path 'lib/./mojo/x' has an empty or '.' segment",
+        "path": "lib/./mojo/x"
+      }
+    },
+    {
+      "id": "path_not_utf8",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "path_unsafe",
+        "message": "tar path is not UTF-8"
+      }
+    },
+    {
+      "id": "collision_duplicate",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "duplicate_path",
+        "message": "'info/licenses/A' appears more than once",
+        "path": "info/licenses/A"
+      }
+    },
+    {
+      "id": "collision_case",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "unicode_collision",
+        "message": "'info/licenses/Readme' and 'info/licenses/README' are the same name after Unicode normalisation or case folding",
+        "path": "info/licenses/README"
+      }
+    },
+    {
+      "id": "collision_nfc_nfd",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "unicode_collision",
+        "message": "'info/licenses/café' and 'info/licenses/café' are the same name after Unicode normalisation or case folding",
+        "path": "info/licenses/café"
+      }
+    },
+    {
+      "id": "collision_nfkc_ligature",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "unicode_collision",
+        "message": "'info/licenses/ﬁle' and 'info/licenses/file' are the same name after Unicode normalisation or case folding",
+        "path": "info/licenses/file"
+      }
+    },
+    {
+      "id": "collision_fullwidth",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "unicode_collision",
+        "message": "'info/licenses/ａ' and 'info/licenses/a' are the same name after Unicode normalisation or case folding",
+        "path": "info/licenses/a"
+      }
+    },
+    {
+      "id": "collision_dir_and_file",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "duplicate_path",
+        "message": "'info/licenses/d' appears more than once",
+        "path": "info/licenses/d"
+      }
+    },
+    {
+      "id": "layout_bin_dir",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "bin_dir",
+        "message": "'bin/tool' is under bin/; packages may not ship executables",
+        "path": "bin/tool"
+      }
+    },
+    {
+      "id": "layout_sbin_dir",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "bin_dir",
+        "message": "'sbin/tool' is under sbin/; packages may not ship executables",
+        "path": "sbin/tool"
+      }
+    },
+    {
+      "id": "layout_scripts_dir",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "bin_dir",
+        "message": "'Scripts/tool.exe' is under Scripts/; packages may not ship executables",
+        "path": "Scripts/tool.exe"
+      }
+    },
+    {
+      "id": "layout_post_link_script",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "link_script",
+        "message": "'lib/mojo/post-link.sh' is a link or activation script; packages may not run code at install time",
+        "path": "lib/mojo/post-link.sh"
+      }
+    },
+    {
+      "id": "layout_pre_unlink_bat",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "link_script",
+        "message": "'info/licenses/Pre-Unlink.BAT' is a link or activation script; packages may not run code at install time",
+        "path": "info/licenses/Pre-Unlink.BAT"
+      }
+    },
+    {
+      "id": "layout_info_link_json",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "link_script",
+        "message": "'info/link.json' is a link or activation script; packages may not run code at install time",
+        "path": "info/link.json"
+      }
+    },
+    {
+      "id": "layout_etc_conda",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "link_script",
+        "message": "'etc/conda/activate.d/x.sh' is a link or activation script; packages may not run code at install time",
+        "path": "etc/conda/activate.d/x.sh"
+      }
+    },
+    {
+      "id": "layout_unlisted_file",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "layout_not_allowed",
+        "message": "'share/doc/readme' is not an allowed path (allowed: lib/mojo/demo.mojoc, lib/mojo/demo.mopm.json, declared native libraries, info/ metadata, licence files)",
+        "path": "share/doc/readme"
+      }
+    },
+    {
+      "id": "layout_unlisted_dir",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "layout_not_allowed",
+        "message": "directory 'share' is outside the allowed layout",
+        "path": "share"
+      }
+    },
+    {
+      "id": "layout_other_mojoc",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "layout_not_allowed",
+        "message": "'lib/mojo/other.mojoc' is not an allowed path (allowed: lib/mojo/demo.mojoc, lib/mojo/demo.mopm.json, declared native libraries, info/ metadata, licence files)",
+        "path": "lib/mojo/other.mojoc"
+      }
+    },
+    {
+      "id": "layout_lib_subdir_native",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "layout_not_allowed",
+        "message": "'lib/sub/libx.so' is not an allowed path (allowed: lib/mojo/demo.mojoc, lib/mojo/demo.mopm.json, declared native libraries, info/ metadata, licence files)",
+        "path": "lib/sub/libx.so"
+      }
+    },
+    {
+      "id": "meta_mojoc_missing",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "mojoc_missing",
+        "message": "lib/mojo/demo.mojoc is missing"
+      }
+    },
+    {
+      "id": "meta_manifest_missing",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "manifest_missing",
+        "message": "lib/mojo/demo.mopm.json is missing"
+      }
+    },
+    {
+      "id": "meta_index_missing",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "index_missing",
+        "message": "info/index.json is missing"
+      }
+    },
+    {
+      "id": "meta_manifest_not_json",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "manifest_json",
+        "message": "lib/mojo/demo.mopm.json is not valid UTF-8 JSON"
+      }
+    },
+    {
+      "id": "meta_manifest_not_object",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "manifest_json",
+        "message": "lib/mojo/demo.mopm.json is not a JSON object"
+      }
+    },
+    {
+      "id": "meta_manifest_invalid_utf8",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "manifest_json",
+        "message": "lib/mojo/demo.mopm.json is not valid UTF-8 JSON"
+      }
+    },
+    {
+      "id": "meta_manifest_schema_2",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "manifest_schema",
+        "message": "<name>.mopm.json: 'schema' must be 1"
+      }
+    },
+    {
+      "id": "meta_manifest_schema_string",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "manifest_schema",
+        "message": "<name>.mopm.json: 'schema' must be 1"
+      }
+    },
+    {
+      "id": "meta_manifest_name_empty",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "manifest_schema",
+        "message": "<name>.mopm.json: 'name' must be a non-empty string"
+      }
+    },
+    {
+      "id": "meta_manifest_version_suffix",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "manifest_schema",
+        "message": "<name>.mopm.json: 'version' '1.0.0rc1' is not MAJOR.MINOR.PATCH (three numbers, no suffix)"
+      }
+    },
+    {
+      "id": "meta_manifest_deps_not_array",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "manifest_schema",
+        "message": "<name>.mopm.json: 'deps' must be an array"
+      }
+    },
+    {
+      "id": "meta_manifest_dep_path_without_range",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "manifest_schema",
+        "message": "<name>.mopm.json: dependency 'x' has a path but no version; a published package depends on a version, so add one next to the path"
+      }
+    },
+    {
+      "id": "meta_manifest_native_bad_soname",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "manifest_schema",
+        "message": "<name>.mopm.json: native 'a': 'soname' must look like lib<name>.<suffix>"
+      }
+    },
+    {
+      "id": "meta_manifest_native_bad_kind",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "manifest_schema",
+        "message": "<name>.mopm.json: native 'a': 'kind' must be shared, static or both"
+      }
+    },
+    {
+      "id": "meta_manifest_native_shared_without_file",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "manifest_schema",
+        "message": "<name>.mopm.json: native 'a': kind shared needs 'file'"
+      }
+    },
+    {
+      "id": "meta_native_path_climbs",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "native_path",
+        "message": "native 'a': '../../x/libx.so' does not resolve to a file directly under lib/"
+      }
+    },
+    {
+      "id": "meta_native_path_absolute",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "native_path",
+        "message": "native 'a': '/lib/libx.so' does not resolve to a file directly under lib/"
+      }
+    },
+    {
+      "id": "meta_native_name_mismatch",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "native_path",
+        "message": "native 'a': file 'liby.so.1' does not fit soname 'libx.so.1'"
+      }
+    },
+    {
+      "id": "meta_native_duplicate_id",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "manifest_schema",
+        "message": "native id 'a' is declared twice"
+      }
+    },
+    {
+      "id": "meta_native_declared_missing",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "native_missing",
+        "message": "native 'a' declares 'lib/libx.so', which the package does not contain",
+        "path": "lib/libx.so"
+      }
+    },
+    {
+      "id": "meta_native_present_undeclared",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "native_undeclared",
+        "message": "'lib/libx.so' is a native library the metadata does not declare",
+        "path": "lib/libx.so"
+      }
+    },
+    {
+      "id": "meta_name_mismatch",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "name_mismatch",
+        "message": "metadata name 'other' is not the published name 'demo'"
+      }
+    },
+    {
+      "id": "meta_manifest_version_mismatch",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "version_mismatch",
+        "message": "metadata version '1.0.1' is not the published version '1.0.0'"
+      }
+    },
+    {
+      "id": "meta_index_not_json",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "index_invalid",
+        "message": "info/index.json is not valid UTF-8 JSON"
+      }
+    },
+    {
+      "id": "meta_index_name_mismatch",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "name_mismatch",
+        "message": "info/index.json name 'mojo-other' is not 'mojo-demo'"
+      }
+    },
+    {
+      "id": "meta_index_version_mismatch",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "version_mismatch",
+        "message": "info/index.json version '1.0.1' is not the published version '1.0.0'"
+      }
+    },
+    {
+      "id": "meta_index_subdir_mismatch",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "subdir_mismatch",
+        "message": "info/index.json subdir 'linux-64' is not 'noarch'"
+      }
+    },
+    {
+      "id": "meta_index_build_malformed",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "index_invalid",
+        "message": "info/index.json: 'build' must be mojo<compiler>_0"
+      }
+    },
+    {
+      "id": "meta_index_build_number_1",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "index_invalid",
+        "message": "info/index.json: 'build_number' must be 0"
+      }
+    },
+    {
+      "id": "meta_index_depends_not_array",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "index_invalid",
+        "message": "info/index.json: 'depends' must be an array of strings"
+      }
+    },
+    {
+      "id": "meta_compiler_missing",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "compiler_missing",
+        "message": "info/index.json 'depends' has no 'mojo-compiler ==<exact>'"
+      }
+    },
+    {
+      "id": "meta_compiler_twice",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "compiler_mismatch",
+        "message": "info/index.json 'depends' names mojo-compiler more than once"
+      }
+    },
+    {
+      "id": "meta_compiler_other_version",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "compiler_mismatch",
+        "message": "'mojo-compiler ==1.0.1' does not equal 'mojo-compiler ==1.0.0' (the compiler in the build string)"
+      }
+    },
+    {
+      "id": "meta_compiler_range",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "compiler_mismatch",
+        "message": "'mojo-compiler >=1.0.0' does not equal 'mojo-compiler ==1.0.0' (the compiler in the build string)"
+      }
+    },
+    {
+      "id": "meta_compiler_extra_spaces",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 133
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 231
+        }
+      }
+    },
+    {
+      "id": "meta_dependency_not_allowed",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "dependency_not_allowed",
+        "rule": "dependency_not_allowed",
+        "message": "dependency 'libssl >=3' is neither a mojo-* package nor an allow-listed native library"
+      }
+    },
+    {
+      "id": "meta_dependency_python",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "dependency_not_allowed",
+        "rule": "dependency_not_allowed",
+        "message": "dependency 'python >=3.9' is neither a mojo-* package nor an allow-listed native library"
+      }
+    },
+    {
+      "id": "meta_deps_missing_from_index",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "deps_mismatch",
+        "message": "info/index.json depends [] differ from the metadata deps [mojo-http_core]"
+      }
+    },
+    {
+      "id": "meta_deps_extra_in_index",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "deps_mismatch",
+        "message": "info/index.json depends [mojo-http_core] differ from the metadata deps []"
+      }
+    },
+    {
+      "id": "meta_filename_mismatch",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "filename_mismatch",
+        "rule": "filename_mismatch",
+        "message": "the file is named 'mojo-demo-1.0.0-mojo1.0.0_1.conda' but its metadata says 'mojo-demo-1.0.0-mojo1.0.0_0.conda'"
+      }
+    },
+    {
+      "id": "meta_manifest_sha256_mismatch",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "sha256_mismatch",
+        "rule": "manifest_sha256_mismatch",
+        "message": "the embedded metadata does not hash to the manifest_sha256 declared at commit"
+      }
+    },
+    {
+      "id": "meta_published_version_two_parts",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "version_mismatch",
+        "message": "metadata version '1.0.0' is not the published version '1.0'"
+      }
+    },
+    {
+      "id": "meta_request_names_another_package",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "layout_not_allowed",
+        "message": "'lib/mojo/demo.mojoc' is not an allowed path (allowed: lib/mojo/other.mojoc, lib/mojo/other.mopm.json, declared native libraries, info/ metadata, licence files)",
+        "path": "lib/mojo/demo.mojoc"
+      }
+    },
+    {
+      "id": "meta_request_names_another_subdir",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "subdir_mismatch",
+        "message": "info/index.json subdir 'noarch' is not 'linux-64'"
+      }
+    },
+    {
+      "id": "order_traversal_then_mojoc_missing",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "path_traversal",
+        "message": "path 'lib/../x' climbs out of the package root",
+        "path": "lib/../x"
+      }
+    },
+    {
+      "id": "order_collision_then_layout",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "unicode_collision",
+        "message": "'share/Readme' and 'share/README' are the same name after Unicode normalisation or case folding",
+        "path": "share/README"
+      }
+    },
+    {
+      "id": "order_layout_then_mojoc_missing",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "layout_not_allowed",
+        "message": "'share/x' is not an allowed path (allowed: lib/mojo/demo.mojoc, lib/mojo/demo.mopm.json, declared native libraries, info/ metadata, licence files)",
+        "path": "share/x"
+      }
+    },
+    {
+      "id": "order_mojoc_missing_then_manifest_missing",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "mojoc_missing",
+        "message": "lib/mojo/demo.mojoc is missing"
+      }
+    },
+    {
+      "id": "order_manifest_missing_then_index_missing",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "manifest_missing",
+        "message": "lib/mojo/demo.mopm.json is missing"
+      }
+    },
+    {
+      "id": "order_manifest_json_then_index_json",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "manifest_json",
+        "message": "lib/mojo/demo.mopm.json is not valid UTF-8 JSON"
+      }
+    },
+    {
+      "id": "order_name_then_index_version",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "name_mismatch",
+        "message": "metadata name 'other' is not the published name 'demo'"
+      }
+    },
+    {
+      "id": "order_mopm_version_then_index_subdir",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "version_mismatch",
+        "message": "metadata version '1.0.1' is not the published version '1.0.0'"
+      }
+    },
+    {
+      "id": "order_deps_then_filename",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "deps_mismatch",
+        "message": "info/index.json depends [] differ from the metadata deps [mojo-http_core]"
+      }
+    },
+    {
+      "id": "order_native_missing_then_undeclared",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "native_missing",
+        "message": "native 'a' declares 'lib/libx.so', which the package does not contain",
+        "path": "lib/libx.so"
+      }
+    },
+    {
+      "id": "order_size_then_hash",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "limit_exceeded",
+        "rule": "archive_too_large",
+        "message": "the archive is 6607 bytes; the limit is 6606"
+      }
+    },
+    {
+      "id": "order_hash_then_magic",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "sha256_mismatch",
+        "rule": "sha256_mismatch",
+        "message": "the archive does not hash to the sha256 declared at begin-upload"
+      }
+    },
+    {
+      "id": "order_metadata_then_tars",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "conda_layout",
+        "message": "metadata.json must be an object with conda_pkg_format_version 2"
+      }
+    },
+    {
+      "id": "order_info_tar_then_pkg_tar",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "tar_header",
+        "message": "tar is truncated (no end marker)"
+      }
+    },
+    {
+      "id": "order_info_stream_then_pkg_stream",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "archive_corrupt",
+        "message": "info-demo-1.0.0-mojo1.0.0_0.tar.zst is not a zstd stream"
+      }
+    },
+    {
+      "id": "order_symlink_then_traversal",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "symlink",
+        "message": "'lib/mojo/l' is a symbolic link; the registry accepts none",
+        "path": "lib/mojo/l"
+      }
+    },
+    {
+      "id": "order_traversal_then_symlink",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "path_not_allowed",
+        "rule": "path_traversal",
+        "message": "path 'lib/../x' climbs out of the package root",
+        "path": "lib/../x"
+      }
+    },
+    {
+      "id": "limit_archive_below",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "limit_exceeded",
+        "rule": "archive_too_large",
+        "message": "the archive is 6607 bytes; the limit is 6606"
+      }
+    },
+    {
+      "id": "limit_archive_at",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "limit_archive_above",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "limit_unpacked_below",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "limit_exceeded",
+        "rule": "unpacked_too_large",
+        "message": "zip entries together are too large"
+      }
+    },
+    {
+      "id": "limit_unpacked_at",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "limit_unpacked_above",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "limit_file_below",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "limit_exceeded",
+        "rule": "file_too_large",
+        "message": "tar entry is 1000 bytes",
+        "path": "lib/mojo/demo.mojoc"
+      }
+    },
+    {
+      "id": "limit_file_at",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 1000
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 1207
+        }
+      }
+    },
+    {
+      "id": "limit_file_above",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 1000
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 1207
+        }
+      }
+    },
+    {
+      "id": "limit_files_below",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "limit_exceeded",
+        "rule": "too_many_files",
+        "message": "more than 3 entries"
+      }
+    },
+    {
+      "id": "limit_files_at",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "limit_files_above",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "limit_metadata_below",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "limit_exceeded",
+        "rule": "manifest_too_large",
+        "message": "'info/index.json' is 131 bytes",
+        "path": "info/index.json"
+      }
+    },
+    {
+      "id": "limit_metadata_at",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "limit_metadata_above",
+      "verdict": {
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 131
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 229
+        }
+      }
+    },
+    {
+      "id": "limit_ratio_below",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "limit_exceeded",
+        "rule": "compression_ratio",
+        "message": "pkg-demo-1.0.0-mojo1.0.0_0.tar.zst expands more than 399 times"
+      }
+    },
+    {
+      "id": "limit_ratio_at",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "tar_header",
+        "message": "tar checksum is not an octal number"
+      }
+    },
+    {
+      "id": "limit_ratio_above",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "tar_header",
+        "message": "tar checksum is not an octal number"
+      }
+    },
+    {
+      "id": "limit_ratio_floor_at",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "archive_invalid",
+        "rule": "tar_header",
+        "message": "tar checksum is not an octal number"
+      }
+    },
+    {
+      "id": "limit_ratio_floor_below",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "limit_exceeded",
+        "rule": "compression_ratio",
+        "message": "pkg-demo-1.0.0-mojo1.0.0_0.tar.zst expands more than 1 times"
+      }
+    }
+  ]
+}

@@ -36,6 +36,7 @@ jest_test(
     data = {
         "spec": "//:spec",
         "tests/contract/api": "//:contract_api",
+        "tests/validator_corpus": "//:validator_corpus_files",
     },
     modules = ":modules",
     node = _NODE,
