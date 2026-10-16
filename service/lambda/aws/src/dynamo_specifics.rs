@@ -369,6 +369,24 @@ async fn the_fake_refuses_what_a_real_table_refuses() {
     );
 }
 
+#[tokio::test]
+async fn the_packages_an_account_owns_are_read_from_the_owners_index_by_account_with_no_consistent_read() {
+    let (s, fake) = rig();
+    for name in ["c", "a", "e", "b"] {
+        s.add_owner(&OwnerRecord { name: name.into(), github_id: 7, handle: "u".into(), added_at: "2026-10-13T12:00:00Z".into() }).await.unwrap();
+    }
+    assert_eq!(s.owned_packages(7).await.unwrap(), ["a", "b", "c", "e"]);
+    let q = bodies(&fake, "Query");
+    assert_eq!(q.len(), 2, "pages of two: two queries for four names");
+    assert_eq!(q[0]["TableName"], "mopm-t-owners");
+    assert_eq!(q[0]["IndexName"], "by_github_id");
+    assert_eq!(q[0]["KeyConditionExpression"], "#g = :g");
+    assert_eq!(q[0]["ExpressionAttributeNames"], json!({"#g": "github_id"}));
+    assert_eq!(q[0]["ExpressionAttributeValues"], json!({":g": {"S": "7"}}), "index keys are strings");
+    assert!(q[0].get("ConsistentRead").is_none_or(|c| c == &Value::Bool(false)), "an index cannot be read consistently");
+    assert!(q[1].get("ExclusiveStartKey").is_some(), "the second page continues from the first");
+}
+
 // ---- auth: rows, secrets, and the Lambda's grants ----------------------------------------------------
 
 #[tokio::test]

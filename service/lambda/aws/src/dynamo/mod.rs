@@ -19,6 +19,9 @@ pub use store::{DynamoStore, Tables, SEARCH_INDEX};
 /// The tokens table's index by account: partition `github_id`, sort `id`.
 pub const TOKENS_BY_GITHUB_ID: &str = "by_github_id";
 
+/// The owners table's index by account: partition `github_id`, sort `name`.
+pub const OWNERS_BY_GITHUB_ID: &str = "by_github_id";
+
 /// An SDK failure that is not a condition the port models: an infrastructure fault.
 pub(crate) fn fault<E: std::error::Error + 'static>(what: &str, e: E) -> PortError {
     PortError::fault(format!("{what}: {}", DisplayErrorContext(e)))

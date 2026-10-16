@@ -46,6 +46,9 @@ pub trait Store: Send + Sync {
     fn remove_owner(&self, name: &str, github_id: u64) -> impl Future<Output = PortResult<()>> + Send;
     /// By github_id.
     fn list_owners(&self, name: &str) -> impl Future<Output = PortResult<Vec<OwnerRecord>>> + Send;
+    /// The names of the packages the account owns, ascending (`auth/owned-packages.ts`). The DynamoDB adapter
+    /// reads the owners table's index by account, one Query and never a Scan.
+    fn owned_packages(&self, github_id: u64) -> impl Future<Output = PortResult<Vec<String>>> + Send;
 
     fn append_audit(&self, entry: &AuditEntry) -> impl Future<Output = PortResult<()>> + Send;
     /// Oldest first.
