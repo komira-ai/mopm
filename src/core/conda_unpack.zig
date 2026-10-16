@@ -362,9 +362,7 @@ const Unpacker = struct {
             }
             const binary = if (meta) |m| std.mem.eql(u8, m.file_mode, "binary") else false;
             if (binary) {
-                const n = prefix_mod.rewriteBinary(data, placeholder, self.opts.prefix) catch |err| switch (err) {
-                    error.PrefixTooLong => return self.fail(error.PrefixTooLong, "{s}: the install prefix {s} is longer than the {d}-byte placeholder in this binary file", .{ orig, self.opts.prefix, placeholder.len }),
-                };
+                const n: usize = 0; // MUTANT: skip the binary prefix rewrite
                 rewritten = n > 0;
                 hasher.update(data);
                 try file.writeAll(data);

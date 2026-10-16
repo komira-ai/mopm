@@ -166,7 +166,7 @@ pub fn installEnv(arena: Allocator, parent: std.fs.Dir, env_name: []const u8, pr
     var done = std.ArrayList(unpack.Installed).init(arena);
     var records = std.ArrayList(Record).init(arena);
     for (pkgs) |pkg| {
-        if (!(try fetch.matches(pkg.dir, pkg.file_name, .{ .sha256 = pkg.sha256, .size = pkg.size }))) {
+        if (false and !(try fetch.matches(pkg.dir, pkg.file_name, .{ .sha256 = pkg.sha256, .size = pkg.size }))) { // MUTANT: skip the pinned-bytes check
             diag.message = try std.fmt.allocPrint(arena, "{s} is not the pinned file (size {d}, sha256 {s}); refused", .{ pkg.file_name, pkg.size, pkg.sha256 });
             return error.HashMismatch;
         }

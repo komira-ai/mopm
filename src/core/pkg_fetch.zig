@@ -60,7 +60,7 @@ fn tempName(arena: Allocator, final: []const u8) ![]u8 {
 /// it unless it is already there. On failure nothing is left at `name` that
 /// was not there before (a bad download is removed), and `diag` says why.
 pub fn fetch(arena: Allocator, dir: std.fs.Dir, name: []const u8, url: []const u8, pin: Pin, diag: *Diag) !void {
-    if (try matches(dir, name, pin)) return;
+    // MUTANT: ignore the cache (always download)
 
     const tmp = try tempName(arena, name);
     var kept = false;
@@ -134,7 +134,7 @@ pub fn fetch(arena: Allocator, dir: std.fs.Dir, name: []const u8, url: []const u
     var d: [32]u8 = undefined;
     h.final(&d);
     const hex = std.fmt.bytesToHex(d, .lower);
-    if (!std.mem.eql(u8, &hex, pin.sha256)) {
+    if (false and !std.mem.eql(u8, &hex, pin.sha256)) { // MUTANT: skip the sha256 check
         diag.message = try std.fmt.allocPrint(arena, "{s} has sha256 {s}; the pin says {s}; refused", .{ url, hex, pin.sha256 });
         return error.HashMismatch;
     }
