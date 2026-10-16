@@ -182,7 +182,7 @@ export function homePage(): PageSpec {
       null,
       h(doc, 'span', { class: 'num', 'aria-hidden': 'true' }, '1'),
       h(doc, 'h3', null, 'Build mopm'),
-      h(doc, 'p', null, 'In a clone of ', link(REPO_URL, 'the repository'), ', with Zig 0.12.0. The one-line installer is planned.'),
+      h(doc, 'p', null, 'In a clone of ', link(REPO_URL, 'the repository'), ', with Zig 0.12.0.'),
       copyBlock('zig build', 'build command'),
     ),
     h(
