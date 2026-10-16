@@ -18,8 +18,9 @@ function normalise(stage: Stage, json: unknown): unknown {
     // CDK builds logical ids and generated names from the construct path, which contains the stage ("mopmbeta...").
     .replace(new RegExp(`mopm${stage}`, 'g'), 'mopm<stage>')
     .replace(stageRe, '<stage>')
-    // ... and ends them with an 8-character hash of that path, which therefore differs per stage.
-    .replace(/aws-cdk:cr-owned:[0-9a-f]{8}/g, 'aws-cdk:cr-owned:<hash>')
+    // ... and ends them with an 8-character hash of that path, which therefore differs per stage. A BucketDeployment
+    // with a key prefix (the site's assets/) tags the bucket with the prefix before the hash.
+    .replace(/aws-cdk:cr-owned:((?:[^:"]+:)?)[0-9a-f]{8}/g, 'aws-cdk:cr-owned:$1<hash>')
     .replace(/(?<=[A-Za-z0-9])[0-9A-F]{8}(?=")/g, '');
   return JSON.parse(text);
 }

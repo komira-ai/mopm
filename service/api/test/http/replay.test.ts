@@ -81,8 +81,10 @@ const continueFromFirstPage: Recipe['prepare'] = async (req, send) => {
 
 const RECIPES: Record<string, Recipe> = {
   // tests/contract/api/meta.json
-  'prod is up': { stage: 'prod', extraKeys: ['version', 'commit'] },
-  'beta in read-only mode': { stage: 'beta', readOnly: true, extraKeys: ['version', 'commit'] },
+  'prod is up': { stage: 'prod', extraKeys: ['version', 'commit', 'impl'] },
+  'beta in read-only mode': { stage: 'beta', readOnly: true, extraKeys: ['version', 'commit', 'impl'] },
+  // This implementation says 'ts', and the fixture does: the member is compared, not removed.
+  'prod is up and says which implementation answered': { stage: 'prod', extraKeys: ['version', 'commit'] },
   // tests/contract/api/packages.json
   'search by prefix': {
     seed: async (s) => {

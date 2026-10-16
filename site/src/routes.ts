@@ -1,10 +1,10 @@
 // URL routes of the site, and the name and version grammar they accept.
 //
-// The site stack does not serve this build yet. When it is switched to (a later change), its edge router (rewrites and
-// redirects in front of the bucket) must agree with parseRoute on which paths reach the app shell:
-// test/fixtures/routes.json holds the vectors parseRoute is tested against here and that router must be tested against
-// there. Path segments are matched as they arrive (still percent-encoded): a valid name or version contains no
-// character that needs encoding, so any '%' fails.
+// The site stack's edge router (a CloudFront Function in front of the bucket, service/infra/stacks/lib/site-stack.ts)
+// is generated from the expressions below, so it and parseRoute accept the same names and versions:
+// test/fixtures/routes.json holds the vectors parseRoute is tested against here and that router is tested against there
+// (service/infra/stacks/test/site-router.test.ts). Path segments are matched as they arrive (still percent-encoded): a
+// valid name or version contains no character that needs encoding, so any '%' fails.
 
 /** The registry's package name (spec Name, router NAME): 2 to 64 characters. */
 export const NAME = /^[a-z][a-z0-9_]{1,63}$/;
@@ -15,6 +15,10 @@ export const NAME = /^[a-z][a-z0-9_]{1,63}$/;
  */
 export const VERSION = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
 export const VERSION_MAX = 128;
+/** A docs page slug (`/docs/<slug>/`, src/links.ts DOC_PAGES); the edge router serves `/docs/<slug>/index.html` for it. */
+export const DOC_SLUG = /^[a-z0-9-]{1,64}$/;
+/** The runs of separators the registry's normalisation folds into one '_' (normaliseName). */
+export const NAME_SEPARATORS = /[-._]+/g;
 
 export function isName(s: string): boolean {
   return NAME.test(s);
@@ -26,12 +30,12 @@ export function isVersion(s: string): boolean {
 
 /** The registry's normalisation: lowercase, then each run of '-', '.' and '_' becomes one '_'. */
 export function normaliseName(s: string): string {
-  return s.toLowerCase().replace(/[-._]+/g, '_');
+  return s.toLowerCase().replace(NAME_SEPARATORS, '_');
 }
 
 /**
  * A name as the registry spells it in paths: valid and already normalised. `foo__bar` passes NAME but is not
- * normalised (the API answers it with invalid_name), so it is not a package route; the edge router is to redirect it to
+ * normalised (the API answers it with invalid_name), so it is not a package route; the edge router redirects it to
  * `foo_bar`.
  */
 export function isCanonicalName(s: string): boolean {

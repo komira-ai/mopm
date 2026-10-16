@@ -1,0 +1,38 @@
+{
+  "description": "A body that is not JSON rejects the invocation (the message returns to the queue and ends in the dead-letter queue); it is not dropped.",
+  "lambda": "validator",
+  "env": {
+    "MOPM_STAGE": "beta",
+    "MOPM_CHANNEL_BUCKET": "channel-bucket",
+    "MOPM_INDEX_QUEUE_URL": "index-queue-url",
+    "MOPM_CHANNEL_URL": "channel-url"
+  },
+  "invocations": [
+    {
+      "event": {
+        "Records": [
+          {
+            "messageId": "m1",
+            "receiptHandle": "handle-1",
+            "body": "not json",
+            "attributes": {
+              "MessageGroupId": "g"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          }
+        ]
+      },
+      "expect": {
+        "rejects": {
+          "name": "SyntaxError"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [],
+    "aws_http": [],
+    "logs": []
+  }
+}

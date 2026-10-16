@@ -76,7 +76,7 @@ test.each(cases.map((c) => [`${c.operationId}: ${c.name}`, c] as const))('%s', a
 });
 
 /** Fields the server sends that the site deliberately does not decode (spec-only; readme_html is never read). */
-const UNREAD: Record<string, readonly string[]> = { getVersion: ['manifest', 'readme_html'] };
+const UNREAD: Record<string, readonly string[]> = { getVersion: ['manifest', 'readme_html'], getHealth: ['impl'] };
 
 function withoutUnread(op: string, body: unknown): unknown {
   const b = { ...(body as Record<string, unknown>) };

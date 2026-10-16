@@ -1,0 +1,68 @@
+{
+  "description": "An error from the store rejects the invocation with that error; the records after the failing one are not touched.",
+  "lambda": "validator",
+  "env": {
+    "MOPM_STAGE": "beta",
+    "MOPM_CHANNEL_BUCKET": "channel-bucket",
+    "MOPM_INDEX_QUEUE_URL": "index-queue-url",
+    "MOPM_CHANNEL_URL": "channel-url"
+  },
+  "dynamo": [
+    {
+      "op": "Get",
+      "table": "mopm-beta-publishes",
+      "key": {
+        "publish_id": "pub_a"
+      },
+      "throw": "ThrottlingException",
+      "message": "Rate exceeded"
+    }
+  ],
+  "invocations": [
+    {
+      "event": {
+        "Records": [
+          {
+            "messageId": "m1",
+            "receiptHandle": "handle-1",
+            "body": "{\"type\":\"validate\",\"publish_id\":\"pub_a\"}",
+            "attributes": {
+              "MessageGroupId": "g"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          },
+          {
+            "messageId": "m2",
+            "receiptHandle": "handle-2",
+            "body": "{\"type\":\"validate\",\"publish_id\":\"pub_b\"}",
+            "attributes": {
+              "MessageGroupId": "g"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          }
+        ]
+      },
+      "expect": {
+        "rejects": {
+          "name": "ThrottlingException",
+          "message": "Rate exceeded"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-publishes",
+        "key": {
+          "publish_id": "pub_a"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": []
+  }
+}

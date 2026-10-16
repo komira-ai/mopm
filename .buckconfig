@@ -44,10 +44,10 @@
   # zig_test exec/env tools, zig_exe optimize/strip), the node_modules rules
   # service/*/BUCK uses (tools/build/node/modules.bzl), and `kpin cargo` with the
   # Rust rules it needs (rustc 1.99.0; env, renamed_deps, native_deps, patch).
-  # This is the head of komira pull request 1665 (kpin cargo --trim without the
-  # edges of optional dependencies nothing enabled), on top of pull request 1648
-  # (kpin cargo, on top of 1646 and 1647). Bump it with farm.yml.
-  commit_hash = 5f80af5154d32528f57bd6dfb65c53e72956e9ac
+  # This is the komira main merge commit of pull request 1665 (kpin cargo --trim without the
+  # edges of optional dependencies nothing enabled), after pull request 1648 (kpin cargo, on top
+  # of 1646 and 1647). Bump it with farm.yml.
+  commit_hash = a44bd01b347695090df90dff1c48ff5bcdb5a339
 
 [buildfile]
   name = BUCK

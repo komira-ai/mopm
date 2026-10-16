@@ -181,9 +181,9 @@ jobs:
         working-directory: service/api
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
-          npm run build
+          npm run build:validate-lib
       - name: mopm pack, then the validator on the result
-        run: node tests/pack_conformance/check.mjs ./zig-out/bin/mopm service/api/dist
+        run: node tests/pack_conformance/check.mjs ./zig-out/bin/mopm service/api/dist-validate
 
   install-e2e:
     name: install e2e (${{ matrix.os }})
