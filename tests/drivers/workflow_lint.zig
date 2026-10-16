@@ -32,9 +32,14 @@ const farm_file = "farm.yml";
 /// manual run: checked below.
 const kpin_file = "kpin-update.yml";
 const kpin_writes = [_][]const u8{ "contents", "pull-requests" };
+/// release.yml (a pushed v* tag publishes a release) holds the three write grants a release with
+/// build-provenance attestations needs, on its jobs only (the top level stays read-only); hygiene
+/// holds its triggers to tags.
+const release_file = "release.yml";
+const release_writes = [_][]const u8{ "contents", "id-token", "attestations" };
 /// Names whose values must never reach a log: no echo/printf/cat/tee of them.
 const secret_names = [_][]const u8{ "AWS_ACCOUNT_ID", "AWS_REGION", "ROLE_ARN", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN" };
-const owned_actions = [_][]const u8{ "checkout", "setup-node", "upload-artifact", "download-artifact" };
+const owned_actions = [_][]const u8{ "checkout", "setup-node", "upload-artifact", "download-artifact", "attest-build-provenance" };
 
 // ---- secret-bearing variables -----------------------------------------------
 
@@ -165,6 +170,7 @@ fn checkPerm(a: Allocator, f: []const u8, base: []const u8, path: []const []cons
                 if (!c.isStr(e.value_ptr.*, "write")) continue;
                 const k = e.key_ptr.*;
                 if (std.mem.eql(u8, base, kpin_file) and c.containsStr(&kpin_writes, k) and path.len == 3 and std.mem.eql(u8, path[0], "jobs")) continue;
+                if (std.mem.eql(u8, base, release_file) and c.containsStr(&release_writes, k) and path.len == 3 and std.mem.eql(u8, path[0], "jobs")) continue;
                 if (!(std.mem.eql(u8, k, "id-token") and (isOidc(base) or std.mem.eql(u8, base, farm_file)))) {
                     try c.problem(a, out, prefix ++ "{s}: {s}.{s}: write is not allowed", .{ f, try joinPath(a, path), k });
                 }

@@ -16,6 +16,11 @@ farm_file = "farm.yml"
 # manual run: checked below.
 kpin_file = "kpin-update.yml"
 kpin_writes = %w[contents pull-requests]
+# release.yml (a pushed v* tag publishes a release) holds the three write grants a release with
+# build-provenance attestations needs, on its jobs only (the top level stays read-only); hygiene.rb
+# holds its triggers to tags.
+release_file = "release.yml"
+release_writes = %w[contents id-token attestations]
 # Names whose values must never reach a log: no echo/printf/cat/tee of them.
 secret_names = %w[AWS_ACCOUNT_ID AWS_REGION ROLE_ARN AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN]
 secret_alt = "(?:" + secret_names.join("|") + ")"
@@ -40,7 +45,7 @@ leaky_lines = lambda do |script|
   end
   out
 end
-owned_actions = %w[checkout setup-node upload-artifact download-artifact]
+owned_actions = %w[checkout setup-node upload-artifact download-artifact attest-build-provenance]
 
 each_perm = lambda do |node, path, &blk|
   case node
@@ -73,6 +78,7 @@ end
       value.each do |k, v|
         next unless v == "write"
         next if base == kpin_file && kpin_writes.include?(k) && path.size == 3 && path[0] == "jobs"
+        next if base == release_file && release_writes.include?(k) && path.size == 3 && path[0] == "jobs"
         fail_.("#{f}: #{path.join('.')}.#{k}: write is not allowed") unless k == "id-token" && (oidc_files.include?(base) || base == farm_file)
       end
     end

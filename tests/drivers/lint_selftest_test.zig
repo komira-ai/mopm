@@ -78,6 +78,14 @@ const cases = [_]Case{
     .{ .name = "kpin_pull_request", .lint = &.{"triggers must be exactly schedule and workflow_dispatch"} },
     .{ .name = "kpin_issues_write", .lint = &.{ "issues: write is not allowed", "may hold only contents and pull-requests" } },
     .{ .name = "kpin_top_write", .lint = &.{ "top-level permissions must be read-only", "permissions.contents: write is not allowed" } },
+    .{ .name = "release_clean", .lint = &.{}, .hyg = &.{} },
+    .{ .name = "release_elsewhere", .lint = &.{ "contents: write is not allowed", "id-token: write is not allowed", "attestations: write is not allowed" }, .hyg = &.{ "an id-token permission is only allowed" } },
+    .{ .name = "release_branch_trigger", .lint = &.{}, .hyg = &.{ "triggers must be exactly push of tags [v*], with no branches" } },
+    .{ .name = "release_pull_request", .lint = &.{}, .hyg = &.{ "triggers must be exactly push of tags [v*], with no branches" } },
+    .{ .name = "release_environment", .lint = &.{}, .hyg = &.{ "must not use secrets or an environment" } },
+    .{ .name = "release_other_write", .lint = &.{ "packages: write is not allowed" }, .hyg = &.{} },
+    .{ .name = "release_unpinned_attest", .lint = &.{ "only GitHub-owned actions pinned by full SHA" }, .hyg = &.{} },
+    .{ .name = "release_calls_with_idtoken", .lint = &.{}, .hyg = &.{ "calls a workflow and grants id-token" } },
 };
 
 /// The values of the placeholders, built from pieces: the same ones run.rb builds.
@@ -99,13 +107,14 @@ fn substitutions(comptime i: usize) struct { []const u8, []const u8 } {
 const n_substitutions = 10;
 
 /// The file name a case is materialized as: promote_* promote.yml, farm_* farm.yml, subject_*
-/// oidc-subject-check.yml, deploy_* deploy.yml, kpin_* kpin-update.yml (kpin_elsewhere stays ci.yml), anything else ci.yml (a name not allowed id-token).
+/// oidc-subject-check.yml, deploy_* deploy.yml, kpin_* kpin-update.yml (kpin_elsewhere stays ci.yml), release_* release.yml (release_elsewhere stays ci.yml), anything else ci.yml (a name not allowed id-token).
 fn materializedName(name: []const u8) []const u8 {
     if (std.mem.startsWith(u8, name, "promote")) return "promote.yml";
     if (std.mem.startsWith(u8, name, "farm")) return "farm.yml";
     if (std.mem.startsWith(u8, name, "subject")) return "oidc-subject-check.yml";
     if (std.mem.startsWith(u8, name, "deploy")) return "deploy.yml";
     if (std.mem.startsWith(u8, name, "kpin") and !std.mem.eql(u8, name, "kpin_elsewhere")) return "kpin-update.yml";
+    if (std.mem.startsWith(u8, name, "release") and !std.mem.eql(u8, name, "release_elsewhere")) return "release.yml";
     return "ci.yml";
 }
 
@@ -259,7 +268,7 @@ test "the table is run.rb's table, case for case" {
         }
     }
     // and the file-name rule
-    for ([_][]const u8{ "(\"promote\") ? \"promote.yml\"", "(\"farm\") ? \"farm.yml\"", "(\"subject\") ? \"oidc-subject-check.yml\"", "(\"deploy\") ? \"deploy.yml\"", "(\"kpin\") && name != \"kpin_elsewhere\") ? \"kpin-update.yml\"" }) |frag| {
+    for ([_][]const u8{ "(\"promote\") ? \"promote.yml\"", "(\"farm\") ? \"farm.yml\"", "(\"subject\") ? \"oidc-subject-check.yml\"", "(\"deploy\") ? \"deploy.yml\"", "(\"kpin\") && name != \"kpin_elsewhere\") ? \"kpin-update.yml\"", "(\"release\") && name != \"release_elsewhere\") ? \"release.yml\"" }) |frag| {
         if (std.mem.indexOf(u8, ruby, frag) == null) {
             std.debug.print("tests/lint/run.rb does not map {s}\n", .{frag});
             return error.TestUnexpectedResult;

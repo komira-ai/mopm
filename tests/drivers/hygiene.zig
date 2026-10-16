@@ -234,6 +234,11 @@ const subject_check = "oidc-subject-check.yml";
 /// action. Allowed only for a pull request from a branch of this repository, with no
 /// environment and no secret.
 const farm_file = "farm.yml";
+/// release.yml publishes a release with build-provenance attestations, so its publish job holds an
+/// id-token grant (the attestation is signed with the job's OIDC token; no cloud access). Allowed only
+/// when a pushed v* tag is the sole trigger, with no environment, no secret and no id-token on a job
+/// that calls another workflow.
+const release_file = "release.yml";
 
 fn isOidcFile(base: []const u8) bool {
     return c.containsStr(&oidc_files, base);
@@ -310,6 +315,26 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
             if (!c.findKey(j.node, "id-token")) continue;
             if (std.mem.indexOf(u8, try jobIf(a, j.node), "github.event.pull_request.head.repo.full_name == github.repository") == null) {
                 try c.problem(a, out, prefix ++ "{s}: job {s} grants id-token but does not skip pull requests from forks", .{ f, j.name });
+            }
+        }
+        return;
+    }
+
+    if (std.mem.eql(u8, base, release_file)) {
+        // on.keys == ["push"] && on["push"] == { "tags" => ["v*"] }
+        const push = c.get(c.onValue(doc), "push");
+        const only_tag = on.len == 1 and std.mem.eql(u8, on[0], "push") and push != null and push.? == .object and
+            push.?.object.count() == 1 and blk: {
+            const tags = c.get(push, "tags") orelse break :blk false;
+            break :blk tags == .array and tags.array.items.len == 1 and c.isStr(tags.array.items[0], "v*");
+        };
+        if (!only_tag) try c.problem(a, out, prefix ++ "{s}: triggers must be exactly push of tags [v*], with no branches", .{f});
+        if (c.findKey(doc, "environment") or c.mentionsSecretsDot(try c.nonCommentLines(a, text))) {
+            try c.problem(a, out, prefix ++ "{s}: must not use secrets or an environment", .{f});
+        }
+        for (jobs) |j| {
+            if (j.node == .object and j.node.object.contains("uses") and c.findKey(j.node, "id-token")) {
+                try c.problem(a, out, prefix ++ "{s}: job {s} calls a workflow and grants id-token", .{ f, j.name });
             }
         }
         return;

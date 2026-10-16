@@ -322,6 +322,11 @@
       "path": "/robots.txt",
       "edge": "pass",
       "view": null
+    },
+    {
+      "path": "/install.sh",
+      "edge": "pass",
+      "view": null
     }
   ]
 }
