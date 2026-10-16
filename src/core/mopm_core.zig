@@ -28,6 +28,7 @@ pub const resolve = @import("resolve.zig");
 pub const lock = @import("lock.zig");
 pub const install_plan = @import("install_plan.zig");
 pub const install = @import("install.zig");
+pub const closure = @import("closure.zig");
 
 test {
     _ = @import("metadata.zig");
@@ -53,5 +54,6 @@ test {
     _ = @import("lock.zig");
     _ = @import("install_plan.zig");
     _ = @import("install.zig");
+    _ = @import("closure.zig");
     _ = @import("testroot.zig");
 }
