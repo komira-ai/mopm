@@ -18,8 +18,13 @@ export interface PublishStackProps extends StackProps {
   handlerDir?: string;
 }
 
-/** Concurrent validator invocations at most; the rest of a burst waits in the validate queue. */
-export const VALIDATOR_RESERVED_CONCURRENCY = 5;
+/**
+ * Concurrent validator invocations at most, set as the validate queue trigger's maximum concurrency (the event source
+ * mapping's ScalingConfig; its minimum is 2); the rest of a burst waits in the queue. It is NOT a reservation on the
+ * function (`reservedConcurrentExecutions`): Lambda refuses a reservation that leaves the account's unreserved pool
+ * under 10, and a new account's whole limit is 10, so the deploy rolls back (publish.test.ts pins both).
+ */
+export const VALIDATOR_MAX_CONCURRENCY = 5;
 
 /** Seconds a Lambda may run. The queue's visibility timeout is six times that, as AWS advises for an SQS trigger. */
 export const VALIDATOR_TIMEOUT_SECONDS = 300;
@@ -86,9 +91,6 @@ export class PublishStack extends Stack {
       // A 100 MB archive may unpack to 512 MB; the buffers of one archive plus the decompressors need room.
       memorySize: 3008,
       timeout: Duration.seconds(VALIDATOR_TIMEOUT_SECONDS),
-      // A publish burst must not take the account's whole Lambda concurrency pool and starve the read API: cap the
-      // validator (it also bounds the 3 GB buffers in flight). Excess messages wait in the queue.
-      reservedConcurrentExecutions: VALIDATOR_RESERVED_CONCURRENCY,
       logGroup: logGroup('ValidatorLogs'),
       environment: {
         MOPM_STAGE: c.stage,
@@ -134,7 +136,15 @@ export class PublishStack extends Stack {
     // embeds a hash of its path, and so differs per stage) into the mapping's logical id, and the whole-template stage
     // diff (template-diff.test.ts) would then see three different resources.
     this.validateQueue.grantConsumeMessages(this.validator);
-    new lambda.EventSourceMapping(this, 'ValidatorTrigger', { target: this.validator, eventSourceArn: this.validateQueue.queueArn, batchSize: 1 });
+    // A publish burst must not take the account's whole Lambda concurrency pool and starve the read API: the trigger
+    // invokes the validator at most VALIDATOR_MAX_CONCURRENCY times at once (this also bounds the 3 GB buffers in flight).
+    // Excess messages wait in the queue. A cap on the trigger takes nothing from the account's unreserved pool.
+    new lambda.EventSourceMapping(this, 'ValidatorTrigger', {
+      target: this.validator,
+      eventSourceArn: this.validateQueue.queueArn,
+      batchSize: 1,
+      maxConcurrency: VALIDATOR_MAX_CONCURRENCY,
+    });
 
     // --- the index writer ------------------------------------------------------------------------------------
     this.indexer = new lambda.Function(this, 'Indexer', {
