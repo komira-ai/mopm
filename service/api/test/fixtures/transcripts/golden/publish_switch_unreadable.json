@@ -1,0 +1,130 @@
+{
+  "description": "If the read-only switch cannot be read, writers fail closed: begin is 503 unavailable; yank (not gated), status and the read routes are unaffected.",
+  "world": {
+    "auth": true,
+    "publish": true,
+    "seeds": [
+      "auth_accounts"
+    ]
+  },
+  "steps": [
+    {
+      "set": {
+        "flags_broken": true
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"subdir\":\"noarch\",\"filename\":\"mojo-alpha-2.0.0-mojo1.0.0_0.conda\",\"sha256\":\"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\",\"size\":5}"
+      },
+      "response": {
+        "status": 503,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-1"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"unavailable\",\"message\":\"The registry is temporarily unavailable.\",\"hint\":\"Try again shortly.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{}"
+      },
+      "response": {
+        "status": 503,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-2"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"unavailable\",\"message\":\"The registry is temporarily unavailable.\",\"hint\":\"Try again shortly.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":true,\"reason\":\"incident\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-3"
+          ]
+        ],
+        "body": "{\"version\":\"1.0.0\",\"state\":\"yanked\",\"published_at\":\"2026-10-13T12:00:00Z\",\"yank_reason\":\"incident\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/alpha",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-4"
+          ]
+        ],
+        "body": "{\"name\":\"alpha\",\"state\":\"active\",\"owners\":[{\"github_id\":4242,\"handle\":\"octo\"}],\"latest\":null,\"repository\":null,\"license\":null,\"description\":null,\"created_at\":\"2026-10-01T09:00:00Z\",\"versions\":[{\"version\":\"1.1.0\",\"state\":\"yanked\",\"published_at\":\"2026-10-13T12:00:00Z\",\"yank_reason\":\"broken\"},{\"version\":\"1.0.0\",\"state\":\"yanked\",\"published_at\":\"2026-10-13T12:00:00Z\",\"yank_reason\":\"incident\"},{\"version\":\"0.9.0\",\"state\":\"tombstoned\",\"published_at\":\"2026-10-13T12:00:00Z\"}]}"
+      }
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "description": "isBase64Encoded decides how the body is read: a base64 body is decoded and parsed (invalid_name from the exchange route), the same JSON sent plainly gives the same answer, and base64 text that is not flagged is not decoded (invalid JSON).",
+  "lambda": "api",
+  "env": {
+    "MOPM_STAGE": "beta",
+    "MOPM_OAUTH_SECRET_NAME": "mopm/beta/github-oauth"
+  },
+  "invocations": [
+    {
+      "event": "events/apigw_post_exchange_b64.json",
+      "expect": {
+        "returns": {
+          "statusCode": 400,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-b64"
+          },
+          "body": "{\"error\":{\"code\":\"invalid_name\",\"message\":\"'Bad Name' is not a valid package name.\",\"hint\":\"Names are lowercase letters, digits and underscores, 2 to 64 characters, starting with a letter.\"}}"
+        }
+      }
+    },
+    {
+      "event": "events/apigw_post_exchange_raw.json",
+      "expect": {
+        "returns": {
+          "statusCode": 400,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-raw"
+          },
+          "body": "{\"error\":{\"code\":\"invalid_name\",\"message\":\"'Bad Name' is not a valid package name.\",\"hint\":\"Names are lowercase letters, digits and underscores, 2 to 64 characters, starting with a letter.\"}}"
+        }
+      }
+    },
+    {
+      "event": "events/apigw_post_exchange_junk.json",
+      "expect": {
+        "returns": {
+          "statusCode": 400,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-junk"
+          },
+          "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: the body is not valid JSON.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-config",
+        "key": {
+          "key": "read_only"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": []
+  }
+}

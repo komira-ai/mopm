@@ -1,0 +1,37 @@
+{
+  "description": "A package whose latest version has a readme and whose record has homepage and keywords.",
+  "world": {
+    "seeds": [
+      "http_client_display_fields"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/0.4.0"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/http_client/0.3.0"
+      },
+      "expect": {
+        "status": 200
+      }
+    }
+  ]
+}

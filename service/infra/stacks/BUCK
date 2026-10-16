@@ -1,8 +1,11 @@
 # The service stacks' checks (see service/api/BUCK): `tsc --noEmit`, `jest --ci`, and
 # `cdk synth` of every stage with a dummy account and zone id, as in service-ci.yml.
-# The tests read three things outside this package, which are `data` at their paths
+# The tests read four things outside this package, which are `data` at their paths
 # in the repository: the access stack's policy template, the API's golden grants and
-# the stages' configuration; the synths also take the API handler bundle (service/api:dist).
+# recorded wire goldens, and the stages' configuration; the synths also take the API handler bundle (service/api:dist).
+# The site stack deploys the site build (//site:dist, at site/dist), generates its edge router
+# from the site's route grammar (site/src/routes.ts) and is tested against the site's route
+# vectors (site/test/fixtures/routes.json).
 
 load("@komira//tools/build/node:modules.bzl", "cdk_synth", "jest_test", "npm_modules", "tsc_check")
 load(":pins.lock.bzl", "NPM")
@@ -19,10 +22,14 @@ _SRCS = glob(["bin/**", "lib/**", "test/**"]) + [
 _DATA = {
     "service/api/dist": "//service/api:dist",
     "service/api/test/fixtures/lambda-auth-grants.json": "//service/api:lambda-auth-grants.json",
+    "service/api/test/fixtures/wire": "//service/api:wire_goldens",
     "service/config/beta.json": "//service/config:beta.json",
     "service/config/gamma.json": "//service/config:gamma.json",
     "service/config/prod.json": "//service/config:prod.json",
     "service/infra/access/cfn-exec-policy.template.json": "//service/infra/access:cfn-exec-policy.template.json",
+    "site/dist": "//site:dist",
+    "site/src/routes.ts": "//site:routes.ts",
+    "site/test/fixtures/routes.json": "//site:routes.json",
 }
 
 # cdk.json's app, `npx ts-node --prefer-ts-exts bin/stacks.ts`, without npx (there is no npm).

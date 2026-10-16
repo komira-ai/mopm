@@ -1,0 +1,77 @@
+{
+  "description": "A container configures once: the second invocation has other environment values and still answers with the first one's stage, version and commit (and reads the first stage's tables).",
+  "lambda": "api",
+  "env": {
+    "MOPM_STAGE": "beta",
+    "MOPM_VERSION": "v1",
+    "MOPM_COMMIT": "first"
+  },
+  "invocations": [
+    {
+      "event": "events/apigw_get_health.json",
+      "expect": {
+        "returns": {
+          "statusCode": 200,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-health"
+          },
+          "body_json": {
+            "status": "ok",
+            "api_version": "v1",
+            "stage": "beta",
+            "version": "v1",
+            "commit": "first"
+          }
+        }
+      }
+    },
+    {
+      "env": {
+        "MOPM_STAGE": "prod",
+        "MOPM_VERSION": "v2",
+        "MOPM_COMMIT": "second"
+      },
+      "clock": "2026-10-01T00:01:00.000Z",
+      "event": "events/apigw_get_health.json",
+      "expect": {
+        "returns": {
+          "statusCode": 200,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-health"
+          },
+          "body_json": {
+            "status": "ok",
+            "api_version": "v1",
+            "stage": "beta",
+            "version": "v1",
+            "commit": "first"
+          }
+        }
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-config",
+        "key": {
+          "key": "read_only"
+        }
+      },
+      {
+        "op": "Get",
+        "table": "mopm-beta-config",
+        "key": {
+          "key": "read_only"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": []
+  }
+}

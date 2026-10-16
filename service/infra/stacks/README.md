@@ -15,6 +15,11 @@ Account ids come from the CDK environment at deploy time and are never committed
 - **API host.** The API is served at `api.<site host>` (three hosts beyond the site and conda hosts, with their
   own certificates and DNS records). Routing `/api/*` through CloudFront on the site host is the alternative;
   this is a pending CEO decision.
+- **Site.** The site stack serves the site build (`site/dist`; deploy.yml builds it before `cdk deploy`, and synth
+  refuses to run without it). Hashed assets are uploaded first and never pruned, then the pages, pruned and invalidated
+  (`/*`), so a rollback is a deploy of the earlier commit: its pages find their assets still in the bucket (which is
+  also versioned). A CloudFront Function routes app and docs paths and redirects non-normalised package names; a
+  missing key gets the 404 page with status 404. What it serves and why: `site/README.md`, "How it is served".
 - **Health endpoint.** `/api/v1/health` reports `stage`, `version` and `commit` (`-c commit=<git sha>`), so the e2e
   workflow can prove the deployed commit equals the one it was asked to test.
 - **Quarantine.** The channel bucket is served through CloudFront with an origin access control; an explicit deny

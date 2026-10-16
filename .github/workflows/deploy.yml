@@ -75,6 +75,14 @@ jobs:
           npm ci --ignore-scripts --no-audit --no-fund
           npm run build
           test -f dist/http/lambda.js
+      # The site stack deploys this build (one artifact for every stage; the stack refuses to synthesize without it).
+      - name: Build the site
+        working-directory: site
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          for f in index.html app.html 404.html; do test -f "dist/$f"; done
+          test -d dist/assets
       - name: Validate stage
         env:
           STAGE: ${{ inputs.stage }}

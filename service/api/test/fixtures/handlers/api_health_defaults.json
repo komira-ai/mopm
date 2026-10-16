@@ -1,0 +1,44 @@
+{
+  "description": "Cold start with only the stage set: health answers with the defaults (version and commit 'dev', writable), after one consistent read of the read-only switch. The body is checked for the members listed (the contract lets a server add members).",
+  "lambda": "api",
+  "env": {
+    "MOPM_STAGE": "beta"
+  },
+  "dynamo": [],
+  "invocations": [
+    {
+      "event": "events/apigw_get_health.json",
+      "expect": {
+        "returns": {
+          "statusCode": 200,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-health"
+          },
+          "body_json": {
+            "status": "ok",
+            "api_version": "v1",
+            "stage": "beta",
+            "read_only": false,
+            "version": "dev",
+            "commit": "dev"
+          }
+        }
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-config",
+        "key": {
+          "key": "read_only"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": []
+  }
+}
