@@ -19,10 +19,10 @@ export const OPENING_SENTENCE =
   'mopm is "cargo for Mojo": a package manager plus build, test and coverage tooling for Mojo projects, with a package registry at mopm.dev.';
 
 /** README.md's "Status: early." list of commands that work today, in its order. */
-export const WORKING_TODAY = ['--version', 'link-plan', 'metadata', 'new', 'init', 'build', 'run', 'repl', 'test'];
+export const WORKING_TODAY = ['--version', 'link-plan', 'metadata', 'new', 'init', 'build', 'run', 'repl', 'test', 'add', 'remove'];
 
 /** The `planned` array of src/cli/main.zig, in its order. */
-export const PLANNED = ['add', 'remove', 'cov', 'check', 'export', 'launch'];
+export const PLANNED = ['cov', 'check', 'export', 'launch'];
 
 /** The commands that work in a package `mopm new` has just made (tests/new/lib holds what it makes). */
 export const QUICKSTART = [
@@ -200,7 +200,7 @@ export function homePage(): PageSpec {
       null,
       h(doc, 'span', { class: 'num', 'aria-hidden': 'true' }, '3'),
       h(doc, 'h3', null, 'Add a package'),
-      h(doc, 'p', null, 'In a pixi project that lists the registry’s conda channel. mopm’s own ', code('mopm add'), ' is planned.'),
+      h(doc, 'p', null, 'In a pixi project that lists the registry’s conda channel. In a mopm project, ', code('mopm add <name>'), ' adds it to mopm.toml and writes mopm.lock.'),
       plainBlock('pixi add mojo-<name>', 'pixi command'),
     ),
   );
@@ -252,7 +252,7 @@ export function homePage(): PageSpec {
           link(`${REPO_URL}/blob/main/spec/channel.md`, 'the channel spec'),
           ').',
         ),
-        h(doc, 'p', null, 'mopm’s own ', code('mopm add'), ' is planned.'),
+        h(doc, 'p', null, 'In a mopm project, ', code('mopm add <name>'), ' resolves it against the registry’s index and writes mopm.toml and mopm.lock.'),
       ),
     ),
   );

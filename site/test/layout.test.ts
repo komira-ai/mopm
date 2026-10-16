@@ -367,17 +367,19 @@ describe('the home page says what the repository says', () => {
     expect(home).toContain('aria-label="build from source commands"><code>git clone https://github.com/komira-ai/mopm\ncd mopm\nzig build');
   });
 
-  // The quickstart's third step is the registry: until main.zig implements `add`, the step says it is planned and the
-  // command shown is pixi's (spec/channel.md), never `mopm add`.
-  test('the three quickstart steps: build, start a package, add one with pixi (mopm add planned)', () => {
+  // The quickstart's third step is the registry: the command block is pixi's (spec/channel.md); the text names
+  // `mopm add`, which main.zig implements, and never calls it planned.
+  test('the three quickstart steps: build, start a package, add one with pixi or mopm add', () => {
     const home = read('index.html');
     const steps = home.slice(home.indexOf('<ol class="stepper">'), home.indexOf('</ol>', home.indexOf('<ol class="stepper">')));
     expect(steps.match(/<li>/g)).toHaveLength(3);
     expect([...steps.matchAll(/<h3>([^<]*)<\/h3>/g)].map((m) => m[1])).toEqual(['Build mopm', 'Start a package', 'Add a package']);
     const cmds = [...steps.matchAll(/<code>([^<]*)<\/code><\/pre>/g)].map((m) => textOf(m[1]));
     expect(cmds).toEqual(['zig build', 'mopm new my_package --lib', 'pixi add mojo-<name>']);
-    expect(PLANNED).toContain('add');
-    expect(textOf(steps)).toContain('mopm add is planned');
+    expect(PLANNED).not.toContain('add');
+    expect(WORKING_TODAY).toContain('add');
+    expect(textOf(steps)).toContain('In a mopm project, mopm add <name> adds it to mopm.toml and writes mopm.lock.');
+    expect(textOf(steps)).not.toContain('planned');
     // One artifact serves every stage: a static step must not name prod's channel (the channel shown below follows
     // the host at runtime).
     expect(textOf(steps)).toContain('In a pixi project that lists the registry’s conda channel.');
