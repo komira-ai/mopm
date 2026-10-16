@@ -602,7 +602,7 @@ test "problem: what the installer relies on" {
     var st = testArena();
     defer st.deinit();
     const a = st.allocator();
-    var c = try parse(a, sample_json);
+    const c = try parse(a, sample_json);
     try std.testing.expectEqual(@as(?[]const u8, null), try problem(a, c));
 
     var bad = c;
