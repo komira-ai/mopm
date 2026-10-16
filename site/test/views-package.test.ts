@@ -70,8 +70,9 @@ describe('an active package (fixture: package info)', () => {
 
   // The note names only commands README.md says work today or src/cli/main.zig still plans (layout.test.ts pins
   // PLANNED to main.zig), so a command the CLI has since implemented is never called planned here.
-  test('the install note says mopm add is planned, and names no other command as planned', () => {
-    expect(text(out)).toContain('mopm metadata checks this table today; mopm add is planned.');
+  test('the install note names mopm add as working, and names no command the CLI does not have', () => {
+    expect(text(out)).toContain('mopm add writes a dependency line like this one and locks it; mopm metadata checks this table.');
+    expect(text(out)).not.toContain('is planned');
     const named = [...text(out).matchAll(/\bmopm ([a-z-]+)/g)].map((m) => m[1]);
     for (const cmd of named) expect([...WORKING_TODAY, ...PLANNED]).toContain(cmd);
   });

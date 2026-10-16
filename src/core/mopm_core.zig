@@ -34,6 +34,7 @@ pub const conda_prefix = @import("conda_prefix.zig");
 pub const conda_unpack = @import("conda_unpack.zig");
 pub const conda_env = @import("conda_env.zig");
 pub const pkg_fetch = @import("pkg_fetch.zig");
+pub const closure = @import("closure.zig");
 
 test {
     _ = @import("metadata.zig");
@@ -64,5 +65,6 @@ test {
     _ = @import("conda_unpack.zig");
     _ = @import("conda_env.zig");
     _ = @import("pkg_fetch.zig");
+    _ = @import("closure.zig");
     _ = @import("testroot.zig");
 }

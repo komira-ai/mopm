@@ -119,7 +119,7 @@ export function installCard<N>(
   const others: N[] = [];
   if (manifest !== null) {
     others.push(snippetBlock(doc, 'mopm.toml', manifest, 'snippet-manifest'));
-    others.push(h(doc, 'p', { class: 'muted small' }, h(doc, 'code', null, 'mopm metadata'), ' checks this table today; ', h(doc, 'code', null, 'mopm add'), ' is planned.'));
+    others.push(h(doc, 'p', { class: 'muted small' }, h(doc, 'code', null, 'mopm add'), ' writes a dependency line like this one and locks it; ', h(doc, 'code', null, 'mopm metadata'), ' checks this table.'));
   } else if (noManifestWhy !== null) {
     others.push(h(doc, 'p', { class: 'muted small' }, noManifestWhy));
   }
