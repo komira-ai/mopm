@@ -82,6 +82,80 @@ pub fn conda2With(a: Allocator, stem: []const u8, info: []const Item, files: []c
     return z;
 }
 
+fn put(out: *std.ArrayList(u8), comptime T: type, v: T) !void {
+    var b: [@sizeOf(T)]u8 = undefined;
+    std.mem.writeInt(T, &b, v, .little);
+    try out.appendSlice(&b);
+}
+
+/// As `conda2`, but every zip entry carries a zip64 extra field, as the
+/// `.conda` files of large packages do: 0xFFFFFFFF in the size fields and the
+/// real sizes in the extra field.
+pub fn conda2Zip64(a: Allocator, stem: []const u8, info: []const Item, files: []const Item) ![]u8 {
+    const entries = [_]conda.File{
+        .{ .path = "metadata.json", .data = "{\"conda_pkg_format_version\": 2}" },
+        .{ .path = try std.fmt.allocPrint(a, "pkg-{s}.tar.zst", .{stem}), .data = try conda.zstdStore(a, try tar(a, files)) },
+        .{ .path = try std.fmt.allocPrint(a, "info-{s}.tar.zst", .{stem}), .data = try conda.zstdStore(a, try tar(a, info)) },
+    };
+    var out = std.ArrayList(u8).init(a);
+    const offsets = try a.alloc(u32, entries.len);
+    for (entries, 0..) |f, i| {
+        offsets[i] = @intCast(out.items.len);
+        try put(&out, u32, 0x04034b50);
+        try put(&out, u16, 45);
+        try put(&out, u16, 0);
+        try put(&out, u16, 0);
+        try put(&out, u16, 0);
+        try put(&out, u16, 0x0021);
+        try put(&out, u32, std.hash.Crc32.hash(f.data));
+        try put(&out, u32, 0xFFFFFFFF);
+        try put(&out, u32, 0xFFFFFFFF);
+        try put(&out, u16, @intCast(f.path.len));
+        try put(&out, u16, 20);
+        try out.appendSlice(f.path);
+        try put(&out, u16, 1);
+        try put(&out, u16, 16);
+        try put(&out, u64, f.data.len);
+        try put(&out, u64, f.data.len);
+        try out.appendSlice(f.data);
+    }
+    const cd_start = out.items.len;
+    for (entries, 0..) |f, i| {
+        try put(&out, u32, 0x02014b50);
+        try put(&out, u16, 45);
+        try put(&out, u16, 45);
+        try put(&out, u16, 0);
+        try put(&out, u16, 0);
+        try put(&out, u16, 0);
+        try put(&out, u16, 0x0021);
+        try put(&out, u32, std.hash.Crc32.hash(f.data));
+        try put(&out, u32, 0xFFFFFFFF);
+        try put(&out, u32, 0xFFFFFFFF);
+        try put(&out, u16, @intCast(f.path.len));
+        try put(&out, u16, 20);
+        try put(&out, u16, 0);
+        try put(&out, u16, 0);
+        try put(&out, u16, 0);
+        try put(&out, u32, 0);
+        try put(&out, u32, offsets[i]);
+        try out.appendSlice(f.path);
+        try put(&out, u16, 1);
+        try put(&out, u16, 16);
+        try put(&out, u64, f.data.len);
+        try put(&out, u64, f.data.len);
+    }
+    const cd_size = out.items.len - cd_start;
+    try put(&out, u32, 0x06054b50);
+    try put(&out, u16, 0);
+    try put(&out, u16, 0);
+    try put(&out, u16, entries.len);
+    try put(&out, u16, entries.len);
+    try put(&out, u32, @intCast(cd_size));
+    try put(&out, u32, @intCast(cd_start));
+    try put(&out, u16, 0);
+    return out.items;
+}
+
 /// `info/index.json` text.
 pub fn indexJson(a: Allocator, name: []const u8, version: []const u8, build: []const u8, depends: []const u8, extra: []const u8) ![]u8 {
     return std.fmt.allocPrint(a, "{{\"name\":\"{s}\",\"version\":\"{s}\",\"build\":\"{s}\",\"build_number\":3,\"depends\":[{s}],\"subdir\":\"linux-64\",\"license\":\"MIT\"{s}}}", .{ name, version, build, depends, extra });
