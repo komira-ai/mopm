@@ -307,3 +307,17 @@ fn the_error_displays_its_code_and_message() {
     let e = invalid_request("x");
     assert_eq!(e.to_string(), "invalid_request: The request is not valid: x.");
 }
+
+#[test]
+fn the_store_errors_have_the_typescript_messages_and_details() {
+    let e = name_taken("p");
+    assert_eq!((e.code, e.message.as_str(), e.status()), (ErrorCode::NameTaken, "'p' is already taken.", 409));
+    assert_eq!(e.detail["name"], "p");
+    let e = version_not_found("p", "1.0.0");
+    assert_eq!((e.code, e.message.as_str(), e.status()), (ErrorCode::VersionNotFound, "'p' has no version '1.0.0'.", 404));
+    assert_eq!(read_auth_error_view(&e).body.message, "'p' has no version '1.0.0'.");
+    let e = already_owner("octocat", "p");
+    assert_eq!((e.code, e.message.as_str()), (ErrorCode::AlreadyOwner, "'octocat' already owns 'p'."));
+    let e = owner_not_found("p");
+    assert_eq!((e.code, e.message.as_str(), e.status()), (ErrorCode::OwnerNotFound, "That account is not an owner of the package.", 404));
+}
