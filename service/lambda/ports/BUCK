@@ -1,0 +1,34 @@
+# mopm_ports: the traits the registry's logic is written against (stores, object store, presigner,
+# queue, flags, clock, rng) and the auth and publish records they carry. Nothing here does I/O.
+load("@komira//tools/build/rust:defs.bzl", "rust_library", "rust_test")
+
+_DEPS = [
+    "//service/lambda/core:mopm_core",
+    "//third_party/rust:jiff",
+    "//third_party/rust:serde",
+    "//third_party/rust:serde_json",
+    "//third_party/rust:thiserror",
+]
+
+rust_test(
+    name = "mopm_ports_unit",
+    srcs = glob(["src/*.rs"]),
+    crate_root = "src/lib.rs",
+    deps = _DEPS,
+)
+
+rust_library(
+    name = "mopm_ports",
+    srcs = glob(["src/*.rs"]),
+    crate_root = "src/lib.rs",
+    deps = _DEPS,
+    tests = [":mopm_ports_unit"],
+    visibility = ["PUBLIC"],
+)
+
+filegroup(
+    name = "lint_files",
+    srcs = glob(["**"]) + [],
+    copy = True,
+    visibility = ["//:"],
+)

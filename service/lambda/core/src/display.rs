@@ -7,20 +7,27 @@
 //! whitespace set, so the rules accept and refuse the same text as `parseDisplay` of the
 //! TypeScript registry. A URL is judged by the WHATWG parser (the `url` crate here, `new URL` there).
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::error::{invalid_request, RegistryError};
 use crate::types::README_MAX_BYTES;
 
-/// The display fields of a commit body.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// The display fields of a commit body. Stored with a publish record: an absent field is absent, never `null`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DisplayMeta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub license: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repository: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub homepage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keywords: Option<Vec<String>>,
     /// Markdown, at most [`README_MAX_BYTES`] of UTF-8.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub readme: Option<String>,
 }
 
