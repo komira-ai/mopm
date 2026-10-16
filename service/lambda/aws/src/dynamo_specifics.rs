@@ -443,6 +443,18 @@ async fn the_adapter_needs_no_permission_the_lambda_role_lacks() {
 }
 
 #[tokio::test]
+async fn the_owners_index_is_read_with_the_lambda_grants_and_the_owners_table_is_not_written() {
+    let fake = FakeDynamo::start(lambda_grants());
+    let s = DynamoStore::new(client(&fake.endpoint()), Tables::for_stage("t"));
+    for name in ["beta", "alpha"] {
+        fake.seed("mopm-t-owners", json!({"name": {"S": name}, "github_id": {"S": "7"}, "github_id_num": {"N": "7"}, "handle": {"S": "u"}, "added_at": {"S": "2026-10-13T12:00:00Z"}}));
+    }
+    assert_eq!(s.owned_packages(7).await.unwrap(), ["alpha", "beta"], "Query on owners/by_github_id is in the Lambda's grants");
+    let o = OwnerRecord { name: "gamma".into(), github_id: 7, handle: "u".into(), added_at: "t".into() };
+    assert!(s.add_owner(&o).await.is_err(), "the role may read the owners table, not write it");
+}
+
+#[tokio::test]
 async fn trusted_publishers_can_be_read_and_not_written_with_the_lambda_grants() {
     let (s, fake) = auth_rig(lambda_grants());
     fake.seed(
