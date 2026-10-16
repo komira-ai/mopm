@@ -1,8 +1,11 @@
 # Contributing
 
 - Tooling is written in Zig 0.12.0. Run `zig build test` from the repository
-  root before opening a pull request; CI runs it on Linux (x86_64, aarch64) and
-  macOS (arm64).
+  root before opening a pull request; CI runs it on Linux (x86_64, aarch64) on
+  every pull request, and on macOS (arm64) after the merge (push to `main`), nightly,
+  on manual dispatch, and on a pull request that carries the label `macos`
+  (the macOS queue is slow, so add the label when your change touches
+  platform-specific code).
 - A bug fix comes with a test that failed before the fix.
 - A behaviour change updates the golden files in `tests/golden` in the same
   pull request, and says why.
