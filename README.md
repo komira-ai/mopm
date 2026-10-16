@@ -9,6 +9,35 @@ registry at [mopm.dev](https://mopm.dev).
 `mopm remove` work today.
 Everything else below is a plan, and the design may change.
 
+## Install
+
+```sh
+curl -fsSL https://mopm.dev/install.sh | sh
+```
+
+The installer needs only `curl`, `tar` and `sha256sum` (or `shasum`). It downloads the release for
+your machine (Linux or macOS, x86_64 or arm64) from
+[GitHub releases](https://github.com/komira-ai/mopm/releases), checks its sha256 against the
+release's `SHA256SUMS`, and installs `~/.mopm/bin/mopm`. It needs no root and edits no shell startup
+file: it prints the `PATH` line to add. `MOPM_VERSION=1.2.3` picks a version and `MOPM_HOME=<dir>`
+a different install directory. The script is [`site/static/install.sh`](site/static/install.sh);
+read it before you run it.
+
+Or download by hand. Each release lists `mopm-<version>-<target>.tar.gz` for `linux-x86_64`,
+`linux-aarch64`, `macos-arm64` and `macos-x86_64`, and a `SHA256SUMS` file:
+
+```sh
+v=1.2.3 t=linux-x86_64     # your version and target
+curl -fsSLO "https://github.com/komira-ai/mopm/releases/download/v$v/mopm-$v-$t.tar.gz"
+curl -fsSLO "https://github.com/komira-ai/mopm/releases/download/v$v/SHA256SUMS"
+grep " mopm-$v-$t.tar.gz\$" SHA256SUMS | sha256sum -c -     # macOS: shasum -a 256 -c -
+tar -xzf "mopm-$v-$t.tar.gz"                              # mopm-$v-$t/mopm
+```
+
+Releases carry GitHub build-provenance attestations: `gh attestation verify
+mopm-<version>-<target>.tar.gz --repo komira-ai/mopm` checks that a tarball was built by this
+repository's release workflow.
+
 ## Goals
 
 1. **Coverage for any Mojo package.** `mopm cov` builds and tests a package and
@@ -70,7 +99,7 @@ spelling to print.
 | `registry/` | the registry and its index (placeholder) |
 | `mojo/mopm_rt` | the Mojo runtime support package (placeholder) |
 
-## Build and test
+## Build from source
 
 You need [Zig](https://ziglang.org) 0.12.0 (`tools/install_zig.sh <dir>` installs it, checked against a pinned sha256).
 

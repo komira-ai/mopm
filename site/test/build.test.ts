@@ -42,6 +42,13 @@ describe('a build', () => {
     expect(assets.sort()).toEqual(['a.js', 'lazy/b.js', 'lazy/c.js', 'main.js', ...css].map((p) => `assets/${id}/${p}`).sort());
   });
 
+  test('the installer ships at the root, byte for byte what static/install.sh says', () => {
+    const f = fresh();
+    f.build();
+    expect(readFileSync(join(f.outDir, 'install.sh'))).toEqual(readFileSync(join(f.staticDir, 'install.sh')));
+    expect(readFileSync(join(f.outDir, 'install.sh'), 'utf8').startsWith('#!/bin/sh\n')).toBe(true);
+  });
+
   test('pages load the shared stylesheet and their area\'s, and the entry module, and preload what the entry imports', () => {
     const f = fresh();
     const { id } = f.build();
@@ -160,6 +167,16 @@ describe('checkDist refuses', () => {
   test('a fresh build passes', () => {
     const { f } = built();
     expect(() => checkDist(f.outDir)).not.toThrow();
+  });
+
+  test('an installer that is not a /bin/sh script, a missing installer, and a second shell script', () => {
+    const { f } = built();
+    writeFileSync(join(f.outDir, 'install.sh'), '#!/bin/bash\necho hi\n');
+    expectRefusal(f, /install\.sh: not a \/bin\/sh script/);
+    rmSync(join(f.outDir, 'install.sh'));
+    expectRefusal(f, /missing install\.sh/);
+    writeFileSync(join(f.outDir, 'other.sh'), '#!/bin/sh\n');
+    expectRefusal(f, /other\.sh: only \.html, \.js and \.css files are published/);
   });
 
   test('a page referencing an asset that is not there', () => {

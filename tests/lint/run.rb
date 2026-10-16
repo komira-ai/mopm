@@ -7,7 +7,7 @@
 # trip the real hygiene scan if stored literally, so fixtures hold placeholders that are
 # substituted here at runtime: @@PRT@@ (the privileged PR trigger) and @@ACCT@@ (a
 # 12-digit account-id-shaped number). The hygiene scan has no allow-list; nothing here
-# needs one. Each case is materialized as ci.yml in a temp dir (a name not allowed id-token); promote_* fixtures become promote.yml, farm_* farm.yml, subject_* oidc-subject-check.yml, deploy_* deploy.yml and kpin_* kpin-update.yml (kpin_elsewhere stays ci.yml).
+# needs one. Each case is materialized as ci.yml in a temp dir (a name not allowed id-token); promote_* fixtures become promote.yml, farm_* farm.yml, subject_* oidc-subject-check.yml, deploy_* deploy.yml and kpin_* kpin-update.yml (kpin_elsewhere stays ci.yml), release_* release.yml (release_elsewhere stays ci.yml).
 require "open3"
 require "tmpdir"
 
@@ -80,6 +80,15 @@ CASES = {
   "kpin_pull_request" => { LINT => ["triggers must be exactly schedule and workflow_dispatch"] },
   "kpin_issues_write" => { LINT => ["issues: write is not allowed", "may hold only contents and pull-requests"] },
   "kpin_top_write" => { LINT => ["top-level permissions must be read-only", "permissions.contents: write is not allowed"] },
+  # release.yml: a pushed v* tag publishes; contents, id-token and attestations write on its jobs, and nowhere else.
+  "release_clean" => { LINT => [], HYG => [] },
+  "release_elsewhere" => { LINT => ["contents: write is not allowed", "id-token: write is not allowed", "attestations: write is not allowed"], HYG => ["an id-token permission is only allowed"] },
+  "release_branch_trigger" => { LINT => [], HYG => ["triggers must be exactly push of tags [v*], with no branches"] },
+  "release_pull_request" => { LINT => [], HYG => ["triggers must be exactly push of tags [v*], with no branches"] },
+  "release_environment" => { LINT => [], HYG => ["must not use secrets or an environment"] },
+  "release_other_write" => { LINT => ["packages: write is not allowed"], HYG => [] },
+  "release_unpinned_attest" => { LINT => ["only GitHub-owned actions pinned by full SHA"], HYG => [] },
+  "release_calls_with_idtoken" => { LINT => [], HYG => ["calls a workflow and grants id-token"] },
 }
 
 bad = 0
@@ -87,7 +96,7 @@ CASES.each do |name, tools|
   text = File.read(File.join(FIX, "#{name}.yml.fixture"))
   SUBST.each { |k, v| text = text.gsub(k, v) }
   Dir.mktmpdir do |d|
-    path = File.join(d, name.start_with?("promote") ? "promote.yml" : name.start_with?("farm") ? "farm.yml" : name.start_with?("subject") ? "oidc-subject-check.yml" : name.start_with?("deploy") ? "deploy.yml" : (name.start_with?("kpin") && name != "kpin_elsewhere") ? "kpin-update.yml" : "ci.yml")
+    path = File.join(d, name.start_with?("promote") ? "promote.yml" : name.start_with?("farm") ? "farm.yml" : name.start_with?("subject") ? "oidc-subject-check.yml" : name.start_with?("deploy") ? "deploy.yml" : (name.start_with?("kpin") && name != "kpin_elsewhere") ? "kpin-update.yml" : (name.start_with?("release") && name != "release_elsewhere") ? "release.yml" : "ci.yml")
     File.write(path, text)
     tools.each do |tool, expected|
       out, st = Open3.capture2e("ruby", tool, path)

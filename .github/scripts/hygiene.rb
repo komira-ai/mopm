@@ -40,6 +40,11 @@ subject_check = "oidc-subject-check.yml"
 # action (the job's OIDC token is exchanged for a network credential). Allowed only for a
 # pull request from a branch of this repository, with no environment and no secret.
 farm_file = "farm.yml"
+# release.yml publishes a release with build-provenance attestations, so its publish job holds an
+# id-token grant (the attestation is signed with the job's OIDC token; no cloud access). Allowed only
+# when a pushed v* tag is the sole trigger, with no environment, no secret and no id-token on a job
+# that calls another workflow.
+release_file = "release.yml"
 find_key = lambda do |node, key|
   case node
   when Hash then node.any? { |k, v| k == key || find_key.(v, key) }
@@ -70,6 +75,14 @@ end
     (doc["jobs"] || {}).each do |jn, job|
       next unless find_key.(job, "id-token")
       fail_.("#{f}: job #{jn} grants id-token but does not skip pull requests from forks") unless job["if"].to_s.include?("github.event.pull_request.head.repo.full_name == github.repository")
+    end
+    next
+  end
+  if base == release_file
+    fail_.("#{f}: triggers must be exactly push of tags [v*], with no branches") unless on.keys == ["push"] && on["push"] == { "tags" => ["v*"] }
+    fail_.("#{f}: must not use secrets or an environment") if find_key.(doc, "environment") || File.readlines(f).reject { |l| l.strip.start_with?("#") }.join =~ /\bsecrets\./
+    (doc["jobs"] || {}).each do |jn, job|
+      fail_.("#{f}: job #{jn} calls a workflow and grants id-token") if job.key?("uses") && find_key.(job, "id-token")
     end
     next
   end

@@ -3,6 +3,8 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    // -Dstrip=true drops symbols and debug info (the release build, tools/release.zig).
+    const strip = b.option(bool, "strip", "Strip the mopm binary") orelse false;
 
     // Library code shared by the CLI and (later) other front ends.
     const core = b.createModule(.{
@@ -14,6 +16,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/cli/main.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = strip,
     });
     exe.root_module.addImport("mopm_core", core);
     b.installArtifact(exe);
