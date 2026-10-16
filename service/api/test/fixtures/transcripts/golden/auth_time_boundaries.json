@@ -1,0 +1,312 @@
+{
+  "description": "The instants at which a rule flips, each tried one millisecond before, at and after: the fresh session (15 minutes, here 12:10:00.000), an API token's expiry, a CI token's expiry.",
+  "world": {
+    "auth": true,
+    "publish": true,
+    "seeds": [
+      "auth_accounts"
+    ]
+  },
+  "steps": [
+    {
+      "set": {
+        "clock": "2026-10-14T12:09:59.999Z"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"name\":\"edge\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"expires_in_days\":1}"
+      },
+      "response": {
+        "status": 201,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-1"
+          ]
+        ],
+        "body": "{\"id\":\"tok_b2cfec092643607d9ab7d4f1\",\"name\":\"edge\",\"token\":\"mopm_bmuekyt7ts45n4yqfvfgpbfbx3n7qfjsj5witjwd\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"expires_at\":\"2026-10-15T12:09:59.999Z\"}"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:10:00.000Z"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"name\":\"edge\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"expires_in_days\":1}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-2"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"stale_session\",\"message\":\"This action needs a login from the last 15 minutes.\",\"hint\":\"Run 'mopm login' again.\"}}"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:10:00.001Z"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"name\":\"edge\",\"scopes\":[\"publish\"],\"packages\":[\"alpha\"],\"expires_in_days\":1}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-3"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"stale_session\",\"message\":\"This action needs a login from the last 15 minutes.\",\"hint\":\"Run 'mopm login' again.\"}}"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:14:59.999Z"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/pub_x",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_ciwidgetsaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-4"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"publish_not_found\",\"message\":\"There is no such publish.\",\"hint\":\"Publish ids are only valid for the caller who made them.\"}}"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:15:00.000Z"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/pub_x",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_ciwidgetsaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-5"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_expired\",\"message\":\"The token expired at 2026-10-14T12:15:00.000Z.\",\"hint\":\"Create a new token.\"}}"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:15:00.001Z"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/pub_x",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_ciwidgetsaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-6"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_expired\",\"message\":\"The token expired at 2026-10-14T12:15:00.000Z.\",\"hint\":\"Create a new token.\"}}"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:29:59.999Z"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/pub_x",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apiexpiringaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-7"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"publish_not_found\",\"message\":\"There is no such publish.\",\"hint\":\"Publish ids are only valid for the caller who made them.\"}}"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:30:00.000Z"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/pub_x",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apiexpiringaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-8"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_expired\",\"message\":\"The token expired at 2026-10-14T12:30:00.000Z.\",\"hint\":\"Create a new token.\"}}"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:30:00.001Z"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/pub_x",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apiexpiringaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-9"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_expired\",\"message\":\"The token expired at 2026-10-14T12:30:00.000Z.\",\"hint\":\"Create a new token.\"}}"
+      }
+    }
+  ]
+}

@@ -1,0 +1,561 @@
+{
+  "description": "begin-upload, the object put, commit and status: the deterministic upload and publish ids, a repeated begin joining the reservation, a repeated commit being the same publish, commit refusals, and who may see a publish.",
+  "world": {
+    "auth": true,
+    "publish": true,
+    "seeds": [
+      "auth_accounts"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"subdir\":\"noarch\",\"filename\":\"mojo-alpha-2.0.0-mojo1.0.0_0.conda\",\"sha256\":\"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\",\"size\":5}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-1"
+          ]
+        ],
+        "body": "{\"upload_id\":\"upl_00000000000000000000000000000002\",\"put_url\":\"https://bucket.invalid/quarantine/upl_00000000000000000000000000000002/mojo-alpha-2.0.0-mojo1.0.0_0.conda?expires=300\",\"put_headers\":{\"content-length\":\"5\",\"x-amz-checksum-sha256\":\"LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=\"},\"expires_at\":\"2026-10-14T12:05:00.000Z\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"subdir\":\"noarch\",\"filename\":\"mojo-alpha-2.0.0-mojo1.0.0_0.conda\",\"sha256\":\"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\",\"size\":5}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-2"
+          ]
+        ],
+        "body": "{\"upload_id\":\"upl_00000000000000000000000000000004\",\"put_url\":\"https://bucket.invalid/quarantine/upl_00000000000000000000000000000004/mojo-alpha-2.0.0-mojo1.0.0_0.conda?expires=300\",\"put_headers\":{\"content-length\":\"5\",\"x-amz-checksum-sha256\":\"LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=\"},\"expires_at\":\"2026-10-14T12:05:00.000Z\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"upload_ids\":[\"upl_00000000000000000000000000000002\"],\"manifest_sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-3"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"upload_invalid\",\"message\":\"The upload does not match what was declared: a file was not uploaded.\",\"hint\":\"Begin a new upload with the real file name, sha256 and size.\"}}"
+      }
+    },
+    {
+      "put_object": {
+        "upload_id": "upl_00000000000000000000000000000002",
+        "content": "hello"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"upload_ids\":[\"upl_00000000000000000000000000000002\"],\"manifest_sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}"
+      },
+      "response": {
+        "status": 202,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-4"
+          ]
+        ],
+        "body": "{\"publish_id\":\"pub_0dd5594817a4bc5714fc16a319718a9f\",\"status_url\":\"/api/v1/publishes/pub_0dd5594817a4bc5714fc16a319718a9f\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"upload_ids\":[\"upl_00000000000000000000000000000002\"],\"manifest_sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}"
+      },
+      "response": {
+        "status": 202,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-5"
+          ]
+        ],
+        "body": "{\"publish_id\":\"pub_0dd5594817a4bc5714fc16a319718a9f\",\"status_url\":\"/api/v1/publishes/pub_0dd5594817a4bc5714fc16a319718a9f\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/pub_0dd5594817a4bc5714fc16a319718a9f",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-6"
+          ]
+        ],
+        "body": "{\"publish_id\":\"pub_0dd5594817a4bc5714fc16a319718a9f\",\"name\":\"alpha\",\"version\":\"2.0.0\",\"status\":\"pending\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/pub_0dd5594817a4bc5714fc16a319718a9f",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_otheracctaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-7"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"publish_not_found\",\"message\":\"There is no such publish.\",\"hint\":\"Publish ids are only valid for the caller who made them.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/pub_0dd5594817a4bc5714fc16a319718a9f",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apiyankaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-8"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"scope_missing\",\"message\":\"The token does not have the 'publish' scope for 'this publish'.\",\"hint\":\"Create a token with that scope and that package.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/pub_0dd5594817a4bc5714fc16a319718a9f",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-9"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_missing\",\"message\":\"This request needs a token.\",\"hint\":\"Run 'mopm login' or pass a token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/publishes/pub_nosuch",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-10"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"publish_not_found\",\"message\":\"There is no such publish.\",\"hint\":\"Publish ids are only valid for the caller who made them.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"subdir\":\"noarch\",\"filename\":\"mojo-alpha-2.0.0-mojo1.0.0_0.conda\",\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"size\":5}"
+      },
+      "response": {
+        "status": 409,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-11"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"version_exists\",\"message\":\"'alpha' 2.0.0 already exists (sha256 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824); versions are immutable.\",\"hint\":\"Publish a new version.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/1.0.0/files",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"subdir\":\"noarch\",\"filename\":\"mojo-alpha-1.0.0-mojo1.0.0_0.conda\",\"sha256\":\"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\",\"size\":5}"
+      },
+      "response": {
+        "status": 409,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-12"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"version_exists\",\"message\":\"'alpha' 1.0.0 already exists (sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa); versions are immutable.\",\"hint\":\"Publish a new version.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/0.9.0/files",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"subdir\":\"noarch\",\"filename\":\"mojo-alpha-0.9.0-mojo1.0.0_0.conda\",\"sha256\":\"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\",\"size\":5}"
+      },
+      "response": {
+        "status": 409,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-13"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"version_exists\",\"message\":\"'alpha' 0.9.0 already exists (sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa); versions are immutable.\",\"hint\":\"Publish a new version.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-14"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: the body is not a JSON object.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-15"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: 'upload_ids' holds 1 to 20 ids.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"upload_ids\":[],\"manifest_sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-16"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: 'upload_ids' holds 1 to 20 ids.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"upload_ids\":[\"upl_00000000000000000000000000000002\"],\"manifest_sha256\":\"XYZ\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-17"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: 'manifest_sha256' is 64 lowercase hex digits.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"upload_ids\":[\"upl_nosuch\"],\"manifest_sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-18"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"upload_invalid\",\"message\":\"The upload does not match what was declared: an upload belongs to another caller, package or version, or is unknown.\",\"hint\":\"Begin a new upload with the real file name, sha256 and size.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apipubaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"upload_ids\":[\"upl_00000000000000000000000000000002\"],\"manifest_sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}"
+      },
+      "response": {
+        "status": 202,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-19"
+          ]
+        ],
+        "body": "{\"publish_id\":\"pub_0dd5594817a4bc5714fc16a319718a9f\",\"status_url\":\"/api/v1/publishes/pub_0dd5594817a4bc5714fc16a319718a9f\"}"
+      }
+    }
+  ]
+}

@@ -1,0 +1,118 @@
+{
+  "description": "The cap of 50 live API tokens per account: the 50th is created (49 exist), the 51st is refused, revoking one makes room, and a token that has expired no longer counts.",
+  "world": {
+    "auth": true,
+    "seeds": [
+      "auth_fifty_tokens"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "fiftieth",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 1
+        }
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "fifty first",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 1
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/me/tokens/tok_bulk0000",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 204
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "fifty first",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 1
+        }
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "fifty second",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 1
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:09:00.000Z"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 200
+      }
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "description": "Without MOPM_OAUTH_SECRET_NAME no auth service is wired: every login and token path answers 503 unavailable, nothing else changes.",
+  "lambda": "api",
+  "env": {
+    "MOPM_STAGE": "beta"
+  },
+  "invocations": [
+    {
+      "event": "events/apigw_post_device.json",
+      "expect": {
+        "returns": {
+          "statusCode": 503,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-device"
+          },
+          "body": "{\"error\":{\"code\":\"unavailable\",\"message\":\"The registry is temporarily unavailable.\",\"hint\":\"Try again shortly.\"}}"
+        }
+      }
+    },
+    {
+      "event": "events/apigw_get_tokens.json",
+      "expect": {
+        "returns": {
+          "statusCode": 503,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-tokens"
+          },
+          "body": "{\"error\":{\"code\":\"unavailable\",\"message\":\"The registry is temporarily unavailable.\",\"hint\":\"Try again shortly.\"}}"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-config",
+        "key": {
+          "key": "read_only"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": []
+  }
+}

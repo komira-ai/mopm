@@ -1,0 +1,25 @@
+{
+  "version": "2.0",
+  "routeKey": "GET /api/v1/packages",
+  "rawPath": "/api/v1/packages",
+  "rawQueryString": "q=Ht-Cl&limit=5",
+  "headers": {
+    "accept": "*/*",
+    "user-agent": "mopm-test"
+  },
+  "requestContext": {
+    "requestId": "req-search",
+    "stage": "$default",
+    "http": {
+      "method": "GET",
+      "path": "/api/v1/packages",
+      "protocol": "HTTP/1.1",
+      "userAgent": "mopm-test"
+    }
+  },
+  "isBase64Encoded": false,
+  "queryStringParameters": {
+    "q": "Ht-Cl",
+    "limit": "5"
+  }
+}

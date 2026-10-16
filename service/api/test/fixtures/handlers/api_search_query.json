@@ -1,0 +1,45 @@
+{
+  "description": "Query-string parameters reach the router: q is lower-cased and punctuation runs collapse to _, and the search is one Query on the by_search_bucket index.",
+  "lambda": "api",
+  "env": {
+    "MOPM_STAGE": "beta"
+  },
+  "invocations": [
+    {
+      "event": "events/apigw_get_search_q.json",
+      "expect": {
+        "returns": {
+          "statusCode": 200,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-search"
+          },
+          "body": "{\"packages\":[],\"next_cursor\":null}"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-config",
+        "key": {
+          "key": "read_only"
+        }
+      },
+      {
+        "op": "Query",
+        "table": "mopm-beta-packages",
+        "index": "by_search_bucket",
+        "values": {
+          ":b": "all",
+          ":p": "ht_cl"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": []
+  }
+}

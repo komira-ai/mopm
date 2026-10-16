@@ -1,0 +1,66 @@
+{
+  "description": "The project quota (2050 bytes here, 2000 already live in alpha's published and yanked versions; the tombstoned one does not count): 50 more bytes fit exactly, 51 are limit_exceeded (403); the per-file cap is checked first.",
+  "world": {
+    "auth": true,
+    "publish": true,
+    "seeds": [
+      "auth_accounts"
+    ],
+    "limits": {
+      "projectQuotaBytes": 2050,
+      "maxArchiveBytes": 100
+    }
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 50
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.1/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.1-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 51
+        }
+      },
+      "expect": {
+        "status": 403,
+        "code": "limit_exceeded"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.1/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.1-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 101
+        }
+      },
+      "expect": {
+        "status": 413,
+        "code": "payload_too_large"
+      }
+    }
+  ]
+}

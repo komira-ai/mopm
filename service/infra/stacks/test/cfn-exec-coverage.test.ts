@@ -194,6 +194,12 @@ export const REQUIRED: Record<string, Needs> = {
       ['cloudfront:CreateOriginAccessControl', 'cloudfront:GetOriginAccessControl', 'cloudfront:UpdateOriginAccessControl', 'cloudfront:DeleteOriginAccessControl'],
       `arn:aws:cloudfront::${c.account}:origin-access-control/dummy`,
     ),
+  // The site's edge router (a CloudFront Function, published on create and update). cloudfront:* is already granted.
+  'AWS::CloudFront::Function': (_r, _id, c) =>
+    each(
+      ['cloudfront:CreateFunction', 'cloudfront:DescribeFunction', 'cloudfront:GetFunction', 'cloudfront:UpdateFunction', 'cloudfront:PublishFunction', 'cloudfront:DeleteFunction'],
+      `arn:aws:cloudfront::${c.account}:function/dummy`,
+    ),
   'AWS::Logs::LogGroup': (_r, id, c) => [
     ...each(
       ['logs:CreateLogGroup', 'logs:DeleteLogGroup', 'logs:PutRetentionPolicy', 'logs:DeleteRetentionPolicy', 'logs:TagResource'],
@@ -326,7 +332,7 @@ describe.each(STAGES)('cfn-exec policy covers the %s stacks', (stage) => {
   });
 
   test('the test sees the resource types that broke the first deploy', () => {
-    for (const t of ['AWS::Route53::RecordSet', 'AWS::CertificateManager::Certificate', 'AWS::Lambda::Function', 'AWS::IAM::Role', 'Custom::CDKBucketDeployment', 'AWS::SQS::Queue', 'AWS::Lambda::EventSourceMapping', 'AWS::CloudWatch::Alarm']) {
+    for (const t of ['AWS::Route53::RecordSet', 'AWS::CertificateManager::Certificate', 'AWS::Lambda::Function', 'AWS::IAM::Role', 'Custom::CDKBucketDeployment', 'AWS::SQS::Queue', 'AWS::Lambda::EventSourceMapping', 'AWS::CloudWatch::Alarm', 'AWS::CloudFront::Function']) {
       expect(report.types).toContain(t);
     }
     expect(report.needCount).toBeGreaterThan(150);

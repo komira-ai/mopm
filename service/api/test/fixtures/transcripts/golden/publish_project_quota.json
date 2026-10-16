@@ -1,0 +1,103 @@
+{
+  "description": "The project quota (2050 bytes here, 2000 already live in alpha's published and yanked versions; the tombstoned one does not count): 50 more bytes fit exactly, 51 are limit_exceeded (403); the per-file cap is checked first.",
+  "world": {
+    "auth": true,
+    "publish": true,
+    "seeds": [
+      "auth_accounts"
+    ],
+    "limits": {
+      "projectQuotaBytes": 2050,
+      "maxArchiveBytes": 100
+    }
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"subdir\":\"noarch\",\"filename\":\"mojo-alpha-2.0.0-mojo1.0.0_0.conda\",\"sha256\":\"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\",\"size\":50}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-1"
+          ]
+        ],
+        "body": "{\"upload_id\":\"upl_00000000000000000000000000000002\",\"put_url\":\"https://bucket.invalid/quarantine/upl_00000000000000000000000000000002/mojo-alpha-2.0.0-mojo1.0.0_0.conda?expires=300\",\"put_headers\":{\"content-length\":\"50\",\"x-amz-checksum-sha256\":\"LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=\"},\"expires_at\":\"2026-10-14T12:05:00.000Z\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.1/files",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"subdir\":\"noarch\",\"filename\":\"mojo-alpha-2.0.1-mojo1.0.0_0.conda\",\"sha256\":\"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\",\"size\":51}"
+      },
+      "response": {
+        "status": 403,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-2"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"limit_exceeded\",\"message\":\"Adding this file would put 'alpha' over its storage limit of 2050 bytes; 50 bytes are left.\",\"hint\":\"Yanked versions still count toward the limit; only a takedown frees space. Reduce the package size.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.1/files",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"subdir\":\"noarch\",\"filename\":\"mojo-alpha-2.0.1-mojo1.0.0_0.conda\",\"sha256\":\"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\",\"size\":101}"
+      },
+      "response": {
+        "status": 413,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-3"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"payload_too_large\",\"message\":\"The file is larger than the limit of 100 bytes.\",\"hint\":\"Reduce the package size.\"}}"
+      }
+    }
+  ]
+}

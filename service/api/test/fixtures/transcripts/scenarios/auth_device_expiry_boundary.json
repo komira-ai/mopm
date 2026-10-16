@@ -1,0 +1,61 @@
+{
+  "description": "A login lives 600 seconds: a poll one millisecond before the end gets pending, one at the end gets expired.",
+  "world": {
+    "auth": true,
+    "github": {
+      "poll_script": [
+        {
+          "error": "authorization_pending"
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device",
+        "json": {
+          "client": "mopm 0.1.0"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:09:59.999Z"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device/poll",
+        "json": {
+          "device_code": "{{0.device_code}}"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:10:00.000Z"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device/poll",
+        "json": {
+          "device_code": "{{0.device_code}}"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    }
+  ]
+}

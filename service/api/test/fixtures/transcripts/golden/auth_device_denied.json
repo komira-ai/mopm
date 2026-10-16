@@ -1,0 +1,101 @@
+{
+  "description": "A poll that GitHub answers with access_denied, and the login gone afterwards.",
+  "world": {
+    "auth": true,
+    "github": {
+      "poll_script": [
+        {
+          "error": "access_denied"
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device",
+        "query": {},
+        "headers": {},
+        "body": "{\"client\":\"mopm 0.1.0\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-1"
+          ]
+        ],
+        "body": "{\"device_code\":\"dev_0b2845627f9cb9d6f3102d4ab2cfec092643607d9ab7d4f1\",\"user_code\":\"WDJB-MJHT\",\"verification_uri\":\"https://github.com/login/device\",\"expires_in\":600,\"interval\":5}"
+      }
+    },
+    {
+      "set": {
+        "advance_s": 6
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device/poll",
+        "query": {},
+        "headers": {},
+        "body": "{\"device_code\":\"dev_0b2845627f9cb9d6f3102d4ab2cfec092643607d9ab7d4f1\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-2"
+          ]
+        ],
+        "body": "{\"status\":\"denied\",\"reason\":\"github_denied\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device/poll",
+        "query": {},
+        "headers": {},
+        "body": "{\"device_code\":\"dev_0b2845627f9cb9d6f3102d4ab2cfec092643607d9ab7d4f1\"}"
+      },
+      "response": {
+        "status": 404,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-3"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"device_code_unknown\",\"message\":\"The device code is not recognised.\",\"hint\":\"Start the login again.\"}}"
+      }
+    }
+  ]
+}

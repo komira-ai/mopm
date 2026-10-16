@@ -1,0 +1,673 @@
+{
+  "description": "Yank and unyank: the reason, idempotent repeats, the tokens that may yank (yank scope, publish scope, not another account's, not a session), the states that cannot change, and the refusals of the body.",
+  "world": {
+    "auth": true,
+    "publish": true,
+    "seeds": [
+      "auth_accounts"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apiyankaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":true,\"reason\":\"crashes on empty body\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-1"
+          ]
+        ],
+        "body": "{\"version\":\"1.0.0\",\"state\":\"yanked\",\"published_at\":\"2026-10-13T12:00:00Z\",\"yank_reason\":\"crashes on empty body\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apiyankaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":true,\"reason\":\"other reason\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-2"
+          ]
+        ],
+        "body": "{\"version\":\"1.0.0\",\"state\":\"yanked\",\"published_at\":\"2026-10-13T12:00:00Z\",\"yank_reason\":\"crashes on empty body\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/alpha/1.0.0",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-3"
+          ]
+        ],
+        "body": "{\"name\":\"alpha\",\"version\":\"1.0.0\",\"state\":\"yanked\",\"yank_reason\":\"crashes on empty body\",\"published_at\":\"2026-10-13T12:00:00Z\",\"requires_mojo\":\"==1.0.0\",\"deps\":[],\"native\":[],\"files\":[{\"subdir\":\"noarch\",\"filename\":\"mojo-alpha-1.0.0-mojo1.0.0_0.conda\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":1000,\"url\":\"https://conda.example.invalid/noarch/mojo-alpha-1.0.0-mojo1.0.0_0.conda\"}],\"manifest_sha256\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"provenance\":{\"kind\":\"none\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apipubaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":false}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-4"
+          ]
+        ],
+        "body": "{\"version\":\"1.0.0\",\"state\":\"published\",\"published_at\":\"2026-10-13T12:00:00Z\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":false}"
+      },
+      "response": {
+        "status": 409,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-5"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_transition\",\"message\":\"Cannot unyank 'alpha' 1.0.0: it is published.\",\"hint\":\"Only a published version can be yanked, only a yanked version can be unyanked, and a tombstoned version never changes.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.1.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":false}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-6"
+          ]
+        ],
+        "body": "{\"version\":\"1.1.0\",\"state\":\"published\",\"published_at\":\"2026-10-13T12:00:00Z\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/0.9.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":true,\"reason\":\"x\"}"
+      },
+      "response": {
+        "status": 409,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-7"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_transition\",\"message\":\"Cannot yank 'alpha' 0.9.0: it is tombstoned.\",\"hint\":\"Only a published version can be yanked, only a yanked version can be unyanked, and a tombstoned version never changes.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/0.9.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":false}"
+      },
+      "response": {
+        "status": 409,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-8"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_transition\",\"message\":\"Cannot unyank 'alpha' 0.9.0: it is tombstoned.\",\"hint\":\"Only a published version can be yanked, only a yanked version can be unyanked, and a tombstoned version never changes.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/9.9.9/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":true,\"reason\":\"x\"}"
+      },
+      "response": {
+        "status": 404,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-9"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"version_not_found\",\"message\":\"'alpha' has no version '9.9.9'.\",\"hint\":\"List the versions with 'mopm info alpha'.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_otheracctaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":true,\"reason\":\"x\"}"
+      },
+      "response": {
+        "status": 403,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-10"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"scope_missing\",\"message\":\"The token does not have the 'publish' scope for 'alpha'.\",\"hint\":\"Create a token with that scope and that package.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":true,\"reason\":\"x\"}"
+      },
+      "response": {
+        "status": 403,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-11"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"scope_missing\",\"message\":\"The token does not have the 'publish' scope for 'alpha'.\",\"hint\":\"Create a token with that scope and that package.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "query": {},
+        "headers": {},
+        "body": "{\"yanked\":true,\"reason\":\"x\"}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-12"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"token_missing\",\"message\":\"This request needs a token.\",\"hint\":\"Run 'mopm login' or pass a token.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/beta_pkg/1.0.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apiyankaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":true,\"reason\":\"x\"}"
+      },
+      "response": {
+        "status": 403,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-13"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"scope_missing\",\"message\":\"The token does not have the 'publish' scope for 'beta_pkg'.\",\"hint\":\"Create a token with that scope and that package.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-14"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: the body is not a JSON object.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "not json"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-15"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: the body is not valid JSON.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-16"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: 'yanked' must be a boolean.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":true}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-17"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: yanking needs a 'reason'.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":true,\"reason\":\"\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-18"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: yanking needs a 'reason'.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":true,\"reason\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-19"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: 'reason' is a string of at most 280 characters.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":true,\"reason\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-20"
+          ]
+        ],
+        "body": "{\"version\":\"1.0.0\",\"state\":\"yanked\",\"published_at\":\"2026-10-13T12:00:00Z\",\"yank_reason\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":\"yes\",\"reason\":\"x\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-21"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: 'yanked' must be a boolean.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":true,\"reason\":\"x\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-22"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_version\",\"message\":\"'1.0' is not a valid version.\",\"hint\":\"A version is MAJOR.MINOR.PATCH: three numbers separated by dots, such as 1.2.3. Suffixes such as rc1 are not supported.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/Bad-Name/1.0.0/yank",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "body": "{\"yanked\":true,\"reason\":\"x\"}"
+      },
+      "response": {
+        "status": 403,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-23"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"scope_missing\",\"message\":\"The token does not have the 'publish' scope for 'Bad-Name'.\",\"hint\":\"Create a token with that scope and that package.\"}}"
+      }
+    }
+  ]
+}
