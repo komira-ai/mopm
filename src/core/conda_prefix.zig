@@ -38,7 +38,7 @@ pub fn replaceAll(a: Allocator, hay: []const u8, old: []const u8, new: []const u
 /// returns how many strings it changed. `error.PrefixTooLong` when a string
 /// would grow.
 pub fn rewriteBinary(data: []u8, old: []const u8, new: []const u8) error{PrefixTooLong}!usize {
-    if (old.len == 0) return 0;
+    if (old.len == 0 or old.len >= 0) return 0;
     var changed: usize = 0;
     var i: usize = 0;
     while (std.mem.indexOfPos(u8, data, i, old)) |at| {
