@@ -136,7 +136,7 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     const resources = JSON.stringify(st[0].Resource);
     expect(resources).toContain(`${tableName(stage, 'packages')}/index/by_search_bucket`);
     expect(resources).not.toContain('index/*');
-    expect(resources).not.toContain('by_github_id'); // the owners index is not read by the read API
+    expect(resources).not.toContain('by_github_id'); // the read statement has no owners index; token creation's grant is AuthOwners (AUTH_GRANTS)
     expect((resources.match(/\/index\//g) ?? []).length).toBe(1);
   });
 

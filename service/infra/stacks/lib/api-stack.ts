@@ -37,7 +37,10 @@ export const DEFAULT_HANDLER_DIR = path.resolve(__dirname, '../../../api/dist');
 
 /** The read-only tables the handler may use. Grants are GetItem and Query: never a write, never a Scan. */
 export const READ_TABLES = ['packages', 'versions', 'owners', 'audit'] as const;
-/** The indexes the handler may Query, by table. Only these: the other index (owners by_github_id) is not read by the read API. */
+/**
+ * The indexes the read statement may Query, by table. Only the search index: the read API never queries the owners index
+ * (owners by_github_id); token creation does, and AUTH_GRANTS grants it there.
+ */
 export const READ_INDEXES: Record<string, string[]> = { packages: ['by_search_bucket'] };
 /** The read operations of spec/api/openapi.yaml served by the handler. */
 export const READ_ROUTES = [
@@ -83,12 +86,15 @@ export const AUTH_ROUTES: { method: apigw.HttpMethod; path: string }[] = [
  * - users: read and upsert a row at login.
  * - device_logins: start (PutItem), poll (GetItem), record the poll and consume (UpdateItem).
  * - trusted_publishers: read only; nothing in the Lambda registers publishers yet.
+ * - owners: read, and Query on its by_github_id index (POST /me/tokens lists the packages the account owns). The table is
+ *   also in READ_TABLES; an index is a separate resource, so the index ARN is granted here.
  */
 export const AUTH_GRANTS: Record<string, { actions: string[]; indexes?: string[] }> = {
   tokens: { actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:Query'], indexes: ['by_github_id'] },
   users: { actions: ['dynamodb:GetItem', 'dynamodb:PutItem'] },
   device_logins: { actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'] },
   trusted_publishers: { actions: ['dynamodb:GetItem', 'dynamodb:Query'] },
+  owners: { actions: ['dynamodb:GetItem', 'dynamodb:Query'], indexes: ['by_github_id'] },
 };
 
 /** Methods a browser may use on the read API. HEAD and OPTIONS are listed for preflight; only GET routes exist. */
