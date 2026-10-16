@@ -309,7 +309,8 @@ const Unpacker = struct {
         if (orig.len == 0) return;
         if (isLinkScript(orig))
             return self.fail(error.LinkScript, "the package holds '{s}', a link script; mopm runs no scripts and so cannot install it", .{orig});
-        const rel = try self.mapPath(orig);
+        // Entry names are slices of the tar reader's buffer, valid until its next entry: keep a copy.
+        const rel = try self.arena.dupe(u8, try self.mapPath(orig));
         try self.safe(rel);
         const dest = self.opts.dest;
         switch (e.kind) {
