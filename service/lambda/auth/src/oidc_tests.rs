@@ -513,11 +513,14 @@ async fn keys_that_are_not_rsa_signing_keys_are_ignored() {
     let ec = Jwk { kty: "EC".into(), kid: Some("k1".into()), ..Jwk::default() };
     let enc = Jwk { kid: Some("enc".into()), use_: Some("enc".into()), ..key_a("enc").jwk };
     let nokid = Jwk { kid: None, ..key_a("x").jwk };
-    let f = setup_with(vec![ec, enc, nokid, key_a("k1").jwk], &["mopm.dev"]).await;
+    // not RSA by its kty, though it carries the RSA components of a key that does sign
+    let mislabelled = Jwk { kty: "EC".into(), ..key_a("ec").jwk };
+    let f = setup_with(vec![ec, enc, nokid, mislabelled, key_a("k1").jwk], &["mopm.dev"]).await;
     f.trust(f.tp.clone()).await;
     f.exchange(&f.token(json!({}))).await.unwrap();
     // a token naming the encryption-only key's kid finds nothing
     assert_invalid(f.exchange(&sign(&key_a("enc"), &Value::Object(good_claims(f.now_s())))).await, "unknown signing key");
+    assert_invalid(f.exchange(&sign(&key_a("ec"), &Value::Object(good_claims(f.now_s())))).await, "unknown signing key");
     // a key with garbage components is skipped, not fatal
     let broken = Jwk { n: Some("!!!".into()), kid: Some("broken".into()), ..key_a("x").jwk };
     let f = setup_with(vec![broken, key_a("k1").jwk], &["mopm.dev"]).await;
