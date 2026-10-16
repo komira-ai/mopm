@@ -1,8 +1,10 @@
 // T3: parseRoute agrees with the route vectors (test/fixtures/routes.json), which also state what the site stack's edge
-// router must do once the stack serves this build (it has no router yet); and the path builders encode every segment.
+// router does (service/infra/stacks/test/site-router.test.ts runs that router over the same vectors); and the path
+// builders encode every segment.
 import vectors from './fixtures/routes.json';
+import { DOC_PAGES } from '../src/links';
 import {
-  isCanonicalName, isName, isVersion, normaliseName, packagePath, parseRoute, searchPath, VERSION_MAX, versionPath,
+  DOC_SLUG, isCanonicalName, isName, isVersion, normaliseName, packagePath, parseRoute, searchPath, VERSION_MAX, versionPath,
 } from '../src/routes';
 
 type Vector = { path: string; edge: string; view: ReturnType<typeof parseRoute> };
@@ -42,6 +44,9 @@ test('the vectors cover the edge cases the plan names', () => {
   const named = [
     '/packages/Foo', '/packages/foo__bar', '/packages/foo__bar/1.0', '/packages/a', '/packages/ab/v1',
     '/packages/ab/1.0/extra', '/docs/../x', '/packages/ab/1.0', '/packages/ab/1.0.0.0', '/packages/ab/1.0rc1',
+    // A bad name with a valid version: only the name check can refuse these (the bad-name vectors above also have a
+    // bad version, so they pass even if the name is not checked).
+    '/packages/Foo/1.0.0', '/packages/foo__bar/1.0.0', '/packages/9lives/1.0.0',
   ];
   for (const p of named) {
     expect(paths).toContain(p);
@@ -79,4 +84,14 @@ test('path builders encode every segment', () => {
   expect(searchPath()).toBe('/search');
   expect(searchPath({ q: 'a&b=c', sort: 'updated', cursor: 'x/y' })).toBe('/search?q=a%26b%3Dc&sort=updated&cursor=x%2Fy');
   expect(searchPath({ q: '', sort: 'name' })).toBe('/search');
+});
+
+test('every docs page has a slug the edge router serves (DOC_SLUG), and a docs vector names each', () => {
+  const paths = V.map((v) => v.path);
+  for (const d of DOC_PAGES) {
+    expect([d.slug, DOC_SLUG.test(d.slug)]).toEqual([d.slug, true]);
+    expect(paths).toContain(`/docs/${d.slug}/`);
+  }
+  expect(DOC_SLUG.test('Bad_Slug')).toBe(false);
+  expect(DOC_SLUG.test('..')).toBe(false);
 });

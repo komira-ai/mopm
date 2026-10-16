@@ -1,0 +1,106 @@
+{
+  "description": "A login lives 600 seconds: a poll one millisecond before the end gets pending, one at the end gets expired.",
+  "world": {
+    "auth": true,
+    "github": {
+      "poll_script": [
+        {
+          "error": "authorization_pending"
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device",
+        "query": {},
+        "headers": {},
+        "body": "{\"client\":\"mopm 0.1.0\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-1"
+          ]
+        ],
+        "body": "{\"device_code\":\"dev_0b2845627f9cb9d6f3102d4ab2cfec092643607d9ab7d4f1\",\"user_code\":\"WDJB-MJHT\",\"verification_uri\":\"https://github.com/login/device\",\"expires_in\":600,\"interval\":5}"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:09:59.999Z"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device/poll",
+        "query": {},
+        "headers": {},
+        "body": "{\"device_code\":\"dev_0b2845627f9cb9d6f3102d4ab2cfec092643607d9ab7d4f1\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-2"
+          ]
+        ],
+        "body": "{\"status\":\"pending\",\"interval\":5}"
+      }
+    },
+    {
+      "set": {
+        "clock": "2026-10-14T12:10:00.000Z"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device/poll",
+        "query": {},
+        "headers": {},
+        "body": "{\"device_code\":\"dev_0b2845627f9cb9d6f3102d4ab2cfec092643607d9ab7d4f1\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-3"
+          ]
+        ],
+        "body": "{\"status\":\"expired\"}"
+      }
+    }
+  ]
+}

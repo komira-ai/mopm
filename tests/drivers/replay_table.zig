@@ -81,6 +81,8 @@ pub const Entry = struct { op: []const u8, name: []const u8, kind: Kind, arg: []
 pub const table = [_]Entry{
     .{ .op = "getHealth", .name = "prod is up", .kind = .health },
     .{ .op = "getHealth", .name = "beta in read-only mode", .kind = .health_read_only },
+    .{ .op = "getHealth", .name = "prod is up and says which implementation answered", .kind = .health },
+    .{ .op = "getHealth", .name = "impl rust is in the contract", .kind = .health },
     .{ .op = "startDeviceLogin", .name = "start login", .kind = .device_start },
     .{ .op = "pollDeviceLogin", .name = "poll while pending", .kind = .poll, .arg = "pending" },
     .{ .op = "pollDeviceLogin", .name = "poll approved", .kind = .poll, .arg = "approve" },

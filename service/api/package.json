@@ -6,7 +6,8 @@
   "scripts": {
     "test": "jest --ci",
     "typecheck": "tsc --noEmit",
-    "build": "tsc -p tsconfig.build.json"
+    "build": "esbuild src/http/lambda.ts src/publish/validator-lambda.ts src/publish/indexer-lambda.ts --bundle --platform=node --target=node22 --format=cjs --external:@aws-sdk/* --outbase=src --outdir=dist --log-level=warning",
+    "build:validate-lib": "esbuild src/validate/index.ts --bundle --platform=node --target=node22 --format=cjs --outbase=src --outdir=dist-validate --log-level=warning"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "3.723.0",
@@ -16,6 +17,7 @@
   "devDependencies": {
     "@types/jest": "29.5.14",
     "@types/node": "20.19.43",
+    "esbuild": "0.28.2",
     "fast-check": "3.23.2",
     "jest": "29.7.0",
     "ts-jest": "29.4.14",

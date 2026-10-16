@@ -32,8 +32,11 @@ export const OPERATIONS: Record<string, string> = {
   getVersion: '/packages/{name}/{version}',
 };
 
-/** Cases the handler never produces: the gateway or an upstream limit answers them, not this code. */
-export const NOT_PRODUCED_BY_HANDLER = new Set(['error rate_limited', 'error unavailable']);
+/**
+ * Cases the handler never produces: the gateway or an upstream limit answers them, not this code; and the one a
+ * Rust implementation answers (`impl: rust`), which this TypeScript one never says.
+ */
+export const NOT_PRODUCED_BY_HANDLER = new Set(['error rate_limited', 'error unavailable', 'impl rust is in the contract']);
 
 export interface Recipe {
   stage?: Stage;

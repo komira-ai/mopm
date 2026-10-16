@@ -1,0 +1,257 @@
+{
+  "description": "A whole login: start, a poll answered pending by GitHub, a poll that is too fast (slow down), a pending poll, then approval; the session token then lists tokens, cannot mint an all_current token for an account with no packages, and the used code is unknown.",
+  "world": {
+    "auth": true,
+    "github": {
+      "poll_script": [
+        {
+          "error": "authorization_pending"
+        },
+        {
+          "error": "authorization_pending"
+        },
+        {
+          "access_token": "gho_faketoken",
+          "token_type": "bearer",
+          "scope": "read:user"
+        }
+      ],
+      "user": {
+        "id": 4242,
+        "login": "octo",
+        "two_factor_authentication": true
+      }
+    }
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device",
+        "query": {},
+        "headers": {},
+        "body": "{\"client\":\"mopm 0.1.0\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-1"
+          ]
+        ],
+        "body": "{\"device_code\":\"dev_0b2845627f9cb9d6f3102d4ab2cfec092643607d9ab7d4f1\",\"user_code\":\"WDJB-MJHT\",\"verification_uri\":\"https://github.com/login/device\",\"expires_in\":600,\"interval\":5}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device/poll",
+        "query": {},
+        "headers": {},
+        "body": "{\"device_code\":\"dev_0b2845627f9cb9d6f3102d4ab2cfec092643607d9ab7d4f1\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-2"
+          ]
+        ],
+        "body": "{\"status\":\"pending\",\"interval\":5}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device/poll",
+        "query": {},
+        "headers": {},
+        "body": "{\"device_code\":\"dev_0b2845627f9cb9d6f3102d4ab2cfec092643607d9ab7d4f1\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-3"
+          ]
+        ],
+        "body": "{\"status\":\"pending\",\"interval\":10}"
+      }
+    },
+    {
+      "set": {
+        "advance_s": 20
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device/poll",
+        "query": {},
+        "headers": {},
+        "body": "{\"device_code\":\"dev_0b2845627f9cb9d6f3102d4ab2cfec092643607d9ab7d4f1\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-4"
+          ]
+        ],
+        "body": "{\"status\":\"pending\",\"interval\":10}"
+      }
+    },
+    {
+      "set": {
+        "advance_s": 30
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device/poll",
+        "query": {},
+        "headers": {},
+        "body": "{\"device_code\":\"dev_0b2845627f9cb9d6f3102d4ab2cfec092643607d9ab7d4f1\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-5"
+          ]
+        ],
+        "body": "{\"status\":\"approved\",\"token\":\"mopm_lf3jhmgn5idsiqk6pomlluxpbquumy4atw5np5ar\",\"token_kind\":\"session\",\"expires_at\":\"2026-11-13T12:00:50.000Z\",\"fresh_until\":\"2026-10-14T12:15:50.000Z\",\"handle\":\"octo\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_lf3jhmgn5idsiqk6pomlluxpbquumy4atw5np5ar"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-6"
+          ]
+        ],
+        "body": "{\"tokens\":[]}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "query": {},
+        "headers": {
+          "authorization": "Bearer mopm_lf3jhmgn5idsiqk6pomlluxpbquumy4atw5np5ar"
+        },
+        "body": "{\"name\":\"ci\",\"scopes\":[\"publish\"],\"packages\":\"all_current\",\"expires_in_days\":30}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-7"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: you own no packages yet.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device/poll",
+        "query": {},
+        "headers": {},
+        "body": "{\"device_code\":\"dev_0b2845627f9cb9d6f3102d4ab2cfec092643607d9ab7d4f1\"}"
+      },
+      "response": {
+        "status": 404,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-8"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"device_code_unknown\",\"message\":\"The device code is not recognised.\",\"hint\":\"Start the login again.\"}}"
+      }
+    }
+  ]
+}

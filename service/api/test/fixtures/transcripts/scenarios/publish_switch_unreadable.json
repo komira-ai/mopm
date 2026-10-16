@@ -1,0 +1,69 @@
+{
+  "description": "If the read-only switch cannot be read, writers fail closed: begin is 503 unavailable; yank (not gated), status and the read routes are unaffected.",
+  "world": {
+    "auth": true,
+    "publish": true,
+    "seeds": [
+      "auth_accounts"
+    ]
+  },
+  "steps": [
+    {
+      "set": {
+        "flags_broken": true
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/files",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "subdir": "noarch",
+          "filename": "mojo-alpha-2.0.0-mojo1.0.0_0.conda",
+          "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+          "size": 5
+        }
+      },
+      "expect": {
+        "status": 503,
+        "code": "unavailable"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/packages/alpha/2.0.0/publish",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {}
+      },
+      "expect": {
+        "status": 503,
+        "code": "unavailable"
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/packages/alpha/1.0.0/yank",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "yanked": true,
+          "reason": "incident"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages/alpha"
+      },
+      "expect": {
+        "status": 200
+      }
+    }
+  ]
+}

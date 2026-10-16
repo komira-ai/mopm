@@ -1,0 +1,52 @@
+{
+  "description": "With the publish side wired, begin-upload and yank without a token are 401 token_missing; the switch was read once (the second use is the handler's cache).",
+  "lambda": "api",
+  "env": {
+    "MOPM_STAGE": "beta",
+    "MOPM_CHANNEL_BUCKET": "channel-bucket",
+    "MOPM_VALIDATE_QUEUE_URL": "validate-queue-url"
+  },
+  "invocations": [
+    {
+      "event": "events/apigw_post_begin.json",
+      "expect": {
+        "returns": {
+          "statusCode": 401,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-begin"
+          },
+          "body": "{\"error\":{\"code\":\"token_missing\",\"message\":\"This request needs a token.\",\"hint\":\"Run 'mopm login' or pass a token.\"}}"
+        }
+      }
+    },
+    {
+      "event": "events/apigw_put_yank.json",
+      "expect": {
+        "returns": {
+          "statusCode": 401,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-yank"
+          },
+          "body": "{\"error\":{\"code\":\"token_missing\",\"message\":\"This request needs a token.\",\"hint\":\"Run 'mopm login' or pass a token.\"}}"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-config",
+        "key": {
+          "key": "read_only"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": []
+  }
+}

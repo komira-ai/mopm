@@ -1,0 +1,93 @@
+{
+  "description": "A publish already in 'indexing' (the Lambda died after the state change) only re-sends the index messages: one SQS SendMessage per remaining subdir, group = subdir, deduplication id = publish id and subdir, signed to the region's SQS endpoint.",
+  "lambda": "validator",
+  "env": {
+    "MOPM_STAGE": "beta",
+    "MOPM_CHANNEL_BUCKET": "channel-bucket",
+    "MOPM_INDEX_QUEUE_URL": "index-queue-url",
+    "MOPM_CHANNEL_URL": "channel-url"
+  },
+  "dynamo": [
+    {
+      "op": "Get",
+      "table": "mopm-beta-publishes",
+      "key": {
+        "publish_id": "pub_abc"
+      },
+      "respond": {
+        "Item": {
+          "publish_id": "pub_abc",
+          "status": "indexing",
+          "remaining_subdirs": [
+            "linux-64",
+            "noarch"
+          ],
+          "files": []
+        }
+      }
+    }
+  ],
+  "invocations": [
+    {
+      "event": {
+        "Records": [
+          {
+            "messageId": "m1",
+            "receiptHandle": "handle-1",
+            "body": "{\"type\":\"validate\",\"publish_id\":\"pub_abc\"}",
+            "attributes": {
+              "MessageGroupId": "g"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          }
+        ]
+      },
+      "expect": {
+        "returns": null
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-publishes",
+        "key": {
+          "publish_id": "pub_abc"
+        }
+      }
+    ],
+    "aws_http": [
+      {
+        "method": "POST",
+        "url": "https://sqs.us-east-1.amazonaws.com/",
+        "headers": {
+          "content-type": "application/x-amz-json-1.0",
+          "x-amz-target": "AmazonSQS.SendMessage"
+        },
+        "body": "{\"QueueUrl\":\"index-queue-url\",\"MessageBody\":\"{\\\"type\\\":\\\"index\\\",\\\"subdir\\\":\\\"linux-64\\\",\\\"publish_id\\\":\\\"pub_abc\\\"}\",\"MessageGroupId\":\"linux-64\",\"MessageDeduplicationId\":\"pub_abc:linux-64\"}"
+      },
+      {
+        "method": "POST",
+        "url": "https://sqs.us-east-1.amazonaws.com/",
+        "headers": {
+          "content-type": "application/x-amz-json-1.0",
+          "x-amz-target": "AmazonSQS.SendMessage"
+        },
+        "body": "{\"QueueUrl\":\"index-queue-url\",\"MessageBody\":\"{\\\"type\\\":\\\"index\\\",\\\"subdir\\\":\\\"noarch\\\",\\\"publish_id\\\":\\\"pub_abc\\\"}\",\"MessageGroupId\":\"noarch\",\"MessageDeduplicationId\":\"pub_abc:noarch\"}"
+      }
+    ],
+    "logs": [
+      {
+        "stream": "log",
+        "line": {
+          "level": "info",
+          "msg": "validate",
+          "publish_id": "pub_abc",
+          "outcome": "processed"
+        }
+      }
+    ]
+  }
+}
