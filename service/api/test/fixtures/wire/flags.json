@@ -1,0 +1,61 @@
+[
+  {
+    "adapter": "flags",
+    "method": "readOnly",
+    "args": [],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "key": "read_only",
+            "value": true
+          }
+        }
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "key": {
+                "S": "read_only"
+              }
+            },
+            "TableName": "mopm-beta-config"
+          }
+        }
+      ],
+      "returns": true
+    }
+  },
+  {
+    "adapter": "flags",
+    "method": "readOnly",
+    "args": [],
+    "replies": [
+      {
+        "body": {}
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "key": {
+                "S": "read_only"
+              }
+            },
+            "TableName": "mopm-beta-config"
+          }
+        }
+      ],
+      "returns": false
+    }
+  }
+]

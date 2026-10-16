@@ -1,0 +1,23 @@
+{
+  "version": "2.0",
+  "routeKey": "PUT /api/v1/packages/http_client/1.0.0/yank",
+  "rawPath": "/api/v1/packages/http_client/1.0.0/yank",
+  "rawQueryString": "",
+  "headers": {
+    "accept": "*/*",
+    "content-type": "application/json",
+    "user-agent": "mopm-test"
+  },
+  "requestContext": {
+    "requestId": "req-yank",
+    "stage": "$default",
+    "http": {
+      "method": "PUT",
+      "path": "/api/v1/packages/http_client/1.0.0/yank",
+      "protocol": "HTTP/1.1",
+      "userAgent": "mopm-test"
+    }
+  },
+  "isBase64Encoded": false,
+  "body": "{\"yanked\":true}"
+}

@@ -21,7 +21,15 @@ describe('health', () => {
     const { res, body } = await get(new MemoryStore(), '/api/v1/health', {}, { stage: 'gamma', version: 'sha-1', commit: 'abc', readOnly: true });
     expect(res.statusCode).toBe(200);
     expect(res.headers['x-mopm-request-id']).toBe('req-1');
-    expect(body).toEqual({ status: 'ok', stage: 'gamma', api_version: 'v1', read_only: true, version: 'sha-1', commit: 'abc' });
+    expect(body).toEqual({ status: 'ok', stage: 'gamma', api_version: 'v1', read_only: true, version: 'sha-1', commit: 'abc', impl: 'ts' });
+  });
+
+  // Catches: a TypeScript build that reports another implementation, or none (e2e would then pass a stage whose
+  // routes the wrong implementation answers). Planted mutant: impl 'rust' in getHealth.
+  test('says which implementation answered, in the position after commit', async () => {
+    const { body } = await get(new MemoryStore(), '/api/v1/health');
+    expect(body.impl).toBe('ts');
+    expect(Object.keys(body)).toEqual(['status', 'stage', 'api_version', 'read_only', 'version', 'commit', 'impl']);
   });
 });
 

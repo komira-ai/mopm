@@ -1,0 +1,98 @@
+{
+  "description": "A read of the switch is reused for under five seconds: invocations at 0 s and 4 s read the table once, the one at 6 s reads it again.",
+  "lambda": "api",
+  "env": {
+    "MOPM_STAGE": "beta"
+  },
+  "dynamo": [
+    {
+      "op": "Get",
+      "table": "mopm-beta-config",
+      "respond": {
+        "Item": {
+          "key": "read_only",
+          "value": true
+        }
+      }
+    }
+  ],
+  "invocations": [
+    {
+      "clock": "2026-10-01T00:00:00.000Z",
+      "event": "events/apigw_get_health.json",
+      "expect": {
+        "returns": {
+          "statusCode": 200,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-health"
+          },
+          "body_json": {
+            "status": "ok",
+            "api_version": "v1",
+            "read_only": true
+          }
+        }
+      }
+    },
+    {
+      "clock": "2026-10-01T00:00:04.000Z",
+      "event": "events/apigw_get_health.json",
+      "expect": {
+        "returns": {
+          "statusCode": 200,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-health"
+          },
+          "body_json": {
+            "status": "ok",
+            "api_version": "v1",
+            "read_only": true
+          }
+        }
+      }
+    },
+    {
+      "clock": "2026-10-01T00:00:06.000Z",
+      "event": "events/apigw_get_health.json",
+      "expect": {
+        "returns": {
+          "statusCode": 200,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-health"
+          },
+          "body_json": {
+            "status": "ok",
+            "api_version": "v1",
+            "read_only": true
+          }
+        }
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-config",
+        "key": {
+          "key": "read_only"
+        }
+      },
+      {
+        "op": "Get",
+        "table": "mopm-beta-config",
+        "key": {
+          "key": "read_only"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": []
+  }
+}

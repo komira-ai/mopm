@@ -1,7 +1,7 @@
 /**
  * A valid zstd frame made only of raw (stored) blocks.
  *
- * Why not compress: Node 20 has no zstd in zlib, and a native or WASM compressor's output is not
+ * Why not compress: the Node runtimes this code targets have no zstd in zlib, and a native or WASM compressor's output is not
  * promised stable across library versions, which would break "same records, same bytes" for the
  * `.zst` file. A raw-block frame is deterministic by construction, needs no dependency, and every
  * conformant decoder (libzstd, fzstd, the conda tools) reads it. The cost is size: the file is the

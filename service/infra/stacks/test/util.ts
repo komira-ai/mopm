@@ -14,6 +14,9 @@ export const DUMMY_ZONE_ID = 'Z0DUMMYZONE';
 /** A stand-in for the CI-built handler bundle, so tests synthesize without a build. */
 export const HANDLER_STUB_DIR = path.join(__dirname, 'fixtures/api-handler');
 
+/** A stand-in for the site build (site/dist): the pages and an assets/ directory, so tests synthesize without a build. */
+export const SITE_STUB_DIR = path.join(__dirname, 'fixtures/site');
+
 export function build(stage: Stage): StageStacks {
   const app = new App();
   return createStageStacks(
@@ -23,6 +26,7 @@ export function build(stage: Stage): StageStacks {
     '1.2.3',
     'c0ffee',
     HANDLER_STUB_DIR,
+    SITE_STUB_DIR,
   );
 }
 

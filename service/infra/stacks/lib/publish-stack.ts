@@ -80,7 +80,7 @@ export class PublishStack extends Stack {
 
     // --- the validator ---------------------------------------------------------------------------------------
     this.validator = new lambda.Function(this, 'Validator', {
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_22_X,
       handler: 'publish/validator-lambda.handler',
       code: lambda.Code.fromAsset(handlerDir),
       // A 100 MB archive may unpack to 512 MB; the buffers of one archive plus the decompressors need room.
@@ -138,7 +138,7 @@ export class PublishStack extends Stack {
 
     // --- the index writer ------------------------------------------------------------------------------------
     this.indexer = new lambda.Function(this, 'Indexer', {
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_22_X,
       handler: 'publish/indexer-lambda.handler',
       code: lambda.Code.fromAsset(handlerDir),
       memorySize: 1024,
