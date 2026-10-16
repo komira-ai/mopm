@@ -1,0 +1,108 @@
+{
+  "description": "A publish that is already published or rejected is skipped after one read (at-least-once delivery): no write, no queue message.",
+  "lambda": "validator",
+  "env": {
+    "MOPM_STAGE": "beta",
+    "MOPM_CHANNEL_BUCKET": "channel-bucket",
+    "MOPM_INDEX_QUEUE_URL": "index-queue-url",
+    "MOPM_CHANNEL_URL": "channel-url"
+  },
+  "dynamo": [
+    {
+      "op": "Get",
+      "table": "mopm-beta-publishes",
+      "key": {
+        "publish_id": "pub_done"
+      },
+      "respond": {
+        "Item": {
+          "publish_id": "pub_done",
+          "status": "published"
+        }
+      }
+    },
+    {
+      "op": "Get",
+      "table": "mopm-beta-publishes",
+      "key": {
+        "publish_id": "pub_no"
+      },
+      "respond": {
+        "Item": {
+          "publish_id": "pub_no",
+          "status": "rejected"
+        }
+      }
+    }
+  ],
+  "invocations": [
+    {
+      "event": {
+        "Records": [
+          {
+            "messageId": "m1",
+            "receiptHandle": "handle-1",
+            "body": "{\"type\":\"validate\",\"publish_id\":\"pub_done\"}",
+            "attributes": {
+              "MessageGroupId": "g"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          },
+          {
+            "messageId": "m2",
+            "receiptHandle": "handle-2",
+            "body": "{\"type\":\"validate\",\"publish_id\":\"pub_no\"}",
+            "attributes": {
+              "MessageGroupId": "g"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          }
+        ]
+      },
+      "expect": {
+        "returns": null
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-publishes",
+        "key": {
+          "publish_id": "pub_done"
+        }
+      },
+      {
+        "op": "Get",
+        "table": "mopm-beta-publishes",
+        "key": {
+          "publish_id": "pub_no"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": [
+      {
+        "stream": "log",
+        "line": {
+          "level": "info",
+          "msg": "validate",
+          "publish_id": "pub_done",
+          "outcome": "skipped"
+        }
+      },
+      {
+        "stream": "log",
+        "line": {
+          "level": "info",
+          "msg": "validate",
+          "publish_id": "pub_no",
+          "outcome": "skipped"
+        }
+      }
+    ]
+  }
+}

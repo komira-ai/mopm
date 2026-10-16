@@ -1,0 +1,62 @@
+{
+  "description": "A validate message for a publish that does not exist reads it (consistent Get by publish_id), logs it and finishes as 'skipped'.",
+  "lambda": "validator",
+  "env": {
+    "MOPM_STAGE": "beta",
+    "MOPM_CHANNEL_BUCKET": "channel-bucket",
+    "MOPM_INDEX_QUEUE_URL": "index-queue-url",
+    "MOPM_CHANNEL_URL": "channel-url"
+  },
+  "invocations": [
+    {
+      "event": {
+        "Records": [
+          {
+            "messageId": "m1",
+            "receiptHandle": "handle-1",
+            "body": "{\"type\":\"validate\",\"publish_id\":\"pub_unknown\"}",
+            "attributes": {
+              "MessageGroupId": "g"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          }
+        ]
+      },
+      "expect": {
+        "returns": null
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-publishes",
+        "key": {
+          "publish_id": "pub_unknown"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": [
+      {
+        "stream": "log",
+        "line": {
+          "level": "error",
+          "msg": "validate message for an unknown publish",
+          "publish_id": "pub_unknown"
+        }
+      },
+      {
+        "stream": "log",
+        "line": {
+          "level": "info",
+          "msg": "validate",
+          "publish_id": "pub_unknown",
+          "outcome": "skipped"
+        }
+      }
+    ]
+  }
+}

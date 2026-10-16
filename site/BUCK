@@ -98,6 +98,8 @@ node_tree_build(
     out_dir = "dist",
     program = "build/tools/tools/build.js",
     srcs = glob(["static/**"]),
+    # The site stack deploys this tree (service/infra/stacks/BUCK, its tests and synths).
+    visibility = ["//service/infra/stacks:"],
 )
 
 # service-ci.yml's `test -f dist/<page>` for each page the site job names.
@@ -108,4 +110,19 @@ node_tree_test(
     node = _NODE,
     program = "check_dist.js",
     srcs = ["check_dist.js"],
+)
+
+# What the site stack reads from this package besides dist/ (service/infra/stacks/BUCK): its edge
+# router is generated from the route grammar of src/routes.ts, and its test runs that router over
+# the route vectors.
+export_file(
+    name = "routes.ts",
+    src = "src/routes.ts",
+    visibility = ["//service/infra/stacks:"],
+)
+
+export_file(
+    name = "routes.json",
+    src = "test/fixtures/routes.json",
+    visibility = ["//service/infra/stacks:"],
 )

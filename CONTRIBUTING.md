@@ -71,7 +71,7 @@ commands `service-ci.yml` runs, on the farm, from pinned npm packages instead of
 |---|---|
 | `//service/api:typecheck`, `:test`, `:dist`, `:dist_has_handler` | `tsc --noEmit`, `jest --ci` (2 workers), `tsc -p tsconfig.build.json` and `test -f dist/http/lambda.js` |
 | `//service/infra/{stacks,dns,access}:typecheck`, `:test` | `tsc --noEmit` and `jest --ci` |
-| `//service/infra/stacks:synth_{beta,gamma,prod}` | `cdk synth` of each stage with a dummy account and zone id; the API bundle is `//service/api:dist` |
+| `//service/infra/stacks:synth_{beta,gamma,prod}` | `cdk synth` of each stage with a dummy account and zone id; the API bundle is `//service/api:dist` and the site build `//site:dist` (the stack refuses to synthesize without it); the synths, `:typecheck` and `:test` also take `site/src/routes.ts` (the edge router's grammar) and `site/test/fixtures/routes.json` (its vectors) |
 | `//service/infra/dns:synth_{beta,gamma,prod,delegation}` | the four `cdk synth` runs with dummy values |
 | `//site:typecheck`, `:typecheck_browser`, `:test`, `:dist`, `:dist_has_pages` | the site job's `npm run typecheck` (two runs), `npm test`, `npm run build` and its `test -f dist/<page>` checks (`site/README.md`) |
 

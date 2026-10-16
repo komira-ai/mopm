@@ -167,6 +167,8 @@ const getHealth = (deps: RouterDeps) => ({
   // Additive fields (the contract allows them): what e2e reads to prove which release is deployed.
   version: deps.version,
   commit: deps.commit,
+  // Which implementation answered. This file is the TypeScript one; e2e compares it with the stage's expected implementation.
+  impl: 'ts',
 });
 
 async function getPackage(deps: RouterDeps, name: string) {

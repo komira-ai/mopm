@@ -10,7 +10,7 @@ export type SecretReader = (secretId: string) => Promise<string | undefined>;
  */
 export const oauthSecretName = (stage: string) => `mopm/${stage}/github-oauth`;
 
-// The AWS SDK v3 is part of the Node.js 20 Lambda runtime (see api-stack.ts), so it is loaded by name at the moment it
+// The AWS SDK v3 is part of the Node.js 22 Lambda runtime (see api-stack.ts), so it is loaded by name at the moment it
 // is first needed: the package takes no dependency on it, and a process that never reads the secret never loads it.
 const SECRETS_MODULE: string = '@aws-sdk/client-secrets-manager';
 

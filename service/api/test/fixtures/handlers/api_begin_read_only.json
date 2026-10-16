@@ -1,0 +1,50 @@
+{
+  "description": "In read-only mode begin-upload is 503 read_only_mode before the token is looked at, and the switch is read once for the handler and the route together.",
+  "lambda": "api",
+  "env": {
+    "MOPM_STAGE": "beta",
+    "MOPM_CHANNEL_BUCKET": "channel-bucket",
+    "MOPM_VALIDATE_QUEUE_URL": "validate-queue-url"
+  },
+  "dynamo": [
+    {
+      "op": "Get",
+      "table": "mopm-beta-config",
+      "respond": {
+        "Item": {
+          "key": "read_only",
+          "value": true
+        }
+      }
+    }
+  ],
+  "invocations": [
+    {
+      "event": "events/apigw_post_begin.json",
+      "expect": {
+        "returns": {
+          "statusCode": 503,
+          "headers": {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            "x-mopm-request-id": "req-begin"
+          },
+          "body": "{\"error\":{\"code\":\"read_only_mode\",\"message\":\"The registry is read-only right now; new uploads are refused.\",\"hint\":\"Installs still work. Try again later.\"}}"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-config",
+        "key": {
+          "key": "read_only"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": []
+  }
+}
