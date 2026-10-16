@@ -1,6 +1,6 @@
 import { authTablesFor, DynamoAuthStore, MemoryAuthStore, ownedPackagesFrom } from '../src/auth';
 import type { AuthStore, DeviceLoginRecord, TokenRecord, TrustedPublisher } from '../src/auth';
-import { FakeAuthDoc, LAMBDA_GRANTS, READ_GRANTS } from './auth-fake-doc';
+import { FakeAuthDoc, LAMBDA_GRANTS } from './auth-fake-doc';
 
 // One suite for the AuthStore port, run against the memory adapter (which defines the rules) and the DynamoDB adapter
 // on a strict fake client. The DynamoDB run is under the Lambda's real grants: DeleteItem is not among them, and the
@@ -182,7 +182,7 @@ describe('the DynamoDB adapter under the Lambda grants', () => {
   });
 
   test('ownedPackagesFrom reads the owners index across pages, only that account', async () => {
-    const doc = new FakeAuthDoc({ pageSize: 2, grants: READ_GRANTS });
+    const doc = new FakeAuthDoc({ pageSize: 2, grants: LAMBDA_GRANTS });
     for (const [n, g] of [['aa', 1], ['bb', 1], ['cc', 1], ['dd', 2]] as const) doc.seed('owners', { name: n, github_id: String(g), github_id_num: g });
     eq((await ownedPackagesFrom(doc, 'mopm-t-owners')(1)).sort(), ['aa', 'bb', 'cc']);
     eq(await ownedPackagesFrom(doc, 'mopm-t-owners')(3), []);

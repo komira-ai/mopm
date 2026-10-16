@@ -86,6 +86,14 @@ export_file(
     visibility = ["//service/infra/stacks:"],
 )
 
+# The recorded storage wire goldens (test/fixtures/wire/*.json): the stacks' iam-wire-coverage test checks that the API
+# role's policy allows every DynamoDB call in them.
+filegroup(
+    name = "wire_goldens",
+    srcs = {f[len("test/fixtures/wire/"):]: f for f in glob(["test/fixtures/wire/*.json"])},
+    visibility = ["//service/infra/stacks:"],
+)
+
 # This package's files, for //:hygiene (the repository-wide scan reads every file, and a
 # package boundary hides these from the root package's glob). A copy of the tree, staged
 # by path from this package.
