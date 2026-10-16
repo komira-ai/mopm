@@ -1,5 +1,6 @@
-# mopm_auth: tokens, device login and GitHub (the OAuth device flow and the user lookup). Logic over the ports
-# (mopm_ports); the HTTP client is the one outbound seam. Written to hold the answers of service/api/src/auth.
+# mopm_auth: tokens, device login, GitHub (the OAuth device flow and the user lookup), and the exchange of a
+# CI identity token (OIDC) for a publish token. Logic over the ports (mopm_ports); the HTTP client is the one
+# outbound seam. Written to hold the answers of service/api/src/auth.
 load("@komira//tools/build/rust:defs.bzl", "rust_library", "rust_test")
 
 AWS_LC = "komira//third_party/aws-lc:crypto[static-pic]"
@@ -7,6 +8,7 @@ AWS_LC = "komira//third_party/aws-lc:crypto[static-pic]"
 _DEPS = [
     "//service/lambda/core:mopm_core",
     "//service/lambda/ports:mopm_ports",
+    "//third_party/rust:base64-0.23.1",
     "//third_party/rust:form_urlencoded",
     "//third_party/rust:getrandom-0.4.3",
     "//third_party/rust:hex",
@@ -15,6 +17,7 @@ _DEPS = [
     "//third_party/rust:hyper-rustls",
     "//third_party/rust:hyper-util",
     "//third_party/rust:jiff",
+    "//third_party/rust:jsonwebtoken",
     "//third_party/rust:rustls",
     "//third_party/rust:serde",
     "//third_party/rust:serde_json",
