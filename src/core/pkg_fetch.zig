@@ -60,7 +60,7 @@ fn tempName(arena: Allocator, final: []const u8) ![]u8 {
 /// it unless it is already there. On failure nothing is left at `name` that
 /// was not there before (a bad download is removed), and `diag` says why.
 pub fn fetch(arena: Allocator, dir: std.fs.Dir, name: []const u8, url: []const u8, pin: Pin, diag: *Diag) !void {
-    if (try matches(dir, name, pin)) return;
+    _ = try matches(dir, name, pin);
 
     const tmp = try tempName(arena, name);
     var kept = false;
