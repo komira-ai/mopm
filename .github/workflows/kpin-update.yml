@@ -6,6 +6,15 @@
 # (komira: tools/build/kpin/README.md, "The weekly update"), over this
 # repository's locks: tools/node and the four service packages.
 #
+# Cargo (komira: tools/build/kpin/README.md, "Cargo"): for each line of KPIN_CARGO_SETS the
+# job also refreshes Cargo.lock (`cargo update`, unless the manual run says not to), makes
+# `cargo metadata --locked --filter-platform <target>` and trims it (`kpin cargo --trim`),
+# fetches the size of each linked `.crate` (`kpin update`, verified against Cargo.lock's
+# sha256) and regenerates the crates file (`kpin cargo`, with `--previous-lock`: a Cargo.lock
+# checksum that changed for a version already locked is an ALARM like any other). Resolution
+# happens HERE, on the runner, with the runner's cargo: never in a build action, never on
+# the farm. The overrides are read, never written: a person re-derives them.
+#
 # Exit code 3 of kpin is an ALARM (a changed hash for a version already pinned):
 # the job fails, with an error annotation, and no branch is pushed and no pull
 # request opened or touched. Exit 1 (for one, a registry that answers TLS 1.2:
@@ -51,6 +60,10 @@ on:
         description: "Also re-fetch every pinned file and alarm on a republished one (kpin update --verify)."
         type: boolean
         default: false
+      cargo_update:
+        description: "Refresh Cargo.lock (cargo update) before regenerating the Cargo inputs. Off: regenerate them from the Cargo.lock as committed."
+        type: boolean
+        default: true
   schedule:
     - cron: "23 5 * * 1"
 
@@ -79,6 +92,10 @@ jobs:
         service/pins.toml service/infra/access/pins.lock.bzl service/infra/access/package-lock.json
         service/pins.toml service/infra/dns/pins.lock.bzl service/infra/dns/package-lock.json
         service/pins.toml service/infra/stacks/pins.lock.bzl service/infra/stacks/package-lock.json
+      # One line per Cargo workspace: <workspace dir> <Cargo.lock> <trimmed metadata>
+      # <sizes> <overrides> <generated crates file> <target triple>.
+      KPIN_CARGO_SETS: |
+        third_party/rust third_party/rust/Cargo.lock third_party/rust/cargo/metadata.json third_party/rust/cargo/sizes.txt third_party/rust/cargo/overrides.json third_party/rust/crates.bzl x86_64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -106,6 +123,7 @@ jobs:
         id: kpin
         env:
           VERIFY: ${{ inputs.verify }}
+          CARGO_UPDATE: ${{ inputs.cargo_update }}
         run: |
           set -eu -o pipefail
           kpin="$RUNNER_TEMP/kpin/kpin"
@@ -142,6 +160,39 @@ jobs:
             echo "::endgroup::"
             touched="$touched $pins $lock"
           done <<< "$KPIN_SETS"
+          # Cargo: resolution on this runner, then kpin reads. The compiler the overrides
+          # must be derived for is the one komira pins, in the komira commit .buckconfig names.
+          komira=$(sed -n 's/^  commit_hash = \([0-9a-f]\{40\}\)$/\1/p' .buckconfig)
+          [ -n "$komira" ] || { echo "::error::cannot read the komira commit from .buckconfig"; exit 1; }
+          rustc=$(curl -fsSL "https://raw.githubusercontent.com/komira-ai/komira/$komira/tools/build/toolchains/rust/BUCK" | sed -n 's/^    version = "\([0-9][0-9.]*\)",$/\1/p')
+          case "$rustc" in
+            ""|*[!0-9.]*) echo "::error::cannot read the pinned rustc version from komira's tools/build/toolchains/rust/BUCK"; exit 1 ;;
+          esac
+          while read -r dir clock cmeta csizes covs cout ctarget; do
+            [ -n "$dir" ] || continue
+            n=$((n + 1))
+            echo "::group::cargo $clock"
+            cp "$clock" "$base/$n.cargo.lock"
+            raw="$RUNNER_TEMP/raw.$n.json"
+            ok=1
+            if [ "$CARGO_UPDATE" != "false" ]; then
+              # Honour the manifest's rust-version when picking versions.
+              (cd "$dir" && CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback cargo update) || { echo "::error title=cargo update failed::in $dir"; failed=1; ok=0; }
+            fi
+            if [ "$ok" = 1 ]; then
+              (cd "$dir" && cargo metadata --format-version 1 --locked --filter-platform "$ctarget") > "$raw" || { echo "::error title=cargo metadata failed::in $dir"; failed=1; ok=0; }
+            fi
+            if [ "$ok" = 1 ] && run cargo --metadata "$raw" --target "$ctarget" --trim "$cmeta"; then
+              cupdate=(update --no-pins --cargo-lock "$clock" --metadata "$cmeta" --sizes "$csizes" --target "$ctarget")
+              if [ "$VERIFY" = "true" ]; then cupdate+=(--verify); fi
+              if run "${cupdate[@]}"; then
+                run cargo --cargo-lock "$clock" --previous-lock "$base/$n.cargo.lock" --metadata "$cmeta" --overrides "$covs" \
+                  --sizes "$csizes" --rustc "$rustc" --target "$ctarget" --cargo-out "$cout" || true
+              fi
+            fi
+            echo "::endgroup::"
+            touched="$touched $clock $cmeta $csizes $cout"
+          done <<< "$KPIN_CARGO_SETS"
           [ "$alarm" = 0 ] || exit 3
           [ "$failed" = 0 ] || exit 1
           if [ -z "$(git status --porcelain --untracked-files=no)" ]; then

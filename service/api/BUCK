@@ -54,7 +54,7 @@ node_tree_build(
         "src/publish/indexer-lambda.ts",
         "--bundle",
         "--platform=node",
-        "--target=node20",
+        "--target=node22",
         "--format=cjs",
         "--external:@aws-sdk/*",
         "--outbase=src",
