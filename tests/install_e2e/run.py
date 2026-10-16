@@ -254,6 +254,33 @@ def main(mopm, fake_exe):
                   str(os.listdir(mojo_env) if os.path.isdir(mojo_env) else "no environment"))
             if r.returncode != 0 or not os.access(mojo_exe, os.X_OK):
                 raise SystemExit("install e2e: no toolchain, nothing more to test")
+            # Every binary file the packages meant to be relocated has its placeholder string replaced by the
+            # install prefix (NUL-padded); an unrewritten one keeps pointing at the build machine.
+            prefixes = {os.path.abspath(mojo_env).encode(), os.path.realpath(mojo_env).encode()}
+            relocated, stale = 0, []
+            metadir = os.path.join(mojo_env, "conda-meta")
+            for rec in sorted(os.listdir(metadir)):
+                if not rec.endswith(".json"):
+                    continue
+                with open(os.path.join(metadir, rec)) as f:
+                    entries = json.load(f).get("paths_data", {}).get("paths", [])
+                for e in entries:
+                    ph = e.get("prefix_placeholder")
+                    if not ph or e.get("file_mode") != "binary" or e.get("path_type") != "hardlink":
+                        continue
+                    with open(os.path.join(mojo_env, e["_path"]), "rb") as f:
+                        data = f.read()
+                    ph = ph.encode()
+                    at = data.find(ph)
+                    while at >= 0:
+                        if data.find(b"\0", at) >= 0:
+                            stale.append(e["_path"])
+                            break
+                        at = data.find(ph, at + 1)
+                    if any(pre in data for pre in prefixes):
+                        relocated += 1
+            check("binary files with a prefix placeholder were rewritten: none keeps it, some hold the install prefix",
+                  relocated > 0 and not stale, "relocated %d; still holding the placeholder: %s" % (relocated, stale[:5]))
             r = sync(boot, "--locked")
             check("a second sync finds the environment current and changes nothing",
                   r.returncode == 0 and "is current" in r.stdout and "downloading" not in r.stdout, r.stdout + r.stderr)
