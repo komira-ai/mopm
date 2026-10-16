@@ -414,6 +414,21 @@ async fn bad_signature_a_payload_altered_after_signing_and_a_forger_that_copies_
 }
 
 #[tokio::test]
+async fn a_signature_that_cannot_be_decoded_and_a_key_that_cannot_verify_are_a_bad_signature_not_a_pass() {
+    let mut weak = key_a("weak");
+    weak.jwk.n = Some("AQAB".into()); // a modulus of 65537: a key no real signature verifies under
+    let f = setup_with(vec![key_a("k1").jwk, weak.jwk.clone()], &["mopm.dev"]).await;
+    f.trust(f.tp.clone()).await;
+    let good = f.token(json!({}));
+    let parts: Vec<&str> = good.split('.').collect();
+    // One base64 character cannot be a whole number of bytes; nor can five.
+    for sig in ["A", "AAAAA", "-_-_-"] {
+        assert_invalid(f.exchange(&format!("{}.{}.{sig}", parts[0], parts[1])).await, "bad signature");
+    }
+    assert_invalid(f.exchange(&sign(&weak, &claims_with(f.now_s(), json!({})))).await, "bad signature");
+}
+
+#[tokio::test]
 async fn an_unknown_kid_is_refused_as_an_unknown_signing_key() {
     let f = setup().await;
     f.trust(f.tp.clone()).await;
