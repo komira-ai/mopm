@@ -441,6 +441,7 @@ _LINT_PACKAGES = [
     "service/infra/dns",
     "service/infra/stacks",
     "service/lambda/core",
+    "service/lambda/validate",
     "third_party/rust",
     "tools/lambda",
     "tools/node",
