@@ -155,7 +155,7 @@ fn readZip(arena: Allocator, file: std.fs.File, diag: *Diag) ![]ZipEntry {
         if (csize == 0xFFFFFFFF or usize_ == 0xFFFFFFFF or lho == 0xFFFFFFFF) {
             const extra = cd[p + 46 + name_len ..][0..extra_len];
             var e: usize = 0;
-            var found = false;
+            var have_extra = false;
             while (e + 4 <= extra.len) {
                 const id = rd(u16, extra, e);
                 const len = rd(u16, extra, e + 2);
@@ -172,12 +172,12 @@ fn readZip(arena: Allocator, file: std.fs.File, diag: *Diag) ![]ZipEntry {
                         field.* = std.mem.readInt(u64, extra[f..][0..8], .little);
                         f += 8;
                     }
-                    found = true;
+                    have_extra = true;
                     break;
                 }
                 e += 4 + len;
             }
-            if (!found) {
+            if (!have_extra) {
                 diag.message = "the zip names a size or offset it does not give (no zip64 extra field)";
                 return error.BadConda;
             }
