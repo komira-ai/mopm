@@ -272,3 +272,126 @@ jobs:
       - name: Stop buck2
         if: always()
         run: ./buck2 kill || true
+
+  # The Mojo toolchain closure (toolchain/README.md, src/core/closure.zig): `mopm sync`
+  # installs the Mojo toolchain from a pre-resolved list, not with a solver. This job is the
+  # one place a solver runs: pixi, on this runner, solves `mojo` for each version in
+  # toolchain/versions.txt on every platform, and `mopm-closure` (built here with zig)
+  # turns the lock into the closure files that are committed. A file the closure already pins
+  # that comes back with other bytes is an ALARM (exit 3, nothing is written, no pull request).
+  # The pull request comes from toolchain/weekly-<run id>, by the same rules as the one above.
+  toolchain:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Install pixi (sha256-pinned), the solver
+        run: echo "$(tools/install_pixi.sh "$RUNNER_TEMP/pixi")" >> "$GITHUB_PATH"
+      - name: Build mopm-closure (its unit tests run first)
+        run: |
+          set -eu
+          zig build test
+          zig build
+      - name: Solve each version in toolchain/versions.txt, then make the closure files
+        id: solve
+        run: |
+          set -eu
+          while read -r ver; do
+            case "$ver" in
+              ""|"#"*) continue ;;
+            esac
+            dir="$RUNNER_TEMP/solve-$ver"
+            mkdir -p "$dir"
+            {
+              echo '[workspace]'
+              echo 'name = "mopm-toolchain"'
+              echo 'channels = ["https://conda.modular.com/max", "conda-forge"]'
+              echo 'platforms = ["linux-64", "linux-aarch64", "osx-arm64"]'
+              echo
+              echo '[dependencies]'
+              echo "mojo = \"==$ver\""
+              echo "mojo-compiler = \"==$ver\""
+              echo 'python = "3.12.*"'
+            } > "$dir/pixi.toml"
+            pixi lock --manifest-path "$dir/pixi.toml"
+            cp "$dir/pixi.lock" "toolchain/mojo-$ver.pixi.lock"
+            rc=0
+            ./zig-out/bin/mopm-closure "toolchain/mojo-$ver.pixi.lock" src/core/toolchain || rc=$?
+            case "$rc" in
+              0) ;;
+              3) echo "::error title=closure alarm::a file pinned for mojo $ver came back with other bytes (see above). No pull request is opened."; exit 3 ;;
+              *) echo "::error title=mopm-closure failed::exit $rc for mojo $ver"; exit 1 ;;
+            esac
+          done < toolchain/versions.txt
+          if [ -z "$(git status --porcelain --untracked-files=all -- toolchain src/core/toolchain)" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "The solver's answer is the committed one: nothing to open." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git status --short --untracked-files=all -- toolchain src/core/toolchain
+          fi
+      - name: Open the pull request from toolchain/weekly-<run id>, close the older ones
+        # Only for a run of the default branch, as above.
+        if: steps.solve.outputs.changed == 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ github.event.repository.default_branch }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -eu
+          branch="toolchain/weekly-$RUN_ID"
+          git add -A -- toolchain src/core/toolchain
+          if git status --porcelain --untracked-files=no | grep -qv '^[MA] '; then
+            echo "::error::files other than the toolchain's own changed:"; git status --short; exit 1
+          fi
+          git diff --cached --stat > "$RUNNER_TEMP/stat"
+          {
+            echo "Weekly update of the Mojo toolchain closure."
+            echo
+            echo "Run: $RUN_URL"
+            echo
+            echo "What changed:"
+            echo
+            sed 's/^/    /' "$RUNNER_TEMP/stat"
+          } > "$RUNNER_TEMP/message"
+          git -c user.name="github-actions[bot]" -c user.email="noreply@github.com" \
+            commit -q -F "$RUNNER_TEMP/message"
+          gh auth setup-git
+          git push origin "HEAD:refs/heads/$branch"
+          {
+            echo "The weekly solve of the Mojo toolchain (run: $RUN_URL)."
+            echo
+            echo "What the run proved before this branch was pushed:"
+            echo
+            echo "- mopm-closure was built from this repository and its unit tests passed (the committed closure files are what it makes from the committed locks)."
+            echo "- Every file the closure already pinned still has the same sha256 and size (no alarm): only new builds and new versions moved."
+            echo
+            echo "Changed files:"
+            echo
+            sed 's/^/    /' "$RUNNER_TEMP/stat"
+            echo
+            echo "**Known gap.** Opened with the workflow's GITHUB_TOKEN, so the pull request's checks have not run. Start them by pushing an empty commit to \`$branch\` or by closing and reopening this pull request, and merge only when they are green (the install end-to-end test installs the new closure). The next weekly run closes this pull request and deletes its branch when it opens its own."
+          } > "$RUNNER_TEMP/body"
+          if ! url=$(gh pr create --repo "$GITHUB_REPOSITORY" --head "$branch" --base "$BASE" \
+            --title "toolchain: weekly solve of the Mojo closure" --body-file "$RUNNER_TEMP/body"); then
+            echo "::error title=no pull request::the branch $branch is pushed but the pull request could not be opened. Open it by hand: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$BASE...$branch?expand=1"
+            exit 1
+          fi
+          echo "Opened $url" | tee -a "$GITHUB_STEP_SUMMARY"
+          gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("toolchain/weekly-")) | "\(.number) \(.headRefName)"' > "$RUNNER_TEMP/older"
+          while read -r num old; do
+            [ -n "$num" ] || continue
+            [ "$old" != "$branch" ] || continue
+            gh pr close "$num" --repo "$GITHUB_REPOSITORY" --comment "Superseded by $url (run $RUN_URL)."
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$old" > /dev/null
+            echo "Closed #$num and deleted $old" | tee -a "$GITHUB_STEP_SUMMARY"
+          done < "$RUNNER_TEMP/older"

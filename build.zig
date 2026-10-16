@@ -23,6 +23,20 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_cmd.addArgs(args);
     b.step("run", "Run the mopm CLI").dependOn(&run_cmd.step);
 
+    // mopm-closure makes the Mojo toolchain closure files from a pixi lock
+    // (src/core/closure.zig, toolchain/README.md).
+    const closure_gen = b.addExecutable(.{
+        .name = "mopm-closure",
+        .root_source_file = b.path("tools/closure_gen.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    closure_gen.root_module.addImport("mopm_core", core);
+    b.installArtifact(closure_gen);
+    const closure_cmd = b.addRunArtifact(closure_gen);
+    if (b.args) |args| closure_cmd.addArgs(args);
+    b.step("run-closure", "Make the toolchain closure files: -- <lock> <output directory>").dependOn(&closure_cmd.step);
+
     // The fake registry the CLI is tested against (registry/fake/README.md).
     const fake = b.addExecutable(.{
         .name = "mopm-fake-registry",

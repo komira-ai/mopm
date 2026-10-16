@@ -42,13 +42,9 @@
 //! Run by Buck2 (//:resolve_e2e) from the repository root; MOPM and
 //! MOPM_FAKE_REGISTRY are the built programs.
 //!
-//! NOT YET MIRRORED: the add / remove checks of the open pull request that
-//! adds `mopm add` and `mopm remove` to run.py (add_before.toml,
-//! add_after.toml, remove_after.toml in this directory, and run.py's
-//! `add_remove`). When that lands, port `add_remove` here: read the three
-//! files from tests/resolve_e2e, run the same steps with `run`, and compare
-//! with `lockOf` / `same` below; the BUCK target globs tests/resolve_e2e/*, so
-//! the files need no BUCK edit.
+//! `mopm add` and `mopm remove` are checked at the end (addRemove): goldens
+//! add_before.toml, add_after.toml and remove_after.toml in this directory.
+//! The BUCK target globs tests/resolve_e2e/*, so the files need no BUCK edit.
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -352,6 +348,144 @@ fn has(hay: []const u8, needle: []const u8) bool {
     return std.mem.indexOf(u8, hay, needle) != null;
 }
 
+// ------------------------------------------------- mopm add and mopm remove
+
+/// `s` with every comment (and the blanks before it) cut from each line.
+fn withoutComments(a: Allocator, s: []const u8) ![]u8 {
+    var out = std.ArrayList(u8).init(a);
+    var lines = std.mem.splitScalar(u8, s, '\n');
+    var first = true;
+    while (lines.next()) |line| {
+        if (!first) try out.append('\n');
+        first = false;
+        const cut = if (std.mem.indexOfScalar(u8, line, '#')) |i| line[0..i] else line;
+        try out.appendSlice(std.mem.trimRight(u8, cut, " \t"));
+    }
+    return out.items;
+}
+
+/// `s` with every run of blanks made one blank.
+fn squeezed(a: Allocator, s: []const u8) ![]u8 {
+    var out = std.ArrayList(u8).init(a);
+    for (s) |ch| {
+        if (ch == ' ' and out.items.len > 0 and out.items[out.items.len - 1] == ' ') continue;
+        try out.append(ch);
+    }
+    return out.items;
+}
+
+/// What changed in mopm.toml or mopm.lock of `dir`: "" when neither did (a
+/// lock that was absent must stay absent).
+fn changedFiles(cx: *Cx, dir: []const u8, toml_before: []const u8, lock_before: ?[]const u8) ![]u8 {
+    var found = std.ArrayList(u8).init(cx.a);
+    const toml_now = h.readFile(cx.a, try h.join(cx.a, &.{ dir, "mopm.toml" })) catch null;
+    if (toml_now == null or !std.mem.eql(u8, toml_now.?, toml_before)) try found.appendSlice("mopm.toml changed");
+    const lock_now = try cx.lockOf(dir);
+    const same_lock = if (lock_before) |lb| (lock_now != null and std.mem.eql(u8, lock_now.?, lb)) else lock_now == null;
+    if (!same_lock) {
+        if (found.items.len > 0) try found.appendSlice("; ");
+        try found.appendSlice(if (lock_before == null) "mopm.lock was written" else "mopm.lock changed");
+    }
+    return found.items;
+}
+
+/// The locked version of `name` in `dir`'s lock, "" when it is not locked.
+fn lockedVersion(cx: *Cx, dir: []const u8, name: []const u8) ![]const u8 {
+    const entries = try cx.entries(try cx.lockOf(dir));
+    return if (entries.get(name)) |p| c.getStr(p, "version") orelse "" else "";
+}
+
+/// `mopm add` and `mopm remove`: byte-exact goldens of mopm.toml, the lock
+/// each writes, and the refusals, which must leave both files as they were.
+///
+/// Two can-fail proofs run here too, so CI shows each comparison going red on
+/// the defect it guards against: the golden refuses add_after.toml with its
+/// comments or its spacing lost (a writer that re-serialises the manifest),
+/// and changedFiles refuses a project whose mopm.toml holds the edit of an add
+/// that failed to resolve (a writer that writes mopm.toml before resolving).
+fn addRemove(cx: *Cx) !void {
+    const a = cx.a;
+    const before = try h.readFile(a, "tests/resolve_e2e/add_before.toml");
+    const after_add = try h.readFile(a, "tests/resolve_e2e/add_after.toml");
+    const after_remove = try h.readFile(a, "tests/resolve_e2e/remove_after.toml");
+    const d = try h.join(a, &.{ cx.work, "edit" });
+    const toml = try h.join(a, &.{ d, "mopm.toml" });
+    try h.writeFile(toml, before);
+
+    const lost = [_]struct { what: []const u8, bad: []u8 }{
+        .{ .what = "comments", .bad = try withoutComments(a, after_add) },
+        .{ .what = "spacing", .bad = try squeezed(a, after_add) },
+    };
+    for (lost) |l| {
+        cx.ok(try cx.fmt("can fail: the add golden refuses the file with its {s} lost", .{l.what}), !std.mem.eql(u8, l.bad, after_add), "the golden does not hold any");
+    }
+
+    // No requirement: the newest version that fits, as ^X.Y.Z, after the last entry.
+    var r = try cx.runReg(d, &.{ "add", "http_client" });
+    var got = try h.readFile(a, toml);
+    const want_first = try std.mem.replaceOwned(u8, a, after_add, "http_core = \"^1.2.5\"\n", "");
+    cx.ok("add writes ^ the newest version that fits, after the table's last entry, every other byte kept", r.code == 0 and std.mem.eql(u8, got, want_first), try cx.fmt("{s}\n--- got\n{s}\n--- want\n{s}", .{ r.stderr, got, want_first }));
+    cx.ok("add locks the added package and what it pulls in", std.mem.eql(u8, try lockedVersion(cx, d, "http_client"), "0.5.0") and std.mem.eql(u8, try lockedVersion(cx, d, "crypto"), "2.0.1") and has(r.stdout, "adding http_client 0.5.0\n"), r.stdout);
+
+    // The newest http_core in the index is 2.0.0; tls's "~1.2" lets only 1.2.x fit.
+    r = try cx.runReg(d, &.{ "add", "http_core", "--dev" });
+    got = try h.readFile(a, toml);
+    cx.ok("add --dev writes [dev-dependencies]; the version is the newest that fits, not the newest (golden add_after.toml)", r.code == 0 and std.mem.eql(u8, got, after_add), try cx.fmt("{s}\n--- got\n{s}", .{ r.stderr, got }));
+
+    r = try cx.runReg(d, &.{ "add", "tls@~1.1" });
+    got = try h.readFile(a, toml);
+    const want_tls = try std.mem.replaceOwned(u8, a, after_add, "tls   =   \"1\"", "tls   =   \"~1.1\"");
+    cx.ok("add of an existing dependency replaces its value in place (spacing and comment kept)", r.code == 0 and std.mem.eql(u8, got, want_tls) and std.mem.eql(u8, try lockedVersion(cx, d, "tls"), "1.1.0"), try cx.fmt("{s}\n--- got\n{s}\n--- want\n{s}", .{ r.stderr, got, want_tls }));
+
+    r = try cx.runReg(d, &.{ "remove", "legacy" });
+    got = try h.readFile(a, toml);
+    cx.ok("remove of the middle key of a table takes its line only (golden remove_after.toml)", r.code == 0 and std.mem.eql(u8, got, after_remove), try cx.fmt("{s}\n--- got\n{s}", .{ r.stderr, got }));
+    cx.ok("remove takes the package out of the lock", std.mem.eql(u8, try lockedVersion(cx, d, "legacy"), "") and has(r.stdout, "removing legacy 1.1.0\n"), r.stdout);
+
+    r = try cx.runReg(d, &.{ "remove", "http_client" });
+    got = try h.readFile(a, toml);
+    cx.ok("remove drops what only the removed package pulled in, and keeps what others need", r.code == 0 and
+        std.mem.eql(u8, try lockedVersion(cx, d, "http_client"), "") and std.mem.eql(u8, try lockedVersion(cx, d, "crypto"), "") and
+        std.mem.eql(u8, try lockedVersion(cx, d, "http_core"), "1.2.5") and std.mem.eql(u8, try lockedVersion(cx, d, "tls"), "1.1.0") and
+        std.mem.eql(u8, got, try std.mem.replaceOwned(u8, a, after_remove, "http_client = \"^0.5.0\"\n", "")), try cx.fmt("{s}\n{s}", .{ r.stderr, got }));
+
+    const toml_now = try h.readFile(a, toml);
+    const lock_now = try cx.lockOf(d);
+    const Refusal = struct { args: []const []const u8, wants: []const u8 };
+    const refusals = [_]Refusal{
+        .{ .args = &.{ "remove", "nosuch" }, .wants = "nosuch is not a dependency: [dependencies] of mopm.toml does not name it" },
+        .{ .args = &.{ "remove", "http_core" }, .wants = "http_core is not a dependency: [dependencies] of mopm.toml does not name it" },
+        .{ .args = &.{ "add", "nosuch" }, .wants = "nosuch (required by mopm.toml) is not in the registry's index" },
+        .{ .args = &.{ "add", "tls@3" }, .wants = "no version of tls matches 3 (from mopm.toml)" },
+    };
+    for (refusals) |refusal| {
+        r = try cx.runReg(d, refusal.args);
+        const changed = try changedFiles(cx, d, toml_now, lock_now);
+        cx.ok(try cx.fmt("refused, both files unchanged: mopm {s}", .{try std.mem.join(a, " ", refusal.args)}), r.code == 1 and has(r.stderr, refusal.wants) and changed.len == 0, try cx.fmt("exit {d}, {s}, stderr {s}", .{ r.code, changed, r.stderr }));
+    }
+
+    // A project with no lock: a failed add writes neither file.
+    const fresh = try h.join(a, &.{ cx.work, "edit_fresh" });
+    try h.writeFile(try h.join(a, &.{ fresh, "mopm.toml" }), before);
+    r = try cx.runReg(fresh, &.{ "add", "http_core@3" });
+    var changed = try changedFiles(cx, fresh, before, null);
+    cx.ok("an add that does not resolve leaves mopm.toml byte-identical and writes no lock", r.code == 1 and has(r.stderr, "no version of http_core matches 3") and changed.len == 0, try cx.fmt("exit {d}, {s}, stderr {s}", .{ r.code, changed, r.stderr }));
+    // The defect that check guards against, planted: the edit written before resolving.
+    const planted = try h.join(a, &.{ cx.work, "edit_planted" });
+    try h.writeFile(try h.join(a, &.{ planted, "mopm.toml" }), try std.mem.replaceOwned(u8, a, before, "legacy = \"1\"\n", "legacy = \"1\"\nhttp_core = \"3\"\n"));
+    changed = try changedFiles(cx, planted, before, null);
+    cx.ok("can fail: the unchanged check refuses mopm.toml written before resolving", std.mem.eql(u8, changed, "mopm.toml changed"), if (changed.len == 0) "accepted" else changed);
+
+    // A path dependency: { path = "<dir>" }, locked with source path.
+    const with_path = try h.join(a, &.{ cx.work, "edit_path" });
+    try h.writeFile(try h.join(a, &.{ with_path, "mopm.toml" }), before);
+    try h.writeFile(try h.join(a, &.{ with_path, "local", "mopm.toml" }), "[package]\nname = \"local\"\nversion = \"0.3.0\"\n");
+    r = try cx.runReg(with_path, &.{ "add", "local", "--path", "local" });
+    const want_path = try std.mem.replaceOwned(u8, a, before, "legacy = \"1\"\n", "legacy = \"1\"\nlocal = { path = \"local\" }\n");
+    got = try h.readFile(a, try h.join(a, &.{ with_path, "mopm.toml" }));
+    cx.ok("add --path writes { path = \"<dir>\" } and locks it as a path dependency", r.code == 0 and std.mem.eql(u8, got, want_path) and std.mem.eql(u8, try lockedVersion(cx, with_path, "local"), "0.3.0"), try cx.fmt("{s}\n--- got\n{s}", .{ r.stderr, got }));
+}
+
 test "mopm lock, update and tree resolve against the fake registry" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -536,6 +670,8 @@ test "mopm lock, update and tree resolve against the fake registry" {
         }
         cx.ok(try cx.fmt("refused: {s}", .{refusal.name}), r.code == 1 and lacks.len == 0 and (try cx.lockOf(d)) == null, try cx.fmt("exit {d}, lacks '{s}': {s}", .{ r.code, lacks, r.stderr }));
     }
+
+    try addRemove(&cx);
 
     try rep.finish();
 }
