@@ -96,7 +96,9 @@ fn preadExact(file: std.fs.File, buf: []u8, offset: u64) !void {
     if (n != buf.len) return error.UnexpectedEndOfStream;
 }
 
-/// The entries of the zip in `file`; only stored, unencrypted, non-zip64.
+/// The entries of the zip in `file`; only stored and unencrypted. Entries may
+/// carry a zip64 extra field (the .conda files of large packages do); the
+/// end-of-central-directory record itself must not be zip64.
 fn readZip(arena: Allocator, file: std.fs.File, diag: *Diag) ![]ZipEntry {
     const size = try file.getEndPos();
     const tail_len: usize = @intCast(@min(size, 22 + 65535));
@@ -119,7 +121,7 @@ fn readZip(arena: Allocator, file: std.fs.File, diag: *Diag) ![]ZipEntry {
     const cd_size = rd(u32, tail, at + 12);
     const cd_off = rd(u32, tail, at + 16);
     if (count == 0xFFFF or cd_size == 0xFFFFFFFF or cd_off == 0xFFFFFFFF) {
-        diag.message = "a zip64 archive; mopm does not read those";
+        diag.message = "a zip64 end-of-central-directory record; mopm does not read those";
         return error.BadConda;
     }
     if (@as(u64, cd_off) + cd_size > size) {
@@ -137,17 +139,49 @@ fn readZip(arena: Allocator, file: std.fs.File, diag: *Diag) ![]ZipEntry {
         }
         const flags = rd(u16, cd, p + 8);
         const method = rd(u16, cd, p + 10);
-        const csize = rd(u32, cd, p + 20);
-        const usize_ = rd(u32, cd, p + 24);
+        var csize: u64 = rd(u32, cd, p + 20);
+        var usize_: u64 = rd(u32, cd, p + 24);
         const name_len = rd(u16, cd, p + 28);
         const extra_len = rd(u16, cd, p + 30);
         const comment_len = rd(u16, cd, p + 32);
-        const lho = rd(u32, cd, p + 42);
-        if (p + 46 + name_len > cd.len) {
+        var lho: u64 = rd(u32, cd, p + 42);
+        if (p + 46 + name_len + extra_len > cd.len) {
             diag.message = "the zip's central directory is damaged";
             return error.BadConda;
         }
         const name = try arena.dupe(u8, cd[p + 46 ..][0..name_len]);
+        // A field that does not fit 32 bits is 0xFFFFFFFF here and the real
+        // value is in the zip64 extra field (id 1), in this order.
+        if (csize == 0xFFFFFFFF or usize_ == 0xFFFFFFFF or lho == 0xFFFFFFFF) {
+            const extra = cd[p + 46 + name_len ..][0..extra_len];
+            var e: usize = 0;
+            var found = false;
+            while (e + 4 <= extra.len) {
+                const id = rd(u16, extra, e);
+                const len = rd(u16, extra, e + 2);
+                if (e + 4 + len > extra.len) break;
+                if (id == 1) {
+                    var f: usize = e + 4;
+                    const end = e + 4 + len;
+                    for ([_]*u64{ &usize_, &csize, &lho }) |field| {
+                        if (field.* != 0xFFFFFFFF) continue;
+                        if (f + 8 > end) {
+                            diag.message = "a zip64 extra field of the zip is too short";
+                            return error.BadConda;
+                        }
+                        field.* = std.mem.readInt(u64, extra[f..][0..8], .little);
+                        f += 8;
+                    }
+                    found = true;
+                    break;
+                }
+                e += 4 + len;
+            }
+            if (!found) {
+                diag.message = "the zip names a size or offset it does not give (no zip64 extra field)";
+                return error.BadConda;
+            }
+        }
         if (flags & 1 != 0 or method != 0 or csize != usize_) {
             diag.message = try std.fmt.allocPrint(arena, "{s} in the zip is encrypted or compressed; a .conda stores its entries", .{name});
             return error.BadConda;
@@ -158,7 +192,7 @@ fn readZip(arena: Allocator, file: std.fs.File, diag: *Diag) ![]ZipEntry {
             diag.message = "a local header of the zip is damaged";
             return error.BadConda;
         }
-        const data = @as(u64, lho) + 30 + rd(u16, &local, 26) + rd(u16, &local, 28);
+        const data = lho + 30 + rd(u16, &local, 26) + rd(u16, &local, 28);
         if (data + csize > size) {
             diag.message = "an entry of the zip runs past the end of the file";
             return error.BadConda;
@@ -850,4 +884,18 @@ test "unpack: a relative link that stays inside the environment may be written t
     var diag = Diag{};
     _ = try env.unpackBytes(a, bytes, null, &diag);
     try std.testing.expectEqualStrings("so", try env.read(a, "lib/x.so"));
+}
+
+test "unpack: a .conda whose zip entries carry zip64 extra fields (as large packages do) unpacks" {
+    var st = testArena();
+    defer st.deinit();
+    const a = st.allocator();
+    var env = try TestEnv.init(a);
+    defer env.deinit();
+    const idx = try fx.indexJson(a, "big", "2", "h0_0", "", "");
+    const bytes = try fx.conda2Zip64(a, "big-2-h0_0", &.{.{ .name = "info/index.json", .data = idx }}, &.{.{ .name = "lib/big.txt", .data = "zip64\n" }});
+    var diag = Diag{};
+    const inst = try env.unpackBytes(a, bytes, null, &diag);
+    try std.testing.expectEqualStrings("big", inst.name);
+    try std.testing.expectEqualStrings("zip64\n", try env.read(a, "lib/big.txt"));
 }
