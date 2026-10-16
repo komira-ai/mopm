@@ -647,6 +647,15 @@ def crates():
     )
 
     crates_io_library(
+        name = "base16ct",
+        version = "0.2.0",
+        sha256 = "4c7f02d4ea65f2c1853089ffd8d2787bdbc63de2f0d29dedbcf8ccdfa0ccd4cf",
+        size = 10240,
+        features = ["alloc"],
+        env = cargo_pkg_env("base16ct", "0.2.0", "base16ct"),
+    )
+
+    crates_io_library(
         name = "base64-0.21.7",
         version = "0.21.7",
         sha256 = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567",
@@ -696,6 +705,16 @@ def crates():
         ],
         env = cargo_pkg_env("base64-simd", "0.8.0", "base64_simd"),
         deps = [":outref", ":vsimd"],
+    )
+
+    crates_io_library(
+        name = "base64ct",
+        version = "1.8.3",
+        sha256 = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06",
+        size = 32227,
+        edition = "2024",
+        features = ["alloc"],
+        env = cargo_pkg_env("base64ct", "1.8.3", "base64ct"),
     )
 
     crates_io_library(
@@ -750,12 +769,22 @@ def crates():
     )
 
     crates_io_library(
-        name = "const-oid",
+        name = "const-oid-0.10.2",
         version = "0.10.2",
         sha256 = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c",
         size = 61449,
+        crate = "const-oid",
         edition = "2024",
         env = cargo_pkg_env("const-oid", "0.10.2", "const_oid"),
+    )
+
+    crates_io_library(
+        name = "const-oid-0.9.6",
+        version = "0.9.6",
+        sha256 = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8",
+        size = 45382,
+        crate = "const-oid",
+        env = cargo_pkg_env("const-oid", "0.9.6", "const_oid"),
     )
 
     crates_io_library(
@@ -805,7 +834,7 @@ def crates():
         deps = [
             ":crc",
             ":digest-0.10.7",
-            ":rand",
+            ":rand-0.9.5",
             ":regex",
             ":rustversion",
         ],
@@ -821,6 +850,21 @@ def crates():
         cfgs = ["stable_arm_crc32_intrinsics", "stable_vpclmulqdq"],
         env = cargo_pkg_env("crc32fast", "1.5.2", "crc32fast"),
         deps = [":cfg-if"],
+    )
+
+    crates_io_library(
+        name = "crypto-bigint",
+        version = "0.5.5",
+        sha256 = "0dc92fb57ca44df6db8059111ab3af99a63d5d0f8375d9972e319a379c6bab76",
+        size = 83384,
+        features = ["generic-array", "rand_core", "zeroize"],
+        env = cargo_pkg_env("crypto-bigint", "0.5.5", "crypto_bigint"),
+        deps = [
+            ":generic-array",
+            ":rand_core-0.6.4",
+            ":subtle",
+            ":zeroize",
+        ],
     )
 
     crates_io_library(
@@ -844,6 +888,41 @@ def crates():
         edition = "2024",
         env = cargo_pkg_env("crypto-common", "0.2.2", "crypto_common"),
         deps = [":hybrid-array"],
+    )
+
+    # build script (a): Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; build.rs picks the field backend: 64-bit limbs on x86_64, and the simd backend (AVX2 code, chosen at run time; the AVX-512 one needs an extra cfg and a nightly compiler and is not on).
+    crates_io_library(
+        name = "curve25519-dalek",
+        version = "4.1.3",
+        sha256 = "97fb8b7c4503de7d6ae7b42ab72a5a59857b4c937ec27a3d4539dba95b5ab2be",
+        size = 306017,
+        features = [
+            "alloc",
+            "digest",
+            "precomputed-tables",
+            "zeroize",
+        ],
+        cfgs = ["curve25519_dalek_bits=\"64\"", "curve25519_dalek_backend=\"simd\""],
+        env = cargo_pkg_env("curve25519-dalek", "4.1.3", "curve25519_dalek"),
+        deps = [
+            ":cfg-if",
+            ":cpufeatures-0.2.17",
+            ":curve25519-dalek-derive",
+            ":digest-0.10.7",
+            ":subtle",
+            ":zeroize",
+        ],
+    )
+
+    crates_io_library(
+        name = "curve25519-dalek-derive",
+        version = "0.1.1",
+        sha256 = "f46882e17999c6cc590af592290432be3bce0428cb0d5f8b6715e4dc7b383eb3",
+        size = 11723,
+        env = cargo_pkg_env("curve25519-dalek-derive", "0.1.1", "curve25519_dalek_derive"),
+        proc_macro = True,
+        proc_macro_extern = True,
+        deps = [":proc-macro2", ":quote", ":syn-2.0.119"],
     )
 
     crates_io_library(
@@ -885,6 +964,22 @@ def crates():
     )
 
     crates_io_library(
+        name = "der",
+        version = "0.7.10",
+        sha256 = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb",
+        size = 90111,
+        features = [
+            "alloc",
+            "oid",
+            "pem",
+            "std",
+            "zeroize",
+        ],
+        env = cargo_pkg_env("der", "0.7.10", "der"),
+        deps = [":const-oid-0.9.6", ":pem-rfc7468", ":zeroize"],
+    )
+
+    crates_io_library(
         name = "deranged",
         version = "0.5.9",
         sha256 = "9e9de72ce2ad1f90dc62fa25f0f430ef85eb4b0d8fa0be4f30373bc40a21d28e",
@@ -905,14 +1000,21 @@ def crates():
         features = [
             "alloc",
             "block-buffer",
+            "const-oid",
             "core-api",
             "default",
             "mac",
+            "oid",
             "std",
             "subtle",
         ],
         env = cargo_pkg_env("digest", "0.10.7", "digest"),
-        deps = [":block-buffer-0.10.4", ":crypto-common-0.1.7", ":subtle"],
+        deps = [
+            ":block-buffer-0.10.4",
+            ":const-oid-0.9.6",
+            ":crypto-common-0.1.7",
+            ":subtle",
+        ],
     )
 
     crates_io_library(
@@ -929,7 +1031,7 @@ def crates():
             "oid",
         ],
         env = cargo_pkg_env("digest", "0.11.3", "digest"),
-        deps = [":block-buffer-0.12.1", ":const-oid"],
+        deps = [":block-buffer-0.12.1", ":const-oid-0.10.2"],
         renamed_deps = {
             "common": ":crypto-common-0.2.2",
         },
@@ -947,12 +1049,111 @@ def crates():
     )
 
     crates_io_library(
+        name = "ecdsa",
+        version = "0.16.9",
+        sha256 = "ee27f32b5c5292967d2d4a9d7f1e0b0aed2c15daded5a60300e4abb9d8020bca",
+        size = 31406,
+        features = [
+            "alloc",
+            "arithmetic",
+            "der",
+            "digest",
+            "hazmat",
+            "pem",
+            "pkcs8",
+            "rfc6979",
+            "signing",
+            "spki",
+            "std",
+            "verifying",
+        ],
+        env = cargo_pkg_env("ecdsa", "0.16.9", "ecdsa"),
+        deps = [
+            ":der",
+            ":digest-0.10.7",
+            ":elliptic-curve",
+            ":rfc6979",
+            ":signature",
+            ":spki",
+        ],
+    )
+
+    crates_io_library(
+        name = "ed25519",
+        version = "2.2.3",
+        sha256 = "115531babc129696a58c64a4fef0a8bf9e9698629fb97e9e40767d235cfbcd53",
+        size = 17802,
+        features = ["alloc", "pkcs8", "std"],
+        env = cargo_pkg_env("ed25519", "2.2.3", "ed25519"),
+        deps = [":pkcs8", ":signature"],
+    )
+
+    crates_io_library(
+        name = "ed25519-dalek",
+        version = "2.2.0",
+        sha256 = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9",
+        size = 98034,
+        features = [
+            "alloc",
+            "default",
+            "fast",
+            "pkcs8",
+            "std",
+            "zeroize",
+        ],
+        env = cargo_pkg_env("ed25519-dalek", "2.2.0", "ed25519_dalek"),
+        deps = [
+            ":curve25519-dalek",
+            ":ed25519",
+            ":sha2-0.10.9",
+            ":subtle",
+            ":zeroize",
+        ],
+    )
+
+    crates_io_library(
         name = "either",
         version = "1.19.0",
         sha256 = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be",
         size = 22501,
         features = ["default", "std"],
         env = cargo_pkg_env("either", "1.19.0", "either"),
+    )
+
+    crates_io_library(
+        name = "elliptic-curve",
+        version = "0.13.8",
+        sha256 = "b5e6043086bf7973472e0c7dff2142ea0b680d30e18d9cc40f267efbf222bd47",
+        size = 63198,
+        features = [
+            "alloc",
+            "arithmetic",
+            "digest",
+            "ecdh",
+            "ff",
+            "group",
+            "hazmat",
+            "pem",
+            "pkcs8",
+            "sec1",
+            "std",
+        ],
+        env = cargo_pkg_env("elliptic-curve", "0.13.8", "elliptic_curve"),
+        deps = [
+            ":base16ct",
+            ":crypto-bigint",
+            ":digest-0.10.7",
+            ":ff",
+            ":generic-array",
+            ":group",
+            ":hkdf",
+            ":pem-rfc7468",
+            ":pkcs8",
+            ":rand_core-0.6.4",
+            ":sec1",
+            ":subtle",
+            ":zeroize",
+        ],
     )
 
     crates_io_library(
@@ -972,6 +1173,16 @@ def crates():
         edition = "2018",
         features = ["alloc", "default", "std"],
         env = cargo_pkg_env("fastrand", "2.5.0", "fastrand"),
+    )
+
+    crates_io_library(
+        name = "ff",
+        version = "0.13.1",
+        sha256 = "c0b50bfb653653f9ca9095b427bed08ab8d75a137839d9ad64eb11810d5b6393",
+        size = 18607,
+        features = ["alloc"],
+        env = cargo_pkg_env("ff", "0.13.1", "ff"),
+        deps = [":rand_core-0.6.4", ":subtle"],
     )
 
     crates_io_library(
@@ -1164,10 +1375,22 @@ def crates():
         sha256 = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a",
         size = 15950,
         edition = "2015",
-        features = ["more_lengths"],
+        features = ["more_lengths", "zeroize"],
         cfgs = ["relaxed_coherence"],
         env = cargo_pkg_env("generic-array", "0.14.7", "generic_array"),
-        deps = [":typenum"],
+        deps = [":typenum", ":zeroize"],
+    )
+
+    crates_io_library(
+        name = "getrandom-0.2.17",
+        version = "0.2.17",
+        sha256 = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0",
+        size = 40780,
+        crate = "getrandom",
+        edition = "2018",
+        features = ["std"],
+        env = cargo_pkg_env("getrandom", "0.2.17", "getrandom"),
+        deps = [":cfg-if", ":libc"],
     )
 
     # build script (a): Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; emits cfgs only for msan and windows targets; none on linux.
@@ -1193,6 +1416,16 @@ def crates():
         features = ["std"],
         env = cargo_pkg_env("getrandom", "0.4.3", "getrandom"),
         deps = [":cfg-if", ":libc"],
+    )
+
+    crates_io_library(
+        name = "group",
+        version = "0.13.0",
+        sha256 = "f0f9ef7462f7c099f518d754361858f86d8a07af53ba9af0fe635bbccb151a63",
+        size = 16526,
+        features = ["alloc"],
+        env = cargo_pkg_env("group", "0.13.0", "group"),
+        deps = [":ff", ":rand_core-0.6.4", ":subtle"],
     )
 
     crates_io_library(
@@ -1255,11 +1488,22 @@ def crates():
     )
 
     crates_io_library(
+        name = "hkdf",
+        version = "0.12.4",
+        sha256 = "7b5f8eb2ad728638ea2c7d47a21db23b7b58a72ed6a38256b8a1849f15fbbdf7",
+        size = 171163,
+        edition = "2018",
+        env = cargo_pkg_env("hkdf", "0.12.4", "hkdf"),
+        deps = [":hmac"],
+    )
+
+    crates_io_library(
         name = "hmac",
         version = "0.12.1",
         sha256 = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e",
         size = 42657,
         edition = "2018",
+        features = ["reset"],
         env = cargo_pkg_env("hmac", "0.12.1", "hmac"),
         deps = [":digest-0.10.7"],
     )
@@ -1391,6 +1635,7 @@ def crates():
         sha256 = "dfa8e654703247911e29c23fbeaa261834bd9bb74efba2f9acddc37bfb127f53",
         size = 23240,
         features = [
+            "aws-lc-rs",
             "http1",
             "http2",
             "native-tokio",
@@ -1618,6 +1863,38 @@ def crates():
     )
 
     crates_io_library(
+        name = "jsonwebtoken",
+        version = "10.3.0",
+        sha256 = "0529410abe238729a60b108898784df8984c87f6054c9c4fcacc47e4803c1ce1",
+        size = 64989,
+        edition = "2024",
+        features = [
+            "ed25519-dalek",
+            "hmac",
+            "p256",
+            "p384",
+            "rand",
+            "rsa",
+            "rust_crypto",
+            "sha2",
+        ],
+        env = cargo_pkg_env("jsonwebtoken", "10.3.0", "jsonwebtoken"),
+        deps = [
+            ":base64-0.22.1",
+            ":ed25519-dalek",
+            ":hmac",
+            ":p256",
+            ":p384",
+            ":rand-0.8.8",
+            ":rsa",
+            ":serde",
+            ":serde_json",
+            ":sha2-0.10.9",
+            ":signature",
+        ],
+    )
+
+    crates_io_library(
         name = "lambda_runtime",
         version = "1.4.0",
         sha256 = "1b4a47ba6672230da151bb4bc10e4c09c9dcb7f6b363f47dc3ce84df1ec9bbbd",
@@ -1669,7 +1946,9 @@ def crates():
         sha256 = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb",
         size = 13937,
         edition = "2015",
+        features = ["spin", "spin_no_std"],
         env = cargo_pkg_env("lazy_static", "1.5.1", "lazy_static"),
+        deps = [":spin"],
     )
 
     # build script (a): Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; x86_64 linux gnu, 64-bit time: linux_time_bits64.
@@ -1681,6 +1960,21 @@ def crates():
         features = ["default", "extra_traits", "std"],
         cfgs = ["linux_time_bits64"],
         env = cargo_pkg_env("libc", "0.2.190", "libc"),
+    )
+
+    # build script (a): Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; build.rs emits arch_enabled (the architecture-specific code paths) and the CFG_* variables its own test harness reads; the library does not read them, they are recorded as emitted (the optimisation level is the debug build's, 0).
+    crates_io_library(
+        name = "libm",
+        version = "0.2.16",
+        sha256 = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981",
+        size = 164243,
+        features = ["arch", "default"],
+        cfgs = ["arch_enabled"],
+        env = cargo_pkg_env("libm", "0.2.16", "libm") | {
+            "CFG_CARGO_FEATURES": "[\"arch\", \"default\"]",
+            "CFG_OPT_LEVEL": "0",
+            "CFG_TARGET_FEATURES": "[\"fxsr\", \"sse\", \"sse2\"]",
+        },
     )
 
     crates_io_library(
@@ -1757,6 +2051,33 @@ def crates():
         deps = [":libc"],
     )
 
+    # build script (a): Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; autocfg probe: i128 is available.
+    crates_io_library(
+        name = "num-bigint-dig",
+        version = "0.8.6",
+        sha256 = "e661dda6640fad38e827a6d4a310ff4763082116fe217f279885c97f511bb0b7",
+        size = 126196,
+        features = [
+            "i128",
+            "prime",
+            "rand",
+            "u64_digit",
+            "zeroize",
+        ],
+        cfgs = ["has_i128"],
+        env = cargo_pkg_env("num-bigint-dig", "0.8.6", "num_bigint_dig"),
+        deps = [
+            ":lazy_static",
+            ":libm",
+            ":num-integer",
+            ":num-iter",
+            ":num-traits",
+            ":rand-0.8.8",
+            ":smallvec",
+            ":zeroize",
+        ],
+    )
+
     crates_io_library(
         name = "num-conv",
         version = "0.1.0",
@@ -1771,9 +2092,19 @@ def crates():
         sha256 = "7ce2d95d4b3734dc35aa2f45e1aa22cd416814592a4f9d9205e11affd5b8e10b",
         size = 23502,
         edition = "2018",
-        features = ["default", "std"],
+        features = ["default", "i128", "std"],
         env = cargo_pkg_env("num-integer", "0.1.47", "num_integer"),
         deps = [":num-traits"],
+    )
+
+    crates_io_library(
+        name = "num-iter",
+        version = "0.1.46",
+        sha256 = "c92800bd69a1eac91786bcfe9da64a897eb72911b8dc3095decbd07429e8048b",
+        size = 10763,
+        edition = "2018",
+        env = cargo_pkg_env("num-iter", "0.1.46", "num_iter"),
+        deps = [":num-integer", ":num-traits"],
     )
 
     # build script (a): Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; autocfg probe `1f64.total_cmp(&2f64)` compiles on 1.99.
@@ -1782,9 +2113,10 @@ def crates():
         version = "0.2.19",
         sha256 = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841",
         size = 51631,
-        features = ["i128", "std"],
+        features = ["i128", "libm", "std"],
         cfgs = ["has_total_cmp"],
         env = cargo_pkg_env("num-traits", "0.2.19", "num_traits"),
+        deps = [":libm"],
     )
 
     crates_io_library(
@@ -1817,6 +2149,57 @@ def crates():
         env = cargo_pkg_env("outref", "0.5.2", "outref"),
     )
 
+    crates_io_library(
+        name = "p256",
+        version = "0.13.2",
+        sha256 = "c9863ad85fa8f4460f9c48cb909d38a0d689dba1f6f6988a5e3e0d31071bcd4b",
+        size = 63434,
+        features = [
+            "alloc",
+            "arithmetic",
+            "default",
+            "digest",
+            "ecdsa",
+            "ecdsa-core",
+            "pem",
+            "pkcs8",
+            "sha2",
+            "sha256",
+            "std",
+        ],
+        env = cargo_pkg_env("p256", "0.13.2", "p256"),
+        deps = [":elliptic-curve", ":primeorder", ":sha2-0.10.9"],
+        renamed_deps = {
+            "ecdsa_core": ":ecdsa",
+        },
+    )
+
+    crates_io_library(
+        name = "p384",
+        version = "0.13.1",
+        sha256 = "fe42f1670a52a47d448f14b6a5c61dd78fce51856e68edaa38f7ae3a46b8d6b6",
+        size = 193022,
+        features = [
+            "alloc",
+            "arithmetic",
+            "default",
+            "digest",
+            "ecdh",
+            "ecdsa",
+            "ecdsa-core",
+            "pem",
+            "pkcs8",
+            "sha2",
+            "sha384",
+            "std",
+        ],
+        env = cargo_pkg_env("p384", "0.13.1", "p384"),
+        deps = [":elliptic-curve", ":primeorder", ":sha2-0.10.9"],
+        renamed_deps = {
+            "ecdsa_core": ":ecdsa",
+        },
+    )
+
     # build script (a): Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; no_literal_fromstr only below rustc 1.54.
     crates_io_library(
         name = "paste",
@@ -1827,6 +2210,16 @@ def crates():
         env = cargo_pkg_env("paste", "1.0.15", "paste"),
         proc_macro = True,
         proc_macro_extern = True,
+    )
+
+    crates_io_library(
+        name = "pem-rfc7468",
+        version = "0.7.0",
+        sha256 = "88b39c9bfcfc231068454382784bb460aae594343fb030d46e9f50a645418412",
+        size = 24159,
+        features = ["alloc"],
+        env = cargo_pkg_env("pem-rfc7468", "0.7.0", "pem_rfc7468"),
+        deps = [":base64ct"],
     )
 
     crates_io_library(
@@ -1878,6 +2271,32 @@ def crates():
     )
 
     crates_io_library(
+        name = "pkcs1",
+        version = "0.7.5",
+        sha256 = "c8ffb9f10fa047879315e6625af03c164b16962a5368d724ed16323b68ace47f",
+        size = 35790,
+        features = [
+            "alloc",
+            "pem",
+            "pkcs8",
+            "std",
+            "zeroize",
+        ],
+        env = cargo_pkg_env("pkcs1", "0.7.5", "pkcs1"),
+        deps = [":der", ":pkcs8", ":spki"],
+    )
+
+    crates_io_library(
+        name = "pkcs8",
+        version = "0.10.2",
+        sha256 = "f950b2377845cebe5cf8b5165cb3cc1a5e0fa5cfa3e1f7f55707d8fd82e0a7b7",
+        size = 26360,
+        features = ["alloc", "pem", "std"],
+        env = cargo_pkg_env("pkcs8", "0.10.2", "pkcs8"),
+        deps = [":der", ":spki"],
+    )
+
+    crates_io_library(
         name = "potential_utf",
         version = "0.1.6",
         sha256 = "d83eb9bc6d8e5cf568e7a1101d60ee05e81ed50ea106026f3d18deeb046d7661",
@@ -1903,6 +2322,15 @@ def crates():
         features = ["simd", "std"],
         env = cargo_pkg_env("ppv-lite86", "0.2.21", "ppv_lite86"),
         deps = [":zerocopy"],
+    )
+
+    crates_io_library(
+        name = "primeorder",
+        version = "0.13.6",
+        sha256 = "353e1ca18966c16d9deb1c69278edbc5f194139612772bd9537af60ac231e1e6",
+        size = 21296,
+        env = cargo_pkg_env("primeorder", "0.13.6", "primeorder"),
+        deps = [":elliptic-curve"],
     )
 
     # build script (a): Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; stable rustc without span-locations: wrap_proc_macro; the probes of the Span methods stabilised in 1.88 compile on 1.99.
@@ -1950,10 +2378,30 @@ def crates():
     )
 
     crates_io_library(
-        name = "rand",
+        name = "rand-0.8.8",
+        version = "0.8.8",
+        sha256 = "e058c7de0b26af77780c769414d6257830bb240f3c38477dbc2c16e5f54d6d4c",
+        size = 84217,
+        crate = "rand",
+        edition = "2018",
+        features = [
+            "alloc",
+            "getrandom",
+            "libc",
+            "rand_chacha",
+            "std",
+            "std_rng",
+        ],
+        env = cargo_pkg_env("rand", "0.8.8", "rand"),
+        deps = [":libc", ":rand_chacha-0.3.1", ":rand_core-0.6.4"],
+    )
+
+    crates_io_library(
+        name = "rand-0.9.5",
         version = "0.9.5",
         sha256 = "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41",
         size = 100216,
+        crate = "rand",
         features = [
             "alloc",
             "default",
@@ -1964,24 +2412,50 @@ def crates():
             "thread_rng",
         ],
         env = cargo_pkg_env("rand", "0.9.5", "rand"),
-        deps = [":rand_chacha", ":rand_core"],
+        deps = [":rand_chacha-0.9.0", ":rand_core-0.9.5"],
     )
 
     crates_io_library(
-        name = "rand_chacha",
+        name = "rand_chacha-0.3.1",
+        version = "0.3.1",
+        sha256 = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88",
+        size = 15251,
+        crate = "rand_chacha",
+        edition = "2018",
+        features = ["std"],
+        env = cargo_pkg_env("rand_chacha", "0.3.1", "rand_chacha"),
+        deps = [":ppv-lite86", ":rand_core-0.6.4"],
+    )
+
+    crates_io_library(
+        name = "rand_chacha-0.9.0",
         version = "0.9.0",
         sha256 = "d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb",
         size = 18258,
+        crate = "rand_chacha",
         features = ["std"],
         env = cargo_pkg_env("rand_chacha", "0.9.0", "rand_chacha"),
-        deps = [":ppv-lite86", ":rand_core"],
+        deps = [":ppv-lite86", ":rand_core-0.9.5"],
     )
 
     crates_io_library(
-        name = "rand_core",
+        name = "rand_core-0.6.4",
+        version = "0.6.4",
+        sha256 = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c",
+        size = 22666,
+        crate = "rand_core",
+        edition = "2018",
+        features = ["alloc", "getrandom", "std"],
+        env = cargo_pkg_env("rand_core", "0.6.4", "rand_core"),
+        deps = [":getrandom-0.2.17"],
+    )
+
+    crates_io_library(
+        name = "rand_core-0.9.5",
         version = "0.9.5",
         sha256 = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c",
         size = 24129,
+        crate = "rand_core",
         features = ["os_rng", "std"],
         env = cargo_pkg_env("rand_core", "0.9.5", "rand_core"),
         deps = [":getrandom-0.3.4"],
@@ -2080,6 +2554,45 @@ def crates():
             "unicode-segment",
         ],
         env = cargo_pkg_env("regex-syntax", "0.8.11", "regex_syntax"),
+    )
+
+    crates_io_library(
+        name = "rfc6979",
+        version = "0.4.0",
+        sha256 = "f8dd2a808d456c4a54e300a23e9f5a67e122c3024119acbfd73e3bf664491cb2",
+        size = 9140,
+        env = cargo_pkg_env("rfc6979", "0.4.0", "rfc6979"),
+        deps = [":hmac", ":subtle"],
+    )
+
+    crates_io_library(
+        name = "rsa",
+        version = "0.9.10",
+        sha256 = "b8573f03f5883dcaebdfcf4725caa1ecb9c15b2ef50c43a07b816e06799bb12d",
+        size = 86417,
+        features = [
+            "default",
+            "pem",
+            "std",
+            "u64_digit",
+        ],
+        env = cargo_pkg_env("rsa", "0.9.10", "rsa"),
+        deps = [
+            ":const-oid-0.9.6",
+            ":digest-0.10.7",
+            ":num-integer",
+            ":num-traits",
+            ":pkcs1",
+            ":pkcs8",
+            ":rand_core-0.6.4",
+            ":signature",
+            ":spki",
+            ":subtle",
+            ":zeroize",
+        ],
+        renamed_deps = {
+            "num_bigint": ":num-bigint-dig",
+        },
     )
 
     # build script (a): Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; read_buf is for nightly only.
@@ -2181,6 +2694,33 @@ def crates():
         sha256 = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f",
         size = 52823,
         env = cargo_pkg_env("ryu", "1.0.23", "ryu"),
+    )
+
+    crates_io_library(
+        name = "sec1",
+        version = "0.7.3",
+        sha256 = "d3e97a565f76233a6003f9f5c54be1d9c5bdfa3eccfb189469f11ec4901c47dc",
+        size = 17979,
+        features = [
+            "alloc",
+            "default",
+            "der",
+            "pem",
+            "pkcs8",
+            "point",
+            "std",
+            "subtle",
+            "zeroize",
+        ],
+        env = cargo_pkg_env("sec1", "0.7.3", "sec1"),
+        deps = [
+            ":base16ct",
+            ":der",
+            ":generic-array",
+            ":pkcs8",
+            ":subtle",
+            ":zeroize",
+        ],
     )
 
     # build script (b): Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; build.rs writes private.rs (a module named for the patch version, 229) and emits if_docsrs_then_no_serde_core; every no_* cfg is off at 1.99. The file is placed beside each include! (src/lib.rs and src/core/crate_root.rs).
@@ -2339,7 +2879,7 @@ def crates():
         size = 29271,
         crate = "sha2",
         edition = "2018",
-        features = ["default", "std"],
+        features = ["default", "oid", "std"],
         env = cargo_pkg_env("sha2", "0.10.9", "sha2"),
         deps = [":cfg-if", ":cpufeatures-0.2.17", ":digest-0.10.7"],
     )
@@ -2364,6 +2904,21 @@ def crates():
         edition = "2018",
         env = cargo_pkg_env("sharded-slab", "0.1.7", "sharded_slab"),
         deps = [":lazy_static"],
+    )
+
+    crates_io_library(
+        name = "signature",
+        version = "2.2.0",
+        sha256 = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de",
+        size = 15531,
+        features = [
+            "alloc",
+            "digest",
+            "rand_core",
+            "std",
+        ],
+        env = cargo_pkg_env("signature", "2.2.0", "signature"),
+        deps = [":digest-0.10.7", ":rand_core-0.6.4"],
     )
 
     crates_io_library(
@@ -2403,6 +2958,26 @@ def crates():
         features = ["all"],
         env = cargo_pkg_env("socket2", "0.6.5", "socket2"),
         deps = [":libc"],
+    )
+
+    crates_io_library(
+        name = "spin",
+        version = "0.9.9",
+        sha256 = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e",
+        size = 39817,
+        edition = "2015",
+        features = ["once"],
+        env = cargo_pkg_env("spin", "0.9.9", "spin"),
+    )
+
+    crates_io_library(
+        name = "spki",
+        version = "0.7.3",
+        sha256 = "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d",
+        size = 16409,
+        features = ["alloc", "pem", "std"],
+        env = cargo_pkg_env("spki", "0.7.3", "spki"),
+        deps = [":der"],
     )
 
     crates_io_library(

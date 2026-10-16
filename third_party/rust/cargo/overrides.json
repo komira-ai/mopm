@@ -75,6 +75,14 @@
     "stable_vpclmulqdq"
    ]
   },
+  "curve25519-dalek 4.1.3": {
+   "class": "a",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; build.rs picks the field backend: 64-bit limbs on x86_64, and the simd backend (AVX2 code, chosen at run time; the AVX-512 one needs an extra cfg and a nightly compiler and is not on).",
+   "cfgs": [
+    "curve25519_dalek_bits=\"64\"",
+    "curve25519_dalek_backend=\"simd\""
+   ]
+  },
   "generic-array 0.14.7": {
    "class": "a",
    "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; version_check: rustc >= 1.41.",
@@ -115,6 +123,25 @@
    "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; x86_64 linux gnu, 64-bit time: linux_time_bits64.",
    "cfgs": [
     "linux_time_bits64"
+   ]
+  },
+  "libm 0.2.16": {
+   "class": "a",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; build.rs emits arch_enabled (the architecture-specific code paths) and the CFG_* variables its own test harness reads; the library does not read them, they are recorded as emitted (the optimisation level is the debug build's, 0).",
+   "cfgs": [
+    "arch_enabled"
+   ],
+   "env": {
+    "CFG_CARGO_FEATURES": "[\"arch\", \"default\"]",
+    "CFG_OPT_LEVEL": "0",
+    "CFG_TARGET_FEATURES": "[\"fxsr\", \"sse\", \"sse2\"]"
+   }
+  },
+  "num-bigint-dig 0.8.6": {
+   "class": "a",
+   "why": "Derived from the build script's own output on a GitHub runner under rustc 1.99.0 (x86_64-unknown-linux-gnu), `cargo build --locked`; autocfg probe: i128 is available.",
+   "cfgs": [
+    "has_i128"
    ]
   },
   "num-traits 0.2.19": {

@@ -71,3 +71,11 @@ ruzstd = "0.9"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 crc32fast = "1"
 unicode-normalization = "0.1"
+
+# HTTPS for GitHub (device login, the OIDC key set): hyper on the same rustls and AWS-LC as the SDK,
+# system roots. Signature checks of CI identity tokens: jsonwebtoken on its pure-Rust backend (no C).
+hyper = { version = "1", default-features = false, features = ["client", "http1"] }
+hyper-util = { version = "0.1", default-features = false, features = ["client-legacy", "http1", "tokio"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "native-tokio", "tls12", "aws-lc-rs"] }
+http-body-util = "0.1"
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
