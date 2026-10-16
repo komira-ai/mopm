@@ -126,7 +126,10 @@ fn tempName(arena: Allocator, env_name: []const u8, kind: []const u8) ![]u8 {
 
 /// Removes what an earlier, interrupted `installEnv` left beside the target.
 fn removeStale(arena: Allocator, parent: std.fs.Dir, env_name: []const u8) void {
-    var it = parent.iterate();
+    // `parent` may not have been opened for iteration: open it again, so.
+    var listing = parent.openDir(".", .{ .iterate = true }) catch return;
+    defer listing.close();
+    var it = listing.iterate();
     const tmp = std.fmt.allocPrint(arena, ".{s}.tmp-", .{env_name}) catch return;
     const old = std.fmt.allocPrint(arena, ".{s}.old-", .{env_name}) catch return;
     var names = std.ArrayList([]const u8).init(arena);
@@ -248,7 +251,7 @@ const Fixture = struct {
         return .{
             .tmp = tmp,
             .cache = try tmp.dir.openDir("pkgs", .{}),
-            .parent = try tmp.dir.openDir("m", .{ .iterate = true }),
+            .parent = try tmp.dir.openDir("m", .{}),
         };
     }
 
@@ -278,7 +281,9 @@ const Fixture = struct {
     /// The names in `m/`, sorted.
     fn listing(self: *Fixture, a: Allocator) ![]const u8 {
         var names = std.ArrayList([]const u8).init(a);
-        var it = self.parent.iterate();
+        var dir = try self.tmp.dir.openDir("m", .{ .iterate = true });
+        defer dir.close();
+        var it = dir.iterate();
         while (try it.next()) |e| try names.append(try a.dupe(u8, e.name));
         std.mem.sort([]const u8, names.items, {}, struct {
             fn less(_: void, x: []const u8, y: []const u8) bool {
