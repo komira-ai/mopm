@@ -1,0 +1,545 @@
+{
+  "description": "Creating a token: a stale session or an API token is stale_session, a CI token is nobody's, each invalid body member, the expiry bounds, and a package the caller does not own.",
+  "world": {
+    "auth": true,
+    "publish": true,
+    "seeds": [
+      "auth_accounts"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessstaleaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "ci",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 30
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "stale_session"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_apifullaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "ci",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 30
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "stale_session"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_ciwidgetsaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "ci",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 30
+        }
+      },
+      "expect": {
+        "status": 403,
+        "code": "scope_missing"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "json": {
+          "name": "ci"
+        }
+      },
+      "expect": {
+        "status": 401,
+        "code": "token_missing"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "body": "not json"
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "body": "[]"
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "body": {
+          "$repeat": [
+            "x",
+            65537
+          ]
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 30
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 30
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 30
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 30
+        }
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "ci",
+          "scopes": [],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 30
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "ci",
+          "scopes": [
+            "admin"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 30
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "ci",
+          "scopes": "publish",
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 30
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "ci",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 0
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "ci",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 1
+        }
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "ci",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 90
+        }
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "ci",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 91
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "ci",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": 1.5
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "ci",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "alpha"
+          ],
+          "expires_in_days": "30"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "ci",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [],
+          "expires_in_days": 30
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "ci",
+          "scopes": [
+            "publish"
+          ],
+          "expires_in_days": 30
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "ci",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "Bad Name"
+          ],
+          "expires_in_days": 30
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_name"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "ci",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "gamma_pkg"
+          ],
+          "expires_in_days": 30
+        }
+      },
+      "expect": {
+        "status": 403,
+        "code": "not_owner"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "ci",
+          "scopes": [
+            "publish"
+          ],
+          "packages": [
+            "nosuch"
+          ],
+          "expires_in_days": 30
+        }
+      },
+      "expect": {
+        "status": 403,
+        "code": "not_owner"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa",
+        "json": {
+          "name": "ci",
+          "scopes": [
+            "publish"
+          ],
+          "packages": "all_current",
+          "expires_in_days": 30
+        }
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 404,
+        "code": "route_not_found"
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/me/tokens",
+        "token": "mopm_sessfreshaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "status": 404,
+        "code": "route_not_found"
+      }
+    }
+  ]
+}

@@ -1,0 +1,140 @@
+{
+  "description": "A whole login: start, a poll answered pending by GitHub, a poll that is too fast (slow down), a pending poll, then approval; the session token then lists tokens, cannot mint an all_current token for an account with no packages, and the used code is unknown.",
+  "world": {
+    "auth": true,
+    "github": {
+      "poll_script": [
+        {
+          "error": "authorization_pending"
+        },
+        {
+          "error": "authorization_pending"
+        },
+        {
+          "access_token": "gho_faketoken",
+          "token_type": "bearer",
+          "scope": "read:user"
+        }
+      ],
+      "user": {
+        "id": 4242,
+        "login": "octo",
+        "two_factor_authentication": true
+      }
+    }
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device",
+        "json": {
+          "client": "mopm 0.1.0"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device/poll",
+        "json": {
+          "device_code": "{{0.device_code}}"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device/poll",
+        "json": {
+          "device_code": "{{0.device_code}}"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "set": {
+        "advance_s": 20
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device/poll",
+        "json": {
+          "device_code": "{{0.device_code}}"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "set": {
+        "advance_s": 30
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device/poll",
+        "json": {
+          "device_code": "{{0.device_code}}"
+        }
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/me/tokens",
+        "token": "{{4.token}}"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/me/tokens",
+        "token": "{{4.token}}",
+        "json": {
+          "name": "ci",
+          "scopes": [
+            "publish"
+          ],
+          "packages": "all_current",
+          "expires_in_days": 30
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/device/poll",
+        "json": {
+          "device_code": "{{0.device_code}}"
+        }
+      },
+      "expect": {
+        "status": 404,
+        "code": "device_code_unknown"
+      }
+    }
+  ]
+}

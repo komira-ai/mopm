@@ -248,6 +248,15 @@ zig_test(  # buck-only: tools/build_parity.zig reads build.zig and this file
     **_TOOLS
 )
 
+# ---- The validator corpus: files made by a Zig generator, and the test that they are what it makes ----
+
+zig_test(  # buck-only: tests/validator_corpus is what tests/drivers/validator_corpus.zig makes
+    name = "validator_corpus",
+    src = "tests/drivers/validator_corpus_test.zig",
+    imports = ["tests/drivers/validator_corpus.zig"] + glob(["tests/validator_corpus/**"]),
+    **_TOOLS
+)
+
 # ---- Mojo end-to-end drivers (komira's pinned Mojo 1.0.0, no pixi) ----------
 
 zig_exe(  # buck-only: `cc` of the Mojo drivers, zig cc
@@ -364,6 +373,12 @@ export_file(
     visibility = ["//service/lambda/core:"],
 )
 
+filegroup(
+    name = "validator_corpus_files",
+    srcs = {f[len("tests/validator_corpus/"):]: f for f in glob(["tests/validator_corpus/**"])},
+    visibility = ["//service/api:", "//service/lambda/validate:"],
+)
+
 # ---- What the site's tests and build read outside site/ (site/BUCK) ----------
 # (Plain calls: tools/build_parity.zig reads only plain calls in this file.)
 export_file(
@@ -427,6 +442,7 @@ _LINT_PACKAGES = [
     "service/infra/stacks",
     "service/lambda/aws",
     "service/lambda/core",
+    "service/lambda/validate",
     "service/lambda/ports",
     "service/lambda/testing",
     "third_party/rust",

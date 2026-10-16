@@ -1,0 +1,47 @@
+{
+  "description": "A stage other than beta, gamma or prod is refused at the cold start; an empty value counts as not set; the check is case sensitive.",
+  "lambda": "api",
+  "env": {
+    "MOPM_STAGE": "dev"
+  },
+  "invocations": [
+    {
+      "event": "events/apigw_get_health.json",
+      "expect": {
+        "rejects": {
+          "name": "Error",
+          "message": "MOPM_STAGE is not a stage"
+        }
+      }
+    },
+    {
+      "env": {
+        "MOPM_STAGE": ""
+      },
+      "event": "events/apigw_get_health.json",
+      "expect": {
+        "rejects": {
+          "name": "Error",
+          "message": "MOPM_STAGE is not set"
+        }
+      }
+    },
+    {
+      "env": {
+        "MOPM_STAGE": "Beta"
+      },
+      "event": "events/apigw_get_health.json",
+      "expect": {
+        "rejects": {
+          "name": "Error",
+          "message": "MOPM_STAGE is not a stage"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [],
+    "aws_http": [],
+    "logs": []
+  }
+}

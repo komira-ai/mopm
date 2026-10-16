@@ -1,0 +1,796 @@
+{
+  "description": "Search by name: default order and page, limits at both edges, cursor chaining over three pages, prefix normalisation, and every refusal.",
+  "world": {
+    "seeds": [
+      "search_five_claimed"
+    ]
+  },
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {},
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-1"
+          ]
+        ],
+        "body": "{\"packages\":[{\"name\":\"http_client\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-01T09:00:00Z\"},{\"name\":\"http_core\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-02T09:00:00Z\"},{\"name\":\"http_server\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-03T09:00:00Z\"},{\"name\":\"httpx\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-04T09:00:00Z\"},{\"name\":\"zlib\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-05T09:00:00Z\"}],\"next_cursor\":null}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "limit": "2"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-2"
+          ]
+        ],
+        "body": "{\"packages\":[{\"name\":\"http_client\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-01T09:00:00Z\"},{\"name\":\"http_core\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-02T09:00:00Z\"}],\"next_cursor\":\"eyJrIjoibmFtZSIsImFmdGVyIjoiaHR0cF9jb3JlIn0\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "limit": "2",
+          "cursor": "eyJrIjoibmFtZSIsImFmdGVyIjoiaHR0cF9jb3JlIn0"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-3"
+          ]
+        ],
+        "body": "{\"packages\":[{\"name\":\"http_server\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-03T09:00:00Z\"},{\"name\":\"httpx\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-04T09:00:00Z\"}],\"next_cursor\":\"eyJrIjoibmFtZSIsImFmdGVyIjoiaHR0cHgifQ\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "limit": "2",
+          "cursor": "eyJrIjoibmFtZSIsImFmdGVyIjoiaHR0cHgifQ"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-4"
+          ]
+        ],
+        "body": "{\"packages\":[{\"name\":\"zlib\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-05T09:00:00Z\"}],\"next_cursor\":null}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "limit": "1"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-5"
+          ]
+        ],
+        "body": "{\"packages\":[{\"name\":\"http_client\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-01T09:00:00Z\"}],\"next_cursor\":\"eyJrIjoibmFtZSIsImFmdGVyIjoiaHR0cF9jbGllbnQifQ\"}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "limit": "100"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-6"
+          ]
+        ],
+        "body": "{\"packages\":[{\"name\":\"http_client\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-01T09:00:00Z\"},{\"name\":\"http_core\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-02T09:00:00Z\"},{\"name\":\"http_server\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-03T09:00:00Z\"},{\"name\":\"httpx\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-04T09:00:00Z\"},{\"name\":\"zlib\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-05T09:00:00Z\"}],\"next_cursor\":null}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "limit": "101"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-7"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: limit must be an integer from 1 to 100.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "limit": "0"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-8"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: limit must be an integer from 1 to 100.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "limit": "-1"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-9"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: limit must be an integer from 1 to 100.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "limit": "abc"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-10"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: limit must be an integer from 1 to 100.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "limit": "1.5"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-11"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: limit must be an integer from 1 to 100.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "limit": ""
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-12"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: limit must be an integer from 1 to 100.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "q": "HTTP"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-13"
+          ]
+        ],
+        "body": "{\"packages\":[{\"name\":\"http_client\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-01T09:00:00Z\"},{\"name\":\"http_core\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-02T09:00:00Z\"},{\"name\":\"http_server\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-03T09:00:00Z\"},{\"name\":\"httpx\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-04T09:00:00Z\"}],\"next_cursor\":null}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "q": "Http-C"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-14"
+          ]
+        ],
+        "body": "{\"packages\":[{\"name\":\"http_client\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-01T09:00:00Z\"},{\"name\":\"http_core\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-02T09:00:00Z\"}],\"next_cursor\":null}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "q": "http.c"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-15"
+          ]
+        ],
+        "body": "{\"packages\":[{\"name\":\"http_client\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-01T09:00:00Z\"},{\"name\":\"http_core\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-02T09:00:00Z\"}],\"next_cursor\":null}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "q": "http__c"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-16"
+          ]
+        ],
+        "body": "{\"packages\":[{\"name\":\"http_client\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-01T09:00:00Z\"},{\"name\":\"http_core\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-02T09:00:00Z\"}],\"next_cursor\":null}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "q": "z"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-17"
+          ]
+        ],
+        "body": "{\"packages\":[{\"name\":\"zlib\",\"latest\":null,\"description\":null,\"updated_at\":\"2026-10-05T09:00:00Z\"}],\"next_cursor\":null}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "q": "nothing_like_it"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-18"
+          ]
+        ],
+        "body": "{\"packages\":[],\"next_cursor\":null}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "q": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-19"
+          ]
+        ],
+        "body": "{\"packages\":[],\"next_cursor\":null}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "q": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-20"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: q is longer than 64 characters.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "q": "a,b"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-21"
+          ]
+        ],
+        "body": "{\"packages\":[],\"next_cursor\":null}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "sort": "bogus"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-22"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: sort must be 'name' or 'updated'.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "sort": "NAME"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-23"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: sort must be 'name' or 'updated'.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "cursor": "garbage"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-24"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: cursor is not recognised.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "cursor": "e30"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-25"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: cursor is not recognised.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "cursor": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-26"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: cursor is not recognised.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "q": "zz",
+          "cursor": "eyJrIjoibmFtZSIsImFmdGVyIjoiaHR0cF9jb3JlIn0"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-27"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: cursor does not belong to this query.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/packages",
+        "query": {
+          "sort": "updated",
+          "cursor": "eyJrIjoibmFtZSIsImFmdGVyIjoiaHR0cF9jb3JlIn0"
+        },
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "cache-control",
+            "no-store"
+          ],
+          [
+            "x-mopm-request-id",
+            "req-28"
+          ]
+        ],
+        "body": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"The request is not valid: cursor is not recognised.\",\"hint\":\"Check the request against the API documentation; update mopm if it is old.\"}}"
+      }
+    }
+  ]
+}
