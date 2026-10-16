@@ -1,0 +1,41 @@
+# mopm_aws: the ports on the AWS SDK for Rust (official crates; nothing here signs a request).
+load("@komira//tools/build/rust:defs.bzl", "rust_library", "rust_test")
+
+AWS_LC = "komira//third_party/aws-lc:crypto[static-pic]"
+
+_DEPS = [
+    "//service/lambda/core:mopm_core",
+    "//service/lambda/ports:mopm_ports",
+    "//third_party/rust:aws-sdk-dynamodb",
+    "//third_party/rust:jiff",
+    "//third_party/rust:serde",
+    "//third_party/rust:serde_dynamo",
+    "//third_party/rust:serde_json",
+]
+
+rust_test(
+    name = "mopm_aws_unit",
+    srcs = glob(["src/*.rs", "src/*/*.rs"]) + ["//service/api:lambda-auth-grants.json"],
+    crate_root = "src/lib.rs",
+    deps = _DEPS + [
+        "//service/lambda/testing:mopm_testing",
+        "//third_party/rust:tokio",
+    ],
+    native_deps = [AWS_LC],
+)
+
+rust_library(
+    name = "mopm_aws",
+    srcs = glob(["src/*.rs", "src/*/*.rs"]),
+    crate_root = "src/lib.rs",
+    deps = _DEPS,
+    tests = [":mopm_aws_unit"],
+    visibility = ["PUBLIC"],
+)
+
+filegroup(
+    name = "lint_files",
+    srcs = glob(["**"]) + [],
+    copy = True,
+    visibility = ["//:"],
+)
