@@ -74,21 +74,21 @@
     },
     {
       "name": "ca-certificates",
-      "version": "2026.7.22",
+      "version": "2026.10.18",
       "build": "hbd8a1cb_0",
       "build_number": 0,
       "subdir": "noarch",
       "channel": "conda-forge",
-      "path": "noarch/ca-certificates-2026.7.22-hbd8a1cb_0.conda",
-      "sha256": "0a0544cf95f64394fe4959286f5c71f5444ad58feb0602e53becb27448d24da6",
-      "md5": "0f51e2391ade309db462a55611263e9c",
-      "size": 131780,
+      "path": "noarch/ca-certificates-2026.10.18-hbd8a1cb_0.conda",
+      "sha256": "d65aa0c8990f34e1e86e6b505c8a149fea6cfbfcccef087a77c0bcb0b4fbe159",
+      "md5": "f9f6a9cf041f31438b034dac016e6429",
+      "size": 129191,
       "depends": [
         "__unix"
       ],
       "constrains": [],
       "license": "ISC",
-      "timestamp": 1784754889428
+      "timestamp": 1792347285941
     },
     {
       "name": "click",
@@ -442,15 +442,15 @@
     },
     {
       "name": "libsqlite",
-      "version": "3.54.0",
-      "build": "h0737f62_101",
+      "version": "3.54.1",
+      "build": "h0737f62_100",
       "build_number": 0,
       "subdir": "linux-64",
       "channel": "conda-forge",
-      "path": "linux-64/libsqlite-3.54.0-h0737f62_101.conda",
-      "sha256": "b4d5d4428bd1931eede11d2d69389c5b9d396a7f3c8df9d7c39c9efd80761eb3",
-      "md5": "a8b899d3c5fc1034b209045653b86ed2",
-      "size": 979215,
+      "path": "linux-64/libsqlite-3.54.1-h0737f62_100.conda",
+      "sha256": "107ba2f9134b45a6fdaf8d2485f432e3a643fdfaf711a325d0c9139b580b3523",
+      "md5": "5fdfd335c3d653e41c1eea1353d827d0",
+      "size": 980418,
       "depends": [
         "__glibc >=2.17,<3.0.a0",
         "libgcc >=15",
@@ -460,7 +460,7 @@
         "icu <0.0a0"
       ],
       "license": "blessing",
-      "timestamp": 1791584361438
+      "timestamp": 1792175610911
     },
     {
       "name": "libstdcxx",
@@ -718,22 +718,22 @@
     },
     {
       "name": "platformdirs",
-      "version": "4.13.0",
+      "version": "4.13.4",
       "build": "pyh5ded981_0",
       "build_number": 0,
       "subdir": "noarch",
       "channel": "conda-forge",
-      "path": "noarch/platformdirs-4.13.0-pyh5ded981_0.conda",
-      "sha256": "e75e5e85e0039c77f8b707baa862f029f25a582ff158bcae36cf361a409eaf59",
-      "md5": "35cc2a176fc6f886d6efa41ecb5f1de0",
-      "size": 34027,
+      "path": "noarch/platformdirs-4.13.4-pyh5ded981_0.conda",
+      "sha256": "67231c3935c50d63ef118bd7d588bd5801dff946d877eb18b75d7ce9a692e4a1",
+      "md5": "9a05512dcc615e7eaf2af437d7f44506",
+      "size": 33848,
       "depends": [
         "python >=3.11",
         "python"
       ],
       "constrains": [],
       "license": "MIT",
-      "timestamp": 1791727231159
+      "timestamp": 1792365474593
     },
     {
       "name": "python",
