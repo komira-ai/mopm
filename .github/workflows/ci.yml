@@ -76,8 +76,8 @@ jobs:
         if: ${{ !cancelled() }}
         run: zig build test-flaky -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
 
-  registry-e2e:
-    name: registry e2e (${{ matrix.os }})
+  registry-build:
+    name: build cli and fake registry (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -92,7 +92,7 @@ jobs:
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
       - name: Build the CLI and the fake registry
         run: zig build
-      # mopm login/logout/whoami and pack/publish against the fake registry, and mopm sync against it, are Zig tests
+      # This job only builds. mopm login/logout/whoami and pack/publish against the fake registry, and mopm sync against it, are Zig tests
       # (//:registry_login, //:registry_publish, //:install_e2e) that farm.yml builds; the Python scripts are gone.
 
   # The packer against the registry's own validator (service/api/src/validate): what mopm pack writes must be accepted,
