@@ -29,10 +29,13 @@ name: release
 #   publish    creates the GitHub release from exactly the verified files. A re-run creates no second
 #              release and replaces no asset: any asset the release already holds must match byte for byte,
 #              or it fails and changes nothing.
+#   bump       after publish, opens the komira-internal pull request that moves its `mopm` submodule to this release
+#              and turns auto-merge on (cut_release bump-internal), with the App token of komira-release-bot. It is
+#              the only job that holds the token, and nothing needs it: a failed bump goes red and un-releases nothing.
 #
 # A manual run (workflow_dispatch) is a dry run: everything up to and including beta-user, then nothing:
-# tag, attest, verify and publish do not run. Writes are held to tag (contents) and publish (contents),
-# both under a push to main, and attest (id-token, attestations) by tests/drivers/release_lint.zig, which
+# tag, attest, verify, publish and bump do not run. Writes to this repository are held to tag (contents) and publish (contents),
+# both under a push to main (bump writes to komira-internal, through the App token, and holds contents: read here), and attest (id-token, attestations) by tests/drivers/release_lint.zig, which
 # also holds the order of the stages, the data flow between them and the path filter; hygiene.zig holds the
 # triggers. A re-run of failed jobs only rebuilds what failed and what depends on it: a changed build
 # always re-runs beta-user. install.sh (site/static/install.sh) reads these assets.
@@ -252,3 +255,39 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.tag.outputs.version }}
         run: '"$RUNNER_TEMP/cut_release" --repo "$GITHUB_REPOSITORY" publish "$VERSION" dist --verified notes/verified.sha256 --notes notes/release-notes.md'
+
+  # The last stage, after the release exists. Its write is on ANOTHER repository: the App token of
+  # komira-release-bot (installed on komira-internal only) opens a pull request there that moves the
+  # `mopm` submodule to the released commit, with auto-merge; komira-internal merges it when its checks and
+  # its bump guard pass. Here the job holds contents: read, and it is the only job that may name the App
+  # token (release_lint.zig). Nothing needs it: a failed bump goes red and un-releases nothing; re-run this
+  # job (RELEASING.md). The token is minted after the tool is built and goes only to the step that runs it.
+  bump:
+    needs: [tag, publish]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      # Built before any step holds the token, so no build runs beside it.
+      - name: Build the release tool
+        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/cut_release"
+      - name: Mint the installation token of the release bot, for komira-internal only
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: komira-ai
+          repositories: komira-internal
+      - name: Open the komira-internal pull request that moves its mopm submodule to this release, with auto-merge (idempotent)
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          VERSION: ${{ needs.tag.outputs.version }}
+        run: '"$RUNNER_TEMP/cut_release" --repo "$GITHUB_REPOSITORY" bump-internal --version "$VERSION" --sha "$GITHUB_SHA" --internal-repo komira-ai/komira-internal --submodule mopm --workdir "$RUNNER_TEMP/bump"'

@@ -15,6 +15,12 @@
 //! - **Who may write.** `contents: write` only in `tag` and `publish`, each under the exact
 //!   push-to-main `if:`; `id-token: write` and `attestations: write` only in `attest`. No other job holds
 //!   any write scope, and no job may set `permissions` to a bare string such as write-all.
+//! - **The bump.** `bump` (after `publish`, under the same `if:`) opens the komira-internal pull request that moves
+//!   its `mopm` submodule: its write is on THAT repository, through the App token of komira-release-bot, so here it
+//!   holds exactly `contents: read`. It is the only job that may name the App token (the action, `RELEASE_BOT_*`,
+//!   `steps.app`); the action is pinned by commit and asked for komira-internal alone; the token is minted after the
+//!   tool is built and goes only to the last step, as GH_TOKEN, never an argument; and no job needs `bump`, so a
+//!   failed bump goes red and un-releases nothing.
 //! - **The order.** `plan` needs `beta` and `lint`, `build` needs `plan`, `beta-user` needs `build`, `tag`
 //!   needs `beta-user` (so a red platform leg stops the release), `attest` needs `build`, `verify` needs
 //!   `build` and `attest`, `publish` needs `verify` and `tag`: a red stage stops everything after it.
@@ -38,7 +44,7 @@ const Out = c.Out;
 pub const prefix = "release-lint: ";
 
 /// The jobs, in the order they run.
-pub const jobs = [_][]const u8{ "beta", "lint", "plan", "build", "beta-user", "tag", "attest", "verify", "publish" };
+pub const jobs = [_][]const u8{ "beta", "lint", "plan", "build", "beta-user", "tag", "attest", "verify", "publish", "bump" };
 
 /// The `concurrency` group: every push shares one, a manual dry run has a group of its own (its run id),
 /// so a dry run cannot displace the one pending push release.
@@ -76,6 +82,7 @@ const needs = [_]struct { job: []const u8, needs: []const []const u8 }{
     .{ .job = "attest", .needs = &.{ "tag", "build" } },
     .{ .job = "verify", .needs = &.{ "tag", "build", "attest" } },
     .{ .job = "publish", .needs = &.{ "tag", "verify" } },
+    .{ .job = "bump", .needs = &.{ "tag", "publish" } },
 };
 
 /// The paths a push may change without releasing: documentation and CI.
@@ -224,7 +231,7 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
                 while (it.next()) |e| {
                     if (!c.isStr(e.value_ptr.*, "write")) continue;
                     if (!isWriter(name, e.key_ptr.*)) {
-                        try c.problem(a, out, prefix ++ "release.yml: {s}: {s}: write is not allowed here (only tag and publish hold contents: write; only attest holds id-token and attestations)", .{ name, e.key_ptr.* });
+                        try c.problem(a, out, prefix ++ "release.yml: {s}: {s}: write is not allowed here (only tag and publish hold contents: write; only attest holds id-token and attestations; bump holds no write at all: its write is on the internal repository, through the App token)", .{ name, e.key_ptr.* });
                     }
                 }
             }
@@ -235,12 +242,12 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
         }
 
         // The `if:` of each job.
-        if (std.mem.eql(u8, name, "tag") or std.mem.eql(u8, name, "publish")) {
+        if (std.mem.eql(u8, name, "tag") or std.mem.eql(u8, name, "publish") or std.mem.eql(u8, name, "bump")) {
             if (!try ifIs(a, job, push_to_main)) {
                 try c.problem(a, out, prefix ++ "release.yml: {s} must run only under if: {s} (a push to main, never a manual run), got {s}", .{ name, push_to_main, try c.inspect(a, c.get(job, "if")) });
             }
         } else if (!try ifIs(a, job, null)) {
-            try c.problem(a, out, prefix ++ "release.yml: {s} must not have an if: (only tag and publish do)", .{name});
+            try c.problem(a, out, prefix ++ "release.yml: {s} must not have an if: (only tag, publish and bump do)", .{name});
         }
         if (job == .object and job.object.contains("continue-on-error")) {
             try c.problem(a, out, prefix ++ "release.yml: {s} must not set continue-on-error: a red stage stops the release", .{name});
@@ -294,7 +301,7 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
         if (!c.isStr(c.get(c.get(tag, "outputs"), "version"), "${{ steps.tag.outputs.version }}")) try c.problem(a, out, prefix ++ "release.yml: tag must output version: ${{{{ steps.tag.outputs.version }}}}", .{});
     }
     const tag_version = "${{ needs.tag.outputs.version }}";
-    for ([_][]const u8{ "verify", "publish" }) |name| {
+    for ([_][]const u8{ "verify", "publish", "bump" }) |name| {
         const job = c.get(jv, name) orelse continue;
         if (!envIs(job, "VERSION", tag_version)) try c.problem(a, out, prefix ++ "release.yml: {s} must set VERSION to {s}", .{ name, tag_version });
     }
@@ -332,6 +339,151 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
             }
         }
         if (!got_records) try c.problem(a, out, prefix ++ "release.yml: attest must download the records (pattern tested-*, path tested, merge-multiple) of the user beta", .{});
+    }
+    try bumpProblems(a, doc, out);
+}
+
+/// The App token of the release bot, minted by this action in `bump` alone.
+pub const app_action = "actions/create-github-app-token";
+
+/// What `bump` runs: the tool, with the version the tag took, the pushed commit, and no token (it is in the
+/// environment of the step). The internal repository and its submodule are spelled out.
+pub const bump_run = "\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" bump-internal --version \"$VERSION\" --sha \"$GITHUB_SHA\" --internal-repo komira-ai/komira-internal --submodule mopm --workdir \"$RUNNER_TEMP/bump\"";
+
+/// Anything that names the App token: the action, the App's variable and secret, the step's output.
+const app_needles = [_][]const u8{ "create-github-app-token", "RELEASE_BOT", "steps.app." };
+
+/// Does a string, key or value anywhere in `v` hold `needle`?
+fn mentions(v: Value, needle: []const u8) bool {
+    switch (v) {
+        .string => |s| return std.mem.indexOf(u8, s, needle) != null,
+        .array => |arr| {
+            for (arr.items) |x| {
+                if (mentions(x, needle)) return true;
+            }
+            return false;
+        },
+        .object => |o| {
+            var it = o.iterator();
+            while (it.next()) |e| {
+                if (std.mem.indexOf(u8, e.key_ptr.*, needle) != null or mentions(e.value_ptr.*, needle)) return true;
+            }
+            return false;
+        },
+        else => return false,
+    }
+}
+
+fn mentionsApp(v: Value) bool {
+    for (app_needles) |n| {
+        if (mentions(v, n)) return true;
+    }
+    return false;
+}
+
+/// `uses` is `<action>@<40 hex digits>`.
+fn usesPinned(u: []const u8, action: []const u8) bool {
+    if (!std.mem.startsWith(u8, u, action) or u.len != action.len + 41 or u[action.len] != '@') return false;
+    for (u[action.len + 1 ..]) |ch| {
+        if (!((ch >= '0' and ch <= '9') or (ch >= 'a' and ch <= 'f'))) return false;
+    }
+    return true;
+}
+
+/// The last stage of a release, `bump`: the pull request that moves the internal repository's submodule to the
+/// release. Its write is on ANOTHER repository, through the App token of komira-release-bot, so it holds
+/// `contents: read` here and no write scope; the token is minted in this job alone, after the tool is built
+/// and by a pinned action, handed to the one step that runs the tool (as GH_TOKEN, never an argument); and
+/// nothing needs `bump`, so that a failed bump goes red without un-releasing or stopping anything.
+fn bumpProblems(a: Allocator, doc: Value, out: *Out) !void {
+    const jv = c.get(doc, "jobs");
+    // Only bump may name the token: not another job, nor the workflow's own keys.
+    if (doc == .object) {
+        var it = doc.object.iterator();
+        while (it.next()) |e| {
+            if (std.mem.eql(u8, e.key_ptr.*, "jobs")) continue;
+            if (mentionsApp(e.value_ptr.*)) try c.problem(a, out, prefix ++ "release.yml: {s} names the release bot's App token; only the bump job may use it", .{e.key_ptr.*});
+        }
+    }
+    for (jobs) |name| {
+        const job = c.get(jv, name) orelse continue;
+        if (!std.mem.eql(u8, name, "bump") and mentionsApp(job)) {
+            try c.problem(a, out, prefix ++ "release.yml: {s} names the release bot's App token (create-github-app-token, RELEASE_BOT_*, steps.app): only the bump job may use it", .{name});
+        }
+        if (c.containsStr(try c.arrayOf(a, c.get(job, "needs")), "bump")) {
+            try c.problem(a, out, prefix ++ "release.yml: {s} must not need bump: a failed bump goes red and changes nothing else (it does not un-release)", .{name});
+        }
+    }
+    const bump = c.get(jv, "bump") orelse return;
+
+    // Read-only here: contents: read and nothing else.
+    const perms = c.get(bump, "permissions");
+    const pk = c.keys(perms);
+    if (perms == null or perms.? != .object or pk.len != 1 or !c.isStr(c.get(perms, "contents"), "read")) {
+        try c.problem(a, out, prefix ++ "release.yml: bump: permissions must be exactly contents: read (its write is on the internal repository, through the App token), got {s}", .{try c.inspect(a, perms)});
+    }
+
+    const steps = c.get(bump, "steps");
+    if (steps == null or steps.? != .array) return try c.problem(a, out, prefix ++ "release.yml: bump has no steps", .{});
+    const items = steps.?.array.items;
+
+    var app_at: ?usize = null;
+    var apps: usize = 0;
+    var run_at: ?usize = null;
+    var build_at: ?usize = null;
+    for (items, 0..) |st, i| {
+        if (c.str(c.get(st, "uses"))) |u| {
+            if (std.mem.indexOf(u8, u, "create-github-app-token") != null) {
+                apps += 1;
+                app_at = i;
+                if (!usesPinned(u, app_action)) try c.problem(a, out, prefix ++ "release.yml: bump must use {s}@<full commit sha>, got {s}", .{ app_action, u });
+            }
+        }
+        if (c.str(c.get(st, "run"))) |r| {
+            if (std.mem.indexOf(u8, r, "bump-internal") != null and run_at == null) run_at = i;
+            if (std.mem.indexOf(u8, r, "zig build-exe tools/cut_release.zig") != null and build_at == null) build_at = i;
+        }
+    }
+    if (apps != 1) {
+        try c.problem(a, out, prefix ++ "release.yml: bump must mint the token with exactly one {s} step, has {d}", .{ app_action, apps });
+    }
+    if (app_at) |at| {
+        const st = items[at];
+        const w = c.get(st, "with");
+        const want = [_][2][]const u8{
+            .{ "app-id", "${{ vars.RELEASE_BOT_APP_ID }}" },
+            .{ "private-key", "${{ secrets.RELEASE_BOT_PRIVATE_KEY }}" },
+            .{ "owner", "komira-ai" },
+            .{ "repositories", "komira-internal" },
+        };
+        for (want) |wv| {
+            if (!c.isStr(c.get(w, wv[0]), wv[1])) try c.problem(a, out, prefix ++ "release.yml: bump: the token step must set {s}: {s} (the token is for the internal repository alone), got {s}", .{ wv[0], wv[1], try c.inspect(a, c.get(w, wv[0])) });
+        }
+        if (c.keys(w).len != want.len) try c.problem(a, out, prefix ++ "release.yml: bump: the token step takes exactly app-id, private-key, owner and repositories, got {s}", .{try c.inspectList(a, c.keys(w))});
+        if (!c.isStr(c.get(st, "id"), "app")) try c.problem(a, out, prefix ++ "release.yml: bump: the token step must have id: app", .{});
+    }
+    if (run_at == null) {
+        try c.problem(a, out, prefix ++ "release.yml: bump must run cut_release bump-internal", .{});
+        return;
+    }
+    const ri = run_at.?;
+    const run = c.str(c.get(items[ri], "run")) orelse "";
+    if (!std.mem.eql(u8, run, bump_run)) {
+        try c.problem(a, out, prefix ++ "release.yml: bump must run exactly `{s}` (the token is in the environment, never an argument), got `{s}`", .{ bump_run, run });
+    }
+    if (!envIs(bump, "GH_TOKEN", "${{ steps.app.outputs.token }}") or !c.isStr(c.get(c.get(items[ri], "env"), "GH_TOKEN"), "${{ steps.app.outputs.token }}")) {
+        try c.problem(a, out, prefix ++ "release.yml: bump: the step that runs the tool must set GH_TOKEN to ${{{{ steps.app.outputs.token }}}}", .{});
+    }
+    if (ri != items.len - 1) try c.problem(a, out, prefix ++ "release.yml: bump: the step that runs the tool must be the last (nothing else may run with the token)", .{});
+    // The tool is built before the token exists, and the token is minted right before it is used.
+    if (build_at == null or (app_at != null and build_at.? > app_at.?)) {
+        try c.problem(a, out, prefix ++ "release.yml: bump: build the tool (zig build-exe tools/cut_release.zig) before the token step, so that no build runs beside the token", .{});
+    }
+    if (app_at != null and app_at.? > ri) try c.problem(a, out, prefix ++ "release.yml: bump: the token step must come before the step that runs the tool", .{});
+    // No other step may take the token.
+    for (items, 0..) |st, i| {
+        if (i == ri or (app_at != null and i == app_at.?)) continue;
+        if (mentionsApp(st)) try c.problem(a, out, prefix ++ "release.yml: bump step {d} names the App token; only the token step and the step that runs the tool may", .{i});
     }
 }
 

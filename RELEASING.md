@@ -22,11 +22,12 @@ customer uses it, on every platform it ships for (`beta-user`).
 | `attest` | `tag`, `build` | `SHA256SUMS` for the four tarballs, a keyless cosign signature (Sigstore) of each of the five files, and build provenance (a signed attestation) for all five. |
 | `verify` | `tag`, `build`, `attest` | checks the built files before anything is published: exactly the ten files (the five and the `<file>.sigstore.json` bundle of each), `SHA256SUMS` matches, every attestation and every signature accepted and pinned to `release.yml`, the ref and the commit, the tarball layout, the tag on main and at this commit. Uploads the release notes and the pin (the `linux-x86_64` url, sha256 and size) as the artifact `release-notes`. |
 | `publish` | `tag`, `verify` | creates the GitHub release for `v<version>` from exactly the verified files (artifacts `verified-assets` and `release-notes`, nothing else). |
+| `bump` | `tag`, `publish` | opens the pull request in komira-internal that moves its `mopm` submodule to this release, with auto-merge (below). The last stage, and the only one that writes outside this repository; nothing needs it. |
 
 A push that changes only documentation or CI (`**.md`, `docs/**`, `.github/**`) does not release.
 Everything else does, including a change to `VERSION`.
 
-Only `tag` and `publish` may write `contents`, each under `if: github.event_name == 'push' && github.ref == 'refs/heads/main'`;
+Only `tag` and `publish` may write `contents` here, each under `if: github.event_name == 'push' && github.ref == 'refs/heads/main'` (`bump` runs under the same `if:` and holds `contents: read`);
 only `attest` holds `id-token` and `attestations` write. `tests/drivers/release_lint.zig` holds the workflow to
 that, to the order of the stages, to the data flow between them (the built and tested version is the planned
 version, the tagged version and the released version; `publish` releases the verified files) and to the path filter;
@@ -36,6 +37,35 @@ version, the tagged version and the released version; `publish` releases the ver
 Pushes share the concurrency group `release-push` (one run at a time, none cancelled). GitHub keeps one pending run
 per group, so if several pushes land while a release runs, only the newest waits: it releases a commit that
 contains the others. A manual run has a group of its own, so it cannot displace the pending push release.
+
+## The komira-internal bump (the last stage)
+
+After `publish`, the `bump` job (push to main only, `permissions: contents: read`) opens a pull request in
+komira-ai/komira-internal that moves its `mopm` submodule to the released commit, and turns auto-merge on:
+`cut_release bump-internal` (`tools/bump_internal.zig`; `gh` and `git`, no shell). komira-internal merges it on its own
+when its `check` and `bump-guard` pass; nobody clicks.
+
+- **The token.** The job builds the tool first, then mints an installation token of the GitHub App `komira-release-bot`
+  with `actions/create-github-app-token` (pinned by commit; `vars.RELEASE_BOT_APP_ID`, `secrets.RELEASE_BOT_PRIVATE_KEY`, owner
+  `komira-ai`, repository `komira-internal` only), and gives it to the one step that runs the tool as `GH_TOKEN`. The App is
+  installed on komira-internal only, so the token reaches nothing else. The tool never puts the token in an argument: `gh`
+  reads it from the environment, and `git` gets it as an HTTP header through `GIT_CONFIG_*` in its environment. The release
+  lint holds that this job alone names the App token, that it holds no write scope here, and where the token lives.
+- **What the pull request is.** What komira-internal's bump guard (`tools/bump_guard/README.md` there) accepts from the bot and
+  nothing else: author `komira-release-bot[bot]`; exactly one changed path, the `mopm` gitlink; branch `bump/mopm-v<version>`;
+  the new commit descends from the old; the tag `v<version>` of komira-ai/mopm names that commit. The tool sets the gitlink
+  with `git update-index --cacheinfo 160000,<sha>,mopm` on a shallow clone (no submodule is checked out), checks that the
+  staged change is that one gitlink, commits `chore(mopm): bump to v<version>` (the release url in the body) as the bot user,
+  pushes the branch (never forced), runs `gh pr create` and `gh pr merge --auto --merge`, and checks that auto-merge is on. It
+  refuses, before writing anything, what the guard would refuse: a tag that names another commit, an old gitlink that is not an
+  ancestor of the release commit.
+- **Idempotent.** An open or merged bump pull request for this or a newer version means there is nothing to open (an open one
+  for this version that lacks auto-merge gets it). An older open bump pull request is closed in favour of the new one. A
+  branch an earlier run pushed before it stopped is reused.
+- **A failed bump un-releases nothing.** The release is complete when `publish` is green; no job needs `bump`, so a red
+  `bump` changes nothing else, it only shows the run as failed. To retry, re-run the `bump` job of that run (Actions, the
+  run, "Re-run failed jobs" or the job's own re-run): it is safe to run again, it finds what exists and finishes the rest.
+  If a newer release has already bumped, the re-run does nothing.
 
 ## The user-level beta
 
@@ -103,7 +133,7 @@ releases `0.1.1`. This is rare; PATCH is never edited by hand, and the base neve
 
 Run the `release` workflow by hand (Actions, `release`, Run workflow) on `main`. It runs `beta`, `lint`, `plan`,
 `build` and `beta-user`: the candidate is built and tested on every platform, and `plan` prints the version the
-next release would get. It creates no tag and publishes nothing (`tag`, `attest`, `verify` and `publish` do not run).
+next release would get. It creates no tag and publishes nothing (`tag`, `attest`, `verify`, `publish` and `bump` do not run).
 
 ## A re-run and a failure
 
@@ -118,6 +148,9 @@ next release would get. It creates no tag and publishes nothing (`tag`, `attest`
 - If `publish` fails half-way, re-running creates no second release and replaces no asset: every asset the
   release already holds must match the verified file byte for byte, and only missing ones are added. A
   mismatch fails the run and changes nothing; a draft release of the tag fails it too (delete the draft by hand).
+- If `bump` fails, the release stands (it is already published and verified). Re-run the `bump` job; see "The komira-internal
+  bump". A bump that cannot succeed because the tag or the old gitlink does not allow it (it refuses with the reason) is
+  fixed in komira-internal by hand: move the submodule there with an ordinary pull request.
 
 ## Verifying a download
 
@@ -141,6 +174,10 @@ Maintainers can repeat all the checks against GitHub with the read-only `verify 
 It prints the pin for the `linux-x86_64` tarball. It changes nothing.
 
 ## What the CEO has to do before the first release
+
+The bump stage needs, once: the GitHub App `komira-release-bot` installed on komira-internal only; the variable
+`RELEASE_BOT_APP_ID` and the secret `RELEASE_BOT_PRIVATE_KEY` in this repository; auto-merge allowed in komira-internal, with
+its ruleset requiring `check` and `bump-guard`. (Done.) Without them `bump` fails and nothing else does.
 
 These are settings only an owner can change; the automation neither makes nor assumes them:
 

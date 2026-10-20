@@ -20,6 +20,15 @@
 //!   attest_refuse  a file name: `attestation verify` of that file fails
 //!   release_error  `release view` fails with HTTP 500 (not a 404)
 //!   upload_fail    `release upload` fails
+//!
+//! For cut_release bump-internal (the pull requests of komira-ai/komira-internal):
+//!   prs            one line per pull request, `<number> <OPEN|CLOSED|MERGED> <head branch> <auto-merge 0|1>`;
+//!                  `pr create` appends one (number 100 + the count, OPEN, 0), `pr merge` sets the last field
+//!                  (not with auto_noop), `pr close` sets CLOSED
+//!   branches       one branch name per line: the branches `git/ref/heads/<name>` finds (else HTTP 404)
+//!   branch_gitlink the commit `contents/<submodule>?ref=<branch>` reports
+//!   create_fail, merge_fail, close_fail, auto_noop   `pr create` / `pr merge` / `pr close` fail; `pr merge` succeeds
+//!                  but leaves auto-merge off
 //! Written by the tool's calls: pending_tag (the tag object a git/tags POST made), release_notes (the
 //! notes file a `release create` was given).
 //! A missing file means: no tag, no release, state "false false", no refusal.
@@ -78,6 +87,7 @@ pub fn main() !void {
     const w = std.io.getStdOut().writer();
     const args = argv[1..];
     const repo = "repos/komira-ai/mopm/";
+    const internal = "repos/komira-ai/komira-internal/";
     try dir.makePath("assets");
 
     if (std.mem.eql(u8, args[0], "api")) {
@@ -148,6 +158,18 @@ pub fn main() !void {
             const file = try std.fmt.allocPrint(a, "compare_tag_{s}", .{rest[0..dots]});
             const t = fileText(a, dir, file) orelse fileText(a, dir, "tag_compare_status") orelse "ahead";
             try w.print("{s}\n", .{std.mem.trim(u8, t, " \n")});
+        } else if (std.mem.startsWith(u8, path, internal ++ "git/ref/heads/")) {
+            const name = path[(internal ++ "git/ref/heads/").len..];
+            var found = false;
+            var bl = std.mem.splitScalar(u8, fileText(a, dir, "branches") orelse "", '\n');
+            while (bl.next()) |b| {
+                if (std.mem.eql(u8, b, name)) found = true;
+            }
+            if (!found) failWith("Not Found (HTTP 404)");
+            try w.writeAll("2222222222222222222222222222222222222222\n");
+        } else if (std.mem.startsWith(u8, path, internal ++ "contents/")) {
+            const held = fileText(a, dir, "branch_gitlink") orelse failWith("no branch_gitlink");
+            try w.print("{s}\n", .{std.mem.trim(u8, held, " \n")});
         } else {
             std.debug.print("fake gh: unexpected api call: {s}\n", .{line});
             std.process.exit(3);
@@ -217,6 +239,8 @@ pub fn main() !void {
             if (assets.access(name, .{})) |_| failWith("an asset with this name already exists (HTTP 422)") else |_| {}
             try std.fs.cwd().copyFile(p, assets, name, .{});
         }
+    } else if (std.mem.eql(u8, args[0], "pr")) {
+        try pr(a, dir, args, w);
     } else if (std.mem.eql(u8, args[0], "attestation") and std.mem.eql(u8, args[1], "verify")) {
         const refused = fileText(a, dir, "attest_refuse");
         if (refused) |r| {
@@ -226,4 +250,79 @@ pub fn main() !void {
         std.debug.print("fake gh: unexpected call: {s}\n", .{line});
         std.process.exit(3);
     }
+}
+
+/// The value after `flag` in `args`, or "".
+fn flagValue(args: []const []const u8, flag: []const u8) []const u8 {
+    for (args, 0..) |x, i| {
+        if (std.mem.eql(u8, x, flag) and i + 1 < args.len) return args[i + 1];
+    }
+    return "";
+}
+
+fn hasFlag(args: []const []const u8, flag: []const u8) bool {
+    for (args) |x| {
+        if (std.mem.eql(u8, x, flag)) return true;
+    }
+    return false;
+}
+
+/// `gh pr list|create|merge|view|close` over the file `prs` (see the header).
+fn pr(a: std.mem.Allocator, dir: std.fs.Dir, args: []const []const u8, w: anytype) !void {
+    const url_head = "https://github.com/komira-ai/komira-internal/pull/";
+    var lines = std.ArrayList([]const u8).init(a);
+    var it = std.mem.splitScalar(u8, fileText(a, dir, "prs") orelse "", '\n');
+    while (it.next()) |l| {
+        if (l.len != 0) try lines.append(l);
+    }
+    const verb = args[1];
+    if (std.mem.eql(u8, verb, "list")) {
+        try w.writeAll("[");
+        for (lines.items, 0..) |l, i| {
+            var f = std.mem.splitScalar(u8, l, ' ');
+            const n = f.next().?;
+            const state = f.next().?;
+            const head = f.next().?;
+            const auto = f.next().?;
+            const am = if (std.mem.eql(u8, auto, "1")) "{\"mergeMethod\":\"MERGE\"}" else "null";
+            try w.print("{s}{{\"number\":{s},\"state\":\"{s}\",\"headRefName\":\"{s}\",\"url\":\"{s}{s}\",\"autoMergeRequest\":{s}}}", .{ if (i == 0) "" else ",", n, state, head, url_head, n, am });
+        }
+        try w.writeAll("]\n");
+        return;
+    }
+    if (std.mem.eql(u8, verb, "create")) {
+        if (fileText(a, dir, "create_fail") != null) failWith("pull request create failed");
+        const n = 100 + lines.items.len;
+        try appendFile(dir, "prs", try std.fmt.allocPrint(a, "{d} OPEN {s} 0", .{ n, flagValue(args, "--head") }));
+        try w.print("{s}{d}\n", .{ url_head, n });
+        return;
+    }
+    // merge, view and close name the pull request by number or url.
+    const ref = args[2];
+    const number = ref[if (std.mem.lastIndexOfScalar(u8, ref, '/')) |s| s + 1 else 0..];
+    var found = false;
+    var next = std.ArrayList(u8).init(a);
+    for (lines.items) |l| {
+        var f = std.mem.splitScalar(u8, l, ' ');
+        const n = f.next().?;
+        var state = f.next().?;
+        const head = f.next().?;
+        var auto = f.next().?;
+        if (std.mem.eql(u8, n, number)) {
+            found = true;
+            if (std.mem.eql(u8, verb, "merge")) {
+                if (fileText(a, dir, "merge_fail") != null) failWith("auto-merge cannot be enabled (GraphQL)");
+                if (!hasFlag(args, "--auto") or !hasFlag(args, "--merge")) failWith("this fake wants gh pr merge --auto --merge");
+                if (fileText(a, dir, "auto_noop") == null) auto = "1";
+            } else if (std.mem.eql(u8, verb, "close")) {
+                if (fileText(a, dir, "close_fail") != null) failWith("cannot close");
+                state = "CLOSED";
+            } else if (std.mem.eql(u8, verb, "view")) {
+                try w.print("{s}\n", .{if (std.mem.eql(u8, auto, "1")) "true" else "false"});
+            }
+        }
+        try next.writer().print("{s} {s} {s} {s}\n", .{ n, state, head, auto });
+    }
+    if (!found) failWith("no pull request found");
+    try dir.writeFile("prs", next.items);
 }
