@@ -245,7 +245,7 @@ test('stage config is validated', () => {
 
 test('public-repo hygiene: no 12-digit account id literal in the access sources', () => {
   const root = path.join(__dirname, '..');
-  for (const f of ['lib/contract.ts', 'lib/github-access-stack.ts', 'bin/access.ts', 'bootstrap.sh', 'BOOTSTRAP.md', 'cfn-exec-policy.template.json']) {
+  for (const f of ['lib/contract.ts', 'lib/github-access-stack.ts', 'bin/access.ts', 'bin/bootstrap.ts', 'bin/oauth-secret.ts', 'lib/bootstrap.ts', 'lib/oauth-secret.ts', 'lib/held.ts', 'lib/diff.ts', 'BOOTSTRAP.md', 'cfn-exec-policy.template.json']) {
     const text = fs.readFileSync(path.join(root, f), 'utf8');
     expect(text.match(/(?<![0-9A-Za-z])\d{12}(?![0-9A-Za-z])/g) ?? []).toEqual([]);
   }

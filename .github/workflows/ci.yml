@@ -33,27 +33,10 @@ jobs:
         run: zig build test
       - name: Build the CLI
         run: zig build
-      - name: Link-plan golden files
-        run: tests/run_golden.sh ./zig-out/bin/mopm
 
   # The contract checks (the OpenAPI document, the schemas, the API cases, the examples, and the replay of the cases
-  # against the fake registry) are the Buck2 targets //:contract and //:contract_replay, built by farm.yml
-  # (`./buck2 build //...`). What stays here is the lock goldens check, until it is ported too.
-  contract:
-    name: contract (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'macos')) && '["ubuntu-24.04","ubuntu-24.04-arm","macos-14"]' || '["ubuntu-24.04","ubuntu-24.04-arm"]') }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install the validators (pip, in a throwaway environment)
-        run: |
-          python3 -m venv "$RUNNER_TEMP/contract-venv"
-          "$RUNNER_TEMP/contract-venv/bin/pip" install --disable-pip-version-check -r tests/contract/requirements.txt
-      - name: The locks mopm's unit tests write pass the lock schema and rules; broken copies are refused
-        run: '"$RUNNER_TEMP/contract-venv/bin/python" -I tests/resolve/check_golden.py'
+  # against the fake registry) and the lock goldens are the Buck2 targets //:contract, //:contract_replay and
+  # //:lock_golden, built by farm.yml (`./buck2 build //...`). No Python is left in them, so no job runs here.
 
   autolink:
     name: autolink e2e (${{ matrix.os }})
@@ -156,13 +139,6 @@ jobs:
         run: python3 -I tests/registry_e2e/run.py ./zig-out/bin/mopm ./zig-out/bin/mopm-fake-registry
       - name: mopm pack and publish against the fake registry
         run: python3 -I tests/registry_e2e/publish.py ./zig-out/bin/mopm ./zig-out/bin/mopm-fake-registry
-
-      - name: Install the contract validators (pip, in a throwaway environment)
-        run: |
-          python3 -m venv "$RUNNER_TEMP/contract-venv"
-          "$RUNNER_TEMP/contract-venv/bin/pip" install --disable-pip-version-check -r tests/contract/requirements.txt
-      - name: mopm lock, update and tree against the fake registry (wrong-version traps, refusals, lock schema)
-        run: '"$RUNNER_TEMP/contract-venv/bin/python" -I tests/resolve_e2e/run.py ./zig-out/bin/mopm ./zig-out/bin/mopm-fake-registry'
 
   # The packer against the registry's own validator (service/api/src/validate): what mopm pack writes must be accepted,
   # and each planted defect must be refused with its rule.

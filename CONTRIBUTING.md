@@ -20,25 +20,25 @@ Two builds describe the same program, and both stay.
 
 - **`zig build`** is the quick path on your machine: `zig build test` runs the
   unit tests, `zig build` makes `zig-out/bin/mopm`, and
-  `tests/run_golden.sh ./zig-out/bin/mopm` runs the golden files. `ci.yml`
-  runs exactly these.
+  `./buck2 build //:golden` runs the golden files. `ci.yml`
+  runs `zig build test` and `zig build`.
 - **Buck2** (`./buck2`, a pinned release; the build rules come from the
   `komira` repository, fetched at the commit `.buckconfig` names) is what the
   build farm runs: `./buck2 build //...`. The build has no shell and no Python:
   every test is a Zig test. The unit tests are welded into the executables
   (`//:mopm` is not built unless `//:core_test` and `//:cli_test` passed).
   The Zig drivers in `tests/drivers` run the built programs: `//:golden` (the
-  checks of `tests/run_golden.sh`), `//:registry_login` and
+  golden files; it replaced `tests/run_golden.sh`), `//:registry_login` and
   `//:registry_publish` (the checks of `tests/registry_e2e/*.py`), and the
   contract checks: `//:contract` (the OpenAPI
   document, the JSON Schemas, the API cases and the examples),
   `//:contract_replay` (the fake registry against the API
-  cases), `//:lock_golden` (`tests/resolve/check_golden.py`) and
-  `//:resolve_e2e` (`tests/resolve_e2e/run.py`). The JSON Schema and YAML
+  cases), `//:lock_golden` (the lock goldens; it replaced `tests/resolve/check_golden.py`) and
+  `//:resolve_e2e` (it replaced `tests/resolve_e2e/run.py`). The JSON Schema and YAML
   readers they use are in `tests/drivers` and implement only what the specs
   use; they refuse anything else with a message (see the headers of
-  `jsonschema.zig` and `yaml.zig`). `tests/run_golden.sh` and the Python
-  scripts stay for `ci.yml` until `farm.yml` has matched it, and are deleted
+  `jsonschema.zig` and `yaml.zig`). The Python scripts of the remaining checks
+  stay for `ci.yml` until `farm.yml` has matched it, and are deleted
   then.
   The Mojo end-to-end suites run on the farm with no pixi, shell or Python:
   `//:autolink` (`tests/e2e/run.sh`), `//:discovery` (`test_discovery.sh`),
@@ -83,8 +83,8 @@ komira's `npm_modules` rule lays out each package's `node_modules` from its
 size, checked against the lockfile's sha512 integrity); no install script runs, there is no network and no
 shell or Python. Node.js is pinned in `tools/node/pins.toml`. The tests that read files outside their
 package get them as `data` (the specification and contract cases for the API, the access policy template,
-the stages' configuration and the API's golden grants for the stacks). The bash tests of `dns.sh`,
-`bootstrap.sh` and `oauth-secret.sh` stay in `service-ci.yml`.
+the stages' configuration and the API's golden grants for the stacks). The held commands (`bootstrap`, `oauth-secret` and `dns-cli`, TypeScript under `bin/` and `lib/`) are tested by
+jest against a fake host, so `:test` covers them.
 
 After `npm install` or `npm update` changes a `package-lock.json`, regenerate its pins (kpin is
 komira's tool, `./buck2 run komira//tools/build/kpin`), then commit the lock with the lockfile:

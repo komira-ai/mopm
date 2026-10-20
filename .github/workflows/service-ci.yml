@@ -121,18 +121,6 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '20'
-      - name: bash -n
-        run: bash -n dns.sh
-      - name: dns.sh is a dry run by default and validates its flags
-        run: |
-          acct="$(printf '4%.0s' $(seq 12))"
-          out="$(./dns.sh --stage beta --account "$acct" --profile p)"
-          echo "$out" | grep -q '^DRY-RUN: npx cdk deploy mopm-dns-beta-zone'
-          if echo "$out" | grep -q '^+ '; then echo "dry run executed something" >&2; exit 1; fi
-          if ./dns.sh --stage dev --account "$acct" --profile p; then exit 1; fi
-          if ./dns.sh --stage beta --account 123 --profile p; then exit 1; fi
-          if ./dns.sh --stage beta --delegate --account "$acct" --profile p; then exit 1; fi
-          if ./dns.sh --stage prod --delegate --account "$acct" --profile p --beta-ns a,b,c,d --gamma-ns a,b,c,d; then exit 1; fi
       - name: Install (npm ci, strict)
         run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run typecheck
@@ -162,37 +150,6 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '20'
-      - name: bash -n
-        run: |
-          bash -n bootstrap.sh
-          bash -n oauth-secret.sh
-          bash -n test/oauth-secret.sh
-      - name: oauth-secret.sh against a fake aws (dry run by default, secret only from stdin, never in argv or output)
-        run: ./test/oauth-secret.sh
-      - name: bootstrap.sh --update-policy and --policy-only against a fake aws (no AWS access)
-        run: ./test/bootstrap-update-policy.sh
-      - name: bootstrap.sh is a dry run by default and validates its flags
-        run: |
-          acct="$(printf '4%.0s' $(seq 12))"
-          out="$(./bootstrap.sh --stage beta --account "$acct" --region us-west-2 --profile p)"
-          echo "$out" | grep -q '^DRY-RUN: aws iam create-policy'
-          if echo "$out" | grep -q '^+ '; then echo "dry run executed something" >&2; exit 1; fi
-          if ./bootstrap.sh --stage dev --account "$acct" --region r --profile p; then exit 1; fi
-          if ./bootstrap.sh --stage beta --account 123 --region r --profile p; then exit 1; fi
-          if ./bootstrap.sh --stage beta --account "$acct" --region r --profile p --repo other/repo; then exit 1; fi
-      - name: bootstrap.sh passes the context to cdk and gates --approve-iam
-        run: |
-          acct="$(printf '5%.0s' $(seq 12))"
-          out="$(./bootstrap.sh --stage beta --account "$acct" --region us-east-1 --profile p)"
-          boot="$(echo "$out" | grep '^DRY-RUN: npx cdk bootstrap')"
-          for v in stage=beta "account=$acct" region=us-east-1; do
-            echo "$boot" | grep -q -- "-c $v" || { echo "bootstrap lacks -c $v" >&2; exit 1; }
-          done
-          echo "$out" | grep -q '^DRY-RUN: npx cdk diff' || { echo "no cdk diff" >&2; exit 1; }
-          echo "$out" | grep -q 'require-approval broadening' || { echo "default is not broadening" >&2; exit 1; }
-          if echo "$out" | grep -q -- '--approve-iam\|require-approval never'; then echo "approval flag present without --approve-iam" >&2; exit 1; fi
-          out2="$(./bootstrap.sh --stage beta --account "$acct" --region us-east-1 --profile p --approve-iam)"
-          echo "$out2" | grep -q 'require-approval never' || { echo "--approve-iam ignored" >&2; exit 1; }
       # The same install deploy.yml runs; it fails if package-lock.json is missing or out of step with package.json.
       - name: Install (npm ci, as in deploy.yml)
         run: npm ci --ignore-scripts --no-audit --no-fund

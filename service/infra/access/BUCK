@@ -1,16 +1,14 @@
-# The access stack's checks (see service/api/BUCK): `tsc --noEmit` and `jest --ci`. The
-# bootstrap and oauth-secret shell tests stay in service-ci.yml.
+# The access stack's checks (see service/api/BUCK): `tsc --noEmit` and `jest --ci`. The held commands
+# (bootstrap, oauth-secret) are TypeScript under bin/ and lib/, tested by test/*.test.ts against a fake host.
 
 load("@buildrules//rules/node:modules.bzl", "jest_test", "npm_modules", "tsc_check")
 load(":pins.lock.bzl", "NPM")
 
 _NODE = "//tools/node:node"
 
-# The shell scripts are not run here (service-ci.yml does); a test reads bootstrap.sh and
-# BOOTSTRAP.md as text for the public-repo hygiene check.
-_SRCS = glob(["bin/**", "lib/**", "test/**"], exclude = ["test/*.sh"]) + [
+# The hygiene test reads the sources and BOOTSTRAP.md as text, and the bootstrap test reads the policy template.
+_SRCS = glob(["bin/**", "lib/**", "test/**"]) + [
     "BOOTSTRAP.md",
-    "bootstrap.sh",
     "cdk.json",
     "cfn-exec-policy.template.json",
     "jest.config.js",
