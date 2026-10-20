@@ -193,16 +193,20 @@ zig_test(  # buck-only: mopm pack and publish against the fake registry and a st
     **_TOOLS
 )
 
+# tools/channels' sources, named by a glob so a new file is picked up. The release tools import the .deb writer from there.
+_CHANNELS_SRCS = glob(["tools/channels/*.zig"], exclude = ["tools/channels/channels.zig", "tools/channels/main.zig"])
+
 zig_exe(  # buck-only: tools/release.zig, whose `tarball` and `sums` make the fake release of :cut_release
     name = "release-tool",
     src = "tools/release.zig",
+    imports = ["tools/release_debs.zig"] + _CHANNELS_SRCS,
     **_TOOLS
 )
 
 zig_exe(  # buck-only: tools/cut_release.zig, the release run's steps (plan, tag, verify-dir, publish) and the read-only verify
     name = "cut-release",
     src = "tools/cut_release.zig",
-    imports = ["tools/bump_internal.zig"],
+    imports = ["tools/bump_internal.zig", "tools/release_debs.zig"] + _CHANNELS_SRCS,
     **_TOOLS
 )
 
@@ -227,8 +231,9 @@ zig_exe(  # buck-only: a `git` whose answers are files, for :bump_internal
 zig_test(  # buck-only: cut_release against the fake gh, with planted defects it must refuse
     name = "cut_release",
     src = "tests/drivers/cut_release_test.zig",
-    imports = ["tests/drivers/harness.zig"],
+    imports = ["tests/drivers/harness.zig"] + glob(["packaging/deb/*"]),
     env_tools = {
+        "MOPM_CHANNELS": ":channels",
         "MOPM_CUT_RELEASE": ":cut-release",
         "MOPM_FAKE_GH": ":fake-gh",
         "MOPM_RELEASE_TOOL": ":release-tool",
@@ -250,8 +255,7 @@ zig_test(  # buck-only: cut_release bump-internal against the fake gh and the fa
 )
 
 # ---- tools/channels: the .deb, the apt index and the Homebrew formula of a release, byte for byte ----------------------
-# (tools/channels/channels.zig says what each file is. The sources are named by a glob so a new file is picked up.)
-_CHANNELS_SRCS = glob(["tools/channels/*.zig"], exclude = ["tools/channels/channels.zig", "tools/channels/main.zig"])
+# (tools/channels/channels.zig says what each file is. _CHANNELS_SRCS, the sources, is defined above :release-tool, which uses it.)
 
 # What the unit tests and the CLI driver read: the fixtures and the golden files.
 _CHANNELS_DATA = glob(["tests/channels/**"])
@@ -275,7 +279,7 @@ zig_exe(  # buck-only: tools/channels/main.zig, not built unless the unit tests 
 zig_test(  # buck-only: the channels CLI end to end: byte-determinism (twice, compare), goldens, and the refusals it must make
     name = "channels_cli",
     src = "tests/drivers/channels_cli_test.zig",
-    imports = ["tests/drivers/harness.zig"] + _CHANNELS_DATA,
+    imports = ["tests/drivers/harness.zig"] + _CHANNELS_DATA + glob(["packaging/deb/*"]),
     env_tools = {"CHANNELS": ":channels"},
     **_TOOLS
 )

@@ -12,19 +12,19 @@ name: release
 #   plan       the version the release will have (cut_release plan --sha): the VERSION file's MAJOR.MINOR
 #              and the next PATCH. It refuses a commit that a newer release supersedes, and a base below
 #              an existing tag. Nothing is written.
-#   build      the four binaries (release-build.yml) at that version, each reporting exactly it. These
+#   build      the four binaries (release-build.yml) at that version, each reporting exactly it, and a .deb (amd64, arm64) made from each linux binary. These
 #              ARE the release files: they are built once, from the commit that is tagged later, and
 #              neither rebuilt nor changed after the tests below.
 #   beta-user  the candidate tested AS A USER (release-beta-user.yml, tests/drivers/user_beta.zig) on
 #              linux x86_64, linux arm64 and macOS 14: every verb against the fake registry, then the
 #              documented install path. A red leg on any platform stops the release.
-#   attest     only the tarballs the user beta passed (release tested), then SHA256SUMS for the four tarballs, a keyless cosign signature (Sigstore) of each of the
-#              five files, and build provenance (actions/attest-build-provenance) for all five. It runs only on
+#   attest     only the tarballs the user beta passed (release tested, which also rebuilds each .deb from its tarball and refuses other bytes), then SHA256SUMS for the four tarballs and
+#              two .debs, a keyless cosign signature (Sigstore) of each of the seven files, and build provenance (actions/attest-build-provenance) for all seven. It runs only on
 #              main (if: github.ref == 'refs/heads/main'): a manual run from another branch signs nothing, and
 #              verify and the rest are skipped with it. Its artifact is signed-assets: not release-*, which
 #              is the pattern attest downloads the build's artifacts with (a re-run would merge it back in).
-#   verify     cut_release verify-dir on the built files, before anything is published: exactly the ten
-#              files, SHA256SUMS matches, every attestation and every signature accepted (pinned to this
+#   verify     cut_release verify-dir on the built files, before anything is published: exactly the fourteen
+#              files (the seven and the bundle of each: four tarballs, two .debs, SHA256SUMS), SHA256SUMS matches, every attestation and every signature accepted (pinned to this
 #              workflow, the ref, the commit and the trigger, which is the event of this run ($GITHUB_EVENT_NAME):
 #              push for a release, workflow_dispatch for a dry run, which signs with that event), the tarball layout, the commit on
 #              main. It reads no tag (none exists yet) and uploads the release notes and the pin (artifact
@@ -151,22 +151,24 @@ jobs:
           merge-multiple: true
       - name: Build the release tool
         run: zig build-exe tools/release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/release"
-      - name: Attest only the tarballs the user beta passed (the sha256 each leg recorded)
+      - name: Attest only the tarballs the user beta passed (the sha256 each leg recorded), and .debs made from exactly their binaries
         run: '"$RUNNER_TEMP/release" tested dist tested'
-      - name: Write SHA256SUMS (exactly the four tarballs) and check it
+      - name: Write SHA256SUMS (exactly the four tarballs and the two .debs) and check it
         run: '"$RUNNER_TEMP/release" sums dist'
-      - name: Sign the four tarballs and SHA256SUMS, keyless (Sigstore; the OIDC identity of this workflow, no key, no secret)
+      - name: Sign the four tarballs, the two .debs and SHA256SUMS, keyless (Sigstore; the OIDC identity of this workflow, no key, no secret)
         run: '"$RUNNER_TEMP/release" sign dist'
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             dist/mopm-*.tar.gz
+            dist/mopm_*.deb
             dist/SHA256SUMS
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: signed-assets
           path: |
             dist/mopm-*.tar.gz
+            dist/mopm_*.deb
             dist/SHA256SUMS
             dist/*.sigstore.json
           if-no-files-found: error

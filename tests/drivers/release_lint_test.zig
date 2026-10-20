@@ -269,7 +269,7 @@ test "mutant: the user-level beta tests something other than the candidate, or l
 test "mutant: attest signs files the user beta did not pass" {
     try mutant("attest does not compare with the tested records", "        run: '\"$RUNNER_TEMP/release\" tested dist tested'", "        run: '\"$RUNNER_TEMP/release\" check dist'", "attest must run exactly");
     try mutant("attest does not download the records", "          pattern: tested-*\n", "          pattern: release-*\n", "attest must download the records");
-    try mutant("attest checks the records only after writing SHA256SUMS", "        run: '\"$RUNNER_TEMP/release\" tested dist tested'\n      - name: Write SHA256SUMS (exactly the four tarballs) and check it\n        run: '\"$RUNNER_TEMP/release\" sums dist'\n", "        run: '\"$RUNNER_TEMP/release\" sums dist'\n      - name: Write SHA256SUMS (exactly the four tarballs) and check it\n        run: '\"$RUNNER_TEMP/release\" tested dist tested'\n", "attest must check the tested records before it writes SHA256SUMS");
+    try mutant("attest checks the records only after writing SHA256SUMS", "        run: '\"$RUNNER_TEMP/release\" tested dist tested'\n      - name: Write SHA256SUMS (exactly the four tarballs and the two .debs) and check it\n        run: '\"$RUNNER_TEMP/release\" sums dist'\n", "        run: '\"$RUNNER_TEMP/release\" sums dist'\n      - name: Write SHA256SUMS (exactly the four tarballs and the two .debs) and check it\n        run: '\"$RUNNER_TEMP/release\" tested dist tested'\n", "attest must check the tested records before it writes SHA256SUMS");
 }
 
 test "the glob matcher reads patterns as GitHub does" {

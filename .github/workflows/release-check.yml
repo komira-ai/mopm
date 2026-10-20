@@ -2,7 +2,7 @@ name: release-check
 
 # A pull request that touches the release machinery proves it without publishing: the same build and
 # packaging as release.yml (release-build.yml, with the fake version 0.0.1, never published: the fake registry refuses a CLI older than 0.0.1), the candidate tested as a user on
-# every platform (release-beta-user.yml), SHA256SUMS written and checked, and
+# every platform (release-beta-user.yml), SHA256SUMS written and checked, the .debs read by dpkg and linted by lintian, and
 # the installer run against a local fake release on Linux and macOS, with planted defects that it
 # must catch. No write permission, nothing uploaded but the short-lived workflow artifacts.
 
@@ -11,6 +11,9 @@ on:
     paths:
       - ".github/workflows/release*.yml"
       - "tools/release.zig"
+      - "tools/release_debs.zig"
+      - "tools/channels/**"
+      - "packaging/deb/**"
       - "tools/install_zig.sh"
       - "build.zig"
       - "build.zig.zon"
@@ -31,6 +34,9 @@ on:
     paths:
       - ".github/workflows/release*.yml"
       - "tools/release.zig"
+      - "tools/release_debs.zig"
+      - "tools/channels/**"
+      - "packaging/deb/**"
       - "site/static/install.sh"
       - "tests/drivers/install_script_test.zig"
       - "tests/drivers/fake_mopm.zig"
@@ -72,11 +78,35 @@ jobs:
           merge-multiple: true
       - name: Install Zig 0.12.0 (sha256-pinned)
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
-      - name: SHA256SUMS for exactly the four tarballs, written and checked
+      - name: SHA256SUMS for exactly the four tarballs and the two .debs, written and checked
         run: |
           zig build-exe tools/release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/release"
           "$RUNNER_TEMP/release" sums dist
           cat dist/SHA256SUMS
+
+  # The .debs the release would ship, as the build made them: dpkg reads them, and lintian finds no error. Lintian runs on the
+  # real files (the real static binary), so the override for it is exercised, and a missing changelog, a copyright that does not
+  # point at the common license, or an empty long description goes red here before a release carries it.
+  lintian:
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-linux-*
+          path: dist
+          merge-multiple: true
+      - name: Install lintian
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lintian
+      - name: dpkg-deb reads each .deb (control and contents)
+        run: |
+          for deb in dist/*.deb; do
+            dpkg-deb --info "$deb"
+            dpkg-deb --contents "$deb"
+          done
+      - name: lintian, every tag printed, an error fails
+        run: lintian --version && lintian --fail-on error --tag-display-limit 0 dist/*.deb
 
   installer:
     name: install.sh (${{ matrix.os }})

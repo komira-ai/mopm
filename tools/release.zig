@@ -13,28 +13,31 @@
 //!       mopm-<version>-<target>/{mopm,LICENSE}. --run-prefix is a command put before the binary to
 //!       run it (`arch -x86_64` for the Intel macOS build on an arm64 runner).
 //!   release sums <dir>
-//!       Requires exactly four mopm-<version>-<target>.tar.gz in <dir>, one per target, one version;
-//!       writes <dir>/SHA256SUMS and checks it.
+//!       Requires exactly four mopm-<version>-<target>.tar.gz in <dir>, one per target, one version, and the two
+//!       mopm_<version>_<arch>.deb (amd64, arm64) of it; writes <dir>/SHA256SUMS (six lines) and checks it.
 //!   release check <dir>
-//!       Checks <dir>/SHA256SUMS: exactly those four tarballs, each with the hash listed.
+//!       Checks <dir>/SHA256SUMS: exactly those four tarballs and two .debs, each with the hash listed.
 //!   release tarball <parent> <name> <out.tar.gz>
 //!       Packs the files of <parent>/<name>/ as <name>/<file> (ustar, then gzip).
 //!   release record <tarball> <outdir>
 //!       Writes <outdir>/<tarball name>.sha256 (`<sha256>  <name>`): the exact bytes the user beta ran.
-//!   release tested <dist> <tested-dir>
+//!   release tested <dist> <tested-dir> [--packaging <dir>]
 //!       Refuses unless <tested-dir> holds one record per user-tested target (linux-x86_64, linux-aarch64,
 //!       macos-arm64), nothing else, and <dist> holds each named tarball with the recorded sha256: the
-//!       files attested are the files that passed the user beta. Runs in the attest job before `sums`.
+//!       files attested are the files that passed the user beta. Each .deb must also equal, byte for byte, the one that its
+//!       tarball's binary makes with the metadata in <dir> (default packaging/deb): a .deb carries the tested binary and
+//!       nothing else. Runs in the attest job before `sums`.
 //!   release sign <dir> [--cosign <path>]
-//!       After `sums`: signs the four tarballs and SHA256SUMS with keyless `cosign sign-blob` (Sigstore;
+//!       After `sums`: signs the four tarballs, the two .debs and SHA256SUMS with keyless `cosign sign-blob` (Sigstore;
 //!       the signing identity is the workflow's OIDC token, no key and no secret exists), writing
-//!       <file>.sigstore.json beside each, and refuses unless all five bundles exist and are not empty.
+//!       <file>.sigstore.json beside each, and refuses unless all seven bundles exist and are not empty.
 //!       Runs only in the attest job of release.yml, the one job that holds id-token.
 //!
 //! Nothing here uploads anything.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const release_debs = @import("release_debs.zig");
 
 const targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64", "macos-x86_64" };
 
@@ -44,7 +47,7 @@ fn die(comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 fn usage() noreturn {
-    die("usage: release package <version> <target> <zig-target> <outdir> [--run-prefix \"<words>\"] | sums <dir> | check <dir> | tarball <parent> <name> <out.tar.gz> | sign <dir> [--cosign <path>] | record <tarball> <outdir> | tested <dist> <tested-dir>", .{});
+    die("usage: release package <version> <target> <zig-target> <outdir> [--run-prefix \"<words>\"] | sums <dir> | check <dir> | tarball <parent> <name> <out.tar.gz> | sign <dir> [--cosign <path>] | record <tarball> <outdir> | tested <dist> <tested-dir> [--packaging <dir>]", .{});
 }
 
 pub fn main() !void {
@@ -72,8 +75,9 @@ pub fn main() !void {
         return record(a, rest[0], rest[1]);
     }
     if (std.mem.eql(u8, cmd, "tested")) {
-        if (rest.len != 2) usage();
-        return tested(a, rest[0], rest[1]);
+        if (rest.len == 2) return tested(a, rest[0], rest[1], release_debs.default_packaging);
+        if (rest.len == 4 and std.mem.eql(u8, rest[2], "--packaging")) return tested(a, rest[0], rest[1], rest[3]);
+        usage();
     }
     if (std.mem.eql(u8, cmd, "sign")) {
         if (rest.len == 1) return sign(a, rest[0], "cosign");
@@ -267,8 +271,41 @@ fn fourTarballs(a: Allocator, dir_path: []const u8) ![][]const u8 {
     return names.items;
 }
 
+/// The version the four tarballs in `names` share.
+fn versionOf(a: Allocator, names: []const []const u8) []const u8 {
+    const first = names[0];
+    for (targets) |t| {
+        const suffix = std.fmt.allocPrint(a, "-{s}.tar.gz", .{t}) catch @panic("oom");
+        if (std.mem.endsWith(u8, first, suffix)) return first["mopm-".len .. first.len - suffix.len];
+    }
+    die("{s} is not a tarball of a known target", .{first});
+}
+
+/// The payload of a release that SHA256SUMS lists and cosign signs: the four tarballs, then the two .debs (one per
+/// architecture, of the tarballs' version). Refuses unless the directory holds exactly one of each, and no other mopm_*.deb.
+fn payloadFiles(a: Allocator, dir_path: []const u8) ![][]const u8 {
+    const tarballs = try fourTarballs(a, dir_path);
+    const version = versionOf(a, tarballs);
+    var dir = try std.fs.cwd().openDir(dir_path, .{ .iterate = true });
+    defer dir.close();
+    var stray: usize = 0;
+    var it = dir.iterate();
+    while (try it.next()) |e| {
+        if (std.mem.startsWith(u8, e.name, "mopm_") and std.mem.endsWith(u8, e.name, ".deb")) stray += 1;
+    }
+    if (stray != release_debs.debs.len) die("expected exactly {d} mopm_*.deb in {s}, found {d}", .{ release_debs.debs.len, dir_path, stray });
+    var out = std.ArrayList([]const u8).init(a);
+    try out.appendSlice(tarballs);
+    for (release_debs.debs) |d| {
+        const name = try release_debs.debName(a, version, d.arch);
+        dir.access(name, .{}) catch die("{s} has no {s}", .{ dir_path, name });
+        try out.append(name);
+    }
+    return out.items;
+}
+
 fn sums(a: Allocator, dir_path: []const u8) !void {
-    const names = try fourTarballs(a, dir_path);
+    const names = try payloadFiles(a, dir_path);
     var text = std.ArrayList(u8).init(a);
     for (names) |n| {
         const hex = try sha256Hex(try std.fs.path.join(a, &.{ dir_path, n }));
@@ -279,7 +316,7 @@ fn sums(a: Allocator, dir_path: []const u8) !void {
 }
 
 fn check(a: Allocator, dir_path: []const u8) !void {
-    const names = try fourTarballs(a, dir_path);
+    const names = try payloadFiles(a, dir_path);
     const text = try std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ dir_path, "SHA256SUMS" }), 1 << 20);
     var lines = std.mem.splitScalar(u8, text, '\n');
     var listed: usize = 0;
@@ -292,20 +329,20 @@ fn check(a: Allocator, dir_path: []const u8) !void {
         for (names) |m| {
             if (std.mem.eql(u8, m, n)) known = true;
         }
-        if (!known) die("SHA256SUMS lists {s}, which is not one of the four tarballs", .{n});
+        if (!known) die("SHA256SUMS lists {s}, which is not one of the four tarballs and two .debs", .{n});
         const got = try sha256Hex(try std.fs.path.join(a, &.{ dir_path, n }));
         if (!std.mem.eql(u8, hex, &got)) die("{s}: sha256 {s} is not the listed {s}", .{ n, &got, hex });
         listed += 1;
     }
     if (listed != names.len) die("SHA256SUMS lists {d} files, expected {d}", .{ listed, names.len });
-    std.debug.print("SHA256SUMS ok: {d} tarballs\n", .{listed});
+    std.debug.print("SHA256SUMS ok: {d} files (tarballs and .debs)\n", .{listed});
 }
 
 // ---- sign: keyless cosign signatures --------------------------------------------------------
 
-/// `cosign sign-blob --yes --bundle <file>.sigstore.json <file>` for the four tarballs and SHA256SUMS.
+/// `cosign sign-blob --yes --bundle <file>.sigstore.json <file>` for the four tarballs, the two .debs and SHA256SUMS.
 fn sign(a: Allocator, dir_path: []const u8, cosign: []const u8) !void {
-    const names = try fourTarballs(a, dir_path);
+    const names = try payloadFiles(a, dir_path);
     var files = std.ArrayList([]const u8).init(a);
     try files.appendSlice(names);
     try files.append("SHA256SUMS");
@@ -338,8 +375,10 @@ fn record(a: Allocator, tarball: []const u8, outdir: []const u8) !void {
 }
 
 /// Refuses unless, for each tested target, `tested_dir` holds exactly one record and `dist_dir` holds the
-/// tarball it names with exactly the recorded sha256; and `tested_dir` holds no other file.
-fn tested(a: Allocator, dist_dir: []const u8, tested_dir: []const u8) !void {
+/// tarball it names with exactly the recorded sha256; and `tested_dir` holds no other file. Then each .deb in `dist_dir` must be
+/// byte for byte the one its linux tarball (the tested one) makes with the metadata in `packaging`: the .debs attested carry
+/// the binary the user beta ran, and nothing else.
+fn tested(a: Allocator, dist_dir: []const u8, tested_dir: []const u8, packaging: []const u8) !void {
     var dir = std.fs.cwd().openDir(tested_dir, .{ .iterate = true }) catch |err| die("cannot open {s}: {s}", .{ tested_dir, @errorName(err) });
     defer dir.close();
     var files = std.ArrayList([]const u8).init(a);
@@ -365,4 +404,21 @@ fn tested(a: Allocator, dist_dir: []const u8, tested_dir: []const u8) !void {
         std.debug.print("tested ok: {s} {s}\n", .{ name, &have });
     }
     if (files.items.len != matched) die("{s} holds {d} files, expected exactly the {d} records of the tested targets", .{ tested_dir, files.items.len, matched });
+    try debsFromTested(a, dist_dir, packaging);
+}
+
+/// Every .deb of the release is the one its tarball's binary makes (release_debs.rebuild), byte for byte.
+fn debsFromTested(a: Allocator, dist_dir: []const u8, packaging: []const u8) !void {
+    const names = try payloadFiles(a, dist_dir);
+    const version = versionOf(a, names);
+    const meta = release_debs.loadPackaging(a, packaging) catch |err| die("cannot read the .deb metadata in {s}: {s}", .{ packaging, @errorName(err) });
+    for (release_debs.debs) |d| {
+        const deb_name = try release_debs.debName(a, version, d.arch);
+        const tar_name = try release_debs.tarballName(a, version, d.target);
+        const tar_gz = std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ dist_dir, tar_name }), 1 << 30) catch |err| die("cannot read {s}: {s}", .{ tar_name, @errorName(err) });
+        const have = std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ dist_dir, deb_name }), 1 << 30) catch |err| die("cannot read {s}: {s}", .{ deb_name, @errorName(err) });
+        const want = release_debs.rebuild(a, tar_gz, version, d, meta) catch |err| die("cannot rebuild {s} from {s}: {s}", .{ deb_name, tar_name, @errorName(err) });
+        if (!std.mem.eql(u8, have, want)) die("{s} is not the .deb that the binary of {s} makes: the file to attest holds other bytes than the tested binary", .{ deb_name, tar_name });
+        std.debug.print("deb ok: {s} is built from the tested binary of {s}\n", .{ deb_name, tar_name });
+    }
 }

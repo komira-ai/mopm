@@ -1,0 +1,7 @@
+Maintainer: mopm authors <apt@mopm.dev>
+Homepage: https://mopm.dev
+Description: package manager for Mojo
+ mopm resolves, locks and builds Mojo packages. It reads a mopm.toml,
+ pins every dependency in a lock file, and runs the build and the tests.
+ .
+ This is a static binary: it needs nothing else installed.

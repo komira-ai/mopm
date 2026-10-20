@@ -3,6 +3,7 @@
 //!   tar.zig      byte-deterministic ustar and gzip, and a reader for them
 //!   control.zig  Debian control-file syntax
 //!   deb.zig      a .deb written byte-deterministically
+//!   deb_package.zig  the build half's one entry point: a binary and its metadata in, a .deb out (the shape of buildrules' deb_package)
 //!   apt.zig      Packages / Packages.gz / Release, merging a new .deb into an index, monotonic and bounded
 //!   formula.zig  the Homebrew formula from SHA256SUMS
 //!   version.zig  X.Y.Z and the rule that a channel never moves down
@@ -12,6 +13,7 @@
 pub const tar = @import("tar.zig");
 pub const control = @import("control.zig");
 pub const deb = @import("deb.zig");
+pub const deb_package = @import("deb_package.zig");
 pub const apt = @import("apt.zig");
 pub const formula = @import("formula.zig");
 pub const version = @import("version.zig");
@@ -20,6 +22,7 @@ test {
     _ = tar;
     _ = control;
     _ = deb;
+    _ = deb_package;
     _ = apt;
     _ = formula;
     _ = version;

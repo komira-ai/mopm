@@ -68,7 +68,16 @@ fn validPath(p: []const u8) bool {
 
 fn checkPackage(p: Package) !void {
     if (!validName(p.name)) return error.BadName;
-    _ = try version_mod.Version.parse(p.version);
+    // X.Y.Z, or X.Y.Z~suffix (a pre-release: dpkg sorts it before X.Y.Z).
+    const core = p.version[0 .. std.mem.indexOfScalar(u8, p.version, '~') orelse p.version.len];
+    _ = try version_mod.Version.parse(core);
+    if (core.len < p.version.len) {
+        const suffix = p.version[core.len + 1 ..];
+        if (suffix.len == 0) return error.BadVersion;
+        for (suffix) |ch| {
+            if (!std.ascii.isAlphanumeric(ch) and ch != '.') return error.BadVersion;
+        }
+    }
     if (!validArch(p.architecture)) return error.BadArchitecture;
     if (p.files.len == 0) return error.NoFiles;
     for (p.files) |f| {

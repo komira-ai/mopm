@@ -5,6 +5,10 @@
 //!                --mtime <epoch seconds> --out <path.deb>
 //!       Writes a .deb. <mode> is octal, <dest> the path inside the package with no leading slash, <src> a file.
 //!       The same arguments and the same files give the same bytes.
+//!   channels deb-package --binary <path> --name <name> --version <X.Y.Z> --arch <arch> --packaging <dir> --out <path.deb>
+//!       Writes the .deb of a built binary (deb_package.zig): the binary, the copyright, a changelog.gz and the lintian
+//!       overrides, with the control fields from <dir>/control, <dir>/copyright and <dir>/lintian-overrides. The same
+//!       binary and metadata give the same bytes.
 //!   channels apt-index --repo <dir> --out <dir> --deb <path> [--deb ...] --date <epoch seconds>
 //!                --origin <text> --label <text> --description <text> [--arch <arch> ...] [--keep <N>]
 //!       Reads the Packages files under <dir>/dists/stable/main/binary-<arch>/ (none is an empty index) for the --arch
@@ -24,6 +28,7 @@ const Allocator = std.mem.Allocator;
 const apt = @import("apt.zig");
 const control = @import("control.zig");
 const deb = @import("deb.zig");
+const deb_package = @import("deb_package.zig");
 const formula = @import("formula.zig");
 const version_mod = @import("version.zig");
 
@@ -33,7 +38,7 @@ fn die(comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 fn usage() noreturn {
-    std.debug.print("usage: channels deb|apt-index|formula|monotonic ... (see tools/channels/main.zig)\n", .{});
+    std.debug.print("usage: channels deb|deb-package|apt-index|formula|monotonic ... (see tools/channels/main.zig)\n", .{});
     std.process.exit(2);
 }
 
@@ -109,6 +114,7 @@ pub fn main() !void {
     const cmd = argv[1];
     const rest = argv[2..];
     if (std.mem.eql(u8, cmd, "deb")) return cmdDeb(a, rest);
+    if (std.mem.eql(u8, cmd, "deb-package")) return cmdDebPackage(a, rest);
     if (std.mem.eql(u8, cmd, "apt-index")) return cmdAptIndex(a, rest);
     if (std.mem.eql(u8, cmd, "formula")) return cmdFormula(a, rest);
     if (std.mem.eql(u8, cmd, "monotonic")) return cmdMonotonic(a, rest);
@@ -138,6 +144,28 @@ fn cmdDeb(a: Allocator, args: []const []const u8) !void {
         .files = files.items,
         .mtime = number(need(flags, "--mtime"), "--mtime"),
     }) catch |err| die("deb: {s}", .{@errorName(err)});
+    const out = need(flags, "--out");
+    writeFile(out, bytes);
+    var d: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(bytes, &d, .{});
+    std.debug.print("wrote {s} {d} bytes sha256 {s}\n", .{ out, bytes.len, std.fmt.bytesToHex(d, .lower) });
+}
+
+fn cmdDebPackage(a: Allocator, args: []const []const u8) !void {
+    const flags = try parseFlags(a, args, &.{ "--binary", "--name", "--version", "--arch", "--packaging", "--out" }, &.{});
+    const dir_path = need(flags, "--packaging");
+    var dir = std.fs.cwd().openDir(dir_path, .{}) catch |err| die("cannot open {s}: {s}", .{ dir_path, @errorName(err) });
+    defer dir.close();
+    const meta = deb_package.Metadata.load(a, dir) catch |err| die("cannot read the metadata in {s}: {s}", .{ dir_path, @errorName(err) });
+    const bytes = deb_package.build(a, .{
+        .binary = readFile(a, need(flags, "--binary")),
+        .name = need(flags, "--name"),
+        .version = need(flags, "--version"),
+        .arch = need(flags, "--arch"),
+        .control = meta.control,
+        .copyright = meta.copyright,
+        .lintian_overrides = meta.lintian_overrides,
+    }) catch |err| die("deb-package: {s}", .{@errorName(err)});
     const out = need(flags, "--out");
     writeFile(out, bytes);
     var d: [32]u8 = undefined;
