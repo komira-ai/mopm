@@ -13,7 +13,7 @@ curl -fsSL https://mopm.dev/install.sh | sh
 ```
 
 The script needs `curl`, `tar`, `awk` and `sha256sum` (or `shasum`). It picks the release for your
-machine (Linux or macOS, x86_64 or arm64) from the GitHub releases, checks the tarball's sha256 against
+machine (Linux on x86_64 or arm64, or macOS on arm64; there is no Intel Mac release) from the GitHub releases, checks the tarball's sha256 against
 the release's `SHA256SUMS`, and installs `~/.mopm/bin/mopm`. It needs no root and edits no shell startup
 file: add the `PATH` line it prints to your own. If any check fails, it installs nothing.
 
@@ -27,9 +27,9 @@ Read the script before you run it: it is `site/static/install.sh` in the reposit
 
 ### By hand
 
-Each release lists `mopm-<version>-<target>.tar.gz` for `linux-x86_64`, `linux-aarch64`, `macos-arm64` and
-`macos-x86_64`, `mopm_<version>_amd64.deb` and `mopm_<version>_arm64.deb` (for Debian and Ubuntu: `sudo apt install ./mopm_<version>_amd64.deb`),
-a `SHA256SUMS` file, and a `<file>.sigstore.json` signature bundle for each of those seven files.
+Each release lists `mopm-<version>-<target>.tar.gz` for `linux-x86_64`, `linux-aarch64` and
+`macos-arm64`, `mopm_<version>_amd64.deb` and `mopm_<version>_arm64.deb` (for Debian and Ubuntu: `sudo apt install ./mopm_<version>_amd64.deb`),
+a `SHA256SUMS` file, and a `<file>.sigstore.json` signature bundle for each of those six files.
 
 ```sh
 v=0.0.2 t=linux-x86_64

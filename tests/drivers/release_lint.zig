@@ -6,7 +6,7 @@
 //!
 //! The pipeline (RELEASING.md): a push to main that changes more than docs or CI runs `beta` (the
 //! whole of ci.yml) and `lint` (the whole of lint.yml), then `plan` (the version), `build` (the
-//! candidate: four targets, at that version), `beta-user` (the candidate tested as a user on every
+//! candidate: three targets, at that version), `beta-user` (the candidate tested as a user on every
 //! platform), `attest` (SHA256SUMS, cosign signatures and build provenance), `verify` (the checks of the
 //! built files, read-only), `tag` (the annotated tag v<version>, the one write before the release) and
 //! `publish` (the release, from exactly the verified files). The tag comes AFTER verify, so a failing

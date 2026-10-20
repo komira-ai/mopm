@@ -11,11 +11,11 @@ const std = @import("std");
 const h = @import("harness.zig");
 const Allocator = std.mem.Allocator;
 
-const targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64", "macos-x86_64" };
+const targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64" };
 const sha = "0123456789abcdef0123456789abcdef01234567";
 const other = "fedcba9876543210fedcba9876543210fedcba98";
-const names7 = [_][]const u8{ "mopm-1.2.3-linux-x86_64.tar.gz", "mopm-1.2.3-linux-aarch64.tar.gz", "mopm-1.2.3-macos-arm64.tar.gz", "mopm-1.2.3-macos-x86_64.tar.gz", "mopm_1.2.3_amd64.deb", "mopm_1.2.3_arm64.deb", "SHA256SUMS" };
-const names14 = names7 ++ [_][]const u8{ "mopm-1.2.3-linux-x86_64.tar.gz.sigstore.json", "mopm-1.2.3-linux-aarch64.tar.gz.sigstore.json", "mopm-1.2.3-macos-arm64.tar.gz.sigstore.json", "mopm-1.2.3-macos-x86_64.tar.gz.sigstore.json", "SHA256SUMS.sigstore.json", "mopm_1.2.3_amd64.deb.sigstore.json", "mopm_1.2.3_arm64.deb.sigstore.json" };
+const names6 = [_][]const u8{ "mopm-1.2.3-linux-x86_64.tar.gz", "mopm-1.2.3-linux-aarch64.tar.gz", "mopm-1.2.3-macos-arm64.tar.gz", "mopm_1.2.3_amd64.deb", "mopm_1.2.3_arm64.deb", "SHA256SUMS" };
+const names12 = names6 ++ [_][]const u8{ "mopm-1.2.3-linux-x86_64.tar.gz.sigstore.json", "mopm-1.2.3-linux-aarch64.tar.gz.sigstore.json", "mopm-1.2.3-macos-arm64.tar.gz.sigstore.json", "SHA256SUMS.sigstore.json", "mopm_1.2.3_amd64.deb.sigstore.json", "mopm_1.2.3_arm64.deb.sigstore.json" };
 
 const Tools = struct { cut: []const u8, gh: []const u8, release: []const u8, cosign: []const u8, channels: []const u8 };
 
@@ -62,7 +62,7 @@ const World = struct {
         return h.readFile(w.a, w.path(name)) catch "";
     }
 
-    /// The four tarballs, the two .debs for `version` and SHA256SUMS in <root>/<sub>, as the build makes them.
+    /// The three tarballs, the two .debs for `version` and SHA256SUMS in <root>/<sub>, as the build makes them.
     /// `extra`: an additional file packed into the linux-x86_64 tarball.
     fn assets(w: *World, sub: []const u8, version: []const u8, extra: ?[]const u8) !void {
         const a = w.a;
@@ -404,7 +404,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         const size = (try std.fs.cwd().statFile(try h.join(a, &.{ dir, "mopm-1.2.3-linux-x86_64.tar.gz" }))).size;
         rep.check("verify-dir: good built files pass before any release exists", r.code == 0 and h.contains(r.text, "verified v1.2.3 at " ++ sha), r.text);
         rep.check("verify-dir: prints the pin: url, sha256 and size of the linux-x86_64 tarball", h.contains(r.text, "releases/download/v1.2.3/mopm-1.2.3-linux-x86_64.tar.gz") and h.contains(r.text, want) and h.contains(r.text, try h.fmt(a, "size   {d}\n", .{size})), r.text);
-        rep.check("verify-dir: attestation is checked for all seven payload files", w.calls("attestation verify ") == 7, w.log());
+        rep.check("verify-dir: attestation is checked for all six payload files", w.calls("attestation verify ") == 6, w.log());
         rep.check("verify-dir: attestation is pinned to release.yml, the given ref and the commit", h.contains(w.log(), "--signer-workflow komira-ai/mopm/.github/workflows/release.yml --source-ref refs/heads/main --source-digest " ++ sha ++ "\n"), w.log());
         rep.check("verify-dir: reads no release (none exists yet in a real run)", w.calls("release ") == 0, w.log());
         const nt = h.readFile(a, try h.join(a, &.{ notes, "release-notes.md" })) catch "";
@@ -417,7 +417,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         while (it.next()) |l| {
             if (l.len != 0) lines += 1;
         }
-        rep.check("verify-dir: verified.sha256 lists the fourteen files", lines == 14 and h.contains(man, "  mopm_1.2.3_amd64.deb\n") and h.contains(man, "  mopm_1.2.3_arm64.deb.sigstore.json") and h.contains(man, "  SHA256SUMS.sigstore.json"), man);
+        rep.check("verify-dir: verified.sha256 lists the twelve files", lines == 12 and h.contains(man, "  mopm_1.2.3_amd64.deb\n") and h.contains(man, "  mopm_1.2.3_arm64.deb.sigstore.json") and h.contains(man, "  SHA256SUMS.sigstore.json"), man);
     }
     {
         var w = try goodVerify(a, tools, &tmp, "vd_tamper", "1.2.3");
@@ -438,13 +438,13 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
     }
     {
         var w = try goodVerify(a, tools, &tmp, "vd_missing", "1.2.3");
-        try std.fs.cwd().deleteFile(w.path("assets/mopm-1.2.3-macos-x86_64.tar.gz"));
+        try std.fs.cwd().deleteFile(w.path("assets/mopm-1.2.3-macos-arm64.tar.gz"));
         const r = try w.run(&.{ "verify-dir", "1.2.3", w.path("assets"), "--sha", sha, "--source-ref", "refs/heads/main" });
-        rep.check("verify-dir: three tarballs are refused", r.code == 1 and h.contains(r.text, "holds 13 files, expected exactly 14"), r.text);
-        try w.put("assets/mopm-1.2.3-macos-x86_64.tar.gz", "not a tarball");
+        rep.check("verify-dir: two tarballs are refused", r.code == 1 and h.contains(r.text, "holds 11 files, expected exactly 12"), r.text);
+        try w.put("assets/mopm-1.2.3-macos-arm64.tar.gz", "not a tarball");
         try w.put("assets/stray.txt", "x");
         const s = try w.run(&.{ "verify-dir", "1.2.3", w.path("assets"), "--sha", sha, "--source-ref", "refs/heads/main" });
-        rep.check("verify-dir: a fifteenth file is refused", s.code == 1 and h.contains(s.text, "holds 15 files, expected exactly 14"), s.text);
+        rep.check("verify-dir: a thirteenth file is refused", s.code == 1 and h.contains(s.text, "holds 13 files, expected exactly 12"), s.text);
     }
     {
         var w = try goodVerify(a, tools, &tmp, "vd_version", "1.2.3");
@@ -468,7 +468,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         while (lines.next()) |l| {
             if (std.mem.startsWith(u8, l, "verify-blob ")) verifies += 1;
         }
-        rep.check("verify-dir: the signature of each of the seven payload files is verified", ok.code == 0 and verifies == 7, cl);
+        rep.check("verify-dir: the signature of each of the six payload files is verified", ok.code == 0 and verifies == 6, cl);
         rep.check("verify-dir: the signature is pinned to release.yml at the ref, the OIDC issuer, the commit, the push trigger and the repository", h.contains(cl, "--certificate-identity https://github.com/komira-ai/mopm/.github/workflows/release.yml@refs/heads/main --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-github-workflow-sha " ++ sha ++ " --certificate-github-workflow-trigger push --certificate-github-workflow-repository komira-ai/mopm "), cl);
 
         try w.put("cosign_refuse", "mopm-1.2.3-macos-arm64.tar.gz");
@@ -484,7 +484,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         var w2 = try goodVerify(a, tools, &tmp, "vd_unsigned", "1.2.3");
         try std.fs.cwd().deleteFile(w2.path("assets/mopm-1.2.3-linux-x86_64.tar.gz.sigstore.json"));
         const m = try w2.run(&.{ "verify-dir", "1.2.3", w2.path("assets"), "--sha", sha, "--source-ref", "refs/heads/main" });
-        rep.check("verify-dir: a missing bundle is refused (thirteen files, fourteen expected)", m.code == 1 and h.contains(m.text, "holds 13 files, expected exactly 14"), m.text);
+        rep.check("verify-dir: a missing bundle is refused (eleven files, twelve expected)", m.code == 1 and h.contains(m.text, "holds 11 files, expected exactly 12"), m.text);
     }
     // ---- the .debs: each is the one its tarball's binary makes ---------------------------------
     // Everything below is a planted defect in an otherwise good scenario (vd_ok above is the control for the same files).
@@ -522,28 +522,28 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         rep.check("verify-dir: a .deb that is not the one SHA256SUMS lists is refused", r.code == 1 and h.contains(r.text, "mopm_1.2.3_arm64.deb: sha256"), r.text);
     }
     {
-        // The set of earlier releases (four tarballs, SHA256SUMS, five bundles: ten files) is refused now: fourteen files are expected.
-        var w = try goodVerify(a, tools, &tmp, "vd_ten_files", "1.2.3");
+        // A set without the .debs (three tarballs, SHA256SUMS, four bundles: eight files) is refused: twelve files are expected.
+        var w = try goodVerify(a, tools, &tmp, "vd_eight_files", "1.2.3");
         for ([_][]const u8{ "mopm_1.2.3_amd64.deb", "mopm_1.2.3_arm64.deb", "mopm_1.2.3_amd64.deb.sigstore.json", "mopm_1.2.3_arm64.deb.sigstore.json" }) |n| {
             try std.fs.cwd().deleteFile(try h.join(a, &.{ w.path("assets"), n }));
         }
         const r = try w.run(&.{ "verify-dir", "1.2.3", w.path("assets"), "--sha", sha, "--source-ref", "refs/heads/main" });
-        rep.check("verify-dir: the ten files of earlier releases are refused (fourteen expected)", r.code == 1 and h.contains(r.text, "holds 10 files, expected exactly 14"), r.text);
+        rep.check("verify-dir: the eight files of a release without .debs are refused (twelve expected)", r.code == 1 and h.contains(r.text, "holds 8 files, expected exactly 12"), r.text);
     }
     {
         // A .deb without its bundle.
         var w = try goodVerify(a, tools, &tmp, "vd_deb_unsigned", "1.2.3");
         try std.fs.cwd().deleteFile(w.path("assets/mopm_1.2.3_amd64.deb.sigstore.json"));
         const r = try w.run(&.{ "verify-dir", "1.2.3", w.path("assets"), "--sha", sha, "--source-ref", "refs/heads/main" });
-        rep.check("verify-dir: a .deb without its bundle is refused", r.code == 1 and h.contains(r.text, "holds 13 files, expected exactly 14"), r.text);
+        rep.check("verify-dir: a .deb without its bundle is refused", r.code == 1 and h.contains(r.text, "holds 11 files, expected exactly 12"), r.text);
     }
     {
-        // release sums: refuses when a .deb is missing or a third one is there; the control writes six lines.
+        // release sums: refuses when a .deb is missing or a third one is there; the control writes five lines.
         var w = try goodVerify(a, tools, &tmp, "sums_debs", "1.2.3");
         var env = try h.environ(a);
         try env.put("FAKE_GH_DIR", w.root);
         const dir = try freshDir(a, w, "sumsdir");
-        for ([_][]const u8{ "mopm-1.2.3-linux-x86_64.tar.gz", "mopm-1.2.3-linux-aarch64.tar.gz", "mopm-1.2.3-macos-arm64.tar.gz", "mopm-1.2.3-macos-x86_64.tar.gz", "mopm_1.2.3_amd64.deb", "mopm_1.2.3_arm64.deb" }) |n| {
+        for ([_][]const u8{ "mopm-1.2.3-linux-x86_64.tar.gz", "mopm-1.2.3-linux-aarch64.tar.gz", "mopm-1.2.3-macos-arm64.tar.gz", "mopm_1.2.3_amd64.deb", "mopm_1.2.3_arm64.deb" }) |n| {
             try h.writeFile(try h.join(a, &.{ dir, n }), w.read(try h.join(a, &.{ "assets", n })));
         }
         const ok = try h.run(a, &.{ tools.release, "sums", dir }, &env, .{});
@@ -553,7 +553,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         while (it.next()) |l| {
             if (l.len != 0) lines += 1;
         }
-        rep.check("release sums: control: the four tarballs and the two .debs make a SHA256SUMS of six lines", ok.code == 0 and lines == 6 and h.contains(sums_text, "  mopm_1.2.3_arm64.deb\n"), ok.text);
+        rep.check("release sums: control: the three tarballs and the two .debs make a SHA256SUMS of five lines", ok.code == 0 and lines == 5 and h.contains(sums_text, "  mopm_1.2.3_arm64.deb\n"), ok.text);
         try std.fs.cwd().deleteFile(try h.join(a, &.{ dir, "mopm_1.2.3_arm64.deb" }));
         const missing = try h.run(a, &.{ tools.release, "sums", dir }, &env, .{});
         rep.check("release sums: a missing .deb is refused", missing.code != 0 and h.contains(missing.text, "expected exactly 2 mopm_*.deb"), missing.text);
@@ -613,7 +613,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         rep.check("release sign: a failing cosign fails the step", r.code != 0 and h.contains(r.text, "cosign sign-blob failed"), r.text);
         try std.fs.cwd().deleteFile(w.path("cosign_sign_fail"));
         const ok = try h.run(a, &.{ tools.release, "sign", w.path("assets"), "--cosign", tools.cosign }, &env, .{});
-        rep.check("release sign: control: with cosign working it signs the seven payload files", ok.code == 0 and h.contains(ok.text, "signed 7 files"), ok.text);
+        rep.check("release sign: control: with cosign working it signs the six payload files", ok.code == 0 and h.contains(ok.text, "signed 6 files"), ok.text);
     }
     {
         // release record / tested: the tarballs attested are the tarballs the user beta passed.
@@ -656,7 +656,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
             if (rr.code != 0) return error.ToolFailed;
         }
         const again = try h.run(a, &.{ tools.release, "tested", dist, rec }, &env, .{});
-        try h.writeFile(try h.join(a, &.{ rec, "mopm-1.2.3-macos-x86_64.tar.gz.sha256" }), "x\n");
+        try h.writeFile(try h.join(a, &.{ rec, "mopm-1.2.3-linux-riscv64.tar.gz.sha256" }), "x\n");
         const extra = try h.run(a, &.{ tools.release, "tested", dist, rec }, &env, .{});
         rep.check("release tested: a record beyond the three tested targets is refused", again.code == 0 and extra.code != 0 and h.contains(extra.text, "expected exactly the 3 records"), extra.text);
     }
@@ -704,13 +704,13 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         const v = try w.run(&.{ "verify-dir", "1.2.3", w.path("dist"), "--sha", sha, "--source-ref", "refs/heads/main", "--notes-out", w.path("notes") });
         rep.check("publish: setup: the built files verify", v.code == 0, v.text);
         const r = try w.run(&.{ "publish", "1.2.3", w.path("dist"), "--verified", w.path("notes/verified.sha256"), "--notes", w.path("notes/release-notes.md") });
-        rep.check("publish: creates the release from exactly the fourteen verified files", r.code == 0 and h.contains(r.text, "created the release v1.2.3") and w.calls("release create v1.2.3 ") == 1 and countFiles(w, "assets") == 14, r.text);
+        rep.check("publish: creates the release from exactly the twelve verified files", r.code == 0 and h.contains(r.text, "created the release v1.2.3") and w.calls("release create v1.2.3 ") == 1 and countFiles(w, "assets") == 12, r.text);
         var same_all = true;
-        for (names14) |n| same_all = same_all and same(a, w.path("dist"), w.path("assets"), n);
+        for (names12) |n| same_all = same_all and same(a, w.path("dist"), w.path("assets"), n);
         rep.check("publish: every published asset is the verified file, byte for byte", same_all, w.log());
         rep.check("publish: tag check, title, notes file, no prerelease flag", h.contains(w.log(), "--verify-tag --title mopm 1.2.3 --notes-file " ++ "") and !h.contains(w.log(), "--prerelease") and h.contains(w.read("release_notes"), "mopm 1.2.3"), w.log());
 
-        // A re-run: the release exists with all fourteen identical assets. Nothing is created or replaced.
+        // A re-run: the release exists with all twelve identical assets. Nothing is created or replaced.
         try w.put("releases_page_1", "[{\"tag_name\":\"v1.2.3\",\"draft\":false}]");
         const again = try w.run(&.{ "publish", "1.2.3", w.path("dist"), "--verified", w.path("notes/verified.sha256"), "--notes", w.path("notes/release-notes.md") });
         rep.check("publish: a re-run finds the release and does nothing", again.code == 0 and h.contains(again.text, "nothing to do") and w.calls("release create ") == 1 and w.calls("release upload ") == 0, again.text);
@@ -719,7 +719,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         try std.fs.cwd().deleteFile(w.path("assets/mopm-1.2.3-macos-arm64.tar.gz"));
         try std.fs.cwd().deleteFile(w.path("assets/SHA256SUMS"));
         const part = try w.run(&.{ "publish", "1.2.3", w.path("dist"), "--verified", w.path("notes/verified.sha256"), "--notes", w.path("notes/release-notes.md") });
-        rep.check("publish: a re-run adds exactly the assets the release lacks", part.code == 0 and w.calls("release upload ") == 1 and w.calls("release create ") == 1 and h.contains(w.log(), "mopm-1.2.3-macos-arm64.tar.gz") and countFiles(w, "assets") == 14, part.text);
+        rep.check("publish: a re-run adds exactly the assets the release lacks", part.code == 0 and w.calls("release upload ") == 1 and w.calls("release create ") == 1 and h.contains(w.log(), "mopm-1.2.3-macos-arm64.tar.gz") and countFiles(w, "assets") == 12, part.text);
 
         // A held asset that differs: refused, and nothing is changed (no upload, the asset is as it was).
         try w.put("assets/mopm-1.2.3-linux-aarch64.tar.gz", "tampered");
@@ -730,7 +730,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         try w.put("assets/mopm-1.2.3-linux-aarch64.tar.gz", w.read("dist/mopm-1.2.3-linux-aarch64.tar.gz"));
         try w.put("assets/stray.txt", "x");
         const stray = try w.run(&.{ "publish", "1.2.3", w.path("dist"), "--verified", w.path("notes/verified.sha256"), "--notes", w.path("notes/release-notes.md") });
-        rep.check("publish: an asset that is not one of the fourteen is refused, and nothing is uploaded", stray.code == 1 and h.contains(stray.text, "stray.txt") and w.calls("release upload ") == before, stray.text);
+        rep.check("publish: an asset that is not one of the twelve is refused, and nothing is uploaded", stray.code == 1 and h.contains(stray.text, "stray.txt") and w.calls("release upload ") == before, stray.text);
     }
     {
         var w = try fresh(a, tools, &tmp, "pub_refuse");
@@ -741,7 +741,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         const pub_args = [_][]const u8{ "publish", "1.2.3", w.path("dist"), "--verified", w.path("notes/verified.sha256"), "--notes", w.path("notes/release-notes.md") };
 
         // A file changed after verify-dir: not the verified file.
-        const f = try std.fs.cwd().openFile(w.path("dist/mopm-1.2.3-macos-x86_64.tar.gz"), .{ .mode = .read_write });
+        const f = try std.fs.cwd().openFile(w.path("dist/mopm-1.2.3-macos-arm64.tar.gz"), .{ .mode = .read_write });
         try f.seekFromEnd(0);
         try f.writeAll("x");
         f.close();
@@ -755,11 +755,11 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         const args2 = [_][]const u8{ "publish", "1.2.3", w2.path("dist"), "--verified", w2.path("notes/verified.sha256"), "--notes", w2.path("notes/release-notes.md") };
         try w2.put("dist/extra.txt", "x");
         const e = try w2.run(&args2);
-        rep.check("publish: a fifteenth file in the directory is refused", e.code == 1 and h.contains(e.text, "holds 15 files") and w2.calls("release create ") == 0, e.text);
+        rep.check("publish: a thirteenth file in the directory is refused", e.code == 1 and h.contains(e.text, "holds 13 files") and w2.calls("release create ") == 0, e.text);
         try std.fs.cwd().deleteFile(w2.path("dist/extra.txt"));
         try std.fs.cwd().deleteFile(w2.path("dist/SHA256SUMS"));
         const m = try w2.run(&args2);
-        rep.check("publish: a missing file is refused", m.code == 1 and h.contains(m.text, "holds 13 files") and w2.calls("release create ") == 0, m.text);
+        rep.check("publish: a missing file is refused", m.code == 1 and h.contains(m.text, "holds 11 files") and w2.calls("release create ") == 0, m.text);
     }
     {
         // A draft of the tag, and a prerelease flag that does not match the version.
@@ -793,7 +793,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         const r = try w.run(&.{ "verify", "1.2.3", dir });
         const want = try sha256Of(a, try h.join(a, &.{ w.root, "assets", "mopm-1.2.3-linux-x86_64.tar.gz" }));
         rep.check("verify: a good release passes", r.code == 0 and h.contains(r.text, "verified v1.2.3") and h.contains(r.text, want), r.text);
-        rep.check("verify: attestation is checked for the seven payload assets, pinned to release.yml, main and the tag's commit", w.calls("attestation verify ") == 7 and h.contains(w.log(), "--signer-workflow komira-ai/mopm/.github/workflows/release.yml --source-ref refs/heads/main --source-digest " ++ sha ++ "\n"), w.log());
+        rep.check("verify: attestation is checked for the six payload assets, pinned to release.yml, main and the tag's commit", w.calls("attestation verify ") == 6 and h.contains(w.log(), "--signer-workflow komira-ai/mopm/.github/workflows/release.yml --source-ref refs/heads/main --source-digest " ++ sha ++ "\n"), w.log());
         rep.check("verify: the signatures are checked too, pinned to main, the tag's commit, the push trigger and the repository", h.contains(w.read("cosign_log"), "--certificate-identity https://github.com/komira-ai/mopm/.github/workflows/release.yml@refs/heads/main --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-github-workflow-sha " ++ sha ++ " --certificate-github-workflow-trigger push --certificate-github-workflow-repository komira-ai/mopm "), w.read("cosign_log"));
         rep.check("verify: changes nothing (no create, no upload, no POST)", w.calls("release create") == 0 and w.calls("release upload") == 0 and w.calls("api -X POST") == 0, w.log());
         const ok = try w.run(&.{ "verify", "1.2.3", try freshDir(a, w, "dl2"), "--expect-sha256", want });
@@ -823,12 +823,12 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
     }
     {
         var w = try goodVerify(a, tools, &tmp, "verify_extra_asset", "1.2.3");
-        try w.put("asset_list", "mopm-1.2.3-linux-x86_64.tar.gz\nmopm-1.2.3-linux-aarch64.tar.gz\nmopm-1.2.3-macos-arm64.tar.gz\nmopm-1.2.3-macos-x86_64.tar.gz\nSHA256SUMS\nstray.txt\n");
+        try w.put("asset_list", "mopm-1.2.3-linux-x86_64.tar.gz\nmopm-1.2.3-linux-aarch64.tar.gz\nmopm-1.2.3-macos-arm64.tar.gz\nSHA256SUMS\nstray.txt\n");
         const r = try w.run(&.{ "verify", "1.2.3", try freshDir(a, w, "dl") });
         rep.check("verify: an extra asset in the release's list is refused by name, before any download", r.code == 1 and h.contains(r.text, "unexpected asset stray.txt") and w.calls("release download") == 0, r.text);
-        try w.put("asset_list", "mopm-1.2.3-linux-x86_64.tar.gz\nmopm-1.2.3-linux-aarch64.tar.gz\nmopm-1.2.3-macos-arm64.tar.gz\nSHA256SUMS\n");
+        try w.put("asset_list", "mopm-1.2.3-linux-x86_64.tar.gz\nmopm-1.2.3-linux-aarch64.tar.gz\nSHA256SUMS\n");
         const m = try w.run(&.{ "verify", "1.2.3", try freshDir(a, w, "dl2") });
-        rep.check("verify: a missing asset in the release's list is refused by name", m.code == 1 and h.contains(m.text, "lacks the asset mopm-1.2.3-macos-x86_64.tar.gz"), m.text);
+        rep.check("verify: a missing asset in the release's list is refused by name", m.code == 1 and h.contains(m.text, "lacks the asset mopm-1.2.3-macos-arm64.tar.gz"), m.text);
     }
     {
         var w = try goodVerify(a, tools, &tmp, "verify_off_main", "1.2.3");

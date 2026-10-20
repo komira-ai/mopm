@@ -258,13 +258,13 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
         var lines = std.mem.splitScalar(u8, sums, '\n');
         var kept = std.ArrayList(u8).init(a);
         while (lines.next()) |l| {
-            if (l.len == 0 or h.contains(l, "macos-x86_64")) continue;
+            if (l.len == 0 or h.contains(l, "macos-arm64")) continue;
             try kept.appendSlice(l);
             try kept.append('\n');
         }
         try h.writeFile(w.path("sums_missing"), kept.items);
         const missing = try w.run(try cat(a, &.{ &base, &.{ "--repo", "komira-ai/mopm", "--sums", w.path("sums_missing"), "--out", w.path("missing.rb") } }));
-        rep.check("mutant: a SHA256SUMS without macos-x86_64 is refused, no formula written", missing.code == 1 and h.contains(missing.text, "MissingTarball") and !w.has("missing.rb"), missing.text);
+        rep.check("mutant: a SHA256SUMS without macos-arm64 is refused, no formula written", missing.code == 1 and h.contains(missing.text, "MissingTarball") and !w.has("missing.rb"), missing.text);
 
         try h.writeFile(w.path("sums_stray"), try h.fmt(a, "{s}{s}  mopm-1.2.2-macos-arm64.tar.gz\n", .{ sums, "0" ** 64 }));
         const stray = try w.run(try cat(a, &.{ &base, &.{ "--repo", "komira-ai/mopm", "--sums", w.path("sums_stray"), "--out", w.path("stray.rb") } }));

@@ -2,7 +2,7 @@
 //!
 //! The checksums in the formula come from that one file and nowhere else: nothing is downloaded and nothing is
 //! hashed here, so a formula can only say what the verified SHA256SUMS says. The formula is a binary formula (no
-//! build, no bottles): four `url`/`sha256` pairs under `on_macos`/`on_linux` and `on_arm`/`on_intel`, `bin.install`
+//! build, no bottles): three `url`/`sha256` pairs under `on_macos`/`on_linux` and `on_arm`/`on_intel`, `bin.install`
 //! of the program, and a `test do` that requires `<name> --version` to print `<name> <version>`.
 
 const std = @import("std");
@@ -19,7 +19,7 @@ pub const Info = struct {
     license: []const u8,
     /// `owner/name` of the GitHub repository the release is in; the URL base is derived from it.
     repo: []const u8 = "",
-    /// Where the four tarballs are, instead of the release of `repo` (a `file://` directory for the install gate).
+    /// Where the three tarballs are, instead of the release of `repo` (a `file://` directory for the install gate).
     url_base: ?[]const u8 = null,
     /// Write `version "X.Y.Z"` (the default). Brew can usually read it from the URL.
     explicit_version: bool = true,
@@ -39,7 +39,6 @@ const Target = struct { suffix: []const u8, os: []const u8, cpu: []const u8 };
 /// In the order the formula lists them.
 const targets = [_]Target{
     .{ .suffix = "macos-arm64", .os = "macos", .cpu = "arm" },
-    .{ .suffix = "macos-x86_64", .os = "macos", .cpu = "intel" },
     .{ .suffix = "linux-aarch64", .os = "linux", .cpu = "arm" },
     .{ .suffix = "linux-x86_64", .os = "linux", .cpu = "intel" },
 };
@@ -123,7 +122,7 @@ pub fn render(a: Allocator, info: Info, sums_text: []const u8) ![]u8 {
     };
 
     const sums = try parseSums(a, sums_text);
-    // Every tarball of this name in the file must be one of the four of this version: a stray older one is a mistake.
+    // Every tarball of this name in the file must be one of the three of this version: a stray older one is a mistake.
     const prefix = try std.fmt.allocPrint(a, "{s}-", .{info.name});
     for (sums) |s| {
         if (!std.mem.startsWith(u8, s.name, prefix) or !std.mem.endsWith(u8, s.name, ".tar.gz")) continue;
@@ -168,7 +167,7 @@ pub fn render(a: Allocator, info: Info, sums_text: []const u8) ![]u8 {
 const t = std.testing;
 
 const h_macos_arm = "1111111111111111111111111111111111111111111111111111111111111111";
-const h_macos_x86 = "2222222222222222222222222222222222222222222222222222222222222222";
+const h_stale_intel = "2222222222222222222222222222222222222222222222222222222222222222";
 const h_linux_arm = "3333333333333333333333333333333333333333333333333333333333333333";
 const h_linux_x86 = "4444444444444444444444444444444444444444444444444444444444444444";
 const h_deb = "5555555555555555555555555555555555555555555555555555555555555555";
@@ -178,7 +177,6 @@ const sums_ok =
     h_linux_x86 ++ "  mopm-1.2.3-linux-x86_64.tar.gz\n" ++
     h_linux_arm ++ "  mopm-1.2.3-linux-aarch64.tar.gz\n" ++
     h_macos_arm ++ "  mopm-1.2.3-macos-arm64.tar.gz\n" ++
-    h_macos_x86 ++ "  mopm-1.2.3-macos-x86_64.tar.gz\n" ++
     h_deb ++ "  mopm_1.2.3_amd64.deb\n";
 
 fn sampleInfo() Info {
@@ -195,7 +193,6 @@ test "each platform block carries its own tarball's URL and the hash listed for 
     const linux_half = text[split..];
     const cases = [_]struct { half: []const u8, cpu: []const u8, file: []const u8, hash: []const u8 }{
         .{ .half = macos_half, .cpu = "arm", .file = "mopm-1.2.3-macos-arm64.tar.gz", .hash = h_macos_arm },
-        .{ .half = macos_half, .cpu = "intel", .file = "mopm-1.2.3-macos-x86_64.tar.gz", .hash = h_macos_x86 },
         .{ .half = linux_half, .cpu = "arm", .file = "mopm-1.2.3-linux-aarch64.tar.gz", .hash = h_linux_arm },
         .{ .half = linux_half, .cpu = "intel", .file = "mopm-1.2.3-linux-x86_64.tar.gz", .hash = h_linux_x86 },
     };
@@ -232,8 +229,10 @@ test "a missing tarball, a stray one of another version, a bad line or hash are 
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const no_macos_x86 = h_linux_x86 ++ "  mopm-1.2.3-linux-x86_64.tar.gz\n" ++ h_linux_arm ++ "  mopm-1.2.3-linux-aarch64.tar.gz\n" ++ h_macos_arm ++ "  mopm-1.2.3-macos-arm64.tar.gz\n";
-    try t.expectError(error.MissingTarball, render(a, sampleInfo(), no_macos_x86));
+    const no_macos_arm = h_linux_x86 ++ "  mopm-1.2.3-linux-x86_64.tar.gz\n" ++ h_linux_arm ++ "  mopm-1.2.3-linux-aarch64.tar.gz\n";
+    try t.expectError(error.MissingTarball, render(a, sampleInfo(), no_macos_arm));
+    // There is no Intel Mac release: a SHA256SUMS that still lists one is refused, not rendered into the formula.
+    try t.expectError(error.UnexpectedTarball, render(a, sampleInfo(), sums_ok ++ h_stale_intel ++ "  mopm-1.2.3-macos-x86_64.tar.gz\n"));
     try t.expectError(error.UnexpectedTarball, render(a, sampleInfo(), sums_ok ++ h_deb ++ "  mopm-1.2.2-macos-arm64.tar.gz\n"));
     try t.expectError(error.BadHash, render(a, sampleInfo(), h_bad ++ "  mopm-1.2.3-macos-arm64.tar.gz\n"));
     try t.expectError(error.BadSumsLine, render(a, sampleInfo(), h_deb ++ " mopm-1.2.3-macos-arm64.tar.gz\n"));

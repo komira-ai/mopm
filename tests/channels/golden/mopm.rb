@@ -9,10 +9,6 @@ class Mopm < Formula
       url "https://github.com/komira-ai/mopm/releases/download/v1.2.3/mopm-1.2.3-macos-arm64.tar.gz"
       sha256 "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
     end
-    on_intel do
-      url "https://github.com/komira-ai/mopm/releases/download/v1.2.3/mopm-1.2.3-macos-x86_64.tar.gz"
-      sha256 "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
-    end
   end
 
   on_linux do

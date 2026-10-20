@@ -29,7 +29,7 @@ const std = @import("std");
 const h = @import("harness.zig");
 const Allocator = std.mem.Allocator;
 
-const targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64", "macos-x86_64" };
+const targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64" };
 
 // ---- a loopback stand-in for GitHub releases ------------------------------------------------
 
@@ -359,7 +359,6 @@ const Pass = struct {
             .{ .os = "Linux", .arch = "aarch64", .want = "linux-aarch64" },
             .{ .os = "Linux", .arch = "arm64", .want = "linux-aarch64" },
             .{ .os = "Darwin", .arch = "arm64", .want = "macos-arm64" },
-            .{ .os = "Darwin", .arch = "x86_64", .want = "macos-x86_64" },
         };
         for (rows) |row| {
             srv.clear();
@@ -376,6 +375,12 @@ const Pass = struct {
             const r = try p.install(base, &.{ .{ "MOPM_VERSION", "1.2.3" }, .{ "FAKE_OS", row[0] }, .{ "FAKE_ARCH", row[1] } }, true, false, false);
             const name = try std.fmt.allocPrint(a, "{s} {s} is refused", .{ row[0], row[1] });
             rep.check(name, r.code != 0 and h.contains(r.text, "no mopm release for") and srv.requestCount() == 0 and !exists(try p.homeBin()), r.text);
+        }
+        // An Intel Mac is refused by name before any request (it used to be sent to a file that is no longer released).
+        {
+            srv.clear();
+            const r = try p.install(base, &.{ .{ "MOPM_VERSION", "1.2.3" }, .{ "FAKE_OS", "Darwin" }, .{ "FAKE_ARCH", "x86_64" } }, true, false, false);
+            rep.check("Darwin x86_64 (an Intel Mac) is refused with a message that names it, and nothing is requested", r.code != 0 and h.contains(r.text, "no mopm release for Intel Macs") and srv.requestCount() == 0 and !exists(try p.homeBin()), r.text);
         }
         srv.stop();
 
@@ -461,9 +466,19 @@ const mutants = [_]Mutant{
         .to = "if false; then",
     },
     .{
-        .name = "macos-arm-maps-to-intel",
+        .name = "intel-mac-gets-the-arm-binary",
+        .from = "    Darwin-x86_64) die \"no mopm release for Intel Macs (Darwin x86_64); mopm is released for Apple silicon Macs (arm64) and for Linux on x86_64 and arm64. On an Apple silicon Mac, run this from a native shell, not one running under Rosetta\" ;;",
+        .to = "    Darwin-x86_64) target=macos-arm64 ;;",
+    },
+    .{
+        .name = "intel-mac-sent-to-a-missing-file",
+        .from = "    Darwin-x86_64) die \"no mopm release for Intel Macs (Darwin x86_64); mopm is released for Apple silicon Macs (arm64) and for Linux on x86_64 and arm64. On an Apple silicon Mac, run this from a native shell, not one running under Rosetta\" ;;",
+        .to = "    Darwin-x86_64) target=macos-x86_64 ;;",
+    },
+    .{
+        .name = "macos-arm-maps-to-linux",
         .from = "Darwin-arm64) target=macos-arm64 ;;",
-        .to = "Darwin-arm64) target=macos-x86_64 ;;",
+        .to = "Darwin-arm64) target=linux-aarch64 ;;",
     },
     .{
         .name = "aarch64-maps-to-x86",
