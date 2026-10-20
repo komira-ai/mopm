@@ -1,7 +1,7 @@
 name: release-check
 
 # A pull request that touches the release machinery proves it without publishing: the same build and
-# packaging as release.yml (release-build.yml, with the fake version 0.0.0-check), the candidate tested as a user on
+# packaging as release.yml (release-build.yml, with the fake version 0.0.1, never published: the fake registry refuses a CLI older than 0.0.1), the candidate tested as a user on
 # every platform (release-beta-user.yml), SHA256SUMS written and checked, and
 # the installer run against a local fake release on Linux and macOS, with planted defects that it
 # must catch. No write permission, nothing uploaded but the short-lived workflow artifacts.
@@ -45,7 +45,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/release-build.yml
     with:
-      version: 0.0.0-check
+      version: 0.0.1
 
   # The candidate tested as a user on every platform, as release.yml's beta-user stage does.
   beta-user:
@@ -54,7 +54,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/release-beta-user.yml
     with:
-      version: 0.0.0-check
+      version: 0.0.1
 
   sums:
     needs: package
