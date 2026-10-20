@@ -60,13 +60,25 @@ jobs:
           farm-instance: ${{ vars.FARM_INSTANCE }}
           farm-properties: ${{ vars.FARM_LINUX_X86_64_PROPERTIES }}
           tls: ${{ vars.FARM_TLS || 'false' }}
+      # farm-connect writes the worker property sets under [komira_re]; buildrules reads them
+      # from [buildrules_re] of this checkout's .buckconfig.local. Copy the keys across without
+      # printing them (the values are the farm's).
+      - name: hand the worker properties to buildrules
+        if: ${{ vars.FARM_ADDRESS != '' }}
+        run: |
+          set -eu
+          src="$HOME/.buckconfig.d/farm.buckconfig"
+          {
+            echo "[buildrules_re]"
+            awk '/^\[/ { keep = ($0 == "[komira_re]"); next } keep' "$src"
+          } >> .buckconfig.local
       # With no farm configured buck2 builds on the runner: refuse that.
       - name: the buckconfig names the farm
         if: ${{ vars.FARM_ADDRESS != '' }}
         run: |
           for key in linux_x86_64_properties; do
-            ./buck2 audit config "komira_re.$key" --style json | grep -q '": *"[^"]' ||
-              { echo "the buckconfig sets no [komira_re] $key: this job would build on the runner"; exit 1; }
+            ./buck2 audit config "buildrules_re.$key" --style json | grep -q '": *"[^"]' ||
+              { echo "the buckconfig sets no [buildrules_re] $key: this job would build on the runner"; exit 1; }
           done
       - name: buck2 build //...
         if: ${{ vars.FARM_ADDRESS != '' }}

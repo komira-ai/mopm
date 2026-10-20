@@ -19,7 +19,7 @@ Neither tool runs a shell.
 def _lambda_zip_impl(ctx):
     exe = ctx.attrs.bootstrap[DefaultInfo].default_outputs[0]
     # The package is not built unless every test passed: their markers are inputs.
-    markers = [t[DefaultInfo].default_outputs[0] for t in ctx.attrs.welded_tests]
+    markers = [m for t in ctx.attrs.welded_tests for m in t[DefaultInfo].default_outputs]
     zip = ctx.actions.declare_output(ctx.label.name + ".zip")
     sums = ctx.actions.declare_output(ctx.label.name + ".sha256")
     ctx.actions.run(

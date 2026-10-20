@@ -1,4 +1,4 @@
-# mopm's Buck2 targets, built with komira's rules (.buckconfig names the cell).
+# mopm's Buck2 targets, built with buildrules' rules (.buckconfig names the cell).
 # `zig build` (build.zig) stays the contributor's quick path; this file is
 # what the farm builds. Both name the same roots, executables, modules and unit
 # tests, and `:build_parity` fails if they stop doing so. See CONTRIBUTING.md,
@@ -15,14 +15,20 @@
 # `buck-only` on its first line has no counterpart in
 # build.zig and is left out of the parity comparison.
 
-load("@komira//tools/build/mojo:toolchain.bzl", "zig_exe", "zig_module", "zig_test")
-load("@komira//tools/build/platforms:defs.bzl", "LINUX_X86_64")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_module", "zig_test")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("//:buildrules.bzl", "cargo_workspace")
 
-# What every Zig rule here takes: komira's pinned busybox and zig, on linux.
+# The Rust workspace (Cargo.toml): `:check` (is the generated table what Cargo.toml / Cargo.lock / rust-toolchain.toml say),
+# and one aggregate per step, `:lint :debug :test :release`, over every member. Each member's BUCK file has one
+# `cargo_package` call. `buildrules sync` regenerates buildrules.lock.bzl, buildrules.bzl and third_party/buildrules/BUCK.
+cargo_workspace(path = ".")
+
+# What every Zig rule here takes: buildrules' pinned busybox and zig, on linux.
 _TOOLS = {
-    "busybox": "komira//tools/build/toolchains:busybox",
+    "busybox": "buildrules//rules/pins:busybox",
     "exec_compatible_with": LINUX_X86_64,
-    "zig": "komira//tools/build/toolchains:zig",
+    "zig": "buildrules//rules/pins:zig",
 }
 
 # The files each root imports by a relative name (all siblings of the root).
@@ -283,7 +289,7 @@ zig_exe(  # buck-only: `cc` of the Mojo drivers, zig cc
 _MOJO_TOOLS = {
     "CC_SHIM": ":zigcc",
     "MOJO_TOOLCHAIN": "komira//tools/build/toolchains:mojo_compiler",
-    "ZIG_DIR": "komira//tools/build/toolchains:zig",
+    "ZIG_DIR": "buildrules//rules/pins:zig",
 }
 
 zig_test(  # buck-only: komira's Mojo toolchain works from this cell
@@ -372,18 +378,29 @@ filegroup(
     visibility = ["//service/api:", "//site:"],
 )
 
-# ---- What the Rust registry core (service/lambda/core) compares itself with ------
-# The error table of the API specification and the contract fixtures' rendered errors.
+# ---- What the Rust crates (service/lambda/*) read -----------------------------------
+# Their sources `include_str!` / `include_bytes!` these at their real paths (cargo_package's `extra_srcs` makes them inputs).
+# The error table of the API specification and the contract fixtures' rendered errors, and the validator corpus.
 export_file(
     name = "lambda.spec.openapi.yaml",
     src = "spec/api/openapi.yaml",
+    mode = "reference",
     visibility = ["//service/lambda/core:"],
 )
 
 export_file(
     name = "lambda.contract.errors.json",
     src = "tests/contract/api/errors.json",
+    mode = "reference",
     visibility = ["//service/lambda/core:"],
+)
+
+# The corpus directory itself (mode reference: the source directory, not a copy), for mopm_validate.
+export_file(
+    name = "validator_corpus_dir",
+    src = "tests/validator_corpus",
+    mode = "reference",
+    visibility = ["//service/lambda/validate:"],
 )
 
 filegroup(
@@ -434,7 +451,7 @@ filegroup(
 # ---- The repository's own lints, ported from Ruby (.github/scripts, tests/lint) ------------
 
 # Every tracked file hygiene scans (tests/drivers/hygiene.zig), staged by path under
-# KOMIRA_TEST_WORK: the root package's files (a glob skips dotfiles, so those are named)
+# BUILDRULES_TEST_WORK: the root package's files (a glob skips dotfiles, so those are named)
 # and each sub-package's `lint_files` (a package boundary hides its files from this glob).
 # Not scanned: platforms/BUCK and toolchains/BUCK, byte copies of komira's files that
 # cannot carry a `lint_files` target of their own (toolchains is another cell) without
@@ -458,7 +475,6 @@ _LINT_PACKAGES = [
     "service/lambda/validate",
     "service/lambda/ports",
     "service/lambda/testing",
-    "third_party/rust",
     "tools/lambda",
     "tools/node",
 ]

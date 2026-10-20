@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 
 use crate::dynamo::{AuthTables, DynamoAuthStore, DynamoPublishStore, DynamoStore, PublishTables, Tables, SEARCH_INDEX};
 
-const LAMBDA_GRANTS: &str = include_str!("../lambda-auth-grants.json");
+const LAMBDA_GRANTS: &str = include_str!("../../../api/test/fixtures/lambda-auth-grants.json");
 
 fn client(endpoint: &str) -> Client {
     let config = aws_sdk_dynamodb::Config::builder()

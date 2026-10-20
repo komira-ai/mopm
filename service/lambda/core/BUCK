@@ -3,45 +3,22 @@
 # catalogue, the validator's limits, the display metadata rules), ported from the TypeScript
 # registry (service/api/src) with its outputs held byte for byte. See README.md.
 #
-# The unit tests are welded into the library: building it runs them, and it is not published unless
-# they passed. They read, as files, what the TypeScript side holds itself to: the repodata its index
-# writer produced for the golden records, the error table of the API specification, and the rendered
-# errors of the contract fixtures.
-load("@komira//tools/build/rust:defs.bzl", "rust_library", "rust_test")
+# Built from Cargo.toml by buildrules' cargo_package (the front door of the cargo_unit engine): `:lib`, `:test`, `:lint`,
+# `:debug`, `:release`. The unit tests run as build actions (`:test`; `:debug` does not wait for them, `:ci` does both).
+# They read, as files, what the TypeScript side holds itself to: the repodata its index writer produced for the golden
+# records, the error table of the API specification, and the rendered errors of the contract fixtures. The sources
+# `include_str!` them at their real paths, so `cargo test` finds them too; `extra_srcs` makes them inputs.
+load("//:buildrules.bzl", "cargo_package")
 
-_DEPS = [
-    "//third_party/rust:serde",
-    "//third_party/rust:serde_json",
-    "//third_party/rust:thiserror",
-    "//third_party/rust:url",
-]
-
-_SRCS = glob(["src/*.rs"])
-
-# Files of other packages, by label: they land at their package-relative path beside src/, which is
-# where the include_str! of the tests reaches them.
-_GOLDEN = [
-    "//:lambda.contract.errors.json",
-    "//:lambda.spec.openapi.yaml",
-    "//service/api:repodata.linux-64.json",
-    "//service/api:repodata.noarch.json",
-    "//service/api:repodata.osx-arm64.json",
-]
-
-rust_test(
-    name = "mopm_core_unit",
-    srcs = _SRCS + _GOLDEN,
-    crate_root = "src/lib.rs",
-    deps = _DEPS + ["//third_party/rust:ruzstd"],
-)
-
-rust_library(
-    name = "mopm_core",
-    srcs = _SRCS,
-    crate_root = "src/lib.rs",
-    deps = _DEPS,
-    tests = [":mopm_core_unit"],
-    visibility = ["PUBLIC"],
+cargo_package(
+    path = ".",
+    extra_srcs = [
+        "//:lambda.spec.openapi.yaml",
+        "//:lambda.contract.errors.json",
+        "//service/api:repodata.linux-64.json",
+        "//service/api:repodata.noarch.json",
+        "//service/api:repodata.osx-arm64.json",
+    ],
 )
 
 # This package's files, for //:hygiene (a package boundary hides them from the root package's glob).

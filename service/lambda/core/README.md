@@ -15,8 +15,8 @@ Lambdas that come after it.
 | `limits` | `validate/limits.ts` | the seven numbers |
 | `display` | `publish/display.ts`: the display metadata of a commit request | every message and bound of the TS function; JavaScript's `length` (UTF-16 units) and `\s` |
 
-The oracles are files the TypeScript side already holds itself to, read by `include_str!` through labels
-(`//service/api:repodata.*.json`, `//:lambda.spec.openapi.yaml`, `//:lambda.contract.errors.json`): a change to one of
+The oracles are files the TypeScript side already holds itself to, read by `include_str!` at their real paths
+(`service/api/test/fixtures/repodata.*.json`, `spec/api/openapi.yaml`, `tests/contract/api/errors.json`; `extra_srcs` in `BUCK` makes them inputs): a change to one of
 them that the Rust does not follow is a red build here. No Node ran to make a golden: expected values that are not
 in those files are derived from reading the TypeScript.
 

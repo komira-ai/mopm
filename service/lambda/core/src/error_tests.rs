@@ -9,8 +9,8 @@ use serde_json::Value;
 
 use crate::error::*;
 
-const SPEC: &str = include_str!("../lambda.spec.openapi.yaml");
-const CONTRACT_ERRORS: &str = include_str!("../lambda.contract.errors.json");
+const SPEC: &str = include_str!("../../../../spec/api/openapi.yaml");
+const CONTRACT_ERRORS: &str = include_str!("../../../../tests/contract/api/errors.json");
 
 struct SpecError {
     status: u16,

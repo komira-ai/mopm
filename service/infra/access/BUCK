@@ -1,7 +1,7 @@
 # The access stack's checks (see service/api/BUCK): `tsc --noEmit` and `jest --ci`. The
 # bootstrap and oauth-secret shell tests stay in service-ci.yml.
 
-load("@komira//tools/build/node:modules.bzl", "jest_test", "npm_modules", "tsc_check")
+load("@buildrules//rules/node:modules.bzl", "jest_test", "npm_modules", "tsc_check")
 load(":pins.lock.bzl", "NPM")
 
 _NODE = "//tools/node:node"
