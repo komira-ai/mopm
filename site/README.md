@@ -76,16 +76,18 @@ it loads, so it links both `package.css` and `search.css`; one sheet per view wo
 a flash of an unstyled view on every load. It is the heaviest page, and the 30 KiB page budget is set over it with room for
 its next view's styles.
 
-The home page copy is held to `README.md` and `src/cli/main.zig` by `test/layout.test.ts`: when the list of working
-or planned commands changes there, the page has to change too. Route vectors are in `test/fixtures/routes.json`; the
+The home page copy is held to `README.md`, `src/cli/main.zig`, `VERSION` and `static/install.sh` by
+`test/layout.test.ts`: when the list of working or planned commands, the install command, the release targets and file
+names, the verification commands or the version series change there, the page has to change too. The page names the
+version series (`0.0.x`), never a patch number, because a release is cut on every merge. Route vectors are in `test/fixtures/routes.json`; the
 site stack's edge router is tested against the same file. The Markdown attack corpus is `test/fixtures/attacks.md`.
 
 ## How it is served
 
 `service/infra/stacks/lib/site-stack.ts` deploys `dist/` (built by `npm run build` here in deploy.yml, or `//site:dist`
 with Buck2) to a private bucket behind CloudFront, and refuses to synthesize when `index.html`, `app.html`, `404.html`
-or `assets/` is missing. Merging a change under `site/` (or to `spec/mopm-toml.md` or `docs/mopm-test.md`, which the
-docs pages are rendered from) starts promote.yml, which deploys it to beta, gamma and prod in turn.
+or `assets/` is missing. Merging a change under `site/` (or to `spec/mopm-toml.md`, `docs/mopm-test.md`,
+`docs/why-and-design.md` or `docs/getting-started.md`, which the docs pages are rendered from) starts promote.yml, which deploys it to beta, gamma and prod in turn.
 
 - **Two uploads.** `assets/` goes first, with `Cache-Control: public, max-age=31536000, immutable`, and is never
   pruned: the pages of an earlier release (an open tab, a rollback) still find their assets. The pages (everything

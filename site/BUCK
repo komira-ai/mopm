@@ -21,7 +21,9 @@ _SRCS = glob(["src/**", "static/**", "test/**", "tools/**"]) + _CONFIGS + ["jest
 # The repository files the pages are rendered from (tools/docs.ts reads the published docs,
 # src/links.ts names them), at their paths in the repository.
 _DOCS = {
+    "docs/getting-started.md": "//:site.docs.getting-started.md",
     "docs/mopm-test.md": "//:site.docs.mopm-test.md",
+    "docs/why-and-design.md": "//:site.docs.why-and-design.md",
     "spec/mopm-toml.md": "//:site.spec.mopm-toml.md",
 }
 
@@ -55,6 +57,7 @@ jest_test(
     name = "test",
     data = _DOCS | {
         "README.md": "//:site.README.md",
+        "VERSION": "//:site.VERSION",
         "spec/channel.md": "//:site.spec.channel.md",
         "src/cli/main.zig": "//:site.src.cli.main.zig",
         "tests/contract/api": "//:contract_api",

@@ -491,8 +491,26 @@ export_file(
 )
 
 export_file(
+    name = "site.VERSION",
+    src = "VERSION",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.docs.getting-started.md",
+    src = "docs/getting-started.md",
+    visibility = ["//site:"],
+)
+
+export_file(
     name = "site.docs.mopm-test.md",
     src = "docs/mopm-test.md",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.docs.why-and-design.md",
+    src = "docs/why-and-design.md",
     visibility = ["//site:"],
 )
 

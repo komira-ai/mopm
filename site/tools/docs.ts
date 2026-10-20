@@ -151,7 +151,7 @@ export function docsIndexPage(pages: readonly DocPage[], repoRoot: string): Page
   const nav = docsNav(pages.map((p) => ({ slug: p.slug, title: p.title })), '');
   return {
     title: 'Docs',
-    description: 'mopm documentation: the mopm.toml manifest and the mopm test runner.',
+    description: 'mopm documentation: why mopm exists and how it is built, getting started, the mopm.toml manifest and the mopm test runner.',
     kind: 'docs',
     current: 'docs',
     currentIsTarget: true,
