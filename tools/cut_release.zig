@@ -47,9 +47,14 @@
 //!       verified.sha256 lists. A re-run creates no second release and replaces no asset: when the release
 //!       exists, every asset it holds must equal the local file byte for byte, or this refuses before
 //!       changing anything; only the assets it lacks are added.
+//!   cut_release bump-internal --version <v> --sha <commit> --internal-repo <owner/name> --submodule <name> --workdir <dir>
+//!       The last step, after publish (tools/bump_internal.zig): opens the pull request that moves the
+//!       internal repository's submodule to --sha, as the release bot, with auto-merge. Needs `git` as well
+//!       as `gh` (--git <path>), and GH_TOKEN in the environment (never an argument). Idempotent.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const bump_internal = @import("bump_internal.zig");
 
 const targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64", "macos-x86_64" };
 const pin_target = "linux-x86_64";
@@ -61,7 +66,7 @@ fn die(comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 fn usage() noreturn {
-    die("usage: cut_release [--gh <path>] [--cosign <path>] [--repo <owner/name>] plan [--sha <commit>] | tag --sha <commit> [--expect-version <v>] | verify-dir <version> <dir> --sha <commit> --source-ref <ref> --trigger <push|workflow_dispatch> | verify <version> <dir> | publish <version> <dir> --verified <file> --notes <file>", .{});
+    die("usage: cut_release [--gh <path>] [--cosign <path>] [--repo <owner/name>] plan [--sha <commit>] | tag --sha <commit> [--expect-version <v>] | verify-dir <version> <dir> --sha <commit> --source-ref <ref> --trigger <push|workflow_dispatch> | verify <version> <dir> | publish <version> <dir> --verified <file> --notes <file> | bump-internal --version <v> --sha <commit> --internal-repo <owner/name> --submodule <name> --workdir <dir> [--git <path>]", .{});
 }
 
 fn out(comptime fmt: []const u8, args: anytype) void {
@@ -763,6 +768,11 @@ pub fn main() !void {
     var notes: ?[]const u8 = null;
     var expect_version: ?[]const u8 = null;
     var cosign: []const u8 = "cosign";
+    var git_exe: []const u8 = "git";
+    var internal_repo: ?[]const u8 = null;
+    var submodule: ?[]const u8 = null;
+    var bump_version: ?[]const u8 = null;
+    var workdir: ?[]const u8 = null;
     var pos = std.ArrayList([]const u8).init(a);
     var i: usize = 1;
     while (i < argv.len) : (i += 1) {
@@ -775,6 +785,16 @@ pub fn main() !void {
                 gh_exe = v;
             } else if (std.mem.eql(u8, arg, "--cosign")) {
                 cosign = v;
+            } else if (std.mem.eql(u8, arg, "--git")) {
+                git_exe = v;
+            } else if (std.mem.eql(u8, arg, "--internal-repo")) {
+                internal_repo = v;
+            } else if (std.mem.eql(u8, arg, "--submodule")) {
+                submodule = v;
+            } else if (std.mem.eql(u8, arg, "--version")) {
+                bump_version = v;
+            } else if (std.mem.eql(u8, arg, "--workdir")) {
+                workdir = v;
             } else if (std.mem.eql(u8, arg, "--expect-version")) {
                 expect_version = v;
             } else if (std.mem.eql(u8, arg, "--repo")) {
@@ -823,6 +843,19 @@ pub fn main() !void {
     if (std.mem.eql(u8, cmd, "publish")) {
         if (n != 3) usage();
         return publishCmd(gh, pos.items[1], pos.items[2], verified orelse usage(), notes orelse usage());
+    }
+    if (std.mem.eql(u8, cmd, "bump-internal")) {
+        if (n != 1) usage();
+        return bump_internal.run(a, .{
+            .gh = gh_exe,
+            .git = git_exe,
+            .repo = repo,
+            .internal_repo = internal_repo orelse usage(),
+            .submodule = submodule orelse usage(),
+            .version = bump_version orelse usage(),
+            .sha = sha orelse usage(),
+            .workdir = workdir orelse usage(),
+        });
     }
     usage();
 }

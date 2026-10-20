@@ -201,6 +201,7 @@ zig_exe(  # buck-only: tools/release.zig, whose `tarball` and `sums` make the fa
 zig_exe(  # buck-only: tools/cut_release.zig, the release run's steps (plan, tag, verify-dir, publish) and the read-only verify
     name = "cut-release",
     src = "tools/cut_release.zig",
+    imports = ["tools/bump_internal.zig"],
     **_TOOLS
 )
 
@@ -216,6 +217,12 @@ zig_exe(  # buck-only: a `cosign` that signs nothing (a bundle names the file's 
     **_TOOLS
 )
 
+zig_exe(  # buck-only: a `git` whose answers are files, for :bump_internal
+    name = "fake-git",
+    src = "tests/drivers/fake_git.zig",
+    **_TOOLS
+)
+
 zig_test(  # buck-only: cut_release against the fake gh, with planted defects it must refuse
     name = "cut_release",
     src = "tests/drivers/cut_release_test.zig",
@@ -225,6 +232,18 @@ zig_test(  # buck-only: cut_release against the fake gh, with planted defects it
         "MOPM_FAKE_GH": ":fake-gh",
         "MOPM_RELEASE_TOOL": ":release-tool",
         "MOPM_FAKE_COSIGN": ":fake-cosign",
+    },
+    **_TOOLS
+)
+
+zig_test(  # buck-only: cut_release bump-internal against the fake gh and the fake git, with planted defects it must refuse
+    name = "bump_internal",
+    src = "tests/drivers/bump_internal_test.zig",
+    imports = ["tests/drivers/harness.zig"],
+    env_tools = {
+        "MOPM_CUT_RELEASE": ":cut-release",
+        "MOPM_FAKE_GH": ":fake-gh",
+        "MOPM_FAKE_GIT": ":fake-git",
     },
     **_TOOLS
 )

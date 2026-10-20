@@ -10,6 +10,10 @@
 //! that is built and tested is the version that is tagged and released; `publish` releases the verified
 //! files and nothing else; every platform leg of the user beta is required; and the path filter skips
 //! docs and CI only.
+//!
+//! The last stage, `bump`, writes to komira-internal through an App token: it holds `contents: read` here, is the
+//! only job that names the token, pins the action, and nothing needs it (a failed bump un-releases nothing); the
+//! mutants at the end of this file plant each way of breaking that.
 
 const std = @import("std");
 const c = @import("lint_common.zig");
@@ -269,4 +273,82 @@ test "the glob matcher reads patterns as GitHub does" {
     try t.expect(rl.globMatch("VERSION", "VERSION"));
     try t.expect(!rl.globMatch("VERSION", "VERSIONS"));
     try t.expect(!rl.globMatch("", "x"));
+}
+
+// ---- bump: the last stage, which writes to komira-internal through the release bot's App token ----
+
+const bump_head = "  bump:\n    needs: [tag, publish]\n    ";
+const bump_perms = "    permissions:\n      contents: read\n    steps:\n      - uses: actions/checkout";
+const app_use = "        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n";
+
+test "mutant: bump does not need publish, or runs on a manual run" {
+    try mutant("bump without publish", bump_head ++ push_main, "  bump:\n    needs: [tag]\n    " ++ push_main, "bump must need publish");
+    try mutant("bump with no if", bump_head ++ push_main ++ "\n", "  bump:\n    needs: [tag, publish]\n", "bump must run only under if");
+    try mutant("bump on any branch", bump_head ++ push_main, bump_head ++ "if: ${{ github.event_name == 'push' }}", "bump must run only under if");
+    try mutant("bump on a manual run", bump_head ++ push_main, bump_head ++ "if: ${{ always() }}", "bump must run only under if");
+}
+
+test "mutant: bump holds a write scope here, or more than contents" {
+    try mutant("bump writes contents", bump_perms, "    permissions:\n      contents: write\n    steps:\n      - uses: actions/checkout", "bump: contents: write is not allowed here");
+    try mutant("bump writes pull requests", bump_perms, "    permissions:\n      contents: read\n      pull-requests: write\n    steps:\n      - uses: actions/checkout", "bump: pull-requests: write is not allowed here");
+    try mutant("bump reads more than contents", bump_perms, "    permissions:\n      contents: read\n      id-token: read\n    steps:\n      - uses: actions/checkout", "bump: permissions must be exactly contents: read");
+    try mutant("bump with no permissions", bump_perms, "    steps:\n      - uses: actions/checkout", "bump: permissions must be exactly contents: read");
+    try mutant("bump with write-all", bump_perms, "    permissions: write-all\n    steps:\n      - uses: actions/checkout", "grants every scope");
+    try mutant("bump behind an environment", bump_head ++ push_main ++ "\n", bump_head ++ push_main ++ "\n    environment: prod\n", "bump must not use an environment");
+    try mutant("bump that may fail quietly", bump_head ++ push_main ++ "\n", bump_head ++ push_main ++ "\n    continue-on-error: true\n", "bump must not set continue-on-error");
+}
+
+test "mutant: a failed bump must not stop or un-release anything" {
+    try mutant("publish needs bump", "  publish:\n    needs: [tag, verify]", "  publish:\n    needs: [tag, verify, bump]", "publish must not need bump");
+    try mutant("verify needs bump", "    needs: [plan, build, attest]\n    runs-on: ubuntu-24.04\n    timeout-minutes: 15\n    permissions:\n      contents: read\n      attestations: read", "    needs: [plan, build, attest, bump]\n    runs-on: ubuntu-24.04\n    timeout-minutes: 15\n    permissions:\n      contents: read\n      attestations: read", "verify must not need bump");
+}
+
+test "mutant: another job names the App token" {
+    try mutant("publish mints the token", "  publish:\n    needs: [tag, verify]\n    " ++ push_main ++ "\n    runs-on: ubuntu-24.04\n    timeout-minutes: 15\n    permissions:\n      contents: write\n    steps:\n", "  publish:\n    needs: [tag, verify]\n    " ++ push_main ++ "\n    runs-on: ubuntu-24.04\n    timeout-minutes: 15\n    permissions:\n      contents: write\n    steps:\n      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1\n", "publish names the release bot's App token");
+    try mutant("tag reads the key", "      PLANNED: ${{ needs.plan.outputs.version }}", "      PLANNED: ${{ needs.plan.outputs.version }}\n          KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}", "tag names the release bot's App token");
+    try mutant("verify reads the app id", "          VERSION: ${{ needs.plan.outputs.version }}\n        run: '\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" verify-dir", "          VERSION: ${{ needs.plan.outputs.version }}\n          ID: ${{ vars.RELEASE_BOT_APP_ID }}\n        run: '\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" verify-dir", "verify names the release bot's App token");
+    try mutant("publish takes the token of bump", "          VERSION: ${{ needs.tag.outputs.version }}\n        run: '\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" publish", "          VERSION: ${{ needs.tag.outputs.version }}\n          T: ${{ steps.app.outputs.token }}\n        run: '\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" publish", "publish names the release bot's App token");
+    try mutant("the workflow's env holds the key", "permissions:\n  contents: read\n\n# One release run", "permissions:\n  contents: read\nenv:\n  K: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n\n# One release run", "env names the release bot's App token");
+}
+
+test "mutant: the App token step of bump" {
+    try mutant("an unpinned action", "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1", "actions/create-github-app-token@v3", "bump must use actions/create-github-app-token@<full commit sha>");
+    try mutant("a short sha", "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1", "actions/create-github-app-token@bcd2ba4", "bump must use actions/create-github-app-token@<full commit sha>");
+    try mutant("another action mints the token", app_use, "        uses: someone/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1\n", "bump must use actions/create-github-app-token@");
+    try mutant("no token step", "      - name: Mint the installation token of the release bot, for komira-internal only\n        id: app\n" ++ app_use ++ "        with:\n          app-id: ${{ vars.RELEASE_BOT_APP_ID }}\n          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n          owner: komira-ai\n          repositories: komira-internal\n          permission-contents: write\n          permission-pull-requests: write\n", "", "bump must mint the token with exactly one actions/create-github-app-token step, has 0");
+    try mutant("the app id from a literal", "          app-id: ${{ vars.RELEASE_BOT_APP_ID }}", "          app-id: 5395718", "the token step must set app-id");
+    try mutant("another key", "          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}", "          private-key: ${{ secrets.OTHER_KEY }}", "the token step must set private-key");
+    try mutant("another owner", "          owner: komira-ai\n", "          owner: someone\n", "the token step must set owner");
+    try mutant("a token for every repository of the owner", "          repositories: komira-internal\n", "", "the token step must set repositories");
+    try mutant("a token for two repositories", "          repositories: komira-internal\n", "          repositories: komira-internal,mopm\n", "the token step must set repositories");
+    try mutant("an extra input", "          permission-pull-requests: write\n", "          permission-pull-requests: write\n          permission-issues: write\n", "the token step takes exactly app-id, private-key, owner, repositories, permission-contents and permission-pull-requests");
+    // The token holds only contents and pull-requests write on komira-internal, not every scope the App has.
+    try mutant("a token with no pull-requests scope named", "          permission-pull-requests: write\n", "", "the token step must set permission-pull-requests");
+    try mutant("a token with no contents scope named", "          permission-contents: write\n", "", "the token step must set permission-contents");
+    try mutant("a token with a wider scope", "          permission-contents: write\n", "          permission-contents: admin\n", "the token step must set permission-contents");
+    try mutant("no step id", "        id: app\n", "", "the token step must have id: app");
+}
+
+test "mutant: the step that runs the tool" {
+    try mutant("the token in argv", " --workdir \"$RUNNER_TEMP/bump\"'", " --workdir \"$RUNNER_TEMP/bump\" --token \"$GH_TOKEN\"'", "bump must run exactly");
+    try mutant("another submodule", " --submodule mopm ", " --submodule komira ", "bump must run exactly");
+    try mutant("another repository", " --internal-repo komira-ai/komira-internal", " --internal-repo komira-ai/komira", "bump must run exactly");
+    try mutant("another commit", " --sha \"$GITHUB_SHA\" --internal-repo", " --sha \"$GITHUB_REF\" --internal-repo", "bump must run exactly");
+    try mutant("another version", " bump-internal --version \"$VERSION\"", " bump-internal --version 0.0.0", "bump must run exactly");
+    try mutant("version from the plan", "          GH_TOKEN: ${{ steps.app.outputs.token }}\n          VERSION: ${{ needs.tag.outputs.version }}", "          GH_TOKEN: ${{ steps.app.outputs.token }}\n          VERSION: ${{ needs.plan.outputs.version }}", "bump must set VERSION to");
+    try mutant("the default token", "          GH_TOKEN: ${{ steps.app.outputs.token }}\n", "          GH_TOKEN: ${{ github.token }}\n", "the step that runs the tool must set GH_TOKEN to");
+    try mutant("no token", "          GH_TOKEN: ${{ steps.app.outputs.token }}\n          VERSION: ${{ needs.tag.outputs.version }}", "          VERSION: ${{ needs.tag.outputs.version }}", "the step that runs the tool must set GH_TOKEN to");
+    try mutant("the tool does not run", " bump-internal --version", " bump-nothing --version", "bump must run cut_release bump-internal");
+}
+
+test "mutant: where the token lives in bump" {
+    // Built after the token exists.
+    try mutant("the tool built after the token", "      # Built before any step holds the token, so no build runs beside it.\n      - name: Build the release tool\n        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/cut_release\"\n      - name: Mint", "      - name: Mint", "bump: build the tool (zig build-exe tools/cut_release.zig) before the token step");
+    // Another step takes the token.
+    try mutant("checkout with the token", "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Install Zig 0.12.0 (sha256-pinned)\n        run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"\n      # Built before any step holds the token, so no build runs beside it.\n      - name: Build the release tool\n        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/cut_release\"\n      - name: Mint", "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          token: ${{ steps.app.outputs.token }}\n      - name: Install Zig 0.12.0 (sha256-pinned)\n        run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"\n      # Built before any step holds the token, so no build runs beside it.\n      - name: Build the release tool\n        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/cut_release\"\n      - name: Mint", "bump step 0 names the App token");
+    // A step after the tool runs with the token still alive.
+    const build_step = "      - name: Build the release tool\n        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/cut_release\"\n";
+    const app_step = "      - name: Mint the installation token of the release bot, for komira-internal only\n        id: app\n" ++ app_use ++ "        with:\n          app-id: ${{ vars.RELEASE_BOT_APP_ID }}\n          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n          owner: komira-ai\n          repositories: komira-internal\n          permission-contents: write\n          permission-pull-requests: write\n";
+    try mutant("the token minted before the tool is built", build_step ++ app_step, app_step ++ build_step, "bump: build the tool (zig build-exe tools/cut_release.zig) before the token step");
+    try mutant("a step after the tool"," --workdir \"$RUNNER_TEMP/bump\"'\n", " --workdir \"$RUNNER_TEMP/bump\"'\n      - run: echo done\n", "the step that runs the tool must be the last");
 }
