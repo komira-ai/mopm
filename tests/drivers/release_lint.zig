@@ -267,8 +267,15 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
         if (job == .object and job.object.contains("continue-on-error")) {
             try c.problem(a, out, prefix ++ "release.yml: {s} must not set continue-on-error: a red stage stops the release", .{name});
         }
-        if (job == .object and job.object.contains("environment")) {
-            try c.problem(a, out, prefix ++ "release.yml: {s} must not use an environment: every gate is automated", .{name});
+        // The environment: exactly the jobs that read RELEASE_BOT_* declare `release` (restricted to main; the key
+        // lives only there), and no other job declares any environment: every gate is automated.
+        const env = c.get(job, "environment");
+        if (mentionsAny(job, &bot_names)) {
+            if (!c.isStr(env, release_environment)) {
+                try c.problem(a, out, prefix ++ "release.yml: {s} reads RELEASE_BOT_* so it must declare `environment: {s}`, got {s}", .{ name, release_environment, try c.inspect(a, env) });
+            }
+        } else if (job == .object and job.object.contains("environment")) {
+            try c.problem(a, out, prefix ++ "release.yml: {s} must not use an environment: only the jobs that read RELEASE_BOT_* (tag, bump) declare `{s}`", .{ name, release_environment });
         }
     }
 
@@ -453,6 +460,8 @@ const token_jobs = [_]TokenJob{
 /// The App's variable and secret (`RELEASE_BOT_APP_ID`, `RELEASE_BOT_PRIVATE_KEY`): named by the token steps of
 /// `bump` and `tag` and nowhere else. hygiene.zig allows the secret exactly twice.
 const bot_names = [_][]const u8{"RELEASE_BOT"};
+/// The environment of the jobs that read `bot_names`: restricted to main, it holds the key (RELEASING.md).
+const release_environment = "release";
 
 fn mentionsAny(v: Value, needles: []const []const u8) bool {
     for (needles) |n| {

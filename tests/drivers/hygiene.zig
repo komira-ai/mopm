@@ -234,9 +234,12 @@ const subject_check = "oidc-subject-check.yml";
 const farm_file = "farm.yml";
 /// release.yml publishes a release with build-provenance attestations, so its publish job holds an
 /// id-token grant (the attestation is signed with the job's OIDC token; no cloud access). Allowed only
-/// when the triggers are a push to main and a manual run, with no environment, no secret and no id-token on a job
-/// that calls another workflow.
+/// when the triggers are a push to main and a manual run, with no secret but the release bot's key, no
+/// environment but `release` (on exactly the jobs that read RELEASE_BOT_*) and no id-token on a job that
+/// calls another workflow.
 const release_file = "release.yml";
+/// The environment that holds the release bot's key, restricted to main.
+const release_environment = "release";
 
 fn isOidcFile(base: []const u8) bool {
     return c.containsStr(&oidc_files, base);
@@ -344,8 +347,21 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
             if (!(branches != null and branches.? == .array and branches.?.array.items.len == 1 and c.isStr(branches.?.array.items[0], "main"))) main_push = false;
         }
         if (!main_push) try c.problem(a, out, prefix ++ "{s}: triggers must be exactly push to branches [main] (paths-ignore allowed) and workflow_dispatch", .{f});
-        if (c.findKey(doc, "environment") or c.mentionsSecretsDot(try releaseSecretFree(a, text))) {
+        if (c.mentionsSecretsDot(try releaseSecretFree(a, text))) {
             try c.problem(a, out, prefix ++ "{s}: must not use secrets or an environment", .{f});
+        }
+        // The one environment is `release`, on exactly the jobs that read RELEASE_BOT_*; the workflow itself has none.
+        if (c.get(doc, "environment") != null) {
+            try c.problem(a, out, prefix ++ "{s}: must not use secrets or an environment", .{f});
+        }
+        for (jobs) |j| {
+            const reads_bot = std.mem.indexOf(u8, try c.inspect(a, j.node), "RELEASE_BOT") != null;
+            const env = c.get(j.node, "environment");
+            if (reads_bot and !c.isStr(env, release_environment)) {
+                try c.problem(a, out, prefix ++ "{s}: job {s} reads RELEASE_BOT_* so it must declare environment {s}, got {s}", .{ f, j.name, release_environment, try c.inspect(a, env) });
+            } else if (!reads_bot and env != null) {
+                try c.problem(a, out, prefix ++ "{s}: job {s}: must not use secrets or an environment (only jobs that read RELEASE_BOT_* declare {s})", .{ f, j.name, release_environment });
+            }
         }
         for (jobs) |j| {
             if (j.node == .object and j.node.object.contains("uses") and c.findKey(j.node, "id-token")) {

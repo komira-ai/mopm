@@ -220,6 +220,8 @@ jobs:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # The release bot's key lives only in this environment, which is restricted to main (RELEASING.md).
+    environment: release
     # The job's own token only reads: the tag ruleset lets the GitHub App komira-release-bot alone create v* tags,
     # so the tag is created with that App's token (minted below, for this repository only).
     permissions:
@@ -294,6 +296,8 @@ jobs:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # Same environment as tag: the key is readable only here and in tag (RELEASING.md).
+    environment: release
     permissions:
       contents: read
     steps:
