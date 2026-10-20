@@ -1,10 +1,4 @@
-| bump-internal --version//! The release s/// mopm-<version>-<target>.tar.gz for the four targets, mopm_<version>_<arch>.deb for the two linux ones, then SHA256SUMS: the
-/// seven payload files.
-fn payloadAssets(a: Allocator, version: []const u8) [][]const u8 {
-    var want = std.ArrayList([]const u8).init(a);
-    for (targets) |t| want.append(std.fmt.allocPrint(a, "mopm-{s}-{s}.tar.gz", .{ version, t }) catch @panic("oom")) catch @panic("oom");
-    for (release_debs.debs) |d| want.append(release_debs.debName(a, version, d.arch) catch @panic("oom")) catch @panic("oom");
-eps .github/workflows/release.yml runs, and the read-only check of a published
+//! The release steps .github/workflows/release.yml runs, and the read-only check of a published
 //! release. Zig only, standard library only; build it with the pinned Zig and run it from the
 //! repository root:
 //!

@@ -1,4 +1,4 @@
- for (names14) |n|//! //:cut_release: tools/cut_release.zig, the steps release.yml runs (plan, tag, verify-dir, publish)
+//! //:cut_release: tools/cut_release.zig, the steps release.yml runs (plan, tag, verify-dir, publish)
 //! and the read-only check of a published release (verify), run against a fake `gh` (fake_gh.zig)
 //! whose state is a directory. Nothing here reaches GitHub, and nothing creates a real tag or release.
 //!
