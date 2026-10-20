@@ -48,6 +48,14 @@ tool it mints an installation token of that App with `actions/create-github-app-
 as `GH_TOKEN` to the one step that runs `cut_release tag`. The App must be installed on mopm (Contents read and write, Metadata read) and
 the variable and the secret must exist in this repository.
 
+The secret is not a repository secret. `RELEASE_BOT_PRIVATE_KEY` lives in the environment `release` of this repository, which is
+restricted to the `main` branch (deployment branches: `main` only), so a workflow run from any other branch cannot read it; the repository-level
+copy is removed. `tag` and `bump`, the only two jobs that read `RELEASE_BOT_*`, declare `environment: release`, and no other job declares an
+environment. The release lint and hygiene hold both: exactly the jobs that read `RELEASE_BOT_*` declare `environment: release`, any other job
+with an environment is a finding, and a job reading `RELEASE_BOT_*` without it is a finding. (The CEO's held script creates the environment, moves the
+secret into it and deletes the repository-level copy; until it has run, a job declaring `environment: release` still reads the repository-level
+secret, because GitHub creates an empty environment on first use, so releases keep working.)
+
 A release run without them fails safely at `tag`: the token step errors, no tag is created, `publish` (which needs `tag`) and `bump` never
 run, and nothing is released. Re-run the failed jobs once they exist. The release lint holds that the release workflow has exactly two token
 steps (this one and `bump`'s), that the tag token is for `mopm` with contents write only and the bump token for komira-internal alone, that each is
@@ -191,7 +199,7 @@ It prints the pin for the `linux-x86_64` tarball. It changes nothing.
 ## What the CEO has to do before the first release
 
 The bump and tag stages need, once: the GitHub App `komira-release-bot` installed on komira-internal and on mopm; the variable
-`RELEASE_BOT_APP_ID` and the secret `RELEASE_BOT_PRIVATE_KEY` in this repository; auto-merge allowed in komira-internal, with
+`RELEASE_BOT_APP_ID` in this repository and the secret `RELEASE_BOT_PRIVATE_KEY` in the environment `release` (restricted to main, not a repository secret); auto-merge allowed in komira-internal, with
 its ruleset requiring `check` and `bump-guard`; and the `v*` tag ruleset allowing only that App to create, update and delete tags.
 Without the App's variable and secret `tag` fails (no tag, no release); without the bump setup only `bump` fails.
 

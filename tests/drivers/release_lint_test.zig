@@ -307,7 +307,6 @@ test "mutant: bump holds a write scope here, or more than contents" {
     try mutant("bump reads more than contents", bump_perms, "    permissions:\n      contents: read\n      id-token: read\n    steps:\n      - uses: actions/checkout", "bump: permissions must be exactly contents: read");
     try mutant("bump with no permissions", bump_perms, "    steps:\n      - uses: actions/checkout", "bump: permissions must be exactly contents: read");
     try mutant("bump with write-all", bump_perms, "    permissions: write-all\n    steps:\n      - uses: actions/checkout", "grants every scope");
-    try mutant("bump behind an environment", bump_head ++ push_main ++ "\n", bump_head ++ push_main ++ "\n    environment: prod\n", "bump must not use an environment");
     try mutant("bump that may fail quietly", bump_head ++ push_main ++ "\n", bump_head ++ push_main ++ "\n    continue-on-error: true\n", "bump must not set continue-on-error");
 }
 
@@ -462,4 +461,16 @@ test "mutant: gh release create without --verify-tag" {
     try toolMutant("no --verify-tag", "\"--verify-tag\", ", "", "must be given --verify-tag");
     try toolMutant("a second release create", "args.appendSlice(&.{ \"release\", \"upload\", tag })", "args.appendSlice(&.{ \"release\", \"create\", tag })", "more than one `gh release create` call");
     try toolMutant("no release create", "\"release\", \"create\"", "\"release\", \"edit\"", "no longer calls `gh release create`");
+}
+
+const tag_env_lines = "    # The release bot's key lives only in this environment, which is restricted to main (RELEASING.md).\n    environment: release\n";
+const bump_env_lines = "    # Same environment as tag: the key is readable only here and in tag (RELEASING.md).\n    environment: release\n";
+
+test "mutant: the jobs that read the release bot's key declare environment release, and no other job declares one" {
+    try mutant("tag without the environment", tag_env_lines, "", "tag reads RELEASE_BOT_* so it must declare `environment: release`, got nil");
+    try mutant("bump without the environment", bump_env_lines, "", "bump reads RELEASE_BOT_* so it must declare `environment: release`, got nil");
+    try mutant("tag in the wrong environment", tag_env_lines, "    environment: relase\n", "tag reads RELEASE_BOT_* so it must declare `environment: release`, got \"relase\"");
+    try mutant("bump in prod", bump_env_lines, "    environment: prod\n", "bump reads RELEASE_BOT_* so it must declare `environment: release`, got \"prod\"");
+    try mutant("publish in the release environment", "  publish:\n    needs: [tag, verify]\n    " ++ push_main, "  publish:\n    needs: [tag, verify]\n    environment: release\n    " ++ push_main, "publish must not use an environment");
+    try mutant("verify in the release environment", "  verify:\n    needs: [plan, build, attest]\n", "  verify:\n    needs: [plan, build, attest]\n    environment: release\n", "verify must not use an environment");
 }
