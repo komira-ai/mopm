@@ -311,6 +311,23 @@ fn hex(data: []const u8) [64]u8 {
     return std.fmt.bytesToHex(digest, .lower);
 }
 
+/// `info/paths.json`: the files of the package with their sha256 and size. Without it (or the older
+/// `info/files`) pixi's installer cannot link the package ("failed to read 'paths.json'"), so a package
+/// `mopm pack` wrote would publish but never install. Keys sorted.
+pub fn pathsJson(arena: Allocator, files: []const File) Allocator.Error![]u8 {
+    var out = std.ArrayList(u8).init(arena);
+    const w = out.writer();
+    try w.writeAll("{\"paths\":[");
+    for (files, 0..) |f, i| {
+        if (i > 0) try w.writeByte(',');
+        try w.writeAll("{\"_path\":");
+        try jsonStr(w, f.path);
+        try w.print(",\"path_type\":\"hardlink\",\"sha256\":\"{s}\",\"size_in_bytes\":{d}}}", .{ hex(f.data), f.data.len });
+    }
+    try w.writeAll("],\"paths_version\":1}");
+    return out.items;
+}
+
 /// Builds the `.conda` for `in`.
 pub fn pack(arena: Allocator, in: Input) PackError!Packed {
     if (!exactVersion(in.version)) return error.BadVersion;
@@ -321,11 +338,15 @@ pub fn pack(arena: Allocator, in: Input) PackError!Packed {
     const mopm = try mopmJson(arena, in);
     const index = try indexJson(arena, in);
 
-    const info_tar = try tar(arena, &.{.{ .path = "info/index.json", .data = index }});
-    const pkg_tar = try tar(arena, &.{
+    const pkg_files = [_]File{
         .{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mojoc", .{in.name}), .data = in.mojoc },
         .{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mopm.json", .{in.name}), .data = mopm },
+    };
+    const info_tar = try tar(arena, &.{
+        .{ .path = "info/index.json", .data = index },
+        .{ .path = "info/paths.json", .data = try pathsJson(arena, &pkg_files) },
     });
+    const pkg_tar = try tar(arena, &pkg_files);
     const bytes = try zip(arena, &.{
         .{ .path = "metadata.json", .data = "{\"conda_pkg_format_version\": 2}" },
         .{ .path = try std.fmt.allocPrint(arena, "info-{s}.tar.zst", .{stem}), .data = try zstdStore(arena, info_tar) },
@@ -639,13 +660,27 @@ test "a package: zip structure, tars, index.json and mopm.json bytes" {
     try std.testing.expectEqualStrings("pkg-mojo-demo-1.2.3-mojo1.0.0_0.tar.zst", entries[2].name);
 
     const info = try readTar(a, try unzstd(a, entries[1].data));
-    try std.testing.expectEqual(@as(usize, 1), info.len);
+    try std.testing.expectEqual(@as(usize, 2), info.len);
     try std.testing.expectEqualStrings("info/index.json", info[0].path);
     try std.testing.expectEqualStrings(
         "{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\",\"mojo-alpha >=1.2,<2\",\"mojo-beta\"]," ++
             "\"name\":\"mojo-demo\",\"subdir\":\"linux-64\",\"version\":\"1.2.3\"}",
         info[0].data,
     );
+    // paths.json lists exactly the package's files, with the sha256 and size of each (pixi cannot link a
+    // package without it: the user-level beta's `mopm sync` of a package `mopm pack` made failed on this).
+    try std.testing.expectEqualStrings("info/paths.json", info[1].path);
+    {
+        const pj = try std.json.parseFromSlice(std.json.Value, a, info[1].data, .{});
+        const paths = pj.value.object.get("paths").?.array.items;
+        try std.testing.expectEqual(@as(i64, 1), pj.value.object.get("paths_version").?.integer);
+        try std.testing.expectEqual(@as(usize, 2), paths.len);
+        try std.testing.expectEqualStrings("lib/mojo/demo.mojoc", paths[0].object.get("_path").?.string);
+        try std.testing.expectEqualStrings(&hex("MOJOC-BYTES"), paths[0].object.get("sha256").?.string);
+        try std.testing.expectEqual(@as(i64, 11), paths[0].object.get("size_in_bytes").?.integer);
+        try std.testing.expectEqualStrings("hardlink", paths[0].object.get("path_type").?.string);
+        try std.testing.expectEqualStrings("lib/mojo/demo.mopm.json", paths[1].object.get("_path").?.string);
+    }
 
     const pkg = try readTar(a, try unzstd(a, entries[2].data));
     try std.testing.expectEqual(@as(usize, 2), pkg.len);

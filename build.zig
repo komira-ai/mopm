@@ -5,6 +5,11 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     // -Dstrip=true drops symbols and debug info (the release build, tools/release.zig).
     const strip = b.option(bool, "strip", "Strip the mopm binary") orelse false;
+    // -Dversion=<v> is the version `mopm --version` prints (the release build, tools/release.zig, which
+    // gets it from release.yml). The default is src/cli/build_options.zig's, the Buck2 build's copy.
+    const version = b.option([]const u8, "version", "The version the CLI reports") orelse "0.0.1+dev";
+    const build_options = b.addOptions();
+    build_options.addOption([]const u8, "version", version);
 
     // Library code shared by the CLI and (later) other front ends.
     const core = b.createModule(.{
@@ -19,6 +24,7 @@ pub fn build(b: *std.Build) void {
         .strip = strip,
     });
     exe.root_module.addImport("mopm_core", core);
+    exe.root_module.addOptions("build_options", build_options);
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -68,6 +74,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     cli_tests.root_module.addImport("mopm_core", core);
+    cli_tests.root_module.addOptions("build_options", build_options);
     test_step.dependOn(&b.addRunArtifact(cli_tests).step);
 
     const fake_tests = b.addTest(.{

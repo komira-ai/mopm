@@ -12,11 +12,14 @@ on:
   push:
     branches: [main]
 
+  # release.yml runs this workflow again on the pushed commit as its `lint` stage (the release lint included).
+  workflow_call:
+
 permissions:
   contents: read
 
 concurrency:
-  group: lint-${{ github.event.pull_request.number || github.sha }}
+  group: lint-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -40,3 +43,6 @@ jobs:
       - name: lint self-test (each rule goes red on its planted fixture)
         if: ${{ !cancelled() }}
         run: zig test tests/drivers/lint_selftest_test.zig
+      - name: release pipeline lint (scopes, stage order, path filter; each rule goes red on a planted mutant)
+        if: ${{ !cancelled() }}
+        run: zig test tests/drivers/release_lint_test.zig

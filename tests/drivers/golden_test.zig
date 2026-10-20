@@ -270,7 +270,7 @@ test "golden files: link-plan, metadata, new and init, build, run, repl, test --
 
     {
         const v = try h.run(a, try c.mopmArgv(&.{"--version"}), &base, .{ .capture = .stdout });
-        rep.check("--version", std.mem.eql(u8, h.chomp(v.text), "mopm 0.0.1"), v.text);
+        rep.check("--version", std.mem.eql(u8, h.chomp(v.text), "mopm 0.0.1+dev"), v.text);
         // A planned command exits non-zero and says it is not implemented.
         const p = try h.run(a, try c.mopmArgv(&.{"cov"}), &base, .{});
         rep.check("planned command should exit non-zero", p.signaled or p.code != 0, "exit 0");

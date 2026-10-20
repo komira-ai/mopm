@@ -1,0 +1,87 @@
+name: release-beta-user
+
+# Tests the release CANDIDATE as a user would use it, on every platform the release serves
+# natively: linux x86_64, linux arm64 (ubuntu-24.04-arm) and macOS 14 (arm64). The candidate is the
+# tarball release-build.yml built in this run (artifact release-<target>), the very file the release
+# publishes if this passes. tests/drivers/user_beta.zig takes that binary and walks every verb against
+# a fake registry started in the job: create a package (new, init), add and pull dependencies (add,
+# lock, update, tree, sync, remove), build, run, test, pack and publish to the test registry, then
+# install through site/static/install.sh pointed at the candidate files and check `mopm --version`
+# equals the candidate version. The Mojo toolchain is the pinned pixi environment of tests/e2e/pixi.toml.
+#
+# Called by release.yml (stage beta-user: a red leg on any platform stops the release) and by
+# release-check.yml (a pull request touching the release files). No leg may be skipped, optional or
+# allowed to fail: tests/drivers/release_lint.zig (userBetaProblems) holds the matrix, the absence of
+# `if`, `continue-on-error` and `exclude`, and the use of the candidate artifact. It holds no write
+# permission and no credential.
+#
+# The macOS x86_64 tarball is built (under Rosetta) and checked for its version, but no runner executes the user
+# walk for it: macos-13 is gone and the macOS 14 runners are arm64.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "The candidate's version (1.2.3, no leading v)"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  user:
+    name: user (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-x86_64, os: ubuntu-24.04 }
+          - { target: linux-aarch64, os: ubuntu-24.04-arm }
+          - { target: macos-arm64, os: macos-14 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-${{ matrix.target }}
+          path: ${{ runner.temp }}/candidate
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Build the user walk (tests/drivers/user_beta.zig)
+        run: zig build-exe tests/drivers/user_beta.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/user_beta"
+      - name: Build the fake registry, the test registry of the walk
+        run: zig build-exe registry/fake/main.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/mopm-fake-registry"
+      - name: Unpack the candidate
+        env:
+          VERSION: ${{ inputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: tar -xzf "$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET.tar.gz" -C "$RUNNER_TEMP/candidate"
+      - name: Install pixi 0.79.0 (sha256-pinned)
+        run: echo "$(tools/install_pixi.sh "$RUNNER_TEMP/pixi")" >> "$GITHUB_PATH"
+      - name: Create the Mojo environment (mojo 1.0.0, tests/e2e/pixi.toml)
+        run: pixi install --manifest-path tests/e2e/pixi.toml
+      - name: The user walk, every verb, then the install path
+        env:
+          VERSION: ${{ inputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: '"$RUNNER_TEMP/user_beta" "$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET/mopm" "$RUNNER_TEMP/walk" --version "$VERSION" --tarball "$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET.tar.gz" --install-sh site/static/install.sh --fake-registry "$RUNNER_TEMP/mopm-fake-registry" --mojo-env tests/e2e/.pixi/envs/default --pixi pixi --ci'
+
+      # What passed is recorded: attest refuses to attest any other bytes (tools/release.zig, tested).
+      - name: Build the release tool
+        run: zig build-exe tools/release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/release"
+      - name: Record the sha256 of the exact tarball the walk passed
+        env:
+          VERSION: ${{ inputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: '"$RUNNER_TEMP/release" record "$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET.tar.gz" "$RUNNER_TEMP/tested"'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tested-${{ matrix.target }}
+          path: ${{ runner.temp }}/tested/
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true

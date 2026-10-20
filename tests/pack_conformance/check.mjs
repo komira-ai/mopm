@@ -67,7 +67,7 @@ for (const p of packed) {
         JSON.stringify(v.facts.mojoDeps) === JSON.stringify(['mojo-confdep', 'mojo-other_dep']) &&
         v.facts.manifestSha256 === p.manifestSha256 &&
         JSON.stringify(v.facts.files.map((f) => f.path).sort()) ===
-          JSON.stringify(['info/index.json', 'lib/mojo/confdemo.mojoc', 'lib/mojo/confdemo.mopm.json']) &&
+          JSON.stringify(['info/index.json', 'info/paths.json', 'lib/mojo/confdemo.mojoc', 'lib/mojo/confdemo.mopm.json']) &&
         v.facts.files.find((f) => f.path === 'lib/mojo/confdemo.mojoc').size === mojoc.length,
       JSON.stringify(v.facts));
   }

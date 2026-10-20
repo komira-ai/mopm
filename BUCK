@@ -34,7 +34,7 @@ _TOOLS = {
 # The files each root imports by a relative name (all siblings of the root).
 # src/core/toolchain/*.json are embedded (@embedFile) by src/core/unit_graph.zig.
 _CORE_SRCS = glob(["src/core/*.zig"], exclude = ["src/core/mopm_core.zig"]) + glob(["src/core/toolchain/*.json"])
-_CLI_SRCS = glob(["src/cli/*.zig"], exclude = ["src/cli/main.zig"])
+_CLI_SRCS = glob(["src/cli/*.zig"], exclude = ["src/cli/main.zig", "src/cli/build_options.zig"])
 _FAKE_SRCS = glob(["registry/fake/*.zig"], exclude = ["registry/fake/main.zig"])
 
 # A Buck2 glob skips dotfiles: these are named.
@@ -89,11 +89,18 @@ zig_test(
 
 # ---- The CLI -----------------------------------------------------------------
 
+# The version `mopm --version` prints: the dev default (build.zig's -Dversion option replaces it for a release).
+zig_module(
+    name = "build_options",
+    src = "src/cli/build_options.zig",
+    visibility = ["PUBLIC"],
+)
+
 zig_exe(
     name = "mopm",
     src = "src/cli/main.zig",
     imports = _CLI_SRCS,
-    deps = [":mopm_core"],
+    deps = [":mopm_core", ":build_options"],
     unit_tests = [":cli_test"],
     visibility = ["PUBLIC"],
     **_TOOLS
@@ -103,7 +110,7 @@ zig_test(
     name = "cli_test",
     src = "src/cli/main.zig",
     imports = _CLI_SRCS,
-    deps = [":mopm_core"],
+    deps = [":mopm_core", ":build_options"],
     **_TOOLS
 )
 
@@ -191,7 +198,7 @@ zig_exe(  # buck-only: tools/release.zig, whose `tarball` and `sums` make the fa
     **_TOOLS
 )
 
-zig_exe(  # buck-only: tools/cut_release.zig, the maintainer's two release steps (tag, verify)
+zig_exe(  # buck-only: tools/cut_release.zig, the release run's steps (plan, tag, verify-dir, publish) and the read-only verify
     name = "cut-release",
     src = "tools/cut_release.zig",
     **_TOOLS
@@ -203,6 +210,12 @@ zig_exe(  # buck-only: a `gh` whose answers are files, for :cut_release
     **_TOOLS
 )
 
+zig_exe(  # buck-only: a `cosign` that signs nothing (a bundle names the file's sha256), for :cut_release
+    name = "fake-cosign",
+    src = "tests/drivers/fake_cosign.zig",
+    **_TOOLS
+)
+
 zig_test(  # buck-only: cut_release against the fake gh, with planted defects it must refuse
     name = "cut_release",
     src = "tests/drivers/cut_release_test.zig",
@@ -211,6 +224,7 @@ zig_test(  # buck-only: cut_release against the fake gh, with planted defects it
         "MOPM_CUT_RELEASE": ":cut-release",
         "MOPM_FAKE_GH": ":fake-gh",
         "MOPM_RELEASE_TOOL": ":release-tool",
+        "MOPM_FAKE_COSIGN": ":fake-cosign",
     },
     **_TOOLS
 )
@@ -291,6 +305,7 @@ zig_test(  # buck-only: tools/build_parity.zig reads build.zig and this file
         "src/core/mopm_core.zig",
         "src/core/toml.zig",
         "src/cli/main.zig",
+        "src/cli/build_options.zig",
         "tools/closure_gen.zig",
         "registry/fake/main.zig",
     ],
@@ -338,6 +353,14 @@ _AUTOLINK_DATA = [
     "tests/e2e/repl.stdin",
     "tests/e2e/repl_outer.stdin",
 ]
+zig_test(  # buck-only: the user-level beta walk (tests/drivers/user_beta.zig) in its farm form: no pixi, no installer
+    name = "user_beta",
+    src = "tests/drivers/user_beta_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig", "tests/drivers/user_beta.zig"],
+    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm", MOPM_FAKE_REGISTRY = ":mopm-fake-registry"),
+    **_TOOLS
+)
+
 
 zig_test(  # buck-only: mopm build, run, repl with native libraries; the Zig port of tests/e2e/run.sh
     name = "autolink",
@@ -533,8 +556,17 @@ zig_test(  # buck-only: the workflow lint, over the workflows, with a stand-in f
     src = "tests/drivers/workflow_lint_test.zig",
     imports = _LINT_LIBS + [
         "tests/drivers/shell_syntax.zig",
+        "tests/drivers/release_lint.zig",
         "tests/drivers/workflow_lint.zig",
     ],
+    data = {f: f for f in glob([".github/workflows/*.yml", ".github/workflows/*.yaml"])},
+    **_TOOLS
+)
+
+zig_test(  # buck-only: release.yml's scopes, stage order and path filter (tests/drivers/release_lint.zig), with a planted mutant per rule
+    name = "release_workflow",
+    src = "tests/drivers/release_lint_test.zig",
+    imports = _LINT_LIBS + ["tests/drivers/release_lint.zig"],
     data = {f: f for f in glob([".github/workflows/*.yml", ".github/workflows/*.yaml"])},
     **_TOOLS
 )
@@ -545,6 +577,7 @@ zig_test(  # buck-only: both lints over the fixtures, against the table in the t
     imports = _LINT_LIBS + [
         "tests/drivers/hygiene.zig",
         "tests/drivers/shell_syntax.zig",
+        "tests/drivers/release_lint.zig",
         "tests/drivers/workflow_lint.zig",
     ],
     data = {f: f for f in glob(["tests/lint/fixtures/*"])},

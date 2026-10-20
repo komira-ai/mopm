@@ -74,12 +74,15 @@ const cases = [_]Case{
     .{ .name = "kpin_top_write", .lint = &.{ "top-level permissions must be read-only", "permissions.contents: write is not allowed" } },
     .{ .name = "release_clean", .lint = &.{}, .hyg = &.{} },
     .{ .name = "release_elsewhere", .lint = &.{ "contents: write is not allowed", "id-token: write is not allowed", "attestations: write is not allowed" }, .hyg = &.{ "an id-token permission is only allowed" } },
-    .{ .name = "release_branch_trigger", .lint = &.{}, .hyg = &.{ "triggers must be exactly push of tags [v*], with no branches" } },
-    .{ .name = "release_pull_request", .lint = &.{}, .hyg = &.{ "triggers must be exactly push of tags [v*], with no branches" } },
+    .{ .name = "release_tag_trigger", .lint = &.{}, .hyg = &.{"triggers must be exactly push to branches [main]"} },
+    .{ .name = "release_pull_request", .lint = &.{}, .hyg = &.{ "triggers must be exactly push to branches [main]" } },
     .{ .name = "release_environment", .lint = &.{}, .hyg = &.{ "must not use secrets or an environment" } },
     .{ .name = "release_other_write", .lint = &.{ "packages: write is not allowed" }, .hyg = &.{} },
     .{ .name = "release_unpinned_attest", .lint = &.{ "only GitHub-owned actions pinned by full SHA" }, .hyg = &.{} },
     .{ .name = "release_calls_with_idtoken", .lint = &.{}, .hyg = &.{ "calls a workflow and grants id-token" } },
+    .{ .name = "release_cosign_pinned", .lint = &.{}, .hyg = &.{} },
+    .{ .name = "release_unpinned_cosign", .lint = &.{"only GitHub-owned actions pinned by full SHA"}, .hyg = &.{} },
+    .{ .name = "cosign_elsewhere", .lint = &.{"only GitHub-owned actions pinned by full SHA"}, .hyg = &.{} },
 };
 
 /// The values of the placeholders, built from pieces: built from pieces so this file does not trip hygiene.

@@ -30,7 +30,9 @@ mopm test --list [--check [--strict-discovery] [--prefix <dir>]]
    the `mojo build` line of `mopm build` (the same environment, the same
    native link arguments, so a test of a package with native libraries links
    them exactly as `mopm build` does), plus `-D ASSERT=all` and
-   `--optimization-level 1` (`--opt-level` changes the level). The binary is
+   `--optimization-level 1` (`--opt-level` changes the level), and `-I <root>/src` when the package has a `src/`
+   directory, so that a test can import the package it belongs to (`from my_pkg import f`, as `mopm new` writes
+   it). The binary is
    `target/mopm/bin/<hash>/<stem>`.
 3. **Listing check.** Each binary runs once with `--skip-all`, and the names
    it lists are compared with the scan. For a generated harness a difference

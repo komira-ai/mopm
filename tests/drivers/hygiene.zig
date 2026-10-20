@@ -234,7 +234,7 @@ const subject_check = "oidc-subject-check.yml";
 const farm_file = "farm.yml";
 /// release.yml publishes a release with build-provenance attestations, so its publish job holds an
 /// id-token grant (the attestation is signed with the job's OIDC token; no cloud access). Allowed only
-/// when a pushed v* tag is the sole trigger, with no environment, no secret and no id-token on a job
+/// when the triggers are a push to main and a manual run, with no environment, no secret and no id-token on a job
 /// that calls another workflow.
 const release_file = "release.yml";
 
@@ -327,14 +327,23 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
     }
 
     if (std.mem.eql(u8, base, release_file)) {
-        // on.keys == ["push"] && on["push"] == { "tags" => ["v*"] }
+        // on.keys == ["push", "workflow_dispatch"] && push has branches == ["main"] and nothing but paths-ignore
+        const sorted_on = try a.dupe([]const u8, on);
+        std.mem.sort([]const u8, sorted_on, {}, struct {
+            fn lt(_: void, x: []const u8, y: []const u8) bool {
+                return std.mem.lessThan(u8, x, y);
+            }
+        }.lt);
         const push = c.get(c.onValue(doc), "push");
-        const only_tag = on.len == 1 and std.mem.eql(u8, on[0], "push") and push != null and push.? == .object and
-            push.?.object.count() == 1 and blk: {
-            const tags = c.get(push, "tags") orelse break :blk false;
-            break :blk tags == .array and tags.array.items.len == 1 and c.isStr(tags.array.items[0], "v*");
-        };
-        if (!only_tag) try c.problem(a, out, prefix ++ "{s}: triggers must be exactly push of tags [v*], with no branches", .{f});
+        var main_push = c.eqlList(sorted_on, &.{ "push", "workflow_dispatch" }) and push != null and push.? == .object;
+        if (main_push) {
+            for (push.?.object.keys()) |k| {
+                if (!std.mem.eql(u8, k, "branches") and !std.mem.eql(u8, k, "paths-ignore")) main_push = false;
+            }
+            const branches = c.get(push, "branches");
+            if (!(branches != null and branches.? == .array and branches.?.array.items.len == 1 and c.isStr(branches.?.array.items[0], "main"))) main_push = false;
+        }
+        if (!main_push) try c.problem(a, out, prefix ++ "{s}: triggers must be exactly push to branches [main] (paths-ignore allowed) and workflow_dispatch", .{f});
         if (c.findKey(doc, "environment") or c.mentionsSecretsDot(try c.nonCommentLines(a, text))) {
             try c.problem(a, out, prefix ++ "{s}: must not use secrets or an environment", .{f});
         }
