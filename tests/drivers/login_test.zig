@@ -1,7 +1,7 @@
 //! End-to-end tests of mopm's registry commands against mopm-fake-registry:
-//! the Zig port of tests/registry_e2e/run.py (superseded by this file).
+//! the Zig port of tests/registry_e2e/run.py (deleted with this port).
 //!
-//! Run by Buck2 (//tests/registry_e2e:login): MOPM and MOPM_FAKE_REGISTRY are
+//! Run by Buck2 (//:registry_login): MOPM and MOPM_FAKE_REGISTRY are
 //! the built programs. Each check prints `ok` or `FAIL`. The refusals are
 //! checked as well as the successes, so each check can go red: a registry URL
 //! that is not https or loopback http, a config.json that names one, a login

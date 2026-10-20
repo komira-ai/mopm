@@ -29,8 +29,8 @@
 //!       because the tag exists (another run took the number) it recomputes and tries once more. Prints and,
 //!       with --out, appends `version=` and `tag=` lines (the format of $GITHUB_OUTPUT).
 //!   cut_release verify-dir <version> <dir> --sha <commit> --source-ref <ref> [--notes-out <dir>]
-//!       Before anything is published: checks the BUILT files in <dir>. The tag v<version> is on main and
-//!       names <commit>; the files are exactly the ten: the four mopm-<version>-<target>.tar.gz, SHA256SUMS and the
+//!       Before the tag exists and before anything is published: checks the BUILT files in <dir>. <commit> is on
+//!       main (no tag is read: the tag job runs after this); the files are exactly the ten: the four mopm-<version>-<target>.tar.gz, SHA256SUMS and the
 //!       cosign bundle <file>.sigstore.json of each; SHA256SUMS lists each tarball with the hash it has; `gh attestation verify` and `cosign verify-blob` (--cosign, identity pinned to release.yml at <ref>, the commit, the push trigger and the repository pinned) accept every payload file
 //!       (attestations pinned to release.yml, <ref> and <commit>); each tarball holds exactly
 //!       mopm-<version>-<target>/{mopm,LICENSE}. With --notes-out it writes release-notes.md, pin.txt (the
@@ -548,10 +548,9 @@ fn verifyDirCmd(gh: Gh, version: []const u8, dir_path: []const u8, sha: []const 
     if (!isHex40(sha)) die("--sha '{s}' is not a 40-character commit sha", .{sha});
     const tag = std.fmt.allocPrint(a, "v{s}", .{version}) catch @panic("oom");
 
-    // The tag the tag job made names the commit this run built, and the commit is on main.
-    const tag_sha = commitOf(gh, tag);
-    if (!std.mem.eql(u8, tag_sha, sha)) die("the tag {s} names {s}, not the commit {s} that was built", .{ tag, tag_sha, sha });
-    requireOnMain(gh, tag, tag_sha);
+    // verify-dir runs BEFORE the tag job (a red attest, signature or verify leaves no orphan tag): no tag exists yet,
+    // and none is read. The commit that was built is on main.
+    requireOnMain(gh, "the built commit", sha);
 
     const pin = checkAssets(gh, version, dir_path, .{ .ref = source_ref, .sha = sha });
     const prerelease = std.mem.indexOfScalar(u8, version, '-') != null;
@@ -575,7 +574,7 @@ fn verifyDirCmd(gh: Gh, version: []const u8, dir_path: []const u8, sha: []const 
         writeInto(a, nd, "pin.txt", pinText(a, gh.repo, version, pin));
         writeInto(a, nd, "verified.sha256", manifest.items);
     }
-    out("verified {s} at {s}: four tarballs and SHA256SUMS, hashes match, attestations accepted, layout exact, tag on main.\n", .{ tag, sha });
+    out("verified {s} at {s}: four tarballs and SHA256SUMS, hashes match, attestations accepted, layout exact, commit on main.\n", .{ tag, sha });
     out("prerelease: {s}\nthe pin for {s}:\n{s}", .{ if (prerelease) "true" else "false", pin_target, pinText(a, gh.repo, version, pin) });
 }
 

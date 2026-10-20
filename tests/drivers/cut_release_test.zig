@@ -529,12 +529,11 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
     }
     {
         var w = try goodVerify(a, tools, &tmp, "vd_tag_elsewhere", "1.2.3");
-        try w.put("tags", "v1.2.3 " ++ other ++ "\n");
-        const r = try w.run(&.{ "verify-dir", "1.2.3", w.path("assets"), "--sha", sha, "--source-ref", "refs/heads/main" });
-        rep.check("verify-dir: a tag that names another commit than the built one is refused", r.code == 1 and h.contains(r.text, "not the commit " ++ sha) and w.calls("attestation") == 0, r.text);
+        // verify-dir runs before the tag job: it must pass with no tag of this version (the first release), and
+        // reads none, so a failed attest, signature or verify leaves no orphan tag.
         try w.put("tags", "v9.9.9 " ++ sha ++ "\n");
         const m = try w.run(&.{ "verify-dir", "1.2.3", w.path("assets"), "--sha", sha, "--source-ref", "refs/heads/main" });
-        rep.check("verify-dir: a missing tag is refused", m.code == 1 and h.contains(m.text, "gh api failed") and w.calls("attestation") == 0, m.text);
+        rep.check("verify-dir: passes with no tag v1.2.3 yet, and writes none", m.code == 0 and !h.contains(w.read("tags"), "v1.2.3") and w.calls("api -X POST") == 0, m.text);
         try w.put("tags", "v1.2.3 " ++ sha ++ "\n");
         try w.put("compare_status", "diverged\n");
         const o = try w.run(&.{ "verify-dir", "1.2.3", w.path("assets"), "--sha", sha, "--source-ref", "refs/heads/main" });

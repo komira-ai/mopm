@@ -137,7 +137,7 @@ polls it every 20 ms.
   not, it says so on stderr and the run exits 5.
 
 `--test-only-no-group-kill` exists for the supervisor's own end-to-end
-self-test (`tests/e2e/test_supervisor.sh`): it signals only the test process
+self-test (`tests/drivers/test_supervisor_test.zig`): it signals only the test process
 and skips the cleanup kill, so the self-test can show that a process left
 behind is detected. Do not use it otherwise.
 

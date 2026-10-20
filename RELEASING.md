@@ -18,9 +18,9 @@ customer uses it, on every platform it ships for (`beta-user`).
 | `plan` | `beta`, `lint` | the version this commit's release will have (`cut_release plan --sha`). Writes nothing. Refuses a commit that a newer release supersedes (below) and a `VERSION` base below an existing tag. Gamma and bake time are a slot for later stages between `lint` and `plan`. |
 | `build` | `plan` | the four binaries (`linux-x86_64`, `linux-aarch64`, `macos-arm64`, `macos-x86_64`) at that version, each reporting exactly it. **These are the release files.** They are built once, before the tag, from the commit that is tagged later, and are not rebuilt. |
 | `beta-user` | `plan`, `build` | the candidate tested as a user (below), on linux x86_64, linux arm64 and macOS 14 (arm64). A red leg on any platform stops the release. |
-| `tag` | `plan`, `build`, `beta-user` | creates the annotated tag `v<version>` at the pushed commit. The only write before the files are published. Refuses a superseded commit, and refuses unless the version it would take is the planned one (`--expect-version`), so the tested bytes are the released bytes. |
-| `attest` | `tag`, `build` | `SHA256SUMS` for the four tarballs, a keyless cosign signature (Sigstore) of each of the five files, and build provenance (a signed attestation) for all five. |
-| `verify` | `tag`, `build`, `attest` | checks the built files before anything is published: exactly the ten files (the five and the `<file>.sigstore.json` bundle of each), `SHA256SUMS` matches, every attestation and every signature accepted and pinned to `release.yml`, the ref and the commit, the tarball layout, the tag on main and at this commit. Uploads the release notes and the pin (the `linux-x86_64` url, sha256 and size) as the artifact `release-notes`. |
+| `attest` | `plan`, `build`, `beta-user` | refuses unless each tarball is the exact file the user beta passed (`release tested`), then writes `SHA256SUMS` for the four tarballs, a keyless cosign signature (Sigstore) of each of the five files, and build provenance (a signed attestation) for all five. |
+| `verify` | `plan`, `build`, `attest` | read-only, before any tag exists: exactly the ten files (the five and the `<file>.sigstore.json` bundle of each), `SHA256SUMS` matches, every attestation and every signature accepted and pinned to `release.yml`, the ref, the commit, the push trigger and the repository, the tarball layout, the commit on main. Uploads the release notes and the pin (the `linux-x86_64` url, sha256 and size) as the artifact `release-notes`. |
+| `tag` | `plan`, `build`, `beta-user`, `verify` | creates the annotated tag `v<version>` at the pushed commit, only after the files verified, so a failing attest, signature or verify leaves no orphan tag. The only write before the release. Refuses a superseded commit, and refuses unless the version it would take is the planned one (`--expect-version`), so the tested bytes are the released bytes. |
 | `publish` | `tag`, `verify` | creates the GitHub release for `v<version>` from exactly the verified files (artifacts `verified-assets` and `release-notes`, nothing else). |
 | `bump` | `tag`, `publish` | opens the pull request in komira-internal that moves its `mopm` submodule to this release, with auto-merge (below). The last stage, and the only one that writes outside this repository; nothing needs it. |
 
@@ -132,13 +132,13 @@ releases `0.1.1`. This is rare; PATCH is never edited by hand, and the base neve
 ## A dry run
 
 Run the `release` workflow by hand (Actions, `release`, Run workflow) on `main`. It runs `beta`, `lint`, `plan`,
-`build` and `beta-user`: the candidate is built and tested on every platform, and `plan` prints the version the
-next release would get. It creates no tag and publishes nothing (`tag`, `attest`, `verify`, `publish` and `bump` do not run).
+`build`, `beta-user`, `attest` and `verify`: the candidate is built and tested on every platform, and `plan` prints the version the
+next release would get. It creates no tag and publishes nothing (`tag`, `publish` and `bump` do not run; `attest` and `verify` do, as a rehearsal of the signing).
 
 ## A re-run and a failure
 
 - A red `beta`, `lint`, `build` or `beta-user` stops everything: nothing is tagged. Fix main; the next push releases.
-- If `attest`, `verify` or `publish` fails after the tag exists, the tag stays. Re-running the failed run reuses the
+- A red `attest` or `verify` leaves no tag (the tag job comes after verify). If `publish` fails after the tag exists, the tag stays. Re-running the failed run reuses the
   tag (it is the highest and names this commit; `plan` reports its version). If a newer release exists by then, the
   re-run stops with `superseded` and the old tag stays as a gap.
 - Re-run "failed jobs" rather than the whole run when only a late stage failed: it keeps the tested candidate. A job

@@ -1,8 +1,9 @@
 name: release
 
 # Releases mopm automatically: a push to main that changes more than docs or CI runs the whole test
-# suite, builds the CANDIDATE, tests it as a user on every platform, tags the next version, then
-# attests, signs, verifies and publishes exactly those candidate files.
+# suite, builds the CANDIDATE, tests it as a user on every platform, then attests, signs and verifies those candidate files, tags the
+# next version only after they verified (a failing attest, signature or verify leaves no orphan tag), and
+# publishes exactly those files.
 # Nobody tags, approves or runs anything (RELEASING.md); a red stage stops the release.
 #
 #   beta       the whole of ci.yml on the pushed commit (a workflow_call of it).
@@ -17,15 +18,16 @@ name: release
 #   beta-user  the candidate tested AS A USER (release-beta-user.yml, tests/drivers/user_beta.zig) on
 #              linux x86_64, linux arm64 and macOS 14: every verb against the fake registry, then the
 #              documented install path. A red leg on any platform stops the release.
-#   tag        the annotated tag v<version> at the pushed commit, the only write before the files are
-#              published. It refuses a commit older than the highest tag (a re-run of an old run) and a
-#              version other than the one planned and tested (cut_release tag).
-#   attest     SHA256SUMS for the four tarballs, a keyless cosign signature (Sigstore) of each of the
+#   attest     only the tarballs the user beta passed (release tested), then SHA256SUMS for the four tarballs, a keyless cosign signature (Sigstore) of each of the
 #              five files, and build provenance (actions/attest-build-provenance) for all five.
 #   verify     cut_release verify-dir on the built files, before anything is published: exactly the ten
 #              files, SHA256SUMS matches, every attestation and every signature accepted (pinned to this
-#              workflow, the ref and the commit), the tarball layout, the tag on main. It uploads the
+#              workflow, the ref and the commit), the tarball layout, the commit on main. It reads no tag (none exists
+#              yet) and uploads the
 #              release notes and the pin (artifact release-notes) and the verified files (verified-assets).
+#   tag        the annotated tag v<version> at the pushed commit, the only write before the release; it needs
+#              verify. It refuses a commit older than the highest tag (a re-run of an old run) and a
+#              version other than the one planned and tested (cut_release tag).
 #   publish    creates the GitHub release from exactly the verified files. A re-run creates no second
 #              release and replaces no asset: any asset the release already holds must match byte for byte,
 #              or it fails and changes nothing.
@@ -33,8 +35,8 @@ name: release
 #              and turns auto-merge on (cut_release bump-internal), with the App token of komira-release-bot. It is
 #              the only job that holds the token, and nothing needs it: a failed bump goes red and un-releases nothing.
 #
-# A manual run (workflow_dispatch) is a dry run: everything up to and including beta-user, then nothing:
-# tag, attest, verify, publish and bump do not run. Writes to this repository are held to tag (contents) and publish (contents),
+# A manual run (workflow_dispatch) is a dry run: everything up to and including verify, then nothing:
+# tag, publish and bump do not run. Writes to this repository are held to tag (contents) and publish (contents),
 # both under a push to main (bump writes to komira-internal, through the App token, and holds contents: read here), and attest (id-token, attestations) by tests/drivers/release_lint.zig, which
 # also holds the order of the stages, the data flow between them and the path filter; hygiene.zig holds the
 # triggers. A re-run of failed jobs only rebuilds what failed and what depends on it: a changed build
@@ -109,33 +111,8 @@ jobs:
     with:
       version: ${{ needs.plan.outputs.version }}
 
-  tag:
-    needs: [plan, build, beta-user]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    outputs:
-      version: ${{ steps.tag.outputs.version }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install Zig 0.12.0 (sha256-pinned)
-        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
-      # Built before any step holds the token, so no build runs beside it.
-      - name: Build the release tool
-        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/cut_release"
-      - name: Create the annotated tag of the planned version at the pushed commit (refused if superseded)
-        id: tag
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PLANNED: ${{ needs.plan.outputs.version }}
-        run: '"$RUNNER_TEMP/cut_release" --repo "$GITHUB_REPOSITORY" tag --sha "$GITHUB_SHA" --expect-version "$PLANNED" --out "$GITHUB_OUTPUT"'
-
   attest:
-    needs: [tag, build]
+    needs: [plan, build, beta-user]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -185,7 +162,7 @@ jobs:
           overwrite: true
 
   verify:
-    needs: [tag, build, attest]
+    needs: [plan, build, attest]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -207,7 +184,7 @@ jobs:
       - name: Verify the built files (assets, SHA256SUMS, attestations, signatures, layout, tag) and write the notes and the pin
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.tag.outputs.version }}
+          VERSION: ${{ needs.plan.outputs.version }}
         run: '"$RUNNER_TEMP/cut_release" --repo "$GITHUB_REPOSITORY" verify-dir "$VERSION" dist --sha "$GITHUB_SHA" --source-ref "$GITHUB_REF" --notes-out notes'
       # What the release will say, and the pin of the linux-x86_64 tarball.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -225,6 +202,31 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           overwrite: true
+
+  tag:
+    needs: [plan, build, beta-user, verify]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      # Built before any step holds the token, so no build runs beside it.
+      - name: Build the release tool
+        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/cut_release"
+      - name: Create the annotated tag of the planned version at the pushed commit (refused if superseded)
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLANNED: ${{ needs.plan.outputs.version }}
+        run: '"$RUNNER_TEMP/cut_release" --repo "$GITHUB_REPOSITORY" tag --sha "$GITHUB_SHA" --expect-version "$PLANNED" --out "$GITHUB_OUTPUT"'
 
   publish:
     needs: [tag, verify]
