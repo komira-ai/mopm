@@ -34,7 +34,7 @@ with. It does not duplicate package metadata; that stays in the installed
 
 ## Fields
 
-- `lock_version`: 1. A higher value is refused with "update mopm".
+- `lock_version`: 1 (2 is "Version 2" below). A value mopm does not know is refused with "update mopm".
 - `toolchain.mojo`: the Mojo version the project is locked to
   (`[toolchain]` in `mopm.toml`).
 - `channels`: the channels packages may come from. This is the root project's
@@ -87,7 +87,64 @@ check them on every read. A violation is an error, not a warning.
   the reason. A locked version that was taken down fails to install, and the
   error shows the tombstone reason from the index.
 
+## Version 2
+
+A project that lists its Mojo versions under `[package] mojo` (`mopm-toml.md`)
+gets a `lock_version` 2 lock: one lock for every Mojo version, because a
+`.mojoc` is tied to one compiler. mopm reads both versions; a lock from
+`[toolchain] mojo` stays version 1. Version 2 changes the top of the file and
+what a package entry carries; `channels` and the rules below keep their
+meaning. `lock.schema.json` describes version 1.
+
+```json
+{
+  "lock_version": 2,
+  "mojo": ["1.0.0", "1.1.0"],
+  "toolchain": { "1.0.0": { "linux-64": "<64 hex digits>" }, "1.1.0": { "linux-64": "<64 hex digits>" } },
+  "channels": ["https://conda.mopm.dev/"],
+  "packages": [
+    {
+      "name": "http_core",
+      "version": "1.2.5",
+      "subdir": "linux-64",
+      "channel": "https://conda.mopm.dev/",
+      "artifacts": {
+        "1.0.0": { "build": "mojo1.0.0_0", "url": "https://conda.mopm.dev/linux-64/mojo-http_core-1.2.5-mojo1.0.0_0.conda", "sha256": "<64 hex digits>", "size": 1000 },
+        "1.1.0": { "build": "mojo1.1.0_0", "url": "https://conda.mopm.dev/linux-64/mojo-http_core-1.2.5-mojo1.1.0_0.conda", "sha256": "<64 hex digits>", "size": 1100 }
+      }
+    }
+  ]
+}
+```
+
+- `mojo`: the Mojo versions locked, sorted as byte strings, with no repeats.
+  It equals the set `mopm.toml` lists; a lock for another set is stale.
+- `toolchain`: for each locked Mojo version and each subdir mopm pins a
+  toolchain for, the closure hash (`unit-graph.md`, "toolchain"). It replaces
+  version 1's `toolchain.mojo`. Every locked version has a closure.
+- `packages[]`: one entry per package version per subdir, sorted as in
+  version 1. It has no `build`, `url`, `sha256`, `size` or `mojo`; instead
+  `artifacts` maps each Mojo version the version has a build for to that
+  build's `build`, `url`, `sha256` and `size`. Keys are listed in `mojo`. Two
+  Mojo versions may lock different versions of one package: the entry for a
+  Mojo version `M` is the one with an artifact for `M`, and a package version
+  without one is not part of the closure for `M`. A path dependency is
+  unchanged (it has no artifacts). `deps` and `native` are as in version 1.
+- Rule 3 holds per artifact (`url` is `<channel><subdir>/mojo-<name>-<version>-<build>.conda`);
+  rule 4 becomes: every artifact's Mojo version is in `mojo`.
+- `mopm sync` installs the builds for the first locked Mojo version.
+
 ## Versioning
 
 `lock_version` changes only for incompatible changes. New optional keys can
 be added within version 1; readers ignore keys they do not know.
+
+## A project with no registry dependency
+
+`mopm lock` contacts the registry only when it has something to ask it: a
+project whose `mopm.toml` and path dependencies' `mopm.toml` files name no
+version requirement is locked offline, with no network, and the registry named
+by `--registry` is not contacted (it may be unreachable). Its lock holds the
+path packages only. `channels` still lists one channel, the default
+`https://conda.mopm.dev/`, which nothing is fetched from; the lock is the same
+for every `--registry`.

@@ -1,0 +1,16 @@
+{
+  "format": 1,
+  "mojo": "1.0.0",
+  "pins": [
+    {
+      "subdir": "linux-64",
+      "cc_target": "x86_64-linux-gnu.2.34",
+      "zig": {
+        "version": "0.12.0",
+        "url": "https://ziglang.org/download/0.12.0/zig-linux-x86_64-0.12.0.tar.xz",
+        "sha256": "c7ae866b8a76a568e2d5cfd31fe89cdb629bdd161fdd5018b29a4a0a17045cad",
+        "size": 45480516
+      }
+    }
+  ]
+}

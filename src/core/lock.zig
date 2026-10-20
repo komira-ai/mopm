@@ -25,8 +25,29 @@ const testroot = @import("testroot.zig");
 const Allocator = std.mem.Allocator;
 const registry = @import("registry.zig");
 
-/// The `lock_version` this mopm reads and writes.
+/// The `lock_version` of a lock for one Mojo version (the `[toolchain]` form).
 pub const lock_version: i64 = 1;
+
+/// The `lock_version` of a lock with one artifact per locked Mojo version
+/// (spec/lock.md, "Version 2"): written when `Lock.mojos` is not empty.
+pub const lock_version_2: i64 = 2;
+
+/// One `.mojoc` build of a package version, for one Mojo version.
+pub const Artifact = struct {
+    mojo: []const u8,
+    build: []const u8,
+    url: []const u8,
+    sha256: []const u8,
+    size: u64,
+};
+
+/// The closure hash of mopm's pinned toolchain for a Mojo version and subdir
+/// (`mopm plan --unit-graph` prints the same value; version 2 locks only).
+pub const Closure = struct {
+    mojo: []const u8,
+    subdir: []const u8,
+    sha256: []const u8,
+};
 
 pub const Native = struct {
     id: []const u8,
@@ -51,14 +72,25 @@ pub const Package = struct {
     sha256: []const u8 = "",
     size: u64 = 0,
     mojo: []const u8 = "",
+    /// Version 2: the builds, one per Mojo version, sorted by `mojo`. Then
+    /// `build`, `url`, `sha256`, `size` and `mojo` above are empty; `forMojo`
+    /// fills them for one Mojo version.
+    artifacts: []const Artifact = &.{},
     deps: []const []const u8 = &.{},
     native: []const Native = &.{},
 };
 
 pub const Lock = struct {
+    /// Version 1: the one Mojo version. Version 2: the first of `mojos`
+    /// (what `mopm sync` installs).
     mojo: []const u8,
     channels: []const []const u8,
     packages: []const Package,
+    /// Version 2: the Mojo versions locked, sorted, no repeats. Empty for a
+    /// version 1 lock.
+    mojos: []const []const u8 = &.{},
+    /// Version 2: mopm's toolchain closure hash per (mojo, subdir), sorted.
+    closures: []const Closure = &.{},
 
     /// The version locked for `name`, or null.
     pub fn versionOf(self: Lock, name: []const u8) ?[]const u8 {
@@ -68,6 +100,63 @@ pub const Lock = struct {
         return null;
     }
 };
+
+/// The build of `p` for `mojo`, or null (a path dependency has none).
+pub fn artifactFor(p: Package, mojo: []const u8) ?Artifact {
+    if (p.source == .path) return null;
+    if (p.artifacts.len > 0) {
+        for (p.artifacts) |a| {
+            if (std.mem.eql(u8, a.mojo, mojo)) return a;
+        }
+        return null;
+    }
+    if (!std.mem.eql(u8, p.mojo, mojo)) return null;
+    return .{ .mojo = p.mojo, .build = p.build, .url = p.url, .sha256 = p.sha256, .size = p.size };
+}
+
+/// The Mojo versions `p` has a build for, sorted.
+pub fn publishedFor(arena: Allocator, p: Package) Allocator.Error![]const []const u8 {
+    var out = std.ArrayList([]const u8).init(arena);
+    if (p.artifacts.len > 0) {
+        for (p.artifacts) |a| try out.append(a.mojo);
+    } else if (p.source == .registry and p.mojo.len > 0) {
+        try out.append(p.mojo);
+    }
+    return out.items;
+}
+
+/// The refusal for a dependency that has no `.mojoc` for the consumer's Mojo
+/// (spec/unit-graph.md, "Choosing the Mojo version"). `published` is never empty.
+pub fn noMojocMessage(arena: Allocator, name: []const u8, version: []const u8, mojo: []const u8, published: []const []const u8) Allocator.Error![]const u8 {
+    const list = try std.mem.join(arena, ", ", published);
+    const first = if (published.len > 0) published[0] else "?";
+    return std.fmt.allocPrint(arena, "{s} {s} has no .mojoc for Mojo {s} (published for: {s}). Build with mojo {s}, ask the publisher for a {s} build, or pin a version that has one.", .{ name, version, mojo, list, first, mojo });
+}
+
+/// `l` seen for one Mojo version: a version 1 lock as it is; a version 2 lock
+/// as a lock of the packages that have a build for `mojo`, each with its
+/// `build`, `url`, `sha256`, `size` and `mojo` filled in (the shape
+/// `mopm sync` and the install code read).
+pub fn forMojo(arena: Allocator, l: Lock, mojo: []const u8) Allocator.Error!Lock {
+    if (l.mojos.len == 0) return l;
+    var out = std.ArrayList(Package).init(arena);
+    for (l.packages) |p| {
+        if (p.source == .path) {
+            try out.append(p);
+            continue;
+        }
+        const a = artifactFor(p, mojo) orelse continue;
+        var q = p;
+        q.artifacts = &.{};
+        q.build = a.build;
+        q.url = a.url;
+        q.sha256 = a.sha256;
+        q.size = a.size;
+        q.mojo = a.mojo;
+        try out.append(q);
+    }
+    return .{ .mojo = mojo, .channels = l.channels, .packages = out.items };
+}
 
 /// `<channel><subdir>/mojo-<name>-<version>-<build>.conda` (rule 3).
 pub fn fileUrl(arena: Allocator, channel: []const u8, subdir: []const u8, name: []const u8, version: []const u8, build: []const u8) Allocator.Error![]const u8 {
@@ -101,6 +190,19 @@ pub const channel_rule = "a channel ends with '/' and is https, or plain http on
 
 /// The first rule of spec/lock.md that `l` breaks, worded, or null.
 pub fn check(arena: Allocator, l: Lock) Allocator.Error!?[]const u8 {
+    for (l.mojos, 0..) |m, i| {
+        if (i > 0 and std.mem.order(u8, l.mojos[i - 1], m) != .lt) {
+            return try std.fmt.allocPrint(arena, "mojo is not sorted with no repeats (at {s})", .{m});
+        }
+    }
+    for (l.closures) |c| {
+        if (!contains(l.mojos, c.mojo)) return try std.fmt.allocPrint(arena, "toolchain names mojo {s}, which the lock does not list in mojo", .{c.mojo});
+    }
+    for (l.mojos) |m| {
+        var have = false;
+        for (l.closures) |c| have = have or std.mem.eql(u8, c.mojo, m);
+        if (!have) return try std.fmt.allocPrint(arena, "toolchain has no closure for mojo {s}", .{m});
+    }
     for (l.channels) |c| {
         if (!allowedChannel(c)) return try std.fmt.allocPrint(arena, "channel {s} is refused: {s}", .{ c, channel_rule });
     }
@@ -117,10 +219,24 @@ pub fn check(arena: Allocator, l: Lock) Allocator.Error!?[]const u8 {
             var listed = false;
             for (l.channels) |c| listed = listed or std.mem.eql(u8, c, p.channel);
             if (!listed) return try std.fmt.allocPrint(arena, "{s}: channel {s} is not in channels", .{ p.name, p.channel });
-            const want = try fileUrl(arena, p.channel, p.subdir, p.name, p.version, p.build);
-            if (!std.mem.eql(u8, want, p.url)) return try std.fmt.allocPrint(arena, "{s}: url is {s}, not {s}", .{ p.name, p.url, want });
-            if (!std.mem.eql(u8, p.mojo, l.mojo)) {
-                return try std.fmt.allocPrint(arena, "{s}: built with mojo {s}, but the toolchain is mojo {s}", .{ p.name, p.mojo, l.mojo });
+            if (l.mojos.len > 0) {
+                if (p.artifacts.len == 0) return try std.fmt.allocPrint(arena, "{s} {s}: no artifacts", .{ p.name, p.version });
+                for (p.artifacts, 0..) |a, k| {
+                    if (k > 0 and std.mem.order(u8, p.artifacts[k - 1].mojo, a.mojo) != .lt) {
+                        return try std.fmt.allocPrint(arena, "{s}: artifacts are not sorted by mojo with no repeats (at {s})", .{ p.name, a.mojo });
+                    }
+                    if (!contains(l.mojos, a.mojo)) {
+                        return try std.fmt.allocPrint(arena, "{s}: an artifact for mojo {s}, which the lock does not list in mojo", .{ p.name, a.mojo });
+                    }
+                    const want_url = try fileUrl(arena, p.channel, p.subdir, p.name, p.version, a.build);
+                    if (!std.mem.eql(u8, want_url, a.url)) return try std.fmt.allocPrint(arena, "{s}: url is {s}, not {s}", .{ p.name, a.url, want_url });
+                }
+            } else {
+                const want = try fileUrl(arena, p.channel, p.subdir, p.name, p.version, p.build);
+                if (!std.mem.eql(u8, want, p.url)) return try std.fmt.allocPrint(arena, "{s}: url is {s}, not {s}", .{ p.name, p.url, want });
+                if (!std.mem.eql(u8, p.mojo, l.mojo)) {
+                    return try std.fmt.allocPrint(arena, "{s}: built with mojo {s}, but the toolchain is mojo {s}", .{ p.name, p.mojo, l.mojo });
+                }
             }
         }
         for (p.deps) |d| {
@@ -143,6 +259,13 @@ pub fn check(arena: Allocator, l: Lock) Allocator.Error!?[]const u8 {
         }
     }
     return null;
+}
+
+fn contains(list: []const []const u8, s: []const u8) bool {
+    for (list) |x| {
+        if (std.mem.eql(u8, x, s)) return true;
+    }
+    return false;
 }
 
 pub const ParseError = error{ Invalid, OutOfMemory };
@@ -208,11 +331,40 @@ pub fn parse(arena: Allocator, text: []const u8, why: *[]const u8) ParseError!Lo
         .integer => |n| n,
         else => return r.bad("lock_version is not an integer", .{}),
     };
-    if (ver > lock_version) return r.bad("lock_version is {d}; this mopm reads {d}. Update mopm.", .{ ver, lock_version });
-    if (ver != lock_version) return r.bad("lock_version {d} is not one mopm writes", .{ver});
+    if (ver > lock_version_2) return r.bad("lock_version is {d}; this mopm reads {d}. Update mopm.", .{ ver, lock_version_2 });
+    if (ver != lock_version and ver != lock_version_2) return r.bad("lock_version {d} is not one mopm writes", .{ver});
+    const two = ver == lock_version_2;
 
-    const toolchain = try r.object(top.get("toolchain") orelse return r.bad("the lock has no toolchain", .{}), "toolchain");
-    const mojo = try r.string(toolchain, "mojo", "toolchain");
+    var mojo: []const u8 = "";
+    var mojos = std.ArrayList([]const u8).init(arena);
+    var closures = std.ArrayList(Closure).init(arena);
+    if (two) {
+        for (try r.array(top, "mojo", "the lock", true)) |m| {
+            switch (m) {
+                .string => |s| try mojos.append(s),
+                else => return r.bad("a mojo version is not a string", .{}),
+            }
+        }
+        if (mojos.items.len == 0) return r.bad("the lock's mojo lists no version", .{});
+        mojo = mojos.items[0];
+        const toolchain = try r.object(top.get("toolchain") orelse return r.bad("the lock has no toolchain", .{}), "toolchain");
+        var it = toolchain.iterator();
+        while (it.next()) |e| {
+            const per = try r.object(e.value_ptr.*, "a toolchain entry");
+            var jt = per.iterator();
+            while (jt.next()) |f| {
+                const sum = switch (f.value_ptr.*) {
+                    .string => |s| s,
+                    else => return r.bad("the closure hash of mojo {s} on {s} is not a string", .{ e.key_ptr.*, f.key_ptr.* }),
+                };
+                try closures.append(.{ .mojo = e.key_ptr.*, .subdir = f.key_ptr.*, .sha256 = try r.sha(sum, "toolchain") });
+            }
+        }
+        std.mem.sort(Closure, closures.items, {}, lessClosure);
+    } else {
+        const toolchain = try r.object(top.get("toolchain") orelse return r.bad("the lock has no toolchain", .{}), "toolchain");
+        mojo = try r.string(toolchain, "mojo", "toolchain");
+    }
 
     var channels = std.ArrayList([]const u8).init(arena);
     for (try r.array(top, "channels", "the lock", true)) |c| {
@@ -230,7 +382,7 @@ pub fn parse(arena: Allocator, text: []const u8, why: *[]const u8) ParseError!Lo
         if (o.get("source") != null) {
             const source = try r.string(o, "source", what);
             if (!std.mem.eql(u8, source, "path")) return r.bad("{s}'s source is {s}; a lock entry's source is path, or none for the registry", .{ what, source });
-            for ([_][]const u8{ "build", "subdir", "channel", "url", "sha256", "size", "mojo" }) |key| {
+            for ([_][]const u8{ "build", "subdir", "channel", "url", "sha256", "size", "mojo", "artifacts" }) |key| {
                 if (o.get(key) != null) return r.bad("{s} is a path dependency, which has no {s}", .{ what, key });
             }
             try packages.append(.{
@@ -246,20 +398,46 @@ pub fn parse(arena: Allocator, text: []const u8, why: *[]const u8) ParseError!Lo
         var p = Package{
             .name = try r.string(o, "name", what),
             .version = try r.string(o, "version", what),
-            .build = try r.string(o, "build", what),
             .subdir = try r.string(o, "subdir", what),
             .channel = try r.string(o, "channel", what),
-            .url = try r.string(o, "url", what),
-            .sha256 = try r.sha(try r.string(o, "sha256", what), what),
-            .size = 0,
-            .mojo = try r.string(o, "mojo", what),
         };
-        const size: i64 = switch (o.get("size") orelse return r.bad("{s} has no size", .{what})) {
-            .integer => |s| s,
-            else => return r.bad("{s}'s size is not an integer", .{what}),
-        };
-        if (size < 1) return r.bad("{s}'s size is not positive", .{what});
-        p.size = @intCast(size);
+        if (two) {
+            for ([_][]const u8{ "build", "url", "sha256", "size", "mojo" }) |key| {
+                if (o.get(key) != null) return r.bad("{s} has {s}; in a version 2 lock it belongs under artifacts", .{ what, key });
+            }
+            const arts = try r.object(o.get("artifacts") orelse return r.bad("{s} has no artifacts", .{what}), "artifacts");
+            var list = std.ArrayList(Artifact).init(arena);
+            var it = arts.iterator();
+            while (it.next()) |e| {
+                const aw = try std.fmt.allocPrint(arena, "{s}'s artifact for mojo {s}", .{ what, e.key_ptr.* });
+                const ao = try r.object(e.value_ptr.*, aw);
+                const size: i64 = switch (ao.get("size") orelse return r.bad("{s} has no size", .{aw})) {
+                    .integer => |s| s,
+                    else => return r.bad("{s}'s size is not an integer", .{aw}),
+                };
+                if (size < 1) return r.bad("{s}'s size is not positive", .{aw});
+                try list.append(.{
+                    .mojo = e.key_ptr.*,
+                    .build = try r.string(ao, "build", aw),
+                    .url = try r.string(ao, "url", aw),
+                    .sha256 = try r.sha(try r.string(ao, "sha256", aw), aw),
+                    .size = @intCast(size),
+                });
+            }
+            std.mem.sort(Artifact, list.items, {}, lessArtifact);
+            p.artifacts = list.items;
+        } else {
+            p.build = try r.string(o, "build", what);
+            p.url = try r.string(o, "url", what);
+            p.sha256 = try r.sha(try r.string(o, "sha256", what), what);
+            p.mojo = try r.string(o, "mojo", what);
+            const size: i64 = switch (o.get("size") orelse return r.bad("{s} has no size", .{what})) {
+                .integer => |s| s,
+                else => return r.bad("{s}'s size is not an integer", .{what}),
+            };
+            if (size < 1) return r.bad("{s}'s size is not positive", .{what});
+            p.size = @intCast(size);
+        }
         p.deps = try stringList(r, o, what);
         var natives = std.ArrayList(Native).init(arena);
         for (try r.array(o, "native", what, false)) |nv| {
@@ -271,9 +449,19 @@ pub fn parse(arena: Allocator, text: []const u8, why: *[]const u8) ParseError!Lo
         p.native = natives.items;
         try packages.append(p);
     }
-    const l = Lock{ .mojo = mojo, .channels = channels.items, .packages = packages.items };
+    const l = Lock{ .mojo = mojo, .channels = channels.items, .packages = packages.items, .mojos = mojos.items, .closures = closures.items };
     if (try check(arena, l)) |broken| return r.bad("{s}", .{broken});
     return l;
+}
+
+fn lessClosure(_: void, a: Closure, b: Closure) bool {
+    const m = std.mem.order(u8, a.mojo, b.mojo);
+    if (m != .eq) return m == .lt;
+    return std.mem.order(u8, a.subdir, b.subdir) == .lt;
+}
+
+fn lessArtifact(_: void, a: Artifact, b: Artifact) bool {
+    return std.mem.order(u8, a.mojo, b.mojo) == .lt;
 }
 
 fn stringList(r: Reader, o: std.json.ObjectMap, what: []const u8) ParseError![]const []const u8 {
@@ -293,6 +481,7 @@ fn str(w: anytype, s: []const u8) !void {
 
 /// Prints `l` in the lock's fixed layout. `l.packages` must already be sorted.
 pub fn write(l: Lock, w: anytype) !void {
+    if (l.mojos.len > 0) return writeV2(l, w);
     try w.print("{{\n  \"lock_version\": {d},\n  \"toolchain\": {{\n    \"mojo\": ", .{lock_version});
     try str(w, l.mojo);
     try w.writeAll("\n  },\n  \"channels\": [");
@@ -342,6 +531,95 @@ pub fn write(l: Lock, w: anytype) !void {
             }
             try w.writeAll("\n      ]");
         }
+        try w.writeAll("\n    }");
+    }
+    try w.writeAll(if (l.packages.len == 0) "]\n}\n" else "\n  ]\n}\n");
+}
+
+
+fn writeNatives(w: anytype, native: []const Native) !void {
+    if (native.len == 0) return;
+    try w.writeAll(",\n      \"native\": [");
+    for (native, 0..) |lib, n| {
+        try w.writeAll(if (n == 0) "\n        {\n          \"id\": " else ",\n        {\n          \"id\": ");
+        try str(w, lib.id);
+        try w.writeAll(",\n          \"soname\": ");
+        try str(w, lib.soname);
+        if (lib.sha256) |s| {
+            try w.writeAll(",\n          \"sha256\": ");
+            try str(w, s);
+        }
+        try w.writeAll("\n        }");
+    }
+    try w.writeAll("\n      ]");
+}
+
+/// The version 2 layout: `mojo`, `toolchain` by Mojo version then subdir, and
+/// each registry package's builds under `artifacts`.
+fn writeV2(l: Lock, w: anytype) !void {
+    try w.print("{{\n  \"lock_version\": {d},\n  \"mojo\": [", .{lock_version_2});
+    for (l.mojos, 0..) |m, i| {
+        try w.writeAll(if (i == 0) "\n    " else ",\n    ");
+        try str(w, m);
+    }
+    try w.writeAll("\n  ],\n  \"toolchain\": {");
+    for (l.closures, 0..) |c, i| {
+        const same = i > 0 and std.mem.eql(u8, l.closures[i - 1].mojo, c.mojo);
+        if (same) {
+            try w.writeAll(",\n      ");
+        } else {
+            if (i > 0) try w.writeAll("\n    },");
+            try w.writeAll("\n    ");
+            try str(w, c.mojo);
+            try w.writeAll(": {\n      ");
+        }
+        try str(w, c.subdir);
+        try w.writeAll(": ");
+        try str(w, c.sha256);
+    }
+    try w.writeAll(if (l.closures.len == 0) "},\n  \"channels\": [" else "\n    }\n  },\n  \"channels\": [");
+    for (l.channels, 0..) |c, i| {
+        try w.writeAll(if (i == 0) "\n    " else ",\n    ");
+        try str(w, c);
+    }
+    try w.writeAll("\n  ],\n  \"packages\": [");
+    for (l.packages, 0..) |p, i| {
+        try w.writeAll(if (i == 0) "\n    {" else ",\n    {");
+        if (p.source == .path) {
+            const fields = [_]struct { []const u8, []const u8 }{
+                .{ "name", p.name }, .{ "version", p.version }, .{ "source", "path" }, .{ "path", p.path },
+            };
+            for (fields, 0..) |f, n| {
+                try w.print("{s}\n      \"{s}\": ", .{ if (n == 0) "" else ",", f[0] });
+                try str(w, f[1]);
+            }
+            try writeDeps(w, p.deps);
+            try w.writeAll("\n    }");
+            continue;
+        }
+        const fields = [_]struct { []const u8, []const u8 }{
+            .{ "name", p.name },       .{ "version", p.version },
+            .{ "subdir", p.subdir },   .{ "channel", p.channel },
+        };
+        for (fields, 0..) |f, n| {
+            try w.print("{s}\n      \"{s}\": ", .{ if (n == 0) "" else ",", f[0] });
+            try str(w, f[1]);
+        }
+        try w.writeAll(",\n      \"artifacts\": {");
+        for (p.artifacts, 0..) |a, k| {
+            try w.writeAll(if (k == 0) "\n        " else ",\n        ");
+            try str(w, a.mojo);
+            try w.writeAll(": {\n          \"build\": ");
+            try str(w, a.build);
+            try w.writeAll(",\n          \"url\": ");
+            try str(w, a.url);
+            try w.writeAll(",\n          \"sha256\": ");
+            try str(w, a.sha256);
+            try w.print(",\n          \"size\": {d}\n        }}", .{a.size});
+        }
+        try w.writeAll(if (p.artifacts.len == 0) "}" else "\n      }");
+        try writeDeps(w, p.deps);
+        try writeNatives(w, p.native);
         try w.writeAll("\n    }");
     }
     try w.writeAll(if (l.packages.len == 0) "]\n}\n" else "\n  ]\n}\n");
@@ -571,4 +849,160 @@ test "a path dependency is locked with source path, its version and path, and no
     why = "";
     try std.testing.expectError(error.Invalid, parse(a, twice, &why));
     try std.testing.expectEqualStrings("local is locked as a path dependency and has another entry", why);
+}
+
+const lock_v2_text =
+    \\{
+    \\  "lock_version": 2,
+    \\  "mojo": [
+    \\    "1.0.0",
+    \\    "1.1.0"
+    \\  ],
+    \\  "toolchain": {
+    \\    "1.0.0": {
+    \\      "linux-64": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    \\    },
+    \\    "1.1.0": {
+    \\      "linux-64": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    \\    }
+    \\  },
+    \\  "channels": [
+    \\    "https://conda.mopm.dev/"
+    \\  ],
+    \\  "packages": [
+    \\    {
+    \\      "name": "http_core",
+    \\      "version": "1.2.5",
+    \\      "subdir": "linux-64",
+    \\      "channel": "https://conda.mopm.dev/",
+    \\      "artifacts": {
+    \\        "1.0.0": {
+    \\          "build": "mojo1.0.0_0",
+    \\          "url": "https://conda.mopm.dev/linux-64/mojo-http_core-1.2.5-mojo1.0.0_0.conda",
+    \\          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    \\          "size": 1000
+    \\        },
+    \\        "1.1.0": {
+    \\          "build": "mojo1.1.0_0",
+    \\          "url": "https://conda.mopm.dev/linux-64/mojo-http_core-1.2.5-mojo1.1.0_0.conda",
+    \\          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    \\          "size": 1100
+    \\        }
+    \\      },
+    \\      "native": [
+    \\        {
+    \\          "id": "z",
+    \\          "soname": "libz_native.so.1",
+    \\          "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    \\        }
+    \\      ]
+    \\    },
+    \\    {
+    \\      "name": "http_server",
+    \\      "version": "0.2.0",
+    \\      "subdir": "linux-64",
+    \\      "channel": "https://conda.mopm.dev/",
+    \\      "artifacts": {
+    \\        "1.1.0": {
+    \\          "build": "mojo1.1.0_0",
+    \\          "url": "https://conda.mopm.dev/linux-64/mojo-http_server-0.2.0-mojo1.1.0_0.conda",
+    \\          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    \\          "size": 2000
+    \\        }
+    \\      },
+    \\      "deps": [
+    \\        "http_core"
+    \\      ]
+    \\    },
+    \\    {
+    \\      "name": "util",
+    \\      "version": "0.3.0",
+    \\      "source": "path",
+    \\      "path": "util"
+    \\    }
+    \\  ]
+    \\}
+;
+
+test "a version 2 lock is read and written back byte for byte; forMojo gives the lock of one Mojo version" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var why: []const u8 = "";
+    const l = parse(a, lock_v2_text ++ "\n", &why) catch |e| {
+        std.debug.print("refused: {s}\n", .{why});
+        return e;
+    };
+    try std.testing.expectEqual(@as(usize, 2), l.mojos.len);
+    try std.testing.expectEqualStrings("1.0.0", l.mojo);
+    try std.testing.expectEqual(@as(usize, 2), l.closures.len);
+    try std.testing.expectEqual(@as(usize, 2), l.packages[0].artifacts.len);
+    try std.testing.expectEqualStrings(lock_v2_text ++ "\n", try render(a, l));
+
+    // One Mojo version: the packages that have a build for it, flat, as a version 1 lock reads.
+    const v10 = try forMojo(a, l, "1.0.0");
+    try std.testing.expectEqual(@as(usize, 2), v10.packages.len); // http_core and util; http_server has no 1.0.0 build
+    try std.testing.expectEqualStrings("mojo1.0.0_0", v10.packages[0].build);
+    try std.testing.expectEqualStrings("a" ** 64, v10.packages[0].sha256);
+    const v11 = try forMojo(a, l, "1.1.0");
+    try std.testing.expectEqual(@as(usize, 3), v11.packages.len);
+    try std.testing.expectEqualStrings("mojo1.1.0_0", v11.packages[0].build);
+    try std.testing.expectEqual(@as(u64, 1100), v11.packages[0].size);
+    try std.testing.expectEqualStrings("1.1.0", v11.packages[0].mojo);
+
+    // artifactFor and what the error words.
+    try std.testing.expect(artifactFor(l.packages[1], "1.0.0") == null);
+    try std.testing.expect(artifactFor(l.packages[2], "1.0.0") == null); // a path dependency has no build
+    const published = try publishedFor(a, l.packages[1]);
+    try std.testing.expectEqualStrings(
+        "http_server 0.2.0 has no .mojoc for Mojo 1.0.0 (published for: 1.1.0). Build with mojo 1.1.0, ask the publisher for a 1.0.0 build, or pin a version that has one.",
+        try noMojocMessage(a, "http_server", "0.2.0", "1.0.0", published),
+    );
+}
+
+test "a version 2 lock that breaks its rules is refused, saying which" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const Case = struct { []const u8, []const u8, []const u8 };
+    const url_10 = "mojo-http_core-1.2.5-mojo1.0.0_0.conda";
+    const cases = [_]Case{
+        // a build for a Mojo version the lock does not list
+        .{ "\"1.0.0\": {\n          \"build\": \"mojo1.0.0_0\"", "\"1.2.0\": {\n          \"build\": \"mojo1.0.0_0\"", "an artifact for mojo 1.2.0, which the lock does not list in mojo" },
+        // a toolchain closure for a Mojo version the lock does not list
+        .{ "\"mojo\": [\n    \"1.0.0\",\n    \"1.1.0\"\n  ]", "\"mojo\": [\n    \"1.1.0\"\n  ]", "toolchain names mojo 1.0.0, which the lock does not list in mojo" },
+        // mojo out of order
+        .{ "\"mojo\": [\n    \"1.0.0\",\n    \"1.1.0\"\n  ]", "\"mojo\": [\n    \"1.1.0\",\n    \"1.0.0\"\n  ]", "mojo is not sorted with no repeats" },
+        // a url that is not the build's
+        .{ url_10, "mojo-http_core-1.2.5-mojo9.9.9_0.conda", "url is " },
+        // a flat key in a version 2 entry
+        .{ "\"subdir\": \"linux-64\",\n      \"channel\": \"https://conda.mopm.dev/\",\n      \"artifacts\": {\n        \"1.0.0\"", "\"subdir\": \"linux-64\",\n      \"mojo\": \"1.0.0\",\n      \"channel\": \"https://conda.mopm.dev/\",\n      \"artifacts\": {\n        \"1.0.0\"", "in a version 2 lock it belongs under artifacts" },
+        // no artifacts
+        .{ "\"artifacts\": {\n        \"1.1.0\": {\n          \"build\": \"mojo1.1.0_0\",\n          \"url\": \"https://conda.mopm.dev/linux-64/mojo-http_server-0.2.0-mojo1.1.0_0.conda\",\n          \"sha256\": \"" ++ "a" ** 64 ++ "\",\n          \"size\": 2000\n        }\n      },", "", "has no artifacts" },
+    };
+    for (cases) |case| {
+        if (std.mem.indexOf(u8, lock_v2_text, case[0]) == null) {
+            std.debug.print("the case's text is not in the lock: {s}\n", .{case[0]});
+            return error.TestUnexpectedResult;
+        }
+        const bad_text = try std.mem.replaceOwned(u8, a, lock_v2_text, case[0], case[1]);
+        var why: []const u8 = "";
+        if (parse(a, bad_text, &why)) |_| {
+            std.debug.print("accepted, want: {s}\n", .{case[2]});
+            return error.TestUnexpectedResult;
+        } else |e| if (e != error.Invalid) return e;
+        if (std.mem.indexOf(u8, why, case[2]) == null) {
+            std.debug.print("refused with '{s}', want '{s}'\n", .{ why, case[2] });
+            return error.TestUnexpectedResult;
+        }
+    }
+    // A closure missing for a locked Mojo version: take the 1.1.0 closure out.
+    const gone = try std.mem.replaceOwned(u8, a, lock_v2_text, ",\n    \"1.1.0\": {\n      \"linux-64\": \"" ++ "d" ** 64 ++ "\"\n    }", "");
+    var why: []const u8 = "";
+    try std.testing.expectError(error.Invalid, parse(a, gone, &why));
+    try std.testing.expectEqualStrings("toolchain has no closure for mojo 1.1.0", why);
+    // A newer lock_version is still "update mopm".
+    const future = try std.mem.replaceOwned(u8, a, lock_v2_text, "\"lock_version\": 2", "\"lock_version\": 3");
+    try std.testing.expectError(error.Invalid, parse(a, future, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "Update mopm.") != null);
 }

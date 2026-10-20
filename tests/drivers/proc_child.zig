@@ -9,6 +9,8 @@
 //!   bg_sleep_wait   start a `sleep 60` child in this process group, wait for it
 //!   bg_sleep_exit0  start a `sleep 60` child, exit 0 without waiting
 //!   exit0           exit 0
+//!   --source-root=<dir> ...   a stand-in for the `mojo_compile` wrapper (fakeMojoCompile)
+//!   (no arguments)  as a test binary built by that stand-in: writes its environment to <argv0>.env
 
 const std = @import("std");
 const posix = std.posix;
@@ -28,12 +30,79 @@ fn startSleeper(a: std.mem.Allocator) !std.process.Child {
     return child;
 }
 
+/// Stands in for `mojo_compile`, the toolchain wrapper `mopm unit build` runs
+/// (src/core/unit_run.zig). It does what the real wrapper does to the line
+/// (tools/build/mojo/tools/compile_args.zig, `compilerArgs`): the argument that
+/// names the `--source-root` directory becomes that directory's basename, so a
+/// `precompile` records `p`, not the staged path. For `precompile` it writes
+/// what the compiler would have been given to the file after `-o`, one argument
+/// per line, then `env=<number of environment variables>`; the `-I` and `-o`
+/// arguments are left out, they are absolute staged paths the real `.mojoc`
+/// does not record. For `build` it makes the output a copy of this program,
+/// which, run with no arguments, writes its environment to `<its own path>.env`.
+fn fakeMojoCompile(a: std.mem.Allocator, args: []const [:0]u8) !void {
+    var out: ?[]const u8 = null;
+    var root: []const u8 = "";
+    var after_dashes = false;
+    var is_build = false;
+    for (args, 0..) |arg, i| {
+        if (std.mem.eql(u8, arg, "-o") and i + 1 < args.len) out = args[i + 1];
+        if (std.mem.startsWith(u8, arg, "--source-root=")) root = arg["--source-root=".len..];
+        if (after_dashes and std.mem.eql(u8, arg, "build")) is_build = true;
+        if (std.mem.eql(u8, arg, "--")) after_dashes = true;
+    }
+    const path = out orelse std.process.exit(2);
+    if (std.fs.path.dirname(path)) |d| try std.fs.cwd().makePath(d);
+    if (is_build) {
+        const me = try std.fs.selfExePathAlloc(a);
+        try std.fs.cwd().copyFile(me, std.fs.cwd(), path, .{});
+        return;
+    }
+    var text = std.ArrayList(u8).init(a);
+    var past = false;
+    var skip_next = false;
+    for (args[1..]) |arg| {
+        if (!past) {
+            past = std.mem.eql(u8, arg, "--");
+            continue;
+        }
+        if (skip_next) {
+            skip_next = false;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "-o")) {
+            skip_next = true;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "-I")) continue;
+        if (root.len > 0 and std.mem.eql(u8, arg, root)) {
+            try text.writer().print("{s}\n", .{std.fs.path.basename(root)});
+        } else try text.writer().print("{s}\n", .{arg});
+    }
+    var env = try std.process.getEnvMap(a);
+    try text.writer().print("env={d}\n", .{env.count()});
+    try std.fs.cwd().writeFile(path, text.items);
+}
+
+/// A test binary built by the fake wrapper, run: writes the environment it
+/// got, `NAME=value` per line, to `<its own path>.env`.
+fn fakeTestBinary(a: std.mem.Allocator, me: []const u8) !void {
+    var env = try std.process.getEnvMap(a);
+    var text = std.ArrayList(u8).init(a);
+    var it = env.iterator();
+    while (it.next()) |e| try text.writer().print("{s}={s}\n", .{ e.key_ptr.*, e.value_ptr.* });
+    const dest = try std.fmt.allocPrint(a, "{s}.env", .{me});
+    try std.fs.cwd().writeFile(dest, text.items);
+}
+
 pub fn main() !void {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena_state.allocator();
     const args = try std.process.argsAlloc(a);
+    if (args.len == 1) return fakeTestBinary(a, args[0]);
     if (args.len < 2) std.process.exit(2);
     const mode = args[1];
+    if (std.mem.startsWith(u8, mode, "--source-root=") or std.mem.startsWith(u8, mode, "--runpath=")) return fakeMojoCompile(a, args);
     if (std.mem.eql(u8, mode, "out_err_exit3")) {
         try std.io.getStdOut().writeAll("to-out\n");
         try std.io.getStdErr().writeAll("to-err\n");
