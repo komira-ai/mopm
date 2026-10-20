@@ -505,7 +505,7 @@ test "mutant: the provenance subjects and the signed-assets upload leave out the
 test "mutant: the matrix gives a leg the wrong Debian architecture" {
     try buildMutant("amd64 leg without deb_arch", "deb_arch: amd64 }", "deb_arch: \"\" }", "the package leg linux-x86_64 has deb_arch");
     try buildMutant("aarch64 leg with the amd64 architecture", "deb_arch: arm64 }", "deb_arch: amd64 }", "the package leg linux-aarch64 has deb_arch");
-    try buildMutant("a macos leg that gets a .deb", "os: macos-14, run_prefix: \"\", deb_arch: \"\" }", "os: macos-14, run_prefix: \"\", deb_arch: amd64 }", "the package leg macos-arm64 has deb_arch");
+    try buildMutant("a macos leg that gets a .deb", "os: macos-14, deb_arch: \"\" }", "os: macos-14, deb_arch: amd64 }", "the package leg macos-arm64 has deb_arch");
 }
 
 test "mutant: the .deb is not made from the binary of the tarball, for the architecture, at the path the upload takes" {
