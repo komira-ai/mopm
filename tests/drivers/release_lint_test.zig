@@ -402,7 +402,7 @@ test "mutant: the token step of tag" {
     try tagMutant("tag token from a literal app id", "          app-id: ${{ vars.RELEASE_BOT_APP_ID }}", "          app-id: 5395718", "tag: the token step must set app-id");
     try tagMutant("tag token action unpinned", "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1", "actions/create-github-app-token@v3", "tag must use actions/create-github-app-token@<full commit sha>");
     try tagMutant("tag token step without its id", "        id: tagapp\n", "", "tag: the token step must have id: tagapp");
-    try tagMutant("tag token step removed", "      - name: Mint the installation token of the release bot, for this repository only (contents write: the tag)\n        id: tagapp\n" ++ app_use ++ "        with:\n          app-id: ${{ vars.RELEASE_BOT_APP_ID }}\n          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n          owner: komira-ai\n          repositories: mopm\n          permission-contents: write\n", "", "tag must mint the token with exactly one actions/create-github-app-token step, has 0");
+    try tagMutant("tag token step removed", "      - name: Mint the installation token of the release bot, for this repository only, with contents write for the tag\n        id: tagapp\n" ++ app_use ++ "        with:\n          app-id: ${{ vars.RELEASE_BOT_APP_ID }}\n          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n          owner: komira-ai\n          repositories: mopm\n          permission-contents: write\n", "", "tag must mint the token with exactly one actions/create-github-app-token step, has 0");
 }
 
 test "mutant: the step that runs the tag tool" {

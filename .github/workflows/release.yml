@@ -235,7 +235,7 @@ jobs:
       # Built before any step holds the token, so no build runs beside it.
       - name: Build the release tool
         run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/cut_release"
-      - name: Mint the installation token of the release bot, for this repository only (contents write: the tag)
+      - name: Mint the installation token of the release bot, for this repository only, with contents write for the tag
         id: tagapp
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
