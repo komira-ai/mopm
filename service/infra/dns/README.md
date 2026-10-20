@@ -18,12 +18,12 @@ Zones are retained if a stack is deleted (a new zone would get new name servers 
 
 ## Order
 
-Preview any command first: `dns.sh` prints what it would run and executes nothing without `--apply`.
+Preview any command first: `dns-cli` prints what it would run and executes nothing without `--apply`; with `--apply` it first refuses a profile that is not in `--account`. Run `npm ci` in this directory once (the command is TypeScript, run with ts-node).
 
 1. **Zone in prod** (creates `mopm.dev` and prints its four name servers):
    ```sh
-   service/infra/dns/dns.sh --stage prod --account <prod id> --profile <prod profile>
-   service/infra/dns/dns.sh --stage prod --account <prod id> --profile <prod profile> --apply
+   npm --prefix service/infra/dns run -s dns-cli -- --stage prod --account <prod id> --profile <prod profile>
+   npm --prefix service/infra/dns run -s dns-cli -- --stage prod --account <prod id> --profile <prod profile> --apply
    ```
 2. **GoDaddy**: Domain > DNS > Nameservers > "I'll use my own nameservers" > enter the four Route 53 name
    servers printed in step 1 (no trailing dots) > Save. GoDaddy currently holds only parking A records and no
@@ -31,13 +31,13 @@ Preview any command first: `dns.sh` prints what it would run and executes nothin
    propagate; check with `dig +short NS mopm.dev` (it must list the four Route 53 hosts) before relying on it.
 3. **Zones in beta and gamma** (each prints its four name servers; keep them):
    ```sh
-   service/infra/dns/dns.sh --stage beta  --account <beta id>  --profile <beta profile>  --apply
-   service/infra/dns/dns.sh --stage gamma --account <gamma id> --profile <gamma profile> --apply
+   npm --prefix service/infra/dns run -s dns-cli -- --stage beta  --account <beta id>  --profile <beta profile>  --apply
+   npm --prefix service/infra/dns run -s dns-cli -- --stage gamma --account <gamma id> --profile <gamma profile> --apply
    ```
 4. **Delegate from prod** (NS records for `beta.mopm.dev` and `gamma.mopm.dev` in the `mopm.dev` zone, from the
    name servers of step 3, comma separated):
    ```sh
-   service/infra/dns/dns.sh --stage prod --delegate --account <prod id> --profile <prod profile> \
+   npm --prefix service/infra/dns run -s dns-cli -- --stage prod --delegate --account <prod id> --profile <prod profile> \
      --beta-ns ns-a,ns-b,ns-c,ns-d --gamma-ns ns-e,ns-f,ns-g,ns-h --apply
    ```
 5. **Verify**:
@@ -56,4 +56,4 @@ Preview any command first: `dns.sh` prints what it would run and executes nothin
 - Cost: Route 53 charges $0.50 per hosted zone per month (three zones, $1.50) plus a small per-query fee.
 - If you re-create a zone, its name servers change; redo steps 2 or 4 for it.
 - `--delegate` is refused for any stage but prod, and the delegation stack contains only NS records for the
-  two child names; `dns.sh --help` lists every flag. Tests: `npm ci && npm test` here (CI job `dns`).
+  two child names; `npm run -s dns-cli -- --help` lists every flag. Tests: `npm ci && npm test` here (CI job `dns`).
