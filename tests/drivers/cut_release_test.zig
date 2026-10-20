@@ -96,11 +96,25 @@ fn goodTag(a: Allocator, tools: Tools, tmp: *std.testing.TmpDir, name: []const u
 
 /// A fresh scenario that `verify 1.2.3 <dir>` accepts.
 fn goodVerify(a: Allocator, tools: Tools, tmp: *std.testing.TmpDir, name: []const u8) !World {
+    return goodVerifyOf(a, tools, tmp, name, "1.2.3");
+}
+
+fn goodVerifyOf(a: Allocator, tools: Tools, tmp: *std.testing.TmpDir, name: []const u8, version: []const u8) !World {
     var w = try goodTag(a, tools, tmp, name);
     try w.put("release_exists", "");
     try w.put("tag_exists", "");
-    try w.assets("1.2.3", null);
+    try w.assets(version, null);
     return w;
+}
+
+/// A page of the release listing: `n` filler releases, then (if given) one with `tag`.
+fn releasePage(a: Allocator, n: usize, tag: ?[]const u8) ![]const u8 {
+    var b = std.ArrayList(u8).init(a);
+    try b.append('[');
+    for (0..n) |i| try b.writer().print("{s}{{\"tag_name\":\"v0.0.{d}\",\"draft\":false}}", .{ if (i == 0) "" else ",", i + 100 });
+    if (tag) |t| try b.writer().print("{s}{{\"tag_name\":\"{s}\",\"draft\":true}}", .{ if (n == 0) "" else ",", t });
+    try b.append(']');
+    return b.items;
 }
 
 fn sha256Of(a: Allocator, path: []const u8) ![]const u8 {
@@ -138,6 +152,16 @@ test "cut_release: tag and verify, and every planted defect is refused" {
         rep.check("tag: the dry run creates nothing", !w.has("tag_exists") and !h.contains(w.log(), "-X POST"), w.log());
     }
     {
+        // A commented-out decoy ahead of the real declaration does not shadow it; a full page of
+        // other releases followed by an empty page is not a match; total_count equal to the runs read is fine.
+        const w = try goodTag(a, tools, &tmp, "tag_decoy");
+        try w.put("main_zig", "// pub const version = \"9.9.9\";\n    // pub const version = \"0.0.1\";\npub const version = \"1.2.3\";\n");
+        try w.put("releases_page_1", try releasePage(a, 100, null));
+        try w.put("runs", "{\"total_count\":2,\"workflow_runs\":[{\"event\":\"push\",\"conclusion\":\"success\"},{\"event\":\"schedule\",\"conclusion\":null}]}");
+        const r = try w.run(&.{ "tag", "1.2.3" });
+        rep.check("tag: a commented-out decoy does not shadow the real version; 100 other releases, none draft of this tag, pass", r.code == 0 and h.contains(r.text, "DRY RUN"), r.text);
+    }
+    {
         const w = try goodTag(a, tools, &tmp, "tag_exec");
         const r = try w.run(&.{ "tag", "1.2.3", "--execute" });
         rep.check("tag: --execute succeeds", r.code == 0 and h.contains(r.text, "created the tag v1.2.3"), r.text);
@@ -153,6 +177,12 @@ test "cut_release: tag and verify, and every planted defect is refused" {
             .{ .name = "unfinished", .version = "1.2.3", .why = "does not have all checks green" },
             .{ .name = "only_scheduled", .version = "1.2.3", .why = "does not have all checks green" },
             .{ .name = "no_checks", .version = "1.2.3", .why = "does not have all checks green" },
+            // GET releases/tags/<tag> answers 404 for a draft: only the listing shows it.
+            .{ .name = "draft_exists", .version = "1.2.3", .why = "draft or published" },
+            .{ .name = "draft_exists_page2", .version = "1.2.3", .why = "draft or published" },
+            .{ .name = "total_count", .version = "1.2.3", .why = "partial list" },
+            .{ .name = "decoy_only", .version = "9.9.9", .why = "no version in" },
+            .{ .name = "bad_chars", .version = "1.2.3-a", .why = "no version in" },
             .{ .name = "leading_v", .version = "v1.2.3", .why = "is not <major>.<minor>.<patch>" },
             // A lookup that fails for any reason but 404 must stop the tool: "could not ask" is not "absent".
             .{ .name = "tag_error", .version = "1.2.3", .why = "could not tell whether" },
@@ -166,6 +196,14 @@ test "cut_release: tag and verify, and every planted defect is refused" {
             if (std.mem.eql(u8, c.name, "only_scheduled")) try w.put("runs", runs_only_scheduled);
             if (std.mem.eql(u8, c.name, "tag_exists")) try w.put("tag_exists", "");
             if (std.mem.eql(u8, c.name, "release_exists")) try w.put("release_exists", "");
+            if (std.mem.eql(u8, c.name, "draft_exists")) try w.put("releases_page_1", try releasePage(a, 3, "v1.2.3"));
+            if (std.mem.eql(u8, c.name, "draft_exists_page2")) {
+                try w.put("releases_page_1", try releasePage(a, 100, null));
+                try w.put("releases_page_2", try releasePage(a, 1, "v1.2.3"));
+            }
+            if (std.mem.eql(u8, c.name, "total_count")) try w.put("runs", "{\"total_count\":150,\"workflow_runs\":[{\"event\":\"push\",\"conclusion\":\"success\"}]}");
+            if (std.mem.eql(u8, c.name, "decoy_only")) try w.put("main_zig", "// pub const version = \"9.9.9\";\n");
+            if (std.mem.eql(u8, c.name, "bad_chars")) try w.put("main_zig", "pub const version = \"1.2.3-a b\";\n");
             if (std.mem.eql(u8, c.name, "tag_error")) try w.put("tag_error", "");
             if (std.mem.eql(u8, c.name, "release_error")) try w.put("release_error", "");
             const r = try w.run(&.{ "tag", c.version, "--execute" });
@@ -188,7 +226,7 @@ test "cut_release: tag and verify, and every planted defect is refused" {
             if (std.mem.startsWith(u8, l, "attestation verify ")) attested += 1;
         }
         rep.check("verify: attestation is checked for all five assets", attested == 5, w.log());
-        rep.check("verify: attestation is pinned to release.yml", h.contains(w.log(), "--signer-workflow komira-ai/mopm/.github/workflows/release.yml\n"), w.log());
+        rep.check("verify: attestation is pinned to release.yml", h.contains(w.log(), "--signer-workflow komira-ai/mopm/.github/workflows/release.yml --source-ref refs/tags/v1.2.3 --source-digest " ++ sha ++ "\n"), w.log());
 
         const dir2 = try freshDir(a, w, "dl2");
         const ok = try w.run(&.{ "verify", "1.2.3", dir2, "--expect-sha256", want });
@@ -220,7 +258,7 @@ test "cut_release: tag and verify, and every planted defect is refused" {
         var w = try goodVerify(a, tools, &tmp, "verify_missing");
         try std.fs.cwd().deleteFile(try h.join(a, &.{ w.root, "assets", "mopm-1.2.3-macos-x86_64.tar.gz" }));
         const r = try w.run(&.{ "verify", "1.2.3", try freshDir(a, w, "dl") });
-        rep.check("verify: three tarballs are refused", r.code == 1 and h.contains(r.text, "assets"), r.text);
+        rep.check("verify: three tarballs are refused", r.code == 1 and h.contains(r.text, "lacks the asset mopm-1.2.3-macos-x86_64.tar.gz"), r.text);
     }
     {
         var w = try goodVerify(a, tools, &tmp, "verify_other_version");
@@ -241,6 +279,40 @@ test "cut_release: tag and verify, and every planted defect is refused" {
         try w.put("release_state", "false true\n");
         const p = try w.run(&.{ "verify", "1.2.3", try freshDir(a, w, "dl2") });
         rep.check("verify: a prerelease flag on a plain version is refused", p.code == 1 and h.contains(p.text, "draft"), p.text);
+    }
+    {
+        var w = try goodVerify(a, tools, &tmp, "verify_extra_asset");
+        try w.put("asset_list", "mopm-1.2.3-linux-x86_64.tar.gz\nmopm-1.2.3-linux-aarch64.tar.gz\nmopm-1.2.3-macos-arm64.tar.gz\nmopm-1.2.3-macos-x86_64.tar.gz\nSHA256SUMS\nstray.txt\n");
+        const r = try w.run(&.{ "verify", "1.2.3", try freshDir(a, w, "dl") });
+        rep.check("verify: an extra asset in the release's list is refused by name", r.code == 1 and h.contains(r.text, "unexpected asset stray.txt") and !h.contains(w.log(), "release download"), r.text);
+        try w.put("asset_list", "mopm-1.2.3-linux-x86_64.tar.gz\nmopm-1.2.3-linux-aarch64.tar.gz\nmopm-1.2.3-macos-arm64.tar.gz\nSHA256SUMS\n");
+        const m = try w.run(&.{ "verify", "1.2.3", try freshDir(a, w, "dl2") });
+        rep.check("verify: a missing asset in the release's list is refused by name", m.code == 1 and h.contains(m.text, "lacks the asset mopm-1.2.3-macos-x86_64.tar.gz"), m.text);
+    }
+    {
+        var w = try goodVerify(a, tools, &tmp, "verify_off_main");
+        try w.put("compare_status", "diverged\n");
+        const r = try w.run(&.{ "verify", "1.2.3", try freshDir(a, w, "dl") });
+        rep.check("verify: a tag on a commit that diverged from main is refused", r.code == 1 and h.contains(r.text, "is not on main") and !h.contains(w.log(), "release download"), r.text);
+        try w.put("compare_status", "ahead\n");
+        const q = try w.run(&.{ "verify", "1.2.3", try freshDir(a, w, "dl2") });
+        rep.check("verify: a tag ahead of main is refused", q.code == 1 and h.contains(q.text, "is not on main"), q.text);
+        try w.put("compare_status", "identical\n");
+        const ok = try w.run(&.{ "verify", "1.2.3", try freshDir(a, w, "dl3") });
+        rep.check("verify: a tag at main's tip is accepted", ok.code == 0, ok.text);
+        try w.put("tag_commit", "abc\n");
+        const s = try w.run(&.{ "verify", "1.2.3", try freshDir(a, w, "dl4") });
+        rep.check("verify: a tag that does not resolve to a sha is refused", s.code == 1 and h.contains(s.text, "40-character"), s.text);
+    }
+    {
+        // A prerelease version expects the prerelease flag; the mismatch is refused both ways.
+        var w = try goodVerifyOf(a, tools, &tmp, "verify_rc", "0.0.1-rc.1");
+        try w.put("release_state", "false true\n");
+        const r = try w.run(&.{ "verify", "0.0.1-rc.1", try freshDir(a, w, "dl") });
+        rep.check("verify: a prerelease version with the prerelease flag passes", r.code == 0 and h.contains(r.text, "verified v0.0.1-rc.1"), r.text);
+        try w.put("release_state", "false false\n");
+        const p = try w.run(&.{ "verify", "0.0.1-rc.1", try freshDir(a, w, "dl2") });
+        rep.check("verify: a prerelease version without the prerelease flag is refused", p.code == 1 and h.contains(p.text, "expected 'false true'"), p.text);
     }
     try rep.finish();
 }

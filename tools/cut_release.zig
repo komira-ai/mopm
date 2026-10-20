@@ -9,14 +9,16 @@
 //!
 //!   cut_release [--gh <path>] [--repo <owner/name>] tag <version> [--execute]
 //!       Checks that main's src/cli/main.zig names <version>, that main's push-triggered workflow
-//!       runs are all green (scheduled runs are ignored: no one requires them of a commit), and that the tag and the release do not exist yet. Then it prints the one command that
+//!       runs are all green (scheduled runs are ignored: no one requires them of a commit), and that neither the tag nor any release (draft or published) of it exists yet. Then it prints the one command that
 //!       would create the tag v<version> at main's commit. It RUNS that command only with
 //!       --execute (a dry run is the default); the tag push starts release.yml.
 //!   cut_release [--gh <path>] [--repo <owner/name>] verify <version> <dir> [--expect-sha256 <hex>]
 //!       After release.yml has finished: downloads the release's assets into <dir> (which must be
 //!       empty), and REFUSES unless the release is published and not a draft, the assets are
-//!       exactly the four mopm-<version>-<target>.tar.gz and SHA256SUMS, SHA256SUMS lists
-//!       each tarball with the hash it has, `gh attestation verify` accepts every asset, and
+//!       exactly the four mopm-<version>-<target>.tar.gz and SHA256SUMS (the release's asset list is
+//!       checked by name, and the tag must point at a commit on main), SHA256SUMS lists
+//!       each tarball with the hash it has, `gh attestation verify` accepts every asset (pinned to
+//!       release.yml, the tag ref and the tag's commit), and
 //!       each tarball holds exactly mopm-<version>-<target>/{mopm,LICENSE}. It prints the URL,
 //!       sha256, size and directory of the linux-x86_64 tarball, the row a build system pins.
 //!       With --expect-sha256 it also refuses unless that tarball has that hash.
@@ -137,6 +139,10 @@ fn allDigits(s: []const u8) bool {
 fn validVersion(v: []const u8) bool {
     const core_end = std.mem.indexOfScalar(u8, v, '-') orelse v.len;
     if (core_end < v.len and core_end + 1 == v.len) return false;
+    for (v[core_end..]) |c| {
+        const ok = (c >= '0' and c <= '9') or (c >= 'A' and c <= 'Z') or (c >= 'a' and c <= 'z') or c == '.' or c == '-';
+        if (!ok) return false;
+    }
     var parts = std.mem.splitScalar(u8, v[0..core_end], '.');
     var n: usize = 0;
     while (parts.next()) |p| : (n += 1) {
@@ -145,28 +151,37 @@ fn validVersion(v: []const u8) bool {
     return n == 3;
 }
 
-/// The version in the text of src/cli/main.zig.
+/// The version in the text of src/cli/main.zig: the first line that is a `pub const version = "..."`
+/// declaration (not a comment or a longer name), if the quoted text is a valid version.
 fn versionIn(text: []const u8) ?[]const u8 {
     const key = "pub const version = \"";
-    const at = std.mem.indexOf(u8, text, key) orelse return null;
-    const rest = text[at + key.len ..];
-    const end = std.mem.indexOfScalar(u8, rest, '"') orelse return null;
-    return rest[0..end];
+    const tail = "\";";
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (!std.mem.startsWith(u8, line, key)) continue;
+        const rest = line[key.len..];
+        const end = std.mem.indexOfScalar(u8, rest, '"') orelse continue;
+        if (!std.mem.eql(u8, rest[end..], tail)) continue;
+        if (!validVersion(rest[0..end])) return null;
+        return rest[0..end];
+    }
+    return null;
 }
 
 /// What the workflow runs on main's commit say. A run started by a schedule is not a check anyone
 /// required of the commit (the weekly pin update runs against main's newest commit whatever its
 /// outcome), so it is counted apart and never blocks a tag; every other run must have concluded
 /// success or skipped, and at least one must exist. An unfinished run has no conclusion: not green.
-const Gate = struct { counted: usize, bad: usize, scheduled: usize };
+const Gate = struct { counted: usize, bad: usize, scheduled: usize, total: usize, read: usize };
 
 fn checkRuns(a: Allocator, json: []const u8) Gate {
     const Run = struct { event: []const u8 = "", conclusion: ?[]const u8 = null };
-    const Doc = struct { workflow_runs: []const Run = &.{} };
+    const Doc = struct { total_count: ?usize = null, workflow_runs: []const Run = &.{} };
     const parsed = std.json.parseFromSlice(Doc, a, json, .{ .ignore_unknown_fields = true }) catch |err| {
         die("cannot read the workflow runs: {s}", .{@errorName(err)});
     };
-    var g = Gate{ .counted = 0, .bad = 0, .scheduled = 0 };
+    var g = Gate{ .counted = 0, .bad = 0, .scheduled = 0, .total = parsed.value.total_count orelse parsed.value.workflow_runs.len, .read = parsed.value.workflow_runs.len };
     for (parsed.value.workflow_runs) |r| {
         if (std.mem.eql(u8, r.event, "schedule")) {
             g.scheduled += 1;
@@ -177,6 +192,25 @@ fn checkRuns(a: Allocator, json: []const u8) Gate {
         if (!std.mem.eql(u8, c, "success") and !std.mem.eql(u8, c, "skipped")) g.bad += 1;
     }
     return g;
+}
+
+/// Is there any release, draft or published, whose tag_name is `tag`? Pages through the listing.
+fn releaseListed(gh: Gh, tag: []const u8) bool {
+    const Rel = struct { tag_name: []const u8 = "" };
+    const per_page = 100;
+    const max_pages = 50;
+    var page: usize = 1;
+    while (page <= max_pages) : (page += 1) {
+        const json = gh.must(&.{ "api", gh.api("releases?per_page={d}&page={d}", .{ per_page, page }) });
+        const parsed = std.json.parseFromSlice([]const Rel, gh.a, json, .{ .ignore_unknown_fields = true }) catch |err| {
+            die("cannot read the release list: {s}", .{@errorName(err)});
+        };
+        for (parsed.value) |r| {
+            if (std.mem.eql(u8, r.tag_name, tag)) return true;
+        }
+        if (parsed.value.len < per_page) return false;
+    }
+    die("more than {d} releases: cannot tell whether {s} has one", .{ max_pages * per_page, tag });
 }
 
 // ---- tag -------------------------------------------------------------------------------
@@ -194,12 +228,17 @@ fn tagCmd(gh: Gh, version: []const u8, execute: bool) void {
 
     const runs_json = gh.must(&.{ "api", gh.api("actions/runs?head_sha={s}&per_page=100", .{sha}) });
     const gate = checkRuns(a, runs_json);
+    if (gate.total > gate.read) {
+        die("main's commit {s} has {d} workflow runs and only {d} were read: refusing to judge a partial list", .{ sha, gate.total, gate.read });
+    }
     if (gate.counted == 0 or gate.bad != 0) {
         die("main's commit {s} does not have all checks green (workflow runs counted: {d}, not green: {d}, scheduled runs ignored: {d})", .{ sha, gate.counted, gate.bad, gate.scheduled });
     }
 
     if (gh.exists(gh.api("git/ref/tags/{s}", .{tag}))) die("the tag {s} already exists", .{tag});
     if (gh.exists(gh.api("releases/tags/{s}", .{tag}))) die("a release for {s} already exists", .{tag});
+    // releases/tags/<tag> answers 404 for a draft, so list every release (drafts included) and match the tag.
+    if (releaseListed(gh, tag)) die("a release (draft or published) for {s} already exists", .{tag});
 
     const ref_arg = std.fmt.allocPrint(a, "ref=refs/tags/{s}", .{tag}) catch @panic("oom");
     const sha_arg = std.fmt.allocPrint(a, "sha={s}", .{sha}) catch @panic("oom");
@@ -256,6 +295,41 @@ fn verifyCmd(gh: Gh, version: []const u8, dir_path: []const u8, expect: ?[]const
     const want_state = if (std.mem.indexOfScalar(u8, version, '-') != null) "false true" else "false false";
     if (!std.mem.eql(u8, state, want_state)) die("the release {s} has (draft prerelease) = '{s}', expected '{s}'", .{ tag, state, want_state });
 
+    // The release's asset list is exactly the four tarballs and SHA256SUMS (by name, before any download).
+    var want = std.ArrayList([]const u8).init(a);
+    for (targets) |t| want.append(std.fmt.allocPrint(a, "mopm-{s}-{s}.tar.gz", .{ version, t }) catch @panic("oom")) catch @panic("oom");
+    want.append("SHA256SUMS") catch @panic("oom");
+    {
+        const listing = gh.must(&.{ "release", "view", tag, "-R", gh.repo, "--json", "assets", "--jq", ".assets[].name" });
+        var listed = std.ArrayList([]const u8).init(a);
+        var names = std.mem.splitScalar(u8, listing, '\n');
+        while (names.next()) |n| {
+            const t = std.mem.trim(u8, n, " \r");
+            if (t.len != 0) listed.append(t) catch @panic("oom");
+        }
+        for (listed.items) |n| {
+            var known = false;
+            for (want.items) |w| {
+                if (std.mem.eql(u8, n, w)) known = true;
+            }
+            if (!known) die("the release {s} has an unexpected asset {s}", .{ tag, n });
+        }
+        for (want.items) |w| {
+            var found = false;
+            for (listed.items) |n| {
+                if (std.mem.eql(u8, n, w)) found = true;
+            }
+            if (!found) die("the release {s} lacks the asset {s}", .{ tag, w });
+        }
+        if (listed.items.len != want.items.len) die("the release {s} lists {d} assets, expected exactly {d} (a name is repeated)", .{ tag, listed.items.len, want.items.len });
+    }
+
+    // The tag points at a commit on main: main's history contains it (compare says identical or behind).
+    const tag_sha = gh.must(&.{ "api", gh.api("commits/{s}", .{tag}), "--jq", ".sha" });
+    if (tag_sha.len != 40) die("the tag {s} resolves to '{s}', not a 40-character sha", .{ tag, tag_sha });
+    const rel = gh.must(&.{ "api", gh.api("compare/main...{s}", .{tag_sha}), "--jq", ".status" });
+    if (!std.mem.eql(u8, rel, "identical") and !std.mem.eql(u8, rel, "behind")) die("the tag {s} (commit {s}) is not on main (compare with main says '{s}')", .{ tag, tag_sha, rel });
+
     std.fs.cwd().makePath(dir_path) catch |err| die("cannot make {s}: {s}", .{ dir_path, @errorName(err) });
     var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |err| die("cannot open {s}: {s}", .{ dir_path, @errorName(err) });
     defer dir.close();
@@ -264,10 +338,7 @@ fn verifyCmd(gh: Gh, version: []const u8, dir_path: []const u8, expect: ?[]const
 
     _ = gh.must(&.{ "release", "download", tag, "-R", gh.repo, "-D", dir_path, "--pattern", "mopm-*.tar.gz", "--pattern", "SHA256SUMS" });
 
-    // The assets are exactly the four tarballs and SHA256SUMS.
-    var want = std.ArrayList([]const u8).init(a);
-    for (targets) |t| want.append(std.fmt.allocPrint(a, "mopm-{s}-{s}.tar.gz", .{ version, t }) catch @panic("oom")) catch @panic("oom");
-    want.append("SHA256SUMS") catch @panic("oom");
+    // What was downloaded is the same set.
     var have = std.ArrayList([]const u8).init(a);
     var it = dir.iterate();
     while (it.next() catch |err| die("cannot list {s}: {s}", .{ dir_path, @errorName(err) })) |e| {
@@ -302,9 +373,10 @@ fn verifyCmd(gh: Gh, version: []const u8, dir_path: []const u8, expect: ?[]const
     // Every asset is attested by this repository's release workflow (release.yml's publish job
     // runs actions/attest-build-provenance), not merely by some workflow of the repository.
     const signer = std.fmt.allocPrint(a, "{s}/.github/workflows/release.yml", .{gh.repo}) catch @panic("oom");
+    const ref = std.fmt.allocPrint(a, "refs/tags/{s}", .{tag}) catch @panic("oom");
     for (want.items) |w| {
         const path = std.fs.path.join(a, &.{ dir_path, w }) catch @panic("oom");
-        const r = gh.run(&.{ "attestation", "verify", path, "-R", gh.repo, "--signer-workflow", signer });
+        const r = gh.run(&.{ "attestation", "verify", path, "-R", gh.repo, "--signer-workflow", signer, "--source-ref", ref, "--source-digest", tag_sha });
         if (!r.ok) die("gh attestation verify refused {s}: {s}", .{ w, std.mem.trim(u8, r.stderr, " \r\n") });
     }
 

@@ -7,6 +7,9 @@
 //!   release_exists the release exists                      release_state "<draft> <prerelease>"
 //!   assets/        the release's files (a download copies them)
 //!   attest_refuse  a file name: `attestation verify` of that file fails
+//!   releases_page_<n>  page n of the release listing (JSON array; a missing page is [])
+//!   asset_list     the release's asset names, one per line (default: the file names in assets/)
+//!   tag_commit     the commit the tag resolves to (default main_sha)   compare_status  main...tag (default behind)
 //!   tag_error      the tag-ref lookup fails with HTTP 500 (not a 404)
 //!   release_error  the release lookup fails with HTTP 500 (not a 404)
 //! A missing file means: no tag, no release, state "false false", no refusal.
@@ -59,6 +62,16 @@ pub fn main() !void {
             try w.writeAll(fileText(a, dir, "main_zig") orelse "");
         } else if (std.mem.indexOf(u8, path, "/actions/runs") != null) {
             try w.print("{s}\n", .{fileText(a, dir, "runs") orelse "{\"workflow_runs\":[]}"});
+        } else if (std.mem.startsWith(u8, path, repo ++ "releases?")) {
+            const at = std.mem.indexOf(u8, path, "&page=") orelse @panic("no page");
+            const name = try std.fmt.allocPrint(a, "releases_page_{s}", .{path[at + 6 ..]});
+            try w.print("{s}\n", .{fileText(a, dir, name) orelse "[]"});
+        } else if (std.mem.startsWith(u8, path, repo ++ "commits/v")) {
+            const t = fileText(a, dir, "tag_commit") orelse fileText(a, dir, "main_sha") orelse "";
+            try w.print("{s}\n", .{std.mem.trim(u8, t, " \n")});
+        } else if (std.mem.startsWith(u8, path, repo ++ "compare/main...")) {
+            const t = fileText(a, dir, "compare_status") orelse "behind";
+            try w.print("{s}\n", .{std.mem.trim(u8, t, " \n")});
         } else if (std.mem.startsWith(u8, path, repo ++ "git/ref/tags/")) {
             if (fileText(a, dir, "tag_error") != null) fail500();
             if (fileText(a, dir, "tag_exists") == null) fail404("Not Found");
@@ -72,7 +85,22 @@ pub fn main() !void {
             std.process.exit(3);
         }
     } else if (std.mem.eql(u8, args[0], "release") and std.mem.eql(u8, args[1], "view")) {
-        try w.print("{s}\n", .{fileText(a, dir, "release_state") orelse "false false"});
+        var want_assets = false;
+        for (args) |x| {
+            if (std.mem.eql(u8, x, "assets")) want_assets = true;
+        }
+        if (want_assets) {
+            if (fileText(a, dir, "asset_list")) |l| {
+                try w.print("{s}\n", .{std.mem.trim(u8, l, "\n")});
+            } else {
+                var assets = try dir.openDir("assets", .{ .iterate = true });
+                defer assets.close();
+                var it = assets.iterate();
+                while (try it.next()) |e| try w.print("{s}\n", .{e.name});
+            }
+        } else {
+            try w.print("{s}\n", .{fileText(a, dir, "release_state") orelse "false false"});
+        }
     } else if (std.mem.eql(u8, args[0], "release") and std.mem.eql(u8, args[1], "download")) {
         var dest: []const u8 = "";
         for (args, 0..) |x, i| {
