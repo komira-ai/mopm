@@ -210,6 +210,12 @@ zig_exe(  # buck-only: a `gh` whose answers are files, for :cut_release
     **_TOOLS
 )
 
+zig_exe(  # buck-only: a `cosign` that signs nothing (a bundle names the file's sha256), for :cut_release
+    name = "fake-cosign",
+    src = "tests/drivers/fake_cosign.zig",
+    **_TOOLS
+)
+
 zig_test(  # buck-only: cut_release against the fake gh, with planted defects it must refuse
     name = "cut_release",
     src = "tests/drivers/cut_release_test.zig",
@@ -218,6 +224,7 @@ zig_test(  # buck-only: cut_release against the fake gh, with planted defects it
         "MOPM_CUT_RELEASE": ":cut-release",
         "MOPM_FAKE_GH": ":fake-gh",
         "MOPM_RELEASE_TOOL": ":release-tool",
+        "MOPM_FAKE_COSIGN": ":fake-cosign",
     },
     **_TOOLS
 )
@@ -346,6 +353,14 @@ _AUTOLINK_DATA = [
     "tests/e2e/repl.stdin",
     "tests/e2e/repl_outer.stdin",
 ]
+zig_test(  # buck-only: the user-level beta walk (tests/drivers/user_beta.zig) in its farm form: no pixi, no installer
+    name = "user_beta",
+    src = "tests/drivers/user_beta_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig", "tests/drivers/user_beta.zig"],
+    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm", MOPM_FAKE_REGISTRY = ":mopm-fake-registry"),
+    **_TOOLS
+)
+
 
 zig_test(  # buck-only: mopm build, run, repl with native libraries; the Zig port of tests/e2e/run.sh
     name = "autolink",

@@ -1,7 +1,8 @@
 name: release-check
 
 # A pull request that touches the release machinery proves it without publishing: the same build and
-# packaging as release.yml (release-build.yml, with the fake version 0.0.0-check), SHA256SUMS written and checked, and
+# packaging as release.yml (release-build.yml, with the fake version 0.0.0-check), the candidate tested as a user on
+# every platform (release-beta-user.yml), SHA256SUMS written and checked, and
 # the installer run against a local fake release on Linux and macOS, with planted defects that it
 # must catch. No write permission, nothing uploaded but the short-lived workflow artifacts.
 
@@ -20,6 +21,10 @@ on:
       - "tests/drivers/fake_mopm.zig"
       - "tests/drivers/fake_uname.zig"
       - "tests/drivers/harness.zig"
+      - "tests/drivers/user_beta.zig"
+      - "tools/cut_release.zig"
+      - "registry/fake/**"
+      - "tests/e2e/pixi.toml"
   push:
     branches: [main]
     paths:
@@ -29,6 +34,7 @@ on:
       - "tests/drivers/install_script_test.zig"
       - "tests/drivers/fake_mopm.zig"
       - "tests/drivers/fake_uname.zig"
+      - "tests/drivers/user_beta.zig"
 
 permissions:
   contents: read
@@ -38,6 +44,15 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/release-build.yml
+    with:
+      version: 0.0.0-check
+
+  # The candidate tested as a user on every platform, as release.yml's beta-user stage does.
+  beta-user:
+    needs: package
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-beta-user.yml
     with:
       version: 0.0.0-check
 

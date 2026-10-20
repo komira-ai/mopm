@@ -11,6 +11,8 @@
 //!   tag_commit     the commit every tag resolves to when there is no `tags` file (default main_sha); with a
 //!                  `tags` file, a tag not in it is HTTP 404
 //!   compare_status main...<sha> (default behind)
+//!   compare_tag_<commit>  <commit>...<sha> for another base than main (a release tag's commit);
+//!                  tag_compare_status is the answer when that file is missing (default ahead)
 //!   releases_page_<n>  page n of the release listing (JSON array; a missing page is [])
 //!   release_exists the release exists (`release view`, `releases/tags/`)   release_state "<draft> <prerelease>"
 //!   assets/        the release's files (a download copies them; create and upload add to them)
@@ -138,6 +140,13 @@ pub fn main() !void {
             }
         } else if (std.mem.startsWith(u8, path, repo ++ "compare/main...")) {
             const t = fileText(a, dir, "compare_status") orelse "behind";
+            try w.print("{s}\n", .{std.mem.trim(u8, t, " \n")});
+        } else if (std.mem.startsWith(u8, path, repo ++ "compare/")) {
+            // <tag commit>...<sha>: is the sha ahead of that release's commit?
+            const rest = path[(repo ++ "compare/").len..];
+            const dots = std.mem.indexOf(u8, rest, "...") orelse @panic("compare without ...");
+            const file = try std.fmt.allocPrint(a, "compare_tag_{s}", .{rest[0..dots]});
+            const t = fileText(a, dir, file) orelse fileText(a, dir, "tag_compare_status") orelse "ahead";
             try w.print("{s}\n", .{std.mem.trim(u8, t, " \n")});
         } else {
             std.debug.print("fake gh: unexpected api call: {s}\n", .{line});

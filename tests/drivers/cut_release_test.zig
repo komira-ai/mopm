@@ -15,8 +15,9 @@ const targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64", "
 const sha = "0123456789abcdef0123456789abcdef01234567";
 const other = "fedcba9876543210fedcba9876543210fedcba98";
 const names5 = [_][]const u8{ "mopm-1.2.3-linux-x86_64.tar.gz", "mopm-1.2.3-linux-aarch64.tar.gz", "mopm-1.2.3-macos-arm64.tar.gz", "mopm-1.2.3-macos-x86_64.tar.gz", "SHA256SUMS" };
+const names10 = names5 ++ [_][]const u8{ "mopm-1.2.3-linux-x86_64.tar.gz.sigstore.json", "mopm-1.2.3-linux-aarch64.tar.gz.sigstore.json", "mopm-1.2.3-macos-arm64.tar.gz.sigstore.json", "mopm-1.2.3-macos-x86_64.tar.gz.sigstore.json", "SHA256SUMS.sigstore.json" };
 
-const Tools = struct { cut: []const u8, gh: []const u8, release: []const u8 };
+const Tools = struct { cut: []const u8, gh: []const u8, release: []const u8, cosign: []const u8 };
 
 const World = struct {
     a: Allocator,
@@ -59,7 +60,8 @@ const World = struct {
     /// `extra`: an additional file packed into the linux-x86_64 tarball.
     fn assets(w: *World, sub: []const u8, version: []const u8, extra: ?[]const u8) !void {
         const a = w.a;
-        const env = try h.environ(a);
+        var env = try h.environ(a);
+        try env.put("FAKE_GH_DIR", w.root);
         const dir = w.path(sub);
         try std.fs.cwd().makePath(dir);
         for (targets) |t| {
@@ -83,6 +85,11 @@ const World = struct {
             std.debug.print("release sums failed: {s}\n", .{r.text});
             return error.ToolFailed;
         }
+        const signed = try h.run(a, &.{ w.tools.release, "sign", dir, "--cosign", w.tools.cosign }, &env, .{});
+        if (signed.code != 0) {
+            std.debug.print("release sign failed: {s}\n", .{signed.text});
+            return error.ToolFailed;
+        }
     }
 
     fn run(w: World, args: []const []const u8) !h.Ran {
@@ -90,7 +97,7 @@ const World = struct {
         var env = try h.environ(a);
         try env.put("FAKE_GH_DIR", w.root);
         var argv = std.ArrayList([]const u8).init(a);
-        try argv.appendSlice(&.{ w.tools.cut, "--gh", w.tools.gh });
+        try argv.appendSlice(&.{ w.tools.cut, "--gh", w.tools.gh, "--cosign", w.tools.cosign });
         try argv.appendSlice(args);
         return h.run(a, argv.items, &env, .{});
     }
@@ -169,6 +176,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         .cut = try h.toolPath(a, "MOPM_CUT_RELEASE"),
         .gh = try h.toolPath(a, "MOPM_FAKE_GH"),
         .release = try h.toolPath(a, "MOPM_RELEASE_TOOL"),
+        .cosign = try h.toolPath(a, "MOPM_FAKE_COSIGN"),
     };
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -202,9 +210,9 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         // a suffix, a leading zero, a non-number and a fourth part are all ignored.
         const w = try fresh(a, tools, &tmp, "plan_other_bases");
         try w.put("VERSION", "0.1\n");
-        try w.put("tags", try h.fmt(a, "v0.1.5 {s}\nv0.10.9 {s}\nv1.1.99 {s}\nv0.1.40-rc.1 {s}\nv0.1.07 {s}\nv0.1.x {s}\nv0.1.60.1 {s}\n", .{ sha, sha, sha, sha, sha, sha, sha }));
+        try w.put("tags", try h.fmt(a, "v0.1.5 {s}\nv0.0.9 {s}\nv0.0.99 {s}\nv0.1.40-rc.1 {s}\nv0.1.07 {s}\nv0.1.x {s}\nv0.1.60.1 {s}\n", .{ sha, sha, sha, sha, sha, sha, sha }));
         const r = try w.runV(&.{"plan"});
-        rep.check("plan: other bases, suffixes, leading zeros and non-numbers are ignored (0.1.5 gives 0.1.6)", r.code == 0 and h.contains(r.text, "version=0.1.6\n"), r.text);
+        rep.check("plan: lower bases, suffixes, leading zeros and non-numbers are ignored (0.1.5 gives 0.1.6)", r.code == 0 and h.contains(r.text, "version=0.1.6\n"), r.text);
     }
     {
         // More than one page of tags: the highest is on the second page.
@@ -249,6 +257,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
     {
         const w = try fresh(a, tools, &tmp, "tag_next");
         try w.put("tags", try tagLines(a, 1, 4, other));
+        try w.put("compare_tag_" ++ other, "ahead\n"); // the commit is a descendant of the highest release (v0.0.4)
         const r = try w.runV(&.{ "tag", "--sha", sha });
         rep.check("tag: with v0.0.4 taken by another commit the new tag is v0.0.5", r.code == 0 and h.contains(r.text, "version=0.0.5\ntag=v0.0.5\n") and h.contains(w.read("tags"), "v0.0.5 " ++ sha), r.text);
     }
@@ -289,6 +298,73 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         rep.check("tag: a commit ahead of main is refused", c.code == 1 and h.contains(c.text, "is not on main"), c.text);
     }
 
+    // ---- tag and plan: a superseded commit, the version the candidate was tested as, the base ---
+    {
+        // The re-run hazard: an old run is re-run after a newer release exists. The old commit is not main's
+        // tip, and v0.0.3 names a commit it is behind: it must not become v0.0.4.
+        const w = try fresh(a, tools, &tmp, "tag_superseded");
+        try w.put("tags", try tagLines(a, 1, 3, other));
+        try w.put("compare_status", "behind\n");
+        try w.put("compare_tag_" ++ other, "behind\n");
+        const r = try w.runV(&.{ "tag", "--sha", sha });
+        rep.check("tag: a commit behind the highest release tag is refused as superseded, with no POST", r.code == 1 and h.contains(r.text, "superseded") and h.contains(r.text, "v0.0.3") and w.calls("api -X POST") == 0, r.text);
+        rep.check("tag: and no tag was written", !h.contains(w.read("tags"), sha), w.read("tags"));
+        try w.put("compare_tag_" ++ other, "diverged\n");
+        const d = try w.runV(&.{ "tag", "--sha", sha });
+        rep.check("tag: a commit that diverged from the highest release is refused too", d.code == 1 and h.contains(d.text, "superseded") and w.calls("api -X POST") == 0, d.text);
+        try w.put("compare_tag_" ++ other, "ahead\n");
+        const ok = try w.runV(&.{ "tag", "--sha", sha });
+        rep.check("tag: control: the same commit, once it is ahead of the highest release (not main's tip), is tagged", ok.code == 0 and h.contains(ok.text, "version=0.0.4\n") and w.calls("api -X POST") == 2, ok.text);
+    }
+    {
+        // Only the highest tag counts: an older release the commit is behind does not refuse it.
+        const w = try fresh(a, tools, &tmp, "tag_superseded_only_highest");
+        try w.put("tags", try h.fmt(a, "v0.0.1 {s}\nv0.0.2 {s}\n", .{ other, sha }));
+        try w.put("compare_tag_" ++ other, "behind\n");
+        const r = try w.runV(&.{ "tag", "--sha", sha });
+        rep.check("tag: the guard compares with the highest tag only (v0.0.2 is this commit's: reused)", r.code == 0 and h.contains(r.text, "version=0.0.2\n"), r.text);
+    }
+    {
+        const w = try fresh(a, tools, &tmp, "plan_superseded");
+        try w.put("tags", try tagLines(a, 1, 3, other));
+        try w.put("compare_tag_" ++ other, "behind\n");
+        const r = try w.runV(&.{ "plan", "--sha", sha });
+        rep.check("plan --sha: a superseded commit is refused before the build", r.code == 1 and h.contains(r.text, "superseded"), r.text);
+        const free = try w.runV(&.{"plan"});
+        rep.check("plan without --sha does not look at the commit (a dry run of the numbering)", free.code == 0 and h.contains(free.text, "version=0.0.4\n"), free.text);
+        try w.put("compare_tag_" ++ other, "ahead\n");
+        const next = try w.runV(&.{ "plan", "--sha", sha });
+        rep.check("plan --sha: a descendant of the highest release gets the next number", next.code == 0 and h.contains(next.text, "version=0.0.4\n"), next.text);
+        try w.put("tags", try h.fmt(a, "v0.0.1 {s}\nv0.0.2 {s}\n", .{ other, sha }));
+        const rerun = try w.runV(&.{ "plan", "--sha", sha });
+        rep.check("plan --sha: a re-run of the run that tagged this commit gets that tag's version (0.0.2)", rerun.code == 0 and h.contains(rerun.text, "version=0.0.2\n"), rerun.text);
+    }
+    {
+        const w = try fresh(a, tools, &tmp, "tag_expect");
+        const bad = try w.runV(&.{ "tag", "--sha", sha, "--expect-version", "0.0.2" });
+        rep.check("tag --expect-version: a different next version is refused, with no POST", bad.code == 1 and h.contains(bad.text, "built and tested as 0.0.2") and w.calls("api -X POST") == 0, bad.text);
+        const ok = try w.runV(&.{ "tag", "--sha", sha, "--expect-version", "0.0.1" });
+        rep.check("tag --expect-version: the planned version is tagged", ok.code == 0 and h.contains(ok.text, "version=0.0.1\ntag=v0.0.1\n"), ok.text);
+        const again = try w.runV(&.{ "tag", "--sha", sha, "--expect-version", "0.0.3" });
+        rep.check("tag --expect-version: a re-run's reused tag is checked against it too", again.code == 1 and h.contains(again.text, "built and tested as 0.0.3"), again.text);
+    }
+    {
+        // VERSION may not go backwards.
+        const w = try fresh(a, tools, &tmp, "base_backwards");
+        try w.put("VERSION", "0.1\n");
+        try w.put("tags", try h.fmt(a, "v0.2.1 {s}\n", .{sha}));
+        const p = try w.runV(&.{"plan"});
+        rep.check("plan: a base below an existing release tag's (0.1 against v0.2.1) is refused", p.code == 1 and h.contains(p.text, "never goes backwards") and h.contains(p.text, "v0.2.1"), p.text);
+        const t = try w.runV(&.{ "tag", "--sha", sha });
+        rep.check("tag: and so is tagging with it, with no POST", t.code == 1 and h.contains(t.text, "never goes backwards") and w.calls("api -X POST") == 0, t.text);
+        try w.put("VERSION", "1.0\n");
+        const up = try w.runV(&.{"plan"});
+        rep.check("plan: a higher base is fine (1.0 gives 1.0.1)", up.code == 0 and h.contains(up.text, "version=1.0.1\n"), up.text);
+        try w.put("VERSION", "0.2\n");
+        const same_base = try w.runV(&.{"plan"});
+        rep.check("plan: the same base continues (0.2 against v0.2.1 gives 0.2.2)", same_base.code == 0 and h.contains(same_base.text, "version=0.2.2\n"), same_base.text);
+    }
+
     // ---- verify-dir: the built files, before anything is published --------------------------
     {
         var w = try goodVerify(a, tools, &tmp, "vd_ok", "1.2.3");
@@ -299,7 +375,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         const size = (try std.fs.cwd().statFile(try h.join(a, &.{ dir, "mopm-1.2.3-linux-x86_64.tar.gz" }))).size;
         rep.check("verify-dir: good built files pass before any release exists", r.code == 0 and h.contains(r.text, "verified v1.2.3 at " ++ sha), r.text);
         rep.check("verify-dir: prints the pin: url, sha256 and size of the linux-x86_64 tarball", h.contains(r.text, "releases/download/v1.2.3/mopm-1.2.3-linux-x86_64.tar.gz") and h.contains(r.text, want) and h.contains(r.text, try h.fmt(a, "size   {d}\n", .{size})), r.text);
-        rep.check("verify-dir: attestation is checked for all five files", w.calls("attestation verify ") == 5, w.log());
+        rep.check("verify-dir: attestation is checked for all five payload files", w.calls("attestation verify ") == 5, w.log());
         rep.check("verify-dir: attestation is pinned to release.yml, the given ref and the commit", h.contains(w.log(), "--signer-workflow komira-ai/mopm/.github/workflows/release.yml --source-ref refs/heads/main --source-digest " ++ sha ++ "\n"), w.log());
         rep.check("verify-dir: reads no release (none exists yet in a real run)", w.calls("release ") == 0, w.log());
         const nt = h.readFile(a, try h.join(a, &.{ notes, "release-notes.md" })) catch "";
@@ -312,7 +388,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         while (it.next()) |l| {
             if (l.len != 0) lines += 1;
         }
-        rep.check("verify-dir: verified.sha256 lists the five files", lines == 5 and h.contains(man, "  SHA256SUMS"), man);
+        rep.check("verify-dir: verified.sha256 lists the ten files", lines == 10 and h.contains(man, "  SHA256SUMS.sigstore.json"), man);
     }
     {
         var w = try goodVerify(a, tools, &tmp, "vd_tamper", "1.2.3");
@@ -335,11 +411,11 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         var w = try goodVerify(a, tools, &tmp, "vd_missing", "1.2.3");
         try std.fs.cwd().deleteFile(w.path("assets/mopm-1.2.3-macos-x86_64.tar.gz"));
         const r = try w.run(&.{ "verify-dir", "1.2.3", w.path("assets"), "--sha", sha, "--source-ref", "refs/heads/main" });
-        rep.check("verify-dir: three tarballs are refused", r.code == 1 and h.contains(r.text, "holds 4 files, expected exactly 5"), r.text);
+        rep.check("verify-dir: three tarballs are refused", r.code == 1 and h.contains(r.text, "holds 9 files, expected exactly 10"), r.text);
         try w.put("assets/mopm-1.2.3-macos-x86_64.tar.gz", "not a tarball");
         try w.put("assets/stray.txt", "x");
         const s = try w.run(&.{ "verify-dir", "1.2.3", w.path("assets"), "--sha", sha, "--source-ref", "refs/heads/main" });
-        rep.check("verify-dir: a sixth file is refused", s.code == 1 and h.contains(s.text, "holds 6 files, expected exactly 5"), s.text);
+        rep.check("verify-dir: a sixth file is refused", s.code == 1 and h.contains(s.text, "holds 11 files, expected exactly 10"), s.text);
     }
     {
         var w = try goodVerify(a, tools, &tmp, "vd_version", "1.2.3");
@@ -351,6 +427,60 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         try w.put("attest_refuse", "SHA256SUMS");
         const r = try w.run(&.{ "verify-dir", "1.2.3", w.path("assets"), "--sha", sha, "--source-ref", "refs/heads/main" });
         rep.check("verify-dir: a file without an attestation is refused", r.code == 1 and h.contains(r.text, "attestation verify refused SHA256SUMS"), r.text);
+    }
+    {
+        // Keyless signatures: cosign verify-blob on every payload file, identity and commit pinned.
+        var w = try goodVerify(a, tools, &tmp, "vd_signatures", "1.2.3");
+        const dir = w.path("assets");
+        const ok = try w.run(&.{ "verify-dir", "1.2.3", dir, "--sha", sha, "--source-ref", "refs/heads/main" });
+        const cl = w.read("cosign_log");
+        var verifies: usize = 0;
+        var lines = std.mem.splitScalar(u8, cl, '\n');
+        while (lines.next()) |l| {
+            if (std.mem.startsWith(u8, l, "verify-blob ")) verifies += 1;
+        }
+        rep.check("verify-dir: the signature of each of the five payload files is verified", ok.code == 0 and verifies == 5, cl);
+        rep.check("verify-dir: the signature is pinned to release.yml at the ref, the OIDC issuer and the commit", h.contains(cl, "--certificate-identity https://github.com/komira-ai/mopm/.github/workflows/release.yml@refs/heads/main --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-github-workflow-sha " ++ sha ++ " "), cl);
+
+        try w.put("cosign_refuse", "mopm-1.2.3-macos-arm64.tar.gz");
+        const r = try w.run(&.{ "verify-dir", "1.2.3", dir, "--sha", sha, "--source-ref", "refs/heads/main" });
+        rep.check("verify-dir: a file with no valid signature is refused by name", r.code == 1 and h.contains(r.text, "cosign verify-blob refused mopm-1.2.3-macos-arm64.tar.gz"), r.text);
+        try std.fs.cwd().deleteFile(w.path("cosign_refuse"));
+
+        // A bundle that signs other bytes (the file was changed after signing, SHA256SUMS kept consistent).
+        try w.put("assets/SHA256SUMS.sigstore.json", "fake-cosign-bundle sha256=" ++ "0" ** 64 ++ "\n");
+        const t = try w.run(&.{ "verify-dir", "1.2.3", dir, "--sha", sha, "--source-ref", "refs/heads/main" });
+        rep.check("verify-dir: a bundle that does not match its file is refused", t.code == 1 and h.contains(t.text, "cosign verify-blob refused SHA256SUMS"), t.text);
+
+        var w2 = try goodVerify(a, tools, &tmp, "vd_unsigned", "1.2.3");
+        try std.fs.cwd().deleteFile(w2.path("assets/mopm-1.2.3-linux-x86_64.tar.gz.sigstore.json"));
+        const m = try w2.run(&.{ "verify-dir", "1.2.3", w2.path("assets"), "--sha", sha, "--source-ref", "refs/heads/main" });
+        rep.check("verify-dir: a missing bundle is refused (nine files, ten expected)", m.code == 1 and h.contains(m.text, "holds 9 files, expected exactly 10"), m.text);
+    }
+    {
+        // release sign: refuses when cosign fails, and signs nothing it was not given.
+        var w = try goodVerify(a, tools, &tmp, "sign_fail", "1.2.3");
+        try w.put("cosign_sign_fail", "");
+        var env = try h.environ(a);
+        try env.put("FAKE_GH_DIR", w.root);
+        const r = try h.run(a, &.{ tools.release, "sign", w.path("assets"), "--cosign", tools.cosign }, &env, .{});
+        rep.check("release sign: a failing cosign fails the step", r.code != 0 and h.contains(r.text, "cosign sign-blob failed"), r.text);
+        try std.fs.cwd().deleteFile(w.path("cosign_sign_fail"));
+        const ok = try h.run(a, &.{ tools.release, "sign", w.path("assets"), "--cosign", tools.cosign }, &env, .{});
+        rep.check("release sign: control: with cosign working it signs the five payload files", ok.code == 0 and h.contains(ok.text, "signed 5 files"), ok.text);
+    }
+    {
+        // A re-run of an old release run after a newer release exists must not publish the old one last.
+        var w = try fresh(a, tools, &tmp, "pub_superseded");
+        try w.put("tags", "v1.2.3 " ++ sha ++ "\nv1.2.4 " ++ other ++ "\n");
+        try w.assets("dist", "1.2.3", null);
+        const v = try w.run(&.{ "verify-dir", "1.2.3", w.path("dist"), "--sha", sha, "--source-ref", "refs/heads/main", "--notes-out", w.path("notes") });
+        const pub_args = [_][]const u8{ "publish", "1.2.3", w.path("dist"), "--verified", w.path("notes/verified.sha256"), "--notes", w.path("notes/release-notes.md") };
+        const r = try w.run(&pub_args);
+        rep.check("publish: with v1.2.4 existing, publishing 1.2.3 is refused as superseded, creating and uploading nothing", v.code == 0 and r.code == 1 and h.contains(r.text, "superseded") and w.calls("release create ") == 0 and w.calls("release upload ") == 0 and w.calls("api -X POST") == 0, r.text);
+        try w.put("tags", "v1.2.3 " ++ sha ++ "\n");
+        const ok = try w.run(&pub_args);
+        rep.check("publish: control: with v1.2.3 the highest, the same publish succeeds", ok.code == 0 and w.calls("release create v1.2.3 ") == 1, ok.text);
     }
     {
         var w = try goodVerify(a, tools, &tmp, "vd_tag_elsewhere", "1.2.3");
@@ -384,9 +514,9 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         const v = try w.run(&.{ "verify-dir", "1.2.3", w.path("dist"), "--sha", sha, "--source-ref", "refs/heads/main", "--notes-out", w.path("notes") });
         rep.check("publish: setup: the built files verify", v.code == 0, v.text);
         const r = try w.run(&.{ "publish", "1.2.3", w.path("dist"), "--verified", w.path("notes/verified.sha256"), "--notes", w.path("notes/release-notes.md") });
-        rep.check("publish: creates the release from exactly the five verified files", r.code == 0 and h.contains(r.text, "created the release v1.2.3") and w.calls("release create v1.2.3 ") == 1 and countFiles(w, "assets") == 5, r.text);
+        rep.check("publish: creates the release from exactly the ten verified files", r.code == 0 and h.contains(r.text, "created the release v1.2.3") and w.calls("release create v1.2.3 ") == 1 and countFiles(w, "assets") == 10, r.text);
         var same_all = true;
-        for (names5) |n| same_all = same_all and same(a, w.path("dist"), w.path("assets"), n);
+        for (names10) |n| same_all = same_all and same(a, w.path("dist"), w.path("assets"), n);
         rep.check("publish: every published asset is the verified file, byte for byte", same_all, w.log());
         rep.check("publish: tag check, title, notes file, no prerelease flag", h.contains(w.log(), "--verify-tag --title mopm 1.2.3 --notes-file " ++ "") and !h.contains(w.log(), "--prerelease") and h.contains(w.read("release_notes"), "mopm 1.2.3"), w.log());
 
@@ -399,7 +529,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         try std.fs.cwd().deleteFile(w.path("assets/mopm-1.2.3-macos-arm64.tar.gz"));
         try std.fs.cwd().deleteFile(w.path("assets/SHA256SUMS"));
         const part = try w.run(&.{ "publish", "1.2.3", w.path("dist"), "--verified", w.path("notes/verified.sha256"), "--notes", w.path("notes/release-notes.md") });
-        rep.check("publish: a re-run adds exactly the assets the release lacks", part.code == 0 and w.calls("release upload ") == 1 and w.calls("release create ") == 1 and h.contains(w.log(), "mopm-1.2.3-macos-arm64.tar.gz") and countFiles(w, "assets") == 5, part.text);
+        rep.check("publish: a re-run adds exactly the assets the release lacks", part.code == 0 and w.calls("release upload ") == 1 and w.calls("release create ") == 1 and h.contains(w.log(), "mopm-1.2.3-macos-arm64.tar.gz") and countFiles(w, "assets") == 10, part.text);
 
         // A held asset that differs: refused, and nothing is changed (no upload, the asset is as it was).
         try w.put("assets/mopm-1.2.3-linux-aarch64.tar.gz", "tampered");
@@ -435,11 +565,11 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         const args2 = [_][]const u8{ "publish", "1.2.3", w2.path("dist"), "--verified", w2.path("notes/verified.sha256"), "--notes", w2.path("notes/release-notes.md") };
         try w2.put("dist/extra.txt", "x");
         const e = try w2.run(&args2);
-        rep.check("publish: a sixth file in the directory is refused", e.code == 1 and h.contains(e.text, "holds 6 files") and w2.calls("release create ") == 0, e.text);
+        rep.check("publish: a sixth file in the directory is refused", e.code == 1 and h.contains(e.text, "holds 11 files") and w2.calls("release create ") == 0, e.text);
         try std.fs.cwd().deleteFile(w2.path("dist/extra.txt"));
         try std.fs.cwd().deleteFile(w2.path("dist/SHA256SUMS"));
         const m = try w2.run(&args2);
-        rep.check("publish: a missing file is refused", m.code == 1 and h.contains(m.text, "holds 4 files") and w2.calls("release create ") == 0, m.text);
+        rep.check("publish: a missing file is refused", m.code == 1 and h.contains(m.text, "holds 9 files") and w2.calls("release create ") == 0, m.text);
     }
     {
         // A draft of the tag, and a prerelease flag that does not match the version.
@@ -473,7 +603,8 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         const r = try w.run(&.{ "verify", "1.2.3", dir });
         const want = try sha256Of(a, try h.join(a, &.{ w.root, "assets", "mopm-1.2.3-linux-x86_64.tar.gz" }));
         rep.check("verify: a good release passes", r.code == 0 and h.contains(r.text, "verified v1.2.3") and h.contains(r.text, want), r.text);
-        rep.check("verify: attestation is checked for all five assets, pinned to release.yml, main and the tag's commit", w.calls("attestation verify ") == 5 and h.contains(w.log(), "--signer-workflow komira-ai/mopm/.github/workflows/release.yml --source-ref refs/heads/main --source-digest " ++ sha ++ "\n"), w.log());
+        rep.check("verify: attestation is checked for the five payload assets, pinned to release.yml, main and the tag's commit", w.calls("attestation verify ") == 5 and h.contains(w.log(), "--signer-workflow komira-ai/mopm/.github/workflows/release.yml --source-ref refs/heads/main --source-digest " ++ sha ++ "\n"), w.log());
+        rep.check("verify: the signatures are checked too, pinned to main and the tag's commit", h.contains(w.read("cosign_log"), "--certificate-identity https://github.com/komira-ai/mopm/.github/workflows/release.yml@refs/heads/main --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-github-workflow-sha " ++ sha ++ " "), w.read("cosign_log"));
         rep.check("verify: changes nothing (no create, no upload, no POST)", w.calls("release create") == 0 and w.calls("release upload") == 0 and w.calls("api -X POST") == 0, w.log());
         const ok = try w.run(&.{ "verify", "1.2.3", try freshDir(a, w, "dl2"), "--expect-sha256", want });
         rep.check("verify: the expected sha256 is accepted", ok.code == 0, ok.text);

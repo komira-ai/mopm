@@ -13,6 +13,13 @@
 #   MOPM_RELEASES_URL  where releases are read from (for a mirror or a test);
 #                      default https://github.com/komira-ai/mopm/releases
 #
+# To check a download further (the release notes repeat this; RELEASING.md has the details), for a file F of the release:
+#   gh attestation verify F -R komira-ai/mopm --signer-workflow komira-ai/mopm/.github/workflows/release.yml
+#   cosign verify-blob --bundle F.sigstore.json --certificate-identity \
+#     https://github.com/komira-ai/mopm/.github/workflows/release.yml@refs/heads/main \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com F
+# This script checks the sha256 only. macOS binaries are not yet code-signed or notarized by Apple.
+#
 # Needs curl, tar, awk and sha256sum or shasum. Linux (x86_64, aarch64; static
 # binaries) and macOS (arm64, x86_64).
 set -eu

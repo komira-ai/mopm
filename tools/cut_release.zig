@@ -9,30 +9,39 @@
 //! `--repo <owner/name>` another repository. A release is made by release.yml alone, on a push to main
 //! (RELEASING.md); nobody runs `plan`, `tag` or `publish` by hand.
 //!
-//!   cut_release plan [--version-file VERSION] [--out <file>]
+//!   cut_release plan [--sha <commit>] [--version-file VERSION] [--out <file>]
 //!       Reads the base MAJOR.MINOR from the file and prints the version the next release would get:
 //!       the highest PATCH among the tags v<base>.N and the releases (draft or published) of the
 //!       repository, plus one; 1 when there is none (the first release of 0.0 is 0.0.1). Changes nothing.
-//!   cut_release tag --sha <commit> [--version-file VERSION] [--out <file>]
+//!       Refuses a base below any existing release tag's. With --sha it also refuses a commit that is
+//!       superseded (see tag), and when the highest tag already names that commit (a re-run) it prints
+//!       that tag's version. release.yml runs it before the build: the candidate is built, user-tested
+//!       and later shipped as this version.
+//!   cut_release tag --sha <commit> [--expect-version <v>] [--version-file VERSION] [--out <file>]
 //!       The one write before the build: creates the annotated tag v<version> at <commit>, which must be
-//!       main or an ancestor of it. If the highest tag already names <commit> (a re-run) it is reused
-//!       and nothing is created. If creating the tag fails because the tag exists (another run took the
-//!       number) it recomputes and tries once more. Prints and, with --out, appends `version=` and `tag=`
-//!       lines (the format of $GITHUB_OUTPUT).
+//!       main or an ancestor of it, and must not be superseded: the highest tag v<base>.N must name <commit>
+//!       or an ancestor of it (compare says identical or ahead), else this refuses with 'superseded'. A
+//!       re-run of an old run after a newer release exists would otherwise tag the OLD commit with the
+//!       next number and install.sh would hand users older code. Main's exact tip is not required: pushes
+//!       land while a run waits for the macOS runners. With --expect-version it refuses unless the version
+//!       it would take is that one (the candidate was built and tested as that version). If the highest tag
+//!       already names <commit> (a re-run) it is reused and nothing is created. If creating the tag fails
+//!       because the tag exists (another run took the number) it recomputes and tries once more. Prints and,
+//!       with --out, appends `version=` and `tag=` lines (the format of $GITHUB_OUTPUT).
 //!   cut_release verify-dir <version> <dir> --sha <commit> --source-ref <ref> [--notes-out <dir>]
 //!       Before anything is published: checks the BUILT files in <dir>. The tag v<version> is on main and
-//!       names <commit>; the files are exactly the four mopm-<version>-<target>.tar.gz and SHA256SUMS;
-//!       SHA256SUMS lists each tarball with the hash it has; `gh attestation verify` accepts every file
-//!       (pinned to release.yml, <ref> and <commit>); each tarball holds exactly
+//!       names <commit>; the files are exactly the ten: the four mopm-<version>-<target>.tar.gz, SHA256SUMS and the
+//!       cosign bundle <file>.sigstore.json of each; SHA256SUMS lists each tarball with the hash it has; `gh attestation verify` and `cosign verify-blob` (--cosign, identity pinned to release.yml at <ref>, the commit pinned) accept every payload file
+//!       (attestations pinned to release.yml, <ref> and <commit>); each tarball holds exactly
 //!       mopm-<version>-<target>/{mopm,LICENSE}. With --notes-out it writes release-notes.md, pin.txt (the
-//!       linux-x86_64 url, sha256 and size) and verified.sha256 (the hash of each of the five files).
+//!       linux-x86_64 url, sha256 and size) and verified.sha256 (the hash of each of the ten files).
 //!   cut_release verify <version> <dir> [--expect-sha256 <hex>]
 //!       After the release exists (read-only): the release is published, not a draft, with the prerelease
-//!       flag its version calls for, and exactly the five assets; its tag is on main; the assets are
+//!       flag its version calls for, and exactly the ten assets; its tag is on main; the assets are
 //!       downloaded into the empty <dir> and pass the same checks as verify-dir, with the attestation
 //!       pinned to main and the tag's commit. Prints the pin.
 //!   cut_release publish <version> <dir> --verified <file> --notes <file>
-//!       Creates the release v<version> from exactly the five files of <dir>, which must be the ones
+//!       Creates the release v<version> from exactly the ten files of <dir>, which must be the ones
 //!       verified.sha256 lists. A re-run creates no second release and replaces no asset: when the release
 //!       exists, every asset it holds must equal the local file byte for byte, or this refuses before
 //!       changing anything; only the assets it lacks are added.
@@ -50,7 +59,7 @@ fn die(comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 fn usage() noreturn {
-    die("usage: cut_release [--gh <path>] [--repo <owner/name>] plan | tag --sha <commit> | verify-dir <version> <dir> --sha <commit> --source-ref <ref> | verify <version> <dir> | publish <version> <dir> --verified <file> --notes <file>", .{});
+    die("usage: cut_release [--gh <path>] [--cosign <path>] [--repo <owner/name>] plan [--sha <commit>] | tag --sha <commit> [--expect-version <v>] | verify-dir <version> <dir> --sha <commit> --source-ref <ref> | verify <version> <dir> | publish <version> <dir> --verified <file> --notes <file>", .{});
 }
 
 fn out(comptime fmt: []const u8, args: anytype) void {
@@ -65,13 +74,19 @@ const Gh = struct {
     a: Allocator,
     exe: []const u8,
     repo: []const u8,
+    /// The `cosign` that checks signatures (`--cosign <path>`; the tests give a fake).
+    cosign: []const u8 = "cosign",
 
     fn run(g: Gh, args: []const []const u8) Ran {
+        return g.runExe(g.exe, args);
+    }
+
+    fn runExe(g: Gh, exe: []const u8, args: []const []const u8) Ran {
         var argv = std.ArrayList([]const u8).init(g.a);
-        argv.append(g.exe) catch @panic("oom");
+        argv.append(exe) catch @panic("oom");
         argv.appendSlice(args) catch @panic("oom");
         const r = std.process.Child.run(.{ .allocator = g.a, .argv = argv.items, .max_output_bytes = 1 << 22 }) catch |err| {
-            die("could not run {s}: {s}", .{ g.exe, @errorName(err) });
+            die("could not run {s}: {s}", .{ exe, @errorName(err) });
         };
         return .{ .ok = r.term == .Exited and r.term.Exited == 0, .stdout = r.stdout, .stderr = r.stderr };
     }
@@ -173,25 +188,64 @@ fn nextPatch(base: []const u8, names: []const []const u8) u64 {
 const per_page = 100;
 const max_pages = 50;
 
-/// Every tag name v<base>.* the repository has (paged).
-fn tagNames(gh: Gh, base: []const u8) []const []const u8 {
+/// Every tag name that starts with `prefix` (paged).
+fn tagsByPrefix(gh: Gh, prefix: []const u8) []const []const u8 {
     const a = gh.a;
     var names = std.ArrayList([]const u8).init(a);
     const Ref = struct { ref: []const u8 = "" };
     var page: usize = 1;
     while (true) : (page += 1) {
-        if (page > max_pages) die("more than {d} tags of v{s}.*: cannot tell which number is next", .{ max_pages * per_page, base });
-        const json = gh.must(&.{ "api", gh.api("git/matching-refs/tags/v{s}.?per_page={d}&page={d}", .{ base, per_page, page }) });
+        if (page > max_pages) die("more than {d} tags starting with {s}: cannot tell which number is next", .{ max_pages * per_page, prefix });
+        const json = gh.must(&.{ "api", gh.api("git/matching-refs/tags/{s}?per_page={d}&page={d}", .{ prefix, per_page, page }) });
         const parsed = std.json.parseFromSlice([]const Ref, a, json, .{ .ignore_unknown_fields = true }) catch |err| {
             die("cannot read the tag list: {s}", .{@errorName(err)});
         };
         for (parsed.value) |r| {
-            const prefix = "refs/tags/";
-            if (std.mem.startsWith(u8, r.ref, prefix)) names.append(r.ref[prefix.len..]) catch @panic("oom");
+            const head = "refs/tags/";
+            if (std.mem.startsWith(u8, r.ref, head)) names.append(r.ref[head.len..]) catch @panic("oom");
         }
         if (parsed.value.len < per_page) break;
     }
     return names.items;
+}
+
+/// Every tag name v<base>.* the repository has (paged).
+fn tagNames(gh: Gh, base: []const u8) []const []const u8 {
+    return tagsByPrefix(gh, std.fmt.allocPrint(gh.a, "v{s}.", .{base}) catch @panic("oom"));
+}
+
+/// (major, minor) of a base or of a plain tag v<major>.<minor>.<patch>; null for anything else.
+fn majorMinor(s: []const u8) ?[2]u64 {
+    var parts = std.mem.splitScalar(u8, s, '.');
+    const maj = canonical(parts.next() orelse return null) orelse return null;
+    const min = canonical(parts.next() orelse return null) orelse return null;
+    return .{ maj, min };
+}
+
+/// The base of VERSION may not go backwards: a tag of a higher MAJOR.MINOR than `base` means the
+/// file was lowered (or this is an old commit), and a release would number below what users have.
+fn requireBaseNotBehind(gh: Gh, base: []const u8) void {
+    const mine = majorMinor(base) orelse die("'{s}' is not <major>.<minor>", .{base});
+    for (tagsByPrefix(gh, "v")) |t| {
+        if (!validVersion(t[1..]) or std.mem.indexOfScalar(u8, t, '-') != null) continue;
+        const theirs = majorMinor(t[1..]) orelse continue;
+        if (theirs[0] > mine[0] or (theirs[0] == mine[0] and theirs[1] > mine[1])) {
+            die("VERSION holds {s}, below the existing release tag {s}: the base never goes backwards", .{ base, t });
+        }
+    }
+}
+
+/// A release is cut only for a commit that is, or descends from, the commit of the highest v<base>.N tag.
+/// A re-run of an old run, after a newer release exists, would otherwise tag the OLD commit with the next
+/// number, and install.sh (which installs the latest) would then give users that older code. The exact tip
+/// of main is not required: pushes land while a run waits for the macOS runners.
+fn requireNotSuperseded(gh: Gh, base: []const u8, tags: []const []const u8, sha: []const u8) void {
+    const h = highest(base, tags) orelse return;
+    const tag_sha = commitOf(gh, h.name);
+    const rel = gh.must(&.{ "api", gh.api("compare/{s}...{s}", .{ tag_sha, sha }), "--jq", ".status" });
+    if (!std.mem.eql(u8, rel, "identical") and !std.mem.eql(u8, rel, "ahead")) {
+        die("superseded: the commit {s} is not a descendant of the release {s} (commit {s}; compare says '{s}'); tagging it would number old code above newer code. Nothing was changed.", .{ sha, h.name, tag_sha, rel });
+    }
 }
 
 /// The names whose number is taken: the tags, and every tag_name of the releases, draft or published
@@ -253,30 +307,48 @@ fn appendOut(path: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
 
 // ---- plan and tag ----------------------------------------------------------------------
 
-fn planCmd(gh: Gh, version_file: []const u8, out_path: ?[]const u8) void {
+fn planCmd(gh: Gh, sha: ?[]const u8, version_file: []const u8, out_path: ?[]const u8) void {
     const base = readBase(gh.a, version_file);
-    const version = std.fmt.allocPrint(gh.a, "{s}.{d}", .{ base, nextPatch(base, takenNames(gh, tagNames(gh, base))) }) catch @panic("oom");
+    requireBaseNotBehind(gh, base);
+    const tags = tagNames(gh, base);
+    if (sha) |s| {
+        if (!isHex40(s)) die("--sha '{s}' is not a 40-character commit sha", .{s});
+        requireNotSuperseded(gh, base, tags, s);
+        // A re-run of a run that already tagged this commit: that tag's version.
+        if (highest(base, tags)) |h| {
+            if (std.mem.eql(u8, commitOf(gh, h.name), s)) {
+                appendOut(out_path, "version={s}.{d}\n", .{ base, h.patch });
+                return;
+            }
+        }
+    }
+    const version = std.fmt.allocPrint(gh.a, "{s}.{d}", .{ base, nextPatch(base, takenNames(gh, tags)) }) catch @panic("oom");
     appendOut(out_path, "version={s}\n", .{version});
 }
 
-fn tagCmd(gh: Gh, sha: []const u8, version_file: []const u8, out_path: ?[]const u8) void {
+fn tagCmd(gh: Gh, sha: []const u8, expect_version: ?[]const u8, version_file: []const u8, out_path: ?[]const u8) void {
     const a = gh.a;
     if (!isHex40(sha)) die("--sha '{s}' is not a 40-character commit sha", .{sha});
     const base = readBase(a, version_file);
     requireOnMain(gh, "the release commit", sha);
+    requireBaseNotBehind(gh, base);
 
     var attempt: usize = 0;
     while (true) : (attempt += 1) {
         const tags = tagNames(gh, base);
         const names = takenNames(gh, tags);
+        requireNotSuperseded(gh, base, tags, sha);
         // A re-run of the run that made the tag: the tag is this commit's, so this commit's release.
         if (highest(base, tags)) |h| {
             if (std.mem.eql(u8, commitOf(gh, h.name), sha)) {
-                appendOut(out_path, "version={s}.{d}\ntag={s}\n", .{ base, h.patch, h.name });
+                const reused = std.fmt.allocPrint(a, "{s}.{d}", .{ base, h.patch }) catch @panic("oom");
+                requireExpected(expect_version, reused);
+                appendOut(out_path, "version={s}\ntag={s}\n", .{ reused, h.name });
                 return;
             }
         }
         const version = std.fmt.allocPrint(a, "{s}.{d}", .{ base, nextPatch(base, names) }) catch @panic("oom");
+        requireExpected(expect_version, version);
         const tag = std.fmt.allocPrint(a, "v{s}", .{version}) catch @panic("oom");
         const message = std.fmt.allocPrint(a, "message=mopm {s}\n\nReleased automatically from main commit {s}.", .{ version, sha }) catch @panic("oom");
         const tag_arg = std.fmt.allocPrint(a, "tag={s}", .{tag}) catch @panic("oom");
@@ -298,7 +370,7 @@ fn tagCmd(gh: Gh, sha: []const u8, version_file: []const u8, out_path: ?[]const 
     }
 }
 
-// ---- the checks of the five files ------------------------------------------------------
+// ---- the checks of the ten files ------------------------------------------------------
 
 fn sha256Hex(a: Allocator, bytes: []const u8) []const u8 {
     var digest: [32]u8 = undefined;
@@ -330,15 +402,27 @@ fn tarNames(a: Allocator, tar: []const u8) [][]const u8 {
     return names.items;
 }
 
-/// mopm-<version>-<target>.tar.gz for the four targets, then SHA256SUMS.
-fn wantAssets(a: Allocator, version: []const u8) [][]const u8 {
+const bundle_suffix = ".sigstore.json";
+const oidc_issuer = "https://token.actions.githubusercontent.com";
+
+/// mopm-<version>-<target>.tar.gz for the four targets, then SHA256SUMS: the five payload files.
+fn payloadAssets(a: Allocator, version: []const u8) [][]const u8 {
     var want = std.ArrayList([]const u8).init(a);
     for (targets) |t| want.append(std.fmt.allocPrint(a, "mopm-{s}-{s}.tar.gz", .{ version, t }) catch @panic("oom")) catch @panic("oom");
     want.append(sums_name) catch @panic("oom");
     return want.items;
 }
 
-/// <dir> holds exactly the five files, by name (sorted names are returned).
+/// The ten assets of a release: the five payload files, then the cosign bundle `<file>.sigstore.json` of each.
+fn wantAssets(a: Allocator, version: []const u8) [][]const u8 {
+    var want = std.ArrayList([]const u8).init(a);
+    const payload = payloadAssets(a, version);
+    want.appendSlice(payload) catch @panic("oom");
+    for (payload) |p| want.append(std.fmt.allocPrint(a, "{s}{s}", .{ p, bundle_suffix }) catch @panic("oom")) catch @panic("oom");
+    return want.items;
+}
+
+/// <dir> holds exactly the ten files, by name (sorted names are returned).
 fn checkNames(a: Allocator, dir: std.fs.Dir, where: []const u8, want: [][]const u8) void {
     var have = std.ArrayList([]const u8).init(a);
     var it = dir.iterate();
@@ -365,7 +449,7 @@ fn checkSums(a: Allocator, dir: std.fs.Dir, want: [][]const u8) void {
         const file = line[66..];
         var known = false;
         for (want) |w| {
-            if (std.mem.eql(u8, w, file) and !std.mem.eql(u8, w, sums_name)) known = true;
+            if (std.mem.eql(u8, w, file) and std.mem.endsWith(u8, w, ".tar.gz")) known = true;
         }
         if (!known) die("SHA256SUMS lists {s}, which is not one of the four tarballs", .{file});
         const got = sha256Hex(a, readAll(a, dir, file));
@@ -383,6 +467,19 @@ fn checkAttestations(gh: Gh, dir_path: []const u8, want: [][]const u8, source_re
         const path = std.fs.path.join(a, &.{ dir_path, w }) catch @panic("oom");
         const r = gh.run(&.{ "attestation", "verify", path, "-R", gh.repo, "--signer-workflow", signer, "--source-ref", source_ref, "--source-digest", sha });
         if (!r.ok) die("gh attestation verify refused {s}: {s}", .{ w, std.mem.trim(u8, r.stderr, " \r\n") });
+    }
+}
+
+/// Every payload file has a keyless cosign signature by this repository's release workflow, for `source_ref`
+/// and `sha`: the certificate identity and issuer are pinned, and so is the commit.
+fn checkSignatures(gh: Gh, dir_path: []const u8, payload: [][]const u8, source_ref: []const u8, sha: []const u8) void {
+    const a = gh.a;
+    const identity = std.fmt.allocPrint(a, "https://github.com/{s}/.github/workflows/release.yml@{s}", .{ gh.repo, source_ref }) catch @panic("oom");
+    for (payload) |w| {
+        const path = std.fs.path.join(a, &.{ dir_path, w }) catch @panic("oom");
+        const bundle = std.fmt.allocPrint(a, "{s}{s}", .{ path, bundle_suffix }) catch @panic("oom");
+        const r = gh.runExe(gh.cosign, &.{ "verify-blob", "--bundle", bundle, "--certificate-identity", identity, "--certificate-oidc-issuer", oidc_issuer, "--certificate-github-workflow-sha", sha, path });
+        if (!r.ok) die("cosign verify-blob refused {s}: {s}", .{ w, std.mem.trim(u8, r.stderr, " \r\n") });
     }
 }
 
@@ -421,16 +518,20 @@ fn pinText(a: Allocator, repo: []const u8, version: []const u8, pin: Pin) []cons
     return std.fmt.allocPrint(a, "url    https://github.com/{s}/releases/download/v{s}/mopm-{s}-{s}.tar.gz\nsha256 {s}\nsize   {d}\ndir    mopm-{s}-{s}\n", .{ repo, version, version, pin_target, pin.sha256, pin.size, version, pin_target }) catch @panic("oom");
 }
 
-/// The four tarballs, SHA256SUMS, the layout; with `attest` also the attestation of all five.
+/// The four tarballs, SHA256SUMS, the layout; with `attest` also the attestation and the signature of the five payload files.
 /// Returns the pin of the linux-x86_64 tarball.
 fn checkAssets(gh: Gh, version: []const u8, dir_path: []const u8, attest: ?struct { ref: []const u8, sha: []const u8 }) Pin {
     const a = gh.a;
     var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |err| die("cannot open {s}: {s}", .{ dir_path, @errorName(err) });
     defer dir.close();
     const want = wantAssets(a, version);
+    const payload = payloadAssets(a, version);
     checkNames(a, dir, dir_path, want);
-    checkSums(a, dir, want);
-    if (attest) |t| checkAttestations(gh, dir_path, want, t.ref, t.sha);
+    checkSums(a, dir, payload);
+    if (attest) |t| {
+        checkAttestations(gh, dir_path, payload, t.ref, t.sha);
+        checkSignatures(gh, dir_path, payload, t.ref, t.sha);
+    }
     return checkLayout(a, dir, version);
 }
 
@@ -456,7 +557,7 @@ fn verifyDirCmd(gh: Gh, version: []const u8, dir_path: []const u8, sha: []const 
         defer d.close();
         var notes = std.ArrayList(u8).init(a);
         const w = notes.writer();
-        w.print("mopm {s}\n\nBuilt and released automatically from main commit {s}. Every file below is attested (build provenance, signed by release.yml) and was verified before this release was created.{s}\n\nsha256 of each file:\n\n", .{ version, sha, if (prerelease) " This is a prerelease." else "" }) catch @panic("oom");
+        w.print("mopm {s}\n\nBuilt and released automatically from main commit {s}. Every file below is attested (build provenance) and signed (keyless cosign, Sigstore), both by release.yml, and was verified before this release was created.{s}\n\nsha256 of each file:\n\n", .{ version, sha, if (prerelease) " This is a prerelease." else "" }) catch @panic("oom");
         var manifest = std.ArrayList(u8).init(a);
         for (wantAssets(a, version)) |name| {
             const h = sha256Hex(a, readAll(a, d, name));
@@ -464,6 +565,7 @@ fn verifyDirCmd(gh: Gh, version: []const u8, dir_path: []const u8, sha: []const 
             manifest.writer().print("{s}  {s}\n", .{ h, name }) catch @panic("oom");
         }
         w.print("\nThe pin for {s}:\n\n```\n{s}```\n", .{ pin_target, pinText(a, gh.repo, version, pin) }) catch @panic("oom");
+        w.print("\nVerify a download (needs the GitHub CLI and cosign), for a file F of this release:\n\n```\ngh attestation verify F -R {s} --signer-workflow {s}/.github/workflows/release.yml\ncosign verify-blob --bundle F.sigstore.json --certificate-identity https://github.com/{s}/.github/workflows/release.yml@refs/heads/main --certificate-oidc-issuer {s} F\n```\n\nmacOS binaries are not yet code-signed or notarized by Apple; see RELEASING.md.\n", .{ gh.repo, gh.repo, gh.repo, oidc_issuer }) catch @panic("oom");
         writeInto(a, nd, "release-notes.md", notes.items);
         writeInto(a, nd, "pin.txt", pinText(a, gh.repo, version, pin));
         writeInto(a, nd, "verified.sha256", manifest.items);
@@ -488,7 +590,7 @@ fn verifyCmd(gh: Gh, version: []const u8, dir_path: []const u8, expect: ?[]const
     const want_state = if (std.mem.indexOfScalar(u8, version, '-') != null) "false true" else "false false";
     if (!std.mem.eql(u8, state, want_state)) die("the release {s} has (draft prerelease) = '{s}', expected '{s}'", .{ tag, state, want_state });
 
-    // The release's asset list is exactly the five files (by name, before any download).
+    // The release's asset list is exactly the ten files (by name, before any download).
     const want = wantAssets(a, version);
     {
         const listing = gh.must(&.{ "release", "view", tag, "-R", gh.repo, "--json", "assets", "--jq", ".assets[].name" });
@@ -525,7 +627,7 @@ fn verifyCmd(gh: Gh, version: []const u8, dir_path: []const u8, expect: ?[]const
         var empty_it = dir.iterate();
         if (empty_it.next() catch null) |_| die("{s} is not empty; give an empty directory", .{dir_path});
     }
-    _ = gh.must(&.{ "release", "download", tag, "-R", gh.repo, "-D", dir_path, "--pattern", "mopm-*.tar.gz", "--pattern", sums_name });
+    _ = gh.must(&.{ "release", "download", tag, "-R", gh.repo, "-D", dir_path, "--pattern", "mopm-*.tar.gz", "--pattern", sums_name, "--pattern", "*" ++ bundle_suffix });
 
     // The workflow ran for a push to main, so that is the ref the attestations name.
     const pin = checkAssets(gh, version, dir_path, .{ .ref = "refs/heads/main", .sha = tag_sha });
@@ -545,7 +647,19 @@ fn publishCmd(gh: Gh, version: []const u8, dir_path: []const u8, verified: []con
     const prerelease = std.mem.indexOfScalar(u8, version, '-') != null;
     const want = wantAssets(a, version);
 
-    // Exactly the files that were verified: the five names, each with the hash verify-dir recorded.
+    // Never publish an older release after a newer one exists: GitHub's "latest" is the newest created, and
+    // install.sh installs the latest, so users would be moved back to older code.
+    {
+        const core = version[0 .. std.mem.indexOfScalar(u8, version, '-') orelse version.len];
+        const last_dot = std.mem.lastIndexOfScalar(u8, core, '.').?;
+        const base = core[0..last_dot];
+        const mine = canonical(core[last_dot + 1 ..]) orelse die("'{s}' has no plain patch number", .{version});
+        if (highest(base, tagNames(gh, base))) |h| {
+            if (h.patch > mine) die("superseded: the release {s} exists and is newer than {s}; publishing the older one would make it the latest. Nothing was changed.", .{ h.name, tag });
+        }
+    }
+
+    // Exactly the files that were verified: the ten names, each with the hash verify-dir recorded.
     var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |err| die("cannot open {s}: {s}", .{ dir_path, @errorName(err) });
     defer dir.close();
     checkNames(a, dir, dir_path, want);
@@ -561,7 +675,7 @@ fn publishCmd(gh: Gh, version: []const u8, dir_path: []const u8, verified: []con
             for (want) |w| {
                 if (std.mem.eql(u8, w, file)) known = true;
             }
-            if (!known) die("{s} lists {s}, which is not one of the five files", .{ verified, file });
+            if (!known) die("{s} lists {s}, which is not one of the ten files", .{ verified, file });
             const got = sha256Hex(a, readAll(a, dir, file));
             if (!std.mem.eql(u8, got, line[0..64])) die("{s} is not the file that was verified: sha256 {s}, verified {s}", .{ file, got, line[0..64] });
             seen += 1;
@@ -587,7 +701,7 @@ fn publishCmd(gh: Gh, version: []const u8, dir_path: []const u8, verified: []con
             for (want) |w| {
                 if (std.mem.eql(u8, w, asset.name)) known = true;
             }
-            if (!known) die("the release {s} holds the asset {s}, which is not one of the five files; nothing was changed", .{ tag, asset.name });
+            if (!known) die("the release {s} holds the asset {s}, which is not one of the ten files; nothing was changed", .{ tag, asset.name });
         }
         if (view.value.assets.len != 0) _ = gh.must(&.{ "release", "download", tag, "-R", gh.repo, "-D", held_path, "--pattern", "*" });
         for (view.value.assets) |asset| {
@@ -603,7 +717,7 @@ fn publishCmd(gh: Gh, version: []const u8, dir_path: []const u8, verified: []con
             if (!held) missing.append(w) catch @panic("oom");
         }
         if (missing.items.len == 0) {
-            out("the release {s} exists with all five assets, identical to the verified files: nothing to do.\n", .{tag});
+            out("the release {s} exists with all ten assets, identical to the verified files: nothing to do.\n", .{tag});
             return;
         }
         var args = std.ArrayList([]const u8).init(a);
@@ -611,7 +725,7 @@ fn publishCmd(gh: Gh, version: []const u8, dir_path: []const u8, verified: []con
         for (missing.items) |m| args.append(std.fs.path.join(a, &.{ dir_path, m }) catch @panic("oom")) catch @panic("oom");
         args.appendSlice(&.{ "-R", gh.repo }) catch @panic("oom");
         _ = gh.must(args.items);
-        out("the release {s} existed with {d} of the five assets, all identical; added the {d} it lacked.\n", .{ tag, view.value.assets.len, missing.items.len });
+        out("the release {s} existed with {d} of the ten assets, all identical; added the {d} it lacked.\n", .{ tag, view.value.assets.len, missing.items.len });
         return;
     }
 
@@ -621,7 +735,7 @@ fn publishCmd(gh: Gh, version: []const u8, dir_path: []const u8, verified: []con
     args.appendSlice(&.{ "-R", gh.repo, "--verify-tag", "--title", std.fmt.allocPrint(a, "mopm {s}", .{version}) catch @panic("oom"), "--notes-file", notes }) catch @panic("oom");
     if (prerelease) args.append("--prerelease") catch @panic("oom");
     _ = gh.must(args.items);
-    out("created the release {s} with the five verified files.\n", .{tag});
+    out("created the release {s} with the ten verified files.\n", .{tag});
 }
 
 // ---- main ------------------------------------------------------------------------------
@@ -641,6 +755,8 @@ pub fn main() !void {
     var version_file: []const u8 = "VERSION";
     var verified: ?[]const u8 = null;
     var notes: ?[]const u8 = null;
+    var expect_version: ?[]const u8 = null;
+    var cosign: []const u8 = "cosign";
     var pos = std.ArrayList([]const u8).init(a);
     var i: usize = 1;
     while (i < argv.len) : (i += 1) {
@@ -651,6 +767,10 @@ pub fn main() !void {
             const v = argv[i];
             if (std.mem.eql(u8, arg, "--gh")) {
                 gh_exe = v;
+            } else if (std.mem.eql(u8, arg, "--cosign")) {
+                cosign = v;
+            } else if (std.mem.eql(u8, arg, "--expect-version")) {
+                expect_version = v;
             } else if (std.mem.eql(u8, arg, "--repo")) {
                 repo = v;
             } else if (std.mem.eql(u8, arg, "--expect-sha256")) {
@@ -673,16 +793,16 @@ pub fn main() !void {
         } else try pos.append(arg);
     }
     if (pos.items.len == 0) usage();
-    const gh = Gh{ .a = a, .exe = gh_exe, .repo = repo };
+    const gh = Gh{ .a = a, .exe = gh_exe, .repo = repo, .cosign = cosign };
     const cmd = pos.items[0];
     const n = pos.items.len;
     if (std.mem.eql(u8, cmd, "plan")) {
-        if (n != 1 or sha != null) usage();
-        return planCmd(gh, version_file, out_path);
+        if (n != 1) usage();
+        return planCmd(gh, sha, version_file, out_path);
     }
     if (std.mem.eql(u8, cmd, "tag")) {
         if (n != 1) usage();
-        return tagCmd(gh, sha orelse usage(), version_file, out_path);
+        return tagCmd(gh, sha orelse usage(), expect_version, version_file, out_path);
     }
     if (std.mem.eql(u8, cmd, "verify-dir")) {
         if (n != 3) usage();
@@ -697,4 +817,10 @@ pub fn main() !void {
         return publishCmd(gh, pos.items[1], pos.items[2], verified orelse usage(), notes orelse usage());
     }
     usage();
+}
+
+/// The version the candidate was built and tested as (plan, before the build) must be the version the tag takes.
+fn requireExpected(expect: ?[]const u8, version: []const u8) void {
+    const e = expect orelse return;
+    if (!std.mem.eql(u8, e, version)) die("the candidate was built and tested as {s}, but the next release is {s} (another release landed meanwhile); nothing was tagged", .{ e, version });
 }

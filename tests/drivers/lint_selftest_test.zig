@@ -80,6 +80,9 @@ const cases = [_]Case{
     .{ .name = "release_other_write", .lint = &.{ "packages: write is not allowed" }, .hyg = &.{} },
     .{ .name = "release_unpinned_attest", .lint = &.{ "only GitHub-owned actions pinned by full SHA" }, .hyg = &.{} },
     .{ .name = "release_calls_with_idtoken", .lint = &.{}, .hyg = &.{ "calls a workflow and grants id-token" } },
+    .{ .name = "release_cosign_pinned", .lint = &.{}, .hyg = &.{} },
+    .{ .name = "release_unpinned_cosign", .lint = &.{"only GitHub-owned actions pinned by full SHA"}, .hyg = &.{} },
+    .{ .name = "cosign_elsewhere", .lint = &.{"only GitHub-owned actions pinned by full SHA"}, .hyg = &.{} },
 };
 
 /// The values of the placeholders, built from pieces: built from pieces so this file does not trip hygiene.

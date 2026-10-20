@@ -1,29 +1,41 @@
 name: release
 
 # Releases mopm automatically: a push to main that changes more than docs or CI runs the whole test
-# suite, tags the next version, builds, attests and verifies the files, and publishes the release.
+# suite, builds the CANDIDATE, tests it as a user on every platform, tags the next version, then
+# attests, signs, verifies and publishes exactly those candidate files.
 # Nobody tags, approves or runs anything (RELEASING.md); a red stage stops the release.
 #
-#   beta     the whole of ci.yml on the pushed commit (a workflow_call of it). Gamma and bake time are
-#            a slot for later stages between beta and tag.
-#   tag      the annotated tag v<version> at the pushed commit, the only write before the build. The
-#            version is the VERSION file's MAJOR.MINOR and the next PATCH (cut_release plan, tag).
-#   build    the four binaries (release-build.yml), each reporting exactly this version.
-#   attest   SHA256SUMS for the four tarballs, and build provenance (actions/attest-build-provenance)
-#            for all five files.
-#   verify   cut_release verify-dir on the BUILT files, before anything is published: exactly the five
-#            files, SHA256SUMS matches, every attestation accepted (pinned to this workflow, the ref and
-#            the commit), the tarball layout, the tag on main. It uploads the release notes and the pin
-#            (artifact release-notes) and the verified files (verified-assets).
-#   publish  creates the GitHub release from exactly the verified files. A re-run creates no second
-#            release and replaces no asset: any asset the release already holds must match byte for byte,
-#            or it fails and changes nothing.
+#   beta       the whole of ci.yml on the pushed commit (a workflow_call of it).
+#   lint       the whole of lint.yml (hygiene, workflow lint, the release lint) on the pushed commit.
+#              Gamma and bake time are a slot for later stages between these and plan.
+#   plan       the version the release will have (cut_release plan --sha): the VERSION file's MAJOR.MINOR
+#              and the next PATCH. It refuses a commit that a newer release supersedes, and a base below
+#              an existing tag. Nothing is written.
+#   build      the four binaries (release-build.yml) at that version, each reporting exactly it. These
+#              ARE the release files: they are built once, from the commit that is tagged later, and
+#              neither rebuilt nor changed after the tests below.
+#   beta-user  the candidate tested AS A USER (release-beta-user.yml, tests/drivers/user_beta.zig) on
+#              linux x86_64, linux arm64 and macOS 14: every verb against the fake registry, then the
+#              documented install path. A red leg on any platform stops the release.
+#   tag        the annotated tag v<version> at the pushed commit, the only write before the files are
+#              published. It refuses a commit older than the highest tag (a re-run of an old run) and a
+#              version other than the one planned and tested (cut_release tag).
+#   attest     SHA256SUMS for the four tarballs, a keyless cosign signature (Sigstore) of each of the
+#              five files, and build provenance (actions/attest-build-provenance) for all five.
+#   verify     cut_release verify-dir on the built files, before anything is published: exactly the ten
+#              files, SHA256SUMS matches, every attestation and every signature accepted (pinned to this
+#              workflow, the ref and the commit), the tarball layout, the tag on main. It uploads the
+#              release notes and the pin (artifact release-notes) and the verified files (verified-assets).
+#   publish    creates the GitHub release from exactly the verified files. A re-run creates no second
+#              release and replaces no asset: any asset the release already holds must match byte for byte,
+#              or it fails and changes nothing.
 #
-# A manual run (workflow_dispatch) is a dry run: beta, then `plan`, which prints the version the next
-# release would get. Nothing is tagged or published. Writes are held to tag (contents) and publish
-# (contents), both under a push to main, and attest (id-token, attestations) by tests/drivers/release_lint.zig,
-# which also holds the order of the stages and the path filter; hygiene.zig holds the triggers.
-# install.sh (site/static/install.sh) reads these assets.
+# A manual run (workflow_dispatch) is a dry run: everything up to and including beta-user, then nothing:
+# tag, attest, verify and publish do not run. Writes are held to tag (contents) and publish (contents),
+# both under a push to main, and attest (id-token, attestations) by tests/drivers/release_lint.zig, which
+# also holds the order of the stages, the data flow between them and the path filter; hygiene.zig holds the
+# triggers. A re-run of failed jobs only rebuilds what failed and what depends on it: a changed build
+# always re-runs beta-user. install.sh (site/static/install.sh) reads these assets.
 
 on:
   push:
@@ -40,8 +52,9 @@ permissions:
   contents: read
 
 # One release run at a time, none cancelled: a cancelled run could leave a tag without its release.
+# A manual dry run has a group of its own (its run id), so it cannot displace the one pending push run.
 concurrency:
-  group: release
+  group: release-${{ github.event_name == 'push' && 'push' || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -50,13 +63,19 @@ jobs:
       contents: read
     uses: ./.github/workflows/ci.yml
 
+  lint:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/lint.yml
+
   plan:
-    needs: beta
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: [beta, lint]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -65,13 +84,30 @@ jobs:
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
       - name: Build the release tool
         run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/cut_release"
-      - name: The version the next release would get (a dry run changes nothing)
+      - name: The version this commit's release will have (changes nothing)
+        id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-        run: '"$RUNNER_TEMP/cut_release" --repo "$GITHUB_REPOSITORY" plan'
+        run: '"$RUNNER_TEMP/cut_release" --repo "$GITHUB_REPOSITORY" plan --sha "$GITHUB_SHA" --out "$GITHUB_OUTPUT"'
+
+  build:
+    needs: plan
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-build.yml
+    with:
+      version: ${{ needs.plan.outputs.version }}
+
+  beta-user:
+    needs: [plan, build]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-beta-user.yml
+    with:
+      version: ${{ needs.plan.outputs.version }}
 
   tag:
-    needs: beta
+    needs: [plan, build, beta-user]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -88,19 +124,12 @@ jobs:
       # Built before any step holds the token, so no build runs beside it.
       - name: Build the release tool
         run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/cut_release"
-      - name: Create the annotated tag of the next version at the pushed commit
+      - name: Create the annotated tag of the planned version at the pushed commit (refused if superseded)
         id: tag
         env:
           GH_TOKEN: ${{ github.token }}
-        run: '"$RUNNER_TEMP/cut_release" --repo "$GITHUB_REPOSITORY" tag --sha "$GITHUB_SHA" --out "$GITHUB_OUTPUT"'
-
-  build:
-    needs: tag
-    permissions:
-      contents: read
-    uses: ./.github/workflows/release-build.yml
-    with:
-      version: ${{ needs.tag.outputs.version }}
+          PLANNED: ${{ needs.plan.outputs.version }}
+        run: '"$RUNNER_TEMP/cut_release" --repo "$GITHUB_REPOSITORY" tag --sha "$GITHUB_SHA" --expect-version "$PLANNED" --out "$GITHUB_OUTPUT"'
 
   attest:
     needs: [tag, build]
@@ -121,10 +150,14 @@ jobs:
           merge-multiple: true
       - name: Install Zig 0.12.0 (sha256-pinned)
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      # cosign v3.0.6, checked by the action against a sha256 it carries.
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Write SHA256SUMS (exactly the four tarballs) and check it
         run: |
           zig build-exe tools/release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/release"
           "$RUNNER_TEMP/release" sums dist
+      - name: Sign the four tarballs and SHA256SUMS, keyless (Sigstore; the OIDC identity of this workflow, no key, no secret)
+        run: '"$RUNNER_TEMP/release" sign dist'
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
@@ -136,8 +169,10 @@ jobs:
           path: |
             dist/mopm-*.tar.gz
             dist/SHA256SUMS
+            dist/*.sigstore.json
           if-no-files-found: error
           retention-days: 7
+          overwrite: true
 
   verify:
     needs: [tag, build, attest]
@@ -156,9 +191,10 @@ jobs:
           path: dist
       - name: Install Zig 0.12.0 (sha256-pinned)
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Build the release tool
         run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/cut_release"
-      - name: Verify the built files (assets, SHA256SUMS, attestations, layout, tag) and write the notes and the pin
+      - name: Verify the built files (assets, SHA256SUMS, attestations, signatures, layout, tag) and write the notes and the pin
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.tag.outputs.version }}
@@ -170,6 +206,7 @@ jobs:
           path: notes/
           if-no-files-found: error
           retention-days: 7
+          overwrite: true
       # The files publish releases: the ones just verified.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -177,6 +214,7 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 7
+          overwrite: true
 
   publish:
     needs: [tag, verify]

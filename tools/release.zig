@@ -19,6 +19,11 @@
 //!       Checks <dir>/SHA256SUMS: exactly those four tarballs, each with the hash listed.
 //!   release tarball <parent> <name> <out.tar.gz>
 //!       Packs the files of <parent>/<name>/ as <name>/<file> (ustar, then gzip).
+//!   release sign <dir> [--cosign <path>]
+//!       After `sums`: signs the four tarballs and SHA256SUMS with keyless `cosign sign-blob` (Sigstore;
+//!       the signing identity is the workflow's OIDC token, no key and no secret exists), writing
+//!       <file>.sigstore.json beside each, and refuses unless all five bundles exist and are not empty.
+//!       Runs only in the attest job of release.yml, the one job that holds id-token.
 //!
 //! Nothing here uploads anything.
 
@@ -33,7 +38,7 @@ fn die(comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 fn usage() noreturn {
-    die("usage: release package <version> <target> <zig-target> <outdir> [--run-prefix \"<words>\"] | sums <dir> | check <dir> | tarball <parent> <name> <out.tar.gz>", .{});
+    die("usage: release package <version> <target> <zig-target> <outdir> [--run-prefix \"<words>\"] | sums <dir> | check <dir> | tarball <parent> <name> <out.tar.gz> | sign <dir> [--cosign <path>]", .{});
 }
 
 pub fn main() !void {
@@ -55,6 +60,11 @@ pub fn main() !void {
     if (std.mem.eql(u8, cmd, "tarball")) {
         if (rest.len != 3) usage();
         return makeTarGz(a, rest[0], rest[1], rest[2]);
+    }
+    if (std.mem.eql(u8, cmd, "sign")) {
+        if (rest.len == 1) return sign(a, rest[0], "cosign");
+        if (rest.len == 3 and std.mem.eql(u8, rest[1], "--cosign")) return sign(a, rest[0], rest[2]);
+        usage();
     }
     usage();
 }
@@ -275,4 +285,24 @@ fn check(a: Allocator, dir_path: []const u8) !void {
     }
     if (listed != names.len) die("SHA256SUMS lists {d} files, expected {d}", .{ listed, names.len });
     std.debug.print("SHA256SUMS ok: {d} tarballs\n", .{listed});
+}
+
+// ---- sign: keyless cosign signatures --------------------------------------------------------
+
+/// `cosign sign-blob --yes --bundle <file>.sigstore.json <file>` for the four tarballs and SHA256SUMS.
+fn sign(a: Allocator, dir_path: []const u8, cosign: []const u8) !void {
+    const names = try fourTarballs(a, dir_path);
+    var files = std.ArrayList([]const u8).init(a);
+    try files.appendSlice(names);
+    try files.append("SHA256SUMS");
+    for (files.items) |n| {
+        const file = try std.fs.path.join(a, &.{ dir_path, n });
+        const bundle = try std.fmt.allocPrint(a, "{s}.sigstore.json", .{file});
+        var child = std.process.Child.init(&.{ cosign, "sign-blob", "--yes", "--bundle", bundle, file }, a);
+        const term = child.spawnAndWait() catch |err| die("could not run {s}: {s}", .{ cosign, @errorName(err) });
+        if (term != .Exited or term.Exited != 0) die("cosign sign-blob failed for {s}", .{n});
+        const st = std.fs.cwd().statFile(bundle) catch die("cosign wrote no bundle for {s}", .{n});
+        if (st.size == 0) die("the bundle of {s} is empty", .{n});
+    }
+    std.debug.print("signed {d} files\n", .{files.items.len});
 }

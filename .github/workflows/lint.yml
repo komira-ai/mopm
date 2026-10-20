@@ -12,11 +12,14 @@ on:
   push:
     branches: [main]
 
+  # release.yml runs this workflow again on the pushed commit as its `lint` stage (the release lint included).
+  workflow_call:
+
 permissions:
   contents: read
 
 concurrency:
-  group: lint-${{ github.event.pull_request.number || github.sha }}
+  group: lint-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

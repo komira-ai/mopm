@@ -1,22 +1,30 @@
 //! What .github/workflows/release.yml must keep: the release pipeline's scopes and gates as lint rules.
 //! `problems` reads the workflow and reports each way it differs; the real file must report none
 //! (workflow_lint.zig runs it over release.yml, //:workflows), and release_lint_test.zig plants each
-//! defect on it and requires the matching message.
+//! defect on it and requires the matching message. `userBetaProblems` does the same for
+//! release-beta-user.yml, the matrix of the user-level beta.
 //!
 //! The pipeline (RELEASING.md): a push to main that changes more than docs or CI runs `beta` (the
-//! whole of ci.yml), then `tag` (the annotated tag v<version>, the one write before the build), `build`
-//! (four targets), `attest` (SHA256SUMS and build provenance), `verify` (the checks of the built
-//! files) and `publish` (the release, from exactly the verified files). A manual run does `beta` and
-//! `plan` only, and publishes nothing.
+//! whole of ci.yml) and `lint` (the whole of lint.yml), then `plan` (the version), `build` (the
+//! candidate: four targets, at that version), `beta-user` (the candidate tested as a user on every
+//! platform), `tag` (the annotated tag v<version>, the one write before the files are published),
+//! `attest` (SHA256SUMS, cosign signatures and build provenance), `verify` (the checks of the built
+//! files) and `publish` (the release, from exactly the verified files). A manual run does everything
+//! up to `beta-user` and publishes nothing.
 //!
 //! - **Who may write.** `contents: write` only in `tag` and `publish`, each under the exact
 //!   push-to-main `if:`; `id-token: write` and `attestations: write` only in `attest`. No other job holds
 //!   any write scope, and no job may set `permissions` to a bare string such as write-all.
-//! - **The order.** `tag` needs `beta`, `build` needs `tag`, `attest` needs `build`, `verify` needs
+//! - **The order.** `plan` needs `beta` and `lint`, `build` needs `plan`, `beta-user` needs `build`, `tag`
+//!   needs `beta-user` (so a red platform leg stops the release), `attest` needs `build`, `verify` needs
 //!   `build` and `attest`, `publish` needs `verify` and `tag`: a red stage stops everything after it.
-//!   No job may set `continue-on-error`, and only `tag`, `publish` and `plan` have an `if:`.
+//!   No job may set `continue-on-error`, and only `tag` and `publish` have an `if:`.
+//! - **The data flow.** `build` and `beta-user` take the planned version (`needs.plan.outputs.version`),
+//!   `tag` is told it (`--expect-version`) and the commit (`--sha "$GITHUB_SHA"`), `verify` and `publish`
+//!   use `needs.tag.outputs.version`, and `publish` releases the artifacts `verified-assets` and
+//!   `release-notes` and nothing else.
 //! - **The triggers.** A push to main, with the `paths-ignore` below, and `workflow_dispatch`; one run
-//!   at a time (`concurrency` group `release`, never cancelled).
+//!   at a time per group: all pushes share one, a manual run has its own (never cancelled).
 //! - **The path filter.** A push that changes only docs or CI does not release. The filter is checked
 //!   by matching sample paths against it as GitHub does: sources, the VERSION file, the build and the
 //!   tools release; docs and workflows skip.
@@ -30,12 +38,21 @@ const Out = c.Out;
 pub const prefix = "release-lint: ";
 
 /// The jobs, in the order they run.
-pub const jobs = [_][]const u8{ "beta", "plan", "tag", "build", "attest", "verify", "publish" };
+pub const jobs = [_][]const u8{ "beta", "lint", "plan", "build", "beta-user", "tag", "attest", "verify", "publish" };
+
+/// The `concurrency` group: every push shares one, a manual dry run has a group of its own (its run id),
+/// so a dry run cannot displace the one pending push release.
+pub const concurrency_group = "release-${{ github.event_name == 'push' && 'push' || github.run_id }}";
+
+/// The platforms of the user-level beta: (target, runner). Every one is required.
+pub const user_legs = [_][2][]const u8{
+    .{ "linux-x86_64", "ubuntu-24.04" },
+    .{ "linux-aarch64", "ubuntu-24.04-arm" },
+    .{ "macos-arm64", "macos-14" },
+};
 
 /// The `if:` of `tag` and `publish`: a push to main, never a manual run.
 pub const push_to_main = "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}";
-/// The `if:` of `plan`: a manual run only.
-pub const manual_run = "${{ github.event_name == 'workflow_dispatch' }}";
 
 /// The `(job, scope)` pairs that may be `write`.
 pub const writers = [_][2][]const u8{
@@ -47,9 +64,10 @@ pub const writers = [_][2][]const u8{
 
 /// What each job must (directly) need.
 const needs = [_]struct { job: []const u8, needs: []const []const u8 }{
-    .{ .job = "plan", .needs = &.{"beta"} },
-    .{ .job = "tag", .needs = &.{"beta"} },
-    .{ .job = "build", .needs = &.{"tag"} },
+    .{ .job = "plan", .needs = &.{ "beta", "lint" } },
+    .{ .job = "build", .needs = &.{"plan"} },
+    .{ .job = "beta-user", .needs = &.{ "plan", "build" } },
+    .{ .job = "tag", .needs = &.{ "plan", "build", "beta-user" } },
     .{ .job = "attest", .needs = &.{ "tag", "build" } },
     .{ .job = "verify", .needs = &.{ "tag", "build", "attest" } },
     .{ .job = "publish", .needs = &.{ "tag", "verify" } },
@@ -174,8 +192,8 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
 
     // One run at a time, none cancelled: a cancelled run could leave a tag without its release.
     const conc = c.get(doc, "concurrency");
-    if (!c.isStr(c.get(conc, "group"), "release") or c.truthy(c.get(conc, "cancel-in-progress"))) {
-        try c.problem(a, out, prefix ++ "release.yml: concurrency must be group `release` with cancel-in-progress false", .{});
+    if (!c.isStr(c.get(conc, "group"), concurrency_group) or c.truthy(c.get(conc, "cancel-in-progress"))) {
+        try c.problem(a, out, prefix ++ "release.yml: concurrency must be group `{s}` with cancel-in-progress false", .{concurrency_group});
     }
 
     // The jobs.
@@ -216,12 +234,8 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
             if (!try ifIs(a, job, push_to_main)) {
                 try c.problem(a, out, prefix ++ "release.yml: {s} must run only under if: {s} (a push to main, never a manual run), got {s}", .{ name, push_to_main, try c.inspect(a, c.get(job, "if")) });
             }
-        } else if (std.mem.eql(u8, name, "plan")) {
-            if (!try ifIs(a, job, manual_run)) {
-                try c.problem(a, out, prefix ++ "release.yml: plan must run only under if: {s}, got {s}", .{ manual_run, try c.inspect(a, c.get(job, "if")) });
-            }
         } else if (!try ifIs(a, job, null)) {
-            try c.problem(a, out, prefix ++ "release.yml: {s} must not have an if: (only tag, publish and plan do)", .{name});
+            try c.problem(a, out, prefix ++ "release.yml: {s} must not have an if: (only tag and publish do)", .{name});
         }
         if (job == .object and job.object.contains("continue-on-error")) {
             try c.problem(a, out, prefix ++ "release.yml: {s} must not set continue-on-error: a red stage stops the release", .{name});
@@ -241,11 +255,160 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
             }
         }
     }
-    // beta is the whole of ci.yml, and build the reusable build.
-    if (c.get(jv, "beta")) |beta| {
-        if (!c.isStr(c.get(beta, "uses"), "./.github/workflows/ci.yml")) try c.problem(a, out, prefix ++ "release.yml: beta must call ./.github/workflows/ci.yml", .{});
+    // Each stage that calls another workflow calls the right one.
+    const calls = [_][2][]const u8{
+        .{ "beta", "./.github/workflows/ci.yml" },
+        .{ "lint", "./.github/workflows/lint.yml" },
+        .{ "build", "./.github/workflows/release-build.yml" },
+        .{ "beta-user", "./.github/workflows/release-beta-user.yml" },
+    };
+    for (calls) |cl| {
+        const job = c.get(jv, cl[0]) orelse continue;
+        if (!c.isStr(c.get(job, "uses"), cl[1])) try c.problem(a, out, prefix ++ "release.yml: {s} must call {s}", .{ cl[0], cl[1] });
     }
-    if (c.get(jv, "build")) |build| {
-        if (!c.isStr(c.get(build, "uses"), "./.github/workflows/release-build.yml")) try c.problem(a, out, prefix ++ "release.yml: build must call ./.github/workflows/release-build.yml", .{});
+
+    // The data flow: the planned version is what is built and user-tested; the candidate is tagged
+    // (told the version and the commit) and then released as the tag's version.
+    const planned = "${{ needs.plan.outputs.version }}";
+    for ([_][]const u8{ "build", "beta-user" }) |name| {
+        const job = c.get(jv, name) orelse continue;
+        if (!c.isStr(c.get(c.get(job, "with"), "version"), planned)) {
+            try c.problem(a, out, prefix ++ "release.yml: {s} must be given version: {s} (the candidate has the planned version), got {s}", .{ name, planned, try c.inspect(a, c.get(c.get(job, "with"), "version")) });
+        }
+    }
+    if (c.get(jv, "plan")) |plan| {
+        if (!c.isStr(c.get(c.get(plan, "outputs"), "version"), "${{ steps.plan.outputs.version }}")) {
+            try c.problem(a, out, prefix ++ "release.yml: plan must output version: ${{{{ steps.plan.outputs.version }}}}", .{});
+        }
+    }
+    if (c.get(jv, "tag")) |tag| {
+        const run = stepRunContaining(tag, "--expect-version") orelse stepRunContaining(tag, " tag --sha") orelse "";
+        if (std.mem.indexOf(u8, run, " tag --sha \"$GITHUB_SHA\"") == null) try c.problem(a, out, prefix ++ "release.yml: tag must tag the pushed commit: `tag --sha \"$GITHUB_SHA\"`", .{});
+        if (std.mem.indexOf(u8, run, "--expect-version \"$PLANNED\"") == null) try c.problem(a, out, prefix ++ "release.yml: tag must pass --expect-version \"$PLANNED\" (the version that was built and tested)", .{});
+        if (!envIs(tag, "PLANNED", planned)) try c.problem(a, out, prefix ++ "release.yml: tag must set PLANNED to {s}", .{planned});
+        if (!c.isStr(c.get(c.get(tag, "outputs"), "version"), "${{ steps.tag.outputs.version }}")) try c.problem(a, out, prefix ++ "release.yml: tag must output version: ${{{{ steps.tag.outputs.version }}}}", .{});
+    }
+    const tag_version = "${{ needs.tag.outputs.version }}";
+    for ([_][]const u8{ "verify", "publish" }) |name| {
+        const job = c.get(jv, name) orelse continue;
+        if (!envIs(job, "VERSION", tag_version)) try c.problem(a, out, prefix ++ "release.yml: {s} must set VERSION to {s}", .{ name, tag_version });
+    }
+    if (c.get(jv, "publish")) |publish| {
+        const got = try downloaded(a, publish);
+        if (!c.eqlList(got, &.{ "verified-assets", "release-notes" })) {
+            try c.problem(a, out, prefix ++ "release.yml: publish must download exactly the artifacts verified-assets and release-notes, got {s}", .{try c.inspectList(a, got)});
+        }
+    }
+    if (c.get(jv, "verify")) |verify| {
+        const got = try downloaded(a, verify);
+        if (!c.eqlList(got, &.{"release-assets"})) try c.problem(a, out, prefix ++ "release.yml: verify must download exactly the artifact release-assets, got {s}", .{try c.inspectList(a, got)});
+        if (stepRunContaining(verify, "verify-dir") == null) try c.problem(a, out, prefix ++ "release.yml: verify must run cut_release verify-dir", .{});
+        if (!usesAction(verify, "sigstore/cosign-installer@")) try c.problem(a, out, prefix ++ "release.yml: verify needs cosign (sigstore/cosign-installer) to check the signatures", .{});
+    }
+    if (c.get(jv, "attest")) |attest| {
+        if (stepRunContaining(attest, "release\" sign dist") == null) try c.problem(a, out, prefix ++ "release.yml: attest must sign the files (`release sign dist`)", .{});
+        if (!usesAction(attest, "sigstore/cosign-installer@")) try c.problem(a, out, prefix ++ "release.yml: attest needs cosign (sigstore/cosign-installer) to sign", .{});
+    }
+}
+
+/// The `run:` of the first step of `job` that contains `needle`.
+fn stepRunContaining(job: Value, needle: []const u8) ?[]const u8 {
+    const steps = c.get(job, "steps") orelse return null;
+    if (steps != .array) return null;
+    for (steps.array.items) |st| {
+        const run = c.str(c.get(st, "run")) orelse continue;
+        if (std.mem.indexOf(u8, run, needle) != null) return run;
+    }
+    return null;
+}
+
+/// Does some step of `job` use an action starting with `prefix_text`?
+fn usesAction(job: Value, prefix_text: []const u8) bool {
+    const steps = c.get(job, "steps") orelse return false;
+    if (steps != .array) return false;
+    for (steps.array.items) |st| {
+        const u = c.str(c.get(st, "uses")) orelse continue;
+        if (std.mem.startsWith(u8, u, prefix_text)) return true;
+    }
+    return false;
+}
+
+/// Some step of `job` sets `env.<name>` to `value`.
+fn envIs(job: Value, name: []const u8, value: []const u8) bool {
+    const steps = c.get(job, "steps") orelse return false;
+    if (steps != .array) return false;
+    for (steps.array.items) |st| {
+        if (c.isStr(c.get(c.get(st, "env"), name), value)) return true;
+    }
+    return false;
+}
+
+/// The `name:` of every actions/download-artifact step of `job`, in order.
+fn downloaded(a: Allocator, job: Value) ![]const []const u8 {
+    var out = std.ArrayList([]const u8).init(a);
+    const steps = c.get(job, "steps") orelse return out.items;
+    if (steps != .array) return out.items;
+    for (steps.array.items) |st| {
+        const u = c.str(c.get(st, "uses")) orelse continue;
+        if (!std.mem.startsWith(u8, u, "actions/download-artifact@")) continue;
+        try out.append(c.str(c.get(c.get(st, "with"), "name")) orelse "(a pattern, not a name)");
+    }
+    return out.items;
+}
+
+/// What differs between release-beta-user.yml and its rules, one line each: the matrix holds exactly
+/// the three platforms and none can be skipped, optional or allowed to fail, the candidate comes from
+/// the build's artifact, and the walk is the driver run with the version.
+pub fn userBetaProblems(a: Allocator, text: []const u8, out: *Out) !void {
+    const f = "release-beta-user.yml: ";
+    const doc = c.load(a, text) catch |err| return c.problem(a, out, prefix ++ f ++ "not readable as YAML: {s}", .{@errorName(err)});
+    const on = try c.onKeys(a, doc);
+    if (!c.eqlList(on, &.{"workflow_call"})) try c.problem(a, out, prefix ++ f ++ "runs on {s}, not exactly workflow_call", .{try c.inspectList(a, on)});
+    const jv = c.get(doc, "jobs");
+    const names = c.keys(jv);
+    if (!c.eqlList(names, &.{"user"})) {
+        try c.problem(a, out, prefix ++ f ++ "jobs are {s}, expected exactly user", .{try c.inspectList(a, names)});
+        return;
+    }
+    const job = c.get(jv, "user").?;
+    for ([_][]const u8{ "if", "continue-on-error", "environment" }) |k| {
+        if (job == .object and job.object.contains(k)) try c.problem(a, out, prefix ++ f ++ "user must not set {s}: every platform leg is required", .{k});
+    }
+    const matrix = c.get(c.get(job, "strategy"), "matrix");
+    for (c.keys(matrix)) |k| {
+        if (!std.mem.eql(u8, k, "include")) try c.problem(a, out, prefix ++ f ++ "the matrix has the key {s}; only include (the three legs) is allowed, so no leg can be excluded or added", .{k});
+    }
+    const include = c.get(matrix, "include");
+    const items: []const Value = if (include != null and include.? == .array) include.?.array.items else &.{};
+    if (items.len != user_legs.len) try c.problem(a, out, prefix ++ f ++ "the matrix has {d} legs, expected exactly {d}", .{ items.len, user_legs.len });
+    for (user_legs) |leg| {
+        var found = false;
+        for (items) |it| {
+            if (c.isStr(c.get(it, "target"), leg[0]) and c.isStr(c.get(it, "os"), leg[1])) found = true;
+        }
+        if (!found) try c.problem(a, out, prefix ++ f ++ "the matrix lacks the leg {s} on {s}", .{ leg[0], leg[1] });
+    }
+    if (!c.isStr(c.get(job, "runs-on"), "${{ matrix.os }}")) try c.problem(a, out, prefix ++ f ++ "user must run on ${{{{ matrix.os }}}}", .{});
+
+    const steps = c.get(job, "steps");
+    if (steps == null or steps.? != .array) return c.problem(a, out, prefix ++ f ++ "user has no steps", .{});
+    for (steps.?.array.items, 0..) |st, i| {
+        for ([_][]const u8{ "if", "continue-on-error" }) |k| {
+            if (st == .object and st.object.contains(k)) try c.problem(a, out, prefix ++ f ++ "step {d} must not set {s}: no step of a leg may be skipped or allowed to fail", .{ i, k });
+        }
+    }
+    // The candidate is the build's artifact for this leg, not a rebuild.
+    const got = try downloaded(a, job);
+    if (!c.eqlList(got, &.{"release-${{ matrix.target }}"})) try c.problem(a, out, prefix ++ f ++ "user must download exactly the build's artifact release-${{{{ matrix.target }}}}, got {s}", .{try c.inspectList(a, got)});
+    const walk = stepRunContaining(job, "user_beta\" ") orelse "";
+    if (walk.len == 0) try c.problem(a, out, prefix ++ f ++ "user must run the walk (tests/drivers/user_beta.zig)", .{});
+    for ([_][]const u8{ "--version \"$VERSION\"", "--tarball ", "--install-sh site/static/install.sh", "--fake-registry ", "--mojo-env " }) |need| {
+        if (walk.len != 0 and std.mem.indexOf(u8, walk, need) == null) try c.problem(a, out, prefix ++ f ++ "the walk must be given {s}", .{need});
+    }
+    if (stepRunContaining(job, "zig build-exe tests/drivers/user_beta.zig") == null) try c.problem(a, out, prefix ++ f ++ "user must build tests/drivers/user_beta.zig", .{});
+    if (c.get(job, "permissions")) |p| {
+        if (p == .object) {
+            for (p.object.values()) |v| if (!c.isStr(v, "read")) try c.problem(a, out, prefix ++ f ++ "user holds a permission other than read", .{});
+        } else try c.problem(a, out, prefix ++ f ++ "permissions must be a read-only mapping", .{});
     }
 }
