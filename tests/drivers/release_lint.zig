@@ -7,21 +7,23 @@
 //! The pipeline (RELEASING.md): a push to main that changes more than docs or CI runs `beta` (the
 //! whole of ci.yml) and `lint` (the whole of lint.yml), then `plan` (the version), `build` (the
 //! candidate: four targets, at that version), `beta-user` (the candidate tested as a user on every
-//! platform), `tag` (the annotated tag v<version>, the one write before the files are published),
-//! `attest` (SHA256SUMS, cosign signatures and build provenance), `verify` (the checks of the built
-//! files) and `publish` (the release, from exactly the verified files). A manual run does everything
-//! up to `beta-user` and publishes nothing.
+//! platform), `attest` (SHA256SUMS, cosign signatures and build provenance), `verify` (the checks of the
+//! built files, read-only), `tag` (the annotated tag v<version>, the one write before the release) and
+//! `publish` (the release, from exactly the verified files). The tag comes AFTER verify, so a failing
+//! attest, signature or verify leaves no orphan tag. A manual run does everything up to `verify` and
+//! tags and publishes nothing.
 //!
 //! - **Who may write.** `contents: write` only in `tag` and `publish`, each under the exact
 //!   push-to-main `if:`; `id-token: write` and `attestations: write` only in `attest`. No other job holds
 //!   any write scope, and no job may set `permissions` to a bare string such as write-all.
-//! - **The order.** `plan` needs `beta` and `lint`, `build` needs `plan`, `beta-user` needs `build`, `tag`
-//!   needs `beta-user` (so a red platform leg stops the release), `attest` needs `build`, `verify` needs
-//!   `build` and `attest`, `publish` needs `verify` and `tag`: a red stage stops everything after it.
+//! - **The order.** `plan` needs `beta` and `lint`, `build` needs `plan`, `beta-user` needs `build`, `attest`
+//!   needs `beta-user` (so a red platform leg stops the release before anything is signed), `verify` needs
+//!   `build` and `attest`, `tag` needs `beta-user` and `verify` (no tag without verified files), `publish`
+//!   needs `verify` and `tag`: a red stage stops everything after it.
 //!   No job may set `continue-on-error`, and only `tag` and `publish` have an `if:`.
 //! - **The data flow.** `build` and `beta-user` take the planned version (`needs.plan.outputs.version`),
-//!   `tag` is told it (`--expect-version`) and the commit (`--sha "$GITHUB_SHA"`), `verify` and `publish`
-//!   use `needs.tag.outputs.version`, and `publish` releases the artifacts `verified-assets` and
+//!   `tag` is told it (`--expect-version`) and the commit (`--sha "$GITHUB_SHA"`), `verify` checks the
+//!   planned version (the tag does not exist yet), `publish` uses `needs.tag.outputs.version`, and `publish` releases the artifacts `verified-assets` and
 //!   `release-notes` and nothing else.
 //! - **The triggers.** A push to main, with the `paths-ignore` below, and `workflow_dispatch`; one run
 //!   at a time per group: all pushes share one, a manual run has its own (never cancelled).
@@ -38,7 +40,7 @@ const Out = c.Out;
 pub const prefix = "release-lint: ";
 
 /// The jobs, in the order they run.
-pub const jobs = [_][]const u8{ "beta", "lint", "plan", "build", "beta-user", "tag", "attest", "verify", "publish" };
+pub const jobs = [_][]const u8{ "beta", "lint", "plan", "build", "beta-user", "attest", "verify", "tag", "publish" };
 
 /// The `concurrency` group: every push shares one, a manual dry run has a group of its own (its run id),
 /// so a dry run cannot displace the one pending push release.
@@ -72,9 +74,9 @@ const needs = [_]struct { job: []const u8, needs: []const []const u8 }{
     .{ .job = "plan", .needs = &.{ "beta", "lint" } },
     .{ .job = "build", .needs = &.{"plan"} },
     .{ .job = "beta-user", .needs = &.{ "plan", "build" } },
-    .{ .job = "tag", .needs = &.{ "plan", "build", "beta-user" } },
-    .{ .job = "attest", .needs = &.{ "tag", "build" } },
-    .{ .job = "verify", .needs = &.{ "tag", "build", "attest" } },
+    .{ .job = "attest", .needs = &.{ "plan", "build", "beta-user" } },
+    .{ .job = "verify", .needs = &.{ "plan", "build", "attest" } },
+    .{ .job = "tag", .needs = &.{ "plan", "build", "beta-user", "verify" } },
     .{ .job = "publish", .needs = &.{ "tag", "verify" } },
 };
 
@@ -294,9 +296,12 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
         if (!c.isStr(c.get(c.get(tag, "outputs"), "version"), "${{ steps.tag.outputs.version }}")) try c.problem(a, out, prefix ++ "release.yml: tag must output version: ${{{{ steps.tag.outputs.version }}}}", .{});
     }
     const tag_version = "${{ needs.tag.outputs.version }}";
-    for ([_][]const u8{ "verify", "publish" }) |name| {
-        const job = c.get(jv, name) orelse continue;
-        if (!envIs(job, "VERSION", tag_version)) try c.problem(a, out, prefix ++ "release.yml: {s} must set VERSION to {s}", .{ name, tag_version });
+    // verify runs before the tag exists, so it checks the planned version; publish releases the tag's.
+    if (c.get(jv, "verify")) |job| {
+        if (!envIs(job, "VERSION", planned)) try c.problem(a, out, prefix ++ "release.yml: verify must set VERSION to {s} (it runs before the tag exists)", .{planned});
+    }
+    if (c.get(jv, "publish")) |job| {
+        if (!envIs(job, "VERSION", tag_version)) try c.problem(a, out, prefix ++ "release.yml: publish must set VERSION to {s}", .{tag_version});
     }
     if (c.get(jv, "publish")) |publish| {
         const got = try downloaded(a, publish);

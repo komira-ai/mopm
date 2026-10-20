@@ -4,8 +4,9 @@
 //!
 //! What the rules protect: only `tag` and `publish` may write `contents`, both under the exact
 //! push-to-main `if:`, so a manual run cannot tag or publish; only `attest` may write the attestation
-//! scopes; `tag` needs `beta-user`, which needs `build`, so a red platform leg of the user-level beta stops
-//! the release before anything is tagged; `publish` needs `verify`, `verify` needs `build`; the version
+//! scopes; `attest` needs `beta-user`, which needs `build`, so a red platform leg of the user-level beta stops
+//! the release before anything is signed, and `tag` needs `verify`, so a failing attest, signature or verify
+//! leaves no orphan tag; `publish` needs `verify`, `verify` needs `build`; the version
 //! that is built and tested is the version that is tagged and released; `publish` releases the verified
 //! files and nothing else; every platform leg of the user beta is required; and the path filter skips
 //! docs and CI only.
@@ -76,18 +77,19 @@ fn userMutant(name: []const u8, from: []const u8, to: []const u8, needle: []cons
 }
 
 const push_main = "if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}";
-const tag_head = "  tag:\n    needs: [plan, build, beta-user]\n    ";
+const tag_head = "  tag:\n    needs: [plan, build, beta-user, verify]\n    ";
 
 test "mutant: publish does not need verify" {
     try mutant("publish without verify", "  publish:\n    needs: [tag, verify]", "  publish:\n    needs: [tag]", "publish must need verify");
 }
 
 test "mutant: verify does not need build" {
-    try mutant("verify without build", "    needs: [tag, build, attest]\n    runs-on: ubuntu-24.04\n    timeout-minutes: 15\n    permissions:\n      contents: read\n      attestations: read", "    needs: [tag, attest]\n    runs-on: ubuntu-24.04\n    timeout-minutes: 15\n    permissions:\n      contents: read\n      attestations: read", "verify must need build");
+    try mutant("verify without build", "    needs: [plan, build, attest]\n    runs-on: ubuntu-24.04\n    timeout-minutes: 15\n    permissions:\n      contents: read\n      attestations: read", "    needs: [plan, attest]\n    runs-on: ubuntu-24.04\n    timeout-minutes: 15\n    permissions:\n      contents: read\n      attestations: read", "verify must need build");
 }
 
 test "mutant: tag does not need the user-level beta, or the plan" {
     try mutant("tag without beta-user", tag_head, "  tag:\n    needs: [plan, build]\n    ", "tag must need beta-user");
+    try mutant("tag without verify (an orphan tag when attest, sign or verify fails)", tag_head, "  tag:\n    needs: [plan, build, beta-user]\n    ", "tag must need verify");
     try mutant("tag without plan", tag_head, "  tag:\n    needs: [build, beta-user]\n    ", "tag must need plan");
     try mutant("tag without any need", tag_head, "  tag:\n    needs: []\n    ", "tag must need beta-user");
 }
@@ -109,8 +111,8 @@ test "mutant: contents: write in verify" {
 }
 
 test "mutant: tag runs on a manual run" {
-    try mutant("tag on dispatch", tag_head ++ push_main, "  tag:\n    needs: [plan, build, beta-user]\n    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}", "tag must run only under if");
-    try mutant("tag with no if", tag_head ++ push_main ++ "\n", "  tag:\n    needs: [plan, build, beta-user]\n", "tag must run only under if");
+    try mutant("tag on dispatch", tag_head ++ push_main, "  tag:\n    needs: [plan, build, beta-user, verify]\n    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}", "tag must run only under if");
+    try mutant("tag with no if", tag_head ++ push_main ++ "\n", "  tag:\n    needs: [plan, build, beta-user, verify]\n", "tag must run only under if");
 }
 
 test "mutant: publish runs on a manual run, or has no if" {
@@ -141,7 +143,8 @@ test "mutant: a bare write-all, a continue-on-error, an if where none belongs" {
 
 test "mutant: the order of the stages" {
     try mutant("build without plan", "  build:\n    needs: plan", "  build:\n    needs: beta", "build must need plan");
-    try mutant("attest without build", "  attest:\n    needs: [tag, build]", "  attest:\n    needs: [tag]", "attest must need build");
+    try mutant("attest without build", "  attest:\n    needs: [plan, build, beta-user]", "  attest:\n    needs: [plan, beta-user]", "attest must need build");
+    try mutant("attest without beta-user (it would sign untested files)", "  attest:\n    needs: [plan, build, beta-user]", "  attest:\n    needs: [plan, build]", "attest must need beta-user");
 }
 
 test "mutant: the data flow (the tested version is the tagged and released version)" {
@@ -151,7 +154,7 @@ test "mutant: the data flow (the tested version is the tagged and released versi
     try mutant("tag not told the planned version", " --expect-version \"$PLANNED\"", "", "tag must pass --expect-version");
     try mutant("tag at another commit", " tag --sha \"$GITHUB_SHA\"", " tag --sha \"$GITHUB_REF\"", "tag must tag the pushed commit");
     try mutant("tag planned from another job", "          PLANNED: ${{ needs.plan.outputs.version }}", "          PLANNED: 0.0.1", "tag must set PLANNED");
-    try mutant("verify with another version", "          VERSION: ${{ needs.tag.outputs.version }}\n        run: '\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" verify-dir", "          VERSION: ${{ needs.plan.outputs.version }}\n        run: '\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" verify-dir", "verify must set VERSION");
+    try mutant("verify with another version", "          VERSION: ${{ needs.plan.outputs.version }}\n        run: '\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" verify-dir", "          VERSION: ${{ needs.tag.outputs.version }}\n        run: '\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" verify-dir", "verify must set VERSION");
     try mutant("plan outputs nothing", "      version: ${{ steps.plan.outputs.version }}", "      other: ${{ steps.plan.outputs.version }}", "plan must output version");
 }
 
