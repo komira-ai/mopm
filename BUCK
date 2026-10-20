@@ -17,6 +17,7 @@
 
 load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_module", "zig_test")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//ci:workflow_lint.bzl", "actionlint_check")
 load("//:buildrules.bzl", "cargo_workspace")
 
 # The Rust workspace (Cargo.toml): `:check` (is the generated table what Cargo.toml / Cargo.lock / rust-toolchain.toml say),
@@ -636,5 +637,24 @@ zig_test(  # buck-only: registry/fake/errors.zig is what gen_errors makes of the
     src = "tests/drivers/gen_errors_test.zig",
     imports = ["tests/drivers/errors_gen.zig", "tests/drivers/harness.zig", "tests/drivers/yaml.zig"],
     data = ["spec/api/openapi.yaml", "registry/fake/errors.zig"],
+    **_TOOLS
+)
+
+# ---- actionlint: a strict parse and check of every workflow ---------------------------------
+
+# The Zig lints above read workflows with a small YAML reader that is lenient: an unquoted `name: ... (contents write: the tag)`
+# parsed as a name, reached a push, and GitHub refused the workflow (startup_failure). actionlint is a real YAML parser plus the
+# workflow schema, expressions and contexts. This is buildrules' own rule over its pinned actionlint (1.7.12), a build action
+# with no network and no host tool; lint.yml runs the same binary, installed by tools/install_actionlint.zig.
+actionlint_check(  # buck-only: the pinned actionlint over every workflow file
+    name = "actionlint",
+    exec_compatible_with = LINUX_X86_64,
+    actionlint = "buildrules//rules/pins:actionlint_linux_amd64.tar.gz",
+    workflows = glob([".github/workflows/*.yml", ".github/workflows/*.yaml"]),
+)
+
+zig_exe(  # buck-only: installs the pinned actionlint for lint.yml (sha256-checked download)
+    name = "install-actionlint",
+    src = "tools/install_actionlint.zig",
     **_TOOLS
 )
