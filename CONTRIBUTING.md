@@ -30,9 +30,9 @@ Two builds describe the same program, and both stay.
   The Zig drivers in `tests/drivers` run the built programs: `//:golden` (the
   golden files; it replaced `tests/run_golden.sh`), `//:registry_login` and
   `//:registry_publish` (the checks of `tests/registry_e2e/*.py`), and the
-  contract checks: `//:contract` (`tests/contract/validate.py`: the OpenAPI
+  contract checks: `//:contract` (the OpenAPI
   document, the JSON Schemas, the API cases and the examples),
-  `//:contract_replay` (`replay.py`: the fake registry against the API
+  `//:contract_replay` (the fake registry against the API
   cases), `//:lock_golden` (the lock goldens; it replaced `tests/resolve/check_golden.py`) and
   `//:resolve_e2e` (it replaced `tests/resolve_e2e/run.py`). The JSON Schema and YAML
   readers they use are in `tests/drivers` and implement only what the specs

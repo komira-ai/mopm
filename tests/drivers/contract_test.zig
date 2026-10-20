@@ -1,6 +1,6 @@
-//! The contract checks of tests/contract/validate.py, in Zig, for the build
-//! farm, which has no Python. tests/contract/validate.py stays for ci.yml
-//! until farm.yml has matched it, and is superseded by this file.
+//! The contract checks of the registry API, index and lock, for the build farm,
+//! which has no Python. (They were tests/contract/validate.py; the Python is
+//! deleted and this file is the check.)
 //!
 //! Run by Buck2 (//:contract): the working directory is the repository root
 //! with spec/, tests/contract and tests/fixtures present. It checks

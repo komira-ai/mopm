@@ -1,25 +1,23 @@
 # Contract tests
 
-Examples of the registry contract (`spec/`), checked in CI by `validate.py`.
-Both the CLI and the hosted registry are tested against the same contract;
-these files are the part that needs no running service.
+Examples of the registry contract (`spec/`), checked by the Buck2 target
+`//:contract` (`tests/drivers/contract_test.zig`). Both the CLI and the hosted
+registry are tested against the same contract; these files are the part that
+needs no running service. `//:contract_replay` (`tests/drivers/replay_test.zig`)
+replays the same API cases against the fake registry.
 
 ```text
-python -I tests/contract/validate.py
+./buck2 build //:contract //:contract_replay
 ```
 
-Needs `jsonschema`, `openapi-spec-validator` and `PyYAML` (pinned in
-`requirements.txt`). CI installs them into a throwaway virtual environment.
-Nothing here is part of the mopm build.
+Both are Zig tests and run on the build farm; there is no Python in them. The
+JSON Schema reader (`tests/drivers/jsonschema.zig`) implements only the
+keywords the schemas use and fails the run, naming the keyword, on any other:
+a schema that starts using a new keyword needs it implemented there first. The
+OpenAPI checks (`openapi_check.zig`) are structural (see its header); they are
+not the full OpenAPI 3.1 meta schema.
 
-The Buck2 build runs the Zig ports instead, with no Python: `//:contract`
-(`tests/drivers/contract_test.zig`) for `validate.py`, `//:contract_replay`
-for `replay.py`. The JSON Schema reader (`tests/drivers/jsonschema.zig`)
-implements only the keywords the schemas use and fails the run, naming the
-keyword, on any other: a schema that starts using a new keyword needs it
-implemented there first. The OpenAPI checks (`openapi_check.zig`) are
-structural (see its header); they are not the full OpenAPI 3.1 meta schema
-that `openapi-spec-validator` applies.
+`requirements.txt` (PyYAML) stays only for `registry/fake/gen_errors.py`, which is not ported yet.
 
 ## API cases: `api/*.json`
 
@@ -49,7 +47,7 @@ Each file is `{"cases": [...]}`. A case:
   the request schema (`invalid_name`, `invalid_version`, `payload_too_large`):
   the request values are not schema-checked, the response still is.
 
-What `validate.py` enforces on every case: path and query parameters are
+What `//:contract` enforces on every case: path and query parameters are
 declared and match their schemas; the request body matches; the response
 status is declared by the operation (or is an error); required response
 headers are present; the response body matches; an error uses a code from the

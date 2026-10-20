@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mopm.dev/schema/lock-1.json",
   "title": "mopm.lock",
-  "description": "The resolved closure of a project. JSON. Written by mopm, committed, never edited by hand. Semantic rules that JSON Schema cannot express are in spec/lock.md and checked by tests/contract/validate.py.",
+  "description": "The resolved closure of a project. JSON. Written by mopm, committed, never edited by hand. Semantic rules that JSON Schema cannot express are in spec/lock.md and checked by the //:contract target (tests/drivers/contract.zig).",
   "type": "object",
   "required": ["lock_version", "toolchain", "channels", "packages"],
   "properties": {
