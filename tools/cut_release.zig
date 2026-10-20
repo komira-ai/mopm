@@ -28,13 +28,15 @@
 //!       already names <commit> (a re-run) it is reused and nothing is created. If creating the tag fails
 //!       because the tag exists (another run took the number) it recomputes and tries once more. Prints and,
 //!       with --out, appends `version=` and `tag=` lines (the format of $GITHUB_OUTPUT).
-//!   cut_release verify-dir <version> <dir> --sha <commit> --source-ref <ref> [--notes-out <dir>]
+//!   cut_release verify-dir <version> <dir> --sha <commit> --source-ref <ref> --trigger <push|workflow_dispatch> [--notes-out <dir>]
 //!       Before the tag exists and before anything is published: checks the BUILT files in <dir>. <commit> is on
 //!       main (no tag is read: the tag job runs after this); the files are exactly the ten: the four mopm-<version>-<target>.tar.gz, SHA256SUMS and the
-//!       cosign bundle <file>.sigstore.json of each; SHA256SUMS lists each tarball with the hash it has; `gh attestation verify` and `cosign verify-blob` (--cosign, identity pinned to release.yml at <ref>, the commit, the push trigger and the repository pinned) accept every payload file
+//!       cosign bundle <file>.sigstore.json of each; SHA256SUMS lists each tarball with the hash it has; `gh attestation verify` and `cosign verify-blob` (--cosign, identity pinned to release.yml at <ref>, the commit, <trigger> (the event of the run that signed: exactly `push` or `workflow_dispatch`, nothing else) and the repository pinned) accept every payload file
 //!       (attestations pinned to release.yml, <ref> and <commit>); each tarball holds exactly
 //!       mopm-<version>-<target>/{mopm,LICENSE}. With --notes-out it writes release-notes.md, pin.txt (the
-//!       linux-x86_64 url, sha256 and size) and verified.sha256 (the hash of each of the ten files).
+//!       linux-x86_64 url, sha256 and size) and, only for --trigger push, verified.sha256 (the hash of each of the ten
+//!       files): the manifest `publish` requires. A dry run (workflow_dispatch) verifies the same but writes no manifest, so
+//!       what a manual run signed can never be published.
 //!   cut_release verify <version> <dir> [--expect-sha256 <hex>]
 //!       After the release exists (read-only): the release is published, not a draft, with the prerelease
 //!       flag its version calls for, and exactly the ten assets; its tag is on main; the assets are
@@ -59,7 +61,7 @@ fn die(comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 fn usage() noreturn {
-    die("usage: cut_release [--gh <path>] [--cosign <path>] [--repo <owner/name>] plan [--sha <commit>] | tag --sha <commit> [--expect-version <v>] | verify-dir <version> <dir> --sha <commit> --source-ref <ref> | verify <version> <dir> | publish <version> <dir> --verified <file> --notes <file>", .{});
+    die("usage: cut_release [--gh <path>] [--cosign <path>] [--repo <owner/name>] plan [--sha <commit>] | tag --sha <commit> [--expect-version <v>] | verify-dir <version> <dir> --sha <commit> --source-ref <ref> --trigger <push|workflow_dispatch> | verify <version> <dir> | publish <version> <dir> --verified <file> --notes <file>", .{});
 }
 
 fn out(comptime fmt: []const u8, args: anytype) void {
@@ -471,14 +473,14 @@ fn checkAttestations(gh: Gh, dir_path: []const u8, want: [][]const u8, source_re
 }
 
 /// Every payload file has a keyless cosign signature by this repository's release workflow, for `source_ref`
-/// and `sha`: the certificate identity and issuer are pinned, and so is the commit.
-fn checkSignatures(gh: Gh, dir_path: []const u8, payload: [][]const u8, source_ref: []const u8, sha: []const u8) void {
+/// and `sha`: the certificate identity and issuer are pinned, and so are the commit and the trigger (the event of the signing run).
+fn checkSignatures(gh: Gh, dir_path: []const u8, payload: [][]const u8, source_ref: []const u8, sha: []const u8, trigger: []const u8) void {
     const a = gh.a;
     const identity = std.fmt.allocPrint(a, "https://github.com/{s}/.github/workflows/release.yml@{s}", .{ gh.repo, source_ref }) catch @panic("oom");
     for (payload) |w| {
         const path = std.fs.path.join(a, &.{ dir_path, w }) catch @panic("oom");
         const bundle = std.fmt.allocPrint(a, "{s}{s}", .{ path, bundle_suffix }) catch @panic("oom");
-        const r = gh.runExe(gh.cosign, &.{ "verify-blob", "--bundle", bundle, "--certificate-identity", identity, "--certificate-oidc-issuer", oidc_issuer, "--certificate-github-workflow-sha", sha, "--certificate-github-workflow-trigger", "push", "--certificate-github-workflow-repository", gh.repo, path });
+        const r = gh.runExe(gh.cosign, &.{ "verify-blob", "--bundle", bundle, "--certificate-identity", identity, "--certificate-oidc-issuer", oidc_issuer, "--certificate-github-workflow-sha", sha, "--certificate-github-workflow-trigger", trigger, "--certificate-github-workflow-repository", gh.repo, path });
         if (!r.ok) die("cosign verify-blob refused {s}: {s}", .{ w, std.mem.trim(u8, r.stderr, " \r\n") });
     }
 }
@@ -520,7 +522,7 @@ fn pinText(a: Allocator, repo: []const u8, version: []const u8, pin: Pin) []cons
 
 /// The four tarballs, SHA256SUMS, the layout; with `attest` also the attestation and the signature of the five payload files.
 /// Returns the pin of the linux-x86_64 tarball.
-fn checkAssets(gh: Gh, version: []const u8, dir_path: []const u8, attest: ?struct { ref: []const u8, sha: []const u8 }) Pin {
+fn checkAssets(gh: Gh, version: []const u8, dir_path: []const u8, attest: ?struct { ref: []const u8, sha: []const u8, trigger: []const u8 }) Pin {
     const a = gh.a;
     var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |err| die("cannot open {s}: {s}", .{ dir_path, @errorName(err) });
     defer dir.close();
@@ -530,15 +532,18 @@ fn checkAssets(gh: Gh, version: []const u8, dir_path: []const u8, attest: ?struc
     checkSums(a, dir, payload);
     if (attest) |t| {
         checkAttestations(gh, dir_path, payload, t.ref, t.sha);
-        checkSignatures(gh, dir_path, payload, t.ref, t.sha);
+        checkSignatures(gh, dir_path, payload, t.ref, t.sha, t.trigger);
     }
     return checkLayout(a, dir, version);
 }
 
 // ---- verify-dir ------------------------------------------------------------------------
 
-fn verifyDirCmd(gh: Gh, version: []const u8, dir_path: []const u8, sha: []const u8, source_ref: []const u8, notes_out: ?[]const u8) void {
+fn verifyDirCmd(gh: Gh, version: []const u8, dir_path: []const u8, sha: []const u8, source_ref: []const u8, trigger: []const u8, notes_out: ?[]const u8) void {
     const a = gh.a;
+    // The signatures must carry exactly the event of the run that made them; nothing else is accepted.
+    const is_push = std.mem.eql(u8, trigger, "push");
+    if (!is_push and !std.mem.eql(u8, trigger, "workflow_dispatch")) die("--trigger '{s}' is not push or workflow_dispatch", .{trigger});
     if (!validVersion(version)) die("'{s}' is not <major>.<minor>.<patch>[-suffix] (no leading v)", .{version});
     if (!isHex40(sha)) die("--sha '{s}' is not a 40-character commit sha", .{sha});
     const tag = std.fmt.allocPrint(a, "v{s}", .{version}) catch @panic("oom");
@@ -547,7 +552,7 @@ fn verifyDirCmd(gh: Gh, version: []const u8, dir_path: []const u8, sha: []const 
     // and none is read. The commit that was built is on main.
     requireOnMain(gh, "the built commit", sha);
 
-    const pin = checkAssets(gh, version, dir_path, .{ .ref = source_ref, .sha = sha });
+    const pin = checkAssets(gh, version, dir_path, .{ .ref = source_ref, .sha = sha, .trigger = trigger });
     const prerelease = std.mem.indexOfScalar(u8, version, '-') != null;
 
     if (notes_out) |nd| {
@@ -567,7 +572,8 @@ fn verifyDirCmd(gh: Gh, version: []const u8, dir_path: []const u8, sha: []const 
         w.print("\nVerify a download (needs the GitHub CLI and cosign), for a file F of this release:\n\n```\ngh attestation verify F -R {s} --signer-workflow {s}/.github/workflows/release.yml\ncosign verify-blob --bundle F.sigstore.json --certificate-identity https://github.com/{s}/.github/workflows/release.yml@refs/heads/main --certificate-oidc-issuer {s} F\n```\n\nmacOS binaries are not yet code-signed or notarized by Apple; see RELEASING.md.\n", .{ gh.repo, gh.repo, gh.repo, oidc_issuer }) catch @panic("oom");
         writeInto(a, nd, "release-notes.md", notes.items);
         writeInto(a, nd, "pin.txt", pinText(a, gh.repo, version, pin));
-        writeInto(a, nd, "verified.sha256", manifest.items);
+        // Only what a push signed can be published: a dry run writes no manifest, and publish refuses without one.
+        if (is_push) writeInto(a, nd, "verified.sha256", manifest.items);
     }
     out("verified {s} at {s}: four tarballs and SHA256SUMS, hashes match, attestations accepted, layout exact, commit on main.\n", .{ tag, sha });
     out("prerelease: {s}\nthe pin for {s}:\n{s}", .{ if (prerelease) "true" else "false", pin_target, pinText(a, gh.repo, version, pin) });
@@ -629,7 +635,7 @@ fn verifyCmd(gh: Gh, version: []const u8, dir_path: []const u8, expect: ?[]const
     _ = gh.must(&.{ "release", "download", tag, "-R", gh.repo, "-D", dir_path, "--pattern", "mopm-*.tar.gz", "--pattern", sums_name, "--pattern", "*" ++ bundle_suffix });
 
     // The workflow ran for a push to main, so that is the ref the attestations name.
-    const pin = checkAssets(gh, version, dir_path, .{ .ref = "refs/heads/main", .sha = tag_sha });
+    const pin = checkAssets(gh, version, dir_path, .{ .ref = "refs/heads/main", .sha = tag_sha, .trigger = "push" });
     if (expect) |e| {
         if (!std.mem.eql(u8, e, pin.sha256)) die("{s} has sha256 {s}, not the expected {s}", .{ pin_target, pin.sha256, e });
     }
@@ -750,6 +756,7 @@ pub fn main() !void {
     var sha: ?[]const u8 = null;
     var source_ref: ?[]const u8 = null;
     var notes_out: ?[]const u8 = null;
+    var trigger: ?[]const u8 = null;
     var out_path: ?[]const u8 = null;
     var version_file: []const u8 = "VERSION";
     var verified: ?[]const u8 = null;
@@ -778,6 +785,8 @@ pub fn main() !void {
                 sha = v;
             } else if (std.mem.eql(u8, arg, "--source-ref")) {
                 source_ref = v;
+            } else if (std.mem.eql(u8, arg, "--trigger")) {
+                trigger = v;
             } else if (std.mem.eql(u8, arg, "--notes-out")) {
                 notes_out = v;
             } else if (std.mem.eql(u8, arg, "--out")) {
@@ -805,10 +814,10 @@ pub fn main() !void {
     }
     if (std.mem.eql(u8, cmd, "verify-dir")) {
         if (n != 3) usage();
-        return verifyDirCmd(gh, pos.items[1], pos.items[2], sha orelse usage(), source_ref orelse usage(), notes_out);
+        return verifyDirCmd(gh, pos.items[1], pos.items[2], sha orelse usage(), source_ref orelse usage(), trigger orelse usage(), notes_out);
     }
     if (std.mem.eql(u8, cmd, "verify")) {
-        if (n != 3 or sha != null) usage();
+        if (n != 3 or sha != null or trigger != null) usage();
         return verifyCmd(gh, pos.items[1], pos.items[2], expect);
     }
     if (std.mem.eql(u8, cmd, "publish")) {

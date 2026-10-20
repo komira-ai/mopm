@@ -159,9 +159,33 @@ test "mutant: the data flow (the tested version is the tagged and released versi
 }
 
 test "mutant: publish releases something other than the verified files" {
-    try mutant("publish downloads the unverified assets", "          name: verified-assets\n          path: dist\n", "          name: release-assets\n          path: dist\n", "publish must download exactly the artifacts verified-assets and release-notes");
-    try mutant("publish downloads other notes", "          name: release-notes\n          path: notes\n", "          name: release-assets\n          path: notes\n", "publish must download exactly the artifacts verified-assets and release-notes");
-    try mutant("verify downloads a build artifact", "          name: release-assets\n          path: dist\n      - name: Install Zig 0.12.0 (sha256-pinned)\n        run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"\n      - uses: sigstore", "          name: release-linux-x86_64\n          path: dist\n      - name: Install Zig 0.12.0 (sha256-pinned)\n        run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"\n      - uses: sigstore", "verify must download exactly the artifact release-assets");
+    try mutant("publish downloads the unverified assets", "          name: verified-assets\n          path: dist\n", "          name: signed-assets\n          path: dist\n", "publish must download exactly the artifacts verified-assets and notes-pin");
+    try mutant("publish downloads other notes", "          name: notes-pin\n          path: notes\n", "          name: signed-assets\n          path: notes\n", "publish must download exactly the artifacts verified-assets and notes-pin");
+    try mutant("verify downloads a build artifact", "          name: signed-assets\n          path: dist\n      - name: Install Zig 0.12.0 (sha256-pinned)\n        run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"\n      - uses: sigstore", "          name: release-linux-x86_64\n          path: dist\n      - name: Install Zig 0.12.0 (sha256-pinned)\n        run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"\n      - uses: sigstore", "verify must download exactly the artifact signed-assets");
+}
+
+test "mutant: attest signs an unmerged commit" {
+    const guard = "    if: github.ref == 'refs/heads/main'\n";
+    // A dispatch from a branch would sign and attest a commit nobody merged, and publish a Sigstore entry for it.
+    try mutant("attest with no main guard", guard, "", "attest must run only under if");
+    try mutant("attest guarded by the event only", guard, "    if: github.event_name == 'push'\n", "attest must run only under if");
+    try mutant("attest guarded on any ref", guard, "    if: github.ref != ''\n", "attest must run only under if");
+    try mutant("an if on verify", "  verify:\n    needs: [plan, build, attest]\n", "  verify:\n    needs: [plan, build, attest]\n    if: ${{ always() }}\n", "verify must not have an if:");
+}
+
+test "mutant: a dry run's signatures cannot be published or mis-pinned" {
+    // verify pins the trigger of the run that signed; a hardcoded `push` would refuse every dry run.
+    try mutant("verify without --trigger", " --trigger \"$GITHUB_EVENT_NAME\"", "", "verify must pass --trigger");
+    try mutant("verify with a hardcoded push trigger", " --trigger \"$GITHUB_EVENT_NAME\"", " --trigger push", "verify must pass --trigger");
+    // publish must never run on a dispatch, whose signatures verify accepted for a dry run.
+    try mutant("publish on a dispatch", "    needs: [tag, verify]\n    " ++ push_main, "    needs: [tag, verify]\n    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}", "publish must run only under if");
+}
+
+test "mutant: an artifact attest's release-* download would merge into dist" {
+    // 'Re-run all jobs' would download these with the build's artifacts and wedge the run.
+    try mutant("attest uploads release-assets", "          name: signed-assets\n          path: |", "          name: release-assets\n          path: |", "attest's download pattern release-* would also match");
+    try mutant("verify uploads release-notes", "          name: notes-pin\n          path: notes/", "          name: release-notes\n          path: notes/", "attest's download pattern release-* would also match");
+    try mutant("attest uploads another name", "          name: signed-assets\n          path: |", "          name: other\n          path: |", "attest must upload exactly the artifact signed-assets");
 }
 
 test "mutant: no signatures" {

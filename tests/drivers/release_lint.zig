@@ -20,11 +20,15 @@
 //!   needs `beta-user` (so a red platform leg stops the release before anything is signed), `verify` needs
 //!   `build` and `attest`, `tag` needs `beta-user` and `verify` (no tag without verified files), `publish`
 //!   needs `verify` and `tag`: a red stage stops everything after it.
-//!   No job may set `continue-on-error`, and only `tag` and `publish` have an `if:`.
+//!   No job may set `continue-on-error`, and only `attest` (`github.ref == 'refs/heads/main'`: an unmerged
+//!   commit is never signed or attested; the stages after it are skipped with it), `tag` and `publish` have an `if:`.
 //! - **The data flow.** `build` and `beta-user` take the planned version (`needs.plan.outputs.version`),
 //!   `tag` is told it (`--expect-version`) and the commit (`--sha "$GITHUB_SHA"`), `verify` checks the
 //!   planned version (the tag does not exist yet), `publish` uses `needs.tag.outputs.version`, and `publish` releases the artifacts `verified-assets` and
-//!   `release-notes` and nothing else.
+//!   `notes-pin` and nothing else. `verify` passes `--trigger "$GITHUB_EVENT_NAME"`, so the signatures are pinned to the
+//!   event that made them (a dry run signs as workflow_dispatch); `publish` runs only under the push-to-main `if:`, so a
+//!   dispatch-signed file is never published. No artifact of `attest` or `verify` is named `release-*`: attest downloads
+//!   the build's artifacts by that pattern, and a re-run of all jobs would merge a stale one into dist.
 //! - **The triggers.** A push to main, with the `paths-ignore` below, and `workflow_dispatch`; one run
 //!   at a time per group: all pushes share one, a manual run has its own (never cancelled).
 //! - **The path filter.** A push that changes only docs or CI does not release. The filter is checked
@@ -60,6 +64,9 @@ pub const candidate_tarball = "$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET.tar.
 
 /// The `if:` of `tag` and `publish`: a push to main, never a manual run.
 pub const push_to_main = "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}";
+
+/// The `if:` of `attest`: only a commit on main is signed and attested (a dispatch from another branch stops there).
+pub const main_only = "github.ref == 'refs/heads/main'";
 
 /// The `(job, scope)` pairs that may be `write`.
 pub const writers = [_][2][]const u8{
@@ -241,8 +248,12 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
             if (!try ifIs(a, job, push_to_main)) {
                 try c.problem(a, out, prefix ++ "release.yml: {s} must run only under if: {s} (a push to main, never a manual run), got {s}", .{ name, push_to_main, try c.inspect(a, c.get(job, "if")) });
             }
+        } else if (std.mem.eql(u8, name, "attest")) {
+            if (!try ifIs(a, job, main_only)) {
+                try c.problem(a, out, prefix ++ "release.yml: attest must run only under if: {s} (an unmerged commit is never signed or attested), got {s}", .{ main_only, try c.inspect(a, c.get(job, "if")) });
+            }
         } else if (!try ifIs(a, job, null)) {
-            try c.problem(a, out, prefix ++ "release.yml: {s} must not have an if: (only tag and publish do)", .{name});
+            try c.problem(a, out, prefix ++ "release.yml: {s} must not have an if: (only attest, tag and publish do)", .{name});
         }
         if (job == .object and job.object.contains("continue-on-error")) {
             try c.problem(a, out, prefix ++ "release.yml: {s} must not set continue-on-error: a red stage stops the release", .{name});
@@ -305,13 +316,32 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
     }
     if (c.get(jv, "publish")) |publish| {
         const got = try downloaded(a, publish);
-        if (!c.eqlList(got, &.{ "verified-assets", "release-notes" })) {
-            try c.problem(a, out, prefix ++ "release.yml: publish must download exactly the artifacts verified-assets and release-notes, got {s}", .{try c.inspectList(a, got)});
+        if (!c.eqlList(got, &.{ "verified-assets", "notes-pin" })) {
+            try c.problem(a, out, prefix ++ "release.yml: publish must download exactly the artifacts verified-assets and notes-pin, got {s}", .{try c.inspectList(a, got)});
         }
     }
+    // No job uploads an artifact that attest's `release-*` download (the build's per-target artifacts) would
+    // match: a re-run of all jobs would merge the stale upload into dist and wedge the run.
+    for (jobs) |name| {
+        const job = c.get(jv, name) orelse continue;
+        for (try uploadedNames(a, job)) |up| {
+            if (std.mem.startsWith(u8, up, "release-")) {
+                try c.problem(a, out, prefix ++ "release.yml: {s} uploads the artifact {s}, which attest's download pattern release-* would also match (a re-run would merge it into dist); name it otherwise", .{ name, up });
+            }
+        }
+    }
+    if (c.get(jv, "attest")) |attest| {
+        const up = try uploadedNames(a, attest);
+        if (!c.eqlList(up, &.{"signed-assets"})) try c.problem(a, out, prefix ++ "release.yml: attest must upload exactly the artifact signed-assets, got {s}", .{try c.inspectList(a, up)});
+    }
     if (c.get(jv, "verify")) |verify| {
+        const up = try uploadedNames(a, verify);
+        if (!c.eqlList(up, &.{ "notes-pin", "verified-assets" })) try c.problem(a, out, prefix ++ "release.yml: verify must upload exactly the artifacts notes-pin and verified-assets, got {s}", .{try c.inspectList(a, up)});
+        // The signatures are pinned to the event of this run (push for a release, workflow_dispatch for a dry run).
+        const run = stepRunContaining(verify, "verify-dir") orelse "";
+        if (std.mem.indexOf(u8, run, " --trigger \"$GITHUB_EVENT_NAME\"") == null) try c.problem(a, out, prefix ++ "release.yml: verify must pass --trigger \"$GITHUB_EVENT_NAME\" to verify-dir (the signatures carry the event of the run that made them)", .{});
         const got = try downloaded(a, verify);
-        if (!c.eqlList(got, &.{"release-assets"})) try c.problem(a, out, prefix ++ "release.yml: verify must download exactly the artifact release-assets, got {s}", .{try c.inspectList(a, got)});
+        if (!c.eqlList(got, &.{"signed-assets"})) try c.problem(a, out, prefix ++ "release.yml: verify must download exactly the artifact signed-assets, got {s}", .{try c.inspectList(a, got)});
         if (stepRunContaining(verify, "verify-dir") == null) try c.problem(a, out, prefix ++ "release.yml: verify must run cut_release verify-dir", .{});
         if (!usesAction(verify, "sigstore/cosign-installer@")) try c.problem(a, out, prefix ++ "release.yml: verify needs cosign (sigstore/cosign-installer) to check the signatures", .{});
     }
@@ -416,6 +446,19 @@ fn downloaded(a: Allocator, job: Value) ![]const []const u8 {
         const u = c.str(c.get(st, "uses")) orelse continue;
         if (!std.mem.startsWith(u8, u, "actions/download-artifact@")) continue;
         try out.append(c.str(c.get(c.get(st, "with"), "name")) orelse "(a pattern, not a name)");
+    }
+    return out.items;
+}
+
+/// The `name:` of every actions/upload-artifact step of `job`, in order.
+fn uploadedNames(a: Allocator, job: Value) ![]const []const u8 {
+    var out = std.ArrayList([]const u8).init(a);
+    const steps = c.get(job, "steps") orelse return out.items;
+    if (steps != .array) return out.items;
+    for (steps.array.items) |st| {
+        const u = c.str(c.get(st, "uses")) orelse continue;
+        if (!std.mem.startsWith(u8, u, "actions/upload-artifact@")) continue;
+        try out.append(c.str(c.get(c.get(st, "with"), "name")) orelse "(no name)");
     }
     return out.items;
 }

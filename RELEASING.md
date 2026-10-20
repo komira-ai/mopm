@@ -18,10 +18,10 @@ customer uses it, on every platform it ships for (`beta-user`).
 | `plan` | `beta`, `lint` | the version this commit's release will have (`cut_release plan --sha`). Writes nothing. Refuses a commit that a newer release supersedes (below) and a `VERSION` base below an existing tag. Gamma and bake time are a slot for later stages between `lint` and `plan`. |
 | `build` | `plan` | the four binaries (`linux-x86_64`, `linux-aarch64`, `macos-arm64`, `macos-x86_64`) at that version, each reporting exactly it. **These are the release files.** They are built once, before the tag, from the commit that is tagged later, and are not rebuilt. |
 | `beta-user` | `plan`, `build` | the candidate tested as a user (below), on linux x86_64, linux arm64 and macOS 14 (arm64). A red leg on any platform stops the release. |
-| `attest` | `plan`, `build`, `beta-user` | refuses unless each tarball is the exact file the user beta passed (`release tested`), then writes `SHA256SUMS` for the four tarballs, a keyless cosign signature (Sigstore) of each of the five files, and build provenance (a signed attestation) for all five. |
-| `verify` | `plan`, `build`, `attest` | read-only, before any tag exists: exactly the ten files (the five and the `<file>.sigstore.json` bundle of each), `SHA256SUMS` matches, every attestation and every signature accepted and pinned to `release.yml`, the ref, the commit, the push trigger and the repository, the tarball layout, the commit on main. Uploads the release notes and the pin (the `linux-x86_64` url, sha256 and size) as the artifact `release-notes`. |
+| `attest` | `plan`, `build`, `beta-user` | refuses unless each tarball is the exact file the user beta passed (`release tested`), then writes `SHA256SUMS` for the four tarballs, a keyless cosign signature (Sigstore) of each of the five files, and build provenance (a signed attestation) for all five. Runs only on `main` (`if: github.ref == 'refs/heads/main'`), so a manual run from another branch signs and attests nothing; `verify` and the rest are skipped with it. Uploads the artifact `signed-assets`. |
+| `verify` | `plan`, `build`, `attest` | read-only, before any tag exists: exactly the ten files (the five and the `<file>.sigstore.json` bundle of each), `SHA256SUMS` matches, every attestation and every signature accepted and pinned to `release.yml`, the ref, the commit, the trigger (the event of this run: `push` for a release, `workflow_dispatch` for a dry run) and the repository, the tarball layout, the commit on main. Uploads the release notes and the pin (the `linux-x86_64` url, sha256 and size) as the artifact `notes-pin`. A dry run writes no `verified.sha256`, which `publish` requires. |
 | `tag` | `plan`, `build`, `beta-user`, `verify` | creates the annotated tag `v<version>` at the pushed commit, only after the files verified, so a failing attest, signature or verify leaves no orphan tag. The only write before the release. Refuses a superseded commit, and refuses unless the version it would take is the planned one (`--expect-version`), so the tested bytes are the released bytes. |
-| `publish` | `tag`, `verify` | creates the GitHub release for `v<version>` from exactly the verified files (artifacts `verified-assets` and `release-notes`, nothing else). |
+| `publish` | `tag`, `verify` | creates the GitHub release for `v<version>` from exactly the verified files (artifacts `verified-assets` and `notes-pin`, nothing else). Runs only for a push to `main`, never a manual run. |
 
 A push that changes only documentation or CI (`**.md`, `docs/**`, `.github/**`) does not release.
 Everything else does, including a change to `VERSION`.
@@ -103,7 +103,7 @@ releases `0.1.1`. This is rare; PATCH is never edited by hand, and the base neve
 
 Run the `release` workflow by hand (Actions, `release`, Run workflow) on `main`. It runs `beta`, `lint`, `plan`,
 `build`, `beta-user`, `attest` and `verify`: the candidate is built and tested on every platform, and `plan` prints the version the
-next release would get. It creates no tag and publishes nothing (`tag` and `publish` do not run; `attest` and `verify` do, as a rehearsal of the signing).
+next release would get. It creates no tag and publishes nothing (`tag` and `publish` do not run; `attest` and `verify` do, as a rehearsal of the signing, whose signatures carry the trigger `workflow_dispatch` and are verified as such). From any other branch the run stops after `beta-user`: `attest` runs only on `main`, so an unmerged commit is never signed.
 
 ## A re-run and a failure
 

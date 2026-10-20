@@ -19,12 +19,17 @@ name: release
 #              linux x86_64, linux arm64 and macOS 14: every verb against the fake registry, then the
 #              documented install path. A red leg on any platform stops the release.
 #   attest     only the tarballs the user beta passed (release tested), then SHA256SUMS for the four tarballs, a keyless cosign signature (Sigstore) of each of the
-#              five files, and build provenance (actions/attest-build-provenance) for all five.
+#              five files, and build provenance (actions/attest-build-provenance) for all five. It runs only on
+#              main (if: github.ref == 'refs/heads/main'): a manual run from another branch signs nothing, and
+#              verify and the rest are skipped with it. Its artifact is signed-assets: not release-*, which
+#              is the pattern attest downloads the build's artifacts with (a re-run would merge it back in).
 #   verify     cut_release verify-dir on the built files, before anything is published: exactly the ten
 #              files, SHA256SUMS matches, every attestation and every signature accepted (pinned to this
-#              workflow, the ref and the commit), the tarball layout, the commit on main. It reads no tag (none exists
-#              yet) and uploads the
-#              release notes and the pin (artifact release-notes) and the verified files (verified-assets).
+#              workflow, the ref, the commit and the trigger, which is the event of this run ($GITHUB_EVENT_NAME):
+#              push for a release, workflow_dispatch for a dry run, which signs with that event), the tarball layout, the commit on
+#              main. It reads no tag (none exists yet) and uploads the release notes and the pin (artifact
+#              notes-pin) and the verified files (verified-assets). A dry run writes no verified.sha256, which
+#              publish requires, and publish never runs on a dispatch: nothing a manual run signed is published.
 #   tag        the annotated tag v<version> at the pushed commit, the only write before the release; it needs
 #              verify. It refuses a commit older than the highest tag (a re-run of an old run) and a
 #              version other than the one planned and tested (cut_release tag).
@@ -32,8 +37,8 @@ name: release
 #              release and replaces no asset: any asset the release already holds must match byte for byte,
 #              or it fails and changes nothing.
 #
-# A manual run (workflow_dispatch) is a dry run: everything up to and including verify, then nothing:
-# tag and publish do not run. Writes are held to tag (contents) and publish (contents),
+# A manual run (workflow_dispatch) of main is a dry run: everything up to and including verify, then nothing:
+# tag and publish do not run. From any other branch it builds and tests the candidate and stops before attest. Writes are held to tag (contents) and publish (contents),
 # both under a push to main, and attest (id-token, attestations) by tests/drivers/release_lint.zig, which
 # also holds the order of the stages, the data flow between them and the path filter; hygiene.zig holds the
 # triggers. A re-run of failed jobs only rebuilds what failed and what depends on it: a changed build
@@ -110,6 +115,9 @@ jobs:
 
   attest:
     needs: [plan, build, beta-user]
+    # Nothing is signed or attested unless the commit is on main: a manual run from another branch stops here
+    # (verify and everything after it are skipped with it), so no unmerged commit gets a Sigstore entry.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -149,7 +157,7 @@ jobs:
             dist/SHA256SUMS
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: release-assets
+          name: signed-assets
           path: |
             dist/mopm-*.tar.gz
             dist/SHA256SUMS
@@ -171,7 +179,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: release-assets
+          name: signed-assets
           path: dist
       - name: Install Zig 0.12.0 (sha256-pinned)
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
@@ -182,11 +190,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.plan.outputs.version }}
-        run: '"$RUNNER_TEMP/cut_release" --repo "$GITHUB_REPOSITORY" verify-dir "$VERSION" dist --sha "$GITHUB_SHA" --source-ref "$GITHUB_REF" --notes-out notes'
+        run: '"$RUNNER_TEMP/cut_release" --repo "$GITHUB_REPOSITORY" verify-dir "$VERSION" dist --sha "$GITHUB_SHA" --source-ref "$GITHUB_REF" --trigger "$GITHUB_EVENT_NAME" --notes-out notes'
       # What the release will say, and the pin of the linux-x86_64 tarball.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: release-notes
+          name: notes-pin
           path: notes/
           if-no-files-found: error
           retention-days: 7
@@ -242,7 +250,7 @@ jobs:
           path: dist
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: release-notes
+          name: notes-pin
           path: notes
       - name: Install Zig 0.12.0 (sha256-pinned)
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
