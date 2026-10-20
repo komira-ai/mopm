@@ -1,0 +1,32 @@
+Package: mopm
+Version: 1.2.3
+Architecture: amd64
+Maintainer: mopm authors <apt@mopm.dev>
+Installed-Size: 1
+Section: devel
+Priority: optional
+Homepage: https://mopm.dev
+Filename: pool/main/m/mopm/mopm_1.2.3_amd64.deb
+Size: 1038
+SHA256: d5322a9ae51826dcb3f6e8813c36bd78f999acb4a73e921ec58c76564a91000f
+Description: package manager for Mojo
+ Resolves, locks and builds Mojo packages.
+ .
+ A static binary: it needs nothing else installed.
+
+Package: mopm
+Version: 1.2.2
+Architecture: amd64
+Maintainer: mopm authors <apt@mopm.dev>
+Installed-Size: 1
+Section: devel
+Priority: optional
+Homepage: https://mopm.dev
+Filename: pool/main/m/mopm/mopm_1.2.2_amd64.deb
+Size: 1038
+SHA256: 350f50d2207fa1d62508673aed9910c27d04121d012b5fac08a6d594e8c97f4d
+Description: package manager for Mojo
+ Resolves, locks and builds Mojo packages.
+ .
+ A static binary: it needs nothing else installed.
+
