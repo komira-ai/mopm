@@ -36,6 +36,9 @@ jobs:
       - name: Link-plan golden files
         run: tests/run_golden.sh ./zig-out/bin/mopm
 
+  # The contract checks (the OpenAPI document, the schemas, the API cases, the examples, and the replay of the cases
+  # against the fake registry) are the Buck2 targets //:contract and //:contract_replay, built by farm.yml
+  # (`./buck2 build //...`). What stays here is the lock goldens check, until it is ported too.
   contract:
     name: contract (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -49,16 +52,8 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/contract-venv"
           "$RUNNER_TEMP/contract-venv/bin/pip" install --disable-pip-version-check -r tests/contract/requirements.txt
-      - name: Validate the OpenAPI document, the schemas and the examples
-        run: '"$RUNNER_TEMP/contract-venv/bin/python" -I tests/contract/validate.py'
       - name: The locks mopm's unit tests write pass the lock schema and rules; broken copies are refused
         run: '"$RUNNER_TEMP/contract-venv/bin/python" -I tests/resolve/check_golden.py'
-      - name: Install Zig 0.12.0 (sha256-pinned)
-        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
-      - name: Build the fake registry
-        run: zig build
-      - name: Replay the API cases against the fake registry
-        run: '"$RUNNER_TEMP/contract-venv/bin/python" -I tests/contract/replay.py ./zig-out/bin/mopm-fake-registry'
 
   autolink:
     name: autolink e2e (${{ matrix.os }})
