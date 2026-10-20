@@ -234,7 +234,7 @@ test "mutant: a platform leg of the user-level beta is skipped, optional or miss
     try userMutant("no linux arm64 leg", "          - { target: linux-aarch64, os: ubuntu-24.04-arm }\n", "", "lacks the leg linux-aarch64 on ubuntu-24.04-arm");
     try userMutant("no linux x86_64 leg", "          - { target: linux-x86_64, os: ubuntu-24.04 }\n", "", "lacks the leg linux-x86_64 on ubuntu-24.04");
     try userMutant("a leg on another runner", "{ target: macos-arm64, os: macos-14 }", "{ target: macos-arm64, os: macos-15 }", "lacks the leg macos-arm64 on macos-14");
-    try userMutant("an extra leg", "          - { target: macos-arm64, os: macos-14 }\n", "          - { target: macos-arm64, os: macos-14 }\n          - { target: macos-x86_64, os: macos-13 }\n", "the matrix has 4 legs");
+    try userMutant("an extra leg", "          - { target: macos-arm64, os: macos-14 }\n", "          - { target: macos-arm64, os: macos-14 }\n          - { target: linux-riscv64, os: ubuntu-24.04 }\n", "the matrix has 4 legs");
     try userMutant("an excluded leg", "      matrix:\n        include:", "      matrix:\n        exclude:\n          - { target: macos-arm64 }\n        include:", "the matrix has the key exclude");
     try userMutant("legs that may fail", "    timeout-minutes: 90\n", "    timeout-minutes: 90\n    continue-on-error: true\n", "user must not set continue-on-error");
     try userMutant("legs that run only sometimes", "    timeout-minutes: 90\n", "    timeout-minutes: 90\n    if: ${{ github.event_name == 'push' }}\n", "user must not set if");
@@ -269,7 +269,7 @@ test "mutant: the user-level beta tests something other than the candidate, or l
 test "mutant: attest signs files the user beta did not pass" {
     try mutant("attest does not compare with the tested records", "        run: '\"$RUNNER_TEMP/release\" tested dist tested'", "        run: '\"$RUNNER_TEMP/release\" check dist'", "attest must run exactly");
     try mutant("attest does not download the records", "          pattern: tested-*\n", "          pattern: release-*\n", "attest must download the records");
-    try mutant("attest checks the records only after writing SHA256SUMS", "        run: '\"$RUNNER_TEMP/release\" tested dist tested'\n      - name: Write SHA256SUMS (exactly the four tarballs and the two .debs) and check it\n        run: '\"$RUNNER_TEMP/release\" sums dist'\n", "        run: '\"$RUNNER_TEMP/release\" sums dist'\n      - name: Write SHA256SUMS (exactly the four tarballs and the two .debs) and check it\n        run: '\"$RUNNER_TEMP/release\" tested dist tested'\n", "attest must check the tested records before it writes SHA256SUMS");
+    try mutant("attest checks the records only after writing SHA256SUMS", "        run: '\"$RUNNER_TEMP/release\" tested dist tested'\n      - name: Write SHA256SUMS (exactly the three tarballs and the two .debs) and check it\n        run: '\"$RUNNER_TEMP/release\" sums dist'\n", "        run: '\"$RUNNER_TEMP/release\" sums dist'\n      - name: Write SHA256SUMS (exactly the three tarballs and the two .debs) and check it\n        run: '\"$RUNNER_TEMP/release\" tested dist tested'\n", "attest must check the tested records before it writes SHA256SUMS");
 }
 
 test "the glob matcher reads patterns as GitHub does" {

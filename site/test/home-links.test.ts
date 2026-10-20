@@ -44,5 +44,5 @@ test('the Releases link is the repository’s latest release', () => {
 test('the install note names the platforms the releases serve', () => {
   const m = /<p class="note" id="install-note">(.*?)<\/p>/s.exec(home);
   expect(m).not.toBeNull();
-  expect((m as RegExpExecArray)[1]).toContain('Release binaries for Linux and macOS, on x86_64 and arm64.');
+  expect((m as RegExpExecArray)[1]).toContain('Release binaries for Linux (x86_64, arm64) and macOS (arm64).');
 });

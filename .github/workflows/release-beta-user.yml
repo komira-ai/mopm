@@ -14,9 +14,6 @@ name: release-beta-user
 # allowed to fail: tests/drivers/release_lint.zig (userBetaProblems) holds the matrix, the absence of
 # `if`, `continue-on-error` and `exclude`, and the use of the candidate artifact. It holds no write
 # permission and no credential.
-#
-# The macOS x86_64 tarball is built (under Rosetta) and checked for its version, but no runner executes the user
-# walk for it: macos-13 is gone and the macOS 14 runners are arm64.
 
 on:
   workflow_call:

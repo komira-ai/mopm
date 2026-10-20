@@ -19,7 +19,7 @@ curl -fsSL https://mopm.dev/install.sh | sh
 ```
 
 The installer needs only `curl`, `tar`, `awk` and `sha256sum` (or `shasum`). It downloads the release for
-your machine (Linux or macOS, x86_64 or arm64) from
+your machine (Linux on x86_64 or arm64, or macOS on arm64; there is no Intel Mac release) from
 [GitHub releases](https://github.com/komira-ai/mopm/releases), checks its sha256 against the
 release's `SHA256SUMS`, and installs `~/.mopm/bin/mopm`. It needs no root and edits no shell startup
 file: it prints the `PATH` line to add. `MOPM_VERSION=1.2.3` picks a version and `MOPM_HOME=<dir>`
@@ -27,7 +27,7 @@ a different install directory. The script is [`site/static/install.sh`](site/sta
 read it before you run it.
 
 Or download by hand. Each release lists `mopm-<version>-<target>.tar.gz` for `linux-x86_64`,
-`linux-aarch64`, `macos-arm64` and `macos-x86_64`, and a `SHA256SUMS` file:
+`linux-aarch64` and `macos-arm64`, and a `SHA256SUMS` file:
 
 ```sh
 v=1.2.3 t=linux-x86_64     # your version and target

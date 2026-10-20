@@ -246,10 +246,9 @@ only), and native libraries that a workspace member builds itself.
   `bin/` directory, link scripts, undeclared native code, case-fold collisions, or sizes over the
   limits (a package file of at most 100 MB, any one unpacked file of at most 128 MiB, today). Display fields (readme, description) are stored verbatim and are
   untrusted input; consumers must sanitize.
-- **Release integrity.** Releases are produced by one automatic workflow. Each of the four binaries
-  (Linux x86_64 and aarch64, macOS arm64 and x86_64) is built once, tested as a user would use it on
-  three platforms (Linux x86_64 and aarch64, macOS arm64; the macOS x86_64 binary is built and its
-  `--version` checked, but no runner walks it), then given a `SHA256SUMS` entry, a keyless cosign (Sigstore) signature and a GitHub
+- **Release integrity.** Releases are produced by one automatic workflow. Each of the three binaries
+  (Linux x86_64 and aarch64, macOS arm64) is built once, tested as a user would use it on
+  those three platforms, then given a `SHA256SUMS` entry, a keyless cosign (Sigstore) signature and a GitHub
   build-provenance attestation. The workflow verifies all of it before any tag exists, then tags (through
   a dedicated GitHub App, since a repository ruleset allows only that App to create `v*` tags) and
   publishes exactly the verified files. A defect in this chain is meant to make the release red; the

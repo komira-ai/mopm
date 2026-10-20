@@ -78,7 +78,7 @@ jobs:
           merge-multiple: true
       - name: Install Zig 0.12.0 (sha256-pinned)
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
-      - name: SHA256SUMS for exactly the four tarballs and the two .debs, written and checked
+      - name: SHA256SUMS for exactly the three tarballs and the two .debs, written and checked
         run: |
           zig build-exe tools/release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/release"
           "$RUNNER_TEMP/release" sums dist

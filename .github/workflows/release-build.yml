@@ -1,6 +1,6 @@
 name: release-build
 
-# Builds and packages the mopm CLI for the four release targets (and a .deb for each linux one), and uploads the files as
+# Builds and packages the mopm CLI for the three release targets (and a .deb for each linux one), and uploads the files as
 # workflow artifacts. Called by release.yml (a push to main that tagged a version, which then
 # attests, verifies and publishes them) and by release-check.yml (a pull request touching the
 # release files, which publishes nothing). It holds no write permission and no credential: it
@@ -29,11 +29,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { target: linux-x86_64, zig_target: x86_64-linux-musl, os: ubuntu-24.04, run_prefix: "", deb_arch: amd64 }
-          - { target: linux-aarch64, zig_target: aarch64-linux-musl, os: ubuntu-24.04-arm, run_prefix: "", deb_arch: arm64 }
-          - { target: macos-arm64, zig_target: aarch64-macos, os: macos-14, run_prefix: "", deb_arch: "" }
-          # Built on the arm64 runner and run there under Rosetta.
-          - { target: macos-x86_64, zig_target: x86_64-macos, os: macos-14, run_prefix: "arch -x86_64", deb_arch: "" }
+          - { target: linux-x86_64, zig_target: x86_64-linux-musl, os: ubuntu-24.04, deb_arch: amd64 }
+          - { target: linux-aarch64, zig_target: aarch64-linux-musl, os: ubuntu-24.04-arm, deb_arch: arm64 }
+          - { target: macos-arm64, zig_target: aarch64-macos, os: macos-14, deb_arch: "" }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -47,8 +45,7 @@ jobs:
           VERSION: ${{ inputs.version }}
           TARGET: ${{ matrix.target }}
           ZIG_TARGET: ${{ matrix.zig_target }}
-          RUN_PREFIX: ${{ matrix.run_prefix }}
-        run: '"$RUNNER_TEMP/release" package "$VERSION" "$TARGET" "$ZIG_TARGET" "$RUNNER_TEMP/out" --run-prefix "$RUN_PREFIX"'
+        run: '"$RUNNER_TEMP/release" package "$VERSION" "$TARGET" "$ZIG_TARGET" "$RUNNER_TEMP/out"'
       # The linux targets also ship a .deb. It is made from the binary INSIDE the tarball just packaged (unpacked here), so the
       # .deb and the tarball carry the same bytes by construction; release.zig tested and cut_release verify-dir rebuild it
       # from the tarball later and refuse any other bytes. tools/channels deb-package is the one place a .deb is written.

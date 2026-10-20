@@ -21,7 +21,7 @@
 # This script checks the sha256 only. macOS binaries are not yet code-signed or notarized by Apple.
 #
 # Needs curl, tar, awk and sha256sum or shasum. Linux (x86_64, aarch64; static
-# binaries) and macOS (arm64, x86_64).
+# binaries) and macOS (arm64; there is no release for Intel Macs).
 set -eu
 
 releases=${MOPM_RELEASES_URL:-https://github.com/komira-ai/mopm/releases}
@@ -38,8 +38,8 @@ case "$(uname -s)-$(uname -m)" in
     Linux-x86_64|Linux-amd64) target=linux-x86_64 ;;
     Linux-aarch64|Linux-arm64) target=linux-aarch64 ;;
     Darwin-arm64) target=macos-arm64 ;;
-    Darwin-x86_64) target=macos-x86_64 ;;
-    *) die "no mopm release for $(uname -s) $(uname -m); there are releases for Linux and macOS on x86_64 and arm64" ;;
+    Darwin-x86_64) die "no mopm release for Intel Macs (Darwin x86_64); mopm is released for Apple silicon Macs (arm64) and for Linux on x86_64 and arm64. On an Apple silicon Mac, run this from a native shell, not one running under Rosetta" ;;
+    *) die "no mopm release for $(uname -s) $(uname -m); there are releases for Linux on x86_64 and arm64 and for macOS on arm64" ;;
 esac
 
 # The version: MOPM_VERSION, else the tag that <releases>/latest redirects to.

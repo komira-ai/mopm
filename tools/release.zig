@@ -6,17 +6,16 @@
 //!
 //! and run it from the repository root.
 //!
-//!   release package <version> <target> <zig-target> <outdir> [--run-prefix "<words>"]
+//!   release package <version> <target> <zig-target> <outdir>
 //!       Builds the CLI (zig build -Doptimize=ReleaseSafe -Dtarget=<zig-target> -Dstrip=true -Dversion=<version>), runs
 //!       it with `--version` and REFUSES unless it prints `mopm <version>` (version has no leading
 //!       v), and writes <outdir>/mopm-<version>-<target>.tar.gz holding
-//!       mopm-<version>-<target>/{mopm,LICENSE}. --run-prefix is a command put before the binary to
-//!       run it (`arch -x86_64` for the Intel macOS build on an arm64 runner).
+//!       mopm-<version>-<target>/{mopm,LICENSE}.
 //!   release sums <dir>
-//!       Requires exactly four mopm-<version>-<target>.tar.gz in <dir>, one per target, one version, and the two
-//!       mopm_<version>_<arch>.deb (amd64, arm64) of it; writes <dir>/SHA256SUMS (six lines) and checks it.
+//!       Requires exactly three mopm-<version>-<target>.tar.gz in <dir>, one per target, one version, and the two
+//!       mopm_<version>_<arch>.deb (amd64, arm64) of it; writes <dir>/SHA256SUMS (five lines) and checks it.
 //!   release check <dir>
-//!       Checks <dir>/SHA256SUMS: exactly those four tarballs and two .debs, each with the hash listed.
+//!       Checks <dir>/SHA256SUMS: exactly those three tarballs and two .debs, each with the hash listed.
 //!   release tarball <parent> <name> <out.tar.gz>
 //!       Packs the files of <parent>/<name>/ as <name>/<file> (ustar, then gzip).
 //!   release record <tarball> <outdir>
@@ -28,9 +27,9 @@
 //!       tarball's binary makes with the metadata in <dir> (default packaging/deb): a .deb carries the tested binary and
 //!       nothing else. Runs in the attest job before `sums`.
 //!   release sign <dir> [--cosign <path>]
-//!       After `sums`: signs the four tarballs, the two .debs and SHA256SUMS with keyless `cosign sign-blob` (Sigstore;
+//!       After `sums`: signs the three tarballs, the two .debs and SHA256SUMS with keyless `cosign sign-blob` (Sigstore;
 //!       the signing identity is the workflow's OIDC token, no key and no secret exists), writing
-//!       <file>.sigstore.json beside each, and refuses unless all seven bundles exist and are not empty.
+//!       <file>.sigstore.json beside each, and refuses unless all six bundles exist and are not empty.
 //!       Runs only in the attest job of release.yml, the one job that holds id-token.
 //!
 //! Nothing here uploads anything.
@@ -39,7 +38,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const release_debs = @import("release_debs.zig");
 
-const targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64", "macos-x86_64" };
+const targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64" };
 
 fn die(comptime fmt: []const u8, args: anytype) noreturn {
     std.debug.print("release: " ++ fmt ++ "\n", args);
@@ -47,7 +46,7 @@ fn die(comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 fn usage() noreturn {
-    die("usage: release package <version> <target> <zig-target> <outdir> [--run-prefix \"<words>\"] | sums <dir> | check <dir> | tarball <parent> <name> <out.tar.gz> | sign <dir> [--cosign <path>] | record <tarball> <outdir> | tested <dist> <tested-dir> [--packaging <dir>]", .{});
+    die("usage: release package <version> <target> <zig-target> <outdir> | sums <dir> | check <dir> | tarball <parent> <name> <out.tar.gz> | sign <dir> [--cosign <path>] | record <tarball> <outdir> | tested <dist> <tested-dir> [--packaging <dir>]", .{});
 }
 
 pub fn main() !void {
@@ -90,17 +89,11 @@ pub fn main() !void {
 // ---- package ---------------------------------------------------------------------------
 
 fn package(a: Allocator, args: []const []const u8) !void {
-    if (args.len != 4 and args.len != 6) usage();
+    if (args.len != 4) usage();
     const version = args[0];
     const target = args[1];
     const zig_target = args[2];
     const outdir = args[3];
-    var prefix_words = std.ArrayList([]const u8).init(a);
-    if (args.len == 6) {
-        if (!std.mem.eql(u8, args[4], "--run-prefix")) usage();
-        var it = std.mem.tokenizeScalar(u8, args[5], ' ');
-        while (it.next()) |w| try prefix_words.append(w);
-    }
     var known = false;
     for (targets) |t| {
         if (std.mem.eql(u8, t, target)) known = true;
@@ -134,7 +127,6 @@ fn package(a: Allocator, args: []const []const u8) !void {
     try cwd.copyFile("LICENSE", cwd, try std.fs.path.join(a, &.{ stage_pkg, "LICENSE" }), .{});
 
     var run_argv = std.ArrayList([]const u8).init(a);
-    try run_argv.appendSlice(prefix_words.items);
     try run_argv.append(try cwd.realpathAlloc(a, bin));
     try run_argv.append("--version");
     const ran = std.process.Child.run(.{ .allocator = a, .argv = run_argv.items }) catch |err| {
@@ -240,9 +232,9 @@ fn sha256Hex(path: []const u8) ![64]u8 {
     return std.fmt.bytesToHex(digest, .lower);
 }
 
-/// The names of the mopm-*.tar.gz in `dir`, sorted. Refuses unless there are exactly four: one per
+/// The names of the mopm-*.tar.gz in `dir`, sorted. Refuses unless there are exactly three: one per
 /// target, all of one version.
-fn fourTarballs(a: Allocator, dir_path: []const u8) ![][]const u8 {
+fn threeTarballs(a: Allocator, dir_path: []const u8) ![][]const u8 {
     var dir = try std.fs.cwd().openDir(dir_path, .{ .iterate = true });
     defer dir.close();
     var names = std.ArrayList([]const u8).init(a);
@@ -271,7 +263,7 @@ fn fourTarballs(a: Allocator, dir_path: []const u8) ![][]const u8 {
     return names.items;
 }
 
-/// The version the four tarballs in `names` share.
+/// The version the three tarballs in `names` share.
 fn versionOf(a: Allocator, names: []const []const u8) []const u8 {
     const first = names[0];
     for (targets) |t| {
@@ -281,10 +273,10 @@ fn versionOf(a: Allocator, names: []const []const u8) []const u8 {
     die("{s} is not a tarball of a known target", .{first});
 }
 
-/// The payload of a release that SHA256SUMS lists and cosign signs: the four tarballs, then the two .debs (one per
+/// The payload of a release that SHA256SUMS lists and cosign signs: the three tarballs, then the two .debs (one per
 /// architecture, of the tarballs' version). Refuses unless the directory holds exactly one of each, and no other mopm_*.deb.
 fn payloadFiles(a: Allocator, dir_path: []const u8) ![][]const u8 {
-    const tarballs = try fourTarballs(a, dir_path);
+    const tarballs = try threeTarballs(a, dir_path);
     const version = versionOf(a, tarballs);
     var dir = try std.fs.cwd().openDir(dir_path, .{ .iterate = true });
     defer dir.close();
@@ -329,7 +321,7 @@ fn check(a: Allocator, dir_path: []const u8) !void {
         for (names) |m| {
             if (std.mem.eql(u8, m, n)) known = true;
         }
-        if (!known) die("SHA256SUMS lists {s}, which is not one of the four tarballs and two .debs", .{n});
+        if (!known) die("SHA256SUMS lists {s}, which is not one of the three tarballs and two .debs", .{n});
         const got = try sha256Hex(try std.fs.path.join(a, &.{ dir_path, n }));
         if (!std.mem.eql(u8, hex, &got)) die("{s}: sha256 {s} is not the listed {s}", .{ n, &got, hex });
         listed += 1;
@@ -340,7 +332,7 @@ fn check(a: Allocator, dir_path: []const u8) !void {
 
 // ---- sign: keyless cosign signatures --------------------------------------------------------
 
-/// `cosign sign-blob --yes --bundle <file>.sigstore.json <file>` for the four tarballs, the two .debs and SHA256SUMS.
+/// `cosign sign-blob --yes --bundle <file>.sigstore.json <file>` for the three tarballs, the two .debs and SHA256SUMS.
 fn sign(a: Allocator, dir_path: []const u8, cosign: []const u8) !void {
     const names = try payloadFiles(a, dir_path);
     var files = std.ArrayList([]const u8).init(a);
@@ -359,9 +351,6 @@ fn sign(a: Allocator, dir_path: []const u8, cosign: []const u8) !void {
 }
 
 // ---- record, tested: the tarball the user beta passed is the tarball attested -----------------
-
-/// The targets whose tarball release-beta-user.yml walks as a user (macos-x86_64 has no runner).
-const tested_targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64" };
 
 /// Writes `<outdir>/<tarball name>.sha256` holding `<sha256>  <tarball name>`: the bytes the user beta ran.
 fn record(a: Allocator, tarball: []const u8, outdir: []const u8) !void {
@@ -385,7 +374,7 @@ fn tested(a: Allocator, dist_dir: []const u8, tested_dir: []const u8, packaging:
     var it = dir.iterate();
     while (try it.next()) |e| try files.append(try a.dupe(u8, e.name));
     var matched: usize = 0;
-    for (tested_targets) |t| {
+    for (targets) |t| {
         const suffix = try std.fmt.allocPrint(a, "-{s}.tar.gz.sha256", .{t});
         var found: ?[]const u8 = null;
         for (files.items) |n| {

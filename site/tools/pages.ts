@@ -31,7 +31,7 @@ export const WORKING_TODAY = [
 export const INSTALL_COMMAND = 'curl -fsSL https://mopm.dev/install.sh | sh';
 
 /** The release targets, in the order site/static/install.sh maps a machine to one. */
-export const TARGETS = ['linux-x86_64', 'linux-aarch64', 'macos-arm64', 'macos-x86_64'];
+export const TARGETS = ['linux-x86_64', 'linux-aarch64', 'macos-arm64'];
 
 /** A release's tarball name, as install.sh builds it (`name=mopm-$version-$target`, `asset=$name.tar.gz`). */
 export const ASSET_PATTERN = 'mopm-<version>-<target>.tar.gz';
@@ -186,7 +186,7 @@ export function homePage(): PageSpec {
             doc,
             'p',
             { class: 'note', id: 'install-note' },
-            'Release binaries for Linux and macOS, on x86_64 and arm64. The script checks the download against the release’s SHA256SUMS, installs ',
+            'Release binaries for Linux (x86_64, arm64) and macOS (arm64). The script checks the download against the release’s SHA256SUMS, installs ',
             code('~/.mopm/bin/mopm'),
             ' and needs no root. Read ',
             link(`${REPO_URL}/blob/main/site/static/install.sh`, 'the script'),
