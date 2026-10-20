@@ -232,8 +232,8 @@ test "the pull-request tier: unit on a pull request, beta only after the merge" 
     , &.{"a pull request runs build and unit tests only"});
     // Mutant: an e2e workflow gains a pull_request trigger.
     try expectStructure("e2e-extra.yml", header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: x\n", &.{"a pull request runs build and unit tests only"});
-    // The same trigger is fine in the four unit workflows.
-    for ([_][]const u8{ "farm.yml", "service-ci.yml" }) |ok| {
+    // The same trigger is fine in a unit workflow (lint.yml, farm.yml and ci.yml have rules of their own).
+    for ([_][]const u8{"service-ci.yml"}) |ok| {
         try expectStructure(ok, header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: x\n", &.{});
     }
     // Mutant: a guard with a clause that lets the beta job run on a pull request (the whole `if:` is compared, not a substring).
