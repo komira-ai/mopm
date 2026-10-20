@@ -1,0 +1,32 @@
+name: spike-claims-called
+
+# SPIKE, called by spike-channel-checks.yml. Prints the claim names and the non-secret values of the OIDC token
+# a job of a called (reusable) workflow gets. The token is masked and never printed.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  claims:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Print the claim names and the non-secret values (never the token)
+        run: |
+          set -euo pipefail
+          resp=$(curl -sSf -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          jwt=$(printf '%s' "$resp" | jq -r .value)
+          echo "::add-mask::$jwt"
+          payload=$(printf '%s' "$jwt" | cut -d. -f2 | tr '_-' '/+')
+          while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="${payload}="; done
+          echo "claim names:"
+          printf '%s' "$payload" | base64 -d | jq -c 'keys'
+          echo "values:"
+          printf '%s' "$payload" | base64 -d | jq '{sub, job_workflow_ref, job_workflow_sha, workflow_ref, ref, event_name, repository_id, repository_owner_id, environment, runner_environment}'

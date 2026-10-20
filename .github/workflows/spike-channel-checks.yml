@@ -1,0 +1,258 @@
+name: spike-channel-checks
+
+# SPIKE. Never merged: the pull request that carries this file is a draft titled "do not merge".
+# It answers three questions the channels design leaves open, on a real runner each, with the library of
+# tools/channels as the thing under test:
+#   1. does Homebrew install a formula whose URL is a file:// URL, from a local tap, on macos-14, and does the
+#      formula the library renders pass `brew audit --strict`;
+#   2. does a .deb the library wrote pass dpkg-deb --info / --contents and lintian, install with apt in debian:12,
+#      and is the apt index the library wrote (Packages, Packages.gz, Release) accepted by apt;
+#   3. which `sub` and `job_workflow_ref` does GitHub issue to a job of a reusable workflow call (claim names and
+#      the non-secret values only; the token is masked and never printed).
+# Every step that answers a question has continue-on-error, so one wrong answer does not hide the others; the
+# last step of each job prints the outcome of each. Only GitHub-owned actions are used.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  brew:
+    name: brew file:// install (macos-14)
+    runs-on: macos-14
+    timeout-minutes: 40
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_ANALYTICS: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Build the release tool and the channels tool with that Zig
+        run: |
+          zig build-exe tools/release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/release"
+          zig build-exe tools/channels/main.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/channels"
+      - name: Package mopm 0.0.1 for macos-arm64 and name the same tarball for the other three targets
+        run: |
+          "$RUNNER_TEMP/release" package 0.0.1 macos-arm64 aarch64-macos "$RUNNER_TEMP/out"
+          for t in macos-x86_64 linux-x86_64 linux-aarch64; do
+            cp "$RUNNER_TEMP/out/mopm-0.0.1-macos-arm64.tar.gz" "$RUNNER_TEMP/out/mopm-0.0.1-$t.tar.gz"
+          done
+          "$RUNNER_TEMP/release" sums "$RUNNER_TEMP/out"
+      - name: Render the formula with the library, URLs are file:// URLs of the tarballs
+        run: |
+          "$RUNNER_TEMP/channels" formula --sums "$RUNNER_TEMP/out/SHA256SUMS" --name mopm --version 0.0.1 \
+            --desc "Package manager for Mojo" --homepage https://mopm.dev --license Apache-2.0 \
+            --url-base "file://$RUNNER_TEMP/out" --out "$RUNNER_TEMP/mopm.rb"
+          cat "$RUNNER_TEMP/mopm.rb"
+      - name: Make a local tap and put the formula in it
+        run: |
+          brew --version
+          brew tap-new --no-git local/cand
+          mkdir -p "$(brew --repository local/cand)/Formula"
+          cp "$RUNNER_TEMP/mopm.rb" "$(brew --repository local/cand)/Formula/mopm.rb"
+      - name: Q1a brew install local/cand/mopm
+        id: install
+        continue-on-error: true
+        run: brew install local/cand/mopm
+      - name: Q1b brew test, and the installed program
+        id: test
+        continue-on-error: true
+        run: |
+          brew test local/cand/mopm
+          "$(brew --prefix)/bin/mopm" --version
+          test "$("$(brew --prefix)/bin/mopm" --version)" = "mopm 0.0.1"
+      - name: Q1c brew audit --strict (the formula as rendered)
+        id: audit
+        continue-on-error: true
+        run: brew audit --strict --formula local/cand/mopm
+      - name: Q1d brew audit --strict --online (needs a real URL, so expected to complain about file://)
+        id: audit_online
+        continue-on-error: true
+        run: brew audit --strict --online --formula local/cand/mopm
+      - name: Q1e a wrong sha256 must make brew install fail
+        id: negative
+        continue-on-error: true
+        run: |
+          brew uninstall --force local/cand/mopm
+          zeros=0000000000000000000000000000000000000000000000000000000000000000
+          sed -e "s/^[0-9a-f]\{64\}/$zeros/" "$RUNNER_TEMP/out/SHA256SUMS" > "$RUNNER_TEMP/bad.sums"
+          "$RUNNER_TEMP/channels" formula --sums "$RUNNER_TEMP/bad.sums" --name mopm --version 0.0.1 \
+            --desc "Package manager for Mojo" --homepage https://mopm.dev --license Apache-2.0 \
+            --url-base "file://$RUNNER_TEMP/out" --out "$(brew --repository local/cand)/Formula/mopm.rb"
+          if brew install local/cand/mopm; then
+            echo "NEGATIVE FAILED: brew installed a tarball whose sha256 does not match"
+            exit 1
+          fi
+          echo "negative ok: brew refused the wrong sha256"
+      - name: The answers
+        if: always()
+        env:
+          INSTALL: ${{ steps.install.outcome }}
+          TEST: ${{ steps.test.outcome }}
+          AUDIT: ${{ steps.audit.outcome }}
+          AUDIT_ONLINE: ${{ steps.audit_online.outcome }}
+          NEGATIVE: ${{ steps.negative.outcome }}
+        run: |
+          {
+            echo "### brew on macos-14"
+            echo "- brew install from a file:// URL in a local tap: $INSTALL"
+            echo "- brew test and mopm --version == mopm 0.0.1: $TEST"
+            echo "- brew audit --strict: $AUDIT"
+            echo "- brew audit --strict --online: $AUDIT_ONLINE"
+            echo "- a wrong sha256 is refused by brew install: $NEGATIVE"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  deb:
+    name: deb and apt (ubuntu-24.04, debian:12, ubuntu:24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Build the release tool and the channels tool with that Zig
+        run: |
+          zig build-exe tools/release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/release"
+          zig build-exe tools/channels/main.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/channels"
+      - name: Package mopm 0.0.1 for linux-x86_64 (static musl)
+        run: '"$RUNNER_TEMP/release" package 0.0.1 linux-x86_64 x86_64-linux-musl "$RUNNER_TEMP/out"'
+      - name: Write the .deb with the library
+        run: |
+          mkdir -p "$RUNNER_TEMP/dist"
+          "$RUNNER_TEMP/channels" deb --package mopm --version 0.0.1 --arch amd64 \
+            --maintainer "mopm authors <apt@mopm.dev>" --homepage https://mopm.dev \
+            --synopsis "package manager for Mojo" \
+            --file "755:usr/bin/mopm:$RUNNER_TEMP/out/stage/mopm-0.0.1-linux-x86_64/mopm" \
+            --file "644:usr/share/doc/mopm/copyright:LICENSE" \
+            --mtime "$(git log -1 --format=%ct)" --out "$RUNNER_TEMP/dist/mopm_0.0.1_amd64.deb"
+          ls -l "$RUNNER_TEMP/dist"
+      - name: Q2a dpkg-deb --info
+        id: info
+        continue-on-error: true
+        run: dpkg-deb --info "$RUNNER_TEMP/dist/mopm_0.0.1_amd64.deb"
+      - name: Q2b dpkg-deb --contents
+        id: contents
+        continue-on-error: true
+        run: dpkg-deb --contents "$RUNNER_TEMP/dist/mopm_0.0.1_amd64.deb"
+      - name: Install lintian
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lintian
+      - name: Q2c lintian --fail-on error (every tag is printed, warnings too)
+        id: lintian
+        continue-on-error: true
+        run: lintian --version && lintian --fail-on error --tag-display-limit 0 "$RUNNER_TEMP/dist/mopm_0.0.1_amd64.deb"
+      - name: Q2d apt installs the .deb file in debian:12
+        id: apt_file
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$RUNNER_TEMP/dist:/dist:ro" debian:12 sh -c '
+            set -eu
+            apt-get update -qq
+            apt-get install -y -qq /dist/mopm_0.0.1_amd64.deb
+            mopm --version
+            dpkg -L mopm
+            dpkg -s mopm
+            apt-get remove -y -qq mopm
+            test ! -e /usr/bin/mopm'
+      - name: Write the apt index with the library
+        run: |
+          "$RUNNER_TEMP/channels" apt-index --repo "$RUNNER_TEMP/no-such-repo" --out "$RUNNER_TEMP/repo" \
+            --deb "$RUNNER_TEMP/dist/mopm_0.0.1_amd64.deb" --date "$(git log -1 --format=%ct)" \
+            --origin mopm --label mopm --description "mopm spike"
+          find "$RUNNER_TEMP/repo" -type f | sort
+          cat "$RUNNER_TEMP/repo/dists/stable/Release"
+      - name: Q2e apt accepts the library's index and installs from it in debian:12 (unsigned, trusted=yes)
+        id: apt_repo_debian
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$RUNNER_TEMP/repo:/repo:ro" debian:12 sh -c '
+            set -eu
+            echo "deb [trusted=yes] file:/repo stable main" > /etc/apt/sources.list.d/spike.list
+            apt-get update
+            apt-cache policy mopm
+            apt-get install -y -qq mopm
+            mopm --version'
+      - name: Q2f the same in ubuntu:24.04
+        id: apt_repo_ubuntu
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$RUNNER_TEMP/repo:/repo:ro" ubuntu:24.04 sh -c '
+            set -eu
+            echo "deb [trusted=yes] file:/repo stable main" > /etc/apt/sources.list.d/spike.list
+            apt-get update
+            apt-get install -y -qq mopm
+            mopm --version'
+      - name: Q2g a damaged Packages must make apt-get update fail
+        id: apt_negative
+        continue-on-error: true
+        run: |
+          cp -r "$RUNNER_TEMP/repo" "$RUNNER_TEMP/repo_bad"
+          sed -i '1s/^/X/' "$RUNNER_TEMP/repo_bad/dists/stable/main/binary-amd64/Packages"
+          printf 'X' >> "$RUNNER_TEMP/repo_bad/dists/stable/main/binary-amd64/Packages.gz"
+          if docker run --rm -v "$RUNNER_TEMP/repo_bad:/repo:ro" debian:12 sh -c '
+              set -eu
+              echo "deb [trusted=yes] file:/repo stable main" > /etc/apt/sources.list.d/spike.list
+              apt-get update'; then
+            echo "NEGATIVE FAILED: apt-get update accepted a Packages that does not match Release"
+            exit 1
+          fi
+          echo "negative ok: apt refused the damaged index"
+      - name: The answers
+        if: always()
+        env:
+          INFO: ${{ steps.info.outcome }}
+          CONTENTS: ${{ steps.contents.outcome }}
+          LINTIAN: ${{ steps.lintian.outcome }}
+          APT_FILE: ${{ steps.apt_file.outcome }}
+          APT_REPO_DEBIAN: ${{ steps.apt_repo_debian.outcome }}
+          APT_REPO_UBUNTU: ${{ steps.apt_repo_ubuntu.outcome }}
+          APT_NEGATIVE: ${{ steps.apt_negative.outcome }}
+        run: |
+          {
+            echo "### deb and apt"
+            echo "- dpkg-deb --info: $INFO"
+            echo "- dpkg-deb --contents: $CONTENTS"
+            echo "- lintian --fail-on error: $LINTIAN"
+            echo "- apt installs the .deb file in debian:12: $APT_FILE"
+            echo "- apt update and install from the library's index in debian:12: $APT_REPO_DEBIAN"
+            echo "- the same in ubuntu:24.04: $APT_REPO_UBUNTU"
+            echo "- a damaged Packages is refused by apt-get update: $APT_NEGATIVE"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  claims-direct:
+    name: claims of a job of this workflow
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Print the claim names and the non-secret values (never the token)
+        run: |
+          set -euo pipefail
+          resp=$(curl -sSf -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          jwt=$(printf '%s' "$resp" | jq -r .value)
+          echo "::add-mask::$jwt"
+          payload=$(printf '%s' "$jwt" | cut -d. -f2 | tr '_-' '/+')
+          while [ $(( ${#payload} % 4 )) -ne 0 ]; do payload="${payload}="; done
+          echo "claim names:"
+          printf '%s' "$payload" | base64 -d | jq -c 'keys'
+          echo "values:"
+          printf '%s' "$payload" | base64 -d | jq '{sub, job_workflow_ref, job_workflow_sha, workflow_ref, ref, event_name, repository_id, repository_owner_id, environment, runner_environment}'
+
+  claims-reusable:
+    name: claims of a job of a reusable workflow call
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/spike-claims-called.yml
