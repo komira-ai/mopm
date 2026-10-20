@@ -417,8 +417,8 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
             const steps = c.get(j.node, "steps") orelse continue;
             if (steps != .array) continue;
             for (steps.array.items) |st| {
-                const run = c.str(c.get(st, "run")) orelse continue;
-                if (!std.mem.eql(u8, std.mem.trim(u8, run, " \r\n\t"), "zig test tests/drivers/release_lint_test.zig")) continue;
+                const step_run = c.str(c.get(st, "run")) orelse continue;
+                if (!std.mem.eql(u8, std.mem.trim(u8, step_run, " \r\n\t"), "zig test tests/drivers/release_lint_test.zig")) continue;
                 if (c.truthy(c.get(st, "continue-on-error"))) continue;
                 const cond = std.mem.trim(u8, try jobIf(a, st), " ");
                 if (cond.len == 0 or std.mem.eql(u8, cond, "${{ !cancelled() }}")) runs_release_lint = true;
