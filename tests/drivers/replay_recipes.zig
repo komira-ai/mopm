@@ -1,4 +1,4 @@
-//! The client of the fake registry and the recipes of tests/contract/replay.py
+//! The client of the fake registry and the recipes of the replay
 //! (`build`): how to put a fresh fake in the state a case describes and which
 //! request to send. The list of recipes is replay_table.zig; the assertions
 //! about the live answer are replay_checks.zig. Used by replay_test.zig.

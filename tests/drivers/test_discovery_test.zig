@@ -1,6 +1,6 @@
-//! tests/e2e/test_discovery.sh in Zig, for the build farm: `mopm test --list`
+//! The port of the former tests/e2e/test_discovery.sh in Zig, for the build farm: `mopm test --list`
 //! against the real Mojo toolchain (komira's pinned 1.0.0), no shell, no pixi.
-//! The shell script stays for ci.yml and is superseded by //:discovery.
+//! It replaces tests/e2e/test_discovery.sh (deleted); the check is //:discovery.
 //!
 //! tests/e2e/testpkg is a package with three test files, one of each kind:
 //! a bare file (mopm generates its main), a self-hosted file registering its

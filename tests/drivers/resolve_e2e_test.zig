@@ -318,7 +318,7 @@ const Cx = struct {
         cx.rep.check(name, good, detail);
     }
 
-    /// What tests/contract/validate.py finds wrong with a lock: schema, then rules.
+    /// What the lock contract finds wrong with a lock: schema, then rules (it was tests/contract/validate.py).
     fn contractProblems(cx: *Cx, text: []const u8) !c.Problems {
         var out = c.Problems.init(cx.a);
         const doc = c.parseJson(cx.a, text) catch {

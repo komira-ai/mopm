@@ -331,7 +331,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     const fake_dir = try h.join(a, &.{ work, "fake" });
     const fake_exe = try h.toolPathAbs(a, "MOPM_FAKE_REGISTRY");
 
-    // 1. libgreet and greet.mojoc, as tests/e2e/run.sh builds them.
+    // 1. libgreet and greet.mojoc, as tests/drivers/test_autolink_test.zig builds them.
     var c = Ctx{
         .a = a,
         .rep = rep,

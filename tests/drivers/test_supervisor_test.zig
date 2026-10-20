@@ -1,7 +1,7 @@
-//! tests/e2e/test_supervisor.sh and check_supervisor.py in Zig, for the build
+//! The port of the former tests/e2e/test_supervisor.sh and check_supervisor.py in Zig, for the build
 //! farm (no shell, no Python, no pgrep or pkill): `mopm test` running tests
-//! against the real Mojo toolchain (komira's pinned 1.0.0). The shell and
-//! Python files stay for ci.yml and are superseded by //:supervisor.
+//! against the real Mojo toolchain (komira's pinned 1.0.0). They replace
+//! tests/e2e/test_supervisor.sh and check_supervisor.py (deleted); the check is //:supervisor.
 //!
 //! tests/e2e/supervise is a package whose tests each must get one exact
 //! verdict (the comment above each test names it): pass, an assertion and a
@@ -39,6 +39,7 @@
 //! was reparented, and kills exactly those pids.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const h = @import("harness.zig");
 const r = @import("results.zig");
 const mojo_env = @import("mojo_env.zig");
@@ -213,6 +214,18 @@ var run_mark: []const u8 = "";
 /// is `sleep 7919`: what a broken group kill leaves behind.
 fn survivors(a: Allocator) ![]i32 {
     var out = std.ArrayList(i32).init(a);
+    if (builtin.os.tag != .linux) {
+        // No /proc: `pgrep -f`, as the shell test did. The mark cannot be
+        // read from another process's environment here; a runner runs one job.
+        var env = try h.environ(a);
+        const r1 = try h.run(a, &.{ "/usr/bin/pgrep", "-f", "sleep 7919" }, &env, .{ .capture = .stdout });
+        var lines = std.mem.tokenizeScalar(u8, r1.text, '\n');
+        while (lines.next()) |l| {
+            const pid = std.fmt.parseInt(i32, std.mem.trim(u8, l, " \t"), 10) catch continue;
+            try out.append(pid);
+        }
+        return out.items;
+    }
     const want = try std.fmt.allocPrint(a, "MOPM_E2E_MARK={s}", .{run_mark});
     var proc = try std.fs.cwd().openDir("/proc", .{ .iterate = true });
     defer proc.close();
@@ -295,7 +308,7 @@ test "supervisor: mopm test verdicts against the real mojo (tests/e2e/test_super
 
 fn run(a: Allocator, rep: *h.Report) !void {
     const m = try mojo_env.Mojo.init(a);
-    run_mark = try h.fmt(a, "{d}.{d}", .{ std.os.linux.getpid(), std.time.milliTimestamp() });
+    run_mark = try h.fmt(a, "{d}.{d}", .{ std.crypto.random.int(u32), std.time.milliTimestamp() });
     const prefix = try h.join(a, &.{ m.work, "env" });
     try m.prefix(prefix, true);
     var c = Ctx{
@@ -313,9 +326,13 @@ fn run(a: Allocator, rep: *h.Report) !void {
     std.debug.print("== mojo: {s}", .{v.text});
 
     // ---------------------------------------------------------------- 1
-    const lib = try h.join(a, &.{ prefix, "lib/libgreet.so" });
+    const libgreet = try mojo_env.libName(a, "greet");
+    const lib = try h.join(a, &.{ prefix, "lib", libgreet });
     {
-        const cc = try m.cc(&.{ "-shared", "-fPIC", "-Wl,-soname,libgreet.so", "-o", lib, try h.join(a, &.{ here, "native/greet.c" }) });
+        var cc_args = std.ArrayList([]const u8).init(a);
+        try cc_args.appendSlice(try mojo_env.shlibFlags(a, "greet"));
+        try cc_args.appendSlice(&.{ "-o", lib, try h.join(a, &.{ here, "native/greet.c" }) });
+        const cc = try m.cc(cc_args.items);
         if (cc.signaled or cc.code != 0) {
             std.debug.print("FAIL cc libgreet: {s}\n", .{cc.text});
             return error.Fatal;
@@ -325,12 +342,12 @@ fn run(a: Allocator, rep: *h.Report) !void {
             std.debug.print("FAIL mojo precompile greet: {s}\n", .{pc.text});
             return error.Fatal;
         }
-        try h.writeFile(try h.join(a, &.{ prefix, "lib/mojo/greet.mopm.json" }),
-            \\{"schema": 1, "name": "greet", "version": "1.0.0", "deps": [],
-            \\ "native": [{"id": "greet", "soname": "libgreet.so", "file": "../libgreet.so", "needs": []}]}
+        try h.writeFile(try h.join(a, &.{ prefix, "lib/mojo/greet.mopm.json" }), try h.fmt(a,
+            \\{{"schema": 1, "name": "greet", "version": "1.0.0", "deps": [],
+            \\ "native": [{{"id": "greet", "soname": "{s}", "file": "../{s}", "needs": []}}]}}
             \\
-        );
-        std.debug.print("ok   installed greet (libgreet.so) into the environment\n", .{});
+        , .{ libgreet, libgreet }));
+        std.debug.print("ok   installed greet ({s}) into the environment\n", .{libgreet});
     }
 
     // ---------------------------------------------------------------- 2
@@ -366,8 +383,8 @@ fn run(a: Allocator, rep: *h.Report) !void {
         const bins = try h.findFiles(a, try h.join(a, &.{ c.pkg, "target/mopm/bin" }), "test_native");
         var named = false;
         if (bins.len == 1) {
-            const d = try mojo_env.readDynamic(a, try h.fmt(a, "{s}/target/mopm/bin/{s}", .{ c.pkg, bins[0] }));
-            named = d.needs("libgreet.so");
+            const d = try mojo_env.dynamic(a, try h.fmt(a, "{s}/target/mopm/bin/{s}", .{ c.pkg, bins[0] }));
+            named = d.needs(libgreet);
         }
         rep.check("the native test's binary names libgreet", named, "no single test_native binary, or it does not name libgreet");
     }

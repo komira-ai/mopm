@@ -1,6 +1,6 @@
-//! tests/contract/replay.py in Zig, for the build farm, which has no Python.
-//! replay.py stays for ci.yml until farm.yml has matched it, and is
-//! superseded by this file.
+//! Replays the API cases of tests/contract/api against the fake registry, for
+//! the build farm, which has no Python. (It was tests/contract/replay.py; the
+//! Python is deleted and this file is the check.)
 //!
 //! Replays the API cases of tests/contract/api against the fake registry. For
 //! every case marked valid whose operation the fake implements, a recipe

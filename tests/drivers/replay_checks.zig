@@ -1,5 +1,5 @@
-//! The assertions of tests/contract/replay.py's recipes (`check` lambdas) about
-//! the live answer, besides the contract checks. Used by replay_test.zig.
+//! The assertions of the replay recipes about the live answer, besides the
+//! contract checks. Used by replay_test.zig.
 
 const std = @import("std");
 const c = @import("contract.zig");
