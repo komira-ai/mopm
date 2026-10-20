@@ -1,7 +1,7 @@
-//! tests/e2e/run.sh in Zig, for the build farm (no shell, no pixi, no system
+//! The port of the former tests/e2e/run.sh in Zig, for the build farm (no shell, no pixi, no system
 //! C compiler): `mopm build`, `mopm run` and `mopm repl` against the real
 //! Mojo toolchain, with native libraries reached through mopm's autolink.
-//! tests/e2e/run.sh stays for ci.yml and is superseded by //:autolink.
+//! It replaces tests/e2e/run.sh (deleted); the check is //:autolink.
 //!
 //! What it does, as run.sh does:
 //!   1. builds libgreet, libinner and libouter (libouter needs libinner and
@@ -60,10 +60,10 @@ const Ctx = struct {
 
     fn shlib(c: *Ctx, name: []const u8, extra: []const []const u8) !void {
         const src = try h.fmt(c.a, "{s}/native/{s}.c", .{ c.here, name });
-        const out = try h.fmt(c.a, "{s}/lib{s}.so", .{ c.natives, name });
-        const soname = try h.fmt(c.a, "-Wl,-soname,lib{s}.so", .{name});
+        const out = try h.fmt(c.a, "{s}/{s}", .{ c.natives, try mojo_env.libName(c.a, name) });
         var argv = std.ArrayList([]const u8).init(c.a);
-        try argv.appendSlice(&.{ "-shared", "-fPIC", soname, "-o", out, src });
+        try argv.appendSlice(try mojo_env.shlibFlags(c.a, name));
+        try argv.appendSlice(&.{ "-o", out, src });
         try argv.appendSlice(extra);
         try c.mustRun(try h.fmt(c.a, "cc lib{s}", .{name}), try c.m.cc(argv.items));
     }
@@ -72,21 +72,21 @@ const Ctx = struct {
     fn meta(c: *Ctx, name: []const u8, deps: []const u8, needs: []const u8) ![]u8 {
         return h.fmt(c.a,
             \\{{"schema": 1, "name": "{s}", "version": "1.0.0", "deps": {s},
-            \\ "native": [{{"id": "{s}", "soname": "lib{s}.so", "file": "../lib{s}.so", "needs": {s}}}]}}
+            \\ "native": [{{"id": "{s}", "soname": "lib{s}.{s}", "file": "../lib{s}.{s}", "needs": {s}}}]}}
             \\
-        , .{ name, deps, name, name, name, needs });
+        , .{ name, deps, name, name, mojo_env.ext, name, mojo_env.ext, needs });
     }
 
     /// The three packages, as spec/channel.md lays them out.
     fn install(c: *Ctx, prefix: []const u8) !void {
         const cwd = std.fs.cwd();
         for ([_][]const u8{ "greet", "inner", "outer" }) |p| {
-            try cwd.copyFile(try h.fmt(c.a, "{s}/lib{s}.so", .{ c.natives, p }), cwd, try h.fmt(c.a, "{s}/lib/lib{s}.so", .{ prefix, p }), .{});
+            try cwd.copyFile(try h.fmt(c.a, "{s}/lib{s}.{s}", .{ c.natives, p, mojo_env.ext }), cwd, try h.fmt(c.a, "{s}/lib/lib{s}.{s}", .{ prefix, p, mojo_env.ext }), .{});
             try cwd.copyFile(try h.fmt(c.a, "{s}/{s}.mojoc", .{ c.pkgs, p }), cwd, try h.fmt(c.a, "{s}/lib/mojo/{s}.mojoc", .{ prefix, p }), .{});
         }
         try h.writeFile(try h.fmt(c.a, "{s}/lib/mojo/greet.mopm.json", .{prefix}), try c.meta("greet", "[]", "[]"));
         try h.writeFile(try h.fmt(c.a, "{s}/lib/mojo/inner.mopm.json", .{prefix}), try c.meta("inner", "[]", "[]"));
-        try h.writeFile(try h.fmt(c.a, "{s}/lib/mojo/outer.mopm.json", .{prefix}), try c.meta("outer", "[{\"name\": \"inner\"}]", "[\"libinner.so\"]"));
+        try h.writeFile(try h.fmt(c.a, "{s}/lib/mojo/outer.mopm.json", .{prefix}), try c.meta("outer", "[{\"name\": \"inner\"}]", try h.fmt(c.a, "[\"libinner.{s}\"]", .{mojo_env.ext})));
     }
 
     fn wantFor(prog: []const u8) []const []const u8 {
@@ -208,8 +208,8 @@ fn run(a: Allocator, rep: *h.Report) !void {
     try c.shlib("greet", &.{});
     try c.shlib("inner", &.{});
     try c.shlib("outer", &.{ try h.fmt(a, "-L{s}", .{c.natives}), "-linner" });
-    const outer = try mojo_env.readDynamic(a, try h.fmt(a, "{s}/libouter.so", .{c.natives}));
-    rep.check("fixture: libouter needs libinner and has no run path", outer.needs("libinner.so") and !outer.has_run_path, "libouter.so lacks DT_NEEDED libinner.so, or has a run path");
+    const outer = try mojo_env.dynamic(a, try h.fmt(a, "{s}/libouter.{s}", .{ c.natives, mojo_env.ext }));
+    rep.check("fixture: libouter needs libinner and has no run path", outer.needs(try h.fmt(a, "libinner.{s}", .{mojo_env.ext})) and !outer.has_run_path, "libouter lacks libinner as a needed library (DT_NEEDED, macOS: @rpath/libinner.dylib), or has a run path");
 
     // 2. packages
     for ([_][]const u8{ "greet", "inner", "outer" }) |p| {
@@ -227,16 +227,16 @@ fn run(a: Allocator, rep: *h.Report) !void {
     try m.prefix(split, false);
     try c.install(split);
     try std.fs.cwd().access(try h.fmt(a, "{s}/lib", .{m.tc}), .{});
-    const leak = std.fs.cwd().access(try h.fmt(a, "{s}/lib/libinner.so", .{m.tc}), .{});
-    rep.check("split: libinner is not in the toolchain's lib", leak == error.FileNotFound, "libinner.so is in the toolchain's lib");
+    const leak = std.fs.cwd().access(try h.fmt(a, "{s}/lib/libinner.{s}", .{ m.tc, mojo_env.ext }), .{});
+    rep.check("split: libinner is not in the toolchain's lib", leak == error.FileNotFound, "libinner is in the toolchain's lib");
 
     // Controls (split only): libinner named nowhere, so libouter cannot load.
     const lib = try h.fmt(a, "{s}/lib", .{split});
     const prog_src = try h.join(a, &.{ c.here, "prog.mojo" });
-    const ctl1 = try m.run(split, &.{ "run", "-Xlinker", try h.fmt(a, "{s}/libgreet.so", .{lib}), "-Xlinker", try h.fmt(a, "{s}/libouter.so", .{lib}), prog_src }, null);
+    const ctl1 = try m.run(split, &.{ "run", "-Xlinker", try h.fmt(a, "{s}/libgreet.{s}", .{ lib, mojo_env.ext }), "-Xlinker", try h.fmt(a, "{s}/libouter.{s}", .{ lib, mojo_env.ext }), prog_src }, null);
     c.refuse("control, split: mojo run without libinner fails", ctl1, true);
     rep.check("control, split: the mojo run failure names libinner", h.contains(ctl1.text, "libinner"), ctl1.text);
-    const ctl3 = try m.run(split, &.{ "run", "-Xlinker", try h.fmt(a, "{s}/libouter.so", .{lib}), try h.join(a, &.{ c.here, "prog_outer.mojo" }) }, null);
+    const ctl3 = try m.run(split, &.{ "run", "-Xlinker", try h.fmt(a, "{s}/libouter.{s}", .{ lib, mojo_env.ext }), try h.join(a, &.{ c.here, "prog_outer.mojo" }) }, null);
     c.refuse("control, split: mojo run of the outer-only program without libinner fails", ctl3, true);
     rep.check("control, split: the outer-only mojo run failure names libinner", h.contains(ctl3.text, "libinner"), ctl3.text);
     if (!c.have_repl) {
@@ -244,7 +244,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     } else {
         var e = try m.freshEnv();
         try e.put("MODULAR_HOME", try h.fmt(a, "{s}/share/max", .{split}));
-        const pre = try h.fmt(a, "settings set target.env-vars LD_PRELOAD={s}/libgreet.so:{s}/libouter.so", .{ lib, lib });
+        const pre = try h.fmt(a, "settings set target.env-vars {s}={s}/libgreet.{s}:{s}/libouter.{s}", .{ mojo_env.preload_var, lib, mojo_env.ext, lib, mojo_env.ext });
         const ctl2 = try h.run(a, &.{ try h.fmt(a, "{s}/bin/mojo", .{split}), "repl", "-O", pre }, &e, .{ .stdin_path = try h.join(a, &.{ c.here, "repl.stdin" }) });
         c.refuse("control, split: mojo repl without libinner preloaded prints nothing", ctl2, false);
     }

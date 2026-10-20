@@ -41,16 +41,21 @@ Two builds describe the same program, and both stay.
   stay for `ci.yml` until `farm.yml` has matched it, and are deleted
   then.
   The Mojo end-to-end suites run on the farm with no pixi, shell or Python:
-  `//:autolink` (`tests/e2e/run.sh`), `//:discovery` (`test_discovery.sh`),
-  `//:supervisor` (`test_supervisor.sh`, `check_supervisor.py`) and `//:flaky`
-  (`test_flaky.sh`, `check_flaky.py`). They use the Mojo 1.0.0 compiler komira
+  `//:autolink` (`tests/drivers/test_autolink_test.zig`), `//:discovery`,
+  `//:supervisor` and `//:flaky` (drivers `tests/drivers/test_*_test.zig`; the
+  shell and Python scripts they replaced are deleted). They use the Mojo 1.0.0 compiler komira
   pins (`komira//tools/build/toolchains:mojo_compiler`, handed over as a
   directory), komira's zig as the C compiler (`zig cc`, through
   `tests/drivers/zigcc.zig`: `mojo build` links through `cc` on `PATH`), and
   the built `mopm`; `//:mojo_probe` shows the toolchain works from this cell.
+  The same drivers run natively on the GitHub runners (Linux x86_64, Linux
+  aarch64, macOS arm64) from `ci.yml`: `zig build test-autolink`,
+  `test-discovery`, `test-supervisor` and `test-flaky` (`test-e2e` runs all
+  four) with `-Dmojo-env=<pixi environment>` (`tests/e2e/pixi.toml`, mojo
+  1.0.0) and the system C compiler.
   The pinned compiler closure has no lldb, so `mojo repl` cannot run there and
   the REPL checks print `SKIP` (they run if the toolchain gains
-  `bin/mojo-lldb`); `ci.yml` still runs them against the pixi environment.
+  `bin/mojo-lldb`), so the REPL is not exercised in CI until then.
   The repository's own lints are Zig tests too, with no Ruby: `//:hygiene`
   (`.github/scripts/hygiene.rb`, over every file of the repository),
   `//:workflows` (`.github/scripts/workflow_lint.rb`, over the workflows) and

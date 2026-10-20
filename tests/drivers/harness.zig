@@ -333,7 +333,7 @@ fn contentLength(head: []const u8) ?usize {
 /// absolute path already.
 pub fn toolPathAbs(a: Allocator, name: []const u8) ![]u8 {
     return std.process.getEnvVarOwned(a, name) catch {
-        std.debug.print("the environment variable {s} is not set (BUCK gives it with exec_tools or data)\n", .{name});
+        std.debug.print("the environment variable {s} is not set (BUCK gives it with exec_tools or data; `zig build test-e2e` with -Dmojo-env sets the native ones)\n", .{name});
         return error.MissingTool;
     };
 }
