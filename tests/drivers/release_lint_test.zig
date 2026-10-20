@@ -163,9 +163,33 @@ test "mutant: the data flow (the tested version is the tagged and released versi
 }
 
 test "mutant: publish releases something other than the verified files" {
-    try mutant("publish downloads the unverified assets", "          name: verified-assets\n          path: dist\n", "          name: release-assets\n          path: dist\n", "publish must download exactly the artifacts verified-assets and release-notes");
-    try mutant("publish downloads other notes", "          name: release-notes\n          path: notes\n", "          name: release-assets\n          path: notes\n", "publish must download exactly the artifacts verified-assets and release-notes");
-    try mutant("verify downloads a build artifact", "          name: release-assets\n          path: dist\n      - name: Install Zig 0.12.0 (sha256-pinned)\n        run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"\n      - uses: sigstore", "          name: release-linux-x86_64\n          path: dist\n      - name: Install Zig 0.12.0 (sha256-pinned)\n        run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"\n      - uses: sigstore", "verify must download exactly the artifact release-assets");
+    try mutant("publish downloads the unverified assets", "          name: verified-assets\n          path: dist\n", "          name: signed-assets\n          path: dist\n", "publish must download exactly the artifacts verified-assets and notes-pin");
+    try mutant("publish downloads other notes", "          name: notes-pin\n          path: notes\n", "          name: signed-assets\n          path: notes\n", "publish must download exactly the artifacts verified-assets and notes-pin");
+    try mutant("verify downloads a build artifact", "          name: signed-assets\n          path: dist\n      - name: Install Zig 0.12.0 (sha256-pinned)\n        run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"\n      - uses: sigstore", "          name: release-linux-x86_64\n          path: dist\n      - name: Install Zig 0.12.0 (sha256-pinned)\n        run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"\n      - uses: sigstore", "verify must download exactly the artifact signed-assets");
+}
+
+test "mutant: attest signs an unmerged commit" {
+    const guard = "    if: github.ref == 'refs/heads/main'\n";
+    // A dispatch from a branch would sign and attest a commit nobody merged, and publish a Sigstore entry for it.
+    try mutant("attest with no main guard", guard, "", "attest must run only under if");
+    try mutant("attest guarded by the event only", guard, "    if: github.event_name == 'push'\n", "attest must run only under if");
+    try mutant("attest guarded on any ref", guard, "    if: github.ref != ''\n", "attest must run only under if");
+    try mutant("an if on verify", "  verify:\n    needs: [plan, build, attest]\n", "  verify:\n    needs: [plan, build, attest]\n    if: ${{ always() }}\n", "verify must not have an if:");
+}
+
+test "mutant: a dry run's signatures cannot be published or mis-pinned" {
+    // verify pins the trigger of the run that signed; a hardcoded `push` would refuse every dry run.
+    try mutant("verify without --trigger", " --trigger \"$GITHUB_EVENT_NAME\"", "", "verify must pass --trigger");
+    try mutant("verify with a hardcoded push trigger", " --trigger \"$GITHUB_EVENT_NAME\"", " --trigger push", "verify must pass --trigger");
+    // publish must never run on a dispatch, whose signatures verify accepted for a dry run.
+    try mutant("publish on a dispatch", "    needs: [tag, verify]\n    " ++ push_main, "    needs: [tag, verify]\n    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}", "publish must run only under if");
+}
+
+test "mutant: an artifact attest's release-* download would merge into dist" {
+    // 'Re-run all jobs' would download these with the build's artifacts and wedge the run.
+    try mutant("attest uploads release-assets", "          name: signed-assets\n          path: |", "          name: release-assets\n          path: |", "attest's download pattern release-* would also match");
+    try mutant("verify uploads release-notes", "          name: notes-pin\n          path: notes/", "          name: release-notes\n          path: notes/", "attest's download pattern release-* would also match");
+    try mutant("attest uploads another name", "          name: signed-assets\n          path: |", "          name: other\n          path: |", "attest must upload exactly the artifact signed-assets");
 }
 
 test "mutant: no signatures" {
@@ -291,13 +315,17 @@ test "mutant: the App token step of bump" {
     try mutant("an unpinned action", "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1", "actions/create-github-app-token@v3", "bump must use actions/create-github-app-token@<full commit sha>");
     try mutant("a short sha", "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1", "actions/create-github-app-token@bcd2ba4", "bump must use actions/create-github-app-token@<full commit sha>");
     try mutant("another action mints the token", app_use, "        uses: someone/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1\n", "bump must use actions/create-github-app-token@");
-    try mutant("no token step", "      - name: Mint the installation token of the release bot, for komira-internal only\n        id: app\n" ++ app_use ++ "        with:\n          app-id: ${{ vars.RELEASE_BOT_APP_ID }}\n          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n          owner: komira-ai\n          repositories: komira-internal\n", "", "bump must mint the token with exactly one actions/create-github-app-token step, has 0");
+    try mutant("no token step", "      - name: Mint the installation token of the release bot, for komira-internal only\n        id: app\n" ++ app_use ++ "        with:\n          app-id: ${{ vars.RELEASE_BOT_APP_ID }}\n          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n          owner: komira-ai\n          repositories: komira-internal\n          permission-contents: write\n          permission-pull-requests: write\n", "", "bump must mint the token with exactly one actions/create-github-app-token step, has 0");
     try mutant("the app id from a literal", "          app-id: ${{ vars.RELEASE_BOT_APP_ID }}", "          app-id: 5395718", "the token step must set app-id");
     try mutant("another key", "          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}", "          private-key: ${{ secrets.OTHER_KEY }}", "the token step must set private-key");
     try mutant("another owner", "          owner: komira-ai\n", "          owner: someone\n", "the token step must set owner");
     try mutant("a token for every repository of the owner", "          repositories: komira-internal\n", "", "the token step must set repositories");
     try mutant("a token for two repositories", "          repositories: komira-internal\n", "          repositories: komira-internal,mopm\n", "the token step must set repositories");
-    try mutant("an extra input", "          repositories: komira-internal\n", "          repositories: komira-internal\n          permission-contents: write\n", "the token step takes exactly app-id, private-key, owner and repositories");
+    try mutant("an extra input", "          permission-pull-requests: write\n", "          permission-pull-requests: write\n          permission-issues: write\n", "the token step takes exactly app-id, private-key, owner, repositories, permission-contents and permission-pull-requests");
+    // The token holds only contents and pull-requests write on komira-internal, not every scope the App has.
+    try mutant("a token with no pull-requests scope named", "          permission-pull-requests: write\n", "", "the token step must set permission-pull-requests");
+    try mutant("a token with no contents scope named", "          permission-contents: write\n", "", "the token step must set permission-contents");
+    try mutant("a token with a wider scope", "          permission-contents: write\n", "          permission-contents: admin\n", "the token step must set permission-contents");
     try mutant("no step id", "        id: app\n", "", "the token step must have id: app");
 }
 
@@ -320,7 +348,7 @@ test "mutant: where the token lives in bump" {
     try mutant("checkout with the token", "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Install Zig 0.12.0 (sha256-pinned)\n        run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"\n      # Built before any step holds the token, so no build runs beside it.\n      - name: Build the release tool\n        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/cut_release\"\n      - name: Mint", "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          token: ${{ steps.app.outputs.token }}\n      - name: Install Zig 0.12.0 (sha256-pinned)\n        run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"\n      # Built before any step holds the token, so no build runs beside it.\n      - name: Build the release tool\n        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/cut_release\"\n      - name: Mint", "bump step 0 names the App token");
     // A step after the tool runs with the token still alive.
     const build_step = "      - name: Build the release tool\n        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/cut_release\"\n";
-    const app_step = "      - name: Mint the installation token of the release bot, for komira-internal only\n        id: app\n" ++ app_use ++ "        with:\n          app-id: ${{ vars.RELEASE_BOT_APP_ID }}\n          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n          owner: komira-ai\n          repositories: komira-internal\n";
+    const app_step = "      - name: Mint the installation token of the release bot, for komira-internal only\n        id: app\n" ++ app_use ++ "        with:\n          app-id: ${{ vars.RELEASE_BOT_APP_ID }}\n          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n          owner: komira-ai\n          repositories: komira-internal\n          permission-contents: write\n          permission-pull-requests: write\n";
     try mutant("the token minted before the tool is built", build_step ++ app_step, app_step ++ build_step, "bump: build the tool (zig build-exe tools/cut_release.zig) before the token step");
     try mutant("a step after the tool"," --workdir \"$RUNNER_TEMP/bump\"'\n", " --workdir \"$RUNNER_TEMP/bump\"'\n      - run: echo done\n", "the step that runs the tool must be the last");
 }

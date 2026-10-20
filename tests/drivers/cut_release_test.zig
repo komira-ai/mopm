@@ -24,6 +24,7 @@ const World = struct {
     tools: Tools,
     root: []const u8, // the scenario's directory: the fake gh's state
     n: usize = 0,
+    sign_trigger: []const u8 = "push", // the event of the run that "signs" in `assets`
 
     fn path(w: World, name: []const u8) []const u8 {
         return h.join(w.a, &.{ w.root, name }) catch @panic("oom");
@@ -62,6 +63,7 @@ const World = struct {
         const a = w.a;
         var env = try h.environ(a);
         try env.put("FAKE_GH_DIR", w.root);
+        try env.put("FAKE_COSIGN_TRIGGER", w.sign_trigger);
         const dir = w.path(sub);
         try std.fs.cwd().makePath(dir);
         for (targets) |t| {
@@ -99,6 +101,10 @@ const World = struct {
         var argv = std.ArrayList([]const u8).init(a);
         try argv.appendSlice(&.{ w.tools.cut, "--gh", w.tools.gh, "--cosign", w.tools.cosign });
         try argv.appendSlice(args);
+        // verify-dir needs --trigger; a scenario that does not name one is a push run.
+        var named = false;
+        for (args) |x| named = named or std.mem.eql(u8, x, "--trigger");
+        if (args.len > 0 and std.mem.eql(u8, args[0], "verify-dir") and !named) try argv.appendSlice(&.{ "--trigger", "push" });
         return h.run(a, argv.items, &env, .{});
     }
 
@@ -456,6 +462,32 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         try std.fs.cwd().deleteFile(w2.path("assets/mopm-1.2.3-linux-x86_64.tar.gz.sigstore.json"));
         const m = try w2.run(&.{ "verify-dir", "1.2.3", w2.path("assets"), "--sha", sha, "--source-ref", "refs/heads/main" });
         rep.check("verify-dir: a missing bundle is refused (nine files, ten expected)", m.code == 1 and h.contains(m.text, "holds 9 files, expected exactly 10"), m.text);
+    }
+    {
+        // The trigger is pinned to the event of the run that signed. A dry run (workflow_dispatch) signs with that
+        // trigger, so verify-dir must accept it when told so, refuse it as a push, and refuse a push-signed file as a dispatch.
+        var w = try fresh(a, tools, &tmp, "vd_dispatch");
+        w.sign_trigger = "workflow_dispatch";
+        try w.assets("assets", "1.2.3", null);
+        const dir = w.path("assets");
+        const ok = try w.run(&.{ "verify-dir", "1.2.3", dir, "--sha", sha, "--source-ref", "refs/heads/main", "--trigger", "workflow_dispatch", "--notes-out", w.path("notes") });
+        rep.check("verify-dir: --trigger workflow_dispatch accepts files signed by a dispatch run", ok.code == 0 and h.contains(ok.text, "verified v1.2.3 at " ++ sha), ok.text);
+        rep.check("verify-dir: the signature is pinned to the trigger it was given (workflow_dispatch)", h.contains(w.read("cosign_log"), "--certificate-github-workflow-trigger workflow_dispatch --certificate-github-workflow-repository komira-ai/mopm "), w.read("cosign_log"));
+        rep.check("verify-dir: a dry run writes the notes and the pin but no verified.sha256, so nothing it verified can be published", w.has("notes/release-notes.md") and w.has("notes/pin.txt") and !w.has("notes/verified.sha256"), "notes");
+        const as_push = try w.run(&.{ "verify-dir", "1.2.3", dir, "--sha", sha, "--source-ref", "refs/heads/main", "--trigger", "push" });
+        rep.check("verify-dir: files signed by a dispatch run are refused as a push", as_push.code == 1 and h.contains(as_push.text, "cosign verify-blob refused"), as_push.text);
+
+        var w2 = try goodVerify(a, tools, &tmp, "vd_push_as_dispatch", "1.2.3");
+        const as_dispatch = try w2.run(&.{ "verify-dir", "1.2.3", w2.path("assets"), "--sha", sha, "--source-ref", "refs/heads/main", "--trigger", "workflow_dispatch" });
+        rep.check("verify-dir: files signed by a push run are refused as a dispatch (a mismatched trigger)", as_dispatch.code == 1 and h.contains(as_dispatch.text, "cosign verify-blob refused"), as_dispatch.text);
+        for ([_][]const u8{ "pull_request", "" }) |bad| {
+            const r = try w2.run(&.{ "verify-dir", "1.2.3", w2.path("assets"), "--sha", sha, "--source-ref", "refs/heads/main", "--trigger", bad });
+            rep.check("verify-dir: a trigger other than push or workflow_dispatch is refused", r.code == 1 and h.contains(r.text, "is not push or workflow_dispatch"), r.text);
+        }
+        var env = try h.environ(a);
+        try env.put("FAKE_GH_DIR", w2.root);
+        const bare = try h.run(a, &.{ tools.cut, "--gh", tools.gh, "--cosign", tools.cosign, "verify-dir", "1.2.3", w2.path("assets"), "--sha", sha, "--source-ref", "refs/heads/main" }, &env, .{});
+        rep.check("verify-dir: --trigger is required", bare.code == 1 and h.contains(bare.text, "usage"), bare.text);
     }
     {
         // release sign: refuses when cosign fails, and signs nothing it was not given.
