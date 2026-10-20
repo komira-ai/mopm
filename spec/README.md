@@ -55,7 +55,7 @@ Readers ignore unknown keys and refuse a higher version number than they know.
 ## Tests
 
 `tests/contract/` holds example requests and responses for every API
-operation, example index files and locks, and `validate.py`, which CI runs:
+operation, example index files and locks, checked by `//:contract` (`tests/drivers/contract_test.zig`), which the farm builds:
 
 - the OpenAPI document is valid OpenAPI 3.1;
 - every example request and response is valid against it, and counter-examples

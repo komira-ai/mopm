@@ -33,37 +33,15 @@ jobs:
         run: zig build test
       - name: Build the CLI
         run: zig build
-      - name: Link-plan golden files
-        run: tests/run_golden.sh ./zig-out/bin/mopm
 
-  contract:
-    name: contract (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'macos')) && '["ubuntu-24.04","ubuntu-24.04-arm","macos-14"]' || '["ubuntu-24.04","ubuntu-24.04-arm"]') }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install the validators (pip, in a throwaway environment)
-        run: |
-          python3 -m venv "$RUNNER_TEMP/contract-venv"
-          "$RUNNER_TEMP/contract-venv/bin/pip" install --disable-pip-version-check -r tests/contract/requirements.txt
-      - name: Validate the OpenAPI document, the schemas and the examples
-        run: '"$RUNNER_TEMP/contract-venv/bin/python" -I tests/contract/validate.py'
-      - name: The locks mopm's unit tests write pass the lock schema and rules; broken copies are refused
-        run: '"$RUNNER_TEMP/contract-venv/bin/python" -I tests/resolve/check_golden.py'
-      - name: Install Zig 0.12.0 (sha256-pinned)
-        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
-      - name: Build the fake registry
-        run: zig build
-      - name: Replay the API cases against the fake registry
-        run: '"$RUNNER_TEMP/contract-venv/bin/python" -I tests/contract/replay.py ./zig-out/bin/mopm-fake-registry'
+  # The contract checks (the OpenAPI document, the schemas, the API cases, the examples, and the replay of the cases
+  # against the fake registry) and the lock goldens are the Buck2 targets //:contract, //:contract_replay and
+  # //:lock_golden, built by farm.yml (`./buck2 build //...`). No Python is left in them, so no job runs here.
 
-  autolink:
-    name: autolink e2e (${{ matrix.os }})
+  mojo-e2e:
+    name: mojo e2e (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -74,8 +52,6 @@ jobs:
           persist-credentials: false
       - name: Install Zig 0.12.0 (sha256-pinned)
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
-      - name: Build the CLI
-        run: zig build
       - name: Install pixi 0.79.0 (sha256-pinned)
         run: echo "$(tools/install_pixi.sh "$RUNNER_TEMP/pixi")" >> "$GITHUB_PATH"
       - name: Create the Mojo environment (mojo 1.0.0, tests/e2e/pixi.toml)
@@ -83,63 +59,20 @@ jobs:
           mkdir -p "$RUNNER_TEMP/mojo-env"
           cp tests/e2e/pixi.toml "$RUNNER_TEMP/mojo-env/pixi.toml"
           pixi install --manifest-path "$RUNNER_TEMP/mojo-env/pixi.toml"
-      - name: mopm build, run and repl against the real mojo
-        run: tests/e2e/run.sh ./zig-out/bin/mopm "$RUNNER_TEMP/mojo-env/.pixi/envs/default" "$RUNNER_TEMP/e2e"
-
-  test-discovery:
-    name: test discovery e2e (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'macos')) && '["ubuntu-24.04","ubuntu-24.04-arm","macos-14"]' || '["ubuntu-24.04","ubuntu-24.04-arm"]') }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install Zig 0.12.0 (sha256-pinned)
-        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
-      - name: Build the CLI
-        run: zig build
-      - name: Install pixi 0.79.0 (sha256-pinned)
-        run: echo "$(tools/install_pixi.sh "$RUNNER_TEMP/pixi")" >> "$GITHUB_PATH"
-      - name: Create the Mojo environment (mojo 1.0.0, tests/e2e/pixi.toml)
-        run: |
-          mkdir -p "$RUNNER_TEMP/mojo-env"
-          cp tests/e2e/pixi.toml "$RUNNER_TEMP/mojo-env/pixi.toml"
-          pixi install --manifest-path "$RUNNER_TEMP/mojo-env/pixi.toml"
-      - name: mopm test --list, and --check against harnesses built by the real mojo
-        run: tests/e2e/test_discovery.sh ./zig-out/bin/mopm "$RUNNER_TEMP/mojo-env/.pixi/envs/default" "$RUNNER_TEMP/test-discovery"
-
-  test-supervisor:
-    name: test supervisor e2e (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'macos')) && '["ubuntu-24.04","ubuntu-24.04-arm","macos-14"]' || '["ubuntu-24.04","ubuntu-24.04-arm"]') }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install Zig 0.12.0 (sha256-pinned)
-        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
-      - name: Build the CLI
-        run: zig build
-      - name: Install pixi 0.79.0 (sha256-pinned)
-        run: echo "$(tools/install_pixi.sh "$RUNNER_TEMP/pixi")" >> "$GITHUB_PATH"
-      - name: Create the Mojo environment (mojo 1.0.0, tests/e2e/pixi.toml)
-        run: |
-          mkdir -p "$RUNNER_TEMP/mojo-env"
-          cp tests/e2e/pixi.toml "$RUNNER_TEMP/mojo-env/pixi.toml"
-          pixi install --manifest-path "$RUNNER_TEMP/mojo-env/pixi.toml"
-      - name: mopm test runs the fixtures; exact verdicts, JSON, JUnit, supervisor self-test
-        run: tests/e2e/test_supervisor.sh ./zig-out/bin/mopm "$RUNNER_TEMP/mojo-env/.pixi/envs/default" "$RUNNER_TEMP/test-supervisor"
-      - name: mopm test --retries, --deny-flaky and filters on deterministic flaky fixtures
+      # The Zig drivers of tests/drivers, run natively by build.zig (the farm runs the same
+      # files as //:autolink, //:discovery, //:supervisor and //:flaky on Linux x86_64 only).
+      # The REPL checks of the autolink driver run where the environment has bin/mojo-lldb.
+      - name: mopm build, run and repl against the real mojo (autolink)
+        run: zig build test-autolink -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
+      - name: mopm test --list against the real mojo (discovery)
         if: ${{ !cancelled() }}
-        run: tests/e2e/test_flaky.sh ./zig-out/bin/mopm "$RUNNER_TEMP/mojo-env/.pixi/envs/default" "$RUNNER_TEMP/test-flaky"
+        run: zig build test-discovery -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
+      - name: mopm test verdicts, JSON, JUnit and the group kill (supervisor)
+        if: ${{ !cancelled() }}
+        run: zig build test-supervisor -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
+      - name: mopm test --retries, --deny-flaky and filters on deterministic flaky fixtures (flaky)
+        if: ${{ !cancelled() }}
+        run: zig build test-flaky -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
 
   registry-e2e:
     name: registry e2e (${{ matrix.os }})
@@ -161,13 +94,6 @@ jobs:
         run: python3 -I tests/registry_e2e/run.py ./zig-out/bin/mopm ./zig-out/bin/mopm-fake-registry
       - name: mopm pack and publish against the fake registry
         run: python3 -I tests/registry_e2e/publish.py ./zig-out/bin/mopm ./zig-out/bin/mopm-fake-registry
-
-      - name: Install the contract validators (pip, in a throwaway environment)
-        run: |
-          python3 -m venv "$RUNNER_TEMP/contract-venv"
-          "$RUNNER_TEMP/contract-venv/bin/pip" install --disable-pip-version-check -r tests/contract/requirements.txt
-      - name: mopm lock, update and tree against the fake registry (wrong-version traps, refusals, lock schema)
-        run: '"$RUNNER_TEMP/contract-venv/bin/python" -I tests/resolve_e2e/run.py ./zig-out/bin/mopm ./zig-out/bin/mopm-fake-registry'
 
   # The packer against the registry's own validator (service/api/src/validate): what mopm pack writes must be accepted,
   # and each planted defect must be refused with its rule.

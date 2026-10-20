@@ -1,5 +1,5 @@
 //! The structural checks of spec/api/openapi.yaml that stand in for
-//! openapi-spec-validator, which validate.py ran and the build cannot (it is
+//! openapi-spec-validator, which the Python validator ran and the build cannot (it is
 //! Python, and it checks the document against the whole OpenAPI 3.1 meta
 //! schema). What this file checks:
 //!

@@ -11,11 +11,50 @@
 //!   CC_SHIM         tests/drivers/zigcc.zig, built (becomes `cc`)
 //!   MOPM            the built CLI
 //! and BUILDRULES_TEST_WORK, a writable directory.
+//!
+//! `zig build test-e2e` (build.zig) runs the same drivers natively, on the
+//! GitHub runners (Linux x86_64, Linux aarch64, macOS arm64). With no CC_SHIM
+//! the driver is native: MOJO_TOOLCHAIN is a pixi environment (mojo 1.0.0,
+//! tests/e2e/pixi.toml, `-Dmojo-env=<dir>`), `cc` is the system C compiler, the
+//! run keeps the runner's HOME and TMPDIR, and MOPM_E2E_SRC names the
+//! repository's tests/e2e, which is copied into the work directory (the
+//! drivers edit the fixtures in place).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const h = @import("harness.zig");
 const Allocator = std.mem.Allocator;
 const fs = std.fs;
+
+pub const is_macos = builtin.os.tag == .macos;
+
+/// The extension of a shared library on the machine the driver runs on.
+pub const ext = if (is_macos) "dylib" else "so";
+
+/// `lib<name>.<ext>`.
+pub fn libName(a: Allocator, name: []const u8) ![]u8 {
+    return h.fmt(a, "lib{s}.{s}", .{ name, ext });
+}
+
+/// The `cc` arguments (before `-o <out> <src>`) that make `lib<name>.<ext>`
+/// with its soname (macOS: the install name `@rpath/lib<name>.dylib`) and no
+/// run path.
+pub fn shlibFlags(a: Allocator, name: []const u8) ![]const []const u8 {
+    const out = try a.alloc([]const u8, 3);
+    if (is_macos) {
+        out[0] = "-dynamiclib";
+        out[1] = "-install_name";
+        out[2] = try h.fmt(a, "@rpath/lib{s}.dylib", .{name});
+    } else {
+        out[0] = "-shared";
+        out[1] = "-fPIC";
+        out[2] = try h.fmt(a, "-Wl,-soname,lib{s}.so", .{name});
+    }
+    return out;
+}
+
+/// The variable that makes the loader preload libraries.
+pub const preload_var = if (is_macos) "DYLD_INSERT_LIBRARIES" else "LD_PRELOAD";
 
 pub const Mojo = struct {
     a: Allocator,
@@ -33,16 +72,24 @@ pub const Mojo = struct {
     pub fn init(a: Allocator) !Mojo {
         const work = try h.toolPathAbs(a, "BUILDRULES_TEST_WORK");
         const tc = try h.toolPathAbs(a, "MOJO_TOOLCHAIN");
-        const zig_dir = try h.toolPathAbs(a, "ZIG_DIR");
-        const shim = try h.toolPathAbs(a, "CC_SHIM");
+        const shim: ?[]const u8 = std.process.getEnvVarOwned(a, "CC_SHIM") catch null;
+        const native = shim == null;
         const cc_dir = try h.join(a, &.{ work, "cc" });
         try fs.cwd().makePath(cc_dir);
         const cc_path = try h.join(a, &.{ cc_dir, "cc" });
-        try fs.cwd().copyFile(shim, fs.cwd(), cc_path, .{});
-        {
+        if (shim) |sh| {
+            try fs.cwd().copyFile(sh, fs.cwd(), cc_path, .{});
             const f = try fs.cwd().openFile(cc_path, .{});
             defer f.close();
             try f.chmod(0o755);
+        } else {
+            // Native: the system C compiler, as `cc`, in the directory
+            // that comes first on PATH.
+            const sys = try findOnPath(a, "cc");
+            try fs.cwd().symLink(sys, cc_path, .{});
+            if (std.process.getEnvVarOwned(a, "MOPM_E2E_SRC")) |src| {
+                try h.copyTree(a, src, try h.join(a, &.{ work, "tests/e2e" }));
+            } else |_| {}
         }
         var env = std.process.EnvMap.init(a);
         const scratch = try h.join(a, &.{ work, "scratch" });
@@ -51,6 +98,17 @@ pub const Mojo = struct {
         // children (`sleep`) are found there; there is no /bin/sh.
         const outer_path = std.process.getEnvVarOwned(a, "PATH") catch try a.dupe(u8, "");
         try env.put("PATH", try h.fmt(a, "{s}:{s}/bin:{s}", .{ cc_dir, tc, outer_path }));
+        if (native) {
+            // The runner's own home, temporary directory and developer
+            // directory: the compiler and the debugger on macOS need them.
+            for ([_][]const u8{ "HOME", "TMPDIR", "USER", "LANG", "DEVELOPER_DIR", "SDKROOT" }) |k| {
+                if (std.process.getEnvVarOwned(a, k)) |v| try env.put(k, v) else |_| {}
+            }
+            try env.put("MODULAR_CRASH_REPORTING_ENABLED", "false");
+            if (is_macos) try macDebugserver(a, &env);
+            return .{ .a = a, .tc = tc, .work = work, .cc_dir = cc_dir, .base = env };
+        }
+        const zig_dir = try h.toolPathAbs(a, "ZIG_DIR");
         try env.put("HOME", scratch);
         try env.put("TMPDIR", scratch);
         try env.put("XDG_CACHE_HOME", scratch);
@@ -62,6 +120,11 @@ pub const Mojo = struct {
         try env.put("ZIG_GLOBAL_CACHE_DIR", try h.join(a, &.{ scratch, "zig-global" }));
         try env.put("ZIG_LOCAL_CACHE_DIR", try h.join(a, &.{ scratch, "zig-local" }));
         return .{ .a = a, .tc = tc, .work = work, .cc_dir = cc_dir, .base = env };
+    }
+
+    /// Whether this is the native run (build.zig), not the farm's.
+    pub fn isNative(self: *const Mojo) bool {
+        return self.base.get("MOPM_ZIG") == null;
     }
 
     pub fn freshEnv(self: *const Mojo) !std.process.EnvMap {
@@ -89,7 +152,18 @@ pub const Mojo = struct {
             if (e.kind == .directory) continue; // lib/mojo is linked below
             try cwd.symLink(try h.join(a, &.{ tc_lib, e.name }), try h.join(a, &.{ dest, "lib", e.name }), .{});
         }
-        try cwd.symLink(try h.join(a, &.{ self.tc, "lib/mojo/std.mojoc" }), try h.join(a, &.{ dest, "lib/mojo/std.mojoc" }), .{});
+        if (self.isNative()) {
+            // A pixi environment: every package the compiler ships.
+            var mdir = try cwd.openDir(try h.join(a, &.{ tc_lib, "mojo" }), .{ .iterate = true });
+            defer mdir.close();
+            var mit = mdir.iterate();
+            while (try mit.next()) |e| {
+                if (e.kind == .directory or !std.mem.endsWith(u8, e.name, ".mojoc")) continue;
+                try cwd.symLink(try h.join(a, &.{ tc_lib, "mojo", e.name }), try h.join(a, &.{ dest, "lib/mojo", e.name }), .{});
+            }
+        } else {
+            try cwd.symLink(try h.join(a, &.{ self.tc, "lib/mojo/std.mojoc" }), try h.join(a, &.{ dest, "lib/mojo/std.mojoc" }), .{});
+        }
         // modular.cfg: the toolchain's, rendered for this toolchain's path,
         // with the import path and (pixi layout) the run path moved.
         const cfg = try h.readFile(a, try h.join(a, &.{ self.tc, "share/max/modular.cfg" }));
@@ -128,7 +202,62 @@ pub const Mojo = struct {
     }
 };
 
+/// The first executable called `name` on PATH, absolute.
+fn findOnPath(a: Allocator, name: []const u8) ![]u8 {
+    const path = std.process.getEnvVarOwned(a, "PATH") catch return error.NoCompiler;
+    var it = std.mem.tokenizeScalar(u8, path, ':');
+    while (it.next()) |d| {
+        const cand = try h.join(a, &.{ d, name });
+        fs.cwd().access(cand, .{}) catch continue;
+        return cand;
+    }
+    std.debug.print("no `{s}` on PATH: the native drivers link through the system C compiler\n", .{name});
+    return error.NoCompiler;
+}
+
+/// macOS 14 (Darwin 23): the debugserver in the mojo 1.0.0 package crashes
+/// (SIGSEGV in dyld4::FileRecord::getPath) when the REPL starts, and the REPL
+/// then prints "couldn't find a REPL for mojo". Point lldb at Xcode's
+/// debugserver there; macOS 15 runs the packaged one. This is the toolchain
+/// on this OS, not mopm: mopm passes the variable through like any other.
+fn macDebugserver(a: Allocator, env: *std.process.EnvMap) !void {
+    const rel = try h.run(a, &.{ "/usr/bin/uname", "-r" }, env, .{ .capture = .stdout });
+    const dot = std.mem.indexOfScalar(u8, rel.text, '.') orelse return;
+    const major = std.fmt.parseInt(u32, rel.text[0..dot], 10) catch return;
+    if (major > 23) return;
+    const xs = try h.run(a, &.{ "/usr/bin/xcode-select", "-p" }, env, .{ .capture = .stdout });
+    const dev = h.chomp(xs.text);
+    const dbg = try h.fmt(a, "{s}/../SharedFrameworks/LLDB.framework/Versions/A/Resources/debugserver", .{dev});
+    fs.cwd().access(dbg, .{}) catch {
+        std.debug.print("macOS 14: no Xcode debugserver at {s}\n", .{dbg});
+        return error.NoDebugserver;
+    };
+    try env.put("LLDB_DEBUGSERVER_PATH", dbg);
+    std.debug.print("note: macOS 14, LLDB_DEBUGSERVER_PATH={s}\n", .{dbg});
+}
+
 // ------------------------------------------------------------------- ELF
+
+/// `readDynamic` on Linux; on macOS the same facts from `otool`: the
+/// basenames of the libraries `otool -L` lists, and whether `otool -l` shows
+/// an LC_RPATH.
+pub fn dynamic(a: Allocator, path: []const u8) !Dynamic {
+    if (!is_macos) return readDynamic(a, path);
+    var env = try h.environ(a);
+    const libs = try h.run(a, &.{ "/usr/bin/otool", "-L", path }, &env, .{ .capture = .stdout });
+    const cmds = try h.run(a, &.{ "/usr/bin/otool", "-l", path }, &env, .{ .capture = .stdout });
+    var needed = std.ArrayList([]const u8).init(a);
+    var lines = std.mem.splitScalar(u8, libs.text, '\n');
+    _ = lines.next(); // "<path>:"
+    while (lines.next()) |raw| {
+        const l = std.mem.trim(u8, raw, " \t");
+        const end = std.mem.indexOf(u8, l, " (") orelse l.len;
+        if (end == 0) continue;
+        try needed.append(fs.path.basename(l[0..end]));
+    }
+    const rp = h.contains(cmds.text, "LC_RPATH");
+    return .{ .needed = needed.items, .has_run_path = rp, .has_rpath = rp, .has_runpath = false };
+}
 
 /// What the dynamic section of a 64-bit little-endian ELF file records:
 /// the needed sonames and whether it carries a run path (DT_RPATH or

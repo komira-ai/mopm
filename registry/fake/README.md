@@ -59,9 +59,8 @@ Not part of the contract. Each is a POST with a JSON object body.
 
 ## Tested how
 
-`tests/contract/replay.py` replays every valid case of `tests/contract/api`
+`//:contract_replay` (`tests/drivers/replay_test.zig`) replays every valid case of `tests/contract/api`
 for the operations above against a running fake: each recipe sets the state
 the case describes, and the live answer must have the case's status and error
-code and pass the contract checks of `validate.py`. CI runs it in the
-`contract` job. Unit tests (`zig build test`) cover the catalogue templates,
+code and pass the contract checks of `//:contract`. The farm builds it. Unit tests (`zig build test`) cover the catalogue templates,
 times, tokens, names and routing.

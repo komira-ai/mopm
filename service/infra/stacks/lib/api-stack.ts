@@ -139,7 +139,7 @@ export class ApiStack extends Stack {
         MOPM_COMMIT: props.commit,
         MOPM_READ_ONLY: String(props.readOnly ?? false),
         // The NAME of the secret holding the stage's GitHub OAuth app (never its value). Created by
-        // service/infra/access/oauth-secret.sh; until it exists the device login routes answer 503.
+        // service/infra/access/lib/oauth-secret.ts; until it exists the device login routes answer 503.
         MOPM_OAUTH_SECRET_NAME: oauthSecretName(c.stage),
         MOPM_REQUIRE_2FA: String(props.require2fa ?? true),
         // Where uploads go (a presigned PUT into quarantine/) and where a commit is queued. Built from names, not

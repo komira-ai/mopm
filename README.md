@@ -106,12 +106,20 @@ You need [Zig](https://ziglang.org) 0.12.0 (`tools/install_zig.sh <dir>` install
 ```sh
 zig build            # builds zig-out/bin/mopm
 zig build test       # unit tests and golden tests; run from the repository root
-tests/run_golden.sh  # runs the built CLI against tests/golden
+./buck2 build //:golden  # runs the built CLI against tests/golden (on the build farm)
 ```
 
-CI runs all three on Linux x86_64, Linux aarch64 and macOS arm64, and there
-also runs `tests/e2e/run.sh` in a pixi environment with the pinned `mojo`
-(`tools/install_pixi.sh`, `tests/e2e/pixi.toml`).
+CI runs `zig build` and `zig build test` on Linux x86_64, Linux aarch64 and macOS arm64, and
+there also runs the Mojo end-to-end drivers (`tests/drivers/test_*_test.zig`) natively, in a
+pixi environment with the pinned `mojo` (`tools/install_pixi.sh`, `tests/e2e/pixi.toml`):
+
+```sh
+zig build test-e2e -Dmojo-env=<pixi environment>   # or test-autolink, test-discovery, test-supervisor, test-flaky
+```
+
+The REPL checks run where the environment has `bin/mojo-lldb`. The build farm (`farm.yml`) runs
+the same drivers (`//:autolink`, `//:discovery`, `//:supervisor`, `//:flaky`) on Linux x86_64
+against komira's pinned Mojo compiler.
 
 ## License
 
