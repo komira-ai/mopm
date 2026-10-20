@@ -80,7 +80,10 @@ const cases = [_]Case{
     .{ .name = "release_other_write", .lint = &.{ "packages: write is not allowed" }, .hyg = &.{} },
     .{ .name = "release_unpinned_attest", .lint = &.{ "only GitHub-owned actions pinned by full SHA" }, .hyg = &.{} },
     .{ .name = "release_calls_with_idtoken", .lint = &.{}, .hyg = &.{ "calls a workflow and grants id-token" } },
-    .{ .name = "release_cosign_pinned", .lint = &.{}, .hyg = &.{} },
+    // sigstore/cosign-installer, even pinned by commit, is refused: the org's Actions policy would fail the whole run at startup.
+    .{ .name = "release_cosign_pinned", .lint = &.{"only GitHub-owned actions pinned by full SHA"}, .hyg = &.{} },
+    .{ .name = "release_tailscale_pinned", .lint = &.{}, .hyg = &.{} },
+    .{ .name = "release_tailscale_unpinned", .lint = &.{"only GitHub-owned actions pinned by full SHA"}, .hyg = &.{} },
     .{ .name = "release_unpinned_cosign", .lint = &.{"only GitHub-owned actions pinned by full SHA"}, .hyg = &.{} },
     .{ .name = "cosign_elsewhere", .lint = &.{"only GitHub-owned actions pinned by full SHA"}, .hyg = &.{} },
 };

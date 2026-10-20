@@ -29,6 +29,10 @@
 //!   event that made them (a dry run signs as workflow_dispatch); `publish` runs only under the push-to-main `if:`, so a
 //!   dispatch-signed file is never published. No artifact of `attest` or `verify` is named `release-*`: attest downloads
 //!   the build's artifacts by that pattern, and a re-run of all jobs would merge a stale one into dist.
+//! - **The actions.** No `uses:` of a release workflow (this one, release-build.yml, release-beta-user.yml, release-check.yml)
+//!   may be an action the org's Actions policy refuses: only GitHub-owned actions and `tailscale/github-action`. One such
+//!   action makes the whole run fail at startup (`startup_failure`), as sigstore/cosign-installer did. cosign is installed by
+//!   `release install-cosign`, pinned by sha256 in tools/release.zig, in `attest` and `verify` before the first use.
 //! - **The triggers.** A push to main, with the `paths-ignore` below, and `workflow_dispatch`; one run
 //!   at a time per group: all pushes share one, a manual run has its own (never cancelled).
 //! - **The path filter.** A push that changes only docs or CI does not release. The filter is checked
@@ -172,6 +176,7 @@ fn ifIs(a: Allocator, job: Value, want: ?[]const u8) !bool {
 /// What differs between release.yml and the rules above, one line each.
 pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
     const doc = c.load(a, text) catch |err| return c.problem(a, out, prefix ++ "release.yml: not readable as YAML: {s}", .{@errorName(err)});
+    try actionProblems(a, "release.yml", text, out);
 
     // Triggers and the path filter.
     const on = try c.onKeys(a, doc);
@@ -343,11 +348,11 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
         const got = try downloaded(a, verify);
         if (!c.eqlList(got, &.{"signed-assets"})) try c.problem(a, out, prefix ++ "release.yml: verify must download exactly the artifact signed-assets, got {s}", .{try c.inspectList(a, got)});
         if (stepRunContaining(verify, "verify-dir") == null) try c.problem(a, out, prefix ++ "release.yml: verify must run cut_release verify-dir", .{});
-        if (!usesAction(verify, "sigstore/cosign-installer@")) try c.problem(a, out, prefix ++ "release.yml: verify needs cosign (sigstore/cosign-installer) to check the signatures", .{});
+        try cosignInstalledBefore(a, out, "verify", verify, "verify-dir");
     }
     if (c.get(jv, "attest")) |attest| {
         if (stepRunContaining(attest, "release\" sign dist") == null) try c.problem(a, out, prefix ++ "release.yml: attest must sign the files (`release sign dist`)", .{});
-        if (!usesAction(attest, "sigstore/cosign-installer@")) try c.problem(a, out, prefix ++ "release.yml: attest needs cosign (sigstore/cosign-installer) to sign", .{});
+        try cosignInstalledBefore(a, out, "attest", attest, "release\" sign dist");
         // The tarballs attested are the tarballs the user beta passed.
         const tested_at = stepIndexRunContaining(attest, "release\" tested ");
         const sums_at = stepIndexRunContaining(attest, "release\" sums ");
@@ -368,6 +373,59 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
         }
         if (!got_records) try c.problem(a, out, prefix ++ "release.yml: attest must download the records (pattern tested-*, path tested, merge-multiple) of the user beta", .{});
     }
+}
+
+
+/// The actions that are not GitHub-owned and that the org's Actions policy allows (`tailscale/github-action@*`).
+/// Any other action outside `actions/` and `github/` makes the whole run fail at startup (`startup_failure`),
+/// before a single job runs; a pull request's checks never use the release workflows, so only a push to main shows it.
+pub const allowed_third_party = [_][]const u8{"tailscale/github-action"};
+
+/// Does the org's Actions policy allow `uses`? A local path (`./...`), a GitHub-owned action (`actions/`, `github/`)
+/// and the `allowed_third_party` list pass; anything else does not.
+pub fn actionAllowed(uses: []const u8) bool {
+    if (std.mem.startsWith(u8, uses, "./")) return true;
+    if (std.mem.startsWith(u8, uses, "actions/") or std.mem.startsWith(u8, uses, "github/")) return true;
+    const at = std.mem.indexOfScalar(u8, uses, '@') orelse uses.len;
+    for (allowed_third_party) |p| {
+        if (std.mem.eql(u8, uses[0..at], p)) return true;
+    }
+    return false;
+}
+
+/// The release workflows (release.yml, release-build.yml, release-beta-user.yml, release-check.yml) may use no
+/// action the org's policy refuses, at the job level (a reusable workflow) or in a step. One line each.
+pub fn actionProblems(a: Allocator, file: []const u8, text: []const u8, out: *Out) !void {
+    const doc = c.load(a, text) catch |err| return c.problem(a, out, prefix ++ "{s}: not readable as YAML: {s}", .{ file, @errorName(err) });
+    const jv = c.get(doc, "jobs");
+    for (c.keys(jv)) |name| {
+        const job = c.get(jv, name) orelse continue;
+        if (c.str(c.get(job, "uses"))) |u| {
+            if (!actionAllowed(u)) try c.problem(a, out, prefix ++ "{s}: {s} uses {s}, which the org's Actions policy does not allow (only GitHub-owned actions and {s}; the run would fail at startup)", .{ file, name, u, allowed_third_party[0] });
+        }
+        const steps = c.get(job, "steps") orelse continue;
+        if (steps != .array) continue;
+        for (steps.array.items, 0..) |st, i| {
+            const u = c.str(c.get(st, "uses")) orelse continue;
+            if (!actionAllowed(u)) try c.problem(a, out, prefix ++ "{s}: {s} step {d} uses {s}, which the org's Actions policy does not allow (only GitHub-owned actions and {s}; the run would fail at startup)", .{ file, name, i, u, allowed_third_party[0] });
+        }
+    }
+}
+
+/// The step that puts cosign on the PATH: the release tool, built just before, downloads the pinned binary.
+pub const install_cosign_run = "echo \"$(\"$RUNNER_TEMP/release\" install-cosign \"$RUNNER_TEMP/cosign\")\" >> \"$GITHUB_PATH\"";
+
+/// `job` must build the release tool, then install cosign with `install_cosign_run`, and only then run the step
+/// whose `run:` contains `user` (the first use of cosign).
+fn cosignInstalledBefore(a: Allocator, out: *Out, name: []const u8, job: Value, user: []const u8) !void {
+    const built = stepIndexRunContaining(job, "zig build-exe tools/release.zig");
+    const installed = stepIndexRunContaining(job, "install-cosign");
+    const used = stepIndexRunContaining(job, user);
+    if (installed == null or !std.mem.eql(u8, stepRunContaining(job, "install-cosign").?, install_cosign_run)) {
+        return c.problem(a, out, prefix ++ "release.yml: {s} must install cosign with exactly `{s}` (sha256-pinned in tools/release.zig; no third-party action is allowed)", .{ name, install_cosign_run });
+    }
+    if (built == null or built.? > installed.?) try c.problem(a, out, prefix ++ "release.yml: {s} must build tools/release.zig before it installs cosign with it", .{name});
+    if (used != null and installed.? > used.?) try c.problem(a, out, prefix ++ "release.yml: {s} must install cosign before the step that uses it (`{s}`)", .{ name, user });
 }
 
 /// The `run:` of the first step of `job` that contains `needle`.
@@ -416,16 +474,6 @@ fn hasWords(line: []const u8, words: []const u8) bool {
     return false;
 }
 
-/// Does some step of `job` use an action starting with `prefix_text`?
-fn usesAction(job: Value, prefix_text: []const u8) bool {
-    const steps = c.get(job, "steps") orelse return false;
-    if (steps != .array) return false;
-    for (steps.array.items) |st| {
-        const u = c.str(c.get(st, "uses")) orelse continue;
-        if (std.mem.startsWith(u8, u, prefix_text)) return true;
-    }
-    return false;
-}
 
 /// Some step of `job` sets `env.<name>` to `value`.
 fn envIs(job: Value, name: []const u8, value: []const u8) bool {
@@ -469,6 +517,7 @@ fn uploadedNames(a: Allocator, job: Value) ![]const []const u8 {
 pub fn userBetaProblems(a: Allocator, text: []const u8, out: *Out) !void {
     const f = "release-beta-user.yml: ";
     const doc = c.load(a, text) catch |err| return c.problem(a, out, prefix ++ f ++ "not readable as YAML: {s}", .{@errorName(err)});
+    try actionProblems(a, "release-beta-user.yml", text, out);
     const on = try c.onKeys(a, doc);
     if (!c.eqlList(on, &.{"workflow_call"})) try c.problem(a, out, prefix ++ f ++ "runs on {s}, not exactly workflow_call", .{try c.inspectList(a, on)});
     const jv = c.get(doc, "jobs");

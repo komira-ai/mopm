@@ -229,6 +229,16 @@ zig_test(  # buck-only: cut_release against the fake gh, with planted defects it
     **_TOOLS
 )
 
+zig_test(  # buck-only: release install-cosign against a fake download: a good sha installs, a wrong sha and a missing file are refused
+    name = "install_cosign",
+    src = "tests/drivers/install_cosign_test.zig",
+    imports = ["tests/drivers/harness.zig"],
+    env_tools = {
+        "MOPM_RELEASE_TOOL": ":release-tool",
+    },
+    **_TOOLS
+)
+
 # ---- Contract checks, ported from Python (tests/contract, tests/resolve*) ------
 
 # The JSON Schema validator and what it needs, shared by the contract drivers.

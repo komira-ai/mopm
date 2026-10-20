@@ -76,6 +76,11 @@ jobs:
           zig build-exe tools/release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/release"
           "$RUNNER_TEMP/release" sums dist
           cat dist/SHA256SUMS
+      # The step release.yml's attest and verify run: the real download, checked against the sha256 pinned in tools/release.zig.
+      - name: Install cosign (sha256-pinned)
+        run: echo "$("$RUNNER_TEMP/release" install-cosign "$RUNNER_TEMP/cosign")" >> "$GITHUB_PATH"
+      - name: The installed cosign runs
+        run: cosign version
 
   installer:
     name: install.sh (${{ matrix.os }})

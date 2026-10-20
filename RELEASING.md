@@ -33,6 +33,12 @@ version, the tagged version and the released version; `publish` releases the ver
 `release_lint_test.zig` plants a defect for each rule and requires it to go red. The same file holds
 `release-beta-user.yml`: exactly the three platform legs, none skippable, optional or allowed to fail.
 
+The org's Actions policy allows only GitHub-owned actions and `tailscale/github-action`; a workflow that uses any other
+action fails at startup (`startup_failure`) before a job runs, and a pull request does not show it. So no release workflow
+uses one, and `attest` and `verify` install cosign v3.0.6 with `release install-cosign` (`tools/release.zig`): the official
+linux-amd64 binary from github.com/sigstore/cosign, refused unless its sha256 is the one pinned in the source. The release lint
+refuses any other action in the four release workflows, and the workflow lint in every workflow.
+
 Pushes share the concurrency group `release-push` (one run at a time, none cancelled). GitHub keeps one pending run
 per group, so if several pushes land while a release runs, only the newest waits: it releases a commit that
 contains the others. A manual run has a group of its own, so it cannot displace the pending push release.

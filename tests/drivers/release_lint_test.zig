@@ -18,6 +18,8 @@ const Allocator = std.mem.Allocator;
 
 const release_path = ".github/workflows/release.yml";
 const user_path = ".github/workflows/release-beta-user.yml";
+const build_path = ".github/workflows/release-build.yml";
+const check_path = ".github/workflows/release-check.yml";
 
 fn real(a: Allocator, path: []const u8) ![]u8 {
     const tree = try c.loadTree(a);
@@ -26,7 +28,11 @@ fn real(a: Allocator, path: []const u8) ![]u8 {
 
 fn problemsOf(a: Allocator, path: []const u8, text: []const u8) ![]const []const u8 {
     var out = c.Out.init(a);
-    if (std.mem.eql(u8, path, user_path)) try rl.userBetaProblems(a, text, &out) else try rl.problems(a, text, &out);
+    if (std.mem.eql(u8, path, user_path)) {
+        try rl.userBetaProblems(a, text, &out);
+    } else if (std.mem.eql(u8, path, build_path) or std.mem.eql(u8, path, check_path)) {
+        try rl.actionProblems(a, c.basename(path), text, &out);
+    } else try rl.problems(a, text, &out);
     return out.items;
 }
 
@@ -34,7 +40,7 @@ test "the real release.yml and release-beta-user.yml pass every rule" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    for ([_][]const u8{ release_path, user_path }) |p| {
+    for ([_][]const u8{ release_path, user_path, build_path, check_path }) |p| {
         const got = try problemsOf(a, p, try real(a, p));
         for (got) |l| std.debug.print("{s}\n", .{l});
         try std.testing.expectEqual(@as(usize, 0), got.len);
@@ -57,6 +63,38 @@ fn mutantIn(path: []const u8, name: []const u8, from: []const u8, to: []const u8
     }
     const planted = try std.mem.concat(a, u8, &.{ text[0..at], to, text[at + from.len ..] });
     const got = try problemsOf(a, path, planted);
+    var found = false;
+    for (got) |l| {
+        if (std.mem.indexOf(u8, l, needle) != null) found = true;
+    }
+    std.debug.print("{s} mutant: {s} ({d} problem(s))\n", .{ if (found) "red " else "NOT RED", name, got.len });
+    if (!found) {
+        for (got) |l| std.debug.print("  {s}\n", .{l});
+        return error.TestUnexpectedResult;
+    }
+}
+
+
+const Edit = struct { []const u8, []const u8 };
+
+/// Like `mutantIn`, with several edits applied in order (each must apply, once): for a defect that moves a step.
+fn mutants(name: []const u8, edits: []const Edit, path: []const u8, needle: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var text = try real(a, path);
+    for (edits) |e| {
+        const at = std.mem.indexOf(u8, text, e[0]) orelse {
+            std.debug.print("mutant '{s}' does not apply: {s} is not in {s}\n", .{ name, e[0], path });
+            return error.TestUnexpectedResult;
+        };
+        if (std.mem.indexOfPos(u8, text, at + 1, e[0]) != null) {
+            std.debug.print("mutant '{s}' is ambiguous: {s} is in {s} twice\n", .{ name, e[0], path });
+            return error.TestUnexpectedResult;
+        }
+        text = try std.mem.concat(a, u8, &.{ text[0..at], e[1], text[at + e[0].len ..] });
+    }
+    const got = try problemsOf(a, path, text);
     var found = false;
     for (got) |l| {
         if (std.mem.indexOf(u8, l, needle) != null) found = true;
@@ -161,7 +199,7 @@ test "mutant: the data flow (the tested version is the tagged and released versi
 test "mutant: publish releases something other than the verified files" {
     try mutant("publish downloads the unverified assets", "          name: verified-assets\n          path: dist\n", "          name: signed-assets\n          path: dist\n", "publish must download exactly the artifacts verified-assets and notes-pin");
     try mutant("publish downloads other notes", "          name: notes-pin\n          path: notes\n", "          name: signed-assets\n          path: notes\n", "publish must download exactly the artifacts verified-assets and notes-pin");
-    try mutant("verify downloads a build artifact", "          name: signed-assets\n          path: dist\n      - name: Install Zig 0.12.0 (sha256-pinned)\n        run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"\n      - uses: sigstore", "          name: release-linux-x86_64\n          path: dist\n      - name: Install Zig 0.12.0 (sha256-pinned)\n        run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"\n      - uses: sigstore", "verify must download exactly the artifact signed-assets");
+    try mutant("verify downloads a build artifact", "          name: signed-assets\n          path: dist\n      - name: Install Zig 0.12.0 (sha256-pinned)\n        run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"\n      - name: Build the release tool", "          name: release-linux-x86_64\n          path: dist\n      - name: Install Zig 0.12.0 (sha256-pinned)\n        run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"\n      - name: Build the release tool", "verify must download exactly the artifact signed-assets");
 }
 
 test "mutant: attest signs an unmerged commit" {
@@ -190,7 +228,6 @@ test "mutant: an artifact attest's release-* download would merge into dist" {
 
 test "mutant: no signatures" {
     try mutant("attest does not sign", "        run: '\"$RUNNER_TEMP/release\" sign dist'", "        run: '\"$RUNNER_TEMP/release\" check dist'", "attest must sign the files");
-    try mutant("verify without cosign", "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n      - name: Build the release tool\n        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/cut_release\"\n      - name: Verify", "      - name: Build the release tool\n        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/cut_release\"\n      - name: Verify", "verify needs cosign");
 }
 
 test "mutant: triggers and concurrency" {
@@ -269,4 +306,76 @@ test "the glob matcher reads patterns as GitHub does" {
     try t.expect(rl.globMatch("VERSION", "VERSION"));
     try t.expect(!rl.globMatch("VERSION", "VERSIONS"));
     try t.expect(!rl.globMatch("", "x"));
+}
+
+// ---- cosign: installed by the pinned release tool, never by a third-party action ----------------
+
+const install_step = "      - name: Install cosign (sha256-pinned)\n        run: echo \"$(\"$RUNNER_TEMP/release\" install-cosign \"$RUNNER_TEMP/cosign\")\" >> \"$GITHUB_PATH\"\n";
+const attest_comment = "      # cosign v3.0.6, by the sha256 pinned in tools/release.zig (the org's Actions policy allows no third-party action).\n";
+const installer = "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n";
+const policy = "which the org's Actions policy does not allow";
+
+test "mutant: cosign comes from a third-party action (the startup_failure of the first release run)" {
+    // Re-adding the action the org's policy refuses, beside the install step, in each job that signs or verifies.
+    try mutant("sigstore/cosign-installer re-added in attest", attest_comment, installer ++ attest_comment, "attest step");
+    try mutant("sigstore/cosign-installer re-added in attest (message)", attest_comment, installer ++ attest_comment, policy);
+    try mutant("sigstore/cosign-installer re-added in verify", install_step ++ "      - name: Build the cut_release tool\n", installer ++ install_step ++ "      - name: Build the cut_release tool\n", "verify step");
+    // The action in place of the install step: refused as an action, and the missing install step is reported too.
+    try mutant("the action instead of the install step in verify", install_step ++ "      - name: Build the cut_release tool\n", installer ++ "      - name: Build the cut_release tool\n", "verify must install cosign");
+    try mutant("the action instead of the install step in attest", attest_comment ++ install_step, installer, "attest must install cosign");
+    try mutant("the action pinned by tag only", attest_comment, "      - uses: sigstore/cosign-installer@v4\n" ++ attest_comment, policy);
+}
+
+test "mutant: cosign is used before it is installed, or the install step is not the pinned one" {
+    try mutant("attest without the install step", attest_comment ++ install_step, "", "attest must install cosign");
+    try mutant("verify without the install step", install_step ++ "      - name: Build the cut_release tool\n", "      - name: Build the cut_release tool\n", "verify must install cosign");
+    try mutant("attest installs with another command", "install-cosign \"$RUNNER_TEMP/cosign\")\" >> \"$GITHUB_PATH\"\n      - name: Attest only", "install-cosign \"$RUNNER_TEMP/cosign\" --from /tmp/x)\" >> \"$GITHUB_PATH\"\n      - name: Attest only", "attest must install cosign");
+    // `--from`/`--sha256` replace the download and the pin: they are for the test, never for the workflow.
+    try mutant("verify installs from a file", "install-cosign \"$RUNNER_TEMP/cosign\")\" >> \"$GITHUB_PATH\"\n      - name: Build the cut_release tool", "install-cosign \"$RUNNER_TEMP/cosign\" --from x --sha256 y)\" >> \"$GITHUB_PATH\"\n      - name: Build the cut_release tool", "verify must install cosign");
+    try mutant("verify installs without building the release tool", "      - name: Build the release tool\n        run: zig build-exe tools/release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/release\"\n" ++ install_step ++ "      - name: Build the cut_release tool", install_step ++ "      - name: Build the cut_release tool", "verify must build tools/release.zig before it installs cosign");
+    // verify-dir (the use) before the install: the install moved behind it.
+    try mutants("verify installs after it verifies", &.{
+        .{ install_step ++ "      - name: Build the cut_release tool\n", "      - name: Build the cut_release tool\n" },
+        .{ "      # What the release will say, and the pin of the linux-x86_64 tarball.\n", install_step ++ "      # What the release will say, and the pin of the linux-x86_64 tarball.\n" },
+    }, release_path, "verify must install cosign before the step that uses it");
+    try mutants("attest installs after it signs", &.{
+        .{ attest_comment ++ install_step, "" },
+        .{ "      - uses: actions/attest-build-provenance@", install_step ++ "      - uses: actions/attest-build-provenance@" },
+    }, release_path, "attest must install cosign before the step that uses it");
+}
+
+test "mutant: a workflow of the release pipeline uses an action the org's policy refuses" {
+    const checkout = "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n";
+    const other = "      - uses: some-org/some-action@3d3c42e5aac5ba805825da76410c181273ba90b1\n";
+    try userMutant("beta-user with a third-party action", checkout, other, policy);
+    try mutantIn(build_path, "build with a third-party action", checkout, other, policy);
+    try mutantIn(check_path, "check with a third-party action", "      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2\n", other, policy);
+    try mutant("release with a third-party action in a job", "    uses: ./.github/workflows/release-beta-user.yml", "    uses: some-org/some-repo/.github/workflows/x.yml@main", policy);
+    try mutant("release with a mutable tag of an unknown action", attest_comment, "      - uses: docker/login-action@v3\n" ++ attest_comment, policy);
+    try mutantIn(build_path, "build with a lookalike of a GitHub-owned owner", checkout, "      - uses: actionsx/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n", policy);
+}
+
+test "the allowed actions are GitHub's own and tailscale/github-action only" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_][]const u8{ "actions/checkout@v4", "github/codeql-action/init@v3", "./.github/workflows/ci.yml", "tailscale/github-action@v3", "tailscale/github-action@3d3c42e5aac5ba805825da76410c181273ba90b1" }) |u| {
+        if (!rl.actionAllowed(u)) {
+            std.debug.print("{s} must be allowed\n", .{u});
+            return error.TestUnexpectedResult;
+        }
+    }
+    for ([_][]const u8{ "sigstore/cosign-installer@v4", "tailscale/other@v3", "tailscale/github-actionx@v3", "tailscale/github-action/sub@v3", "actionsx/checkout@v4", "komira-ai/komira/.github/actions/farm-connect@abc", "docker/login-action@v3" }) |u| {
+        if (rl.actionAllowed(u)) {
+            std.debug.print("{s} must be refused\n", .{u});
+            return error.TestUnexpectedResult;
+        }
+    }
+    // A workflow that uses tailscale/github-action passes the action rule.
+    const text = try real(a, release_path);
+    const at = std.mem.indexOf(u8, text, attest_comment).?;
+    const planted = try std.mem.concat(a, u8, &.{ text[0..at], "      - uses: tailscale/github-action@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v3\n", text[at..] });
+    var out = c.Out.init(a);
+    try rl.actionProblems(a, "release.yml", planted, &out);
+    try std.testing.expectEqual(@as(usize, 0), out.items.len);
 }

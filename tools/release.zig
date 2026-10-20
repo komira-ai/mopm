@@ -30,6 +30,12 @@
 //!       the signing identity is the workflow's OIDC token, no key and no secret exists), writing
 //!       <file>.sigstore.json beside each, and refuses unless all five bundles exist and are not empty.
 //!       Runs only in the attest job of release.yml, the one job that holds id-token.
+//!   release install-cosign <dir> [--from <file> --sha256 <hex>]
+//!       Downloads cosign v3.0.6 (the official linux-amd64 release binary from github.com/sigstore/cosign) to
+//!       <dir>/cosign and REFUSES, leaving no file, unless its sha256 is the one pinned in this source; then
+//!       makes it executable and prints <dir>, for $GITHUB_PATH. It replaces sigstore/cosign-installer, which the
+//!       org's Actions policy does not allow. `--from` (a local file in place of the download) and `--sha256`
+//!       (in place of the pin, only with `--from`) are for the test.
 //!
 //! Nothing here uploads anything.
 
@@ -44,7 +50,7 @@ fn die(comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 fn usage() noreturn {
-    die("usage: release package <version> <target> <zig-target> <outdir> [--run-prefix \"<words>\"] | sums <dir> | check <dir> | tarball <parent> <name> <out.tar.gz> | sign <dir> [--cosign <path>] | record <tarball> <outdir> | tested <dist> <tested-dir>", .{});
+    die("usage: release package <version> <target> <zig-target> <outdir> [--run-prefix \"<words>\"] | sums <dir> | check <dir> | tarball <parent> <name> <out.tar.gz> | sign <dir> [--cosign <path>] | record <tarball> <outdir> | tested <dist> <tested-dir> | install-cosign <dir> [--from <file> --sha256 <hex>]", .{});
 }
 
 pub fn main() !void {
@@ -75,6 +81,7 @@ pub fn main() !void {
         if (rest.len != 2) usage();
         return tested(a, rest[0], rest[1]);
     }
+    if (std.mem.eql(u8, cmd, "install-cosign")) return installCosign(a, rest);
     if (std.mem.eql(u8, cmd, "sign")) {
         if (rest.len == 1) return sign(a, rest[0], "cosign");
         if (rest.len == 3 and std.mem.eql(u8, rest[1], "--cosign")) return sign(a, rest[0], rest[2]);
@@ -365,4 +372,129 @@ fn tested(a: Allocator, dist_dir: []const u8, tested_dir: []const u8) !void {
         std.debug.print("tested ok: {s} {s}\n", .{ name, &have });
     }
     if (files.items.len != matched) die("{s} holds {d} files, expected exactly the {d} records of the tested targets", .{ tested_dir, files.items.len, matched });
+}
+
+// ---- install-cosign: the cosign binary, by a sha256 pinned here ---------------------------------
+
+/// The cosign the release signs and verifies with. The org's Actions policy allows no third-party action, so
+/// release.yml installs it with this step instead of sigstore/cosign-installer. The sha256 is the one in the
+/// release's own cosign_checksums.txt (and the one the retired installer carried) for cosign-linux-amd64.
+const cosign_version = "v3.0.6";
+const cosign_url = "https://github.com/sigstore/cosign/releases/download/" ++ cosign_version ++ "/cosign-linux-amd64";
+const cosign_sha256 = "c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74";
+/// The download is refused past this size (the real binary is 135 MB).
+const cosign_max_bytes: u64 = 256 << 20;
+
+fn isLowerHex64(s: []const u8) bool {
+    if (s.len != 64) return false;
+    for (s) |ch| if (!((ch >= '0' and ch <= '9') or (ch >= 'a' and ch <= 'f'))) return false;
+    return true;
+}
+
+/// Copies `reader` to `out`, hashing what passes; refuses more than `limit` bytes.
+fn pump(reader: anytype, out: std.fs.File, h: *std.crypto.hash.sha2.Sha256, limit: u64) !void {
+    var buf: [64 * 1024]u8 = undefined;
+    var total: u64 = 0;
+    while (true) {
+        const n = try reader.read(&buf);
+        if (n == 0) break;
+        total += n;
+        if (total > limit) return error.TooLarge;
+        h.update(buf[0..n]);
+        try out.writeAll(buf[0..n]);
+    }
+}
+
+fn fetchInto(a: Allocator, out: std.fs.File, h: *std.crypto.hash.sha2.Sha256) !void {
+    var client = std.http.Client{ .allocator = a };
+    defer client.deinit();
+    const uri = try std.Uri.parse(cosign_url);
+    var header_buf: [16 * 1024]u8 = undefined;
+    var req = try client.open(.GET, uri, .{
+        .server_header_buffer = &header_buf,
+        .keep_alive = false,
+        .headers = .{
+            .user_agent = .{ .override = "mopm-release" },
+            .accept_encoding = .{ .override = "identity" },
+        },
+    });
+    defer req.deinit();
+    try req.send();
+    try req.finish();
+    try req.wait();
+    const status = @intFromEnum(req.response.status);
+    if (status < 200 or status >= 300) {
+        std.debug.print("release: {s} answered HTTP {d}\n", .{ cosign_url, status });
+        return error.BadStatus;
+    }
+    try pump(req.reader(), out, h, cosign_max_bytes);
+}
+
+/// `install-cosign <dir> [--from <file> --sha256 <hex>]`: downloads cosign-linux-amd64 to <dir>/cosign, REFUSES
+/// (and leaves no file) unless its sha256 is the one pinned above, makes it executable and prints <dir> (for
+/// $GITHUB_PATH). `--from` reads a local file in place of the download and `--sha256` replaces the pin; both
+/// exist for the test, and `--sha256` is refused without `--from`, so the real download can only meet the pin.
+fn installCosign(a: Allocator, args: []const []const u8) !void {
+    if (args.len == 0) usage();
+    const dir_path = args[0];
+    var from: ?[]const u8 = null;
+    var want: []const u8 = cosign_sha256;
+    var custom_pin = false;
+    var i: usize = 1;
+    while (i < args.len) : (i += 2) {
+        if (i + 1 >= args.len) usage();
+        if (std.mem.eql(u8, args[i], "--from")) {
+            from = args[i + 1];
+        } else if (std.mem.eql(u8, args[i], "--sha256")) {
+            want = args[i + 1];
+            custom_pin = true;
+        } else usage();
+    }
+    if (custom_pin and from == null) die("--sha256 is only accepted with --from: the download is checked against the pin in this file", .{});
+    if (!isLowerHex64(want)) die("the expected sha256 '{s}' is not 64 lowercase hex digits", .{want});
+
+    const cwd = std.fs.cwd();
+    try cwd.makePath(dir_path);
+    const dest = try std.fs.path.join(a, &.{ dir_path, "cosign" });
+    const part = try std.fs.path.join(a, &.{ dir_path, "cosign.part" });
+    // A failed install leaves no cosign behind, not even an older one.
+    cwd.deleteFile(dest) catch {};
+    cwd.deleteFile(part) catch {};
+
+    var h = std.crypto.hash.sha2.Sha256.init(.{});
+    const out = try cwd.createFile(part, .{});
+    var got: ?anyerror = null;
+    if (from) |path| {
+        if (cwd.openFile(path, .{})) |f| {
+            defer f.close();
+            pump(f.reader(), out, &h, cosign_max_bytes) catch |e| {
+                got = e;
+            };
+        } else |e| {
+            got = e;
+            std.debug.print("release: cannot open {s}: {s}\n", .{ path, @errorName(e) });
+        }
+    } else {
+        fetchInto(a, out, &h) catch |e| {
+            got = e;
+        };
+    }
+    out.close();
+    if (got) |e| {
+        cwd.deleteFile(part) catch {};
+        die("cosign {s} was not installed: {s}", .{ cosign_version, @errorName(e) });
+    }
+    var digest: [32]u8 = undefined;
+    h.final(&digest);
+    const hex = std.fmt.bytesToHex(digest, .lower);
+    if (!std.mem.eql(u8, &hex, want)) {
+        cwd.deleteFile(part) catch {};
+        die("the cosign file has sha256 {s}, not the expected {s}; refusing to install it", .{ &hex, want });
+    }
+    try cwd.rename(part, dest);
+    const f = try cwd.openFile(dest, .{});
+    defer f.close();
+    try f.chmod(0o755);
+    std.debug.print("installed cosign {s} (sha256 {s})\n", .{ cosign_version, &hex });
+    try std.io.getStdOut().writer().print("{s}\n", .{try cwd.realpathAlloc(a, dir_path)});
 }
