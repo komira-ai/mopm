@@ -14,7 +14,7 @@
 #   * `mopm test --list` on tests/discovery (tests/golden/test): the test
 #     files a package root holds, the tests each one has, and the refusals.
 #     The scanner's per-file goldens are unit tests (src/core/test_scan.zig);
-#     building and listing real harnesses is tests/e2e/test_discovery.sh.
+#     building and listing real harnesses is tests/drivers/test_discovery_test.zig.
 # The repository root is written as @ROOT@ in the golden files.
 # Usage: tests/run_golden.sh [path-to-mopm]   (from any directory)
 #
@@ -196,7 +196,7 @@ rm -f "$scratch/golden_cmd.raw"
 # with nothing mopm can read (a warning, exit 0); usage errors. Then the
 # refusals of `mopm test` (running) that need no Mojo: no environment (exit
 # 5), no tests (exit 2, or 0 with --allow-empty). Running real tests is
-# tests/e2e/test_supervisor.sh.
+# tests/drivers/test_supervisor_test.zig.
 g=tests/golden/test
 cmd "test --list: a package root" "$g/tree.txt" 0 \
     "$mopm" test --list tests/discovery/tree
@@ -232,9 +232,9 @@ cmd "test --list: a path that does not exist" "$g/missing.txt" 2 \
     "$mopm" test --list tests/discovery/no_such_dir
 
 # Selection (src/core/test_filter.zig) over the fixture package of
-# tests/e2e/test_flaky.sh: 11 tests in 3 files, test_alpha_one in two of
+# tests/drivers/test_flaky_test.zig: 11 tests in 3 files, test_alpha_one in two of
 # them, test_ignored_fails marked `# mopm: ignore`. --list prints exactly
-# what a run would run; tests/e2e/test_flaky.sh shows a run runs exactly
+# what a run would run; tests/drivers/test_flaky_test.zig shows a run runs exactly
 # that. The last cases select nothing to run, so they need no Mojo: exit 2,
 # or 0 with --allow-empty; an ignored test is still reported, as SKIP.
 fx=tests/e2e/flaky

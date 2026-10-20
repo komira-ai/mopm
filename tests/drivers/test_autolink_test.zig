@@ -1,7 +1,7 @@
-//! tests/e2e/run.sh in Zig, for the build farm (no shell, no pixi, no system
+//! The port of the former tests/e2e/run.sh in Zig, for the build farm (no shell, no pixi, no system
 //! C compiler): `mopm build`, `mopm run` and `mopm repl` against the real
 //! Mojo toolchain, with native libraries reached through mopm's autolink.
-//! tests/e2e/run.sh stays for ci.yml and is superseded by //:autolink.
+//! It replaces tests/e2e/run.sh (deleted); the check is //:autolink.
 //!
 //! What it does, as run.sh does:
 //!   1. builds libgreet, libinner and libouter (libouter needs libinner and

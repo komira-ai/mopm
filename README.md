@@ -109,9 +109,9 @@ zig build test       # unit tests and golden tests; run from the repository root
 tests/run_golden.sh  # runs the built CLI against tests/golden
 ```
 
-CI runs all three on Linux x86_64, Linux aarch64 and macOS arm64, and there
-also runs `tests/e2e/run.sh` in a pixi environment with the pinned `mojo`
-(`tools/install_pixi.sh`, `tests/e2e/pixi.toml`).
+CI runs all three on Linux x86_64, Linux aarch64 and macOS arm64. The Mojo
+end-to-end suites (`//:autolink`, `//:discovery`, `//:supervisor`, `//:flaky`)
+run on the build farm (`farm.yml`) against the pinned Mojo compiler.
 
 ## License
 

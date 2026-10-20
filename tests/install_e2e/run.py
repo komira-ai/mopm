@@ -133,7 +133,7 @@ def conda_package(name, version, subdir, depends, files):
 
 
 def build_greet(mojo_env, work, ext):
-    """libgreet and greet.mojoc, as tests/e2e/run.sh builds them."""
+    """libgreet and greet.mojoc, as tests/drivers/test_autolink_test.zig builds them."""
     lib = os.path.join(work, "libgreet." + ext)
     if ext == "dylib":
         cmd = ["cc", "-dynamiclib", "-install_name", "@rpath/libgreet.dylib", "-o", lib]

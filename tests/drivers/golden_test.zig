@@ -253,7 +253,7 @@ test "golden files: link-plan, metadata, new and init, build, run, repl, test --
     try c.cmd("test: no tests at all, --allow-empty", g ++ "/empty.txt", 0, &.{ "test", "--allow-empty", "tests/discovery/none.mojo" }, .{});
     try c.cmd("test --list: a path that does not exist", g ++ "/missing.txt", 2, &.{ "test", "--list", "tests/discovery/no_such_dir" }, .{});
 
-    // Selection over the fixture package of tests/e2e/test_flaky.sh.
+    // Selection over the fixture package of tests/drivers/test_flaky_test.zig.
     const fx = "tests/e2e/flaky";
     const fxt = fx ++ "/tests";
     try c.cmd("test --list: no filter (the ignored test is not listed)", g ++ "/filter_none.txt", 0, &.{ "test", "--list", fx }, .{});

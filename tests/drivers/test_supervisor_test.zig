@@ -1,7 +1,7 @@
-//! tests/e2e/test_supervisor.sh and check_supervisor.py in Zig, for the build
+//! The port of the former tests/e2e/test_supervisor.sh and check_supervisor.py in Zig, for the build
 //! farm (no shell, no Python, no pgrep or pkill): `mopm test` running tests
-//! against the real Mojo toolchain (komira's pinned 1.0.0). The shell and
-//! Python files stay for ci.yml and are superseded by //:supervisor.
+//! against the real Mojo toolchain (komira's pinned 1.0.0). They replace
+//! tests/e2e/test_supervisor.sh and check_supervisor.py (deleted); the check is //:supervisor.
 //!
 //! tests/e2e/supervise is a package whose tests each must get one exact
 //! verdict (the comment above each test names it): pass, an assertion and a

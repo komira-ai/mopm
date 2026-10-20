@@ -1,4 +1,4 @@
-"""Fixtures of the supervisor end-to-end test (tests/e2e/test_supervisor.sh),
+"""Fixtures of the supervisor end-to-end test (tests/drivers/test_supervisor_test.zig),
 run with `mopm test --timeout 6`. The script asserts each test's exact
 verdict; the comment above each test names it. Tests run in source order, so
 test_after_crashes runs after two crashes.
