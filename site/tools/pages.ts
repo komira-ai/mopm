@@ -1,10 +1,13 @@
 // The prerendered pages that are not docs: the home page, the 404 page and the app shell.
 //
-// The home page says only what README.md says: its opening sentence word for word, the commands that work today, the
-// build from source (there is no installer yet, so the page marks it planned), and the planned commands
-// (src/cli/main.zig). Its "Recently updated" list is an empty slot the page script fills from the registry
+// The home page says only what the repository says: README.md's opening sentence word for word and its commands that
+// work today, the install story (the one-line installer site/static/install.sh, the release files it names, the
+// verification commands, the version series of VERSION; Homebrew and apt are marked planned because no tap or apt
+// repository exists), the build from source, and the planned commands (src/cli/main.zig). The page never shows a patch
+// version: releases are cut on every merge, so the page names the series and GitHub's /releases/latest is the latest.
+// Its "Recently updated" list is an empty slot the page script fills from the registry
 // (src/views/recent.ts): no package is baked into the page. There is no featured list: the API has no source for one. test/layout.test.ts holds this copy to those files,
-// so when the README or the CLI changes, this page has to change with it.
+// so when the README, the installer, VERSION or the CLI changes, this page has to change with it.
 
 import { h, type SNode } from '../src/doc';
 import { anchorHref, internalHref, REPO_URL, webHref } from '../src/links';
@@ -19,7 +22,30 @@ export const OPENING_SENTENCE =
   'mopm is "cargo for Mojo": a package manager plus build, test and coverage tooling for Mojo projects, with a package registry at mopm.dev.';
 
 /** README.md's "Status: early." list of commands that work today, in its order. */
-export const WORKING_TODAY = ['--version', 'link-plan', 'metadata', 'new', 'init', 'build', 'run', 'repl', 'test', 'add', 'remove'];
+export const WORKING_TODAY = [
+  '--version', 'link-plan', 'metadata', 'new', 'init', 'build', 'run', 'repl', 'test',
+  'login', 'logout', 'whoami', 'pack', 'publish', 'lock', 'update', 'tree', 'sync', 'add', 'remove', 'plan', 'unit',
+];
+
+/** The command that installs mopm: README.md's, and the first line of site/static/install.sh's header. */
+export const INSTALL_COMMAND = 'curl -fsSL https://mopm.dev/install.sh | sh';
+
+/** The release targets, in the order site/static/install.sh maps a machine to one. */
+export const TARGETS = ['linux-x86_64', 'linux-aarch64', 'macos-arm64', 'macos-x86_64'];
+
+/** A release's tarball name, as install.sh builds it (`name=mopm-$version-$target`, `asset=$name.tar.gz`). */
+export const ASSET_PATTERN = 'mopm-<version>-<target>.tar.gz';
+
+/** The version series: the `VERSION` file, which the release workflow adds a patch number to (RELEASING.md). */
+export const RELEASE_SERIES = '0.0';
+
+/** The two ways to check a release file, as install.sh's header gives them (F is the file). */
+export const VERIFY = [
+  'gh attestation verify F -R komira-ai/mopm --signer-workflow komira-ai/mopm/.github/workflows/release.yml',
+  'cosign verify-blob --bundle F.sigstore.json \\',
+  '  --certificate-identity https://github.com/komira-ai/mopm/.github/workflows/release.yml@refs/heads/main \\',
+  '  --certificate-oidc-issuer https://token.actions.githubusercontent.com F',
+].join('\n');
 
 /** The `planned` array of src/cli/main.zig, in its order. */
 export const PLANNED = ['cov', 'check', 'export', 'launch'];
@@ -154,17 +180,30 @@ export function homePage(): PageSpec {
           doc,
           'div',
           { class: 'install-hero', id: 'install' },
-          h(doc, 'p', { class: 'install-label' }, h(doc, 'strong', null, 'Install the mopm CLI'), ' from source'),
-          copyBlock(BUILD, 'build from source commands', ' cmd-xl'),
-          // A plain line, not a tab: nothing happens on a click, so it must not look like a control.
-          h(doc, 'p', { class: 'installer-planned', id: 'installer-planned' }, 'One-line installer: ', h(doc, 'span', { class: 'tag tag-planned' }, 'planned')),
+          h(doc, 'p', { class: 'install-label' }, h(doc, 'strong', null, 'Install the mopm CLI'), ' with one command'),
+          copyBlock(INSTALL_COMMAND, 'install command', ' cmd-xl'),
           h(
             doc,
             'p',
-            { class: 'note', id: 'build' },
-            'There are no release binaries yet, and no one-line installer: build from source with Zig 0.12.0 (',
-            code('tools/install_zig.sh <dir>'),
-            ' installs it, checked against a pinned sha256). CI builds and tests it on Linux x86_64, Linux aarch64 and macOS arm64.',
+            { class: 'note', id: 'install-note' },
+            'Release binaries for Linux and macOS, on x86_64 and arm64. The script checks the download against the release’s SHA256SUMS, installs ',
+            code('~/.mopm/bin/mopm'),
+            ' and needs no root. Read ',
+            link(`${REPO_URL}/blob/main/site/static/install.sh`, 'the script'),
+            ' first, and see ',
+            h(doc, 'a', { href: anchorHref('releases') }, 'the release files and how to verify them'),
+            '.',
+          ),
+          // A plain line, not a tab: nothing happens on a click, so it must not look like a control. No tap or apt
+          // repository exists, so neither is shown as a command.
+          h(
+            doc,
+            'p',
+            { class: 'installer-planned', id: 'packaging-planned' },
+            'Homebrew: ',
+            h(doc, 'span', { class: 'tag tag-planned' }, 'planned'),
+            ' · apt: ',
+            h(doc, 'span', { class: 'tag tag-planned' }, 'planned'),
           ),
         ),
       ),
@@ -181,9 +220,9 @@ export function homePage(): PageSpec {
       'li',
       null,
       h(doc, 'span', { class: 'num', 'aria-hidden': 'true' }, '1'),
-      h(doc, 'h3', null, 'Build mopm'),
-      h(doc, 'p', null, 'In a clone of ', link(REPO_URL, 'the repository'), ', with Zig 0.12.0.'),
-      copyBlock('zig build', 'build command'),
+      h(doc, 'h3', null, 'Install mopm'),
+      h(doc, 'p', null, 'Run the install command above, then check it.'),
+      copyBlock('mopm --version', 'version command'),
     ),
     h(
       doc,
@@ -318,6 +357,53 @@ export function homePage(): PageSpec {
       h(doc, 'a', { href: internalHref('/docs/mopm-test/') }, 'How mopm test works'),
       '.',
     ),
+    h(
+      doc,
+      'p',
+      { id: 'docs-pointer' },
+      'New here? ',
+      h(doc, 'a', { href: internalHref('/docs/getting-started/') }, 'Getting started'),
+      ' walks through install, a first package, dependencies, tests and publishing; ',
+      h(doc, 'a', { href: internalHref('/docs/why/') }, 'Why mopm, and how it is built'),
+      ' is the design.',
+    ),
+  );
+
+  const releases = band(
+    'releases',
+    'home-wide',
+    'Releases',
+    'Release files and how to check them',
+    h(
+      doc,
+      'p',
+      { id: 'release-files' },
+      'Each ',
+      link(`${REPO_URL}/releases/latest`, 'GitHub release'),
+      ' lists ',
+      code(ASSET_PATTERN),
+      ' for ',
+      ...codeList(TARGETS, 'and'),
+      ', a ',
+      code('SHA256SUMS'),
+      ' file, and a ',
+      code('.sigstore.json'),
+      ' signature bundle for each of those files. Versions are ',
+      code(`${RELEASE_SERIES}.x`),
+      ' and are released automatically on every merge; the installer takes the latest.',
+    ),
+    h(doc, 'p', { id: 'verify' }, 'To check a download beyond its sha256, use the GitHub attestation or the cosign signature (', code('F'), ' is a release file):'),
+    block(VERIFY, 'Verify a download commands'),
+    h(doc, 'p', { class: 'note', id: 'macos-unsigned' }, 'macOS binaries are not signed or notarized by Apple yet.'),
+    h(
+      doc,
+      'p',
+      { id: 'build' },
+      'To build from source instead you need Zig 0.12.0 (',
+      code('tools/install_zig.sh <dir>'),
+      ' installs it, checked against a pinned sha256). CI builds and tests it on Linux x86_64, Linux aarch64 and macOS arm64.',
+    ),
+    block(BUILD, 'build from source commands'),
   );
 
   const planned = band(
@@ -331,7 +417,7 @@ export function homePage(): PageSpec {
       'ul',
       { class: 'goals' },
       h(doc, 'li', null, h(doc, 'h3', null, 'Coverage for any Mojo package'), h(doc, 'p', null, code('mopm cov'), ' builds and tests a package and reports line coverage, without the package adopting a particular build system.')),
-      h(doc, 'li', null, h(doc, 'h3', null, 'Automatic native linking for downstream consumers'), h(doc, 'p', null, 'The build, run and REPL part works today; dependency resolution is planned.')),
+      h(doc, 'li', null, h(doc, 'h3', null, 'Automatic native linking for downstream consumers'), h(doc, 'p', null, 'Build, run and REPL link the native libraries of an environment today, and lock and sync install locked packages into one. A coverage report and a larger catalogue are what is still to come.')),
     ),
   );
 
@@ -339,7 +425,7 @@ export function homePage(): PageSpec {
     title: 'mopm',
     description: 'mopm is a package manager plus build, test and coverage tooling for Mojo projects, with a package registry at mopm.dev.',
     kind: 'home',
-    main: [hero, quickstart, registry, today, planned],
+    main: [hero, quickstart, registry, today, releases, planned],
   };
 }
 

@@ -5,9 +5,12 @@ tooling for [Mojo](https://www.modular.com/mojo) projects, with a package
 registry at [mopm.dev](https://mopm.dev).
 
 **Status: early.** `mopm --version`, `mopm link-plan`, `mopm metadata`,
-`mopm new`, `mopm init`, `mopm build`, `mopm run`, `mopm repl`, `mopm test`, `mopm add` and
-`mopm remove` work today.
-Everything else below is a plan, and the design may change.
+`mopm new`, `mopm init`, `mopm build`, `mopm run`, `mopm repl`, `mopm test`, `mopm login`, `mopm logout`,
+`mopm whoami`, `mopm pack`, `mopm publish`, `mopm lock`, `mopm update`, `mopm tree`, `mopm sync`, `mopm add`,
+`mopm remove`, `mopm plan` and `mopm unit` work today.
+Everything else below is a plan, and the design may change. The documentation is on
+[mopm.dev/docs](https://mopm.dev/docs/): [why mopm and how it is built](docs/why-and-design.md) and
+[getting started](docs/getting-started.md).
 
 ## Install
 
@@ -15,7 +18,7 @@ Everything else below is a plan, and the design may change.
 curl -fsSL https://mopm.dev/install.sh | sh
 ```
 
-The installer needs only `curl`, `tar` and `sha256sum` (or `shasum`). It downloads the release for
+The installer needs only `curl`, `tar`, `awk` and `sha256sum` (or `shasum`). It downloads the release for
 your machine (Linux or macOS, x86_64 or arm64) from
 [GitHub releases](https://github.com/komira-ai/mopm/releases), checks its sha256 against the
 release's `SHA256SUMS`, and installs `~/.mopm/bin/mopm`. It needs no root and edits no shell startup
@@ -50,7 +53,7 @@ repository's release workflow.
    `mojo run -Xlinker` list and the REPL preload list itself, and refuses a
    closure with a missing transitive library or two owners of one library.
 
-## Command tour (planned)
+## Command tour
 
 ```text
 mopm new my_pkg            # create a package with a mopm.toml
@@ -59,8 +62,8 @@ mopm build                 # build, linking native libraries for you
 mopm run                   # mojo run with the right -Xlinker list
 mopm repl                  # mojo repl with natives preloaded
 mopm test                  # run tests
-mopm cov                   # run tests with coverage
 mopm publish               # publish to a registry and mopm.dev
+mopm cov                   # planned: run tests with coverage
 ```
 
 Working today:

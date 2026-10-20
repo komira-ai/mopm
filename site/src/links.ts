@@ -13,6 +13,8 @@ const REPO_BLOB_PATH = new URL(REPO_BLOB).pathname;
 
 /** Repo docs the site publishes, by source path: a relative link to one of them stays on the site. */
 export const DOC_PAGES: readonly { slug: string; source: string }[] = [
+  { slug: 'why', source: 'docs/why-and-design.md' },
+  { slug: 'getting-started', source: 'docs/getting-started.md' },
   { slug: 'mopm-toml', source: 'spec/mopm-toml.md' },
   { slug: 'mopm-test', source: 'docs/mopm-test.md' },
 ];

@@ -88,6 +88,14 @@ export_file(
     visibility = ["//service/infra/stacks:", "//service/lambda/aws:"],
 )
 
+# The validator's size caps (src/validate/limits.ts): the site's test holds the published docs to them.
+export_file(
+    name = "limits.ts",
+    src = "src/validate/limits.ts",
+    mode = "reference",
+    visibility = ["//site:"],
+)
+
 # The repodata the TS index writer produced for the golden records: the Rust core
 # (service/lambda/core) must write the same bytes.
 [export_file(

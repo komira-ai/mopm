@@ -21,7 +21,9 @@ _SRCS = glob(["src/**", "static/**", "test/**", "tools/**"]) + _CONFIGS + ["jest
 # The repository files the pages are rendered from (tools/docs.ts reads the published docs,
 # src/links.ts names them), at their paths in the repository.
 _DOCS = {
+    "docs/getting-started.md": "//:site.docs.getting-started.md",
     "docs/mopm-test.md": "//:site.docs.mopm-test.md",
+    "docs/why-and-design.md": "//:site.docs.why-and-design.md",
     "spec/mopm-toml.md": "//:site.spec.mopm-toml.md",
 }
 
@@ -50,11 +52,16 @@ tsc_check(
 # The tests read files outside site/ by relative path (test/build-fixture.ts's REPO_ROOT,
 # test/fixtures.ts's CONTRACT_DIR, test/docs-render.test.ts): the API contract cases, the
 # published docs, spec/channel.md, README.md, src/cli/main.zig and the scaffold golden
-# tests/new/lib (test/layout.test.ts holds the home page copy to them).
+# tests/new/lib (test/layout.test.ts holds the home page copy to them), the validator's limits.ts and the two
+# workflows whose page lists test/pages-lists.test.ts compares with DOC_PAGES.
 jest_test(
     name = "test",
     data = _DOCS | {
         "README.md": "//:site.README.md",
+        "VERSION": "//:site.VERSION",
+        ".github/workflows/promote.yml": "//:site.workflows.promote.yml",
+        ".github/workflows/service-ci.yml": "//:site.workflows.service-ci.yml",
+        "service/api/src/validate/limits.ts": "//service/api:limits.ts",
         "spec/channel.md": "//:site.spec.channel.md",
         "src/cli/main.zig": "//:site.src.cli.main.zig",
         "tests/contract/api": "//:contract_api",
@@ -62,7 +69,7 @@ jest_test(
     },
     modules = ":modules",
     node = _NODE,
-    srcs = _SRCS,
+    srcs = _SRCS + ["check_dist.js"],
 )
 
 # `npm run build`, step 1: `tsc -p tsconfig.browser.json`, the browser modules.

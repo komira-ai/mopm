@@ -264,6 +264,26 @@
       "view": null
     },
     {
+      "path": "/docs/why",
+      "edge": "/docs/why/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/why/",
+      "edge": "/docs/why/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/getting-started",
+      "edge": "/docs/getting-started/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/getting-started/",
+      "edge": "/docs/getting-started/index.html",
+      "view": null
+    },
+    {
       "path": "/docs/mopm-toml",
       "edge": "/docs/mopm-toml/index.html",
       "view": null
