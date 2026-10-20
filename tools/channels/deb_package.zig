@@ -12,7 +12,7 @@
 //!
 //! What it adds to the binary: the copyright file, a `changelog.gz` written from the name, version and maintainer (a
 //! native package has one entry), and the lintian overrides. The same inputs give the same bytes (every time in the file is
-//! `mtime`, which is 0 unless the caller says otherwise): a verifier rebuilds a .deb from the binary inside a release
+//! `mtime`, which is `default_mtime` unless the caller says otherwise): a verifier rebuilds a .deb from the binary inside a release
 //! tarball and compares bytes.
 //!
 //! Deploying a .deb (the apt index, the upload) is not here: that half is apt.zig and the callers of main.zig.
@@ -23,6 +23,11 @@ const deb = @import("deb.zig");
 const control = @import("control.zig");
 const tar = @import("tar.zig");
 
+/// The time written into every member, entry and the changelog: 2026-01-01T00:00:00Z. A fixed date, so the same inputs give the
+/// same bytes (a verifier rebuilds the .deb from the tarball alone), and not 0: lintian refuses files dated 1970
+/// (package-contains-ancient-file).
+pub const default_mtime: u64 = 1767225600;
+
 pub const Inputs = struct {
     binary: []const u8,
     name: []const u8,
@@ -32,7 +37,7 @@ pub const Inputs = struct {
     copyright: []const u8,
     lintian_overrides: []const u8,
     /// Seconds since the epoch, written to every member, entry and the changelog's date.
-    mtime: u64 = 0,
+    mtime: u64 = default_mtime,
 };
 
 pub const Error = error{ MissingField, UnknownField, EmptyFile };
@@ -161,6 +166,13 @@ fn sample(binary: []const u8) Inputs {
     };
 }
 
+test "the default time is a real date: not 1970, which lintian refuses" {
+    try t.expect(default_mtime > 946684800); // after 2000-01-01
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    try t.expectEqualStrings("Thu, 01 Jan 2026 00:00:00 +0000", try rfc2822(arena.allocator(), default_mtime));
+}
+
 test "the date is RFC 2822, from the epoch" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
@@ -186,7 +198,7 @@ test "the package holds the binary, the copyright, the changelog and the overrid
         if (std.mem.eql(u8, m.path, "./usr/share/doc/mopm/changelog.gz")) {
             seen += 1;
             const text = try tar.gunzip(a, m.data);
-            try t.expectEqualStrings("mopm (1.2.3) unstable; urgency=medium\n\n  * Release 1.2.3.\n\n -- mopm authors <apt@mopm.dev>  Thu, 01 Jan 1970 00:00:00 +0000\n", text);
+            try t.expectEqualStrings("mopm (1.2.3) unstable; urgency=medium\n\n  * Release 1.2.3.\n\n -- mopm authors <apt@mopm.dev>  Thu, 01 Jan 2026 00:00:00 +0000\n", text);
         }
         if (std.mem.eql(u8, m.path, "./usr/share/doc/mopm/copyright")) seen += 1;
         if (std.mem.eql(u8, m.path, "./usr/share/lintian/overrides/mopm")) seen += 1;
