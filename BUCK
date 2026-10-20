@@ -478,7 +478,7 @@ filegroup(
     visibility = ["//site:"],
 )
 
-# ---- The repository's own lints, ported from Ruby (.github/scripts, tests/lint) ------------
+# ---- The repository's own lints (hygiene, workflows, lint_selftest) ------------------------
 
 # Every tracked file hygiene scans (tests/drivers/hygiene.zig), staged by path under
 # BUILDRULES_TEST_WORK: the root package's files (a glob skips dotfiles, so those are named)
@@ -520,7 +520,7 @@ _LINT_LIBS = [
     "tests/drivers/yaml.zig",
 ]
 
-zig_test(  # buck-only: .github/scripts/hygiene.rb in Zig, over every file of the repository
+zig_test(  # buck-only: the hygiene scan, over every file of the repository
     name = "hygiene",
     src = "tests/drivers/hygiene_test.zig",
     imports = _LINT_LIBS + ["tests/drivers/hygiene.zig"],
@@ -528,7 +528,7 @@ zig_test(  # buck-only: .github/scripts/hygiene.rb in Zig, over every file of th
     **_TOOLS
 )
 
-zig_test(  # buck-only: .github/scripts/workflow_lint.rb in Zig, over the workflows, and the stand-in for its `bash -n`
+zig_test(  # buck-only: the workflow lint, over the workflows, with a stand-in for `bash -n`
     name = "workflows",
     src = "tests/drivers/workflow_lint_test.zig",
     imports = _LINT_LIBS + [
@@ -539,7 +539,7 @@ zig_test(  # buck-only: .github/scripts/workflow_lint.rb in Zig, over the workfl
     **_TOOLS
 )
 
-zig_test(  # buck-only: tests/lint/run.rb in Zig: both Zig lints over the fixtures, against run.rb's own table
+zig_test(  # buck-only: both lints over the fixtures, against the table in the test
     name = "lint_selftest",
     src = "tests/drivers/lint_selftest_test.zig",
     imports = _LINT_LIBS + [
@@ -547,6 +547,6 @@ zig_test(  # buck-only: tests/lint/run.rb in Zig: both Zig lints over the fixtur
         "tests/drivers/shell_syntax.zig",
         "tests/drivers/workflow_lint.zig",
     ],
-    data = {f: f for f in glob(["tests/lint/fixtures/*", "tests/lint/run.rb"])},
+    data = {f: f for f in glob(["tests/lint/fixtures/*"])},
     **_TOOLS
 )
