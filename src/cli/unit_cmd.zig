@@ -25,6 +25,9 @@ pub const usage =
     \\  --natives <dir>    native libraries by soname (natives)
     \\  --stage <dir>      scratch for the compiler's tree (<out>.stage)
     \\  --toolchain <dir>  mojo_compile and CLOSURE_SHA256 of the pinned toolchain
+    \\  --target-cpu <l>   the CPU level a test or binary is compiled for: x86-64,
+    \\                     x86-64-v2, x86-64-v3 or x86-64-v4 (armv8.0-a..armv8.4-a are
+    \\                     named and refused: no verified Mojo spelling); none: no CPU argument
     \\
 ;
 
@@ -40,6 +43,7 @@ pub const Args = struct {
     deps: []const u8 = "deps",
     natives: []const u8 = "natives",
     stage: ?[]const u8 = null,
+    target_cpu: ?[]const u8 = null,
 };
 
 /// The options of `unit <verb>`; null on a usage error.
@@ -71,6 +75,8 @@ pub fn parseArgs(args: []const []const u8) ?Args {
             a.natives = v;
         } else if (std.mem.eql(u8, args[i], "--stage")) {
             a.stage = v;
+        } else if (std.mem.eql(u8, args[i], "--target-cpu")) {
+            a.target_cpu = v;
         } else return null;
     }
     a.unit = unit orelse return null;
@@ -84,18 +90,33 @@ fn say(comptime fmt: []const u8, args: anytype) void {
     std.io.getStdErr().writer().print("mopm unit: " ++ fmt, args) catch {};
 }
 
+/// The compiler's `--target-cpu` value for the level the user gave (null: none given). A level that is
+/// unknown, or has no verified Mojo spelling, is a usage error with `why` set: nothing runs.
+pub fn cpuOf(arena: Allocator, a: Args, why: *[]const u8) error{Usage}!?[]const u8 {
+    const level = a.target_cpu orelse return null;
+    return core.target_cpu.mojoValue(level) catch |e| {
+        why.* = core.target_cpu.explain(arena, level, e) catch "bad --target-cpu";
+        return error.Usage;
+    };
+}
+
 pub fn main(arena: Allocator, args: []const []const u8) u8 {
     const a = parseArgs(args) orelse {
         std.io.getStdErr().writeAll(usage) catch {};
         return exit_usage;
     };
-    return run(arena, a) catch |e| {
+    var why: []const u8 = "";
+    const cpu = cpuOf(arena, a, &why) catch {
+        say("{s}\n", .{why});
+        return exit_usage;
+    };
+    return run(arena, a, cpu) catch |e| {
         say("{s}\n", .{@errorName(e)});
         return 1;
     };
 }
 
-fn run(arena: Allocator, a: Args) !u8 {
+fn run(arena: Allocator, a: Args, cpu: ?[]const u8) !u8 {
     const text = std.fs.cwd().readFileAlloc(arena, a.graph, 256 << 20) catch |e| {
         say("cannot read {s}: {s}\n", .{ a.graph, @errorName(e) });
         return 1;
@@ -119,6 +140,7 @@ fn run(arena: Allocator, a: Args) !u8 {
         .natives = a.natives,
         .out = a.out,
         .stage = a.stage orelse try std.fmt.allocPrint(arena, "{s}.stage", .{std.mem.trimRight(u8, a.out, "/")}),
+        .target_cpu = cpu,
     };
     var why: []const u8 = "";
     return core.unit_run.run(arena, g, idx, if (a.verb == .build) .build else .run_test, dirs, &why) catch |e| {
@@ -151,4 +173,26 @@ test "unit build and test take the unit, the graph, the output and the toolchain
     const b = parseArgs(&more).?;
     try std.testing.expectEqualStrings("w", b.src);
     try std.testing.expectEqualStrings("s", b.stage.?);
+    try std.testing.expect(b.target_cpu == null);
+    const with_cpu = build ++ [_][]const u8{ "--target-cpu", "x86-64-v3" };
+    try std.testing.expectEqualStrings("x86-64-v3", parseArgs(&with_cpu).?.target_cpu.?);
+    const empty_cpu = build ++ [_][]const u8{ "--target-cpu", "" };
+    try std.testing.expect(parseArgs(&empty_cpu) == null);
+}
+
+test "--target-cpu: a known level resolves, none resolves to none, anything else is a usage error" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    const base = [_][]const u8{ "build", "--unit", "u", "--graph", "g", "--out", "o", "--toolchain", "t" };
+    var why: []const u8 = "";
+    try std.testing.expect((try cpuOf(a, parseArgs(&base).?, &why)) == null);
+    const v3 = base ++ [_][]const u8{ "--target-cpu", "x86-64-v3" };
+    try std.testing.expectEqualStrings("x86-64-v3", (try cpuOf(a, parseArgs(&v3).?, &why)).?);
+    const bad = base ++ [_][]const u8{ "--target-cpu", "x86-64-v5" };
+    try std.testing.expectError(error.Usage, cpuOf(a, parseArgs(&bad).?, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "unknown --target-cpu 'x86-64-v5'") != null);
+    const arm = base ++ [_][]const u8{ "--target-cpu", "armv8.2-a" };
+    try std.testing.expectError(error.Usage, cpuOf(a, parseArgs(&arm).?, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "no verified Mojo spelling") != null);
 }

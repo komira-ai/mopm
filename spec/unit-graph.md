@@ -166,6 +166,7 @@ A refusal is one line on standard error, `error: <reason>`.
 
     mopm unit build --unit <id> --graph <file> --out <dir> --toolchain <dir>
                     [--src <dir>] [--deps <dir>] [--natives <dir>] [--stage <dir>]
+                    [--target-cpu <level>]
     mopm unit test  (the same options)
 
 `unit build` builds one `lib`, `test` or `bin` unit. `unit test` builds one
@@ -179,6 +180,7 @@ A refusal is one line on standard error, `error: <reason>`.
 | `--toolchain` | `mojo_compile`, the pinned hermetic wrapper, and `CLOSURE_SHA256`, one line naming the closure it is |
 | `--stage` (`<out>.stage`) | scratch: the tree the compiler sees |
 | `--out` | the outputs |
+| `--target-cpu` (none) | the CPU level, see "Target CPU" below |
 
 Before any program runs, mopm checks every declared input and stops with exit
 status 4 and `error: <reason>` on the first that fails: the toolchain's
@@ -222,4 +224,46 @@ environment: the wrapper makes the compiler's own.)
 When the wrapper exits 0, the output must exist and not be empty, or the unit
 fails. Not done yet: the test supervisor (`mopm test` runs each test file under
 timeouts and a group kill; `unit test` runs the binary directly), coverage, and
-ISA levels in the profile, and the native libraries a workspace member builds (`[native.<id>]`): a graph holds only prebuilt natives, each pinned by sha256 before the build, and a member's are products of its own build command, so they need a unit kind of their own that the build system builds; `mopm pack` refuses them too.
+ISA levels in the graph's profile (the level is an option of the command, below), and the native libraries a workspace member builds (`[native.<id>]`): a graph holds only prebuilt natives, each pinned by sha256 before the build, and a member's are products of its own build command, so they need a unit kind of their own that the build system builds; `mopm pack` refuses them too.
+
+## Target CPU
+
+    mopm unit build ... --target-cpu <level>
+    mopm unit test  ... --target-cpu <level>
+
+The level is the CPU a test or binary is compiled for. The caller gives it;
+mopm does not read it from the graph, a profile or the environment, and does
+not default it. mopm maps it to the compiler's option and nothing else:
+
+| level | passed to `mojo build` |
+|---|---|
+| `x86-64` | `--target-cpu x86-64` |
+| `x86-64-v2` | `--target-cpu x86-64-v2` |
+| `x86-64-v3` | `--target-cpu x86-64-v3` |
+| `x86-64-v4` | `--target-cpu x86-64-v4` |
+| `armv8.0-a` .. `armv8.4-a` | refused: no verified Mojo spelling |
+| no `--target-cpu` | no CPU argument: the compiler's own default |
+
+The two arguments are placed right after `build`. Any other value, and an Arm
+level, is a usage error (exit status 2, `mopm unit: <reason>` on standard
+error) before any input is read or program run. An Arm level is named in the
+refusal so the caller can tell "not supported yet" from "misspelt"; it is
+accepted the day its spelling has been run against `mojo build`, not before.
+(`x86-64` is the lowest x86 level, called v1 elsewhere.)
+
+A `lib` unit gets no CPU argument at any level, because `mojo precompile`
+rejects the option and a `.mojoc` holds no machine code: the same library
+bytes serve every level, and the level is accepted and ignored for a `lib`.
+Only a `test` or `bin` unit, which generates code, differs by level.
+
+**Identity.** The level is not in the unit graph and mopm writes no manifest of
+the outputs, so the level is part of the output identity only if the caller
+puts it in its cache key. It must: the same unit at two levels is two different
+binaries, and nothing in the unit's declared inputs tells them apart. In a Buck2
+build the level is an argument of the action, so it is in the action key and in
+the output path of the configuration that chose it. We did not add it to the
+graph because the graph describes what a unit reads and is meant to be the same
+for every level (a `lib` and its key do not change), and we did not write a
+manifest because the outputs are the files the graph names, and a new file
+would change the set that a caller declares and verifies. A caller that
+does not pass the level through its key will reuse a v1 binary for a v3 request.

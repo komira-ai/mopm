@@ -33,6 +33,10 @@ pub const Dirs = struct {
     out: []const u8,
     /// Where the sources and the dependencies are staged for the compiler.
     stage: []const u8,
+    /// The value of `mojo build --target-cpu` (`target_cpu.mojoValue`), or null for no CPU argument.
+    /// Only a test or a binary is code generation; a `.mojoc` holds none and `mojo precompile`
+    /// rejects the option, so a library gets no CPU argument whatever this is.
+    target_cpu: ?[]const u8 = null,
 };
 
 pub const wrapper_name = "mojo_compile";
@@ -150,6 +154,10 @@ pub fn argv(arena: Allocator, g: unit_graph.Graph, idx: usize, d: Dirs) !Plan {
     try a.append("--");
     try a.append(if (is_lib) "precompile" else "build");
     if (!is_lib) {
+        if (d.target_cpu) |cpu| {
+            try a.append("--target-cpu");
+            try a.append(cpu);
+        }
         if (u.profile) |p| {
             try a.append("-D");
             try a.append(try std.fmt.allocPrint(arena, "ASSERT={s}", .{p.assert}));
@@ -272,6 +280,7 @@ pub fn absolute(arena: Allocator, d: Dirs) !Dirs {
         .natives = cwd.realpathAlloc(arena, d.natives) catch try join(arena, try cwd.realpathAlloc(arena, "."), d.natives),
         .out = try cwd.realpathAlloc(arena, d.out),
         .stage = try cwd.realpathAlloc(arena, d.stage),
+        .target_cpu = d.target_cpu,
     };
 }
 
@@ -479,6 +488,38 @@ test "the wrapper gets the staged tree, the dependencies' -I directories and not
     for (want_test, tst.argv) |w, got| try std.testing.expectEqualStrings(w, got);
     try std.testing.expectEqualStrings("/o/test_p", tst.exe);
     try std.testing.expectEqualStrings("/o/test_p.pass", tst.marker);
+}
+
+test "--target-cpu: each level reaches a test's compiler command, right after build, and no level adds nothing" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const g = try fixtureGraph(a);
+    const target_cpu = @import("target_cpu.zig");
+    const tid = g.find("p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?;
+    const bid = g.find("p@2.0.0#mojo1.0.0/lib").?;
+    var d = Dirs{ .src = "/s", .deps = "/d", .toolchain = "/t", .natives = "/n", .out = "/o", .stage = "/g" };
+
+    // No level: no CPU argument anywhere.
+    for ((try argv(a, g, tid, d)).argv) |x| try std.testing.expect(!std.mem.eql(u8, x, "--target-cpu"));
+
+    for ([_][]const u8{ "x86-64", "x86-64-v2", "x86-64-v3", "x86-64-v4" }) |level| {
+        d.target_cpu = try target_cpu.mojoValue(level);
+        const t = (try argv(a, g, tid, d)).argv;
+        // [wrapper, --runpath, --source-root, --, build, --target-cpu, <level>, -D ...]
+        try std.testing.expectEqualStrings("build", t[4]);
+        try std.testing.expectEqualStrings("--target-cpu", t[5]);
+        try std.testing.expectEqualStrings(level, t[6]);
+        try std.testing.expectEqualStrings("-D", t[7]);
+        // Exactly one CPU option.
+        var n: usize = 0;
+        for (t) |x| {
+            if (std.mem.eql(u8, x, "--target-cpu")) n += 1;
+        }
+        try std.testing.expectEqual(@as(usize, 1), n);
+        // A library is not code generation: its command is the same at every level.
+        for ((try argv(a, g, bid, d)).argv) |x| try std.testing.expect(!std.mem.eql(u8, x, "--target-cpu"));
+    }
 }
 
 test "mopm unit build stages the tree, runs the wrapper in an empty environment and finds the output" {
