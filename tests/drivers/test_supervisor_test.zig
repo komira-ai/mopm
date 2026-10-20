@@ -22,7 +22,7 @@
 //!      on copies of the results with one verdict changed, and must fail;
 //!   4. checks that no `sleep 7919` survived (the group kill), and that the
 //!      native test's binary names libgreet;
-//!   5. human output: the memory file with --memory 0 --timeout 3 (no cap:
+//!   5. human output: the memory file with --memory 0 --timeout 12 (no cap:
 //!      the same test is now TIMEOUT hung, so the OOM above was the cap's),
 //!      and the self-hosted file alone (exit 0);
 //!   6. supervisor self-test: test_verdicts.mojo with the test-only
@@ -51,6 +51,15 @@ test {
 
 const V = "tests/test_verdicts.mojo";
 const M = "tests/test_memory.mojo";
+
+/// The deadline of the uncapped run of test_memory.mojo, in seconds. The verdict `hung` means "under 5% of one
+/// CPU over the last second before the deadline" (src/core/test_proc.zig), so it is true only if the fixture
+/// has finished touching its 1 GiB, and then sleeps, by deadline - 1 s. Nothing tells the driver when that is.
+/// The capped run passes 512 MiB in about 330 ms on the ubuntu leg, but on the macos-14 runner the touch was still going at 3 s twice
+/// (main runs on 16 and 20 October: `slow at the 3 s deadline ... still computing`, 3201 and 3413 ms). A
+/// deadline this far above the touch time leaves it a margin of an order of magnitude: the check no longer
+/// races the memset, and it still fails (as `slow`) if the touch really never ends.
+const nocap_deadline_s = "12";
 const N = "tests/test_native.mojo";
 const S = "tests/test_self_hosted.mojo";
 
@@ -391,9 +400,9 @@ fn run(a: Allocator, rep: *h.Report) !void {
 
     // ---------------------------------------------------------------- 5
     {
-        const nocap = try c.mopm2(&.{ "test", "--prefix", prefix, "--memory", "0", "--timeout", "3", "tests/test_memory.mojo" }, "nocap");
+        const nocap = try c.mopm2(&.{ "test", "--prefix", prefix, "--memory", "0", "--timeout", nocap_deadline_s, "tests/test_memory.mojo" }, "nocap");
         const ok = !nocap.signaled and nocap.code == 1 and
-            h.hasLineMatching(nocap.out, "TIMEOUT", "tests/test_memory.mojo::test_oom (", "ms): hung at the 3 s deadline") and
+            h.hasLineMatching(nocap.out, "TIMEOUT", "tests/test_memory.mojo::test_oom (", "ms): hung at the " ++ nocap_deadline_s ++ " s deadline") and
             h.hasLinePrefix(nocap.out, "---- tests/test_memory.mojo::test_oom: TIMEOUT") and
             h.hasLine(nocap.out, "mopm test: 1 tests: 0 passed, 0 failed, 0 crashed, 1 timed out, 0 out of memory, 0 not built, 0 flaky, 0 ignored");
         rep.check("human output: with --memory 0 the same test is TIMEOUT hung (so the OOM came from the cap)", ok, try h.fmt(a, "exit {d}; stdout:\n{s}stderr:\n{s}", .{ nocap.code, c.plain(nocap.out), c.plain(nocap.err) }));
