@@ -33,6 +33,9 @@
   fbsource = none
   fbcode_macros = none
   buck = none
+  # komira 9504a2daf names its own tests cell in a few visibility lists; the alias
+  # makes those patterns resolve (to packages that are not there). Nothing is built from it.
+  tests = komira
 
 [external_cells]
   prelude = bundled
@@ -44,10 +47,9 @@
   # zig_test exec/env tools, zig_exe optimize/strip), the node_modules rules
   # service/*/BUCK uses (tools/build/node/modules.bzl), and `kpin cargo` with the
   # Rust rules it needs (rustc 1.99.0; env, renamed_deps, native_deps, patch).
-  # This is the komira main merge commit of pull request 1665 (kpin cargo --trim without the
-  # edges of optional dependencies nothing enabled), after pull request 1648 (kpin cargo, on top
-  # of 1646 and 1647). Bump it with farm.yml.
-  commit_hash = a44bd01b347695090df90dff1c48ff5bcdb5a339
+  # This is komira main at the commit whose farm-connect action takes the tls input
+  # (pull requests 1701 and 1705 are its newest merges). Bump it with farm.yml.
+  commit_hash = 9504a2daf88754de25d93f62a76ea2955ebc38c8
 
 [buildfile]
   name = BUCK
