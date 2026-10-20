@@ -875,7 +875,6 @@ const deb_legs = [_]struct { target: []const u8, deb_arch: []const u8 }{
     .{ .target = "linux-x86_64", .deb_arch = "amd64" },
     .{ .target = "linux-aarch64", .deb_arch = "arm64" },
     .{ .target = "macos-arm64", .deb_arch = "" },
-    .{ .target = "macos-x86_64", .deb_arch = "" },
 };
 
 /// release-build.yml: the linux legs have the Debian architecture of their target (the others none), the .deb is made from
