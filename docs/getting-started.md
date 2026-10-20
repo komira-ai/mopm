@@ -28,7 +28,8 @@ Read the script before you run it: it is `site/static/install.sh` in the reposit
 ### By hand
 
 Each release lists `mopm-<version>-<target>.tar.gz` for `linux-x86_64`, `linux-aarch64`, `macos-arm64` and
-`macos-x86_64`, a `SHA256SUMS` file, and a `<file>.sigstore.json` signature bundle for each of those five files.
+`macos-x86_64`, `mopm_<version>_amd64.deb` and `mopm_<version>_arm64.deb` (for Debian and Ubuntu: `sudo apt install ./mopm_<version>_amd64.deb`),
+a `SHA256SUMS` file, and a `<file>.sigstore.json` signature bundle for each of those seven files.
 
 ```sh
 v=0.0.2 t=linux-x86_64

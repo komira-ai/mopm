@@ -253,6 +253,10 @@ const Pass = struct {
                 return error.ToolFailed;
             }
         }
+        // SHA256SUMS also lists the two .debs of a release. install.sh never reads them, so placeholders stand in.
+        for ([_][]const u8{ "amd64", "arm64" }) |arch| {
+            try h.writeFile(try p.path(&.{ out_dir, try std.fmt.allocPrint(a, "mopm_{s}_{s}.deb", .{ ver, arch }) }), "not a real .deb\n");
+        }
         const r = try h.run(a, &.{ p.tools.release, "sums", out_dir }, &env, .{});
         if (r.code != 0) {
             std.debug.print("release sums failed: {s}\n", .{r.text});

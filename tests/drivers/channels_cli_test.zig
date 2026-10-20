@@ -132,6 +132,41 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
         rep.check("mutant: a path that climbs out of the package is refused", escape.code == 1 and h.contains(escape.text, "BadPath") and !w.has("escape.deb"), escape.text);
     }
 
+    // ---- deb-package: the release's .deb, from a binary and the metadata in packaging/deb ---------------------------
+    {
+        const pk = "packaging/deb";
+        const r1 = try w.run(&.{ "deb-package", "--binary", bin, "--name", "mopm", "--version", "1.2.3", "--arch", "amd64", "--packaging", pk, "--out", w.path("p1.deb") });
+        const r2 = try w.run(&.{ "deb-package", "--binary", bin, "--name", "mopm", "--version", "1.2.3", "--arch", "amd64", "--packaging", pk, "--out", w.path("p2.deb") });
+        rep.check("deb-package: the program succeeds", r1.code == 0 and r2.code == 0 and h.contains(r1.text, "wrote "), r1.text);
+        rep.same("deb-package: built twice, the two files are the same bytes", w.read("p1.deb"), w.read("p2.deb"));
+        rep.check("deb-package: the file is an ar archive", w.read("p1.deb").len > 200 and std.mem.startsWith(u8, w.read("p1.deb"), "!<arch>\n"), "no ar magic");
+
+        try h.writeFile(w.path("pother.bin"), "other bytes for the binary\n");
+        _ = try w.run(&.{ "deb-package", "--binary", w.path("pother.bin"), "--name", "mopm", "--version", "1.2.3", "--arch", "amd64", "--packaging", pk, "--out", w.path("p3.deb") });
+        rep.check("mutant: another binary gives other bytes (the compare is live)", w.read("p3.deb").len > 0 and !std.mem.eql(u8, w.read("p1.deb"), w.read("p3.deb")), "same bytes");
+        _ = try w.run(&.{ "deb-package", "--binary", bin, "--name", "mopm", "--version", "1.2.3", "--arch", "arm64", "--packaging", pk, "--out", w.path("p4.deb") });
+        rep.check("mutant: another architecture gives other bytes", w.read("p4.deb").len > 0 and !std.mem.eql(u8, w.read("p1.deb"), w.read("p4.deb")), "same bytes");
+
+        // The package is what apt-index reads: its control file parses and lists mopm 1.2.3.
+        const idx = try w.index("nowhere", "pidx", &.{"p1.deb"}, &.{});
+        rep.check("deb-package: apt-index accepts the .deb and lists it", idx.code == 0 and h.contains(idx.text, "added 1") and h.contains(w.read("pidx/dists/stable/main/binary-amd64/Packages"), "Package: mopm\nVersion: 1.2.3\n"), idx.text);
+
+        // Metadata that the package format cannot carry is refused and writes nothing.
+        for ([_][]const u8{ "control", "copyright", "lintian-overrides" }) |n| {
+            try h.writeFile(try h.fmt(a, "{s}/pk_bad/{s}", .{ w.root, n }), h.readFile(a, try h.fmt(a, "{s}/{s}", .{ pk, n })) catch "");
+        }
+        try h.writeFile(w.path("pk_bad/control"), try h.fmt(a, "{s}Depends: libc6\n", .{h.readFile(a, pk ++ "/control") catch ""}));
+        const unknown = try w.run(&.{ "deb-package", "--binary", bin, "--name", "mopm", "--version", "1.2.3", "--arch", "amd64", "--packaging", w.path("pk_bad"), "--out", w.path("bad1.deb") });
+        rep.check("mutant: a control field the package does not allow is refused, nothing written", unknown.code == 1 and h.contains(unknown.text, "UnknownField") and !w.has("bad1.deb"), unknown.text);
+        const nodir = try w.run(&.{ "deb-package", "--binary", bin, "--name", "mopm", "--version", "1.2.3", "--arch", "amd64", "--packaging", w.path("no_such_dir"), "--out", w.path("bad2.deb") });
+        rep.check("mutant: a metadata directory that is not there is refused, nothing written", nodir.code == 1 and h.contains(nodir.text, "cannot open") and !w.has("bad2.deb"), nodir.text);
+        try h.writeFile(w.path("empty.bin"), "");
+        const empty = try w.run(&.{ "deb-package", "--binary", w.path("empty.bin"), "--name", "mopm", "--version", "1.2.3", "--arch", "amd64", "--packaging", pk, "--out", w.path("bad3.deb") });
+        rep.check("mutant: an empty binary is refused, nothing written", empty.code == 1 and h.contains(empty.text, "EmptyFile") and !w.has("bad3.deb"), empty.text);
+        const badv = try w.run(&.{ "deb-package", "--binary", bin, "--name", "mopm", "--version", "1.2", "--arch", "amd64", "--packaging", pk, "--out", w.path("bad4.deb") });
+        rep.check("mutant: a version that is not X.Y.Z is refused, nothing written", badv.code == 1 and h.contains(badv.text, "BadVersion") and !w.has("bad4.deb"), badv.text);
+    }
+
     // ---- the apt tree: two additions, the goldens, the files' own checksums ------------------------------------------
     {
         _ = try w.deb("1.2.2", "amd64", bin, mtime, "d122a.deb");

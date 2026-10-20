@@ -1,4 +1,10 @@
-//! The release steps .github/workflows/release.yml runs, and the read-only check of a published
+| bump-internal --version//! The release s/// mopm-<version>-<target>.tar.gz for the four targets, mopm_<version>_<arch>.deb for the two linux ones, then SHA256SUMS: the
+/// seven payload files.
+fn payloadAssets(a: Allocator, version: []const u8) [][]const u8 {
+    var want = std.ArrayList([]const u8).init(a);
+    for (targets) |t| want.append(std.fmt.allocPrint(a, "mopm-{s}-{s}.tar.gz", .{ version, t }) catch @panic("oom")) catch @panic("oom");
+    for (release_debs.debs) |d| want.append(release_debs.debName(a, version, d.arch) catch @panic("oom")) catch @panic("oom");
+eps .github/workflows/release.yml runs, and the read-only check of a published
 //! release. Zig only, standard library only; build it with the pinned Zig and run it from the
 //! repository root:
 //!
@@ -30,20 +36,20 @@
 //!       with --out, appends `version=` and `tag=` lines (the format of $GITHUB_OUTPUT).
 //!   cut_release verify-dir <version> <dir> --sha <commit> --source-ref <ref> --trigger <push|workflow_dispatch> [--notes-out <dir>]
 //!       Before the tag exists and before anything is published: checks the BUILT files in <dir>. <commit> is on
-//!       main (no tag is read: the tag job runs after this); the files are exactly the ten: the four mopm-<version>-<target>.tar.gz, SHA256SUMS and the
-//!       cosign bundle <file>.sigstore.json of each; SHA256SUMS lists each tarball with the hash it has; `gh attestation verify` and `cosign verify-blob` (--cosign, identity pinned to release.yml at <ref>, the commit, <trigger> (the event of the run that signed: exactly `push` or `workflow_dispatch`, nothing else) and the repository pinned) accept every payload file
+//!       main (no tag is read: the tag job runs after this); the files are exactly the fourteen: the four mopm-<version>-<target>.tar.gz, the two mopm_<version>_<arch>.deb, SHA256SUMS and the
+//!       cosign bundle <file>.sigstore.json of each; SHA256SUMS lists each tarball and .deb with the hash it has; each .deb equals, byte for byte, the one the binary in its tarball makes with the metadata in --packaging (default packaging/deb); `gh attestation verify` and `cosign verify-blob` (--cosign, identity pinned to release.yml at <ref>, the commit, <trigger> (the event of the run that signed: exactly `push` or `workflow_dispatch`, nothing else) and the repository pinned) accept every payload file
 //!       (attestations pinned to release.yml, <ref> and <commit>); each tarball holds exactly
 //!       mopm-<version>-<target>/{mopm,LICENSE}. With --notes-out it writes release-notes.md, pin.txt (the
-//!       linux-x86_64 url, sha256 and size) and, only for --trigger push, verified.sha256 (the hash of each of the ten
+//!       linux-x86_64 url, sha256 and size) and, only for --trigger push, verified.sha256 (the hash of each of the fourteen
 //!       files): the manifest `publish` requires. A dry run (workflow_dispatch) verifies the same but writes no manifest, so
 //!       what a manual run signed can never be published.
 //!   cut_release verify <version> <dir> [--expect-sha256 <hex>]
 //!       After the release exists (read-only): the release is published, not a draft, with the prerelease
-//!       flag its version calls for, and exactly the ten assets; its tag is on main; the assets are
+//!       flag its version calls for, and exactly the fourteen assets; its tag is on main; the assets are
 //!       downloaded into the empty <dir> and pass the same checks as verify-dir, with the attestation
 //!       pinned to main and the tag's commit. Prints the pin.
 //!   cut_release publish <version> <dir> --verified <file> --notes <file>
-//!       Creates the release v<version> from exactly the ten files of <dir>, which must be the ones
+//!       Creates the release v<version> from exactly the fourteen files of <dir>, which must be the ones
 //!       verified.sha256 lists. A re-run creates no second release and replaces no asset: when the release
 //!       exists, every asset it holds must equal the local file byte for byte, or this refuses before
 //!       changing anything; only the assets it lacks are added.
@@ -55,6 +61,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const bump_internal = @import("bump_internal.zig");
+const release_debs = @import("release_debs.zig");
 
 const targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64", "macos-x86_64" };
 const pin_target = "linux-x86_64";
@@ -83,6 +90,8 @@ const Gh = struct {
     repo: []const u8,
     /// The `cosign` that checks signatures (`--cosign <path>`; the tests give a fake).
     cosign: []const u8 = "cosign",
+    /// The directory of the .deb metadata (`--packaging <dir>`), which verify uses to rebuild each .deb from its tarball.
+    packaging: []const u8 = release_debs.default_packaging,
 
     fn run(g: Gh, args: []const []const u8) Ran {
         return g.runExe(g.exe, args);
@@ -377,7 +386,7 @@ fn tagCmd(gh: Gh, sha: []const u8, expect_version: ?[]const u8, version_file: []
     }
 }
 
-// ---- the checks of the ten files ------------------------------------------------------
+// ---- the checks of the fourteen files ------------------------------------------------
 
 fn sha256Hex(a: Allocator, bytes: []const u8) []const u8 {
     var digest: [32]u8 = undefined;
@@ -412,15 +421,17 @@ fn tarNames(a: Allocator, tar: []const u8) [][]const u8 {
 const bundle_suffix = ".sigstore.json";
 const oidc_issuer = "https://token.actions.githubusercontent.com";
 
-/// mopm-<version>-<target>.tar.gz for the four targets, then SHA256SUMS: the five payload files.
+/// mopm-<version>-<target>.tar.gz for the four targets, mopm_<version>_<arch>.deb for the two linux ones, then SHA256SUMS:
+/// the seven payload files.
 fn payloadAssets(a: Allocator, version: []const u8) [][]const u8 {
     var want = std.ArrayList([]const u8).init(a);
     for (targets) |t| want.append(std.fmt.allocPrint(a, "mopm-{s}-{s}.tar.gz", .{ version, t }) catch @panic("oom")) catch @panic("oom");
+    for (release_debs.debs) |d| want.append(release_debs.debName(a, version, d.arch) catch @panic("oom")) catch @panic("oom");
     want.append(sums_name) catch @panic("oom");
     return want.items;
 }
 
-/// The ten assets of a release: the five payload files, then the cosign bundle `<file>.sigstore.json` of each.
+/// The fourteen assets of a release: the seven payload files, then the cosign bundle `<file>.sigstore.json` of each.
 fn wantAssets(a: Allocator, version: []const u8) [][]const u8 {
     var want = std.ArrayList([]const u8).init(a);
     const payload = payloadAssets(a, version);
@@ -429,7 +440,7 @@ fn wantAssets(a: Allocator, version: []const u8) [][]const u8 {
     return want.items;
 }
 
-/// <dir> holds exactly the ten files, by name (sorted names are returned).
+/// <dir> holds exactly the fourteen files, by name (sorted names are returned).
 fn checkNames(a: Allocator, dir: std.fs.Dir, where: []const u8, want: [][]const u8) void {
     var have = std.ArrayList([]const u8).init(a);
     var it = dir.iterate();
@@ -445,7 +456,7 @@ fn checkNames(a: Allocator, dir: std.fs.Dir, where: []const u8, want: [][]const 
     }
 }
 
-/// SHA256SUMS lists each of the four tarballs, once, with the hash the file has.
+/// SHA256SUMS lists each of the four tarballs and the two .debs, once, with the hash the file has.
 fn checkSums(a: Allocator, dir: std.fs.Dir, want: [][]const u8) void {
     const sums = readAll(a, dir, sums_name);
     var listed: usize = 0;
@@ -456,14 +467,14 @@ fn checkSums(a: Allocator, dir: std.fs.Dir, want: [][]const u8) void {
         const file = line[66..];
         var known = false;
         for (want) |w| {
-            if (std.mem.eql(u8, w, file) and std.mem.endsWith(u8, w, ".tar.gz")) known = true;
+            if (std.mem.eql(u8, w, file) and (std.mem.endsWith(u8, w, ".tar.gz") or std.mem.endsWith(u8, w, ".deb"))) known = true;
         }
-        if (!known) die("SHA256SUMS lists {s}, which is not one of the four tarballs", .{file});
+        if (!known) die("SHA256SUMS lists {s}, which is not one of the four tarballs and two .debs", .{file});
         const got = sha256Hex(a, readAll(a, dir, file));
         if (!std.mem.eql(u8, line[0..64], got)) die("{s}: sha256 is {s}, SHA256SUMS lists {s}", .{ file, got, line[0..64] });
         listed += 1;
     }
-    if (listed != targets.len) die("SHA256SUMS lists {d} files, expected {d}", .{ listed, targets.len });
+    if (listed != targets.len + release_debs.debs.len) die("SHA256SUMS lists {d} files, expected {d}", .{ listed, targets.len + release_debs.debs.len });
 }
 
 /// Every file is attested by this repository's release workflow, for `source_ref` and `sha`.
@@ -487,6 +498,21 @@ fn checkSignatures(gh: Gh, dir_path: []const u8, payload: [][]const u8, source_r
         const bundle = std.fmt.allocPrint(a, "{s}{s}", .{ path, bundle_suffix }) catch @panic("oom");
         const r = gh.runExe(gh.cosign, &.{ "verify-blob", "--bundle", bundle, "--certificate-identity", identity, "--certificate-oidc-issuer", oidc_issuer, "--certificate-github-workflow-sha", sha, "--certificate-github-workflow-trigger", trigger, "--certificate-github-workflow-repository", gh.repo, path });
         if (!r.ok) die("cosign verify-blob refused {s}: {s}", .{ w, std.mem.trim(u8, r.stderr, " \r\n") });
+    }
+}
+
+
+/// Each .deb is the one that the binary inside its tarball makes, byte for byte (release_debs.rebuild with the metadata in
+/// `packaging`): a .deb with other bytes than the tarball's binary, or other metadata than the repository's, is refused.
+fn checkDebs(gh: Gh, dir: std.fs.Dir, version: []const u8) void {
+    const a = gh.a;
+    const meta = release_debs.loadPackaging(a, gh.packaging) catch |err| die("cannot read the .deb metadata in {s}: {s}", .{ gh.packaging, @errorName(err) });
+    for (release_debs.debs) |d| {
+        const deb_name = release_debs.debName(a, version, d.arch) catch @panic("oom");
+        const tar_name = release_debs.tarballName(a, version, d.target) catch @panic("oom");
+        const have = readAll(a, dir, deb_name);
+        const want = release_debs.rebuild(a, readAll(a, dir, tar_name), version, d, meta) catch |err| die("cannot rebuild {s} from {s}: {s}", .{ deb_name, tar_name, @errorName(err) });
+        if (!std.mem.eql(u8, have, want)) die("{s} is not the .deb that the binary in {s} makes (sha256 {s}, rebuilt {s}): it holds other bytes", .{ deb_name, tar_name, sha256Hex(a, have), sha256Hex(a, want) });
     }
 }
 
@@ -525,7 +551,7 @@ fn pinText(a: Allocator, repo: []const u8, version: []const u8, pin: Pin) []cons
     return std.fmt.allocPrint(a, "url    https://github.com/{s}/releases/download/v{s}/mopm-{s}-{s}.tar.gz\nsha256 {s}\nsize   {d}\ndir    mopm-{s}-{s}\n", .{ repo, version, version, pin_target, pin.sha256, pin.size, version, pin_target }) catch @panic("oom");
 }
 
-/// The four tarballs, SHA256SUMS, the layout; with `attest` also the attestation and the signature of the five payload files.
+/// The four tarballs and two .debs, SHA256SUMS, the layout, each .deb rebuilt from its tarball; with `attest` also the attestation and the signature of the seven payload files.
 /// Returns the pin of the linux-x86_64 tarball.
 fn checkAssets(gh: Gh, version: []const u8, dir_path: []const u8, attest: ?struct { ref: []const u8, sha: []const u8, trigger: []const u8 }) Pin {
     const a = gh.a;
@@ -539,7 +565,9 @@ fn checkAssets(gh: Gh, version: []const u8, dir_path: []const u8, attest: ?struc
         checkAttestations(gh, dir_path, payload, t.ref, t.sha);
         checkSignatures(gh, dir_path, payload, t.ref, t.sha, t.trigger);
     }
-    return checkLayout(a, dir, version);
+    const pin = checkLayout(a, dir, version);
+    checkDebs(gh, dir, version);
+    return pin;
 }
 
 // ---- verify-dir ------------------------------------------------------------------------
@@ -574,13 +602,13 @@ fn verifyDirCmd(gh: Gh, version: []const u8, dir_path: []const u8, sha: []const 
             manifest.writer().print("{s}  {s}\n", .{ h, name }) catch @panic("oom");
         }
         w.print("\nThe pin for {s}:\n\n```\n{s}```\n", .{ pin_target, pinText(a, gh.repo, version, pin) }) catch @panic("oom");
-        w.print("\nVerify a download (needs the GitHub CLI and cosign), for a file F of this release:\n\n```\ngh attestation verify F -R {s} --signer-workflow {s}/.github/workflows/release.yml\ncosign verify-blob --bundle F.sigstore.json --certificate-identity https://github.com/{s}/.github/workflows/release.yml@refs/heads/main --certificate-oidc-issuer {s} F\n```\n\nmacOS binaries are not yet code-signed or notarized by Apple; see RELEASING.md.\n", .{ gh.repo, gh.repo, gh.repo, oidc_issuer }) catch @panic("oom");
+        w.print("\nVerify a download (needs the GitHub CLI and cosign), for a file F of this release:\n\n```\ngh attestation verify F -R {s} --signer-workflow {s}/.github/workflows/release.yml\ncosign verify-blob --bundle F.sigstore.json --certificate-identity https://github.com/{s}/.github/workflows/release.yml@refs/heads/main --certificate-oidc-issuer {s} F\n```\n\nThe two `mopm_<version>_<arch>.deb` files install on Debian and Ubuntu (`sudo apt install ./mopm_<version>_amd64.deb`); each is built from the binary in the linux tarball of the same architecture.\n\nmacOS binaries are not yet code-signed or notarized by Apple; see RELEASING.md.\n", .{ gh.repo, gh.repo, gh.repo, oidc_issuer }) catch @panic("oom");
         writeInto(a, nd, "release-notes.md", notes.items);
         writeInto(a, nd, "pin.txt", pinText(a, gh.repo, version, pin));
         // Only what a push signed can be published: a dry run writes no manifest, and publish refuses without one.
         if (is_push) writeInto(a, nd, "verified.sha256", manifest.items);
     }
-    out("verified {s} at {s}: four tarballs and SHA256SUMS, hashes match, attestations accepted, layout exact, commit on main.\n", .{ tag, sha });
+    out("verified {s} at {s}: four tarballs, two .debs and SHA256SUMS, hashes match, attestations accepted, layout exact, each .deb the one its tarball's binary makes, commit on main.\n", .{ tag, sha });
     out("prerelease: {s}\nthe pin for {s}:\n{s}", .{ if (prerelease) "true" else "false", pin_target, pinText(a, gh.repo, version, pin) });
 }
 
@@ -600,7 +628,7 @@ fn verifyCmd(gh: Gh, version: []const u8, dir_path: []const u8, expect: ?[]const
     const want_state = if (std.mem.indexOfScalar(u8, version, '-') != null) "false true" else "false false";
     if (!std.mem.eql(u8, state, want_state)) die("the release {s} has (draft prerelease) = '{s}', expected '{s}'", .{ tag, state, want_state });
 
-    // The release's asset list is exactly the ten files (by name, before any download).
+    // The release's asset list is exactly the fourteen files (by name, before any download).
     const want = wantAssets(a, version);
     {
         const listing = gh.must(&.{ "release", "view", tag, "-R", gh.repo, "--json", "assets", "--jq", ".assets[].name" });
@@ -637,14 +665,14 @@ fn verifyCmd(gh: Gh, version: []const u8, dir_path: []const u8, expect: ?[]const
         var empty_it = dir.iterate();
         if (empty_it.next() catch null) |_| die("{s} is not empty; give an empty directory", .{dir_path});
     }
-    _ = gh.must(&.{ "release", "download", tag, "-R", gh.repo, "-D", dir_path, "--pattern", "mopm-*.tar.gz", "--pattern", sums_name, "--pattern", "*" ++ bundle_suffix });
+    _ = gh.must(&.{ "release", "download", tag, "-R", gh.repo, "-D", dir_path, "--pattern", "mopm-*.tar.gz", "--pattern", "mopm_*.deb", "--pattern", sums_name, "--pattern", "*" ++ bundle_suffix });
 
     // The workflow ran for a push to main, so that is the ref the attestations name.
     const pin = checkAssets(gh, version, dir_path, .{ .ref = "refs/heads/main", .sha = tag_sha, .trigger = "push" });
     if (expect) |e| {
         if (!std.mem.eql(u8, e, pin.sha256)) die("{s} has sha256 {s}, not the expected {s}", .{ pin_target, pin.sha256, e });
     }
-    out("verified {s}: four tarballs and SHA256SUMS, hashes match, attestations accepted, layout exact.\n", .{tag});
+    out("verified {s}: four tarballs, two .debs and SHA256SUMS, hashes match, attestations accepted, layout exact, each .deb the one its tarball's binary makes.\n", .{tag});
     out("the pin for {s}:\n{s}", .{ pin_target, pinText(a, gh.repo, version, pin) });
 }
 
@@ -669,7 +697,7 @@ fn publishCmd(gh: Gh, version: []const u8, dir_path: []const u8, verified: []con
         }
     }
 
-    // Exactly the files that were verified: the ten names, each with the hash verify-dir recorded.
+    // Exactly the files that were verified: the fourteen names, each with the hash verify-dir recorded.
     var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |err| die("cannot open {s}: {s}", .{ dir_path, @errorName(err) });
     defer dir.close();
     checkNames(a, dir, dir_path, want);
@@ -685,7 +713,7 @@ fn publishCmd(gh: Gh, version: []const u8, dir_path: []const u8, verified: []con
             for (want) |w| {
                 if (std.mem.eql(u8, w, file)) known = true;
             }
-            if (!known) die("{s} lists {s}, which is not one of the ten files", .{ verified, file });
+            if (!known) die("{s} lists {s}, which is not one of the fourteen files", .{ verified, file });
             const got = sha256Hex(a, readAll(a, dir, file));
             if (!std.mem.eql(u8, got, line[0..64])) die("{s} is not the file that was verified: sha256 {s}, verified {s}", .{ file, got, line[0..64] });
             seen += 1;
@@ -711,7 +739,7 @@ fn publishCmd(gh: Gh, version: []const u8, dir_path: []const u8, verified: []con
             for (want) |w| {
                 if (std.mem.eql(u8, w, asset.name)) known = true;
             }
-            if (!known) die("the release {s} holds the asset {s}, which is not one of the ten files; nothing was changed", .{ tag, asset.name });
+            if (!known) die("the release {s} holds the asset {s}, which is not one of the fourteen files; nothing was changed", .{ tag, asset.name });
         }
         if (view.value.assets.len != 0) _ = gh.must(&.{ "release", "download", tag, "-R", gh.repo, "-D", held_path, "--pattern", "*" });
         for (view.value.assets) |asset| {
@@ -727,7 +755,7 @@ fn publishCmd(gh: Gh, version: []const u8, dir_path: []const u8, verified: []con
             if (!held) missing.append(w) catch @panic("oom");
         }
         if (missing.items.len == 0) {
-            out("the release {s} exists with all ten assets, identical to the verified files: nothing to do.\n", .{tag});
+            out("the release {s} exists with all fourteen assets, identical to the verified files: nothing to do.\n", .{tag});
             return;
         }
         var args = std.ArrayList([]const u8).init(a);
@@ -735,7 +763,7 @@ fn publishCmd(gh: Gh, version: []const u8, dir_path: []const u8, verified: []con
         for (missing.items) |m| args.append(std.fs.path.join(a, &.{ dir_path, m }) catch @panic("oom")) catch @panic("oom");
         args.appendSlice(&.{ "-R", gh.repo }) catch @panic("oom");
         _ = gh.must(args.items);
-        out("the release {s} existed with {d} of the ten assets, all identical; added the {d} it lacked.\n", .{ tag, view.value.assets.len, missing.items.len });
+        out("the release {s} existed with {d} of the fourteen assets, all identical; added the {d} it lacked.\n", .{ tag, view.value.assets.len, missing.items.len });
         return;
     }
 
@@ -745,7 +773,7 @@ fn publishCmd(gh: Gh, version: []const u8, dir_path: []const u8, verified: []con
     args.appendSlice(&.{ "-R", gh.repo, "--verify-tag", "--title", std.fmt.allocPrint(a, "mopm {s}", .{version}) catch @panic("oom"), "--notes-file", notes }) catch @panic("oom");
     if (prerelease) args.append("--prerelease") catch @panic("oom");
     _ = gh.must(args.items);
-    out("created the release {s} with the ten verified files.\n", .{tag});
+    out("created the release {s} with the fourteen verified files.\n", .{tag});
 }
 
 // ---- main ------------------------------------------------------------------------------
@@ -768,6 +796,7 @@ pub fn main() !void {
     var notes: ?[]const u8 = null;
     var expect_version: ?[]const u8 = null;
     var cosign: []const u8 = "cosign";
+    var packaging: []const u8 = release_debs.default_packaging;
     var git_exe: []const u8 = "git";
     var internal_repo: ?[]const u8 = null;
     var submodule: ?[]const u8 = null;
@@ -785,6 +814,8 @@ pub fn main() !void {
                 gh_exe = v;
             } else if (std.mem.eql(u8, arg, "--cosign")) {
                 cosign = v;
+            } else if (std.mem.eql(u8, arg, "--packaging")) {
+                packaging = v;
             } else if (std.mem.eql(u8, arg, "--git")) {
                 git_exe = v;
             } else if (std.mem.eql(u8, arg, "--internal-repo")) {
@@ -821,7 +852,7 @@ pub fn main() !void {
         } else try pos.append(arg);
     }
     if (pos.items.len == 0) usage();
-    const gh = Gh{ .a = a, .exe = gh_exe, .repo = repo, .cosign = cosign };
+    const gh = Gh{ .a = a, .exe = gh_exe, .repo = repo, .cosign = cosign, .packaging = packaging };
     const cmd = pos.items[0];
     const n = pos.items.len;
     if (std.mem.eql(u8, cmd, "plan")) {
