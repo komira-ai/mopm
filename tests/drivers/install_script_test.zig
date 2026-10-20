@@ -457,7 +457,7 @@ const mutants = [_]Mutant{
     },
     .{
         .name = "any-platform-accepted",
-        .from = "    *) die \"no mopm release for $(uname -s) $(uname -m); there are releases for Linux and macOS on x86_64 and arm64\" ;;",
+        .from = "    *) die \"no mopm release for $(uname -s) $(uname -m); there are releases for Linux on x86_64 and arm64 and for macOS on arm64\" ;;",
         .to = "    *) target=linux-x86_64 ;;",
     },
     .{
