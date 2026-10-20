@@ -17,8 +17,6 @@ a schema that starts using a new keyword needs it implemented there first. The
 OpenAPI checks (`openapi_check.zig`) are structural (see its header); they are
 not the full OpenAPI 3.1 meta schema.
 
-`requirements.txt` (PyYAML) stays only for `registry/fake/gen_errors.py`, which is not ported yet.
-
 ## API cases: `api/*.json`
 
 Each file is `{"cases": [...]}`. A case:

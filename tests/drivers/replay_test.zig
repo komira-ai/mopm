@@ -75,7 +75,7 @@ fn catalogueDrift(a: Allocator, t: *c.Tally, spec: Value) !void {
     while (left.next()) |k| try only_spec.append(k.*);
     if (only_spec.items.len != 0) {
         std.mem.sort([]const u8, only_spec.items, {}, c.lessStr);
-        t.fail("registry/fake/errors.zig and the spec's ErrorCode differ ({s}); run registry/fake/gen_errors.py", .{try std.mem.join(a, ", ", only_spec.items)});
+        t.fail("registry/fake/errors.zig and the spec's ErrorCode differ ({s}); run ./buck2 run //:gen_errors -- spec/api/openapi.yaml registry/fake/errors.zig", .{try std.mem.join(a, ", ", only_spec.items)});
     }
 }
 
