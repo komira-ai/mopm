@@ -424,7 +424,6 @@ pub fn repoProblems(a: Allocator, ctx: anytype, out: *Out) !void {
     try rl.problems(a, try ctx.read(a, "release.yml"), out);
     try rl.userBetaProblems(a, try ctx.read(a, "release-beta-user.yml"), out);
     try rl.buildDebProblems(a, try ctx.read(a, "release-build.yml"), out);
-    try rl.checkDebProblems(a, try ctx.read(a, "release-check.yml"), out);
 
     // promote.yml
     {

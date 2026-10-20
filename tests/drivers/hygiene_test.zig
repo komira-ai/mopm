@@ -233,9 +233,28 @@ test "the pull-request tier: unit on a pull request, beta only after the merge" 
     // Mutant: an e2e workflow gains a pull_request trigger.
     try expectStructure("e2e-extra.yml", header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: x\n", &.{"a pull request runs build and unit tests only"});
     // The same trigger is fine in the four unit workflows.
-    for ([_][]const u8{ "lint.yml", "service-ci.yml" }) |ok| {
+    for ([_][]const u8{ "farm.yml", "service-ci.yml" }) |ok| {
         try expectStructure(ok, header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: x\n", &.{});
     }
+    // Mutant: a guard with a clause that lets the beta job run on a pull request (the whole `if:` is compared, not a substring).
+    const guard_head = header ++ "on: [pull_request, push]\njobs:\n  test:\n    runs-on: x\n  registry-build:\n    runs-on: x\n  pack-conformance:\n    runs-on: x\n    if: ";
+    try expectStructure("ci.yml", guard_head ++ "github.event_name != 'pull_request' || true\n", &.{"job pack-conformance is not a unit job"});
+    try expectStructure("ci.yml", guard_head ++ "github.event_name != 'pull_request' || github.ref == 'refs/heads/main'\n", &.{"job pack-conformance is not a unit job"});
+    // The exact guard passes, bare or in ${{ }}.
+    try expectStructure("ci.yml", guard_head ++ "github.event_name != 'pull_request'\n", &.{});
+    try expectStructure("ci.yml", guard_head ++ "${{ github.event_name != 'pull_request' }}\n", &.{});
+    // lint.yml must run the release lint test on every pull request.
+    const lint_head = header ++ "on: [pull_request, push]\njobs:\n  lint:\n    runs-on: x\n    steps:\n";
+    const lint_step = "      - run: zig test tests/drivers/release_lint_test.zig\n";
+    try expectStructure("lint.yml", lint_head ++ lint_step, &.{});
+    try expectStructure("lint.yml", lint_head ++ "      - if: ${{ !cancelled() }}\n        run: zig test tests/drivers/release_lint_test.zig\n", &.{});
+    // Mutants: the step is gone, conditional on something else, may fail, is in a job that may fail, or the trigger is gone.
+    const no_release_lint = "release_lint_test.zig` unconditionally";
+    try expectStructure("lint.yml", lint_head ++ "      - run: zig test tests/drivers/hygiene_test.zig\n", &.{no_release_lint});
+    try expectStructure("lint.yml", lint_head ++ "      - if: github.event_name == 'push'\n        run: zig test tests/drivers/release_lint_test.zig\n", &.{no_release_lint});
+    try expectStructure("lint.yml", lint_head ++ "      - continue-on-error: true\n        run: zig test tests/drivers/release_lint_test.zig\n", &.{no_release_lint});
+    try expectStructure("lint.yml", header ++ "on: [pull_request]\njobs:\n  lint:\n    runs-on: x\n    continue-on-error: true\n    steps:\n" ++ lint_step, &.{no_release_lint});
+    try expectStructure("lint.yml", header ++ "on: [push]\njobs:\n  lint:\n    runs-on: x\n    steps:\n" ++ lint_step, &.{"the lints must run on pull_request"});
     // Mutant: a beta job of ci.yml loses its guard, or is new and unguarded.
     try expectStructure("ci.yml", header ++
         \\on: [pull_request, push]
