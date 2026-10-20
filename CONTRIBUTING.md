@@ -83,8 +83,8 @@ komira's `npm_modules` rule lays out each package's `node_modules` from its
 size, checked against the lockfile's sha512 integrity); no install script runs, there is no network and no
 shell or Python. Node.js is pinned in `tools/node/pins.toml`. The tests that read files outside their
 package get them as `data` (the specification and contract cases for the API, the access policy template,
-the stages' configuration and the API's golden grants for the stacks). The bash tests of `dns.sh`,
-`bootstrap.sh` and `oauth-secret.sh` stay in `service-ci.yml`.
+the stages' configuration and the API's golden grants for the stacks). The held commands (`bootstrap`, `oauth-secret` and `dns-cli`, TypeScript under `bin/` and `lib/`) are tested by
+jest against a fake host, so `:test` covers them.
 
 After `npm install` or `npm update` changes a `package-lock.json`, regenerate its pins (kpin is
 komira's tool, `./buck2 run komira//tools/build/kpin`), then commit the lock with the lockfile:
