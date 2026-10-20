@@ -1,5 +1,5 @@
 //! //:release_workflow: the release pipeline's lint rules (tests/drivers/release_lint.zig) over the
-//! real .github/workflows/release.yml, release-beta-user.yml, release-build.yml and release-check.yml, and each rule shown able to fail: a
+//! real .github/workflows/release.yml, release-beta-user.yml, and release-build.yml, and each rule shown able to fail: a
 //! copy of the real file with one planted defect must report the matching message.
 //!
 //! What the rules protect: only `publish` holds `contents: write` (to create the release of an existing tag, with
@@ -24,7 +24,6 @@ const Allocator = std.mem.Allocator;
 const release_path = ".github/workflows/release.yml";
 const user_path = ".github/workflows/release-beta-user.yml";
 const build_path = ".github/workflows/release-build.yml";
-const check_path = ".github/workflows/release-check.yml";
 
 fn real(a: Allocator, path: []const u8) ![]u8 {
     const tree = try c.loadTree(a);
@@ -37,17 +36,15 @@ fn problemsOf(a: Allocator, path: []const u8, text: []const u8) ![]const []const
         try rl.userBetaProblems(a, text, &out);
     } else if (std.mem.eql(u8, path, build_path)) {
         try rl.buildDebProblems(a, text, &out);
-    } else if (std.mem.eql(u8, path, check_path)) {
-        try rl.checkDebProblems(a, text, &out);
     } else try rl.problems(a, text, &out);
     return out.items;
 }
 
-test "the real release.yml, release-beta-user.yml, release-build.yml and release-check.yml pass every rule" {
+test "the real release.yml, release-beta-user.yml, and release-build.yml pass every rule" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    for ([_][]const u8{ release_path, user_path, build_path, check_path }) |p| {
+    for ([_][]const u8{ release_path, user_path, build_path }) |p| {
         const got = try problemsOf(a, p, try real(a, p));
         for (got) |l| std.debug.print("{s}\n", .{l});
         try std.testing.expectEqual(@as(usize, 0), got.len);
@@ -489,9 +486,6 @@ fn buildMutant(name: []const u8, from: []const u8, to: []const u8, needle: []con
     return mutantIn(build_path, name, from, to, needle);
 }
 
-fn checkMutant(name: []const u8, from: []const u8, to: []const u8, needle: []const u8) !void {
-    return mutantIn(check_path, name, from, to, needle);
-}
 
 const provenance_tail = "            dist/mopm-*.tar.gz\n            dist/mopm_*.deb\n            dist/SHA256SUMS\n      - uses: actions/upload-artifact";
 
@@ -505,7 +499,7 @@ test "mutant: the provenance subjects and the signed-assets upload leave out the
 test "mutant: the matrix gives a leg the wrong Debian architecture" {
     try buildMutant("amd64 leg without deb_arch", "deb_arch: amd64 }", "deb_arch: \"\" }", "the package leg linux-x86_64 has deb_arch");
     try buildMutant("aarch64 leg with the amd64 architecture", "deb_arch: arm64 }", "deb_arch: amd64 }", "the package leg linux-aarch64 has deb_arch");
-    try buildMutant("a macos leg that gets a .deb", "os: macos-14, run_prefix: \"\", deb_arch: \"\" }", "os: macos-14, run_prefix: \"\", deb_arch: amd64 }", "the package leg macos-arm64 has deb_arch");
+    try buildMutant("a macos leg that gets a .deb", "os: macos-14, deb_arch: \"\" }", "os: macos-14, deb_arch: amd64 }", "the package leg macos-arm64 has deb_arch");
 }
 
 test "mutant: the .deb is not made from the binary of the tarball, for the architecture, at the path the upload takes" {
@@ -525,9 +519,22 @@ test "mutant: the build's upload leaves out the .debs" {
 }
 
 test "mutant: lintian does not gate on errors, or does not lint the build's .debs" {
-    try checkMutant("lintian without --fail-on error", "lintian --version && lintian --fail-on error --tag-display-limit 0 dist/*.deb", "lintian --version && lintian --tag-display-limit 0 dist/*.deb", "lintian must run `lintian --fail-on error`");
-    try checkMutant("lintian that may not fail", "--tag-display-limit 0 dist/*.deb", "--tag-display-limit 0 dist/*.deb || true", "lintian must not be allowed to fail");
-    try checkMutant("lintian without needs", "  lintian:\n    needs: package\n", "  lintian:\n", "lintian must need exactly package");
-    try checkMutant("lintian needing another job", "  lintian:\n    needs: package\n", "  lintian:\n    needs: sums\n", "lintian must need exactly package");
-    try checkMutant("lintian over the macos artifacts", "pattern: release-linux-*", "pattern: release-macos-*", "lintian must download the artifacts release-linux-*");
+    const lint_cmd = "lintian --version && lintian --fail-on error --tag-display-limit 0 \"$RUNNER_TEMP\"/out/*.deb";
+    try buildMutant("lintian without --fail-on error", lint_cmd, "lintian --version && lintian --tag-display-limit 0 \"$RUNNER_TEMP\"/out/*.deb", "package must run `lintian --fail-on error`");
+    try buildMutant("lintian that may not fail", "--tag-display-limit 0 \"$RUNNER_TEMP\"/out/*.deb", "--tag-display-limit 0 \"$RUNNER_TEMP\"/out/*.deb || true", "lintian must not be allowed to fail");
+    try buildMutant("lintian that lints another directory", "--tag-display-limit 0 \"$RUNNER_TEMP\"/out/*.deb", "--tag-display-limit 0 dist/*.deb", "lintian must lint \"$RUNNER_TEMP\"/out/*.deb");
+    try buildMutant("lintian step that may fail", "      - name: lintian, every tag printed, an error fails\n        if: matrix.deb_arch != ''\n", "      - name: lintian, every tag printed, an error fails\n        continue-on-error: true\n        if: matrix.deb_arch != ''\n", "lintian must not be allowed to fail");
+    try buildMutant("lintian for every leg (the macos one has no .deb)", "      - name: lintian, every tag printed, an error fails\n        if: matrix.deb_arch != ''\n", "      - name: lintian, every tag printed, an error fails\n", "the lintian step must run only for the legs that have a deb_arch");
+    try buildMutant("lintian never installed", "sudo apt-get update -qq && sudo apt-get install -y -qq lintian", "sudo apt-get update -qq", "package must install lintian");
+    try buildMutant("lintian install without the legs' condition", "      - name: Install lintian\n        if: matrix.deb_arch != ''\n", "      - name: Install lintian\n", "the lintian install must run only for the legs that have a deb_arch");
+}
+
+test "mutant: lintian runs before the .deb exists or after the upload" {
+    // Lintian moved ahead of the step that makes the .deb: it would lint nothing.
+    const make = "      - name: Package the binary of the tarball as mopm_<version>_<arch>.deb\n";
+    const lint_step = "      - name: lintian, every tag printed, an error fails\n        if: matrix.deb_arch != ''\n        run: lintian --version && lintian --fail-on error --tag-display-limit 0 \"$RUNNER_TEMP\"/out/*.deb\n";
+    try buildMutant("lintian before the .deb is made", make, lint_step ++ make, "lintian must run after the step that makes the .deb");
+    // Lintian moved after the upload: an error no longer stops the leg before the .deb is carried on.
+    const upload = "      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          name: release-${{ matrix.target }}\n          path: |\n            ${{ runner.temp }}/out/*.tar.gz\n            ${{ runner.temp }}/out/*.deb\n          if-no-files-found: error\n          retention-days: 7\n          overwrite: true\n";
+    try buildMutant("lintian after the upload", lint_step ++ upload, upload ++ lint_step, "lintian must run before the artifact upload");
 }

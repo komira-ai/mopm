@@ -241,6 +241,14 @@ const release_file = "release.yml";
 /// The environment that holds the release bot's key, restricted to main.
 const release_environment = "release";
 
+/// The pull-request tier: a pull request runs build and unit tests only. These four workflows are the only ones that may
+/// run on pull_request (ci.yml: its unit jobs; lint.yml: the lints, the release lint included; farm.yml: the unit build on the test farm;
+/// service-ci.yml: the unit tests of the service packages). Everything else (the release machinery, the end-to-end runs) runs after the
+/// merge. The oidc files and farm.yml, release.yml have rules of their own above.
+const pr_files = [_][]const u8{ "ci.yml", "lint.yml", "farm.yml", "service-ci.yml" };
+/// The jobs of ci.yml that run on a pull request (the unit tier). Every other job of ci.yml is beta and must say `if: github.event_name != 'pull_request'`.
+const ci_unit_jobs = [_][]const u8{ "test", "registry-build" };
+
 fn isOidcFile(base: []const u8) bool {
     return c.containsStr(&oidc_files, base);
 }
@@ -268,6 +276,13 @@ fn jobEntries(a: Allocator, doc: Value) ![]const Job {
     var it = jobs.object.iterator();
     while (it.next()) |e| try out.append(.{ .name = e.key_ptr.*, .node = e.value_ptr.* });
     return out.items;
+}
+
+/// The whole `if:` is the guard (optionally in `${{ }}`): a substring test would pass `... || true`.
+fn isBetaGuard(expr: []const u8) bool {
+    var e = std.mem.trim(u8, expr, " \r\n\t");
+    if (std.mem.startsWith(u8, e, "${{") and std.mem.endsWith(u8, e, "}}")) e = std.mem.trim(u8, e[3 .. e.len - 2], " ");
+    return std.mem.eql(u8, e, "github.event_name != 'pull_request'");
 }
 
 fn jobIf(a: Allocator, job: Value) ![]const u8 {
@@ -382,6 +397,34 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
     }
     if (c.containsStr(on, "pull_request") and (has_id_token or has_environment)) {
         try c.problem(a, out, prefix ++ "{s}: a workflow with id-token or an environment must not run on pull_request", .{f});
+    }
+    if (c.containsStr(on, "pull_request") and !c.containsStr(&pr_files, base) and !isOidcFile(base)) {
+        try c.problem(a, out, prefix ++ "{s}: a pull request runs build and unit tests only, so only ci.yml, lint.yml, farm.yml and service-ci.yml may run on pull_request", .{f});
+    }
+    if (std.mem.eql(u8, base, "ci.yml") and c.containsStr(on, "pull_request")) {
+        for (jobs) |j| {
+            if (c.containsStr(&ci_unit_jobs, j.name)) continue;
+            if (!isBetaGuard(try jobIf(a, j.node))) {
+                try c.problem(a, out, prefix ++ "{s}: job {s} is not a unit job, so its `if:` must be exactly `github.event_name != 'pull_request'` (beta runs after the merge, never on a pull request; any `||` clause would let it run)", .{ f, j.name });
+            }
+        }
+    }
+    if (std.mem.eql(u8, base, "lint.yml")) {
+        if (!c.containsStr(on, "pull_request")) try c.problem(a, out, prefix ++ "{s}: the lints must run on pull_request", .{f});
+        var runs_release_lint = false;
+        for (jobs) |j| {
+            if (c.truthy(c.get(j.node, "continue-on-error"))) continue;
+            const steps = c.get(j.node, "steps") orelse continue;
+            if (steps != .array) continue;
+            for (steps.array.items) |st| {
+                const step_run = c.str(c.get(st, "run")) orelse continue;
+                if (!std.mem.eql(u8, std.mem.trim(u8, step_run, " \r\n\t"), "zig test tests/drivers/release_lint_test.zig")) continue;
+                if (c.truthy(c.get(st, "continue-on-error"))) continue;
+                const cond = std.mem.trim(u8, try jobIf(a, st), " ");
+                if (cond.len == 0 or std.mem.eql(u8, cond, "${{ !cancelled() }}")) runs_release_lint = true;
+            }
+        }
+        if (!runs_release_lint) try c.problem(a, out, prefix ++ "{s}: no step runs `zig test tests/drivers/release_lint_test.zig` unconditionally (or under `!cancelled()`) without continue-on-error; the release lint, the .deb wiring included, runs on every pull request", .{f});
     }
     if (!isOidcFile(base)) return;
 

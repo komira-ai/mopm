@@ -90,11 +90,21 @@ jobs:
             ./buck2 audit config "buildrules_re.$key" --style json | grep -q '": *"[^"]' ||
               { echo "the buckconfig sets no [buildrules_re] $key: this job would build on the runner"; exit 1; }
           done
-      - name: buck2 build //...
+      # A pull request builds the unit tier: every target except the beta ones (the tests that run against the real Mojo toolchain,
+      # and the user walk of the candidate; BUCK gives each of them _MOJO_TOOLS). A push to main builds every target, so those run
+      # after the merge.
+      - name: buck2 build (the unit tier on a pull request, every target on a push to main)
         if: ${{ vars.FARM_ADDRESS != '' }}
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
           set -o pipefail
-          ./buck2 build //... 2>&1 | tee "$RUNNER_TEMP/build.log"
+          if [ "$EVENT" = pull_request ]; then
+            ./buck2 uquery '//... - set(//:autolink //:discovery //:flaky //:install_e2e //:mojo_probe //:supervisor //:user_beta)' > "$RUNNER_TEMP/targets"
+            ./buck2 build --skip-incompatible-targets "@$RUNNER_TEMP/targets" 2>&1 | tee "$RUNNER_TEMP/build.log"
+          else
+            ./buck2 build //... 2>&1 | tee "$RUNNER_TEMP/build.log"
+          fi
       # The summary line counts the actions run on this machine: all must have
       # run on the farm or come from its cache.
       - name: no action ran on the runner

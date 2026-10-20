@@ -1,8 +1,19 @@
-# macOS runs, Linux always runs. The GitHub macOS queue waits 50 to 120 minutes, so the macos-14 leg of every
-# matrix below is not part of a pull request's checks. It runs on a push to main (after the merge, so a Mac
+# Tiers (the pull request runs the unit tier only; the rest runs after the merge):
+#   unit   each library: `test` (zig build test) and `registry-build` (the CLI and the fake registry build). These run on
+#          every pull request, and on a push to main, nightly and by hand. No coverage is measured by any job of this
+#          repository today, so none is reported.
+#   beta   each component against its real counterpart: `mojo-e2e` (the CLI against the real Mojo), `pack-conformance` (the
+#          packer against the registry's validator) and `installer` (site/static/install.sh against a fake release). They have
+#          `if: github.event_name != 'pull_request'`: never on a pull request. release.yml runs this whole workflow on the
+#          pushed commit as its `beta` stage, and a push to main runs it too.
+#   gamma  the whole system with real consumers: promote.yml (deploy.yml, e2e.yml), not this file.
+# tests/drivers/hygiene.zig holds this split (the jobs that may run on a pull request, and which workflows may).
+#
+# macOS runs, Linux always runs. The GitHub macOS queue waits 50 to 120 minutes, so the macos-14 leg of the unit matrix
+# is not part of a pull request's checks. It runs on a push to main (after the merge, so a Mac
 # regression is still caught and the main-red policy applies), on the nightly schedule, on workflow_dispatch, and on
 # a pull request only while it carries the label `macos` (adding the label starts the run). The Linux legs are
-# the same everywhere. release.yml and release-check.yml keep their macOS packaging: they build the Mac binaries.
+# the same everywhere. release.yml keeps its macOS packaging: it builds the Mac binaries.
 name: ci
 
 on:
@@ -42,12 +53,14 @@ jobs:
 
   mojo-e2e:
     name: mojo e2e (${{ matrix.os }})
+    # Beta tier: never on a pull request.
+    if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'macos')) && '["ubuntu-24.04","ubuntu-24.04-arm","macos-14"]' || '["ubuntu-24.04","ubuntu-24.04-arm"]') }}
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -99,6 +112,8 @@ jobs:
   # and each planted defect must be refused with its rule.
   pack-conformance:
     name: pack conformance (validator)
+    # Beta tier: never on a pull request.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -119,3 +134,24 @@ jobs:
           npm run build:validate-lib
       - name: mopm pack, then the validator on the result
         run: node tests/pack_conformance/check.mjs ./zig-out/bin/mopm service/api/dist-validate
+
+  # install.sh against a fake release served over loopback, then with planted defects that it must catch.
+  # It needs a shell, curl and a network stack, so only a GitHub-hosted runner runs it (no Buck2 target does).
+  installer:
+    name: install.sh (${{ matrix.os }})
+    # Beta tier: never on a pull request.
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: install.sh against a fake release, then with planted defects (each must turn a check red)
+        run: zig test tests/drivers/install_script_test.zig

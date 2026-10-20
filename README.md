@@ -112,15 +112,14 @@ zig build test       # unit tests and golden tests; run from the repository root
 ./buck2 build //:golden  # runs the built CLI against tests/golden (on the build farm)
 ```
 
-CI runs `zig build` and `zig build test` on Linux x86_64, Linux aarch64 and macOS arm64, and
-there also runs the Mojo end-to-end drivers (`tests/drivers/test_*_test.zig`) natively, in a
+A pull request runs the unit tier (`zig build` and `zig build test` on Linux x86_64 and Linux aarch64, and the farm build without the beta targets). After the merge (a push to main, which is also the beta stage of the release) CI also runs macOS arm64 and the Mojo end-to-end drivers (`tests/drivers/test_*_test.zig`) natively, in a
 pixi environment with the pinned `mojo` (`tools/install_pixi.sh`, `tests/e2e/pixi.toml`):
 
 ```sh
 zig build test-e2e -Dmojo-env=<pixi environment>   # or test-autolink, test-discovery, test-supervisor, test-flaky
 ```
 
-The REPL checks run where the environment has `bin/mojo-lldb`. The build farm (`farm.yml`) runs
+The REPL checks run where the environment has `bin/mojo-lldb`. On a push to main the build farm (`farm.yml`) runs
 the same drivers (`//:autolink`, `//:discovery`, `//:supervisor`, `//:flaky`) on Linux x86_64
 against komira's pinned Mojo compiler.
 

@@ -818,8 +818,8 @@ pub fn userBetaProblems(a: Allocator, text: []const u8, out: *Out) !void {
 
 // ---- the .deb wiring --------------------------------------------------------------------------
 //
-// The .debs cross four workflow files: release-build.yml makes one per linux leg (from the binary inside the tarball),
-// release.yml attests and uploads them with the tarballs, and release-check.yml lints them with lintian. Each hop is a
+// The .debs cross three workflow files: release-build.yml makes one per linux leg (from the binary inside the tarball),
+// release.yml attests and uploads them with the tarballs (release-build.yml also lints them with lintian, in the leg that built them). Each hop is a
 // path or a name; a typo in one drops the .deb from the release without any step going red, so each is pinned here.
 
 /// The non-empty trimmed lines of a block scalar.
@@ -875,7 +875,6 @@ const deb_legs = [_]struct { target: []const u8, deb_arch: []const u8 }{
     .{ .target = "linux-x86_64", .deb_arch = "amd64" },
     .{ .target = "linux-aarch64", .deb_arch = "arm64" },
     .{ .target = "macos-arm64", .deb_arch = "" },
-    .{ .target = "macos-x86_64", .deb_arch = "" },
 };
 
 /// release-build.yml: the linux legs have the Debian architecture of their target (the others none), the .deb is made from
@@ -917,21 +916,41 @@ pub fn buildDebProblems(a: Allocator, text: []const u8, out: *Out) !void {
     if (!c.isStr(c.get(tool, "if"), "matrix.deb_arch != ''")) try c.problem(a, out, prefix ++ f ++ "the channels build step must run only for the legs that have a deb_arch", .{});
     try exactLines(a, out, "release-build.yml: the artifact upload path", stepWith(job, "actions/upload-artifact@", "path"), &.{ "${{ runner.temp }}/out/*.tar.gz", "${{ runner.temp }}/out/*.deb" });
     if (!std.mem.eql(u8, stepWith(job, "actions/upload-artifact@", "if-no-files-found") orelse "", "error")) try c.problem(a, out, prefix ++ f ++ "the artifact upload must set if-no-files-found: error", .{});
+    try lintianProblems(a, job, out);
 }
 
-/// release-check.yml: the lintian job runs after the package job, lints the .debs the package job built (the linux
-/// artifacts), and an error fails it.
-pub fn checkDebProblems(a: Allocator, text: []const u8, out: *Out) !void {
-    const f = "release-check.yml: ";
-    const doc = c.load(a, text) catch |err| return c.problem(a, out, prefix ++ f ++ "not readable as YAML: {s}", .{@errorName(err)});
-    const job = c.get(c.get(doc, "jobs"), "lintian") orelse return c.problem(a, out, prefix ++ f ++ "there is no lintian job", .{});
-    const need = try c.arrayOf(a, c.get(job, "needs"));
-    if (!c.eqlList(need, &.{"package"})) try c.problem(a, out, prefix ++ f ++ "lintian must need exactly package (the .debs it lints), got {s}", .{try c.inspectList(a, need)});
-    if (!std.mem.eql(u8, stepWith(job, "actions/download-artifact@", "pattern") orelse "", "release-linux-*")) try c.problem(a, out, prefix ++ f ++ "lintian must download the artifacts release-linux-* (the .debs)", .{});
-    const step = stepRunning(job, "lintian --fail-on error") orelse return c.problem(a, out, prefix ++ f ++ "lintian must run `lintian --fail-on error` (an error tag fails the job)", .{});
-    const run = c.str(c.get(step, "run")) orelse "";
-    if (std.mem.indexOf(u8, run, "dist/*.deb") == null) try c.problem(a, out, prefix ++ f ++ "lintian must lint dist/*.deb", .{});
-    if (std.mem.indexOf(u8, run, "||") != null or c.truthy(c.get(step, "continue-on-error")) or c.truthy(c.get(job, "continue-on-error"))) {
+/// The index of the first step of `job` whose `run:` contains `needle`.
+fn stepIndexRunning(job: Value, needle: []const u8) ?usize {
+    const steps = c.get(job, "steps") orelse return null;
+    if (steps != .array) return null;
+    for (steps.array.items, 0..) |st, i| {
+        const run = c.str(c.get(st, "run")) orelse continue;
+        if (std.mem.indexOf(u8, run, needle) != null) return i;
+    }
+    return null;
+}
+
+/// The lintian steps of release-build.yml's package job (the .debs are linted where they are built, on the linux legs only): the
+/// tool is installed, and `lintian --fail-on error` runs over the .debs of `out/` after the step that made them and before the
+/// upload, so an error tag fails the leg before a release carries the file, and nothing can tolerate its failure.
+fn lintianProblems(a: Allocator, job: Value, out: *Out) !void {
+    const f = "release-build.yml: ";
+    const steps = c.get(job, "steps");
+    const items: []const Value = if (steps != null and steps.? == .array) steps.?.array.items else &.{};
+    const made_at = stepIndexRunning(job, "deb-package");
+    const up_at = stepIndexUsing(job, "actions/upload-artifact@");
+    const lint_at = stepIndexRunning(job, "lintian --fail-on error") orelse return c.problem(a, out, prefix ++ f ++ "package must run `lintian --fail-on error` (an error tag fails the leg)", .{});
+    const lint = items[lint_at];
+    const run = c.str(c.get(lint, "run")) orelse "";
+    if (std.mem.indexOf(u8, run, "\"$RUNNER_TEMP\"/out/*.deb") == null) try c.problem(a, out, prefix ++ f ++ "lintian must lint \"$RUNNER_TEMP\"/out/*.deb, the .debs this leg built", .{});
+    if (std.mem.indexOf(u8, run, "||") != null or c.truthy(c.get(lint, "continue-on-error")) or c.truthy(c.get(job, "continue-on-error"))) {
         try c.problem(a, out, prefix ++ f ++ "lintian must not be allowed to fail (no `||`, no continue-on-error)", .{});
     }
+    if (!c.isStr(c.get(lint, "if"), "matrix.deb_arch != ''")) try c.problem(a, out, prefix ++ f ++ "the lintian step must run only for the legs that have a deb_arch (if: matrix.deb_arch != ''), the legs that built a .deb", .{});
+    if (made_at == null or lint_at < made_at.?) try c.problem(a, out, prefix ++ f ++ "lintian must run after the step that makes the .deb (it needs the .debs it lints)", .{});
+    if (up_at == null or up_at.? < lint_at) try c.problem(a, out, prefix ++ f ++ "lintian must run before the artifact upload (an error must stop the leg before the .deb is carried on)", .{});
+    const install_at = stepIndexRunning(job, "apt-get install") orelse return c.problem(a, out, prefix ++ f ++ "package must install lintian (apt-get install ... lintian)", .{});
+    if (std.mem.indexOf(u8, c.str(c.get(items[install_at], "run")) orelse "", "lintian") == null) try c.problem(a, out, prefix ++ f ++ "the apt-get install step must install lintian", .{});
+    if (install_at > lint_at) try c.problem(a, out, prefix ++ f ++ "lintian must be installed before it runs", .{});
+    if (!c.isStr(c.get(items[install_at], "if"), "matrix.deb_arch != ''")) try c.problem(a, out, prefix ++ f ++ "the lintian install must run only for the legs that have a deb_arch", .{});
 }
