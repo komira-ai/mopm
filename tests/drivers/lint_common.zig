@@ -36,11 +36,12 @@ pub const Tree = struct {
 
 /// The files the Buck2 rule staged for the test (BUILDRULES_TEST_WORK: exactly the
 /// `data` of the target, so exactly the files the lint is to check).
+///
+/// Without BUILDRULES_TEST_WORK (a run by `zig test tests/drivers/<lint>_test.zig` from the
+/// repository root, as .github/workflows/lint.yml does) the files are the ones git tracks
+/// in the current directory (`git ls-files`): the same checkout the pull request holds.
 pub fn loadTree(a: Allocator) !Tree {
-    const root = std.process.getEnvVarOwned(a, "BUILDRULES_TEST_WORK") catch {
-        std.debug.print("BUILDRULES_TEST_WORK is not set: this test runs as a Buck2 target with the repository files as `data`\n", .{});
-        return error.NoTestWork;
-    };
+    const root = std.process.getEnvVarOwned(a, "BUILDRULES_TEST_WORK") catch return trackedTree(a);
     var dir = try std.fs.cwd().openDir(root, .{ .iterate = true });
     defer dir.close();
     var walker = try dir.walk(a);
@@ -51,6 +52,33 @@ pub fn loadTree(a: Allocator) !Tree {
     }
     std.mem.sort([]const u8, files.items, {}, lessThan);
     return .{ .root = root, .files = files.items };
+}
+
+/// The files git tracks under the current directory, which must be the repository root.
+fn trackedTree(a: Allocator) !Tree {
+    const r = std.process.Child.run(.{
+        .allocator = a,
+        .argv = &.{ "git", "ls-files", "-z", "--cached" },
+        .max_output_bytes = 64 * 1024 * 1024,
+    }) catch |err| {
+        std.debug.print("BUILDRULES_TEST_WORK is not set and `git ls-files` did not run ({s}): run this from the repository root\n", .{@errorName(err)});
+        return error.NoTestWork;
+    };
+    if (r.term != .Exited or r.term.Exited != 0) {
+        std.debug.print("BUILDRULES_TEST_WORK is not set and `git ls-files` failed: {s}\n", .{r.stderr});
+        return error.NoTestWork;
+    }
+    var files = std.ArrayList([]const u8).init(a);
+    var it = std.mem.splitScalar(u8, r.stdout, 0);
+    while (it.next()) |p| {
+        if (p.len == 0) continue;
+        // A path git lists but the checkout lacks (a submodule, a deletion) has nothing to scan.
+        const st = std.fs.cwd().statFile(p) catch continue;
+        if (st.kind != .file) continue;
+        try files.append(p);
+    }
+    std.mem.sort([]const u8, files.items, {}, lessThan);
+    return .{ .root = ".", .files = files.items };
 }
 
 fn lessThan(_: void, x: []const u8, y: []const u8) bool {

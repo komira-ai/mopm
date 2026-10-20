@@ -361,10 +361,12 @@ test "oidc-subject-check.yml: manual, main only, beta at most, no AWS" {
     , &.{});
 }
 
-test "farm.yml: a pull request from this repository, no secret, no environment" {
+test "farm.yml: a push to main or a pull request from this repository, no secret, no environment" {
     const farm = header ++
         \\on:
         \\  pull_request:
+        \\    branches: [main]
+        \\  push:
         \\    branches: [main]
         \\jobs:
         \\  build:
@@ -375,15 +377,26 @@ test "farm.yml: a pull request from this repository, no secret, no environment" 
         \\
     ;
     try expectStructure("farm.yml", farm, &.{});
+    // A push to any branch, a push without branches, a pull request alone and a third trigger are refused.
+    inline for ([_][]const u8{
+        "on:\n  pull_request:\n  push:\n    branches: ['*']\n",
+        "on: [pull_request, push]\n",
+        "on:\n  pull_request:\n    branches: [main]\n",
+        "on:\n  push:\n    branches: [main]\n",
+        "on:\n  pull_request:\n  push:\n    branches: [main]\n  workflow_dispatch:\n",
+    }) |on| {
+        try expectStructure("farm.yml", header ++ on ++
+            \\jobs:
+            \\  build:
+            \\    runs-on: x
+            \\
+        , &.{"triggers must be exactly pull_request and push of branches [main]"});
+    }
     try expectStructure("farm.yml", header ++
-        \\on: [pull_request, push]
-        \\jobs:
-        \\  build:
-        \\    runs-on: x
-        \\
-    , &.{"triggers must be exactly pull_request"});
-    try expectStructure("farm.yml", header ++
-        \\on: [pull_request]
+        \\on:
+        \\  pull_request:
+        \\  push:
+        \\    branches: [main]
         \\jobs:
         \\  build:
         \\    environment: beta
@@ -391,7 +404,10 @@ test "farm.yml: a pull request from this repository, no secret, no environment" 
         \\
     , &.{"must not use secrets or an environment"});
     try expectStructure("farm.yml", header ++
-        \\on: [pull_request]
+        \\on:
+        \\  pull_request:
+        \\  push:
+        \\    branches: [main]
         \\jobs:
         \\  build:
         \\    runs-on: x
@@ -400,7 +416,10 @@ test "farm.yml: a pull request from this repository, no secret, no environment" 
         \\
     , &.{"must not use secrets or an environment"});
     try expectStructure("farm.yml", header ++
-        \\on: [pull_request]
+        \\on:
+        \\  pull_request:
+        \\  push:
+        \\    branches: [main]
         \\jobs:
         \\  build:
         \\    runs-on: x

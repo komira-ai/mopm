@@ -42,6 +42,7 @@ const cases = [_]Case{
     .{ .name = "account_id_literal", .hyg = &.{"12-digit number that looks like an account id"} },
     .{ .name = "farm_clean", .lint = &.{}, .hyg = &.{} },
     .{ .name = "farm_fork_unguarded", .lint = &.{}, .hyg = &.{"does not skip pull requests from forks"} },
+    .{ .name = "farm_push_any_branch", .lint = &.{}, .hyg = &.{"triggers must be exactly pull_request and push of branches [main]"} },
     .{ .name = "farm_other_action", .lint = &.{"only GitHub-owned actions pinned by full SHA"}, .hyg = &.{} },
     .{ .name = "hyg_aws_key", .hyg = &.{"AWS access key id"} },
     .{ .name = "hyg_secret_key", .hyg = &.{"AWS secret key assignment"} },

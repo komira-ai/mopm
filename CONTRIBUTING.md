@@ -55,7 +55,11 @@ Two builds describe the same program, and both stay.
   (`tests/drivers/hygiene.zig`, over every file of the repository),
   `//:workflows` (`tests/drivers/workflow_lint.zig`, over the workflows) and
   `//:lint_selftest` (both lints over `tests/lint/fixtures`, against the table in
-  `tests/drivers/lint_selftest_test.zig`). `farm.yml` runs them with `//...`. The
+  `tests/drivers/lint_selftest_test.zig`). `farm.yml` runs them with `//...` (and fails a push to
+  `main` when the farm is not configured); `lint.yml` runs the same three tests with `zig test` on a
+  GitHub-hosted runner for every pull request, forks included, and every push to `main`, with no
+  secret and a read-only token (without `BUILDRULES_TEST_WORK` they read the files `git ls-files`
+  lists). The
   farm has no bash, so the syntax check of `run:` scripts is not `bash -n`: `tests/drivers/shell_syntax.zig` stands in for
   it (unterminated quotes and expansions, unbalanced `if`/`fi`, `do`/`done`,
   `case`/`esac`, braces and parentheses; not the rest of bash's grammar).

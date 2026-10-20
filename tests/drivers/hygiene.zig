@@ -228,9 +228,9 @@ pub fn textProblems(a: Allocator, f: []const u8, data: []const u8, out: *Out) !v
 const oidc_files = [_][]const u8{ "deploy.yml", "e2e.yml", "promote.yml" };
 /// The one other file allowed an id-token grant: it prints OIDC claims and holds no AWS access.
 const subject_check = "oidc-subject-check.yml";
-/// farm.yml runs on pull_request and holds an id-token grant for komira's farm-connect
-/// action. Allowed only for a pull request from a branch of this repository, with no
-/// environment and no secret.
+/// farm.yml runs on pull_request and on push to main, and holds an id-token grant for komira's
+/// farm-connect action. Allowed only for a push to main or a pull request from a branch of this
+/// repository, with no environment and no secret.
 const farm_file = "farm.yml";
 /// release.yml publishes a release with build-provenance attestations, so its publish job holds an
 /// id-token grant (the attestation is signed with the job's OIDC token; no cloud access). Allowed only
@@ -303,8 +303,16 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
     }
 
     if (std.mem.eql(u8, base, farm_file)) {
-        if (!(on.len == 1 and std.mem.eql(u8, on[0], "pull_request"))) {
-            try c.problem(a, out, prefix ++ "{s}: triggers must be exactly pull_request", .{f});
+        // pull_request, and push to main alone (the farm must be configured there: the job fails
+        // when it is not, so a merge never goes unbuilt).
+        const push = c.get(c.onValue(doc), "push");
+        const pr_and_push = on.len == 2 and c.containsStr(on, "pull_request") and c.containsStr(on, "push");
+        const push_main = push != null and push.? == .object and push.?.object.count() == 1 and blk: {
+            const br = c.get(push, "branches") orelse break :blk false;
+            break :blk br == .array and br.array.items.len == 1 and c.isStr(br.array.items[0], "main");
+        };
+        if (!(pr_and_push and push_main)) {
+            try c.problem(a, out, prefix ++ "{s}: triggers must be exactly pull_request and push of branches [main]", .{f});
         }
         if (c.findKey(doc, "environment") or c.mentionsSecretsDot(try c.nonCommentLines(a, text))) {
             try c.problem(a, out, prefix ++ "{s}: must not use secrets or an environment", .{f});

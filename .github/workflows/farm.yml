@@ -10,29 +10,35 @@
 # it joins the farm's private network with the job's OIDC token (workload identity, no stored
 # secret), checks the farm answers, and writes the machine buckconfig. Its
 # inputs are repository variables; this repository holds no endpoint and no
-# worker property set. Until the variables are set the job does nothing and
-# says so, so it cannot fail a pull request before the farm is available.
+# worker property set. Until the variables are set a pull request's job does
+# nothing and says so, so it cannot fail a pull request before the farm is
+# available. A push to main is different: with no farm the job FAILS, because a
+# merge that nothing built must not look green.
 # A fork's pull request gets neither the token nor the variables and is
-# skipped. The hygiene and workflow lints (//:hygiene, //:workflows) allow the id-token grant and the
+# skipped; lint.yml runs the repository's lints for it on a GitHub-hosted runner,
+# as it does for every pull request and every push to main.
+# The hygiene and workflow lints (//:hygiene, //:workflows) allow the id-token grant and the
 # one action outside GitHub's own for this file only, under these conditions.
 name: farm
 
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
-  # A newer push to a pull request cancels its older farm build.
-  group: farm-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  # A newer push to a pull request cancels its older farm build; a build of main is never cancelled.
+  group: farm-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
-    # A pull request from a branch of this repository, and nothing else.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # A push to main, or a pull request from a branch of this repository, and nothing else.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
@@ -45,10 +51,14 @@ jobs:
           persist-credentials: false
       # The condition reads the variable without putting its value in a step's
       # environment, which GitHub prints in the log.
-      - name: the farm is not configured
-        if: ${{ vars.FARM_ADDRESS == '' }}
+      - name: the farm is not configured (pull request)
+        if: ${{ vars.FARM_ADDRESS == '' && github.event_name != 'push' }}
         run: |
           echo "::notice title=farm::the repository variable FARM_ADDRESS is not set, so there is no farm to build on. Skipping; nothing was built."
+      - name: the farm is not configured (push to main)
+        if: ${{ vars.FARM_ADDRESS == '' && github.event_name == 'push' }}
+        run: |
+          echo "::error title=farm::the repository variable FARM_ADDRESS is not set, so nothing built this push to main. Set it, or the farm check is not a check."; exit 1
       # The same komira commit as commit_hash in .buckconfig; bump them together.
       - name: connect to the farm
         if: ${{ vars.FARM_ADDRESS != '' }}
