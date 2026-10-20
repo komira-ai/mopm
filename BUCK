@@ -249,6 +249,37 @@ zig_test(  # buck-only: cut_release bump-internal against the fake gh and the fa
     **_TOOLS
 )
 
+# ---- tools/channels: the .deb, the apt index and the Homebrew formula of a release, byte for byte ----------------------
+# (tools/channels/channels.zig says what each file is. The sources are named by a glob so a new file is picked up.)
+_CHANNELS_SRCS = glob(["tools/channels/*.zig"], exclude = ["tools/channels/channels.zig", "tools/channels/main.zig"])
+
+# What the unit tests and the CLI driver read: the fixtures and the golden files.
+_CHANNELS_DATA = glob(["tests/channels/**"])
+
+zig_test(  # buck-only: the unit tests and the golden files of tools/channels
+    name = "channels_test",
+    src = "tools/channels/channels.zig",
+    imports = _CHANNELS_SRCS + _CHANNELS_DATA,
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: tools/channels/main.zig, not built unless the unit tests and goldens pass
+    name = "channels",
+    src = "tools/channels/main.zig",
+    imports = _CHANNELS_SRCS,
+    unit_tests = [":channels_test"],
+    visibility = ["PUBLIC"],
+    **_TOOLS
+)
+
+zig_test(  # buck-only: the channels CLI end to end: byte-determinism (twice, compare), goldens, and the refusals it must make
+    name = "channels_cli",
+    src = "tests/drivers/channels_cli_test.zig",
+    imports = ["tests/drivers/harness.zig"] + _CHANNELS_DATA,
+    env_tools = {"CHANNELS": ":channels"},
+    **_TOOLS
+)
+
 # ---- Contract checks, ported from Python (tests/contract, tests/resolve*) ------
 
 # The JSON Schema validator and what it needs, shared by the contract drivers.
