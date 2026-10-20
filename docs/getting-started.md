@@ -214,8 +214,8 @@ the command mopm itself uses to build a library.
 [package]
 name = "http_client"             # import name and registry name: lowercase letters, digits, underscore
 version = "0.4.0"                # MAJOR.MINOR.PATCH, nothing else
-description = "HTTP/1.1 client"  # optional display fields: description, license (SPDX),
-license = "Apache-2.0"           #   repository, homepage (https URLs), keywords (<= 10), readme (Markdown <= 64 KiB)
+description = "HTTP/1.1 client"  # optional display fields: description, license, repository
+license = "Apache-2.0"           #   (checked to be strings), and readme (a Markdown file of at most 64 KiB)
 repository = "https://github.com/example/http_client"
 readme = "README.md"
 mojo = ["1.0.0", "1.1.0"]        # exact compilers this package builds for (or use [toolchain] below)
@@ -223,7 +223,7 @@ mojo = ["1.0.0", "1.1.0"]        # exact compilers this package builds for (or u
 [dependencies]
 http_core = "1.2"                # caret: >=1.2.0, <2.0.0
 tls = { version = "0.9" }
-local_util = { path = "../local_util", version = "0.2" }   # a path needs a version to be published
+local_util = { path = "../local_util" }   # a path or a version, not both; a path cannot be published
 
 [dev-dependencies]
 mopm_test = "0.1"
@@ -249,10 +249,10 @@ Use either `[package] mojo` (a list of exact versions; gives a version 2 lock) o
 older form, a version or a list read as alternatives, locked for the first that resolves; what `mopm new`
 writes), never both. Version requirements follow cargo: `"1.2"`, `"~1.2"`, `"=1.2.3"`, `">=1.2, <1.5"`,
 `"*"`. mopm refuses keys and tables it does not know, so a typo is an error; `mopm metadata` shows exactly how
-the file was read. Field rules are in `spec/mopm-toml.md`.
+the file was read. Every key, with its type, default and allowed values, is in [configuration](configuration.md); `spec/mopm-toml.md` is the draft of the format, and where it differs from the parser, the configuration page says what the parser does.
 
-Not all of this is fully exercised end to end today: `[native.<id>]` libraries built by a workspace member
-are refused by `mopm pack` and the unit graph for now.
+Not all of this is used end to end today: `[native-dependencies]` and `[native.<id>]` are checked and shown by
+`mopm metadata`, and `mopm pack` refuses a package that has either, for now.
 
 ### Registries and credentials
 
@@ -280,6 +280,8 @@ build system supplies it. For Buck2 this is the job of buildrules, which has its
 (it names the mopm and Mojo versions); mopm itself reads no such file. See the buildrules documentation.
 
 ## 8. Examples
+
+The [examples page](examples.md) walks through six complete packages (a library, a program with a dependency, several packages in one repository, tests, publishing, and a compiler pin), each of them run by the CI of this repository. These are shorter.
 
 **A library with a test, from nothing**
 
@@ -330,7 +332,8 @@ mopm unit build --unit 'greeter@0.1.0#mojo1.0.0/lib' --graph graph.json --out ou
 
 ## 9. Where to go next
 
-- [mopm.toml](../spec/mopm-toml.md) for the manifest; `spec/` also holds `lock.md`, `index.md`, `channel.md`,
+- [Configuration](configuration.md) for every key of `mopm.toml`, `mopm.lock` and the user's own configuration, and [Examples](examples.md) for six complete packages.
+- [mopm.toml](../spec/mopm-toml.md) for the draft of the manifest; `spec/` also holds `lock.md`, `index.md`, `channel.md`,
   `unit-graph.md` and the OpenAPI document.
 - [mopm test](mopm-test.md) for the test runner.
 - [Why mopm, and how it is built](why-and-design.md) for the design.

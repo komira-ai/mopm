@@ -44,6 +44,15 @@ test.each([
   ['docs/getting-started.md', '../spec/mopm-toml.md', '/docs/mopm-toml/'],
   ['docs/getting-started.md', '../SECURITY.md', blob('SECURITY.md')],
   ['spec/mopm-toml.md', 'getting-started.md', '/docs/getting-started/'],
+  // The HOW part: getting started, the configuration reference and the examples link to each other, and to the draft.
+  ['docs/configuration.md', 'examples.md', '/docs/examples/'],
+  ['docs/configuration.md', 'getting-started.md', '/docs/getting-started/'],
+  ['docs/configuration.md', '../spec/mopm-toml.md', '/docs/mopm-toml/'],
+  ['docs/configuration.md', 'why-and-design.md', '/docs/why/'],
+  ['docs/examples.md', 'configuration.md', '/docs/configuration/'],
+  ['docs/examples.md', 'mopm-test.md', '/docs/mopm-test/'],
+  ['docs/getting-started.md', 'configuration.md#mopmlock', '/docs/configuration/#mopmlock'],
+  ['docs/getting-started.md', 'examples.md', '/docs/examples/'],
   // Any other name still resolves as on GitHub.
   ['docs/mopm-test.md', 'channel.md', blob('docs/channel.md')],
   ['docs/mopm-test.md', '../mopm-toml.md', blob('mopm-toml.md')],

@@ -1,0 +1,2 @@
+adding greeter 0.1.0
+locked 1 packages for mojo 1.0.0

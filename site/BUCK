@@ -21,6 +21,8 @@ _SRCS = glob(["src/**", "static/**", "test/**", "tools/**"]) + _CONFIGS + ["jest
 # The repository files the pages are rendered from (tools/docs.ts reads the published docs,
 # src/links.ts names them), at their paths in the repository.
 _DOCS = {
+    "docs/configuration.md": "//:site.docs.configuration.md",
+    "docs/examples.md": "//:site.docs.examples.md",
     "docs/getting-started.md": "//:site.docs.getting-started.md",
     "docs/mopm-test.md": "//:site.docs.mopm-test.md",
     "docs/why-and-design.md": "//:site.docs.why-and-design.md",
@@ -52,8 +54,10 @@ tsc_check(
 # The tests read files outside site/ by relative path (test/build-fixture.ts's REPO_ROOT,
 # test/fixtures.ts's CONTRACT_DIR, test/docs-render.test.ts): the API contract cases, the
 # published docs, spec/channel.md, README.md, src/cli/main.zig and the scaffold golden
-# tests/new/lib (test/layout.test.ts holds the home page copy to them), the validator's limits.ts and the two
-# workflows whose page lists test/pages-lists.test.ts compares with DOC_PAGES.
+# tests/new/lib (test/layout.test.ts holds the home page copy to them), the validator's limits.ts, the two
+# workflows whose page lists test/pages-lists.test.ts compares with DOC_PAGES, the parsers whose keys
+# test/docs-facts.test.ts requires on the configuration page (src/core/manifest.zig, lock.zig, credentials.zig) and the
+# worked examples test/docs-examples.test.ts holds the examples page to (and the driver that runs them, tests/drivers/examples_test.zig).
 jest_test(
     name = "test",
     data = _DOCS | {
@@ -63,8 +67,13 @@ jest_test(
         ".github/workflows/service-ci.yml": "//:site.workflows.service-ci.yml",
         "service/api/src/validate/limits.ts": "//service/api:limits.ts",
         "spec/channel.md": "//:site.spec.channel.md",
+        "examples": "//:site_examples",
         "src/cli/main.zig": "//:site.src.cli.main.zig",
+        "src/core/credentials.zig": "//:site.src.core.credentials.zig",
+        "src/core/lock.zig": "//:site.src.core.lock.zig",
+        "src/core/manifest.zig": "//:site.src.core.manifest.zig",
         "tests/contract/api": "//:contract_api",
+        "tests/drivers/examples_test.zig": "//:site.tests.drivers.examples_test.zig",
         "tests/new/lib": "//:site_new_lib",
     },
     modules = ":modules",

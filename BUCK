@@ -349,6 +349,14 @@ zig_test(  # buck-only: tests/resolve/check_golden.py: the goldens pass the lock
     **_TOOLS
 )
 
+zig_test(  # buck-only: docs/examples.md: the files under examples/ are what mopm reads, writes and refuses
+    name = "examples",
+    src = "tests/drivers/examples_test.zig",
+    imports = ["tests/drivers/harness.zig"] + glob(["examples/**"]),
+    env_tools = {"MOPM": ":mopm"},
+    **_TOOLS
+)
+
 # ---- build.zig and this file name the same build, and the check can go red ----
 
 zig_test(  # buck-only: tools/build_parity.zig reads build.zig and this file
@@ -532,8 +540,20 @@ export_file(
 )
 
 export_file(
+    name = "site.docs.configuration.md",
+    src = "docs/configuration.md",
+    visibility = ["//site:"],
+)
+
+export_file(
     name = "site.docs.getting-started.md",
     src = "docs/getting-started.md",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.docs.examples.md",
+    src = "docs/examples.md",
     visibility = ["//site:"],
 )
 
@@ -562,8 +582,32 @@ export_file(
 )
 
 export_file(
+    name = "site.src.core.credentials.zig",
+    src = "src/core/credentials.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.core.lock.zig",
+    src = "src/core/lock.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.core.manifest.zig",
+    src = "src/core/manifest.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
     name = "site.src.cli.main.zig",
     src = "src/cli/main.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.tests.drivers.examples_test.zig",
+    src = "tests/drivers/examples_test.zig",
     visibility = ["//site:"],
 )
 
@@ -576,6 +620,13 @@ export_file(
 export_file(
     name = "site.workflows.service-ci.yml",
     src = ".github/workflows/service-ci.yml",
+    visibility = ["//site:"],
+)
+
+# The worked examples, staged as `examples`: the site's test holds docs/examples.md to every file of them.
+filegroup(
+    name = "site_examples",
+    srcs = {f[len("examples/"):]: f for f in glob(["examples/**"])},
     visibility = ["//site:"],
 )
 

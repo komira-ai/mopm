@@ -1,0 +1,17 @@
+{
+  "lock_version": 1,
+  "toolchain": {
+    "mojo": "1.0.0"
+  },
+  "channels": [
+    "https://conda.mopm.dev/"
+  ],
+  "packages": [
+    {
+      "name": "greeter",
+      "version": "0.1.0",
+      "source": "path",
+      "path": "../greeter"
+    }
+  ]
+}
