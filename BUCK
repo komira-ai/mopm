@@ -586,7 +586,7 @@ zig_test(  # buck-only: release.yml's scopes, stage order and path filter (tests
     name = "release_workflow",
     src = "tests/drivers/release_lint_test.zig",
     imports = _LINT_LIBS + ["tests/drivers/release_lint.zig"],
-    data = {f: f for f in glob([".github/workflows/*.yml", ".github/workflows/*.yaml"])},
+    data = dict({f: f for f in glob([".github/workflows/*.yml", ".github/workflows/*.yaml"])}, **{"tools/cut_release.zig": "tools/cut_release.zig"}),  # the tool: gh release create must carry --verify-tag
     **_TOOLS
 )
 
