@@ -1,0 +1,18 @@
+[package]
+name = "mopm_testing"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+mopm_core.workspace = true
+mopm_ports.workspace = true
+base64.workspace = true
+hex.workspace = true
+jiff.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true

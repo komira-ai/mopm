@@ -4,7 +4,7 @@
 # `esbuild` (package.json "build"), whose output the infra stacks deploy. No install, no
 # script, no network. See service/README.md, "Building with Buck2".
 
-load("@komira//tools/build/node:modules.bzl", "jest_test", "node_tree_build", "node_tree_test", "npm_modules", "tsc_check")
+load("@buildrules//rules/node:modules.bzl", "jest_test", "node_tree_build", "node_tree_test", "npm_modules", "tsc_check")
 load(":pins.lock.bzl", "NPM")
 
 _NODE = "//tools/node:node"
@@ -41,7 +41,7 @@ jest_test(
     modules = ":modules",
     node = _NODE,
     srcs = _SRCS,
-    tools = {"bzip2": "komira//tools/build/toolchains:busybox"},
+    tools = {"bzip2": "buildrules//rules/pins:busybox"},
 )
 
 # `npm run build`: the handler bundle the API stack deploys. esbuild bundles each of the three
@@ -84,6 +84,7 @@ node_tree_test(
 export_file(
     name = "lambda-auth-grants.json",
     src = "test/fixtures/lambda-auth-grants.json",
+    mode = "reference",
     visibility = ["//service/infra/stacks:", "//service/lambda/aws:"],
 )
 
@@ -92,6 +93,7 @@ export_file(
 [export_file(
     name = "repodata." + subdir + ".json",
     src = "test/fixtures/repodata." + subdir + ".json",
+    mode = "reference",
     visibility = ["//service/lambda/core:"],
 ) for subdir in ["linux-64", "osx-arm64", "noarch"]]
 

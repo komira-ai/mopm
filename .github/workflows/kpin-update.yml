@@ -94,8 +94,8 @@ jobs:
         service/pins.toml service/infra/stacks/pins.lock.bzl service/infra/stacks/package-lock.json
       # One line per Cargo workspace: <workspace dir> <Cargo.lock> <trimmed metadata>
       # <sizes> <overrides> <generated crates file> <target triple>.
-      KPIN_CARGO_SETS: |
-        third_party/rust third_party/rust/Cargo.lock third_party/rust/cargo/metadata.json third_party/rust/cargo/sizes.txt third_party/rust/cargo/overrides.json third_party/rust/crates.bzl x86_64-unknown-linux-gnu
+      # None now: the Rust crates are pinned by the root Cargo.lock and `buildrules sync` (buildrules' cargo_unit rules), not by kpin.
+      KPIN_CARGO_SETS: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

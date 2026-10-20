@@ -7,7 +7,7 @@
 # from the site's route grammar (site/src/routes.ts) and is tested against the site's route
 # vectors (site/test/fixtures/routes.json).
 
-load("@komira//tools/build/node:modules.bzl", "cdk_synth", "jest_test", "npm_modules", "tsc_check")
+load("@buildrules//rules/node:modules.bzl", "cdk_synth", "jest_test", "npm_modules", "tsc_check")
 load(":pins.lock.bzl", "NPM")
 
 _NODE = "//tools/node:node"

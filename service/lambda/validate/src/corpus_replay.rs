@@ -16,8 +16,8 @@ use sha2::Digest;
 use crate::corpus_table::ARCHIVES;
 use crate::{validate_package, PublishExpectation, ValidatorOptions};
 
-const CASES: &str = include_str!("../validator_corpus_files/cases.json");
-const VERDICTS: &str = include_str!("../validator_corpus_files/verdicts.json");
+const CASES: &str = include_str!("../../../../tests/validator_corpus/cases.json");
+const VERDICTS: &str = include_str!("../../../../tests/validator_corpus/verdicts.json");
 
 fn archive(name: &str) -> &'static [u8] {
     ARCHIVES.iter().find(|(n, _)| *n == name).map(|(_, b)| *b).unwrap_or_else(|| panic!("src/corpus_table.rs lacks the line for {name}"))

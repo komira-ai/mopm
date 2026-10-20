@@ -1,0 +1,4 @@
+# The compiler: an exact release, the one buildrules pins by sha256 (rules/rust/pins.bzl). Plain cargo (rustup) and Buck2 use the same one.
+[toolchain]
+channel = "1.95.0"
+profile = "minimal"

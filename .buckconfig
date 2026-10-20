@@ -24,6 +24,7 @@
   toolchains = toolchains
   # A git external cell needs no directory here; nothing is checked out at this path.
   komira = komira-ext
+  buildrules = buildrules-ext
   none = none
 
 [cell_aliases]
@@ -37,23 +38,25 @@
 [external_cells]
   prelude = bundled
   komira = git
+  buildrules = git
 
 [external_cell_komira]
   git_origin = https://github.com/komira-ai/komira.git
-  # komira at the commit that holds the Zig rules BUCK uses (zig_module deps,
-  # zig_test exec/env tools, zig_exe optimize/strip), the node_modules rules
-  # service/*/BUCK uses (tools/build/node/modules.bzl), and `kpin cargo` with the
-  # Rust rules it needs (rustc 1.99.0; env, renamed_deps, native_deps, patch).
-  # This is the komira main merge commit of pull request 1665 (kpin cargo --trim without the
-  # edges of optional dependencies nothing enabled), after pull request 1648 (kpin cargo, on top
-  # of 1646 and 1647). Bump it with farm.yml.
+  # komira, kept for the Mojo compiler of the end-to-end tests (komira//tools/build/toolchains:mojo_compiler) only: the Zig,
+  # node, C/C++ and Rust rules, and AWS-LC, are buildrules'. Bump it with farm.yml.
   commit_hash = a44bd01b347695090df90dff1c48ff5bcdb5a339
+
+[external_cell_buildrules]
+  # buildrules: its Rust (cargo_unit, the cargo_package front door), Zig, node, cxx and AWS-LC rules and the CLI. Bump commit_hash
+  # to take a newer commit.
+  git_origin = https://github.com/komira-ai/buildrules.git
+  commit_hash = 8d19217212ee5871636bec85f89c75cae458d9a6
 
 [buildfile]
   name = BUCK
 
 [parser]
-  target_platform_detector_spec = target:mopm//...->komira//tools/build/platforms:host target:komira//...->komira//tools/build/platforms:host target:toolchains//...->komira//tools/build/platforms:host
+  target_platform_detector_spec = target:mopm//...->mopm//platforms:linux_x86_64 target:komira//...->mopm//platforms:linux_x86_64 target:buildrules//...->mopm//platforms:linux_x86_64 target:toolchains//...->mopm//platforms:linux_x86_64
 
 [build]
   execution_platforms = mopm//platforms:default

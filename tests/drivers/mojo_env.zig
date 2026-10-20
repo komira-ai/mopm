@@ -10,7 +10,7 @@
 //!   ZIG_DIR         komira's zig directory (run ZIG_DIR/zig)
 //!   CC_SHIM         tests/drivers/zigcc.zig, built (becomes `cc`)
 //!   MOPM            the built CLI
-//! and KOMIRA_TEST_WORK, a writable directory.
+//! and BUILDRULES_TEST_WORK, a writable directory.
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -31,7 +31,7 @@ pub const Mojo = struct {
     base: std.process.EnvMap,
 
     pub fn init(a: Allocator) !Mojo {
-        const work = try h.toolPathAbs(a, "KOMIRA_TEST_WORK");
+        const work = try h.toolPathAbs(a, "BUILDRULES_TEST_WORK");
         const tc = try h.toolPathAbs(a, "MOJO_TOOLCHAIN");
         const zig_dir = try h.toolPathAbs(a, "ZIG_DIR");
         const shim = try h.toolPathAbs(a, "CC_SHIM");

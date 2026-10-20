@@ -2,7 +2,7 @@
 # `cdk synth` runs of service-ci.yml with the same dummy values. dns.sh's dry-run tests stay
 # in service-ci.yml.
 
-load("@komira//tools/build/node:modules.bzl", "cdk_synth", "jest_test", "npm_modules", "tsc_check")
+load("@buildrules//rules/node:modules.bzl", "cdk_synth", "jest_test", "npm_modules", "tsc_check")
 load(":pins.lock.bzl", "NPM")
 
 _NODE = "//tools/node:node"

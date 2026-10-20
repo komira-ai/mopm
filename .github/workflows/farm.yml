@@ -65,8 +65,8 @@ jobs:
         if: ${{ vars.FARM_ADDRESS != '' }}
         run: |
           for key in linux_x86_64_properties; do
-            ./buck2 audit config "komira_re.$key" --style json | grep -q '": *"[^"]' ||
-              { echo "the buckconfig sets no [komira_re] $key: this job would build on the runner"; exit 1; }
+            ./buck2 audit config "buildrules_re.$key" --style json | grep -q '": *"[^"]' ||
+              { echo "the buckconfig sets no [buildrules_re] $key: this job would build on the runner"; exit 1; }
           done
       - name: buck2 build //...
         if: ${{ vars.FARM_ADDRESS != '' }}

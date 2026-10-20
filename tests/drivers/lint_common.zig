@@ -34,11 +34,11 @@ pub const Tree = struct {
     }
 };
 
-/// The files the Buck2 rule staged for the test (KOMIRA_TEST_WORK: exactly the
+/// The files the Buck2 rule staged for the test (BUILDRULES_TEST_WORK: exactly the
 /// `data` of the target, so exactly the files the lint is to check).
 pub fn loadTree(a: Allocator) !Tree {
-    const root = std.process.getEnvVarOwned(a, "KOMIRA_TEST_WORK") catch {
-        std.debug.print("KOMIRA_TEST_WORK is not set: this test runs as a Buck2 target with the repository files as `data`\n", .{});
+    const root = std.process.getEnvVarOwned(a, "BUILDRULES_TEST_WORK") catch {
+        std.debug.print("BUILDRULES_TEST_WORK is not set: this test runs as a Buck2 target with the repository files as `data`\n", .{});
         return error.NoTestWork;
     };
     var dir = try std.fs.cwd().openDir(root, .{ .iterate = true });

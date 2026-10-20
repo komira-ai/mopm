@@ -117,9 +117,9 @@ mod tests {
     use std::io::Read;
 
     // The bytes the TypeScript registry wrote for the golden records (service/api/test/fixtures).
-    const GOLDEN_LINUX_64: &str = include_str!("../repodata.linux-64.json");
-    const GOLDEN_OSX_ARM64: &str = include_str!("../repodata.osx-arm64.json");
-    const GOLDEN_NOARCH: &str = include_str!("../repodata.noarch.json");
+    const GOLDEN_LINUX_64: &str = include_str!("../../../api/test/fixtures/repodata.linux-64.json");
+    const GOLDEN_OSX_ARM64: &str = include_str!("../../../api/test/fixtures/repodata.osx-arm64.json");
+    const GOLDEN_NOARCH: &str = include_str!("../../../api/test/fixtures/repodata.noarch.json");
 
     fn decode(frame: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();

@@ -1,15 +1,15 @@
 # Lambda packaging: the deployment package of a custom-runtime function (`bootstrap`
 # in a zip), written and read back by Zig tools, so no build or test action uses a shell
 # of its own. See README.md.
-load("@komira//tools/build/mojo:toolchain.bzl", "zig_exe", "zig_test")
-load("@komira//tools/build/platforms:defs.bzl", "LINUX_X86_64")
-load("@komira//tools/build/rust:defs.bzl", "rust_binary", "rust_test")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_test")
+load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("//:buildrules.bzl", "cargo_package")
 load(":lambda.bzl", "lambda_zip")
 
 _TOOLS = {
-    "busybox": "komira//tools/build/toolchains:busybox",
+    "busybox": "buildrules//rules/pins:busybox",
     "exec_compatible_with": LINUX_X86_64,
-    "zig": "komira//tools/build/toolchains:zig",
+    "zig": "buildrules//rules/pins:zig",
 }
 
 zig_exe(
@@ -42,92 +42,37 @@ zig_test(
 
 # ---- The canary
 #
-# The canary: a Lambda function built from the pinned crates (//third_party/rust) with komira's
-# Rust rules, to hold the build foundation of the registry's Rust functions. Nothing deploys it.
+# The canary: a Lambda function built from the pinned crates (Cargo.toml, third_party/buildrules) with buildrules' cargo_unit
+# rules, to hold the build foundation of the registry's Rust functions. Nothing deploys it. Built from Cargo.toml by
+# `cargo_package` (this package is a Cargo package, `mopm_canary`: the executable `canary`, and the integration tests
+# `tls_test` and `sdk_test`):
 #
-#   :canary          the function's executable (`bootstrap`); not built unless :canary_unit passed
-#   :canary_e2e_test runs it against a fake Lambda runtime API on loopback and holds its answer
-#   :canary_zip      the deployment package; not built unless :canary_e2e_test passed on that binary
-#   :tls_test        rustls on aws-lc-rs over komira's AWS-LC: handshakes, a refused name, the version
-#   :sdk_test        the AWS SDK for Rust: one DynamoDB GetItem on loopback, and a client of each service
+#   :release           the function's executable (`bootstrap`), the release profile
+#   :test              the unit tests of main.rs, :tls_test and :sdk_test, one marker each
+#   :canary_e2e_test   runs the release executable against a fake Lambda runtime API on loopback and holds its answer
+#   :canary_zip        the deployment package; not built unless :test and :canary_e2e_test passed on that binary
 #
-# See tools/lambda/README.md.
-
-# komira's AWS-LC, as the archive an executable links: what aws-lc-sys's build script would compile.
-AWS_LC = "komira//third_party/aws-lc:crypto[static-pic]"
-
-_CANARY_DEPS = [
-    "//third_party/rust:aws_lambda_events",
-    "//third_party/rust:lambda_runtime",
-    "//third_party/rust:serde_json",
-    "//third_party/rust:tokio",
-    "//third_party/rust:tracing",
-    "//third_party/rust:tracing-subscriber",
-]
-
-# The unit tests of main.rs (#[cfg(test)]): the same source, so the binary can wait for them.
-rust_test(
-    name = "canary_unit",
-    srcs = ["canary/main.rs"],
-    crate_root = "canary/main.rs",
-    deps = _CANARY_DEPS,
-)
-
-rust_binary(
-    name = "canary",
-    srcs = ["canary/main.rs"],
-    crate_root = "canary/main.rs",
-    deps = _CANARY_DEPS,
-    tests = [":canary_unit"],
-    visibility = ["PUBLIC"],
-)
+#   canary/tls_test.rs rustls on aws-lc-rs over buildrules' AWS-LC: handshakes, a refused name, the version
+#   canary/sdk_test.rs the AWS SDK for Rust: one DynamoDB GetItem on loopback, and a client of each service
+#
+# aws-lc-sys is not built from its C sources: third_party/buildrules/overrides.json links buildrules' AWS-LC into each test
+# and executable. See tools/lambda/README.md.
+cargo_package(path = ".")
 
 zig_test(
     name = "canary_e2e_test",
     src = "canary/e2e_test.zig",
-    env_tools = {"BOOTSTRAP": ":canary"},
-    busybox = "komira//tools/build/toolchains:busybox",
+    env_tools = {"BOOTSTRAP": ":release"},
+    busybox = "buildrules//rules/pins:busybox",
     exec_compatible_with = LINUX_X86_64,
-    zig = "komira//tools/build/toolchains:zig",
+    zig = "buildrules//rules/pins:zig",
 )
 
 lambda_zip(
     name = "canary_zip",
-    bootstrap = ":canary",
-    welded_tests = [":canary_e2e_test"],
+    bootstrap = ":release",
+    welded_tests = [":canary_e2e_test", ":test"],
     visibility = ["PUBLIC"],
-)
-
-rust_test(
-    name = "tls_test",
-    srcs = [
-        "canary/fixtures/ca.der",
-        "canary/fixtures/leaf.der",
-        "canary/fixtures/leaf_key.der",
-        "canary/tls_test.rs",
-    ],
-    crate_root = "canary/tls_test.rs",
-    deps = [
-        "//third_party/rust:aws-lc-sys",
-        "//third_party/rust:rustls",
-    ],
-    native_deps = [AWS_LC],
-)
-
-rust_test(
-    name = "sdk_test",
-    srcs = ["canary/sdk_test.rs"],
-    crate_root = "canary/sdk_test.rs",
-    deps = [
-        "//third_party/rust:aws-sdk-cloudfront",
-        "//third_party/rust:aws-sdk-dynamodb",
-        "//third_party/rust:aws-sdk-s3",
-        "//third_party/rust:aws-sdk-secretsmanager",
-        "//third_party/rust:aws-sdk-sqs",
-        "//third_party/rust:serde_json",
-        "//third_party/rust:tokio",
-    ],
-    native_deps = [AWS_LC],
 )
 
 # This package's files, for //:hygiene (a package boundary hides them from the root package's glob).

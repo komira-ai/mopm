@@ -1,0 +1,99 @@
+# The Cargo workspace of mopm's Rust: the registry's functions (service/lambda/*) and the Lambda packaging canary
+# (tools/lambda). Nothing here is compiled by Cargo on the farm: `buildrules sync` reads cargo's own view of this
+# workspace (the unit graph) into buildrules.lock.bzl and third_party/buildrules/BUCK, and Buck2 builds those, one rustc
+# action per crate (docs/contract.md of buildrules). Cargo.lock is the one the third-party crates were pinned with before
+# (kpin's), so no crate moved.
+#
+# The AWS stack is one coherent set that builds against AWS-LC 1.39.0 (buildrules//third_party/aws-lc): aws-lc-rs 1.11.1,
+# aws-lc-sys 0.23.1 and rustls 0.23.20 are held with `=`, and Cargo resolves the SDK around them. Moving the three is a
+# decision (the AWS-LC pin), not an update. aws-lc-sys is not built from its C sources: third_party/buildrules/overrides.json.
+[workspace]
+resolver = "3"
+members = [
+    "service/lambda/aws",
+    "service/lambda/core",
+    "service/lambda/ports",
+    "service/lambda/testing",
+    "service/lambda/validate",
+    "tools/lambda",
+]
+
+[workspace.package]
+edition = "2021"
+version = "0.0.0"
+publish = false
+# What the resolver took as the newest compiler the set must support (CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback
+# when Cargo.lock was made): it keeps the AWS SDK crates one coherent older stack. Not the pinned compiler.
+rust-version = "1.85"
+
+[workspace.dependencies]
+# Lambda runtime and event types (the API router is ours; aws_lambda_events only types the events).
+lambda_runtime = { version = "1", default-features = false }
+aws_lambda_events = { version = "1", default-features = false, features = ["apigw", "sqs"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "net", "time", "sync", "io-util"] }
+
+# The AWS SDK for Rust.
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio"] }
+aws-sdk-dynamodb = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }
+aws-sdk-s3 = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }
+aws-sdk-sqs = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }
+aws-sdk-cloudfront = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }
+aws-sdk-secretsmanager = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client"] }
+serde_dynamo = { version = "4", features = ["aws-sdk-dynamodb+1"] }
+rustls = { version = "=0.23.20", default-features = false, features = ["aws-lc-rs", "std", "tls12"] }
+aws-lc-rs = { version = "=1.11.1", default-features = false, features = ["aws-lc-sys"] }
+aws-lc-sys = { version = "=0.23.1", default-features = false }
+
+# Data, errors, logs, time.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "registry", "fmt", "json"] }
+jiff = { version = "0.2", default-features = false, features = ["std"] }
+
+# Encoding, hashing, randomness.
+base64 = "0.23"
+hex = "0.4"
+sha2 = "0.11"
+subtle = "2"
+getrandom = "0.4"
+percent-encoding = "2"
+form_urlencoded = "1"
+url = "2"
+
+# Reading archives (the validator): pure Rust, no build script that compiles C.
+ruzstd = "0.9"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+crc32fast = "1"
+unicode-normalization = "0.1"
+
+# The workspace's own crates.
+mopm_core = { path = "service/lambda/core" }
+mopm_ports = { path = "service/lambda/ports" }
+mopm_testing = { path = "service/lambda/testing" }
+
+[profile.dev]
+# An incremental profile cannot be built hermetically (buildrules refuses it).
+incremental = false
+debug = "line-tables-only"
+
+# Third-party crates are built without debug assertions, as they were under kpin's rules (rustc's own default above opt-level 0).
+# One of them asserts, in debug builds only, that the machine has native root certificates
+# (aws-smithy-http-client tls.rs, `debug_assert!(valid > 0, ...)`); the farm's workers have none, and the tests that build a
+# client (the SDK tests of tools/lambda and the adapters of service/lambda/aws) talk to loopback fakes, never to a real endpoint.
+# First-party crates keep theirs.
+[profile.dev.package."*"]
+debug-assertions = false
+
+[profile.release]
+strip = "debuginfo"
+
+[workspace.metadata.buildrules]
+default-action = "ci"
+
+[workspace.metadata.buildrules.actions]
+ci = ["lint", "test"]
+
+[workspace.metadata.buildrules.lint]
+deny-warnings = false

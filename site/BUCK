@@ -4,7 +4,7 @@
 # `:typecheck_browser`), `npm test` is `:test`, and `npm run build` is three programs, each
 # a target (`:browser`, `:tools`, `:dist`). No install, no script, no network.
 
-load("@komira//tools/build/node:modules.bzl", "jest_test", "node_tree_build", "node_tree_test", "npm_modules", "tsc_build", "tsc_check")
+load("@buildrules//rules/node:modules.bzl", "jest_test", "node_tree_build", "node_tree_test", "npm_modules", "tsc_build", "tsc_check")
 load(":pins.lock.bzl", "NPM")
 
 _NODE = "//tools/node:node"
