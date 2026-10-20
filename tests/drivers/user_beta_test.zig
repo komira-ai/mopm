@@ -29,3 +29,19 @@ test "user beta: the walk of a customer, farm form (no pixi, no installer)" {
     });
     try rep.finish();
 }
+
+test "user beta: --ci turns a skipped step into a failure; the farm form only reports it" {
+    // The farm form: a SKIP is counted and is not a failure.
+    var farm = h.Report{};
+    var skipped: usize = 0;
+    beta.skipStep(&farm, false, &skipped, "sync", "no --pixi");
+    try std.testing.expectEqual(@as(usize, 1), skipped);
+    try std.testing.expectEqual(@as(usize, 0), farm.failures);
+    // CI: the same skip is a failure of the walk, and is not counted as a mere skip.
+    var ci = h.Report{};
+    var ci_skipped: usize = 0;
+    beta.skipStep(&ci, true, &ci_skipped, "sync", "no --pixi");
+    try std.testing.expectEqual(@as(usize, 1), ci.failures);
+    try std.testing.expectEqual(@as(usize, 0), ci_skipped);
+    try std.testing.expectError(error.ChecksFailed, ci.finish());
+}

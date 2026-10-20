@@ -5,7 +5,7 @@
 //! installer: see below). No shell: every step is a program started here, its exit status and output asserted.
 //!
 //!     user_beta <mopm> <work dir> --version <v> --fake-registry <exe> --mojo-env <prefix>
-//!               [--tarball <mopm-v-target.tar.gz> --install-sh <install.sh>] [--pixi <exe>]
+//!               [--tarball <mopm-v-target.tar.gz> --install-sh <install.sh>] [--pixi <exe>] [--ci]
 //!
 //!   <mopm>            the candidate binary
 //!   --version         the version it must report (1.2.3: `mopm --version` prints `mopm 1.2.3`)
@@ -13,6 +13,8 @@
 //!   --mojo-env        a Mojo environment prefix (bin/mojo, lib/mojo): tests/e2e/pixi.toml's, as ci.yml makes it
 //!   --pixi            enables `mopm sync` (it installs a published package through pixi); without it the
 //!                     dependency is locked but not installed, and the steps that need it are reported SKIP
+//!   --ci              the walk runs in CI (release-beta-user.yml): a step that would be skipped FAILS instead, so
+//!                     only the farm form (no --ci) may skip
 //!   --tarball, --install-sh
 //!                     enable the install path: site/static/install.sh pointed at a directory laid out like
 //!                     a GitHub release that holds the candidate tarball
@@ -48,6 +50,8 @@ pub const Opts = struct {
     tarball: ?[]const u8 = null,
     install_sh: ?[]const u8 = null,
     pixi: ?[]const u8 = null,
+    /// CI form: a skipped step is a failure.
+    ci: bool = false,
     /// The environment every child gets (default: this process's).
     env: ?*const std.process.EnvMap = null,
 };
@@ -93,8 +97,7 @@ const Ctx = struct {
     }
 
     fn skip(c: *Ctx, name: []const u8, why: []const u8) void {
-        c.skipped += 1;
-        std.debug.print("SKIP {s}: {s}\n", .{ name, why });
+        skipStep(c.rep, c.o.ci, &c.skipped, name, why);
     }
 
     fn path(c: *Ctx, parts: []const []const u8) []const u8 {
@@ -116,6 +119,17 @@ const Ctx = struct {
         return pair;
     }
 };
+
+/// A step the walk cannot run here. On the farm (no --ci) it is reported SKIP; in CI it is a failure, so a
+/// release leg that lost its pixi (or its tarball) is red rather than green with the steps missing.
+pub fn skipStep(rep: *h.Report, ci: bool, skipped: *usize, name: []const u8, why: []const u8) void {
+    if (ci) {
+        rep.check(name, false, why);
+        return;
+    }
+    skipped.* += 1;
+    std.debug.print("SKIP {s}: {s}\n", .{ name, why });
+}
 
 fn sha256File(a: Allocator, p: []const u8) ![]const u8 {
     const bytes = try h.readFile(a, p);
@@ -461,7 +475,7 @@ fn install(c: *Ctx) !void {
 // ---------------------------------------------------------------------------- main
 
 fn usageDie() noreturn {
-    std.debug.print("usage: user_beta <mopm> <work dir> --version <v> --fake-registry <exe> --mojo-env <prefix> [--tarball <file> --install-sh <file>] [--pixi <exe>]\n", .{});
+    std.debug.print("usage: user_beta <mopm> <work dir> --version <v> --fake-registry <exe> --mojo-env <prefix> [--tarball <file> --install-sh <file>] [--pixi <exe>] [--ci]\n", .{});
     std.process.exit(2);
 }
 
@@ -480,8 +494,14 @@ pub fn main() !void {
     var tarball: ?[]const u8 = null;
     var installer: ?[]const u8 = null;
     var pixi: ?[]const u8 = null;
+    var ci = false;
     var i: usize = 3;
     while (i < argv.len) : (i += 2) {
+        if (std.mem.eql(u8, argv[i], "--ci")) {
+            ci = true;
+            i -= 1; // a flag without a value
+            continue;
+        }
         if (i + 1 >= argv.len) usageDie();
         const v = argv[i + 1];
         if (std.mem.eql(u8, argv[i], "--version")) {
@@ -513,6 +533,7 @@ pub fn main() !void {
         .tarball = if (tarball) |t| try absolute(a, t) else null,
         .install_sh = if (installer) |s| try absolute(a, s) else null,
         .pixi = pixi,
+        .ci = ci,
     });
     try rep.finish();
 }

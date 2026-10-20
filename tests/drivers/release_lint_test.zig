@@ -207,6 +207,25 @@ test "mutant: the user-level beta tests something other than the candidate, or l
     try userMutant("no registry", " --fake-registry \"$RUNNER_TEMP/mopm-fake-registry\"", "", "the walk must be given --fake-registry");
     try userMutant("the walk not built", "        run: zig build-exe tests/drivers/user_beta.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/user_beta\"", "        run: zig build-exe tools/release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/user_beta\"", "user must build tests/drivers/user_beta.zig");
     try userMutant("write permission", "permissions:\n  contents: read\n\njobs:\n  user:\n", "permissions:\n  contents: read\n\njobs:\n  user:\n    permissions:\n      contents: write\n", "user holds a permission other than read");
+    // The walk must really run, in full, on the candidate, and fail the leg when it fails.
+    try userMutant("no pixi (the walk would skip sync and the build against the dependency)", " --pixi pixi --ci'", " --ci'", "the walk must be given --pixi pixi");
+    try userMutant("no --ci (a skipped step stays green)", " --pixi pixi --ci'", " --pixi pixi'", "the walk must be given --ci");
+    try userMutant("a mopm from PATH instead of the candidate", " \"$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET/mopm\" \"$RUNNER_TEMP/walk\"", " mopm \"$RUNNER_TEMP/walk\"", "first argument must be the candidate binary");
+    try userMutant("a binary beside the candidate", "\"$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET/mopm\" \"$RUNNER_TEMP/walk\"", "\"$RUNNER_TEMP/candidate/mopm\" \"$RUNNER_TEMP/walk\"", "first argument must be the candidate binary");
+    try userMutant("|| true on the walk", " --pixi pixi --ci'", " --pixi pixi --ci || true'", "must not contain |");
+    try userMutant("|| : on the walk", " --pixi pixi --ci'", " --pixi pixi --ci || :'", "must not contain |");
+    try userMutant("; true on the walk", " --pixi pixi --ci'", " --pixi pixi --ci; true'", "must not contain ;");
+    try userMutant("a tarball that is not the candidate", "--tarball \"$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET.tar.gz\"", "--tarball \"$RUNNER_TEMP/other.tar.gz\"", "the walk must be given --tarball");
+    // What passed is what is attested.
+    try userMutant("the record names another tarball", "record \"$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET.tar.gz\" \"$RUNNER_TEMP/tested\"", "record \"$RUNNER_TEMP/candidate/mopm-$VERSION-linux-x86_64.tar.gz\" \"$RUNNER_TEMP/tested\"", "user must run exactly");
+    try userMutant("the record is not uploaded under the leg's name", "          name: tested-${{ matrix.target }}\n", "          name: tested\n", "user must upload the record as the artifact tested-");
+    try userMutant("the release tool is not built", "      - name: Build the release tool\n        run: zig build-exe tools/release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/release\"\n", "", "user must build tools/release.zig");
+}
+
+test "mutant: attest signs files the user beta did not pass" {
+    try mutant("attest does not compare with the tested records", "        run: '\"$RUNNER_TEMP/release\" tested dist tested'", "        run: '\"$RUNNER_TEMP/release\" check dist'", "attest must run exactly");
+    try mutant("attest does not download the records", "          pattern: tested-*\n", "          pattern: release-*\n", "attest must download the records");
+    try mutant("attest checks the records only after writing SHA256SUMS", "        run: '\"$RUNNER_TEMP/release\" tested dist tested'\n      - name: Write SHA256SUMS (exactly the four tarballs) and check it\n        run: '\"$RUNNER_TEMP/release\" sums dist'\n", "        run: '\"$RUNNER_TEMP/release\" sums dist'\n      - name: Write SHA256SUMS (exactly the four tarballs) and check it\n        run: '\"$RUNNER_TEMP/release\" tested dist tested'\n", "attest must check the tested records before it writes SHA256SUMS");
 }
 
 test "the glob matcher reads patterns as GitHub does" {

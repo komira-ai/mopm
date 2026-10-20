@@ -51,6 +51,11 @@ pub const user_legs = [_][2][]const u8{
     .{ "macos-arm64", "macos-14" },
 };
 
+/// The candidate the user beta walks, as release-beta-user.yml spells it: the binary inside the unpacked tarball,
+/// and the tarball itself. Both under the artifact download of this run.
+pub const candidate_binary = "$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET/mopm";
+pub const candidate_tarball = "$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET.tar.gz";
+
 /// The `if:` of `tag` and `publish`: a push to main, never a manual run.
 pub const push_to_main = "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}";
 
@@ -308,6 +313,25 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
     if (c.get(jv, "attest")) |attest| {
         if (stepRunContaining(attest, "release\" sign dist") == null) try c.problem(a, out, prefix ++ "release.yml: attest must sign the files (`release sign dist`)", .{});
         if (!usesAction(attest, "sigstore/cosign-installer@")) try c.problem(a, out, prefix ++ "release.yml: attest needs cosign (sigstore/cosign-installer) to sign", .{});
+        // The tarballs attested are the tarballs the user beta passed.
+        const tested_at = stepIndexRunContaining(attest, "release\" tested ");
+        const sums_at = stepIndexRunContaining(attest, "release\" sums ");
+        if (tested_at == null or !std.mem.eql(u8, stepRunContaining(attest, "release\" tested ").?, "\"$RUNNER_TEMP/release\" tested dist tested")) {
+            try c.problem(a, out, prefix ++ "release.yml: attest must run exactly `\"$RUNNER_TEMP/release\" tested dist tested` (the files to attest are the files the user beta recorded)", .{});
+        } else if (sums_at == null or tested_at.? > sums_at.?) {
+            try c.problem(a, out, prefix ++ "release.yml: attest must check the tested records before it writes SHA256SUMS", .{});
+        }
+        const steps = c.get(attest, "steps");
+        var got_records = false;
+        if (steps != null and steps.? == .array) {
+            for (steps.?.array.items) |st| {
+                const u = c.str(c.get(st, "uses")) orelse continue;
+                if (!std.mem.startsWith(u8, u, "actions/download-artifact@")) continue;
+                const w = c.get(st, "with");
+                if (c.isStr(c.get(w, "pattern"), "tested-*") and c.isStr(c.get(w, "path"), "tested") and c.truthy(c.get(w, "merge-multiple"))) got_records = true;
+            }
+        }
+        if (!got_records) try c.problem(a, out, prefix ++ "release.yml: attest must download the records (pattern tested-*, path tested, merge-multiple) of the user beta", .{});
     }
 }
 
@@ -320,6 +344,41 @@ fn stepRunContaining(job: Value, needle: []const u8) ?[]const u8 {
         if (std.mem.indexOf(u8, run, needle) != null) return run;
     }
     return null;
+}
+
+/// The index of the first step of `job` whose `run:` contains `needle`.
+fn stepIndexRunContaining(job: Value, needle: []const u8) ?usize {
+    const steps = c.get(job, "steps") orelse return null;
+    if (steps != .array) return null;
+    for (steps.array.items, 0..) |st, i| {
+        const run = c.str(c.get(st, "run")) orelse continue;
+        if (std.mem.indexOf(u8, run, needle) != null) return i;
+    }
+    return null;
+}
+
+/// The index of the first step of `job` that uses an action starting with `prefix_text`.
+fn stepIndexUsing(job: Value, prefix_text: []const u8) ?usize {
+    const steps = c.get(job, "steps") orelse return null;
+    if (steps != .array) return null;
+    for (steps.array.items, 0..) |st, i| {
+        const u = c.str(c.get(st, "uses")) orelse continue;
+        if (std.mem.startsWith(u8, u, prefix_text)) return i;
+    }
+    return null;
+}
+
+/// Does `line` hold the words `words` (space-separated, in this order) as whole words?
+fn hasWords(line: []const u8, words: []const u8) bool {
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, line, from, words)) |at| {
+        const before = at == 0 or line[at - 1] == ' ';
+        const end = at + words.len;
+        const after = end == line.len or line[end] == ' ';
+        if (before and after) return true;
+        from = at + 1;
+    }
+    return false;
 }
 
 /// Does some step of `job` use an action starting with `prefix_text`?
@@ -402,10 +461,36 @@ pub fn userBetaProblems(a: Allocator, text: []const u8, out: *Out) !void {
     if (!c.eqlList(got, &.{"release-${{ matrix.target }}"})) try c.problem(a, out, prefix ++ f ++ "user must download exactly the build's artifact release-${{{{ matrix.target }}}}, got {s}", .{try c.inspectList(a, got)});
     const walk = stepRunContaining(job, "user_beta\" ") orelse "";
     if (walk.len == 0) try c.problem(a, out, prefix ++ f ++ "user must run the walk (tests/drivers/user_beta.zig)", .{});
-    for ([_][]const u8{ "--version \"$VERSION\"", "--tarball ", "--install-sh site/static/install.sh", "--fake-registry ", "--mojo-env " }) |need| {
-        if (walk.len != 0 and std.mem.indexOf(u8, walk, need) == null) try c.problem(a, out, prefix ++ f ++ "the walk must be given {s}", .{need});
+    for ([_][]const u8{ "--version \"$VERSION\"", "--tarball \"" ++ candidate_tarball ++ "\"", "--install-sh site/static/install.sh", "--fake-registry", "--mojo-env", "--pixi pixi", "--ci" }) |need| {
+        if (walk.len != 0 and !hasWords(walk, need)) try c.problem(a, out, prefix ++ f ++ "the walk must be given {s}", .{need});
+    }
+    // The walk is the candidate binary (not a `mopm` found on PATH), and nothing on its line can swallow its exit status.
+    if (walk.len != 0 and !std.mem.startsWith(u8, walk, "\"$RUNNER_TEMP/user_beta\" \"" ++ candidate_binary ++ "\" ")) {
+        try c.problem(a, out, prefix ++ f ++ "the walk's first argument must be the candidate binary \"" ++ candidate_binary ++ "\"", .{});
+    }
+    if (walk.len != 0) {
+        for ([_][]const u8{ "|", ";", "&", "\n", "`", "$(" }) |bad| {
+            if (std.mem.indexOf(u8, std.mem.trimRight(u8, walk, "\n"), bad) != null) {
+                try c.problem(a, out, prefix ++ f ++ "the walk's line must not contain {s} (no `|| true`, no pipe, no chain: nothing may hide its exit status)", .{if (std.mem.eql(u8, bad, "\n")) "a newline" else bad});
+            }
+        }
     }
     if (stepRunContaining(job, "zig build-exe tests/drivers/user_beta.zig") == null) try c.problem(a, out, prefix ++ f ++ "user must build tests/drivers/user_beta.zig", .{});
+    // What passed is what is recorded: attest compares the files it attests with these records.
+    const walk_at = stepIndexRunContaining(job, "user_beta\" ");
+    const record_at = stepIndexRunContaining(job, "release\" record ");
+    if (stepRunContaining(job, "zig build-exe tools/release.zig") == null) try c.problem(a, out, prefix ++ f ++ "user must build tools/release.zig (it records the tested tarball)", .{});
+    if (record_at == null or !std.mem.eql(u8, stepRunContaining(job, "release\" record ").?, "\"$RUNNER_TEMP/release\" record \"" ++ candidate_tarball ++ "\" \"$RUNNER_TEMP/tested\"")) {
+        try c.problem(a, out, prefix ++ f ++ "user must run exactly `\"$RUNNER_TEMP/release\" record \"" ++ candidate_tarball ++ "\" \"$RUNNER_TEMP/tested\"` (the sha256 of the tarball the walk passed)", .{});
+    } else if (walk_at == null or record_at.? < walk_at.?) {
+        try c.problem(a, out, prefix ++ f ++ "user must record the tarball after the walk passed, not before", .{});
+    }
+    const up_at = stepIndexUsing(job, "actions/upload-artifact@");
+    if (up_at == null or !std.mem.eql(u8, c.str(c.get(c.get(steps.?.array.items[up_at.?], "with"), "name")) orelse "", "tested-${{ matrix.target }}") or !std.mem.eql(u8, c.str(c.get(c.get(steps.?.array.items[up_at.?], "with"), "path")) orelse "", "${{ runner.temp }}/tested/")) {
+        try c.problem(a, out, prefix ++ f ++ "user must upload the record as the artifact tested-${{{{ matrix.target }}}} from ${{{{ runner.temp }}}}/tested/", .{});
+    } else if (record_at == null or up_at.? < record_at.?) {
+        try c.problem(a, out, prefix ++ f ++ "user must upload the record after making it", .{});
+    }
     if (c.get(job, "permissions")) |p| {
         if (p == .object) {
             for (p.object.values()) |v| if (!c.isStr(v, "read")) try c.problem(a, out, prefix ++ f ++ "user holds a permission other than read", .{});

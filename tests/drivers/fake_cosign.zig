@@ -6,8 +6,9 @@
 //!   sign-blob --yes --bundle <bundle> <file>
 //!       writes the bundle. Fails when the file `cosign_sign_fail` exists.
 //!   verify-blob --bundle <bundle> --certificate-identity <id> --certificate-oidc-issuer <issuer>
-//!               [--certificate-github-workflow-sha <sha>] <file>
-//!       Fails when the identity or the issuer is missing (a verification that pins nothing is
+//!               [--certificate-github-workflow-sha <sha>] --certificate-github-workflow-trigger <t>
+//!               --certificate-github-workflow-repository <owner/name> <file>
+//!       Fails when the identity, the issuer, the trigger or the repository is missing (a verification that pins nothing is
 //!       not one), when the bundle does not name this file's sha256, or when `cosign_refuse` holds
 //!       a name the file's path ends with (that file "has no valid signature").
 
@@ -58,6 +59,8 @@ pub fn main() !void {
         const bundle = flag(args, "--bundle") orelse failWith("verify-blob needs --bundle");
         if (flag(args, "--certificate-identity") == null) failWith("verify-blob needs --certificate-identity");
         if (flag(args, "--certificate-oidc-issuer") == null) failWith("verify-blob needs --certificate-oidc-issuer");
+        if (flag(args, "--certificate-github-workflow-trigger") == null) failWith("verify-blob needs --certificate-github-workflow-trigger");
+        if (flag(args, "--certificate-github-workflow-repository") == null) failWith("verify-blob needs --certificate-github-workflow-repository");
         if (dir.readFileAlloc(a, "cosign_refuse", 1 << 16)) |refused| {
             if (std.mem.endsWith(u8, file, std.mem.trim(u8, refused, " \n"))) failWith("no matching signatures");
         } else |_| {}

@@ -68,4 +68,20 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           TARGET: ${{ matrix.target }}
-        run: '"$RUNNER_TEMP/user_beta" "$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET/mopm" "$RUNNER_TEMP/walk" --version "$VERSION" --tarball "$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET.tar.gz" --install-sh site/static/install.sh --fake-registry "$RUNNER_TEMP/mopm-fake-registry" --mojo-env tests/e2e/.pixi/envs/default --pixi pixi'
+        run: '"$RUNNER_TEMP/user_beta" "$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET/mopm" "$RUNNER_TEMP/walk" --version "$VERSION" --tarball "$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET.tar.gz" --install-sh site/static/install.sh --fake-registry "$RUNNER_TEMP/mopm-fake-registry" --mojo-env tests/e2e/.pixi/envs/default --pixi pixi --ci'
+
+      # What passed is recorded: attest refuses to attest any other bytes (tools/release.zig, tested).
+      - name: Build the release tool
+        run: zig build-exe tools/release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/release"
+      - name: Record the sha256 of the exact tarball the walk passed
+        env:
+          VERSION: ${{ inputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: '"$RUNNER_TEMP/release" record "$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET.tar.gz" "$RUNNER_TEMP/tested"'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tested-${{ matrix.target }}
+          path: ${{ runner.temp }}/tested/
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true

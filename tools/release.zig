@@ -19,6 +19,12 @@
 //!       Checks <dir>/SHA256SUMS: exactly those four tarballs, each with the hash listed.
 //!   release tarball <parent> <name> <out.tar.gz>
 //!       Packs the files of <parent>/<name>/ as <name>/<file> (ustar, then gzip).
+//!   release record <tarball> <outdir>
+//!       Writes <outdir>/<tarball name>.sha256 (`<sha256>  <name>`): the exact bytes the user beta ran.
+//!   release tested <dist> <tested-dir>
+//!       Refuses unless <tested-dir> holds one record per user-tested target (linux-x86_64, linux-aarch64,
+//!       macos-arm64), nothing else, and <dist> holds each named tarball with the recorded sha256: the
+//!       files attested are the files that passed the user beta. Runs in the attest job before `sums`.
 //!   release sign <dir> [--cosign <path>]
 //!       After `sums`: signs the four tarballs and SHA256SUMS with keyless `cosign sign-blob` (Sigstore;
 //!       the signing identity is the workflow's OIDC token, no key and no secret exists), writing
@@ -38,7 +44,7 @@ fn die(comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 fn usage() noreturn {
-    die("usage: release package <version> <target> <zig-target> <outdir> [--run-prefix \"<words>\"] | sums <dir> | check <dir> | tarball <parent> <name> <out.tar.gz> | sign <dir> [--cosign <path>]", .{});
+    die("usage: release package <version> <target> <zig-target> <outdir> [--run-prefix \"<words>\"] | sums <dir> | check <dir> | tarball <parent> <name> <out.tar.gz> | sign <dir> [--cosign <path>] | record <tarball> <outdir> | tested <dist> <tested-dir>", .{});
 }
 
 pub fn main() !void {
@@ -60,6 +66,14 @@ pub fn main() !void {
     if (std.mem.eql(u8, cmd, "tarball")) {
         if (rest.len != 3) usage();
         return makeTarGz(a, rest[0], rest[1], rest[2]);
+    }
+    if (std.mem.eql(u8, cmd, "record")) {
+        if (rest.len != 2) usage();
+        return record(a, rest[0], rest[1]);
+    }
+    if (std.mem.eql(u8, cmd, "tested")) {
+        if (rest.len != 2) usage();
+        return tested(a, rest[0], rest[1]);
     }
     if (std.mem.eql(u8, cmd, "sign")) {
         if (rest.len == 1) return sign(a, rest[0], "cosign");
@@ -305,4 +319,50 @@ fn sign(a: Allocator, dir_path: []const u8, cosign: []const u8) !void {
         if (st.size == 0) die("the bundle of {s} is empty", .{n});
     }
     std.debug.print("signed {d} files\n", .{files.items.len});
+}
+
+// ---- record, tested: the tarball the user beta passed is the tarball attested -----------------
+
+/// The targets whose tarball release-beta-user.yml walks as a user (macos-x86_64 has no runner).
+const tested_targets = [_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64" };
+
+/// Writes `<outdir>/<tarball name>.sha256` holding `<sha256>  <tarball name>`: the bytes the user beta ran.
+fn record(a: Allocator, tarball: []const u8, outdir: []const u8) !void {
+    const name = std.fs.path.basename(tarball);
+    if (!std.mem.startsWith(u8, name, "mopm-") or !std.mem.endsWith(u8, name, ".tar.gz")) die("{s} is not a mopm-*.tar.gz", .{name});
+    const hex = sha256Hex(tarball) catch |err| die("cannot read {s}: {s}", .{ tarball, @errorName(err) });
+    try std.fs.cwd().makePath(outdir);
+    const out = try std.fs.path.join(a, &.{ outdir, try std.fmt.allocPrint(a, "{s}.sha256", .{name}) });
+    try std.fs.cwd().writeFile(out, try std.fmt.allocPrint(a, "{s}  {s}\n", .{ hex, name }));
+    std.debug.print("recorded {s} {s}\n", .{ name, &hex });
+}
+
+/// Refuses unless, for each tested target, `tested_dir` holds exactly one record and `dist_dir` holds the
+/// tarball it names with exactly the recorded sha256; and `tested_dir` holds no other file.
+fn tested(a: Allocator, dist_dir: []const u8, tested_dir: []const u8) !void {
+    var dir = std.fs.cwd().openDir(tested_dir, .{ .iterate = true }) catch |err| die("cannot open {s}: {s}", .{ tested_dir, @errorName(err) });
+    defer dir.close();
+    var files = std.ArrayList([]const u8).init(a);
+    var it = dir.iterate();
+    while (try it.next()) |e| try files.append(try a.dupe(u8, e.name));
+    var matched: usize = 0;
+    for (tested_targets) |t| {
+        const suffix = try std.fmt.allocPrint(a, "-{s}.tar.gz.sha256", .{t});
+        var found: ?[]const u8 = null;
+        for (files.items) |n| {
+            if (!std.mem.endsWith(u8, n, suffix)) continue;
+            if (found != null) die("two records for {s} in {s}", .{ t, tested_dir });
+            found = n;
+        }
+        const rec = found orelse die("the user beta recorded nothing for {s}: that tarball was not tested", .{t});
+        matched += 1;
+        const text = try dir.readFileAlloc(a, rec, 4096);
+        const line = std.mem.trimRight(u8, text, "\n");
+        const name = rec[0 .. rec.len - ".sha256".len];
+        if (line.len != 66 + name.len or !std.mem.eql(u8, line[64..66], "  ") or !std.mem.eql(u8, line[66..], name)) die("malformed record {s}", .{rec});
+        const have = sha256Hex(try std.fs.path.join(a, &.{ dist_dir, name })) catch |err| die("cannot read {s} in {s}: {s}", .{ name, dist_dir, @errorName(err) });
+        if (!std.mem.eql(u8, line[0..64], &have)) die("{s}: the user beta tested sha256 {s}, but the file to attest has {s}", .{ name, line[0..64], &have });
+        std.debug.print("tested ok: {s} {s}\n", .{ name, &have });
+    }
+    if (files.items.len != matched) die("{s} holds {d} files, expected exactly the {d} records of the tested targets", .{ tested_dir, files.items.len, matched });
 }

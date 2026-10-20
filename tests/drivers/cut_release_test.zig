@@ -440,7 +440,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
             if (std.mem.startsWith(u8, l, "verify-blob ")) verifies += 1;
         }
         rep.check("verify-dir: the signature of each of the five payload files is verified", ok.code == 0 and verifies == 5, cl);
-        rep.check("verify-dir: the signature is pinned to release.yml at the ref, the OIDC issuer and the commit", h.contains(cl, "--certificate-identity https://github.com/komira-ai/mopm/.github/workflows/release.yml@refs/heads/main --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-github-workflow-sha " ++ sha ++ " "), cl);
+        rep.check("verify-dir: the signature is pinned to release.yml at the ref, the OIDC issuer, the commit, the push trigger and the repository", h.contains(cl, "--certificate-identity https://github.com/komira-ai/mopm/.github/workflows/release.yml@refs/heads/main --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-github-workflow-sha " ++ sha ++ " --certificate-github-workflow-trigger push --certificate-github-workflow-repository komira-ai/mopm "), cl);
 
         try w.put("cosign_refuse", "mopm-1.2.3-macos-arm64.tar.gz");
         const r = try w.run(&.{ "verify-dir", "1.2.3", dir, "--sha", sha, "--source-ref", "refs/heads/main" });
@@ -468,6 +468,51 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         try std.fs.cwd().deleteFile(w.path("cosign_sign_fail"));
         const ok = try h.run(a, &.{ tools.release, "sign", w.path("assets"), "--cosign", tools.cosign }, &env, .{});
         rep.check("release sign: control: with cosign working it signs the five payload files", ok.code == 0 and h.contains(ok.text, "signed 5 files"), ok.text);
+    }
+    {
+        // release record / tested: the tarballs attested are the tarballs the user beta passed.
+        var w = try goodVerify(a, tools, &tmp, "tested_flow", "1.2.3");
+        var env = try h.environ(a);
+        try env.put("FAKE_GH_DIR", w.root);
+        const dist = w.path("assets");
+        const rec = w.path("tested");
+        for ([_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64" }) |t| {
+            const rr = try h.run(a, &.{ tools.release, "record", try h.join(a, &.{ dist, try h.fmt(a, "mopm-1.2.3-{s}.tar.gz", .{t}) }), rec }, &env, .{});
+            if (rr.code != 0) {
+                std.debug.print("release record failed: {s}\n", .{rr.text});
+                return error.ToolFailed;
+            }
+        }
+        const ok = try h.run(a, &.{ tools.release, "tested", dist, rec }, &env, .{});
+        rep.check("release tested: control: the files attested are the files recorded as tested", ok.code == 0 and h.contains(ok.text, "tested ok: mopm-1.2.3-macos-arm64.tar.gz"), ok.text);
+
+        // The recorded line names the sha256 of the very file.
+        const want = try sha256Of(a, try h.join(a, &.{ dist, "mopm-1.2.3-linux-x86_64.tar.gz" }));
+        const line = try h.readFile(a, try h.join(a, &.{ rec, "mopm-1.2.3-linux-x86_64.tar.gz.sha256" }));
+        rep.check("release record: writes `<sha256>  <name>` of the tarball", std.mem.eql(u8, line, try h.fmt(a, "{s}  mopm-1.2.3-linux-x86_64.tar.gz\n", .{want})), line);
+
+        // Mutant: the tarball changed after it was tested.
+        try h.writeFile(try h.join(a, &.{ dist, "mopm-1.2.3-linux-aarch64.tar.gz" }), "a different tarball\n");
+        const bad = try h.run(a, &.{ tools.release, "tested", dist, rec }, &env, .{});
+        rep.check("release tested: a tarball that is not the one the user beta passed is refused, by name", bad.code != 0 and h.contains(bad.text, "mopm-1.2.3-linux-aarch64.tar.gz: the user beta tested sha256"), bad.text);
+
+        // Mutant: a platform leg left no record (the changed tarball is recorded again, so only this defect remains).
+        const rr2 = try h.run(a, &.{ tools.release, "record", try h.join(a, &.{ dist, "mopm-1.2.3-linux-aarch64.tar.gz" }), rec }, &env, .{});
+        if (rr2.code != 0) return error.ToolFailed;
+        try std.fs.cwd().deleteFile(try h.join(a, &.{ rec, "mopm-1.2.3-macos-arm64.tar.gz.sha256" }));
+        const missing = try h.run(a, &.{ tools.release, "tested", dist, rec }, &env, .{});
+        rep.check("release tested: a target with no record is refused", missing.code != 0 and h.contains(missing.text, "recorded nothing for macos-arm64"), missing.text);
+
+        // Mutant: a record of a target that is not tested.
+        // (Control first: with the changed tarball and the missing leg recorded again, it passes.)
+        for ([_][]const u8{ "linux-aarch64", "macos-arm64" }) |t| {
+            const rr = try h.run(a, &.{ tools.release, "record", try h.join(a, &.{ dist, try h.fmt(a, "mopm-1.2.3-{s}.tar.gz", .{t}) }), rec }, &env, .{});
+            if (rr.code != 0) return error.ToolFailed;
+        }
+        const again = try h.run(a, &.{ tools.release, "tested", dist, rec }, &env, .{});
+        try h.writeFile(try h.join(a, &.{ rec, "mopm-1.2.3-macos-x86_64.tar.gz.sha256" }), "x\n");
+        const extra = try h.run(a, &.{ tools.release, "tested", dist, rec }, &env, .{});
+        rep.check("release tested: a record beyond the three tested targets is refused", again.code == 0 and extra.code != 0 and h.contains(extra.text, "expected exactly the 3 records"), extra.text);
     }
     {
         // A re-run of an old release run after a newer release exists must not publish the old one last.
@@ -604,7 +649,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         const want = try sha256Of(a, try h.join(a, &.{ w.root, "assets", "mopm-1.2.3-linux-x86_64.tar.gz" }));
         rep.check("verify: a good release passes", r.code == 0 and h.contains(r.text, "verified v1.2.3") and h.contains(r.text, want), r.text);
         rep.check("verify: attestation is checked for the five payload assets, pinned to release.yml, main and the tag's commit", w.calls("attestation verify ") == 5 and h.contains(w.log(), "--signer-workflow komira-ai/mopm/.github/workflows/release.yml --source-ref refs/heads/main --source-digest " ++ sha ++ "\n"), w.log());
-        rep.check("verify: the signatures are checked too, pinned to main and the tag's commit", h.contains(w.read("cosign_log"), "--certificate-identity https://github.com/komira-ai/mopm/.github/workflows/release.yml@refs/heads/main --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-github-workflow-sha " ++ sha ++ " "), w.read("cosign_log"));
+        rep.check("verify: the signatures are checked too, pinned to main, the tag's commit, the push trigger and the repository", h.contains(w.read("cosign_log"), "--certificate-identity https://github.com/komira-ai/mopm/.github/workflows/release.yml@refs/heads/main --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-github-workflow-sha " ++ sha ++ " --certificate-github-workflow-trigger push --certificate-github-workflow-repository komira-ai/mopm "), w.read("cosign_log"));
         rep.check("verify: changes nothing (no create, no upload, no POST)", w.calls("release create") == 0 and w.calls("release upload") == 0 and w.calls("api -X POST") == 0, w.log());
         const ok = try w.run(&.{ "verify", "1.2.3", try freshDir(a, w, "dl2"), "--expect-sha256", want });
         rep.check("verify: the expected sha256 is accepted", ok.code == 0, ok.text);

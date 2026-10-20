@@ -31,7 +31,7 @@
 //!   cut_release verify-dir <version> <dir> --sha <commit> --source-ref <ref> [--notes-out <dir>]
 //!       Before anything is published: checks the BUILT files in <dir>. The tag v<version> is on main and
 //!       names <commit>; the files are exactly the ten: the four mopm-<version>-<target>.tar.gz, SHA256SUMS and the
-//!       cosign bundle <file>.sigstore.json of each; SHA256SUMS lists each tarball with the hash it has; `gh attestation verify` and `cosign verify-blob` (--cosign, identity pinned to release.yml at <ref>, the commit pinned) accept every payload file
+//!       cosign bundle <file>.sigstore.json of each; SHA256SUMS lists each tarball with the hash it has; `gh attestation verify` and `cosign verify-blob` (--cosign, identity pinned to release.yml at <ref>, the commit, the push trigger and the repository pinned) accept every payload file
 //!       (attestations pinned to release.yml, <ref> and <commit>); each tarball holds exactly
 //!       mopm-<version>-<target>/{mopm,LICENSE}. With --notes-out it writes release-notes.md, pin.txt (the
 //!       linux-x86_64 url, sha256 and size) and verified.sha256 (the hash of each of the ten files).
@@ -478,7 +478,7 @@ fn checkSignatures(gh: Gh, dir_path: []const u8, payload: [][]const u8, source_r
     for (payload) |w| {
         const path = std.fs.path.join(a, &.{ dir_path, w }) catch @panic("oom");
         const bundle = std.fmt.allocPrint(a, "{s}{s}", .{ path, bundle_suffix }) catch @panic("oom");
-        const r = gh.runExe(gh.cosign, &.{ "verify-blob", "--bundle", bundle, "--certificate-identity", identity, "--certificate-oidc-issuer", oidc_issuer, "--certificate-github-workflow-sha", sha, path });
+        const r = gh.runExe(gh.cosign, &.{ "verify-blob", "--bundle", bundle, "--certificate-identity", identity, "--certificate-oidc-issuer", oidc_issuer, "--certificate-github-workflow-sha", sha, "--certificate-github-workflow-trigger", "push", "--certificate-github-workflow-repository", gh.repo, path });
         if (!r.ok) die("cosign verify-blob refused {s}: {s}", .{ w, std.mem.trim(u8, r.stderr, " \r\n") });
     }
 }
