@@ -202,7 +202,7 @@ test "id-token and environments are for the deploy workflows only" {
     try expectStructure("ci.yml", header ++
         \\on: [pull_request]
         \\jobs:
-        \\  j:
+        \\  test:
         \\    runs-on: x
         \\    environment: beta
         \\    permissions:
@@ -212,10 +212,55 @@ test "id-token and environments are for the deploy workflows only" {
     try expectStructure("ci.yml", header ++
         \\on: [push, pull_request]
         \\jobs:
-        \\  j:
+        \\  test:
         \\    runs-on: x
         \\
     , &.{});
+}
+
+test "the pull-request tier: unit on a pull request, beta only after the merge" {
+    // Mutant: the release dry run is back (release-check.yml on pull_request).
+    try expectStructure("release-check.yml", header ++
+        \\on:
+        \\  pull_request:
+        \\  push:
+        \\    branches: [main]
+        \\jobs:
+        \\  package:
+        \\    runs-on: x
+        \\
+    , &.{"a pull request runs build and unit tests only"});
+    // Mutant: an e2e workflow gains a pull_request trigger.
+    try expectStructure("e2e-extra.yml", header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: x\n", &.{"a pull request runs build and unit tests only"});
+    // The same trigger is fine in the four unit workflows.
+    for ([_][]const u8{ "lint.yml", "service-ci.yml" }) |ok| {
+        try expectStructure(ok, header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: x\n", &.{});
+    }
+    // Mutant: a beta job of ci.yml loses its guard, or is new and unguarded.
+    try expectStructure("ci.yml", header ++
+        \\on: [pull_request, push]
+        \\jobs:
+        \\  test:
+        \\    runs-on: x
+        \\  registry-build:
+        \\    runs-on: x
+        \\  mojo-e2e:
+        \\    if: github.event_name != 'pull_request'
+        \\    runs-on: x
+        \\  pack-conformance:
+        \\    runs-on: x
+        \\
+    , &.{"job pack-conformance is not a unit job"});
+    try expectStructure("ci.yml", header ++
+        \\on: [pull_request]
+        \\jobs:
+        \\  installer:
+        \\    if: github.event_name == 'push'
+        \\    runs-on: x
+        \\
+    , &.{"job installer is not a unit job"});
+    // With no pull_request trigger every job of ci.yml is free.
+    try expectStructure("ci.yml", header ++ "on: [push]\njobs:\n  mojo-e2e:\n    runs-on: x\n", &.{});
 }
 
 const deploy_ok = header ++

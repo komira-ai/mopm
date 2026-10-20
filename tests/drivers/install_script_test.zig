@@ -2,7 +2,7 @@
 //! `curl | sh` needs one) against a fake release served over loopback, on the machine it runs
 //! on. It replaces the shell and Python scripts this test would otherwise be.
 //!
-//! GitHub Actions runs it on Linux and macOS (release-check.yml); it needs a shell, curl and a
+//! GitHub Actions runs it on Linux and macOS (ci.yml, the job `installer`, after the merge); it needs a shell, curl and a
 //! network stack, which the build farm does not give, so no Buck2 target runs it:
 //!
 //!     zig test tests/drivers/install_script_test.zig        (from the repository root)

@@ -7,13 +7,29 @@ stops the release, and the next green push to main releases instead.
 mopm is a customer-facing tool, so the last gate before anything is tagged is the candidate used the way a
 customer uses it, on every platform it ships for (`beta-user`).
 
+## What a pull request runs
+
+A pull request runs build and unit tests only. Nothing of the release runs on it: no release dry run, no packaging, no signing, attesting or
+verifying, and no beta. The tiers:
+
+| tier | what | when |
+|---|---|---|
+| unit (each library) | `ci.yml` `test` (`zig build test`) and `registry-build`; `service-ci.yml` (typecheck and tests of the API, site, stacks, DNS and access packages, and the CDK synth with dummy values); `farm.yml` (on the test farm, the tests are welded into the targets: a pull request builds every target except the beta ones that run against the real Mojo, `//:autolink`, `//:discovery`, `//:flaky`, `//:install_e2e`, `//:mojo_probe`, `//:supervisor` and `//:user_beta`; a push to main builds `//...`) | every pull request, and a push to main |
+| lint | `lint.yml`: hygiene, workflow lint, lint self-test, **the release lint of `release.yml`** (so a broken `release.yml` still fails a pull request) and actionlint | every pull request, and a push to main |
+| beta (each component) | `ci.yml` `mojo-e2e`, `pack-conformance` and `installer`; then `release-beta-user.yml`, the candidate used as a user | after the merge only: `release.yml` stage `beta` (the whole of `ci.yml`) and stage `beta-user` |
+| gamma (the whole system, real consumers) | `promote.yml` (`deploy.yml`, `e2e.yml`) | after a release, never on a pull request |
+
+No job of this repository measures coverage today, so none is reported. `tests/drivers/hygiene.zig` holds the split: only `ci.yml`, `lint.yml`, `farm.yml`
+and `service-ci.yml` may run on `pull_request`, and every job of `ci.yml` other than `test` and `registry-build` must carry
+`if: github.event_name != 'pull_request'`. The `.deb` checks (dpkg and lintian) run inside `release-build.yml`, in the `build` stage.
+
 ## What happens on a push to main
 
 `.github/workflows/release.yml` runs these stages; each needs the ones named:
 
 | stage | needs | what it does |
 |---|---|---|
-| `beta` | | the whole of `ci.yml` on the pushed commit (unit, golden, contract and end-to-end tests, on Linux and macOS). |
+| `beta` | | the whole of `ci.yml` on the pushed commit: the unit tier a pull request runs (unit and golden tests, the CLI and fake registry build), then the beta tier that never runs on a pull request (the CLI against the real Mojo, the packer against the registry validator, `install.sh` against a fake release), on Linux and macOS. |
 | `lint` | | the whole of `lint.yml` (hygiene, workflow lint, the release lint with its planted mutants). |
 | `plan` | `beta`, `lint` | the version this commit's release will have (`cut_release plan --sha`). Writes nothing. Refuses a commit that a newer release supersedes (below) and a `VERSION` base below an existing tag. Gamma and bake time are a slot for later stages between `lint` and `plan`. |
 | `build` | `plan` | the three binaries (`linux-x86_64`, `linux-aarch64`, `macos-arm64`) at that version, each reporting exactly it, and a `.deb` (`amd64`, `arm64`) for each linux binary, packaged by `tools/channels deb-package` from the binary inside the tarball just made (metadata in `packaging/deb/`). **These are the release files.** They are built once, before the tag, from the commit that is tagged later, and are not rebuilt. |
@@ -92,8 +108,7 @@ when its `check` and `bump-guard` pass; nobody clicks.
 
 ## The user-level beta
 
-`.github/workflows/release-beta-user.yml` (also run on a pull request that touches the release files, by
-`release-check.yml`) uses pinned tools only, and takes the tarball that
+`.github/workflows/release-beta-user.yml` (run only by `release.yml`, after the merge, never on a pull request) uses pinned tools only, and takes the tarball that
 `build` produced. On each platform `tests/drivers/user_beta.zig` (Zig, no shell) takes the candidate binary and
 walks the verbs against a fake registry (`registry/fake`) that it starts, asserting each step's output and exit
 status:
@@ -153,7 +168,7 @@ releases `0.1.1`. This is rare; PATCH is never edited by hand, and the base neve
 
 ## A dry run
 
-Run the `release` workflow by hand (Actions, `release`, Run workflow) on `main`. It runs `beta`, `lint`, `plan`,
+A dry run is never made by a pull request (it used to be: `release-check.yml` is gone). Run the `release` workflow by hand (Actions, `release`, Run workflow) on `main`. It runs `beta`, `lint`, `plan`,
 `build`, `beta-user`, `attest` and `verify`: the candidate is built and tested on every platform, and `plan` prints the version the
 next release would get. It creates no tag and publishes nothing (`tag`, `publish` and `bump` do not run; `attest` and `verify` do, as a rehearsal of the signing, whose signatures carry the trigger `workflow_dispatch` and are verified as such). From any other branch the run stops after `beta-user`: `attest` runs only on `main`, so an unmerged commit is never signed.
 

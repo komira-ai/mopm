@@ -241,6 +241,14 @@ const release_file = "release.yml";
 /// The environment that holds the release bot's key, restricted to main.
 const release_environment = "release";
 
+/// The pull-request tier: a pull request runs build and unit tests only. These four workflows are the only ones that may
+/// run on pull_request (ci.yml: its unit jobs; lint.yml: the lints, the release lint included; farm.yml: the unit build on the test farm;
+/// service-ci.yml: the unit tests of the service packages). Everything else (the release machinery, the end-to-end runs) runs after the
+/// merge. The oidc files and farm.yml, release.yml have rules of their own above.
+const pr_files = [_][]const u8{ "ci.yml", "lint.yml", "farm.yml", "service-ci.yml" };
+/// The jobs of ci.yml that run on a pull request (the unit tier). Every other job of ci.yml is beta and must say `if: github.event_name != 'pull_request'`.
+const ci_unit_jobs = [_][]const u8{ "test", "registry-build" };
+
 fn isOidcFile(base: []const u8) bool {
     return c.containsStr(&oidc_files, base);
 }
@@ -382,6 +390,17 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
     }
     if (c.containsStr(on, "pull_request") and (has_id_token or has_environment)) {
         try c.problem(a, out, prefix ++ "{s}: a workflow with id-token or an environment must not run on pull_request", .{f});
+    }
+    if (c.containsStr(on, "pull_request") and !c.containsStr(&pr_files, base) and !isOidcFile(base)) {
+        try c.problem(a, out, prefix ++ "{s}: a pull request runs build and unit tests only, so only ci.yml, lint.yml, farm.yml and service-ci.yml may run on pull_request", .{f});
+    }
+    if (std.mem.eql(u8, base, "ci.yml") and c.containsStr(on, "pull_request")) {
+        for (jobs) |j| {
+            if (c.containsStr(&ci_unit_jobs, j.name)) continue;
+            if (std.mem.indexOf(u8, try jobIf(a, j.node), "github.event_name != 'pull_request'") == null) {
+                try c.problem(a, out, prefix ++ "{s}: job {s} is not a unit job, so it must say `if: github.event_name != 'pull_request'` (beta runs after the merge, never on a pull request)", .{ f, j.name });
+            }
+        }
     }
     if (!isOidcFile(base)) return;
 

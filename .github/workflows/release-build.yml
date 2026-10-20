@@ -2,8 +2,7 @@ name: release-build
 
 # Builds and packages the mopm CLI for the three release targets (and a .deb for each linux one), and uploads the files as
 # workflow artifacts. Called by release.yml (a push to main that tagged a version, which then
-# attests, verifies and publishes them) and by release-check.yml (a pull request touching the
-# release files, which publishes nothing). It holds no write permission and no credential: it
+# attests, verifies and publishes them). It never runs on a pull request. It holds no write permission and no credential: it
 # cannot create a release.
 #
 # version: the version to build (1.2.3, no leading v), passed to `zig build -Dversion=`; each binary
@@ -61,6 +60,22 @@ jobs:
         run: |
           tar -xzf "$RUNNER_TEMP/out/mopm-$VERSION-$TARGET.tar.gz" -C "$RUNNER_TEMP" "mopm-$VERSION-$TARGET/mopm"
           "$RUNNER_TEMP/channels" deb-package --binary "$RUNNER_TEMP/mopm-$VERSION-$TARGET/mopm" --name mopm --version "$VERSION" --arch "$DEB_ARCH" --packaging packaging/deb --out "$RUNNER_TEMP/out/mopm_${VERSION}_${DEB_ARCH}.deb"
+      # The .debs as built: dpkg reads them and lintian finds no error. Lintian runs on the real files (the real static binary), so its override is
+      # exercised, and a missing changelog, a copyright that does not point at the common license, or an empty long description goes red
+      # here, before a release carries it.
+      - name: Install lintian
+        if: matrix.deb_arch != ''
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lintian
+      - name: dpkg-deb reads the .deb (control and contents)
+        if: matrix.deb_arch != ''
+        run: |
+          for deb in "$RUNNER_TEMP"/out/*.deb; do
+            dpkg-deb --info "$deb"
+            dpkg-deb --contents "$deb"
+          done
+      - name: lintian, every tag printed, an error fails
+        if: matrix.deb_arch != ''
+        run: lintian --version && lintian --fail-on error --tag-display-limit 0 "$RUNNER_TEMP"/out/*.deb
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ matrix.target }}

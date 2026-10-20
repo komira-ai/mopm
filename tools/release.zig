@@ -1,5 +1,5 @@
-//! The release packaging tool, run by .github/workflows/release-build.yml, release.yml and
-//! release-check.yml (and by tests/drivers/install_script_test.zig to make a fake release). Zig
+//! The release packaging tool, run by .github/workflows/release-build.yml and release.yml
+//! (and by tests/drivers/install_script_test.zig to make a fake release). Zig
 //! only, standard library only: build it with the pinned Zig,
 //!
 //!     zig build-exe tools/release.zig -femit-bin=<path>

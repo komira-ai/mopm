@@ -2,7 +2,8 @@
 
 - Tooling is written in Zig 0.12.0. Run `zig build test` from the repository
   root before opening a pull request; CI runs it on Linux (x86_64, aarch64) on
-  every pull request, and on macOS (arm64) after the merge (push to `main`), nightly,
+  every pull request (the unit tier only: the end-to-end, packer-conformance and `install.sh`
+  checks and the release run after the merge), and on macOS (arm64) after the merge (push to `main`), nightly,
   on manual dispatch, and on a pull request that carries the label `macos`
   (the macOS queue is slow, so add the label when your change touches
   platform-specific code).
