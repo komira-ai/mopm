@@ -1,22 +1,13 @@
-# The site's checks and build, run on the farm from the pinned npm packages (pins.lock.bzl,
-# from package-lock.json by kpin) with komira's node_modules rules, as service/api/BUCK does:
-# the commands of service-ci.yml's site job. `npm run typecheck` is two tsc runs (`:typecheck`,
-# `:typecheck_browser`), `npm test` is `:test`, and `npm run build` is three programs, each
-# a target (`:browser`, `:tools`, `:dist`). No install, no script, no network.
+# The site's checks and build, run on the farm from the pinned npm packages (buildrules.lock.bzl,
+# from package-lock.json by `buildrules npm sync`) with buildrules' npm_package: the steps are
+# package.json's own scripts, `npm run typecheck` (both tsc runs, one step), `npm test` and
+# `npm run build` (the whole script: the tsc runs and tools/build.js; `:dist` is dist/).
+# No install, no script, no network. The policy is the "buildrules" key of package.json.
 
-load("@buildrules//rules/node:modules.bzl", "jest_test", "node_tree_build", "node_tree_test", "npm_modules", "tsc_build", "tsc_check")
-load(":pins.lock.bzl", "NPM")
+load(":buildrules.bzl", "npm_package")
+load("@buildrules//rules/node:modules.bzl", "node_tree_test")
 
 _NODE = "//tools/node:node"
-
-_CONFIGS = [
-    "package.json",
-    "tsconfig.browser.json",
-    "tsconfig.json",
-    "tsconfig.tools.json",
-]
-
-_SRCS = glob(["src/**", "static/**", "test/**", "tools/**"]) + _CONFIGS + ["jest.config.js"]
 
 # The repository files the pages are rendered from (tools/docs.ts reads the published docs,
 # src/links.ts names them), at their paths in the repository.
@@ -25,88 +16,35 @@ _DOCS = {
     "spec/mopm-toml.md": "//:site.spec.mopm-toml.md",
 }
 
-npm_modules(
-    name = "modules",
-    lockfile = "package-lock.json",
-    npm = NPM,
-)
-
-tsc_check(
-    name = "typecheck",
-    modules = ":modules",
+npm_package(
+    path = ".",
     node = _NODE,
-    srcs = _SRCS,
-)
-
-# src alone, with no Node types.
-tsc_check(
-    name = "typecheck_browser",
-    modules = ":modules",
-    node = _NODE,
-    project = "tsconfig.browser.json",
-    srcs = _SRCS,
-)
-
-# The tests read files outside site/ by relative path (test/build-fixture.ts's REPO_ROOT,
-# test/fixtures.ts's CONTRACT_DIR, test/docs-render.test.ts): the API contract cases, the
-# published docs, spec/channel.md, README.md, src/cli/main.zig and the scaffold golden
-# tests/new/lib (test/layout.test.ts holds the home page copy to them).
-jest_test(
-    name = "test",
-    data = _DOCS | {
-        "README.md": "//:site.README.md",
-        "spec/channel.md": "//:site.spec.channel.md",
-        "src/cli/main.zig": "//:site.src.cli.main.zig",
-        "tests/contract/api": "//:contract_api",
-        "tests/new/lib": "//:site_new_lib",
+    # kpin's files of the old rules, still read by the weekly update.
+    exclude = ["pins.lock.bzl", "pins.toml", "README.md", "check_dist.js"],
+    # The tests read files outside site/ by relative path (test/build-fixture.ts's REPO_ROOT,
+    # test/fixtures.ts's CONTRACT_DIR, test/docs-render.test.ts): the API contract cases, the
+    # published docs, spec/channel.md, README.md, src/cli/main.zig and the scaffold golden
+    # tests/new/lib (test/layout.test.ts holds the home page copy to them).
+    step_data = {
+        "test": _DOCS | {
+            "README.md": "//:site.README.md",
+            "spec/channel.md": "//:site.spec.channel.md",
+            "src/cli/main.zig": "//:site.src.cli.main.zig",
+            "tests/contract/api": "//:contract_api",
+            "tests/new/lib": "//:site_new_lib",
+        },
+        # tools/build.js renders the pages from them.
+        "build": _DOCS,
     },
-    modules = ":modules",
-    node = _NODE,
-    srcs = _SRCS,
-)
-
-# `npm run build`, step 1: `tsc -p tsconfig.browser.json`, the browser modules.
-tsc_build(
-    name = "browser",
-    modules = ":modules",
-    node = _NODE,
-    out_dir = "build/browser",
-    project = "tsconfig.browser.json",
-    srcs = glob(["src/**"]) + _CONFIGS,
-)
-
-# Step 2: `tsc -p tsconfig.tools.json`, the build program.
-tsc_build(
-    name = "tools",
-    modules = ":modules",
-    node = _NODE,
-    out_dir = "build/tools",
-    project = "tsconfig.tools.json",
-    srcs = glob(["src/**", "tools/**"]) + _CONFIGS,
-)
-
-# Step 3: `node build/tools/tools/build.js`, which renders the pages, hashes the assets into
-# dist/ and checks the tree (tools/check-dist.ts); the target is dist/.
-node_tree_build(
-    name = "dist",
-    data = _DOCS | {
-        "site/build/browser": ":browser",
-        "site/build/tools": ":tools",
-    },
-    modules = ":modules",
-    node = _NODE,
-    out_dir = "dist",
-    program = "build/tools/tools/build.js",
-    srcs = glob(["static/**"]),
-    # The site stack deploys this tree (service/infra/stacks/BUCK, its tests and synths).
-    visibility = ["//service/infra/stacks:"],
+    # The site stack deploys dist/ (service/infra/stacks/BUCK, its tests and synths).
+    visibility = ["//service/infra/stacks:", "//site:"],
 )
 
 # service-ci.yml's `test -f dist/<page>` for each page the site job names.
 node_tree_test(
     name = "dist_has_pages",
     data = {"site/dist": ":dist"},
-    modules = ":modules",
+    modules = ":node_modules",
     node = _NODE,
     program = "check_dist.js",
     srcs = ["check_dist.js"],

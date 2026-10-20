@@ -50,14 +50,17 @@ npm run build       # compiles src and tools to build/, then writes dist/ (and c
 ```
 
 On the build farm the same commands are Buck2 targets (`site/BUCK`, run from the repository root), over
-`node_modules` laid out from `package-lock.json` and the pinned tarballs of `pins.lock.bzl` (see CONTRIBUTING.md,
-"The service packages (TypeScript) on the farm"; the site's kpin files are `pins.toml` and `pins.lock.bzl` here):
+`node_modules` laid out from `package-lock.json` and the pinned tarballs of `buildrules.lock.bzl` (buildrules' `npm_package`;
+regenerate it with `buildrules npm sync site` after `npm install`, see CONTRIBUTING.md, "The service packages (TypeScript) on
+the farm"). The steps are the scripts of `package.json`; the `buildrules` key there names the build output (`dist`) and the `ci` action:
 
 | target | the command it replaces |
 |---|---|
-| `//site:typecheck`, `//site:typecheck_browser` | the two `tsc --noEmit` runs of `npm run typecheck` |
+| `//site:typecheck` | `npm run typecheck` (both `tsc --noEmit` runs) |
 | `//site:test` | `npm test` (`jest --ci`, 2 workers) |
-| `//site:browser`, `//site:tools`, `//site:dist` | `npm run build`: the two `tsc -p` runs, then `build/tools/tools/build.js`; `:dist` is `dist/` |
+| `//site:build`, `//site:dist` | `npm run build` (the two `tsc -p` runs, then `build/tools/tools/build.js`); `:dist` is its `dist/` |
+| `//site:ci` | typecheck, test and build together |
+| `//site:check` | `buildrules.lock.bzl` still matches `package.json` and `package-lock.json` (also a validation of every step) |
 | `//site:dist_has_pages` | the job's `test -f dist/<page>` checks (`check_dist.js`) |
 
 `dist/` holds `index.html`, `app.html`, `404.html`, `docs/index.html`, `docs/<slug>/index.html` and

@@ -1,80 +1,38 @@
 # The registry API package's checks, run on the farm from the pinned npm packages
-# (pins.lock.bzl, from package-lock.json by kpin) with komira's node_modules rules:
-# the same commands as service-ci.yml (`tsc --noEmit`, `jest --ci` with 2 workers) and
-# `esbuild` (package.json "build"), whose output the infra stacks deploy. No install, no
-# script, no network. See service/README.md, "Building with Buck2".
+# (buildrules.lock.bzl, from package-lock.json by `buildrules npm sync`) with buildrules'
+# npm_package: the steps are package.json's own scripts (`tsc --noEmit`, `jest --ci` with 2
+# workers and `esbuild`, whose output the infra stacks deploy). No install, no script, no
+# network. See service/README.md, "Building with Buck2".
 
-load("@buildrules//rules/node:modules.bzl", "jest_test", "node_tree_build", "node_tree_test", "npm_modules", "tsc_check")
-load(":pins.lock.bzl", "NPM")
+load(":buildrules.bzl", "npm_package")
+load("@buildrules//rules/node:modules.bzl", "node_tree_test")
 
 _NODE = "//tools/node:node"
 
-_SRCS = glob(["src/**", "test/**"]) + [
-    "jest.config.js",
-    "package.json",
-    "tsconfig.json",
-]
-
-npm_modules(
-    name = "modules",
-    lockfile = "package-lock.json",
-    npm = NPM,
-)
-
-tsc_check(
-    name = "typecheck",
-    modules = ":modules",
+npm_package(
+    path = ".",
     node = _NODE,
-    srcs = _SRCS,
-)
-
-# The tests read the specification and the contract cases at their paths in the repository
-# (`../../../../spec/api/openapi.yaml`, `.../tests/contract/api`), and the validator's tests run
-# `bzip2` (test/validate/builder.ts): the pinned busybox's applet is the only command on PATH.
-jest_test(
-    name = "test",
-    data = {
-        "spec": "//:spec",
-        "tests/contract/api": "//:contract_api",
-        "tests/validator_corpus": "//:validator_corpus_files",
+    # kpin's files of the old rules, still read by the weekly update.
+    exclude = ["pins.lock.bzl", "check_dist.js"],
+    # The tests read the specification and the contract cases at their paths in the repository
+    # (`../../../../spec/api/openapi.yaml`, `.../tests/contract/api`), and the validator's tests run
+    # `bzip2` (test/validate/builder.ts): the pinned busybox's applet is the only command on PATH.
+    step_data = {
+        "test": {
+            "spec": "//:spec",
+            "tests/contract/api": "//:contract_api",
+            "tests/validator_corpus": "//:validator_corpus_files",
+        },
     },
-    modules = ":modules",
-    node = _NODE,
-    srcs = _SRCS,
-    tools = {"bzip2": "buildrules//rules/pins:busybox"},
-)
-
-# `npm run build`: the handler bundle the API stack deploys. esbuild bundles each of the three
-# handlers (api, validator, index writer) with its own dependencies into one file; the AWS SDK
-# is left out, the Lambda runtime provides it. The arguments are package.json's "build" script.
-node_tree_build(
-    name = "dist",
-    args = [
-        "src/http/lambda.ts",
-        "src/publish/validator-lambda.ts",
-        "src/publish/indexer-lambda.ts",
-        "--bundle",
-        "--platform=node",
-        "--target=node22",
-        "--format=cjs",
-        "--external:@aws-sdk/*",
-        "--outbase=src",
-        "--outdir=dist",
-        "--log-level=warning",
-    ],
-    modules = ":modules",
-    node = _NODE,
-    out_dir = "dist",
-    program = "node_modules/.bin/esbuild",
-    srcs = _SRCS,
-    visibility = ["//service/infra/stacks:"],
+    step_tools = {"test": {"bzip2": "buildrules//rules/pins:busybox"}},
+    visibility = ["//service/infra/stacks:", "//service/api:"],
 )
 
 # service-ci.yml's `test -f dist/http/lambda.js`.
 node_tree_test(
     name = "dist_has_handler",
     data = {"service/api/dist": ":dist"},
-    modules = ":modules",
+    modules = ":node_modules",
     node = _NODE,
     program = "check_dist.js",
     srcs = ["check_dist.js"],
