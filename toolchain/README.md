@@ -8,6 +8,10 @@ and everything they need) is a fixed list per Mojo version and platform:
 | `versions.txt` | the Mojo versions mopm can install | a person |
 | `mojo-<version>.pixi.lock` | the solver's answer for that version, all platforms | the `toolchain` job of `.github/workflows/kpin-update.yml` (pixi, on GitHub) |
 | `../src/core/toolchain/mojo-<version>-<subdir>.json` | the closure of one platform: url, sha256, size and conda-meta fields of every package | `mopm-closure`, from the lock |
+| `../src/core/toolchain/zig-for-mojo-<version>.json` | the Zig that links for that Mojo version (url, sha256, size, target triple), per platform | a person |
+
+`mopm plan --unit-graph` hashes the closure file and the Zig pin into the toolchain's
+`closure_sha256` (spec/unit-graph.md).
 
 The unit test `closure.zig` ("the committed closure files are the ones made from the
 committed locks") fails when a lock and its closure files disagree, so a hash is never

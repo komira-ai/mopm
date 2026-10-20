@@ -484,7 +484,7 @@ def main(mopm, fake_exe):
             add_remove(work, run, reg)
 
             with open(os.path.join(app, "mopm.lock"), "w") as f:
-                f.write(expected.replace('"lock_version": 1', '"lock_version": 2'))
+                f.write(expected.replace('"lock_version": 1', '"lock_version": 99'))
             r = run(app, "lock", *reg)
             check("a lock from a newer mopm is refused", r.returncode == 1 and "Update mopm." in r.stderr, r.stderr)
 

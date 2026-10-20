@@ -9,6 +9,8 @@ const test_cmd = @import("test_cmd.zig");
 const registry_cmd = @import("registry_cmd.zig");
 const publish_cmd = @import("publish_cmd.zig");
 const install_cmd = @import("install_cmd.zig");
+const plan_cmd = @import("plan_cmd.zig");
+const unit_cmd = @import("unit_cmd.zig");
 
 pub const version = "0.0.1";
 
@@ -85,6 +87,12 @@ const usage =
     \\                          written if it does not resolve
     \\  remove <package> [--dev] [--registry ...]
     \\                          take a dependency out of mopm.toml and lock
+    \\  plan --unit-graph --locked [--mojo <version>] [-o <file>]
+    \\                          print the unit graph (spec/unit-graph.md) of
+    \\                          mopm.lock for one Mojo version; never resolves
+    \\  unit build|test --unit <id> --graph <file> --out <dir> --toolchain <dir>
+    \\                          build (or build and run) one unit of a graph,
+    \\                          offline, from declared inputs only
     \\
     \\  options for build, run and repl:
     \\    --prefix <dir>        the environment (default: CONDA_PREFIX, then
@@ -416,6 +424,8 @@ fn run(arena: std.mem.Allocator) u8 {
     if (std.mem.eql(u8, cmd, "sync")) return install_cmd.main(arena, .sync, args[2..], version);
     if (std.mem.eql(u8, cmd, "add")) return install_cmd.main(arena, .add, args[2..], version);
     if (std.mem.eql(u8, cmd, "remove")) return install_cmd.main(arena, .remove, args[2..], version);
+    if (std.mem.eql(u8, cmd, "plan")) return plan_cmd.main(arena, args[2..]);
+    if (std.mem.eql(u8, cmd, "unit")) return unit_cmd.main(arena, args[2..]);
     if (std.meta.stringToEnum(mojo_cmd.Tool, cmd)) |tool| return autolink(arena, tool, args[2..]);
     if (isPlanned(cmd)) {
         std.debug.print("mopm {s}: not implemented yet\n", .{cmd});
@@ -435,6 +445,8 @@ test {
     _ = registry_cmd;
     _ = publish_cmd;
     _ = install_cmd;
+    _ = plan_cmd;
+    _ = unit_cmd;
 }
 
 test "planned commands are recognised, working ones are not planned" {

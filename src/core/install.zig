@@ -89,7 +89,13 @@ fn lockedEntry(l: lock.Lock, name: []const u8) ?lock.Package {
 /// version, and every locked package is needed by a requirement or a path
 /// dependency directly or through the locked dependencies.
 pub fn staleness(arena: Allocator, toolchains: []const []const u8, roots: []const resolve.Root, paths: []const plan.PathDep, l: lock.Lock) Allocator.Error!?[]const u8 {
-    if (!contains(toolchains, l.mojo)) {
+    if (l.mojos.len > 0) {
+        var same = l.mojos.len == toolchains.len;
+        for (toolchains) |t| same = same and contains(l.mojos, t);
+        if (!same) {
+            return try std.fmt.allocPrint(arena, "mopm.lock is for mojo {s}; mopm.toml's mojo is {s}", .{ try std.mem.join(arena, ", ", l.mojos), try std.mem.join(arena, ", ", toolchains) });
+        }
+    } else if (!contains(toolchains, l.mojo)) {
         const allowed = try std.mem.join(arena, ", ", toolchains);
         return try std.fmt.allocPrint(arena, "mopm.lock is for mojo {s}; mopm.toml's [toolchain] allows {s}", .{ l.mojo, allowed });
     }
@@ -104,10 +110,15 @@ pub fn staleness(arena: Allocator, toolchains: []const []const u8, roots: []cons
             error.Invalid => return try std.fmt.allocPrint(arena, "mopm.toml: {s} = \"{s}\": {s}", .{ r.name, r.requirement, why }),
             error.OutOfMemory => return error.OutOfMemory,
         };
-        const v = resolve.semverOf(have);
-        if (v == null or !req.matches(v.?)) {
-            return try std.fmt.allocPrint(arena, "mopm.toml needs {s} \"{s}\", but mopm.lock has {s} {s}", .{ r.name, r.requirement, r.name, have });
+        // A version 2 lock may hold one version per Mojo version: each must fit.
+        for (l.packages) |q| {
+            if (!std.mem.eql(u8, q.name, r.name)) continue;
+            const v = resolve.semverOf(q.version);
+            if (v == null or !req.matches(v.?)) {
+                return try std.fmt.allocPrint(arena, "mopm.toml needs {s} \"{s}\", but mopm.lock has {s} {s}", .{ r.name, r.requirement, r.name, q.version });
+            }
         }
+        _ = have;
     }
     for (paths) |d| {
         const e = lockedEntry(l, d.name) orelse

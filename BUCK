@@ -32,7 +32,8 @@ _TOOLS = {
 }
 
 # The files each root imports by a relative name (all siblings of the root).
-_CORE_SRCS = glob(["src/core/*.zig"], exclude = ["src/core/mopm_core.zig"])
+# src/core/toolchain/*.json are embedded (@embedFile) by src/core/unit_graph.zig.
+_CORE_SRCS = glob(["src/core/*.zig"], exclude = ["src/core/mopm_core.zig"]) + glob(["src/core/toolchain/*.json"])
 _CLI_SRCS = glob(["src/cli/*.zig"], exclude = ["src/cli/main.zig"])
 _FAKE_SRCS = glob(["registry/fake/*.zig"], exclude = ["registry/fake/main.zig"])
 
@@ -54,7 +55,6 @@ _UNIT_DATA = glob([
     "tests/new/**",
     "tests/resolve/golden/**",
     "toolchain/**",
-    "src/core/toolchain/**",
 ]) + _DOTFILES
 
 # What the golden driver reads (tests/drivers/golden_test.zig).

@@ -147,7 +147,65 @@ pub fn addPaths(arena: Allocator, l: lock.Lock, paths: []const PathDep, diag: *D
         try packages.append(.{ .name = d.name, .version = d.version, .source = .path, .path = d.path, .deps = d.deps });
     }
     lock.sortPackages(packages.items);
-    return .{ .mojo = l.mojo, .channels = l.channels, .packages = packages.items };
+    var out = l;
+    out.packages = packages.items;
+    return out;
+}
+
+fn lessName(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.order(u8, a, b) == .lt;
+}
+
+fn lessArtifact(_: void, a: lock.Artifact, b: lock.Artifact) bool {
+    return std.mem.order(u8, a.mojo, b.mojo) == .lt;
+}
+
+/// One version 2 lock from `per`, a lock (as `buildLock` makes it) for each
+/// Mojo version in `per[i].mojo`. A package version picked for several Mojo
+/// versions becomes one entry with one artifact each; a version picked for
+/// one only has one. `closures` are the toolchain hashes of those versions.
+pub fn mergeMojos(arena: Allocator, per: []const lock.Lock, closures: []const lock.Closure) Allocator.Error!lock.Lock {
+    var packages = std.ArrayList(lock.Package).init(arena);
+    var mojos = std.ArrayList([]const u8).init(arena);
+    for (per) |l| {
+        try mojos.append(l.mojo);
+        for (l.packages) |p| {
+            const art = lock.Artifact{ .mojo = l.mojo, .build = p.build, .url = p.url, .sha256 = p.sha256, .size = p.size };
+            var at: ?usize = null;
+            for (packages.items, 0..) |q, i| {
+                if (std.mem.eql(u8, q.name, p.name) and std.mem.eql(u8, q.version, p.version) and std.mem.eql(u8, q.subdir, p.subdir)) at = i;
+            }
+            if (at) |i| {
+                const old = packages.items[i].artifacts;
+                const grown = try arena.alloc(lock.Artifact, old.len + 1);
+                @memcpy(grown[0..old.len], old);
+                grown[old.len] = art;
+                packages.items[i].artifacts = grown;
+                var names = std.ArrayList([]const u8).init(arena);
+                try names.appendSlice(packages.items[i].deps);
+                for (p.deps) |d| {
+                    var have = false;
+                    for (names.items) |x| have = have or std.mem.eql(u8, x, d);
+                    if (!have) try names.append(d);
+                }
+                std.mem.sort([]const u8, names.items, {}, lessName);
+                packages.items[i].deps = names.items;
+            } else {
+                var q = p;
+                q.build = "";
+                q.url = "";
+                q.sha256 = "";
+                q.size = 0;
+                q.mojo = "";
+                q.artifacts = try arena.dupe(lock.Artifact, &.{art});
+                try packages.append(q);
+            }
+        }
+    }
+    for (packages.items) |*p| std.mem.sort(lock.Artifact, @constCast(p.artifacts), {}, lessArtifact);
+    std.mem.sort([]const u8, mojos.items, {}, lessName);
+    lock.sortPackages(packages.items);
+    return .{ .mojo = mojos.items[0], .channels = per[0].channels, .packages = packages.items, .mojos = mojos.items, .closures = closures };
 }
 
 /// One line per package whose version changed between `old` and `new`
@@ -490,4 +548,68 @@ test "path dependencies: one entry each with source path, no file; a name the re
     try std.testing.expectError(error.ResolveFailed, addPaths(a, base, &clash, &diag));
     try std.testing.expectEqual(resolve.Kind.conflict, diag.kind);
     try std.testing.expectEqualStrings("http_core is a path dependency (vendor/http_core), and the registry's http_client 0.4.0, tls 1.1.0 needs http_core 1.2.5 too; a package comes from one place", diag.message);
+}
+
+fn flatPackage(a: Allocator, name: []const u8, version: []const u8, mojo: []const u8, deps: []const []const u8) !lock.Package {
+    const build = try std.fmt.allocPrint(a, "mojo{s}_0", .{mojo});
+    return .{
+        .name = name,
+        .version = version,
+        .build = build,
+        .subdir = "linux-64",
+        .channel = "https://conda.mopm.dev/",
+        .url = try lock.fileUrl(a, "https://conda.mopm.dev/", "linux-64", name, version, build),
+        .sha256 = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        .size = 1000,
+        .mojo = mojo,
+        .deps = deps,
+    };
+}
+
+test "mergeMojos: a version picked for two Mojo versions is one entry with two builds; a version picked for one has one" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const channels = [_][]const u8{"https://conda.mopm.dev/"};
+    // With Mojo 1.0.0 core 1.2.0 is the newest build; with 1.1.0 it is core 1.3.0. app 1.0.0 serves both.
+    const for_10 = lock.Lock{ .mojo = "1.0.0", .channels = &channels, .packages = &.{
+        try flatPackage(a, "app", "1.0.0", "1.0.0", &.{"core"}),
+        try flatPackage(a, "core", "1.2.0", "1.0.0", &.{}),
+    } };
+    const for_11 = lock.Lock{ .mojo = "1.1.0", .channels = &channels, .packages = &.{
+        try flatPackage(a, "app", "1.0.0", "1.1.0", &.{"core"}),
+        try flatPackage(a, "core", "1.3.0", "1.1.0", &.{}),
+    } };
+    const closures = [_]lock.Closure{
+        .{ .mojo = "1.0.0", .subdir = "linux-64", .sha256 = "c" ** 64 },
+        .{ .mojo = "1.1.0", .subdir = "linux-64", .sha256 = "d" ** 64 },
+    };
+    const merged = try mergeMojos(a, &.{ for_11, for_10 }, &closures);
+    try std.testing.expectEqual(@as(usize, 2), merged.mojos.len);
+    try std.testing.expectEqualStrings("1.0.0", merged.mojos[0]);
+    try std.testing.expectEqualStrings("1.1.0", merged.mojos[1]);
+    try std.testing.expectEqual(@as(usize, 3), merged.packages.len);
+    try std.testing.expectEqualStrings("app", merged.packages[0].name);
+    try std.testing.expectEqual(@as(usize, 2), merged.packages[0].artifacts.len);
+    try std.testing.expectEqualStrings("1.0.0", merged.packages[0].artifacts[0].mojo);
+    try std.testing.expectEqualStrings("mojo1.1.0_0", merged.packages[0].artifacts[1].build);
+    try std.testing.expectEqualStrings("1.2.0", merged.packages[1].version);
+    try std.testing.expectEqual(@as(usize, 1), merged.packages[1].artifacts.len);
+    try std.testing.expectEqualStrings("1.0.0", merged.packages[1].artifacts[0].mojo);
+    try std.testing.expectEqualStrings("1.3.0", merged.packages[2].version);
+    try std.testing.expectEqualStrings("1.1.0", merged.packages[2].artifacts[0].mojo);
+    try std.testing.expectEqual(@as(?[]const u8, null), try lock.check(a, merged));
+
+    // What is written reads back to the same bytes.
+    const text = try lock.render(a, merged);
+    var why: []const u8 = "";
+    const back = try lock.parse(a, text, &why);
+    try std.testing.expectEqualStrings(text, try lock.render(a, back));
+
+    // A path dependency added after the merge keeps the Mojo versions and the closures.
+    var diag: Diagnostic = .{};
+    const with_path = try addPaths(a, merged, &.{.{ .name = "util", .version = "0.3.0", .path = "util" }}, &diag);
+    try std.testing.expectEqual(@as(usize, 4), with_path.packages.len);
+    try std.testing.expectEqual(@as(usize, 2), with_path.mojos.len);
+    try std.testing.expectEqual(@as(usize, 2), with_path.closures.len);
 }

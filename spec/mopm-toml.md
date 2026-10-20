@@ -13,9 +13,7 @@ repository = "https://github.com/example/http_client"
 homepage = "https://example.com/http_client"
 keywords = ["http", "client"]
 readme = "README.md"
-
-[toolchain]
-mojo = "1.0.0"                # exact compiler version, or an array of them; a .mojoc is tied to one
+mojo = ["1.0.0", "1.1.0"]     # exact compiler versions it builds for, one .mojoc each (a .mojoc is tied to one)
 
 [dependencies]                # Mojo packages
 http_core = "1.2"
@@ -57,13 +55,41 @@ tests = ["tests"]
   default link) is how consumers' tooling uses it: link means mopm computes the
   link and load flags, load means the package opens the library itself.
 - `[dev-dependencies]`: not installed for consumers.
-- `[toolchain]`: the Mojo compiler version(s) the package is built with: a
-  string or an array of strings, each an exact version. Tools normalise it to an
-  array.
+- `mojo` (in `[package]`): the exact Mojo compiler versions the package builds
+  for, a string or an array of strings, none repeated. `mopm publish` builds
+  one `.mojoc` per version and uploads all of them under the one package
+  version; a lock covers every version listed (`lock.md`, "Version 2"), and a
+  build system makes one unit per version (`unit-graph.md`). Tools normalise it
+  to an array.
+- `[toolchain]` (older form): `mojo = <version or array>` read as
+  alternatives: a lock is made for the first that resolves. Setting `mojo` in
+  `[package]` and `[toolchain]` is an error.
 - `[native.<id>]`: a native library the package builds and ships. Its entry in
   the installed `<name>.mopm.json` (see `package-metadata.schema.json`) is what
   consumers' tooling reads.
 - `[targets]`: the library, executables and tests to build.
+
+## Other tools' settings: `[package.metadata]`
+
+mopm refuses a key or table it does not know, so a typo is an error. One place
+is left for the settings of other tools, as in cargo's `package.metadata`:
+`[package.metadata]`, with one subtable per tool by convention
+(`[package.metadata.<tool>]`).
+
+```toml
+[package.metadata.buildrules]
+visibility = ["PUBLIC"]
+```
+
+- mopm reads nothing in it and checks nothing in it: any keys, nesting and
+  values the TOML subset mopm reads (strings, integers, booleans, arrays,
+  tables) are accepted. It must be a table; `metadata = "x"` is an error.
+- mopm preserves it. `mopm metadata` prints it, as JSON in file order, under
+  `package.metadata`; the key is there only when the file has the table, so
+  every other output is unchanged. It does not change a lock, a unit graph or
+  a unit's key, and `mopm pack` and `mopm publish` ignore it.
+- There is no other such table: `[tool.*]` or any other top-level table is
+  still refused.
 
 ## Version requirements
 
