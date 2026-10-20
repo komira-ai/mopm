@@ -1,6 +1,6 @@
-//! tests/contract/replay.py in Zig, for the build farm, which has no Python.
-//! replay.py stays for ci.yml until farm.yml has matched it, and is
-//! superseded by this file.
+//! Replays the API cases of tests/contract/api against the fake registry, for
+//! the build farm, which has no Python. (It was tests/contract/replay.py; the
+//! Python is deleted and this file is the check.)
 //!
 //! Replays the API cases of tests/contract/api against the fake registry. For
 //! every case marked valid whose operation the fake implements, a recipe
@@ -75,7 +75,7 @@ fn catalogueDrift(a: Allocator, t: *c.Tally, spec: Value) !void {
     while (left.next()) |k| try only_spec.append(k.*);
     if (only_spec.items.len != 0) {
         std.mem.sort([]const u8, only_spec.items, {}, c.lessStr);
-        t.fail("registry/fake/errors.zig and the spec's ErrorCode differ ({s}); run registry/fake/gen_errors.py", .{try std.mem.join(a, ", ", only_spec.items)});
+        t.fail("registry/fake/errors.zig and the spec's ErrorCode differ ({s}); run ./buck2 run //:gen_errors -- spec/api/openapi.yaml registry/fake/errors.zig", .{try std.mem.join(a, ", ", only_spec.items)});
     }
 }
 

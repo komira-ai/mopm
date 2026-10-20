@@ -1,9 +1,9 @@
-//! The recipes of tests/contract/replay.py, in Zig: for each valid API case of
+//! The recipes of the replay, in Zig: for each valid API case of
 //! an operation the fake registry implements, how to put a fresh fake in the
 //! state the case describes and which request to send (a `Step`).
 //!
 //! `table` is the list of (operation, case name) with the recipe that builds
-//! the step, as RECIPES of replay.py. Recipes reach states the public API
+//! the step. Recipes reach states the public API
 //! cannot (a second account, a stale session, time passing, a server fault)
 //! through the fake's /_fake controls, documented in registry/fake/README.md.
 //! Used by replay_test.zig. The client and the recipes are in replay_recipes.zig,
@@ -21,7 +21,7 @@ pub const implemented = [_][]const u8{
 };
 
 /// What a recipe asks the replay to assert about the live answer, besides the
-/// contract checks (python's `check` lambdas). `args` of the step feed it.
+/// contract checks (the recipes' own assertions). `args` of the step feed it.
 pub const Check = enum {
     none,
     read_only,

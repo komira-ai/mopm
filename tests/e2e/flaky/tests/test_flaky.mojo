@@ -1,4 +1,4 @@
-"""Fixtures of the retry end-to-end test (tests/e2e/test_flaky.sh).
+"""Fixtures of the retry end-to-end test (tests/drivers/test_flaky_test.zig).
 
 Each test counts its own attempts in a state file under the working
 directory (mopm test runs tests in the directory it was started in, here a
