@@ -145,6 +145,9 @@ test "cut_release: tag and verify, and every planted defect is refused" {
             .{ .name = "release_exists", .version = "1.2.3", .why = "already exists" },
             .{ .name = "no_checks", .version = "1.2.3", .why = "does not have all checks green" },
             .{ .name = "leading_v", .version = "v1.2.3", .why = "is not <major>.<minor>.<patch>" },
+            // A lookup that fails for any reason but 404 must stop the tool: "could not ask" is not "absent".
+            .{ .name = "tag_error", .version = "1.2.3", .why = "could not tell whether" },
+            .{ .name = "release_error", .version = "1.2.3", .why = "could not tell whether" },
         };
         for (cases) |c| {
             const w = try goodTag(a, tools, &tmp, try h.fmt(a, "tag_bad_{s}", .{c.name}));
@@ -152,6 +155,8 @@ test "cut_release: tag and verify, and every planted defect is refused" {
             if (std.mem.eql(u8, c.name, "no_checks")) try w.put("checks", "0 0\n");
             if (std.mem.eql(u8, c.name, "tag_exists")) try w.put("tag_exists", "");
             if (std.mem.eql(u8, c.name, "release_exists")) try w.put("release_exists", "");
+            if (std.mem.eql(u8, c.name, "tag_error")) try w.put("tag_error", "");
+            if (std.mem.eql(u8, c.name, "release_error")) try w.put("release_error", "");
             const r = try w.run(&.{ "tag", c.version, "--execute" });
             rep.check(try h.fmt(a, "tag: refused with --execute: {s}", .{c.name}), r.code == 1 and h.contains(r.text, c.why) and !h.contains(w.log(), "-X POST"), r.text);
         }

@@ -7,12 +7,19 @@
 //!   release_exists the release exists                      release_state "<draft> <prerelease>"
 //!   assets/        the release's files (a download copies them)
 //!   attest_refuse  a file name: `attestation verify` of that file fails
+//!   tag_error      the tag-ref lookup fails with HTTP 500 (not a 404)
+//!   release_error  the release lookup fails with HTTP 500 (not a 404)
 //! A missing file means: no tag, no release, state "false false", no refusal.
 
 const std = @import("std");
 
 fn fail404(msg: []const u8) noreturn {
     std.io.getStdErr().writer().print("gh: {s} (HTTP 404)\n", .{msg}) catch {};
+    std.process.exit(1);
+}
+
+fn fail500() noreturn {
+    std.io.getStdErr().writer().print("gh: Server Error (HTTP 500)\n", .{}) catch {};
     std.process.exit(1);
 }
 
@@ -53,9 +60,11 @@ pub fn main() !void {
         } else if (std.mem.indexOf(u8, path, "/check-runs") != null) {
             try w.print("{s}\n", .{fileText(a, dir, "checks") orelse "0 0"});
         } else if (std.mem.startsWith(u8, path, repo ++ "git/ref/tags/")) {
+            if (fileText(a, dir, "tag_error") != null) fail500();
             if (fileText(a, dir, "tag_exists") == null) fail404("Not Found");
             try w.writeAll("{}\n");
         } else if (std.mem.startsWith(u8, path, repo ++ "releases/tags/")) {
+            if (fileText(a, dir, "release_error") != null) fail500();
             if (fileText(a, dir, "release_exists") == null) fail404("Not Found");
             try w.writeAll("{}\n");
         } else {
