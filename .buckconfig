@@ -55,7 +55,7 @@
   # buildrules: its Rust (cargo_unit, the cargo_package front door), Zig, node, cxx and AWS-LC rules and the CLI. Bump commit_hash
   # to take a newer commit.
   git_origin = https://github.com/komira-ai/buildrules.git
-  commit_hash = 8d19217212ee5871636bec85f89c75cae458d9a6
+  commit_hash = 93a3136321e97e387a5b95da3780ddb9bf7c7a08
 
 [buildfile]
   name = BUCK
