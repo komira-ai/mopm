@@ -4,7 +4,7 @@ import { AuthError } from '../auth/errors';
 export type SecretReader = (secretId: string) => Promise<string | undefined>;
 
 /**
- * The secret is JSON: {"client_id": "...", "client_secret": "..."}, stored by service/infra/access/oauth-secret.sh,
+ * The secret is JSON: {"client_id": "...", "client_secret": "..."}, stored by service/infra/access/lib/oauth-secret.ts,
  * one per stage (`mopm/<stage>/github-oauth`). The device flow needs only the client id; the client secret is stored
  * with it because GitHub issues them together, and is never read into memory here.
  */

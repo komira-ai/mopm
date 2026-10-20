@@ -24,6 +24,8 @@
 //! on one line. A call whose first line carries `buck-only` is a target of
 //! the Buck2 build with no counterpart in build.zig (a helper program, a test
 //! driver that needs the built programs): it is left out of the comparison.
+//! A block of build.zig whose first line carries `native-only` is the mirror
+//! of that: a driver only `zig build` runs, natively (test-e2e); it is left out.
 //! A form it does not understand is a finding, not a pass.
 //!
 //! Run as a zig_test by Buck2 (//:build_parity), with build.zig and BUCK as
@@ -78,6 +80,7 @@ fn zigFacts(a: Allocator, text: []const u8, found: *List) !List {
     var var_name: []const u8 = "";
     var name: ?[]const u8 = null;
     var root: ?[]const u8 = null;
+    var native_only = false;
     var lines = std.mem.splitScalar(u8, text, '\n');
     var n: usize = 0;
     while (lines.next()) |raw| {
@@ -88,6 +91,7 @@ fn zigFacts(a: Allocator, text: []const u8, found: *List) !List {
             if (std.mem.startsWith(u8, line, ".root_source_file")) root = firstQuoted(line);
             if (std.mem.eql(u8, line, "});")) {
                 open = null;
+                if (native_only) continue;
                 const r = root orelse {
                     try found.append(try std.fmt.allocPrint(a, "build.zig:{d}: a block with no .root_source_file = b.path(\"...\")", .{n}));
                     continue;
@@ -110,6 +114,7 @@ fn zigFacts(a: Allocator, text: []const u8, found: *List) !List {
         const started: ?Kind = if (contains(line, "b.addExecutable(.{")) .exe else if (contains(line, "b.addTest(.{")) .test_ else if (contains(line, "b.createModule(.{")) .module else null;
         if (started) |k| {
             open = k;
+            native_only = contains(line, "native-only");
             name = null;
             root = null;
             var_name = try std.fmt.allocPrint(a, "?{d}", .{n});
@@ -304,6 +309,27 @@ test "mutant: a test added to build.zig and not to BUCK" {
     });
     const f = try findings(a, mutant, try readAll(a, "BUCK"), false);
     try std.testing.expect(mentions(f, "build.zig has `test src/core/toml.zig`"));
+}
+
+test "a native-only block of build.zig is left out, an unmarked one is not" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const zig = try readAll(a, "build.zig");
+    const end = std.mem.lastIndexOfScalar(u8, zig, '}').?;
+    const block =
+        \\
+        \\    const drv = b.addTest(.{{{s}
+        \\        .root_source_file = b.path("src/core/toml.zig"),
+        \\    }});
+        \\}}
+        \\
+    ;
+    const marked = try std.mem.concat(a, u8, &.{ zig[0..end], try std.fmt.allocPrint(a, block, .{" // native-only"}) });
+    const plain = try std.mem.concat(a, u8, &.{ zig[0..end], try std.fmt.allocPrint(a, block, .{""}) });
+    const buck = try readAll(a, "BUCK");
+    try std.testing.expectEqual(@as(usize, 0), (try findings(a, marked, buck, false)).items.len);
+    try std.testing.expect(mentions(try findings(a, plain, buck, false), "build.zig has `test src/core/toml.zig`"));
 }
 
 test "mutant: a zig_test removed from BUCK" {

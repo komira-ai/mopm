@@ -6,7 +6,8 @@
   "scripts": {
     "test": "jest",
     "typecheck": "tsc --noEmit",
-    "synth": "cdk synth"
+    "synth": "cdk synth",
+    "dns-cli": "ts-node --prefer-ts-exts bin/dns-cli.ts"
   },
   "devDependencies": {
     "@types/jest": "29.5.14",
