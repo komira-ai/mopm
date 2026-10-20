@@ -29,7 +29,11 @@ Two builds describe the same program, and both stay.
   (`//:mopm` is not built unless `//:core_test` and `//:cli_test` passed).
   The Zig drivers in `tests/drivers` run the built programs: `//:golden` (the
   checks of `tests/run_golden.sh`), `//:registry_login` and
-  `//:registry_publish` (the checks of `tests/registry_e2e/*.py`), and the
+  `//:registry_publish` (the former `tests/registry_e2e/*.py`), `//:install_e2e`
+  (`mopm sync`, the former `tests/install_e2e/run.py`; pixi is
+  `tests/drivers/fake_pixi.zig` there), `//:gen_errors_current` (the committed
+  `registry/fake/errors.zig` is what `./buck2 run //:gen_errors -- spec/api/openapi.yaml registry/fake/errors.zig`
+  makes of the spec; the former `gen_errors.py`), and the
   contract checks: `//:contract` (`tests/contract/validate.py`: the OpenAPI
   document, the JSON Schemas, the API cases and the examples),
   `//:contract_replay` (`replay.py`: the fake registry against the API

@@ -520,3 +520,39 @@ zig_test(  # buck-only: tests/lint/run.rb in Zig: both Zig lints over the fixtur
     data = {f: f for f in glob(["tests/lint/fixtures/*", "tests/lint/run.rb"])},
     **_TOOLS
 )
+
+# ---- Ports of the install e2e test and the fake registry's error generator ------------
+
+zig_exe(  # buck-only: stands in for pixi in install_e2e: unpacks the pinned conda files into the environment
+    name = "fake-pixi",
+    src = "tests/drivers/fake_pixi.zig",
+    **_TOOLS
+)
+
+zig_test(  # buck-only: mopm sync against the fake registry and the real Mojo; the Zig port of tests/install_e2e/run.py
+    name = "install_e2e",
+    src = "tests/drivers/install_e2e_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig"],
+    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm", MOPM_FAKE_REGISTRY = ":mopm-fake-registry", FAKE_PIXI = ":fake-pixi"),
+    data = [
+        "tests/e2e/native/greet.c",
+        "tests/e2e/pkgs/greet",
+        "tests/install_e2e/prog.mojo",
+    ],
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: regenerates registry/fake/errors.zig from spec/api/openapi.yaml (the Zig port of gen_errors.py)
+    name = "gen_errors",
+    src = "tests/drivers/gen_errors.zig",
+    imports = ["tests/drivers/errors_gen.zig", "tests/drivers/yaml.zig"],
+    **_TOOLS
+)
+
+zig_test(  # buck-only: registry/fake/errors.zig is what gen_errors makes of the spec, and the generator's refusals
+    name = "gen_errors_current",
+    src = "tests/drivers/gen_errors_test.zig",
+    imports = ["tests/drivers/errors_gen.zig", "tests/drivers/harness.zig", "tests/drivers/yaml.zig"],
+    data = ["spec/api/openapi.yaml", "registry/fake/errors.zig"],
+    **_TOOLS
+)
