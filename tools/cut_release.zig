@@ -41,7 +41,9 @@
 //!       After the release exists (read-only): the release is published, not a draft, with the prerelease
 //!       flag its version calls for, and exactly the twelve assets; its tag is on main; the assets are
 //!       downloaded into the empty <dir> and pass the same checks as verify-dir, with the attestation
-//!       pinned to main and the tag's commit. Prints the pin.
+//!       pinned to main and the tag's commit. Prints the pin. The .debs are checked against the .deb metadata the repository
+//!       held at the release's tag (read with `gh api`; --packaging <dir> names a directory instead). A release older than
+//!       v0.0.6, the first with .debs, is refused at once: it has none to check.
 //!   cut_release publish <version> <dir> --verified <file> --notes <file>
 //!       Creates the release v<version> from exactly the twelve files of <dir>, which must be the ones
 //!       verified.sha256 lists. A re-run creates no second release and replaces no asset: when the release
@@ -86,6 +88,10 @@ const Gh = struct {
     cosign: []const u8 = "cosign",
     /// The directory of the .deb metadata (`--packaging <dir>`), which verify uses to rebuild each .deb from its tarball.
     packaging: []const u8 = release_debs.default_packaging,
+    /// `--packaging` was given.
+    packaging_given: bool = false,
+    /// The .deb metadata itself, when it was not read from `packaging` (verify reads the release's own tag).
+    meta: ?release_debs.Metadata = null,
 
     fn run(g: Gh, args: []const []const u8) Ran {
         return g.runExe(g.exe, args);
@@ -500,7 +506,7 @@ fn checkSignatures(gh: Gh, dir_path: []const u8, payload: [][]const u8, source_r
 /// `packaging`): a .deb with other bytes than the tarball's binary, or other metadata than the repository's, is refused.
 fn checkDebs(gh: Gh, dir: std.fs.Dir, version: []const u8) void {
     const a = gh.a;
-    const meta = release_debs.loadPackaging(a, gh.packaging) catch |err| die("cannot read the .deb metadata in {s}: {s}", .{ gh.packaging, @errorName(err) });
+    const meta = gh.meta orelse (release_debs.loadPackaging(a, gh.packaging) catch |err| die("cannot read the .deb metadata in {s}: {s}", .{ gh.packaging, @errorName(err) }));
     for (release_debs.debs) |d| {
         const deb_name = release_debs.debName(a, version, d.arch) catch @panic("oom");
         const tar_name = release_debs.tarballName(a, version, d.target) catch @panic("oom");
@@ -613,8 +619,24 @@ fn writeInto(a: Allocator, dir_path: []const u8, name: []const u8, data: []const
 
 // ---- verify (a published release) ------------------------------------------------------
 
-fn verifyCmd(gh: Gh, version: []const u8, dir_path: []const u8, expect: ?[]const u8) void {
+/// The .deb metadata as the repository held it at `sha` (the commit of the release's tag), read with `gh api` as raw file
+/// bytes (not trimmed: a changed final newline is another .deb).
+fn packagingAt(gh: Gh, tag: []const u8, sha: []const u8) release_debs.Metadata {
+    const a = gh.a;
+    var texts: [3][]const u8 = undefined;
+    for (release_debs.metadata_files, 0..) |name, i| {
+        const path = std.fmt.allocPrint(a, "repos/{s}/contents/{s}/{s}?ref={s}", .{ gh.repo, release_debs.default_packaging, name, sha }) catch @panic("oom");
+        const r = gh.run(&.{ "api", path, "-H", "Accept: application/vnd.github.raw+json" });
+        if (!r.ok) die("cannot read {s}/{s} as {s} had it ({s}): {s}", .{ release_debs.default_packaging, name, tag, sha, std.mem.trim(u8, r.stderr, " \r\n") });
+        texts[i] = r.stdout;
+    }
+    return .{ .control = texts[0], .copyright = texts[1], .lintian_overrides = texts[2] };
+}
+
+fn verifyCmd(gh_in: Gh, version: []const u8, dir_path: []const u8, expect: ?[]const u8) void {
     if (!validVersion(version)) die("'{s}' is not <major>.<minor>.<patch>[-suffix] (no leading v)", .{version});
+    if (release_debs.predatesDebs(version)) die("v{s} is older than v0.0.6, the first release with .deb files; verify checks the .debs of a release and cannot check this one (it would find them missing). Nothing was downloaded.", .{version});
+    var gh = gh_in;
     const a = gh.a;
     const tag = std.fmt.allocPrint(a, "v{s}", .{version}) catch @panic("oom");
 
@@ -651,6 +673,8 @@ fn verifyCmd(gh: Gh, version: []const u8, dir_path: []const u8, expect: ?[]const
 
     const tag_sha = commitOf(gh, tag);
     requireOnMain(gh, tag, tag_sha);
+    // The .deb metadata is the release's own, read at its tag: a later change to packaging/deb does not make an old release fail. --packaging names a directory instead.
+    if (!gh.packaging_given) gh.meta = packagingAt(gh, tag, tag_sha);
 
     std.fs.cwd().makePath(dir_path) catch |err| die("cannot make {s}: {s}", .{ dir_path, @errorName(err) });
     {
@@ -791,6 +815,7 @@ pub fn main() !void {
     var expect_version: ?[]const u8 = null;
     var cosign: []const u8 = "cosign";
     var packaging: []const u8 = release_debs.default_packaging;
+    var packaging_given = false;
     var git_exe: []const u8 = "git";
     var internal_repo: ?[]const u8 = null;
     var submodule: ?[]const u8 = null;
@@ -810,6 +835,7 @@ pub fn main() !void {
                 cosign = v;
             } else if (std.mem.eql(u8, arg, "--packaging")) {
                 packaging = v;
+                packaging_given = true;
             } else if (std.mem.eql(u8, arg, "--git")) {
                 git_exe = v;
             } else if (std.mem.eql(u8, arg, "--internal-repo")) {
@@ -846,7 +872,7 @@ pub fn main() !void {
         } else try pos.append(arg);
     }
     if (pos.items.len == 0) usage();
-    const gh = Gh{ .a = a, .exe = gh_exe, .repo = repo, .cosign = cosign, .packaging = packaging };
+    const gh = Gh{ .a = a, .exe = gh_exe, .repo = repo, .cosign = cosign, .packaging = packaging, .packaging_given = packaging_given };
     const cmd = pos.items[0];
     const n = pos.items.len;
     if (std.mem.eql(u8, cmd, "plan")) {

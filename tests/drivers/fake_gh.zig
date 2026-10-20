@@ -17,6 +17,8 @@
 //!   release_exists the release exists (`release view`, `releases/tags/`)   release_state "<draft> <prerelease>"
 //!   assets/        the release's files (a download copies them; create and upload add to them)
 //!   asset_list     the release's asset names, one per line (default: the file names in assets/)
+//!   tag_packaging/ the .deb metadata files (control, copyright, lintian-overrides) `contents/packaging/deb/<file>?ref=` answers with;
+//!                  without the directory it answers with the working tree's packaging/deb; a file missing from the directory is HTTP 404
 //!   attest_refuse  a file name: `attestation verify` of that file fails
 //!   release_error  `release view` fails with HTTP 500 (not a 404)
 //!   upload_fail    `release upload` fails
@@ -158,6 +160,16 @@ pub fn main() !void {
             const file = try std.fmt.allocPrint(a, "compare_tag_{s}", .{rest[0..dots]});
             const t = fileText(a, dir, file) orelse fileText(a, dir, "tag_compare_status") orelse "ahead";
             try w.print("{s}\n", .{std.mem.trim(u8, t, " \n")});
+        } else if (std.mem.startsWith(u8, path, repo ++ "contents/packaging/deb/")) {
+            // The .deb metadata at a tag: tag_packaging/<file> when the scenario has it, else the repository's own.
+            const rest = path[(repo ++ "contents/packaging/deb/").len..];
+            const name = rest[0..std.mem.indexOfScalar(u8, rest, '?').?];
+            const held = if (dir.openDir("tag_packaging", .{})) |d0| blk: {
+                var d = d0;
+                defer d.close();
+                break :blk fileText(a, d, name);
+            } else |_| std.fs.cwd().readFileAlloc(a, try std.fmt.allocPrint(a, "packaging/deb/{s}", .{name}), 1 << 20) catch null;
+            try w.writeAll(held orelse failWith("Not Found (HTTP 404)"));
         } else if (std.mem.startsWith(u8, path, internal ++ "git/ref/heads/")) {
             const name = path[(internal ++ "git/ref/heads/").len..];
             var found = false;
