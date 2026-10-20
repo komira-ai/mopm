@@ -1,8 +1,7 @@
-//! //:hygiene: .github/scripts/hygiene.rb in Zig (tests/drivers/hygiene.zig),
+//! //:hygiene: the repository hygiene scan (tests/drivers/hygiene.zig),
 //! run by Buck2 over every file of the repository (the target's `data`), and
 //! shown able to fail: one planted sample per rule must be flagged, and a near
-//! miss of each must not be. hygiene.rb stays for ci.yml until farm.yml has
-//! matched it, and is superseded by this file.
+//! miss of each must not be.
 //!
 //! Samples hold key-shaped values built from pieces at run time: hygiene scans
 //! this file too, and has no allow-list.

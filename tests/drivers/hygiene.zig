@@ -1,8 +1,6 @@
-//! .github/scripts/hygiene.rb in Zig, for the build farm, which has no Ruby.
-//! hygiene.rb stays for ci.yml until farm.yml has matched it; this file
-//! reproduces its rules and its messages (`hygiene: <file>: <rule>`).
+//! The repository hygiene scan, run by Buck2 (//:hygiene). Its messages read (`hygiene: <file>: <rule>`).
 //!
-//! Two halves, as in the Ruby:
+//! Two halves:
 //!   - `textProblems`: the secret and identifier patterns over the bytes of
 //!     every tracked text file (a file holding a NUL byte is binary and skipped);
 //!   - `structureProblems`: which workflows may hold an id-token grant or a
@@ -205,7 +203,7 @@ fn accountIdShaped(s: []const u8) bool {
 }
 
 /// Every problem the text rules find in one file's bytes, as
-/// `hygiene: <file>: <rule>`; the same rules, in the same order, as hygiene.rb.
+/// `hygiene: <file>: <rule>`.
 pub fn textProblems(a: Allocator, f: []const u8, data: []const u8, out: *Out) !void {
     if (std.mem.indexOfScalar(u8, data, 0) != null) return;
     const Rule = struct { name: []const u8, hit: bool };
@@ -380,7 +378,7 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
     }
 }
 
-/// hygiene.rb with path arguments: the text rules over each path, then the
+/// Given paths (the self-test): the text rules over each path, then the
 /// structure rules over the paths that end in .yml or .yaml. (Without
 /// arguments the structure rules run over .github/workflows only: `repo`.)
 pub fn run(a: Allocator, files: []const File, structure: []const File, out: *Out) !void {

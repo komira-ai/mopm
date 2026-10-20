@@ -1,4 +1,4 @@
-//! What the Zig ports of .github/scripts/hygiene.rb and workflow_lint.rb share:
+//! What hygiene.zig and workflow_lint.zig share (they began as ports of Ruby scripts, now removed):
 //! the reading of the files they check, a few Ruby behaviours the ports keep
 //! (truthiness, `to_s`, `inspect`), and the small text matchers that stand in
 //! for the Ruby regular expressions.
@@ -385,7 +385,7 @@ pub fn nonCommentLines(a: Allocator, text: []const u8) ![]u8 {
 // ---- for the tests ------------------------------------------------------------------
 
 /// `got` has exactly one line per entry of `want`, and each entry of `want`
-/// is a substring of some line: the comparison tests/lint/run.rb makes.
+/// is a substring of some line: the self-test's comparison.
 pub fn expectLines(what: []const u8, got: []const []const u8, want: []const []const u8) !void {
     var ok = got.len == want.len;
     for (want) |w| {

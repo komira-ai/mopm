@@ -13,7 +13,7 @@
 # worker property set. Until the variables are set the job does nothing and
 # says so, so it cannot fail a pull request before the farm is available.
 # A fork's pull request gets neither the token nor the variables and is
-# skipped. hygiene.rb and workflow_lint.rb allow the id-token grant and the
+# skipped. The hygiene and workflow lints (//:hygiene, //:workflows) allow the id-token grant and the
 # one action outside GitHub's own for this file only, under these conditions.
 name: farm
 
