@@ -14,6 +14,7 @@
 
 const std = @import("std");
 const c = @import("lint_common.zig");
+const rl = @import("release_lint.zig");
 const sh = @import("shell_syntax.zig");
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
@@ -30,9 +31,9 @@ const farm_file = "farm.yml";
 /// manual run: checked below.
 const kpin_file = "kpin-update.yml";
 const kpin_writes = [_][]const u8{ "contents", "pull-requests" };
-/// release.yml (a pushed v* tag publishes a release) holds the three write grants a release with
-/// build-provenance attestations needs, on its jobs only (the top level stays read-only); hygiene
-/// holds its triggers to tags.
+/// release.yml (a push to main releases) holds the three write grants a release with
+/// build-provenance attestations needs, on its jobs only (the top level stays read-only); release_lint.zig
+/// holds each of them to the one job that may have it, and hygiene holds its triggers.
 const release_file = "release.yml";
 const release_writes = [_][]const u8{ "contents", "id-token", "attestations" };
 /// Names whose values must never reach a log: no echo/printf/cat/tee of them.
@@ -415,6 +416,9 @@ fn sortedKeys(a: Allocator, v: ?Value) ![]const []const u8 {
 /// The checks that run only without path arguments. The workflows
 /// are read by name through `read` (the repository's .github/workflows).
 pub fn repoProblems(a: Allocator, ctx: anytype, out: *Out) !void {
+    // release.yml: who may write, what each stage needs, the triggers and the path filter.
+    try rl.problems(a, try ctx.read(a, "release.yml"), out);
+
     // promote.yml
     {
         const pdoc = c.load(a, try ctx.read(a, "promote.yml")) catch |err| return c.problem(a, out, prefix ++ "promote.yml: not readable as YAML: {s}", .{@errorName(err)});

@@ -1,33 +1,68 @@
 //! A `gh` for cut_release_test.zig. Its state is the directory $FAKE_GH_DIR: the files below say
 //! what GitHub would answer, `log` gets one line per call (the arguments, space-joined), and the
-//! one mutating call (creating a tag ref) makes the file `tag_exists`.
+//! mutating calls (creating a tag, a release, an asset) change the files, so a test can read what
+//! the tool did.
 //!
-//!   main_sha       the sha of main                         main_zig     src/cli/main.zig at main
-//!   runs           the workflow-runs JSON of main's commit       tag_exists   the tag ref exists
-//!   release_exists the release exists                      release_state "<draft> <prerelease>"
-//!   assets/        the release's files (a download copies them)
-//!   attest_refuse  a file name: `attestation verify` of that file fails
+//!   main_sha       the sha of main (the default commit of a tag)
+//!   tags           one line per tag, `<name> <commit>`; a tag-ref POST appends one
+//!   race           `<name> <commit>`: the next tag-ref POST first creates that tag (another run took
+//!                  the number) and fails with HTTP 422 "Reference already exists"
+//!   ref_taken      every tag-ref POST fails with HTTP 422 "Reference already exists"
+//!   tag_commit     the commit every tag resolves to when there is no `tags` file (default main_sha); with a
+//!                  `tags` file, a tag not in it is HTTP 404
+//!   compare_status main...<sha> (default behind)
 //!   releases_page_<n>  page n of the release listing (JSON array; a missing page is [])
+//!   release_exists the release exists (`release view`, `releases/tags/`)   release_state "<draft> <prerelease>"
+//!   assets/        the release's files (a download copies them; create and upload add to them)
 //!   asset_list     the release's asset names, one per line (default: the file names in assets/)
-//!   tag_commit     the commit the tag resolves to (default main_sha)   compare_status  main...tag (default behind)
-//!   tag_error      the tag-ref lookup fails with HTTP 500 (not a 404)
-//!   release_error  the release lookup fails with HTTP 500 (not a 404)
+//!   attest_refuse  a file name: `attestation verify` of that file fails
+//!   release_error  `release view` fails with HTTP 500 (not a 404)
+//!   upload_fail    `release upload` fails
+//! Written by the tool's calls: pending_tag (the tag object a git/tags POST made), release_notes (the
+//! notes file a `release create` was given).
 //! A missing file means: no tag, no release, state "false false", no refusal.
 
 const std = @import("std");
 
-fn fail404(msg: []const u8) noreturn {
-    std.io.getStdErr().writer().print("gh: {s} (HTTP 404)\n", .{msg}) catch {};
-    std.process.exit(1);
-}
-
-fn fail500() noreturn {
-    std.io.getStdErr().writer().print("gh: Server Error (HTTP 500)\n", .{}) catch {};
+fn failWith(comptime msg: []const u8) noreturn {
+    std.io.getStdErr().writer().print("gh: " ++ msg ++ "\n", .{}) catch {};
     std.process.exit(1);
 }
 
 fn fileText(a: std.mem.Allocator, dir: std.fs.Dir, name: []const u8) ?[]u8 {
     return dir.readFileAlloc(a, name, 1 << 20) catch null;
+}
+
+fn field(args: []const []const u8, key: []const u8) []const u8 {
+    for (args) |x| {
+        if (std.mem.startsWith(u8, x, key) and x.len > key.len and x[key.len] == '=') return x[key.len + 1 ..];
+    }
+    return "";
+}
+
+/// The commit of tag `name` in the `tags` file, if it is there.
+fn tagCommit(a: std.mem.Allocator, dir: std.fs.Dir, name: []const u8) ?[]const u8 {
+    const text = fileText(a, dir, "tags") orelse return null;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |l| {
+        const sp = std.mem.indexOfScalar(u8, l, ' ') orelse continue;
+        if (std.mem.eql(u8, l[0..sp], name)) return l[sp + 1 ..];
+    }
+    return null;
+}
+
+fn appendFile(dir: std.fs.Dir, name: []const u8, line: []const u8) !void {
+    var f = try dir.createFile(name, .{ .truncate = false });
+    defer f.close();
+    try f.seekFromEnd(0);
+    try f.writer().print("{s}\n", .{line});
+}
+
+/// The file arguments of `release create|upload <tag> <files...> [flags]`.
+fn fileArgs(args: []const []const u8) []const []const u8 {
+    var end: usize = 3;
+    while (end < args.len and !std.mem.startsWith(u8, args[end], "-")) end += 1;
+    return args[3..end];
 }
 
 pub fn main() !void {
@@ -37,15 +72,11 @@ pub fn main() !void {
     var dir = try std.fs.cwd().openDir(dir_path, .{});
     defer dir.close();
     const line = try std.mem.join(a, " ", argv[1..]);
-    {
-        var log = try dir.createFile("log", .{ .truncate = false });
-        defer log.close();
-        try log.seekFromEnd(0);
-        try log.writer().print("{s}\n", .{line});
-    }
+    try appendFile(dir, "log", line);
     const w = std.io.getStdOut().writer();
     const args = argv[1..];
     const repo = "repos/komira-ai/mopm/";
+    try dir.makePath("assets");
 
     if (std.mem.eql(u8, args[0], "api")) {
         var path: []const u8 = "";
@@ -53,43 +84,87 @@ pub fn main() !void {
             if (std.mem.startsWith(u8, x, "repos/")) path = x;
         }
         if (std.mem.indexOf(u8, line, "-X POST") != null) {
-            try dir.writeFile("tag_exists", "");
+            if (std.mem.eql(u8, path, repo ++ "git/tags")) {
+                try dir.writeFile("pending_tag", try std.fmt.allocPrint(a, "{s} {s}", .{ field(args, "tag"), field(args, "object") }));
+                try w.writeAll("1111111111111111111111111111111111111111\n");
+            } else if (std.mem.eql(u8, path, repo ++ "git/refs")) {
+                const name = field(args, "ref")["refs/tags/".len..];
+                if (fileText(a, dir, "race")) |r| {
+                    try appendFile(dir, "tags", std.mem.trim(u8, r, "\n"));
+                    try dir.deleteFile("race");
+                    failWith("Reference already exists (HTTP 422)");
+                }
+                if (fileText(a, dir, "ref_taken") != null or tagCommit(a, dir, name) != null) failWith("Reference already exists (HTTP 422)");
+                const pending = fileText(a, dir, "pending_tag") orelse failWith("no tag object (HTTP 422)");
+                const sp = std.mem.indexOfScalar(u8, pending, ' ') orelse failWith("bad pending tag");
+                if (!std.mem.eql(u8, pending[0..sp], name)) failWith("the ref names another tag than the object (HTTP 422)");
+                try appendFile(dir, "tags", try std.fmt.allocPrint(a, "{s} {s}", .{ name, pending[sp + 1 ..] }));
+            } else {
+                std.debug.print("fake gh: unexpected POST: {s}\n", .{line});
+                std.process.exit(3);
+            }
             return;
         }
-        if (std.mem.eql(u8, path, repo ++ "commits/main")) {
-            try w.print("{s}\n", .{fileText(a, dir, "main_sha") orelse ""});
-        } else if (std.mem.startsWith(u8, path, repo ++ "contents/src/cli/main.zig?ref=")) {
-            try w.writeAll(fileText(a, dir, "main_zig") orelse "");
-        } else if (std.mem.indexOf(u8, path, "/actions/runs") != null) {
-            try w.print("{s}\n", .{fileText(a, dir, "runs") orelse "{\"workflow_runs\":[]}"});
+        if (std.mem.startsWith(u8, path, repo ++ "git/matching-refs/tags/")) {
+            const rest = path[(repo ++ "git/matching-refs/tags/").len..];
+            const q = std.mem.indexOf(u8, rest, "?per_page=") orelse @panic("no per_page");
+            const prefix = rest[0..q];
+            const at = std.mem.indexOf(u8, rest, "&page=") orelse @panic("no page");
+            const page = try std.fmt.parseInt(usize, rest[at + 6 ..], 10);
+            var matched = std.ArrayList([]const u8).init(a);
+            var lines = std.mem.splitScalar(u8, fileText(a, dir, "tags") orelse "", '\n');
+            while (lines.next()) |l| {
+                const sp = std.mem.indexOfScalar(u8, l, ' ') orelse continue;
+                if (std.mem.startsWith(u8, l[0..sp], prefix)) try matched.append(l[0..sp]);
+            }
+            const from = @min((page - 1) * 100, matched.items.len);
+            const to = @min(page * 100, matched.items.len);
+            try w.writeAll("[");
+            for (matched.items[from..to], 0..) |n, i| try w.print("{s}{{\"ref\":\"refs/tags/{s}\"}}", .{ if (i == 0) "" else ",", n });
+            try w.writeAll("]\n");
         } else if (std.mem.startsWith(u8, path, repo ++ "releases?")) {
             const at = std.mem.indexOf(u8, path, "&page=") orelse @panic("no page");
             const name = try std.fmt.allocPrint(a, "releases_page_{s}", .{path[at + 6 ..]});
             try w.print("{s}\n", .{fileText(a, dir, name) orelse "[]"});
         } else if (std.mem.startsWith(u8, path, repo ++ "commits/v")) {
-            const t = fileText(a, dir, "tag_commit") orelse fileText(a, dir, "main_sha") orelse "";
-            try w.print("{s}\n", .{std.mem.trim(u8, t, " \n")});
+            const name = path[(repo ++ "commits/").len..];
+            if (tagCommit(a, dir, name)) |c| {
+                try w.print("{s}\n", .{c});
+            } else if (fileText(a, dir, "tags") != null) {
+                failWith("Not Found (HTTP 404)");
+            } else {
+                const t = fileText(a, dir, "tag_commit") orelse fileText(a, dir, "main_sha") orelse "";
+                try w.print("{s}\n", .{std.mem.trim(u8, t, " \n")});
+            }
         } else if (std.mem.startsWith(u8, path, repo ++ "compare/main...")) {
             const t = fileText(a, dir, "compare_status") orelse "behind";
             try w.print("{s}\n", .{std.mem.trim(u8, t, " \n")});
-        } else if (std.mem.startsWith(u8, path, repo ++ "git/ref/tags/")) {
-            if (fileText(a, dir, "tag_error") != null) fail500();
-            if (fileText(a, dir, "tag_exists") == null) fail404("Not Found");
-            try w.writeAll("{}\n");
-        } else if (std.mem.startsWith(u8, path, repo ++ "releases/tags/")) {
-            if (fileText(a, dir, "release_error") != null) fail500();
-            if (fileText(a, dir, "release_exists") == null) fail404("Not Found");
-            try w.writeAll("{}\n");
         } else {
             std.debug.print("fake gh: unexpected api call: {s}\n", .{line});
             std.process.exit(3);
         }
     } else if (std.mem.eql(u8, args[0], "release") and std.mem.eql(u8, args[1], "view")) {
+        if (fileText(a, dir, "release_error") != null) failWith("Server Error (HTTP 500)");
+        if (fileText(a, dir, "release_exists") == null) failWith("release not found");
         var want_assets = false;
+        var want_json = false;
         for (args) |x| {
             if (std.mem.eql(u8, x, "assets")) want_assets = true;
+            if (std.mem.eql(u8, x, "isDraft,isPrerelease,assets")) want_json = true;
         }
-        if (want_assets) {
+        const state = std.mem.trim(u8, fileText(a, dir, "release_state") orelse "false false", " \n");
+        if (want_json) {
+            try w.print("{{\"isDraft\":{s},\"isPrerelease\":{s},\"assets\":[", .{ state[0 .. std.mem.indexOfScalar(u8, state, ' ').?], state[std.mem.indexOfScalar(u8, state, ' ').? + 1 ..] });
+            var assets = try dir.openDir("assets", .{ .iterate = true });
+            defer assets.close();
+            var it = assets.iterate();
+            var first = true;
+            while (try it.next()) |e| {
+                try w.print("{s}{{\"name\":\"{s}\"}}", .{ if (first) "" else ",", e.name });
+                first = false;
+            }
+            try w.writeAll("]}\n");
+        } else if (want_assets) {
             if (fileText(a, dir, "asset_list")) |l| {
                 try w.print("{s}\n", .{std.mem.trim(u8, l, "\n")});
             } else {
@@ -99,7 +174,7 @@ pub fn main() !void {
                 while (try it.next()) |e| try w.print("{s}\n", .{e.name});
             }
         } else {
-            try w.print("{s}\n", .{fileText(a, dir, "release_state") orelse "false false"});
+            try w.print("{s}\n", .{state});
         }
     } else if (std.mem.eql(u8, args[0], "release") and std.mem.eql(u8, args[1], "download")) {
         var dest: []const u8 = "";
@@ -112,13 +187,31 @@ pub fn main() !void {
         defer out.close();
         var it = assets.iterate();
         while (try it.next()) |e| try assets.copyFile(e.name, out, e.name, .{});
+    } else if (std.mem.eql(u8, args[0], "release") and std.mem.eql(u8, args[1], "create")) {
+        if (fileText(a, dir, "release_exists") != null) failWith("a release with this tag already exists (HTTP 422)");
+        var assets = try dir.openDir("assets", .{});
+        defer assets.close();
+        for (fileArgs(args)) |p| try std.fs.cwd().copyFile(p, assets, std.fs.path.basename(p), .{});
+        var pre = false;
+        for (args, 0..) |x, i| {
+            if (std.mem.eql(u8, x, "--prerelease")) pre = true;
+            if (std.mem.eql(u8, x, "--notes-file")) try dir.writeFile("release_notes", try std.fs.cwd().readFileAlloc(a, args[i + 1], 1 << 20));
+        }
+        try dir.writeFile("release_exists", "");
+        try dir.writeFile("release_state", if (pre) "false true\n" else "false false\n");
+    } else if (std.mem.eql(u8, args[0], "release") and std.mem.eql(u8, args[1], "upload")) {
+        if (fileText(a, dir, "upload_fail") != null) failWith("upload failed");
+        var assets = try dir.openDir("assets", .{});
+        defer assets.close();
+        for (fileArgs(args)) |p| {
+            const name = std.fs.path.basename(p);
+            if (assets.access(name, .{})) |_| failWith("an asset with this name already exists (HTTP 422)") else |_| {}
+            try std.fs.cwd().copyFile(p, assets, name, .{});
+        }
     } else if (std.mem.eql(u8, args[0], "attestation") and std.mem.eql(u8, args[1], "verify")) {
         const refused = fileText(a, dir, "attest_refuse");
         if (refused) |r| {
-            if (std.mem.endsWith(u8, args[2], std.mem.trim(u8, r, " \n"))) {
-                std.io.getStdErr().writer().print("gh: no attestation found\n", .{}) catch {};
-                std.process.exit(1);
-            }
+            if (std.mem.endsWith(u8, args[2], std.mem.trim(u8, r, " \n"))) failWith("no attestation found");
         }
     } else {
         std.debug.print("fake gh: unexpected call: {s}\n", .{line});

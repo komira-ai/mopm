@@ -7,14 +7,11 @@
 //! and run it from the repository root.
 //!
 //!   release package <version> <target> <zig-target> <outdir> [--run-prefix "<words>"]
-//!       Builds the CLI (zig build -Doptimize=ReleaseSafe -Dtarget=<zig-target> -Dstrip=true), runs
+//!       Builds the CLI (zig build -Doptimize=ReleaseSafe -Dtarget=<zig-target> -Dstrip=true -Dversion=<version>), runs
 //!       it with `--version` and REFUSES unless it prints `mopm <version>` (version has no leading
 //!       v), and writes <outdir>/mopm-<version>-<target>.tar.gz holding
 //!       mopm-<version>-<target>/{mopm,LICENSE}. --run-prefix is a command put before the binary to
 //!       run it (`arch -x86_64` for the Intel macOS build on an arm64 runner).
-//!   release version [<tag>]
-//!       Prints the version in src/cli/main.zig. With a tag (v1.2.3) it REFUSES unless the tag is
-//!       v<major>.<minor>.<patch>[-suffix] and names that same version.
 //!   release sums <dir>
 //!       Requires exactly four mopm-<version>-<target>.tar.gz in <dir>, one per target, one version;
 //!       writes <dir>/SHA256SUMS and checks it.
@@ -36,7 +33,7 @@ fn die(comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 fn usage() noreturn {
-    die("usage: release package <version> <target> <zig-target> <outdir> [--run-prefix \"<words>\"] | version [<tag>] | sums <dir> | check <dir> | tarball <parent> <name> <out.tar.gz>", .{});
+    die("usage: release package <version> <target> <zig-target> <outdir> [--run-prefix \"<words>\"] | sums <dir> | check <dir> | tarball <parent> <name> <out.tar.gz>", .{});
 }
 
 pub fn main() !void {
@@ -47,10 +44,6 @@ pub fn main() !void {
     const cmd = argv[1];
     const rest = argv[2..];
     if (std.mem.eql(u8, cmd, "package")) return package(a, rest);
-    if (std.mem.eql(u8, cmd, "version")) {
-        if (rest.len > 1) usage();
-        return versionCmd(a, if (rest.len == 1) rest[0] else "");
-    }
     if (std.mem.eql(u8, cmd, "sums")) {
         if (rest.len != 1) usage();
         return sums(a, rest[0]);
@@ -64,40 +57,6 @@ pub fn main() !void {
         return makeTarGz(a, rest[0], rest[1], rest[2]);
     }
     usage();
-}
-
-// ---- version ---------------------------------------------------------------------------
-
-fn allDigits(s: []const u8) bool {
-    if (s.len == 0) return false;
-    for (s) |c| {
-        if (c < '0' or c > '9') return false;
-    }
-    return true;
-}
-
-fn versionCmd(a: Allocator, tag: []const u8) !void {
-    const text = try std.fs.cwd().readFileAlloc(a, "src/cli/main.zig", 1 << 22);
-    const key = "pub const version = \"";
-    const at = std.mem.indexOf(u8, text, key) orelse die("no version in src/cli/main.zig", .{});
-    const rest = text[at + key.len ..];
-    const end = std.mem.indexOfScalar(u8, rest, '"') orelse die("no version in src/cli/main.zig", .{});
-    const src = rest[0..end];
-    if (tag.len != 0) {
-        var ok = tag[0] == 'v';
-        if (ok) {
-            const core_end = std.mem.indexOfScalar(u8, tag, '-') orelse tag.len;
-            var parts = std.mem.splitScalar(u8, tag[1..core_end], '.');
-            var n: usize = 0;
-            while (parts.next()) |part| : (n += 1) {
-                if (!allDigits(part)) ok = false;
-            }
-            if (n != 3) ok = false;
-        }
-        if (!ok) die("tag '{s}' is not v<major>.<minor>.<patch>", .{tag});
-        if (!std.mem.eql(u8, tag[1..], src)) die("tag {s} does not match the version in src/cli/main.zig ({s})", .{ tag, src });
-    }
-    try std.io.getStdOut().writer().print("{s}\n", .{src});
 }
 
 // ---- package ---------------------------------------------------------------------------
@@ -120,6 +79,9 @@ fn package(a: Allocator, args: []const []const u8) !void {
     }
     if (!known) die("unknown target '{s}'", .{target});
     if (version.len == 0 or version[0] == 'v') die("version '{s}' must be given without a leading v", .{version});
+    for (version) |ch| {
+        if (!std.ascii.isAlphanumeric(ch) and ch != '.' and ch != '-') die("version '{s}' holds a character outside [0-9A-Za-z.-]", .{version});
+    }
 
     const cwd = std.fs.cwd();
     const name = try std.fmt.allocPrint(a, "mopm-{s}-{s}", .{ version, target });
@@ -131,7 +93,8 @@ fn package(a: Allocator, args: []const []const u8) !void {
     const build_argv = [_][]const u8{
         "zig",                                                 "build",
         "-Doptimize=ReleaseSafe",                              try std.fmt.allocPrint(a, "-Dtarget={s}", .{zig_target}),
-        "-Dstrip=true",                                        "-p",
+        "-Dstrip=true",                                        try std.fmt.allocPrint(a, "-Dversion={s}", .{version}),
+        "-p",
         prefix,
     };
     var child = std.process.Child.init(&build_argv, a);

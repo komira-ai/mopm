@@ -40,3 +40,6 @@ jobs:
       - name: lint self-test (each rule goes red on its planted fixture)
         if: ${{ !cancelled() }}
         run: zig test tests/drivers/lint_selftest_test.zig
+      - name: release pipeline lint (scopes, stage order, path filter; each rule goes red on a planted mutant)
+        if: ${{ !cancelled() }}
+        run: zig test tests/drivers/release_lint_test.zig

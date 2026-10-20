@@ -1,7 +1,7 @@
 name: release-check
 
 # A pull request that touches the release machinery proves it without publishing: the same build and
-# packaging as release.yml (release-build.yml, dry run: no tag), SHA256SUMS written and checked, and
+# packaging as release.yml (release-build.yml, with the fake version 0.0.0-check), SHA256SUMS written and checked, and
 # the installer run against a local fake release on Linux and macOS, with planted defects that it
 # must catch. No write permission, nothing uploaded but the short-lived workflow artifacts.
 
@@ -14,6 +14,7 @@ on:
       - "build.zig"
       - "build.zig.zon"
       - "src/cli/main.zig"
+      - "src/cli/build_options.zig"
       - "site/static/install.sh"
       - "tests/drivers/install_script_test.zig"
       - "tests/drivers/fake_mopm.zig"
@@ -37,6 +38,8 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/release-build.yml
+    with:
+      version: 0.0.0-check
 
   sums:
     needs: package
