@@ -1,0 +1,23 @@
+{
+  "package": {
+    "name": "tiny",
+    "version": "0.1.0",
+    "description": null,
+    "license": null,
+    "repository": null,
+    "readme": null,
+    "metadata": {"note": "a \"quoted\" word", "unknown_to_mopm": [1, 2, 3], "buildrules": {"visibility": ["PUBLIC"], "tests": true, "opt": 2, "deep": {"a": "b"}}}
+  },
+  "toolchain": {
+    "mojo": []
+  },
+  "dependencies": [],
+  "dev-dependencies": [],
+  "native-dependencies": [],
+  "native": [],
+  "targets": {
+    "lib": null,
+    "bins": [],
+    "tests": []
+  }
+}

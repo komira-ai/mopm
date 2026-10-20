@@ -33,8 +33,6 @@ jobs:
         run: zig build test
       - name: Build the CLI
         run: zig build
-      - name: Link-plan golden files
-        run: tests/run_golden.sh ./zig-out/bin/mopm
 
   contract:
     name: contract (${{ matrix.os }})
@@ -51,8 +49,6 @@ jobs:
           "$RUNNER_TEMP/contract-venv/bin/pip" install --disable-pip-version-check -r tests/contract/requirements.txt
       - name: Validate the OpenAPI document, the schemas and the examples
         run: '"$RUNNER_TEMP/contract-venv/bin/python" -I tests/contract/validate.py'
-      - name: The locks mopm's unit tests write pass the lock schema and rules; broken copies are refused
-        run: '"$RUNNER_TEMP/contract-venv/bin/python" -I tests/resolve/check_golden.py'
       - name: Install Zig 0.12.0 (sha256-pinned)
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
       - name: Build the fake registry
@@ -161,13 +157,6 @@ jobs:
         run: python3 -I tests/registry_e2e/run.py ./zig-out/bin/mopm ./zig-out/bin/mopm-fake-registry
       - name: mopm pack and publish against the fake registry
         run: python3 -I tests/registry_e2e/publish.py ./zig-out/bin/mopm ./zig-out/bin/mopm-fake-registry
-
-      - name: Install the contract validators (pip, in a throwaway environment)
-        run: |
-          python3 -m venv "$RUNNER_TEMP/contract-venv"
-          "$RUNNER_TEMP/contract-venv/bin/pip" install --disable-pip-version-check -r tests/contract/requirements.txt
-      - name: mopm lock, update and tree against the fake registry (wrong-version traps, refusals, lock schema)
-        run: '"$RUNNER_TEMP/contract-venv/bin/python" -I tests/resolve_e2e/run.py ./zig-out/bin/mopm ./zig-out/bin/mopm-fake-registry'
 
   # The packer against the registry's own validator (service/api/src/validate): what mopm pack writes must be accepted,
   # and each planted defect must be refused with its rule.

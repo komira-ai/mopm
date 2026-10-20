@@ -1,9 +1,7 @@
-//! tests/resolve_e2e/run.py in Zig, for the build farm, which has no Python.
-//! run.py stays for ci.yml until farm.yml has matched it, and is superseded by
-//! this file.
-//!
-//! End-to-end tests of `mopm lock`, `mopm update` and `mopm tree` against
-//! mopm-fake-registry. The fake registry is started on a free port; the index
+//! End-to-end tests of `mopm lock`, `mopm update`, `mopm tree`, `mopm add` and
+//! `mopm remove` against mopm-fake-registry, for the build farm, which has no
+//! Python (this file replaced tests/resolve_e2e/run.py). The fake registry is
+//! started on a free port; the index
 //! records and the channel's repodata.json files below are then written into
 //! its data directory, which it serves at /index/... and /channel/... as the
 //! hosted registry does (spec/index.md, spec/channel.md). Each check prints
@@ -348,6 +346,99 @@ fn has(hay: []const u8, needle: []const u8) bool {
     return std.mem.indexOf(u8, hay, needle) != null;
 }
 
+// ------------------------------------- [package] mojo, the version 2 lock, mopm plan
+
+/// A project whose mopm.toml lists its Mojo versions under [package] and
+/// depends on `dep`, with one source file for its library.
+fn unitProject(cx: *Cx, name: []const u8, mojo: []const u8, dep: []const u8) ![]u8 {
+    const d = try h.join(cx.a, &.{ cx.work, name });
+    try h.writeFile(try h.join(cx.a, &.{ d, "mopm.toml" }), try cx.fmt("[package]\nname = \"app\"\nversion = \"0.1.0\"\nmojo = {s}\n\n[dependencies]\n{s}\n", .{ mojo, dep }));
+    try h.writeFile(try h.join(cx.a, &.{ d, "src", "app", "__init__.mojo" }), "def run():\n    pass\n");
+    return d;
+}
+
+/// `[package] mojo` makes a version 2 lock with the toolchain's closure hash;
+/// `mopm plan --unit-graph --locked` prints the graph of it and refuses what
+/// it cannot plan with the exit status spec/unit-graph.md names. Every
+/// refusal here is checked against a project that differs in one thing only.
+fn unitGraph(cx: *Cx) !void {
+    h.stage = "unit graph";
+    const ok_dir = try unitProject(cx, "unit_ok", "[\"1.0.0\"]", "legacy = \"1\"");
+    var r = try cx.runReg(ok_dir, &.{"lock"});
+    cx.ok("[package] mojo: lock succeeds", r.code == 0 and has(r.stdout, "for mojo 1.0.0\n"), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
+    const lock_text = (try cx.lockOf(ok_dir)) orelse "";
+    cx.ok("the lock is version 2: mojo, a closure hash, one artifact per Mojo version", has(lock_text, "\"lock_version\": 2") and has(lock_text, "\"mojo\": [\n    \"1.0.0\"\n  ]") and has(lock_text, "\"toolchain\": {\n    \"1.0.0\": {\n      \"linux-64\": \"") and has(lock_text, "\"artifacts\": {\n        \"1.0.0\": {"), lock_text);
+
+    r = try cx.run(ok_dir, &.{ "plan", "--unit-graph", "--locked" });
+    cx.ok("plan prints the graph: units named for the Mojo version, the dependency prebuilt", r.code == 0 and has(r.stdout, "\"unit_graph\": 1") and has(r.stdout, "\"id\": \"app@0.1.0#mojo1.0.0/lib\"") and has(r.stdout, "\"id\": \"legacy@1.1.0#mojo1.0.0/lib\"") and has(r.stdout, "\"kind\": \"prebuilt\"") and has(r.stdout, "\"closure_sha256\": \""), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
+    const first = r.stdout;
+    r = try cx.run(ok_dir, &.{ "plan", "--unit-graph", "--locked", "--mojo", "1.0.0" });
+    cx.ok("plan prints the same bytes again", r.code == 0 and std.mem.eql(u8, first, r.stdout), r.stderr);
+
+    r = try cx.run(ok_dir, &.{ "plan", "--unit-graph", "--locked", "--mojo", "1.1.0" });
+    cx.ok("plan for a Mojo version the package does not list is refused (4)", r.code == 4 and std.mem.startsWith(u8, r.stderr, "error: "), try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+    r = try cx.run(ok_dir, &.{ "plan", "--unit-graph" });
+    cx.ok("plan without --locked is a usage error (2)", r.code == 2, r.stderr);
+
+    // A lock that no longer fits mopm.toml: the same project asking for a version the lock does not hold.
+    const stale = try unitProject(cx, "unit_stale", "[\"1.0.0\"]", "legacy = \"1\"");
+    r = try cx.runReg(stale, &.{"lock"});
+    try h.writeFile(try h.join(cx.a, &.{ stale, "mopm.toml" }), "[package]\nname = \"app\"\nversion = \"0.1.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\nlegacy = \"=1.0.0\"\n");
+    r = try cx.run(stale, &.{ "plan", "--unit-graph", "--locked" });
+    cx.ok("a stale lock is refused (3) and not repaired", r.code == 3 and has(r.stderr, "out of date") and has(r.stderr, "but mopm.lock has legacy 1.1.0") and r.stdout.len == 0, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+    const nolock = try unitProject(cx, "unit_nolock", "[\"1.0.0\"]", "legacy = \"1\"");
+    r = try cx.run(nolock, &.{ "plan", "--unit-graph", "--locked" });
+    cx.ok("no lock is refused (3); plan never resolves", r.code == 3 and has(r.stderr, "there is no mopm.lock") and (try cx.lockOf(nolock)) == null, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+
+    // A native library the lock does not pin by sha256.
+    const native = try unitProject(cx, "unit_native", "[\"1.0.0\"]", "crypto = \"2\"");
+    r = try cx.runReg(native, &.{"lock"});
+    r = try cx.run(native, &.{ "plan", "--unit-graph", "--locked" });
+    cx.ok("a native library without a sha256 in the lock is refused (4)", r.code == 4 and has(r.stderr, "libcrypto_native.so.1") and has(r.stderr, "has no sha256 in mopm.lock"), try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+
+    // http_client 0.4.1 is built for Mojo 1.1.0 only.
+    const nomojoc = try unitProject(cx, "unit_nomojoc", "[\"1.0.0\"]", "http_client = \"=0.4.1\"");
+    r = try cx.runReg(nomojoc, &.{"lock"});
+    cx.ok("no .mojoc for the project's Mojo: lock gives the specified error and writes no lock", r.code == 1 and has(r.stderr, "error: http_client 0.4.1 has no .mojoc for Mojo 1.0.0 (published for: 1.1.0). Build with mojo 1.1.0, ask the publisher for a 1.0.0 build, or pin a version that has one.\n") and (try cx.lockOf(nomojoc)) == null, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+
+    // Listing a Mojo version mopm pins no toolchain for.
+    const unpinned = try unitProject(cx, "unit_unpinned", "[\"1.0.0\", \"1.1.0\"]", "legacy = \"1\"");
+    r = try cx.runReg(unpinned, &.{"lock"});
+    cx.ok("a Mojo version without a pinned toolchain is refused at lock", r.code == 1 and has(r.stderr, "mopm has no pinned toolchain for mojo 1.1.0") and (try cx.lockOf(unpinned)) == null, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+}
+
+// ------------------------------------------- mopm lock with no registry dependency
+
+/// A registry nothing listens on: any attempt to reach it fails ("cannot reach").
+const dead_registry = "http://127.0.0.1:1";
+
+/// A project with only path dependencies is locked offline: the registry the
+/// command names is never contacted, so it succeeds with a registry that is
+/// down. The checks that follow make that check able to fail: the same project
+/// with one registry dependency does contact the registry and fails on it.
+fn offlineLock(cx: *Cx) !void {
+    h.stage = "offline lock";
+    const d = try cx.project("offline", "local = { path = \"local\" }");
+    try cx.package(try h.join(cx.a, &.{ d, "local" }), "local", "0.3.0", "inner = { path = \"../inner\" }");
+    try cx.package(try h.join(cx.a, &.{ d, "inner" }), "inner", "0.1.0", "");
+    var r = try cx.run(d, &.{ "lock", "--registry", dead_registry });
+    cx.ok("a project with only path dependencies locks with the registry down", r.code == 0 and has(r.stdout, "locked 2 packages for mojo 1.0.0\n") and r.stderr.len == 0, try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+    const text = (try cx.lockOf(d)) orelse "";
+    cx.ok("its lock holds both path packages, as path sources, and the default channel", has(text, "\"source\": \"path\"") and has(text, "\"name\": \"local\"") and has(text, "\"name\": \"inner\"") and has(text, "\"channels\": [\n    \"https://conda.mopm.dev/\"\n  ]"), text);
+    r = try cx.run(d, &.{ "tree" });
+    cx.ok("tree reads that lock", r.code == 0 and has(r.stdout, "local"), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
+
+    // Control: a registry dependency, anywhere in the project, needs the registry.
+    const direct = try cx.project("offline_direct", "local = { path = \"local\" }\nlegacy = \"1\"");
+    try cx.package(try h.join(cx.a, &.{ direct, "local" }), "local", "0.3.0", "");
+    r = try cx.run(direct, &.{ "lock", "--registry", dead_registry });
+    cx.ok("can fail: a registry dependency of the project is not locked with the registry down", r.code == 1 and has(r.stderr, "cannot reach http://127.0.0.1:1") and (try cx.lockOf(direct)) == null, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+    const nested = try cx.project("offline_nested", "local = { path = \"local\" }");
+    try cx.package(try h.join(cx.a, &.{ nested, "local" }), "local", "0.3.0", "legacy = \"1\"");
+    r = try cx.run(nested, &.{ "lock", "--registry", dead_registry });
+    cx.ok("can fail: nor is a registry dependency of a path dependency", r.code == 1 and has(r.stderr, "cannot reach http://127.0.0.1:1") and (try cx.lockOf(nested)) == null, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+}
+
 // ------------------------------------------------- mopm add and mopm remove
 
 /// `s` with every comment (and the blanks before it) cut from each line.
@@ -643,7 +734,7 @@ test "mopm lock, update and tree resolve against the fake registry" {
         cx.ok("a path dependency without a mopm.toml is refused", r.code == 1 and has(r.stderr, "no gone/mopm.toml") and (try cx.lockOf(nodir)) == null, r.stderr);
     }
 
-    try cx.writeLock(app, try std.mem.replaceOwned(u8, a, expected, "\"lock_version\": 1", "\"lock_version\": 2"));
+    try cx.writeLock(app, try std.mem.replaceOwned(u8, a, expected, "\"lock_version\": 1", "\"lock_version\": 99"));
     r = try cx.runReg(app, &.{"lock"});
     cx.ok("a lock from a newer mopm is refused", r.code == 1 and has(r.stderr, "Update mopm."), r.stderr);
 
@@ -672,6 +763,8 @@ test "mopm lock, update and tree resolve against the fake registry" {
     }
 
     try addRemove(&cx);
+    try unitGraph(&cx);
+    try offlineLock(&cx);
 
     try rep.finish();
 }

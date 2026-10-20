@@ -1,6 +1,5 @@
-# The DNS stacks' checks (see service/api/BUCK): `tsc --noEmit`, `jest --ci` and the four
-# `cdk synth` runs of service-ci.yml with the same dummy values. dns.sh's dry-run tests stay
-# in service-ci.yml.
+# The DNS stacks' checks (see service/api/BUCK): `tsc --noEmit`, `jest --ci` (which includes the held dns command,
+# tested against a fake host) and the four `cdk synth` runs of service-ci.yml with the same dummy values.
 
 load("@buildrules//rules/node:modules.bzl", "cdk_synth", "jest_test", "npm_modules", "tsc_check")
 load(":pins.lock.bzl", "NPM")

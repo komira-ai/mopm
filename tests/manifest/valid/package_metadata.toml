@@ -1,0 +1,16 @@
+[package]
+name = "tiny"
+version = "0.1.0"
+
+# Another tool's settings: mopm checks none of it, and keeps all of it.
+[package.metadata]
+note = "a \"quoted\" word"
+unknown_to_mopm = [1, 2, 3]
+
+[package.metadata.buildrules]
+visibility = ["PUBLIC"]
+tests = true
+opt = 2
+
+[package.metadata.buildrules.deep]
+a = "b"

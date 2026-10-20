@@ -55,8 +55,9 @@ const plan = core.install_plan;
 const inst = core.install;
 const semver = core.semver;
 const toml_edit = core.toml_edit;
+const unit_graph = core.unit_graph;
 
-pub const Command = enum { lock, update, tree, sync, add, remove };
+pub const Command = enum { lock, update, tree, sync, add, remove, plan };
 
 const usage =
     \\usage: mopm lock   [--registry <prod|gamma|beta|url>]
@@ -142,7 +143,7 @@ pub fn main(arena: Allocator, cmd: Command, args: []const []const u8, cli_versio
     };
 }
 
-const Project = struct {
+pub const Project = struct {
     m: manifest.Manifest,
     /// Registry requirements: the project's, and its path dependencies'.
     roots: []const resolve.Root,
@@ -219,7 +220,7 @@ fn addPathDep(arena: Allocator, cmd: Command, name: []const u8, path: []const u8
     return true;
 }
 
-fn readProject(arena: Allocator, cmd: Command) !?Project {
+pub fn readProject(arena: Allocator, cmd: Command) !?Project {
     std.fs.cwd().access(manifest_path, .{}) catch |e| {
         if (e == error.FileNotFound) {
             err(cmd, "no {s} in this directory\n", .{manifest_path});
@@ -254,7 +255,7 @@ fn projectOf(arena: Allocator, cmd: Command, m: manifest.Manifest) !?Project {
 }
 
 /// The existing lock, null when there is none, or error.Invalid (reported).
-fn readLock(arena: Allocator, cmd: Command) !?lock.Lock {
+pub fn readLock(arena: Allocator, cmd: Command) !?lock.Lock {
     const text = std.fs.cwd().readFileAlloc(arena, lock_path, 64 << 20) catch |e| {
         if (e == error.FileNotFound) return null;
         return e;
@@ -353,7 +354,9 @@ fn resolveProject(arena: Allocator, cmd: Command, project: Project, old: ?lock.L
             return null;
         },
     };
-    const config = switch (try registry.load(arena, base, cli_version)) {
+    // A project with no registry dependency (no version requirement, its path dependencies' included) has
+    // nothing to ask a registry: it is locked offline, so `mopm lock` works with no network.
+    const config = if (project.roots.len == 0) registry.offlineConfig(base) else switch (try registry.load(arena, base, cli_version)) {
         .ok => |c| c,
         .bad => |why| {
             err(cmd, "{s}: {s}\n", .{ base, why });
@@ -364,6 +367,7 @@ fn resolveProject(arena: Allocator, cmd: Command, project: Project, old: ?lock.L
     var failures = std.ArrayList(u8).init(arena);
     var warnings = std.ArrayList([]const u8).init(arena);
     defer printWarnings(cmd, warnings.items);
+    if (project.m.mojo_all) return resolveAll(arena, cmd, project, old, args, config, &warnings);
     for (toolchains) |mojo| {
         var pins = std.ArrayList(resolve.Pin).init(arena);
         if (old) |o| {
@@ -399,6 +403,70 @@ fn resolveProject(arena: Allocator, cmd: Command, project: Project, old: ?lock.L
     return null;
 }
 
+fn lessStr(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.order(u8, a, b) == .lt;
+}
+
+/// `[package] mojo`: resolves the project once for each Mojo version it lists
+/// (each takes the newest version that has a build for it) and makes one
+/// version 2 lock of the results. Null when a version cannot be resolved or
+/// has no toolchain pinned by this mopm (reported).
+fn resolveAll(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock, args: Args, config: registry.Config, warnings: *std.ArrayList([]const u8)) !?Resolved {
+    var versions = std.ArrayList([]const u8).init(arena);
+    try versions.appendSlice(project.m.mojo);
+    std.mem.sort([]const u8, versions.items, {}, lessStr);
+    var per = std.ArrayList(lock.Lock).init(arena);
+    var closures = std.ArrayList(lock.Closure).init(arena);
+    for (versions.items) |mojo| {
+        // A version mopm pins no toolchain for cannot be locked: say so first.
+        var why: []const u8 = "";
+        const tc = unit_graph.toolchainFor(arena, mojo, unit_graph.lock_subdir, &why) catch |e| {
+            if (e == error.Refused) {
+                err(cmd, "{s}\n", .{why});
+                return null;
+            }
+            return e;
+        };
+        var pins = std.ArrayList(resolve.Pin).init(arena);
+        if (old) |o| {
+            const update_all = cmd == .update and args.packages.len == 0;
+            if (!update_all and (o.mojos.len > 0 or std.mem.eql(u8, o.mojo, mojo))) {
+                for ((try lock.forMojo(arena, o, mojo)).packages) |p| {
+                    if (p.source == .path) continue;
+                    var named = false;
+                    for (args.packages) |n| named = named or std.mem.eql(u8, n, p.name);
+                    if (!named) try pins.append(.{ .name = p.name, .version = p.version });
+                }
+            }
+        }
+        var diag: resolve.Diagnostic = .{};
+        const res = resolve.resolve(arena, IndexSource{ .config = config }, .{ .mojo = mojo, .roots = project.roots, .pins = pins.items, .warnings = warnings, .mojoc_message = true }, &diag) catch |e| {
+            if (e != error.ResolveFailed) return e;
+            if (diag.kind == .compiler_mismatch) {
+                std.io.getStdErr().writer().print("error: {s}\n", .{diag.message}) catch {};
+            } else {
+                err(cmd, "cannot resolve the dependencies of {s} with mojo {s}: {s}\n", .{ project.m.package.name, mojo, diag.message });
+            }
+            return null;
+        };
+        const one = plan.buildLock(arena, res, config.channel_url, ChannelSource{ .channel_url = config.channel_url }, &diag) catch |e| {
+            if (e != error.ResolveFailed) return e;
+            err(cmd, "{s}\n", .{diag.message});
+            return null;
+        };
+        try per.append(one);
+        try closures.append(.{ .mojo = mojo, .subdir = unit_graph.lock_subdir, .sha256 = tc.closure_sha256 });
+    }
+    const merged = try plan.mergeMojos(arena, per.items, closures.items);
+    var diag: resolve.Diagnostic = .{};
+    const new = plan.addPaths(arena, merged, project.paths, &diag) catch |e| {
+        if (e != error.ResolveFailed) return e;
+        err(cmd, "{s}\n", .{diag.message});
+        return null;
+    };
+    return .{ .lock = new, .count = merged.packages.len + project.paths.len, .mojo = try std.mem.join(arena, ", ", new.mojos) };
+}
+
 /// `mopm sync`: lock when needed (never with `--locked`), then install.
 fn sync(arena: Allocator, project: Project, old: ?lock.Lock, args: Args, cli_version: []const u8) !u8 {
     var stale: ?[]const u8 = "there is no " ++ lock_path;
@@ -431,7 +499,9 @@ fn httpGet(arena: Allocator, url: []const u8) ?http.Answer {
 
 /// Installs `l` into `.mopm/` (see core/install.zig); 0 when the environment
 /// is exactly the lock.
-fn install(arena: Allocator, l: lock.Lock, pixi: []const u8) !u8 {
+fn install(arena: Allocator, whole: lock.Lock, pixi: []const u8) !u8 {
+    // A version 2 lock installs the builds for its first Mojo version.
+    const l = try lock.forMojo(arena, whole, whole.mojo);
     const cwd = std.fs.cwd();
     const subdir = inst.hostSubdir() orelse {
         err(.sync, "no Mojo toolchain is published for this machine (linux-64, linux-aarch64 and osx-arm64 are)\n", .{});

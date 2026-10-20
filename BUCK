@@ -32,7 +32,8 @@ _TOOLS = {
 }
 
 # The files each root imports by a relative name (all siblings of the root).
-_CORE_SRCS = glob(["src/core/*.zig"], exclude = ["src/core/mopm_core.zig"])
+# src/core/toolchain/*.json are embedded (@embedFile) by src/core/unit_graph.zig.
+_CORE_SRCS = glob(["src/core/*.zig"], exclude = ["src/core/mopm_core.zig"]) + glob(["src/core/toolchain/*.json"])
 _CLI_SRCS = glob(["src/cli/*.zig"], exclude = ["src/cli/main.zig"])
 _FAKE_SRCS = glob(["registry/fake/*.zig"], exclude = ["registry/fake/main.zig"])
 
@@ -54,7 +55,6 @@ _UNIT_DATA = glob([
     "tests/new/**",
     "tests/resolve/golden/**",
     "toolchain/**",
-    "src/core/toolchain/**",
 ]) + _DOTFILES
 
 # What the golden driver reads (tests/drivers/golden_test.zig).
@@ -181,6 +181,36 @@ zig_test(  # buck-only: mopm pack and publish against the fake registry and a st
     env_tools = {
         "MOPM": ":mopm",
         "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+    },
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: tools/release.zig, whose `tarball` and `sums` make the fake release of :cut_release
+    name = "release-tool",
+    src = "tools/release.zig",
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: tools/cut_release.zig, the maintainer's two release steps (tag, verify)
+    name = "cut-release",
+    src = "tools/cut_release.zig",
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: a `gh` whose answers are files, for :cut_release
+    name = "fake-gh",
+    src = "tests/drivers/fake_gh.zig",
+    **_TOOLS
+)
+
+zig_test(  # buck-only: cut_release against the fake gh, with planted defects it must refuse
+    name = "cut_release",
+    src = "tests/drivers/cut_release_test.zig",
+    imports = ["tests/drivers/harness.zig"],
+    env_tools = {
+        "MOPM_CUT_RELEASE": ":cut-release",
+        "MOPM_FAKE_GH": ":fake-gh",
+        "MOPM_RELEASE_TOOL": ":release-tool",
     },
     **_TOOLS
 )

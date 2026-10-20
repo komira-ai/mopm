@@ -92,6 +92,7 @@ jobs:
         service/pins.toml service/infra/access/pins.lock.bzl service/infra/access/package-lock.json
         service/pins.toml service/infra/dns/pins.lock.bzl service/infra/dns/package-lock.json
         service/pins.toml service/infra/stacks/pins.lock.bzl service/infra/stacks/package-lock.json
+        site/pins.toml site/pins.lock.bzl site/package-lock.json
       # One line per Cargo workspace: <workspace dir> <Cargo.lock> <trimmed metadata>
       # <sizes> <overrides> <generated crates file> <target triple>.
       # None now: the Rust crates are pinned by the root Cargo.lock and `buildrules sync` (buildrules' cargo_unit rules), not by kpin.

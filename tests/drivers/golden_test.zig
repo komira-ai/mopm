@@ -1,7 +1,7 @@
-//! The golden tests of tests/run_golden.sh, in Zig: the same checks over the
-//! same files under tests/golden, for the build farm, which has neither a
-//! shell nor `diff`. tests/run_golden.sh stays for ci.yml until farm.yml has
-//! matched it, and is superseded by this file.
+//! The golden tests: `mopm link-plan`, `metadata`, `new`, `init`, `build`, `run`,
+//! `repl` and `test --list` run over the files under tests/golden, for the build
+//! farm, which has neither a shell nor `diff`. (This file replaced
+//! tests/run_golden.sh.)
 //!
 //! Run by Buck2 (//:golden_test): the working directory is the repository
 //! root with the test data present, MOPM is the built CLI, MOPM_FAKE_MOJO a

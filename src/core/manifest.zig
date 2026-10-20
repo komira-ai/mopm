@@ -1,10 +1,11 @@
 //! mopm.toml: read with the TOML subset in toml.zig, then checked against
 //! spec/mopm-toml.md. Unknown tables and keys are refused, so a typo is an error
-//! rather than a setting that silently does nothing.
+//! rather than a setting that silently does nothing; `[package.metadata]` is the one place a
+//! tool other than mopm keeps its settings, and mopm neither checks nor changes it.
 //!
 //! `writeJson` prints the checked manifest in one fixed shape (`mopm metadata`):
 //! every section is present, absent optional values are null, and entries keep
-//! the order of the file.
+//! the order of the file (`metadata`, under `package`, only when the file has `[package.metadata]`).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -22,6 +23,9 @@ pub const Package = struct {
     license: ?[]const u8 = null,
     repository: ?[]const u8 = null,
     readme: ?[]const u8 = null,
+    /// `[package.metadata]`: settings of other tools. mopm checks nothing in it and keeps it as written
+    /// (spec/mopm-toml.md, "Other tools' settings"); null when absent.
+    metadata: ?*const toml.Table = null,
 };
 
 /// Where a Mojo dependency comes from: a version requirement or a local path.
@@ -60,8 +64,12 @@ pub const Targets = struct {
 
 pub const Manifest = struct {
     package: Package,
-    /// `[toolchain] mojo`: one version, or several.
+    /// The Mojo versions, from `[package] mojo` (`mojo_all`) or `[toolchain] mojo`.
     mojo: []const []const u8 = &.{},
+    /// `[package] mojo`: the package builds for every version listed (one
+    /// `.mojoc` each), and a lock covers all of them. `[toolchain] mojo`, the
+    /// older form, lists alternatives: a lock is for the first that resolves.
+    mojo_all: bool = false,
     dependencies: []const Dep = &.{},
     dev_dependencies: []const Dep = &.{},
     native_dependencies: []const NativeDep = &.{},
@@ -184,7 +192,13 @@ const Checker = struct {
             "package", "toolchain", "dependencies", "dev-dependencies", "native-dependencies", "native", "targets",
         });
         const pkg = root.get("package") orelse return c.fail(.{ .line = 1, .col = 1 }, "missing the [package] table", .{});
-        var m = Manifest{ .package = try c.package(try c.table(pkg, "mopm.toml")) };
+        const pkg_table = try c.table(pkg, "mopm.toml");
+        var m = Manifest{ .package = try c.package(pkg_table) };
+        if (pkg_table.get("mojo")) |e| {
+            if (root.get("toolchain") != null) return c.fail(e.pos, "mojo is set in [package] and in [toolchain]; keep [package] mojo", .{});
+            m.mojo = try c.mojoVersions(e, "[package]");
+            m.mojo_all = true;
+        }
         if (root.get("toolchain")) |e| m.mojo = try c.toolchain(try c.table(e, "mopm.toml"));
         if (root.get("dependencies")) |e| m.dependencies = try c.deps(try c.table(e, "mopm.toml"), "[dependencies]");
         if (root.get("dev-dependencies")) |e| m.dev_dependencies = try c.deps(try c.table(e, "mopm.toml"), "[dev-dependencies]");
@@ -196,7 +210,7 @@ const Checker = struct {
 
     fn package(c: *Checker, t: Table) Error!Package {
         const where = "[package]";
-        try c.onlyKeys(t, where, &.{ "name", "version", "description", "license", "repository", "readme" });
+        try c.onlyKeys(t, where, &.{ "name", "version", "description", "license", "repository", "readme", "mojo", "metadata" });
         const name_e = t.get("name") orelse return c.fail(t.pos, "[package] is missing 'name'", .{});
         const name = try c.str(name_e, where);
         try c.packageName(name, name_e.pos, "package name");
@@ -212,20 +226,29 @@ const Checker = struct {
             .license = try c.optStr(t, "license", where),
             .repository = try c.optStr(t, "repository", where),
             .readme = try c.optStr(t, "readme", where),
+            .metadata = if (t.get("metadata")) |e| try c.table(e, where) else null,
         };
     }
 
     fn toolchain(c: *Checker, t: Table) Error![]const []const u8 {
         try c.onlyKeys(t, "[toolchain]", &.{"mojo"});
         const e = t.get("mojo") orelse return c.fail(t.pos, "[toolchain] is missing 'mojo'", .{});
+        return c.mojoVersions(e, "[toolchain]");
+    }
+
+    /// A version string or an array of them, each exact, none repeated.
+    fn mojoVersions(c: *Checker, e: Entry, where: []const u8) Error![]const []const u8 {
         const versions = switch (e.value) {
             .string => |s| try c.arena.dupe([]const u8, &.{s}),
-            .array => try c.strings(e, "[toolchain]"),
-            else => return c.fail(e.pos, "'mojo' in [toolchain] must be a version string or an array of them, not {s}", .{e.value.typeName()}),
+            .array => try c.strings(e, where),
+            else => return c.fail(e.pos, "'mojo' in {s} must be a version string or an array of them, not {s}", .{ where, e.value.typeName() }),
         };
-        if (versions.len == 0) return c.fail(e.pos, "'mojo' in [toolchain] names no version", .{});
-        for (versions) |v| {
-            if (v.len == 0) return c.fail(e.pos, "'mojo' in [toolchain] has an empty version", .{});
+        if (versions.len == 0) return c.fail(e.pos, "'mojo' in {s} names no version", .{where});
+        for (versions, 0..) |v, i| {
+            if (v.len == 0) return c.fail(e.pos, "'mojo' in {s} has an empty version", .{where});
+            for (versions[0..i]) |u| {
+                if (std.mem.eql(u8, u, v)) return c.fail(e.pos, "'mojo' in {s} lists {s} twice", .{ where, v });
+            }
         }
         return versions;
     }
@@ -391,6 +414,10 @@ pub fn writeJson(m: Manifest, w: anytype) !void {
     try jsonOpt(w, p.repository);
     try w.writeAll(",\n    \"readme\": ");
     try jsonOpt(w, p.readme);
+    if (p.metadata) |t| {
+        try w.writeAll(",\n    \"metadata\": ");
+        try jsonTable(w, t);
+    }
     try w.writeAll("\n  },\n  \"toolchain\": {\n    \"mojo\": ");
     try jsonStrList(w, m.mojo);
     try w.writeAll("\n  },\n  \"dependencies\": ");
@@ -487,6 +514,35 @@ fn jsonStrList(w: anytype, items: []const []const u8) !void {
 fn jsonOpt(w: anytype, s: ?[]const u8) !void {
     if (s) |v| return jsonStr(w, v);
     try w.writeAll("null");
+}
+
+/// A TOML value as JSON (tables in file order). Only `[package.metadata]` is written this way.
+fn jsonValue(w: anytype, v: toml.Value) anyerror!void {
+    switch (v) {
+        .string => |s| try jsonStr(w, s),
+        .integer => |i| try w.print("{d}", .{i}),
+        .boolean => |b| try w.writeAll(if (b) "true" else "false"),
+        .array => |items| {
+            try w.writeAll("[");
+            for (items, 0..) |item, n| {
+                if (n > 0) try w.writeAll(", ");
+                try jsonValue(w, item);
+            }
+            try w.writeAll("]");
+        },
+        .table => |t| try jsonTable(w, t),
+    }
+}
+
+fn jsonTable(w: anytype, t: *const toml.Table) anyerror!void {
+    try w.writeAll("{");
+    for (t.entries.items, 0..) |e, n| {
+        if (n > 0) try w.writeAll(", ");
+        try jsonStr(w, e.key);
+        try w.writeAll(": ");
+        try jsonValue(w, e.value);
+    }
+    try w.writeAll("}");
 }
 
 fn jsonStr(w: anytype, s: []const u8) !void {

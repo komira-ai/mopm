@@ -276,6 +276,9 @@ pub const Input = struct {
     warnings: ?*std.ArrayList([]const u8) = null,
     /// Choices tried before the search gives up.
     max_steps: usize = 100_000,
+    /// Word a version with no build for `mojo` as spec/unit-graph.md does
+    /// ("<name> <version> has no .mojoc for Mojo <M> (published for: ...)").
+    mojoc_message: bool = false,
 };
 
 pub const Picked = struct {
@@ -485,7 +488,20 @@ fn Resolver(comptime S: type) type {
             }
             var built = false;
             for (published.items) |rec| built = built or rec.builtFor(self.input.mojo);
-            if (!built) {
+            if (!built and self.input.mojoc_message) {
+                // The newest version that matches, and the compilers it has builds for.
+                var best = published.items[0];
+                for (published.items) |rec| {
+                    if (rec.sv != null and (best.sv == null or semver.compare(rec.sv.?, best.sv.?) == .gt)) best = rec;
+                }
+                var for_mojo = std.ArrayList([]const u8).init(self.arena);
+                for (published.items) |rec| {
+                    if (std.mem.eql(u8, rec.version, best.version)) try for_mojo.append(rec.mojoOf());
+                }
+                std.mem.sort([]const u8, for_mojo.items, {}, lessString);
+                const first = for_mojo.items[0];
+                try self.note(.compiler_mismatch, "{s} {s} has no .mojoc for Mojo {s} (published for: {s}). Build with mojo {s}, ask the publisher for a {s} build, or pin a version that has one.", .{ name, best.version, self.input.mojo, try std.mem.join(self.arena, ", ", for_mojo.items), first, self.input.mojo });
+            } else if (!built) {
                 var list = std.ArrayList(u8).init(self.arena);
                 for (published.items, 0..) |rec, i| {
                     try list.writer().print("{s}{s} (mojo {s})", .{ if (i == 0) "" else ", ", rec.version, rec.mojoOf() });
@@ -737,6 +753,23 @@ test "a build for another mojo is not picked; when only it matches, the compiler
     }} };
     try expectPicks(index, &.{.{ .name = "core", .requirement = "1" }}, &.{}, &.{.{ "core", "1.0.0" }});
     try expectFailure(index, &.{.{ .name = "core", .requirement = "=1.1.0" }}, .compiler_mismatch, &.{ "built for mojo 1.0.0", "1.1.0 (mojo 1.1.0)" });
+}
+
+test "no version with a build for the project's mojo: the error names the version, its builds and the way out" {
+    // core 1.2.0 is built for mojo 1.0.0 only; the project builds for 1.1.0.
+    const index = comptime MemoryIndex{ .files = &.{.{
+        "core",
+        indexLine("core", "1.1.0", no_deps) ++ indexLine("core", "1.2.0", no_deps) ++ indexLine2("core", "1.0.0", "1.1.0", "published", no_deps),
+    }} };
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var diag: Diagnostic = .{};
+    const roots = [_]Root{.{ .name = "core", .requirement = "1.2" }};
+    try std.testing.expectError(error.ResolveFailed, resolve(arena_state.allocator(), index, .{ .mojo = "1.1.0", .roots = &roots, .mojoc_message = true }, &diag));
+    try std.testing.expectEqual(Kind.compiler_mismatch, diag.kind);
+    try std.testing.expectEqualStrings("core 1.2.0 has no .mojoc for Mojo 1.1.0 (published for: 1.0.0). Build with mojo 1.0.0, ask the publisher for a 1.1.0 build, or pin a version that has one.", diag.message);
+    // Without the flag the older wording stays.
+    try expectFailure(index, &.{.{ .name = "core", .requirement = "=1.0.0" }}, .compiler_mismatch, &.{"built for mojo 1.0.0"});
 }
 
 test "a package with no index file is named with what required it" {

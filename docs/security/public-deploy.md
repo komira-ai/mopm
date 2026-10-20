@@ -21,7 +21,7 @@ corresponding row as open.
 | Role trust is `StringEquals` on `aud` and on a `sub` that names this repository, the stage environment, the exact workflow file and `refs/heads/main` | `service/infra/access`, asserted by its tests | Another repository, branch, environment or workflow file assuming a stage role |
 | The deploy role can only assume the CDK bootstrap roles of its account; the e2e role reads one secret and the channel bucket, with `e2e_*` cleanup on beta and gamma only | `service/infra/access` | A hijacked e2e run changing infrastructure |
 | The CloudFormation execution policy is scoped to `mopm-<stage>-*`, has no `kms:*`, conditions role-policy attachment, and denies edits to the access roles, OIDC provider and bootstrap roles; Route 53 record changes are limited to the stage zone's names and to A, AAAA and CNAME; `service/infra/stacks/test/cfn-exec-coverage.test.ts` fails when the policy lacks something the stacks need | `cfn-exec-policy.template.json` | A deploy widening its own access |
-| The access bootstrap is a held script: dry run unless `--apply`, flags only, the admin's own credentials | `service/infra/access/bootstrap.sh` | Standing CI access to IAM |
+| The access bootstrap is a held command (TypeScript, tested against a fake host): dry run unless `--apply`, flags only, the admin's own credentials | `service/infra/access/lib/bootstrap.ts` | Standing CI access to IAM |
 | Account id and region are GitHub environment secrets (`secrets.*`), never files or `vars.*`; role ARNs are built in the job, not stored | workflows, `hygiene` and `workflows` jobs | Account identity in a public tree |
 
 ## Settings only the repository owner can make
@@ -48,7 +48,7 @@ Each row says what to set and the attack it closes. Settings 1 to 3 matter most:
 
 1. Set 1 to 10 on the repository (the owner).
 2. Set 11 (the OIDC subject template) BEFORE any bootstrap.
-3. Per stage, an administrator runs `service/infra/access/bootstrap.sh` with their own
+3. Per stage, an administrator runs `npm --prefix service/infra/access run bootstrap --` with their own
    credentials (dry run first; see `service/infra/access/BOOTSTRAP.md`).
 4. Create the three environments (setting 3) and store the two secrets (`AWS_ACCOUNT_ID`, `AWS_REGION`) on each.
 5. Merge. `promote.yml` runs automatically on the merge (gated by the beta/gamma e2e and prod smoke), and can be re-run by hand on `main` (Actions, promote, Run workflow).
