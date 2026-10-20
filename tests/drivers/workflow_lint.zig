@@ -364,7 +364,9 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
                 // The org's Actions policy allows GitHub-owned actions and tailscale/github-action; any other action makes the whole run
                 // fail at startup. farm-connect is komira-ai's own and runs in farm.yml alone.
                 const tailscale = pinned(u, "tailscale/github-action");
-                if (!farm_connect and !tailscale and !ownedActionPinned(u)) {
+                // The action that mints the release bot's App token (release_lint.zig holds that only the bump job uses it).
+                const app_token = std.mem.eql(u8, base, release_file) and pinned(u, "actions/create-github-app-token");
+                if (!farm_connect and !tailscale and !app_token and !ownedActionPinned(u)) {
                     try c.problem(a, out, prefix ++ "{s}: {s} step {d}: only GitHub-owned actions pinned by full SHA are allowed: {s}", .{ f, jn, i, u });
                 }
             }

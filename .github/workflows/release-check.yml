@@ -23,6 +23,7 @@ on:
       - "tests/drivers/harness.zig"
       - "tests/drivers/user_beta.zig"
       - "tools/cut_release.zig"
+      - "tools/bump_internal.zig"
       - "registry/fake/**"
       - "tests/e2e/pixi.toml"
   push:

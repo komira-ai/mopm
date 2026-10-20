@@ -432,3 +432,37 @@ test "farm.yml: a push to main or a pull request from this repository, no secret
 test "a workflow that cannot be read is a finding, not a pass" {
     try expectStructure("ci.yml", "on: [push\n", &.{"not readable as YAML"});
 }
+
+test "release.yml may name the release bot's key exactly twice (tag, bump), and no other secret" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const release = header ++
+        \\on:
+        \\  push:
+        \\    branches: [main]
+        \\  workflow_dispatch:
+        \\jobs:
+        \\  tag:
+        \\    runs-on: x
+        \\    steps:
+        \\      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        \\        with:
+        \\          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+        \\  bump:
+        \\    runs-on: x
+        \\    steps:
+        \\      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        \\        with:
+        \\          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+        \\
+    ;
+    try expectStructure("release.yml", release, &.{});
+    // Mutant: a third reference to the key.
+    try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "        env:\n          K: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n" }), &.{"must not use secrets or an environment"});
+    // Mutants: the key under another name; another secret beside the allowed one.
+    try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, "RELEASE_BOT_PRIVATE_KEY", "OTHER_KEY"), &.{"must not use secrets or an environment"});
+    try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "        env:\n          X: ${{ secrets.ANOTHER }}\n" }), &.{"must not use secrets or an environment"});
+    // An environment is still refused.
+    try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "    environment: prod\n" }), &.{"must not use secrets or an environment"});
+}

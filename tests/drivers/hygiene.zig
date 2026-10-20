@@ -344,7 +344,7 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
             if (!(branches != null and branches.? == .array and branches.?.array.items.len == 1 and c.isStr(branches.?.array.items[0], "main"))) main_push = false;
         }
         if (!main_push) try c.problem(a, out, prefix ++ "{s}: triggers must be exactly push to branches [main] (paths-ignore allowed) and workflow_dispatch", .{f});
-        if (c.findKey(doc, "environment") or c.mentionsSecretsDot(try c.nonCommentLines(a, text))) {
+        if (c.findKey(doc, "environment") or c.mentionsSecretsDot(try releaseSecretFree(a, text))) {
             try c.problem(a, out, prefix ++ "{s}: must not use secrets or an environment", .{f});
         }
         for (jobs) |j| {
@@ -404,3 +404,16 @@ pub fn run(a: Allocator, files: []const File, structure: []const File, out: *Out
 }
 
 pub const File = struct { path: []const u8, data: []const u8 };
+
+/// The text of release.yml (comments dropped) without its two allowed secret references: the tag job and the bump
+/// job each hand the key of the release bot's GitHub App to actions/create-github-app-token (release_lint.zig holds
+/// where). Exactly two are removed; a third, or any other `secrets.`, is still a finding.
+fn releaseSecretFree(a: Allocator, text: []const u8) ![]u8 {
+    const ref = "${{ secrets.RELEASE_BOT_PRIVATE_KEY }}";
+    var s = try c.nonCommentLines(a, text);
+    for (0..2) |_| {
+        const at = std.mem.indexOf(u8, s, ref) orelse break;
+        s = try std.mem.concat(a, u8, &.{ s[0..at], s[at + ref.len ..] });
+    }
+    return s;
+}

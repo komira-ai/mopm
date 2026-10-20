@@ -323,6 +323,18 @@ test "only local workflows are called, only GitHub-owned actions pinned by SHA a
     try c.expectLines("farm other", try lint(a, "farm.yml", other), &.{"only GitHub-owned actions pinned by full SHA"});
 }
 
+test "actions/create-github-app-token is for release.yml alone, pinned by commit" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const pinned_use = try std.fmt.allocPrint(a, "{s}{s}    steps:\n      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1\n", .{ head, job_head });
+    try c.expectLines("release.yml", try lint(a, "release.yml", pinned_use), &.{});
+    // Mutants: another workflow, and a tag instead of a commit.
+    try c.expectLines("ci.yml", try lint(a, "ci.yml", pinned_use), &.{"only GitHub-owned actions pinned by full SHA"});
+    const tagged = try std.fmt.allocPrint(a, "{s}{s}    steps:\n      - uses: actions/create-github-app-token@v3\n", .{ head, job_head });
+    try c.expectLines("release.yml tag", try lint(a, "release.yml", tagged), &.{"only GitHub-owned actions pinned by full SHA"});
+}
+
 // ---- run scripts ------------------------------------------------------------------------
 
 fn withRun(a: Allocator, script: []const u8) ![]u8 {

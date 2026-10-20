@@ -201,6 +201,7 @@ zig_exe(  # buck-only: tools/release.zig, whose `tarball` and `sums` make the fa
 zig_exe(  # buck-only: tools/cut_release.zig, the release run's steps (plan, tag, verify-dir, publish) and the read-only verify
     name = "cut-release",
     src = "tools/cut_release.zig",
+    imports = ["tools/bump_internal.zig"],
     **_TOOLS
 )
 
@@ -213,6 +214,12 @@ zig_exe(  # buck-only: a `gh` whose answers are files, for :cut_release
 zig_exe(  # buck-only: a `cosign` that signs nothing (a bundle names the file's sha256), for :cut_release
     name = "fake-cosign",
     src = "tests/drivers/fake_cosign.zig",
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: a `git` whose answers are files, for :bump_internal
+    name = "fake-git",
+    src = "tests/drivers/fake_git.zig",
     **_TOOLS
 )
 
@@ -235,6 +242,18 @@ zig_test(  # buck-only: release install-cosign against a fake download: a good s
     imports = ["tests/drivers/harness.zig"],
     env_tools = {
         "MOPM_RELEASE_TOOL": ":release-tool",
+    },
+    **_TOOLS
+)
+
+zig_test(  # buck-only: cut_release bump-internal against the fake gh and the fake git, with planted defects it must refuse
+    name = "bump_internal",
+    src = "tests/drivers/bump_internal_test.zig",
+    imports = ["tests/drivers/harness.zig"],
+    env_tools = {
+        "MOPM_CUT_RELEASE": ":cut-release",
+        "MOPM_FAKE_GH": ":fake-gh",
+        "MOPM_FAKE_GIT": ":fake-git",
     },
     **_TOOLS
 )
@@ -577,7 +596,7 @@ zig_test(  # buck-only: release.yml's scopes, stage order and path filter (tests
     name = "release_workflow",
     src = "tests/drivers/release_lint_test.zig",
     imports = _LINT_LIBS + ["tests/drivers/release_lint.zig"],
-    data = {f: f for f in glob([".github/workflows/*.yml", ".github/workflows/*.yaml"])},
+    data = dict({f: f for f in glob([".github/workflows/*.yml", ".github/workflows/*.yaml"])}, **{"tools/cut_release.zig": "tools/cut_release.zig"}),  # the tool: gh release create must carry --verify-tag
     **_TOOLS
 )
 
