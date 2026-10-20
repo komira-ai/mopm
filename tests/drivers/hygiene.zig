@@ -433,3 +433,48 @@ fn releaseSecretFree(a: Allocator, text: []const u8) ![]u8 {
     }
     return s;
 }
+
+/// kpin-update.yml's KPIN_SETS names, one line per lock (`<pins.toml> <pins.lock.bzl> [<package-lock.json>...]`), the
+/// weekly update's whole set of npm locks, and the job refuses to start when it differs from the pins.lock.bzl files
+/// of the tree. That check runs weekly, so a new lock (site/pins.lock.bzl, which turned the 19 October run red) went
+/// unnoticed for days. This is the same comparison on every pull request: one finding per lock the tree has and
+/// KPIN_SETS lacks, and per lock KPIN_SETS names that the tree lacks. `workflow` is the text of kpin-update.yml,
+/// `files` the repository's paths. The block is read as text: the lines under `KPIN_SETS: |` that are indented
+/// deeper than the key, to the first line that is not.
+pub fn kpinSetsProblems(a: Allocator, workflow: []const u8, files: []const []const u8, out: *Out) !void {
+    const key = "KPIN_SETS: |";
+    const at = std.mem.indexOf(u8, workflow, key) orelse {
+        try c.problem(a, out, prefix ++ "kpin-update.yml: no `KPIN_SETS: |` block", .{});
+        return;
+    };
+    // The key's own indent: the characters between the start of its line and the key.
+    const line_start = if (std.mem.lastIndexOfScalar(u8, workflow[0..at], '\n')) |n| n + 1 else 0;
+    const key_indent = at - line_start;
+    var listed = std.ArrayList([]const u8).init(a);
+    var lines = std.mem.splitScalar(u8, workflow[at + key.len ..], '\n');
+    _ = lines.next(); // the rest of the key's own line
+    while (lines.next()) |line| {
+        var indent: usize = 0;
+        while (indent < line.len and line[indent] == ' ') indent += 1;
+        if (indent == line.len) continue; // a blank line
+        if (indent <= key_indent) break;
+        var words = std.mem.tokenizeAny(u8, line, " \t\r");
+        _ = words.next(); // the pins.toml
+        const lock = words.next() orelse continue;
+        try listed.append(lock);
+    }
+    if (listed.items.len == 0) try c.problem(a, out, prefix ++ "kpin-update.yml: KPIN_SETS names no lock", .{});
+    for (files) |f| {
+        if (!std.mem.eql(u8, c.basename(f), "pins.lock.bzl")) continue;
+        if (!c.containsStr(listed.items, f)) {
+            try c.problem(a, out, prefix ++ "kpin-update.yml: KPIN_SETS has no line for {s}: the weekly update would fail at its first step", .{f});
+        }
+    }
+    for (listed.items) |l| {
+        var present = false;
+        for (files) |f| {
+            if (std.mem.eql(u8, f, l)) present = true;
+        }
+        if (!present) try c.problem(a, out, prefix ++ "kpin-update.yml: KPIN_SETS names {s}, which is not in the repository", .{l});
+    }
+}

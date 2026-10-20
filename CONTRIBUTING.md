@@ -118,8 +118,8 @@ closes the older open `kpin/weekly-*` pull requests (a comment links the new one
 (a changed hash for a version already pinned) fails the job and opens nothing. Two limits: the repository
 setting "Allow GitHub Actions to create and approve pull requests" must be on, and a pull request opened with
 `GITHUB_TOKEN` starts no other workflow, so push an empty commit to its branch (or close and reopen the pull
-request) to run its checks. A new `pins.lock.bzl` needs a line in the workflow's `KPIN_SETS`; the job fails until
-it has one. kpin's fetcher speaks TLS 1.3 only (komira's `tools/build/kpin/README.md`): `registry.npmjs.org`
+request) to run its checks. A new `pins.lock.bzl` needs a line in the workflow's `KPIN_SETS`; `//:hygiene` fails the pull request that adds one without it (the job itself fails until
+it has one). kpin's fetcher speaks TLS 1.3 only (komira's `tools/build/kpin/README.md`): `registry.npmjs.org`
 answers TLS 1.2 only, so `update` cannot fetch a new npm tarball from a runner or from here today, and the job
 fails on a lock that lacks one.
 

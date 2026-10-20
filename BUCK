@@ -548,6 +548,7 @@ _LINT_PACKAGES = [
     "service/lambda/validate",
     "service/lambda/ports",
     "service/lambda/testing",
+    "site",
     "tools/lambda",
     "tools/node",
 ]

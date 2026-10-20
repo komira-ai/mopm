@@ -29,6 +29,7 @@ test "every file of the repository passes the text rules, and every workflow the
         "service/api/BUCK",
         "service/api/.gitignore",
         "service/infra/stacks/BUCK",
+        "site/pins.lock.bzl",
         "tools/node/BUCK",
         "tests/lint/fixtures/clean.yml.fixture",
     }) |must| {
@@ -42,6 +43,7 @@ test "every file of the repository passes the text rules, and every workflow the
     var out = c.Out.init(a);
     for (tree.files) |f| try hyg.textProblems(a, f, try tree.read(a, f), &out);
     for (try c.workflowFiles(a, tree)) |f| try hyg.structureProblems(a, f, try tree.read(a, f), &out);
+    try hyg.kpinSetsProblems(a, try tree.read(a, ".github/workflows/kpin-update.yml"), tree.files, &out);
     for (out.items) |l| std.debug.print("{s}\n", .{l});
     try std.testing.expectEqual(@as(usize, 0), out.items.len);
 }
@@ -475,4 +477,38 @@ test "release.yml may name the release bot's key exactly twice (tag, bump), and 
     try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, bump_env, "  bump:\n    environment: prod\n"), &.{"job bump reads RELEASE_BOT_* so it must declare environment release, got \"prod\""});
     try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "  publish:\n    environment: release\n    runs-on: x\n" }), &.{"job publish: must not use secrets or an environment"});
     try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "  publish:\n    environment: prod\n    runs-on: x\n" }), &.{"job publish: must not use secrets or an environment"});
+}
+
+test "kpin-update.yml: KPIN_SETS has a line for every pins.lock.bzl, and only for those" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const wf =
+        \\jobs:
+        \\  update:
+        \\    env:
+        \\      KPIN_SETS: |
+        \\        tools/node/pins.toml tools/node/pins.lock.bzl
+        \\        site/pins.toml site/pins.lock.bzl site/package-lock.json
+        \\
+        \\      KPIN_CARGO_SETS: ""
+        \\    steps: []
+        \\
+    ;
+    const tree = [_][]const u8{ "site/pins.lock.bzl", "site/BUCK", "tools/node/pins.lock.bzl", "README.md" };
+    var out = c.Out.init(a);
+    try hyg.kpinSetsProblems(a, wf, &tree, &out);
+    try c.expectLines("matching", out.items, &.{});
+    // Mutant: a lock in the tree with no line (what turned the 19 October run red).
+    out = c.Out.init(a);
+    try hyg.kpinSetsProblems(a, wf, &(tree ++ [_][]const u8{"service/new/pins.lock.bzl"}), &out);
+    try c.expectLines("unlisted", out.items, &.{"KPIN_SETS has no line for service/new/pins.lock.bzl"});
+    // Mutant: a line for a lock the tree does not have.
+    out = c.Out.init(a);
+    try hyg.kpinSetsProblems(a, wf, tree[1..], &out);
+    try c.expectLines("gone", out.items, &.{"KPIN_SETS names site/pins.lock.bzl, which is not in the repository"});
+    // A block that cannot be found is a finding, not a pass.
+    out = c.Out.init(a);
+    try hyg.kpinSetsProblems(a, "jobs: {}\n", &tree, &out);
+    try c.expectLines("no block", out.items, &.{"no `KPIN_SETS: |` block"});
 }
