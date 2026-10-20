@@ -64,7 +64,7 @@ Two builds describe the same program, and both stay.
   (`tests/drivers/hygiene.zig`, over every file of the repository),
   `//:workflows` (`tests/drivers/workflow_lint.zig`, over the workflows) and
   `//:lint_selftest` (both lints over `tests/lint/fixtures`, against the table in
-  `tests/drivers/lint_selftest_test.zig`). `farm.yml` runs them with `//...` (and fails a push to
+  `tests/drivers/lint_selftest_test.zig`). Those readers are lenient about YAML, so `//:actionlint` also runs the pinned actionlint (1.7.12, as buildrules pins it) over every workflow, a strict parse (`lint.yml` installs the same release with `tools/install_actionlint.zig`). `farm.yml` runs them with `//...` (and fails a push to
   `main` when the farm is not configured); `lint.yml` runs the same three tests with `zig test` on a
   GitHub-hosted runner for every pull request, forks included, and every push to `main`, with no
   secret and a read-only token (without `BUILDRULES_TEST_WORK` they read the files `git ls-files`
