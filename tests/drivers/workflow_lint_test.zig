@@ -1,8 +1,7 @@
-//! //:workflows: .github/scripts/workflow_lint.rb in Zig
+//! //:workflows: the workflow lint
 //! (tests/drivers/workflow_lint.zig), run by Buck2 over the repository's
 //! workflows, and shown able to fail: each rule has a planted defect that must
-//! be flagged, with the message the Ruby gives. workflow_lint.rb stays for
-//! ci.yml until farm.yml has matched it, and is superseded by this file.
+//! be flagged, with its message.
 //!
 //! The syntax check of `run:` scripts is a stand-in for `bash -n` (the farm has
 //! no bash); the scripts it accepts and refuses are listed below, the gaps too.
@@ -526,7 +525,7 @@ test "scripts bash refuses, the scanner refuses" {
     try expectRefused("if true; then\n  echo \"a\n  echo b\nfi", "matching `\"'");
 }
 
-test "what bash refuses and the scanner does not (the gaps; ruby -n stays in ci.yml for them)" {
+test "what bash refuses and the scanner does not (the gaps; gaps of a farm with no bash)" {
     try std.testing.expect(try syntaxOk("if true; then fi"));
     try std.testing.expect(try syntaxOk("echo a &&"));
     try std.testing.expect(try syntaxOk("echo a |"));

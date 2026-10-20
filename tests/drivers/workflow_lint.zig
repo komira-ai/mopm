@@ -1,17 +1,15 @@
-//! .github/scripts/workflow_lint.rb in Zig, for the build farm, which has no
-//! Ruby. workflow_lint.rb stays for ci.yml until farm.yml has matched it; this
-//! file reproduces its rules and its messages (`workflow-lint: <file>: ...`).
+//! The workflow lint, run by Buck2 (//:workflows). Its messages read (`workflow-lint: <file>: ...`).
 //!
-//! `fileProblems` is the per-file half (what workflow_lint.rb does with path
-//! arguments, and for every file without): read-only token, no `write` outside
+//! `fileProblems` is the per-file half (what runs for every workflow, and for the
+//! fixtures): read-only token, no `write` outside
 //! the id-token grants, secrets reach a step only through env, only
 //! GitHub-owned actions pinned by SHA, no step that prints a secret-bearing
 //! variable, and a syntax check of every `run:` script. `repoProblems` is the
 //! whole-repository half: the promotion chain, the guard jobs of deploy.yml and
 //! e2e.yml, and oidc-subject-check.yml.
 //!
-//! The one rule that is not the same: workflow_lint.rb runs `bash -n` on each
-//! `run:` script and the farm has no bash. shell_syntax.zig is the stand-in
+//! One check is a stand-in: a shell has no place on the farm, so `run:` scripts are
+//! syntax-checked without bash. shell_syntax.zig is the stand-in
 //! and says what it does and does not catch.
 
 const std = @import("std");
@@ -25,7 +23,7 @@ pub const prefix = "workflow-lint: ";
 
 const oidc_files = [_][]const u8{ "deploy.yml", "e2e.yml", "promote.yml", "oidc-subject-check.yml" };
 /// farm.yml may also hold the id-token grant, and one action outside GitHub's own
-/// (komira's farm-connect, pinned by commit); hygiene.rb holds it to its conditions.
+/// (komira's farm-connect, pinned by commit); hygiene.zig holds it to its conditions.
 const farm_file = "farm.yml";
 /// kpin-update.yml (the weekly pin update) holds the two write grants it needs to push its branch
 /// and open its pull request with the default token, nothing else, and only on a schedule or a
@@ -414,7 +412,7 @@ fn sortedKeys(a: Allocator, v: ?Value) ![]const []const u8 {
     return s;
 }
 
-/// The checks workflow_lint.rb runs only without path arguments. The workflows
+/// The checks that run only without path arguments. The workflows
 /// are read by name through `read` (the repository's .github/workflows).
 pub fn repoProblems(a: Allocator, ctx: anytype, out: *Out) !void {
     // promote.yml

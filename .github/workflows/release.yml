@@ -6,7 +6,7 @@ name: release
 # provenance of the tarballs and SHA256SUMS (actions/attest-build-provenance) and creates the GitHub
 # release with them, using only the workflow's own token. Its permissions are on the publish job alone.
 # It is the one workflow with contents: write, id-token: write (for the attestation's signing) and
-# attestations: write; .github/scripts/workflow_lint.rb and hygiene.rb pin its trigger to tags.
+# attestations: write; tests/drivers/workflow_lint.zig and hygiene.zig pin its trigger to tags.
 # install.sh (site/static/install.sh) reads these assets.
 
 on:

@@ -51,14 +51,16 @@ Two builds describe the same program, and both stay.
   The pinned compiler closure has no lldb, so `mojo repl` cannot run there and
   the REPL checks print `SKIP` (they run if the toolchain gains
   `bin/mojo-lldb`); `ci.yml` still runs them against the pixi environment.
-  The repository's own lints are Zig tests too, with no Ruby: `//:hygiene`
-  (`.github/scripts/hygiene.rb`, over every file of the repository),
-  `//:workflows` (`.github/scripts/workflow_lint.rb`, over the workflows) and
-  `//:lint_selftest` (`tests/lint/run.rb`: both lints over `tests/lint/fixtures`,
-  against the table in `run.rb` itself, which it refuses to differ from). The
-  Ruby scripts stay for `ci.yml` until `farm.yml` has matched it; change a rule in
-  both. One rule is not the same: `workflow_lint.rb` runs `bash -n` on each `run:`
-  script and the farm has no bash, so `tests/drivers/shell_syntax.zig` stands in for
+  The repository's own lints are Zig tests too: `//:hygiene`
+  (`tests/drivers/hygiene.zig`, over every file of the repository),
+  `//:workflows` (`tests/drivers/workflow_lint.zig`, over the workflows) and
+  `//:lint_selftest` (both lints over `tests/lint/fixtures`, against the table in
+  `tests/drivers/lint_selftest_test.zig`). `farm.yml` runs them with `//...` (and fails a push to
+  `main` when the farm is not configured); `lint.yml` runs the same three tests with `zig test` on a
+  GitHub-hosted runner for every pull request, forks included, and every push to `main`, with no
+  secret and a read-only token (without `BUILDRULES_TEST_WORK` they read the files `git ls-files`
+  lists). The
+  farm has no bash, so the syntax check of `run:` scripts is not `bash -n`: `tests/drivers/shell_syntax.zig` stands in for
   it (unterminated quotes and expansions, unbalanced `if`/`fi`, `do`/`done`,
   `case`/`esac`, braces and parentheses; not the rest of bash's grammar).
   Without a farm configured (`.buckconfig.local`, gitignored) the actions run on
