@@ -8,8 +8,8 @@
 //! pushed; what this tool adds is the checks around that push and the checks after it.
 //!
 //!   cut_release [--gh <path>] [--repo <owner/name>] tag <version> [--execute]
-//!       Checks that main's src/cli/main.zig names <version>, that main's checks are all green,
-//!       and that the tag and the release do not exist yet. Then it prints the one command that
+//!       Checks that main's src/cli/main.zig names <version>, that main's push-triggered workflow
+//!       runs are all green (scheduled runs are ignored: no one requires them of a commit), and that the tag and the release do not exist yet. Then it prints the one command that
 //!       would create the tag v<version> at main's commit. It RUNS that command only with
 //!       --execute (a dry run is the default); the tag push starts release.yml.
 //!   cut_release [--gh <path>] [--repo <owner/name>] verify <version> <dir> [--expect-sha256 <hex>]
@@ -154,6 +154,31 @@ fn versionIn(text: []const u8) ?[]const u8 {
     return rest[0..end];
 }
 
+/// What the workflow runs on main's commit say. A run started by a schedule is not a check anyone
+/// required of the commit (the weekly pin update runs against main's newest commit whatever its
+/// outcome), so it is counted apart and never blocks a tag; every other run must have concluded
+/// success or skipped, and at least one must exist. An unfinished run has no conclusion: not green.
+const Gate = struct { counted: usize, bad: usize, scheduled: usize };
+
+fn checkRuns(a: Allocator, json: []const u8) Gate {
+    const Run = struct { event: []const u8 = "", conclusion: ?[]const u8 = null };
+    const Doc = struct { workflow_runs: []const Run = &.{} };
+    const parsed = std.json.parseFromSlice(Doc, a, json, .{ .ignore_unknown_fields = true }) catch |err| {
+        die("cannot read the workflow runs: {s}", .{@errorName(err)});
+    };
+    var g = Gate{ .counted = 0, .bad = 0, .scheduled = 0 };
+    for (parsed.value.workflow_runs) |r| {
+        if (std.mem.eql(u8, r.event, "schedule")) {
+            g.scheduled += 1;
+            continue;
+        }
+        g.counted += 1;
+        const c = r.conclusion orelse "";
+        if (!std.mem.eql(u8, c, "success") and !std.mem.eql(u8, c, "skipped")) g.bad += 1;
+    }
+    return g;
+}
+
 // ---- tag -------------------------------------------------------------------------------
 
 fn tagCmd(gh: Gh, version: []const u8, execute: bool) void {
@@ -167,13 +192,10 @@ fn tagCmd(gh: Gh, version: []const u8, execute: bool) void {
     const have = versionIn(src) orelse die("no version in src/cli/main.zig at {s}", .{sha});
     if (!std.mem.eql(u8, have, version)) die("src/cli/main.zig at {s} says {s}, not {s}: change the version in a reviewed commit first", .{ sha, have, version });
 
-    const checks_jq = "\"\\(.total_count) \\([.check_runs[] | select(.conclusion != \"success\" and .conclusion != \"skipped\")] | length)\"";
-    const checks = gh.must(&.{ "api", gh.api("commits/{s}/check-runs?per_page=100", .{sha}), "--jq", checks_jq });
-    var it = std.mem.tokenizeScalar(u8, checks, ' ');
-    const total = it.next() orelse "";
-    const bad = it.next() orelse "";
-    if (std.mem.eql(u8, total, "0") or !allDigits(total) or !std.mem.eql(u8, bad, "0")) {
-        die("main's commit {s} does not have all checks green (check runs: {s}, not green: {s})", .{ sha, total, bad });
+    const runs_json = gh.must(&.{ "api", gh.api("actions/runs?head_sha={s}&per_page=100", .{sha}) });
+    const gate = checkRuns(a, runs_json);
+    if (gate.counted == 0 or gate.bad != 0) {
+        die("main's commit {s} does not have all checks green (workflow runs counted: {d}, not green: {d}, scheduled runs ignored: {d})", .{ sha, gate.counted, gate.bad, gate.scheduled });
     }
 
     if (gh.exists(gh.api("git/ref/tags/{s}", .{tag}))) die("the tag {s} already exists", .{tag});
@@ -277,10 +299,12 @@ fn verifyCmd(gh: Gh, version: []const u8, dir_path: []const u8, expect: ?[]const
     }
     if (listed != targets.len) die("SHA256SUMS lists {d} files, expected {d}", .{ listed, targets.len });
 
-    // Every asset is attested by this repository's release workflow.
+    // Every asset is attested by this repository's release workflow (release.yml's publish job
+    // runs actions/attest-build-provenance), not merely by some workflow of the repository.
+    const signer = std.fmt.allocPrint(a, "{s}/.github/workflows/release.yml", .{gh.repo}) catch @panic("oom");
     for (want.items) |w| {
         const path = std.fs.path.join(a, &.{ dir_path, w }) catch @panic("oom");
-        const r = gh.run(&.{ "attestation", "verify", path, "-R", gh.repo });
+        const r = gh.run(&.{ "attestation", "verify", path, "-R", gh.repo, "--signer-workflow", signer });
         if (!r.ok) die("gh attestation verify refused {s}: {s}", .{ w, std.mem.trim(u8, r.stderr, " \r\n") });
     }
 

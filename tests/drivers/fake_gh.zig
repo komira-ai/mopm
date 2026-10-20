@@ -3,7 +3,7 @@
 //! one mutating call (creating a tag ref) makes the file `tag_exists`.
 //!
 //!   main_sha       the sha of main                         main_zig     src/cli/main.zig at main
-//!   checks         what the check-runs query prints        tag_exists   the tag ref exists
+//!   runs           the workflow-runs JSON of main's commit       tag_exists   the tag ref exists
 //!   release_exists the release exists                      release_state "<draft> <prerelease>"
 //!   assets/        the release's files (a download copies them)
 //!   attest_refuse  a file name: `attestation verify` of that file fails
@@ -57,8 +57,8 @@ pub fn main() !void {
             try w.print("{s}\n", .{fileText(a, dir, "main_sha") orelse ""});
         } else if (std.mem.startsWith(u8, path, repo ++ "contents/src/cli/main.zig?ref=")) {
             try w.writeAll(fileText(a, dir, "main_zig") orelse "");
-        } else if (std.mem.indexOf(u8, path, "/check-runs") != null) {
-            try w.print("{s}\n", .{fileText(a, dir, "checks") orelse "0 0"});
+        } else if (std.mem.indexOf(u8, path, "/actions/runs") != null) {
+            try w.print("{s}\n", .{fileText(a, dir, "runs") orelse "{\"workflow_runs\":[]}"});
         } else if (std.mem.startsWith(u8, path, repo ++ "git/ref/tags/")) {
             if (fileText(a, dir, "tag_error") != null) fail500();
             if (fileText(a, dir, "tag_exists") == null) fail404("Not Found");

@@ -76,14 +76,21 @@ const World = struct {
     }
 };
 
-/// A fresh scenario that `tag 1.2.3` accepts: main at `sha` names 1.2.3, 14 checks, all green.
+// Workflow runs of main's commit. A scheduled run that failed must not block a tag (it is no
+// required check); a failed or unfinished push run must; scheduled runs alone are not evidence.
+const runs_green = "{\"workflow_runs\":[{\"event\":\"push\",\"conclusion\":\"success\"},{\"event\":\"push\",\"conclusion\":\"skipped\"},{\"event\":\"schedule\",\"conclusion\":\"failure\"},{\"event\":\"schedule\",\"conclusion\":null}]}";
+const runs_red = "{\"workflow_runs\":[{\"event\":\"push\",\"conclusion\":\"success\"},{\"event\":\"push\",\"conclusion\":\"failure\"}]}";
+const runs_unfinished = "{\"workflow_runs\":[{\"event\":\"push\",\"conclusion\":\"success\"},{\"event\":\"push\",\"conclusion\":null}]}";
+const runs_only_scheduled = "{\"workflow_runs\":[{\"event\":\"schedule\",\"conclusion\":\"success\"}]}";
+
+/// A fresh scenario that `tag 1.2.3` accepts: main at `sha` names 1.2.3, three push runs and a scheduled one, all green.
 fn goodTag(a: Allocator, tools: Tools, tmp: *std.testing.TmpDir, name: []const u8) !World {
     const root = try h.join(a, &.{ try h.tmpPath(a, tmp), name });
     try std.fs.cwd().makePath(root);
     const w = World{ .a = a, .tools = tools, .root = root };
     try w.put("main_sha", sha ++ "\n");
     try w.put("main_zig", main_zig);
-    try w.put("checks", "14 0\n");
+    try w.put("runs", runs_green);
     return w;
 }
 
@@ -143,6 +150,8 @@ test "cut_release: tag and verify, and every planted defect is refused" {
             .{ .name = "checks", .version = "1.2.3", .why = "does not have all checks green" },
             .{ .name = "tag_exists", .version = "1.2.3", .why = "already exists" },
             .{ .name = "release_exists", .version = "1.2.3", .why = "already exists" },
+            .{ .name = "unfinished", .version = "1.2.3", .why = "does not have all checks green" },
+            .{ .name = "only_scheduled", .version = "1.2.3", .why = "does not have all checks green" },
             .{ .name = "no_checks", .version = "1.2.3", .why = "does not have all checks green" },
             .{ .name = "leading_v", .version = "v1.2.3", .why = "is not <major>.<minor>.<patch>" },
             // A lookup that fails for any reason but 404 must stop the tool: "could not ask" is not "absent".
@@ -151,8 +160,10 @@ test "cut_release: tag and verify, and every planted defect is refused" {
         };
         for (cases) |c| {
             const w = try goodTag(a, tools, &tmp, try h.fmt(a, "tag_bad_{s}", .{c.name}));
-            if (std.mem.eql(u8, c.name, "checks")) try w.put("checks", "14 1\n");
-            if (std.mem.eql(u8, c.name, "no_checks")) try w.put("checks", "0 0\n");
+            if (std.mem.eql(u8, c.name, "checks")) try w.put("runs", runs_red);
+            if (std.mem.eql(u8, c.name, "no_checks")) try w.put("runs", "{\"workflow_runs\":[]}");
+            if (std.mem.eql(u8, c.name, "unfinished")) try w.put("runs", runs_unfinished);
+            if (std.mem.eql(u8, c.name, "only_scheduled")) try w.put("runs", runs_only_scheduled);
             if (std.mem.eql(u8, c.name, "tag_exists")) try w.put("tag_exists", "");
             if (std.mem.eql(u8, c.name, "release_exists")) try w.put("release_exists", "");
             if (std.mem.eql(u8, c.name, "tag_error")) try w.put("tag_error", "");
@@ -177,6 +188,7 @@ test "cut_release: tag and verify, and every planted defect is refused" {
             if (std.mem.startsWith(u8, l, "attestation verify ")) attested += 1;
         }
         rep.check("verify: attestation is checked for all five assets", attested == 5, w.log());
+        rep.check("verify: attestation is pinned to release.yml", h.contains(w.log(), "--signer-workflow komira-ai/mopm/.github/workflows/release.yml\n"), w.log());
 
         const dir2 = try freshDir(a, w, "dl2");
         const ok = try w.run(&.{ "verify", "1.2.3", dir2, "--expect-sha256", want });
