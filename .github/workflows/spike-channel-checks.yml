@@ -126,11 +126,12 @@ jobs:
         run: '"$RUNNER_TEMP/release" package 0.0.1 linux-x86_64 x86_64-linux-musl "$RUNNER_TEMP/out"'
       - name: Write the .deb with the library
         run: |
-          mkdir -p "$RUNNER_TEMP/dist"
+          mkdir -p "$RUNNER_TEMP/dist" "$RUNNER_TEMP/x"
+          tar -xzf "$RUNNER_TEMP/out/mopm-0.0.1-linux-x86_64.tar.gz" -C "$RUNNER_TEMP/x"
           "$RUNNER_TEMP/channels" deb --package mopm --version 0.0.1 --arch amd64 \
             --maintainer "mopm authors <apt@mopm.dev>" --homepage https://mopm.dev \
             --synopsis "package manager for Mojo" \
-            --file "755:usr/bin/mopm:$RUNNER_TEMP/out/stage/mopm-0.0.1-linux-x86_64/mopm" \
+            --file "755:usr/bin/mopm:$RUNNER_TEMP/x/mopm-0.0.1-linux-x86_64/mopm" \
             --file "644:usr/share/doc/mopm/copyright:LICENSE" \
             --mtime "$(git log -1 --format=%ct)" --out "$RUNNER_TEMP/dist/mopm_0.0.1_amd64.deb"
           ls -l "$RUNNER_TEMP/dist"
