@@ -1,6 +1,6 @@
-//! tests/resolve/check_golden.py in Zig, for the build farm, which has no
-//! Python. check_golden.py stays for ci.yml until farm.yml has matched it,
-//! and is superseded by this file.
+//! The locks mopm's unit tests write, checked against the lock contract, in
+//! Zig, for the build farm, which has no Python. (This file replaced
+//! tests/resolve/check_golden.py.)
 //!
 //! Each tests/resolve/golden/*.lock is the exact output of a Zig unit test
 //! (src/core/install_plan.zig compares the bytes). Here each one must pass
