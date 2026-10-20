@@ -348,6 +348,7 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
         }
     }
     if (c.get(jv, "attest")) |attest| {
+        try attestDebProblems(a, attest, out);
         const up = try uploadedNames(a, attest);
         if (!c.eqlList(up, &.{"signed-assets"})) try c.problem(a, out, prefix ++ "release.yml: attest must upload exactly the artifact signed-assets, got {s}", .{try c.inspectList(a, up)});
     }
@@ -812,5 +813,125 @@ pub fn userBetaProblems(a: Allocator, text: []const u8, out: *Out) !void {
         if (p == .object) {
             for (p.object.values()) |v| if (!c.isStr(v, "read")) try c.problem(a, out, prefix ++ f ++ "user holds a permission other than read", .{});
         } else try c.problem(a, out, prefix ++ f ++ "permissions must be a read-only mapping", .{});
+    }
+}
+
+// ---- the .deb wiring --------------------------------------------------------------------------
+//
+// The .debs cross four workflow files: release-build.yml makes one per linux leg (from the binary inside the tarball),
+// release.yml attests and uploads them with the tarballs, and release-check.yml lints them with lintian. Each hop is a
+// path or a name; a typo in one drops the .deb from the release without any step going red, so each is pinned here.
+
+/// The non-empty trimmed lines of a block scalar.
+fn lineList(a: Allocator, text: []const u8) ![]const []const u8 {
+    var out = std.ArrayList([]const u8).init(a);
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |l| {
+        const t = std.mem.trim(u8, l, " \r\t");
+        if (t.len != 0) try out.append(t);
+    }
+    std.mem.sort([]const u8, out.items, {}, lessThan);
+    return out.items;
+}
+
+/// `with.<key>` of the first step of `job` that uses an action starting with `prefix_text`.
+fn stepWith(job: Value, prefix_text: []const u8, key: []const u8) ?[]const u8 {
+    const steps = c.get(job, "steps") orelse return null;
+    if (steps != .array) return null;
+    for (steps.array.items) |st| {
+        const u = c.str(c.get(st, "uses")) orelse continue;
+        if (std.mem.startsWith(u8, u, prefix_text)) return c.str(c.get(c.get(st, "with"), key));
+    }
+    return null;
+}
+
+/// The step of `job` whose `run:` contains `needle`.
+fn stepRunning(job: Value, needle: []const u8) ?Value {
+    const steps = c.get(job, "steps") orelse return null;
+    if (steps != .array) return null;
+    for (steps.array.items) |st| {
+        const run = c.str(c.get(st, "run")) orelse continue;
+        if (std.mem.indexOf(u8, run, needle) != null) return st;
+    }
+    return null;
+}
+
+/// `list` holds exactly the lines `want` (order does not matter); otherwise one problem naming `what`.
+fn exactLines(a: Allocator, out: *Out, what: []const u8, have: ?[]const u8, want: []const []const u8) !void {
+    const sorted = try a.dupe([]const u8, want);
+    std.mem.sort([]const u8, sorted, {}, lessThan);
+    const got = try lineList(a, have orelse "");
+    if (!c.eqlList(got, sorted)) try c.problem(a, out, prefix ++ "{s} lists {s}, expected exactly {s}", .{ what, try c.inspectList(a, got), try c.inspectList(a, sorted) });
+}
+
+/// The .deb wiring of release.yml's `attest` job: the build provenance covers the two .debs with the four tarballs and
+/// SHA256SUMS, and the signed-assets artifact that verify downloads carries them. Called by `problems`.
+fn attestDebProblems(a: Allocator, attest: Value, out: *Out) !void {
+    try exactLines(a, out, "release.yml: attest's build provenance subject-path", stepWith(attest, "actions/attest-build-provenance@", "subject-path"), &.{ "dist/mopm-*.tar.gz", "dist/mopm_*.deb", "dist/SHA256SUMS" });
+    try exactLines(a, out, "release.yml: attest's signed-assets artifact path", stepWith(attest, "actions/upload-artifact@", "path"), &.{ "dist/mopm-*.tar.gz", "dist/mopm_*.deb", "dist/SHA256SUMS", "dist/*.sigstore.json" });
+}
+
+const deb_legs = [_]struct { target: []const u8, deb_arch: []const u8 }{
+    .{ .target = "linux-x86_64", .deb_arch = "amd64" },
+    .{ .target = "linux-aarch64", .deb_arch = "arm64" },
+    .{ .target = "macos-arm64", .deb_arch = "" },
+    .{ .target = "macos-x86_64", .deb_arch = "" },
+};
+
+/// release-build.yml: the linux legs have the Debian architecture of their target (the others none), the .deb is made from
+/// the binary inside the tarball of the same leg, the step runs for the legs that have an architecture only, and the .debs
+/// are uploaded with the tarballs.
+pub fn buildDebProblems(a: Allocator, text: []const u8, out: *Out) !void {
+    const f = "release-build.yml: ";
+    const doc = c.load(a, text) catch |err| return c.problem(a, out, prefix ++ f ++ "not readable as YAML: {s}", .{@errorName(err)});
+    const job = c.get(c.get(doc, "jobs"), "package") orelse return c.problem(a, out, prefix ++ f ++ "there is no package job", .{});
+    const include = c.get(c.get(c.get(job, "strategy"), "matrix"), "include");
+    const items: []const Value = if (include != null and include.? == .array) include.?.array.items else &.{};
+    for (deb_legs) |leg| {
+        var found = false;
+        for (items) |it| {
+            if (!c.isStr(c.get(it, "target"), leg.target)) continue;
+            found = true;
+            if (!c.isStr(c.get(it, "deb_arch"), leg.deb_arch)) {
+                try c.problem(a, out, prefix ++ f ++ "the package leg {s} has deb_arch {s}, expected \"{s}\"", .{ leg.target, try c.inspect(a, c.get(it, "deb_arch")), leg.deb_arch });
+            }
+        }
+        if (!found) try c.problem(a, out, prefix ++ f ++ "the package matrix has no leg {s}", .{leg.target});
+    }
+    const step = stepRunning(job, "deb-package") orelse return c.problem(a, out, prefix ++ f ++ "package has no step that runs `channels deb-package`", .{});
+    const run = c.str(c.get(step, "run")) orelse "";
+    if (std.mem.indexOf(u8, run, "--binary \"$RUNNER_TEMP/mopm-$VERSION-$TARGET/mopm\"") == null) {
+        try c.problem(a, out, prefix ++ f ++ "deb-package must take --binary \"$RUNNER_TEMP/mopm-$VERSION-$TARGET/mopm\", the binary inside the tarball of this leg (so the .deb and the tarball hold the same bytes)", .{});
+    }
+    if (std.mem.indexOf(u8, run, "tar -xzf \"$RUNNER_TEMP/out/mopm-$VERSION-$TARGET.tar.gz\" -C \"$RUNNER_TEMP\" \"mopm-$VERSION-$TARGET/mopm\"") == null) {
+        try c.problem(a, out, prefix ++ f ++ "the .deb step must first unpack mopm from this leg's tarball ($RUNNER_TEMP/out/mopm-$VERSION-$TARGET.tar.gz)", .{});
+    }
+    if (std.mem.indexOf(u8, run, "--arch \"$DEB_ARCH\"") == null) try c.problem(a, out, prefix ++ f ++ "deb-package must take --arch \"$DEB_ARCH\"", .{});
+    if (std.mem.indexOf(u8, run, "--packaging packaging/deb") == null) try c.problem(a, out, prefix ++ f ++ "deb-package must take --packaging packaging/deb", .{});
+    if (std.mem.indexOf(u8, run, "--out \"$RUNNER_TEMP/out/mopm_${VERSION}_${DEB_ARCH}.deb\"") == null) {
+        try c.problem(a, out, prefix ++ f ++ "deb-package must write --out \"$RUNNER_TEMP/out/mopm_${{VERSION}}_${{DEB_ARCH}}.deb\" (the upload takes out/*.deb)", .{});
+    }
+    if (!c.isStr(c.get(c.get(step, "env"), "DEB_ARCH"), "${{ matrix.deb_arch }}")) try c.problem(a, out, prefix ++ f ++ "the .deb step must set DEB_ARCH to ${{{{ matrix.deb_arch }}}}", .{});
+    if (!c.isStr(c.get(step, "if"), "matrix.deb_arch != ''")) try c.problem(a, out, prefix ++ f ++ "the .deb step must run only for the legs that have a deb_arch (if: matrix.deb_arch != '')", .{});
+    const tool = stepRunning(job, "tools/channels/main.zig") orelse return c.problem(a, out, prefix ++ f ++ "package has no step that builds tools/channels/main.zig", .{});
+    if (!c.isStr(c.get(tool, "if"), "matrix.deb_arch != ''")) try c.problem(a, out, prefix ++ f ++ "the channels build step must run only for the legs that have a deb_arch", .{});
+    try exactLines(a, out, "release-build.yml: the artifact upload path", stepWith(job, "actions/upload-artifact@", "path"), &.{ "${{ runner.temp }}/out/*.tar.gz", "${{ runner.temp }}/out/*.deb" });
+    if (!std.mem.eql(u8, stepWith(job, "actions/upload-artifact@", "if-no-files-found") orelse "", "error")) try c.problem(a, out, prefix ++ f ++ "the artifact upload must set if-no-files-found: error", .{});
+}
+
+/// release-check.yml: the lintian job runs after the package job, lints the .debs the package job built (the linux
+/// artifacts), and an error fails it.
+pub fn checkDebProblems(a: Allocator, text: []const u8, out: *Out) !void {
+    const f = "release-check.yml: ";
+    const doc = c.load(a, text) catch |err| return c.problem(a, out, prefix ++ f ++ "not readable as YAML: {s}", .{@errorName(err)});
+    const job = c.get(c.get(doc, "jobs"), "lintian") orelse return c.problem(a, out, prefix ++ f ++ "there is no lintian job", .{});
+    const need = try c.arrayOf(a, c.get(job, "needs"));
+    if (!c.eqlList(need, &.{"package"})) try c.problem(a, out, prefix ++ f ++ "lintian must need exactly package (the .debs it lints), got {s}", .{try c.inspectList(a, need)});
+    if (!std.mem.eql(u8, stepWith(job, "actions/download-artifact@", "pattern") orelse "", "release-linux-*")) try c.problem(a, out, prefix ++ f ++ "lintian must download the artifacts release-linux-* (the .debs)", .{});
+    const step = stepRunning(job, "lintian --fail-on error") orelse return c.problem(a, out, prefix ++ f ++ "lintian must run `lintian --fail-on error` (an error tag fails the job)", .{});
+    const run = c.str(c.get(step, "run")) orelse "";
+    if (std.mem.indexOf(u8, run, "dist/*.deb") == null) try c.problem(a, out, prefix ++ f ++ "lintian must lint dist/*.deb", .{});
+    if (std.mem.indexOf(u8, run, "||") != null or c.truthy(c.get(step, "continue-on-error")) or c.truthy(c.get(job, "continue-on-error"))) {
+        try c.problem(a, out, prefix ++ f ++ "lintian must not be allowed to fail (no `||`, no continue-on-error)", .{});
     }
 }
