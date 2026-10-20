@@ -1,9 +1,7 @@
-//! tests/resolve_e2e/run.py in Zig, for the build farm, which has no Python.
-//! run.py stays for ci.yml until farm.yml has matched it, and is superseded by
-//! this file.
-//!
-//! End-to-end tests of `mopm lock`, `mopm update` and `mopm tree` against
-//! mopm-fake-registry. The fake registry is started on a free port; the index
+//! End-to-end tests of `mopm lock`, `mopm update`, `mopm tree`, `mopm add` and
+//! `mopm remove` against mopm-fake-registry, for the build farm, which has no
+//! Python (this file replaced tests/resolve_e2e/run.py). The fake registry is
+//! started on a free port; the index
 //! records and the channel's repodata.json files below are then written into
 //! its data directory, which it serves at /index/... and /channel/... as the
 //! hosted registry does (spec/index.md, spec/channel.md). Each check prints
