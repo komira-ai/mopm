@@ -9,7 +9,9 @@
 //!     sha256 of the files on disk, a second run gives the same tree, and the new .debs are in the pool;
 //!   - a channel never moves down: an older version, or the same version with other bytes, is refused with exit 1 and
 //!     NOTHING is written (no output directory at all); the same file again is a no-op;
-//!   - retention: with --keep 2 the third newest version is dropped from the index;
+//!   - retention: with --keep 2 the third newest version is dropped from the index; without --keep the newest 25 stay;
+//!   - re-indexing with one --arch keeps the published packages of every other architecture the repository lists;
+//!   - an architecture given twice, or that is not a name, is refused;
 //!   - the formula is the golden one, and a missing platform, a stray tarball of another version or a bad version is
 //!     refused with no file written;
 //!   - `monotonic` says advance, same, or refuses with exit 1.
@@ -170,8 +172,19 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
         rep.check("mutant: no .deb is refused, nothing written", nodeb.code == 1 and h.contains(nodeb.text, "--deb is required") and !w.has("r_nodeb"), nodeb.text);
         const nodate = try w.run(&.{ "apt-index", "--repo", w.path("r2"), "--out", w.path("r_nodate"), "--deb", w.path("one.deb"), "--origin", "mopm", "--label", "mopm", "--description", "d" });
         rep.check("mutant: no --date is refused (the tool never reads the clock), nothing written", nodate.code == 1 and h.contains(nodate.text, "--date is required") and !w.has("r_nodate"), nodate.text);
-        const stray = try w.index("r2", "r_stray", &.{"one.deb"}, &.{ "--arch", "arm64" });
+        _ = try w.deb("1.2.3", "armhf", bin, mtime, "armhf.deb");
+        const stray = try w.index("r2", "r_stray", &.{"armhf.deb"}, &.{});
         rep.check("mutant: a .deb of an architecture the index does not list is refused, nothing written", stray.code == 1 and h.contains(stray.text, "ArchitectureNotIndexed") and !w.has("r_stray"), stray.text);
+        const dup_arch = try w.index("r2", "r_duparch", &.{"one.deb"}, &.{ "--arch", "amd64", "--arch", "amd64" });
+        rep.check("mutant: an architecture given twice is refused, nothing written", dup_arch.code == 1 and h.contains(dup_arch.text, "BadArchitecture") and !w.has("r_duparch"), dup_arch.text);
+        const odd_arch = try w.index("r2", "r_oddarch", &.{"one.deb"}, &.{ "--arch", "../AMD64" });
+        rep.check("mutant: an architecture that is not a name is refused, nothing written", odd_arch.code == 1 and h.contains(odd_arch.text, "BadArchitecture") and !w.has("r_oddarch"), odd_arch.text);
+
+        // ---- re-indexing with one --arch must not drop the published packages of the other architectures ---------------
+        const one_arch = try w.index("r2", "r_onearch", &.{"newer.deb"}, &.{ "--arch", "amd64" });
+        rep.check("apt-index: --arch amd64 over a repository that also lists arm64 succeeds", one_arch.code == 0 and h.contains(one_arch.text, "listed 4"), one_arch.text);
+        rep.same("apt-index: and the arm64 Packages is the golden one still (its stanza was kept)", h.readFile(a, gold ++ "Packages_arm64") catch "", w.read("r_onearch/dists/stable/main/binary-arm64/Packages"));
+        rep.check("apt-index: and the arm64 Packages.gz and the Release still list arm64", w.has("r_onearch/dists/stable/main/binary-arm64/Packages.gz") and h.contains(w.read("r_onearch/dists/stable/Release"), "Architectures: amd64 arm64\n") and h.contains(w.read("r_onearch/dists/stable/Release"), "main/binary-arm64/Packages.gz\n"), w.read("r_onearch/dists/stable/Release"));
         const unknown = try w.index("r2", "r_unknown", &.{"one.deb"}, &.{"--force"});
         rep.check("mutant: an unknown flag is refused", unknown.code == 1 and h.contains(unknown.text, "unknown argument") and !w.has("r_unknown"), unknown.text);
 
@@ -181,6 +194,18 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
         rep.check("apt-index: --keep 2 drops the oldest of three and says so", keep.code == 0 and h.contains(keep.text, "dropped 1") and h.contains(listed, "Version: 1.2.4\n") and h.contains(listed, "Version: 1.2.3\n") and !h.contains(listed, "Version: 1.2.2\n"), keep.text);
         const keep0 = try w.index("r2", "r_keep0", &.{"newer.deb"}, &.{ "--keep", "0" });
         rep.check("mutant: --keep 0 would empty the index: refused, nothing written", keep0.code == 1 and !w.has("r_keep0"), keep0.text);
+
+        // Without --keep the newest 25 stay: 27 versions in one call list 25 and drop 2 (24 or 26 would say otherwise).
+        var many_debs = std.ArrayList([]const u8).init(a);
+        var n: usize = 0;
+        while (n < 27) : (n += 1) {
+            const name = try h.fmt(a, "many{d}.deb", .{n});
+            _ = try w.deb(try h.fmt(a, "1.0.{d}", .{n}), "amd64", bin, mtime, name);
+            try many_debs.append(name);
+        }
+        const dflt = try w.index("nowhere", "r_default", many_debs.items, &.{});
+        const kept = w.read("r_default/dists/stable/main/binary-amd64/Packages");
+        rep.check("apt-index: the default keeps the newest 25 of 27 and drops 2", dflt.code == 0 and h.contains(dflt.text, "added 27, dropped 2, listed 25") and h.contains(kept, "Version: 1.0.26\n") and h.contains(kept, "Version: 1.0.2\n") and !h.contains(kept, "Version: 1.0.1\n"), dflt.text);
     }
 
     // ---- the formula ------------------------------------------------------------------------------------------------

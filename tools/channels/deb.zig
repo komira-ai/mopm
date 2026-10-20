@@ -40,7 +40,7 @@ pub const Package = struct {
 
 pub const Error = error{ BadName, BadArchitecture, BadPath, NoFiles, MemberTooBig, NotADeb, NoControl };
 
-fn validName(s: []const u8) bool {
+pub fn validName(s: []const u8) bool {
     if (s.len < 2) return false;
     if (!std.ascii.isLower(s[0]) and !std.ascii.isDigit(s[0])) return false;
     for (s) |ch| {
@@ -49,7 +49,7 @@ fn validName(s: []const u8) bool {
     return true;
 }
 
-fn validArch(s: []const u8) bool {
+pub fn validArch(s: []const u8) bool {
     if (s.len == 0) return false;
     for (s) |ch| {
         if (!std.ascii.isLower(ch) and !std.ascii.isDigit(ch) and ch != '-') return false;
@@ -147,7 +147,7 @@ fn dataEntries(a: Allocator, files: []const File) ![]tar.Entry {
     return out.toOwnedSlice();
 }
 
-fn arMember(out: *std.ArrayList(u8), name: []const u8, mtime: u64, data: []const u8) !void {
+pub fn arMember(out: *std.ArrayList(u8), name: []const u8, mtime: u64, data: []const u8) !void {
     var h: [60]u8 = undefined;
     @memset(&h, ' ');
     @memcpy(h[0..name.len], name);
@@ -421,4 +421,51 @@ test "a file that is not a deb is refused" {
     const bad_magic = try a.dupe(u8, deb);
     bad_magic[0] = '?';
     try t.expectError(error.NotADeb, readControl(a, bad_magic));
+}
+
+test "an ar header whose terminator is not a backtick and a newline is refused, each byte on its own" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const deb = try build(a, sample());
+    try t.expectEqual(@as(u8, '`'), deb[8 + 58]);
+    try t.expectEqual(@as(u8, '\n'), deb[8 + 59]);
+    const no_tick = try a.dupe(u8, deb);
+    no_tick[8 + 58] = '\'';
+    try t.expectError(error.NotADeb, readControl(a, no_tick));
+    const no_newline = try a.dupe(u8, deb);
+    no_newline[8 + 59] = ' ';
+    try t.expectError(error.NotADeb, readControl(a, no_newline));
+}
+
+test "package names: two characters are the least, a start that is not a lower-case letter or digit is refused" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var p = sample();
+    p.name = "a";
+    try t.expectError(error.BadName, build(a, p));
+    p.name = "";
+    try t.expectError(error.BadName, build(a, p));
+    p.name = "ab";
+    _ = try build(a, p);
+    p.name = "9a";
+    _ = try build(a, p);
+    p.name = "-a";
+    try t.expectError(error.BadName, build(a, p));
+    p.name = "a_b";
+    try t.expectError(error.BadName, build(a, p));
+}
+
+test "an empty architecture is refused" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var p = sample();
+    p.architecture = "";
+    try t.expectError(error.BadArchitecture, build(a, p));
+    p.architecture = "all";
+    _ = try build(a, p);
+    p.architecture = "linux-amd64";
+    _ = try build(a, p);
 }

@@ -7,7 +7,8 @@
 //!       The same arguments and the same files give the same bytes.
 //!   channels apt-index --repo <dir> --out <dir> --deb <path> [--deb ...] --date <epoch seconds>
 //!                --origin <text> --label <text> --description <text> [--arch <arch> ...] [--keep <N>]
-//!       Reads the Packages files under <dir>/dists/stable/main/binary-<arch>/ (none is an empty index), adds the
+//!       Reads the Packages files under <dir>/dists/stable/main/binary-<arch>/ (none is an empty index) for the --arch
+//!       given (default amd64 and arm64) and for every other binary-<arch> the repository has, so none is dropped; adds the
 //!       .debs, and writes the new Packages, Packages.gz and Release under <out>/dists/stable and the .debs under
 //!       <out>/pool. Refuses (exit 1, nothing written) to list a version older than the newest one listed for its
 //!       package and architecture, or the same version with other bytes. Keeps the newest <N> (default 25) per
@@ -144,15 +145,52 @@ fn cmdDeb(a: Allocator, args: []const []const u8) !void {
     std.debug.print("wrote {s} {d} bytes sha256 {s}\n", .{ out, bytes.len, std.fmt.bytesToHex(d, .lower) });
 }
 
+/// How many versions of a package and architecture an index keeps when --keep is not given.
+const default_keep: usize = 25;
+
+/// The names after `binary-` of the directories under `<repo>/dists/stable/main`; none when there is no such directory.
+fn listedArchs(a: Allocator, repo: []const u8) ![]const []const u8 {
+    const dir_path = try std.fmt.allocPrint(a, "{s}/dists/stable/main", .{repo});
+    var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => return &.{},
+        else => die("cannot read {s}: {s}", .{ dir_path, @errorName(err) }),
+    };
+    defer dir.close();
+    var out = std.ArrayList([]const u8).init(a);
+    var it = dir.iterate();
+    while (try it.next()) |entry| {
+        if (entry.kind != .directory or !std.mem.startsWith(u8, entry.name, "binary-")) continue;
+        try out.append(try a.dupe(u8, entry.name["binary-".len..]));
+    }
+    // The directory order is the file system's; the Release sorts, and so does this.
+    std.mem.sort([]const u8, out.items, {}, struct {
+        fn lt(_: void, x: []const u8, y: []const u8) bool {
+            return std.mem.lessThan(u8, x, y);
+        }
+    }.lt);
+    return out.items;
+}
+
 fn cmdAptIndex(a: Allocator, args: []const []const u8) !void {
     const flags = try parseFlags(a, args, &.{
         "--repo", "--out", "--deb", "--date", "--origin", "--label", "--description", "--arch", "--keep",
     }, &.{});
     const repo = need(flags, "--repo");
     const out_dir = need(flags, "--out");
-    var archs: []const []const u8 = try many(a, flags, "--arch");
-    if (archs.len == 0) archs = &.{ "amd64", "arm64" };
-    const keep: usize = if (one(flags, "--keep")) |k| @intCast(number(k, "--keep")) else 25;
+    var archs_list = std.ArrayList([]const u8).init(a);
+    try archs_list.appendSlice(try many(a, flags, "--arch"));
+    if (archs_list.items.len == 0) try archs_list.appendSlice(&.{ "amd64", "arm64" });
+    // Every architecture the repository already lists stays listed, whatever --arch says: an index written without
+    // one would drop its packages.
+    for (try listedArchs(a, repo)) |arch| {
+        var known = false;
+        for (archs_list.items) |x| {
+            if (std.mem.eql(u8, x, arch)) known = true;
+        }
+        if (!known) try archs_list.append(arch);
+    }
+    const archs: []const []const u8 = archs_list.items;
+    const keep: usize = if (one(flags, "--keep")) |k| @intCast(number(k, "--keep")) else default_keep;
 
     var existing = std.ArrayList(apt.Stanza).init(a);
     for (archs) |arch| {

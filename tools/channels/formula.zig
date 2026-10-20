@@ -277,3 +277,44 @@ test "class names: mopm is Mopm, my-tool is MyTool" {
     try t.expectEqualStrings("Mopm", try className(a, "mopm"));
     try t.expectEqualStrings("MyTool", try className(a, "my-tool"));
 }
+
+test "the license is plain text like the description: empty, a quote, a backslash, a hash or a newline is refused" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_][]const u8{ "", "Apache\"-2.0", "Apache\\2.0", "#{evil}", "MIT\nend" }) |bad| {
+        var i = sampleInfo();
+        i.license = bad;
+        try t.expectError(error.BadInfo, render(a, i, sums_ok));
+    }
+    var ok = sampleInfo();
+    ok.license = "Apache-2.0 OR MIT";
+    _ = try render(a, ok, sums_ok);
+}
+
+test "the url_base is plain text with no blank: empty, a quote, a space, a tab or a newline is refused" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_][]const u8{ "", "file:///a\"b", "file:///a b", "file:///a\tb", "file:///a\nb", "file:///a#b" }) |bad| {
+        var i = sampleInfo();
+        i.repo = "";
+        i.url_base = bad;
+        try t.expectError(error.BadInfo, render(a, i, sums_ok));
+    }
+}
+
+test "the repo is owner/name: no owner, no name, a second slash, a blank or another character is refused" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_][]const u8{ "", "owner", "/name", "owner/", "a/b/c", "own er/name", "owner/na me", "owner/na\"me", "owner/na?me", "owner/na@me" }) |bad| {
+        var i = sampleInfo();
+        i.repo = bad;
+        try t.expectError(error.BadInfo, render(a, i, sums_ok));
+    }
+    var ok = sampleInfo();
+    ok.repo = "komira-ai/my_repo.v2";
+    const text = try render(a, ok, sums_ok);
+    try t.expect(std.mem.indexOf(u8, text, "https://github.com/komira-ai/my_repo.v2/releases/download/v1.2.3/") != null);
+}

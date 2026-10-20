@@ -26,7 +26,11 @@ pub const Stanza = struct {
     text: []const u8,
 };
 
-pub const Error = error{ BadStanza, MissingField, VersionConflict, ArchitectureNotIndexed, BadKeep };
+pub const Error = error{ BadStanza, MissingField, VersionConflict, ArchitectureNotIndexed, BadKeep, BadName, BadArchitecture, ReservedField };
+
+/// Fields the index writes itself, from the file: a control file that carries one would forge the file's name, size or
+/// checksums. Field names are not case sensitive in Debian control files.
+const reserved_fields = [_][]const u8{ "Filename", "Size", "SHA256", "MD5sum", "SHA1" };
 
 /// `pool/main/m/mopm/mopm_1.2.3_amd64.deb` for package `mopm`: the first letter, or `lib` and the letter for `lib*`.
 pub fn poolPath(a: Allocator, package: []const u8, file_name: []const u8) ![]u8 {
@@ -66,7 +70,15 @@ pub fn stanzaOf(a: Allocator, deb_bytes: []const u8) !Stanza {
     const package = control.get(fields, "Package") orelse return error.MissingField;
     const ver = control.get(fields, "Version") orelse return error.MissingField;
     const arch = control.get(fields, "Architecture") orelse return error.MissingField;
+    // The same rules deb.build applies: the name and the architecture become a path in the pool.
+    if (!deb.validName(package)) return error.BadName;
     _ = try Version.parse(ver);
+    if (!deb.validArch(arch)) return error.BadArchitecture;
+    for (fields) |f| {
+        for (reserved_fields) |r| {
+            if (std.ascii.eqlIgnoreCase(f.name, r)) return error.ReservedField;
+        }
+    }
     const file_name = try debFileName(a, package, ver, arch);
     const sum = sha256Hex(deb_bytes);
     var out = std.ArrayList(control.Field).init(a);
@@ -124,7 +136,16 @@ pub fn merge(a: Allocator, existing: []const Stanza, add: []const Stanza, keep: 
     var all = std.ArrayList(Stanza).init(a);
     try all.appendSlice(existing);
     var added: usize = 0;
-    for (add) |n| {
+    for (add, 0..) |n, i| {
+        // Among the added stanzas themselves: the same version twice is one (when the bytes are the same) or a conflict.
+        var repeat = false;
+        for (add[0..i]) |m| {
+            if (!std.mem.eql(u8, m.package, n.package) or !std.mem.eql(u8, m.architecture, n.architecture)) continue;
+            if (m.version.order(n.version) != .eq) continue;
+            if (!std.mem.eql(u8, m.sha256, n.sha256)) return error.VersionConflict;
+            repeat = true;
+        }
+        if (repeat) continue;
         var newest: ?Version = null;
         var same: ?Stanza = null;
         for (existing) |e| {
@@ -213,6 +234,13 @@ pub fn formatDate(a: Allocator, secs: u64) ![]u8 {
 /// Release that lists them. Paths are relative to the repository root. A stanza whose architecture is not in
 /// `archs` is refused: it would be listed nowhere.
 pub fn tree(a: Allocator, info: ReleaseInfo, stanzas: []const Stanza, archs: []const []const u8) ![]TreeFile {
+    // An architecture is a name (it becomes a directory) and is listed once (its Packages would be written twice).
+    for (archs, 0..) |x, i| {
+        if (!deb.validArch(x)) return error.BadArchitecture;
+        for (archs[0..i]) |y| {
+            if (std.mem.eql(u8, x, y)) return error.BadArchitecture;
+        }
+    }
     for (stanzas) |s| {
         var found = false;
         for (archs) |x| {
@@ -413,4 +441,104 @@ test "a stanza of an architecture the Release does not list is refused" {
     const s = try stanzaOf(a, try sampleDeb(a, "1.2.3", "armhf", "x"));
     const info = ReleaseInfo{ .origin = "mopm", .label = "mopm", .description = "d", .date = 0 };
     try t.expectError(error.ArchitectureNotIndexed, tree(a, info, &.{s}, &.{ "amd64", "arm64" }));
+}
+
+/// A .deb whose control file is exactly `ctrl` (deb.build would refuse a bad one, which is what these tests need to write).
+fn rawDeb(a: Allocator, ctrl: []const u8) ![]u8 {
+    const control_tar = try tar.write(a, &.{.{ .path = "./control", .mode = 0o644, .data = ctrl }}, 1700000000);
+    const data_tar = try tar.write(a, &.{.{ .path = "./", .kind = .dir, .mode = 0o755 }}, 1700000000);
+    var out = std.ArrayList(u8).init(a);
+    try out.appendSlice("!<arch>\n");
+    try deb.arMember(&out, "debian-binary", 1700000000, "2.0\n");
+    try deb.arMember(&out, "control.tar.gz", 1700000000, try tar.gzip(a, control_tar));
+    try deb.arMember(&out, "data.tar.gz", 1700000000, try tar.gzip(a, data_tar));
+    return out.toOwnedSlice();
+}
+
+const good_ctrl = "Package: mopm\nVersion: 1.2.3\nArchitecture: amd64\nDescription: d\n";
+
+test "rawDeb with a good control file is indexed (the refusals below are about the fields, not the helper)" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const s = try stanzaOf(a, try rawDeb(a, good_ctrl));
+    try t.expectEqualStrings("pool/main/m/mopm/mopm_1.2.3_amd64.deb", control.get(try control.parse(a, s.text), "Filename").?);
+}
+
+test "a package name, version or architecture that deb.build would refuse is refused (no path out of the pool)" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try t.expectError(error.BadName, stanzaOf(a, try rawDeb(a, "Package: ../../evil\nVersion: 1.2.3\nArchitecture: amd64\nDescription: d\n")));
+    try t.expectError(error.BadName, stanzaOf(a, try rawDeb(a, "Package: Mopm\nVersion: 1.2.3\nArchitecture: amd64\nDescription: d\n")));
+    try t.expectError(error.BadVersion, stanzaOf(a, try rawDeb(a, "Package: mopm\nVersion: ../1.2.3\nArchitecture: amd64\nDescription: d\n")));
+    try t.expectError(error.BadVersion, stanzaOf(a, try rawDeb(a, "Package: mopm\nVersion: 1.2\nArchitecture: amd64\nDescription: d\n")));
+    try t.expectError(error.BadArchitecture, stanzaOf(a, try rawDeb(a, "Package: mopm\nVersion: 1.2.3\nArchitecture: ../x\nDescription: d\n")));
+    try t.expectError(error.BadArchitecture, stanzaOf(a, try rawDeb(a, "Package: mopm\nVersion: 1.2.3\nArchitecture: AMD64\nDescription: d\n")));
+}
+
+test "a control file that carries a field the index writes itself is refused, whatever the case" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_][]const u8{ "Filename", "Size", "SHA256", "MD5sum", "SHA1", "filename", "SHA256" }) |name| {
+        const ctrl = try std.fmt.allocPrint(a, "Package: mopm\nVersion: 1.2.3\nArchitecture: amd64\n{s}: forged\nDescription: d\n", .{name});
+        try t.expectError(error.ReservedField, stanzaOf(a, try rawDeb(a, ctrl)));
+    }
+}
+
+test "merge: one call adding the same version twice with other bytes is a conflict; with the same bytes it is added once" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const one = try stanzaOf(a, try sampleDeb(a, "1.2.3", "amd64", "one"));
+    const other = try stanzaOf(a, try sampleDeb(a, "1.2.3", "amd64", "other"));
+    try t.expectError(error.VersionConflict, merge(a, &.{}, &.{ one, other }, 25));
+    try t.expectError(error.VersionConflict, merge(a, &.{}, &.{ other, one }, 25));
+    const twice = try merge(a, &.{}, &.{ one, one }, 25);
+    try t.expectEqual(@as(usize, 1), twice.added);
+    try t.expectEqual(@as(usize, 1), twice.stanzas.len);
+    // Another architecture's 1.2.3 is not the same version of the same thing.
+    const arm = try stanzaOf(a, try sampleDeb(a, "1.2.3", "arm64", "other"));
+    try t.expectEqual(@as(usize, 2), (try merge(a, &.{}, &.{ one, arm }, 25)).stanzas.len);
+}
+
+test "tree refuses an architecture listed twice and one that is not a name" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const info = ReleaseInfo{ .origin = "mopm", .label = "mopm", .description = "d", .date = 0 };
+    try t.expectError(error.BadArchitecture, tree(a, info, &.{}, &.{ "amd64", "amd64" }));
+    try t.expectError(error.BadArchitecture, tree(a, info, &.{}, &.{ "amd64", "arm64", "amd64" }));
+    try t.expectError(error.BadArchitecture, tree(a, info, &.{}, &.{"../x"}));
+    try t.expectError(error.BadArchitecture, tree(a, info, &.{}, &.{ "amd64", "" }));
+    try t.expectError(error.BadArchitecture, tree(a, info, &.{}, &.{"AMD64"}));
+}
+
+test "formatDate: every weekday and every month name" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // 1970-01-01 was a Thursday; the seven days from it are the seven weekdays.
+    const week = [_][]const u8{
+        "Thu, 01 Jan 1970 00:00:00 UTC", "Fri, 02 Jan 1970 00:00:00 UTC", "Sat, 03 Jan 1970 00:00:00 UTC", "Sun, 04 Jan 1970 00:00:00 UTC",
+        "Mon, 05 Jan 1970 00:00:00 UTC", "Tue, 06 Jan 1970 00:00:00 UTC", "Wed, 07 Jan 1970 00:00:00 UTC",
+    };
+    for (week, 0..) |want, day| try t.expectEqualStrings(want, try formatDate(a, day * 86400));
+    // The first of each month of 1970 (not a leap year): days since the epoch, 31 59 90 120 151 181 212 243 273 304 334.
+    const months = [_]struct { day: u64, want: []const u8 }{
+        .{ .day = 0, .want = "Thu, 01 Jan 1970 00:00:00 UTC" },
+        .{ .day = 31, .want = "Sun, 01 Feb 1970 00:00:00 UTC" },
+        .{ .day = 59, .want = "Sun, 01 Mar 1970 00:00:00 UTC" },
+        .{ .day = 90, .want = "Wed, 01 Apr 1970 00:00:00 UTC" },
+        .{ .day = 120, .want = "Fri, 01 May 1970 00:00:00 UTC" },
+        .{ .day = 151, .want = "Mon, 01 Jun 1970 00:00:00 UTC" },
+        .{ .day = 181, .want = "Wed, 01 Jul 1970 00:00:00 UTC" },
+        .{ .day = 212, .want = "Sat, 01 Aug 1970 00:00:00 UTC" },
+        .{ .day = 243, .want = "Tue, 01 Sep 1970 00:00:00 UTC" },
+        .{ .day = 273, .want = "Thu, 01 Oct 1970 00:00:00 UTC" },
+        .{ .day = 304, .want = "Sun, 01 Nov 1970 00:00:00 UTC" },
+        .{ .day = 334, .want = "Tue, 01 Dec 1970 00:00:00 UTC" },
+    };
+    for (months) |m| try t.expectEqualStrings(m.want, try formatDate(a, m.day * 86400));
 }

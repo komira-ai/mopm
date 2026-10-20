@@ -238,3 +238,36 @@ test "gzip round-trips, is deterministic, and its header holds no time" {
     const back = try gunzip(a, one);
     try t.expectEqualStrings(src, back);
 }
+
+test "a file whose size is a whole number of blocks gets no padding block; one byte more gets a whole one" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // header (512) + data rounded up to 512 + the two zero blocks that end the archive (1024).
+    const cases = [_]struct { len: usize, total: usize }{
+        .{ .len = 0, .total = 512 + 0 + 1024 },
+        .{ .len = 1, .total = 512 + 512 + 1024 },
+        .{ .len = 511, .total = 512 + 512 + 1024 },
+        .{ .len = 512, .total = 512 + 512 + 1024 },
+        .{ .len = 513, .total = 512 + 1024 + 1024 },
+        .{ .len = 1024, .total = 512 + 1024 + 1024 },
+        .{ .len = 1025, .total = 512 + 1536 + 1024 },
+    };
+    for (cases) |c| {
+        const data = try a.alloc(u8, c.len);
+        @memset(data, 'x');
+        const bytes = try write(a, &.{.{ .path = "./f", .mode = 0o644, .data = data }}, 1);
+        try t.expectEqual(c.total, bytes.len);
+        const got = try read(a, bytes);
+        try t.expectEqual(@as(usize, 1), got.len);
+        try t.expectEqualSlices(u8, data, got[0].data);
+    }
+    // And a second entry after an aligned one starts on its own header, not 512 bytes later.
+    const data = try a.alloc(u8, 512);
+    @memset(data, 'y');
+    const two = try write(a, &.{ .{ .path = "./a", .mode = 0o644, .data = data }, .{ .path = "./b", .mode = 0o644, .data = "z" } }, 1);
+    const members = try read(a, two);
+    try t.expectEqual(@as(usize, 2), members.len);
+    try t.expectEqualStrings("./b", members[1].path);
+    try t.expectEqualStrings("z", members[1].data);
+}
