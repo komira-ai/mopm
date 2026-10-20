@@ -185,6 +185,36 @@ zig_test(  # buck-only: mopm pack and publish against the fake registry and a st
     **_TOOLS
 )
 
+zig_exe(  # buck-only: tools/release.zig, whose `tarball` and `sums` make the fake release of :cut_release
+    name = "release-tool",
+    src = "tools/release.zig",
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: tools/cut_release.zig, the maintainer's two release steps (tag, verify)
+    name = "cut-release",
+    src = "tools/cut_release.zig",
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: a `gh` whose answers are files, for :cut_release
+    name = "fake-gh",
+    src = "tests/drivers/fake_gh.zig",
+    **_TOOLS
+)
+
+zig_test(  # buck-only: cut_release against the fake gh, with planted defects it must refuse
+    name = "cut_release",
+    src = "tests/drivers/cut_release_test.zig",
+    imports = ["tests/drivers/harness.zig"],
+    env_tools = {
+        "MOPM_CUT_RELEASE": ":cut-release",
+        "MOPM_FAKE_GH": ":fake-gh",
+        "MOPM_RELEASE_TOOL": ":release-tool",
+    },
+    **_TOOLS
+)
+
 # ---- Contract checks, ported from Python (tests/contract, tests/resolve*) ------
 
 # The JSON Schema validator and what it needs, shared by the contract drivers.
