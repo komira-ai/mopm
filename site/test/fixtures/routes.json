@@ -264,6 +264,11 @@
       "view": null
     },
     {
+      "path": "/docs/why",
+      "edge": "/docs/why/index.html",
+      "view": null
+    },
+    {
       "path": "/docs/why/",
       "edge": "/docs/why/index.html",
       "view": null

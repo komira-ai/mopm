@@ -532,6 +532,18 @@ export_file(
     visibility = ["//site:"],
 )
 
+export_file(
+    name = "site.workflows.promote.yml",
+    src = ".github/workflows/promote.yml",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.workflows.service-ci.yml",
+    src = ".github/workflows/service-ci.yml",
+    visibility = ["//site:"],
+)
+
 # The scaffold golden of `mopm new --lib`, staged as `tests/new/lib`.
 filegroup(
     name = "site_new_lib",
