@@ -11,6 +11,25 @@ const tar = @import("channels/tar.zig");
 
 pub const package_name = "mopm";
 
+pub const Metadata = deb_package.Metadata;
+
+/// The files of the metadata directory, in the order of the Metadata fields: control, copyright, lintian-overrides.
+pub const metadata_files = [3][]const u8{ "control", "copyright", "lintian-overrides" };
+
+/// The first release that has .debs. An older release has none, so there is nothing of the kind to check in it.
+pub const first_deb_release = [3]u64{ 0, 0, 6 };
+
+/// Whether the release `version` (X.Y.Z or X.Y.Z-suffix) is older than the first one with .debs.
+pub fn predatesDebs(version: []const u8) bool {
+    const core = version[0 .. std.mem.indexOfScalar(u8, version, '-') orelse version.len];
+    var parts = std.mem.splitScalar(u8, core, '.');
+    for (first_deb_release) |want| {
+        const got = std.fmt.parseInt(u64, parts.next() orelse return false, 10) catch return false;
+        if (got != want) return got < want;
+    }
+    return false;
+}
+
 /// Where the package metadata (control, copyright, lintian-overrides) is kept, relative to the repository root.
 pub const default_packaging = "packaging/deb";
 
