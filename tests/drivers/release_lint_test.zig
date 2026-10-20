@@ -1,5 +1,5 @@
 //! //:release_workflow: the release pipeline's lint rules (tests/drivers/release_lint.zig) over the
-//! real .github/workflows/release.yml and release-beta-user.yml, and each rule shown able to fail: a
+//! real .github/workflows/release.yml, release-beta-user.yml, release-build.yml and release-check.yml, and each rule shown able to fail: a
 //! copy of the real file with one planted defect must report the matching message.
 //!
 //! What the rules protect: only `publish` holds `contents: write` (to create the release of an existing tag, with
@@ -23,6 +23,8 @@ const Allocator = std.mem.Allocator;
 
 const release_path = ".github/workflows/release.yml";
 const user_path = ".github/workflows/release-beta-user.yml";
+const build_path = ".github/workflows/release-build.yml";
+const check_path = ".github/workflows/release-check.yml";
 
 fn real(a: Allocator, path: []const u8) ![]u8 {
     const tree = try c.loadTree(a);
@@ -31,15 +33,21 @@ fn real(a: Allocator, path: []const u8) ![]u8 {
 
 fn problemsOf(a: Allocator, path: []const u8, text: []const u8) ![]const []const u8 {
     var out = c.Out.init(a);
-    if (std.mem.eql(u8, path, user_path)) try rl.userBetaProblems(a, text, &out) else try rl.problems(a, text, &out);
+    if (std.mem.eql(u8, path, user_path)) {
+        try rl.userBetaProblems(a, text, &out);
+    } else if (std.mem.eql(u8, path, build_path)) {
+        try rl.buildDebProblems(a, text, &out);
+    } else if (std.mem.eql(u8, path, check_path)) {
+        try rl.checkDebProblems(a, text, &out);
+    } else try rl.problems(a, text, &out);
     return out.items;
 }
 
-test "the real release.yml and release-beta-user.yml pass every rule" {
+test "the real release.yml, release-beta-user.yml, release-build.yml and release-check.yml pass every rule" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    for ([_][]const u8{ release_path, user_path }) |p| {
+    for ([_][]const u8{ release_path, user_path, build_path, check_path }) |p| {
         const got = try problemsOf(a, p, try real(a, p));
         for (got) |l| std.debug.print("{s}\n", .{l});
         try std.testing.expectEqual(@as(usize, 0), got.len);
@@ -473,4 +481,53 @@ test "mutant: the jobs that read the release bot's key declare environment relea
     try mutant("bump in prod", bump_env_lines, "    environment: prod\n", "bump reads RELEASE_BOT_* so it must declare `environment: release`, got \"prod\"");
     try mutant("publish in the release environment", "  publish:\n    needs: [tag, verify]\n    " ++ push_main, "  publish:\n    needs: [tag, verify]\n    environment: release\n    " ++ push_main, "publish must not use an environment");
     try mutant("verify in the release environment", "  verify:\n    needs: [plan, build, attest]\n", "  verify:\n    needs: [plan, build, attest]\n    environment: release\n", "verify must not use an environment");
+}
+
+// ---- the .deb wiring: a mutant for each hop a .deb takes from the build to the release and the lint --------------
+
+fn buildMutant(name: []const u8, from: []const u8, to: []const u8, needle: []const u8) !void {
+    return mutantIn(build_path, name, from, to, needle);
+}
+
+fn checkMutant(name: []const u8, from: []const u8, to: []const u8, needle: []const u8) !void {
+    return mutantIn(check_path, name, from, to, needle);
+}
+
+const provenance_tail = "            dist/mopm-*.tar.gz\n            dist/mopm_*.deb\n            dist/SHA256SUMS\n      - uses: actions/upload-artifact";
+
+test "mutant: the provenance subjects and the signed-assets upload leave out the .debs" {
+    try mutant("provenance without the .debs", provenance_tail, "            dist/mopm-*.tar.gz\n            dist/SHA256SUMS\n      - uses: actions/upload-artifact", "attest's build provenance subject-path lists");
+    try mutant("provenance with a misspelled .deb glob", provenance_tail, "            dist/mopm-*.tar.gz\n            dist/mopm-*.deb\n            dist/SHA256SUMS\n      - uses: actions/upload-artifact", "attest's build provenance subject-path lists");
+    try mutant("provenance without the sums", provenance_tail, "            dist/mopm-*.tar.gz\n            dist/mopm_*.deb\n      - uses: actions/upload-artifact", "attest's build provenance subject-path lists");
+    try mutant("signed-assets without the .debs", "            dist/mopm_*.deb\n            dist/SHA256SUMS\n            dist/*.sigstore.json", "            dist/SHA256SUMS\n            dist/*.sigstore.json", "attest's signed-assets artifact path lists");
+}
+
+test "mutant: the matrix gives a leg the wrong Debian architecture" {
+    try buildMutant("amd64 leg without deb_arch", "deb_arch: amd64 }", "deb_arch: \"\" }", "the package leg linux-x86_64 has deb_arch");
+    try buildMutant("aarch64 leg with the amd64 architecture", "deb_arch: arm64 }", "deb_arch: amd64 }", "the package leg linux-aarch64 has deb_arch");
+    try buildMutant("a macos leg that gets a .deb", "os: macos-14, run_prefix: \"\", deb_arch: \"\" }", "os: macos-14, run_prefix: \"\", deb_arch: amd64 }", "the package leg macos-arm64 has deb_arch");
+}
+
+test "mutant: the .deb is not made from the binary of the tarball, for the architecture, at the path the upload takes" {
+    try buildMutant("--binary is not the tarball's binary", "--binary \"$RUNNER_TEMP/mopm-$VERSION-$TARGET/mopm\"", "--binary \"$RUNNER_TEMP/out/mopm\"", "deb-package must take --binary");
+    try buildMutant("the unpacked tarball is another leg's", "mopm-$VERSION-$TARGET.tar.gz\" -C", "mopm-$VERSION-linux-x86_64.tar.gz\" -C", "must first unpack mopm from this leg's tarball");
+    try buildMutant("--arch is fixed", "--arch \"$DEB_ARCH\"", "--arch amd64", "deb-package must take --arch");
+    try buildMutant("--packaging is another directory", "--packaging packaging/deb", "--packaging packaging", "deb-package must take --packaging packaging/deb");
+    try buildMutant("--out is outside the upload", "/out/mopm_${VERSION}_${DEB_ARCH}.deb\"", "/mopm_${VERSION}_${DEB_ARCH}.deb\"", "deb-package must write --out");
+    try buildMutant("DEB_ARCH is fixed", "DEB_ARCH: ${{ matrix.deb_arch }}", "DEB_ARCH: amd64", "the .deb step must set DEB_ARCH");
+    try buildMutant("the .deb step runs for every leg", "      - name: Package the binary of the tarball as mopm_<version>_<arch>.deb\n        if: matrix.deb_arch != ''\n", "      - name: Package the binary of the tarball as mopm_<version>_<arch>.deb\n", "the .deb step must run only for the legs that have a deb_arch");
+    try buildMutant("the channels build runs for every leg", "      - name: Build the channels tool (tools/channels)\n        if: matrix.deb_arch != ''\n", "      - name: Build the channels tool (tools/channels)\n", "the channels build step must run only for the legs that have a deb_arch");
+}
+
+test "mutant: the build's upload leaves out the .debs" {
+    try buildMutant("upload without *.deb", "            ${{ runner.temp }}/out/*.deb\n", "", "the artifact upload path lists");
+    try buildMutant("upload that tolerates no files", "if-no-files-found: error", "if-no-files-found: ignore", "the artifact upload must set if-no-files-found: error");
+}
+
+test "mutant: lintian does not gate on errors, or does not lint the build's .debs" {
+    try checkMutant("lintian without --fail-on error", "lintian --version && lintian --fail-on error --tag-display-limit 0 dist/*.deb", "lintian --version && lintian --tag-display-limit 0 dist/*.deb", "lintian must run `lintian --fail-on error`");
+    try checkMutant("lintian that may not fail", "--tag-display-limit 0 dist/*.deb", "--tag-display-limit 0 dist/*.deb || true", "lintian must not be allowed to fail");
+    try checkMutant("lintian without needs", "  lintian:\n    needs: package\n", "  lintian:\n", "lintian must need exactly package");
+    try checkMutant("lintian needing another job", "  lintian:\n    needs: package\n", "  lintian:\n    needs: sums\n", "lintian must need exactly package");
+    try checkMutant("lintian over the macos artifacts", "pattern: release-linux-*", "pattern: release-macos-*", "lintian must download the artifacts release-linux-*");
 }

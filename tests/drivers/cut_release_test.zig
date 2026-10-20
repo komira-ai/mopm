@@ -30,6 +30,12 @@ const World = struct {
     sign_trigger: []const u8 = "push", // the event of the run that "signs" in `assets`
     /// Build the linux-x86_64 .deb from other binary bytes than the tarball holds (signed and listed consistently, so only a rebuild can tell).
     evil_deb: bool = false,
+    /// The same for the linux-aarch64 .deb.
+    evil_deb_arm64: bool = false,
+    /// The architecture (amd64 or arm64) whose .deb has one byte flipped after it is built: the same length and the same name, signed and listed consistently.
+    flip_deb: ?[]const u8 = null,
+    /// Where the .deb metadata the .debs are made with is (the tag's own, when a scenario changes it).
+    packaging_dir: []const u8 = packaging,
 
     fn path(w: World, name: []const u8) []const u8 {
         return h.join(w.a, &.{ w.root, name }) catch @panic("oom");
@@ -90,17 +96,25 @@ const World = struct {
             const arch: ?[]const u8 = if (std.mem.eql(u8, t, "linux-x86_64")) "amd64" else if (std.mem.eql(u8, t, "linux-aarch64")) "arm64" else null;
             if (arch) |ar| {
                 const bin = try h.join(a, &.{ pkg, "mopm" });
-                const evil = w.evil_deb and std.mem.eql(u8, t, "linux-x86_64");
+                const evil = (w.evil_deb and std.mem.eql(u8, t, "linux-x86_64")) or (w.evil_deb_arm64 and std.mem.eql(u8, t, "linux-aarch64"));
                 const use = if (evil) try h.join(a, &.{ pkg, "other-mopm" }) else bin;
                 if (evil) try h.writeFile(use, "a different binary\n");
                 // dpkg names a pre-release 1.2.3-rc.1 as 1.2.3~rc.1.
                 const dv = try a.dupe(u8, version);
                 if (std.mem.indexOfScalar(u8, dv, '-')) |i| dv[i] = '~';
                 const deb = try h.join(a, &.{ dir, try h.fmt(a, "mopm_{s}_{s}.deb", .{ dv, ar }) });
-                const d = try h.run(a, &.{ w.tools.channels, "deb-package", "--binary", use, "--name", "mopm", "--version", version, "--arch", ar, "--packaging", packaging, "--out", deb }, &env, .{});
+                const d = try h.run(a, &.{ w.tools.channels, "deb-package", "--binary", use, "--name", "mopm", "--version", version, "--arch", ar, "--packaging", w.packaging_dir, "--out", deb }, &env, .{});
                 if (d.code != 0) {
                     std.debug.print("channels deb-package failed: {s}\n", .{d.text});
                     return error.ToolFailed;
+                }
+                if (w.flip_deb) |fl| {
+                    if (std.mem.eql(u8, fl, ar)) {
+                        const bytes = try h.readFile(a, deb);
+                        const flipped = try a.dupe(u8, bytes);
+                        flipped[flipped.len / 2] ^= 0x01;
+                        try h.writeFile(deb, flipped);
+                    }
                 }
             }
         }
@@ -840,12 +854,12 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         rep.check("verify: a tag at main's tip is accepted", ok.code == 0, ok.text);
     }
     {
-        var w = try goodVerify(a, tools, &tmp, "verify_rc", "0.0.1-rc.1");
+        var w = try goodVerify(a, tools, &tmp, "verify_rc", "0.0.6-rc.1");
         try w.put("release_state", "false true\n");
-        const r = try w.run(&.{ "verify", "0.0.1-rc.1", try freshDir(a, w, "dl") });
-        rep.check("verify: a prerelease version with the prerelease flag passes", r.code == 0 and h.contains(r.text, "verified v0.0.1-rc.1"), r.text);
+        const r = try w.run(&.{ "verify", "0.0.6-rc.1", try freshDir(a, w, "dl") });
+        rep.check("verify: a prerelease version with the prerelease flag passes", r.code == 0 and h.contains(r.text, "verified v0.0.6-rc.1"), r.text);
         try w.put("release_state", "false false\n");
-        const p = try w.run(&.{ "verify", "0.0.1-rc.1", try freshDir(a, w, "dl2") });
+        const p = try w.run(&.{ "verify", "0.0.6-rc.1", try freshDir(a, w, "dl2") });
         rep.check("verify: a prerelease version without the prerelease flag is refused", p.code == 1 and h.contains(p.text, "expected 'false true'"), p.text);
     }
     {
@@ -858,6 +872,91 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         try w.assets("assets", "1.2.3", null);
         const r = try w.run(&.{ "verify", "1.2.3", try freshDir(a, w, "dl"), "--packaging", packaging });
         rep.check("verify: a published .deb with other bytes than its tarball's binary is refused", r.code == 1 and h.contains(r.text, "mopm_1.2.3_amd64.deb is not the .deb that the binary in"), r.text);
+    }
+    {
+        // Every .deb is rebuilt from its own tarball, so a planted .deb is refused whichever architecture it is and however small
+        // the change: the arm64 .deb made from another binary, and a .deb of either architecture with one byte flipped (the same
+        // length, the same name, listed in SHA256SUMS and signed, so only the rebuild can tell). The same three cases for verify-dir,
+        // release tested and verify; the amd64 .deb made from another binary is above.
+        const Case = struct { label: []const u8, arch: []const u8, tar: []const u8, other_binary: bool };
+        const cases = [_]Case{
+            .{ .label = "arm64_other_binary", .arch = "arm64", .tar = "linux-aarch64", .other_binary = true },
+            .{ .label = "amd64_flipped", .arch = "amd64", .tar = "linux-x86_64", .other_binary = false },
+            .{ .label = "arm64_flipped", .arch = "arm64", .tar = "linux-aarch64", .other_binary = false },
+        };
+        for (cases) |c| {
+            const what = try h.fmt(a, "{s} {s}", .{ c.arch, if (c.other_binary) "made from another binary" else "with one byte flipped" });
+            const deb_name = try h.fmt(a, "mopm_1.2.3_{s}.deb", .{c.arch});
+            const tar_name = try h.fmt(a, "mopm-1.2.3-{s}.tar.gz", .{c.tar});
+            {
+                var w = try fresh(a, tools, &tmp, try h.fmt(a, "vd_evil_{s}", .{c.label}));
+                if (c.other_binary) w.evil_deb_arm64 = true else w.flip_deb = c.arch;
+                try w.put("tags", "v1.2.3 " ++ sha ++ "\n");
+                try w.assets("assets", "1.2.3", null);
+                const r = try w.run(&.{ "verify-dir", "1.2.3", w.path("assets"), "--sha", sha, "--source-ref", "refs/heads/main", "--packaging", packaging, "--notes-out", w.path("notes") });
+                rep.check(try h.fmt(a, "verify-dir: the {s} .deb is refused, by name", .{what}), r.code == 1 and h.contains(r.text, try h.fmt(a, "{s} is not the .deb that the binary in {s} makes", .{ deb_name, tar_name })), r.text);
+                rep.check(try h.fmt(a, "verify-dir: the {s} .deb leaves no verified.sha256", .{what}), !w.has("notes/verified.sha256"), r.text);
+            }
+            {
+                var w = try fresh(a, tools, &tmp, try h.fmt(a, "tested_evil_{s}", .{c.label}));
+                if (c.other_binary) w.evil_deb_arm64 = true else w.flip_deb = c.arch;
+                try w.assets("assets", "1.2.3", null);
+                var env = try h.environ(a);
+                try env.put("FAKE_GH_DIR", w.root);
+                const rec = w.path("tested");
+                for ([_][]const u8{ "linux-x86_64", "linux-aarch64", "macos-arm64" }) |t| {
+                    const rr = try h.run(a, &.{ tools.release, "record", try h.join(a, &.{ w.path("assets"), try h.fmt(a, "mopm-1.2.3-{s}.tar.gz", .{t}) }), rec }, &env, .{});
+                    if (rr.code != 0) return error.ToolFailed;
+                }
+                const bad = try h.run(a, &.{ tools.release, "tested", w.path("assets"), rec }, &env, .{});
+                rep.check(try h.fmt(a, "release tested: the {s} .deb is refused before it is attested", .{what}), bad.code != 0 and h.contains(bad.text, try h.fmt(a, "{s} is not the .deb that the binary of {s} makes", .{ deb_name, tar_name })), bad.text);
+            }
+            {
+                var w = try fresh(a, tools, &tmp, try h.fmt(a, "verify_evil_{s}", .{c.label}));
+                if (c.other_binary) w.evil_deb_arm64 = true else w.flip_deb = c.arch;
+                try w.put("tags", "v1.2.3 " ++ sha ++ "\n");
+                try w.put("release_exists", "");
+                try w.put("releases_page_1", "[{\"tag_name\":\"v1.2.3\",\"draft\":false}]");
+                try w.assets("assets", "1.2.3", null);
+                const r = try w.run(&.{ "verify", "1.2.3", try freshDir(a, w, "dl"), "--packaging", packaging });
+                rep.check(try h.fmt(a, "verify: the published {s} .deb is refused", .{what}), r.code == 1 and h.contains(r.text, try h.fmt(a, "{s} is not the .deb that the binary in {s} makes", .{ deb_name, tar_name })), r.text);
+            }
+        }
+    }
+    {
+        // verify of a release older than the first one with .debs: refused at once, with the reason, before any call to GitHub.
+        const w = try fresh(a, tools, &tmp, "verify_old_release");
+        const r = try w.run(&.{ "verify", "0.0.5", try freshDir(a, w, "dl") });
+        rep.check("verify: a release older than v0.0.6 is refused with the reason", r.code == 1 and h.contains(r.text, "v0.0.5 is older than v0.0.6, the first release with .deb files"), r.text);
+        rep.check("verify: and nothing was asked of GitHub", w.log().len == 0, w.log());
+        // The boundary is v0.0.6 itself, which has .debs and is verified.
+        const edge = try goodVerify(a, tools, &tmp, "verify_first_deb_release", "0.0.6");
+        const e = try edge.run(&.{ "verify", "0.0.6", try freshDir(a, edge, "dl") });
+        rep.check("verify: v0.0.6, the first release with .debs, is verified", e.code == 0 and h.contains(e.text, "verified v0.0.6"), e.text);
+    }
+    {
+        // verify reads the .deb metadata of the release's own tag, not the working tree's: a release made when the copyright
+        // had another line is still verified after packaging/deb has changed, and --packaging still names a directory.
+        var w = try fresh(a, tools, &tmp, "verify_tag_metadata");
+        const pk = w.path("tag_packaging");
+        for ([_][]const u8{ "control", "copyright", "lintian-overrides" }) |n| {
+            const text = try h.readFile(a, try h.join(a, &.{ packaging, n }));
+            try h.writeFile(try h.join(a, &.{ pk, n }), if (std.mem.eql(u8, n, "copyright")) try h.fmt(a, "{s}\nAnd one line more.\n", .{text}) else text);
+        }
+        w.packaging_dir = pk;
+        try w.put("tags", "v1.2.3 " ++ sha ++ "\n");
+        try w.put("release_exists", "");
+        try w.put("releases_page_1", "[{\"tag_name\":\"v1.2.3\",\"draft\":false}]");
+        try w.assets("assets", "1.2.3", null);
+        const own = try w.run(&.{ "verify", "1.2.3", try freshDir(a, w, "dl_own") });
+        rep.check("verify: the .debs made with the metadata the tag held are verified though the working tree's differs", own.code == 0 and h.contains(own.text, "verified v1.2.3"), own.text);
+        rep.check("verify: and the metadata was read at the tag's commit", h.contains(w.log(), "contents/packaging/deb/control?ref=" ++ sha) and h.contains(w.log(), "contents/packaging/deb/copyright?ref=" ++ sha) and h.contains(w.log(), "contents/packaging/deb/lintian-overrides?ref=" ++ sha), w.log());
+        const tree = try w.run(&.{ "verify", "1.2.3", try freshDir(a, w, "dl_tree"), "--packaging", packaging });
+        rep.check("verify: --packaging names the directory instead (the working tree's differs, so it is refused)", tree.code == 1 and h.contains(tree.text, "is not the .deb that the binary in"), tree.text);
+        // A tag without the metadata files cannot be verified.
+        try std.fs.cwd().deleteFile(w.path("tag_packaging/copyright"));
+        const gone = try w.run(&.{ "verify", "1.2.3", try freshDir(a, w, "dl_gone") });
+        rep.check("verify: a tag without the metadata is refused, naming the file", gone.code == 1 and h.contains(gone.text, "cannot read packaging/deb/copyright as v1.2.3 had it"), gone.text);
     }
     try rep.finish();
 }
