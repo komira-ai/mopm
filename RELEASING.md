@@ -20,14 +20,15 @@ customer uses it, on every platform it ships for (`beta-user`).
 | `beta-user` | `plan`, `build` | the candidate tested as a user (below), on linux x86_64, linux arm64 and macOS 14 (arm64). A red leg on any platform stops the release. |
 | `attest` | `plan`, `build`, `beta-user` | refuses unless each tarball is the exact file the user beta passed (`release tested`), then writes `SHA256SUMS` for the four tarballs, a keyless cosign signature (Sigstore) of each of the five files, and build provenance (a signed attestation) for all five. Runs only on `main` (`if: github.ref == 'refs/heads/main'`), so a manual run from another branch signs and attests nothing; `verify` and the rest are skipped with it. Uploads the artifact `signed-assets`. |
 | `verify` | `plan`, `build`, `attest` | read-only, before any tag exists: exactly the ten files (the five and the `<file>.sigstore.json` bundle of each), `SHA256SUMS` matches, every attestation and every signature accepted and pinned to `release.yml`, the ref, the commit, the trigger (the event of this run: `push` for a release, `workflow_dispatch` for a dry run) and the repository, the tarball layout, the commit on main. Uploads the release notes and the pin (the `linux-x86_64` url, sha256 and size) as the artifact `notes-pin`. A dry run writes no `verified.sha256`, which `publish` requires. |
-| `tag` | `plan`, `build`, `beta-user`, `verify` | creates the annotated tag `v<version>` at the pushed commit, only after the files verified, so a failing attest, signature or verify leaves no orphan tag. The only write before the release. Refuses a superseded commit, and refuses unless the version it would take is the planned one (`--expect-version`), so the tested bytes are the released bytes. |
-| `publish` | `tag`, `verify` | creates the GitHub release for `v<version>` from exactly the verified files (artifacts `verified-assets` and `notes-pin`, nothing else). Runs only for a push to `main`, never a manual run. |
+| `tag` | `plan`, `build`, `beta-user`, `verify` | creates the annotated tag `v<version>` at the pushed commit, only after the files verified, so a failing attest, signature or verify leaves no orphan tag. The only write before the release. Refuses a superseded commit, and refuses unless the version it would take is the planned one (`--expect-version`), so the tested bytes are the released bytes. The tag ruleset admits only the GitHub App `komira-release-bot` to create `v*` tags, so the job mints that App's token for this repository alone (`repositories: mopm`, `permission-contents: write`, see "The tag token" below) and gives it to the tag step only; the job's own `GITHUB_TOKEN` holds `contents: read`. |
+| `publish` | `tag`, `verify` | creates the GitHub release for `v<version>` from exactly the verified files (artifacts `verified-assets` and `notes-pin`, nothing else). Runs only for a push to `main`, never a manual run. It holds `contents: write` for the release, and `gh release create` is always called with `--verify-tag`, so it can never create a tag (the lint pins that in `tools/cut_release.zig`). |
 | `bump` | `tag`, `publish` | opens the pull request in komira-internal that moves its `mopm` submodule to this release, with auto-merge (below). The last stage, and the only one that writes outside this repository; nothing needs it. |
 
 A push that changes only documentation or CI (`**.md`, `docs/**`, `.github/**`) does not release.
 Everything else does, including a change to `VERSION`.
 
-Only `tag` and `publish` may write `contents` here, each under `if: github.event_name == 'push' && github.ref == 'refs/heads/main'` (`bump` runs under the same `if:` and holds `contents: read`);
+Only `publish` holds `contents: write` through the job token here; `tag`, `bump` and `publish` run only under `if: github.event_name == 'push' && github.ref == 'refs/heads/main'`
+(`tag` and `bump` hold `contents: read` and write through App tokens);
 only `attest` holds `id-token` and `attestations` write. `tests/drivers/release_lint.zig` holds the workflow to
 that, to the order of the stages, to the data flow between them (the built and tested version is the planned
 version, the tagged version and the released version; `publish` releases the verified files) and to the path filter;
@@ -37,6 +38,20 @@ version, the tagged version and the released version; `publish` releases the ver
 Pushes share the concurrency group `release-push` (one run at a time, none cancelled). GitHub keeps one pending run
 per group, so if several pushes land while a release runs, only the newest waits: it releases a commit that
 contains the others. A manual run has a group of its own, so it cannot displace the pending push release.
+
+## The tag token
+
+The `v*` tag ruleset lets only the GitHub App `komira-release-bot` create, update or delete `v*` tags (GitHub refused the
+Actions integration as a bypass). So the `tag` job does not use its `GITHUB_TOKEN` (it holds `contents: read`): after it builds the
+tool it mints an installation token of that App with `actions/create-github-app-token` (pinned by commit; `vars.RELEASE_BOT_APP_ID`,
+`secrets.RELEASE_BOT_PRIVATE_KEY`, owner `komira-ai`, `repositories: mopm`, `permission-contents: write` and no other scope) and gives it
+as `GH_TOKEN` to the one step that runs `cut_release tag`. The App must be installed on mopm (Contents read and write, Metadata read) and
+the variable and the secret must exist in this repository.
+
+A release run without them fails safely at `tag`: the token step errors, no tag is created, `publish` (which needs `tag`) and `bump` never
+run, and nothing is released. Re-run the failed jobs once they exist. The release lint holds that the release workflow has exactly two token
+steps (this one and `bump`'s), that the tag token is for `mopm` with contents write only and the bump token for komira-internal alone, that each is
+used only in its own job's last step, and (hygiene) that `RELEASE_BOT_PRIVATE_KEY` is referenced exactly twice, once in `tag` and once in `bump`.
 
 ## The komira-internal bump (the last stage)
 
@@ -48,7 +63,7 @@ when its `check` and `bump-guard` pass; nobody clicks.
 - **The token.** The job builds the tool first, then mints an installation token of the GitHub App `komira-release-bot`
   with `actions/create-github-app-token` (pinned by commit; `vars.RELEASE_BOT_APP_ID`, `secrets.RELEASE_BOT_PRIVATE_KEY`, owner
   `komira-ai`, repository `komira-internal` only), and gives it to the one step that runs the tool as `GH_TOKEN`. The App is
-  installed on komira-internal only, so the token reaches nothing else. The tool never puts the token in an argument: `gh`
+  installed on komira-internal and mopm, and this token is requested for komira-internal alone, so it reaches nothing else. The tool never puts the token in an argument: `gh`
   reads it from the environment, and `git` gets it as an HTTP header through `GIT_CONFIG_*` in its environment. The release
   lint holds that this job alone names the App token, that it holds no write scope here, and where the token lives.
 - **What the pull request is.** What komira-internal's bump guard (`tools/bump_guard/README.md` there) accepts from the bot and
@@ -175,15 +190,16 @@ It prints the pin for the `linux-x86_64` tarball. It changes nothing.
 
 ## What the CEO has to do before the first release
 
-The bump stage needs, once: the GitHub App `komira-release-bot` installed on komira-internal only; the variable
+The bump and tag stages need, once: the GitHub App `komira-release-bot` installed on komira-internal and on mopm; the variable
 `RELEASE_BOT_APP_ID` and the secret `RELEASE_BOT_PRIVATE_KEY` in this repository; auto-merge allowed in komira-internal, with
-its ruleset requiring `check` and `bump-guard`. (Done.) Without them `bump` fails and nothing else does.
+its ruleset requiring `check` and `bump-guard`; and the `v*` tag ruleset allowing only that App to create, update and delete tags.
+Without the App's variable and secret `tag` fails (no tag, no release); without the bump setup only `bump` fails.
 
 These are settings only an owner can change; the automation neither makes nor assumes them:
 
 1. **A tag ruleset for `v*`** (Settings, Rules, Rulesets, target: tags, pattern `v*`): restrict updates and deletions,
-   so a released tag can never be moved. The workflow creates tags with the default token, so the ruleset must not
-   block creation by GitHub Actions.
+   so a released tag can never be moved. The only bypass actor is the GitHub App `komira-release-bot`, which the `tag`
+   job uses to create tags (GitHub does not accept the Actions integration as a bypass).
 2. **Immutable releases** (Settings, General, Releases): enable, so a published release's assets cannot be replaced.
 3. **Apple Developer ID**: macOS binaries are not code-signed or notarized yet, because that needs an Apple Developer
    ID certificate (a paid Apple Developer Program membership) and an app-specific password or API key for

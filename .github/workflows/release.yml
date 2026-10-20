@@ -32,18 +32,21 @@ name: release
 #              publish requires, and publish never runs on a dispatch: nothing a manual run signed is published.
 #   tag        the annotated tag v<version> at the pushed commit, the only write before the release; it needs
 #              verify. It refuses a commit older than the highest tag (a re-run of an old run) and a
-#              version other than the one planned and tested (cut_release tag).
+#              version other than the one planned and tested (cut_release tag). The tag ruleset admits only the
+#              GitHub App komira-release-bot to create v* tags, so the job mints that App's token (mopm only,
+#              contents: write) and gives it to the tag step alone; the job's GITHUB_TOKEN holds contents: read.
+#              Without the App's variable and secret this job fails with no tag, and publish never runs.
 #   publish    creates the GitHub release from exactly the verified files. A re-run creates no second
 #              release and replaces no asset: any asset the release already holds must match byte for byte,
 #              or it fails and changes nothing.
 #   bump       after publish, opens the komira-internal pull request that moves its `mopm` submodule to this release
 #              and turns auto-merge on (cut_release bump-internal), with the App token of komira-release-bot. It is
-#              the only job that holds the token, and nothing needs it: a failed bump goes red and un-releases nothing.
+#              the only job that holds that token (tag holds its own, for mopm), and nothing needs it: a failed bump goes red and un-releases nothing.
 #
 # A manual run (workflow_dispatch) of main is a dry run: everything up to and including verify, then nothing:
 # tag, publish and bump do not run. From any other branch it builds and tests the candidate and stops before attest.
-# Writes to this repository are held to tag (contents) and publish (contents),
-# both under a push to main (bump writes to komira-internal, through the App token, and holds contents: read here), and attest (id-token, attestations) by tests/drivers/release_lint.zig, which
+# The only write to this repository by the job token is publish (contents), under a push to main; the tag is
+# written through the release bot App's token (above). Both tag and publish run only under a push to main (bump writes to komira-internal, through the App token, and holds contents: read here), and attest (id-token, attestations) by tests/drivers/release_lint.zig, which
 # also holds the order of the stages, the data flow between them and the path filter; hygiene.zig holds the
 # triggers. A re-run of failed jobs only rebuilds what failed and what depends on it: a changed build
 # always re-runs beta-user. install.sh (site/static/install.sh) reads these assets.
@@ -217,8 +220,10 @@ jobs:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # The job's own token only reads: the tag ruleset lets the GitHub App komira-release-bot alone create v* tags,
+    # so the tag is created with that App's token (minted below, for this repository only).
     permissions:
-      contents: write
+      contents: read
     outputs:
       version: ${{ steps.tag.outputs.version }}
     steps:
@@ -230,13 +235,24 @@ jobs:
       # Built before any step holds the token, so no build runs beside it.
       - name: Build the release tool
         run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/cut_release"
+      - name: Mint the installation token of the release bot, for this repository only, with contents write for the tag
+        id: tagapp
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: komira-ai
+          repositories: mopm
+          permission-contents: write
       - name: Create the annotated tag of the planned version at the pushed commit (refused if superseded)
         id: tag
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.tagapp.outputs.token }}
           PLANNED: ${{ needs.plan.outputs.version }}
         run: '"$RUNNER_TEMP/cut_release" --repo "$GITHUB_REPOSITORY" tag --sha "$GITHUB_SHA" --expect-version "$PLANNED" --out "$GITHUB_OUTPUT"'
 
+  # contents: write creates the release of the EXISTING tag (gh release create --verify-tag, which creates no tag:
+  # release_lint.zig holds that the tool passes it); the tag ruleset's creators are the release bot App alone.
   publish:
     needs: [tag, verify]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
