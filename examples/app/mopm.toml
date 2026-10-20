@@ -1,0 +1,14 @@
+[package]
+name = "app"
+version = "0.1.0"
+
+[toolchain]
+mojo = "1.0.0"
+
+[dependencies]
+greeter = { path = "../greeter" }
+# A package from the registry is a version requirement instead:
+# http_client = "0.4"
+
+[targets]
+bins = [{ name = "hello", path = "src/main.mojo" }]

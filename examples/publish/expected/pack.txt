@@ -1,0 +1,4 @@
+packed dist/linux-64/mojo-slug-1.2.0-mojo1.0.0_0.conda
+  sha256 <sha256>
+  size <n>
+  manifest_sha256 <sha256>

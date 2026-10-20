@@ -284,6 +284,26 @@
       "view": null
     },
     {
+      "path": "/docs/configuration",
+      "edge": "/docs/configuration/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/configuration/",
+      "edge": "/docs/configuration/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/examples",
+      "edge": "/docs/examples/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/examples/",
+      "edge": "/docs/examples/index.html",
+      "view": null
+    },
+    {
       "path": "/docs/mopm-toml",
       "edge": "/docs/mopm-toml/index.html",
       "view": null
@@ -291,6 +311,11 @@
     {
       "path": "/docs/mopm-toml/",
       "edge": "/docs/mopm-toml/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/mopm-test",
+      "edge": "/docs/mopm-test/index.html",
       "view": null
     },
     {

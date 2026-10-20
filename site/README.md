@@ -87,7 +87,7 @@ site stack's edge router is tested against the same file. The Markdown attack co
 `service/infra/stacks/lib/site-stack.ts` deploys `dist/` (built by `npm run build` here in deploy.yml, or `//site:dist`
 with Buck2) to a private bucket behind CloudFront, and refuses to synthesize when `index.html`, `app.html`, `404.html`
 or `assets/` is missing. Merging a change under `site/` (or to `spec/mopm-toml.md`, `docs/mopm-test.md`,
-`docs/why-and-design.md` or `docs/getting-started.md`, which the docs pages are rendered from) starts promote.yml, which deploys it to beta, gamma and prod in turn.
+`docs/why-and-design.md`, `docs/getting-started.md`, `docs/configuration.md` or `docs/examples.md`, which the docs pages are rendered from) starts promote.yml, which deploys it to beta, gamma and prod in turn.
 
 - **Two uploads.** `assets/` goes first, with `Cache-Control: public, max-age=31536000, immutable`, and is never
   pruned: the pages of an earlier release (an open tab, a rollback) still find their assets. The pages (everything

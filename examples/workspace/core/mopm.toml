@@ -1,0 +1,9 @@
+[package]
+name = "core"
+version = "0.1.0"
+
+[toolchain]
+mojo = "1.0.0"
+
+[dependencies]
+util = { path = "../util" }

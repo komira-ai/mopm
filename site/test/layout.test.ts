@@ -44,10 +44,10 @@ function byId(html: string, id: string): string {
 }
 
 // The pages the build writes: the home page, the 404, the app shell, the docs index and one page per doc.
-const DOC_HTML = ['docs/why/index.html', 'docs/getting-started/index.html', 'docs/mopm-toml/index.html', 'docs/mopm-test/index.html'];
+const DOC_HTML = ['docs/why/index.html', 'docs/getting-started/index.html', 'docs/configuration/index.html', 'docs/examples/index.html', 'docs/mopm-toml/index.html', 'docs/mopm-test/index.html'];
 const ALL_PAGES = ['404.html', 'app.html', 'docs/index.html', ...DOC_HTML, 'index.html'];
 
-test('the eight pages are built', () => {
+test('the ten pages are built', () => {
   expect([...pages].sort()).toEqual([...ALL_PAGES].sort());
 });
 
@@ -171,6 +171,8 @@ describe('the docs pages', () => {
   test.each([
     ['docs/why/index.html', 'docs/why-and-design.md'],
     ['docs/getting-started/index.html', 'docs/getting-started.md'],
+    ['docs/configuration/index.html', 'docs/configuration.md'],
+    ['docs/examples/index.html', 'docs/examples.md'],
     ['docs/mopm-toml/index.html', 'spec/mopm-toml.md'],
     ['docs/mopm-test/index.html', 'docs/mopm-test.md'],
   ])('%s: the title is the first heading of %s, and the Source link is that file on GitHub', (page, source) => {
@@ -193,13 +195,15 @@ describe('the docs pages', () => {
     ['docs/index.html', '/docs/'],
     ['docs/why/index.html', '/docs/why/'],
     ['docs/getting-started/index.html', '/docs/getting-started/'],
+    ['docs/configuration/index.html', '/docs/configuration/'],
+    ['docs/examples/index.html', '/docs/examples/'],
     ['docs/mopm-toml/index.html', '/docs/mopm-toml/'],
     ['docs/mopm-test/index.html', '/docs/mopm-test/'],
   ])('%s: the docs nav lists every docs page and marks this one', (page, self) => {
     const html = read(page);
     const nav = html.slice(html.indexOf('<nav class="docs-nav" aria-label="Docs pages">'));
     const list = nav.slice(0, nav.indexOf('</nav>'));
-    expect([...list.matchAll(/<a href="([^"]+)"/g)].map((m) => m[1])).toEqual(['/docs/', '/docs/why/', '/docs/getting-started/', '/docs/mopm-toml/', '/docs/mopm-test/']);
+    expect([...list.matchAll(/<a href="([^"]+)"/g)].map((m) => m[1])).toEqual(['/docs/', '/docs/why/', '/docs/getting-started/', '/docs/configuration/', '/docs/examples/', '/docs/mopm-toml/', '/docs/mopm-test/']);
     expect([...list.matchAll(/<a href="([^"]+)" aria-current="page">/g)].map((m) => m[1])).toEqual([self]);
     // Each doc's title read here from its source's first '# ' heading, not through docTitle.
     const titles = DOC_PAGES.map((d) => {
@@ -259,6 +263,9 @@ describe('the docs pages', () => {
     // The two new docs, by their first sentences. Mutant: a doc whose summary is not its first paragraph.
     expect(index).toContain('This is part one of the mopm documentation: the reasons and the design.');
     expect(index).toContain('This is part two of the mopm documentation: how to install it and use it.');
+    // The HOW part continues with the reference and the examples, by their first sentences.
+    expect(index).toContain('This page lists every setting mopm reads, in mopm.toml, in mopm.lock and in the configuration of the user, with its type, its default, the values it allows and an example.');
+    expect(index).toContain('This page walks through six complete examples, from a library with a test to a package that pins its compiler, and every file in them is quoted from the examples/ directory of the repository.');
   });
 
   // The two parts of the plan: WHY and design first, then HOW. Mutant: the docs in another order, or the second part

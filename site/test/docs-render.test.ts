@@ -14,9 +14,9 @@ function render(source: string) {
   return mdFull(src, { idPrefix: '', headingShift: 0, links: { mode: 'docs', source } });
 }
 
-test('the published docs are the four the plan names: why and design, getting started, mopm.toml, mopm test', () => {
-  expect(DOC_PAGES.map((d) => d.source)).toEqual(['docs/why-and-design.md', 'docs/getting-started.md', 'spec/mopm-toml.md', 'docs/mopm-test.md']);
-  expect(DOC_PAGES.map((d) => d.slug)).toEqual(['why', 'getting-started', 'mopm-toml', 'mopm-test']);
+test('the published docs are the six the plan names: why and design, getting started, configuration, examples, mopm.toml, mopm test', () => {
+  expect(DOC_PAGES.map((d) => d.source)).toEqual(['docs/why-and-design.md', 'docs/getting-started.md', 'docs/configuration.md', 'docs/examples.md', 'spec/mopm-toml.md', 'docs/mopm-test.md']);
+  expect(DOC_PAGES.map((d) => d.slug)).toEqual(['why', 'getting-started', 'configuration', 'examples', 'mopm-toml', 'mopm-test']);
 });
 
 test.each(DOC_PAGES.map((d) => [d.source] as const))('%s renders with no literal fallback and unique ids', (source) => {

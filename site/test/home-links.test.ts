@@ -46,3 +46,13 @@ test('the install note names the platforms the releases serve', () => {
   expect(m).not.toBeNull();
   expect((m as RegExpExecArray)[1]).toContain('Release binaries for Linux (x86_64, arm64) and macOS (arm64).');
 });
+
+// macos-x86_64 (an Intel Mac) is no longer a release platform (release/drop-macos-x86_64): no part of the home page names
+// it as one. Mutants: TARGETS (tools/pages.ts) with macos-x86_64 back in it; the install note saying "macOS (x86_64, arm64)".
+test('the home page names no Intel Mac release, and lists exactly the three release targets', () => {
+  expect(home).not.toMatch(/macos-x86_64|macOS \(x86_64|Intel Mac/i);
+  const files = /<p[^>]* id="release-files"[^>]*>(.*?)<\/p>/s.exec(home);
+  expect(files).not.toBeNull();
+  const targets = [...(files as RegExpExecArray)[1].matchAll(/<code>((?:linux|macos)-[a-z0-9_]+)<\/code>/g)].map((m) => m[1]);
+  expect(targets).toEqual(['linux-x86_64', 'linux-aarch64', 'macos-arm64']);
+});

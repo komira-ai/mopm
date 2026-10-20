@@ -15,6 +15,8 @@ const REPO_BLOB_PATH = new URL(REPO_BLOB).pathname;
 export const DOC_PAGES: readonly { slug: string; source: string }[] = [
   { slug: 'why', source: 'docs/why-and-design.md' },
   { slug: 'getting-started', source: 'docs/getting-started.md' },
+  { slug: 'configuration', source: 'docs/configuration.md' },
+  { slug: 'examples', source: 'docs/examples.md' },
   { slug: 'mopm-toml', source: 'spec/mopm-toml.md' },
   { slug: 'mopm-test', source: 'docs/mopm-test.md' },
 ];
