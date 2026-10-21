@@ -764,7 +764,7 @@ zig_test(  # buck-only: the workflow lint, over the workflows, with a stand-in f
         "tests/drivers/release_lint.zig",
         "tests/drivers/workflow_lint.zig",
     ],
-    data = {f: f for f in glob([".github/workflows/*.yml", ".github/workflows/*.yaml"])},
+    data = dict({f: f for f in glob([".github/workflows/*.yml", ".github/workflows/*.yaml"])}, **{"tools/install_osv_scanner.zig": "tools/install_osv_scanner.zig"}),  # the installer: the pinned version, the sha256 and the refusal
     **_TOOLS
 )
 
@@ -841,6 +841,12 @@ actionlint_check(  # buck-only: the pinned actionlint over every workflow file
 zig_exe(  # buck-only: installs the pinned actionlint for lint.yml (sha256-checked download)
     name = "install-actionlint",
     src = "tools/install_actionlint.zig",
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: installs the pinned OSV-Scanner for advisories.yml (sha256-checked download); built so the farm compiles it
+    name = "install-osv-scanner",
+    src = "tools/install_osv_scanner.zig",
     **_TOOLS
 )
 
