@@ -1,3 +1,0 @@
-# kpin's pins.toml for the site: it pins nothing but npm tarballs, and kpin reads those from
-# package-lock.json into pins.lock.bzl. The site is not a service package (its own job in
-# service-ci.yml, its own lockfile), so its pins live with it rather than in service/pins.toml.

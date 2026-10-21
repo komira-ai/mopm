@@ -24,8 +24,7 @@ _TEST_TOOLS = {"bzip2": "buildrules//rules/pins:busybox"}
 npm_package(
     path = ".",
     node = _NODE,
-    # kpin's files of the old rules, still read by the weekly update.
-    exclude = ["pins.lock.bzl", "check_dist.js"],
+    exclude = ["check_dist.js"],
     step_data = {"test": _TEST_DATA},
     step_tools = {"test": _TEST_TOOLS},
     visibility = ["//service/infra/stacks:", "//service/api:"],

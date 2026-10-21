@@ -50,8 +50,7 @@ _TEST_DATA = _DOCS | {
 npm_package(
     path = ".",
     node = _NODE,
-    # kpin's files of the old rules, still read by the weekly update.
-    exclude = ["pins.lock.bzl", "pins.toml", "README.md"],
+    exclude = ["README.md"],
     step_data = {
         "test": _TEST_DATA,
         # tools/build.js renders the pages from them.
@@ -108,8 +107,7 @@ export_file(
 
 # This package's files, for //:hygiene (the repository-wide scan reads every file, and a
 # package boundary hides these from the root package's glob). A copy of the tree, staged
-# by path from this package. (//:hygiene also holds that kpin-update.yml lists this
-# package's pins.lock.bzl.)
+# by path from this package.
 filegroup(
     name = "lint_files",
     srcs = glob(["**"], exclude = ["dist/**", "coverage/**", "node_modules/**"]) + [".gitignore"],

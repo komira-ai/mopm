@@ -29,7 +29,7 @@ test "every file of the repository passes the text rules, and every workflow the
         "service/api/BUCK",
         "service/api/.gitignore",
         "service/infra/stacks/BUCK",
-        "site/pins.lock.bzl",
+        "site/buildrules.lock.bzl",
         "tools/node/BUCK",
         "tests/lint/fixtures/clean.yml.fixture",
     }) |must| {
@@ -45,6 +45,7 @@ test "every file of the repository passes the text rules, and every workflow the
     for (try c.workflowFiles(a, tree)) |f| try hyg.structureProblems(a, f, try tree.read(a, f), &out);
     try hyg.kpinSetsProblems(a, try tree.read(a, ".github/workflows/kpin-update.yml"), tree.files, &out);
     try hyg.farmExclusionProblems(a, try tree.read(a, "BUCK"), try tree.read(a, ".github/workflows/farm.yml"), &out);
+    try hyg.dependabotProblems(a, try tree.read(a, ".github/dependabot.yml"), tree.files, &out);
     for (out.items) |l| std.debug.print("{s}\n", .{l});
     try std.testing.expectEqual(@as(usize, 0), out.items.len);
 }
@@ -745,4 +746,63 @@ test "lint.yml and ci.yml: no pull_request filter, and no job-level if on a lint
     try expectStructure("lint.yml", header ++ with_if ++ "false\n" ++ run_step, &.{"job lint has an `if:`"});
     try expectStructure("lint.yml", header ++ with_if ++ "'!cancelled()'\n" ++ run_step, &.{});
     try expectStructure("lint.yml", header ++ with_if ++ "${{ !cancelled() }}\n" ++ run_step, &.{});
+}
+
+// ---- dependabot.yml: the cooldown and the coverage of every npm package ----------------------------
+
+/// `real` with the first `from` replaced by `to`; the anchor must exist in the real file, so a mutant cannot go stale.
+fn mutate(a: Allocator, real: []const u8, from: []const u8, to: []const u8) ![]u8 {
+    if (std.mem.indexOf(u8, real, from) == null) {
+        std.debug.print("the mutant anchor `{s}` is not in .github/dependabot.yml\n", .{from});
+        return error.TestUnexpectedResult;
+    }
+    const at = std.mem.indexOf(u8, real, from).?;
+    return std.mem.concat(a, u8, &.{ real[0..at], to, real[at + from.len ..] });
+}
+
+test "dependabot.yml: every npm entry waits 7 days, and every package-lock.json has an entry" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const tree = try c.loadTree(a);
+    const real = try tree.read(a, ".github/dependabot.yml");
+
+    var out = c.Out.init(a);
+    try hyg.dependabotProblems(a, real, tree.files, &out);
+    try c.expectLines("the real file", out.items, &.{});
+
+    // Mutant: one entry's cooldown is 6 days.
+    out = c.Out.init(a);
+    try hyg.dependabotProblems(a, try mutate(a, real, "default-days: 7", "default-days: 6"), tree.files, &out);
+    try c.expectLines("6 days", out.items, &.{"npm entry /service/api: needs `cooldown: default-days:` of at least 7, got 6"});
+    // Mutant: a quoted number is a string, not a day count.
+    out = c.Out.init(a);
+    try hyg.dependabotProblems(a, try mutate(a, real, "default-days: 7", "default-days: \"7\""), tree.files, &out);
+    try c.expectLines("a string", out.items, &.{"npm entry /service/api: needs"});
+    // Mutant: the cooldown key of one entry is misspelled (Dependabot would ignore it).
+    out = c.Out.init(a);
+    try hyg.dependabotProblems(a, try mutate(a, real, "default-days: 7", "default_days: 7"), tree.files, &out);
+    try c.expectLines("a misspelled key", out.items, &.{"npm entry /service/api: needs"});
+    // Mutant: an entry without a cooldown block at all (the one for /site, the last).
+    out = c.Out.init(a);
+    try hyg.dependabotProblems(a, try mutate(a, real, "    directory: /site\n    schedule:\n      interval: weekly\n    cooldown:\n      default-days: 7\n", "    directory: /site\n    schedule:\n      interval: weekly\n"), tree.files, &out);
+    try c.expectLines("no cooldown", out.items, &.{"npm entry /site: needs"});
+    // Mutant: a package with a lockfile and no entry (/service/api renamed to a directory without one).
+    out = c.Out.init(a);
+    try hyg.dependabotProblems(a, try mutate(a, real, "directory: /service/api\n", "directory: /service/other\n"), tree.files, &out);
+    try c.expectLines("no entry", out.items, &.{"no npm entry for /service/api (it has a package-lock.json)"});
+    // Mutant: an unreadable document, and one without updates, are findings and not passes.
+    out = c.Out.init(a);
+    try hyg.dependabotProblems(a, "version: 2\n", tree.files, &out);
+    try c.expectLines("no updates", out.items, &.{"no `updates` list"});
+    out = c.Out.init(a);
+    try hyg.dependabotProblems(a, "version: 2\nupdates: x\n", tree.files, &out);
+    try c.expectLines("updates not a list", out.items, &.{"`updates` is not a list"});
+    out = c.Out.init(a);
+    try hyg.dependabotProblems(a, "version: 2\nupdates:\n\t- x\n", tree.files, &out);
+    try c.expectLines("not YAML", out.items, &.{"not readable as YAML"});
+    // Mutant: an npm entry with no directory is named as such, and still needs its cooldown.
+    out = c.Out.init(a);
+    try hyg.dependabotProblems(a, "version: 2\nupdates:\n  - package-ecosystem: npm\n", &.{}, &out);
+    try c.expectLines("no directory", out.items, &.{"npm entry (no directory): needs"});
 }

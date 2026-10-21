@@ -622,3 +622,50 @@ pub fn farmExclusionProblems(a: Allocator, buck: []const u8, farm: []const u8, o
         if (!c.containsStr(want, n)) try c.problem(a, out, prefix ++ "farm.yml: //:{s} is excluded from the pull request build but BUCK does not build it with _MOJO_TOOLS", .{n});
     }
 }
+
+// ---- dependabot.yml -----------------------------------------------------------
+
+/// The cooldown, in days, every npm entry of .github/dependabot.yml must carry at least (`cooldown.default-days`): a
+/// newly published version is proposed only after it has been public that long. Version updates only; security updates
+/// ignore it.
+pub const min_cooldown_days: i64 = 7;
+
+/// dependabot.yml against the repository's files: every `npm` entry carries `cooldown: default-days: N` with N a
+/// number and N >= min_cooldown_days, and every directory holding a package-lock.json has an npm entry (a package
+/// Dependabot never looks at is a package whose pins only a human updates). `files` are the repository's paths.
+pub fn dependabotProblems(a: Allocator, text: []const u8, files: []const []const u8, out: *Out) !void {
+    const f = ".github/dependabot.yml";
+    const doc = c.load(a, text) catch |err| {
+        try c.problem(a, out, prefix ++ "{s}: not readable as YAML: {s}", .{ f, @errorName(err) });
+        return;
+    };
+    const updates = c.get(doc, "updates") orelse {
+        try c.problem(a, out, prefix ++ "{s}: no `updates` list", .{f});
+        return;
+    };
+    if (updates != .array) {
+        try c.problem(a, out, prefix ++ "{s}: `updates` is not a list", .{f});
+        return;
+    }
+    var dirs = std.ArrayList([]const u8).init(a);
+    for (updates.array.items) |u| {
+        if (!c.isStr(c.get(u, "package-ecosystem"), "npm")) continue;
+        const dir = c.str(c.get(u, "directory")) orelse "(no directory)";
+        try dirs.append(dir);
+        const days = c.get(c.get(u, "cooldown"), "default-days");
+        const ok = if (days) |d| switch (d) {
+            .integer => |n| n >= min_cooldown_days,
+            else => false,
+        } else false;
+        if (!ok) {
+            try c.problem(a, out, prefix ++ "{s}: npm entry {s}: needs `cooldown: default-days:` of at least {d}, got {s}", .{ f, dir, min_cooldown_days, try c.inspect(a, days) });
+        }
+    }
+    for (files) |p| {
+        if (!std.mem.eql(u8, c.basename(p), "package-lock.json")) continue;
+        const dir = try std.mem.concat(a, u8, &.{ "/", std.fs.path.dirname(p) orelse "" });
+        if (!c.containsStr(dirs.items, dir)) {
+            try c.problem(a, out, prefix ++ "{s}: no npm entry for {s} (it has a package-lock.json)", .{ f, dir });
+        }
+    }
+}
