@@ -683,12 +683,29 @@ test "tools/install_osv_scanner.zig: an exact version, a sha256 constant, compar
 test "advisories.yml: report only, a finding is never a failure" {
     try expectAdvisories("[ \"$rc\" -gt 1 ]", "[ \"$rc\" -gt 0 ]", &.{"the scan step must fail only on"});
     try expectAdvisories("|| echo \"::warning::could not create the Advisories issue\"", "|| true", &.{"`|| true` would hide a scan that could not run"});
-    try expectAdvisories("echo \"::warning::could not list issues, so the Advisories issue was not updated\"", "exit 1", &.{"only the scan step may exit nonzero"});
+    try expectAdvisories("echo \"::warning::could not list issues, so the Advisories issue was not touched (creating one blind could duplicate it)\"", "exit 1", &.{"only the scan step may exit nonzero"});
     try expectAdvisories("    timeout-minutes: 15\n", "    timeout-minutes: 15\n    continue-on-error: true\n", &.{"job scan: continue-on-error is not allowed"});
     try expectAdvisories("      - name: Install Zig 0.12.0 (sha256-pinned)\n", "      - name: Install Zig 0.12.0 (sha256-pinned)\n        continue-on-error: true\n", &.{"continue-on-error is not allowed"});
     try expectAdvisories("cat \"$body\" >> \"$GITHUB_STEP_SUMMARY\"", "cat \"$body\"", &.{"findings must go to the job summary"});
     try expectAdvisories("gh issue create --title Advisories", "gh issue create --title Other", &.{"findings must go to one issue titled Advisories"});
     try expectAdvisories("gh issue close \"$number\"", "gh issue view \"$number\"", &.{"closed when there are no findings"});
+}
+
+test "advisories.yml: set +e before the scanner and set -e after it (bash -e would turn findings red)" {
+    try expectAdvisories("          set +e\n", "", &.{"`set +e` must come before the scanner call"});
+    try expectAdvisories("          set -e\n          if [ \"$rc\"", "          if [ \"$rc\"", &.{"`set -e` must come back after the scanner call"});
+}
+
+test "advisories.yml: GH_TOKEN only on the report step, never at job or workflow level" {
+    try expectAdvisories("      GH_REPO: ${{ github.repository }}\n", "      GH_REPO: ${{ github.repository }}\n      GH_TOKEN: ${{ github.token }}\n", &.{"GH_TOKEN must not be set at job level"});
+    try expectAdvisories("name: advisories\n", "name: advisories\nenv:\n  GH_TOKEN: ${{ github.token }}\n", &.{"GH_TOKEN must not be set at workflow level"});
+    try expectAdvisories("        env:\n          GH_TOKEN: ${{ github.token }}\n", "", &.{"must set GH_TOKEN in its own env"});
+    try expectAdvisories("      - name: Install Zig 0.12.0 (sha256-pinned)\n", "      - name: Install Zig 0.12.0 (sha256-pinned)\n        env:\n          GH_TOKEN: ${{ github.token }}\n", &.{"GH_TOKEN belongs on the step that runs `gh issue` alone"});
+}
+
+test "advisories.yml: a failed issue list never creates an issue" {
+    try expectAdvisories("if [ \"$listed\" = 1 ]; then", "if true; then", &.{"must sit inside `if [ \"$listed\" = 1 ]; then`"});
+    try expectAdvisories("            listed=1\n", "", &.{"`listed=0` then `listed=1`"});
 }
 
 test "no other workflow may call advisories.yml" {

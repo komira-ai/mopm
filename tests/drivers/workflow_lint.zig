@@ -476,6 +476,7 @@ pub fn advisoriesProblems(a: Allocator, f: []const u8, text: []const u8, out: *O
     var closes = false;
     const jobs = c.get(doc, "jobs");
     if (jobs == null or jobs.? != .object) return c.problem(a, out, prefix ++ "{s}: no jobs", .{f});
+    if (c.get(c.get(doc, "env"), "GH_TOKEN") != null) try c.problem(a, out, prefix ++ "{s}: GH_TOKEN must not be set at workflow level", .{f});
     var jit = jobs.?.object.iterator();
     while (jit.next()) |je| {
         const jn = je.key_ptr.*;
@@ -487,11 +488,27 @@ pub fn advisoriesProblems(a: Allocator, f: []const u8, text: []const u8, out: *O
             for (perms.?.object.keys()) |k| if (!std.mem.eql(u8, k, "contents") and !std.mem.eql(u8, k, "issues")) try extra.append(k);
             if (extra.items.len != 0) try c.problem(a, out, prefix ++ "{s}: job {s} may hold only contents and issues permissions, not {s}", .{ f, jn, try c.inspectList(a, extra.items) });
         }
+        if (c.get(c.get(job, "env"), "GH_TOKEN") != null) try c.problem(a, out, prefix ++ "{s}: job {s}: GH_TOKEN must not be set at job level (the downloaded scanner would see it); set it on the report step alone", .{ f, jn });
         const steps = c.get(job, "steps") orelse continue;
         if (steps != .array) continue;
         for (steps.array.items, 0..) |st, i| {
             if (c.truthy(c.get(st, "continue-on-error"))) try c.problem(a, out, prefix ++ "{s}: {s} step {d}: continue-on-error is not allowed (the job fails only when the scan cannot run)", .{ f, jn, i });
             const run = c.str(c.get(st, "run")) orelse continue;
+            const has_token = c.get(c.get(st, "env"), "GH_TOKEN") != null;
+            const uses_gh = std.mem.indexOf(u8, run, "gh issue") != null;
+            if (has_token and !uses_gh) try c.problem(a, out, prefix ++ "{s}: {s} step {d}: GH_TOKEN belongs on the step that runs `gh issue` alone", .{ f, jn, i });
+            if (uses_gh and !has_token) try c.problem(a, out, prefix ++ "{s}: {s} step {d}: the step that runs `gh issue` must set GH_TOKEN in its own env", .{ f, jn, i });
+            if (uses_gh) {
+                const guard = std.mem.indexOf(u8, run, "if [ \"$listed\" = 1 ]; then");
+                const create = std.mem.indexOf(u8, run, "gh issue create");
+                const edit = std.mem.indexOf(u8, run, "gh issue edit");
+                if (guard == null or create == null or edit == null or guard.? > create.? or guard.? > edit.?) {
+                    try c.problem(a, out, prefix ++ "{s}: {s} step {d}: `gh issue create` and `edit` must sit inside `if [ \"$listed\" = 1 ]; then` (a failed `gh issue list` must not create a duplicate)", .{ f, jn, i });
+                }
+                if (std.mem.indexOf(u8, run, "listed=1") == null or std.mem.indexOf(u8, run, "listed=0") == null) {
+                    try c.problem(a, out, prefix ++ "{s}: {s} step {d}: `listed=0` then `listed=1` after a successful `gh issue list` is required", .{ f, jn, i });
+                }
+            }
             if (std.mem.indexOf(u8, run, "tools/install_zig.sh") != null) installs_zig = true;
             if (std.mem.indexOf(u8, run, "zig run " ++ advisories_installer) != null) installs_scanner = true;
             for (advisories_downloads) |d| {
@@ -500,6 +517,11 @@ pub fn advisoriesProblems(a: Allocator, f: []const u8, text: []const u8, out: *O
             if (std.mem.indexOf(u8, run, "|| true") != null) try c.problem(a, out, prefix ++ "{s}: {s} step {d}: `|| true` would hide a scan that could not run", .{ f, jn, i });
             if (std.mem.indexOf(u8, run, "\"$OSV_SCANNER\"") != null) {
                 scans = true;
+                const call = std.mem.indexOf(u8, run, "\"$OSV_SCANNER\"").?;
+                const off = std.mem.indexOf(u8, run, "set +e");
+                const on_again = std.mem.lastIndexOf(u8, run, "set -e");
+                if (off == null or off.? > call) try c.problem(a, out, prefix ++ "{s}: {s} step {d}: `set +e` must come before the scanner call (GitHub runs bash -e, and exit 1 is findings)", .{ f, jn, i });
+                if (on_again == null or on_again.? < call) try c.problem(a, out, prefix ++ "{s}: {s} step {d}: `set -e` must come back after the scanner call", .{ f, jn, i });
                 if (std.mem.indexOf(u8, run, advisories_scan_guard) == null) {
                     try c.problem(a, out, prefix ++ "{s}: {s} step {d}: the scan step must fail only on `{s}` (exit 1 is findings: reported, never a failure)", .{ f, jn, i, advisories_scan_guard });
                 }

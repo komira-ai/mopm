@@ -41,7 +41,6 @@ jobs:
       contents: read
       issues: write
     env:
-      GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -72,6 +71,8 @@ jobs:
             exit 1
           fi
       - name: Report (job summary and the one Advisories issue; never a failure)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           json="$RUNNER_TEMP/osv.json"
           body="$RUNNER_TEMP/advisories.md"
@@ -91,22 +92,28 @@ jobs:
           cat "$body" >> "$GITHUB_STEP_SUMMARY"
           number=""
           state=""
+          listed=0
           if line="$(gh issue list --state all --limit 100 --json number,title,state --jq '[.[] | select(.title == "Advisories")] | sort_by(.number) | last | select(. != null) | "\(.number) \(.state)"')"; then
-            number="${line% *}"
-            state="${line#* }"
-          else
-            echo "::warning::could not list issues, so the Advisories issue was not updated"
-          fi
-          if [ "$count" -gt 0 ]; then
-            if [ -z "$number" ]; then
-              gh issue create --title Advisories --body-file "$body" || echo "::warning::could not create the Advisories issue"
-            else
-              gh issue edit "$number" --body-file "$body" || echo "::warning::could not update the Advisories issue"
-              if [ "$state" = CLOSED ]; then
-                gh issue reopen "$number" || echo "::warning::could not reopen the Advisories issue"
-              fi
+            listed=1
+            if [ -n "$line" ]; then
+              number="${line% *}"
+              state="${line#* }"
             fi
-          elif [ -n "$number" ] && [ "$state" = OPEN ]; then
-            gh issue edit "$number" --body-file "$body" || echo "::warning::could not update the Advisories issue"
-            gh issue close "$number" --comment "No known vulnerabilities at the last scan." || echo "::warning::could not close the Advisories issue"
+          else
+            echo "::warning::could not list issues, so the Advisories issue was not touched (creating one blind could duplicate it)"
+          fi
+          if [ "$listed" = 1 ]; then
+            if [ "$count" -gt 0 ]; then
+              if [ -z "$number" ]; then
+                gh issue create --title Advisories --body-file "$body" || echo "::warning::could not create the Advisories issue"
+              else
+                gh issue edit "$number" --body-file "$body" || echo "::warning::could not update the Advisories issue"
+                if [ "$state" = CLOSED ]; then
+                  gh issue reopen "$number" || echo "::warning::could not reopen the Advisories issue"
+                fi
+              fi
+            elif [ -n "$number" ] && [ "$state" = OPEN ]; then
+              gh issue edit "$number" --body-file "$body" || echo "::warning::could not update the Advisories issue"
+              gh issue close "$number" --comment "No known vulnerabilities at the last scan." || echo "::warning::could not close the Advisories issue"
+            fi
           fi
