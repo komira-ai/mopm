@@ -10,6 +10,8 @@
 //!   s3api put-object --bucket <b> --key <k> --body <file> (--if-match <etag> | --if-none-match '*')
 //!       Below `apt/pool/mopm/` only with If-None-Match; below `apt/dists/` only with exactly one of the two headers; anything else
 //!       is AccessDenied. If-None-Match on an existing key and If-Match on another ETag (or a missing key) are PreconditionFailed.
+//!       When the file `fail_at_put` holds N, the N-th put (and any later one) fails with an InternalError and stores nothing: the write is
+//!       interrupted there.
 //!   cloudfront create-invalidation --distribution-id <id> --paths /apt/dists/*
 //!       Fails when the file `invalidate_fail` exists.
 //! Every call is appended to `log` (its arguments, space-joined, then the access key id in the environment).
@@ -115,7 +117,7 @@ pub fn main() !void {
                 }
             }
             if (hit) {
-                _ = try store(a, dir, key, try std.mem.concat(a, u8, &.{ body, "# changed by another writer\n" }));
+                _ = try store(a, dir, key, try std.mem.concat(a, u8, &.{ body, "X-Other-Writer: yes\n" }));
                 try dir.writeFile("bump_after_get", keep.items);
             }
         } else |_| {}
@@ -138,6 +140,15 @@ pub fn main() !void {
         if (if_none) |v| {
             if (!std.mem.eql(u8, v, "*")) fail(252, "aws: --if-none-match must be *");
         }
+        // The write is interrupted at the N-th put (the file `fail_at_put` holds N): that put and nothing after it is stored; the
+        // call answers with a server error that is not a precondition failure.
+        if (dir.readFileAlloc(a, "fail_at_put", 64)) |want| {
+            const target = std.fmt.parseInt(u64, std.mem.trim(u8, want, "\n "), 10) catch fail(252, "aws: fail_at_put is not a number");
+            const seen: []const u8 = dir.readFileAlloc(a, "put_count", 64) catch "0";
+            const n = (std.fmt.parseInt(u64, std.mem.trim(u8, seen, "\n "), 10) catch 0) + 1;
+            try dir.writeFile("put_count", try std.fmt.allocPrint(a, "{d}\n", .{n}));
+            if (n >= target) fail(254, "An error occurred (InternalError) when calling the PutObject operation (reached max retries: 2): We encountered an internal error. Please try again.");
+        } else |_| {}
         const sp = try std.fmt.allocPrint(a, "store/{s}", .{key});
         const have = dir.access(sp, .{});
         const cur_etag: ?[]const u8 = if (have) |_| try dir.readFileAlloc(a, try std.fmt.allocPrint(a, "etag/{s}", .{key}), 256) else |_| null;

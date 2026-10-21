@@ -224,9 +224,10 @@ pub fn renderPackages(a: Allocator, stanzas: []const Stanza, arch: []const u8) !
 pub const TreeFile = struct { path: []const u8, data: []const u8 };
 
 pub const ReleaseInfo = struct {
-    origin: []const u8,
-    label: []const u8,
-    description: []const u8,
+    /// Origin, Label and Description are null when the Release carries no such field (see `keepSharedFields`).
+    origin: ?[]const u8,
+    label: ?[]const u8,
+    description: ?[]const u8,
     suite: []const u8 = "stable",
     codename: []const u8 = "stable",
     component: []const u8 = "main",
@@ -234,7 +235,21 @@ pub const ReleaseInfo = struct {
     date: u64,
 };
 
-const day_names = [_][]const u8{ "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" };
+/// The Release of a shared repository belongs to every product that publishes into it: the Origin, Label and Description of the Release
+/// that exists stay exactly as they are (a field it lacks stays absent), and `info` supplies them only for the first Release, when there is
+/// none. `existing` is the text of the Release that was read, null when there was none.
+pub fn keepSharedFields(a: Allocator, existing: ?[]const u8, info: ReleaseInfo) !ReleaseInfo {
+    const text = existing orelse return info;
+    if (text.len == 0) return info;
+    const fields = try control.parse(a, text);
+    var out = info;
+    out.origin = control.get(fields, "Origin");
+    out.label = control.get(fields, "Label");
+    out.description = control.get(fields, "Description");
+    return out;
+}
+
+const day_names =[_][]const u8{ "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" };
 const month_names = [_][]const u8{ "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
 
 /// RFC 2822 in UTC: `Tue, 20 Oct 2026 12:00:00 UTC`.
@@ -294,18 +309,20 @@ pub fn tree(a: Allocator, info: ReleaseInfo, stanzas: []const Stanza, archs: []c
         try sums.writer().print(" {s} {d} {s}\n", .{ sha256Hex(gz), gz.len, rel_gz });
     }
     const archs_line = try std.mem.join(a, " ", sorted_archs);
-    const fields = [_]control.Field{
-        .{ .name = "Origin", .value = info.origin },
-        .{ .name = "Label", .value = info.label },
-        .{ .name = "Suite", .value = info.suite },
-        .{ .name = "Codename", .value = info.codename },
-        .{ .name = "Date", .value = try formatDate(a, info.date) },
-        .{ .name = "Architectures", .value = archs_line },
-        .{ .name = "Components", .value = info.component },
-        .{ .name = "Description", .value = info.description },
-    };
+    var fields = std.ArrayList(control.Field).init(a);
+    if (info.origin) |v| try fields.append(.{ .name = "Origin", .value = v });
+    if (info.label) |v| try fields.append(.{ .name = "Label", .value = v });
+    try fields.append(.{ .name = "Suite", .value = info.suite });
+    try fields.append(.{ .name = "Codename", .value = info.codename });
+    try fields.append(.{ .name = "Date", .value = try formatDate(a, info.date) });
+    try fields.append(.{ .name = "Architectures", .value = archs_line });
+    try fields.append(.{ .name = "Components", .value = info.component });
+    if (info.description) |v| try fields.append(.{ .name = "Description", .value = v });
+    // The index files are also served by their hash (`by-hash/SHA256/<hash>` below each binary-<arch> directory, which the publish writes
+    // before the plain files), so a client that reads a Release finds the files it lists whatever is written next.
+    try fields.append(.{ .name = "Acquire-By-Hash", .value = "yes" });
     var rel_text = std.ArrayList(u8).init(a);
-    try rel_text.appendSlice(try control.render(a, &fields));
+    try rel_text.appendSlice(try control.render(a, fields.items));
     try rel_text.appendSlice("SHA256:\n");
     try rel_text.appendSlice(sums.items);
     try files.append(.{ .path = try std.fmt.allocPrint(a, "dists/{s}/Release", .{info.suite}), .data = try rel_text.toOwnedSlice() });
@@ -442,6 +459,40 @@ test "Packages parses back to the same stanzas" {
     for (merged.stanzas, back) |x, y| try t.expectEqualStrings(x.text, y.text);
     try t.expectEqual(@as(usize, 0), (try renderPackages(a, merged.stanzas, "arm64")).len);
     try t.expectEqual(@as(usize, 0), (try parsePackages(a, "")).len);
+}
+
+test "keepSharedFields: the Origin, Label and Description of an existing Release win; the first Release takes the given ones" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const mine = ReleaseInfo{ .origin = "mopm", .label = "mopm", .description = "mopm packages", .date = 1700000000 };
+    // No Release: the first creation sets all three.
+    const first = try keepSharedFields(a, null, mine);
+    try t.expectEqualStrings("mopm", first.origin.?);
+    try t.expectEqualStrings("mopm packages", first.description.?);
+    try t.expectEqual(@as(usize, 1700000000), first.date);
+    // An empty file is no Release either.
+    try t.expectEqualStrings("mopm", (try keepSharedFields(a, "", mine)).label.?);
+    // A Release of another product: its three fields stay (a multi-line Description too), whatever the caller passes.
+    const other = "Origin: Shared Co\nLabel: Shared Label\nSuite: stable\nDescription: line one\n line two\nSHA256:\n aa 1 main/binary-amd64/Packages\n";
+    const kept = try keepSharedFields(a, other, mine);
+    try t.expectEqualStrings("Shared Co", kept.origin.?);
+    try t.expectEqualStrings("Shared Label", kept.label.?);
+    try t.expectEqualStrings("line one\n line two", kept.description.?);
+    // A field the existing Release lacks is not added.
+    const bare = try keepSharedFields(a, "Suite: stable\nSHA256:\n aa 1 main/binary-amd64/Packages\n", mine);
+    try t.expect(bare.origin == null and bare.label == null and bare.description == null);
+    // A Release that is not a control file is an error, not a silent overwrite.
+    try t.expectError(error.BadStanza, keepSharedFields(a, "not a control file\n", mine));
+    // And the Release rendered from kept fields carries them, and no field that is null.
+    const s = try stanzaOf(a, try sampleDeb(a, "1.2.3", "amd64", "one"));
+    const files = try tree(a, bare, &.{s}, &.{"amd64"});
+    const rel = files[files.len - 1].data;
+    try t.expect(std.mem.indexOf(u8, rel, "Origin:") == null and std.mem.indexOf(u8, rel, "Label:") == null and std.mem.indexOf(u8, rel, "\nDescription:") == null);
+    try t.expect(std.mem.indexOf(u8, rel, "Acquire-By-Hash: yes\n") != null);
+    const full = try tree(a, kept, &.{s}, &.{"amd64"});
+    try t.expect(std.mem.indexOf(u8, full[full.len - 1].data, "Origin: Shared Co\nLabel: Shared Label\n") != null);
+    try t.expect(std.mem.indexOf(u8, full[full.len - 1].data, "Description: line one\n line two\nAcquire-By-Hash: yes\nSHA256:\n") != null);
 }
 
 test "formatDate: weekday, month and time of known instants" {

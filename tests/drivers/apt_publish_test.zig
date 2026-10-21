@@ -4,8 +4,14 @@
 //!
 //! What it proves, and the defect each check would catch:
 //!   - the order of the writes: the whole of the index is read before anything is written; both .debs are in the pool before the first object of
-//!     the index; every Packages and Packages.gz before Release, InRelease and Release.gpg; the invalidation last (a reader that sees a Release
-//!     must find the files it lists; a CDN must not serve the old index after the write);
+//!     the index; the by-hash copy of every Packages and Packages.gz (If-None-Match) before any plain file of the index; every Packages and
+//!     Packages.gz before Release, Release.gpg and InRelease, which is last (its If-Match is the commit point); the invalidation last;
+//!   - a write interrupted after every one of its puts (the fake aws fails the N-th put, for each N) leaves a state in which the Release and the
+//!     InRelease that a client can read list only files whose by-hash copy exists with the listed hash, and InRelease is still the old one until
+//!     its own put (a reader sees the old Release with the old hashes, or the new Release whose by-hash files already exist);
+//!   - a Release that exists keeps its Origin, Label and Description (the repository is shared with other products);
+//!   - a put of a .deb that fails for another reason than a 412 fails the job before anything of the index is written; a Release.gpg that does
+//!     not verify fails the signing, and nothing is written; a Packages file that is not the one its Release lists is not uploaded;
 //!   - If-None-Match on every .deb, so a released .deb is never replaced, and a 412 on one is "exists", not a failure; the fake refuses a put to the
 //!     pool without the header, so a tool that dropped it goes red;
 //!   - If-Match on the ETag that was READ for every object of an index that exists, If-None-Match for one that does not; the fake refuses an unconditional put
@@ -172,6 +178,36 @@ fn before(x: ?usize, y: ?usize) bool {
     return x != null and y != null and x.? < y.?;
 }
 
+fn sha256Hex(bytes: []const u8) [64]u8 {
+    var d: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(bytes, &d, .{});
+    return std.fmt.bytesToHex(d, .lower);
+}
+
+/// What a client sees in the store of the fake S3: is every Packages and Packages.gz that the Release `name` (Release or InRelease) lists also there
+/// by its hash, with exactly the listed hash? Null when it is, else what is wrong. A client that reads `name` and then fetches by hash must succeed.
+fn byHashProblem(w: World, name: []const u8) ?[]const u8 {
+    const text = w.read(h.fmt(w.a, "aws/store/apt/dists/stable/{s}", .{name}) catch @panic("oom"));
+    if (text.len == 0) return "the file is not there";
+    var listed: usize = 0;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0 or line[0] != ' ') continue;
+        var words = std.mem.tokenizeScalar(u8, line, ' ');
+        const hash = words.next() orelse continue;
+        _ = words.next() orelse continue;
+        const path = words.next() orelse continue;
+        if (!std.mem.endsWith(u8, path, "/Packages") and !std.mem.endsWith(u8, path, "/Packages.gz")) continue;
+        listed += 1;
+        const dir = std.fs.path.dirname(path) orelse return "a listed path has no directory";
+        const body = w.read(h.fmt(w.a, "aws/store/apt/dists/stable/{s}/by-hash/SHA256/{s}", .{ dir, hash }) catch @panic("oom"));
+        if (body.len == 0) return h.fmt(w.a, "{s} lists {s} with hash {s}, which has no by-hash file", .{ name, path, hash }) catch @panic("oom");
+        if (!std.mem.eql(u8, &sha256Hex(body), hash)) return h.fmt(w.a, "{s}: the by-hash file of {s} does not hash to {s}", .{ name, path, hash }) catch @panic("oom");
+    }
+    if (listed != 4) return h.fmt(w.a, "{s} lists {d} Packages files, not 4", .{ name, listed }) catch @panic("oom");
+    return null;
+}
+
 const foreign_packages =
     "Package: other\nVersion: 2.0.0\nArchitecture: amd64\nMaintainer: someone <someone@example.test>\n" ++
     "Filename: pool/other/other_2.0.0_amd64.deb\nSize: 100\nSHA256: 0000000000000000000000000000000000000000000000000000000000000001\nDescription: another product\n";
@@ -295,17 +331,30 @@ test "apt_publish: gate, OIDC exchange, read, index, sign, write, with every pla
         const rel_put = lineNo(log, &.{ "put-object", "--key apt/dists/stable/Release " });
         const inrel_put = lineNo(log, &.{ "put-object", "--key apt/dists/stable/InRelease " });
         const gpg_put = lineNo(log, &.{ "put-object", "--key apt/dists/stable/Release.gpg " });
-        const last_packages = lastLineNo(log, &.{ "put-object", "/Packages" });
+        const last_packages = lastLineNo(log, &.{ "put-object", "--key apt/dists/stable/main/binary-arm64/Packages.gz " });
+        const first_byhash = lineNo(log, &.{ "put-object", "/by-hash/SHA256/", "--if-none-match *" });
+        const last_byhash = lastLineNo(log, &.{ "put-object", "/by-hash/SHA256/" });
+        const first_plain = lineNo(log, &.{ "put-object", "--key apt/dists/stable/main/binary-amd64/Packages " });
         const invalidation = lineNo(log, &.{ "create-invalidation", "--distribution-id DISTID", "--paths /apt/dists/*" });
         rep.check("first: the index is read from S3 before anything is written", before(read_release, first_put), log);
         rep.check("first: every Packages and Packages.gz is read, so every ETag is known", count(log, "get-object") == 7, log);
         rep.check("first: both .debs are in the pool, with If-None-Match, before the first object of the index", before(pool_amd, first_dists) and before(pool_arm, first_dists), log);
-        rep.check("first: Release is written after every Packages file, then InRelease, then Release.gpg", before(last_packages, rel_put) and before(rel_put, inrel_put) and before(inrel_put, gpg_put), log);
-        rep.check("first: the invalidation of /apt/dists/* comes last, once", before(gpg_put, invalidation) and count(log, "create-invalidation") == 1, log);
-        rep.check("first: nothing existed, so every object of the index is created with If-None-Match (7 of them), none with If-Match", count(log, "--key apt/dists/") - count(log, "get-object") == 7 and count(log, "--if-none-match *") == 9 and count(log, "--if-match") == 0, log);
+        rep.check("first: Release is written after every Packages file, then Release.gpg, and InRelease last (the commit point)", before(last_packages, rel_put) and before(rel_put, gpg_put) and before(gpg_put, inrel_put), log);
+        rep.check("first: the by-hash copy of every Packages and Packages.gz (4 of them, If-None-Match) is written after the .debs and before any plain file of the index", count(log, "/by-hash/SHA256/") == 4 and before(pool_amd, first_byhash) and before(pool_arm, first_byhash) and before(last_byhash, first_plain), log);
+        rep.check("first: the by-hash keys are below the binary-<arch> directory of the file and named by the sha256 the Release lists", h.contains(log, "--key apt/dists/stable/main/binary-amd64/by-hash/SHA256/") and h.contains(log, "--key apt/dists/stable/main/binary-arm64/by-hash/SHA256/"), log);
+        rep.check("first: the invalidation of /apt/dists/* comes last, once", before(inrel_put, invalidation) and count(log, "create-invalidation") == 1, log);
+        rep.check("first: nothing existed, so every object of the index is created with If-None-Match (7 plain and 4 by-hash), none with If-Match", count(log, "--key apt/dists/") - count(log, "get-object") == 11 and count(log, "--if-none-match *") == 13 and count(log, "--if-match") == 0, log);
         rep.check("first: every S3 and CloudFront call carries the credentials of the exchange", count(log, "| key=ASIAFAKEKEYID") == count(log, "s3api") + count(log, "cloudfront") and count(log, "s3api") > 0, log);
         const inrelease = w.read("aws/store/apt/dists/stable/InRelease");
         const release = w.read("aws/store/apt/dists/stable/Release");
+        rep.check("first: the Release says Acquire-By-Hash: yes and carries the Origin, Label and Description it was first given", h.contains(release, "Acquire-By-Hash: yes\n") and h.contains(release, "Origin: owner\nLabel: owner\n") and h.contains(release, "Description: owner packages\n"), release);
+        for ([_][]const u8{ "amd64", "arm64" }) |arch| {
+            for ([_][]const u8{ "Packages", "Packages.gz" }) |name| {
+                const body = w.read(try h.fmt(a, "aws/store/apt/dists/stable/main/binary-{s}/{s}", .{ arch, name }));
+                const by = w.read(try h.fmt(a, "aws/store/apt/dists/stable/main/binary-{s}/by-hash/SHA256/{s}", .{ arch, sha256Hex(body) }));
+                rep.check(try h.fmt(a, "first: the by-hash copy of {s}/{s} holds the same bytes", .{ arch, name }), body.len > 0 and std.mem.eql(u8, body, by), "");
+            }
+        }
         rep.check("first: InRelease is the Release signed with the subkey and Release.gpg signs the same bytes", release.len > 0 and h.contains(inrelease, release) and h.contains(inrelease, "key=" ++ fpr ++ "!") and h.contains(w.read("aws/store/apt/dists/stable/Release.gpg"), "key=" ++ fpr ++ "!"), inrelease);
         const packages = w.read("aws/store/apt/dists/stable/main/binary-amd64/Packages");
         rep.check("first: the .deb is listed below the product's pool directory, not pool/main", h.contains(packages, "Filename: pool/mopm/mopm_1.2.3_amd64.deb\n") and !h.contains(packages, "pool/main"), packages);
@@ -334,6 +383,13 @@ test "apt_publish: gate, OIDC exchange, read, index, sign, write, with every pla
         try w.put("aws/etag/apt/dists/stable/main/binary-amd64/Packages", "\"other-writer\"");
         try w.deb("debs2", "1.2.4", "amd64");
         try w.deb("debs2", "1.2.4", "arm64");
+        // The repository is shared: the Release that is there carries the Origin, Label and Description of another product.
+        {
+            var rel_text = w.read("aws/store/apt/dists/stable/Release");
+            rel_text = try std.mem.replaceOwned(u8, a, rel_text, "Origin: owner\nLabel: owner\n", "Origin: Shared Co\nLabel: Shared Label\n");
+            rel_text = try std.mem.replaceOwned(u8, a, rel_text, "Description: owner packages\n", "Description: Shared description\n");
+            try w.put("aws/store/apt/dists/stable/Release", rel_text);
+        }
         const etag_release = w.read("aws/etag/apt/dists/stable/Release");
         const before_log = w.awsLog().len;
         const p2 = try w.pipeline("two", "debs2", false, false);
@@ -343,7 +399,10 @@ test "apt_publish: gate, OIDC exchange, read, index, sign, write, with every pla
         const want_match = try h.fmt(a, "--if-match {s}", .{etag_release});
         rep.check("second: Release is replaced with If-Match on the ETag that was read", lineNo(log2, &.{ "put-object", rel2, want_match }) != null, log2);
         rep.check("second: the Packages that another writer changed is replaced with If-Match on THAT ETag", lineNo(log2, &.{ "put-object", "--key apt/dists/stable/main/binary-amd64/Packages ", "--if-match \"other-writer\"" }) != null, log2);
-        rep.check("second: nothing of the index is created again (no If-None-Match on dists/)", lineNo(log2, &.{ "put-object", "--key apt/dists/", "--if-none-match" }) == null, log2);
+        rep.check("second: nothing of the plain index is created again (If-None-Match on dists/ only for the 4 new by-hash files)", count(log2, "--key apt/dists/") - count(log2, "get-object") == 11 and count(log2, "/by-hash/SHA256/") == 4 and count(log2, "--if-none-match *") == 2 + 4, log2);
+        const release2 = w.read("aws/store/apt/dists/stable/Release");
+        rep.check("second: the Release that is there keeps its Origin, Label and Description: mopm's flags do not overwrite another product's", h.contains(release2, "Origin: Shared Co\nLabel: Shared Label\n") and h.contains(release2, "Description: Shared description\n") and !h.contains(release2, "Origin: owner") and !h.contains(release2, "owner packages"), release2);
+        rep.check("second: and the signed InRelease carries them too", h.contains(w.read("aws/store/apt/dists/stable/InRelease"), "Origin: Shared Co\nLabel: Shared Label\n"), "");
         rep.check("second: each .deb is still put with If-None-Match", count(log2, "--key apt/pool/mopm/") == 2, log2);
         const packages2 = w.read("aws/store/apt/dists/stable/main/binary-amd64/Packages");
         rep.check("second: both mopm versions and the other product are listed", h.contains(packages2, "Version: 1.2.4") and h.contains(packages2, "Version: 1.2.3") and h.contains(packages2, "Package: other\n") and h.contains(packages2, "Filename: pool/other/other_2.0.0_amd64.deb"), packages2);
@@ -356,12 +415,12 @@ test "apt_publish: gate, OIDC exchange, read, index, sign, write, with every pla
         rep.check("conflict: the losing write exits 0 and says conflict=true", std.mem.eql(u8, p3.stage, "write") and p3.ran.code == 0 and h.contains(w.read(p3.gho), "conflict=true\n") and !h.contains(w.read(p3.gho), "conflict=false"), p3.ran.text);
         rep.check("conflict: it says why", h.contains(p3.ran.text, "changed while the index was built"), p3.ran.text);
         rep.check("conflict: nothing is invalidated on a lost write", count(w.awsLog(), "create-invalidation") == 2, w.awsLog());
-        rep.check("conflict: the other writer's Release is still there (nothing overwrote it)", h.contains(w.read("aws/store/apt/dists/stable/Release"), "# changed by another writer"), w.read("aws/store/apt/dists/stable/Release"));
+        rep.check("conflict: the other writer's Release is still there (nothing overwrote it)", h.contains(w.read("aws/store/apt/dists/stable/Release"), "X-Other-Writer: yes"), w.read("aws/store/apt/dists/stable/Release"));
         const p4 = try w.pipeline("four", "debs3", false, false);
         rep.check("conflict: the next attempt reads again and succeeds", std.mem.eql(u8, p4.stage, "write") and p4.ran.code == 0 and h.contains(w.read(p4.gho), "conflict=false\n"), p4.ran.text);
         const packages4 = w.read("aws/store/apt/dists/stable/main/binary-amd64/Packages");
         rep.check("conflict: and lists all three versions and the other product", h.contains(packages4, "Version: 1.2.5") and h.contains(packages4, "Version: 1.2.4") and h.contains(packages4, "Version: 1.2.3") and h.contains(packages4, "Package: other\n"), packages4);
-        rep.check("conflict: the Release written is the new one, not the other writer's", !h.contains(w.read("aws/store/apt/dists/stable/Release"), "# changed by another writer"), w.read("aws/store/apt/dists/stable/Release"));
+        rep.check("conflict: the Release written is the new one, not the other writer's", !h.contains(w.read("aws/store/apt/dists/stable/Release"), "X-Other-Writer: yes"), w.read("aws/store/apt/dists/stable/Release"));
 
         // The last attempt fails instead of asking for another.
         try w.deb("debs5", "1.2.6", "amd64");
@@ -490,6 +549,132 @@ test "apt_publish: gate, OIDC exchange, read, index, sign, write, with every pla
         var e = try w.credEnv();
         const r = try w.runEnv(&e, &.{ "index", "--channels", t.channels, "--current", w.path("one_current"), "--out", w.path("x_next"), "--debs", w.path("nodebs"), "--origin", "o", "--label", "o", "--description", "d", "--date", date });
         rep.check("index: a directory with no .deb is refused", r.code != 0 and h.contains(r.text, "no .deb"), r.text);
+    }
+
+    // ---- a write that stops after every put: the state a client can read stays consistent ------------------------------
+    // The second publish of a repository that exists is interrupted at its N-th put, for every N (the fake fails that put and every later one and
+    // stores nothing from there on). A clean run first says how many puts there are: 2 .debs, 4 by-hash files, 4 plain Packages files, and Release,
+    // Release.gpg and InRelease. In every interrupted state: the job fails (not a conflict, not a success), nothing is invalidated, the Release and the
+    // InRelease a client can read list only files that exist by their hash, and InRelease is still the old one (it is the last put, the commit point).
+    {
+        n += 1;
+        const root = try h.join(a, &.{ try h.tmpPath(a, &tmp), try h.fmt(a, "sweep{d}", .{n}) });
+        var total: usize = 0;
+        var k: usize = 0;
+        while (k <= 14) : (k += 1) {
+            const w = World{ .a = a, .t = t, .root = try h.join(a, &.{ root, try h.fmt(a, "k{d}", .{k}) }) };
+            try std.fs.cwd().makePath(w.path("aws"));
+            try std.fs.cwd().makePath(w.path("gpg"));
+            try w.deb("debs", "1.2.3", "amd64");
+            try w.deb("debs", "1.2.3", "arm64");
+            try w.deb("debs2", "1.2.4", "amd64");
+            try w.deb("debs2", "1.2.4", "arm64");
+            _ = try w.run(&.{ "assume", "--env-file", w.path("github_env"), "--curl", t.curl, "--aws", t.aws });
+            const p1 = try w.pipeline("one", "debs", false, false);
+            if (!(std.mem.eql(u8, p1.stage, "write") and p1.ran.code == 0)) {
+                rep.check("sweep: the first publish succeeds", false, p1.ran.text);
+                continue;
+            }
+            const old_inrelease = w.read("aws/store/apt/dists/stable/InRelease");
+            const old_release = w.read("aws/store/apt/dists/stable/Release");
+            const old_packages = w.read("aws/store/apt/dists/stable/main/binary-amd64/Packages");
+            const puts_before = count(w.awsLog(), "put-object");
+            if (k >= 1) try w.put("aws/fail_at_put", try h.fmt(a, "{d}\n", .{k}));
+            const p2 = try w.pipeline("two", "debs2", false, false);
+            const puts = count(w.awsLog(), "put-object") - puts_before;
+            const label = try h.fmt(a, "sweep k={d}", .{k});
+            if (k == 0) {
+                total = puts;
+                rep.check("sweep: a clean second publish makes 13 puts (2 .debs, 4 by-hash, 4 Packages, Release, Release.gpg, InRelease)", p2.ran.code == 0 and total == 13, p2.ran.text);
+                rep.check("sweep: and it ends with a consistent state: both files list only what is there by hash, and the plain Packages files are the listed ones", byHashProblem(w, "InRelease") == null and byHashProblem(w, "Release") == null and !std.mem.eql(u8, old_inrelease, w.read("aws/store/apt/dists/stable/InRelease")) and !std.mem.eql(u8, old_packages, w.read("aws/store/apt/dists/stable/main/binary-amd64/Packages")), "");
+                continue;
+            }
+            if (k > total) break;
+            rep.check(try h.fmt(a, "{s}: the job fails, and it is not reported as a conflict", .{label}), std.mem.eql(u8, p2.stage, "write") and p2.ran.code != 0 and !h.contains(w.read(p2.gho), "conflict=") and h.contains(p2.ran.text, "failed"), p2.ran.text);
+            rep.check(try h.fmt(a, "{s}: nothing is invalidated (only the first publish did)", .{label}), count(w.awsLog(), "create-invalidation") == 1, w.awsLog());
+            rep.check(try h.fmt(a, "{s}: the InRelease a client reads lists only files that exist by their hash", .{label}), byHashProblem(w, "InRelease") == null, byHashProblem(w, "InRelease") orelse "");
+            rep.check(try h.fmt(a, "{s}: and so does the Release", .{label}), byHashProblem(w, "Release") == null, byHashProblem(w, "Release") orelse "");
+            rep.check(try h.fmt(a, "{s}: InRelease is still the old one (it is the last put, the commit point)", .{label}), std.mem.eql(u8, old_inrelease, w.read("aws/store/apt/dists/stable/InRelease")), "");
+            // The Release is replaced only by the put that comes right before Release.gpg and InRelease.
+            const release_replaced = !std.mem.eql(u8, old_release, w.read("aws/store/apt/dists/stable/Release"));
+            rep.check(try h.fmt(a, "{s}: the Release is replaced exactly when the failing put comes after it", .{label}), release_replaced == (k > 11), "");
+        }
+        rep.check("sweep: every put was interrupted once (13 of them)", total == 13, "");
+    }
+
+    // ---- a .deb put that fails for another reason than a 412 ---------------------------------------------------------
+    {
+        n += 1;
+        const w = World{ .a = a, .t = t, .root = try h.join(a, &.{ try h.tmpPath(a, &tmp), try h.fmt(a, "debfail{d}", .{n}) }) };
+        try std.fs.cwd().makePath(w.path("aws"));
+        try std.fs.cwd().makePath(w.path("gpg"));
+        try w.deb("debs", "1.2.3", "amd64");
+        try w.deb("debs", "1.2.3", "arm64");
+        _ = try w.run(&.{ "assume", "--env-file", w.path("github_env"), "--curl", t.curl, "--aws", t.aws });
+        try w.put("aws/fail_at_put", "1\n");
+        const p = try w.pipeline("one", "debs", false, false);
+        const log = w.awsLog();
+        rep.check("deb put fails: an InternalError on the first .deb fails the job, naming the key and the error", std.mem.eql(u8, p.stage, "write") and p.ran.code != 0 and h.contains(p.ran.text, "put-object apt/pool/mopm/mopm_1.2.3_amd64.deb failed") and h.contains(p.ran.text, "InternalError"), p.ran.text);
+        rep.check("deb put fails: it is neither 'exists already' nor a conflict (no conflict output)", !h.contains(p.ran.text, "exists already") and !h.contains(w.read(p.gho), "conflict"), p.ran.text);
+        rep.check("deb put fails: nothing else was put (no second .deb, no by-hash file, no index) and nothing was invalidated", count(log, "put-object") == 1 and count(log, "create-invalidation") == 0 and !w.has("aws/store/apt/dists/stable/Release"), log);
+    }
+
+    // ---- a Release.gpg that does not verify ---------------------------------------------------------------------------
+    {
+        n += 1;
+        const w = World{ .a = a, .t = t, .root = try h.join(a, &.{ try h.tmpPath(a, &tmp), try h.fmt(a, "badgpg{d}", .{n}) }) };
+        try std.fs.cwd().makePath(w.path("aws"));
+        try std.fs.cwd().makePath(w.path("gpg"));
+        try w.deb("debs", "1.2.3", "amd64");
+        try w.deb("debs", "1.2.3", "arm64");
+        _ = try w.run(&.{ "assume", "--env-file", w.path("github_env"), "--curl", t.curl, "--aws", t.aws });
+        try w.put("gpg/bad_detached", "");
+        const p = try w.pipeline("one", "debs", false, false);
+        rep.check("bad Release.gpg: the signing fails and says that Release.gpg does not verify (InRelease, which verifies, is not blamed)", std.mem.eql(u8, p.stage, "sign") and p.ran.code != 0 and h.contains(p.ran.text, "Release.gpg does not verify") and !h.contains(p.ran.text, "InRelease does not verify"), p.ran.text);
+        rep.check("bad Release.gpg: signed=true is not output, so the write job does not run", !w.has(p.gho), w.read(p.gho));
+        rep.check("bad Release.gpg: nothing was put to the repository, not even the pool", !h.contains(w.awsLog(), "put-object") and !w.has("aws/store/apt/dists/stable/Release"), w.awsLog());
+        var gone = true;
+        var homes = std.mem.splitScalar(u8, w.read("gpg/homes"), '\n');
+        while (homes.next()) |hm| {
+            if (hm.len == 0) continue;
+            std.fs.cwd().access(hm, .{}) catch continue;
+            gone = false;
+        }
+        rep.check("bad Release.gpg: the private directory of the key is gone", gone and w.read("gpg/homes").len > 0 and !h.contains(p.ran.text, passphrase), w.read("gpg/homes"));
+        // The same index signed well verifies: the defect is the signature, not the index.
+        std.fs.cwd().deleteFile(w.path("gpg/bad_detached")) catch {};
+        const q = try w.pipeline("two", "debs", false, false);
+        rep.check("bad Release.gpg: with a good signature the same publish succeeds", std.mem.eql(u8, q.stage, "write") and q.ran.code == 0, q.ran.text);
+    }
+
+    // ---- a Packages file that is not the one its Release lists is not uploaded ---------------------------------------------
+    {
+        n += 1;
+        const w = World{ .a = a, .t = t, .root = try h.join(a, &.{ try h.tmpPath(a, &tmp), try h.fmt(a, "tamper{d}", .{n}) }) };
+        try std.fs.cwd().makePath(w.path("aws"));
+        try std.fs.cwd().makePath(w.path("gpg"));
+        try w.deb("debs", "1.2.3", "amd64");
+        try w.deb("debs", "1.2.3", "arm64");
+        _ = try w.run(&.{ "assume", "--env-file", w.path("github_env"), "--curl", t.curl, "--aws", t.aws });
+        const p = try w.pipeline("one", "debs", false, false);
+        rep.check("tamper: the good publish succeeds first", std.mem.eql(u8, p.stage, "write") and p.ran.code == 0, p.ran.text);
+        var e = try w.credEnv();
+        const writeArgs = [_][]const u8{ "write", "--aws", t.aws, "--bucket", bucket, "--distribution", "DISTID", "--hostname", "packages.example.test", "--next", w.path("one_next"), "--debs", w.path("debs"), "--out", w.path("gho_t") };
+        const puts_before = count(w.awsLog(), "put-object");
+        const packages_path = w.path("one_next/dists/stable/main/binary-amd64/Packages");
+        const good = w.read("one_next/dists/stable/main/binary-amd64/Packages");
+        try h.writeFile(packages_path, try std.mem.concat(a, u8, &.{ good, "# changed after the index was built\n" }));
+        var r = try w.runEnv(&e, &writeArgs);
+        rep.check("tamper: a Packages file that does not have the hash its Release lists fails the write before any by-hash file or index object", r.code != 0 and h.contains(r.text, "does not have the hash its Release lists") and count(w.awsLog(), "put-object") - puts_before == 2, r.text);
+        try h.writeFile(packages_path, good);
+        const release_path = w.path("one_next/dists/stable/Release");
+        const release = w.read("one_next/dists/stable/Release");
+        try h.writeFile(release_path, try std.mem.replaceOwned(u8, a, release, "main/binary-amd64/Packages\n", "main/binary-amd64/Packagez\n"));
+        r = try w.runEnv(&e, &writeArgs);
+        rep.check("tamper: a Release that lists no hash for a Packages file fails the write", r.code != 0 and h.contains(r.text, "lists no hash for main/binary-amd64/Packages"), r.text);
+        try h.writeFile(release_path, release);
+        r = try w.runEnv(&e, &writeArgs);
+        rep.check("tamper: the untouched index written again: the .debs and by-hash files exist already (a 412 is 'exists'), and the index objects fail on their stale ETags as a conflict", r.code == 0 and h.contains(r.text, "exists already") and h.contains(w.read("gho_t"), "conflict=true"), r.text);
     }
 
     try rep.finish();

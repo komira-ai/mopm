@@ -24,8 +24,10 @@
 //!   apt_publish write --bucket <b> --distribution <id> --hostname <h> --next <dir> --debs <dir> [--pool-dir pool/mopm]
 //!                     [--last] [--out <file>] [--aws <path>]
 //!       Uploads each .deb to the product's pool with If-None-Match (a 412 means it exists), writes the signed index with
-//!       If-Match on the ETag that was read (If-None-Match for an object that did not exist), Packages first and Release,
-//!       InRelease, Release.gpg last, and then invalidates /apt/dists/*. A 412 on the index means someone else wrote in between:
+//!       If-Match on the ETag that was read (If-None-Match for an object that did not exist), and then invalidates /apt/dists/*. The order
+//!       is what keeps a reader consistent when the write stops anywhere: the .debs, then the by-hash copy of every Packages and
+//!       Packages.gz (`main/binary-<arch>/by-hash/SHA256/<hash>`, If-None-Match; the Release says Acquire-By-Hash: yes), then the plain
+//!       Packages files, then Release, Release.gpg and InRelease last. The If-Match of InRelease is the commit point. A 412 on the index means someone else wrote in between:
 //!       it appends `conflict=true` to --out and exits 0 so the next attempt reads again; with --last it fails instead.
 
 const std = @import("std");
@@ -382,7 +384,26 @@ fn cmdWrite(a: Allocator, args: []const []const u8) !void {
         }
     }
 
-    // The index: each object only if it is still the version that was read.
+    // The by-hash copies of every Packages and Packages.gz, before any plain file of the index changes: the Release lists these files by hash
+    // (`Acquire-By-Hash: yes`), so a client that reads the old Release finds the old files by their hashes and one that reads the new Release
+    // finds the new ones, whatever part of this write has happened. They are named by their content, so a 412 means the same bytes are there.
+    for (files) |rel| {
+        if (!state.isPackagesFile(rel)) continue;
+        const file_path = try std.fs.path.join(a, &.{ root, rel });
+        const hash = state.sha256Hex(readFile(a, file_path));
+        const listed = state.releaseHashOf(release, rel) orelse die("the Release lists no hash for {s}", .{rel});
+        if (!std.mem.eql(u8, listed, &hash)) die("{s} does not have the hash its Release lists: the index was changed after it was built", .{rel});
+        const key = try state.byHashKey(a, rel, &hash);
+        const r = put(a, aws_exe, bucket, key, file_path, .{ "--if-none-match", "*" });
+        switch (r.result) {
+            .ok => say("uploaded {s}\n", .{key}),
+            .lost => say("{s} exists already; it is kept as it is\n", .{key}),
+            .failed => die("put-object {s} failed: {s}", .{ key, r.stderr }),
+        }
+    }
+
+    // The index: each object only if it is still the version that was read. The Packages files first, then Release, Release.gpg, and InRelease
+    // last: the If-Match of InRelease is the commit point, and a reader that sees the new InRelease finds everything it lists.
     for (files) |rel| {
         const key = try state.indexKey(a, rel);
         const tag = state.etagOf(etags, rel);

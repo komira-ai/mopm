@@ -1,7 +1,8 @@
 //! A `gpg` for apt_publish_test.zig. It signs nothing: a signature is a text that names the sha256 of what it covers and the key spec,
 //! so `--verify` accepts a signature exactly when the file is the one that was "signed". State and settings:
 //!   $FAKE_GPG_DIR   where it appends every call (the arguments, space-joined) to `log` and the home directory of each call to `homes`.
-//!                   A file `sign_fail` there makes every signature fail.
+//!                   A file `sign_fail` there makes every signature fail; a file `bad_detached` makes the detached signature cover other bytes, so
+//!                   it does not verify.
 //!   $FAKE_GPG_KEY   the exact bytes the key file must hold for --import to accept it
 //!   $FAKE_GPG_FPR   the fingerprint of the signing subkey: --list-secret-keys finds only that; --local-user must be it followed by `!`
 //!   $FAKE_GPG_PASS  the passphrase the passphrase file must hold (the loopback pinentry); a signature without one is refused
@@ -93,7 +94,13 @@ pub fn main() !void {
         }
         const input = try std.fs.cwd().readFileAlloc(a, args[args.len - 1], 1 << 28);
         const output = flag(args, "--output") orelse fail("no --output");
-        const sig = try sigText(a, input, user);
+        // `bad_detached`: the detached signature covers other bytes than the Release (a signature that does not verify).
+        const bad = has(args, "--detach-sign") and blk: {
+            dir.access("bad_detached", .{}) catch break :blk false;
+            break :blk true;
+        };
+        const covered: []const u8 = if (bad) "not the release" else input;
+        const sig = try sigText(a, covered, user);
         const data = if (has(args, "--clearsign")) try std.mem.concat(a, u8, &.{ clear_head, input, sig }) else sig;
         try std.fs.cwd().writeFile(output, data);
         return;

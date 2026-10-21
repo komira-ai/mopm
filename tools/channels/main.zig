@@ -18,6 +18,8 @@
 //!       package and architecture, or the same version with other bytes. Keeps the newest <N> (default 25) per
 //!       package and architecture. Signing is not done here. With --pool-dir the .debs are listed and written below that
 //!       directory (`pool/mopm/<file>.deb`), the layout of a repository several products share, each below its own directory.
+//!       The Origin, Label and Description of a Release that exists in <dir> are kept as they are and the three flags apply to the first Release
+//!       only (the repository is shared); the Release says `Acquire-By-Hash: yes`, which the publish backs with the by-hash files.
 //!   channels formula --sums <SHA256SUMS> --name <name> --version <X.Y.Z> --desc <text> --homepage <url>
 //!                --license <spdx> (--repo <owner/name> | --url-base <url>) [--no-explicit-version] --out <path.rb>
 //!       Renders the Homebrew formula from the checksums in the file and nothing else.
@@ -248,12 +250,20 @@ fn cmdAptIndex(a: Allocator, args: []const []const u8) !void {
         error.VersionConflict => die("refused: a version that is already listed comes with other bytes", .{}),
         else => die("merge: {s}", .{@errorName(err)}),
     };
-    const info = apt.ReleaseInfo{
+    const given = apt.ReleaseInfo{
         .origin = need(flags, "--origin"),
         .label = need(flags, "--label"),
         .description = need(flags, "--description"),
         .date = number(need(flags, "--date"), "--date"),
     };
+    // The repository is shared with other products: the Origin, Label and Description of the Release that is there stay as they are;
+    // the three flags apply to the first Release only.
+    const release_path = try std.fmt.allocPrint(a, "{s}/dists/stable/Release", .{repo});
+    const existing_release: ?[]const u8 = std.fs.cwd().readFileAlloc(a, release_path, 1 << 24) catch |err| switch (err) {
+        error.FileNotFound => null,
+        else => die("cannot read {s}: {s}", .{ release_path, @errorName(err) }),
+    };
+    const info = apt.keepSharedFields(a, existing_release, given) catch |err| die("{s}: {s}", .{ release_path, @errorName(err) });
     const tree = apt.tree(a, info, merged.stanzas, archs) catch |err| die("tree: {s}", .{@errorName(err)});
 
     // Everything is computed; only now is anything written.

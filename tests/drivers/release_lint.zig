@@ -36,7 +36,7 @@
 //!   `apt-publish`); `id-token: write` only there and in `attest`; every apt job has a step `gate` after only the setup steps, and every later step carries
 //!   `if: steps.gate.outputs.enabled == 'true'`, so a job without the owner's settings does nothing and ends green; the retries start only on a lost
 //!   write; nothing needs an apt job. `aptToolProblems` holds the puts of tools/apt_publish.zig: If-None-Match on every .deb, If-Match on the ETag
-//!   read (If-None-Match when there was none) on every object of the index, the .debs before the index and the invalidation last.
+//!   read (If-None-Match when there was none) on every object of the index, the .debs, then the by-hash files (If-None-Match), then the index, and the invalidation last.
 //! - **The order.** `plan` needs `beta` and `lint`, `build` needs `plan`, `beta-user` needs `build`, `attest`
 //!   needs `beta-user` (so a red platform leg stops the release before anything is signed), `verify` needs
 //!   `build` and `attest`, `tag` needs `beta-user` and `verify` (no tag without verified files), `publish`
@@ -1347,8 +1347,11 @@ pub fn aptToolProblems(a: Allocator, src: []const u8, out: *Out) !void {
     const pool_put = "try std.fs.path.join(a, &.{ debs_dir, name }), .{ \"--if-none-match\", \"*\" })";
     const index_put = "try std.fs.path.join(a, &.{ root, rel }), cond)";
     const cond = "if (tag == null or std.mem.eql(u8, tag.?, state.absent)) .{ \"--if-none-match\", \"*\" } else .{ \"--if-match\", tag.? }";
+    const byhash_put = "state.byHashKey(a, rel, &hash)";
+    const byhash_cond = "put(a, aws_exe, bucket, key, file_path, .{ \"--if-none-match\", \"*\" })";
     const pool_at = std.mem.indexOf(u8, src, pool_put);
     const index_at = std.mem.indexOf(u8, src, index_put);
+    const byhash_at = std.mem.indexOf(u8, src, byhash_put);
     if (pool_at == null) try c.problem(a, out, f ++ "a .deb must be put with If-None-Match (a released .deb is never replaced; the role may not put to the pool otherwise)", .{});
     if (index_at == null) try c.problem(a, out, f ++ "every object of the index must be put with the condition `cond` (the role may not put to dists/ unconditionally)", .{});
     if (std.mem.indexOf(u8, src, cond) == null) {
@@ -1360,5 +1363,9 @@ pub fn aptToolProblems(a: Allocator, src: []const u8, out: *Out) !void {
     const inval_at = std.mem.indexOf(u8, src, "\"create-invalidation\"");
     if (inval_at == null) try c.problem(a, out, f ++ "the index must be invalidated after the write", .{});
     if (pool_at != null and index_at != null and pool_at.? > index_at.?) try c.problem(a, out, f ++ "the .debs must be put before the index (the index must never list a file that is not there)", .{});
+    if (byhash_at == null) try c.problem(a, out, f ++ "the Packages files must be written by their hash (by-hash/SHA256/<hash>) before the plain files change: a client that reads a Release must find the files it lists whatever part of the write has happened", .{});
+    if (std.mem.indexOf(u8, src, byhash_cond) == null) try c.problem(a, out, f ++ "a by-hash file must be put with If-None-Match (it is named by its content and never replaced)", .{});
+    if (byhash_at != null and index_at != null and byhash_at.? > index_at.?) try c.problem(a, out, f ++ "the by-hash files must be put before the plain files of the index", .{});
+    if (pool_at != null and byhash_at != null and pool_at.? > byhash_at.?) try c.problem(a, out, f ++ "the .debs must be put before the by-hash files (the index must never list a file that is not there)", .{});
     if (inval_at != null and index_at != null and inval_at.? < index_at.?) try c.problem(a, out, f ++ "the invalidation must come after the index is written", .{});
 }

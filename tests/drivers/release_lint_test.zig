@@ -815,5 +815,9 @@ test "mutant: the apt tool's puts" {
     try aptToolMutant("the index read through something else", "\"get-object\"", "\"head-object\"", "the index must be read with s3api get-object");
     try aptToolMutant("no invalidation", "\"create-invalidation\"", "\"list-invalidations\"", "the index must be invalidated after the write");
     try aptToolMutant("an invalidation before the index", "// The pool first:", "_ = aws(a, aws_exe, &.{ \"cloudfront\", \"create-invalidation\" });\n    // The pool first:", "the invalidation must come after the index is written");
+    try aptToolMutant("no by-hash files", "state.byHashKey(a, rel, &hash)", "state.poolKey(a, rel, &hash)", "the Packages files must be written by their hash");
+    try aptToolMutant("a by-hash file put without If-None-Match", "put(a, aws_exe, bucket, key, file_path, .{ \"--if-none-match\", \"*\" })", "put(a, aws_exe, bucket, key, file_path, .{ \"--if-match\", \"x\" })", "a by-hash file must be put with If-None-Match");
+    try aptToolMutant("the by-hash files after the index", "// The by-hash copies of every Packages", "// try std.fs.path.join(a, &.{ root, rel }), cond)\n    // The by-hash copies of every Packages", "the by-hash files must be put before the plain files of the index");
+    try aptToolMutant("the by-hash files before the .debs", "// The pool first:", "// state.byHashKey(a, rel, &hash)\n    // The pool first:", "the .debs must be put before the by-hash files");
     try aptToolMutant("the index before the .debs", "// The pool first:", "// try std.fs.path.join(a, &.{ root, rel }), cond)\n    // The pool first:", "the .debs must be put before the index");
 }

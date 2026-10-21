@@ -131,8 +131,16 @@ by a second lint over `tools/apt_publish.zig` (every `.deb` put carries `If-None
 `.debs` before the index and the invalidation last) and by `tests/drivers/apt_publish_test.zig`, which runs the real tool against a fake `aws` that refuses every call the role may not
 make, a fake `gpg` and a fake `curl`.
 
-**The order of the writes.** The pool first (the index must never list a file that is not there), then every `Packages` and `Packages.gz`, then `Release`, `InRelease` and `Release.gpg`
-(a reader that sees a `Release` finds the files it lists), then the invalidation. The OIDC exchange is the one `deploy.yml` makes (the runner's token request, then
+**The order of the writes.** The pool first (the index must never list a file that is not there); then the by-hash copy of every `Packages` and `Packages.gz`
+(`dists/stable/main/binary-<arch>/by-hash/SHA256/<hash>`, `If-None-Match`; the `Release` says `Acquire-By-Hash: yes`); then the plain `Packages` files; then `Release`, `Release.gpg` and
+`InRelease` last; then the invalidation. The `If-Match` of `InRelease` is the commit point. A write that stops anywhere (a `412`, a failed put, the last attempt) leaves either the old
+`Release` or `InRelease` with the index files it lists, found by their hashes (the old by-hash files are never replaced or removed), or the new one with its by-hash files already there. `tests/drivers/apt_publish_test.zig`
+stops the write after every put and checks exactly that. The by-hash files stay (the role cannot delete); a stopped write leaves some unreferenced ones.
+
+**The shared `Release`.** The index is shared with other products, so the `Origin`, `Label` and `Description` of a `Release` that exists stay as they are; the `--origin`, `--label`
+and `--description` of `apt_publish index` (the repository owner's name) apply to the first `Release` only.
+
+The OIDC exchange is the one `deploy.yml` makes (the runner's token request, then
 `sts assume-role-with-web-identity`, both masked), done by the tool so that no new third-party action is needed and the six jobs that need it do not each carry a copy of it.
 
 **A lost write.** Another product may publish between the read and the write. Every put of the index is conditional on the version that was read, so the loser gets a `412`: it writes

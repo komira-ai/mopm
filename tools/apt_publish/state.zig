@@ -19,8 +19,9 @@ pub const default_archs = [_][]const u8{ "amd64", "arm64" };
 pub const etags_file = "etags.txt";
 /// The ETag of an object that did not exist when it was read.
 pub const absent = "-";
-/// The objects that sign the index, in the order they are written (after every Packages file).
-pub const release_files = [_][]const u8{ "Release", "InRelease", "Release.gpg" };
+/// The objects that sign the index, in the order they are written (after every Packages file). InRelease is last: it is the file apt
+/// reads first, so its If-Match is the commit point of a publish (everything it lists is there before it is replaced).
+pub const release_files = [_][]const u8{ "Release", "Release.gpg", "InRelease" };
 
 pub const Error = error{ BadEtagLine, BadPoolDir, BadFileName };
 
@@ -73,6 +74,39 @@ pub fn indexFiles(a: Allocator, archs: []const []const u8) ![]const []const u8 {
 /// The object key of a file of the index.
 pub fn indexKey(a: Allocator, rel: []const u8) ![]u8 {
     return std.fmt.allocPrint(a, "{s}{s}{s}", .{ key_root, suite_dir, rel });
+}
+
+/// Is `rel` (relative to `dists/stable/`) a Packages or Packages.gz file, the files a Release lists by hash?
+pub fn isPackagesFile(rel: []const u8) bool {
+    return std.mem.endsWith(u8, rel, "/Packages") or std.mem.endsWith(u8, rel, "/Packages.gz");
+}
+
+/// The lowercase hex sha256 of `bytes`.
+pub fn sha256Hex(bytes: []const u8) [64]u8 {
+    var d: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(bytes, &d, .{});
+    return std.fmt.bytesToHex(d, .lower);
+}
+
+/// The sha256 a Release lists for `rel` (a line ` <hash> <size> <rel>` of its checksums), or null when it lists none.
+pub fn releaseHashOf(release: []const u8, rel: []const u8) ?[]const u8 {
+    var lines = std.mem.splitScalar(u8, release, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0 or line[0] != ' ') continue;
+        var words = std.mem.tokenizeScalar(u8, line, ' ');
+        const hash = words.next() orelse continue;
+        _ = words.next() orelse continue;
+        const path = words.next() orelse continue;
+        if (words.next() == null and std.mem.eql(u8, path, rel) and hash.len == 64) return hash;
+    }
+    return null;
+}
+
+/// The object key of the by-hash copy of the index file `rel` (`main/binary-<arch>/Packages[.gz]`) whose sha256 is `hash`:
+/// `apt/dists/stable/main/binary-<arch>/by-hash/SHA256/<hash>`, the name an `Acquire-By-Hash: yes` Release makes apt look for.
+pub fn byHashKey(a: Allocator, rel: []const u8, hash: []const u8) ![]u8 {
+    const dir = std.fs.path.dirname(rel) orelse return error.BadFileName;
+    return std.fmt.allocPrint(a, "{s}{s}{s}/by-hash/SHA256/{s}", .{ key_root, suite_dir, dir, hash });
 }
 
 /// The object key of a .deb in the pool directory `pool_dir` (`pool/<product>`, nothing else is accepted), by the file's
@@ -135,7 +169,7 @@ test "archsOfRelease ignores a word that is not a clean architecture, so it is n
     try t.expectEqual(@as(usize, 2), got.len);
 }
 
-test "indexFiles: every Packages and Packages.gz, then Release, InRelease, Release.gpg last" {
+test "indexFiles: every Packages and Packages.gz, then Release, Release.gpg, and InRelease last (the commit point)" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -144,8 +178,8 @@ test "indexFiles: every Packages and Packages.gz, then Release, InRelease, Relea
     try t.expectEqualStrings("main/binary-amd64/Packages", files[0]);
     try t.expectEqualStrings("main/binary-arm64/Packages.gz", files[3]);
     try t.expectEqualStrings("Release", files[4]);
-    try t.expectEqualStrings("InRelease", files[5]);
-    try t.expectEqualStrings("Release.gpg", files[6]);
+    try t.expectEqualStrings("Release.gpg", files[5]);
+    try t.expectEqualStrings("InRelease", files[6]);
     try t.expectEqualStrings("apt/dists/stable/Release", try indexKey(a, "Release"));
 }
 
@@ -176,4 +210,37 @@ test "the etag file round-trips, an absent object is a dash, and a bad line is r
     for ([_][]const u8{ "no tab\n", "\tetag\n", "path\t\n", "a\tb\tc\n" }) |bad| {
         try t.expectError(error.BadEtagLine, parseEtags(a, bad));
     }
+}
+
+test "isPackagesFile: the Packages and Packages.gz of an architecture, nothing else" {
+    try t.expect(isPackagesFile("main/binary-amd64/Packages"));
+    try t.expect(isPackagesFile("main/binary-arm64/Packages.gz"));
+    for ([_][]const u8{ "Release", "InRelease", "Release.gpg", "main/binary-amd64/Release", "Packages" }) |f| try t.expect(!isPackagesFile(f));
+}
+
+test "sha256Hex: the known digest of abc, in lowercase hex" {
+    try t.expectEqualStrings("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", &sha256Hex("abc"));
+}
+
+test "releaseHashOf: the hash a Release lists for a path, by the whole path, or null" {
+    const h1 = "1111111111111111111111111111111111111111111111111111111111111111";
+    const h2 = "2222222222222222222222222222222222222222222222222222222222222222";
+    const rel = "Origin: x\nSHA256:\n " ++ h1 ++ " 10 main/binary-amd64/Packages\n " ++ h2 ++ " 5 main/binary-amd64/Packages.gz\n abc 1 main/binary-arm64/Packages\n " ++ h1 ++ " 1\n\n";
+    try t.expectEqualStrings(h1, releaseHashOf(rel, "main/binary-amd64/Packages").?);
+    try t.expectEqualStrings(h2, releaseHashOf(rel, "main/binary-amd64/Packages.gz").?);
+    // A path it lists with a hash that is not a sha256, a path it does not list, a line that is not a checksum line, and a word-prefix: none.
+    try t.expect(releaseHashOf(rel, "main/binary-arm64/Packages") == null);
+    try t.expect(releaseHashOf(rel, "main/binary-s390x/Packages") == null);
+    try t.expect(releaseHashOf(rel, "binary-amd64/Packages") == null);
+    try t.expect(releaseHashOf("", "main/binary-amd64/Packages") == null);
+    try t.expect(releaseHashOf(" " ++ h1 ++ " 10 main/binary-amd64/Packages extra\n", "main/binary-amd64/Packages") == null);
+}
+
+test "byHashKey: below the binary-<arch> directory of the file, by the hash" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try t.expectEqualStrings("apt/dists/stable/main/binary-amd64/by-hash/SHA256/abc", try byHashKey(a, "main/binary-amd64/Packages", "abc"));
+    try t.expectEqualStrings("apt/dists/stable/main/binary-arm64/by-hash/SHA256/abc", try byHashKey(a, "main/binary-arm64/Packages.gz", "abc"));
+    try t.expectError(error.BadFileName, byHashKey(a, "Packages", "abc"));
 }
