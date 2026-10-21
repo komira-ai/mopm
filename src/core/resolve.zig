@@ -555,9 +555,12 @@ fn Resolver(comptime S: type) type {
 
 // ---------------------------------------------------------------- tests
 
+/// A name and a text, for the in-memory indexes and channels of the tests.
+pub const Pair = struct { []const u8, []const u8 };
+
 /// An index held in memory: name -> file text.
 pub const MemoryIndex = struct {
-    files: []const struct { []const u8, []const u8 },
+    files: []const Pair,
 
     pub fn fetch(self: MemoryIndex, _: Allocator, name: []const u8, _: *Diagnostic) Error!?[]const u8 {
         for (self.files) |f| {

@@ -22,11 +22,22 @@ const install_plan = @import("install_plan.zig");
 const test_harness = @import("test_harness.zig");
 const resolve = @import("resolve.zig");
 const semver = @import("semver.zig");
+const metadata = @import("metadata.zig");
 
 pub const format_version: u32 = 1;
 
 pub const Src = struct { path: []const u8, sha256: []const u8 };
-pub const NativeRef = struct { id: []const u8, soname: []const u8, sha256: []const u8, package: []const u8 };
+/// A native library in a unit's dependency closure: pinned by `sha256`, from `package`. `kind`, `needs` and `exclusive`
+/// are the package's declarations (the lock copies them); the unit's natives are in link order (see `orderNatives`).
+pub const NativeRef = struct {
+    id: []const u8,
+    soname: []const u8,
+    sha256: []const u8,
+    package: []const u8,
+    kind: metadata.Kind = .shared,
+    needs: []const []const u8 = &.{},
+    exclusive: []const u8 = "",
+};
 /// A prebuilt unit's download: the `.conda` holding its `.mojoc`.
 pub const Archive = struct { url: []const u8, sha256: []const u8, size: u64 };
 pub const Profile = struct { opt: u32, assert: []const u8, debug: bool };
@@ -389,7 +400,7 @@ const Builder = struct {
                     const p = b.lockEntry(u.package).?;
                     for (p.native) |n| {
                         const sha = n.sha256 orelse return b.fail("{s} {s}: its native library {s} ({s}) has no sha256 in mopm.lock; a unit graph takes only pinned natives", .{ p.name, p.version, n.id, n.soname });
-                        try found.append(.{ .id = n.id, .soname = n.soname, .sha256 = sha, .package = p.name });
+                        try found.append(.{ .id = n.id, .soname = n.soname, .sha256 = sha, .package = p.name, .kind = n.kind, .needs = n.needs, .exclusive = n.exclusive });
                     }
                 }
                 for (u.deps) |d| {
@@ -398,12 +409,59 @@ const Builder = struct {
                 }
             }
             std.mem.sort(NativeRef, found.items, {}, Builder.lessNative);
-            b.units.items[i].natives = found.items;
+            b.units.items[i].natives = try b.orderNatives(b.units.items[i].id, found.items);
         }
     }
 
     fn lessNative(_: void, a: NativeRef, c: NativeRef) bool {
         return std.mem.lessThan(u8, a.soname, c.soname);
+    }
+
+    /// The natives of unit `owner` in the order a linker wants them: a library before every library it `needs` (an
+    /// archive's undefined symbols are looked for only in the archives after it), the sonames' order between
+    /// libraries that do not constrain one another. `found` is sorted by soname. A static library that needs one no
+    /// package in the closure ships, and libraries that need each other, are refused; a shared library resolves its
+    /// needs at run time, so a need it names that is not here is not the graph's to judge.
+    fn orderNatives(b: *Builder, owner: []const u8, found: []NativeRef) ![]const NativeRef {
+        for (found) |n| {
+            if (n.kind != .static) continue;
+            for (n.needs) |need| {
+                var provided = false;
+                for (found) |m| provided = provided or std.mem.eql(u8, m.soname, need);
+                if (!provided) return b.fail("{s}: native library {s} of {s} needs {s}, which no package in its dependency closure ships", .{ owner, n.soname, n.package, need });
+            }
+        }
+        const placed = try b.arena.alloc(bool, found.len);
+        @memset(placed, false);
+        var out = std.ArrayList(NativeRef).init(b.arena);
+        while (out.items.len < found.len) {
+            var next: ?usize = null;
+            for (found, 0..) |cand, i| {
+                if (placed[i]) continue;
+                // A library some other library still to be placed needs must wait for it.
+                var wanted = false;
+                for (found, 0..) |other, j| {
+                    if (j == i or placed[j]) continue;
+                    for (other.needs) |need| wanted = wanted or std.mem.eql(u8, need, cand.soname);
+                }
+                if (!wanted) {
+                    next = i;
+                    break;
+                }
+            }
+            const at = next orelse {
+                var left = std.ArrayList(u8).init(b.arena);
+                for (found, 0..) |n, i| {
+                    if (placed[i]) continue;
+                    if (left.items.len > 0) try left.appendSlice(", ");
+                    try left.appendSlice(n.soname);
+                }
+                return b.fail("{s}: native libraries {s} need each other; a link order cannot put one before the other", .{ owner, left.items });
+            };
+            placed[at] = true;
+            try out.append(found[at]);
+        }
+        return out.items;
     }
 
     /// `key`: sha256 of the unit's rendering (without key) and its deps' keys.
@@ -611,6 +669,16 @@ pub fn writeUnit(w: anytype, u: Unit, ind: []const u8) !void {
         try str(w, n.sha256);
         try w.writeAll(", \"package\": ");
         try str(w, n.package);
+        // Left out when they are what a lock written before them means, so such a graph (and each key) is what it was.
+        if (n.kind != .shared) try w.print(", \"kind\": \"{s}\"", .{@tagName(n.kind)});
+        if (n.needs.len > 0) {
+            try w.writeAll(", \"needs\": ");
+            try strList(w, n.needs);
+        }
+        if (n.exclusive.len > 0) {
+            try w.writeAll(", \"exclusive\": ");
+            try str(w, n.exclusive);
+        }
         try w.writeAll("}");
     }
     if (u.natives.len == 0) try w.writeAll("]") else try w.print("\n{s}  ]", .{ind});
@@ -783,6 +851,11 @@ fn fakeToolchain(mojo: []const u8) Toolchain {
 const members = [_]install_plan.PathDep{.{ .name = "util", .version = "0.3.0", .path = "util" }};
 
 fn graphOf(a: Allocator, dir: []const u8, deps_toml: []const u8, lock_template: []const u8, mojo: []const u8, why: *[]const u8) !Graph {
+    return graphOfIn(a, dir, deps_toml, lock_template, mojo, "linux-64", why);
+}
+
+/// As `graphOf`, for the packages of `subdir`.
+fn graphOfIn(a: Allocator, dir: []const u8, deps_toml: []const u8, lock_template: []const u8, mojo: []const u8, subdir: []const u8, why: *[]const u8) !Graph {
     var diag: manifest.Diagnostic = .{};
     const m = try manifest.parse(a, try std.mem.concat(a, u8, &.{ toml_app, deps_toml }), &diag);
     const l = try lock.parse(a, try fill(a, lock_template), why);
@@ -791,7 +864,7 @@ fn graphOf(a: Allocator, dir: []const u8, deps_toml: []const u8, lock_template: 
         .m = m,
         .members = &members,
         .l = l,
-        .subdir = "linux-64",
+        .subdir = subdir,
         .mojo = mojo,
         .toolchain = fakeToolchain(mojo),
     }, why);
@@ -1098,4 +1171,213 @@ test "mopm pins the toolchain of the Mojo it names, and refuses another" {
     try std.testing.expectEqualStrings(tc.closure_sha256, (try toolchainFor(a, "1.0.0", "linux-64", &why)).closure_sha256);
     try std.testing.expectError(error.Refused, toolchainFor(a, "1.1.0", "linux-64", &why));
     try std.testing.expectEqualStrings("mopm has no pinned toolchain for mojo 1.1.0 on linux-64 (it pins mojo 1.0.0 on linux-64)", why);
+}
+
+/// tls_sys (a static library) over crypto_sys (another, in the exclusivity group libcrypto): the lock of a project
+/// that links an archive that needs an archive. By soname crypto_sys is first; by `needs` tls_sys must be.
+const lock_static_chain =
+    \\{
+    \\  "lock_version": 1,
+    \\  "toolchain": {"mojo": "1.0.0"},
+    \\  "channels": ["https://conda.mopm.dev/"],
+    \\  "packages": [
+    \\    {"name": "crypto_sys", "version": "1.39.0", "build": "mojo1.0.0_0", "subdir": "linux-64", "channel": "https://conda.mopm.dev/",
+    \\     "url": "https://conda.mopm.dev/linux-64/mojo-crypto_sys-1.39.0-mojo1.0.0_0.conda", "sha256": "@A@", "size": 1000, "mojo": "1.0.0",
+    \\     "native": [{"id": "crypto_sys", "soname": "libcrypto_sys.a", "sha256": "@N@", "kind": "static", "exclusive": "libcrypto"}]},
+    \\    {"name": "tls_sys", "version": "2.4.0", "build": "mojo1.0.0_0", "subdir": "linux-64", "channel": "https://conda.mopm.dev/",
+    \\     "url": "https://conda.mopm.dev/linux-64/mojo-tls_sys-2.4.0-mojo1.0.0_0.conda", "sha256": "@B@", "size": 1000, "mojo": "1.0.0",
+    \\     "deps": ["crypto_sys"],
+    \\     "native": [{"id": "tls_sys", "soname": "libtls_sys.a", "sha256": "@D@", "kind": "static", "needs": ["libcrypto_sys.a"]}]}
+    \\  ]
+    \\}
+    \\
+;
+
+const toml_tls_dep = "tls_sys = \"2.4\"\n";
+
+fn nativeSonames(a: Allocator, u: Unit) ![]const u8 {
+    var out = std.ArrayList(u8).init(a);
+    for (u.natives, 0..) |n, i| {
+        if (i > 0) try out.append(' ');
+        try out.appendSlice(n.soname);
+    }
+    return out.items;
+}
+
+// Defect it catches: static archives handed to the linker in soname order, so that an archive comes after the
+// archive it needs and the symbols it leaves undefined are not found (the link fails, or worse, links less).
+// Mutant planted: `orderNatives` returns `natives` as sorted by soname.
+test "the natives of a unit are in link order: an archive before the archives it needs, with its kind, needs and group" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeWorkspace(tmp.dir, app_init);
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    const g = graphOf(a, dir, toml_tls_dep, lock_static_chain, "1.0.0", &why) catch |e| {
+        std.debug.print("refused: {s}\n", .{why});
+        return e;
+    };
+    // The unit that links (the test) and the library under it see both archives, the needer first.
+    for ([_][]const u8{ id_app, id_test }) |id| {
+        const u = g.units[g.find(id).?];
+        try std.testing.expectEqualStrings("libtls_sys.a libcrypto_sys.a", try nativeSonames(a, u));
+        try std.testing.expectEqual(metadata.Kind.static, u.natives[0].kind);
+        try std.testing.expectEqualStrings("libcrypto_sys.a", u.natives[0].needs[0]);
+        try std.testing.expectEqualStrings("", u.natives[0].exclusive);
+        try std.testing.expectEqualStrings("libcrypto", u.natives[1].exclusive);
+        try std.testing.expectEqual(@as(usize, 0), u.natives[1].needs.len);
+    }
+    // The unit of crypto_sys alone sees only its own.
+    const crypto = g.units[g.find("crypto_sys@1.39.0#mojo1.0.0/lib").?];
+    try std.testing.expectEqualStrings("libcrypto_sys.a", try nativeSonames(a, crypto));
+
+    // What is printed reads back as the same graph (kind, needs and exclusive survive the text).
+    const text = try render(a, g);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"kind\": \"static\", \"needs\": [\"libcrypto_sys.a\"]}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"exclusive\": \"libcrypto\"}") != null);
+    const back = try parse(a, text);
+    const again = back.units[back.find(id_app).?];
+    try std.testing.expectEqualStrings("libtls_sys.a libcrypto_sys.a", try nativeSonames(a, again));
+    try std.testing.expectEqual(metadata.Kind.static, again.natives[1].kind);
+    try std.testing.expectEqualStrings("libcrypto", again.natives[1].exclusive);
+    try std.testing.expectEqualStrings(text, try render(a, back));
+}
+
+// Defect it catches: a graph whose native libraries are all "shared, no needs" in the text, so a lock that says
+// otherwise (and a unit key that should change with it) prints the same. Mutant planted: `writeUnit` drops `kind`.
+test "a native's kind, needs and group are in the unit's key: changing one changes the key" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeWorkspace(tmp.dir, app_init);
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    const base = try graphOf(a, dir, toml_tls_dep, lock_static_chain, "1.0.0", &why);
+    const variants = [_][2][]const u8{
+        .{ "\"kind\": \"static\", \"exclusive\": \"libcrypto\"", "\"kind\": \"both\", \"exclusive\": \"libcrypto\"" },
+        .{ "\"exclusive\": \"libcrypto\"", "\"exclusive\": \"libcrypto2\"" },
+        .{ "\"kind\": \"static\", \"exclusive\": \"libcrypto\"", "\"kind\": \"static\"" },
+    };
+    for (variants) |v| {
+        const other = try std.mem.replaceOwned(u8, a, lock_static_chain, v[0], v[1]);
+        const g = try graphOf(a, dir, toml_tls_dep, other, "1.0.0", &why);
+        try std.testing.expect(!std.mem.eql(u8, try keyOfId(base, id_app), try keyOfId(g, id_app)));
+    }
+}
+
+test "a static library that needs an archive nobody ships, and archives that need each other, are refused" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeWorkspace(tmp.dir, app_init);
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+
+    const lonely = try std.mem.replaceOwned(u8, a, lock_static_chain, "\"needs\": [\"libcrypto_sys.a\"]", "\"needs\": [\"libnothing.a\"]");
+    try std.testing.expectError(error.Refused, graphOf(a, dir, toml_tls_dep, lonely, "1.0.0", &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "native library libtls_sys.a of tls_sys needs libnothing.a, which no package in its dependency closure ships") != null);
+
+    const cycle = try std.mem.replaceOwned(u8, a, lock_static_chain, "\"kind\": \"static\", \"exclusive\": \"libcrypto\"", "\"kind\": \"static\", \"needs\": [\"libtls_sys.a\"]");
+    try std.testing.expectError(error.Refused, graphOf(a, dir, toml_tls_dep, cycle, "1.0.0", &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "native libraries libcrypto_sys.a, libtls_sys.a need each other") != null);
+
+    // A shared library's needs are resolved by the loader at run time: a need that is not in the closure is not refused here.
+    const shared = try std.mem.replaceOwned(u8, a, lock_static_chain, "\"soname\": \"libtls_sys.a\", \"sha256\": \"@D@\", \"kind\": \"static\", \"needs\": [\"libcrypto_sys.a\"]", "\"soname\": \"libtls_sys.so.1\", \"sha256\": \"@D@\", \"needs\": [\"libnothing.so.1\"]");
+    const g = try graphOf(a, dir, toml_tls_dep, shared, "1.0.0", &why);
+    try std.testing.expectEqual(@as(usize, 2), g.units[g.find(id_app).?].natives.len);
+}
+
+test "a graph for a lock whose natives carry no kind, needs or group prints exactly what it printed before they existed" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeWorkspace(tmp.dir, app_init);
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    const g = try graphOf(a, dir, toml_core_dep ++ toml_util_dep, lock_two, "1.0.0", &why);
+    const text = try render(a, g);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"kind\": \"static\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"needs\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"exclusive\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "{\"id\": \"z\", \"soname\": \"libz_native.so.1\", \"sha256\": \"" ++ native_sha ++ "\", \"package\": \"http_core\"}") != null);
+}
+
+// Spike (natives design, PR 1a): does a native-bearing candidate resolve by subdir? The resolver is blind to subdirs
+// (it picks by version and compiler); `buildLock` makes one lock entry per file; this graph takes, for each package,
+// the entry of exactly the build's subdir. So the natives of a package, which differ per platform, are the ones of the
+// platform being built, and a package published for another subdir only is not there at all.
+test "spike: a package that ships natives is taken by exact subdir, with that subdir's pins; a noarch-only one has no fallback" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeWorkspace(tmp.dir, app_init);
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    const osx_entry =
+        \\    {"name": "crypto_sys", "version": "1.39.0", "build": "mojo1.0.0_0", "subdir": "osx-arm64", "channel": "https://conda.mopm.dev/",
+        \\     "url": "https://conda.mopm.dev/osx-arm64/mojo-crypto_sys-1.39.0-mojo1.0.0_0.conda", "sha256": "@C@", "size": 1000, "mojo": "1.0.0",
+        \\     "native": [{"id": "crypto_sys", "soname": "libcrypto_sys.a", "sha256": "@B@", "kind": "static", "exclusive": "libcrypto"}]},
+        \\
+    ;
+    const both = try std.mem.replaceOwned(u8, a, lock_static_chain, "    {\"name\": \"tls_sys\"", osx_entry ++ "    {\"name\": \"tls_sys\"");
+
+    const linux = try graphOfIn(a, dir, "crypto_sys = \"1\"\n", both, "1.0.0", "linux-64", &why);
+    const mac = try graphOfIn(a, dir, "crypto_sys = \"1\"\n", both, "1.0.0", "osx-arm64", &why);
+    const lin_native = linux.units[linux.find(id_app).?].natives;
+    const mac_native = mac.units[mac.find(id_app).?].natives;
+    try std.testing.expectEqual(@as(usize, 1), lin_native.len);
+    try std.testing.expectEqual(@as(usize, 1), mac_native.len);
+    try std.testing.expectEqualStrings(native_sha, lin_native[0].sha256);
+    try std.testing.expectEqualStrings(test_hex_b, mac_native[0].sha256);
+    // The prebuilt unit's archive is the subdir's own file too.
+    try std.testing.expectEqualStrings(test_hex_a, linux.units[linux.find("crypto_sys@1.39.0#mojo1.0.0/lib").?].artifact.?.sha256);
+    try std.testing.expectEqualStrings(test_hex_c, mac.units[mac.find("crypto_sys@1.39.0#mojo1.0.0/lib").?].artifact.?.sha256);
+    // The graph of a subdir the package is not published for is refused: tls_sys has linux-64 only.
+    try std.testing.expectError(error.Refused, graphOfIn(a, dir, toml_tls_dep, both, "1.0.0", "osx-arm64", &why));
+    try std.testing.expectEqualStrings("tls_sys is not in mopm.lock for osx-arm64", why);
+
+    // No noarch fallback: a package published as noarch alone (what `mopm pack` makes without a subdir) is not in the
+    // graph of linux-64.
+    const noarch = try std.mem.replaceOwned(u8, a, lock_static_chain, "linux-64", "noarch");
+    try std.testing.expectError(error.Refused, graphOfIn(a, dir, toml_tls_dep, noarch, "1.0.0", "linux-64", &why));
+    try std.testing.expectEqualStrings("tls_sys is not in mopm.lock for linux-64", why);
+}
+
+// Spike (natives design, PR 1a): does a package whose Mojo module is empty -- the `-sys` package of a C library, which
+// has no Mojo code and exists to carry an archive -- make a graph? The library directory holds one `__init__.mojo`
+// of no bytes. (That `mojo precompile` accepts such a module, and that the archive links, is run on a real Mojo by
+// tests/drivers/native_static_test.zig.)
+test "spike: a package with an empty Mojo module is a library unit with that empty source" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeWorkspace(tmp.dir, "");
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    const g = graphOf(a, dir, "", lock_v1, "1.0.0", &why) catch |e| {
+        std.debug.print("refused: {s}\n", .{why});
+        return e;
+    };
+    const lib = g.units[g.find(id_app).?];
+    try std.testing.expectEqualStrings("lib", lib.kind);
+    try std.testing.expectEqual(@as(usize, 1), lib.srcs.len);
+    try std.testing.expectEqualStrings("src/app/__init__.mojo", lib.srcs[0].path);
+    try std.testing.expectEqualStrings("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", lib.srcs[0].sha256);
+    // Only the directory with no .mojo file at all is refused.
+    try tmp.dir.deleteFile("src/app/__init__.mojo");
+    try std.testing.expectError(error.Refused, graphOf(a, dir, "", lock_v1, "1.0.0", &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "holds no .mojo file") != null);
 }

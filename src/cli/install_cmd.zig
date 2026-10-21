@@ -297,6 +297,17 @@ const ChannelSource = struct {
         if (!answer.ok()) return resolve.fail(arena, diag, .bad_channel, "{s} answered HTTP {d}", .{ url, answer.status });
         return answer.body;
     }
+
+    /// Reads `<channel><subdir>/<filename>`: a package file, for the natives `mopm lock` hashes. The body is held
+    /// in memory (the HTTP client's limit is 64 MiB).
+    pub fn fetchConda(self: ChannelSource, arena: Allocator, subdir: []const u8, filename: []const u8, diag: *resolve.Diagnostic) resolve.Error![]const u8 {
+        const url = try std.fmt.allocPrint(arena, "{s}{s}/{s}", .{ self.channel_url, subdir, filename });
+        const answer = http.request(arena, .GET, url, .{}) catch |e| {
+            return resolve.fail(arena, diag, .bad_channel, "cannot read {s}: {s}", .{ url, @errorName(e) });
+        };
+        if (!answer.ok()) return resolve.fail(arena, diag, .bad_channel, "{s} answered HTTP {d}", .{ url, answer.status });
+        return answer.body;
+    }
 };
 
 fn run(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8) !u8 {
@@ -387,7 +398,7 @@ fn resolveProject(arena: Allocator, cmd: Command, project: Project, old: ?lock.L
             try failures.writer().print("  with mojo {s}: {s}\n", .{ mojo, diag.message });
             continue;
         };
-        const from_registry = plan.buildLock(arena, res, config.channel_url, ChannelSource{ .channel_url = config.channel_url }, &diag) catch |e| {
+        const from_registry = plan.buildLock(arena, res, config.channel_url, ChannelSource{ .channel_url = config.channel_url }, old, &diag) catch |e| {
             if (e != error.ResolveFailed) return e;
             err(cmd, "{s}\n", .{diag.message});
             return null;
@@ -449,7 +460,7 @@ fn resolveAll(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock,
             }
             return null;
         };
-        const one = plan.buildLock(arena, res, config.channel_url, ChannelSource{ .channel_url = config.channel_url }, &diag) catch |e| {
+        const one = plan.buildLock(arena, res, config.channel_url, ChannelSource{ .channel_url = config.channel_url }, old, &diag) catch |e| {
             if (e != error.ResolveFailed) return e;
             err(cmd, "{s}\n", .{diag.message});
             return null;
@@ -457,8 +468,13 @@ fn resolveAll(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock,
         try per.append(one);
         try closures.append(.{ .mojo = mojo, .subdir = unit_graph.lock_subdir, .sha256 = tc.closure_sha256 });
     }
-    const merged = try plan.mergeMojos(arena, per.items, closures.items);
     var diag: resolve.Diagnostic = .{};
+    plan.checkNativesAgree(arena, per.items, &diag) catch |e| {
+        if (e != error.ResolveFailed) return e;
+        err(cmd, "{s}\n", .{diag.message});
+        return null;
+    };
+    const merged = try plan.mergeMojos(arena, per.items, closures.items);
     const new = plan.addPaths(arena, merged, project.paths, &diag) catch |e| {
         if (e != error.ResolveFailed) return e;
         err(cmd, "{s}\n", .{diag.message});

@@ -1,0 +1,10 @@
+build:
+  tests/fixtures/static_chain/lib/libtls_sys.a
+  tests/fixtures/static_chain/lib/libcrypto_sys.a
+run:
+repl-preload:
+diagnostics:
+  [run] static_only: crypto_sys ships only libcrypto_sys.a (native crypto_sys); mojo run cannot load an archive: use mopm build or ask for a shared flavour
+  [repl] static_only: crypto_sys ships only libcrypto_sys.a (native crypto_sys); mojo repl cannot load an archive: use mopm build or ask for a shared flavour
+  [run] static_only: tls_sys ships only libtls_sys.a (native tls_sys); mojo run cannot load an archive: use mopm build or ask for a shared flavour
+  [repl] static_only: tls_sys ships only libtls_sys.a (native tls_sys); mojo repl cannot load an archive: use mopm build or ask for a shared flavour

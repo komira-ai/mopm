@@ -79,7 +79,7 @@ const Pkg = struct { name: []const u8, versions: []const Ver };
 
 const client_deps = [_]Dep{ .{ .name = "http_core", .range = ">=1.2,<2" }, .{ .name = "crypto", .range = "2" } };
 const tls_deps = [_]Dep{.{ .name = "http_core", .range = "~1.2" }};
-const crypto_native = [_]Native{.{ .id = "crypto", .soname = "libcrypto_native.so.1" }};
+const crypto_native = [_]Native{.{ .id = "crypto", .soname = "libcrypto_native.a" }};
 
 const packages = [_]Pkg{
     .{ .name = "http_client", .versions = &.{
@@ -153,8 +153,61 @@ fn toJson(a: Allocator, value: anytype) ![]u8 {
     return std.json.stringifyAlloc(a, value, .{ .emit_null_optional_fields = false });
 }
 
+/// A package file that is real, made by `mopm pack` (crypto 2.0.1, which ships a static archive, so that `mopm lock` has
+/// something to fetch and hash): its bytes go into the channel, and its sha256 and size into the index and repodata.
+const RealFile = struct { subdir: []const u8, filename: []const u8, bytes: []const u8, sha256: []const u8 };
+
+fn realFile(reals: []const RealFile, subdir: []const u8, filename: []const u8) ?RealFile {
+    for (reals) |r| {
+        if (std.mem.eql(u8, r.subdir, subdir) and std.mem.eql(u8, r.filename, filename)) return r;
+    }
+    return null;
+}
+
+fn sha256Hex(a: Allocator, bytes: []const u8) ![]u8 {
+    var out: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(bytes, &out, .{});
+    return a.dupe(u8, &std.fmt.bytesToHex(out, .lower));
+}
+
+/// The archives of crypto 2.0.1, one per platform (a different one each, so that a hash of one is not the other's).
+const crypto_archive_linux = "!<arch>\ncrypto native, linux-64\n";
+const crypto_archive_osx = "!<arch>\ncrypto native, osx-arm64\n";
+
+/// Packs crypto 2.0.1 with `mopm pack` for linux-64 and osx-arm64, each with its own archive: the files as the registry
+/// would hold them.
+fn packCrypto(a: Allocator, mopm: []const u8, work: []const u8) ![]const RealFile {
+    const dir = try h.join(a, &.{ work, "crypto_pack" });
+    const manifest = try h.join(a, &.{ dir, "mopm.toml" });
+    try h.writeFile(manifest, "[package]\nname = \"crypto\"\nversion = \"2.0.1\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n[native.crypto]\nkind = \"static\"\n");
+    const mojoc = try h.join(a, &.{ dir, "crypto.mojoc" });
+    try h.writeFile(mojoc, "not a real mojoc, only bytes\n");
+    const f_linux = try h.join(a, &.{ dir, "linux", "libcrypto_native.a" });
+    const f_osx = try h.join(a, &.{ dir, "osx", "libcrypto_native.a" });
+    try h.writeFile(f_linux, crypto_archive_linux);
+    try h.writeFile(f_osx, crypto_archive_osx);
+    const out = try h.join(a, &.{ dir, "dist" });
+    const argv = [_][]const u8{
+        mopm, "pack", "--compiler", "1.0.0", "--manifest", manifest, "-o", out,
+        "--mojoc", try std.fmt.allocPrint(a, "linux-64={s}", .{mojoc}), "--mojoc", try std.fmt.allocPrint(a, "osx-arm64={s}", .{mojoc}),
+        "--native", try std.fmt.allocPrint(a, "crypto=linux-64:{s}", .{f_linux}), "--native", try std.fmt.allocPrint(a, "crypto=osx-arm64:{s}", .{f_osx}),
+    };
+    const r = try std.process.Child.run(.{ .allocator = a, .argv = &argv });
+    if (r.term != .Exited or r.term.Exited != 0) {
+        std.debug.print("mopm pack of crypto failed: {s}{s}\n", .{ r.stdout, r.stderr });
+        return error.PackFailed;
+    }
+    const name = "mojo-crypto-2.0.1-mojo1.0.0_0.conda";
+    var reals = std.ArrayList(RealFile).init(a);
+    for ([_][]const u8{ "linux-64", "osx-arm64" }) |sub| {
+        const bytes = try h.readFile(a, try h.join(a, &.{ out, sub, name }));
+        try reals.append(.{ .subdir = sub, .filename = name, .bytes = bytes, .sha256 = try sha256Hex(a, bytes) });
+    }
+    return reals.items;
+}
+
 /// The index files and repodata of `packages` under the fake's data directory.
-fn writeRegistry(a: Allocator, root: []const u8, base: []const u8) !void {
+fn writeRegistry(a: Allocator, root: []const u8, base: []const u8, reals: []const RealFile) !void {
     var entries: [all_subdirs.len]std.ArrayList(u8) = undefined;
     var removed: [all_subdirs.len]std.ArrayList([]const u8) = undefined;
     for (&entries, &removed) |*e, *r| {
@@ -168,11 +221,14 @@ fn writeRegistry(a: Allocator, root: []const u8, base: []const u8) !void {
             const build = try std.fmt.allocPrint(a, "mojo{s}_0", .{v.mojo});
             var files = std.ArrayList(File).init(a);
             for (v.subdirs) |sub| {
-                const sha = try digest(a, sub, fname);
+                const real = realFile(reals, sub, fname);
+                const sha = if (real) |r| r.sha256 else try digest(a, sub, fname);
+                const size: u32 = if (real) |r| @intCast(r.bytes.len) else SIZE;
+                if (real) |r| try h.writeFile(try std.fmt.allocPrint(a, "{s}/channel/{s}/{s}", .{ root, sub, fname }), r.bytes);
                 try files.append(.{
                     .filename = fname,
                     .sha256 = sha,
-                    .size = SIZE,
+                    .size = size,
                     .subdir = sub,
                     .url = if (std.mem.eql(u8, v.state, "tombstoned")) null else try std.fmt.allocPrint(a, "{s}/channel/{s}/{s}", .{ base, sub, fname }),
                 });
@@ -191,7 +247,7 @@ fn writeRegistry(a: Allocator, root: []const u8, base: []const u8) !void {
                         .depends = depends.items,
                         .name = try std.fmt.allocPrint(a, "mojo-{s}", .{pkg.name}),
                         .sha256 = if (tampered) try digest(a, sub, "tampered") else sha,
-                        .size = SIZE,
+                        .size = size,
                         .subdir = sub,
                         .version = v.ver,
                     };
@@ -390,11 +446,40 @@ fn unitGraph(cx: *Cx) !void {
     r = try cx.run(nolock, &.{ "plan", "--unit-graph", "--locked" });
     cx.ok("no lock is refused (3); plan never resolves", r.code == 3 and has(r.stderr, "there is no mopm.lock") and (try cx.lockOf(nolock)) == null, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
 
-    // A native library the lock does not pin by sha256.
+    // A native library: `mopm lock` fetches the package file, hashes the archive in it and pins that (with the kind);
+    // `plan` takes the pin; a lock without it (one written before locks held it) is refused.
     const native = try unitProject(cx, "unit_native", "[\"1.0.0\"]", "crypto = \"2\"");
     r = try cx.runReg(native, &.{"lock"});
+    cx.ok("lock of a package that ships a static archive succeeds", r.code == 0 and has(r.stdout, "adding crypto 2.0.1\n"), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+    const native_lock = (try cx.lockOf(native)) orelse "";
+    const archive_sha = try sha256Hex(cx.a, crypto_archive_linux);
+    const pin = try cx.fmt(",\n          \"sha256\": \"{s}\",\n          \"kind\": \"static\"", .{archive_sha});
+    const pin_osx = try cx.fmt(",\n          \"sha256\": \"{s}\",\n          \"kind\": \"static\"", .{try sha256Hex(cx.a, crypto_archive_osx)});
+    cx.ok("the lock pins each subdir's archive: the sha256 of the library file (not of the package file) and its kind", has(native_lock, pin) and has(native_lock, pin_osx), native_lock);
     r = try cx.run(native, &.{ "plan", "--unit-graph", "--locked" });
-    cx.ok("a native library without a sha256 in the lock is refused (4)", r.code == 4 and has(r.stderr, "libcrypto_native.so.1") and has(r.stderr, "has no sha256 in mopm.lock"), try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+    cx.ok("plan takes the pinned archive: soname, sha256 and kind are in the graph", r.code == 0 and has(r.stdout, try cx.fmt("{{\"id\": \"crypto\", \"soname\": \"libcrypto_native.a\", \"sha256\": \"{s}\", \"package\": \"crypto\", \"kind\": \"static\"}}", .{archive_sha})), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+    {
+        const old_file = try h.join(cx.a, &.{ cx.work, "fake", "channel", "linux-64", "mojo-crypto-2.0.1-mojo1.0.0_0.conda" });
+        const bytes = try h.readFile(cx.a, old_file);
+        try std.fs.cwd().deleteFile(old_file);
+        // The old lock pins that file\'s natives, so locking again needs no download: the file can be gone.
+        r = try cx.runReg(native, &.{"lock"});
+        const again = (try cx.lockOf(native)) orelse "";
+        cx.ok("locking again does not fetch a package file the lock already pins (it is gone, and lock still succeeds)", r.code == 0 and std.mem.eql(u8, again, native_lock), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+        // `update` names the same file again, so it too reuses the pin and needs no download.
+        r = try cx.runReg(native, &.{ "update", "crypto" });
+        cx.ok("update of the same file does not fetch it either", r.code == 0 and std.mem.eql(u8, (try cx.lockOf(native)) orelse "", native_lock), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+        // With no lock there is no pin: the file is needed, the channel answers 404, and no lock is written.
+        const fresh = try unitProject(cx, "unit_native_fresh", "[\"1.0.0\"]", "crypto = \"2\"");
+        r = try cx.runReg(fresh, &.{"lock"});
+        cx.ok("a lock with no pin does fetch it: with the file gone it fails naming the URL, and writes no lock", r.code == 1 and has(r.stderr, "mojo-crypto-2.0.1-mojo1.0.0_0.conda answered HTTP 404") and (try cx.lockOf(fresh)) == null, try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+        try h.writeFile(old_file, bytes);
+        r = try cx.runReg(fresh, &.{"lock"});
+        cx.ok("with the file back the fresh lock is the same bytes as the first", r.code == 0 and std.mem.eql(u8, (try cx.lockOf(fresh)) orelse "", native_lock), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+    }
+    try cx.writeLock(native, try std.mem.replaceOwned(u8, cx.a, native_lock, pin, ""));
+    r = try cx.run(native, &.{ "plan", "--unit-graph", "--locked" });
+    cx.ok("a native library without a sha256 in the lock is refused (4)", r.code == 4 and has(r.stderr, "libcrypto_native.a") and has(r.stderr, "has no sha256 in mopm.lock"), try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
 
     // http_client 0.4.1 is built for Mojo 1.1.0 only.
     const nomojoc = try unitProject(cx, "unit_nomojoc", "[\"1.0.0\"]", "http_client = \"=0.4.1\"");
@@ -592,9 +677,18 @@ test "mopm lock, update and tree resolve against the fake registry" {
     h.stage = "starting the fake registry";
     var fake = try h.Fake.start(a, fake_exe, try h.join(a, &.{ work, "fake" }));
     defer fake.close();
-    try writeRegistry(a, try h.join(a, &.{ work, "fake" }), fake.base);
+    const reals = try packCrypto(a, mopm_exe, work);
+    try writeRegistry(a, try h.join(a, &.{ work, "fake" }), fake.base, reals);
     const channel = try std.fmt.allocPrint(a, "{s}/channel/", .{fake.base});
-    const expected = try std.mem.replaceOwned(u8, a, try h.readFile(a, "tests/resolve_e2e/expected.lock"), "@CHANNEL@", channel);
+    // What the lock holds of crypto's files and natives: the sha256 and size of each file as `mopm pack` made it, and the
+    // sha256 of each archive, which this test knows from the bytes it handed to `mopm pack`.
+    var expected = try std.mem.replaceOwned(u8, a, try h.readFile(a, "tests/resolve_e2e/expected.lock"), "@CHANNEL@", channel);
+    for ([_]struct { []const u8, []const u8, []const u8 }{ .{ "LINUX", "linux-64", crypto_archive_linux }, .{ "OSX", "osx-arm64", crypto_archive_osx } }) |p| {
+        const real = realFile(reals, p[1], "mojo-crypto-2.0.1-mojo1.0.0_0.conda").?;
+        expected = try std.mem.replaceOwned(u8, a, expected, try std.fmt.allocPrint(a, "@CRYPTO_{s}_FILE_SHA@", .{p[0]}), real.sha256);
+        expected = try std.mem.replaceOwned(u8, a, expected, try std.fmt.allocPrint(a, "@CRYPTO_{s}_FILE_SIZE@", .{p[0]}), try std.fmt.allocPrint(a, "{d}", .{real.bytes.len}));
+        expected = try std.mem.replaceOwned(u8, a, expected, try std.fmt.allocPrint(a, "@CRYPTO_{s}_NATIVE_SHA@", .{p[0]}), try sha256Hex(a, p[2]));
+    }
 
     var cx = Cx{ .a = a, .rep = &rep, .mopm = mopm_exe, .work = work, .registry = fake.base, .lock_schema = try c.loadJson(a, "spec/lock.schema.json") };
 

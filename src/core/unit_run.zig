@@ -233,6 +233,8 @@ pub fn stage(arena: Allocator, g: unit_graph.Graph, idx: usize, d: Dirs) !void {
     }
     if (!isLib(u)) {
         for (u.natives) |n| {
+            // An archive is linked into the binary: there is nothing to load from beside it.
+            if (n.kind == .static) continue;
             try copyInto(arena, try join(arena, d.natives, n.soname), try std.fmt.allocPrint(arena, "{s}/lib/{s}", .{ d.out, n.soname }));
         }
     }
@@ -635,4 +637,55 @@ test "a unit test runs with LD_LIBRARY_PATH=<toolchain>/lib and nothing else; no
     const a = arena_state.allocator();
     try std.testing.expectEqualStrings("LD_LIBRARY_PATH=<root>/tc/lib\n", try testEnvOf(a, child_z, true));
     try std.testing.expectEqualStrings("", try testEnvOf(a, child_z, false));
+}
+
+// Defects it catches: the archives sorted by name on the way to the compiler (a library before the one it needs, so
+// the linker drops the symbols the first leaves undefined); an archive copied beside the binary as if it were loaded
+// at run time. Mutants planted: argv sorts `u.natives` by soname; stage drops the `.static` skip.
+test "a static archive is a linker input in the order the unit gives, and is not copied beside the binary" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeInputs(tmp.dir);
+    const tls_bytes = "!<arch>\ntls\n";
+    const crypto_bytes = "!<arch>\ncrypto\n";
+    try tmp.dir.writeFile("natives/libtls_sys.a", tls_bytes);
+    try tmp.dir.writeFile("natives/libcrypto_sys.a", crypto_bytes);
+
+    var g = try fixtureGraph(a);
+    const tid = g.find("p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?;
+    const units = try a.dupe(unit_graph.Unit, g.units);
+    // tls_sys needs crypto_sys, so it is first; by soname, libcrypto_sys.a would be.
+    units[tid].natives = try a.dupe(unit_graph.NativeRef, &.{
+        .{ .id = "tls_sys", .soname = "libtls_sys.a", .sha256 = try sha(a, tls_bytes), .package = "tls_sys", .kind = .static, .needs = &.{"libcrypto_sys.a"} },
+        .{ .id = "crypto_sys", .soname = "libcrypto_sys.a", .sha256 = try sha(a, crypto_bytes), .package = "crypto_sys", .kind = .static },
+        .{ .id = "n", .soname = "libn.so.1", .sha256 = try sha(a, native_bytes), .package = "d" },
+    });
+    g.units = units;
+    const root = try tmp.dir.realpathAlloc(a, ".");
+    const d = try dirsIn(a, root);
+
+    const plan = try argv(a, g, tid, d);
+    var linked = std.ArrayList([]const u8).init(a);
+    for (plan.argv, 0..) |x, i| {
+        if (std.mem.eql(u8, x, "-Xlinker")) try linked.append(std.fs.path.basename(plan.argv[i + 1]));
+    }
+    const want = [_][]const u8{ "libtls_sys.a", "libcrypto_sys.a", "libn.so.1" };
+    try std.testing.expectEqual(want.len, linked.items.len);
+    for (want, linked.items) |w, got| try std.testing.expectEqualStrings(w, got);
+
+    // Each archive is checked against its sha256 like any native library.
+    var why: []const u8 = "";
+    try verify(a, g, tid, d, &why);
+    try tmp.dir.writeFile("natives/libcrypto_sys.a", "!<arch>\nother\n");
+    try expectRefusal(a, g, tid, d, "native library libcrypto_sys.a has sha256");
+    try tmp.dir.writeFile("natives/libcrypto_sys.a", crypto_bytes);
+
+    // The shared object is copied beside the binary; the archives are not.
+    try stage(a, g, tid, d);
+    _ = try tmp.dir.statFile("out/lib/libn.so.1");
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile("out/lib/libtls_sys.a"));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile("out/lib/libcrypto_sys.a"));
 }
