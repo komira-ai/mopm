@@ -6,27 +6,48 @@
 
 load(":buildrules.bzl", "npm_package")
 load("@buildrules//rules/node:modules.bzl", "node_tree_test")
+load("//vendor/buildrules_coverage:jest_cover.bzl", "jest_coverage_floor", "jest_test")
 
 _NODE = "//tools/node:node"
+
+# The tests read the specification and the contract cases at their paths in the repository
+# (`../../../../spec/api/openapi.yaml`, `.../tests/contract/api`), and the validator's tests run
+# `bzip2` (test/validate/builder.ts): the pinned busybox's applet is the only command on PATH.
+_TEST_DATA = {
+    "spec": "//:spec",
+    "tests/contract/api": "//:contract_api",
+    "tests/validator_corpus": "//:validator_corpus_files",
+}
+
+_TEST_TOOLS = {"bzip2": "buildrules//rules/pins:busybox"}
 
 npm_package(
     path = ".",
     node = _NODE,
     # kpin's files of the old rules, still read by the weekly update.
     exclude = ["pins.lock.bzl", "check_dist.js"],
-    # The tests read the specification and the contract cases at their paths in the repository
-    # (`../../../../spec/api/openapi.yaml`, `.../tests/contract/api`), and the validator's tests run
-    # `bzip2` (test/validate/builder.ts): the pinned busybox's applet is the only command on PATH.
-    step_data = {
-        "test": {
-            "spec": "//:spec",
-            "tests/contract/api": "//:contract_api",
-            "tests/validator_corpus": "//:validator_corpus_files",
-        },
-    },
-    step_tools = {"test": {"bzip2": "buildrules//rules/pins:busybox"}},
+    step_data = {"test": _TEST_DATA},
+    step_tools = {"test": _TEST_TOOLS},
     visibility = ["//service/infra/stacks:", "//service/api:"],
 )
+
+# `jest --ci --coverage` over the same tree, data, tools and config as `:test`: the target is the coverage directory.
+# npm_package's `:test` is a pass marker and does not write one, so the floor reads this run instead.
+jest_test(
+    name = "coverage_run",
+    data = _TEST_DATA,
+    modules = ":node_modules",
+    node = _NODE,
+    srcs = glob(["src/**", "test/**"]) + [
+        "jest.config.js",
+        "package.json",
+        "tsconfig.json",
+    ],
+    tools = _TEST_TOOLS,
+)
+
+# The lines and branches of the package's own code that the tests reach (jest --coverage), held to coverage_floor.txt (vendor/buildrules_coverage/README.md).
+jest_coverage_floor(coverage = ":coverage_run")
 
 # service-ci.yml's `test -f dist/http/lambda.js`.
 node_tree_test(
@@ -44,6 +65,14 @@ export_file(
     src = "test/fixtures/lambda-auth-grants.json",
     mode = "reference",
     visibility = ["//service/infra/stacks:", "//service/lambda/aws:"],
+)
+
+# The validator's size caps (src/validate/limits.ts): the site's test holds the published docs to them.
+export_file(
+    name = "limits.ts",
+    src = "src/validate/limits.ts",
+    mode = "reference",
+    visibility = ["//site:"],
 )
 
 # The repodata the TS index writer produced for the golden records: the Rust core

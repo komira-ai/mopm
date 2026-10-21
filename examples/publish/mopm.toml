@@ -1,0 +1,14 @@
+[package]
+name = "slug"
+version = "1.2.0"
+description = "Turn a title into a URL slug"
+license = "Apache-2.0"
+repository = "https://github.com/example/slug"
+readme = "README.md"
+mojo = ["1.0.0"]
+
+[dependencies]
+text_tools = "0.3"
+
+[targets]
+lib = { path = "src/slug" }

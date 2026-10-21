@@ -1,8 +1,6 @@
-//! .github/scripts/hygiene.rb in Zig, for the build farm, which has no Ruby.
-//! hygiene.rb stays for ci.yml until farm.yml has matched it; this file
-//! reproduces its rules and its messages (`hygiene: <file>: <rule>`).
+//! The repository hygiene scan, run by Buck2 (//:hygiene). Its messages read (`hygiene: <file>: <rule>`).
 //!
-//! Two halves, as in the Ruby:
+//! Two halves:
 //!   - `textProblems`: the secret and identifier patterns over the bytes of
 //!     every tracked text file (a file holding a NUL byte is binary and skipped);
 //!   - `structureProblems`: which workflows may hold an id-token grant or a
@@ -205,7 +203,7 @@ fn accountIdShaped(s: []const u8) bool {
 }
 
 /// Every problem the text rules find in one file's bytes, as
-/// `hygiene: <file>: <rule>`; the same rules, in the same order, as hygiene.rb.
+/// `hygiene: <file>: <rule>`.
 pub fn textProblems(a: Allocator, f: []const u8, data: []const u8, out: *Out) !void {
     if (std.mem.indexOfScalar(u8, data, 0) != null) return;
     const Rule = struct { name: []const u8, hit: bool };
@@ -230,15 +228,26 @@ pub fn textProblems(a: Allocator, f: []const u8, data: []const u8, out: *Out) !v
 const oidc_files = [_][]const u8{ "deploy.yml", "e2e.yml", "promote.yml" };
 /// The one other file allowed an id-token grant: it prints OIDC claims and holds no AWS access.
 const subject_check = "oidc-subject-check.yml";
-/// farm.yml runs on pull_request and holds an id-token grant for komira's farm-connect
-/// action. Allowed only for a pull request from a branch of this repository, with no
-/// environment and no secret.
+/// farm.yml runs on pull_request and on push to main, and holds an id-token grant for komira's
+/// farm-connect action. Allowed only for a push to main or a pull request from a branch of this
+/// repository, with no environment and no secret.
 const farm_file = "farm.yml";
 /// release.yml publishes a release with build-provenance attestations, so its publish job holds an
 /// id-token grant (the attestation is signed with the job's OIDC token; no cloud access). Allowed only
-/// when a pushed v* tag is the sole trigger, with no environment, no secret and no id-token on a job
-/// that calls another workflow.
+/// when the triggers are a push to main and a manual run, with no secret but the release bot's key, no
+/// environment but `release` (on exactly the jobs that read RELEASE_BOT_*) and no id-token on a job that
+/// calls another workflow.
 const release_file = "release.yml";
+/// The environment that holds the release bot's key, restricted to main.
+const release_environment = "release";
+
+/// The pull-request tier: a pull request runs build and unit tests only. These four workflows are the only ones that may
+/// run on pull_request (ci.yml: its unit jobs; lint.yml: the lints, the release lint included; farm.yml: the unit build on the test farm;
+/// service-ci.yml: the unit tests of the service packages). Everything else (the release machinery, the end-to-end runs) runs after the
+/// merge. The oidc files and farm.yml, release.yml have rules of their own above.
+const pr_files = [_][]const u8{ "ci.yml", "lint.yml", "farm.yml", "service-ci.yml" };
+/// The jobs of ci.yml that run on a pull request (the unit tier). Every other job of ci.yml is beta and must say `if: github.event_name != 'pull_request'`.
+const ci_unit_jobs = [_][]const u8{ "test", "registry-build" };
 
 fn isOidcFile(base: []const u8) bool {
     return c.containsStr(&oidc_files, base);
@@ -267,6 +276,13 @@ fn jobEntries(a: Allocator, doc: Value) ![]const Job {
     var it = jobs.object.iterator();
     while (it.next()) |e| try out.append(.{ .name = e.key_ptr.*, .node = e.value_ptr.* });
     return out.items;
+}
+
+/// The whole `if:` is the guard (optionally in `${{ }}`): a substring test would pass `... || true`.
+fn isBetaGuard(expr: []const u8) bool {
+    var e = std.mem.trim(u8, expr, " \r\n\t");
+    if (std.mem.startsWith(u8, e, "${{") and std.mem.endsWith(u8, e, "}}")) e = std.mem.trim(u8, e[3 .. e.len - 2], " ");
+    return std.mem.eql(u8, e, "github.event_name != 'pull_request'");
 }
 
 fn jobIf(a: Allocator, job: Value) ![]const u8 {
@@ -305,8 +321,16 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
     }
 
     if (std.mem.eql(u8, base, farm_file)) {
-        if (!(on.len == 1 and std.mem.eql(u8, on[0], "pull_request"))) {
-            try c.problem(a, out, prefix ++ "{s}: triggers must be exactly pull_request", .{f});
+        // pull_request, and push to main alone (the farm must be configured there: the job fails
+        // when it is not, so a merge never goes unbuilt).
+        const push = c.get(c.onValue(doc), "push");
+        const pr_and_push = on.len == 2 and c.containsStr(on, "pull_request") and c.containsStr(on, "push");
+        const push_main = push != null and push.? == .object and push.?.object.count() == 1 and blk: {
+            const br = c.get(push, "branches") orelse break :blk false;
+            break :blk br == .array and br.array.items.len == 1 and c.isStr(br.array.items[0], "main");
+        };
+        if (!(pr_and_push and push_main)) {
+            try c.problem(a, out, prefix ++ "{s}: triggers must be exactly pull_request and push of branches [main]", .{f});
         }
         if (c.findKey(doc, "environment") or c.mentionsSecretsDot(try c.nonCommentLines(a, text))) {
             try c.problem(a, out, prefix ++ "{s}: must not use secrets or an environment", .{f});
@@ -321,16 +345,38 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
     }
 
     if (std.mem.eql(u8, base, release_file)) {
-        // on.keys == ["push"] && on["push"] == { "tags" => ["v*"] }
+        // on.keys == ["push", "workflow_dispatch"] && push has branches == ["main"] and nothing but paths-ignore
+        const sorted_on = try a.dupe([]const u8, on);
+        std.mem.sort([]const u8, sorted_on, {}, struct {
+            fn lt(_: void, x: []const u8, y: []const u8) bool {
+                return std.mem.lessThan(u8, x, y);
+            }
+        }.lt);
         const push = c.get(c.onValue(doc), "push");
-        const only_tag = on.len == 1 and std.mem.eql(u8, on[0], "push") and push != null and push.? == .object and
-            push.?.object.count() == 1 and blk: {
-            const tags = c.get(push, "tags") orelse break :blk false;
-            break :blk tags == .array and tags.array.items.len == 1 and c.isStr(tags.array.items[0], "v*");
-        };
-        if (!only_tag) try c.problem(a, out, prefix ++ "{s}: triggers must be exactly push of tags [v*], with no branches", .{f});
-        if (c.findKey(doc, "environment") or c.mentionsSecretsDot(try c.nonCommentLines(a, text))) {
+        var main_push = c.eqlList(sorted_on, &.{ "push", "workflow_dispatch" }) and push != null and push.? == .object;
+        if (main_push) {
+            for (push.?.object.keys()) |k| {
+                if (!std.mem.eql(u8, k, "branches") and !std.mem.eql(u8, k, "paths-ignore")) main_push = false;
+            }
+            const branches = c.get(push, "branches");
+            if (!(branches != null and branches.? == .array and branches.?.array.items.len == 1 and c.isStr(branches.?.array.items[0], "main"))) main_push = false;
+        }
+        if (!main_push) try c.problem(a, out, prefix ++ "{s}: triggers must be exactly push to branches [main] (paths-ignore allowed) and workflow_dispatch", .{f});
+        if (c.mentionsSecretsDot(try releaseSecretFree(a, text))) {
             try c.problem(a, out, prefix ++ "{s}: must not use secrets or an environment", .{f});
+        }
+        // The one environment is `release`, on exactly the jobs that read RELEASE_BOT_*; the workflow itself has none.
+        if (c.get(doc, "environment") != null) {
+            try c.problem(a, out, prefix ++ "{s}: must not use secrets or an environment", .{f});
+        }
+        for (jobs) |j| {
+            const reads_bot = std.mem.indexOf(u8, try c.inspect(a, j.node), "RELEASE_BOT") != null;
+            const env = c.get(j.node, "environment");
+            if (reads_bot and !c.isStr(env, release_environment)) {
+                try c.problem(a, out, prefix ++ "{s}: job {s} reads RELEASE_BOT_* so it must declare environment {s}, got {s}", .{ f, j.name, release_environment, try c.inspect(a, env) });
+            } else if (!reads_bot and env != null) {
+                try c.problem(a, out, prefix ++ "{s}: job {s}: must not use secrets or an environment (only jobs that read RELEASE_BOT_* declare {s})", .{ f, j.name, release_environment });
+            }
         }
         for (jobs) |j| {
             if (j.node == .object and j.node.object.contains("uses") and c.findKey(j.node, "id-token")) {
@@ -351,6 +397,56 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
     }
     if (c.containsStr(on, "pull_request") and (has_id_token or has_environment)) {
         try c.problem(a, out, prefix ++ "{s}: a workflow with id-token or an environment must not run on pull_request", .{f});
+    }
+    if (c.containsStr(on, "pull_request") and !c.containsStr(&pr_files, base) and !isOidcFile(base)) {
+        try c.problem(a, out, prefix ++ "{s}: a pull request runs build and unit tests only, so only ci.yml, lint.yml, farm.yml and service-ci.yml may run on pull_request", .{f});
+    }
+    if (std.mem.eql(u8, base, "ci.yml") and c.containsStr(on, "pull_request")) {
+        for (jobs) |j| {
+            if (c.containsStr(&ci_unit_jobs, j.name)) continue;
+            if (!isBetaGuard(try jobIf(a, j.node))) {
+                try c.problem(a, out, prefix ++ "{s}: job {s} is not a unit job, so its `if:` must be exactly `github.event_name != 'pull_request'` (beta runs after the merge, never on a pull request; any `||` clause would let it run)", .{ f, j.name });
+            }
+        }
+    }
+    if ((std.mem.eql(u8, base, "lint.yml") or std.mem.eql(u8, base, "ci.yml")) and c.containsStr(on, "pull_request")) {
+        // A filter makes the check skip for some pull requests (a docs-only change, another base branch, a label event), and a
+        // skipped check is a check that did not run. `types` may only add to the defaults (ci.yml adds `labeled` for the macOS opt-in).
+        const pr = c.get(c.onValue(doc), "pull_request");
+        for (c.keys(pr)) |k| {
+            if (std.mem.eql(u8, k, "types")) {
+                const types = try c.arrayOf(a, c.get(pr, "types"));
+                for ([_][]const u8{ "opened", "synchronize", "reopened" }) |dflt| {
+                    if (!c.containsStr(types, dflt)) try c.problem(a, out, prefix ++ "{s}: the pull_request trigger's types must keep {s} (the defaults are opened, synchronize, reopened; more may be added)", .{ f, dflt });
+                }
+            } else {
+                try c.problem(a, out, prefix ++ "{s}: the pull_request trigger must have no {s} filter: every pull request gets this check", .{ f, k });
+            }
+        }
+    }
+    if (std.mem.eql(u8, base, "lint.yml")) {
+        if (!c.containsStr(on, "pull_request")) try c.problem(a, out, prefix ++ "{s}: the lints must run on pull_request", .{f});
+        // A job-level `if:` can skip the whole job, and the check with it; only `!cancelled()` (run unless the run was cancelled) is allowed.
+        for (jobs) |j| {
+            if (c.get(j.node, "if") == null) continue;
+            var cond = std.mem.trim(u8, try jobIf(a, j.node), " \r\n\t");
+            if (std.mem.startsWith(u8, cond, "${{") and std.mem.endsWith(u8, cond, "}}")) cond = std.mem.trim(u8, cond[3 .. cond.len - 2], " ");
+            if (!std.mem.eql(u8, cond, "!cancelled()")) try c.problem(a, out, prefix ++ "{s}: job {s} has an `if:` ({s}); a lint job may carry none, or exactly `!cancelled()`, so it cannot be skipped", .{ f, j.name, cond });
+        }
+        var runs_release_lint = false;
+        for (jobs) |j| {
+            if (c.truthy(c.get(j.node, "continue-on-error"))) continue;
+            const steps = c.get(j.node, "steps") orelse continue;
+            if (steps != .array) continue;
+            for (steps.array.items) |st| {
+                const step_run = c.str(c.get(st, "run")) orelse continue;
+                if (!std.mem.eql(u8, std.mem.trim(u8, step_run, " \r\n\t"), "zig test tests/drivers/release_lint_test.zig")) continue;
+                if (c.truthy(c.get(st, "continue-on-error"))) continue;
+                const cond = std.mem.trim(u8, try jobIf(a, st), " ");
+                if (cond.len == 0 or std.mem.eql(u8, cond, "${{ !cancelled() }}")) runs_release_lint = true;
+            }
+        }
+        if (!runs_release_lint) try c.problem(a, out, prefix ++ "{s}: no step runs `zig test tests/drivers/release_lint_test.zig` unconditionally (or under `!cancelled()`) without continue-on-error; the release lint, the .deb wiring included, runs on every pull request", .{f});
     }
     if (!isOidcFile(base)) return;
 
@@ -380,7 +476,7 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
     }
 }
 
-/// hygiene.rb with path arguments: the text rules over each path, then the
+/// Given paths (the self-test): the text rules over each path, then the
 /// structure rules over the paths that end in .yml or .yaml. (Without
 /// arguments the structure rules run over .github/workflows only: `repo`.)
 pub fn run(a: Allocator, files: []const File, structure: []const File, out: *Out) !void {
@@ -389,3 +485,115 @@ pub fn run(a: Allocator, files: []const File, structure: []const File, out: *Out
 }
 
 pub const File = struct { path: []const u8, data: []const u8 };
+
+/// The text of release.yml (comments dropped) without its two allowed secret references: the tag job and the bump
+/// job each hand the key of the release bot's GitHub App to actions/create-github-app-token (release_lint.zig holds
+/// where). Exactly two are removed; a third, or any other `secrets.`, is still a finding.
+fn releaseSecretFree(a: Allocator, text: []const u8) ![]u8 {
+    const ref = "${{ secrets.RELEASE_BOT_PRIVATE_KEY }}";
+    var s = try c.nonCommentLines(a, text);
+    for (0..2) |_| {
+        const at = std.mem.indexOf(u8, s, ref) orelse break;
+        s = try std.mem.concat(a, u8, &.{ s[0..at], s[at + ref.len ..] });
+    }
+    return s;
+}
+
+/// kpin-update.yml's KPIN_SETS names, one line per lock (`<pins.toml> <pins.lock.bzl> [<package-lock.json>...]`), the
+/// weekly update's whole set of npm locks, and the job refuses to start when it differs from the pins.lock.bzl files
+/// of the tree. That check runs weekly, so a new lock (site/pins.lock.bzl, which turned the 19 October run red) went
+/// unnoticed for days. This is the same comparison on every pull request: one finding per lock the tree has and
+/// KPIN_SETS lacks, and per lock KPIN_SETS names that the tree lacks. `workflow` is the text of kpin-update.yml,
+/// `files` the repository's paths. The block is read as text: the lines under `KPIN_SETS: |` that are indented
+/// deeper than the key, to the first line that is not.
+pub fn kpinSetsProblems(a: Allocator, workflow: []const u8, files: []const []const u8, out: *Out) !void {
+    const key = "KPIN_SETS: |";
+    const at = std.mem.indexOf(u8, workflow, key) orelse {
+        try c.problem(a, out, prefix ++ "kpin-update.yml: no `KPIN_SETS: |` block", .{});
+        return;
+    };
+    // The key's own indent: the characters between the start of its line and the key.
+    const line_start = if (std.mem.lastIndexOfScalar(u8, workflow[0..at], '\n')) |n| n + 1 else 0;
+    const key_indent = at - line_start;
+    var listed = std.ArrayList([]const u8).init(a);
+    var lines = std.mem.splitScalar(u8, workflow[at + key.len ..], '\n');
+    _ = lines.next(); // the rest of the key's own line
+    while (lines.next()) |line| {
+        var indent: usize = 0;
+        while (indent < line.len and line[indent] == ' ') indent += 1;
+        if (indent == line.len) continue; // a blank line
+        if (indent <= key_indent) break;
+        var words = std.mem.tokenizeAny(u8, line, " \t\r");
+        _ = words.next(); // the pins.toml
+        const lock = words.next() orelse continue;
+        try listed.append(lock);
+    }
+    if (listed.items.len == 0) try c.problem(a, out, prefix ++ "kpin-update.yml: KPIN_SETS names no lock", .{});
+    for (files) |f| {
+        if (!std.mem.eql(u8, c.basename(f), "pins.lock.bzl")) continue;
+        if (!c.containsStr(listed.items, f)) {
+            try c.problem(a, out, prefix ++ "kpin-update.yml: KPIN_SETS has no line for {s}: the weekly update would fail at its first step", .{f});
+        }
+    }
+    for (listed.items) |l| {
+        var present = false;
+        for (files) |f| {
+            if (std.mem.eql(u8, f, l)) present = true;
+        }
+        if (!present) try c.problem(a, out, prefix ++ "kpin-update.yml: KPIN_SETS names {s}, which is not in the repository", .{l});
+    }
+}
+
+/// The targets BUCK builds with `_MOJO_TOOLS` (the real Mojo toolchain): the rules whose `exec_tools` is `_MOJO_TOOLS` or
+/// `dict(_MOJO_TOOLS, ...)`. A rule is a block that opens at column 0; its name is the `name = "..."` line at four spaces.
+pub fn mojoToolTargets(a: Allocator, buck: []const u8) ![]const []const u8 {
+    var found = std.ArrayList([]const u8).init(a);
+    var name: []const u8 = "";
+    var lines = std.mem.splitScalar(u8, buck, '\n');
+    while (lines.next()) |line| {
+        if (line.len != 0 and line[0] != ' ' and line[0] != ')' and line[0] != '#') name = "";
+        const named = "    name = \"";
+        if (std.mem.startsWith(u8, line, named)) {
+            const rest = line[named.len..];
+            if (std.mem.indexOfScalar(u8, rest, '"')) |end| name = rest[0..end];
+        }
+        const t = std.mem.trim(u8, line, " ");
+        if (name.len != 0 and std.mem.startsWith(u8, t, "exec_tools = ") and std.mem.indexOf(u8, t, "_MOJO_TOOLS") != null) {
+            if (!c.containsStr(found.items, name)) try found.append(name);
+        }
+    }
+    return found.items;
+}
+
+/// farm.yml's pull request build excludes `set(//:a //:b ...)` from `//...`: the beta targets, which run after the merge.
+/// Those must be exactly the targets BUCK builds with `_MOJO_TOOLS`, or a new beta target would run on every pull request (or a
+/// unit one would be left out of it) with nothing red. One finding per target on one side only.
+pub fn farmExclusionProblems(a: Allocator, buck: []const u8, farm: []const u8, out: *Out) !void {
+    const want = try mojoToolTargets(a, buck);
+    if (want.len == 0) try c.problem(a, out, prefix ++ "BUCK: no target is built with _MOJO_TOOLS, so the farm.yml exclusion list cannot be checked (did the parser lose the BUCK layout?)", .{});
+    const head = "//... - set(";
+    const at = std.mem.indexOf(u8, farm, head) orelse {
+        try c.problem(a, out, prefix ++ "farm.yml: no `//... - set(` exclusion list in the pull request build", .{});
+        return;
+    };
+    const rest = farm[at + head.len ..];
+    const close = std.mem.indexOfScalar(u8, rest, ')') orelse {
+        try c.problem(a, out, prefix ++ "farm.yml: the exclusion list has no closing parenthesis", .{});
+        return;
+    };
+    var listed = std.ArrayList([]const u8).init(a);
+    var words = std.mem.tokenizeScalar(u8, rest[0..close], ' ');
+    while (words.next()) |w| {
+        if (!std.mem.startsWith(u8, w, "//:")) {
+            try c.problem(a, out, prefix ++ "farm.yml: the exclusion list holds {s}, which is not a root target //:name", .{w});
+            continue;
+        }
+        try listed.append(w[3..]);
+    }
+    for (want) |n| {
+        if (!c.containsStr(listed.items, n)) try c.problem(a, out, prefix ++ "farm.yml: //:{s} is built with _MOJO_TOOLS in BUCK (a beta target) but is not excluded from the pull request build", .{n});
+    }
+    for (listed.items) |n| {
+        if (!c.containsStr(want, n)) try c.problem(a, out, prefix ++ "farm.yml: //:{s} is excluded from the pull request build but BUCK does not build it with _MOJO_TOOLS", .{n});
+    }
+}

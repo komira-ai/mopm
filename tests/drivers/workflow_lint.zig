@@ -1,21 +1,20 @@
-//! .github/scripts/workflow_lint.rb in Zig, for the build farm, which has no
-//! Ruby. workflow_lint.rb stays for ci.yml until farm.yml has matched it; this
-//! file reproduces its rules and its messages (`workflow-lint: <file>: ...`).
+//! The workflow lint, run by Buck2 (//:workflows). Its messages read (`workflow-lint: <file>: ...`).
 //!
-//! `fileProblems` is the per-file half (what workflow_lint.rb does with path
-//! arguments, and for every file without): read-only token, no `write` outside
+//! `fileProblems` is the per-file half (what runs for every workflow, and for the
+//! fixtures): read-only token, no `write` outside
 //! the id-token grants, secrets reach a step only through env, only
 //! GitHub-owned actions pinned by SHA, no step that prints a secret-bearing
 //! variable, and a syntax check of every `run:` script. `repoProblems` is the
 //! whole-repository half: the promotion chain, the guard jobs of deploy.yml and
 //! e2e.yml, and oidc-subject-check.yml.
 //!
-//! The one rule that is not the same: workflow_lint.rb runs `bash -n` on each
-//! `run:` script and the farm has no bash. shell_syntax.zig is the stand-in
+//! One check is a stand-in: a shell has no place on the farm, so `run:` scripts are
+//! syntax-checked without bash. shell_syntax.zig is the stand-in
 //! and says what it does and does not catch.
 
 const std = @import("std");
 const c = @import("lint_common.zig");
+const rl = @import("release_lint.zig");
 const sh = @import("shell_syntax.zig");
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
@@ -25,16 +24,16 @@ pub const prefix = "workflow-lint: ";
 
 const oidc_files = [_][]const u8{ "deploy.yml", "e2e.yml", "promote.yml", "oidc-subject-check.yml" };
 /// farm.yml may also hold the id-token grant, and one action outside GitHub's own
-/// (komira's farm-connect, pinned by commit); hygiene.rb holds it to its conditions.
+/// (komira's farm-connect, pinned by commit); hygiene.zig holds it to its conditions.
 const farm_file = "farm.yml";
 /// kpin-update.yml (the weekly pin update) holds the two write grants it needs to push its branch
 /// and open its pull request with the default token, nothing else, and only on a schedule or a
 /// manual run: checked below.
 const kpin_file = "kpin-update.yml";
 const kpin_writes = [_][]const u8{ "contents", "pull-requests" };
-/// release.yml (a pushed v* tag publishes a release) holds the three write grants a release with
-/// build-provenance attestations needs, on its jobs only (the top level stays read-only); hygiene
-/// holds its triggers to tags.
+/// release.yml (a push to main releases) holds the three write grants a release with
+/// build-provenance attestations needs, on its jobs only (the top level stays read-only); release_lint.zig
+/// holds each of them to the one job that may have it, and hygiene holds its triggers.
 const release_file = "release.yml";
 const release_writes = [_][]const u8{ "contents", "id-token", "attestations" };
 /// Names whose values must never reach a log: no echo/printf/cat/tee of them.
@@ -362,7 +361,11 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
             const uses = c.str(c.get(st, "uses"));
             const farm_connect = std.mem.eql(u8, base, farm_file) and uses != null and pinned(uses.?, "komira-ai/komira/.github/actions/farm-connect");
             if (uses) |u| {
-                if (!farm_connect and !ownedActionPinned(u)) {
+                // release.yml signs with Sigstore's installer (not GitHub-owned), pinned by commit like the rest.
+                const cosign_installer = std.mem.eql(u8, base, release_file) and pinned(u, "sigstore/cosign-installer");
+                // ... and so is the action that mints the release bot's App token (release_lint.zig holds that only the bump job uses it).
+                const app_token = std.mem.eql(u8, base, release_file) and pinned(u, "actions/create-github-app-token");
+                if (!farm_connect and !cosign_installer and !app_token and !ownedActionPinned(u)) {
                     try c.problem(a, out, prefix ++ "{s}: {s} step {d}: only GitHub-owned actions pinned by full SHA are allowed: {s}", .{ f, jn, i, u });
                 }
             }
@@ -414,9 +417,14 @@ fn sortedKeys(a: Allocator, v: ?Value) ![]const []const u8 {
     return s;
 }
 
-/// The checks workflow_lint.rb runs only without path arguments. The workflows
+/// The checks that run only without path arguments. The workflows
 /// are read by name through `read` (the repository's .github/workflows).
 pub fn repoProblems(a: Allocator, ctx: anytype, out: *Out) !void {
+    // release.yml: who may write, what each stage needs, the triggers and the path filter.
+    try rl.problems(a, try ctx.read(a, "release.yml"), out);
+    try rl.userBetaProblems(a, try ctx.read(a, "release-beta-user.yml"), out);
+    try rl.buildDebProblems(a, try ctx.read(a, "release-build.yml"), out);
+
     // promote.yml
     {
         const pdoc = c.load(a, try ctx.read(a, "promote.yml")) catch |err| return c.problem(a, out, prefix ++ "promote.yml: not readable as YAML: {s}", .{@errorName(err)});

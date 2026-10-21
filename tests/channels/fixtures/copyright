@@ -1,0 +1,4 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: mopm
+Source: https://github.com/komira-ai/mopm
+License: Apache-2.0

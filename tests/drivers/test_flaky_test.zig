@@ -1,7 +1,7 @@
-//! tests/e2e/test_flaky.sh and check_flaky.py in Zig, for the build farm (no
+//! The port of the former tests/e2e/test_flaky.sh and check_flaky.py in Zig, for the build farm (no
 //! shell, no Python): `mopm test --retries`, `--deny-flaky` and the name
-//! filters against the real Mojo toolchain (komira's pinned 1.0.0). The shell
-//! and Python files stay for ci.yml and are superseded by //:flaky.
+//! filters against the real Mojo toolchain (komira's pinned 1.0.0). They replace
+//! tests/e2e/test_flaky.sh and check_flaky.py (deleted); the check is //:flaky.
 //!
 //! tests/e2e/flaky is a package. Its tests/test_flaky.mojo tests count their
 //! own attempts in target/flaky-state/ under the directory mopm test runs in

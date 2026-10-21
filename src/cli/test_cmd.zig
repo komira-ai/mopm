@@ -9,7 +9,8 @@
 //!       a file is a test file as given; default "."), then build every file
 //!       that has tests with the `mojo build` command line `mopm build` uses
 //!       (core/autolink.zig: same environment, same native link arguments),
-//!       plus `-D ASSERT=all --optimization-level 1`. A bare file is built
+//!       plus `-D ASSERT=all --optimization-level 1` and `-I <root>/src` (the package's own sources,
+//!       which its tests import by name). A bare file is built
 //!       through its generated harness, target/mopm/gen/<hash>/<name>.mojo;
 //!       the binary is target/mopm/bin/<hash>/<stem>. Each binary's
 //!       `--skip-all` listing is compared with the scan as in --check. Then
@@ -322,10 +323,23 @@ fn run(arena: std.mem.Allocator, args: []const []const u8) !u8 {
     }
 
     const opt_level = o.opt_level orelse 1;
-    const flags = [_][]const u8{ "-D", "ASSERT=all", "--optimization-level", try std.fmt.allocPrint(arena, "{d}", .{opt_level}) };
+    var flag_list = std.ArrayList([]const u8).init(arena);
+    try flag_list.appendSlice(&.{ "-D", "ASSERT=all", "--optimization-level", try std.fmt.allocPrint(arena, "{d}", .{opt_level}) });
+    // A package's tests import the package by name (`from my_pkg import f`, as `mopm new` writes them): its
+    // sources are on the import path. The package root is each directory given, or the current one for a file.
+    for (o.paths.items) |p| {
+        const st = std.fs.cwd().statFile(p) catch continue;
+        const src_dir = try std.fs.path.join(arena, &.{ if (st.kind == .directory) p else ".", "src" });
+        const src_st = std.fs.cwd().statFile(src_dir) catch continue;
+        if (src_st.kind != .directory) continue;
+        var seen = false;
+        for (flag_list.items) |f| seen = seen or std.mem.eql(u8, f, src_dir);
+        if (!seen) try flag_list.appendSlice(&.{ "-I", src_dir });
+    }
+    const flags = flag_list.items;
     for (plans.items) |*plan| {
         if (plan.runs == 0) continue;
-        const bin = (try buildFile(arena, tc.?, plan.s.f, plan.s.src, plan.s.sc, &flags)) orelse {
+        const bin = (try buildFile(arena, tc.?, plan.s.f, plan.s.src, plan.s.sc, flags)) orelse {
             failed = true;
             plan.state = .compile_error;
             continue;

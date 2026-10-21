@@ -1,0 +1,15 @@
+{
+  "lock_version": 2,
+  "mojo": [
+    "1.0.0"
+  ],
+  "toolchain": {
+    "1.0.0": {
+      "linux-64": "<sha256>"
+    }
+  },
+  "channels": [
+    "https://conda.mopm.dev/"
+  ],
+  "packages": []
+}

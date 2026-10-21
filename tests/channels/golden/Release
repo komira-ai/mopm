@@ -1,0 +1,13 @@
+Origin: mopm
+Label: mopm
+Suite: stable
+Codename: stable
+Date: Tue, 14 Nov 2023 22:13:20 UTC
+Architectures: amd64 arm64
+Components: main
+Description: mopm packages
+SHA256:
+ d1f978aeda0b76f824188dfb20bdd3e68e14aa6da881802b71ff8f5683de18cd 872 main/binary-amd64/Packages
+ 2c5823966b1fbf6567218daacbc147ac986061884693be9acfdb4762c7124b04 387 main/binary-amd64/Packages.gz
+ efb3b66905a4ee82ae9665fb2d539ab99b0b98ff129659b069926031e17cc800 436 main/binary-arm64/Packages
+ 5148d13be11f633b940da42495073621f65b7e599f7e4d38954d908f83a88a04 327 main/binary-arm64/Packages.gz

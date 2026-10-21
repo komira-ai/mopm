@@ -1,7 +1,7 @@
 //! The registry contract checks, in Zig, shared by the drivers that need
 //! them (contract_test.zig, replay_test.zig, lock_golden_test.zig,
-//! resolve_e2e_test.zig). The port of the library half of
-//! tests/contract/validate.py: what an API case must satisfy (`caseProblems`),
+//! resolve_e2e_test.zig). The library half of
+//! the contract checks: what an API case must satisfy (`caseProblems`),
 //! the rules of a lock that JSON Schema cannot express (`lockProblems`), the
 //! rules of an index file (`indexProblems`). The schema checks themselves are
 //! jsonschema.zig's.

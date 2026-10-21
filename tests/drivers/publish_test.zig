@@ -1,7 +1,7 @@
 //! End-to-end tests of `mopm pack` and `mopm publish`: the Zig port of
-//! tests/registry_e2e/publish.py (superseded by this file).
+//! tests/registry_e2e/publish.py (deleted with this port).
 //!
-//! Run by Buck2 (//tests/registry_e2e:publish): MOPM and MOPM_FAKE_REGISTRY are
+//! Run by Buck2 (//:registry_publish): MOPM and MOPM_FAKE_REGISTRY are
 //! the built programs. Each check prints `ok` or `FAIL`.
 //!
 //! What can go red, and why:

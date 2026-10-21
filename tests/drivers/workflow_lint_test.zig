@@ -1,8 +1,7 @@
-//! //:workflows: .github/scripts/workflow_lint.rb in Zig
+//! //:workflows: the workflow lint
 //! (tests/drivers/workflow_lint.zig), run by Buck2 over the repository's
 //! workflows, and shown able to fail: each rule has a planted defect that must
-//! be flagged, with the message the Ruby gives. workflow_lint.rb stays for
-//! ci.yml until farm.yml has matched it, and is superseded by this file.
+//! be flagged, with its message.
 //!
 //! The syntax check of `run:` scripts is a stand-in for `bash -n` (the farm has
 //! no bash); the scripts it accepts and refuses are listed below, the gaps too.
@@ -324,6 +323,18 @@ test "only local workflows are called, only GitHub-owned actions pinned by SHA a
     try c.expectLines("farm other", try lint(a, "farm.yml", other), &.{"only GitHub-owned actions pinned by full SHA"});
 }
 
+test "actions/create-github-app-token is for release.yml alone, pinned by commit" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const pinned_use = try std.fmt.allocPrint(a, "{s}{s}    steps:\n      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1\n", .{ head, job_head });
+    try c.expectLines("release.yml", try lint(a, "release.yml", pinned_use), &.{});
+    // Mutants: another workflow, and a tag instead of a commit.
+    try c.expectLines("ci.yml", try lint(a, "ci.yml", pinned_use), &.{"only GitHub-owned actions pinned by full SHA"});
+    const tagged = try std.fmt.allocPrint(a, "{s}{s}    steps:\n      - uses: actions/create-github-app-token@v3\n", .{ head, job_head });
+    try c.expectLines("release.yml tag", try lint(a, "release.yml", tagged), &.{"only GitHub-owned actions pinned by full SHA"});
+}
+
 // ---- run scripts ------------------------------------------------------------------------
 
 fn withRun(a: Allocator, script: []const u8) ![]u8 {
@@ -526,7 +537,7 @@ test "scripts bash refuses, the scanner refuses" {
     try expectRefused("if true; then\n  echo \"a\n  echo b\nfi", "matching `\"'");
 }
 
-test "what bash refuses and the scanner does not (the gaps; ruby -n stays in ci.yml for them)" {
+test "what bash refuses and the scanner does not (the gaps; gaps of a farm with no bash)" {
     try std.testing.expect(try syntaxOk("if true; then fi"));
     try std.testing.expect(try syntaxOk("echo a &&"));
     try std.testing.expect(try syntaxOk("echo a |"));

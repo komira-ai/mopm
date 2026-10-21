@@ -1,0 +1,53 @@
+# The repository's own lints, on a GitHub-hosted runner for every pull request (forks
+# included) and for every push to main. They are the Zig tests behind the Buck2 targets
+# //:hygiene, //:workflows and //:lint_selftest (plus //:actionlint, the pinned actionlint over every workflow), run here with the Zig ci.yml installs.
+# This job holds no secret, no id-token and a read-only token, so a fork's pull request
+# gets the same check as a branch of this repository; farm.yml runs the same targets on
+# the farm when it is configured, but is neither required nor run for a fork.
+# Without BUILDRULES_TEST_WORK the lints read the files git tracks in the checkout.
+name: lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+  # release.yml runs this workflow again on the pushed commit as its `lint` stage (the release lint included).
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: lint (hygiene, workflows, self-test)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: hygiene (secret and identifier patterns over every tracked file, id-token and trigger rules)
+        run: zig test tests/drivers/hygiene_test.zig
+      - name: workflow lint (the rules every workflow must keep)
+        if: ${{ !cancelled() }}
+        run: zig test tests/drivers/workflow_lint_test.zig
+      - name: lint self-test (each rule goes red on its planted fixture)
+        if: ${{ !cancelled() }}
+        run: zig test tests/drivers/lint_selftest_test.zig
+      - name: release pipeline lint (scopes, stage order, path filter; each rule goes red on a planted mutant)
+        if: ${{ !cancelled() }}
+        run: zig test tests/drivers/release_lint_test.zig
+      - name: actionlint (strict YAML parse and workflow check of every workflow; the pinned release, sha256-verified)
+        if: ${{ !cancelled() }}
+        run: |
+          al="$(zig run tools/install_actionlint.zig -- "$RUNNER_TEMP/actionlint")"
+          "$al" -no-color -shellcheck= -pyflakes= .github/workflows/*.yml

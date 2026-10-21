@@ -253,7 +253,7 @@ test "golden files: link-plan, metadata, new and init, build, run, repl, test --
     try c.cmd("test: no tests at all, --allow-empty", g ++ "/empty.txt", 0, &.{ "test", "--allow-empty", "tests/discovery/none.mojo" }, .{});
     try c.cmd("test --list: a path that does not exist", g ++ "/missing.txt", 2, &.{ "test", "--list", "tests/discovery/no_such_dir" }, .{});
 
-    // Selection over the fixture package of tests/e2e/test_flaky.sh.
+    // Selection over the fixture package of tests/drivers/test_flaky_test.zig.
     const fx = "tests/e2e/flaky";
     const fxt = fx ++ "/tests";
     try c.cmd("test --list: no filter (the ignored test is not listed)", g ++ "/filter_none.txt", 0, &.{ "test", "--list", fx }, .{});
@@ -270,7 +270,7 @@ test "golden files: link-plan, metadata, new and init, build, run, repl, test --
 
     {
         const v = try h.run(a, try c.mopmArgv(&.{"--version"}), &base, .{ .capture = .stdout });
-        rep.check("--version", std.mem.eql(u8, h.chomp(v.text), "mopm 0.0.1"), v.text);
+        rep.check("--version", std.mem.eql(u8, h.chomp(v.text), "mopm 0.0.1+dev"), v.text);
         // A planned command exits non-zero and says it is not implemented.
         const p = try h.run(a, try c.mopmArgv(&.{"cov"}), &base, .{});
         rep.check("planned command should exit non-zero", p.signaled or p.code != 0, "exit 0");

@@ -58,7 +58,7 @@ with. It does not duplicate package metadata; that stays in the installed
 
 ## Rules the schema cannot express
 
-`tests/contract/validate.py` checks these on the example locks. The CLI must
+`//:contract` (`tests/drivers/contract.zig`) checks these on the example locks. The CLI must
 check them on every read. A violation is an error, not a warning.
 
 1. `packages` is sorted by `name`, then `version`, then `subdir` (each compared

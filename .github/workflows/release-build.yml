@@ -1,58 +1,36 @@
 name: release-build
 
-# Builds and packages the mopm CLI for the four release targets, and uploads the tarballs as
-# workflow artifacts. Called by release.yml (a pushed v* tag, which then publishes them) and by
-# release-check.yml (a pull request touching the release files, which publishes nothing). It holds
-# no write permission and no credential: it cannot create a release.
+# Builds and packages the mopm CLI for the three release targets (and a .deb for each linux one), and uploads the files as
+# workflow artifacts. Called by release.yml (a push to main that tagged a version, which then
+# attests, verifies and publishes them). It never runs on a pull request. It holds no write permission and no credential: it
+# cannot create a release.
 #
-# tag: the pushed tag (v1.2.3); each binary must report exactly that version, or the job fails.
-# Empty: a dry run, which expects the version in src/cli/main.zig.
+# version: the version to build (1.2.3, no leading v), passed to `zig build -Dversion=`; each binary
+# must report exactly that version, or the job fails.
 
 on:
   workflow_call:
     inputs:
-      tag:
-        description: "The release tag (v1.2.3), or empty for a dry run"
+      version:
+        description: "The version to build (1.2.3)"
         type: string
-        default: ""
+        required: true
 
 permissions:
   contents: read
 
 jobs:
-  version:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    outputs:
-      version: ${{ steps.v.outputs.version }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install Zig 0.12.0 (sha256-pinned)
-        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
-      - name: The version to package (a tag must name the version in src/cli/main.zig)
-        id: v
-        env:
-          TAG: ${{ inputs.tag }}
-        run: |
-          zig build-exe tools/release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/release"
-          echo "version=$("$RUNNER_TEMP/release" version "$TAG")" >> "$GITHUB_OUTPUT"
-
   package:
     name: package (${{ matrix.target }})
-    needs: version
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { target: linux-x86_64, zig_target: x86_64-linux-musl, os: ubuntu-24.04, run_prefix: "" }
-          - { target: linux-aarch64, zig_target: aarch64-linux-musl, os: ubuntu-24.04-arm, run_prefix: "" }
-          - { target: macos-arm64, zig_target: aarch64-macos, os: macos-14, run_prefix: "" }
-          # Built on the arm64 runner and run there under Rosetta.
-          - { target: macos-x86_64, zig_target: x86_64-macos, os: macos-14, run_prefix: "arch -x86_64" }
+          - { target: linux-x86_64, zig_target: x86_64-linux-musl, os: ubuntu-24.04, deb_arch: amd64 }
+          - { target: linux-aarch64, zig_target: aarch64-linux-musl, os: ubuntu-24.04-arm, deb_arch: arm64 }
+          - { target: macos-arm64, zig_target: aarch64-macos, os: macos-14, deb_arch: "" }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -63,14 +41,47 @@ jobs:
         run: zig build-exe tools/release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/release"
       - name: Build (ReleaseSafe, stripped), check mopm --version, package
         env:
-          VERSION: ${{ needs.version.outputs.version }}
+          VERSION: ${{ inputs.version }}
           TARGET: ${{ matrix.target }}
           ZIG_TARGET: ${{ matrix.zig_target }}
-          RUN_PREFIX: ${{ matrix.run_prefix }}
-        run: '"$RUNNER_TEMP/release" package "$VERSION" "$TARGET" "$ZIG_TARGET" "$RUNNER_TEMP/out" --run-prefix "$RUN_PREFIX"'
+        run: '"$RUNNER_TEMP/release" package "$VERSION" "$TARGET" "$ZIG_TARGET" "$RUNNER_TEMP/out"'
+      # The linux targets also ship a .deb. It is made from the binary INSIDE the tarball just packaged (unpacked here), so the
+      # .deb and the tarball carry the same bytes by construction; release.zig tested and cut_release verify-dir rebuild it
+      # from the tarball later and refuse any other bytes. tools/channels deb-package is the one place a .deb is written.
+      - name: Build the channels tool (tools/channels)
+        if: matrix.deb_arch != ''
+        run: zig build-exe tools/channels/main.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/channels"
+      - name: Package the binary of the tarball as mopm_<version>_<arch>.deb
+        if: matrix.deb_arch != ''
+        env:
+          VERSION: ${{ inputs.version }}
+          TARGET: ${{ matrix.target }}
+          DEB_ARCH: ${{ matrix.deb_arch }}
+        run: |
+          tar -xzf "$RUNNER_TEMP/out/mopm-$VERSION-$TARGET.tar.gz" -C "$RUNNER_TEMP" "mopm-$VERSION-$TARGET/mopm"
+          "$RUNNER_TEMP/channels" deb-package --binary "$RUNNER_TEMP/mopm-$VERSION-$TARGET/mopm" --name mopm --version "$VERSION" --arch "$DEB_ARCH" --packaging packaging/deb --out "$RUNNER_TEMP/out/mopm_${VERSION}_${DEB_ARCH}.deb"
+      # The .debs as built: dpkg reads them and lintian finds no error. Lintian runs on the real files (the real static binary), so its override is
+      # exercised, and a missing changelog, a copyright that does not point at the common license, or an empty long description goes red
+      # here, before a release carries it.
+      - name: Install lintian
+        if: matrix.deb_arch != ''
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lintian
+      - name: dpkg-deb reads the .deb (control and contents)
+        if: matrix.deb_arch != ''
+        run: |
+          for deb in "$RUNNER_TEMP"/out/*.deb; do
+            dpkg-deb --info "$deb"
+            dpkg-deb --contents "$deb"
+          done
+      - name: lintian, every tag printed, an error fails
+        if: matrix.deb_arch != ''
+        run: lintian --version && lintian --fail-on error --tag-display-limit 0 "$RUNNER_TEMP"/out/*.deb
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ matrix.target }}
-          path: ${{ runner.temp }}/out/*.tar.gz
+          path: |
+            ${{ runner.temp }}/out/*.tar.gz
+            ${{ runner.temp }}/out/*.deb
           if-no-files-found: error
           retention-days: 7
+          overwrite: true

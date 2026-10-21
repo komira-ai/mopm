@@ -12,10 +12,14 @@ on:
     branches: [main]
     paths:
       - 'service/**'
-      # The site build the site stack deploys, and the two docs it renders into pages.
+      # The site build the site stack deploys, and the docs it renders into pages.
       - 'site/**'
       - 'spec/mopm-toml.md'
       - 'docs/mopm-test.md'
+      - 'docs/why-and-design.md'
+      - 'docs/getting-started.md'
+      - 'docs/configuration.md'
+      - 'docs/examples.md'
       - '.github/workflows/promote.yml'
       - '.github/workflows/deploy.yml'
       - '.github/workflows/e2e.yml'

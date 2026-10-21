@@ -330,7 +330,7 @@ for tools that know them.
 
 | limit | value |
 |---|---|
-| `mopm-api.json` | 4 MiB (archives store zstd raw blocks, so four subdirs cost at most 16 MiB of the 100 MB file limit) |
+| `mopm-api.json` | 4 MiB (archives store zstd raw blocks, so four subdirs cost at most 16 MiB of the 100 MB package limit) |
 | served form | 8 MiB; over it, the registry refuses the publish with `api_doc_too_large` and the publisher republishes with fewer symbols or `--docs off` |
 | symbols plus overloads | 5,000 |
 | docstring per symbol | 32 KiB |

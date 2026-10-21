@@ -12,7 +12,8 @@ const install_cmd = @import("install_cmd.zig");
 const plan_cmd = @import("plan_cmd.zig");
 const unit_cmd = @import("unit_cmd.zig");
 
-pub const version = "0.0.1";
+/// The release version, from the build (`zig build -Dversion=`; the dev default in build_options.zig).
+pub const version = @import("build_options").version;
 
 const planned = [_][]const u8{
     "cov", "check", "export", "launch",

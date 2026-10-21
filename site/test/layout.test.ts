@@ -1,13 +1,15 @@
 // T15: every built page is a complete, accessible document with nothing inline: lang, a title, exactly one h1, a skip
 // link to <main id="main">, the header, nav, main and footer landmarks, and no inline script, style or event handler.
 // And the home page says only what the repository says: README.md's opening sentence word for word, its list of the
-// commands that work today, src/cli/main.zig's planned commands, and a quickstart of working commands only.
+// commands that work today, src/cli/main.zig's planned commands, and a quickstart of working commands only. And its
+// install story is the installer's and the release's: the command, the targets, the asset names, the verification
+// commands and the version series are held to site/static/install.sh, README.md and VERSION.
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { TAGS } from '../src/doc';
 import { DOC_PAGES } from '../src/links';
 import { tagsIn } from '../tools/check-dist';
-import { OPENING_SENTENCE, PLANNED, WORKING_TODAY } from '../tools/pages';
+import { ASSET_PATTERN, INSTALL_COMMAND, OPENING_SENTENCE, PLANNED, RELEASE_SERIES, TARGETS, VERIFY, WORKING_TODAY } from '../tools/pages';
 import { cleanup, type Fixture, fixture, REPO_ROOT } from './build-fixture';
 
 let f: Fixture;
@@ -41,11 +43,15 @@ function byId(html: string, id: string): string {
   return html.slice(start, html.indexOf(`</${m[1]}>`, start));
 }
 
-test('the six pages are built', () => {
-  expect(pages.sort()).toEqual(['404.html', 'app.html', 'docs/index.html', 'docs/mopm-test/index.html', 'docs/mopm-toml/index.html', 'index.html']);
+// The pages the build writes: the home page, the 404, the app shell, the docs index and one page per doc.
+const DOC_HTML = ['docs/why/index.html', 'docs/getting-started/index.html', 'docs/configuration/index.html', 'docs/examples/index.html', 'docs/mopm-toml/index.html', 'docs/mopm-test/index.html'];
+const ALL_PAGES = ['404.html', 'app.html', 'docs/index.html', ...DOC_HTML, 'index.html'];
+
+test('the ten pages are built', () => {
+  expect([...pages].sort()).toEqual([...ALL_PAGES].sort());
 });
 
-describe.each(['404.html', 'app.html', 'docs/index.html', 'docs/mopm-test/index.html', 'docs/mopm-toml/index.html', 'index.html'])('%s', (page) => {
+describe.each(ALL_PAGES)('%s', (page) => {
   let html: string;
   let tags: ReturnType<typeof tagsIn>;
   beforeAll(() => {
@@ -92,8 +98,8 @@ describe.each(['404.html', 'app.html', 'docs/index.html', 'docs/mopm-test/index.
       expect(b).not.toContain('<button');
     }
     if (page === 'index.html') expect(boxes.length).toBeGreaterThanOrEqual(3);
-    // Every docs code block is a copy box (both published docs have code). Mutant: the renderer's docs option off.
-    if (/^docs\/mopm-/.test(page)) {
+    // Every docs code block is a copy box (every published doc has code). Mutant: the renderer's docs option off.
+    if (DOC_HTML.includes(page)) {
       expect(boxes.length).toBeGreaterThanOrEqual(1);
       expect(boxes.length).toBe(html.split('<pre ').length - 1);
     }
@@ -163,6 +169,10 @@ describe('the docs pages', () => {
   const firstHeading = (source: string) => (/^# +(.+)$/m.exec(readFileSync(join(REPO_ROOT, source), 'utf8')) as RegExpExecArray)[1].replace(/`/g, '');
 
   test.each([
+    ['docs/why/index.html', 'docs/why-and-design.md'],
+    ['docs/getting-started/index.html', 'docs/getting-started.md'],
+    ['docs/configuration/index.html', 'docs/configuration.md'],
+    ['docs/examples/index.html', 'docs/examples.md'],
     ['docs/mopm-toml/index.html', 'spec/mopm-toml.md'],
     ['docs/mopm-test/index.html', 'docs/mopm-test.md'],
   ])('%s: the title is the first heading of %s, and the Source link is that file on GitHub', (page, source) => {
@@ -183,13 +193,17 @@ describe('the docs pages', () => {
   // of the doc's title, or the index entry not reading 'Overview'.
   test.each([
     ['docs/index.html', '/docs/'],
+    ['docs/why/index.html', '/docs/why/'],
+    ['docs/getting-started/index.html', '/docs/getting-started/'],
+    ['docs/configuration/index.html', '/docs/configuration/'],
+    ['docs/examples/index.html', '/docs/examples/'],
     ['docs/mopm-toml/index.html', '/docs/mopm-toml/'],
     ['docs/mopm-test/index.html', '/docs/mopm-test/'],
   ])('%s: the docs nav lists every docs page and marks this one', (page, self) => {
     const html = read(page);
     const nav = html.slice(html.indexOf('<nav class="docs-nav" aria-label="Docs pages">'));
     const list = nav.slice(0, nav.indexOf('</nav>'));
-    expect([...list.matchAll(/<a href="([^"]+)"/g)].map((m) => m[1])).toEqual(['/docs/', '/docs/mopm-toml/', '/docs/mopm-test/']);
+    expect([...list.matchAll(/<a href="([^"]+)"/g)].map((m) => m[1])).toEqual(['/docs/', '/docs/why/', '/docs/getting-started/', '/docs/configuration/', '/docs/examples/', '/docs/mopm-toml/', '/docs/mopm-test/']);
     expect([...list.matchAll(/<a href="([^"]+)" aria-current="page">/g)].map((m) => m[1])).toEqual([self]);
     // Each doc's title read here from its source's first '# ' heading, not through docTitle.
     const titles = DOC_PAGES.map((d) => {
@@ -205,7 +219,7 @@ describe('the docs pages', () => {
   // The on-this-page list holds the page's h2 and h3 headings, in order, each linked to its own id and reading as the
   // heading reads. Mutants: a link to an id the page does not have (a prefix lost); h4 headings listed; the list out of
   // order; a link reading as the id ('doc-retries-and-flaky') instead of the heading's text.
-  test.each(['docs/mopm-toml/index.html', 'docs/mopm-test/index.html'])('%s: the on-this-page list is the h2 and h3 headings, in order, by their text', (page) => {
+  test.each(DOC_HTML)('%s: the on-this-page list is the h2 and h3 headings, in order, by their text', (page) => {
     const html = read(page);
     const toc = html.slice(html.indexOf('<nav class="toc" aria-label="On this page">'));
     const links = [...toc.slice(0, toc.indexOf('</nav>')).matchAll(/<li class="toc-([23])"><a href="#([^"]+)">([^<]*)<\/a>/g)].map((m) => [`h${m[1]}`, m[2], textOf(m[3])]);
@@ -218,7 +232,7 @@ describe('the docs pages', () => {
   // Below the widest layout the on-this-page list is not a side column but a block between the breadcrumb and the
   // article, so a phone reader gets it too (docs.css shows it at every width). Mutant: the toc after the article (it
   // would sit under a long page on a phone).
-  test.each(['docs/mopm-toml/index.html', 'docs/mopm-test/index.html'])('%s: the on-this-page list comes after the breadcrumb and before the article', (page) => {
+  test.each(DOC_HTML)('%s: the on-this-page list comes after the breadcrumb and before the article', (page) => {
     const html = read(page);
     const crumb = html.indexOf('<nav class="crumb" aria-label="Breadcrumb">');
     const toc = html.indexOf('<nav class="toc" aria-label="On this page">');
@@ -230,7 +244,7 @@ describe('the docs pages', () => {
 
   // Each heading of a doc is a link to its own anchor, so a reader can copy a section's address. Mutant: the anchor
   // pointing at another id; a heading holding a link getting an anchor around it (a link in a link).
-  test.each(['docs/mopm-toml/index.html', 'docs/mopm-test/index.html'])('%s: every heading links to its own anchor', (page) => {
+  test.each(DOC_HTML)('%s: every heading links to its own anchor', (page) => {
     const html = read(page);
     const heads = [...html.matchAll(/<(h[1-6]) id="(doc-[^"]+)">([\s\S]*?)<\/\1>/g)];
     expect(heads.length).toBeGreaterThan(2);
@@ -246,6 +260,30 @@ describe('the docs pages', () => {
     expect(index).toContain('mopm test finds the tests of a Mojo package, builds each test file once, and runs every test in a process of its own under a supervisor.');
     expect(index).not.toContain('test_cmd.zig');
     expect(index).toContain('mopm.toml sits at the root of a package.');
+    // The two new docs, by their first sentences. Mutant: a doc whose summary is not its first paragraph.
+    expect(index).toContain('This is part one of the mopm documentation: the reasons and the design.');
+    expect(index).toContain('This is part two of the mopm documentation: how to install it and use it.');
+    // The HOW part continues with the reference and the examples, by their first sentences.
+    expect(index).toContain('This page lists every setting mopm reads, in mopm.toml, in mopm.lock and in the configuration of the user, with its type, its default, the values it allows and an example.');
+    expect(index).toContain('This page walks through six complete examples, from a library with a test to a package that pins its compiler, and every file in them is quoted from the examples/ directory of the repository.');
+  });
+
+  // The two parts of the plan: WHY and design first, then HOW. Mutant: the docs in another order, or the second part
+  // not linking back to the first (and the first forward).
+  test('the why page links forward to getting started and the getting-started page back to why, on the site', () => {
+    expect(read('docs/why/index.html')).toContain('<a href="/docs/getting-started/">getting-started.md</a>');
+    expect(read('docs/getting-started/index.html')).toContain('<a href="/docs/why/">why-and-design.md</a>');
+    expect(DOC_PAGES.slice(0, 2).map((d) => d.slug)).toEqual(['why', 'getting-started']);
+  });
+
+  // Every thing a doc says is not built is marked planned, as the home page marks its planned commands: the two new docs
+  // name each planned command of src/cli/main.zig as planned and none as working. Mutant: a planned command shown in a
+  // working example.
+  test.each(['docs/why-and-design.md', 'docs/getting-started.md'])('%s never shows a planned command as one that works', (source) => {
+    const md = readFileSync(join(REPO_ROOT, source), 'utf8');
+    const fenced = [...md.matchAll(/```[a-z]*\n([\s\S]*?)```/g)].map((m) => m[1]).join('\n');
+    for (const cmd of PLANNED) expect(fenced).not.toMatch(new RegExp(`^\\s*mopm ${cmd}\\b`, 'm'));
+    expect(md).toContain('**planned**');
   });
 });
 
@@ -354,28 +392,139 @@ describe('the home page says what the repository says', () => {
     }
   });
 
-  // No installer exists (no curl | sh, no release binaries): the page must not show one as working.
-  test('the working install is the build from source; the one-line installer is marked planned and never shown', () => {
-    const home = read('index.html');
-    expect(home).not.toMatch(/curl|install\.sh|\|\s*sh\b/);
-    // The planned installer is a plain line people can read (not a tab that looks clickable and does nothing).
-    expect(textOf(byId(home, 'installer-planned'))).toBe('One-line installer: planned');
-    expect(home).toContain('<p class="installer-planned" id="installer-planned">');
-    expect(home).not.toContain('class="seg');
-    expect(home).toContain('<p class="install-label"><strong>Install the mopm CLI</strong> from source</p>');
-    expect(textOf(byId(home, 'build'))).toMatch(/^There are no release binaries yet, and no one-line installer: build from source with Zig 0\.12\.0/);
-    expect(home).toContain('aria-label="build from source commands"><code>git clone https://github.com/komira-ai/mopm\ncd mopm\nzig build');
+  // The commands that work today are the ones main.zig dispatches, both ways. Mutants: a command added to main.zig's
+  // dispatch (or removed from its usage) without the README and this page following.
+  test("the working commands are the ones main.zig's usage lists and its dispatch handles", () => {
+    const zig = readFileSync(join(REPO_ROOT, 'src', 'cli', 'main.zig'), 'utf8');
+    const usage = zig.slice(zig.indexOf('working today:'), zig.indexOf('planned (not implemented yet)'));
+    expect(usage.length).toBeGreaterThan(500);
+    for (const c of WORKING_TODAY) expect(usage).toMatch(new RegExp(`(?:^|[^a-z-])${c}(?![a-z-])`, 'm'));
+    const help = new Set(['-h', '--help', 'help']);
+    const dispatched = [...zig.matchAll(/std\.mem\.eql\(u8, cmd, "(-?-?[A-Za-z-]+)"\)/g)].map((m) => m[1]).filter((c) => !help.has(c) && c !== '-V');
+    expect(dispatched.length).toBeGreaterThan(15);
+    for (const c of dispatched) expect(WORKING_TODAY).toContain(c);
+    // build, run and repl are dispatched through mojo_cmd.Tool, not by name.
+    for (const c of ['build', 'run', 'repl']) expect(WORKING_TODAY).toContain(c);
+  });
+
+  // The install story. Each fact is held to the file that makes it true, not to a second copy of the words:
+  // site/static/install.sh (the command, the targets, the asset names, the verification commands), README.md (the
+  // command again) and VERSION (the series). Mutants are named at each test.
+  describe('the install story', () => {
+    const installSh = readFileSync(join(REPO_ROOT, 'site', 'static', 'install.sh'), 'utf8');
+    const installHeader = installSh.split('\n').filter((l) => l.startsWith('#'));
+    const readmeInstall = readme.slice(readme.indexOf('\n## Install'), readme.indexOf('\n## Goals'));
+    const oneLine = (s: string) => s.replace(/\\\n/g, ' ').replace(/\s+/g, ' ').trim();
+
+    // Mutant: the page's command with another host, another flag, or no `| sh`; README.md and install.sh's header
+    // changed without the page.
+    test("the install command is README.md's and install.sh's, shown first in a copy box", () => {
+      const home = read('index.html');
+      const readmeCmd = /```sh\n([^\n]*)\n```/.exec(readmeInstall)?.[1];
+      const headerCmd = installHeader.find((l) => /^#\s+curl\b/.test(l))?.replace(/^#\s+/, '');
+      expect(readmeCmd).toBe(INSTALL_COMMAND);
+      expect(headerCmd).toBe(INSTALL_COMMAND);
+      expect(home).toContain('<p class="install-label"><strong>Install the mopm CLI</strong> with one command</p>');
+      expect(home).toContain(`aria-label="install command"><code>${INSTALL_COMMAND}</code>`);
+      // It is the first command block on the page.
+      expect(home.indexOf('<pre')).toBe(home.indexOf('<pre tabindex="0" role="region" aria-label="install command">'));
+    });
+
+    // The command fetches https://mopm.dev/install.sh: the build must serve that file, byte for byte.
+    // Mutant: the installer not copied to dist/, or copied changed.
+    test('the build serves /install.sh as the script in site/static', () => {
+      expect(existsSync(join(f.outDir, 'install.sh'))).toBe(true);
+      expect(read('install.sh')).toBe(installSh);
+      expect(installSh.startsWith('#!/bin/sh\n')).toBe(true);
+      expect(INSTALL_COMMAND).toContain('https://mopm.dev/install.sh');
+    });
+
+    // Mutant: a target dropped from or added to the page; the order changed; install.sh gaining a target the page lacks.
+    test("the release targets are install.sh's, in its order, and the page and README.md name exactly them", () => {
+      const fromScript = [...installSh.matchAll(/\btarget=([a-z0-9]+-[a-z0-9_]+) ;;/g)].map((m) => m[1]);
+      expect([...new Set(fromScript)]).toEqual(TARGETS);
+      expect(textOf(byId(read('index.html'), 'release-files'))).toContain(` for ${TARGETS.slice(0, -1).join(', ')} and ${TARGETS.at(-1)}, `);
+      const flatReadme = readme.replace(/\s*\n\s*/g, ' ');
+      const list = `${TARGETS.slice(0, -1).map((t) => `\`${t}\``).join(', ')} and \`${TARGETS.at(-1)}\``;
+      expect(flatReadme).toContain(`for ${list}, and a \`SHA256SUMS\` file`);
+    });
+
+    // Mutant: the page naming the asset another way (mopm_<version>..., a .zip, no version); install.sh renaming the file.
+    test('the asset names are install.sh\'s: mopm-<version>-<target>.tar.gz, SHA256SUMS and a .sigstore.json bundle per file', () => {
+      const name = /\bname=(mopm-\$version-\$target)\n/.exec(installSh)?.[1];
+      expect(name).toBeDefined();
+      expect(/\basset=\$name\.tar\.gz\n/.test(installSh)).toBe(true);
+      expect(`${name}.tar.gz`.replace('$version', '<version>').replace('$target', '<target>')).toBe(ASSET_PATTERN);
+      expect(installSh).toContain('SHA256SUMS');
+      expect(installHeader.join('\n')).toContain('F.sigstore.json');
+      const files = textOf(byId(read('index.html'), 'release-files'));
+      expect(files).toContain(` lists ${ASSET_PATTERN} for `);
+      expect(files).toContain(', a SHA256SUMS file, and a .sigstore.json signature bundle for each of those files.');
+      expect(oneLine(readme)).toContain(`\`${ASSET_PATTERN}\``);
+    });
+
+    // The page shows the series, never a patch number: a release is cut on every merge, so a patch number written
+    // here would be wrong at the next one. Mutant: 'Versions are 0.0.2'; VERSION bumped (0.1) with the page not.
+    test("the version shown is VERSION's series, with no patch number anywhere on the page", () => {
+      const series = readFileSync(join(REPO_ROOT, 'VERSION'), 'utf8').trim();
+      expect(series).toMatch(/^\d+\.\d+$/);
+      expect(RELEASE_SERIES).toBe(series);
+      const home = read('index.html');
+      expect(textOf(byId(home, 'release-files'))).toContain(` Versions are ${series}.x and are released automatically on every merge; the installer takes the latest.`);
+      // Zig's own pinned version is the only other dotted triple on the page.
+      expect(textOf(home).replace(/Zig 0\.12\.0/g, '')).not.toMatch(/\bv?\d+\.\d+\.\d+\b/);
+    });
+
+    // Mutant: a changed identity, issuer or workflow (a command that verifies nothing, or fails every time); the
+    // commands written differently from install.sh's header, which the release notes repeat.
+    test("the verification commands are install.sh's header: the attestation and the cosign signature", () => {
+      const start = installHeader.findIndex((l) => /^#\s+gh attestation verify F\b/.test(l));
+      const end = installHeader.findIndex((l) => /^#\s+--certificate-oidc-issuer .* F$/.test(l));
+      expect(start).toBeGreaterThan(0);
+      expect(end).toBeGreaterThan(start);
+      const fromScript = oneLine(installHeader.slice(start, end + 1).map((l) => l.replace(/^#\s+/, '')).join('\n'));
+      expect(oneLine(VERIFY)).toBe(fromScript);
+      const home = read('index.html');
+      const shown = /<pre[^>]*aria-label="Verify a download commands"[^>]*><code>([^<]*)<\/code>/.exec(home)?.[1];
+      expect(shown).toBeDefined();
+      expect(oneLine(textOf(shown as string))).toBe(fromScript);
+      expect(fromScript).toContain('--signer-workflow komira-ai/mopm/.github/workflows/release.yml');
+      expect(fromScript).toContain('--certificate-oidc-issuer https://token.actions.githubusercontent.com');
+      expect(textOf(byId(home, 'macos-unsigned'))).toBe('macOS binaries are not signed or notarized by Apple yet.');
+    });
+
+    // No Homebrew tap or apt repository exists: the page says planned, in a plain line, and shows no command for either.
+    // Mutant: `brew install mopm` or `apt install mopm` on the page; the planned tags dropped.
+    test('Homebrew and apt are marked planned and never shown as a command', () => {
+      const home = read('index.html');
+      expect(textOf(byId(home, 'packaging-planned'))).toBe('Homebrew: planned · apt: planned');
+      expect(home).toContain('<p class="installer-planned" id="packaging-planned">');
+      expect(home.match(/class="tag tag-planned"/g)).toHaveLength(2);
+      expect(home).not.toMatch(/brew\s+(?:install|tap)|apt(?:-get)?\s+install/);
+      expect(home).not.toContain('class="seg');
+    });
+
+    // The audit's defect: the page said there were no release binaries and no installer. Mutant: that copy back.
+    test('the old no-installer copy is gone, and build from source is still shown after the install', () => {
+      const home = read('index.html');
+      expect(textOf(home)).not.toMatch(/no release binaries|no one-line installer|One-line installer: planned/);
+      expect(home).not.toContain('id="installer-planned"');
+      expect(textOf(byId(home, 'build'))).toMatch(/^To build from source instead you need Zig 0\.12\.0/);
+      expect(home).toContain('aria-label="build from source commands"><code>git clone https://github.com/komira-ai/mopm\ncd mopm\nzig build');
+      expect(home.indexOf('id="build"')).toBeGreaterThan(home.indexOf(INSTALL_COMMAND));
+      expect(oneLine(readme)).toContain('You need [Zig](https://ziglang.org) 0.12.0');
+    });
   });
 
   // The quickstart's third step is the registry: the command block is pixi's (spec/channel.md); the text names
   // `mopm add`, which main.zig implements, and never calls it planned.
-  test('the three quickstart steps: build, start a package, add one with pixi or mopm add', () => {
+  test('the three quickstart steps: install, start a package, add one with pixi or mopm add', () => {
     const home = read('index.html');
     const steps = home.slice(home.indexOf('<ol class="stepper">'), home.indexOf('</ol>', home.indexOf('<ol class="stepper">')));
     expect(steps.match(/<li>/g)).toHaveLength(3);
-    expect([...steps.matchAll(/<h3>([^<]*)<\/h3>/g)].map((m) => m[1])).toEqual(['Build mopm', 'Start a package', 'Add a package']);
+    expect([...steps.matchAll(/<h3>([^<]*)<\/h3>/g)].map((m) => m[1])).toEqual(['Install mopm', 'Start a package', 'Add a package']);
     const cmds = [...steps.matchAll(/<code>([^<]*)<\/code><\/pre>/g)].map((m) => textOf(m[1]));
-    expect(cmds).toEqual(['zig build', 'mopm new my_package --lib', 'pixi add mojo-<name>']);
+    expect(cmds).toEqual(['mopm --version', 'mopm new my_package --lib', 'pixi add mojo-<name>']);
     expect(PLANNED).not.toContain('add');
     expect(WORKING_TODAY).toContain('add');
     expect(textOf(steps)).toContain('In a mopm project, mopm add <name> adds it to mopm.toml and writes mopm.lock.');

@@ -5,9 +5,12 @@ tooling for [Mojo](https://www.modular.com/mojo) projects, with a package
 registry at [mopm.dev](https://mopm.dev).
 
 **Status: early.** `mopm --version`, `mopm link-plan`, `mopm metadata`,
-`mopm new`, `mopm init`, `mopm build`, `mopm run`, `mopm repl`, `mopm test`, `mopm add` and
-`mopm remove` work today.
-Everything else below is a plan, and the design may change.
+`mopm new`, `mopm init`, `mopm build`, `mopm run`, `mopm repl`, `mopm test`, `mopm login`, `mopm logout`,
+`mopm whoami`, `mopm pack`, `mopm publish`, `mopm lock`, `mopm update`, `mopm tree`, `mopm sync`, `mopm add`,
+`mopm remove`, `mopm plan` and `mopm unit` work today.
+Everything else below is a plan, and the design may change. The documentation is on
+[mopm.dev/docs](https://mopm.dev/docs/): [why mopm and how it is built](docs/why-and-design.md) and
+[getting started](docs/getting-started.md).
 
 ## Install
 
@@ -15,8 +18,8 @@ Everything else below is a plan, and the design may change.
 curl -fsSL https://mopm.dev/install.sh | sh
 ```
 
-The installer needs only `curl`, `tar` and `sha256sum` (or `shasum`). It downloads the release for
-your machine (Linux or macOS, x86_64 or arm64) from
+The installer needs only `curl`, `tar`, `awk` and `sha256sum` (or `shasum`). It downloads the release for
+your machine (Linux on x86_64 or arm64, or macOS on arm64; there is no Intel Mac release) from
 [GitHub releases](https://github.com/komira-ai/mopm/releases), checks its sha256 against the
 release's `SHA256SUMS`, and installs `~/.mopm/bin/mopm`. It needs no root and edits no shell startup
 file: it prints the `PATH` line to add. `MOPM_VERSION=1.2.3` picks a version and `MOPM_HOME=<dir>`
@@ -24,7 +27,7 @@ a different install directory. The script is [`site/static/install.sh`](site/sta
 read it before you run it.
 
 Or download by hand. Each release lists `mopm-<version>-<target>.tar.gz` for `linux-x86_64`,
-`linux-aarch64`, `macos-arm64` and `macos-x86_64`, and a `SHA256SUMS` file:
+`linux-aarch64` and `macos-arm64`, and a `SHA256SUMS` file:
 
 ```sh
 v=1.2.3 t=linux-x86_64     # your version and target
@@ -50,7 +53,7 @@ repository's release workflow.
    `mojo run -Xlinker` list and the REPL preload list itself, and refuses a
    closure with a missing transitive library or two owners of one library.
 
-## Command tour (planned)
+## Command tour
 
 ```text
 mopm new my_pkg            # create a package with a mopm.toml
@@ -59,8 +62,8 @@ mopm build                 # build, linking native libraries for you
 mopm run                   # mojo run with the right -Xlinker list
 mopm repl                  # mojo repl with natives preloaded
 mopm test                  # run tests
-mopm cov                   # run tests with coverage
 mopm publish               # publish to a registry and mopm.dev
+mopm cov                   # planned: run tests with coverage
 ```
 
 Working today:
@@ -109,9 +112,16 @@ zig build test       # unit tests and golden tests; run from the repository root
 ./buck2 build //:golden  # runs the built CLI against tests/golden (on the build farm)
 ```
 
-CI runs the first two on Linux x86_64, Linux aarch64 and macOS arm64, and there
-also runs `tests/e2e/run.sh` in a pixi environment with the pinned `mojo`
-(`tools/install_pixi.sh`, `tests/e2e/pixi.toml`).
+A pull request runs the unit tier (`zig build` and `zig build test` on Linux x86_64 and Linux aarch64, and the farm build without the beta targets). After the merge (a push to main, which is also the beta stage of the release) CI also runs macOS arm64 and the Mojo end-to-end drivers (`tests/drivers/test_*_test.zig`) natively, in a
+pixi environment with the pinned `mojo` (`tools/install_pixi.sh`, `tests/e2e/pixi.toml`):
+
+```sh
+zig build test-e2e -Dmojo-env=<pixi environment>   # or test-autolink, test-discovery, test-supervisor, test-flaky
+```
+
+The REPL checks run where the environment has `bin/mojo-lldb`. On a push to main the build farm (`farm.yml`) runs
+the same drivers (`//:autolink`, `//:discovery`, `//:supervisor`, `//:flaky`) on Linux x86_64
+against komira's pinned Mojo compiler.
 
 ## License
 

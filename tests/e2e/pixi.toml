@@ -1,4 +1,4 @@
-# The Mojo environment the end-to-end tests run in (tests/e2e/run.sh). CI
+# The Mojo environment the install end-to-end test runs in (tests/install_e2e/run.py). CI
 # copies this file to a temporary directory and runs `pixi install` there with
 # the pinned pixi (tools/install_pixi.sh). mojo and mojo-compiler are pinned to
 # an exact version; pixi checks every download against the channel's sha256.

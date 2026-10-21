@@ -15,8 +15,13 @@
 # `buck-only` on its first line has no counterpart in
 # build.zig and is left out of the parity comparison.
 
-load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_module", "zig_test")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_module")
+# zig_test is the pinned buildrules rule plus the ZigTestInfo that zig_coverage reads (vendor/buildrules_coverage/README.md).
+load("//vendor/buildrules_coverage:zig_test.bzl", "zig_test")
+load("//vendor/buildrules_coverage:zig_cover.bzl", "zig_coverage")
+load("//vendor/buildrules_coverage:tools.bzl", "cov_tools")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
+load("@buildrules//ci:workflow_lint.bzl", "actionlint_check")
 load("//:buildrules.bzl", "cargo_workspace")
 
 # The Rust workspace (Cargo.toml): `:check` (is the generated table what Cargo.toml / Cargo.lock / rust-toolchain.toml say),
@@ -34,7 +39,7 @@ _TOOLS = {
 # The files each root imports by a relative name (all siblings of the root).
 # src/core/toolchain/*.json are embedded (@embedFile) by src/core/unit_graph.zig.
 _CORE_SRCS = glob(["src/core/*.zig"], exclude = ["src/core/mopm_core.zig"]) + glob(["src/core/toolchain/*.json"])
-_CLI_SRCS = glob(["src/cli/*.zig"], exclude = ["src/cli/main.zig"])
+_CLI_SRCS = glob(["src/cli/*.zig"], exclude = ["src/cli/main.zig", "src/cli/build_options.zig"])
 _FAKE_SRCS = glob(["registry/fake/*.zig"], exclude = ["registry/fake/main.zig"])
 
 # A Buck2 glob skips dotfiles: these are named.
@@ -89,11 +94,18 @@ zig_test(
 
 # ---- The CLI -----------------------------------------------------------------
 
+# The version `mopm --version` prints: the dev default (build.zig's -Dversion option replaces it for a release).
+zig_module(
+    name = "build_options",
+    src = "src/cli/build_options.zig",
+    visibility = ["PUBLIC"],
+)
+
 zig_exe(
     name = "mopm",
     src = "src/cli/main.zig",
     imports = _CLI_SRCS,
-    deps = [":mopm_core"],
+    deps = [":mopm_core", ":build_options"],
     unit_tests = [":cli_test"],
     visibility = ["PUBLIC"],
     **_TOOLS
@@ -103,7 +115,7 @@ zig_test(
     name = "cli_test",
     src = "src/cli/main.zig",
     imports = _CLI_SRCS,
-    deps = [":mopm_core"],
+    deps = [":mopm_core", ":build_options"],
     **_TOOLS
 )
 
@@ -185,15 +197,20 @@ zig_test(  # buck-only: mopm pack and publish against the fake registry and a st
     **_TOOLS
 )
 
+# tools/channels' sources, named by a glob so a new file is picked up. The release tools import the .deb writer from there.
+_CHANNELS_SRCS = glob(["tools/channels/*.zig"], exclude = ["tools/channels/channels.zig", "tools/channels/main.zig"])
+
 zig_exe(  # buck-only: tools/release.zig, whose `tarball` and `sums` make the fake release of :cut_release
     name = "release-tool",
     src = "tools/release.zig",
+    imports = ["tools/release_debs.zig"] + _CHANNELS_SRCS,
     **_TOOLS
 )
 
-zig_exe(  # buck-only: tools/cut_release.zig, the maintainer's two release steps (tag, verify)
+zig_exe(  # buck-only: tools/cut_release.zig, the release run's steps (plan, tag, verify-dir, publish) and the read-only verify
     name = "cut-release",
     src = "tools/cut_release.zig",
+    imports = ["tools/bump_internal.zig", "tools/release_debs.zig"] + _CHANNELS_SRCS,
     **_TOOLS
 )
 
@@ -203,15 +220,71 @@ zig_exe(  # buck-only: a `gh` whose answers are files, for :cut_release
     **_TOOLS
 )
 
+zig_exe(  # buck-only: a `cosign` that signs nothing (a bundle names the file's sha256), for :cut_release
+    name = "fake-cosign",
+    src = "tests/drivers/fake_cosign.zig",
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: a `git` whose answers are files, for :bump_internal
+    name = "fake-git",
+    src = "tests/drivers/fake_git.zig",
+    **_TOOLS
+)
+
 zig_test(  # buck-only: cut_release against the fake gh, with planted defects it must refuse
     name = "cut_release",
     src = "tests/drivers/cut_release_test.zig",
+    imports = ["tests/drivers/harness.zig"] + glob(["packaging/deb/*"]),
+    env_tools = {
+        "MOPM_CHANNELS": ":channels",
+        "MOPM_CUT_RELEASE": ":cut-release",
+        "MOPM_FAKE_GH": ":fake-gh",
+        "MOPM_RELEASE_TOOL": ":release-tool",
+        "MOPM_FAKE_COSIGN": ":fake-cosign",
+    },
+    **_TOOLS
+)
+
+zig_test(  # buck-only: cut_release bump-internal against the fake gh and the fake git, with planted defects it must refuse
+    name = "bump_internal",
+    src = "tests/drivers/bump_internal_test.zig",
     imports = ["tests/drivers/harness.zig"],
     env_tools = {
         "MOPM_CUT_RELEASE": ":cut-release",
         "MOPM_FAKE_GH": ":fake-gh",
-        "MOPM_RELEASE_TOOL": ":release-tool",
+        "MOPM_FAKE_GIT": ":fake-git",
     },
+    **_TOOLS
+)
+
+# ---- tools/channels: the .deb, the apt index and the Homebrew formula of a release, byte for byte ----------------------
+# (tools/channels/channels.zig says what each file is. _CHANNELS_SRCS, the sources, is defined above :release-tool, which uses it.)
+
+# What the unit tests and the CLI driver read: the fixtures and the golden files.
+_CHANNELS_DATA = glob(["tests/channels/**"])
+
+zig_test(  # buck-only: the unit tests and the golden files of tools/channels
+    name = "channels_test",
+    src = "tools/channels/channels.zig",
+    imports = _CHANNELS_SRCS + _CHANNELS_DATA,
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: tools/channels/main.zig, not built unless the unit tests and goldens pass
+    name = "channels",
+    src = "tools/channels/main.zig",
+    imports = _CHANNELS_SRCS,
+    unit_tests = [":channels_test"],
+    visibility = ["PUBLIC"],
+    **_TOOLS
+)
+
+zig_test(  # buck-only: the channels CLI end to end: byte-determinism (twice, compare), goldens, and the refusals it must make
+    name = "channels_cli",
+    src = "tests/drivers/channels_cli_test.zig",
+    imports = ["tests/drivers/harness.zig"] + _CHANNELS_DATA + glob(["packaging/deb/*"]),
+    env_tools = {"CHANNELS": ":channels"},
     **_TOOLS
 )
 
@@ -280,6 +353,14 @@ zig_test(  # buck-only: tests/resolve/check_golden.py: the goldens pass the lock
     **_TOOLS
 )
 
+zig_test(  # buck-only: docs/examples.md: the files under examples/ are what mopm reads, writes and refuses
+    name = "examples",
+    src = "tests/drivers/examples_test.zig",
+    imports = ["tests/drivers/harness.zig"] + glob(["examples/**"]),
+    env_tools = {"MOPM": ":mopm"},
+    **_TOOLS
+)
+
 # ---- build.zig and this file name the same build, and the check can go red ----
 
 zig_test(  # buck-only: tools/build_parity.zig reads build.zig and this file
@@ -291,6 +372,7 @@ zig_test(  # buck-only: tools/build_parity.zig reads build.zig and this file
         "src/core/mopm_core.zig",
         "src/core/toml.zig",
         "src/cli/main.zig",
+        "src/cli/build_options.zig",
         "tools/closure_gen.zig",
         "registry/fake/main.zig",
     ],
@@ -338,6 +420,14 @@ _AUTOLINK_DATA = [
     "tests/e2e/repl.stdin",
     "tests/e2e/repl_outer.stdin",
 ]
+zig_test(  # buck-only: the user-level beta walk (tests/drivers/user_beta.zig) in its farm form: no pixi, no installer
+    name = "user_beta",
+    src = "tests/drivers/user_beta_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig", "tests/drivers/user_beta.zig"],
+    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm", MOPM_FAKE_REGISTRY = ":mopm-fake-registry"),
+    **_TOOLS
+)
+
 
 zig_test(  # buck-only: mopm build, run, repl with native libraries; the Zig port of tests/e2e/run.sh
     name = "autolink",
@@ -448,8 +538,38 @@ export_file(
 )
 
 export_file(
+    name = "site.VERSION",
+    src = "VERSION",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.docs.configuration.md",
+    src = "docs/configuration.md",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.docs.getting-started.md",
+    src = "docs/getting-started.md",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.docs.examples.md",
+    src = "docs/examples.md",
+    visibility = ["//site:"],
+)
+
+export_file(
     name = "site.docs.mopm-test.md",
     src = "docs/mopm-test.md",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.docs.why-and-design.md",
+    src = "docs/why-and-design.md",
     visibility = ["//site:"],
 )
 
@@ -466,8 +586,51 @@ export_file(
 )
 
 export_file(
+    name = "site.src.core.credentials.zig",
+    src = "src/core/credentials.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.core.lock.zig",
+    src = "src/core/lock.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.core.manifest.zig",
+    src = "src/core/manifest.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
     name = "site.src.cli.main.zig",
     src = "src/cli/main.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.tests.drivers.examples_test.zig",
+    src = "tests/drivers/examples_test.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.workflows.promote.yml",
+    src = ".github/workflows/promote.yml",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.workflows.service-ci.yml",
+    src = ".github/workflows/service-ci.yml",
+    visibility = ["//site:"],
+)
+
+# The worked examples, staged as `examples`: the site's test holds docs/examples.md to every file of them.
+filegroup(
+    name = "site_examples",
+    srcs = {f[len("examples/"):]: f for f in glob(["examples/**"])},
     visibility = ["//site:"],
 )
 
@@ -478,7 +641,7 @@ filegroup(
     visibility = ["//site:"],
 )
 
-# ---- The repository's own lints, ported from Ruby (.github/scripts, tests/lint) ------------
+# ---- The repository's own lints (hygiene, workflows, lint_selftest) ------------------------
 
 # Every tracked file hygiene scans (tests/drivers/hygiene.zig), staged by path under
 # BUILDRULES_TEST_WORK: the root package's files (a glob skips dotfiles, so those are named)
@@ -505,6 +668,7 @@ _LINT_PACKAGES = [
     "service/lambda/validate",
     "service/lambda/ports",
     "service/lambda/testing",
+    "site",
     "tools/lambda",
     "tools/node",
 ]
@@ -520,7 +684,7 @@ _LINT_LIBS = [
     "tests/drivers/yaml.zig",
 ]
 
-zig_test(  # buck-only: .github/scripts/hygiene.rb in Zig, over every file of the repository
+zig_test(  # buck-only: the hygiene scan, over every file of the repository
     name = "hygiene",
     src = "tests/drivers/hygiene_test.zig",
     imports = _LINT_LIBS + ["tests/drivers/hygiene.zig"],
@@ -528,25 +692,182 @@ zig_test(  # buck-only: .github/scripts/hygiene.rb in Zig, over every file of th
     **_TOOLS
 )
 
-zig_test(  # buck-only: .github/scripts/workflow_lint.rb in Zig, over the workflows, and the stand-in for its `bash -n`
+zig_test(  # buck-only: the workflow lint, over the workflows, with a stand-in for `bash -n`
     name = "workflows",
     src = "tests/drivers/workflow_lint_test.zig",
     imports = _LINT_LIBS + [
         "tests/drivers/shell_syntax.zig",
+        "tests/drivers/release_lint.zig",
         "tests/drivers/workflow_lint.zig",
     ],
     data = {f: f for f in glob([".github/workflows/*.yml", ".github/workflows/*.yaml"])},
     **_TOOLS
 )
 
-zig_test(  # buck-only: tests/lint/run.rb in Zig: both Zig lints over the fixtures, against run.rb's own table
+zig_test(  # buck-only: release.yml's scopes, stage order and path filter (tests/drivers/release_lint.zig), with a planted mutant per rule
+    name = "release_workflow",
+    src = "tests/drivers/release_lint_test.zig",
+    imports = _LINT_LIBS + ["tests/drivers/release_lint.zig"],
+    data = dict({f: f for f in glob([".github/workflows/*.yml", ".github/workflows/*.yaml"])}, **{"tools/cut_release.zig": "tools/cut_release.zig"}),  # the tool: gh release create must carry --verify-tag
+    **_TOOLS
+)
+
+zig_test(  # buck-only: both lints over the fixtures, against the table in the test
     name = "lint_selftest",
     src = "tests/drivers/lint_selftest_test.zig",
     imports = _LINT_LIBS + [
         "tests/drivers/hygiene.zig",
         "tests/drivers/shell_syntax.zig",
+        "tests/drivers/release_lint.zig",
         "tests/drivers/workflow_lint.zig",
     ],
-    data = {f: f for f in glob(["tests/lint/fixtures/*", "tests/lint/run.rb"])},
+    data = {f: f for f in glob(["tests/lint/fixtures/*"])},
     **_TOOLS
+)
+
+# ---- Ports of the install e2e test and the fake registry's error generator ------------
+
+zig_exe(  # buck-only: stands in for pixi in install_e2e: unpacks the pinned conda files into the environment
+    name = "fake-pixi",
+    src = "tests/drivers/fake_pixi.zig",
+    **_TOOLS
+)
+
+zig_test(  # buck-only: mopm sync against the fake registry and the real Mojo; the Zig port of tests/install_e2e/run.py
+    name = "install_e2e",
+    src = "tests/drivers/install_e2e_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig"],
+    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm", MOPM_FAKE_REGISTRY = ":mopm-fake-registry", FAKE_PIXI = ":fake-pixi"),
+    data = [
+        "tests/e2e/native/greet.c",
+        "tests/e2e/pkgs/greet",
+        "tests/install_e2e/prog.mojo",
+    ],
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: regenerates registry/fake/errors.zig from spec/api/openapi.yaml (the Zig port of gen_errors.py)
+    name = "gen_errors",
+    src = "tests/drivers/gen_errors.zig",
+    imports = ["tests/drivers/errors_gen.zig", "tests/drivers/yaml.zig"],
+    **_TOOLS
+)
+
+zig_test(  # buck-only: registry/fake/errors.zig is what gen_errors makes of the spec, and the generator's refusals
+    name = "gen_errors_current",
+    src = "tests/drivers/gen_errors_test.zig",
+    imports = ["tests/drivers/errors_gen.zig", "tests/drivers/harness.zig", "tests/drivers/yaml.zig"],
+    data = ["spec/api/openapi.yaml", "registry/fake/errors.zig"],
+    **_TOOLS
+)
+
+# ---- actionlint: a strict parse and check of every workflow ---------------------------------
+
+# The Zig lints above read workflows with a small YAML reader that is lenient: an unquoted `name: ... (contents write: the tag)`
+# parsed as a name, reached a push, and GitHub refused the workflow (startup_failure). actionlint is a real YAML parser plus the
+# workflow schema, expressions and contexts. This is buildrules' own rule over its pinned actionlint (1.7.12), a build action
+# with no network and no host tool; lint.yml runs the same binary, installed by tools/install_actionlint.zig.
+actionlint_check(  # buck-only: the pinned actionlint over every workflow file
+    name = "actionlint",
+    exec_compatible_with = LINUX_X86_64,
+    actionlint = "buildrules//rules/pins:actionlint_linux_amd64.tar.gz",
+    workflows = glob([".github/workflows/*.yml", ".github/workflows/*.yaml"]),
+)
+
+zig_exe(  # buck-only: installs the pinned actionlint for lint.yml (sha256-checked download)
+    name = "install-actionlint",
+    src = "tools/install_actionlint.zig",
+    **_TOOLS
+)
+
+# ---- Coverage: the lines the unit tests reach, held to a floor per package ------------------------------------------------
+# (vendor/buildrules_coverage/README.md says what each figure is, what it leaves out, and how a floor is written.)
+
+# The tools of a coverage run (zig_cover, cov_floor, cov_summary, the launcher), built here until the buildrules pin has them.
+cov_tools()
+
+# Each package: the unit tests of its sources run again under kcov (the same compile and environment), and `<package>_coverage_floor`
+# holds the lines they reach to coverage/<package>.txt, both ways: a fall fails, and so does a rise the floor has not been raised to.
+# The packages are built by zig 0.12, which has no block counters (-ffuzz), so the report is lines only (`blocks = False`).
+# `expect` is the package's own sources; a file in it that no listed test compiled fails the summary. Process tests (a test that runs a built
+# program, `env_tools`) measure the program's behaviour, not its sources, and are not listed.
+zig_coverage(
+    name = "core_coverage",
+    blocks = False,
+    floor = "coverage/core.txt",
+    test_targets = [":core_test"],
+    expect = glob(["src/core/*.zig"]),
+)
+
+zig_coverage(
+    name = "cli_coverage",
+    blocks = False,
+    floor = "coverage/cli.txt",
+    test_targets = [":cli_test"],
+    # build_options.zig is a module of constants (a declaration has no line); test_cmd.zig is compiled only into the mopm program, not into the unit test binary.
+    expect = glob(["src/cli/*.zig"], exclude = ["src/cli/build_options.zig", "src/cli/test_cmd.zig"]),
+)
+
+zig_coverage(
+    name = "fake_registry_coverage",
+    blocks = False,
+    floor = "coverage/fake_registry.txt",
+    test_targets = [":fake_test"],
+    # control.zig is imported by main.zig, but only the code of main() calls it; the unit test binary has no line of it.
+    expect = glob(["registry/fake/*.zig"], exclude = ["registry/fake/control.zig"]),
+)
+
+zig_coverage(
+    name = "channels_coverage",
+    blocks = False,
+    floor = "coverage/channels.txt",
+    test_targets = [":channels_test"],
+    expect = glob(["tools/channels/*.zig"], exclude = ["tools/channels/main.zig"]),
+)
+
+zig_coverage(
+    name = "build_parity_coverage",
+    blocks = False,
+    floor = "coverage/build_parity.txt",
+    test_targets = [":build_parity"],
+    expect = ["tools/build_parity.zig"],
+)
+
+zig_coverage(
+    name = "drivers_coverage",
+    blocks = False,
+    floor = "coverage/drivers.txt",
+    test_targets = [":contract", ":lock_golden", ":validator_corpus", ":hygiene", ":workflows", ":release_workflow", ":lint_selftest", ":gen_errors_current"],
+    expect = [
+        "tests/drivers/contract.zig",
+        "tests/drivers/errors_gen.zig",
+        "tests/drivers/hygiene.zig",
+        "tests/drivers/jsonschema.zig",
+        "tests/drivers/lint_common.zig",
+        "tests/drivers/openapi_check.zig",
+        "tests/drivers/regex.zig",
+        "tests/drivers/release_lint.zig",
+        "tests/drivers/shell_syntax.zig",
+        "tests/drivers/validator_corpus.zig",
+        "tests/drivers/workflow_lint.zig",
+        "tests/drivers/yaml.zig",
+    ],
+)
+
+# Every package's floor, in one target: `./buck2 build //:coverage_floors`.
+filegroup(
+    name = "coverage_floors",
+    srcs = {
+        "build_parity": ":build_parity_coverage_floor",
+        "channels": ":channels_coverage_floor",
+        "cli": ":cli_coverage_floor",
+        "core": ":core_coverage_floor",
+        "drivers": ":drivers_coverage_floor",
+        "fake_registry": ":fake_registry_coverage_floor",
+        "service_api": "//service/api:coverage_floor",
+        "service_infra_access": "//service/infra/access:coverage_floor",
+        "service_infra_dns": "//service/infra/dns:coverage_floor",
+        "service_infra_stacks": "//service/infra/stacks:coverage_floor",
+        "site": "//site:coverage_floor",
+    },
 )

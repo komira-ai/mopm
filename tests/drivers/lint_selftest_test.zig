@@ -1,20 +1,13 @@
-//! //:lint_selftest: tests/lint/run.rb in Zig, for the build farm, which has no
-//! Ruby. run.rb stays for ci.yml until farm.yml has matched it, and is
-//! superseded by this file.
+//! //:lint_selftest: the self-test of the two repository lints (hygiene.zig, workflow_lint.zig).
 //!
 //! Each fixture in tests/lint/fixtures is a minimal workflow with exactly one
 //! violation; the table says which message each of the two lints must print for
-//! it. The Zig lints (hygiene.zig, workflow_lint.zig) run over the same
-//! fixtures that run.rb feeds to the Ruby lints, and the table here must be the
-//! table there, line for line: this test reads tests/lint/run.rb and refuses to
-//! pass if a case, an expectation or a placeholder is on one side only. So the
-//! two implementations are held to the same verdicts by the same fixtures, and a
-//! rule broken in either one turns its own check red.
+//! it. Every rule has a fixture that breaks only that rule, so a rule broken
+//! in a lint turns its own check red.
 //!
 //! Fixtures carry a .yml.fixture extension so GitHub never treats them as
 //! workflows. Values that would trip the real hygiene scan if stored literally
-//! are placeholders, replaced here at run time (and in run.rb, with the same
-//! pieces).
+//! are placeholders, replaced here at run time (built from pieces).
 
 const std = @import("std");
 const c = @import("lint_common.zig");
@@ -49,6 +42,7 @@ const cases = [_]Case{
     .{ .name = "account_id_literal", .hyg = &.{"12-digit number that looks like an account id"} },
     .{ .name = "farm_clean", .lint = &.{}, .hyg = &.{} },
     .{ .name = "farm_fork_unguarded", .lint = &.{}, .hyg = &.{"does not skip pull requests from forks"} },
+    .{ .name = "farm_push_any_branch", .lint = &.{}, .hyg = &.{"triggers must be exactly pull_request and push of branches [main]"} },
     .{ .name = "farm_other_action", .lint = &.{"only GitHub-owned actions pinned by full SHA"}, .hyg = &.{} },
     .{ .name = "hyg_aws_key", .hyg = &.{"AWS access key id"} },
     .{ .name = "hyg_secret_key", .hyg = &.{"AWS secret key assignment"} },
@@ -80,15 +74,18 @@ const cases = [_]Case{
     .{ .name = "kpin_top_write", .lint = &.{ "top-level permissions must be read-only", "permissions.contents: write is not allowed" } },
     .{ .name = "release_clean", .lint = &.{}, .hyg = &.{} },
     .{ .name = "release_elsewhere", .lint = &.{ "contents: write is not allowed", "id-token: write is not allowed", "attestations: write is not allowed" }, .hyg = &.{ "an id-token permission is only allowed" } },
-    .{ .name = "release_branch_trigger", .lint = &.{}, .hyg = &.{ "triggers must be exactly push of tags [v*], with no branches" } },
-    .{ .name = "release_pull_request", .lint = &.{}, .hyg = &.{ "triggers must be exactly push of tags [v*], with no branches" } },
+    .{ .name = "release_tag_trigger", .lint = &.{}, .hyg = &.{"triggers must be exactly push to branches [main]"} },
+    .{ .name = "release_pull_request", .lint = &.{}, .hyg = &.{ "triggers must be exactly push to branches [main]" } },
     .{ .name = "release_environment", .lint = &.{}, .hyg = &.{ "must not use secrets or an environment" } },
     .{ .name = "release_other_write", .lint = &.{ "packages: write is not allowed" }, .hyg = &.{} },
     .{ .name = "release_unpinned_attest", .lint = &.{ "only GitHub-owned actions pinned by full SHA" }, .hyg = &.{} },
     .{ .name = "release_calls_with_idtoken", .lint = &.{}, .hyg = &.{ "calls a workflow and grants id-token" } },
+    .{ .name = "release_cosign_pinned", .lint = &.{}, .hyg = &.{} },
+    .{ .name = "release_unpinned_cosign", .lint = &.{"only GitHub-owned actions pinned by full SHA"}, .hyg = &.{} },
+    .{ .name = "cosign_elsewhere", .lint = &.{"only GitHub-owned actions pinned by full SHA"}, .hyg = &.{} },
 };
 
-/// The values of the placeholders, built from pieces: the same ones run.rb builds.
+/// The values of the placeholders, built from pieces: built from pieces so this file does not trip hygiene.
 fn substitutions(comptime i: usize) struct { []const u8, []const u8 } {
     const list = [_]struct { []const u8, []const u8 }{
         .{ "@@PRT@@", "pull_request_" ++ "target" },
@@ -127,7 +124,7 @@ fn fixtureText(a: Allocator, tree: c.Tree, name: []const u8) ![]u8 {
     return text;
 }
 
-/// run.rb's comparison: for a case that must pass, success and no output; else
+/// The comparison: for a case that must pass, success and no output; else
 /// output of exactly as many lines as expected, each expected substring in one.
 fn verdict(a: Allocator, name: []const u8, tool: []const u8, got: []const []const u8, want: []const []const u8) !bool {
     var ok = got.len == want.len;
@@ -199,79 +196,3 @@ test "every fixture has a case, and every case a fixture" {
     try std.testing.expectEqual(cases.len, fixtures);
 }
 
-// ---- the same table as run.rb ----------------------------------------------------------
-
-fn quoted(a: Allocator, list: []const []const u8) ![]u8 {
-    var out = std.ArrayList(u8).init(a);
-    try out.append('[');
-    for (list, 0..) |s, i| {
-        if (i != 0) try out.appendSlice(", ");
-        try out.append('"');
-        try out.appendSlice(s);
-        try out.append('"');
-    }
-    try out.append(']');
-    return out.items;
-}
-
-/// `  "name" => { LINT => [...], HYG => [...] },` as run.rb spells a case.
-fn rubyLine(a: Allocator, cs: Case) ![]u8 {
-    var out = std.ArrayList(u8).init(a);
-    try out.writer().print("  \"{s}\" => {{ ", .{cs.name});
-    var first = true;
-    if (cs.lint) |l| {
-        try out.writer().print("LINT => {s}", .{try quoted(a, l)});
-        first = false;
-    }
-    if (cs.hyg) |h| {
-        if (!first) try out.appendSlice(", ");
-        try out.writer().print("HYG => {s}", .{try quoted(a, h)});
-    }
-    try out.appendSlice(" },");
-    return out.items;
-}
-
-test "the table is run.rb's table, case for case" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const tree = try c.loadTree(a);
-    const ruby = try tree.read(a, "tests/lint/run.rb");
-
-    var ruby_cases: usize = 0;
-    var lines = std.mem.splitScalar(u8, ruby, '\n');
-    while (lines.next()) |l| {
-        if (std.mem.startsWith(u8, l, "  \"") and std.mem.indexOf(u8, l, "\" => { ") != null and std.mem.endsWith(u8, l, " },")) ruby_cases += 1;
-    }
-    try std.testing.expectEqual(cases.len, ruby_cases);
-
-    for (cases) |cs| {
-        const want = try rubyLine(a, cs);
-        var found = false;
-        var it = std.mem.splitScalar(u8, ruby, '\n');
-        while (it.next()) |l| {
-            if (std.mem.eql(u8, l, want)) found = true;
-        }
-        if (!found) {
-            std.debug.print("tests/lint/run.rb has no line\n{s}\nthe Ruby and Zig tables differ\n", .{want});
-            return error.TestUnexpectedResult;
-        }
-    }
-
-    // the placeholders: run.rb builds each from the same pieces
-    inline for (0..n_substitutions) |i| {
-        const s = comptime substitutions(i);
-        const key = try std.fmt.allocPrint(a, "\"{s}\" =>", .{s[0]});
-        if (std.mem.indexOf(u8, ruby, key) == null) {
-            std.debug.print("tests/lint/run.rb has no placeholder {s}\n", .{s[0]});
-            return error.TestUnexpectedResult;
-        }
-    }
-    // and the file-name rule
-    for ([_][]const u8{ "(\"promote\") ? \"promote.yml\"", "(\"farm\") ? \"farm.yml\"", "(\"subject\") ? \"oidc-subject-check.yml\"", "(\"deploy\") ? \"deploy.yml\"", "(\"kpin\") && name != \"kpin_elsewhere\") ? \"kpin-update.yml\"", "(\"release\") && name != \"release_elsewhere\") ? \"release.yml\"" }) |frag| {
-        if (std.mem.indexOf(u8, ruby, frag) == null) {
-            std.debug.print("tests/lint/run.rb does not map {s}\n", .{frag});
-            return error.TestUnexpectedResult;
-        }
-    }
-}

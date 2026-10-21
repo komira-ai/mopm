@@ -30,7 +30,9 @@ mopm test --list [--check [--strict-discovery] [--prefix <dir>]]
    the `mojo build` line of `mopm build` (the same environment, the same
    native link arguments, so a test of a package with native libraries links
    them exactly as `mopm build` does), plus `-D ASSERT=all` and
-   `--optimization-level 1` (`--opt-level` changes the level). The binary is
+   `--optimization-level 1` (`--opt-level` changes the level), and `-I <root>/src` when the package has a `src/`
+   directory, so that a test can import the package it belongs to (`from my_pkg import f`, as `mopm new` writes
+   it). The binary is
    `target/mopm/bin/<hash>/<stem>`.
 3. **Listing check.** Each binary runs once with `--skip-all`, and the names
    it lists are compared with the scan. For a generated harness a difference
@@ -135,7 +137,7 @@ polls it every 20 ms.
   not, it says so on stderr and the run exits 5.
 
 `--test-only-no-group-kill` exists for the supervisor's own end-to-end
-self-test (`tests/e2e/test_supervisor.sh`): it signals only the test process
+self-test (`tests/drivers/test_supervisor_test.zig`): it signals only the test process
 and skips the cleanup kill, so the self-test can show that a process left
 behind is detected. Do not use it otherwise.
 

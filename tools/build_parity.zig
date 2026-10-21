@@ -18,12 +18,16 @@
 //! What it reads, as the two files are written: build.zig with one
 //! `b.addExecutable(.{`, `b.addTest(.{` or `b.createModule(.{` per block, a
 //! `.name` and a `.root_source_file = b.path("...")` inside it, and
-//! `<var>.root_module.addImport("<name>", <module var>)`; BUCK with one
+//! `<var>.root_module.addImport("<name>", <module var>)` or, for an options module,
+//! `<var>.root_module.addOptions("<name>", <options var>)` (the module is then `<name>.zig` beside
+//! the importer's root, the zig_module BUCK holds); BUCK with one
 //! `zig_exe(`, `zig_module(` or `zig_test(` call per block starting a line,
 //! `name = "..."`, `src = "..."`, `deps = [...]` and `unit_tests = [...]` each
 //! on one line. A call whose first line carries `buck-only` is a target of
 //! the Buck2 build with no counterpart in build.zig (a helper program, a test
 //! driver that needs the built programs): it is left out of the comparison.
+//! A block of build.zig whose first line carries `native-only` is the mirror
+//! of that: a driver only `zig build` runs, natively (test-e2e); it is left out.
 //! A form it does not understand is a finding, not a pass.
 //!
 //! Run as a zig_test by Buck2 (//:build_parity), with build.zig and BUCK as
@@ -78,6 +82,7 @@ fn zigFacts(a: Allocator, text: []const u8, found: *List) !List {
     var var_name: []const u8 = "";
     var name: ?[]const u8 = null;
     var root: ?[]const u8 = null;
+    var native_only = false;
     var lines = std.mem.splitScalar(u8, text, '\n');
     var n: usize = 0;
     while (lines.next()) |raw| {
@@ -88,6 +93,7 @@ fn zigFacts(a: Allocator, text: []const u8, found: *List) !List {
             if (std.mem.startsWith(u8, line, ".root_source_file")) root = firstQuoted(line);
             if (std.mem.eql(u8, line, "});")) {
                 open = null;
+                if (native_only) continue;
                 const r = root orelse {
                     try found.append(try std.fmt.allocPrint(a, "build.zig:{d}: a block with no .root_source_file = b.path(\"...\")", .{n}));
                     continue;
@@ -110,6 +116,7 @@ fn zigFacts(a: Allocator, text: []const u8, found: *List) !List {
         const started: ?Kind = if (contains(line, "b.addExecutable(.{")) .exe else if (contains(line, "b.addTest(.{")) .test_ else if (contains(line, "b.createModule(.{")) .module else null;
         if (started) |k| {
             open = k;
+            native_only = contains(line, "native-only");
             name = null;
             root = null;
             var_name = try std.fmt.allocPrint(a, "?{d}", .{n});
@@ -119,6 +126,19 @@ fn zigFacts(a: Allocator, text: []const u8, found: *List) !List {
                 var_name = rest[0..end];
             }
             continue;
+        }
+        if (std.mem.indexOf(u8, line, ".root_module.addOptions(")) |at| {
+            // An options module (b.addOptions) has no file of its own in build.zig. BUCK's copy is the
+            // zig_module of the same name beside the importer, holding the options' defaults.
+            const importer = line[0..at];
+            const iname = firstQuoted(line[at..]) orelse "";
+            const iroot = var_roots.get(importer) orelse {
+                try found.append(try std.fmt.allocPrint(a, "build.zig:{d}: addOptions of {s}: {s} is not a block of this file", .{ n, iname, importer }));
+                continue;
+            };
+            const dir = std.fs.path.dirname(iroot) orelse "";
+            try out.append(try std.fmt.allocPrint(a, "import {s} {s}", .{ iroot, iname }));
+            try out.append(try std.fmt.allocPrint(a, "module {s} {s}/{s}.zig", .{ iname, dir, iname }));
         }
         if (std.mem.indexOf(u8, line, ".root_module.addImport(")) |at| {
             const importer = line[0..at];
@@ -306,6 +326,27 @@ test "mutant: a test added to build.zig and not to BUCK" {
     try std.testing.expect(mentions(f, "build.zig has `test src/core/toml.zig`"));
 }
 
+test "a native-only block of build.zig is left out, an unmarked one is not" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const zig = try readAll(a, "build.zig");
+    const end = std.mem.lastIndexOfScalar(u8, zig, '}').?;
+    const block =
+        \\
+        \\    const drv = b.addTest(.{{{s}
+        \\        .root_source_file = b.path("src/core/toml.zig"),
+        \\    }});
+        \\}}
+        \\
+    ;
+    const marked = try std.mem.concat(a, u8, &.{ zig[0..end], try std.fmt.allocPrint(a, block, .{" // native-only"}) });
+    const plain = try std.mem.concat(a, u8, &.{ zig[0..end], try std.fmt.allocPrint(a, block, .{""}) });
+    const buck = try readAll(a, "BUCK");
+    try std.testing.expectEqual(@as(usize, 0), (try findings(a, marked, buck, false)).items.len);
+    try std.testing.expect(mentions(try findings(a, plain, buck, false), "build.zig has `test src/core/toml.zig`"));
+}
+
 test "mutant: a zig_test removed from BUCK" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -356,4 +397,23 @@ test "mutant: a root file that does not exist" {
     const buck = try readAll(a, "BUCK");
     const f = try findings(a, try std.mem.replaceOwned(u8, a, zig, "registry/fake/main.zig", "registry/fake/gone.zig"), try std.mem.replaceOwned(u8, a, buck, "registry/fake/main.zig", "registry/fake/gone.zig"), true);
     try std.testing.expect(mentions(f, "registry/fake/gone.zig is named by build.zig and is not a file"));
+}
+
+test "mutant: the options module dropped from BUCK" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    // (Both the executable and its test import it, so both lose it.)
+    const mutant = try std.mem.replaceOwned(u8, a, try readAll(a, "BUCK"), ", \":build_options\"]", "]");
+    const f = try findings(a, try readAll(a, "build.zig"), mutant, false);
+    try std.testing.expect(mentions(f, "build.zig has `import src/cli/main.zig build_options`"));
+}
+
+test "mutant: an options module added to build.zig only" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const mutant = try std.mem.replaceOwned(u8, a, try readAll(a, "build.zig"), "closure_gen.root_module.addImport(\"mopm_core\", core);", "closure_gen.root_module.addImport(\"mopm_core\", core);\n    closure_gen.root_module.addOptions(\"flags\", opts);");
+    const f = try findings(a, mutant, try readAll(a, "BUCK"), false);
+    try std.testing.expect(mentions(f, "tools/flags.zig"));
 }

@@ -6,14 +6,43 @@
 
 load(":buildrules.bzl", "npm_package")
 load("@buildrules//rules/node:modules.bzl", "node_tree_test")
+load("//vendor/buildrules_coverage:jest_cover.bzl", "jest_coverage_floor", "jest_test")
 
 _NODE = "//tools/node:node"
 
 # The repository files the pages are rendered from (tools/docs.ts reads the published docs,
 # src/links.ts names them), at their paths in the repository.
 _DOCS = {
+    "docs/configuration.md": "//:site.docs.configuration.md",
+    "docs/examples.md": "//:site.docs.examples.md",
+    "docs/getting-started.md": "//:site.docs.getting-started.md",
     "docs/mopm-test.md": "//:site.docs.mopm-test.md",
+    "docs/why-and-design.md": "//:site.docs.why-and-design.md",
     "spec/mopm-toml.md": "//:site.spec.mopm-toml.md",
+}
+
+# The tests read files outside site/ by relative path (test/build-fixture.ts's REPO_ROOT,
+# test/fixtures.ts's CONTRACT_DIR, test/docs-render.test.ts): the API contract cases, the
+# published docs, spec/channel.md, README.md, src/cli/main.zig and the scaffold golden
+# tests/new/lib (test/layout.test.ts holds the home page copy to them), the validator's limits.ts, the two
+# workflows whose page lists test/pages-lists.test.ts compares with DOC_PAGES, the parsers whose keys
+# test/docs-facts.test.ts requires on the configuration page (src/core/manifest.zig, lock.zig, credentials.zig) and the
+# worked examples test/docs-examples.test.ts holds the examples page to (and the driver that runs them, tests/drivers/examples_test.zig).
+_TEST_DATA = _DOCS | {
+    "README.md": "//:site.README.md",
+    "VERSION": "//:site.VERSION",
+    ".github/workflows/promote.yml": "//:site.workflows.promote.yml",
+    ".github/workflows/service-ci.yml": "//:site.workflows.service-ci.yml",
+    "service/api/src/validate/limits.ts": "//service/api:limits.ts",
+    "spec/channel.md": "//:site.spec.channel.md",
+    "examples": "//:site_examples",
+    "src/cli/main.zig": "//:site.src.cli.main.zig",
+    "src/core/credentials.zig": "//:site.src.core.credentials.zig",
+    "src/core/lock.zig": "//:site.src.core.lock.zig",
+    "src/core/manifest.zig": "//:site.src.core.manifest.zig",
+    "tests/contract/api": "//:contract_api",
+    "tests/drivers/examples_test.zig": "//:site.tests.drivers.examples_test.zig",
+    "tests/new/lib": "//:site_new_lib",
 }
 
 npm_package(
@@ -21,24 +50,34 @@ npm_package(
     node = _NODE,
     # kpin's files of the old rules, still read by the weekly update.
     exclude = ["pins.lock.bzl", "pins.toml", "README.md", "check_dist.js"],
-    # The tests read files outside site/ by relative path (test/build-fixture.ts's REPO_ROOT,
-    # test/fixtures.ts's CONTRACT_DIR, test/docs-render.test.ts): the API contract cases, the
-    # published docs, spec/channel.md, README.md, src/cli/main.zig and the scaffold golden
-    # tests/new/lib (test/layout.test.ts holds the home page copy to them).
     step_data = {
-        "test": _DOCS | {
-            "README.md": "//:site.README.md",
-            "spec/channel.md": "//:site.spec.channel.md",
-            "src/cli/main.zig": "//:site.src.cli.main.zig",
-            "tests/contract/api": "//:contract_api",
-            "tests/new/lib": "//:site_new_lib",
-        },
+        "test": _TEST_DATA,
         # tools/build.js renders the pages from them.
         "build": _DOCS,
     },
     # The site stack deploys dist/ (service/infra/stacks/BUCK, its tests and synths).
     visibility = ["//service/infra/stacks:", "//site:"],
 )
+
+# `jest --ci --coverage` over the same tree, data and config as `:test`: the target is the coverage directory.
+# npm_package's `:test` is a pass marker and does not write one, so the floor reads this run instead.
+jest_test(
+    name = "coverage_run",
+    data = _TEST_DATA,
+    modules = ":node_modules",
+    node = _NODE,
+    srcs = glob(["src/**", "static/**", "test/**", "tools/**"]) + [
+        "check_dist.js",
+        "jest.config.js",
+        "package.json",
+        "tsconfig.browser.json",
+        "tsconfig.json",
+        "tsconfig.tools.json",
+    ],
+)
+
+# The lines and branches of the package's own code that the tests reach (jest --coverage), held to coverage_floor.txt (vendor/buildrules_coverage/README.md).
+jest_coverage_floor(coverage = ":coverage_run")
 
 # service-ci.yml's `test -f dist/<page>` for each page the site job names.
 node_tree_test(
@@ -63,4 +102,15 @@ export_file(
     name = "routes.json",
     src = "test/fixtures/routes.json",
     visibility = ["//service/infra/stacks:"],
+)
+
+# This package's files, for //:hygiene (the repository-wide scan reads every file, and a
+# package boundary hides these from the root package's glob). A copy of the tree, staged
+# by path from this package. (//:hygiene also holds that kpin-update.yml lists this
+# package's pins.lock.bzl.)
+filegroup(
+    name = "lint_files",
+    srcs = glob(["**"], exclude = ["dist/**", "coverage/**", "node_modules/**"]) + [".gitignore"],
+    copy = True,
+    visibility = ["//:"],
 )
