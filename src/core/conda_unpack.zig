@@ -219,15 +219,28 @@ const BytesSource = struct {
     }
 };
 
-/// The most a file read out of a package by `readFiles` may hold (the registry unpacks at most 512 MB).
-pub const max_member = 512 << 20;
+/// What `readFiles` will read: the registry unpacks a file of at most 128 MiB and all of a package's files together at
+/// most 512 MiB (service/api/src/validate/limits.ts), so a package that needs more than that is not one the registry
+/// holds, whatever its headers say.
+pub const Limits = struct {
+    /// The most one wanted file may hold.
+    member: u64 = 128 << 20,
+    /// The most the whole package tar may decompress to, every entry counted, wanted or not.
+    total: u64 = 512 << 20,
+};
 
 /// Reads the files `want` (paths in the package, such as `lib/mojo/x.mopm.json`) out of the `.conda` in `bytes`,
 /// which it takes as it finds it: nothing is written, nothing is trusted, and no path is followed. The answer holds
 /// the bytes of each wanted file in `want`'s order, null for one the package does not hold. The package tar is
-/// streamed once. A wanted path the tar holds twice, as anything but a plain file, or over `max_member` bytes, is
-/// an error with `diag` set. `window` is a zstd window buffer of `window_size` bytes.
+/// streamed once, at most `limits.total` decompressed bytes of it; a wanted file is read in chunks, so memory is
+/// spent as bytes arrive and never from a size a header claims. A wanted path the tar holds twice, as anything but a
+/// plain file, over `limits.member` bytes by its header or by its data, or a stream that decompresses to more than
+/// `limits.total`, is an error with `diag` set. `window` is a zstd window buffer of `window_size` bytes.
 pub fn readFiles(arena: Allocator, bytes: []const u8, window: []u8, want: []const []const u8, diag: *Diag) ![]const ?[]const u8 {
+    return readFilesLimited(arena, bytes, window, want, .{}, diag);
+}
+
+pub fn readFilesLimited(arena: Allocator, bytes: []const u8, window: []u8, want: []const []const u8, limits: Limits, diag: *Diag) ![]const ?[]const u8 {
     const entries = try readZip(arena, BytesSource{ .bytes = bytes }, diag);
     var pkg: ?ZipEntry = null;
     for (entries) |e| {
@@ -241,7 +254,23 @@ pub fn readFiles(arena: Allocator, bytes: []const u8, window: []u8, want: []cons
     @memset(out, null);
     var fbs = std.io.fixedBufferStream(bytes[@intCast(entry.offset)..][0..@intCast(entry.size)]);
     var zs = std.compress.zstd.decompressor(fbs.reader(), .{ .window_buffer = window });
-    var tr = tar_read.tarReader(zs.reader());
+    // One byte more than the cap: the stream is over it exactly when that byte was read.
+    var lim = std.io.limitedReader(zs.reader(), limits.total + 1);
+    var tr = tar_read.tarReader(lim.reader());
+    readLoop(arena, &tr, want, out, limits, diag) catch |e| {
+        if (lim.bytes_left == 0) return overTotal(arena, limits, diag);
+        return e;
+    };
+    if (lim.bytes_left == 0) return overTotal(arena, limits, diag);
+    return out;
+}
+
+fn overTotal(arena: Allocator, limits: Limits, diag: *Diag) error{ BadConda, OutOfMemory } {
+    diag.message = std.fmt.allocPrint(arena, "the package decompresses to more than {d} bytes; mopm reads at most that", .{limits.total}) catch return error.OutOfMemory;
+    return error.BadConda;
+}
+
+fn readLoop(arena: Allocator, tr: anytype, want: []const []const u8, out: []?[]const u8, limits: Limits, diag: *Diag) !void {
     while (try tr.next()) |e| {
         const name = stripDotSlash(e.name);
         for (want, 0..) |w, i| {
@@ -254,21 +283,21 @@ pub fn readFiles(arena: Allocator, bytes: []const u8, window: []u8, want: []cons
                 diag.message = try std.fmt.allocPrint(arena, "the package holds {s} twice", .{w});
                 return error.BadConda;
             }
-            if (e.size > max_member) {
-                diag.message = try std.fmt.allocPrint(arena, "{s} in the package is {d} bytes; mopm reads at most {d}", .{ w, e.size, @as(u64, max_member) });
+            if (e.size > limits.member) {
+                diag.message = try std.fmt.allocPrint(arena, "{s} in the package is {d} bytes; mopm reads at most {d}", .{ w, e.size, limits.member });
                 return error.BadConda;
             }
-            const buf = try arena.alloc(u8, @intCast(e.size));
-            var got: usize = 0;
-            while (got < buf.len) {
-                const n = try tr.read(buf[got..]);
-                if (n == 0) return error.UnexpectedEndOfStream;
-                got += n;
+            var data = std.ArrayList(u8).init(arena);
+            var chunk: [64 * 1024]u8 = undefined;
+            while (true) {
+                const n = try tr.read(&chunk);
+                if (n == 0) break;
+                try data.appendSlice(chunk[0..n]);
             }
-            out[i] = buf;
+            if (data.items.len != e.size) return error.UnexpectedEndOfStream;
+            out[i] = data.items;
         }
     }
-    return out;
 }
 
 // ------------------------------------------------------------- the install
@@ -1024,4 +1053,72 @@ test "readFiles: a wanted path that is a link, appears twice, or is not a packag
 fn condaNoPkg(a: Allocator) ![]const u8 {
     const conda = @import("conda.zig");
     return conda.zip(a, &.{.{ .path = "metadata.json", .data = "{}" }});
+}
+
+/// A `.conda` whose package tar is `files`, but whose first entry's header says it is `claimed` bytes (the checksum
+/// recomputed, so the tar is well formed and only lies about the size).
+fn lyingConda(a: Allocator, files: []const fx.Item, claimed: u64) ![]u8 {
+    const conda = @import("conda.zig");
+    const tar = try fx.tar(a, files);
+    _ = try std.fmt.bufPrint(tar[124..135], "{o:0>11}", .{claimed});
+    @memset(tar[148..156], ' ');
+    var sum: u64 = 0;
+    for (tar[0..512]) |b| sum += b;
+    _ = try std.fmt.bufPrint(tar[148..154], "{o:0>6}", .{sum});
+    tar[154] = 0;
+    tar[155] = ' ';
+    return conda.zip(a, &.{
+        .{ .path = "metadata.json", .data = "{}" },
+        .{ .path = "pkg-x.tar.zst", .data = try conda.zstdStore(a, tar) },
+    });
+}
+
+// Defects it catches: memory spent from a size the header claims (a header of 1 GiB over a few bytes, which would
+// allocate before a byte is read), and a stream that decompresses without bound. Mutants planted: the member check
+// removed; the total cap removed.
+test "readFiles: a header that claims more than the cap is refused before anything is read, and a short stream is an error" {
+    var st = testArena();
+    defer st.deinit();
+    const a = st.allocator();
+    const window = try std.testing.allocator.alloc(u8, window_size);
+    defer std.testing.allocator.free(window);
+    var diag = Diag{};
+    const big = try lyingConda(a, &.{.{ .name = "lib/libx.a", .data = "abc" }}, 1 << 30);
+    try std.testing.expectError(error.BadConda, readFiles(a, big, window, &.{"lib/libx.a"}, &diag));
+    try std.testing.expectEqualStrings("lib/libx.a in the package is 1073741824 bytes; mopm reads at most 134217728", diag.message);
+    // Under the cap by its header but with less data than it says: an error, and no allocation from the claim.
+    const short = try lyingConda(a, &.{.{ .name = "lib/libx.a", .data = "abc" }}, 1 << 20);
+    const r = readFilesLimited(a, short, window, &.{"lib/libx.a"}, .{ .member = 2 << 20 }, &diag);
+    try std.testing.expect(std.meta.isError(r));
+    // The claim equal to the data is read.
+    const exact = try lyingConda(a, &.{.{ .name = "lib/libx.a", .data = "abc" }}, 3);
+    const got = try readFilesLimited(a, exact, window, &.{"lib/libx.a"}, .{ .member = 3 }, &diag);
+    try std.testing.expectEqualStrings("abc", got[0].?);
+    // One byte over the member cap, by the header.
+    try std.testing.expectError(error.BadConda, readFilesLimited(a, exact, window, &.{"lib/libx.a"}, .{ .member = 2 }, &diag));
+}
+
+test "readFiles: a package tar that decompresses to more than the total is refused, wanted entry or not; exactly the total is read" {
+    var st = testArena();
+    defer st.deinit();
+    const a = st.allocator();
+    const window = try std.testing.allocator.alloc(u8, window_size);
+    defer std.testing.allocator.free(window);
+    const idx = try fx.indexJson(a, "demo", "1.0", "h0_0", "", "");
+    const info = [_]fx.Item{.{ .name = "info/index.json", .data = idx }};
+    const files = [_]fx.Item{
+        .{ .name = "pad/a", .data = "a" ** 1000 },
+        .{ .name = "pad/b", .data = "b" ** 1000 },
+        .{ .name = "lib/libx.a", .data = "wanted" },
+    };
+    const conda_bytes = try fx.conda2(a, "demo-1.0-h0_0", &info, &files);
+    const tar_len: u64 = (try fx.tar(a, &files)).len;
+    var diag = Diag{};
+    try std.testing.expectError(error.BadConda, readFilesLimited(a, conda_bytes, window, &.{"lib/libx.a"}, .{ .total = 1500 }, &diag));
+    try std.testing.expectEqualStrings("the package decompresses to more than 1500 bytes; mopm reads at most that", diag.message);
+    // Padding that is not wanted counts too: the wanted file is last, and the stream is over before it.
+    try std.testing.expectError(error.BadConda, readFilesLimited(a, conda_bytes, window, &.{"nothing"}, .{ .total = 1500 }, &diag));
+    try std.testing.expectError(error.BadConda, readFilesLimited(a, conda_bytes, window, &.{"lib/libx.a"}, .{ .total = tar_len - 1024 - 1 }, &diag));
+    const ok = try readFilesLimited(a, conda_bytes, window, &.{"lib/libx.a"}, .{ .total = tar_len }, &diag);
+    try std.testing.expectEqualStrings("wanted", ok[0].?);
 }

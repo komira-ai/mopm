@@ -254,6 +254,11 @@ pub fn check(arena: Allocator, l: Lock) Allocator.Error!?[]const u8 {
             for (l.packages) |q| found = found or std.mem.eql(u8, q.name, d);
             if (!found) return try std.fmt.allocPrint(arena, "{s}: dependency {s} is not in packages", .{ p.name, d });
         }
+        for (p.native) |n| {
+            for (n.needs) |need| {
+                if (std.mem.eql(u8, need, n.soname)) return try std.fmt.allocPrint(arena, "{s}: native library {s} needs itself ({s})", .{ p.name, n.id, need });
+            }
+        }
         for (l.packages[0..i]) |q| {
             if (std.mem.eql(u8, q.name, p.name) and !std.mem.eql(u8, q.channel, p.channel)) {
                 return try std.fmt.allocPrint(arena, "{s} comes from two channels, {s} and {s}", .{ p.name, q.channel, p.channel });
@@ -1063,4 +1068,18 @@ test "a native library keeps its kind, needs and exclusive group through a read 
     const written = try render(a, p);
     try std.testing.expect(std.mem.indexOf(u8, written, "\"exclusive\"") == null);
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, written, "\"kind\""));
+}
+
+test "a native library that needs its own soname is refused when the lock is read" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var dir = try std.fs.cwd().openDir(try testroot.path(a, "tests/contract/examples/lock/valid"), .{});
+    defer dir.close();
+    const text = try dir.readFileAlloc(a, "static_natives.json", 1 << 20);
+    const selfish = try std.mem.replaceOwned(u8, a, text, "\"libcrypto_sys.a\"\n          ]", "\"libtls_sys.a\"\n          ]");
+    try std.testing.expect(!std.mem.eql(u8, text, selfish));
+    var why: []const u8 = "";
+    try std.testing.expectError(error.Invalid, parse(a, selfish, &why));
+    try std.testing.expectEqualStrings("tls_sys: native library tls_sys needs itself (libtls_sys.a)", why);
 }

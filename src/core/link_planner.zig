@@ -157,6 +157,14 @@ pub fn plan(arena: Allocator, inputs: []const Input) Allocator.Error!Plan {
         for (inp.meta.native) |n| {
             if (n.mode != .link) continue; // a load-mode library resolves its own needs
             for (n.needs) |need| {
+                if (std.mem.eql(u8, need, n.soname)) {
+                    try diags.append(.{
+                        .code = .needs_cycle,
+                        .command = .all,
+                        .message = try std.fmt.allocPrint(arena, "{s} (native {s}) needs itself ({s})", .{ inp.meta.name, n.id, need }),
+                    });
+                    continue;
+                }
                 if (provides.get(need)) |owner_ships| {
                     // A static library takes what it needs from a shared object or from an archive; a shared
                     // object is loaded at run time and cannot reach into an archive.
@@ -624,4 +632,16 @@ test "golden: static only" {
 
 test "golden: a static library over the static library it needs, given in the other order" {
     try golden("static_chain", &.{ "crypto_sys", "tls_sys" });
+}
+
+test "a library that needs its own soname is refused" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const p = try plan(a, &.{try mk(a, "d",
+        \\{"schema": 1, "name": "a", "native": [
+        \\  {"id": "a", "soname": "liba.a", "kind": "static", "static_file": "lib/liba.a", "needs": ["liba.a"]}]}
+    )});
+    try std.testing.expect(has(p, .needs_cycle, .all));
+    try std.testing.expect(!has(p, .missing_library, .all));
 }

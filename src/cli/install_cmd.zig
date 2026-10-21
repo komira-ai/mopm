@@ -56,6 +56,7 @@ const inst = core.install;
 const semver = core.semver;
 const toml_edit = core.toml_edit;
 const unit_graph = core.unit_graph;
+const publish_cmd = @import("publish_cmd.zig");
 
 pub const Command = enum { lock, update, tree, sync, add, remove, plan };
 
@@ -288,6 +289,8 @@ const IndexSource = struct {
 /// Reads `<channel><subdir>/repodata.json`.
 const ChannelSource = struct {
     channel_url: []const u8,
+    /// The most a package file may be: what `mopm publish` sends (the registry's 100 MB), no more.
+    max_conda: usize = publish_cmd.max_file_bytes,
 
     pub fn fetch(self: ChannelSource, arena: Allocator, subdir: []const u8, diag: *resolve.Diagnostic) resolve.Error![]const u8 {
         const url = try std.fmt.allocPrint(arena, "{s}{s}/repodata.json", .{ self.channel_url, subdir });
@@ -299,10 +302,11 @@ const ChannelSource = struct {
     }
 
     /// Reads `<channel><subdir>/<filename>`: a package file, for the natives `mopm lock` hashes. The body is held
-    /// in memory (the HTTP client's limit is 64 MiB).
+    /// in memory, up to `max_conda` bytes; a longer one is refused as too large.
     pub fn fetchConda(self: ChannelSource, arena: Allocator, subdir: []const u8, filename: []const u8, diag: *resolve.Diagnostic) resolve.Error![]const u8 {
         const url = try std.fmt.allocPrint(arena, "{s}{s}/{s}", .{ self.channel_url, subdir, filename });
-        const answer = http.request(arena, .GET, url, .{}) catch |e| {
+        const answer = http.request(arena, .GET, url, .{ .max_body = self.max_conda }) catch |e| {
+            if (e == error.StreamTooLong) return resolve.fail(arena, diag, .bad_channel, "{s} is larger than {d} bytes, the most a package file may be", .{ url, self.max_conda });
             return resolve.fail(arena, diag, .bad_channel, "cannot read {s}: {s}", .{ url, @errorName(e) });
         };
         if (!answer.ok()) return resolve.fail(arena, diag, .bad_channel, "{s} answered HTTP {d}", .{ url, answer.status });
@@ -968,4 +972,41 @@ test "remove of an absent dependency is an error, and so is the other table's" {
     try std.testing.expect((try editText(a, .remove, "[package]\nname = \"a\"\n", true, "tls", "")) == .bad);
     // A table written as dotted keys is not edited.
     try std.testing.expect((try editText(a, .add, "dependencies.tls = \"1\"\n\n[package]\nname = \"a\"\n", false, "x", "\"1\"")) == .bad);
+}
+
+/// A loopback server that answers every GET with `body`, for one connection at a time, until it is closed.
+const BodyServer = struct {
+    server: std.net.Server,
+    body: []const u8,
+
+    fn serve(self: *BodyServer) void {
+        while (true) {
+            const conn = self.server.accept() catch return;
+            defer conn.stream.close();
+            var buf: [8 * 1024]u8 = undefined;
+            var http_server = std.http.Server.init(conn, &buf);
+            var req = http_server.receiveHead() catch continue;
+            req.respond(self.body, .{ .status = .ok, .keep_alive = false }) catch continue;
+        }
+    }
+};
+
+// Defect it catches: a package file read past the size a package may be, or cut short without saying so. Mutant
+// planted: fetchConda passes the HTTP client's own limit (64 MiB) instead of `max_conda`.
+test "fetchConda reads a package file up to its limit and refuses a longer one by name" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const address = try std.net.Address.parseIp("127.0.0.1", 0);
+    var srv = BodyServer{ .server = try address.listen(.{ .reuse_address = true }), .body = "x" ** 2000 };
+    const t = try std.Thread.spawn(.{}, BodyServer.serve, .{&srv});
+    t.detach();
+    const url = try std.fmt.allocPrint(a, "http://127.0.0.1:{d}/", .{srv.server.listen_address.getPort()});
+    var diag: resolve.Diagnostic = .{};
+    // The default limit is publish's maximum, which is more than the 64 MiB the HTTP client used to impose.
+    try std.testing.expectEqual(@as(usize, 100_000_000), (ChannelSource{ .channel_url = url }).max_conda);
+    const ok = try (ChannelSource{ .channel_url = url, .max_conda = 2000 }).fetchConda(a, "linux-64", "f.conda", &diag);
+    try std.testing.expectEqual(@as(usize, 2000), ok.len);
+    try std.testing.expectError(error.ResolveFailed, (ChannelSource{ .channel_url = url, .max_conda = 1999 }).fetchConda(a, "linux-64", "f.conda", &diag));
+    try std.testing.expect(std.mem.indexOf(u8, diag.message, "f.conda is larger than 1999 bytes, the most a package file may be") != null);
 }

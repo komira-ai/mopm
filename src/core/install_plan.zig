@@ -1184,3 +1184,37 @@ test "builds for two Mojo versions that ship different natives are refused befor
     diag = .{};
     try std.testing.expectError(error.ResolveFailed, checkNativesAgree(a, &.{ one, two }, &diag));
 }
+
+// Defect it catches: a repodata size that differs from the index's accepted when the sha256 agrees (the size is what
+// `mopm sync` and the lock hold the download to). Mutant planted: the size half of the comparison dropped.
+test "a repodata size that differs from the index's, with the same sha256, is refused, naming both" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const linux_text = diamond_channel.files[0][1];
+    const resized = try std.mem.replaceOwned(u8, a, linux_text, "\"sha256\":\"" ++ digests[0] ++ "\",\"size\":1000", "\"sha256\":\"" ++ digests[0] ++ "\",\"size\":1001");
+    try std.testing.expect(!std.mem.eql(u8, linux_text, resized));
+    const ch = MemoryChannel{ .files = &.{ .{ "linux-64", resized }, diamond_channel.files[1] } };
+    var diag: Diagnostic = .{};
+    try std.testing.expectError(error.ResolveFailed, diamondLock(a, ch, &diag));
+    try std.testing.expectEqual(resolve.Kind.bad_channel, diag.kind);
+    try std.testing.expect(std.mem.indexOf(u8, diag.message, "the index says sha256 " ++ digests[0] ++ ", size 1000; linux-64/repodata.json says sha256 " ++ digests[0] ++ ", size 1001") != null);
+}
+
+// Defect it catches: a pin kept for a library the index now names differently, with the very same file bytes: the lock
+// would keep the stale soname. Mutant planted: reusable() stops comparing sonames.
+test "an old pin is not reused when the index names the library differently, even for the same file" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var w = try world(a);
+    var diag: Diagnostic = .{};
+    const first = try worldLock(a, w, null, &diag);
+    // The same files, the same hashes; only the index's soname for crypto_sys is another.
+    const renamed = try std.mem.replaceOwned(u8, a, w.index.files[0][1], "\"soname\":\"libcrypto_sys.a\"", "\"soname\":\"libcrypto_other.a\"");
+    try std.testing.expect(!std.mem.eql(u8, renamed, w.index.files[0][1]));
+    w.index = .{ .files = try a.dupe(resolve.Pair, &.{ .{ "crypto_sys", renamed }, w.index.files[1] }) };
+    diag = .{};
+    try std.testing.expectError(error.ResolveFailed, worldLock(a, w, first, &diag));
+    try std.testing.expect(std.mem.indexOf(u8, diag.message, "does not declare it") != null);
+}

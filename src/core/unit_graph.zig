@@ -424,6 +424,9 @@ const Builder = struct {
     /// needs at run time, so a need it names that is not here is not the graph's to judge.
     fn orderNatives(b: *Builder, owner: []const u8, found: []NativeRef) ![]const NativeRef {
         for (found) |n| {
+            for (n.needs) |need| {
+                if (std.mem.eql(u8, need, n.soname)) return b.fail("{s}: native library {s} of {s} needs itself", .{ owner, n.soname, n.package });
+            }
             if (n.kind != .static) continue;
             for (n.needs) |need| {
                 var provided = false;
@@ -1380,4 +1383,26 @@ test "spike: a package with an empty Mojo module is a library unit with that emp
     try tmp.dir.deleteFile("src/app/__init__.mojo");
     try std.testing.expectError(error.Refused, graphOf(a, dir, "", lock_v1, "1.0.0", &why));
     try std.testing.expect(std.mem.indexOf(u8, why, "holds no .mojo file") != null);
+}
+
+test "a native library that needs its own soname is refused, shared or static, when the graph is made" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeWorkspace(tmp.dir, app_init);
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    // The lock reader refuses this lock; the graph must too when handed one (a lock made by hand into a struct).
+    var l = try lock.parse(a, try fill(a, lock_static_chain), &why);
+    const pk = try a.dupe(lock.Package, l.packages);
+    for (pk) |*p| {
+        if (std.mem.eql(u8, p.name, "crypto_sys")) p.native = try a.dupe(lock.Native, &.{.{ .id = "crypto_sys", .soname = "libcrypto_sys.a", .sha256 = native_sha, .kind = .static, .needs = &.{"libcrypto_sys.a"} }});
+    }
+    l.packages = pk;
+    var diag: manifest.Diagnostic = .{};
+    const m = try manifest.parse(a, try std.mem.concat(a, u8, &.{ toml_app, toml_tls_dep }), &diag);
+    try std.testing.expectError(error.Refused, build(a, .{ .dir = dir, .m = m, .members = &members, .l = l, .subdir = "linux-64", .mojo = "1.0.0", .toolchain = fakeToolchain("1.0.0") }, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "native library libcrypto_sys.a of crypto_sys needs itself") != null);
 }
