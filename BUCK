@@ -15,7 +15,11 @@
 # `buck-only` on its first line has no counterpart in
 # build.zig and is left out of the parity comparison.
 
-load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_module", "zig_test")
+load("@buildrules//rules/zig:zig.bzl", "zig_exe", "zig_module")
+# zig_test is the pinned buildrules rule plus the ZigTestInfo that zig_coverage reads (vendor/buildrules_coverage/README.md).
+load("//vendor/buildrules_coverage:zig_test.bzl", "zig_test")
+load("//vendor/buildrules_coverage:zig_cover.bzl", "zig_coverage")
+load("//vendor/buildrules_coverage:tools.bzl", "cov_tools")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//ci:workflow_lint.bzl", "actionlint_check")
 load("//:buildrules.bzl", "cargo_workspace")
@@ -774,4 +778,96 @@ zig_exe(  # buck-only: installs the pinned actionlint for lint.yml (sha256-check
     name = "install-actionlint",
     src = "tools/install_actionlint.zig",
     **_TOOLS
+)
+
+# ---- Coverage: the lines the unit tests reach, held to a floor per package ------------------------------------------------
+# (vendor/buildrules_coverage/README.md says what each figure is, what it leaves out, and how a floor is written.)
+
+# The tools of a coverage run (zig_cover, cov_floor, cov_summary, the launcher), built here until the buildrules pin has them.
+cov_tools()
+
+# Each package: the unit tests of its sources run again under kcov (the same compile and environment), and `<package>_coverage_floor`
+# holds the lines they reach to coverage/<package>.txt, both ways: a fall fails, and so does a rise the floor has not been raised to.
+# The packages are built by zig 0.12, which has no block counters (-ffuzz), so the report is lines only (`blocks = False`).
+# `expect` is the package's own sources; a file in it that no listed test compiled fails the summary. Process tests (a test that runs a built
+# program, `env_tools`) measure the program's behaviour, not its sources, and are not listed.
+zig_coverage(
+    name = "core_coverage",
+    blocks = False,
+    floor = "coverage/core.txt",
+    test_targets = [":core_test"],
+    expect = glob(["src/core/*.zig"]),
+)
+
+zig_coverage(
+    name = "cli_coverage",
+    blocks = False,
+    floor = "coverage/cli.txt",
+    test_targets = [":cli_test"],
+    # build_options.zig is a module of constants (a declaration has no line); test_cmd.zig is compiled only into the mopm program, not into the unit test binary.
+    expect = glob(["src/cli/*.zig"], exclude = ["src/cli/build_options.zig", "src/cli/test_cmd.zig"]),
+)
+
+zig_coverage(
+    name = "fake_registry_coverage",
+    blocks = False,
+    floor = "coverage/fake_registry.txt",
+    test_targets = [":fake_test"],
+    # control.zig is imported by main.zig, but only the code of main() calls it; the unit test binary has no line of it.
+    expect = glob(["registry/fake/*.zig"], exclude = ["registry/fake/control.zig"]),
+)
+
+zig_coverage(
+    name = "channels_coverage",
+    blocks = False,
+    floor = "coverage/channels.txt",
+    test_targets = [":channels_test"],
+    expect = glob(["tools/channels/*.zig"], exclude = ["tools/channels/main.zig"]),
+)
+
+zig_coverage(
+    name = "build_parity_coverage",
+    blocks = False,
+    floor = "coverage/build_parity.txt",
+    test_targets = [":build_parity"],
+    expect = ["tools/build_parity.zig"],
+)
+
+zig_coverage(
+    name = "drivers_coverage",
+    blocks = False,
+    floor = "coverage/drivers.txt",
+    test_targets = [":contract", ":lock_golden", ":validator_corpus", ":hygiene", ":workflows", ":release_workflow", ":lint_selftest", ":gen_errors_current"],
+    expect = [
+        "tests/drivers/contract.zig",
+        "tests/drivers/errors_gen.zig",
+        "tests/drivers/hygiene.zig",
+        "tests/drivers/jsonschema.zig",
+        "tests/drivers/lint_common.zig",
+        "tests/drivers/openapi_check.zig",
+        "tests/drivers/regex.zig",
+        "tests/drivers/release_lint.zig",
+        "tests/drivers/shell_syntax.zig",
+        "tests/drivers/validator_corpus.zig",
+        "tests/drivers/workflow_lint.zig",
+        "tests/drivers/yaml.zig",
+    ],
+)
+
+# Every package's floor, in one target: `./buck2 build //:coverage_floors`.
+filegroup(
+    name = "coverage_floors",
+    srcs = {
+        "build_parity": ":build_parity_coverage_floor",
+        "channels": ":channels_coverage_floor",
+        "cli": ":cli_coverage_floor",
+        "core": ":core_coverage_floor",
+        "drivers": ":drivers_coverage_floor",
+        "fake_registry": ":fake_registry_coverage_floor",
+        "service_api": "//service/api:coverage_floor",
+        "service_infra_access": "//service/infra/access:coverage_floor",
+        "service_infra_dns": "//service/infra/dns:coverage_floor",
+        "service_infra_stacks": "//service/infra/stacks:coverage_floor",
+        "site": "//site:coverage_floor",
+    },
 )
