@@ -4,7 +4,8 @@
 //!                   A file `sign_fail` there makes every signature fail; a file `bad_detached` makes the detached signature cover other bytes, so
 //!                   it does not verify.
 //!   $FAKE_GPG_KEY   the exact bytes the key file must hold for --import to accept it
-//!   $FAKE_GPG_FPR   the fingerprint of the signing subkey: --list-secret-keys finds only that; --local-user must be it followed by `!`
+//!   $FAKE_GPG_FPR   the fingerprint of the signing subkey, or several separated by commas: --list-secret-keys finds only those; --local-user must be given
+//!                   once for each, in that order, each followed by `!`, and for no other key
 //!   $FAKE_GPG_PASS  the passphrase the passphrase file must hold (the loopback pinentry); a signature without one is refused
 //! It also refuses a home directory that others can read (gpg warns about it, and the key is in it).
 
@@ -76,15 +77,34 @@ pub fn main() !void {
     }
     if (has(args, "--list-secret-keys")) {
         _ = std.fs.cwd().statFile(try std.fmt.allocPrint(a, "{s}/imported", .{home})) catch fail("no secret key");
+        // $FAKE_GPG_FPR is one fingerprint or a comma-separated list: the key asked for must be one of them.
         const want = std.posix.getenv("FAKE_GPG_FPR") orelse "";
-        if (!std.ascii.eqlIgnoreCase(args[args.len - 1], want)) fail("error reading key: No secret key");
+        var wants = std.mem.splitScalar(u8, want, ',');
+        var found = false;
+        while (wants.next()) |x| {
+            if (std.ascii.eqlIgnoreCase(args[args.len - 1], x)) found = true;
+        }
+        if (!found) fail("error reading key: No secret key");
         return;
     }
     if (has(args, "--clearsign") or has(args, "--detach-sign")) {
         if (dir.access("sign_fail", .{})) |_| fail("signing failed: Inappropriate ioctl for device") else |_| {}
-        const user = flag(args, "--local-user") orelse fail("no --local-user");
+        // One `--local-user <fpr>!` per signing key, in the order of $FAKE_GPG_FPR (one fingerprint, or several separated by commas), no more and no fewer.
+        var users = std.ArrayList([]const u8).init(a);
+        for (args, 0..) |x, i| {
+            if (std.mem.eql(u8, x, "--local-user") and i + 1 < args.len) try users.append(args[i + 1]);
+        }
+        if (users.items.len == 0) fail("no --local-user");
         const want = std.posix.getenv("FAKE_GPG_FPR") orelse "";
-        if (user.len != want.len + 1 or user[user.len - 1] != '!' or !std.ascii.eqlIgnoreCase(user[0..want.len], want)) fail("signing key spec is not the subkey with !");
+        var wants = std.mem.splitScalar(u8, want, ',');
+        var n: usize = 0;
+        while (wants.next()) |w| : (n += 1) {
+            if (n >= users.items.len) fail("signing key spec is missing a subkey");
+            const u = users.items[n];
+            if (u.len != w.len + 1 or u[u.len - 1] != '!' or !std.ascii.eqlIgnoreCase(u[0..w.len], w)) fail("signing key spec is not the subkey with !");
+        }
+        if (n != users.items.len) fail("signing key spec has a key that is not a signing subkey");
+        const user = try std.mem.join(a, ",", users.items);
         const mode = flag(args, "--pinentry-mode") orelse "";
         const pf = flag(args, "--passphrase-file") orelse fail("no passphrase file");
         if (!std.mem.eql(u8, mode, "loopback")) fail("the pinentry would ask");

@@ -272,6 +272,27 @@ pub fn formatDate(a: Allocator, secs: u64) ![]u8 {
     });
 }
 
+/// The architectures an index lists: `given` (as it is, so a repeated one is still refused by `tree`), then every architecture of `listed` (the
+/// repository's own: an index written without one would drop its packages), then `all` when a stanza to add is for it. `all` is the one
+/// architecture added on the strength of a stanza: a package for every architecture must not be refused by `tree`, whichever product publishes
+/// first. Any other architecture a stanza names that nobody listed stays refused (`ArchitectureNotIndexed`): that is a .deb built for the wrong target.
+pub fn widenArchs(a: Allocator, given: []const []const u8, listed: []const []const u8, add: []const Stanza) ![]const []const u8 {
+    var out = std.ArrayList([]const u8).init(a);
+    try out.appendSlice(given);
+    for (listed) |arch| try appendNew(&out, arch);
+    for (add) |s| {
+        if (std.mem.eql(u8, s.architecture, "all")) try appendNew(&out, "all");
+    }
+    return out.toOwnedSlice();
+}
+
+fn appendNew(out: *std.ArrayList([]const u8), arch: []const u8) !void {
+    for (out.items) |x| {
+        if (std.mem.eql(u8, x, arch)) return;
+    }
+    try out.append(arch);
+}
+
 /// The index files of `archs` (Packages and Packages.gz under `dists/<suite>/<component>/binary-<arch>/`) and the
 /// Release that lists them. Paths are relative to the repository root. A stanza whose architecture is not in
 /// `archs` is refused: it would be listed nowhere.
@@ -637,4 +658,117 @@ test "formatDate: every weekday and every month name" {
         .{ .day = 334, .want = "Tue, 01 Dec 1970 00:00:00 UTC" },
     };
     for (months) |m| try t.expectEqualStrings(m.want, try formatDate(a, m.day * 86400));
+}
+
+fn sampleAllDeb(a: Allocator, ver: []const u8) ![]u8 {
+    return deb.build(a, .{
+        .name = "sample-keyring",
+        .version = ver,
+        .architecture = "all",
+        .maintainer = "mopm authors <apt@mopm.dev>",
+        .homepage = "https://mopm.dev",
+        .synopsis = "a data package",
+        .section = "misc",
+        .files = &.{.{ .path = "usr/share/keyrings/k.gpg", .data = "key", .mode = 0o644 }},
+        .mtime = 1790000000,
+    });
+}
+
+/// The stanzas of every `binary-<arch>/Packages` a tree holds, and the architectures it has directories for: what `apt-index` reads back
+/// from the repository the next product publishes into.
+fn readBack(a: Allocator, files: []const TreeFile, stanzas: *std.ArrayList(Stanza), listed: *std.ArrayList([]const u8)) !void {
+    const mid = "/main/binary-";
+    for (files) |f| {
+        const at = std.mem.indexOf(u8, f.path, mid) orelse continue;
+        if (!std.mem.endsWith(u8, f.path, "/Packages")) continue;
+        try listed.append(f.path[at + mid.len .. f.path.len - "/Packages".len]);
+        try stanzas.appendSlice(try parsePackages(a, f.data));
+    }
+}
+
+test "an index with an all stanza and amd64 and arm64 stanzas round-trips, and the next product's publish still succeeds" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const info = ReleaseInfo{ .origin = "o", .label = "l", .description = "d", .date = 1790000000 };
+    const defaults = [_][]const u8{ "amd64", "arm64" };
+
+    // The first publish into the repository is a package of architecture all (nothing lists `all` yet).
+    const kr = try stanzaOfIn(a, try sampleAllDeb(a, "2026.10.21"), "pool/keyring");
+    try t.expectEqualStrings("all", kr.architecture);
+    const first_archs = try widenArchs(a, &defaults, &.{}, &.{kr});
+    const first = try tree(a, info, (try merge(a, &.{}, &.{kr}, 25)).stanzas, first_archs);
+    const release1 = first[first.len - 1].data;
+    try t.expect(std.mem.indexOf(u8, release1, "Architectures: all amd64 arm64\n") != null);
+    var seen_all = false;
+    for (first) |f| {
+        if (std.mem.eql(u8, f.path, "dists/stable/main/binary-all/Packages")) {
+            seen_all = true;
+            try t.expect(std.mem.indexOf(u8, f.data, "Package: sample-keyring\n") != null);
+        }
+    }
+    try t.expect(seen_all);
+
+    // Another product publishes its amd64 and arm64 builds next: the all stanza stays, the new ones are added, nothing is refused.
+    var existing = std.ArrayList(Stanza).init(a);
+    var listed = std.ArrayList([]const u8).init(a);
+    try readBack(a, first, &existing, &listed);
+    try t.expectEqual(@as(usize, 1), existing.items.len);
+    const amd = try stanzaOf(a, try sampleDeb(a, "1.2.3", "amd64", "x86"));
+    const arm = try stanzaOf(a, try sampleDeb(a, "1.2.3", "arm64", "aarch"));
+    const second_archs = try widenArchs(a, &defaults, listed.items, &.{ amd, arm });
+    const second = try tree(a, info, (try merge(a, existing.items, &.{ amd, arm }, 25)).stanzas, second_archs);
+    try t.expect(std.mem.indexOf(u8, second[second.len - 1].data, "Architectures: all amd64 arm64\n") != null);
+    var back = std.ArrayList(Stanza).init(a);
+    var listed2 = std.ArrayList([]const u8).init(a);
+    try readBack(a, second, &back, &listed2);
+    try t.expectEqual(@as(usize, 3), back.items.len);
+    var names = std.ArrayList([]const u8).init(a);
+    for (back.items) |s| try names.append(s.architecture);
+    std.mem.sort([]const u8, names.items, {}, struct {
+        fn lt(_: void, x: []const u8, y: []const u8) bool {
+            return std.mem.lessThan(u8, x, y);
+        }
+    }.lt);
+    try t.expectEqualStrings("all", names.items[0]);
+    try t.expectEqualStrings("amd64", names.items[1]);
+    try t.expectEqualStrings("arm64", names.items[2]);
+
+    // And the keyring's next version, after both: the same repository takes it, the other products' packages are unchanged.
+    const kr2 = try stanzaOfIn(a, try sampleAllDeb(a, "2026.11.2"), "pool/keyring");
+    const third_archs = try widenArchs(a, &defaults, listed2.items, &.{kr2});
+    const m3 = try merge(a, back.items, &.{kr2}, 25);
+    try t.expectEqual(@as(usize, 4), m3.stanzas.len);
+    _ = try tree(a, info, m3.stanzas, third_archs);
+}
+
+test "widenArchs: the given ones as they are, then the repository's and the added stanzas', each once" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const kr = try stanzaOf(a, try sampleAllDeb(a, "2026.10.21"));
+    const amd = try stanzaOf(a, try sampleDeb(a, "1.2.3", "amd64", "x"));
+    const got = try widenArchs(a, &.{ "amd64", "arm64" }, &.{ "s390x", "amd64", "all" }, &.{ amd, kr });
+    try t.expectEqual(@as(usize, 4), got.len);
+    try t.expectEqualStrings("amd64", got[0]);
+    try t.expectEqualStrings("arm64", got[1]);
+    try t.expectEqualStrings("s390x", got[2]);
+    try t.expectEqualStrings("all", got[3]);
+    // A repeated --arch is kept, so `tree` refuses it as before.
+    const twice = try widenArchs(a, &.{ "amd64", "amd64" }, &.{}, &.{});
+    try t.expectEqual(@as(usize, 2), twice.len);
+    // Only the added stanza names `all`: it is listed.
+    const only = try widenArchs(a, &.{"amd64"}, &.{}, &.{kr});
+    try t.expectEqual(@as(usize, 2), only.len);
+    try t.expectEqualStrings("all", only[1]);
+}
+
+test "widenArchs: a stanza of another unlisted architecture does not widen the index, so a .deb for the wrong target is still refused" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const armhf = try stanzaOf(a, try sampleDeb(a, "1.2.3", "armhf", "x"));
+    const got = try widenArchs(a, &.{ "amd64", "arm64" }, &.{}, &.{armhf});
+    try t.expectEqual(@as(usize, 2), got.len);
+    try t.expectError(error.ArchitectureNotIndexed, tree(a, .{ .origin = null, .label = null, .description = null, .date = 0 }, &.{armhf}, got));
 }

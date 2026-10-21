@@ -229,6 +229,45 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
         rep.check("mutant: a version that is not X.Y.Z is refused, nothing written", badv.code == 1 and h.contains(badv.text, "BadVersion") and !w.has("bad4.deb"), badv.text);
     }
 
+    // ---- deb-data and architecture all: a data-only package, and the index it joins ----------------------------------------
+    {
+        const pk = "packaging/deb";
+        const kr_args = [_][]const u8{ "deb-data", "--name", "sample-keyring", "--version", "2026.10.21", "--packaging", pk, "--file", "644:usr/share/keyrings/sample-keyring.gpg:" ++ fx ++ "copyright" };
+        const d1 = try w.run(try cat(a, &.{ &kr_args, &.{ "--out", w.path("kr1.deb") } }));
+        const d2 = try w.run(try cat(a, &.{ &kr_args, &.{ "--out", w.path("kr2.deb") } }));
+        rep.check("deb-data: the program succeeds", d1.code == 0 and d2.code == 0 and h.contains(d1.text, "wrote "), d1.text);
+        rep.same("deb-data: built twice, the same bytes", w.read("kr1.deb"), w.read("kr2.deb"));
+        const kr_idx = try w.index("nowhere", "kr_first", &.{"kr1.deb"}, &.{});
+        const kr_release = w.read("kr_first/dists/stable/Release");
+        rep.check("apt-index: an all package into an empty repository succeeds and the Release lists all with amd64 and arm64", kr_idx.code == 0 and h.contains(kr_release, "Architectures: all amd64 arm64\n") and h.contains(kr_release, "main/binary-all/Packages.gz\n") and h.contains(w.read("kr_first/dists/stable/main/binary-all/Packages"), "Package: sample-keyring\nVersion: 2026.10.21\nArchitecture: all\n"), kr_idx.text);
+
+        // The next product's publish (here: mopm amd64 and arm64 builds) over the repository that now lists all.
+        _ = try w.deb("1.2.3", "amd64", bin, mtime, "kn_amd.deb");
+        _ = try w.deb("1.2.3", "arm64", bin, mtime, "kn_arm.deb");
+        const next = try w.index("kr_first", "kr_next", &.{ "kn_amd.deb", "kn_arm.deb" }, &.{});
+        rep.check("apt-index: the next product's publish over a repository holding an all package succeeds and lists all", next.code == 0 and h.contains(next.text, "added 2, dropped 0, listed 3") and h.contains(w.read("kr_next/dists/stable/Release"), "Architectures: all amd64 arm64\n"), next.text);
+        rep.same("apt-index: and the all Packages is unchanged by it", w.read("kr_first/dists/stable/main/binary-all/Packages"), w.read("kr_next/dists/stable/main/binary-all/Packages"));
+        rep.check("apt-index: and the new packages are listed for their own architectures", h.contains(w.read("kr_next/dists/stable/main/binary-amd64/Packages"), "Package: mopm\n") and h.contains(w.read("kr_next/dists/stable/main/binary-arm64/Packages"), "Package: mopm\n"), next.text);
+        // And the keyring's own next version over that.
+        const kr3 = try w.run(&.{ "deb-data", "--name", "sample-keyring", "--version", "2026.11.2", "--packaging", pk, "--file", "644:usr/share/keyrings/sample-keyring.gpg:" ++ fx ++ "copyright", "--out", w.path("kr3.deb") });
+        const again = try w.index("kr_next", "kr_again", &.{"kr3.deb"}, &.{});
+        rep.check("apt-index: the all package's next version over the shared repository succeeds, the others stay", kr3.code == 0 and again.code == 0 and h.contains(again.text, "added 1, dropped 0, listed 4") and h.contains(w.read("kr_again/dists/stable/main/binary-amd64/Packages"), "Package: mopm\n"), again.text);
+
+        // Refusals: nothing is written.
+        const conf = try w.run(&.{ "deb-data", "--name", "sample-keyring", "--version", "2026.10.21", "--packaging", pk, "--file", "644:etc/sample.conf:" ++ fx ++ "copyright", "--out", w.path("bad_conf.deb") });
+        rep.check("mutant: deb-data with a file below etc/ is refused, nothing written", conf.code == 1 and h.contains(conf.text, "ConffilePath") and !w.has("bad_conf.deb"), conf.text);
+        const suid = try w.run(&.{ "deb-data", "--name", "sample-keyring", "--version", "2026.10.21", "--packaging", pk, "--file", "4755:usr/bin/x:" ++ fx ++ "copyright", "--out", w.path("bad_mode.deb") });
+        rep.check("mutant: deb-data with a setuid mode is refused, nothing written", suid.code == 1 and h.contains(suid.text, "BadMode") and !w.has("bad_mode.deb"), suid.text);
+        const nofiles = try w.run(&.{ "deb-data", "--name", "sample-keyring", "--version", "2026.10.21", "--packaging", pk, "--out", w.path("bad_nofiles.deb") });
+        rep.check("mutant: deb-data with no file is refused, nothing written", nofiles.code == 1 and h.contains(nofiles.text, "EmptyFile") and !w.has("bad_nofiles.deb"), nofiles.text);
+        const nodir = try w.run(&.{ "deb-data", "--name", "sample-keyring", "--version", "2026.10.21", "--packaging", w.path("no_such_dir"), "--file", "644:usr/share/x:" ++ fx ++ "copyright", "--out", w.path("bad_dir.deb") });
+        rep.check("mutant: deb-data with no metadata directory is refused, nothing written", nodir.code == 1 and h.contains(nodir.text, "cannot open") and !w.has("bad_dir.deb"), nodir.text);
+        const badspec = try w.run(&.{ "deb-data", "--name", "sample-keyring", "--version", "2026.10.21", "--packaging", pk, "--file", "644:nocolon", "--out", w.path("bad_spec.deb") });
+        rep.check("mutant: deb-data with a malformed --file is refused", badspec.code == 1 and h.contains(badspec.text, "is not <mode>:<dest>:<src>") and !w.has("bad_spec.deb"), badspec.text);
+        const badoct = try w.run(&.{ "deb-data", "--name", "sample-keyring", "--version", "2026.10.21", "--packaging", pk, "--file", "9:usr/x:" ++ fx ++ "copyright", "--out", w.path("bad_oct.deb") });
+        rep.check("mutant: deb-data with a mode that is not octal is refused", badoct.code == 1 and h.contains(badoct.text, "not octal") and !w.has("bad_oct.deb"), badoct.text);
+    }
+
     // ---- the apt tree: two additions, the goldens, the files' own checksums ------------------------------------------
     {
         _ = try w.deb("1.2.2", "amd64", bin, mtime, "d122a.deb");

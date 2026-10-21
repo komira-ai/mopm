@@ -9,10 +9,14 @@
 //!       Writes the .deb of a built binary (deb_package.zig): the binary, the copyright, a changelog.gz and the lintian
 //!       overrides, with the control fields from <dir>/control, <dir>/copyright and <dir>/lintian-overrides. The same
 //!       binary and metadata give the same bytes.
+//!   channels deb-data --name <name> --version <X.Y.Z> --packaging <dir> --file <mode>:<dest>:<src> [--file ...] [--mtime <epoch seconds>] --out <path.deb>
+//!       Writes the .deb of a data-only package (deb_package.zig, buildData): Architecture all, the files given, the copyright and a changelog.gz,
+//!       with the control fields from <dir>/control and the copyright from <dir>/copyright. No maintainer script and no conffile: a <dest> below etc/
+//!       and any <mode> other than 0644 or 0755 is refused. The same inputs give the same bytes.
 //!   channels apt-index --repo <dir> --out <dir> --deb <path> [--deb ...] --date <epoch seconds>
 //!                --origin <text> --label <text> --description <text> [--arch <arch> ...] [--keep <N>] [--pool-dir pool/<name>]
 //!       Reads the Packages files under <dir>/dists/stable/main/binary-<arch>/ (none is an empty index) for the --arch
-//!       given (default amd64 and arm64) and for every other binary-<arch> the repository has, so none is dropped; adds the
+//!       given (default amd64 and arm64), for every other binary-<arch> the repository has, so none is dropped, and `all` when a .deb is for it; adds the
 //!       .debs, and writes the new Packages, Packages.gz and Release under <out>/dists/stable and the .debs under
 //!       <out>/pool. Refuses (exit 1, nothing written) to list a version older than the newest one listed for its
 //!       package and architecture, or the same version with other bytes. Keeps the newest <N> (default 25) per
@@ -41,7 +45,7 @@ fn die(comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 fn usage() noreturn {
-    std.debug.print("usage: channels deb|deb-package|apt-index|formula|monotonic ... (see tools/channels/main.zig)\n", .{});
+    std.debug.print("usage: channels deb|deb-package|deb-data|apt-index|formula|monotonic ... (see tools/channels/main.zig)\n", .{});
     std.process.exit(2);
 }
 
@@ -118,6 +122,7 @@ pub fn main() !void {
     const rest = argv[2..];
     if (std.mem.eql(u8, cmd, "deb")) return cmdDeb(a, rest);
     if (std.mem.eql(u8, cmd, "deb-package")) return cmdDebPackage(a, rest);
+    if (std.mem.eql(u8, cmd, "deb-data")) return cmdDebData(a, rest);
     if (std.mem.eql(u8, cmd, "apt-index")) return cmdAptIndex(a, rest);
     if (std.mem.eql(u8, cmd, "formula")) return cmdFormula(a, rest);
     if (std.mem.eql(u8, cmd, "monotonic")) return cmdMonotonic(a, rest);
@@ -176,6 +181,35 @@ fn cmdDebPackage(a: Allocator, args: []const []const u8) !void {
     std.debug.print("wrote {s} {d} bytes sha256 {s}\n", .{ out, bytes.len, std.fmt.bytesToHex(d, .lower) });
 }
 
+fn cmdDebData(a: Allocator, args: []const []const u8) !void {
+    const flags = try parseFlags(a, args, &.{ "--name", "--version", "--packaging", "--file", "--mtime", "--out" }, &.{});
+    const dir_path = need(flags, "--packaging");
+    var dir = std.fs.cwd().openDir(dir_path, .{}) catch |err| die("cannot open {s}: {s}", .{ dir_path, @errorName(err) });
+    defer dir.close();
+    const ctrl = dir.readFileAlloc(a, "control", 1 << 20) catch |err| die("cannot read {s}/control: {s}", .{ dir_path, @errorName(err) });
+    const copyright = dir.readFileAlloc(a, "copyright", 1 << 20) catch |err| die("cannot read {s}/copyright: {s}", .{ dir_path, @errorName(err) });
+    var files = std.ArrayList(deb_package.DataFile).init(a);
+    for (try many(a, flags, "--file")) |spec| {
+        const c1 = std.mem.indexOfScalar(u8, spec, ':') orelse die("--file '{s}' is not <mode>:<dest>:<src>", .{spec});
+        const c2 = std.mem.indexOfScalarPos(u8, spec, c1 + 1, ':') orelse die("--file '{s}' is not <mode>:<dest>:<src>", .{spec});
+        const mode = std.fmt.parseInt(u32, spec[0..c1], 8) catch die("--file '{s}': the mode is not octal", .{spec});
+        try files.append(.{ .path = spec[c1 + 1 .. c2], .mode = mode, .data = readFile(a, spec[c2 + 1 ..]) });
+    }
+    const bytes = deb_package.buildData(a, .{
+        .name = need(flags, "--name"),
+        .version = need(flags, "--version"),
+        .control = ctrl,
+        .copyright = copyright,
+        .files = files.items,
+        .mtime = if (one(flags, "--mtime")) |m| number(m, "--mtime") else deb_package.default_mtime,
+    }) catch |err| die("deb-data: {s}", .{@errorName(err)});
+    const out = need(flags, "--out");
+    writeFile(out, bytes);
+    var d: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(bytes, &d, .{});
+    std.debug.print("wrote {s} {d} bytes sha256 {s}\n", .{ out, bytes.len, std.fmt.bytesToHex(d, .lower) });
+}
+
 /// How many versions of a package and architecture an index keeps when --keep is not given.
 const default_keep: usize = 25;
 
@@ -208,19 +242,23 @@ fn cmdAptIndex(a: Allocator, args: []const []const u8) !void {
     }, &.{});
     const repo = need(flags, "--repo");
     const out_dir = need(flags, "--out");
-    var archs_list = std.ArrayList([]const u8).init(a);
-    try archs_list.appendSlice(try many(a, flags, "--arch"));
-    if (archs_list.items.len == 0) try archs_list.appendSlice(&.{ "amd64", "arm64" });
-    // Every architecture the repository already lists stays listed, whatever --arch says: an index written without
-    // one would drop its packages.
-    for (try listedArchs(a, repo)) |arch| {
-        var known = false;
-        for (archs_list.items) |x| {
-            if (std.mem.eql(u8, x, arch)) known = true;
-        }
-        if (!known) try archs_list.append(arch);
+    const pool_dir = one(flags, "--pool-dir");
+    var added = std.ArrayList(apt.Stanza).init(a);
+    var debs = std.ArrayList([]const u8).init(a);
+    for (try many(a, flags, "--deb")) |path| {
+        const bytes = readFile(a, path);
+        const s = apt.stanzaOfIn(a, bytes, pool_dir) catch |err| die("{s}: not a usable .deb: {s}", .{ path, @errorName(err) });
+        try added.append(s);
+        try debs.append(bytes);
     }
-    const archs: []const []const u8 = archs_list.items;
+    if (added.items.len == 0) die("--deb is required", .{});
+
+    // The architectures: --arch (default amd64 and arm64), every one the repository already lists (an index written without one would
+    // drop its packages), and `all` when a .deb to add is for it (it would be refused otherwise, and which product publishes first must not matter).
+    var given_archs = std.ArrayList([]const u8).init(a);
+    try given_archs.appendSlice(try many(a, flags, "--arch"));
+    if (given_archs.items.len == 0) try given_archs.appendSlice(&.{ "amd64", "arm64" });
+    const archs = try apt.widenArchs(a, given_archs.items, try listedArchs(a, repo), added.items);
     const keep: usize = if (one(flags, "--keep")) |k| @intCast(number(k, "--keep")) else default_keep;
 
     var existing = std.ArrayList(apt.Stanza).init(a);
@@ -233,17 +271,6 @@ fn cmdAptIndex(a: Allocator, args: []const []const u8) !void {
         const parsed = apt.parsePackages(a, text) catch |err| die("{s}: {s}", .{ p, @errorName(err) });
         try existing.appendSlice(parsed);
     }
-
-    const pool_dir = one(flags, "--pool-dir");
-    var added = std.ArrayList(apt.Stanza).init(a);
-    var debs = std.ArrayList([]const u8).init(a);
-    for (try many(a, flags, "--deb")) |path| {
-        const bytes = readFile(a, path);
-        const s = apt.stanzaOfIn(a, bytes, pool_dir) catch |err| die("{s}: not a usable .deb: {s}", .{ path, @errorName(err) });
-        try added.append(s);
-        try debs.append(bytes);
-    }
-    if (added.items.len == 0) die("--deb is required", .{});
 
     const merged = apt.merge(a, existing.items, added.items, keep) catch |err| switch (err) {
         error.ChannelWouldMoveDown => die("refused: a version older than the newest listed for its package and architecture would move the channel down", .{}),

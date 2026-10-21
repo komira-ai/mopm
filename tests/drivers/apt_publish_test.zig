@@ -32,6 +32,7 @@ const h = @import("harness.zig");
 const Allocator = std.mem.Allocator;
 
 const fpr = "ABCDEF0123456789ABCDEF0123456789ABCDEF01";
+const fpr2 = "0123456789ABCDEF0123456789ABCDEF01234567";
 const key_text = "fake key material, not a key\n";
 const passphrase = "correct-horse-battery";
 const role = "role-for-the-tests";
@@ -115,6 +116,19 @@ const World = struct {
         const r = try h.run(w.a, &.{ w.t.channels, "deb-package", "--binary", w.path("mopm-bin"), "--name", "mopm", "--version", version, "--arch", arch, "--packaging", "packaging/deb", "--out", out }, &e, .{});
         if (r.code != 0) {
             std.debug.print("channels deb-package failed: {s}\n", .{r.text});
+            return error.ToolFailed;
+        }
+    }
+
+    /// A data-only .deb of architecture all (the keyring's shape), made by `channels deb-data`.
+    fn dataDeb(w: World, dir: []const u8, version: []const u8) !void {
+        try w.put("keyring.gpg", "binary keyring bytes\n");
+        const out = try h.fmt(w.a, "{s}/sample-keyring_{s}_all.deb", .{ w.path(dir), version });
+        try std.fs.cwd().makePath(w.path(dir));
+        var e = try h.environ(w.a);
+        const r = try h.run(w.a, &.{ w.t.channels, "deb-data", "--name", "sample-keyring", "--version", version, "--packaging", "packaging/deb", "--file", try h.fmt(w.a, "644:usr/share/keyrings/sample-keyring.gpg:{s}", .{w.path("keyring.gpg")}), "--out", out }, &e, .{});
+        if (r.code != 0) {
+            std.debug.print("channels deb-data failed: {s}\n", .{r.text});
             return error.ToolFailed;
         }
     }
@@ -531,6 +545,80 @@ test "apt_publish: gate, OIDC exchange, read, index, sign, write, with every pla
         rep.check("fake aws: a put below another product's pool is AccessDenied", r.code != 0 and h.contains(r.text, "AccessDenied"), r.text);
         r = try h.run(a, &.{ t.aws, "s3api", "get-object", "--bucket", bucket, "--key", "apt/pool/mopm/x.deb", w.path("x") }, &e2, .{});
         rep.check("fake aws: a get below the pool is AccessDenied", r.code != 0 and h.contains(r.text, "AccessDenied"), r.text);
+    }
+
+    // ---- two signing keys: one --local-user for each, for InRelease and Release.gpg ------------------------------------------
+    {
+        n += 1;
+        const w = World{ .a = a, .t = t, .root = try h.join(a, &.{ try h.tmpPath(a, &tmp), try h.fmt(a, "twokeys{d}", .{n}) }) };
+        try std.fs.cwd().makePath(w.path("aws"));
+        try std.fs.cwd().makePath(w.path("gpg"));
+        try w.deb("debs", "1.2.3", "amd64");
+        try w.deb("debs", "1.2.3", "arm64");
+        _ = try w.run(&.{ "assume", "--env-file", w.path("github_env"), "--curl", t.curl, "--aws", t.aws });
+        const unsigned = try w.pipeline("u", "debs", false, true);
+        rep.check("two keys: the unsigned index is built", std.mem.eql(u8, unsigned.stage, "unsigned") and unsigned.ran.code == 0, unsigned.ran.text);
+        const both = fpr ++ "," ++ fpr2;
+        const signArgs = [_][]const u8{ "sign", "--gpg", t.gpg, "--dir", w.path("u_next/dists/stable"), "--work", w.path("work"), "--fingerprint", both, "--out", w.path("gho_s") };
+
+        // Each defect on its own, from a good run: a list with a key the key file does not hold, a list in another order than gpg is told, and a list that is not a list.
+        var e = try w.credEnv();
+        try e.put("FAKE_GPG_FPR", fpr);
+        var r = try w.runEnv(&e, &signArgs);
+        rep.check("two keys: a second key that is not among the imported secret keys fails, names it, and signs nothing", r.code != 0 and h.contains(r.text, "not among the secret keys") and h.contains(r.text, fpr2) and !w.has("u_next/dists/stable/InRelease") and !w.has("gho_s"), r.text);
+        rep.check("two keys: and no signing was attempted (the keys are checked first)", !h.contains(w.read("gpg/log"), "--clearsign") and !h.contains(w.read("gpg/log"), "--detach-sign"), w.read("gpg/log"));
+        for ([_][]const u8{ fpr ++ ",", "," ++ fpr, fpr ++ ",," ++ fpr2, fpr ++ "," ++ fpr, fpr ++ ";" ++ fpr2 }) |bad| {
+            e = try w.credEnv();
+            r = try w.runEnv(&e, &.{ "sign", "--gpg", t.gpg, "--dir", w.path("u_next/dists/stable"), "--work", w.path("work"), "--fingerprint", bad, "--out", w.path("gho_bad") });
+            rep.check(try h.fmt(a, "two keys: --fingerprint '{s}' fails and signs nothing", .{bad}), r.code != 0 and h.contains(r.text, "--fingerprint") and !w.has("u_next/dists/stable/InRelease") and !w.has("gho_bad"), r.text);
+        }
+        e = try w.credEnv();
+        try e.put("FAKE_GPG_FPR", fpr2 ++ "," ++ fpr);
+        r = try w.runEnv(&e, &signArgs);
+        rep.check("two keys: the keys are given to gpg in the order of the list (another order is refused by the fake)", r.code != 0 and !w.has("u_next/dists/stable/InRelease"), r.text);
+
+        e = try w.credEnv();
+        try e.put("FAKE_GPG_FPR", both);
+        try w.put("gpg/log", ""); // only the good run's calls from here on
+        r = try w.runEnv(&e, &signArgs);
+        rep.check("two keys: the signing succeeds, says how many keys, and outputs signed=true", r.code == 0 and h.contains(r.text, "2 subkey(s)") and h.contains(w.read("gho_s"), "signed=true"), r.text);
+        const inrelease = w.read("u_next/dists/stable/InRelease");
+        const detached = w.read("u_next/dists/stable/Release.gpg");
+        rep.check("two keys: InRelease is signed with both keys", h.contains(inrelease, "key=" ++ fpr ++ "!," ++ fpr2 ++ "!"), inrelease);
+        rep.check("two keys: Release.gpg is signed with both keys", h.contains(detached, "key=" ++ fpr ++ "!," ++ fpr2 ++ "!"), detached);
+        const glog = w.read("gpg/log");
+        rep.check("two keys: the clear and the detached signing each carry one --local-user per key", count(glog, "--local-user " ++ fpr ++ "! --local-user " ++ fpr2 ++ "! --armor --clearsign") == 1 and count(glog, "--local-user " ++ fpr ++ "! --local-user " ++ fpr2 ++ "! --armor --detach-sign") == 1, glog);
+        rep.check("two keys: and both keys were looked up among the secret keys", count(glog, "--list-secret-keys --with-colons " ++ fpr ++ "\n") >= 1 and count(glog, "--list-secret-keys --with-colons " ++ fpr2 ++ "\n") >= 1, glog);
+        // The signed index is then written as any other.
+        var argv = std.ArrayList([]const u8).init(a);
+        try argv.appendSlice(&.{ "write", "--aws", t.aws, "--bucket", bucket, "--distribution", "DISTID", "--hostname", "packages.example.test", "--next", w.path("u_next"), "--debs", w.path("debs"), "--out", w.path("gho_w") });
+        e = try w.credEnv();
+        r = try w.runEnv(&e, argv.items);
+        rep.check("two keys: the index signed by both writes", r.code == 0 and h.contains(w.read("aws/store/apt/dists/stable/InRelease"), "key=" ++ fpr ++ "!," ++ fpr2 ++ "!"), r.text);
+    }
+
+    // ---- an all package in the shared index, and the next product's publish over it ----------------------------------------------
+    {
+        n += 1;
+        const w = World{ .a = a, .t = t, .root = try h.join(a, &.{ try h.tmpPath(a, &tmp), try h.fmt(a, "allarch{d}", .{n}) }) };
+        try std.fs.cwd().makePath(w.path("aws"));
+        try std.fs.cwd().makePath(w.path("gpg"));
+        try w.dataDeb("kdebs", "2026.10.21");
+        try w.deb("debs", "1.2.3", "amd64");
+        try w.deb("debs", "1.2.3", "arm64");
+        _ = try w.run(&.{ "assume", "--env-file", w.path("github_env"), "--curl", t.curl, "--aws", t.aws });
+        const first = try w.pipeline("k", "kdebs", true, false);
+        rep.check("all: a package of architecture all published first (nothing lists all yet) goes through read, index, sign and write", std.mem.eql(u8, first.stage, "write") and first.ran.code == 0 and h.contains(w.read(first.gho), "conflict=false"), first.ran.text);
+        const rel1 = w.read("aws/store/apt/dists/stable/Release");
+        rep.check("all: the Release lists all with amd64 and arm64, and the all Packages is in the store", h.contains(rel1, "Architectures: all amd64 arm64\n") and h.contains(w.read("aws/store/apt/dists/stable/main/binary-all/Packages"), "Package: sample-keyring\n"), rel1);
+        // The next product's publish: it reads binary-all because the Release lists it, and writes it back unchanged.
+        const second = try w.pipeline("p", "debs", true, false);
+        rep.check("all: the next product's publish over an index holding an all package succeeds", std.mem.eql(u8, second.stage, "write") and second.ran.code == 0 and h.contains(w.read(second.gho), "conflict=false"), second.ran.text);
+        const rel2 = w.read("aws/store/apt/dists/stable/Release");
+        rep.check("all: and the Release still lists all, with the other products' architectures", h.contains(rel2, "Architectures: all amd64 arm64\n") and h.contains(rel2, "main/binary-all/Packages.gz\n"), rel2);
+        rep.check("all: and the all Packages still holds the keyring, beside the new packages in their own architectures", h.contains(w.read("aws/store/apt/dists/stable/main/binary-all/Packages"), "Package: sample-keyring\n") and h.contains(w.read("aws/store/apt/dists/stable/main/binary-amd64/Packages"), "Package: mopm\n") and h.contains(w.read("aws/store/apt/dists/stable/main/binary-arm64/Packages"), "Package: mopm\n"), w.read("aws/store/apt/dists/stable/main/binary-all/Packages"));
+        rep.check("all: the second publish read the all index (it would otherwise drop it)", h.contains(w.awsLog(), "main/binary-all/Packages"), w.awsLog());
+        rep.check("all: and the written Release lists the by-hash copy of the all Packages", h.contains(w.read("aws/store/apt/dists/stable/Release"), "main/binary-all/Packages\n") and count(w.awsLog(), "binary-all/by-hash/SHA256/") >= 2, w.awsLog());
     }
 
     // ---- an invalidation that fails fails the job; an index with no .deb is refused -------------------------------
