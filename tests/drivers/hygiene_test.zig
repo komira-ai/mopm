@@ -44,6 +44,7 @@ test "every file of the repository passes the text rules, and every workflow the
     for (tree.files) |f| try hyg.textProblems(a, f, try tree.read(a, f), &out);
     for (try c.workflowFiles(a, tree)) |f| try hyg.structureProblems(a, f, try tree.read(a, f), &out);
     try hyg.kpinSetsProblems(a, try tree.read(a, ".github/workflows/kpin-update.yml"), tree.files, &out);
+    try hyg.farmExclusionProblems(a, try tree.read(a, "BUCK"), try tree.read(a, ".github/workflows/farm.yml"), &out);
     for (out.items) |l| std.debug.print("{s}\n", .{l});
     try std.testing.expectEqual(@as(usize, 0), out.items.len);
 }
@@ -575,4 +576,105 @@ test "kpin-update.yml: KPIN_SETS has a line for every pins.lock.bzl, and only fo
     out = c.Out.init(a);
     try hyg.kpinSetsProblems(a, "jobs: {}\n", &tree, &out);
     try c.expectLines("no block", out.items, &.{"no `KPIN_SETS: |` block"});
+}
+
+// ---- the farm's pull request exclusion list, against BUCK's _MOJO_TOOLS targets -----------------
+
+fn farmProblems(a: Allocator, buck: []const u8, farm: []const u8) ![]const []const u8 {
+    var out = c.Out.init(a);
+    try hyg.farmExclusionProblems(a, buck, farm, &out);
+    return out.items;
+}
+
+test "farm.yml's exclusion list is exactly the targets BUCK builds with _MOJO_TOOLS" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // The parser on a sample: plain, dict(), a rule that does not use the tools, a comment, a name that is not at the rule's level.
+    const buck =
+        \\_MOJO_TOOLS = {
+        \\    "CC_SHIM": ":zigcc",
+        \\}
+        \\zig_test(  # a
+        \\    name = "one",
+        \\    exec_tools = _MOJO_TOOLS,
+        \\)
+        \\zig_test(  # b
+        \\    name = "two",
+        \\    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm"),
+        \\)
+        \\zig_test(  # c
+        \\    name = "three",
+        \\    exec_tools = {"MOPM": ":mopm"},
+        \\)
+        \\zig_test(  # d
+        \\    name = "four",
+        \\    # exec_tools = _MOJO_TOOLS,
+        \\)
+        \\
+    ;
+    const got = try hyg.mojoToolTargets(a, buck);
+    try c.expectLines("parsed", got, &.{ "one", "two" });
+    const farm_ok = "          ./buck2 uquery '//... - set(//:one //:two)' > \"$RUNNER_TEMP/targets\"\n";
+    try c.expectLines("equal", try farmProblems(a, buck, farm_ok), &.{});
+    // Mutants: a target dropped from the list, one added to it, and a list that is gone.
+    try c.expectLines("dropped", try farmProblems(a, buck, "x '//... - set(//:one)' y\n"), &.{"//:two is built with _MOJO_TOOLS in BUCK (a beta target) but is not excluded"});
+    try c.expectLines("added", try farmProblems(a, buck, "x '//... - set(//:one //:two //:five)' y\n"), &.{"//:five is excluded from the pull request build but BUCK does not build it with _MOJO_TOOLS"});
+    try c.expectLines("no list", try farmProblems(a, buck, "x ./buck2 build //...\n"), &.{"no `//... - set(` exclusion list"});
+    try c.expectLines("no tools in BUCK", try farmProblems(a, "zig_test(\n    name = \"x\",\n)\n", farm_ok), &.{ "no target is built with _MOJO_TOOLS", "//:one is excluded", "//:two is excluded" });
+}
+
+/// `text` with `from` replaced by `to` (it must occur once).
+fn replaced(a: Allocator, haystack: []const u8, from: []const u8, to: []const u8) ![]u8 {
+    const at = std.mem.indexOf(u8, haystack, from) orelse {
+        std.debug.print("the mutant does not apply: {s} is not in the file\n", .{from});
+        return error.TestUnexpectedResult;
+    };
+    return std.mem.concat(a, u8, &.{ haystack[0..at], to, haystack[at + from.len ..] });
+}
+
+test "the real farm.yml and BUCK: a planted beta target or a dropped exclusion goes red" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const tree = try c.loadTree(a);
+    const buck = try tree.read(a, "BUCK");
+    const farm = try tree.read(a, ".github/workflows/farm.yml");
+    try c.expectLines("real", try farmProblems(a, buck, farm), &.{});
+    // The seven beta targets are the ones the farm excludes today.
+    try std.testing.expectEqual(@as(usize, 7), (try hyg.mojoToolTargets(a, buck)).len);
+    // Mutant: a new Mojo test target in BUCK that farm.yml does not exclude.
+    const planted_buck = try replaced(a, buck, "zig_test(  # buck-only: komira's Mojo toolchain works from this cell\n    name = \"mojo_probe\",", "zig_test(\n    name = \"planted\",\n    exec_tools = _MOJO_TOOLS,\n)\nzig_test(  # buck-only: komira's Mojo toolchain works from this cell\n    name = \"mojo_probe\",");
+    try c.expectLines("planted target", try farmProblems(a, planted_buck, farm), &.{"//:planted is built with _MOJO_TOOLS in BUCK"});
+    // Mutant: farm.yml stops excluding one.
+    try c.expectLines("dropped", try farmProblems(a, buck, try replaced(a, farm, " //:flaky", "")), &.{"//:flaky is built with _MOJO_TOOLS in BUCK"});
+    // Mutant: farm.yml excludes a unit target.
+    try c.expectLines("unit target excluded", try farmProblems(a, buck, try replaced(a, farm, " //:user_beta)", " //:user_beta //:mopm)")), &.{"//:mopm is excluded"});
+}
+
+// ---- lint.yml and ci.yml: no skipped check ---------------------------------------------------------
+
+test "lint.yml and ci.yml: no pull_request filter, and no job-level if on a lint job" {
+    const lint_job = "jobs:\n  lint:\n    runs-on: x\n";
+    // The unfiltered triggers pass, and so do the default types with more added (ci.yml's `labeled`).
+    try expectStructure("lint.yml", header ++ "on:\n  pull_request:\n  push:\n    branches: [main]\n" ++ lint_job ++ "    steps:\n      - run: zig test tests/drivers/release_lint_test.zig\n", &.{});
+    try expectStructure("ci.yml", header ++ "on:\n  pull_request:\n    types: [opened, synchronize, reopened, labeled]\njobs:\n  test:\n    runs-on: x\n", &.{});
+    // Mutants: each filter key, on each file.
+    const run_step = "    steps:\n      - run: zig test tests/drivers/release_lint_test.zig\n";
+    inline for ([_][]const u8{ "lint.yml", "ci.yml" }) |f| {
+        const jobs = comptime if (std.mem.eql(u8, f, "lint.yml")) lint_job ++ run_step else "jobs:\n  test:\n    runs-on: x\n";
+        try expectStructure(f, header ++ "on:\n  pull_request:\n    paths: ['src/**']\n" ++ jobs, &.{"the pull_request trigger must have no paths filter"});
+        try expectStructure(f, header ++ "on:\n  pull_request:\n    paths-ignore: ['docs/**']\n" ++ jobs, &.{"the pull_request trigger must have no paths-ignore filter"});
+        try expectStructure(f, header ++ "on:\n  pull_request:\n    branches: [main]\n" ++ jobs, &.{"the pull_request trigger must have no branches filter"});
+        try expectStructure(f, header ++ "on:\n  pull_request:\n    branches-ignore: [wip]\n" ++ jobs, &.{"the pull_request trigger must have no branches-ignore filter"});
+        try expectStructure(f, header ++ "on:\n  pull_request:\n    types: [labeled]\n" ++ jobs, &.{ "types must keep opened", "types must keep synchronize", "types must keep reopened" });
+        try expectStructure(f, header ++ "on:\n  pull_request:\n    types: [opened, reopened]\n" ++ jobs, &.{"types must keep synchronize"});
+    }
+    // A job-level `if:` on a lint job can skip the check; only `!cancelled()` is allowed.
+    const with_if = "on: [pull_request]\njobs:\n  lint:\n    runs-on: x\n    if: ";
+    try expectStructure("lint.yml", header ++ with_if ++ "github.event_name == 'push'\n" ++ run_step, &.{"job lint has an `if:` (github.event_name == 'push')"});
+    try expectStructure("lint.yml", header ++ with_if ++ "${{ !cancelled() || false }}\n" ++ run_step, &.{"job lint has an `if:`"});
+    try expectStructure("lint.yml", header ++ with_if ++ "false\n" ++ run_step, &.{"job lint has an `if:`"});
+    try expectStructure("lint.yml", header ++ with_if ++ "'!cancelled()'\n" ++ run_step, &.{});
+    try expectStructure("lint.yml", header ++ with_if ++ "${{ !cancelled() }}\n" ++ run_step, &.{});
 }

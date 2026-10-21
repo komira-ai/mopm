@@ -409,8 +409,30 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
             }
         }
     }
+    if ((std.mem.eql(u8, base, "lint.yml") or std.mem.eql(u8, base, "ci.yml")) and c.containsStr(on, "pull_request")) {
+        // A filter makes the check skip for some pull requests (a docs-only change, another base branch, a label event), and a
+        // skipped check is a check that did not run. `types` may only add to the defaults (ci.yml adds `labeled` for the macOS opt-in).
+        const pr = c.get(c.onValue(doc), "pull_request");
+        for (c.keys(pr)) |k| {
+            if (std.mem.eql(u8, k, "types")) {
+                const types = try c.arrayOf(a, c.get(pr, "types"));
+                for ([_][]const u8{ "opened", "synchronize", "reopened" }) |dflt| {
+                    if (!c.containsStr(types, dflt)) try c.problem(a, out, prefix ++ "{s}: the pull_request trigger's types must keep {s} (the defaults are opened, synchronize, reopened; more may be added)", .{ f, dflt });
+                }
+            } else {
+                try c.problem(a, out, prefix ++ "{s}: the pull_request trigger must have no {s} filter: every pull request gets this check", .{ f, k });
+            }
+        }
+    }
     if (std.mem.eql(u8, base, "lint.yml")) {
         if (!c.containsStr(on, "pull_request")) try c.problem(a, out, prefix ++ "{s}: the lints must run on pull_request", .{f});
+        // A job-level `if:` can skip the whole job, and the check with it; only `!cancelled()` (run unless the run was cancelled) is allowed.
+        for (jobs) |j| {
+            if (c.get(j.node, "if") == null) continue;
+            var cond = std.mem.trim(u8, try jobIf(a, j.node), " \r\n\t");
+            if (std.mem.startsWith(u8, cond, "${{") and std.mem.endsWith(u8, cond, "}}")) cond = std.mem.trim(u8, cond[3 .. cond.len - 2], " ");
+            if (!std.mem.eql(u8, cond, "!cancelled()")) try c.problem(a, out, prefix ++ "{s}: job {s} has an `if:` ({s}); a lint job may carry none, or exactly `!cancelled()`, so it cannot be skipped", .{ f, j.name, cond });
+        }
         var runs_release_lint = false;
         for (jobs) |j| {
             if (c.truthy(c.get(j.node, "continue-on-error"))) continue;
@@ -519,5 +541,59 @@ pub fn kpinSetsProblems(a: Allocator, workflow: []const u8, files: []const []con
             if (std.mem.eql(u8, f, l)) present = true;
         }
         if (!present) try c.problem(a, out, prefix ++ "kpin-update.yml: KPIN_SETS names {s}, which is not in the repository", .{l});
+    }
+}
+
+/// The targets BUCK builds with `_MOJO_TOOLS` (the real Mojo toolchain): the rules whose `exec_tools` is `_MOJO_TOOLS` or
+/// `dict(_MOJO_TOOLS, ...)`. A rule is a block that opens at column 0; its name is the `name = "..."` line at four spaces.
+pub fn mojoToolTargets(a: Allocator, buck: []const u8) ![]const []const u8 {
+    var found = std.ArrayList([]const u8).init(a);
+    var name: []const u8 = "";
+    var lines = std.mem.splitScalar(u8, buck, '\n');
+    while (lines.next()) |line| {
+        if (line.len != 0 and line[0] != ' ' and line[0] != ')' and line[0] != '#') name = "";
+        const named = "    name = \"";
+        if (std.mem.startsWith(u8, line, named)) {
+            const rest = line[named.len..];
+            if (std.mem.indexOfScalar(u8, rest, '"')) |end| name = rest[0..end];
+        }
+        const t = std.mem.trim(u8, line, " ");
+        if (name.len != 0 and std.mem.startsWith(u8, t, "exec_tools = ") and std.mem.indexOf(u8, t, "_MOJO_TOOLS") != null) {
+            if (!c.containsStr(found.items, name)) try found.append(name);
+        }
+    }
+    return found.items;
+}
+
+/// farm.yml's pull request build excludes `set(//:a //:b ...)` from `//...`: the beta targets, which run after the merge.
+/// Those must be exactly the targets BUCK builds with `_MOJO_TOOLS`, or a new beta target would run on every pull request (or a
+/// unit one would be left out of it) with nothing red. One finding per target on one side only.
+pub fn farmExclusionProblems(a: Allocator, buck: []const u8, farm: []const u8, out: *Out) !void {
+    const want = try mojoToolTargets(a, buck);
+    if (want.len == 0) try c.problem(a, out, prefix ++ "BUCK: no target is built with _MOJO_TOOLS, so the farm.yml exclusion list cannot be checked (did the parser lose the BUCK layout?)", .{});
+    const head = "//... - set(";
+    const at = std.mem.indexOf(u8, farm, head) orelse {
+        try c.problem(a, out, prefix ++ "farm.yml: no `//... - set(` exclusion list in the pull request build", .{});
+        return;
+    };
+    const rest = farm[at + head.len ..];
+    const close = std.mem.indexOfScalar(u8, rest, ')') orelse {
+        try c.problem(a, out, prefix ++ "farm.yml: the exclusion list has no closing parenthesis", .{});
+        return;
+    };
+    var listed = std.ArrayList([]const u8).init(a);
+    var words = std.mem.tokenizeScalar(u8, rest[0..close], ' ');
+    while (words.next()) |w| {
+        if (!std.mem.startsWith(u8, w, "//:")) {
+            try c.problem(a, out, prefix ++ "farm.yml: the exclusion list holds {s}, which is not a root target //:name", .{w});
+            continue;
+        }
+        try listed.append(w[3..]);
+    }
+    for (want) |n| {
+        if (!c.containsStr(listed.items, n)) try c.problem(a, out, prefix ++ "farm.yml: //:{s} is built with _MOJO_TOOLS in BUCK (a beta target) but is not excluded from the pull request build", .{n});
+    }
+    for (listed.items) |n| {
+        if (!c.containsStr(want, n)) try c.problem(a, out, prefix ++ "farm.yml: //:{s} is excluded from the pull request build but BUCK does not build it with _MOJO_TOOLS", .{n});
     }
 }

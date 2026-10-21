@@ -871,10 +871,11 @@ fn attestDebProblems(a: Allocator, attest: Value, out: *Out) !void {
     try exactLines(a, out, "release.yml: attest's signed-assets artifact path", stepWith(attest, "actions/upload-artifact@", "path"), &.{ "dist/mopm-*.tar.gz", "dist/mopm_*.deb", "dist/SHA256SUMS", "dist/*.sigstore.json" });
 }
 
-const deb_legs = [_]struct { target: []const u8, deb_arch: []const u8 }{
-    .{ .target = "linux-x86_64", .deb_arch = "amd64" },
-    .{ .target = "linux-aarch64", .deb_arch = "arm64" },
-    .{ .target = "macos-arm64", .deb_arch = "" },
+/// The package matrix of release-build.yml, exactly: the three release targets, each on its runner with its Zig target.
+const deb_legs = [_]struct { target: []const u8, zig_target: []const u8, os: []const u8, deb_arch: []const u8 }{
+    .{ .target = "linux-x86_64", .zig_target = "x86_64-linux-musl", .os = "ubuntu-24.04", .deb_arch = "amd64" },
+    .{ .target = "linux-aarch64", .zig_target = "aarch64-linux-musl", .os = "ubuntu-24.04-arm", .deb_arch = "arm64" },
+    .{ .target = "macos-arm64", .zig_target = "aarch64-macos", .os = "macos-14", .deb_arch = "" },
 };
 
 /// release-build.yml: the linux legs have the Debian architecture of their target (the others none), the .deb is made from
@@ -886,11 +887,18 @@ pub fn buildDebProblems(a: Allocator, text: []const u8, out: *Out) !void {
     const job = c.get(c.get(doc, "jobs"), "package") orelse return c.problem(a, out, prefix ++ f ++ "there is no package job", .{});
     const include = c.get(c.get(c.get(job, "strategy"), "matrix"), "include");
     const items: []const Value = if (include != null and include.? == .array) include.?.array.items else &.{};
+    for (c.keys(c.get(c.get(job, "strategy"), "matrix"))) |k| {
+        if (!std.mem.eql(u8, k, "include")) try c.problem(a, out, prefix ++ f ++ "the package matrix has the key {s}; only include (the three release targets) is allowed, so no leg can be excluded or added", .{k});
+    }
+    if (items.len != deb_legs.len) try c.problem(a, out, prefix ++ f ++ "the package matrix has {d} legs, expected exactly the {d} release targets", .{ items.len, deb_legs.len });
     for (deb_legs) |leg| {
         var found = false;
         for (items) |it| {
             if (!c.isStr(c.get(it, "target"), leg.target)) continue;
             found = true;
+            if (!c.isStr(c.get(it, "os"), leg.os) or !c.isStr(c.get(it, "zig_target"), leg.zig_target)) {
+                try c.problem(a, out, prefix ++ f ++ "the package leg {s} must run on {s} and build {s}", .{ leg.target, leg.os, leg.zig_target });
+            }
             if (!c.isStr(c.get(it, "deb_arch"), leg.deb_arch)) {
                 try c.problem(a, out, prefix ++ f ++ "the package leg {s} has deb_arch {s}, expected \"{s}\"", .{ leg.target, try c.inspect(a, c.get(it, "deb_arch")), leg.deb_arch });
             }
