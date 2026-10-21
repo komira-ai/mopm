@@ -363,7 +363,7 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
             if (uses) |u| {
                 // release.yml signs with Sigstore's installer (not GitHub-owned), pinned by commit like the rest.
                 const cosign_installer = std.mem.eql(u8, base, release_file) and pinned(u, "sigstore/cosign-installer");
-                // ... and so is the action that mints the release bot's App token (release_lint.zig holds that only the bump job uses it).
+                // ... and so is the action that mints the release bot's App token (release_lint.zig holds that only the tag, tap and bump jobs use it).
                 const app_token = std.mem.eql(u8, base, release_file) and pinned(u, "actions/create-github-app-token");
                 if (!farm_connect and !cosign_installer and !app_token and !ownedActionPinned(u)) {
                     try c.problem(a, out, prefix ++ "{s}: {s} step {d}: only GitHub-owned actions pinned by full SHA are allowed: {s}", .{ f, jn, i, u });

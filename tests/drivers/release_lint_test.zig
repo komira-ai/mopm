@@ -181,7 +181,7 @@ test "mutant: the data flow (the tested version is the tagged and released versi
 }
 
 test "mutant: publish releases something other than the verified files" {
-    try mutant("publish downloads the unverified assets", "          name: verified-assets\n          path: dist\n", "          name: signed-assets\n          path: dist\n", "publish must download exactly the artifacts verified-assets and notes-pin");
+    try mutantAfter(release_path, "\n  publish:\n", "publish downloads the unverified assets", "          name: verified-assets\n          path: dist\n", "          name: signed-assets\n          path: dist\n", "publish must download exactly the artifacts verified-assets and notes-pin");
     try mutant("publish downloads other notes", "          name: notes-pin\n          path: notes\n", "          name: signed-assets\n          path: notes\n", "publish must download exactly the artifacts verified-assets and notes-pin");
     try mutant("verify downloads a build artifact", "          name: signed-assets\n          path: dist\n      - name: Install Zig 0.12.0 (sha256-pinned)\n        run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"\n      - uses: sigstore", "          name: release-linux-x86_64\n          path: dist\n      - name: Install Zig 0.12.0 (sha256-pinned)\n        run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"\n      - uses: sigstore", "verify must download exactly the artifact signed-assets");
 }
@@ -549,4 +549,125 @@ test "mutant: lintian runs before the .deb exists or after the upload" {
     // Lintian moved after the upload: an error no longer stops the leg before the .deb is carried on.
     const upload = "      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          name: release-${{ matrix.target }}\n          path: |\n            ${{ runner.temp }}/out/*.tar.gz\n            ${{ runner.temp }}/out/*.deb\n          if-no-files-found: error\n          retention-days: 7\n          overwrite: true\n";
     try buildMutant("lintian after the upload", lint_step ++ upload, upload ++ lint_step, "lintian must run before the artifact upload");
+}
+
+// ---- tap: the Homebrew formula is rendered from the verified SHA256SUMS and its pull request opened with the third App token ----
+
+/// A mutant inside the `tap` job (the first occurrence after its header).
+fn tapMutant(name: []const u8, from: []const u8, to: []const u8, needle: []const u8) !void {
+    return mutantAfter(release_path, "\n  tap:\n", name, from, to, needle);
+}
+
+const tap_head = "  tap:\n    needs: [tag, publish, verify]\n    ";
+const tap_perms = "    permissions:\n      contents: read\n    steps:\n";
+const tap_env_lines = "    # Same environment as tag and bump: the key is readable only there (RELEASING.md).\n    environment: release\n";
+const tap_app_step = "      - name: Mint the installation token of the release bot, for homebrew-tap only\n        id: tapapp\n" ++ app_use ++ "        with:\n          app-id: ${{ vars.RELEASE_BOT_APP_ID }}\n          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n          owner: komira-ai\n          repositories: homebrew-tap\n          permission-contents: write\n          permission-pull-requests: write\n";
+const tap_render_step = "      - name: Render Formula/mopm.rb from the verified SHA256SUMS, with the flags the tap's guard expects\n        env:\n          VERSION: ${{ needs.tag.outputs.version }}\n        run: '" ++ rl.render_run ++ "'\n";
+const tap_build_renderer = "      - name: Build the formula renderer\n        run: zig build-exe tools/channels/main.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/channels\"\n";
+const tap_build_cut = "      # Built before any step holds the token, so no build runs beside it.\n      - name: Build the release tool\n        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/cut_release\"\n";
+
+test "the real tap job holds contents: read, renders with render_run and runs tap_run last" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const text = try real(a, release_path);
+    const at = std.mem.indexOf(u8, text, "\n  tap:\n").?;
+    const end = std.mem.indexOf(u8, text, "\n  bump:\n").?;
+    const tap = text[at..end];
+    try std.testing.expect(std.mem.indexOf(u8, tap, tap_perms) != null);
+    try std.testing.expect(std.mem.indexOf(u8, tap, tap_render_step) != null);
+    try std.testing.expect(std.mem.indexOf(u8, tap, tap_app_step) != null);
+    try std.testing.expect(std.mem.indexOf(u8, tap, "run: '" ++ rl.tap_run ++ "'\n") != null);
+}
+
+test "mutant: tap does not need publish, verify or tag, or runs on a manual run" {
+    try mutant("tap without publish", tap_head ++ push_main, "  tap:\n    needs: [tag, verify]\n    " ++ push_main, "tap must need publish");
+    try mutant("tap without verify", tap_head ++ push_main, "  tap:\n    needs: [tag, publish]\n    " ++ push_main, "tap must need verify");
+    try mutant("tap without tag (the version comes from its output)", tap_head ++ push_main, "  tap:\n    needs: [publish, verify]\n    " ++ push_main, "tap must need tag");
+    try mutant("tap with no if", tap_head ++ push_main ++ "\n", "  tap:\n    needs: [tag, publish, verify]\n", "tap must run only under if");
+    try mutant("tap on any branch", tap_head ++ push_main, tap_head ++ "if: ${{ github.event_name == 'push' }}", "tap must run only under if");
+    try mutant("tap on a manual run", tap_head ++ push_main, tap_head ++ "if: ${{ always() }}", "tap must run only under if");
+    try mutant("tap that may fail quietly", tap_head ++ push_main ++ "\n", tap_head ++ push_main ++ "\n    continue-on-error: true\n", "tap must not set continue-on-error");
+}
+
+test "mutant: tap holds a write scope here, or more than contents" {
+    try tapMutant("tap writes contents", tap_perms, "    permissions:\n      contents: write\n    steps:\n", "tap: contents: write is not allowed here");
+    try tapMutant("tap writes pull requests", tap_perms, "    permissions:\n      contents: read\n      pull-requests: write\n    steps:\n", "tap: pull-requests: write is not allowed here");
+    try tapMutant("tap reads more than contents", tap_perms, "    permissions:\n      contents: read\n      id-token: read\n    steps:\n", "tap: permissions must be exactly contents: read");
+    try tapMutant("tap with no permissions", tap_perms, "    steps:\n", "tap: permissions must be exactly contents: read");
+    try tapMutant("tap with write-all", tap_perms, "    permissions: write-all\n    steps:\n", "grants every scope");
+}
+
+test "mutant: nothing may need tap, and no other job names its token or the key" {
+    try mutant("publish needs tap", "  publish:\n    needs: [tag, verify]", "  publish:\n    needs: [tag, verify, tap]", "publish must not need tap");
+    try mutant("bump needs tap", bump_head ++ push_main, "  bump:\n    needs: [tag, publish, tap]\n    " ++ push_main, "bump must not need tap");
+    try mutant("publish takes the token of tap", "          VERSION: ${{ needs.tag.outputs.version }}\n        run: '\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" publish", "          VERSION: ${{ needs.tag.outputs.version }}\n          T: ${{ steps.tapapp.outputs.token }}\n        run: '\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" publish", "publish names the release bot's App token");
+    try mutant("bump with the token of tap", "          GH_TOKEN: ${{ steps.app.outputs.token }}\n", "          GH_TOKEN: ${{ steps.tapapp.outputs.token }}\n", "bump names the token of tap");
+    try tapMutant("tap with the token of bump", "          GH_TOKEN: ${{ steps.tapapp.outputs.token }}\n", "          GH_TOKEN: ${{ steps.app.outputs.token }}\n", "tap names the token of bump");
+    try tapMutant("tap with the token of tag", "          GH_TOKEN: ${{ steps.tapapp.outputs.token }}\n", "          GH_TOKEN: ${{ steps.tagapp.outputs.token }}\n", "tap names the token of tag");
+    try tagMutant("tag's checkout takes the tap token", "          persist-credentials: false\n", "          persist-credentials: false\n          token: ${{ steps.tapapp.outputs.token }}\n", "tag names the token of tap");
+}
+
+test "mutant: the key is named exactly three times" {
+    try tapMutant("a fourth reference to the key in the render step", "          VERSION: ${{ needs.tag.outputs.version }}\n        run: '\"$RUNNER_TEMP/channels\"", "          VERSION: ${{ needs.tag.outputs.version }}\n          K: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n        run: '\"$RUNNER_TEMP/channels\"", "RELEASE_BOT_PRIVATE_KEY is named 4 times, expected exactly 3");
+    try tapMutant("the tap token step without the key", "          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n", "", "RELEASE_BOT_PRIVATE_KEY is named 2 times, expected exactly 3");
+    try tapMutant("the tap token step with another key", "          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}", "          private-key: ${{ secrets.OTHER_KEY }}", "tap: the token step must set private-key");
+}
+
+test "mutant: the App token step of tap" {
+    try tapMutant("tap action unpinned", "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1", "actions/create-github-app-token@v3", "tap must use actions/create-github-app-token@<full commit sha>");
+    try tapMutant("tap action with a short sha", "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1", "actions/create-github-app-token@bcd2ba4", "tap must use actions/create-github-app-token@<full commit sha>");
+    try tapMutant("tap another action mints the token", app_use, "        uses: someone/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1\n", "tap must use actions/create-github-app-token@");
+    try tapMutant("tap token step removed", tap_app_step, "", "tap must mint the token with exactly one actions/create-github-app-token step, has 0");
+    try tapMutant("a second token step in tap", "      - name: Open the homebrew-tap pull request", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1\n      - name: Open the homebrew-tap pull request", "tap must mint the token with exactly one actions/create-github-app-token step, has 2");
+    try tapMutant("tap app id from a literal", "          app-id: ${{ vars.RELEASE_BOT_APP_ID }}", "          app-id: 5395718", "tap: the token step must set app-id");
+    try tapMutant("tap token of another owner", "          owner: komira-ai\n", "          owner: someone\n", "tap: the token step must set owner");
+    try tapMutant("tap token for every repository of the owner", "          repositories: homebrew-tap\n", "", "tap: the token step must set repositories");
+    try tapMutant("tap token for two repositories", "          repositories: homebrew-tap\n", "          repositories: homebrew-tap,mopm\n", "tap: the token step must set repositories");
+    try tapMutant("tap token scoped to mopm", "          repositories: homebrew-tap\n", "          repositories: mopm\n", "tap: the token step must set repositories");
+    try tapMutant("tap token scoped to komira-internal", "          repositories: homebrew-tap\n", "          repositories: komira-internal\n", "tap: the token step must set repositories");
+    try tapMutant("tap token with an extra scope", "          permission-pull-requests: write\n", "          permission-pull-requests: write\n          permission-workflows: write\n", "tap: the token step takes exactly the inputs");
+    try tapMutant("tap token without the pull-requests scope", "          permission-pull-requests: write\n", "", "tap: the token step must set permission-pull-requests");
+    try tapMutant("tap token without the contents scope", "          permission-contents: write\n", "", "tap: the token step must set permission-contents");
+    try tapMutant("tap token with a wider scope", "          permission-contents: write\n", "          permission-contents: admin\n", "tap: the token step must set permission-contents");
+    try tapMutant("tap token step without its id", "        id: tapapp\n", "", "tap: the token step must have id: tapapp");
+}
+
+test "mutant: the step that runs the tap tool" {
+    try tapMutant("the token in argv", " --workdir \"$RUNNER_TEMP/tap-clone\"'", " --workdir \"$RUNNER_TEMP/tap-clone\" --token \"$GH_TOKEN\"'", "tap must run exactly");
+    try tapMutant("another tap repository", " --tap-repo komira-ai/homebrew-tap", " --tap-repo komira-ai/mopm", "tap must run exactly");
+    try tapMutant("another formula", " --formula mopm ", " --formula buildrules ", "tap must run exactly");
+    try tapMutant("another formula file", " --formula-file \"$RUNNER_TEMP/tap/mopm.rb\"", " --formula-file \"$RUNNER_TEMP/other.rb\"", "tap must run exactly");
+    try tapMutant("another version", " tap --version \"$VERSION\"", " tap --version 0.0.0", "tap must run exactly");
+    try tapMutant("version from the plan", "          GH_TOKEN: ${{ steps.tapapp.outputs.token }}\n          VERSION: ${{ needs.tag.outputs.version }}", "          GH_TOKEN: ${{ steps.tapapp.outputs.token }}\n          VERSION: ${{ needs.plan.outputs.version }}", "tap: the step that runs the tool must set VERSION");
+    try tapMutant("the default token", "          GH_TOKEN: ${{ steps.tapapp.outputs.token }}\n", "          GH_TOKEN: ${{ github.token }}\n", "tap: the step that runs the tool must set GH_TOKEN to");
+    try tapMutant("no token", "          GH_TOKEN: ${{ steps.tapapp.outputs.token }}\n          VERSION: ${{ needs.tag.outputs.version }}", "          VERSION: ${{ needs.tag.outputs.version }}", "tap: the step that runs the tool must set GH_TOKEN to");
+    try tapMutant("the tool does not run", " tap --version", " tap-nothing --version", "tap must run the tool step containing ` tap --version`");
+}
+
+test "mutant: where the token lives in tap" {
+    try tapMutant("the tool built after the token", tap_build_cut ++ tap_build_renderer ++ tap_render_step ++ tap_app_step, tap_build_renderer ++ tap_render_step ++ tap_app_step ++ tap_build_cut, "tap: build the tool (zig build-exe tools/cut_release.zig) before the token step");
+    try tapMutant("the token minted before the formula is rendered", tap_render_step ++ tap_app_step, tap_app_step ++ tap_render_step, "tap: render the formula before the token step");
+    try tapMutant("checkout with the token", "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n", "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          token: ${{ steps.tapapp.outputs.token }}\n", "tap step 0 names the App token");
+    try tapMutant("a step after the tool", " --workdir \"$RUNNER_TEMP/tap-clone\"'\n", " --workdir \"$RUNNER_TEMP/tap-clone\"'\n      - run: echo done\n", "tap: the step that runs the tool must be the last");
+}
+
+test "mutant: tap renders the formula with other flags than the tap's guard expects, or from other sums" {
+    try tapMutant("no --repo (no release url)", " --repo \"$GITHUB_REPOSITORY\" --out", " --out", "tap must render the formula with exactly");
+    try tapMutant("another url base", " --repo \"$GITHUB_REPOSITORY\" --out", " --url-base https://example.com/dl --out", "tap must render the formula with exactly");
+    try tapMutant("no explicit version line", " --license \"Apache-2.0\"", " --license \"Apache-2.0\" --no-explicit-version", "tap must render the formula with exactly");
+    try tapMutant("another name", " --name mopm --version", " --name mopm-edge --version", "tap must render the formula with exactly");
+    try tapMutant("another version", " --version \"$VERSION\" --desc", " --version 0.0.0 --desc", "tap must render the formula with exactly");
+    try tapMutant("sums that were not downloaded from the verified artifact", " --sums dist/SHA256SUMS", " --sums SHA256SUMS", "tap must render the formula with exactly");
+    try tapMutant("render step without the version of the tag", "          VERSION: ${{ needs.tag.outputs.version }}\n        run: '\"$RUNNER_TEMP/channels\"", "          VERSION: ${{ needs.plan.outputs.version }}\n        run: '\"$RUNNER_TEMP/channels\"", "tap: the render step must set VERSION");
+    try tapMutant("no render step", tap_render_step, "", "tap must render the formula with `channels formula --sums`");
+    try tapMutant("the renderer is not built", tap_build_renderer, "", "tap: build the renderer (zig build-exe tools/channels/main.zig) before the step that renders");
+    try tapMutant("tap downloads the signed files, not the verified ones", "          name: verified-assets\n", "          name: signed-assets\n", "tap must download exactly the artifact verified-assets");
+    try tapMutant("tap downloads nothing", "      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2\n        with:\n          name: verified-assets\n          path: dist\n", "", "tap must download exactly the artifact verified-assets");
+}
+
+test "mutant: the environment of tap" {
+    try tapMutant("tap without the environment", tap_env_lines, "", "tap reads RELEASE_BOT_* so it must declare `environment: release`, got nil");
+    try tapMutant("tap in the wrong environment", tap_env_lines, "    environment: relase\n", "tap reads RELEASE_BOT_* so it must declare `environment: release`, got \"relase\"");
+    try tapMutant("tap in prod", tap_env_lines, "    environment: prod\n", "tap reads RELEASE_BOT_* so it must declare `environment: release`, got \"prod\"");
 }

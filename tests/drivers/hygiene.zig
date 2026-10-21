@@ -486,13 +486,13 @@ pub fn run(a: Allocator, files: []const File, structure: []const File, out: *Out
 
 pub const File = struct { path: []const u8, data: []const u8 };
 
-/// The text of release.yml (comments dropped) without its two allowed secret references: the tag job and the bump
-/// job each hand the key of the release bot's GitHub App to actions/create-github-app-token (release_lint.zig holds
-/// where). Exactly two are removed; a third, or any other `secrets.`, is still a finding.
+/// The text of release.yml (comments dropped) without its three allowed secret references: the tag, tap and bump
+/// jobs each hand the key of the release bot's GitHub App to actions/create-github-app-token (release_lint.zig holds
+/// where). Exactly three are removed; a fourth, or any other `secrets.`, is still a finding.
 fn releaseSecretFree(a: Allocator, text: []const u8) ![]u8 {
     const ref = "${{ secrets.RELEASE_BOT_PRIVATE_KEY }}";
     var s = try c.nonCommentLines(a, text);
-    for (0..2) |_| {
+    for (0..3) |_| {
         const at = std.mem.indexOf(u8, s, ref) orelse break;
         s = try std.mem.concat(a, u8, &.{ s[0..at], s[at + ref.len ..] });
     }

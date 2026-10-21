@@ -39,12 +39,16 @@ name: release
 #   publish    creates the GitHub release from exactly the verified files. A re-run creates no second
 #              release and replaces no asset: any asset the release already holds must match byte for byte,
 #              or it fails and changes nothing.
+#   tap        after publish, renders Formula/mopm.rb from the verified SHA256SUMS (channels formula) and opens a pull request with it in
+#              komira-ai/homebrew-tap (cut_release tap) as the release bot, with auto-merge (squash) when the tap allows it; a tap with no
+#              required checks refuses auto-merge, and the pull request then stays open for a hand merge, green. Its token (homebrew-tap
+#              only) is its own; nothing needs it.
 #   bump       after publish, opens the komira-internal pull request that moves its `mopm` submodule to this release
 #              and turns auto-merge on (cut_release bump-internal), with the App token of komira-release-bot. It is
-#              the only job that holds that token (tag holds its own, for mopm), and nothing needs it: a failed bump goes red and un-releases nothing.
+#              the only job that holds that token (tag holds its own, for mopm, and tap its own, for homebrew-tap), and nothing needs it: a failed bump goes red and un-releases nothing.
 #
 # A manual run (workflow_dispatch) of main is a dry run: everything up to and including verify, then nothing:
-# tag, publish and bump do not run. From any other branch it builds and tests the candidate and stops before attest.
+# tag, publish, tap and bump do not run. From any other branch it builds and tests the candidate and stops before attest.
 # The only write to this repository by the job token is publish (contents), under a push to main; the tag is
 # written through the release bot App's token (above). Both tag and publish run only under a push to main (bump writes to komira-internal, through the App token, and holds contents: read here), and attest (id-token, attestations) by tests/drivers/release_lint.zig, which
 # also holds the order of the stages, the data flow between them and the path filter; hygiene.zig holds the
@@ -286,6 +290,59 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.tag.outputs.version }}
         run: '"$RUNNER_TEMP/cut_release" --repo "$GITHUB_REPOSITORY" publish "$VERSION" dist --verified notes/verified.sha256 --notes notes/release-notes.md'
+
+  # After the release exists: the Homebrew formula. `channels formula` renders Formula/mopm.rb from the SHA256SUMS that
+  # verify checked and publish released (the verified-assets artifact), and the tool opens a pull request with it in
+  # komira-ai/homebrew-tap, as the release bot, with auto-merge (squash) when GitHub allows it. The tap's own guard
+  # admits only the renderer's exact output, so the flags below are the ones the guard's template expects
+  # (release_lint.zig holds this line; tests/drivers/channels_cli_test.zig renders with it and compares with the guard's
+  # fixture). The job holds contents: read here; its token is for homebrew-tap alone, minted after the tools are built
+  # and given only to the last step. It is the only job beside tag and bump that may name the App token, and nothing
+  # needs it: a failed tap goes red and un-releases nothing; re-run this job (RELEASING.md). It needs tag only for
+  # the version (needs.tag.outputs.version).
+  tap:
+    needs: [tag, publish, verify]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # Same environment as tag and bump: the key is readable only there (RELEASING.md).
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: verified-assets
+          path: dist
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      # Built before any step holds the token, so no build runs beside it.
+      - name: Build the release tool
+        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/cut_release"
+      - name: Build the formula renderer
+        run: zig build-exe tools/channels/main.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/channels"
+      - name: Render Formula/mopm.rb from the verified SHA256SUMS, with the flags the tap's guard expects
+        env:
+          VERSION: ${{ needs.tag.outputs.version }}
+        run: '"$RUNNER_TEMP/channels" formula --sums dist/SHA256SUMS --name mopm --version "$VERSION" --desc "Package manager for Mojo" --homepage "https://mopm.dev" --license "Apache-2.0" --repo "$GITHUB_REPOSITORY" --out "$RUNNER_TEMP/tap/mopm.rb"'
+      - name: Mint the installation token of the release bot, for homebrew-tap only
+        id: tapapp
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: komira-ai
+          repositories: homebrew-tap
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Open the homebrew-tap pull request for this release, with auto-merge when the tap allows it (idempotent, monotonic)
+        env:
+          GH_TOKEN: ${{ steps.tapapp.outputs.token }}
+          VERSION: ${{ needs.tag.outputs.version }}
+        run: '"$RUNNER_TEMP/cut_release" --repo "$GITHUB_REPOSITORY" tap --version "$VERSION" --formula-file "$RUNNER_TEMP/tap/mopm.rb" --tap-repo komira-ai/homebrew-tap --formula mopm --workdir "$RUNNER_TEMP/tap-clone"'
 
   # The last stage, after the release exists. Its write is on ANOTHER repository: the App token of
   # komira-release-bot (installed on komira-internal only) opens a pull request there that moves the
