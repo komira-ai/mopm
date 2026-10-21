@@ -127,7 +127,7 @@ packages and keeps the rest of the index as it finds it.
 | job | environment | holds | does |
 |---|---|---|---|
 | `apt-deploy-read` | `apt-publish` | the role (OIDC, `id-token: write`), no key | reads the current index and the ETag of every object of it from S3 (never through the CDN, which caches the index and would hand back a stale ETag) and passes it on as an artifact |
-| `apt-index` | `apt-signing` | the signing key, no role, no `id-token`, no cloud credential | merges the `.deb`s into the index that was read (`channels apt-index`) and signs `Release` with the signing subkey: `InRelease` and `Release.gpg` |
+| `apt-index` | `apt-signing` | the signing key, no role, no `id-token`, no cloud credential | merges the `.deb`s into the index that was read (`channels apt-index`) and signs `Release` with the signing subkey (with each of two during a key rotation): `InRelease` and `Release.gpg` |
 | `apt-deploy-write` | `apt-publish` | the role (OIDC), no key | uploads the `.deb`s with `If-None-Match` (a `.deb` is never replaced), writes the index with `If-Match` on the ETag it was read with (`If-None-Match` for an object that did not exist yet), then invalidates `/apt/dists/*` |
 
 The job that can sign cannot write, and the job that can write cannot sign; the index travels between them as an artifact that only the workflow can create. The release lint holds
@@ -158,7 +158,8 @@ already published.
 
 - the environment `apt-publish` (deployments from `main` only) with the variables `APT_PUBLISH_ROLE_ARN`, `APT_BUCKET`, `APT_DISTRIBUTION_ID` and `APT_HOSTNAME`;
 - the environment `apt-signing` (deployments from `main` only) with the secrets `APT_GPG_PRIVATE_KEY` and `APT_GPG_PASSPHRASE`, and `APT_GPG_FINGERPRINT`, the fingerprint of the signing
-  subkey, as a secret or as a variable (the jobs take whichever exists).
+  subkey (or a comma-separated list of them, while a key rotation signs with the old and the new subkey at once, `APT_GPG_PRIVATE_KEY` then holding both),
+  as a secret or as a variable (the jobs take whichever exists).
 
 **Fail-safe.** Every apt job has a step `gate` (`apt_publish gate`) that checks the settings it needs, after only the steps that set up the tools. When one is missing the gate prints a
 notice that names it (the names, never a value), and every later step of the job is skipped by `if: steps.gate.outputs.enabled == 'true'`: the job ends green and writes nothing. The

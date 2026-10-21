@@ -17,8 +17,9 @@
 //!                     --description <t> [--date <epoch>]
 //!       Merges the .debs of <debs> into the index read to <current> (tools/channels apt-index) and writes the new unsigned index
 //!       and the ETags it was built from to <out>. Reads no cloud and no key.
-//!   apt_publish sign --dir <out>/dists/stable --work <dir> --fingerprint <fpr> [--gpg <path>] [--out <file>]
-//!       Signs <dir>/Release with the signing subkey: InRelease (clearsigned) and Release.gpg (detached), and verifies both. The
+//!   apt_publish sign --dir <out>/dists/stable --work <dir> --fingerprint <fpr>[,<fpr>...] [--gpg <path>] [--out <file>]
+//!       Signs <dir>/Release with the signing subkey, or with each of several (a comma-separated --fingerprint, during a key rotation: one signature per key,
+//!       and APT_GPG_PRIVATE_KEY then holds all of them): InRelease (clearsigned) and Release.gpg (detached), and verifies both. The
 //!       key is APT_GPG_PRIVATE_KEY and the passphrase APT_GPG_PASSPHRASE, in the environment of this one step; they live in files
 //!       of a private directory below --work that is removed at the end, whatever happens. Appends `signed=true` to --out.
 //!   apt_publish write --bucket <b> --distribution <id> --hostname <h> --next <dir> --debs <dir> [--pool-dir pool/mopm]
@@ -315,7 +316,7 @@ fn cmdSign(a: Allocator, args: []const []const u8) !void {
     const flags = try parseFlags(a, args, &.{ "--dir", "--work", "--fingerprint", "--gpg", "--out" }, &.{});
     const dir = need(flags, "--dir");
     const gpg = one(flags, "--gpg") orelse "gpg";
-    const fpr = gpgx.cleanFingerprint(a, need(flags, "--fingerprint")) catch die("--fingerprint is not a fingerprint", .{});
+    const fprs = gpgx.splitFingerprints(a, need(flags, "--fingerprint")) catch die("--fingerprint is not a fingerprint, or a comma-separated list of different ones", .{});
     const key = getenv(a, "APT_GPG_PRIVATE_KEY") orelse die("APT_GPG_PRIVATE_KEY is not set", .{});
     const pass: []const u8 = std.process.getEnvVarOwned(a, "APT_GPG_PASSPHRASE") catch "";
     const release = try std.fs.path.join(a, &.{ dir, "Release" });
@@ -333,11 +334,11 @@ fn cmdSign(a: Allocator, args: []const []const u8) !void {
 
     const in_release = try std.fs.path.join(a, &.{ dir, "InRelease" });
     const detached = try std.fs.path.join(a, &.{ dir, "Release.gpg" });
-    const failure = gpgSteps(a, gpg, home, fpr, key_file, pass_file, release, in_release, detached);
+    const failure = gpgSteps(a, gpg, home, fprs, key_file, pass_file, release, in_release, detached);
     // die() exits without running defers, so the private directory goes here, before anything can fail the process.
     std.fs.cwd().deleteTree(home) catch {};
     if (failure) |msg| die("{s}", .{msg});
-    say("signed Release with the subkey {s}: InRelease and Release.gpg verify\n", .{fpr});
+    say("signed Release with {d} subkey(s), {s}: InRelease and Release.gpg verify\n", .{ fprs.len, try std.mem.join(a, ", ", fprs) });
     if (one(flags, "--out")) |p| appendFile(p, "signed=true\n");
 }
 
@@ -429,7 +430,7 @@ fn cmdWrite(a: Allocator, args: []const []const u8) !void {
 
 /// The gpg half of `sign`: null when everything worked, else the reason. It returns instead of dying so that the caller can
 /// remove the private directory first.
-fn gpgSteps(a: Allocator, gpg: []const u8, home: []const u8, fpr: []const u8, key_file: []const u8, pass_file: []const u8, release: []const u8, in_release: []const u8, detached: []const u8) ?[]const u8 {
+fn gpgSteps(a: Allocator, gpg: []const u8, home: []const u8, fprs: []const []const u8, key_file: []const u8, pass_file: []const u8, release: []const u8, in_release: []const u8, detached: []const u8) ?[]const u8 {
     const Kind = enum { import, list, clear, detach, verify_clear, verify_detached };
     const steps = [_]struct { what: []const u8, kind: Kind }{
         .{ .what = "gpg could not import the key", .kind = .import },
@@ -440,11 +441,19 @@ fn gpgSteps(a: Allocator, gpg: []const u8, home: []const u8, fpr: []const u8, ke
         .{ .what = "Release.gpg does not verify", .kind = .verify_detached },
     };
     for (steps) |s| {
+        if (s.kind == .list) {
+            // Every signing key must be there: a missing one fails before anything is signed, not after the first signature.
+            for (fprs) |fpr| {
+                const r = runProc(a, gpgx.listArgs(a, gpg, home, fpr) catch return "out of memory");
+                if (!r.ok) return std.fmt.allocPrint(a, "{s} ({s}): {s}", .{ s.what, fpr, trimmed(r.stderr) }) catch "gpg failed";
+            }
+            continue;
+        }
         const built = switch (s.kind) {
             .import => gpgx.importArgs(a, gpg, home, key_file),
-            .list => gpgx.listArgs(a, gpg, home, fpr),
-            .clear => gpgx.clearsignArgs(a, gpg, home, fpr, pass_file, release, in_release),
-            .detach => gpgx.detachArgs(a, gpg, home, fpr, pass_file, release, detached),
+            .list => unreachable, // run once for each key, above
+            .clear => gpgx.clearsignArgs(a, gpg, home, fprs, pass_file, release, in_release),
+            .detach => gpgx.detachArgs(a, gpg, home, fprs, pass_file, release, detached),
             .verify_clear => gpgx.verifyClearArgs(a, gpg, home, in_release),
             .verify_detached => gpgx.verifyDetachedArgs(a, gpg, home, detached, release),
         };
