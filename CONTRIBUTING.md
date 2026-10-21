@@ -99,12 +99,12 @@ the stages' configuration and the API's golden grants for the stacks). The held 
 jest against a fake host, so `:test` covers them.
 
 After `npm install` or `npm update` changes a `package-lock.json`, regenerate its pins (kpin is
-komira's tool, `./buck2 run komira//tools/build/kpin`), then commit the lock with the lockfile:
+buildrules' tool, `./buck2 run buildrules//rules/kpin`), then commit the lock with the lockfile:
 
 ```sh
-./buck2 run komira//tools/build/kpin -- update --pins service/pins.toml \
+./buck2 run buildrules//rules/kpin -- update --pins service/pins.toml \
     --lock service/api/pins.lock.bzl --npm service/api/package-lock.json
-./buck2 run komira//tools/build/kpin -- check --pins service/pins.toml \
+./buck2 run buildrules//rules/kpin -- check --pins service/pins.toml \
     --lock service/api/pins.lock.bzl --npm service/api/package-lock.json
 ```
 
@@ -120,9 +120,16 @@ closes the older open `kpin/weekly-*` pull requests (a comment links the new one
 setting "Allow GitHub Actions to create and approve pull requests" must be on, and a pull request opened with
 `GITHUB_TOKEN` starts no other workflow, so push an empty commit to its branch (or close and reopen the pull
 request) to run its checks. A new `pins.lock.bzl` needs a line in the workflow's `KPIN_SETS`; `//:hygiene` fails the pull request that adds one without it (the job itself fails until
-it has one). kpin's fetcher speaks TLS 1.3 only (komira's `tools/build/kpin/README.md`): `registry.npmjs.org`
+it has one). kpin's fetcher speaks TLS 1.3 only (buildrules' `rules/kpin/README.md`): `registry.npmjs.org`
 answers TLS 1.2 only, so `update` cannot fetch a new npm tarball from a runner or from here today, and the job
 fails on a lock that lacks one.
+
+`.github/workflows/advisories.yml` scans every tracked `package-lock.json` and `Cargo.lock` for known
+vulnerabilities once a day (and on demand), with a pinned, sha256-verified OSV-Scanner
+(`tools/install_osv_scanner.zig`). It only reports: findings go to the job summary and to one issue titled
+`Advisories` (opened or updated while there are findings, closed when there are none), and it never runs on a pull
+request or a push, so an advisory cannot block a pull request or turn `main` or a release red. The job fails only
+when the scan cannot run (the download does not match its sha256, or the scanner exits above 1), on the scheduled run.
 
 A source file you add under `src/core`, `src/cli` or `registry/fake` is picked
 up by both (Buck2 takes each directory by glob; it skips dotfiles, so a new

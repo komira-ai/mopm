@@ -20,9 +20,9 @@
 # request opened or touched. Exit 1 (for one, a registry that answers TLS 1.2:
 # kpin speaks TLS 1.3 only) fails the job the same way.
 #
-# It needs no farm and no secret. kpin comes from komira, the git external cell
+# It needs no farm and no secret. kpin comes from buildrules (rules/kpin), the git external cell
 # pinned in .buckconfig (`commit_hash`): a GitHub-hosted runner builds it with
-# the pinned buck2 (./buck2: sha256-checked) and komira's pinned zig, on the
+# the pinned buck2 (./buck2: sha256-checked) and buildrules' pinned zig, on the
 # runner itself (no [buck2_re_client] is configured here, so buck2 runs the
 # actions locally); kpin's unit tests are welded into its build and run first.
 # `update` is the one step that opens a socket.
@@ -111,12 +111,12 @@ jobs:
             echo "::error::KPIN_SETS (the list above is - ) and the pins.lock.bzl files in the tree (+) differ: add or remove the line"
             exit 1
           fi
-      # kpin, built where it runs, from the komira cell pinned in .buckconfig: the
+      # kpin, built where it runs, from the buildrules cell pinned in .buckconfig: the
       # build runs its unit tests first.
       - name: build kpin
         run: |
           set -eu
-          out=$(./buck2 build komira//tools/build/kpin:kpin --show-full-output | sed -n 's/^[^ ]* //p' | tail -n 1)
+          out=$(./buck2 build buildrules//rules/kpin:kpin --show-full-output | sed -n 's/^[^ ]* //p' | tail -n 1)
           [ -x "$out" ] || { echo "::error::kpin is not an executable file: '$out'"; exit 1; }
           mkdir -p "$RUNNER_TEMP/kpin"
           cp "$out" "$RUNNER_TEMP/kpin/kpin"
@@ -163,7 +163,7 @@ jobs:
           done <<< "$KPIN_SETS"
           # Cargo: resolution on this runner, then kpin reads. The compiler the overrides
           # must be derived for is the one komira pins, in the komira commit .buckconfig names.
-          komira=$(sed -n 's/^  commit_hash = \([0-9a-f]\{40\}\)$/\1/p' .buckconfig)
+          komira=$(sed -n '/^\[external_cell_komira\]/,/^\[/s/^  commit_hash = \([0-9a-f]\{40\}\)$/\1/p' .buckconfig)
           [ -n "$komira" ] || { echo "::error::cannot read the komira commit from .buckconfig"; exit 1; }
           rustc=$(curl -fsSL "https://raw.githubusercontent.com/komira-ai/komira/$komira/tools/build/toolchains/rust/BUCK" | sed -n 's/^    version = "\([0-9][0-9.]*\)",$/\1/p')
           case "$rustc" in
