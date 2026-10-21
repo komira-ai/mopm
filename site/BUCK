@@ -39,6 +39,7 @@ _TEST_DATA = _DOCS | {
     "src/cli/main.zig": "//:site.src.cli.main.zig",
     "src/core/credentials.zig": "//:site.src.core.credentials.zig",
     "src/core/lock.zig": "//:site.src.core.lock.zig",
+    "src/core/conda.zig": "//:site.src.core.conda.zig",
     "src/core/manifest.zig": "//:site.src.core.manifest.zig",
     "tests/contract/api": "//:contract_api",
     "tests/drivers/examples_test.zig": "//:site.tests.drivers.examples_test.zig",

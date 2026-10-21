@@ -373,12 +373,11 @@ app 0.2.0
 └── testkit 0.1.0 (testkit)
 ```
 
-`mopm plan --unit-graph --locked` prints the build as JSON for a build system (see `spec/unit-graph.md`): a unit for each of `util@0.1.0#mojo1.0.0/lib`, `core@0.1.0#mojo1.0.0/lib` and `testkit@0.1.0#mojo1.0.0/lib`, and for the program, `app@0.2.0#mojo1.0.0/bin:run`. It takes only members that are below the root project, which is why the members are directories of the root here and not its siblings (`mopm lock` and `mopm tree` take siblings too). Three mistakes are refused, each with exit status 1:
+`mopm plan --unit-graph --locked` prints the build as JSON for a build system (see `spec/unit-graph.md`): a unit for each of `util@0.1.0#mojo1.0.0/lib`, `core@0.1.0#mojo1.0.0/lib` and `testkit@0.1.0#mojo1.0.0/lib`, and for the program, `app@0.2.0#mojo1.0.0/bin:run`. It takes only members that are below the root project, which is why the members are directories of the root here and not its siblings (`mopm lock` and `mopm tree` take siblings too). Two mistakes are refused, each with exit status 1:
 
 | mistake | message |
 |---|---|
 | a `[workspace]` table | `unknown key 'workspace' in mopm.toml` |
-| `core = { path = "core", version = "0.1" }` | `dependency 'core' sets both 'version' and 'path'; use one` |
 | `util = { path = "testkit" }` while `core` names `../util` | `one name, one path`: a name is one directory |
 
 ## 4. Tests

@@ -1,0 +1,15 @@
+# A dependency with a path and a version: both are kept; lock, build and sync use the path, pack writes the version.
+[package]
+name = "both"
+version = "0.1.0"
+
+[toolchain]
+mojo = "1.0.0"
+
+[dependencies]
+util = { path = "../util", version = "^0.3" }
+path_only = { path = "../path_only" }
+version_only = { version = "1.2" }
+
+[dev-dependencies]
+testkit = { version = ">=0.1, <0.2", path = "../testkit" }

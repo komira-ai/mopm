@@ -662,6 +662,12 @@ export_file(
 )
 
 export_file(
+    name = "site.src.core.conda.zig",
+    src = "src/core/conda.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
     name = "site.src.core.manifest.zig",
     src = "src/core/manifest.zig",
     visibility = ["//site:"],

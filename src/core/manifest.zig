@@ -31,7 +31,9 @@ pub const Package = struct {
 /// Where a Mojo dependency comes from: a version requirement or a local path.
 pub const Source = union(enum) { version: []const u8, path: []const u8 };
 
-pub const Dep = struct { name: []const u8, source: Source };
+/// `requirement` is the `version` of a dependency that also has a `path`: `source` is then the path (lock, build
+/// and sync use it), and the requirement is what `pack` and `publish` write in its place.
+pub const Dep = struct { name: []const u8, source: Source, requirement: ?[]const u8 = null };
 
 /// What a native dependency asks for.
 pub const NativeDepKind = enum { shared, static };
@@ -257,6 +259,7 @@ const Checker = struct {
         var out = std.ArrayList(Dep).init(c.arena);
         for (t.entries.items) |*e| {
             try c.packageName(e.key, e.pos, "dependency name");
+            var requirement: ?[]const u8 = null;
             const source: Source = switch (e.value) {
                 .string => |s| .{ .version = s },
                 .table => |sub| blk: {
@@ -265,7 +268,8 @@ const Checker = struct {
                     const version = try c.optStr(sub, "version", in);
                     const path = try c.optStr(sub, "path", in);
                     if (version != null and path != null) {
-                        return c.fail(e.pos, "dependency '{s}' sets both 'version' and 'path'; use one", .{e.key});
+                        requirement = version;
+                        break :blk .{ .path = path.? };
                     }
                     if (version) |v| break :blk .{ .version = v };
                     if (path) |p| break :blk .{ .path = p };
@@ -273,17 +277,17 @@ const Checker = struct {
                 },
                 else => return c.fail(e.pos, "dependency '{s}' in {s} must be a version string or a table with 'version' or 'path', not {s}", .{ e.key, where, e.value.typeName() }),
             };
-            switch (source) {
-                .version => |v| {
-                    var why: []const u8 = "";
-                    _ = semver.parseReq(c.arena, v, &why) catch |err| switch (err) {
-                        error.Invalid => return c.fail(e.pos, "dependency '{s}' has an invalid version requirement '{s}': {s}", .{ e.key, v, why }),
-                        error.OutOfMemory => return error.OutOfMemory,
-                    };
-                },
-                .path => |p| if (p.len == 0) return c.fail(e.pos, "dependency '{s}' has an empty path", .{e.key}),
+            if (source == .path and source.path.len == 0) return c.fail(e.pos, "dependency '{s}' has an empty path", .{e.key});
+            // The requirement of a path dependency is checked like any other: pack writes it into the published package.
+            const req_text: ?[]const u8 = if (requirement) |r| r else if (source == .version) source.version else null;
+            if (req_text) |v| {
+                var why: []const u8 = "";
+                _ = semver.parseReq(c.arena, v, &why) catch |err| switch (err) {
+                    error.Invalid => return c.fail(e.pos, "dependency '{s}' has an invalid version requirement '{s}': {s}", .{ e.key, v, why }),
+                    error.OutOfMemory => return error.OutOfMemory,
+                };
             }
-            try out.append(.{ .name = e.key, .source = source });
+            try out.append(.{ .name = e.key, .source = source, .requirement = requirement });
         }
         return try out.toOwnedSlice();
     }
@@ -459,6 +463,10 @@ fn writeDep(w: anytype, d: Dep) !void {
         .path => |v| {
             try w.writeAll(", \"path\": ");
             try jsonStr(w, v);
+            if (d.requirement) |r| {
+                try w.writeAll(", \"version\": ");
+                try jsonStr(w, r);
+            }
         },
     }
     try w.writeAll("}");
@@ -619,4 +627,25 @@ test "golden: each tests/manifest/valid/<name>.toml prints <name>.json" {
 
 test "golden: each tests/manifest/invalid/<name>.toml is refused with <name>.err" {
     try eachGolden("tests/manifest/invalid", "err", checkInvalid);
+}
+
+test "a dependency with a path and a version keeps both; the path is its source" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var diag: Diagnostic = .{};
+    const head = "[package]\nname = \"a\"\nversion = \"0.1.0\"\n\n[dependencies]\n";
+    const m = try parse(arena, head ++ "both = { version = \"^0.3\", path = \"../both\" }\nonly_path = { path = \"../p\" }\nonly_version = \"1\"\n", &diag);
+    try std.testing.expectEqual(@as(usize, 3), m.dependencies.len);
+    try std.testing.expectEqualStrings("../both", m.dependencies[0].source.path);
+    try std.testing.expectEqualStrings("^0.3", m.dependencies[0].requirement.?);
+    try std.testing.expectEqualStrings("../p", m.dependencies[1].source.path);
+    try std.testing.expect(m.dependencies[1].requirement == null);
+    try std.testing.expectEqualStrings("1", m.dependencies[2].source.version);
+    try std.testing.expect(m.dependencies[2].requirement == null);
+
+    // Each half is still checked: the requirement is a requirement, the path is not empty, a third key is unknown.
+    try std.testing.expectError(error.Invalid, parse(arena, head ++ "b = { version = \"=>1\", path = \"../b\" }\n", &diag));
+    try std.testing.expectError(error.Invalid, parse(arena, head ++ "b = { version = \"1\", path = \"\" }\n", &diag));
+    try std.testing.expectError(error.Invalid, parse(arena, head ++ "b = { version = \"1\", path = \"../b\", git = \"x\" }\n", &diag));
 }

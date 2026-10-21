@@ -1,0 +1,28 @@
+{
+  "package": {
+    "name": "both",
+    "version": "0.1.0",
+    "description": null,
+    "license": null,
+    "repository": null,
+    "readme": null
+  },
+  "toolchain": {
+    "mojo": ["1.0.0"]
+  },
+  "dependencies": [
+    {"name": "util", "path": "../util", "version": "^0.3"},
+    {"name": "path_only", "path": "../path_only"},
+    {"name": "version_only", "version": "1.2"}
+  ],
+  "dev-dependencies": [
+    {"name": "testkit", "path": "../testkit", "version": ">=0.1, <0.2"}
+  ],
+  "native-dependencies": [],
+  "native": [],
+  "targets": {
+    "lib": null,
+    "bins": [],
+    "tests": []
+  }
+}

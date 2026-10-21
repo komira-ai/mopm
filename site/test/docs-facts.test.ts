@@ -237,3 +237,43 @@ test('the extractors find what they are written to find', () => {
   expect(lockKeys('pub fn parse(a) {\n top.get("lock_version"); r.string(o, "name", w); r.array(o, "deps", w, false);\n}\nfn str(w: anytype')).toEqual(['deps', 'lock_version', 'name']);
   expect(credentialKeys('pub fn load() { e.get("token"); e.get("handle"); }\npub fn store(')).toEqual(['handle', 'token']);
 });
+
+// ------------------------------------------------------- a path with a version
+
+// The rule of a dependency that has both a `path` and a `version`, and the two refusals of `mopm pack` that go with it,
+// are on the page in the words conda.zig prints (the fixed text of each message, read from its format string), so
+// changing a message, or dropping the rule from the page, fails here. Mutants (each planted and shown red when this
+// test was written): the page's old sentence that a dependency with both is refused put back; a word of the
+// path-without-version message changed in conda.zig; a word of the unsatisfied-version message changed in conda.zig;
+// the page's sentence that the path is not written into the package dropped.
+function formatFragments(src: string, name: string): string[] {
+  const m = new RegExp(`pub const ${name} = "((?:[^"\\\\]|\\\\.)*)";`).exec(src);
+  if (!m) throw new Error(`conda.zig: no declaration of ${name}`);
+  return m[1]
+    .replace(/\\"/g, '"')
+    .split('{s}')
+    .filter((f) => f.length > 0);
+}
+
+describe('a dependency with a path and a version', () => {
+  const conda = read('src/core/conda.zig');
+  const dependencies = page.slice(page.indexOf('### Dependencies:'), page.indexOf('### Native dependencies'));
+
+  test.each(['path_no_version_fmt', 'path_unsatisfied_fmt'])('the page quotes the fixed text of %s', (name) => {
+    const fragments = formatFragments(conda, name);
+    expect(fragments.length).toBeGreaterThan(1);
+    for (const f of fragments) expect([name, f, dependencies.includes(f)]).toEqual([name, f, true]);
+  });
+
+  test('the page says both are allowed, which one is used, and what pack writes', () => {
+    expect(dependencies).toContain('An entry needs a `version`, a `path`, or both.');
+    expect(dependencies).toContain('write the version into the package they make and never the path');
+    expect(dependencies).toContain('the path is what `mopm lock`');
+    expect(dependencies).not.toMatch(/sets both/);
+    expect(dependencies).not.toMatch(/not together with `path`/);
+  });
+
+  test('the parser does not refuse both', () => {
+    expect(read('src/core/manifest.zig')).not.toContain("sets both 'version' and 'path'");
+  });
+});

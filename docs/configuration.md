@@ -78,10 +78,15 @@ The keys of the table form:
 
 | key | type | default | allowed | example |
 |---|---|---|---|---|
-| `version` | string | none | a version requirement (below); not together with `path` | `{ version = "0.9" }` |
+| `version` | string | none | a version requirement (below); beside a `path` it is the requirement that `pack` and `publish` write in place of the path | `{ version = "0.9" }` |
 | `path` | string | none | a non-empty directory with its own `mopm.toml` that names the same package; relative to the directory of the manifest that names it | `{ path = "../util" }` |
 
-An entry needs one of the two. A dependency with both is refused (`dependency 'x' sets both 'version' and 'path'; use one`), although [the mopm.toml draft](../spec/mopm-toml.md) shows one; a package with a path dependency cannot be packed.
+An entry needs a `version`, a `path`, or both. With both, `{ path = "../util", version = "0.3" }`, the path is what `mopm lock`, `tree`, `plan`, `build` and `sync` use (the package is built from that directory, and the lock records it as a path), and the version is not looked up in the registry. `mopm pack` and `mopm publish` do the opposite: they write the version into the package they make and never the path, so a consumer of the package asks the registry for `util` 0.3 and gets the registry's copy. The `version` is a version requirement like any other, and a requirement that is not one is refused when the file is read.
+
+Two rules apply when you pack, each refused before any file is made or request is sent, with exit status 1:
+
+- A path dependency with no `version` cannot be packed: `dependency 'x' is a path dependency with no version; add 'version' beside its 'path'`, because a consumer has no checkout to read the path from and nothing says which versions work.
+- The package at the `path` must satisfy the `version`: `mopm pack` reads the `mopm.toml` of that directory and refuses with `dependency 'x' requires version "0.4", but the package at '../util' is version 0.3.4; change the requirement or the version of that package` when its `[package] version` is outside the requirement.
 
 A version requirement is a comma-separated list of comparators that must all hold, or `*`:
 
@@ -152,7 +157,7 @@ Accepted does not mean used. This table says, for every table and key, which com
 
 ### What pack and publish refuse
 
-`mopm pack` and `mopm publish` read the manifest first and refuse, before any request: a version that is not exactly `MAJOR.MINOR.PATCH` ("digits, no leading zeros, no pre-release or build part"), a path dependency, a requirement with a pre-release, any `[native-dependencies]` or `[native.<id>]`, a compiler that is not digits and dots, and an empty `.mojoc` file. `mopm publish` also refuses a readme over 64 KiB or not UTF-8, a package file over 100 MB, and more than 20 files for one version. The registry has its own limits, which [getting started](getting-started.md) lists.
+`mopm pack` and `mopm publish` read the manifest first and refuse, before any request: a version that is not exactly `MAJOR.MINOR.PATCH` ("digits, no leading zeros, no pre-release or build part"), a path dependency with no version or one whose package is outside its version, a requirement with a pre-release, any `[native-dependencies]` or `[native.<id>]`, a compiler that is not digits and dots, and an empty `.mojoc` file. `mopm publish` also refuses a readme over 64 KiB or not UTF-8, a package file over 100 MB, and more than 20 files for one version. The registry has its own limits, which [getting started](getting-started.md) lists.
 
 ## mopm.lock
 

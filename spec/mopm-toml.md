@@ -124,7 +124,7 @@ while developing in a checkout. Following cargo, a dependency that has a
 `path` and no `version` cannot be published: the registry refuses the package
 (`manifest_invalid`), because a consumer has no checkout to read the path from
 and nothing says which versions work. With both, the path is dropped at
-publish and the version requirement is what the registry records. The
+publish and the version requirement is what the registry records. `mopm pack` reads the `mopm.toml` at the path and refuses a package whose own version does not satisfy that requirement. The version of such a dependency must be a valid version requirement, and `mopm lock`, `build` and `sync` use the path, not the registry. The
 generated `<name>.mopm.json` carries the same rule (`dependentRequired` in
 `package-metadata.schema.json`).
 
