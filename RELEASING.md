@@ -42,6 +42,12 @@ and `service-ci.yml` may run on `pull_request`, and every job of `ci.yml` other 
 | `bump` | `tag`, `publish` | opens the pull request in komira-internal that moves its `mopm` submodule to this release, with auto-merge (below). The last stage with `tap`, the two that write outside this repository; nothing needs either. |
 | `apt-deploy-read`, `apt-index`, `apt-deploy-write` (up to three attempts) | `publish` | puts the two `.deb`s into the shared apt repository (below). Three jobs per attempt so that no job holds both the signing key and the cloud role. Until the repository owner has made the settings, every one of them ends green with a notice and writes nothing. Nothing needs them: a red apt job goes red alone and un-releases nothing. |
 
+**The retry of `cosign verify-blob`.** `verify` calls `cosign verify-blob` once per file. When cosign cannot fetch the Sigstore trusted root (the
+TUF repository), the call is tried up to 3 times, waiting 2 s and then 4 s between the tries. Only the final line of cosign's error output decides:
+it must hold `tuf refresh failed`, `Could not fetch trusted_root.json` or `error getting live trusted root`. Any other refusal, a signature or
+certificate mismatch above all, is a finding on the first try; so is a mismatch that follows the legacy-bundle `Could not fetch trusted_root.json ... Continuing`
+warning. An outage longer than about 6 s still fails the release, and the message says it is "a network failure, not a verdict on the signature"; re-run the job.
+
 A push that changes only documentation or CI (`**.md`, `docs/**`, `.github/**`) does not release.
 Everything else does, including a change to `VERSION`.
 

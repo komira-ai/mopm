@@ -505,15 +505,21 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         const t = try w.run(&.{ "verify-dir", "1.2.3", dir, "--sha", sha, "--source-ref", "refs/heads/main" });
         rep.check("verify-dir: a bundle that does not match its file is refused", t.code == 1 and h.contains(t.text, "cosign verify-blob refused SHA256SUMS"), t.text);
 
-        // A flaky Sigstore trusted-root fetch is retried (3 tries); a signature verdict never is.
+        // A flaky Sigstore trusted-root fetch is retried (3 tries); a signature verdict never is. The call counts are measured on a clean run, not typed in.
         {
             const retry = [_][]const u8{ "verify-dir", "1.2.3", "", "--sha", sha, "--source-ref", "refs/heads/main", "--cosign-retry-ms", "1" };
+            var args = retry;
+            var b = try goodVerify(a, tools, &tmp, "vd_tuf_base", "1.2.3");
+            args[2] = b.path("assets");
+            const clean = try b.run(&args);
+            const base = b.cosignCalls("verify-blob ");
+            rep.check("verify-dir: a clean run verifies every file once", clean.code == 0 and base > 0, clean.text);
+
             var f = try goodVerify(a, tools, &tmp, "vd_tuf_twice", "1.2.3");
             try f.put("cosign_tuf_fail", "2\n");
-            var args = retry;
             args[2] = f.path("assets");
             const twice = try f.run(&args);
-            rep.check("verify-dir: the trusted-root fetch failing twice, then working, passes", twice.code == 0 and f.cosignCalls("verify-blob ") == 8, f.read("cosign_log"));
+            rep.check("verify-dir: the trusted-root fetch failing twice, then working, passes at the cost of two more calls", twice.code == 0 and f.cosignCalls("verify-blob ") == base + 2, f.read("cosign_log"));
 
             var g = try goodVerify(a, tools, &tmp, "vd_tuf_thrice", "1.2.3");
             try g.put("cosign_tuf_fail", "3\n");
@@ -521,11 +527,39 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
             const thrice = try g.run(&args);
             rep.check("verify-dir: the trusted-root fetch failing 3 times fails after exactly 3 tries, saying it is a fetch failure", thrice.code == 1 and g.cosignCalls("verify-blob ") == 3 and h.contains(thrice.text, "could not fetch the Sigstore trusted root") and h.contains(thrice.text, "in 3 tries"), thrice.text);
 
+            // Each marker alone, as the final line, is retried (dropping any one of them from the list turns exactly its case red).
+            const alone = [_][]const u8{
+                "Error: tuf refresh failed: Get https://tuf-repo-cdn.sigstore.dev/timestamp.json: i/o timeout",
+                "Error: Could not fetch trusted_root.json from the TUF repository",
+                "Error: error getting live trusted root: boom",
+            };
+            for (alone, 0..) |text, i| {
+                var e = try goodVerify(a, tools, &tmp, try std.fmt.allocPrint(a, "vd_tuf_marker_{d}", .{i}), "1.2.3");
+                try e.put("cosign_tuf_fail", "1\n");
+                try e.put("cosign_tuf_text", text);
+                args[2] = e.path("assets");
+                const one = try e.run(&args);
+                rep.check(try std.fmt.allocPrint(a, "verify-dir: the trusted-root marker {d} alone is retried once and then passes", .{i}), one.code == 0 and e.cosignCalls("verify-blob ") == base + 1, one.text);
+            }
+
+            // Never retried: a mismatch whose text mentions "tuf" and "trusted root" in another context, and the legacy-bundle warning followed by a real mismatch.
+            const verdicts = [_][]const u8{
+                "Error: invalid signature when validating ASN.1 encoded signature: the tuf client and the trusted root of this bundle disagree",
+                "WARNING: Could not fetch trusted_root.json from the TUF repository: tuf refresh failed: i/o timeout. Continuing with the legacy bundle\nError: invalid signature when validating ASN.1 encoded signature",
+            };
+            for (verdicts, 0..) |text, i| {
+                var e = try goodVerify(a, tools, &tmp, try std.fmt.allocPrint(a, "vd_tuf_verdict_{d}", .{i}), "1.2.3");
+                try e.put("cosign_always_fail", text);
+                args[2] = e.path("assets");
+                const one = try e.run(&args);
+                rep.check(try std.fmt.allocPrint(a, "verify-dir: mismatch fixture {d} is final on the first try", .{i}), one.code == 1 and h.contains(one.text, "cosign verify-blob refused") and !h.contains(one.text, "in 3 tries") and e.cosignCalls("verify-blob ") == 1, one.text);
+            }
+
             var m2 = try goodVerify(a, tools, &tmp, "vd_tuf_mismatch", "1.2.3");
             try m2.put("assets/SHA256SUMS.sigstore.json", "fake-cosign-bundle sha256=" ++ "0" ** 64 ++ "\n");
             args[2] = m2.path("assets");
             const mis = try m2.run(&args);
-            rep.check("verify-dir: a signature mismatch is final on the first try (no retry: the SHA256SUMS bundle, the sixth file, is called once)", mis.code == 1 and h.contains(mis.text, "cosign verify-blob refused SHA256SUMS") and !h.contains(mis.text, "trusted root") and m2.cosignCalls("verify-blob ") == 6, mis.text);
+            rep.check("verify-dir: a signature mismatch is final on the first try (the bad bundle is called once, so the calls are the clean run's)", mis.code == 1 and h.contains(mis.text, "cosign verify-blob refused SHA256SUMS") and !h.contains(mis.text, "trusted root") and m2.cosignCalls("verify-blob ") == base, mis.text);
         }
 
         var w2 = try goodVerify(a, tools, &tmp, "vd_unsigned", "1.2.3");

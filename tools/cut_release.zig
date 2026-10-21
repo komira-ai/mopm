@@ -521,12 +521,15 @@ fn checkSignatures(gh: Gh, dir_path: []const u8, payload: [][]const u8, source_r
 /// Tries of `cosign verify-blob` per file when it cannot fetch the Sigstore trusted root.
 const cosign_tries: u32 = 3;
 
-/// cosign's stderr says the trusted root (the TUF repository) could not be fetched: a network failure that says nothing about the
-/// signature. Only these retry; any other refusal (a signature or certificate mismatch) is final.
+/// cosign's FINAL stderr line says the trusted root (the TUF repository) could not be fetched: a network failure that says nothing about the
+/// signature. Only these retry; any other refusal (a signature or certificate mismatch) is final. Only the last line counts: in legacy-bundle
+/// mode cosign prints the `Could not fetch trusted_root.json ... Continuing` warning and may then report a real mismatch, which is a verdict.
 fn isTrustedRootFetchFailure(stderr: []const u8) bool {
+    const text = std.mem.trim(u8, stderr, " \r\n");
+    const last = if (std.mem.lastIndexOfScalar(u8, text, '\n')) |i| text[i + 1 ..] else text;
     const markers = [_][]const u8{ "tuf refresh failed", "Could not fetch trusted_root.json", "error getting live trusted root" };
     for (markers) |m| {
-        if (std.mem.indexOf(u8, stderr, m) != null) return true;
+        if (std.mem.indexOf(u8, last, m) != null) return true;
     }
     return false;
 }
