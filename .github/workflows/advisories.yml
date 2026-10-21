@@ -1,0 +1,112 @@
+# advisories: the daily scan of the lockfiles for known vulnerabilities. It REPORTS and never gates.
+#
+# Maintainer ruling: an advisory check must not block a pull request or turn main or a release red (a new advisory
+# appears the day after a green merge, through no change of ours); the license and ban checks still may. So this
+# workflow runs on a schedule and by hand, NEVER on pull_request or push, and no other workflow calls it.
+#
+# What it scans: every tracked package-lock.json and Cargo.lock (git ls-files), with OSV-Scanner. The pin lockfiles
+# (pins.lock.bzl) are generated from those two kinds of file (kpin reads the npm tarballs from package-lock.json and
+# the crates from Cargo.lock), so scanning the sources covers what they pin.
+#
+# Why OSV-Scanner and not `npm audit` plus `cargo audit`: one pinned binary reads both lockfile kinds against one
+# database (OSV.dev), and tools/install_osv_scanner.zig pins it exactly as tools/install_actionlint.zig pins
+# actionlint (exact release, sha256 constant, refuses on a mismatch). `npm audit` needs node and npm on the runner, and
+# `cargo audit` is a crate to build or a second download to pin; neither adds anything here. No third-party action.
+#
+# Where findings go: the job summary, and ONE issue titled `Advisories` (created or updated while there are findings,
+# reopened if it was closed, closed when there are none). A finding is never an exit code. The job fails only when the
+# scan cannot run: the download does not match its sha256, or osv-scanner exits with more than 1 (0 = clean,
+# 1 = vulnerabilities found). That red appears on this scheduled run alone.
+# tests/drivers/workflow_lint.zig holds this shape.
+name: advisories
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: advisories
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    name: scan the lockfiles (report only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Install OSV-Scanner (pinned release, sha256-verified; a mismatch fails the job)
+        run: |
+          bin="$(zig run tools/install_osv_scanner.zig -- "$RUNNER_TEMP/osv")"
+          echo "OSV_SCANNER=$bin" >> "$GITHUB_ENV"
+      - name: Scan the lockfiles (exit 1 means findings, which are reported below; more than 1 means the scan could not run)
+        run: |
+          set --
+          for f in $(git ls-files -- '*package-lock.json' '*Cargo.lock'); do
+            set -- "$@" --lockfile "$f"
+          done
+          if [ "$#" -eq 0 ]; then
+            echo "::error::no package-lock.json or Cargo.lock is tracked, so there is nothing to scan"
+            exit 1
+          fi
+          set +e
+          "$OSV_SCANNER" scan source --format json "$@" > "$RUNNER_TEMP/osv.json"
+          rc=$?
+          set -e
+          if [ "$rc" -gt 1 ]; then
+            echo "::error::osv-scanner could not scan (exit $rc)"
+            exit 1
+          fi
+      - name: Report (job summary and the one Advisories issue; never a failure)
+        run: |
+          json="$RUNNER_TEMP/osv.json"
+          body="$RUNNER_TEMP/advisories.md"
+          count="$(jq '[.results[]?.packages[]? | select((.vulnerabilities // []) | length > 0)] | length' "$json")"
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          echo "## Advisories" > "$body"
+          echo "" >> "$body"
+          if [ "$count" -gt 0 ]; then
+            echo "$count package(s) in the lockfiles of the default branch have known vulnerabilities (OSV-Scanner, [this run]($run_url))." >> "$body"
+            echo "" >> "$body"
+            echo "| Lockfile | Package | Version | Advisories |" >> "$body"
+            echo "| --- | --- | --- | --- |" >> "$body"
+            jq -r '.results[]? | .source.path as $p | .packages[]? | select((.vulnerabilities // []) | length > 0) | "| \($p) | \(.package.name) | \(.package.version) | \([.vulnerabilities[].id] | join(", ")) |"' "$json" >> "$body"
+          else
+            echo "No known vulnerabilities in the lockfiles (OSV-Scanner, [this run]($run_url))." >> "$body"
+          fi
+          cat "$body" >> "$GITHUB_STEP_SUMMARY"
+          number=""
+          state=""
+          if line="$(gh issue list --state all --limit 100 --json number,title,state --jq '[.[] | select(.title == "Advisories")] | sort_by(.number) | last | select(. != null) | "\(.number) \(.state)"')"; then
+            number="${line% *}"
+            state="${line#* }"
+          else
+            echo "::warning::could not list issues, so the Advisories issue was not updated"
+          fi
+          if [ "$count" -gt 0 ]; then
+            if [ -z "$number" ]; then
+              gh issue create --title Advisories --body-file "$body" || echo "::warning::could not create the Advisories issue"
+            else
+              gh issue edit "$number" --body-file "$body" || echo "::warning::could not update the Advisories issue"
+              if [ "$state" = CLOSED ]; then
+                gh issue reopen "$number" || echo "::warning::could not reopen the Advisories issue"
+              fi
+            fi
+          elif [ -n "$number" ] && [ "$state" = OPEN ]; then
+            gh issue edit "$number" --body-file "$body" || echo "::warning::could not update the Advisories issue"
+            gh issue close "$number" --comment "No known vulnerabilities at the last scan." || echo "::warning::could not close the Advisories issue"
+          fi

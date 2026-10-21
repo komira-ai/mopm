@@ -170,6 +170,7 @@ fn checkPerm(a: Allocator, f: []const u8, base: []const u8, path: []const []cons
                 const k = e.key_ptr.*;
                 if (std.mem.eql(u8, base, kpin_file) and c.containsStr(&kpin_writes, k) and path.len == 3 and std.mem.eql(u8, path[0], "jobs")) continue;
                 if (std.mem.eql(u8, base, release_file) and c.containsStr(&release_writes, k) and path.len == 3 and std.mem.eql(u8, path[0], "jobs")) continue;
+                if (std.mem.eql(u8, base, advisories_file) and std.mem.eql(u8, k, "issues") and path.len == 3 and std.mem.eql(u8, path[0], "jobs")) continue;
                 if (!(std.mem.eql(u8, k, "id-token") and (isOidc(base) or std.mem.eql(u8, base, farm_file)))) {
                     try c.problem(a, out, prefix ++ "{s}: {s}.{s}: write is not allowed", .{ f, try joinPath(a, path), k });
                 }
@@ -363,6 +364,8 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
         if (c.get(job, "uses")) |u| if (c.truthy(u)) {
             const us = c.str(u) orelse "";
             if (!localWorkflow(us)) try c.problem(a, out, prefix ++ "{s}: job {s} may only call a local workflow, not {s}", .{ f, jn, us });
+            // The advisory scan reports on its own schedule; a workflow that called it could be reddened by a finding.
+            if (std.mem.indexOf(u8, us, "advisories") != null) try c.problem(a, out, prefix ++ "{s}: job {s} calls {s}: the advisory scan must never run as part of another workflow", .{ f, jn, us });
         };
         const steps = c.get(job, "steps") orelse continue;
         if (steps != .array) continue;
@@ -402,6 +405,120 @@ fn lessThan(_: void, x: []const u8, y: []const u8) bool {
     return std.mem.lessThan(u8, x, y);
 }
 
+
+// ---- advisories.yml: the daily scan, report only ---------------------------------------
+
+/// advisories.yml (the daily scan of the lockfiles for known vulnerabilities) holds `issues: write` on its job, to keep the one
+/// Advisories issue, and nothing else beyond `contents: read`. It reports and never gates: schedule and workflow_dispatch only (never
+/// pull_request, push or workflow_call), no other workflow calls it, the scanner is the pinned, sha256-verified release, and only the
+/// scan step may fail, and only when the scan cannot run (an exit code above 1; 1 means findings).
+const advisories_file = "advisories.yml";
+const advisories_installer = "tools/install_osv_scanner.zig";
+const advisories_scan_guard = "[ \"$rc\" -gt 1 ]";
+/// Ways a step could fetch a tool without the pinned, verified installer.
+const advisories_downloads = [_][]const u8{ "curl ", "wget ", "releases/download", "go install", "cargo install", "npm ", "npx ", "pip " };
+
+/// The text between the quotes of the first line `const <name> = "..."` of a Zig source, or null.
+fn zigStringConst(text: []const u8, name: []const u8) ?[]const u8 {
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        if (!std.mem.startsWith(u8, line, "const ")) continue;
+        const rest = line["const ".len..];
+        if (!std.mem.startsWith(u8, rest, name) or !std.mem.startsWith(u8, rest[name.len..], " = \"")) continue;
+        const v = rest[name.len + " = \"".len ..];
+        const end = std.mem.indexOfScalar(u8, v, '"') orelse return null;
+        return v[0..end];
+    }
+    return null;
+}
+
+/// tools/install_osv_scanner.zig pins an exact release and a sha256, and refuses a mismatch before it writes the binary.
+pub fn installerProblems(a: Allocator, text: []const u8, out: *Out) !void {
+    const f = advisories_installer;
+    const version = zigStringConst(text, "version") orelse "";
+    var exact = version.len > 0;
+    for (version) |ch| {
+        if (!((ch >= '0' and ch <= '9') or ch == '.')) exact = false;
+    }
+    if (!exact) try c.problem(a, out, prefix ++ "{s}: `const version` must be an exact release (digits and dots), got \"{s}\"", .{ f, version });
+    const sha = zigStringConst(text, "sha256_hex") orelse "";
+    var hex = sha.len == 64;
+    for (sha) |ch| {
+        if (!((ch >= '0' and ch <= '9') or (ch >= 'a' and ch <= 'f'))) hex = false;
+    }
+    if (!hex) try c.problem(a, out, prefix ++ "{s}: `const sha256_hex` must be 64 lowercase hex digits", .{f});
+    if (std.mem.indexOf(u8, text, "/releases/download/v\" ++ version") == null) {
+        try c.problem(a, out, prefix ++ "{s}: the url must be a release download of the pinned version (`/releases/download/v\" ++ version`)", .{f});
+    }
+    const check = std.mem.indexOf(u8, text, "if (!std.mem.eql(u8, &hex, sha256_hex)) die(");
+    const write = std.mem.indexOf(u8, text, "createFile(");
+    if (check == null) {
+        try c.problem(a, out, prefix ++ "{s}: no `if (!std.mem.eql(u8, &hex, sha256_hex)) die(`: the digest of the download is not compared", .{f});
+    } else if (write == null or write.? < check.?) {
+        try c.problem(a, out, prefix ++ "{s}: the binary must be written only after the sha256 comparison", .{f});
+    }
+}
+
+/// The rules for advisories.yml; `f` is the name the messages show.
+pub fn advisoriesProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !void {
+    const doc = c.load(a, text) catch |err| return c.problem(a, out, prefix ++ "{s}: not readable as YAML: {s}", .{ f, @errorName(err) });
+    const on = try c.onKeys(a, doc);
+    const sorted = try a.dupe([]const u8, on);
+    std.mem.sort([]const u8, sorted, {}, lessThan);
+    if (!c.eqlList(sorted, &.{ "schedule", "workflow_dispatch" })) {
+        try c.problem(a, out, prefix ++ "{s}: triggers must be exactly schedule and workflow_dispatch (never pull_request, push or workflow_call: an advisory must not block or redden anything), got {s}", .{ f, try c.inspectList(a, on) });
+    }
+    var installs_zig = false;
+    var installs_scanner = false;
+    var scans = false;
+    var summary = false;
+    var opens = false;
+    var closes = false;
+    const jobs = c.get(doc, "jobs");
+    if (jobs == null or jobs.? != .object) return c.problem(a, out, prefix ++ "{s}: no jobs", .{f});
+    var jit = jobs.?.object.iterator();
+    while (jit.next()) |je| {
+        const jn = je.key_ptr.*;
+        const job = je.value_ptr.*;
+        if (c.truthy(c.get(job, "continue-on-error"))) try c.problem(a, out, prefix ++ "{s}: job {s}: continue-on-error is not allowed (the job fails only when the scan cannot run)", .{ f, jn });
+        const perms = c.get(job, "permissions");
+        if (perms != null and perms.? == .object) {
+            var extra = std.ArrayList([]const u8).init(a);
+            for (perms.?.object.keys()) |k| if (!std.mem.eql(u8, k, "contents") and !std.mem.eql(u8, k, "issues")) try extra.append(k);
+            if (extra.items.len != 0) try c.problem(a, out, prefix ++ "{s}: job {s} may hold only contents and issues permissions, not {s}", .{ f, jn, try c.inspectList(a, extra.items) });
+        }
+        const steps = c.get(job, "steps") orelse continue;
+        if (steps != .array) continue;
+        for (steps.array.items, 0..) |st, i| {
+            if (c.truthy(c.get(st, "continue-on-error"))) try c.problem(a, out, prefix ++ "{s}: {s} step {d}: continue-on-error is not allowed (the job fails only when the scan cannot run)", .{ f, jn, i });
+            const run = c.str(c.get(st, "run")) orelse continue;
+            if (std.mem.indexOf(u8, run, "tools/install_zig.sh") != null) installs_zig = true;
+            if (std.mem.indexOf(u8, run, "zig run " ++ advisories_installer) != null) installs_scanner = true;
+            for (advisories_downloads) |d| {
+                if (std.mem.indexOf(u8, run, d) != null) try c.problem(a, out, prefix ++ "{s}: {s} step {d}: fetches a tool with `{s}`; the scanner comes from the pinned, verified {s} alone", .{ f, jn, i, std.mem.trim(u8, d, " "), advisories_installer });
+            }
+            if (std.mem.indexOf(u8, run, "|| true") != null) try c.problem(a, out, prefix ++ "{s}: {s} step {d}: `|| true` would hide a scan that could not run", .{ f, jn, i });
+            if (std.mem.indexOf(u8, run, "\"$OSV_SCANNER\"") != null) {
+                scans = true;
+                if (std.mem.indexOf(u8, run, advisories_scan_guard) == null) {
+                    try c.problem(a, out, prefix ++ "{s}: {s} step {d}: the scan step must fail only on `{s}` (exit 1 is findings: reported, never a failure)", .{ f, jn, i, advisories_scan_guard });
+                }
+            } else if (c.hasAnyWord(run, &.{"exit"})) {
+                try c.problem(a, out, prefix ++ "{s}: {s} step {d}: only the scan step may exit nonzero (the report never fails the job)", .{ f, jn, i });
+            }
+            if (std.mem.indexOf(u8, run, "GITHUB_STEP_SUMMARY") != null) summary = true;
+            if (std.mem.indexOf(u8, run, "gh issue create --title Advisories") != null) opens = true;
+            if (std.mem.indexOf(u8, run, "gh issue close") != null) closes = true;
+        }
+    }
+    if (!installs_zig) try c.problem(a, out, prefix ++ "{s}: no step runs tools/install_zig.sh (the installer is a Zig program)", .{f});
+    if (!installs_scanner) try c.problem(a, out, prefix ++ "{s}: no step runs `zig run {s}` (the pinned, sha256-verified OSV-Scanner)", .{ f, advisories_installer });
+    if (!scans) try c.problem(a, out, prefix ++ "{s}: no step runs \"$OSV_SCANNER\"", .{f});
+    if (!summary) try c.problem(a, out, prefix ++ "{s}: findings must go to the job summary ($GITHUB_STEP_SUMMARY)", .{f});
+    if (!opens) try c.problem(a, out, prefix ++ "{s}: findings must go to one issue titled Advisories (`gh issue create --title Advisories`)", .{f});
+    if (!closes) try c.problem(a, out, prefix ++ "{s}: the Advisories issue must be closed when there are no findings (`gh issue close`)", .{f});
+}
+
 // ---- whole-repository rules ---------------------------------------------------------
 
 const Step = struct { job: []const u8, needs: ?[]const u8, uses: []const u8, stage: []const u8 };
@@ -429,6 +546,9 @@ fn sortedKeys(a: Allocator, v: ?Value) ![]const []const u8 {
 /// The checks that run only without path arguments. The workflows
 /// are read by name through `read` (the repository's .github/workflows).
 pub fn repoProblems(a: Allocator, ctx: anytype, out: *Out) !void {
+    // advisories.yml: the daily scan, report only.
+    try advisoriesProblems(a, "advisories.yml", try ctx.read(a, "advisories.yml"), out);
+
     // release.yml: who may write, what each stage needs, the triggers and the path filter.
     try rl.problems(a, try ctx.read(a, "release.yml"), out);
     try rl.userBetaProblems(a, try ctx.read(a, "release-beta-user.yml"), out);

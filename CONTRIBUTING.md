@@ -124,6 +124,13 @@ it has one). kpin's fetcher speaks TLS 1.3 only (komira's `tools/build/kpin/READ
 answers TLS 1.2 only, so `update` cannot fetch a new npm tarball from a runner or from here today, and the job
 fails on a lock that lacks one.
 
+`.github/workflows/advisories.yml` scans every tracked `package-lock.json` and `Cargo.lock` for known
+vulnerabilities once a day (and on demand), with a pinned, sha256-verified OSV-Scanner
+(`tools/install_osv_scanner.zig`). It only reports: findings go to the job summary and to one issue titled
+`Advisories` (opened or updated while there are findings, closed when there are none), and it never runs on a pull
+request or a push, so an advisory cannot block a pull request or turn `main` or a release red. The job fails only
+when the scan cannot run (the download does not match its sha256, or the scanner exits above 1), on the scheduled run.
+
 A source file you add under `src/core`, `src/cli` or `registry/fake` is picked
 up by both (Buck2 takes each directory by glob; it skips dotfiles, so a new
 dotfile under `tests/` is named in `BUCK`). A new root source file, executable,

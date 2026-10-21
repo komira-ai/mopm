@@ -597,3 +597,100 @@ test "kpin-update.yml: job-level contents and pull-requests write, schedule and 
     const top = try std.mem.replaceOwned(u8, a, ok, "permissions:\n  contents: read\n", "permissions:\n  contents: write\n");
     try c.expectLines("top", try lint(a, "kpin-update.yml", top), &.{ "top-level permissions must be read-only", "permissions.contents: write is not allowed" });
 }
+
+// ---- advisories.yml: the daily scan reports and never gates --------------------------------
+
+const advisories_path = ".github/workflows/advisories.yml";
+const installer_path = "tools/install_osv_scanner.zig";
+
+/// advisories.yml as the repository has it, with `from` replaced by `to` (it must apply), through both the per-file rules and its own.
+fn expectAdvisories(from: []const u8, to: []const u8, want: []const []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const tree = try c.loadTree(a);
+    const text = try tree.read(a, advisories_path);
+    if (std.mem.indexOf(u8, text, from) == null) {
+        std.debug.print("the planted change does not apply to advisories.yml: {s} is not in it\n", .{from});
+        return error.TestUnexpectedResult;
+    }
+    const mutated = try std.mem.replaceOwned(u8, a, text, from, to);
+    var out = c.Out.init(a);
+    try wl.fileProblems(a, "advisories.yml", mutated, &out);
+    try wl.advisoriesProblems(a, "advisories.yml", mutated, &out);
+    try c.expectLines(from, out.items, want);
+}
+
+fn expectInstaller(from: []const u8, to: []const u8, want: []const []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const tree = try c.loadTree(a);
+    const text = try tree.read(a, installer_path);
+    if (std.mem.indexOf(u8, text, from) == null) {
+        std.debug.print("the planted change does not apply to {s}: {s} is not in it\n", .{ installer_path, from });
+        return error.TestUnexpectedResult;
+    }
+    var out = c.Out.init(a);
+    try wl.installerProblems(a, try std.mem.replaceOwned(u8, a, text, from, to), &out);
+    try c.expectLines(from, out.items, want);
+}
+
+test "advisories.yml and its installer, as the repository has them, pass" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const tree = try c.loadTree(a);
+    var out = c.Out.init(a);
+    const text = try tree.read(a, advisories_path);
+    try wl.fileProblems(a, "advisories.yml", text, &out);
+    try wl.advisoriesProblems(a, "advisories.yml", text, &out);
+    try wl.installerProblems(a, try tree.read(a, installer_path), &out);
+    for (out.items) |l| std.debug.print("{s}\n", .{l});
+    try std.testing.expectEqual(@as(usize, 0), out.items.len);
+}
+
+test "advisories.yml: never pull_request, push or workflow_call; schedule and workflow_dispatch only" {
+    const want: []const []const u8 = &.{"triggers must be exactly schedule and workflow_dispatch"};
+    try expectAdvisories("  workflow_dispatch:\n", "  workflow_dispatch:\n  pull_request:\n", want);
+    try expectAdvisories("  workflow_dispatch:\n", "  workflow_dispatch:\n  push:\n    branches: [main]\n", want);
+    try expectAdvisories("  workflow_dispatch:\n", "  workflow_dispatch:\n  workflow_call:\n", want);
+    try expectAdvisories("  schedule:\n    - cron: \"17 4 * * *\"\n", "", want);
+}
+
+test "advisories.yml: contents read and issues write on the job, nothing else" {
+    try expectAdvisories("      issues: write\n", "      issues: write\n      pull-requests: write\n", &.{ "pull-requests: write is not allowed", "may hold only contents and issues permissions" });
+    try expectAdvisories("      issues: write\n", "      issues: write\n      id-token: write\n", &.{ "id-token: write is not allowed", "may hold only contents and issues permissions" });
+    try expectAdvisories("      contents: read\n      issues: write\n", "      contents: write\n      issues: write\n", &.{"contents: write is not allowed"});
+    try expectAdvisories("permissions:\n  contents: read\n\nconcurrency", "permissions:\n  contents: read\n  issues: write\n\nconcurrency", &.{ "top-level permissions must be read-only", "permissions.issues: write is not allowed" });
+}
+
+test "advisories.yml: the scanner is the pinned, verified release, fetched by nothing else" {
+    try expectAdvisories("bin=\"$(zig run tools/install_osv_scanner.zig -- ", "bin=\"$(curl -sL https://example.invalid/osv-scanner -o ", &.{ "fetches a tool with `curl`", "no step runs `zig run tools/install_osv_scanner.zig`" });
+    try expectAdvisories("zig run tools/install_osv_scanner.zig", "zig run tools/install_osv_scanner2.zig", &.{"no step runs `zig run tools/install_osv_scanner.zig`"});
+    try expectAdvisories("run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"", "run: echo nothing", &.{"no step runs tools/install_zig.sh"});
+    try expectAdvisories("          set --\n", "          npm audit --package-lock-only\n          set --\n", &.{"fetches a tool with `npm`"});
+}
+
+test "tools/install_osv_scanner.zig: an exact version, a sha256 constant, compared before anything is written" {
+    try expectInstaller("const version = \"2.7.0\";", "const version = \"latest\";", &.{"`const version` must be an exact release"});
+    try expectInstaller("const sha256_hex = \"160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b\";", "const sha256_hex = \"160c\";", &.{"`const sha256_hex` must be 64 lowercase hex digits"});
+    try expectInstaller("/releases/download/v\" ++ version", "/releases/latest/download/v\" ++ version", &.{"the url must be a release download of the pinned version"});
+    try expectInstaller("if (!std.mem.eql(u8, &hex, sha256_hex)) die(", "if (std.mem.eql(u8, &hex, \"\")) die(", &.{"the digest of the download is not compared"});
+    try expectInstaller("    var digest: [32]u8 = undefined;\n", "    _ = try std.fs.cwd().createFile(\"early\", .{});\n    var digest: [32]u8 = undefined;\n", &.{"written only after the sha256 comparison"});
+}
+
+test "advisories.yml: report only, a finding is never a failure" {
+    try expectAdvisories("[ \"$rc\" -gt 1 ]", "[ \"$rc\" -gt 0 ]", &.{"the scan step must fail only on"});
+    try expectAdvisories("|| echo \"::warning::could not create the Advisories issue\"", "|| true", &.{"`|| true` would hide a scan that could not run"});
+    try expectAdvisories("echo \"::warning::could not list issues, so the Advisories issue was not updated\"", "exit 1", &.{"only the scan step may exit nonzero"});
+    try expectAdvisories("    timeout-minutes: 15\n", "    timeout-minutes: 15\n    continue-on-error: true\n", &.{"job scan: continue-on-error is not allowed"});
+    try expectAdvisories("      - name: Install Zig 0.12.0 (sha256-pinned)\n", "      - name: Install Zig 0.12.0 (sha256-pinned)\n        continue-on-error: true\n", &.{"continue-on-error is not allowed"});
+    try expectAdvisories("cat \"$body\" >> \"$GITHUB_STEP_SUMMARY\"", "cat \"$body\"", &.{"findings must go to the job summary"});
+    try expectAdvisories("gh issue create --title Advisories", "gh issue create --title Other", &.{"findings must go to one issue titled Advisories"});
+    try expectAdvisories("gh issue close \"$number\"", "gh issue view \"$number\"", &.{"closed when there are no findings"});
+}
+
+test "no other workflow may call advisories.yml" {
+    try expectLint("ci.yml", head ++ "jobs:\n  j:\n    uses: ./.github/workflows/advisories.yml\n", &.{"calls ./.github/workflows/advisories.yml: the advisory scan must never run as part of another workflow"});
+}
