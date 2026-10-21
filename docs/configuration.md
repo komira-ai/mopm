@@ -121,6 +121,10 @@ A native library that the package builds and ships. The id is a lowercase identi
 | `mode` | string | `"link"` | `"link"` or `"load"` | `mode = "link"` |
 | `build` | string | none | any string; mopm does not run it | `build = "cmake -S native -B out"` |
 | `outputs` | array of strings | empty | any strings | `outputs = ["out/libcurl_shim.so.1"]` |
+| `needs` | array of strings | empty | sonames (`lib<name>.<suffix>`) of native libraries of other packages that this one needs; for a static archive they fix its place on the link line (an archive comes before the archives it needs) | `needs = ["libcrypto_sys.a"]` |
+| `exclusive` | string | none | a group name, not empty; recorded in the lock and the unit graph for the check that a closure holds one library of a group (that check is not made yet) | `exclusive = "libcrypto"` |
+
+`mopm pack` and `mopm publish` pack a library with `kind = "static"` and `mode = "link"`: the archive is not built by mopm (`build` and `outputs` are descriptive), it is the file named for each subdir with `--native <id>=<subdir>:<file>`, and its file name, `lib<name>.a`, is the library's soname. A package that declares a native library has no `noarch` file, and every subdir it packs needs an archive for every library it declares. The `.mopm.json` that `pack` writes is the same bytes in every subdir's file; what differs between platforms (the archive's sha256 and size) is in `info/about.json` of each file, under `mopm_native`, which nothing reads back.
 
 ### `[targets]`
 
@@ -151,13 +155,13 @@ Accepted does not mean used. This table says, for every table and key, which com
 | `dependencies` | `lock`, `update`, `tree`, `sync`, `plan`; `pack` writes them as the package's conda dependencies |
 | `dev-dependencies` | `lock`, `tree`, `plan`; not packed |
 | `native-dependencies` | metadata only; `pack` refuses a package that has any ("native dependencies are not packed yet") |
-| `native` | metadata only; `pack` refuses a package that has any ("native libraries are not packed yet") |
+| `native` | `pack` and `publish` pack a library with `kind = "static"` and `mode = "link"` (`needs` and `exclusive` go into the package's metadata) and refuse any other kind or mode; `metadata` shows it |
 | `targets.lib`, `targets.bins` | `plan`, which makes a unit of each |
 | `targets.tests` | metadata only: `mopm test` and `mopm plan` find the tests by their path |
 
 ### What pack and publish refuse
 
-`mopm pack` and `mopm publish` read the manifest first and refuse, before any request: a version that is not exactly `MAJOR.MINOR.PATCH` ("digits, no leading zeros, no pre-release or build part"), a path dependency with no version or one whose package is outside its version, a requirement with a pre-release, any `[native-dependencies]` or `[native.<id>]`, a compiler that is not digits and dots, and an empty `.mojoc` file. `mopm publish` also refuses a readme over 64 KiB or not UTF-8, a package file over 100 MB, and more than 20 files for one version. The registry has its own limits, which [getting started](getting-started.md) lists.
+`mopm pack` and `mopm publish` read the manifest first and refuse, before any request: a version that is not exactly `MAJOR.MINOR.PATCH` ("digits, no leading zeros, no pre-release or build part"), a path dependency with no version or one whose package is outside its version, a requirement with a pre-release, any `[native-dependencies]`, a `[native.<id>]` that is not a static archive in link mode, a native library without an archive for a subdir it packs (or any native library in a `noarch` file), an archive that does not begin with `!<arch>` or is not named `lib<name>.a`, a compiler that is not digits and dots, and an empty `.mojoc` file. `mopm publish` also refuses a readme over 64 KiB or not UTF-8, a package file over 100 MB, and more than 20 files for one version. The registry has its own limits, which [getting started](getting-started.md) lists.
 
 ## mopm.lock
 
@@ -192,7 +196,7 @@ A registry entry has no `source` key. In version 1 it carries its one file; in v
 | `mojo` | string | none, required in version 1 | the Mojo version the file was built with; it equals `toolchain.mojo` | `"mojo": "1.0.0"` |
 | `artifacts` | object | none, required in version 2 | from each Mojo version to the object below; the versions are in the lock's `mojo` | `"artifacts": {"1.0.0": {}}` |
 | `deps` | array of strings | empty | names of direct dependencies, each present in `packages` | `"deps": ["http_core"]` |
-| `native` | array of objects | empty | the native libraries the package ships, below | `"native": [{"id": "z", "soname": "libz.so.1"}]` |
+| `native` | array of objects | empty | the native libraries the package ships, below | `"native": [{"id": "z", "soname": "libz.so.1", "sha256": "<sha256>"}]` |
 
 Each entry of `artifacts` has these keys, which are the file keys of version 1:
 
@@ -203,13 +207,16 @@ Each entry of `artifacts` has these keys, which are the file keys of version 1:
 | `sha256` | string | none, required | 64 lowercase hex digits | `"sha256": "<sha256>"` |
 | `size` | integer | none, required | at least 1 | `"size": 1100` |
 
-Each entry of `native` describes a library the package ships. No two packages may ship the same soname, and `mopm plan` refuses a library that has no `sha256`.
+Each entry of `native` describes a library the package ships. No two packages may ship the same soname, and `mopm plan` refuses a library that has no `sha256`. `mopm lock` writes the `sha256`: for a version that ships natives it downloads the package file once (checking its size and sha256 against the channel's repodata first), reads `<name>.mopm.json` and the library file out of it, and hashes the library; a version whose file the old lock already pins (same name, version, subdir and file sha256, every native hashed) is not downloaded again, and `mopm sync --locked` downloads nothing for this. The file read is the one the package's metadata names, which must be `lib/<soname>`. The package file is held in memory, so one over 64 MiB cannot be locked.
 
 | key | type | default | allowed | example |
 |---|---|---|---|---|
 | `id` | string | none, required | the library's id in its package's metadata | `"id": "crypto"` |
 | `soname` | string | none, required | the file name of the library | `"soname": "libcrypto_native.so.1"` |
-| `sha256` | string | none, optional in the lock | 64 lowercase hex digits | `"sha256": "<sha256>"` |
+| `sha256` | string | none, written by `mopm lock`; optional when read | 64 lowercase hex digits: the sha256 of the library file (not of the package file) | `"sha256": "<sha256>"` |
+| `kind` | string | `"shared"`; left out when it is | `"shared"`, `"static"` or `"both"`, as the package's metadata says | `"kind": "static"` |
+| `needs` | array of strings | empty; left out when empty | the sonames the library needs, as the package's metadata says | `"needs": ["libcrypto_sys.a"]` |
+| `exclusive` | string | none; left out when none | the exclusivity group, as the package's metadata says | `"exclusive": "libcrypto"` |
 
 ## The user's configuration
 

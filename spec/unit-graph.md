@@ -93,7 +93,7 @@ lock whose recorded hash is not the one this mopm computes.
 | `root` | `lib`: the package directory, relative to the workspace |
 | `srcs` | `path` (relative to the workspace) and `sha256` of each source, sorted by path |
 | `deps` | ids of the units this one imports, in the order `mopm.toml` lists them (order is significant) |
-| `natives` | `id`, `soname`, `sha256`, `package` of every native library in the unit's dependency closure, sorted by soname |
+| `natives` | `id`, `soname`, `sha256`, `package` of every native library in the unit's dependency closure, and `kind`, `needs`, `exclusive` when the lock gives them (left out when `shared`, empty, none), in link order: a library before every library it `needs`, the sonames' order between libraries that do not constrain one another |
 | `artifact` | `prebuilt`: `url`, `sha256`, `size` of the `.conda` for `M` (from the lock) |
 | `mojoc` | `prebuilt`: the `.mojoc` inside that package |
 | `profile` | `opt`, `assert`, `debug`: the compiler profile of a `lib`, `test` or `bin` |
@@ -109,7 +109,11 @@ dependencies at any depth) compile from the tree; each must list `M` in its own
 name are refused: a package is imported by name.
 
 The `natives` of a package are prebuilt libraries and declared inputs. A lock
-entry whose native library has no `sha256` is refused.
+entry whose native library has no `sha256` is refused. A static library
+(`kind` static) whose `needs` names a soname that no package in the unit's
+closure ships is refused, and so are libraries that need each other, because no
+link order puts one before the other; a shared library resolves its needs when
+the loader runs, so a need it names that the closure lacks is not judged here.
 
 ### key
 
@@ -204,8 +208,15 @@ arguments are
 - a `lib`: `<root>` is `<stage>/src/<package>`, the package directory, and the command is `precompile -I<dep dir>... <stage>/src/<package> -o <out>/<package>.mojoc`. The wrapper runs the compiler from the parent of the root and names the package by its basename, so the `.mojoc` records `<package>/<file>.mojo` and no staged path: one package staged at two paths gives the same bytes
 - a `test` or `bin`: `<root>` is `<stage>/src`, and the command is `build -D ASSERT=<assert> --optimization-level <opt> [-g]
   -I<dep dir>... <stage>/src/<file> -o <out>/<name> [-Xlinker <natives>/<soname>]...`,
-  with the native libraries also copied to `<out>/lib/` beside the binary
-  (`--runpath=$ORIGIN/lib`: no absolute path is baked in)
+  with the shared libraries also copied to `<out>/lib/` beside the binary
+  (`--runpath=$ORIGIN/lib`: no absolute path is baked in); a static archive is
+  linked into the binary and is not copied. The `-Xlinker` operands are in the
+  unit's `natives` order
+
+A native library reaches the linker as `-Xlinker <path>`. The wrapper's `cc` must hand that
+operand to the C driver as an input file: zig's own driver refuses a bare operand given to `-Xlinker` ("unsupported
+linker arg"), and buildrules' `cc` shim for `mojo_compile` rewrites it into one. On the pinned compiler and zig (tests/drivers/native_static_test.zig) archives are found whatever their
+order (lld does not care), and the order of `natives` is kept for a linker that does.
 
 The `precompile` arguments are those the Mojo build rules that run this
 compiler use. The `build` arguments (`-D ASSERT`, `--optimization-level`,
@@ -224,7 +235,7 @@ environment: the wrapper makes the compiler's own.)
 When the wrapper exits 0, the output must exist and not be empty, or the unit
 fails. Not done yet: the test supervisor (`mopm test` runs each test file under
 timeouts and a group kill; `unit test` runs the binary directly), coverage, and
-ISA levels in the graph's profile (the level is an option of the command, below), and the native libraries a workspace member builds (`[native.<id>]`): a graph holds only prebuilt natives, each pinned by sha256 before the build, and a member's are products of its own build command, so they need a unit kind of their own that the build system builds; `mopm pack` refuses them too.
+ISA levels in the graph's profile (the level is an option of the command, below), and the native libraries a workspace member builds (`[native.<id>]`): a graph holds only prebuilt natives, each pinned by sha256 before the build, and a member's are products of its own build command, so they need a unit kind of their own that the build system builds.
 
 ## Target CPU
 
