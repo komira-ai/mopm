@@ -38,13 +38,14 @@ and `service-ci.yml` may run on `pull_request`, and every job of `ci.yml` other 
 | `verify` | `plan`, `build`, `attest` | read-only, before any tag exists: exactly the twelve files (the six and the `<file>.sigstore.json` bundle of each: three tarballs, two `.deb`s, `SHA256SUMS`), `SHA256SUMS` matches, each `.deb` rebuilt from its tarball's binary and equal byte for byte, every attestation and every signature accepted and pinned to `release.yml`, the ref, the commit, the trigger (the event of this run: `push` for a release, `workflow_dispatch` for a dry run) and the repository, the tarball layout, the commit on main. Uploads the release notes and the pin (the `linux-x86_64` url, sha256 and size) as the artifact `notes-pin`. A dry run writes no `verified.sha256`, which `publish` requires. |
 | `tag` | `plan`, `build`, `beta-user`, `verify` | creates the annotated tag `v<version>` at the pushed commit, only after the files verified, so a failing attest, signature or verify leaves no orphan tag. The only write before the release. Refuses a superseded commit, and refuses unless the version it would take is the planned one (`--expect-version`), so the tested bytes are the released bytes. The tag ruleset admits only the GitHub App `komira-release-bot` to create `v*` tags, so the job mints that App's token for this repository alone (`repositories: mopm`, `permission-contents: write`, see "The tag token" below) and gives it to the tag step only; the job's own `GITHUB_TOKEN` holds `contents: read`. |
 | `publish` | `tag`, `verify` | creates the GitHub release for `v<version>` from exactly the verified files (artifacts `verified-assets` and `notes-pin`, nothing else). Runs only for a push to `main`, never a manual run. It holds `contents: write` for the release, and `gh release create` is always called with `--verify-tag`, so it can never create a tag (the lint pins that in `tools/cut_release.zig`). |
-| `bump` | `tag`, `publish` | opens the pull request in komira-internal that moves its `mopm` submodule to this release, with auto-merge (below). The last stage, and the only one that writes outside this repository; nothing needs it. |
+| `tap` | `tag`, `publish`, `verify` | renders `Formula/mopm.rb` from the verified `SHA256SUMS` and opens the pull request in komira-ai/homebrew-tap that adds it, with auto-merge when the tap allows it (below). Writes outside this repository; nothing needs it. |
+| `bump` | `tag`, `publish` | opens the pull request in komira-internal that moves its `mopm` submodule to this release, with auto-merge (below). The last stage with `tap`, the two that write outside this repository; nothing needs either. |
 
 A push that changes only documentation or CI (`**.md`, `docs/**`, `.github/**`) does not release.
 Everything else does, including a change to `VERSION`.
 
-Only `publish` holds `contents: write` through the job token here; `tag`, `bump` and `publish` run only under `if: github.event_name == 'push' && github.ref == 'refs/heads/main'`
-(`tag` and `bump` hold `contents: read` and write through App tokens);
+only `publish` holds `contents: write` through the job token here; `tag`, `tap`, `bump` and `publish` run only under `if: github.event_name == 'push' && github.ref == 'refs/heads/main'`
+(`tag`, `tap` and `bump` hold `contents: read` and write through App tokens);
 only `attest` holds `id-token` and `attestations` write. `tests/drivers/release_lint.zig` holds the workflow to
 that, to the order of the stages, to the data flow between them (the built and tested version is the planned
 version, the tagged version and the released version; `publish` releases the verified files) and to the path filter;
@@ -66,16 +67,16 @@ the variable and the secret must exist in this repository.
 
 The secret is not a repository secret. `RELEASE_BOT_PRIVATE_KEY` lives in the environment `release` of this repository, which is
 restricted to the `main` branch (deployment branches: `main` only), so a workflow run from any other branch cannot read it; the repository-level
-copy is removed. `tag` and `bump`, the only two jobs that read `RELEASE_BOT_*`, declare `environment: release`, and no other job declares an
+copy is removed. `tag`, `tap` and `bump`, the only three jobs that read `RELEASE_BOT_*`, declare `environment: release`, and no other job declares an
 environment. The release lint and hygiene hold both: exactly the jobs that read `RELEASE_BOT_*` declare `environment: release`, any other job
 with an environment is a finding, and a job reading `RELEASE_BOT_*` without it is a finding. (The CEO's held script creates the environment, moves the
 secret into it and deletes the repository-level copy; until it has run, a job declaring `environment: release` still reads the repository-level
 secret, because GitHub creates an empty environment on first use, so releases keep working.)
 
 A release run without them fails safely at `tag`: the token step errors, no tag is created, `publish` (which needs `tag`) and `bump` never
-run, and nothing is released. Re-run the failed jobs once they exist. The release lint holds that the release workflow has exactly two token
-steps (this one and `bump`'s), that the tag token is for `mopm` with contents write only and the bump token for komira-internal alone, that each is
-used only in its own job's last step, and (hygiene) that `RELEASE_BOT_PRIVATE_KEY` is referenced exactly twice, once in `tag` and once in `bump`.
+run, and nothing is released. Re-run the failed jobs once they exist. The release lint holds that the release workflow has exactly three token
+steps (this one, `tap`'s and `bump`'s), that the tag token is for `mopm` with contents write only, the tap token for `homebrew-tap` alone and the bump token for komira-internal alone, that each is
+used only in its own job's last step, and (hygiene and the release lint) that `RELEASE_BOT_PRIVATE_KEY` is referenced exactly three times, once in each of `tag`, `tap` and `bump`.
 
 ## The komira-internal bump (the last stage)
 
@@ -105,6 +106,41 @@ when its `check` and `bump-guard` pass; nobody clicks.
   `bump` changes nothing else, it only shows the run as failed. To retry, re-run the `bump` job of that run (Actions, the
   run, "Re-run failed jobs" or the job's own re-run): it is safe to run again, it finds what exists and finishes the rest.
   If a newer release has already bumped, the re-run does nothing.
+
+## The Homebrew tap (the `tap` stage)
+
+After `publish`, the `tap` job (push to main only, `permissions: contents: read`) renders `Formula/mopm.rb` and opens a pull request
+with it in komira-ai/homebrew-tap, the repository `brew tap komira-ai/tap` reads. `cut_release tap` (`tools/tap.zig`; `gh` and
+`git`, no shell; it shares its plumbing with `bump` in `tools/ghtool.zig`).
+
+- **Where the checksums come from.** The job downloads the artifact `verified-assets` (the files `verify` checked and `publish`
+  released) and runs `tools/channels formula` on its `SHA256SUMS`. Nothing is downloaded or hashed anew: the formula can only say what
+  the verified `SHA256SUMS` says. The command is fixed by the release lint (`render_run` in `tests/drivers/release_lint.zig`):
+  explicit `version`, the urls of this repository's release, and the three targets `macos-arm64`, `linux-aarch64`, `linux-x86_64`.
+- **Why those flags.** The tap admits a pull request only through its path guard (`.github/guard/guard.js` there), which accepts
+  the bot's pull request when: the branch is `bump/mopm-v<version>`; exactly one file changed, `Formula/mopm.rb`; the file is the
+  renderer's output line for line (an exact allow-list, not deny rules); the version is above the formula on `main`; the tag
+  `v<version>` exists. `tests/drivers/channels_cli_test.zig` reads the render command out of `release.yml`, runs it, and requires the
+  tap's own fixture (`tests/channels/tap_guard/mopm.rb`, a copy that names the tap commit it came from) byte for byte. When the guard's
+  template changes, that fixture, `tools/channels/formula.zig` and the render command change together.
+- **The token.** Same shape as `bump`: after both tools are built, `actions/create-github-app-token` (pinned by commit; owner
+  `komira-ai`, `repositories: homebrew-tap`, `permission-contents: write`, `permission-pull-requests: write`, environment `release`) gives
+  the installation token of `komira-release-bot` to the one step that runs the tool, as `GH_TOKEN`; it is never an argument. The job
+  holds only that token, as its last step.
+- **What the tool does.** It checks that the file is the formula of this version and that the tag exists; reads `Formula/mopm.rb` on the
+  tap's `main` and **refuses (red) when its version is above this release's** (a tap never moves down; the same version means it is
+  already there: nothing to open); reads the tap's pull requests; clones shallowly, writes only `Formula/mopm.rb`, checks that the
+  staged change is that one path, commits `mopm <version>` as the bot, pushes `bump/mopm-v<version>` (never forced), opens the pull
+  request, and asks for `gh pr merge --auto --squash`.
+- **Idempotent.** An open or merged pull request for this or a newer version means there is nothing to open (an open one for this
+  version that lacks auto-merge gets it asked for). A branch an earlier run pushed before it stopped is reused when it holds these
+  bytes. An older open `bump/mopm-v*` pull request is closed in favour of the new one (with its branch); nothing is ever force-pushed.
+- **When the tap has no required checks.** GitHub can refuse to enable auto-merge on a pull request that has no required checks to wait for (the error
+  reads "Pull request is in clean status"), which is the case for every pull request of a tap whose ruleset is not active. That is not a failure: the job stays
+  green, prints a notice (`The tap pull request is open without auto-merge`), and leaves the pull request open for the tap's owner to
+  squash-merge. Once the tap's ruleset requires `guard` and `check`, the next release's run (or a re-run of the job) asks again and the
+  pull request merges itself.
+- **A failed tap un-releases nothing.** No job needs `tap`; re-run the `tap` job of that run, it finds what exists and finishes the rest.
 
 ## The user-level beta
 
@@ -215,7 +251,7 @@ It prints the pin for the `linux-x86_64` tarball. It changes nothing.
 The bump and tag stages need, once: the GitHub App `komira-release-bot` installed on komira-internal and on mopm; the variable
 `RELEASE_BOT_APP_ID` in this repository and the secret `RELEASE_BOT_PRIVATE_KEY` in the environment `release` (restricted to main, not a repository secret); auto-merge allowed in komira-internal, with
 its ruleset requiring `check` and `bump-guard`; and the `v*` tag ruleset allowing only that App to create, update and delete tags.
-Without the App's variable and secret `tag` fails (no tag, no release); without the bump setup only `bump` fails.
+Without the App's variable and secret `tag` fails (no tag, no release); without the bump setup only `bump` fails. The tap stage needs the App installed on homebrew-tap too (Contents and Pull requests read and write; the App is installed on every repository of the organisation today), the tap's repository variable `TAP_BOT_LOGIN` (`komira-release-bot[bot]`), and auto-merge allowed there; without them only `tap` fails or leaves its pull request for a hand merge.
 
 These are settings only an owner can change; the automation neither makes nor assumes them:
 

@@ -31,6 +31,13 @@
 //!   branch_gitlink the commit `contents/<submodule>?ref=<branch>` reports
 //!   create_fail, merge_fail, close_fail, auto_noop   `pr create` / `pr merge` / `pr close` fail; `pr merge` succeeds
 //!                  but leaves auto-merge off
+//!
+//! For cut_release tap (the pull requests of komira-ai/homebrew-tap; the pr calls above answer for whichever repository -R names):
+//!   tap_main_formula   the text `contents/Formula/mopm.rb?ref=main` answers with (else HTTP 404: the tap has no formula yet)
+//!   tap_branch_formula the text it answers with for any other ref, i.e. a pushed bump branch (else HTTP 404)
+//!   tap_read_error reading the tap's formula fails with HTTP 500 (not a 404)
+//!   merge_clean    `pr merge` fails as GitHub does for a pull request with no required checks (HTTP 200, GraphQL: Pull request is in clean status)
+//!   `pr merge` takes --merge or --squash.
 //! Written by the tool's calls: pending_tag (the tag object a git/tags POST made), release_notes (the
 //! notes file a `release create` was given).
 //! A missing file means: no tag, no release, state "false false", no refusal.
@@ -90,6 +97,7 @@ pub fn main() !void {
     const args = argv[1..];
     const repo = "repos/komira-ai/mopm/";
     const internal = "repos/komira-ai/komira-internal/";
+    const tap = "repos/komira-ai/homebrew-tap/";
     try dir.makePath("assets");
 
     if (std.mem.eql(u8, args[0], "api")) {
@@ -179,6 +187,11 @@ pub fn main() !void {
             }
             if (!found) failWith("Not Found (HTTP 404)");
             try w.writeAll("2222222222222222222222222222222222222222\n");
+        } else if (std.mem.startsWith(u8, path, tap ++ "contents/Formula/")) {
+            if (fileText(a, dir, "tap_read_error") != null) failWith("Server Error (HTTP 500)");
+            const at = std.mem.indexOf(u8, path, "?ref=") orelse @panic("no ref");
+            const file = if (std.mem.eql(u8, path[at + 5 ..], "main")) "tap_main_formula" else "tap_branch_formula";
+            try w.writeAll(fileText(a, dir, file) orelse failWith("Not Found (HTTP 404)"));
         } else if (std.mem.startsWith(u8, path, internal ++ "contents/")) {
             const held = fileText(a, dir, "branch_gitlink") orelse failWith("no branch_gitlink");
             try w.print("{s}\n", .{std.mem.trim(u8, held, " \n")});
@@ -281,7 +294,7 @@ fn hasFlag(args: []const []const u8, flag: []const u8) bool {
 
 /// `gh pr list|create|merge|view|close` over the file `prs` (see the header).
 fn pr(a: std.mem.Allocator, dir: std.fs.Dir, args: []const []const u8, w: anytype) !void {
-    const url_head = "https://github.com/komira-ai/komira-internal/pull/";
+    const url_head = try std.fmt.allocPrint(a, "https://github.com/{s}/pull/", .{flagValue(args, "-R")});
     var lines = std.ArrayList([]const u8).init(a);
     var it = std.mem.splitScalar(u8, fileText(a, dir, "prs") orelse "", '\n');
     while (it.next()) |l| {
@@ -324,7 +337,8 @@ fn pr(a: std.mem.Allocator, dir: std.fs.Dir, args: []const []const u8, w: anytyp
             found = true;
             if (std.mem.eql(u8, verb, "merge")) {
                 if (fileText(a, dir, "merge_fail") != null) failWith("auto-merge cannot be enabled (GraphQL)");
-                if (!hasFlag(args, "--auto") or !hasFlag(args, "--merge")) failWith("this fake wants gh pr merge --auto --merge");
+                if (fileText(a, dir, "merge_clean") != null) failWith("GraphQL: Pull request is in clean status (enablePullRequestAutoMerge)");
+                if (!hasFlag(args, "--auto") or !(hasFlag(args, "--merge") or hasFlag(args, "--squash"))) failWith("this fake wants gh pr merge --auto --merge|--squash");
                 if (fileText(a, dir, "auto_noop") == null) auto = "1";
             } else if (std.mem.eql(u8, verb, "close")) {
                 if (fileText(a, dir, "close_fail") != null) failWith("cannot close");

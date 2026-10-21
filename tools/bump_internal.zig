@@ -32,12 +32,21 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const gt = @import("ghtool.zig");
 
-/// The identity of the commit: the bot's login, and the noreply address GitHub gives a bot user,
-/// `<user id>+<login>@users.noreply.github.com`. The id is the id of the bot USER
-/// (`gh api /users/komira-release-bot%5Bbot%5D --jq .id`), not the id of the App.
-pub const bot_name = "komira-release-bot[bot]";
-pub const bot_email = "345322945+komira-release-bot[bot]@users.noreply.github.com";
+const die = gt.die;
+const out = gt.out;
+const pf = gt.pf;
+const Tool = gt.Tool;
+const Pr = gt.Pr;
+const parseSemver = gt.parseSemver;
+const isHex40 = gt.isHex40;
+const namePart = gt.namePart;
+const ownerName = gt.ownerName;
+const order = gt.order;
+const branchVersion = gt.branchVersion;
+pub const bot_name = gt.bot_name;
+pub const bot_email = gt.bot_email;
 
 pub const Options = struct {
     gh: []const u8 = "gh",
@@ -53,179 +62,6 @@ pub const Options = struct {
     base: []const u8 = "main",
 };
 
-fn die(comptime fmt: []const u8, args: anytype) noreturn {
-    std.debug.print("cut_release bump-internal: " ++ fmt ++ "\n", args);
-    std.process.exit(1);
-}
-
-fn out(comptime fmt: []const u8, args: anytype) void {
-    std.io.getStdOut().writer().print(fmt, args) catch {};
-}
-
-// ---- names ------------------------------------------------------------------------------
-
-fn canonical(s: []const u8) ?u64 {
-    if (s.len == 0 or s.len > 9) return null;
-    for (s) |c| {
-        if (c < '0' or c > '9') return null;
-    }
-    if (s.len > 1 and s[0] == '0') return null;
-    return std.fmt.parseInt(u64, s, 10) catch null;
-}
-
-/// <major>.<minor>.<patch>, plain numbers: the version of a stable release.
-fn parseSemver(s: []const u8) ?[3]u64 {
-    var parts = std.mem.splitScalar(u8, s, '.');
-    var v: [3]u64 = undefined;
-    for (&v) |*slot| slot.* = canonical(parts.next() orelse return null) orelse return null;
-    if (parts.next() != null) return null;
-    return v;
-}
-
-fn order(x: [3]u64, y: [3]u64) std.math.Order {
-    for (x, y) |p, q| {
-        if (p != q) return std.math.order(p, q);
-    }
-    return .eq;
-}
-
-fn isHex40(s: []const u8) bool {
-    if (s.len != 40) return false;
-    for (s) |c| {
-        if (!((c >= '0' and c <= '9') or (c >= 'a' and c <= 'f'))) return false;
-    }
-    return true;
-}
-
-/// A repository or submodule name part: letters, digits, `.`, `_`, `-`; not starting with `.`.
-fn namePart(s: []const u8) bool {
-    if (s.len == 0 or s[0] == '.') return false;
-    for (s) |c| {
-        const ok = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '.' or c == '_' or c == '-';
-        if (!ok) return false;
-    }
-    return true;
-}
-
-fn ownerName(s: []const u8) bool {
-    const slash = std.mem.indexOfScalar(u8, s, '/') orelse return false;
-    return namePart(s[0..slash]) and namePart(s[slash + 1 ..]);
-}
-
-// ---- running gh and git ----------------------------------------------------------------
-
-const Ran = struct { ok: bool, stdout: []u8, stderr: []u8 };
-
-const Tool = struct {
-    a: Allocator,
-    gh: []const u8,
-    git: []const u8,
-    token: []const u8,
-    /// The environment of git: no GH_TOKEN, the token as an HTTP header, the bot as author and committer.
-    git_env: std.process.EnvMap,
-
-    /// Refuses a command whose arguments hold the token: the token is world-readable in argv.
-    fn noToken(t: Tool, exe: []const u8, args: []const []const u8) void {
-        if (std.mem.indexOf(u8, exe, t.token) != null) die("refusing to run a command with the token in its name", .{});
-        for (args) |x| {
-            if (std.mem.indexOf(u8, x, t.token) != null) die("refusing to run {s} with the token in its arguments (the token goes in the environment only)", .{std.fs.path.basename(exe)});
-        }
-    }
-
-    fn exec(t: Tool, exe: []const u8, args: []const []const u8, env: ?*const std.process.EnvMap) Ran {
-        t.noToken(exe, args);
-        var argv = std.ArrayList([]const u8).init(t.a);
-        argv.append(exe) catch @panic("oom");
-        argv.appendSlice(args) catch @panic("oom");
-        const r = std.process.Child.run(.{ .allocator = t.a, .argv = argv.items, .env_map = env, .max_output_bytes = 1 << 22 }) catch |err| {
-            die("could not run {s}: {s}", .{ exe, @errorName(err) });
-        };
-        return .{ .ok = r.term == .Exited and r.term.Exited == 0, .stdout = r.stdout, .stderr = r.stderr };
-    }
-
-    fn gh_(t: Tool, args: []const []const u8) Ran {
-        return t.exec(t.gh, args, null);
-    }
-
-    fn git_(t: Tool, args: []const []const u8) Ran {
-        return t.exec(t.git, args, &t.git_env);
-    }
-
-    /// Standard output of a gh call that must succeed, trimmed.
-    fn ghMust(t: Tool, args: []const []const u8) []const u8 {
-        const r = t.gh_(args);
-        if (!r.ok) die("gh {s} failed: {s}", .{ args[0], std.mem.trim(u8, r.stderr, " \r\n") });
-        return std.mem.trim(u8, r.stdout, " \r\n");
-    }
-
-    fn gitMust(t: Tool, args: []const []const u8) []const u8 {
-        const r = t.git_(args);
-        if (!r.ok) die("git {s} failed: {s}", .{ firstNonFlag(args), std.mem.trim(u8, r.stderr, " \r\n") });
-        return r.stdout;
-    }
-};
-
-fn firstNonFlag(args: []const []const u8) []const u8 {
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "-C") or std.mem.eql(u8, args[i], "-c")) {
-            i += 1;
-            continue;
-        }
-        return args[i];
-    }
-    return "?";
-}
-
-fn pf(a: Allocator, comptime f: []const u8, args: anytype) []const u8 {
-    return std.fmt.allocPrint(a, f, args) catch @panic("oom");
-}
-
-fn buildGitEnv(a: Allocator, token: []const u8) std.process.EnvMap {
-    var env = std.process.getEnvMap(a) catch @panic("oom");
-    env.remove("GH_TOKEN");
-    env.remove("GITHUB_TOKEN");
-    const cred = pf(a, "x-access-token:{s}", .{token});
-    const enc = std.base64.standard.Encoder;
-    const buf = a.alloc(u8, enc.calcSize(cred.len)) catch @panic("oom");
-    const b64 = enc.encode(buf, cred);
-    env.put("GIT_CONFIG_COUNT", "1") catch @panic("oom");
-    env.put("GIT_CONFIG_KEY_0", "http.https://github.com/.extraheader") catch @panic("oom");
-    env.put("GIT_CONFIG_VALUE_0", pf(a, "AUTHORIZATION: basic {s}", .{b64})) catch @panic("oom");
-    env.put("GIT_TERMINAL_PROMPT", "0") catch @panic("oom");
-    env.put("GIT_ALLOW_PROTOCOL", "https") catch @panic("oom");
-    env.put("GIT_AUTHOR_NAME", bot_name) catch @panic("oom");
-    env.put("GIT_AUTHOR_EMAIL", bot_email) catch @panic("oom");
-    env.put("GIT_COMMITTER_NAME", bot_name) catch @panic("oom");
-    env.put("GIT_COMMITTER_EMAIL", bot_email) catch @panic("oom");
-    return env;
-}
-
-// ---- the pull requests of the internal repository ---------------------------------------
-
-const Pr = struct {
-    number: u64 = 0,
-    state: []const u8 = "",
-    headRefName: []const u8 = "",
-    url: []const u8 = "",
-    autoMergeRequest: ?std.json.Value = null,
-};
-
-fn listPrs(t: Tool, o: Options) []const Pr {
-    const json = t.ghMust(&.{ "pr", "list", "-R", o.internal_repo, "--state", "all", "--limit", "500", "--json", "number,state,headRefName,url,autoMergeRequest" });
-    const parsed = std.json.parseFromSlice([]const Pr, t.a, json, .{ .ignore_unknown_fields = true }) catch |err| {
-        die("cannot read the pull request list: {s}", .{@errorName(err)});
-    };
-    return parsed.value;
-}
-
-/// The version a bump branch `bump/<submodule>-v<semver>` names, or null for any other branch.
-fn branchVersion(a: Allocator, submodule: []const u8, head: []const u8) ?[3]u64 {
-    const want = pf(a, "bump/{s}-v", .{submodule});
-    if (!std.mem.startsWith(u8, head, want)) return null;
-    return parseSemver(head[want.len..]);
-}
-
 fn enableAutoMerge(t: Tool, o: Options, pr: []const u8) void {
     _ = t.ghMust(&.{ "pr", "merge", pr, "-R", o.internal_repo, "--auto", "--merge" });
     const on = t.ghMust(&.{ "pr", "view", pr, "-R", o.internal_repo, "--json", "autoMergeRequest", "--jq", ".autoMergeRequest != null" });
@@ -235,15 +71,13 @@ fn enableAutoMerge(t: Tool, o: Options, pr: []const u8) void {
 // ---- the bump ---------------------------------------------------------------------------
 
 pub fn run(a: Allocator, o: Options) void {
+    gt.prefix = "cut_release bump-internal";
     const mine = parseSemver(o.version) orelse die("--version '{s}' is not <major>.<minor>.<patch> (plain numbers, no leading v)", .{o.version});
     if (!isHex40(o.sha)) die("--sha '{s}' is not a 40-character lowercase commit sha", .{o.sha});
     if (!ownerName(o.repo)) die("--repo '{s}' is not owner/name", .{o.repo});
     if (!ownerName(o.internal_repo)) die("--internal-repo '{s}' is not owner/name", .{o.internal_repo});
     if (!namePart(o.submodule)) die("--submodule '{s}' is not a submodule name", .{o.submodule});
-    const token = std.process.getEnvVarOwned(a, "GH_TOKEN") catch die("GH_TOKEN is not set (the App installation token of the release bot)", .{});
-    if (token.len == 0) die("GH_TOKEN is empty", .{});
-
-    const t = Tool{ .a = a, .gh = o.gh, .git = o.git, .token = token, .git_env = buildGitEnv(a, token) };
+    const t = Tool.init(a, o.gh, o.git);
     const tag = pf(a, "v{s}", .{o.version});
     const branch = pf(a, "bump/{s}-v{s}", .{ o.submodule, o.version });
     const title = pf(a, "chore({s}): bump to v{s}", .{ o.submodule, o.version });
@@ -253,21 +87,8 @@ pub fn run(a: Allocator, o: Options) void {
     if (!std.mem.eql(u8, tagged, o.sha)) die("the tag {s} of {s} names {s}, not {s}: the guard would refuse this bump", .{ tag, o.repo, tagged, o.sha });
 
     // 2. Is there a bump for this or a newer version already?
-    const prs = listPrs(t, o);
-    var covered: ?Pr = null;
-    var older = std.ArrayList(Pr).init(a);
-    for (prs) |p| {
-        const v = branchVersion(a, o.submodule, p.headRefName) orelse continue;
-        const open = std.mem.eql(u8, p.state, "OPEN");
-        const merged = std.mem.eql(u8, p.state, "MERGED");
-        if (!open and !merged) continue;
-        switch (order(v, mine)) {
-            .lt => if (open) older.append(p) catch @panic("oom"),
-            else => {
-                if (covered == null or (open and std.mem.eql(u8, covered.?.state, "MERGED"))) covered = p;
-            },
-        }
-    }
+    const found = gt.classify(a, gt.listPrs(t, o.internal_repo), o.submodule, mine);
+    const covered = found.covered;
 
     var opened: []const u8 = "";
     if (covered) |p| {
@@ -291,11 +112,7 @@ pub fn run(a: Allocator, o: Options) void {
     }
 
     // 5. Older open bumps are superseded.
-    for (older.items) |p| {
-        const note = if (opened.len != 0) pf(a, "Superseded by {s}.", .{opened}) else pf(a, "Superseded by the bump to v{s}.", .{o.version});
-        _ = t.ghMust(&.{ "pr", "close", pf(a, "{d}", .{p.number}), "-R", o.internal_repo, "--comment", note, "--delete-branch" });
-        out("closed {s} (older than v{s}).\n", .{ p.url, o.version });
-    }
+    gt.closeOlder(t, o.internal_repo, found.older, opened, o.version);
 }
 
 /// The commit of the submodule's gitlink on `branch` of the internal repository, or null when the branch
@@ -314,13 +131,7 @@ fn branchGitlink(t: Tool, o: Options, branch: []const u8) ?[]const u8 {
 fn pushBump(t: Tool, o: Options, branch: []const u8, title: []const u8, tag: []const u8) bool {
     const a = t.a;
     // The clone goes into a directory this run made.
-    std.fs.cwd().makePath(o.workdir) catch |err| die("cannot make {s}: {s}", .{ o.workdir, @errorName(err) });
-    {
-        var d = std.fs.cwd().openDir(o.workdir, .{ .iterate = true }) catch |err| die("cannot open {s}: {s}", .{ o.workdir, @errorName(err) });
-        defer d.close();
-        var it = d.iterate();
-        if (it.next() catch null) |_| die("{s} is not empty; give an empty directory", .{o.workdir});
-    }
+    gt.requireEmptyDir(o.workdir);
     const url = pf(a, "https://github.com/{s}.git", .{o.internal_repo});
     // No submodule is initialised: `clone` without --recurse-submodules leaves the gitlink as it is.
     _ = t.gitMust(&.{ "clone", "--quiet", "--depth", "1", "--no-tags", "--single-branch", "--branch", o.base, url, o.workdir });
@@ -385,10 +196,7 @@ fn openPr(t: Tool, o: Options, branch: []const u8, title: []const u8, tag: []con
     const a = t.a;
     const body = pf(a, "Moves the `{s}` submodule to release v{s}.\n\nRelease: https://github.com/{s}/releases/tag/{s}\n\nOpened by the release pipeline of {s}. Auto-merge fires when the required checks pass, among them the bump guard.", .{ o.submodule, o.version, o.repo, tag, o.repo });
     const made = t.ghMust(&.{ "pr", "create", "-R", o.internal_repo, "--base", o.base, "--head", branch, "--title", title, "--body", body });
-    // The url is the last line of what `gh pr create` prints.
-    const nl = std.mem.lastIndexOfScalar(u8, made, '\n');
-    const url = if (nl) |i| made[i + 1 ..] else made;
-    if (!std.mem.startsWith(u8, url, "https://")) die("gh pr create printed '{s}', not a pull request url", .{made});
+    const url = gt.createdUrl(made);
     enableAutoMerge(t, o, url);
     out("opened {s} with auto-merge: {s} to v{s}.\n", .{ url, o.submodule, o.version });
     return url;

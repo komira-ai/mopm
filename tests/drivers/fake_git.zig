@@ -1,4 +1,4 @@
-//! A `git` for bump_internal_test.zig. Its state is the directory $FAKE_GIT_DIR: the files below say what
+//! A `git` for bump_internal_test.zig and tap_test.zig. Its state is the directory $FAKE_GIT_DIR: the files below say what
 //! git would answer, `git_log` gets one line per call (the arguments, space-joined), `git_env` one line per
 //! call with the parts of the environment that matter (the token header, the identity), and the calls that
 //! change something (update-index, commit, push) write files a test reads. It knows only the calls
@@ -9,8 +9,12 @@
 //!                  the last update-index; empty before any)
 //!   clone_fail, commit_fail, push_fail   that call fails
 //!   commit_wrong   the commit holds another gitlink than the one staged
+//!   add_noop       `git add` stages nothing (the file is the one the clone already has)
+//!   add_extra      `git add` stages one more path than it was given (README.md)
 //! Written by the tool's calls: index_entry (the --cacheinfo value), committed (what ls-tree prints after the
 //! commit), commit (the two -m messages, `---` between), pushed (the refspec).
+//! For cut_release tap: add (the paths staged, in `added`), and the default `diff --cached --raw -z` then prints one added
+//! regular file per staged path; `git_diff` overrides it. A commit with a staged path needs no gitlink (`committed` is not written).
 
 const std = @import("std");
 
@@ -66,9 +70,17 @@ pub fn main() !void {
         try w.writeAll(text);
     } else if (std.mem.eql(u8, verb, "update-index")) {
         try dir.writeFile("index_entry", args[1]);
+    } else if (std.mem.eql(u8, verb, "add")) {
+        if (fileText(a, dir, "add_noop") == null) try appendFile(dir, "added", args[args.len - 1]);
+        if (fileText(a, dir, "add_extra") != null) try appendFile(dir, "added", "README.md");
     } else if (std.mem.eql(u8, verb, "diff")) {
         if (fileText(a, dir, "git_diff")) |d| {
             try w.writeAll(d);
+        } else if (fileText(a, dir, "added")) |paths| {
+            var it = std.mem.splitScalar(u8, paths, '\n');
+            while (it.next()) |p| {
+                if (p.len != 0) try w.print(":000000 100644 {s} {s} A\x00{s}\x00", .{ "0" ** 40, "1" ** 40, p });
+            }
         } else if (fileText(a, dir, "index_entry")) |e| {
             const path = e[std.mem.lastIndexOfScalar(u8, e, ',').? + 1 ..];
             const zeros = "0" ** 40;
@@ -84,6 +96,7 @@ pub fn main() !void {
             }
         }
         try dir.writeFile("commit", msgs.items);
+        if (fileText(a, dir, "added") != null) return;
         const e = fileText(a, dir, "index_entry") orelse failWith("nothing staged");
         var f = std.mem.splitScalar(u8, e, ',');
         _ = f.next();

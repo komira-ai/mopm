@@ -25,6 +25,11 @@
 //!   `bump`'s for komira-internal with contents and pull-requests write; each token is minted after the tool is
 //!   built and goes only to the last step of its job, as GH_TOKEN, never an argument; and no job needs `bump`, so a
 //!   failed bump goes red and un-releases nothing.
+//! - **The tap.** `tap` (after `publish`, needs `tag`, `publish`, `verify`, under the same `if:`) renders Formula/mopm.rb from the
+//!   `verified-assets` SHA256SUMS with `channels formula` and exactly the flags of `render_run` (the ones the Homebrew tap's guard
+//!   expects; channels_cli_test.zig renders with that line and compares with the guard's fixture), then opens the tap's pull request
+//!   (`cut_release tap`, `tap_run`) with the third App token: `repositories: homebrew-tap`, contents and pull-requests write,
+//!   `environment: release`, `RELEASE_BOT_PRIVATE_KEY` named exactly three times in the workflow (tag, tap, bump), nothing needs `tap`.
 //! - **The order.** `plan` needs `beta` and `lint`, `build` needs `plan`, `beta-user` needs `build`, `attest`
 //!   needs `beta-user` (so a red platform leg stops the release before anything is signed), `verify` needs
 //!   `build` and `attest`, `tag` needs `beta-user` and `verify` (no tag without verified files), `publish`
@@ -53,7 +58,7 @@ const Out = c.Out;
 pub const prefix = "release-lint: ";
 
 /// The jobs, in the order they run.
-pub const jobs = [_][]const u8{ "beta", "lint", "plan", "build", "beta-user", "attest", "verify", "tag", "publish", "bump" };
+pub const jobs = [_][]const u8{ "beta", "lint", "plan", "build", "beta-user", "attest", "verify", "tag", "publish", "tap", "bump" };
 
 /// The `concurrency` group: every push shares one, a manual dry run has a group of its own (its run id),
 /// so a dry run cannot displace the one pending push release.
@@ -93,6 +98,7 @@ const needs = [_]struct { job: []const u8, needs: []const []const u8 }{
     .{ .job = "verify", .needs = &.{ "plan", "build", "attest" } },
     .{ .job = "tag", .needs = &.{ "plan", "build", "beta-user", "verify" } },
     .{ .job = "publish", .needs = &.{ "tag", "verify" } },
+    .{ .job = "tap", .needs = &.{ "tag", "publish", "verify" } },
     .{ .job = "bump", .needs = &.{ "tag", "publish" } },
 };
 
@@ -242,7 +248,7 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
                 while (it.next()) |e| {
                     if (!c.isStr(e.value_ptr.*, "write")) continue;
                     if (!isWriter(name, e.key_ptr.*)) {
-                        try c.problem(a, out, prefix ++ "release.yml: {s}: {s}: write is not allowed here (only publish holds contents: write; only attest holds id-token and attestations; tag and bump hold contents: read: their writes go through the App tokens)", .{ name, e.key_ptr.* });
+                        try c.problem(a, out, prefix ++ "release.yml: {s}: {s}: write is not allowed here (only publish holds contents: write; only attest holds id-token and attestations; tag, tap and bump hold contents: read: their writes go through the App tokens)", .{ name, e.key_ptr.* });
                     }
                 }
             }
@@ -253,7 +259,7 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
         }
 
         // The `if:` of each job.
-        if (std.mem.eql(u8, name, "tag") or std.mem.eql(u8, name, "publish") or std.mem.eql(u8, name, "bump")) {
+        if (std.mem.eql(u8, name, "tag") or std.mem.eql(u8, name, "publish") or std.mem.eql(u8, name, "tap") or std.mem.eql(u8, name, "bump")) {
             if (!try ifIs(a, job, push_to_main)) {
                 try c.problem(a, out, prefix ++ "release.yml: {s} must run only under if: {s} (a push to main, never a manual run), got {s}", .{ name, push_to_main, try c.inspect(a, c.get(job, "if")) });
             }
@@ -262,7 +268,7 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
                 try c.problem(a, out, prefix ++ "release.yml: attest must run only under if: {s} (an unmerged commit is never signed or attested), got {s}", .{ main_only, try c.inspect(a, c.get(job, "if")) });
             }
         } else if (!try ifIs(a, job, null)) {
-            try c.problem(a, out, prefix ++ "release.yml: {s} must not have an if: (only attest, tag, publish and bump do)", .{name});
+            try c.problem(a, out, prefix ++ "release.yml: {s} must not have an if: (only attest, tag, publish, tap and bump do)", .{name});
         }
         if (job == .object and job.object.contains("continue-on-error")) {
             try c.problem(a, out, prefix ++ "release.yml: {s} must not set continue-on-error: a red stage stops the release", .{name});
@@ -275,7 +281,7 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
                 try c.problem(a, out, prefix ++ "release.yml: {s} reads RELEASE_BOT_* so it must declare `environment: {s}`, got {s}", .{ name, release_environment, try c.inspect(a, env) });
             }
         } else if (job == .object and job.object.contains("environment")) {
-            try c.problem(a, out, prefix ++ "release.yml: {s} must not use an environment: only the jobs that read RELEASE_BOT_* (tag, bump) declare `{s}`", .{ name, release_environment });
+            try c.problem(a, out, prefix ++ "release.yml: {s} must not use an environment: only the jobs that read RELEASE_BOT_* (tag, tap, bump) declare `{s}`", .{ name, release_environment });
         }
     }
 
@@ -327,7 +333,7 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
     if (c.get(jv, "verify")) |job| {
         if (!envIs(job, "VERSION", planned)) try c.problem(a, out, prefix ++ "release.yml: verify must set VERSION to {s} (it runs before the tag exists)", .{planned});
     }
-    for ([_][]const u8{ "publish", "bump" }) |name| {
+    for ([_][]const u8{ "publish", "tap", "bump" }) |name| {
         const job = c.get(jv, name) orelse continue;
         if (!envIs(job, "VERSION", tag_version)) try c.problem(a, out, prefix ++ "release.yml: {s} must set VERSION to {s}", .{ name, tag_version });
     }
@@ -387,6 +393,7 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
         if (!got_records) try c.problem(a, out, prefix ++ "release.yml: attest must download the records (pattern tested-*, path tested, merge-multiple) of the user beta", .{});
     }
     try bumpProblems(a, doc, out);
+    try tapProblems(a, doc, out);
 }
 
 /// The action that mints an App token: used in `bump` and `tag` alone, one step each, both of the release bot App.
@@ -395,6 +402,16 @@ pub const app_action = "actions/create-github-app-token";
 /// What `bump` runs: the tool, with the version the tag took, the pushed commit, and no token (it is in the
 /// environment of the step). The internal repository and its submodule are spelled out.
 pub const bump_run = "\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" bump-internal --version \"$VERSION\" --sha \"$GITHUB_SHA\" --internal-repo komira-ai/komira-internal --submodule mopm --workdir \"$RUNNER_TEMP/bump\"";
+
+/// What `tap` runs: the tool, with the version the tag took, the formula rendered by `render_run`, and no token (it is in the
+/// environment of the step). The tap repository and the formula are spelled out.
+pub const tap_run = "\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" tap --version \"$VERSION\" --formula-file \"$RUNNER_TEMP/tap/mopm.rb\" --tap-repo komira-ai/homebrew-tap --formula mopm --workdir \"$RUNNER_TEMP/tap-clone\"";
+
+/// What `tap` renders the formula with: `channels formula` from the verified SHA256SUMS, with explicit version (the default), the
+/// release url of this repository (--repo) and the three targets the SHA256SUMS holds. The tap's guard (.github/guard/guard.js of
+/// komira-ai/homebrew-tap) accepts the renderer's exact output only, so these are the flags its template expects: the desc, homepage
+/// and license are free text there, the url base and the version line are not. tests/drivers/channels_cli_test.zig runs this line.
+pub const render_run = "\"$RUNNER_TEMP/channels\" formula --sums dist/SHA256SUMS --name mopm --version \"$VERSION\" --desc \"Package manager for Mojo\" --homepage \"https://mopm.dev\" --license \"Apache-2.0\" --repo \"$GITHUB_REPOSITORY\" --out \"$RUNNER_TEMP/tap/mopm.rb\"";
 
 /// What `tag` runs: the tool, told the commit and the planned version, and no token (it is in the environment).
 pub const tag_run = "\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" tag --sha \"$GITHUB_SHA\" --expect-version \"$PLANNED\" --out \"$GITHUB_OUTPUT\"";
@@ -419,6 +436,25 @@ const TokenJob = struct {
 };
 
 const token_jobs = [_]TokenJob{
+    .{
+        .job = "tap",
+        .id = "tapapp",
+        .who = "release bot",
+        .needles = &.{"steps.tapapp."},
+        .want = &.{
+            .{ "app-id", "${{ vars.RELEASE_BOT_APP_ID }}" },
+            .{ "private-key", "${{ secrets.RELEASE_BOT_PRIVATE_KEY }}" },
+            .{ "owner", "komira-ai" },
+            .{ "repositories", "homebrew-tap" },
+            // The token carries these two scopes and no other: the pull request is the write, the guard of the tap decides.
+            .{ "permission-contents", "write" },
+            .{ "permission-pull-requests", "write" },
+        },
+        .marker = " tap --version",
+        .run = tap_run,
+        .gh_token = "${{ steps.tapapp.outputs.token }}",
+        .note = "its write is on the tap repository, through the App token",
+    },
     .{
         .job = "bump",
         .id = "app",
@@ -459,7 +495,7 @@ const token_jobs = [_]TokenJob{
 };
 
 /// The App's variable and secret (`RELEASE_BOT_APP_ID`, `RELEASE_BOT_PRIVATE_KEY`): named by the token steps of
-/// `bump` and `tag` and nowhere else. hygiene.zig allows the secret exactly twice.
+/// `tag`, `tap` and `bump` and nowhere else. hygiene.zig allows the secret exactly three times.
 const bot_names = [_][]const u8{"RELEASE_BOT"};
 /// The environment of the jobs that read `bot_names`: restricted to main, it holds the key (RELEASING.md).
 const release_environment = "release";
@@ -510,21 +546,22 @@ fn usesPinned(u: []const u8, action: []const u8) bool {
     return true;
 }
 
-/// The two jobs that mint a token of the App komira-release-bot, `tag` and `bump`, each with ONE token step.
-/// Neither writes through its own GITHUB_TOKEN here (`contents: read`): `tag` creates the tag with a token for
-/// this repository alone (contents write; the tag ruleset admits only the App), `bump` opens the pull request on
-/// komira-internal with a token for that repository alone (contents and pull-requests write). Each token is
+/// The three jobs that mint a token of the App komira-release-bot, `tag`, `tap` and `bump`, each with ONE token step.
+/// None writes through its own GITHUB_TOKEN here (`contents: read`): `tag` creates the tag with a token for
+/// this repository alone (contents write; the tag ruleset admits only the App), `tap` opens the pull request on
+/// homebrew-tap with a token for that repository alone and `bump` the one on komira-internal with a token for that
+/// repository alone (contents and pull-requests write each). Each token is
 /// minted after the tool is built, by a pinned action, handed to the one step that runs the tool (as GH_TOKEN,
 /// never an argument), and named nowhere else; no other job, nor the workflow's own keys, names an App token;
-/// and nothing needs `bump`, so that a failed bump goes red without un-releasing or stopping anything.
+/// and nothing needs `tap` or `bump`, so that a failed one goes red without un-releasing or stopping anything.
 fn bumpProblems(a: Allocator, doc: Value, out: *Out) !void {
     const jv = c.get(doc, "jobs");
-    // Only tag and bump may name a token: not another job, nor the workflow's own keys.
+    // Only tag, tap and bump may name a token: not another job, nor the workflow's own keys.
     if (doc == .object) {
         var it = doc.object.iterator();
         while (it.next()) |e| {
             if (std.mem.eql(u8, e.key_ptr.*, "jobs")) continue;
-            if (mentionsApp(e.value_ptr.*)) try c.problem(a, out, prefix ++ "release.yml: {s} names the release bot's App token; only the tag and bump jobs may use it", .{e.key_ptr.*});
+            if (mentionsApp(e.value_ptr.*)) try c.problem(a, out, prefix ++ "release.yml: {s} names the release bot's App token; only the tag, tap and bump jobs may use it", .{e.key_ptr.*});
         }
     }
     for (jobs) |name| {
@@ -534,7 +571,7 @@ fn bumpProblems(a: Allocator, doc: Value, out: *Out) !void {
             if (std.mem.eql(u8, name, t.job)) minter = true;
         }
         if (!minter and mentionsApp(job)) {
-            try c.problem(a, out, prefix ++ "release.yml: {s} names the release bot's App token (create-github-app-token, RELEASE_BOT_*, steps.app, steps.tagapp): only the tag and bump jobs may use it, each in its own token step", .{name});
+            try c.problem(a, out, prefix ++ "release.yml: {s} names the release bot's App token (create-github-app-token, RELEASE_BOT_*, steps.app, steps.tagapp, steps.tapapp): only the tag, tap and bump jobs may use it, each in its own token step", .{name});
         }
         // Each token is used in its own job: bump never names tag's output, tag never names bump's.
         for (token_jobs) |t| {
@@ -545,8 +582,70 @@ fn bumpProblems(a: Allocator, doc: Value, out: *Out) !void {
         if (c.containsStr(try c.arrayOf(a, c.get(job, "needs")), "bump")) {
             try c.problem(a, out, prefix ++ "release.yml: {s} must not need bump: a failed bump goes red and changes nothing else (it does not un-release)", .{name});
         }
+        if (c.containsStr(try c.arrayOf(a, c.get(job, "needs")), "tap")) {
+            try c.problem(a, out, prefix ++ "release.yml: {s} must not need tap: a failed tap goes red and changes nothing else (it does not un-release)", .{name});
+        }
+    }
+    // The key is named by exactly the token steps (tag, tap, bump): hygiene.zig removes exactly that many references and flags the rest.
+    const key_refs = countIn(doc, "RELEASE_BOT_PRIVATE_KEY");
+    if (key_refs != token_jobs.len) {
+        try c.problem(a, out, prefix ++ "release.yml: RELEASE_BOT_PRIVATE_KEY is named {d} times, expected exactly {d} (the token step of tag, tap and bump)", .{ key_refs, token_jobs.len });
     }
     for (token_jobs) |t| try tokenJobProblems(a, jv, t, out);
+}
+
+/// How many times a string, key or value anywhere in `v` holds `needle`.
+fn countIn(v: Value, needle: []const u8) usize {
+    var n: usize = 0;
+    switch (v) {
+        .string => |s| n += std.mem.count(u8, s, needle),
+        .array => |arr| {
+            for (arr.items) |x| n += countIn(x, needle);
+        },
+        .object => |o| {
+            var it = o.iterator();
+            while (it.next()) |e| n += std.mem.count(u8, e.key_ptr.*, needle) + countIn(e.value_ptr.*, needle);
+        },
+        else => {},
+    }
+    return n;
+}
+
+/// `tap`: the formula is rendered from the SHA256SUMS that verify checked (the artifact verified-assets, nothing else), with
+/// exactly `render_run`, by a renderer built before the token exists, and the render step sets the version the tag took.
+fn tapProblems(a: Allocator, doc: Value, out: *Out) !void {
+    const tap = c.get(c.get(doc, "jobs"), "tap") orelse return;
+    const got = try downloaded(a, tap);
+    if (!c.eqlList(got, &.{"verified-assets"})) {
+        try c.problem(a, out, prefix ++ "release.yml: tap must download exactly the artifact verified-assets (the SHA256SUMS verify checked), got {s}", .{try c.inspectList(a, got)});
+    }
+    const render_at = stepIndexRunContaining(tap, "formula --sums");
+    if (render_at == null) {
+        try c.problem(a, out, prefix ++ "release.yml: tap must render the formula with `channels formula --sums`", .{});
+    } else {
+        const run = stepRunContaining(tap, "formula --sums") orelse "";
+        if (!std.mem.eql(u8, run, render_run)) {
+            try c.problem(a, out, prefix ++ "release.yml: tap must render the formula with exactly `{s}` (the flags the tap's guard expects), got `{s}`", .{ render_run, run });
+        }
+        const steps = c.get(tap, "steps").?.array.items;
+        if (!c.isStr(c.get(c.get(steps[render_at.?], "env"), "VERSION"), "${{ needs.tag.outputs.version }}")) {
+            try c.problem(a, out, prefix ++ "release.yml: tap: the render step must set VERSION to ${{{{ needs.tag.outputs.version }}}}", .{});
+        }
+        // The step that runs the tool takes the version the tag took (the render step above is another step, so the generic
+        // "some step sets VERSION" rule alone would pass with only one of them right).
+        if (stepIndexRunContaining(tap, " tap --version")) |ti| {
+            if (!c.isStr(c.get(c.get(steps[ti], "env"), "VERSION"), "${{ needs.tag.outputs.version }}")) {
+                try c.problem(a, out, prefix ++ "release.yml: tap: the step that runs the tool must set VERSION to ${{{{ needs.tag.outputs.version }}}}", .{});
+            }
+        }
+        const build_at = stepIndexRunContaining(tap, "zig build-exe tools/channels/main.zig");
+        if (build_at == null or build_at.? > render_at.?) {
+            try c.problem(a, out, prefix ++ "release.yml: tap: build the renderer (zig build-exe tools/channels/main.zig) before the step that renders", .{});
+        }
+        if (stepIndexUsing(tap, "actions/create-github-app-token")) |app_at| {
+            if (render_at.? > app_at) try c.problem(a, out, prefix ++ "release.yml: tap: render the formula before the token step, so that nothing but the tool runs with the token", .{});
+        }
+    }
 }
 
 fn tokenJobProblems(a: Allocator, jv: ?Value, t: TokenJob, out: *Out) !void {
