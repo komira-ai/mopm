@@ -297,7 +297,7 @@ test "the glob matcher reads patterns as GitHub does" {
 
 const bump_head = "  bump:\n    needs: [tag, publish]\n    ";
 const bump_perms = "    permissions:\n      contents: read\n    steps:\n      - uses: actions/checkout";
-const app_use = "        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0\n";
+const app_use = "        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0\n";
 
 test "mutant: bump does not need publish, or runs on a manual run" {
     try mutant("bump without publish", bump_head ++ push_main, "  bump:\n    needs: [tag]\n    " ++ push_main, "bump must need publish");
@@ -321,7 +321,7 @@ test "mutant: a failed bump must not stop or un-release anything" {
 }
 
 test "mutant: another job names the App token" {
-    try mutant("publish mints the token", "  publish:\n    needs: [tag, verify]\n    " ++ push_main ++ "\n    runs-on: ubuntu-24.04\n    timeout-minutes: 15\n    permissions:\n      contents: write\n    steps:\n", "  publish:\n    needs: [tag, verify]\n    " ++ push_main ++ "\n    runs-on: ubuntu-24.04\n    timeout-minutes: 15\n    permissions:\n      contents: write\n    steps:\n      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1\n", "publish names the release bot's App token");
+    try mutant("publish mints the token", "  publish:\n    needs: [tag, verify]\n    " ++ push_main ++ "\n    runs-on: ubuntu-24.04\n    timeout-minutes: 15\n    permissions:\n      contents: write\n    steps:\n", "  publish:\n    needs: [tag, verify]\n    " ++ push_main ++ "\n    runs-on: ubuntu-24.04\n    timeout-minutes: 15\n    permissions:\n      contents: write\n    steps:\n      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510\n", "publish names the release bot's App token");
     try mutant("plan reads the key", "          GH_TOKEN: ${{ github.token }}\n        run: '\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" plan", "          GH_TOKEN: ${{ github.token }}\n          KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n        run: '\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" plan", "plan names the release bot's App token");
     try mutant("verify reads the app id", "          VERSION: ${{ needs.plan.outputs.version }}\n        run: '\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" verify-dir", "          VERSION: ${{ needs.plan.outputs.version }}\n          ID: ${{ vars.RELEASE_BOT_APP_ID }}\n        run: '\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" verify-dir", "verify names the release bot's App token");
     try mutant("publish takes the token of bump", "          VERSION: ${{ needs.tag.outputs.version }}\n        run: '\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" publish", "          VERSION: ${{ needs.tag.outputs.version }}\n          T: ${{ steps.app.outputs.token }}\n        run: '\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" publish", "publish names the release bot's App token");
@@ -329,9 +329,9 @@ test "mutant: another job names the App token" {
 }
 
 test "mutant: the App token step of bump" {
-    try mutant("an unpinned action", "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1", "actions/create-github-app-token@v3", "bump must use actions/create-github-app-token@<full commit sha>");
-    try mutant("a short sha", "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1", "actions/create-github-app-token@bcd2ba4", "bump must use actions/create-github-app-token@<full commit sha>");
-    try mutant("another action mints the token", app_use, "        uses: someone/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1\n", "bump must use actions/create-github-app-token@");
+    try mutant("an unpinned action", "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510", "actions/create-github-app-token@v3", "bump must use actions/create-github-app-token@<full commit sha>");
+    try mutant("a short sha", "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510", "actions/create-github-app-token@64ab729", "bump must use actions/create-github-app-token@<full commit sha>");
+    try mutant("another action mints the token", app_use, "        uses: someone/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510\n", "bump must use actions/create-github-app-token@");
     try mutant("no token step", "      - name: Mint the installation token of the release bot, for komira-internal only\n        id: app\n" ++ app_use ++ "        with:\n          app-id: ${{ vars.RELEASE_BOT_APP_ID }}\n          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n          owner: komira-ai\n          repositories: komira-internal\n          permission-contents: write\n          permission-pull-requests: write\n", "", "bump must mint the token with exactly one actions/create-github-app-token step, has 0");
     try mutant("the app id from a literal", "          app-id: ${{ vars.RELEASE_BOT_APP_ID }}", "          app-id: 5395718", "the token step must set app-id");
     try mutant("another key", "          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}", "          private-key: ${{ secrets.OTHER_KEY }}", "the token step must set private-key");
@@ -404,7 +404,7 @@ test "mutant: the token step of tag" {
     try tagMutant("tag token of another owner", "          owner: komira-ai\n", "          owner: someone\n", "tag: the token step must set owner");
     try tagMutant("tag token from another key", "          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}", "          private-key: ${{ secrets.OTHER_KEY }}", "tag: the token step must set private-key");
     try tagMutant("tag token from a literal app id", "          app-id: ${{ vars.RELEASE_BOT_APP_ID }}", "          app-id: 5395718", "tag: the token step must set app-id");
-    try tagMutant("tag token action unpinned", "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1", "actions/create-github-app-token@v3", "tag must use actions/create-github-app-token@<full commit sha>");
+    try tagMutant("tag token action unpinned", "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510", "actions/create-github-app-token@v3", "tag must use actions/create-github-app-token@<full commit sha>");
     try tagMutant("tag token step without its id", "        id: tagapp\n", "", "tag: the token step must have id: tagapp");
     try tagMutant("tag token step removed", "      - name: Mint the installation token of the release bot, for this repository only, with contents write for the tag\n        id: tagapp\n" ++ app_use ++ "        with:\n          app-id: ${{ vars.RELEASE_BOT_APP_ID }}\n          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n          owner: komira-ai\n          repositories: mopm\n          permission-contents: write\n", "", "tag must mint the token with exactly one actions/create-github-app-token step, has 0");
 }
@@ -422,10 +422,10 @@ test "mutant: the step that runs the tag tool" {
 test "mutant: a token named outside its own step" {
     try mutant("tag token in publish", "          VERSION: ${{ needs.tag.outputs.version }}\n        run: '\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" publish", "          VERSION: ${{ needs.tag.outputs.version }}\n          T: ${{ steps.tagapp.outputs.token }}\n        run: '\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" publish", "publish names the release bot's App token");
     try mutant("bot key in publish", "          VERSION: ${{ needs.tag.outputs.version }}\n        run: '\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" publish", "          VERSION: ${{ needs.tag.outputs.version }}\n          K: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n        run: '\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" publish", "publish names the release bot's App token");
-    try mutant("a token step in publish", "    permissions:\n      contents: write\n    steps:\n", "    permissions:\n      contents: write\n    steps:\n      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1\n        with:\n          app-id: ${{ vars.RELEASE_BOT_APP_ID }}\n          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n          repositories: mopm\n", "publish names the release bot's App token");
+    try mutant("a token step in publish", "    permissions:\n      contents: write\n    steps:\n", "    permissions:\n      contents: write\n    steps:\n      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510\n        with:\n          app-id: ${{ vars.RELEASE_BOT_APP_ID }}\n          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n          repositories: mopm\n", "publish names the release bot's App token");
     try tagMutant("tag's checkout takes the bump token", "          persist-credentials: false\n", "          persist-credentials: false\n          token: ${{ steps.app.outputs.token }}\n", "tag names the token of bump");
     try mutant("bump token scoped to mopm", "          repositories: komira-internal\n", "          repositories: mopm\n", "bump: the token step must set repositories");
-    try mutant("a second token step in bump", "      - name: Open the komira-internal pull request", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1\n      - name: Open the komira-internal pull request", "bump must mint the token with exactly one actions/create-github-app-token step, has 2");
+    try mutant("a second token step in bump", "      - name: Open the komira-internal pull request", "      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510\n      - name: Open the komira-internal pull request", "bump must mint the token with exactly one actions/create-github-app-token step, has 2");
 }
 
 // ---- publish creates the release of the existing tag: `gh release create --verify-tag` ----
@@ -615,11 +615,11 @@ test "mutant: the key is named exactly three times" {
 }
 
 test "mutant: the App token step of tap" {
-    try tapMutant("tap action unpinned", "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1", "actions/create-github-app-token@v3", "tap must use actions/create-github-app-token@<full commit sha>");
-    try tapMutant("tap action with a short sha", "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1", "actions/create-github-app-token@bcd2ba4", "tap must use actions/create-github-app-token@<full commit sha>");
-    try tapMutant("tap another action mints the token", app_use, "        uses: someone/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1\n", "tap must use actions/create-github-app-token@");
+    try tapMutant("tap action unpinned", "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510", "actions/create-github-app-token@v3", "tap must use actions/create-github-app-token@<full commit sha>");
+    try tapMutant("tap action with a short sha", "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510", "actions/create-github-app-token@64ab729", "tap must use actions/create-github-app-token@<full commit sha>");
+    try tapMutant("tap another action mints the token", app_use, "        uses: someone/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510\n", "tap must use actions/create-github-app-token@");
     try tapMutant("tap token step removed", tap_app_step, "", "tap must mint the token with exactly one actions/create-github-app-token step, has 0");
-    try tapMutant("a second token step in tap", "      - name: Open the homebrew-tap pull request", "      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1\n      - name: Open the homebrew-tap pull request", "tap must mint the token with exactly one actions/create-github-app-token step, has 2");
+    try tapMutant("a second token step in tap", "      - name: Open the homebrew-tap pull request", "      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510\n      - name: Open the homebrew-tap pull request", "tap must mint the token with exactly one actions/create-github-app-token step, has 2");
     try tapMutant("tap app id from a literal", "          app-id: ${{ vars.RELEASE_BOT_APP_ID }}", "          app-id: 5395718", "tap: the token step must set app-id");
     try tapMutant("tap token of another owner", "          owner: komira-ai\n", "          owner: someone\n", "tap: the token step must set owner");
     try tapMutant("tap token for every repository of the owner", "          repositories: homebrew-tap\n", "", "tap: the token step must set repositories");
