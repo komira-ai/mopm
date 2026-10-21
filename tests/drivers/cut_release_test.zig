@@ -542,10 +542,25 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
                 rep.check(try std.fmt.allocPrint(a, "verify-dir: the trusted-root marker {d} alone is retried once and then passes", .{i}), one.code == 0 and e.cosignCalls("verify-blob ") == base + 1, one.text);
             }
 
+            // The incident of the release run that this retry exists for (stderr of cosign v2.5, addresses elided): the fetch error is only a warning line,
+            // and the final line is the consequence. It is retried because the warning is there.
+            const incident = "WARNING: Could not fetch trusted_root.json from the TUF repository. Continuing with individual targets. Error from TUF: error getting live trusted root: failed to create TUF client failed to load metadata: tuf refresh failed: Get \"https://tuf-repo-cdn.sigstore.dev/14.root.json\": read tcp ...: read: connection reset by peer\n" ++
+                "Error: trusted root is required when using new bundle format\n" ++
+                "error during command execution: trusted root is required when using new bundle format";
+            {
+                var e = try goodVerify(a, tools, &tmp, "vd_tuf_incident", "1.2.3");
+                try e.put("cosign_tuf_fail", "1\n");
+                try e.put("cosign_tuf_text", incident);
+                args[2] = e.path("assets");
+                const one = try e.run(&args);
+                rep.check("verify-dir: the incident's stderr (warning, then 'trusted root is required') is retried once and then passes", one.code == 0 and e.cosignCalls("verify-blob ") == base + 1, one.text);
+            }
+
             // Never retried: a mismatch whose text mentions "tuf" and "trusted root" in another context, and the legacy-bundle warning followed by a real mismatch.
             const verdicts = [_][]const u8{
                 "Error: invalid signature when validating ASN.1 encoded signature: the tuf client and the trusted root of this bundle disagree",
                 "WARNING: Could not fetch trusted_root.json from the TUF repository: tuf refresh failed: i/o timeout. Continuing with the legacy bundle\nError: invalid signature when validating ASN.1 encoded signature",
+                "Error: trusted root is required when using new bundle format\nerror during command execution: trusted root is required when using new bundle format",
             };
             for (verdicts, 0..) |text, i| {
                 var e = try goodVerify(a, tools, &tmp, try std.fmt.allocPrint(a, "vd_tuf_verdict_{d}", .{i}), "1.2.3");

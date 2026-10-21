@@ -524,12 +524,22 @@ const cosign_tries: u32 = 3;
 /// cosign's FINAL stderr line says the trusted root (the TUF repository) could not be fetched: a network failure that says nothing about the
 /// signature. Only these retry; any other refusal (a signature or certificate mismatch) is final. Only the last line counts: in legacy-bundle
 /// mode cosign prints the `Could not fetch trusted_root.json ... Continuing` warning and may then report a real mismatch, which is a verdict.
+/// One more shape retries: cosign v2.5 and v2.6 (cmd/cosign/cli/verify/verify_blob.go) end a failed fetch with `trusted root is required when
+/// using new bundle format`, raised when the trusted material is nil, and the fetch error itself is only an earlier warning line. That final
+/// line retries only when an earlier line holds one of the fetch markers; alone it says nothing about why the root is missing.
 fn isTrustedRootFetchFailure(stderr: []const u8) bool {
     const text = std.mem.trim(u8, stderr, " \r\n");
-    const last = if (std.mem.lastIndexOfScalar(u8, text, '\n')) |i| text[i + 1 ..] else text;
+    const cut = std.mem.lastIndexOfScalar(u8, text, '\n');
+    const last = if (cut) |i| text[i + 1 ..] else text;
+    const earlier = if (cut) |i| text[0..i] else "";
     const markers = [_][]const u8{ "tuf refresh failed", "Could not fetch trusted_root.json", "error getting live trusted root" };
     for (markers) |m| {
         if (std.mem.indexOf(u8, last, m) != null) return true;
+    }
+    if (std.mem.indexOf(u8, last, "trusted root is required when using new bundle format") != null) {
+        for (markers) |m| {
+            if (std.mem.indexOf(u8, earlier, m) != null) return true;
+        }
     }
     return false;
 }
