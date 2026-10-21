@@ -496,6 +496,18 @@ test "mutant: the provenance subjects and the signed-assets upload leave out the
     try mutant("signed-assets without the .debs", "            dist/mopm_*.deb\n            dist/SHA256SUMS\n            dist/*.sigstore.json", "            dist/SHA256SUMS\n            dist/*.sigstore.json", "attest's signed-assets artifact path lists");
 }
 
+test "mutant: the package matrix is not exactly the three release targets" {
+    const macos = "          - { target: macos-arm64, zig_target: aarch64-macos, os: macos-14, deb_arch: \"\" }\n";
+    try buildMutant("an added macos-x86_64 leg", macos, macos ++ "          - { target: macos-x86_64, zig_target: x86_64-macos, os: macos-13, deb_arch: \"\" }\n", "the package matrix has 4 legs, expected exactly the 3 release targets");
+    try buildMutant("an added leg of another kind", macos, macos ++ "          - { target: windows-x86_64, zig_target: x86_64-windows, os: windows-2022, deb_arch: \"\" }\n", "the package matrix has 4 legs");
+    try buildMutant("the macos leg dropped", macos, "", "the package matrix has 2 legs");
+    try buildMutant("the macos leg dropped (its absence is named)", macos, "", "the package matrix has no leg macos-arm64");
+    try buildMutant("an exclude key", "      matrix:\n        include:", "      matrix:\n        exclude:\n          - { target: macos-arm64 }\n        include:", "the package matrix has the key exclude");
+    try buildMutant("an include key that adds legs at run time", "      matrix:\n        include:", "      matrix:\n        extra: [1]\n        include:", "the package matrix has the key extra");
+    try buildMutant("a leg on another runner", "os: macos-14,", "os: macos-15,", "the package leg macos-arm64 must run on macos-14");
+    try buildMutant("a leg for another Zig target", "zig_target: x86_64-linux-musl,", "zig_target: x86_64-linux-gnu,", "the package leg linux-x86_64 must run on ubuntu-24.04 and build x86_64-linux-musl");
+}
+
 test "mutant: the matrix gives a leg the wrong Debian architecture" {
     try buildMutant("amd64 leg without deb_arch", "deb_arch: amd64 }", "deb_arch: \"\" }", "the package leg linux-x86_64 has deb_arch");
     try buildMutant("aarch64 leg with the amd64 architecture", "deb_arch: arm64 }", "deb_arch: amd64 }", "the package leg linux-aarch64 has deb_arch");

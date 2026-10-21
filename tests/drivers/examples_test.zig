@@ -1,4 +1,4 @@
-//! The worked examples of docs/examples.md, run by the built CLI, for the build farm.
+//! The worked examples of docs/examples.md, run by the built CLI, as a Buck2 test that runs on the test farm.
 //!
 //! Each directory under examples/ is one example of the page. The page quotes every file of them (the site's
 //! test/docs-examples.test.ts holds the page to the files); this driver holds the files to mopm: what the page says a
