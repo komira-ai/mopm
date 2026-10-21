@@ -120,13 +120,17 @@ minor, then patch.
 ## Dependencies with a path
 
 A dependency may name a `path` as well as a `version`. The path is used only
-while developing in a checkout. Following cargo, a dependency that has a
-`path` and no `version` cannot be published: the registry refuses the package
-(`manifest_invalid`), because a consumer has no checkout to read the path from
-and nothing says which versions work. With both, the path is dropped at
-publish and the version requirement is what the registry records. The
-generated `<name>.mopm.json` carries the same rule (`dependentRequired` in
-`package-metadata.schema.json`).
+while developing in a checkout: `mopm lock`, `tree`, `plan`, `build` and `sync`
+use the path, not the registry. Following cargo, a dependency that has a
+`path` and no `version` cannot be packed: `mopm pack` and `mopm publish` refuse
+it before any file is made, because a consumer has no checkout to read the path
+from and nothing says which versions work. With both, `mopm pack` and
+`mopm publish` write the version requirement into the package and never the
+path, so the registry only ever sees a requirement. `mopm pack` checks the path package's version: it reads the `mopm.toml` at the path and refuses a package whose own version does not satisfy that requirement.
+The version of such a dependency must be a valid version requirement. The
+generated `<name>.mopm.json` therefore has a `range` and no `path` for it;
+`package-metadata.schema.json` still says `dependentRequired` `path` needs
+`range`, so metadata made by hand with a path and no range is refused.
 
 The requirement string of a dependency is recorded exactly as written in
 `mopm.toml`. It is the cargo-syntax requirement that mopm's own resolver reads

@@ -193,7 +193,8 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
         return null;
     }
     var why: []const u8 = "";
-    const deps = conda.depsOf(arena, m, &why) catch |e| switch (e) {
+    const path_versions = (try pathVersions(arena, m, std.fs.path.dirname(f.manifest) orelse ".")) orelse return null;
+    const deps = conda.depsOf(arena, m, path_versions, &why) catch |e| switch (e) {
         error.Unpackable => {
             err("{s}: {s}\n", .{ f.manifest, why });
             return null;
@@ -230,6 +231,39 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
         return null;
     }
     return .{ .m = m, .packs = packs.items, .manifest_dir = std.fs.path.dirname(f.manifest) orelse "." };
+}
+
+/// The version of the package each path dependency (with a version) names, read from its own mopm.toml beside
+/// `manifest_dir`. Null after printing why not. A path dependency with no version is left for `depsOf` to refuse.
+fn pathVersions(arena: Allocator, m: manifest.Manifest, manifest_dir: []const u8) anyerror!?[]const conda.PathVersion {
+    var out = std.ArrayList(conda.PathVersion).init(arena);
+    for (m.dependencies) |d| {
+        const p = switch (d.source) {
+            .path => |p| p,
+            .version => continue,
+        };
+        if (d.requirement == null) continue;
+        const file = try std.fs.path.join(arena, &.{ manifest_dir, p, "mopm.toml" });
+        const src = std.fs.cwd().readFileAlloc(arena, file, 1 << 20) catch |e| {
+            err("{s}: dependency '{s}' has the path '{s}', which cannot be read: {s}\n", .{ file, d.name, p, @errorName(e) });
+            return null;
+        };
+        var diag: manifest.Diagnostic = .{};
+        const dm = manifest.parse(arena, src, &diag) catch |e| {
+            if (e == error.Invalid) {
+                err("{s}:{d}:{d}: {s}\n", .{ file, diag.pos.line, diag.pos.col, diag.message });
+            } else {
+                err("{s}: {s}\n", .{ file, @errorName(e) });
+            }
+            return null;
+        };
+        if (!std.mem.eql(u8, dm.package.name, d.name)) {
+            err("{s} names the package {s}, but dependency '{s}' calls it {s}\n", .{ file, dm.package.name, d.name, d.name });
+            return null;
+        }
+        try out.append(.{ .name = d.name, .version = dm.package.version });
+    }
+    return out.items;
 }
 
 fn fileExists(path: []const u8) bool {

@@ -297,6 +297,19 @@ test "mopm pack and publish against the fake registry, and a rejection against a
     r = try m.run(&.{ "publish", "--compiler", "1.0.0", "--mojoc", mojoc, "--manifest", native_manifest, "--registry", dead, "--config-dir", conf }, null);
     rep.check("native libraries are refused before any request", r.code == 1 and h.contains(r.stderr, "native libraries are not packed yet") and !h.contains(r.stderr, "cannot reach"), r.stderr);
 
+    // --- a path dependency with a version: the path package is read beside the manifest named, not beside the
+    // directory mopm runs in; and it must be the package the dependency names.
+    const mono_manifest = try h.join(a, &.{ work, "mono", "app", "mopm.toml" });
+    try h.writeFile(mono_manifest, try tomlText(a, "pubdemo", "0.1.0", "[dependencies]\nutil = { path = \"../util\", version = \"0.3\" }\n"));
+    try h.writeFile(try h.join(a, &.{ work, "mono", "util", "mopm.toml" }), try tomlText(a, "util", "0.3.4", ""));
+    r = try m.run(&.{ "publish", "--compiler", "1.0.0", "--mojoc", mojoc, "--manifest", mono_manifest, "--registry", dead, "--config-dir", conf, "--dry-run" }, null);
+    rep.check("a path dependency is read beside the manifest named, from any directory", r.code == 0 and h.contains(r.stdout, "would commit mojo-pubdemo 0.1.0") and r.stderr.len == 0, try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+    const other_manifest = try h.join(a, &.{ work, "mono_other", "app", "mopm.toml" });
+    try h.writeFile(other_manifest, try tomlText(a, "pubdemo", "0.1.0", "[dependencies]\nutil = { path = \"../util\", version = \"0.3\" }\n"));
+    try h.writeFile(try h.join(a, &.{ work, "mono_other", "util", "mopm.toml" }), try tomlText(a, "other", "0.3.4", ""));
+    r = try m.run(&.{ "publish", "--compiler", "1.0.0", "--mojoc", mojoc, "--manifest", other_manifest, "--registry", dead, "--config-dir", conf, "--dry-run" }, null);
+    rep.check("a path package named other than its dependency is refused", r.code == 1 and h.contains(r.stderr, "names the package other, but dependency 'util' calls it util") and !h.contains(r.stdout, "would commit"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+
     r = try m.run(&(pub_args ++ flags), null);
     rep.check("publishing without a login or MOPM_TOKEN says to log in", r.code == 1 and h.contains(r.stderr, "not logged in to beta; run 'mopm login' or set MOPM_TOKEN"), r.stderr);
 

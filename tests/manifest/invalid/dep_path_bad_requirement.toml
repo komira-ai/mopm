@@ -3,4 +3,4 @@ name = "a"
 version = "0.1.0"
 
 [dependencies]
-util = { version = "1", path = "../util" }
+util = { version = "=>1.0", path = "../util" }
