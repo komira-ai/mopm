@@ -630,10 +630,38 @@ pub fn farmExclusionProblems(a: Allocator, buck: []const u8, farm: []const u8, o
 /// ignore it.
 pub const min_cooldown_days: i64 = 7;
 
+/// The pattern a group must carry for a directory whose package.json depends on any package matching it.
+pub const aws_sdk_pattern = "@aws-sdk/*";
+
+/// Some group of `groups` lists `pattern` among its `patterns`.
+fn groupCovers(groups: ?Value, pattern: []const u8) bool {
+    for (c.keys(groups)) |name| {
+        const pats = c.get(c.get(groups, name), "patterns") orelse continue;
+        if (pats != .array) continue;
+        for (pats.array.items) |p| if (c.isStr(p, pattern)) return true;
+    }
+    return false;
+}
+
+/// `dir`'s package.json (if it has one) lists a dependency whose name starts with "@aws-sdk/".
+fn dependsOnAwsSdk(a: Allocator, tree: c.Tree, dir: []const u8) !bool {
+    const rel = try std.fs.path.join(a, &.{ if (dir.len > 0 and dir[0] == '/') dir[1..] else dir, "package.json" });
+    if (!c.containsStr(tree.files, rel)) return false;
+    const pkg = std.json.parseFromSliceLeaky(Value, a, try tree.read(a, rel), .{}) catch return false;
+    inline for (.{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" }) |section| {
+        for (c.keys(c.get(pkg, section))) |name| {
+            if (std.mem.startsWith(u8, name, "@aws-sdk/")) return true;
+        }
+    }
+    return false;
+}
+
 /// dependabot.yml against the repository's files: every `npm` entry carries `cooldown: default-days: N` with N a
-/// number and N >= min_cooldown_days, and every directory holding a package-lock.json has an npm entry (a package
+/// number and N >= min_cooldown_days, an entry whose package.json depends on @aws-sdk/* has a group covering
+/// "@aws-sdk/*", and every directory holding a package-lock.json has an npm entry (a package
 /// Dependabot never looks at is a package whose pins only a human updates). `files` are the repository's paths.
-pub fn dependabotProblems(a: Allocator, text: []const u8, files: []const []const u8, out: *Out) !void {
+pub fn dependabotProblems(a: Allocator, text: []const u8, tree: c.Tree, out: *Out) !void {
+    const files = tree.files;
     const f = ".github/dependabot.yml";
     const doc = c.load(a, text) catch |err| {
         try c.problem(a, out, prefix ++ "{s}: not readable as YAML: {s}", .{ f, @errorName(err) });
@@ -659,6 +687,9 @@ pub fn dependabotProblems(a: Allocator, text: []const u8, files: []const []const
         } else false;
         if (!ok) {
             try c.problem(a, out, prefix ++ "{s}: npm entry {s}: needs `cooldown: default-days:` of at least {d}, got {s}", .{ f, dir, min_cooldown_days, try c.inspect(a, days) });
+        }
+        if (try dependsOnAwsSdk(a, tree, dir) and !groupCovers(c.get(u, "groups"), aws_sdk_pattern)) {
+            try c.problem(a, out, prefix ++ "{s}: npm entry {s}: its package.json depends on {s}, so it needs a `groups` entry whose `patterns` include \"{s}\" (the packages must update together)", .{ f, dir, aws_sdk_pattern, aws_sdk_pattern });
         }
     }
     for (files) |p| {

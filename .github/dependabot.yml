@@ -14,7 +14,10 @@ updates:
   # Every npm entry waits 7 days after a release before Dependabot proposes it (cooldown applies to
   # version updates, not security updates): a newly published malicious version is usually pulled
   # within days. tests/drivers/hygiene.zig refuses an npm entry without it, and an npm package
-  # (a package-lock.json) without an entry.
+  # (a package-lock.json) without an entry. The @aws-sdk/* and @smithy/* packages release in lockstep and
+  # peer-depend on one another, so they update in one group (a lone bump fails npm ERESOLVE); the
+  # hygiene check requires the group wherever a package.json depends on @aws-sdk/*. No update-types
+  # filter: the group takes every update type the entry's ignore rule lets through.
   - package-ecosystem: npm
     directory: /service/api
     schedule:
@@ -22,6 +25,8 @@ updates:
     cooldown:
       default-days: 7
     groups:
+      aws-sdk:
+        patterns: ["@aws-sdk/*", "@smithy/*"]
       dev-tooling:
         patterns: ["typescript", "ts-jest", "jest", "@types/*"]
     ignore:
@@ -34,6 +39,8 @@ updates:
     cooldown:
       default-days: 7
     groups:
+      aws-sdk:
+        patterns: ["@aws-sdk/*", "@smithy/*"]
       aws-cdk:
         patterns: ["aws-cdk-lib", "aws-cdk", "constructs"]
       dev-tooling:
@@ -48,6 +55,8 @@ updates:
     cooldown:
       default-days: 7
     groups:
+      aws-sdk:
+        patterns: ["@aws-sdk/*", "@smithy/*"]
       aws-cdk:
         patterns: ["aws-cdk-lib", "aws-cdk", "constructs"]
       dev-tooling:
@@ -62,6 +71,8 @@ updates:
     cooldown:
       default-days: 7
     groups:
+      aws-sdk:
+        patterns: ["@aws-sdk/*", "@smithy/*"]
       aws-cdk:
         patterns: ["aws-cdk-lib", "aws-cdk", "constructs"]
       dev-tooling:
@@ -76,6 +87,8 @@ updates:
     cooldown:
       default-days: 7
     groups:
+      aws-sdk:
+        patterns: ["@aws-sdk/*", "@smithy/*"]
       dev-tooling:
         patterns: ["typescript", "ts-jest", "jest", "fast-check", "@types/*"]
     ignore:
