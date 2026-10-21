@@ -15,9 +15,10 @@
 //! writes anything) what it can see the guard refusing, so a mistake is red here and not a stuck pull request.
 //!
 //! Steps, every one a `gh` or `git` call with no shell:
-//!   1. the file is the formula of THIS version (one `version "<v>"` line, every url under `/download/v<v>/`), and
+//!   1. the file is the formula of THIS version (the renderer writes no version line; the version is the one the release urls
+//!      carry, as in the tap's guard: every url `/releases/download/v<V>/<name>-<V>-<target>.tar.gz`, all the same <V>), and
 //!      the tag v<version> of --repo exists;
-//!   2. monotonic: the formula on the tap's main branch is read. A version above --version is refused (red: the
+//!   2. monotonic: the formula on the tap's main branch is read, and its version is the one its release urls carry. A version above --version is refused (red: the
 //!      tap must never move down). The same version means the tap already has this release: nothing to open;
 //!   3. `gh pr list` of the tap: an open or merged bump pull request for this or a NEWER version means there is
 //!      nothing to open (an open one for this version without auto-merge gets it asked for: idempotent);
@@ -81,7 +82,7 @@ pub fn run(a: Allocator, o: Options) void {
     if (!gt.namePart(o.formula)) die("--formula '{s}' is not a formula name", .{o.formula});
     const text = std.fs.cwd().readFileAlloc(a, o.formula_file, 1 << 20) catch |err| die("cannot read --formula-file {s}: {s}", .{ o.formula_file, @errorName(err) });
     const tag = pf(a, "v{s}", .{o.version});
-    requireFormulaOf(a, text, o, tag);
+    requireFormulaOf(a, text, o);
     const t = Tool.init(a, o.gh, o.git);
     const branch = pf(a, "bump/{s}-v{s}", .{ o.formula, o.version });
     const path = pf(a, "Formula/{s}.rb", .{o.formula});
@@ -92,11 +93,10 @@ pub fn run(a: Allocator, o: Options) void {
 
     // 2. Monotonic: never open a pull request that would not move the tap up.
     if (formulaAt(t, o, path, o.base)) |live| {
-        const have = declaredVersions(a, live);
-        if (have.len != 1) die("{s} on {s} of {s} declares {d} version lines, expected exactly 1", .{ path, o.base, o.tap_repo, have.len });
-        const current = gt.parseSemver(have[0]) orelse die("{s} on {s} of {s} has version '{s}', which is not <major>.<minor>.<patch>", .{ path, o.base, o.tap_repo, have[0] });
+        const have = liveVersion(a, live, o, path);
+        const current = gt.parseSemver(have) orelse die("{s} on {s} of {s} has version '{s}', which is not <major>.<minor>.<patch>", .{ path, o.base, o.tap_repo, have });
         switch (gt.order(mine, current)) {
-            .lt => die("refusing to open a pull request for v{s}: the tap already has v{s} (a tap never moves down)", .{ o.version, have[0] }),
+            .lt => die("refusing to open a pull request for v{s}: the tap already has v{s} (a tap never moves down)", .{ o.version, have }),
             .eq => return out("{s} on {s} of {s} is already at v{s}: nothing to open.\n", .{ path, o.base, o.tap_repo, o.version }),
             .gt => {},
         }
@@ -127,19 +127,53 @@ pub fn run(a: Allocator, o: Options) void {
     gt.closeOlder(t, o.tap_repo, found.older, opened, o.version);
 }
 
-/// The file is the formula of this release: one `version "<v>"` line, and every url under /download/v<v>/ of --repo.
-fn requireFormulaOf(a: Allocator, text: []const u8, o: Options, tag: []const u8) void {
-    const have = declaredVersions(a, text);
-    if (have.len != 1 or !std.mem.eql(u8, have[0], o.version)) die("{s} does not declare exactly one version line `{s}{s}\"`: it is not the formula of v{s}", .{ o.formula_file, version_prefix, o.version, o.version });
-    const want = pf(a, "https://github.com/{s}/releases/download/{s}/", .{ o.repo, tag });
-    var urls: usize = 0;
+/// The version a formula's release urls carry, as the tap's guard reads it: every `url "` line is
+/// `https://github.com/<repo>/releases/download/v<V>/<name>-<V>-<target>.tar.gz` with a plain <major>.<minor>.<patch>
+/// <V> that is the same in the directory and the file name, and all urls carry the same <V>. Dies on the first url that
+/// does not, or when there is no url. `where` names the formula in the message.
+fn urlVersion(a: Allocator, text: []const u8, repo: []const u8, name: []const u8, where: []const u8) []const u8 {
+    const head = pf(a, "https://github.com/{s}/releases/download/v", .{repo});
+    var found: ?[]const u8 = null;
     var lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |l| {
         const at = std.mem.indexOf(u8, l, "url \"") orelse continue;
-        urls += 1;
-        if (!std.mem.startsWith(u8, l[at + 5 ..], want)) die("{s}: the url line '{s}' is not under {s}", .{ o.formula_file, std.mem.trim(u8, l, " "), want });
+        const shown = std.mem.trim(u8, l, " ");
+        const rest = l[at + 5 ..];
+        if (!std.mem.startsWith(u8, rest, head)) die("{s}: the url line '{s}' is not under {s}<X.Y.Z>/", .{ where, shown, head });
+        const after = rest[head.len..];
+        const slash = std.mem.indexOfScalar(u8, after, '/') orelse die("{s}: the url line '{s}' is not under {s}<X.Y.Z>/", .{ where, shown, head });
+        const v = after[0..slash];
+        if (gt.parseSemver(v) == null) die("{s}: the url line '{s}' has version '{s}', which is not <major>.<minor>.<patch>", .{ where, shown, v });
+        const file = after[slash + 1 ..];
+        const stem = pf(a, "{s}-{s}-", .{ name, v });
+        const target_ok = std.mem.startsWith(u8, file, stem) and std.mem.endsWith(u8, file, ".tar.gz\"") and file.len > stem.len + ".tar.gz\"".len;
+        if (!target_ok) die("{s}: the url line '{s}' does not have the file name {s}<target>.tar.gz of its directory's version v{s}", .{ where, shown, stem, v });
+        if (found) |f| {
+            if (!std.mem.eql(u8, f, v)) die("{s}: its urls carry different versions ({s} and {s}), expected one", .{ where, f, v });
+        }
+        found = v;
     }
-    if (urls == 0) die("{s} has no url line", .{o.formula_file});
+    return found orelse die("{s} has no url line", .{where});
+}
+
+/// The file is the formula of this release: its urls (all of them) carry --version and point into --repo's releases,
+/// and it has no version line (the renderer writes none; brew audit refuses one that repeats the urls').
+fn requireFormulaOf(a: Allocator, text: []const u8, o: Options) void {
+    const v = urlVersion(a, text, o.repo, o.formula, o.formula_file);
+    if (!std.mem.eql(u8, v, o.version)) die("{s}: its urls carry v{s}, so it is not the formula of v{s}", .{ o.formula_file, v, o.version });
+    const have = declaredVersions(a, text);
+    if (have.len != 0) die("{s} declares {d} version line(s): the rendered formula has none, the version is in its urls", .{ o.formula_file, have.len });
+}
+
+/// The version of the formula live on the tap, read from its urls. A formula in the older shape, with one
+/// `version "<v>"` line, is accepted when that line equals the urls' version; two version lines, or one that differs, die.
+fn liveVersion(a: Allocator, live: []const u8, o: Options, path: []const u8) []const u8 {
+    const where = pf(a, "{s} on {s} of {s}", .{ path, o.base, o.tap_repo });
+    const v = urlVersion(a, live, o.repo, o.formula, where);
+    const have = declaredVersions(a, live);
+    if (have.len > 1) die("{s} declares {d} version lines, expected at most 1", .{ where, have.len });
+    if (have.len == 1 and !std.mem.eql(u8, have[0], v)) die("{s} declares version '{s}' but its urls carry v{s}", .{ where, have[0], v });
+    return v;
 }
 
 /// The text of `path` at `ref` of the tap, or null when the tap has no such file (or no such ref).

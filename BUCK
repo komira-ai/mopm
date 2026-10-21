@@ -261,7 +261,7 @@ zig_test(  # buck-only: cut_release bump-internal against the fake gh and the fa
 zig_test(  # buck-only: cut_release tap against the fake gh and the fake git, with planted defects it must refuse
     name = "tap",
     src = "tests/drivers/tap_test.zig",
-    imports = ["tests/drivers/harness.zig", "tests/channels/golden/mopm.rb"],
+    imports = ["tests/drivers/harness.zig", "tests/channels/golden/mopm.rb", "tests/channels/tap_guard/mopm.rb"],
     env_tools = {
         "MOPM_CUT_RELEASE": ":cut-release",
         "MOPM_FAKE_GH": ":fake-gh",

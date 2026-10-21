@@ -6,8 +6,9 @@
 //! bump/<formula>-v<semver>, exactly one changed path (Formula/<formula>.rb), the whole file the renderer's output,
 //! the version higher than the formula on main, the tag v<semver> existing. The good scenario checks each of those
 //! on the calls the tool made; then each test plants one defect (a mutant) and requires a refusal for that reason
-//! with no push and no pull request, so a refusal is the defect's doing. The formula used is the golden formula
-//! (tests/channels/golden/mopm.rb), which is the tap guard's own fixture.
+//! with no push and no pull request, so a refusal is the defect's doing. The formula used is the tap guard's fixture
+//! (tests/channels/tap_guard/mopm.rb): no version line, the version is in the urls, on the file side and on the live
+//! side; one live case keeps the old shape (the golden file, with a version line equal to the urls).
 //!
 //! What it proves that a green run of the good scenario alone would not:
 //!   - monotonic: a tap that is ahead (numerically: 1.2.10 is above 1.2.3) is refused with no write; a tap at the
@@ -119,14 +120,26 @@ const World = struct {
     }
 };
 
-/// The formula of 1.2.3 as `channels formula` renders it (the golden file, the tap guard's own fixture).
+/// The formula of 1.2.3 as the release renders it for the tap: the tap guard's fixture, without a version line (the urls
+/// carry the version), minus the comment lines that precede the class.
 fn formula(a: Allocator) ![]const u8 {
+    const raw = try h.readFile(a, "tests/channels/tap_guard/mopm.rb");
+    const at = std.mem.indexOf(u8, raw, "class Mopm") orelse return error.NoClass;
+    return raw[at..];
+}
+
+/// The older shape of the formula still live on a tap: the golden file, the default render, with its version line.
+fn oldShape(a: Allocator) ![]const u8 {
     return h.readFile(a, "tests/channels/golden/mopm.rb");
 }
 
-/// The same formula at another version (every `1.2.3`: the version line and the urls).
+/// The same formula at another version (every `1.2.3`: the urls, and the version line of the old shape).
 fn formulaAt(a: Allocator, version: []const u8) ![]const u8 {
     return std.mem.replaceOwned(u8, a, try formula(a), "1.2.3", version);
+}
+
+fn oldShapeAt(a: Allocator, version: []const u8) ![]const u8 {
+    return std.mem.replaceOwned(u8, a, try oldShape(a), "1.2.3", version);
 }
 
 /// A scenario: the tag v1.2.3 exists; the tap has no formula yet, no pull request, no branch; the file to open is
@@ -220,8 +233,28 @@ test "tap: the pull request the tap's guard admits, and every planted defect ref
         try w.put("tap_main_formula", try formulaAt(a, "1.2.2"));
         const older = try w.go();
         rep.check("monotonic: a tap at v1.2.2 is moved up to v1.2.3", older.code == 0 and w.created() == 1 and w.pushed() == 1, older.text);
+        w = try fresh(a, tools, &tmp, "tap_older_old_shape");
+        try w.put("tap_main_formula", try oldShapeAt(a, "1.2.2"));
+        const old_shape = try w.go();
+        rep.check("monotonic: a tap in the old shape (one version line equal to its urls) at v1.2.2 is moved up to v1.2.3", old_shape.code == 0 and w.created() == 1 and w.pushed() == 1, old_shape.text);
+        w = try fresh(a, tools, &tmp, "tap_old_shape_ahead");
+        try w.put("tap_main_formula", try oldShapeAt(a, "1.2.10"));
+        const old_ahead = try w.go();
+        rep.check("monotonic: a tap in the old shape at v1.2.10 refuses v1.2.3", old_ahead.code == 1 and h.contains(old_ahead.text, "a tap never moves down") and untouched(w), old_ahead.text);
+        w = try fresh(a, tools, &tmp, "tap_line_disagrees");
+        try w.put("tap_main_formula", try std.mem.replaceOwned(u8, a, try oldShapeAt(a, "1.2.2"), "version \"1.2.2\"", "version \"0.0.1\""));
+        const disagree = try w.go();
+        rep.check("mutant: a formula on the tap whose version line differs from its urls is refused (the urls are the version)", disagree.code == 1 and h.contains(disagree.text, "declares version '0.0.1' but its urls carry v1.2.2") and untouched(w), disagree.text);
+        w = try fresh(a, tools, &tmp, "tap_urls_differ");
+        try w.put("tap_main_formula", try std.mem.replaceOwned(u8, a, try formulaAt(a, "1.2.2"), "v1.2.2/mopm-1.2.2-linux-x86_64", "v9.9.9/mopm-9.9.9-linux-x86_64"));
+        const mixed_live = try w.go();
+        rep.check("mutant: a formula on the tap with a url of another version is refused (fail closed), as the guard does", mixed_live.code == 1 and h.contains(mixed_live.text, "its urls carry different versions") and untouched(w), mixed_live.text);
+        w = try fresh(a, tools, &tmp, "tap_no_urls");
+        try w.put("tap_main_formula", "class Mopm < Formula\nend\n");
+        const bare = try w.go();
+        rep.check("mutant: a formula on the tap with no url is refused, not read as version 0.0.0", bare.code == 1 and h.contains(bare.text, "has no url line") and untouched(w), bare.text);
         w = try fresh(a, tools, &tmp, "tap_two_versions");
-        try w.put("tap_main_formula", try std.mem.concat(a, u8, &.{ try formulaAt(a, "1.2.2"), "  version \"9.9.9\"\n" }));
+        try w.put("tap_main_formula", try std.mem.concat(a, u8, &.{ try oldShapeAt(a, "1.2.2"), "  version \"9.9.9\"\n" }));
         const two = try w.go();
         rep.check("mutant: a formula on the tap with two version lines is refused (fail closed), as the guard does", two.code == 1 and h.contains(two.text, "declares 2 version lines") and untouched(w), two.text);
         w = try fresh(a, tools, &tmp, "tap_prerelease");
@@ -380,7 +413,7 @@ test "tap: the pull request the tap's guard admits, and every planted defect ref
             .{ .flag = "--tap-repo", .value = "a/b/c", .said = "--tap-repo" },
             .{ .flag = "--formula-file", .value = "/nonexistent/mopm.rb", .said = "cannot read --formula-file" },
             // The file is a formula, but of another version than --version.
-            .{ .flag = "--version", .value = "1.2.4", .said = "it is not the formula of v1.2.4" },
+            .{ .flag = "--version", .value = "1.2.4", .said = "so it is not the formula of v1.2.4" },
         };
         for (bad) |c| {
             const r = try w0.runWith(&.{.{ c.flag, c.value }});
@@ -389,13 +422,25 @@ test "tap: the pull request the tap's guard admits, and every planted defect ref
         var w = try fresh(a, tools, &tmp, "inputs_formula");
         try w.put("mopm.rb", try std.mem.replaceOwned(u8, a, golden, "komira-ai/mopm/releases", "someone/mopm/releases"));
         const other = try w.go();
-        rep.check("input: a formula whose urls point into another repository's releases is refused before any gh or git call", other.code == 1 and h.contains(other.text, "is not under https://github.com/komira-ai/mopm/releases/download/v1.2.3/") and !w.has("log"), other.text);
+        rep.check("input: a formula whose urls point into another repository's releases is refused before any gh or git call", other.code == 1 and h.contains(other.text, "is not under https://github.com/komira-ai/mopm/releases/download/v<X.Y.Z>/") and !w.has("log"), other.text);
         w = try fresh(a, tools, &tmp, "inputs_two_versions");
-        try w.put("mopm.rb", try std.mem.concat(a, u8, &.{ golden, "  version \"1.2.3\"\n" }));
+        try w.put("mopm.rb", try oldShape(a));
         const dup = try w.go();
-        rep.check("input: a formula with two version lines is refused before any gh or git call", dup.code == 1 and h.contains(dup.text, "does not declare exactly one version line") and !w.has("log"), dup.text);
+        rep.check("input: a formula with a version line is refused before any gh or git call (the rendered formula has none)", dup.code == 1 and h.contains(dup.text, "declares 1 version line(s)") and !w.has("log"), dup.text);
+        w = try fresh(a, tools, &tmp, "inputs_url_other_version");
+        try w.put("mopm.rb", try std.mem.replaceOwned(u8, a, golden, "v1.2.3/mopm-1.2.3-linux-x86_64", "v1.2.4/mopm-1.2.4-linux-x86_64"));
+        const mixed = try w.go();
+        rep.check("mutant: one url of another version than the others is refused before any gh or git call", mixed.code == 1 and h.contains(mixed.text, "its urls carry different versions") and !w.has("log"), mixed.text);
+        w = try fresh(a, tools, &tmp, "inputs_all_urls_other_version");
+        try w.put("mopm.rb", try formulaAt(a, "1.2.4"));
+        const allother = try w.go();
+        rep.check("mutant: urls that all carry another version than --version are refused before any gh or git call", allother.code == 1 and h.contains(allother.text, "its urls carry v1.2.4, so it is not the formula of v1.2.3") and !w.has("log"), allother.text);
+        w = try fresh(a, tools, &tmp, "inputs_dir_file_version");
+        try w.put("mopm.rb", try std.mem.replaceOwned(u8, a, golden, "mopm-1.2.3-macos-arm64", "mopm-1.2.4-macos-arm64"));
+        const skew = try w.go();
+        rep.check("mutant: a url whose file name carries another version than its directory is refused before any gh or git call", skew.code == 1 and h.contains(skew.text, "does not have the file name mopm-1.2.3-<target>.tar.gz") and !w.has("log"), skew.text);
         w = try fresh(a, tools, &tmp, "inputs_no_url");
-        try w.put("mopm.rb", "class Mopm < Formula\n  version \"1.2.3\"\nend\n");
+        try w.put("mopm.rb", "class Mopm < Formula\nend\n");
         const nourl = try w.go();
         rep.check("input: a formula with no url line is refused before any gh or git call", nourl.code == 1 and h.contains(nourl.text, "has no url line") and !w.has("log"), nourl.text);
         w = w0;

@@ -407,11 +407,11 @@ pub const bump_run = "\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\"
 /// environment of the step). The tap repository and the formula are spelled out.
 pub const tap_run = "\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" tap --version \"$VERSION\" --formula-file \"$RUNNER_TEMP/tap/mopm.rb\" --tap-repo komira-ai/homebrew-tap --formula mopm --workdir \"$RUNNER_TEMP/tap-clone\"";
 
-/// What `tap` renders the formula with: `channels formula` from the verified SHA256SUMS, with explicit version (the default), the
+/// What `tap` renders the formula with: `channels formula` from the verified SHA256SUMS, without the version line (--no-explicit-version: brew audit --strict refuses it as redundant with the url), the
 /// release url of this repository (--repo) and the three targets the SHA256SUMS holds. The tap's guard (.github/guard/guard.js of
 /// komira-ai/homebrew-tap) accepts the renderer's exact output only, so these are the flags its template expects: the desc, homepage
-/// and license are free text there, the url base and the version line are not. tests/drivers/channels_cli_test.zig runs this line.
-pub const render_run = "\"$RUNNER_TEMP/channels\" formula --sums dist/SHA256SUMS --name mopm --version \"$VERSION\" --desc \"Package manager for Mojo\" --homepage \"https://mopm.dev\" --license \"Apache-2.0\" --repo \"$GITHUB_REPOSITORY\" --out \"$RUNNER_TEMP/tap/mopm.rb\"";
+/// and license are free text there, the url base is not, and the version line must be absent. tests/drivers/channels_cli_test.zig runs this line.
+pub const render_run = "\"$RUNNER_TEMP/channels\" formula --sums dist/SHA256SUMS --name mopm --version \"$VERSION\" --desc \"Package manager for Mojo\" --homepage \"https://mopm.dev\" --license \"Apache-2.0\" --repo \"$GITHUB_REPOSITORY\" --no-explicit-version --out \"$RUNNER_TEMP/tap/mopm.rb\"";
 
 /// What `tag` runs: the tool, told the commit and the planned version, and no token (it is in the environment).
 pub const tag_run = "\"$RUNNER_TEMP/cut_release\" --repo \"$GITHUB_REPOSITORY\" tag --sha \"$GITHUB_SHA\" --expect-version \"$PLANNED\" --out \"$GITHUB_OUTPUT\"";

@@ -653,9 +653,9 @@ test "mutant: where the token lives in tap" {
 }
 
 test "mutant: tap renders the formula with other flags than the tap's guard expects, or from other sums" {
-    try tapMutant("no --repo (no release url)", " --repo \"$GITHUB_REPOSITORY\" --out", " --out", "tap must render the formula with exactly");
-    try tapMutant("another url base", " --repo \"$GITHUB_REPOSITORY\" --out", " --url-base https://example.com/dl --out", "tap must render the formula with exactly");
-    try tapMutant("no explicit version line", " --license \"Apache-2.0\"", " --license \"Apache-2.0\" --no-explicit-version", "tap must render the formula with exactly");
+    try tapMutant("no --repo (no release url)", " --repo \"$GITHUB_REPOSITORY\" --no-explicit-version --out", " --no-explicit-version --out", "tap must render the formula with exactly");
+    try tapMutant("another url base", " --repo \"$GITHUB_REPOSITORY\" --no-explicit-version --out", " --url-base https://example.com/dl --no-explicit-version --out", "tap must render the formula with exactly");
+    try tapMutant("the version line is rendered again", " --no-explicit-version --out", " --out", "tap must render the formula with exactly");
     try tapMutant("another name", " --name mopm --version", " --name mopm-edge --version", "tap must render the formula with exactly");
     try tapMutant("another version", " --version \"$VERSION\" --desc", " --version 0.0.0 --desc", "tap must render the formula with exactly");
     try tapMutant("sums that were not downloaded from the verified artifact", " --sums dist/SHA256SUMS", " --sums SHA256SUMS", "tap must render the formula with exactly");

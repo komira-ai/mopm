@@ -116,7 +116,7 @@ with it in komira-ai/homebrew-tap, the repository `brew tap komira-ai/tap` reads
 - **Where the checksums come from.** The job downloads the artifact `verified-assets` (the files `verify` checked and `publish`
   released) and runs `tools/channels formula` on its `SHA256SUMS`. Nothing is downloaded or hashed anew: the formula can only say what
   the verified `SHA256SUMS` says. The command is fixed by the release lint (`render_run` in `tests/drivers/release_lint.zig`):
-  explicit `version`, the urls of this repository's release, and the three targets `macos-arm64`, `linux-aarch64`, `linux-x86_64`.
+  no `version` line (`--no-explicit-version`; `brew audit --strict` refuses it as redundant with the release url), the urls of this repository's release, and the three targets `macos-arm64`, `linux-aarch64`, `linux-x86_64`.
 - **Why those flags.** The tap admits a pull request only through its path guard (`.github/guard/guard.js` there), which accepts
   the bot's pull request when: the branch is `bump/mopm-v<version>`; exactly one file changed, `Formula/mopm.rb`; the file is the
   renderer's output line for line (an exact allow-list, not deny rules); the version is above the formula on `main`; the tag
