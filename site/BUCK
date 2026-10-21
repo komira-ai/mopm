@@ -49,7 +49,7 @@ npm_package(
     path = ".",
     node = _NODE,
     # kpin's files of the old rules, still read by the weekly update.
-    exclude = ["pins.lock.bzl", "pins.toml", "README.md", "check_dist.js"],
+    exclude = ["pins.lock.bzl", "pins.toml", "README.md"],
     step_data = {
         "test": _TEST_DATA,
         # tools/build.js renders the pages from them.
