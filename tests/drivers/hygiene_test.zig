@@ -45,7 +45,7 @@ test "every file of the repository passes the text rules, and every workflow the
     for (try c.workflowFiles(a, tree)) |f| try hyg.structureProblems(a, f, try tree.read(a, f), &out);
     try hyg.kpinSetsProblems(a, try tree.read(a, ".github/workflows/kpin-update.yml"), tree.files, &out);
     try hyg.farmExclusionProblems(a, try tree.read(a, "BUCK"), try tree.read(a, ".github/workflows/farm.yml"), &out);
-    try hyg.dependabotProblems(a, try tree.read(a, ".github/dependabot.yml"), tree.files, &out);
+    try hyg.dependabotProblems(a, try tree.read(a, ".github/dependabot.yml"), tree, &out);
     for (out.items) |l| std.debug.print("{s}\n", .{l});
     try std.testing.expectEqual(@as(usize, 0), out.items.len);
 }
@@ -768,41 +768,59 @@ test "dependabot.yml: every npm entry waits 7 days, and every package-lock.json 
     const real = try tree.read(a, ".github/dependabot.yml");
 
     var out = c.Out.init(a);
-    try hyg.dependabotProblems(a, real, tree.files, &out);
+    try hyg.dependabotProblems(a, real, tree, &out);
     try c.expectLines("the real file", out.items, &.{});
 
     // Mutant: one entry's cooldown is 6 days.
     out = c.Out.init(a);
-    try hyg.dependabotProblems(a, try mutate(a, real, "default-days: 7", "default-days: 6"), tree.files, &out);
+    try hyg.dependabotProblems(a, try mutate(a, real, "default-days: 7", "default-days: 6"), tree, &out);
     try c.expectLines("6 days", out.items, &.{"npm entry /service/api: needs `cooldown: default-days:` of at least 7, got 6"});
     // Mutant: a quoted number is a string, not a day count.
     out = c.Out.init(a);
-    try hyg.dependabotProblems(a, try mutate(a, real, "default-days: 7", "default-days: \"7\""), tree.files, &out);
+    try hyg.dependabotProblems(a, try mutate(a, real, "default-days: 7", "default-days: \"7\""), tree, &out);
     try c.expectLines("a string", out.items, &.{"npm entry /service/api: needs"});
     // Mutant: the cooldown key of one entry is misspelled (Dependabot would ignore it).
     out = c.Out.init(a);
-    try hyg.dependabotProblems(a, try mutate(a, real, "default-days: 7", "default_days: 7"), tree.files, &out);
+    try hyg.dependabotProblems(a, try mutate(a, real, "default-days: 7", "default_days: 7"), tree, &out);
     try c.expectLines("a misspelled key", out.items, &.{"npm entry /service/api: needs"});
     // Mutant: an entry without a cooldown block at all (the one for /site, the last).
     out = c.Out.init(a);
-    try hyg.dependabotProblems(a, try mutate(a, real, "    directory: /site\n    schedule:\n      interval: weekly\n    cooldown:\n      default-days: 7\n", "    directory: /site\n    schedule:\n      interval: weekly\n"), tree.files, &out);
+    try hyg.dependabotProblems(a, try mutate(a, real, "    directory: /site\n    schedule:\n      interval: weekly\n    cooldown:\n      default-days: 7\n", "    directory: /site\n    schedule:\n      interval: weekly\n"), tree, &out);
     try c.expectLines("no cooldown", out.items, &.{"npm entry /site: needs"});
     // Mutant: a package with a lockfile and no entry (/service/api renamed to a directory without one).
     out = c.Out.init(a);
-    try hyg.dependabotProblems(a, try mutate(a, real, "directory: /service/api\n", "directory: /service/other\n"), tree.files, &out);
+    try hyg.dependabotProblems(a, try mutate(a, real, "directory: /service/api\n", "directory: /service/other\n"), tree, &out);
     try c.expectLines("no entry", out.items, &.{"no npm entry for /service/api (it has a package-lock.json)"});
     // Mutant: an unreadable document, and one without updates, are findings and not passes.
     out = c.Out.init(a);
-    try hyg.dependabotProblems(a, "version: 2\n", tree.files, &out);
+    try hyg.dependabotProblems(a, "version: 2\n", tree, &out);
     try c.expectLines("no updates", out.items, &.{"no `updates` list"});
     out = c.Out.init(a);
-    try hyg.dependabotProblems(a, "version: 2\nupdates: x\n", tree.files, &out);
+    try hyg.dependabotProblems(a, "version: 2\nupdates: x\n", tree, &out);
     try c.expectLines("updates not a list", out.items, &.{"`updates` is not a list"});
     out = c.Out.init(a);
-    try hyg.dependabotProblems(a, "version: 2\nupdates:\n\t- x\n", tree.files, &out);
+    try hyg.dependabotProblems(a, "version: 2\nupdates:\n\t- x\n", tree, &out);
     try c.expectLines("not YAML", out.items, &.{"not readable as YAML"});
     // Mutant: an npm entry with no directory is named as such, and still needs its cooldown.
     out = c.Out.init(a);
-    try hyg.dependabotProblems(a, "version: 2\nupdates:\n  - package-ecosystem: npm\n", &.{}, &out);
+    try hyg.dependabotProblems(a, "version: 2\nupdates:\n  - package-ecosystem: npm\n", .{ .root = ".", .files = &.{} }, &out);
     try c.expectLines("no directory", out.items, &.{"npm entry (no directory): needs"});
+
+    // service/api's package.json depends on @aws-sdk/* packages, so its entry must group them.
+    const aws_group = "      aws-sdk:\n        patterns: [\"@aws-sdk/*\", \"@smithy/*\"]\n";
+    // Mutant: the aws-sdk group removed from the first entry, /service/api (the only package.json with @aws-sdk/*).
+    out = c.Out.init(a);
+    try hyg.dependabotProblems(a, try mutate(a, real, aws_group, ""), tree, &out);
+    try c.expectLines("group removed", out.items, &.{"npm entry /service/api: its package.json depends on @aws-sdk/*, so it needs a `groups` entry"});
+    // Mutant: the pattern changed (a lone @smithy/* group leaves @aws-sdk/* ungrouped).
+    out = c.Out.init(a);
+    try hyg.dependabotProblems(a, try mutate(a, real, "[\"@aws-sdk/*\", \"@smithy/*\"]", "[\"@smithy/*\"]"), tree, &out);
+    try c.expectLines("pattern dropped", out.items, &.{"npm entry /service/api: its package.json depends on @aws-sdk/*"});
+    out = c.Out.init(a);
+    try hyg.dependabotProblems(a, try mutate(a, real, "\"@aws-sdk/*\"", "\"@aws-sdk/client-*\""), tree, &out);
+    try c.expectLines("pattern narrowed", out.items, &.{"npm entry /service/api: its package.json depends on @aws-sdk/*"});
+    // The group may carry any name: renamed, it still covers.
+    out = c.Out.init(a);
+    try hyg.dependabotProblems(a, try mutate(a, real, "      aws-sdk:\n", "      aws:\n"), tree, &out);
+    try c.expectLines("renamed group", out.items, &.{});
 }
