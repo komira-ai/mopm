@@ -10,13 +10,16 @@
 //!       overrides, with the control fields from <dir>/control, <dir>/copyright and <dir>/lintian-overrides. The same
 //!       binary and metadata give the same bytes.
 //!   channels apt-index --repo <dir> --out <dir> --deb <path> [--deb ...] --date <epoch seconds>
-//!                --origin <text> --label <text> --description <text> [--arch <arch> ...] [--keep <N>]
+//!                --origin <text> --label <text> --description <text> [--arch <arch> ...] [--keep <N>] [--pool-dir pool/<name>]
 //!       Reads the Packages files under <dir>/dists/stable/main/binary-<arch>/ (none is an empty index) for the --arch
 //!       given (default amd64 and arm64) and for every other binary-<arch> the repository has, so none is dropped; adds the
 //!       .debs, and writes the new Packages, Packages.gz and Release under <out>/dists/stable and the .debs under
 //!       <out>/pool. Refuses (exit 1, nothing written) to list a version older than the newest one listed for its
 //!       package and architecture, or the same version with other bytes. Keeps the newest <N> (default 25) per
-//!       package and architecture. Signing is not done here.
+//!       package and architecture. Signing is not done here. With --pool-dir the .debs are listed and written below that
+//!       directory (`pool/mopm/<file>.deb`), the layout of a repository several products share, each below its own directory.
+//!       The Origin, Label and Description of a Release that exists in <dir> are kept as they are and the three flags apply to the first Release
+//!       only (the repository is shared); the Release says `Acquire-By-Hash: yes`, which the publish backs with the by-hash files.
 //!   channels formula --sums <SHA256SUMS> --name <name> --version <X.Y.Z> --desc <text> --homepage <url>
 //!                --license <spdx> (--repo <owner/name> | --url-base <url>) [--no-explicit-version] --out <path.rb>
 //!       Renders the Homebrew formula from the checksums in the file and nothing else.
@@ -201,7 +204,7 @@ fn listedArchs(a: Allocator, repo: []const u8) ![]const []const u8 {
 
 fn cmdAptIndex(a: Allocator, args: []const []const u8) !void {
     const flags = try parseFlags(a, args, &.{
-        "--repo", "--out", "--deb", "--date", "--origin", "--label", "--description", "--arch", "--keep",
+        "--repo", "--out", "--deb", "--date", "--origin", "--label", "--description", "--arch", "--keep", "--pool-dir",
     }, &.{});
     const repo = need(flags, "--repo");
     const out_dir = need(flags, "--out");
@@ -231,11 +234,12 @@ fn cmdAptIndex(a: Allocator, args: []const []const u8) !void {
         try existing.appendSlice(parsed);
     }
 
+    const pool_dir = one(flags, "--pool-dir");
     var added = std.ArrayList(apt.Stanza).init(a);
     var debs = std.ArrayList([]const u8).init(a);
     for (try many(a, flags, "--deb")) |path| {
         const bytes = readFile(a, path);
-        const s = apt.stanzaOf(a, bytes) catch |err| die("{s}: not a usable .deb: {s}", .{ path, @errorName(err) });
+        const s = apt.stanzaOfIn(a, bytes, pool_dir) catch |err| die("{s}: not a usable .deb: {s}", .{ path, @errorName(err) });
         try added.append(s);
         try debs.append(bytes);
     }
@@ -246,12 +250,20 @@ fn cmdAptIndex(a: Allocator, args: []const []const u8) !void {
         error.VersionConflict => die("refused: a version that is already listed comes with other bytes", .{}),
         else => die("merge: {s}", .{@errorName(err)}),
     };
-    const info = apt.ReleaseInfo{
+    const given = apt.ReleaseInfo{
         .origin = need(flags, "--origin"),
         .label = need(flags, "--label"),
         .description = need(flags, "--description"),
         .date = number(need(flags, "--date"), "--date"),
     };
+    // The repository is shared with other products: the Origin, Label and Description of the Release that is there stay as they are;
+    // the three flags apply to the first Release only.
+    const release_path = try std.fmt.allocPrint(a, "{s}/dists/stable/Release", .{repo});
+    const existing_release: ?[]const u8 = std.fs.cwd().readFileAlloc(a, release_path, 1 << 24) catch |err| switch (err) {
+        error.FileNotFound => null,
+        else => die("cannot read {s}: {s}", .{ release_path, @errorName(err) }),
+    };
+    const info = apt.keepSharedFields(a, existing_release, given) catch |err| die("{s}: {s}", .{ release_path, @errorName(err) });
     const tree = apt.tree(a, info, merged.stanzas, archs) catch |err| die("tree: {s}", .{@errorName(err)});
 
     // Everything is computed; only now is anything written.

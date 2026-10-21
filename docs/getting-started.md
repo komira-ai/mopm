@@ -54,9 +54,21 @@ cosign verify-blob --bundle mopm-$v-$t.tar.gz.sigstore.json \
 macOS binaries are not signed or notarized by Apple yet. The install script checks the sha256 only;
 the two commands above are the way to check the signature and the provenance.
 
-### Homebrew and apt (planned)
+### apt (available once the repository is set up)
 
-A Homebrew tap and an apt repository are planned. They do not exist yet; use the script or the tarball.
+Debian and Ubuntu can install mopm from an apt repository, which every release publishes to once its owner has made the settings
+(RELEASING.md, "The apt repository"). Until then use the script, the tarball, or the `.deb` of a release. Once it exists:
+
+```sh
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://packages.komira.ai/apt/keyring.gpg | sudo tee /etc/apt/keyrings/packages.gpg > /dev/null
+echo "deb [signed-by=/etc/apt/keyrings/packages.gpg] https://packages.komira.ai/apt stable main" | sudo tee /etc/apt/sources.list.d/packages.list
+sudo apt update && sudo apt install mopm
+```
+
+### Homebrew (planned)
+
+A Homebrew tap is planned. It does not exist yet; use the script or the tarball.
 
 ### A Mojo environment
 

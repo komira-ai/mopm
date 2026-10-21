@@ -554,6 +554,64 @@ test "release.yml may name the release bot's key exactly three times (tag, tap, 
     try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "  publish:\n    environment: prod\n    runs-on: x\n" }), &.{"job publish: must not use secrets or an environment"});
 }
 
+test "release.yml: the signing key is read only in the apt-signing environment and the publish role only in apt-publish, each a fixed number of times" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const release = header ++
+        \\on:
+        \\  push:
+        \\    branches: [main]
+        \\  workflow_dispatch:
+        \\jobs:
+        \\  apt-index:
+        \\    environment: apt-signing
+        \\    runs-on: x
+        \\    steps:
+        \\      - id: gate
+        \\        env:
+        \\          HAVE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY != '' }}
+        \\          APT_GPG_FINGERPRINT: ${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}
+        \\        run: 'true'
+        \\      - id: sign
+        \\        env:
+        \\          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+        \\          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+        \\          APT_GPG_FINGERPRINT: ${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}
+        \\        run: 'true'
+        \\  apt-deploy-write:
+        \\    environment: apt-publish
+        \\    runs-on: x
+        \\    permissions:
+        \\      id-token: write
+        \\    steps:
+        \\      - env:
+        \\          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+        \\        run: 'true'
+        \\
+    ;
+    try expectStructure("release.yml", release, &.{});
+    // Mutants: more references than the three apt-index attempts make (the key three times, the passphrase three times, the fingerprint six).
+    const extra = "      - env:\n          K: ${{ secrets.APT_GPG_PRIVATE_KEY }}\n          L: ${{ secrets.APT_GPG_PRIVATE_KEY }}\n          M: ${{ secrets.APT_GPG_PRIVATE_KEY }}\n        run: 'true'\n";
+    const publish_job = "  apt-deploy-write:\n";
+    try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, publish_job, extra ++ publish_job), &.{"must not use secrets or an environment"});
+    const extra_pass = "      - env:\n          P: ${{ secrets.APT_GPG_PASSPHRASE }}\n          Q: ${{ secrets.APT_GPG_PASSPHRASE }}\n          R: ${{ secrets.APT_GPG_PASSPHRASE }}\n        run: 'true'\n";
+    try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, publish_job, extra_pass ++ publish_job), &.{"must not use secrets or an environment"});
+    // Another secret beside the allowed ones, and the key's name with another shape.
+    const extra_other = "      - env:\n          X: ${{ secrets.APT_GPG_OTHER }}\n        run: 'true'\n";
+    try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, publish_job, extra_other ++ publish_job), &.{"must not use secrets or an environment"});
+    try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, "secrets.APT_GPG_PASSPHRASE }}", "secrets.APT_GPG_PASSPHRASE || secrets.X }}"), &.{"must not use secrets or an environment"});
+    // The environments: the key's jobs are in apt-signing, the role's jobs in apt-publish, and no other job in any.
+    const sign_env = "  apt-index:\n    environment: apt-signing\n";
+    const publish_env = "  apt-deploy-write:\n    environment: apt-publish\n";
+    try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, sign_env, "  apt-index:\n"), &.{"job apt-index reads APT_GPG_* so it must declare environment apt-signing, got nil"});
+    try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, sign_env, "  apt-index:\n    environment: apt-publish\n"), &.{"job apt-index reads APT_GPG_* so it must declare environment apt-signing, got \"apt-publish\""});
+    try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, publish_env, "  apt-deploy-write:\n"), &.{"job apt-deploy-write reads APT_PUBLISH_* so it must declare environment apt-publish, got nil"});
+    try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, publish_env, "  apt-deploy-write:\n    environment: release\n"), &.{"job apt-deploy-write reads APT_PUBLISH_* so it must declare environment apt-publish, got \"release\""});
+    try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "  publish:\n    environment: apt-publish\n    runs-on: x\n" }), &.{"job publish: must not use secrets or an environment"});
+    try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "  publish:\n    environment: apt-signing\n    runs-on: x\n" }), &.{"job publish: must not use secrets or an environment"});
+}
+
 test "kpin-update.yml: KPIN_SETS has a line for every pins.lock.bzl, and only for those" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

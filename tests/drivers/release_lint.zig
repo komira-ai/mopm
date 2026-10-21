@@ -30,6 +30,13 @@
 //!   expects; channels_cli_test.zig renders with that line and compares with the guard's fixture), then opens the tap's pull request
 //!   (`cut_release tap`, `tap_run`) with the third App token: `repositories: homebrew-tap`, contents and pull-requests write,
 //!   `environment: release`, `RELEASE_BOT_PRIVATE_KEY` named exactly three times in the workflow (tag, tap, bump), nothing needs `tap`.
+//! - **The apt jobs.** After `publish`, up to three attempts of `apt-deploy-read` (the cloud role, OIDC), `apt-index` (the archive signing key) and
+//!   `apt-deploy-write` (the cloud role), `aptProblems`: no job holds both the key (`APT_GPG_*`) and the role (`APT_PUBLISH_*`, `id-token: write`); the
+//!   key is named by the `apt-index` jobs alone (`contents: read`, environment `apt-signing`) and the role by the `apt-deploy` jobs alone (environment
+//!   `apt-publish`); `id-token: write` only there and in `attest`; every apt job has a step `gate` after only the setup steps, and every later step carries
+//!   `if: steps.gate.outputs.enabled == 'true'`, so a job without the owner's settings does nothing and ends green; the retries start only on a lost
+//!   write; nothing needs an apt job. `aptToolProblems` holds the puts of tools/apt_publish.zig: If-None-Match on every .deb, If-Match on the ETag
+//!   read (If-None-Match when there was none) on every object of the index, the .debs, then the by-hash files (If-None-Match), then the index, and the invalidation last.
 //! - **The order.** `plan` needs `beta` and `lint`, `build` needs `plan`, `beta-user` needs `build`, `attest`
 //!   needs `beta-user` (so a red platform leg stops the release before anything is signed), `verify` needs
 //!   `build` and `attest`, `tag` needs `beta-user` and `verify` (no tag without verified files), `publish`
@@ -57,8 +64,25 @@ const Out = c.Out;
 
 pub const prefix = "release-lint: ";
 
-/// The jobs, in the order they run.
-pub const jobs = [_][]const u8{ "beta", "lint", "plan", "build", "beta-user", "attest", "verify", "tag", "publish", "tap", "bump" };
+/// The jobs of the release itself, in the order they run.
+pub const base_jobs = [_][]const u8{ "beta", "lint", "plan", "build", "beta-user", "attest", "verify", "tag", "publish", "tap", "bump" };
+
+/// The apt jobs (RELEASING.md, "The apt repository"), after `publish`: three attempts of read (the cloud role, OIDC), index (the signing
+/// key, no cloud) and write (the cloud role, OIDC). A lost write (412) hands over to the next attempt, which reads again.
+pub const apt_read = [_][]const u8{ "apt-deploy-read", "apt-deploy-read-2", "apt-deploy-read-3" };
+pub const apt_index = [_][]const u8{ "apt-index", "apt-index-2", "apt-index-3" };
+pub const apt_write = [_][]const u8{ "apt-deploy-write", "apt-deploy-write-2", "apt-deploy-write-3" };
+pub const apt_jobs = apt_read ++ apt_index ++ apt_write;
+
+/// Every job of release.yml.
+pub const jobs = base_jobs ++ apt_jobs;
+
+/// The environment of the jobs that hold the cloud role (the variables of the shared repository, the trust of the role), and of the jobs that hold the signing key.
+pub const apt_publish_environment = "apt-publish";
+pub const apt_signing_environment = "apt-signing";
+
+/// The `if:` of every step of an apt job after its gate: the gate found every setting the job needs.
+pub const apt_gate_if = "steps.gate.outputs.enabled == 'true'";
 
 /// The `concurrency` group: every push shares one, a manual dry run has a group of its own (its run id),
 /// so a dry run cannot displace the one pending push release.
@@ -100,6 +124,15 @@ const needs = [_]struct { job: []const u8, needs: []const []const u8 }{
     .{ .job = "publish", .needs = &.{ "tag", "verify" } },
     .{ .job = "tap", .needs = &.{ "tag", "publish", "verify" } },
     .{ .job = "bump", .needs = &.{ "tag", "publish" } },
+    .{ .job = "apt-deploy-read", .needs = &.{"publish"} },
+    .{ .job = "apt-deploy-read-2", .needs = &.{"apt-deploy-write"} },
+    .{ .job = "apt-deploy-read-3", .needs = &.{"apt-deploy-write-2"} },
+    .{ .job = "apt-index", .needs = &.{"apt-deploy-read"} },
+    .{ .job = "apt-index-2", .needs = &.{"apt-deploy-read-2"} },
+    .{ .job = "apt-index-3", .needs = &.{"apt-deploy-read-3"} },
+    .{ .job = "apt-deploy-write", .needs = &.{ "apt-deploy-read", "apt-index" } },
+    .{ .job = "apt-deploy-write-2", .needs = &.{ "apt-deploy-read-2", "apt-index-2" } },
+    .{ .job = "apt-deploy-write-3", .needs = &.{ "apt-deploy-read-3", "apt-index-3" } },
 };
 
 /// The paths a push may change without releasing: documentation and CI.
@@ -171,7 +204,28 @@ fn lessThan(_: void, x: []const u8, y: []const u8) bool {
     return std.mem.lessThan(u8, x, y);
 }
 
+fn inList(list: []const []const u8, name: []const u8) bool {
+    for (list) |x| {
+        if (std.mem.eql(u8, x, name)) return true;
+    }
+    return false;
+}
+
+/// The jobs that hold the cloud role: they read and write the shared apt repository through the OIDC exchange.
+fn isAptOidc(name: []const u8) bool {
+    return inList(&apt_read, name) or inList(&apt_write, name);
+}
+
+fn isAptIndex(name: []const u8) bool {
+    return inList(&apt_index, name);
+}
+
+fn isApt(name: []const u8) bool {
+    return inList(&apt_jobs, name);
+}
+
 fn isWriter(job: []const u8, scope: []const u8) bool {
+    if (isAptOidc(job) and std.mem.eql(u8, scope, "id-token")) return true;
     for (writers) |w| {
         if (std.mem.eql(u8, w[0], job) and std.mem.eql(u8, w[1], scope)) return true;
     }
@@ -257,6 +311,19 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
             if (!std.mem.eql(u8, w[0], name)) continue;
             if (!c.isStr(c.get(perms, w[1]), "write")) try c.problem(a, out, prefix ++ "release.yml: {s}: needs {s}: write", .{ name, w[1] });
         }
+        // The apt jobs: the ones that hold the cloud role hold id-token: write (the OIDC exchange) and contents: read, and nothing else;
+        // the one that holds the signing key holds contents: read and nothing else, in particular no id-token.
+        if (isAptOidc(name)) {
+            const pk = c.keys(perms);
+            if (perms == null or perms.? != .object or pk.len != 2 or !c.isStr(c.get(perms, "contents"), "read") or !c.isStr(c.get(perms, "id-token"), "write")) {
+                try c.problem(a, out, prefix ++ "release.yml: {s}: permissions must be exactly contents: read and id-token: write (the OIDC exchange for the publish role), got {s}", .{ name, try c.inspect(a, perms) });
+            }
+        } else if (isAptIndex(name)) {
+            const pk = c.keys(perms);
+            if (perms == null or perms.? != .object or pk.len != 1 or !c.isStr(c.get(perms, "contents"), "read")) {
+                try c.problem(a, out, prefix ++ "release.yml: {s}: permissions must be exactly contents: read (it holds the signing key, so no id-token), got {s}", .{ name, try c.inspect(a, perms) });
+            }
+        }
 
         // The `if:` of each job.
         if (std.mem.eql(u8, name, "tag") or std.mem.eql(u8, name, "publish") or std.mem.eql(u8, name, "tap") or std.mem.eql(u8, name, "bump")) {
@@ -267,8 +334,19 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
             if (!try ifIs(a, job, main_only)) {
                 try c.problem(a, out, prefix ++ "release.yml: attest must run only under if: {s} (an unmerged commit is never signed or attested), got {s}", .{ main_only, try c.inspect(a, c.get(job, "if")) });
             }
+        } else if (std.mem.eql(u8, name, apt_read[0])) {
+            // The first read runs only after a release, never on a manual run; the retries run only when the attempt before them lost a write.
+            if (!try ifIs(a, job, push_to_main)) {
+                try c.problem(a, out, prefix ++ "release.yml: {s} must run only under if: {s} (a push to main, never a manual run), got {s}", .{ name, push_to_main, try c.inspect(a, c.get(job, "if")) });
+            }
+        } else if (inList(&apt_read, name)) {
+            const prev = apt_write[aptAttempt(name) - 1];
+            const want_if = try std.fmt.allocPrint(a, "${{{{ needs.{s}.outputs.conflict == 'true' }}}}", .{prev});
+            if (!try ifIs(a, job, want_if)) {
+                try c.problem(a, out, prefix ++ "release.yml: {s} must run only under if: {s} (only when the write before it lost to another writer), got {s}", .{ name, want_if, try c.inspect(a, c.get(job, "if")) });
+            }
         } else if (!try ifIs(a, job, null)) {
-            try c.problem(a, out, prefix ++ "release.yml: {s} must not have an if: (only attest, tag, publish, tap and bump do)", .{name});
+            try c.problem(a, out, prefix ++ "release.yml: {s} must not have an if: (only attest, tag, publish, tap, bump and the first read of each apt attempt do)", .{name});
         }
         if (job == .object and job.object.contains("continue-on-error")) {
             try c.problem(a, out, prefix ++ "release.yml: {s} must not set continue-on-error: a red stage stops the release", .{name});
@@ -279,6 +357,15 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
         if (mentionsAny(job, &bot_names)) {
             if (!c.isStr(env, release_environment)) {
                 try c.problem(a, out, prefix ++ "release.yml: {s} reads RELEASE_BOT_* so it must declare `environment: {s}`, got {s}", .{ name, release_environment, try c.inspect(a, env) });
+            }
+        } else if (isAptOidc(name)) {
+            // The role's trust names this environment, and its variables (the role, the bucket, the distribution, the host) live in it.
+            if (!c.isStr(env, apt_publish_environment)) {
+                try c.problem(a, out, prefix ++ "release.yml: {s} holds the publish role so it must declare `environment: {s}`, got {s}", .{ name, apt_publish_environment, try c.inspect(a, env) });
+            }
+        } else if (isAptIndex(name)) {
+            if (!c.isStr(env, apt_signing_environment)) {
+                try c.problem(a, out, prefix ++ "release.yml: {s} holds the signing key so it must declare `environment: {s}`, got {s}", .{ name, apt_signing_environment, try c.inspect(a, env) });
             }
         } else if (job == .object and job.object.contains("environment")) {
             try c.problem(a, out, prefix ++ "release.yml: {s} must not use an environment: only the jobs that read RELEASE_BOT_* (tag, tap, bump) declare `{s}`", .{ name, release_environment });
@@ -393,6 +480,7 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
         if (!got_records) try c.problem(a, out, prefix ++ "release.yml: attest must download the records (pattern tested-*, path tested, merge-multiple) of the user beta", .{});
     }
     try bumpProblems(a, doc, out);
+    try aptProblems(a, doc, out);
     try tapProblems(a, doc, out);
 }
 
@@ -1060,4 +1148,224 @@ fn lintianProblems(a: Allocator, job: Value, out: *Out) !void {
     if (std.mem.indexOf(u8, c.str(c.get(items[install_at], "run")) orelse "", "lintian") == null) try c.problem(a, out, prefix ++ f ++ "the apt-get install step must install lintian", .{});
     if (install_at > lint_at) try c.problem(a, out, prefix ++ f ++ "lintian must be installed before it runs", .{});
     if (!c.isStr(c.get(items[install_at], "if"), "matrix.deb_arch != ''")) try c.problem(a, out, prefix ++ f ++ "the lintian install must run only for the legs that have a deb_arch", .{});
+}
+
+// ---- the apt jobs ------------------------------------------------------------------------------------------------
+
+/// The attempt (0, 1, 2) a read, index or write job belongs to.
+fn aptAttempt(name: []const u8) usize {
+    for (apt_read, 0..) |x, i| {
+        if (std.mem.eql(u8, x, name)) return i;
+    }
+    for (apt_index, 0..) |x, i| {
+        if (std.mem.eql(u8, x, name)) return i;
+    }
+    for (apt_write, 0..) |x, i| {
+        if (std.mem.eql(u8, x, name)) return i;
+    }
+    return 0;
+}
+
+/// The suffix of the artifacts of an attempt: none for the first, `-2` and `-3` for the retries.
+fn aptSuffix(a: Allocator, attempt: usize) ![]const u8 {
+    if (attempt == 0) return "";
+    return std.fmt.allocPrint(a, "-{d}", .{attempt + 1});
+}
+
+/// A step of `job` that runs `apt_publish <command> `.
+fn toolStep(job: Value, command: []const u8) ?usize {
+    var buf: [64]u8 = undefined;
+    const needle = std.fmt.bufPrint(&buf, "apt_publish\" {s} ", .{command}) catch return null;
+    return stepIndexRunContaining(job, needle);
+}
+
+/// Does a step run any command of the tool but the gate (the commands that read the settings, hold the key or reach the cloud)?
+fn runsAptCommand(step: Value) bool {
+    for ([_][]const u8{ "assume", "read", "index", "sign", "write" }) |cmd| {
+        var buf: [64]u8 = undefined;
+        const needle = std.fmt.bufPrint(&buf, "apt_publish\" {s} ", .{cmd}) catch continue;
+        if (mentions(step, needle)) return true;
+    }
+    return false;
+}
+
+/// The rules of the apt jobs. The shared repository takes a write only from a role that a job can assume through OIDC, and the index only
+/// signed with a key that lives in the environment `apt-signing`. So:
+///   - **no job holds both**: the signing key (`APT_GPG_*`) is named by the apt-index jobs alone, which hold `contents: read` and no `id-token`; the
+///     role (`APT_PUBLISH_*`, the OIDC exchange) by the apt-deploy jobs alone, which hold `id-token: write` (the only jobs but `attest` that do);
+///   - each declares its environment: `apt-publish` (the role's trust and variables) or `apt-signing` (the key's secrets);
+///   - **the fail-safe**: each has a step `gate` (`apt_publish gate`) after only the setup steps (checkout, Zig, the build), and every step after it carries
+///     `if: steps.gate.outputs.enabled == 'true'`, so a job whose settings are not made does nothing, writes nothing and ends green; the index and
+///     write jobs also need the jobs before them to have gone on (`READ_ENABLED`, `INDEX_SIGNED`);
+///   - the data flow: read uploads the index it read, index downloads it and the verified .debs and uploads the signed index, write downloads that
+///     and the .debs; the write of the last attempt carries `--last` and no other does;
+///   - nothing waits for an apt job (a red one goes red alone, it un-releases nothing).
+fn aptProblems(a: Allocator, doc: Value, out: *Out) !void {
+    const jv = c.get(doc, "jobs");
+    if (doc == .object) {
+        var it = doc.object.iterator();
+        while (it.next()) |e| {
+            if (std.mem.eql(u8, e.key_ptr.*, "jobs")) continue;
+            if (mentions(e.value_ptr.*, "APT_GPG") or mentions(e.value_ptr.*, "APT_PUBLISH")) {
+                try c.problem(a, out, prefix ++ "release.yml: {s} names the apt signing key or the publish role; only the apt jobs may, each its own", .{e.key_ptr.*});
+            }
+        }
+    }
+    for (jobs) |name| {
+        const job = c.get(jv, name) orelse continue;
+        const names_key = mentions(job, "APT_GPG");
+        const names_role = mentions(job, "APT_PUBLISH") or mentions(job, "apt_publish\" assume ");
+        const holds_id_token = c.isStr(c.get(c.get(job, "permissions"), "id-token"), "write");
+        if (names_key and (names_role or holds_id_token)) {
+            try c.problem(a, out, prefix ++ "release.yml: {s} holds both the signing key (APT_GPG_*) and the cloud role (id-token, APT_PUBLISH_*, the OIDC exchange): no job may, so that a job that can sign cannot write and a job that can write cannot sign", .{name});
+        }
+        if (names_key and !isAptIndex(name)) {
+            try c.problem(a, out, prefix ++ "release.yml: {s} names the signing key (APT_GPG_*); only the apt-index jobs may", .{name});
+        }
+        if (names_role and !isAptOidc(name)) {
+            try c.problem(a, out, prefix ++ "release.yml: {s} names the publish role (APT_PUBLISH_*, the OIDC exchange); only the apt-deploy jobs may", .{name});
+        }
+        if (!isApt(name)) {
+            for (try c.arrayOf(a, c.get(job, "needs"))) |n| {
+                if (isApt(n)) try c.problem(a, out, prefix ++ "release.yml: {s} must not need {s}: a failed apt job goes red alone and un-releases nothing", .{ name, n });
+            }
+        } else {
+            try aptJobProblems(a, name, job, out);
+        }
+    }
+}
+
+fn aptJobProblems(a: Allocator, name: []const u8, job: Value, out: *Out) !void {
+    const steps_v = c.get(job, "steps");
+    if (steps_v == null or steps_v.? != .array) {
+        try c.problem(a, out, prefix ++ "release.yml: {s}: has no steps", .{name});
+        return;
+    }
+    const steps = steps_v.?.array.items;
+    var gate_at: ?usize = null;
+    for (steps, 0..) |st, i| {
+        if (c.isStr(c.get(st, "id"), "gate")) {
+            gate_at = i;
+            break;
+        }
+    }
+    const g = gate_at orelse {
+        try c.problem(a, out, prefix ++ "release.yml: {s}: has no step with id `gate`: until the owner has made the settings the job must do nothing and end green", .{name});
+        return;
+    };
+    const gate_run = c.str(c.get(steps[g], "run")) orelse "";
+    if (std.mem.indexOf(u8, gate_run, "apt_publish\" gate ") == null) {
+        try c.problem(a, out, prefix ++ "release.yml: {s}: the step `gate` must run `apt_publish gate`", .{name});
+    }
+    // Before the gate only the setup runs: nothing that reads a setting or a secret, holds the key or reaches the cloud.
+    for (steps[0..g], 0..) |st, i| {
+        if (mentions(st, "APT_GPG") or mentions(st, "secrets.") or mentions(st, "vars.") or runsAptCommand(st)) {
+            try c.problem(a, out, prefix ++ "release.yml: {s}: step {d} runs before the gate but reads a setting, a secret or the cloud", .{ name, i });
+        }
+    }
+    // After the gate every step is gated.
+    for (steps[g + 1 ..], g + 1..) |st, i| {
+        if (!c.isStr(c.get(st, "if"), apt_gate_if)) {
+            try c.problem(a, out, prefix ++ "release.yml: {s}: step {d} after the gate must carry `if: {s}` (a job without its settings does nothing and ends green)", .{ name, i, apt_gate_if });
+        }
+    }
+
+    const attempt = aptAttempt(name);
+    const sfx = try aptSuffix(a, attempt);
+    const read_name = apt_read[attempt];
+    const index_name = apt_index[attempt];
+    const current = try std.fmt.allocPrint(a, "apt-current{s}", .{sfx});
+    const next = try std.fmt.allocPrint(a, "apt-next{s}", .{sfx});
+
+    if (isAptOidc(name)) {
+        for ([_][]const u8{ "--env APT_PUBLISH_ROLE_ARN", "--env APT_BUCKET", "--env APT_DISTRIBUTION_ID", "--env APT_HOSTNAME" }) |flag| {
+            if (std.mem.indexOf(u8, gate_run, flag) == null) try c.problem(a, out, prefix ++ "release.yml: {s}: the gate must check {s} (the four variables of the apt-publish environment)", .{ name, flag });
+        }
+        const assume_at = toolStep(job, "assume");
+        if (assume_at == null or assume_at.? <= g) {
+            try c.problem(a, out, prefix ++ "release.yml: {s}: must assume the publish role (`apt_publish assume`, the OIDC exchange) in a step after its gate", .{name});
+        }
+        const is_read = inList(&apt_read, name);
+        const cmd = if (is_read) "read" else "write";
+        const cmd_at = toolStep(job, cmd);
+        if (cmd_at == null or assume_at == null or cmd_at.? <= assume_at.?) {
+            try c.problem(a, out, prefix ++ "release.yml: {s}: must run `apt_publish {s}` after it assumed the role", .{ name, cmd });
+        }
+        if (is_read) {
+            if (!c.isStr(c.get(c.get(job, "outputs"), "enabled"), "${{ steps.gate.outputs.enabled }}")) try c.problem(a, out, prefix ++ "release.yml: {s}: must output enabled: ${{{{ steps.gate.outputs.enabled }}}}", .{name});
+            const up = try uploadedNames(a, job);
+            if (!c.eqlList(up, &.{current})) try c.problem(a, out, prefix ++ "release.yml: {s}: must upload exactly the artifact {s}, got {s}", .{ name, current, try c.inspectList(a, up) });
+        } else {
+            if (!c.isStr(c.get(c.get(job, "outputs"), "conflict"), "${{ steps.write.outputs.conflict }}")) try c.problem(a, out, prefix ++ "release.yml: {s}: must output conflict: ${{{{ steps.write.outputs.conflict }}}} (the next attempt starts on it)", .{name});
+            const got = try downloaded(a, job);
+            if (!c.eqlList(got, &.{ next, "verified-assets" })) try c.problem(a, out, prefix ++ "release.yml: {s}: must download exactly the artifacts {s} and verified-assets, got {s}", .{ name, next, try c.inspectList(a, got) });
+            const up = try uploadedNames(a, job);
+            if (up.len != 0) try c.problem(a, out, prefix ++ "release.yml: {s}: must upload nothing, got {s}", .{ name, try c.inspectList(a, up) });
+            const want_read = try std.fmt.allocPrint(a, "${{{{ needs.{s}.outputs.enabled }}}}", .{read_name});
+            const want_signed = try std.fmt.allocPrint(a, "${{{{ needs.{s}.outputs.signed }}}}", .{index_name});
+            if (!envIs(job, "READ_ENABLED", want_read) or !envIs(job, "INDEX_SIGNED", want_signed)) {
+                try c.problem(a, out, prefix ++ "release.yml: {s}: the gate must be given READ_ENABLED: {s} and INDEX_SIGNED: {s}", .{ name, want_read, want_signed });
+            }
+            for ([_][]const u8{ "--true READ_ENABLED", "--true INDEX_SIGNED" }) |flag| {
+                if (std.mem.indexOf(u8, gate_run, flag) == null) try c.problem(a, out, prefix ++ "release.yml: {s}: the gate must check {s}", .{ name, flag });
+            }
+            // The last attempt fails on a lost write; the others hand over to the next.
+            const run = stepRunContaining(job, "apt_publish\" write ") orelse "";
+            const has_last = std.mem.indexOf(u8, run, " --last") != null;
+            if (has_last != (attempt == apt_write.len - 1)) {
+                try c.problem(a, out, prefix ++ "release.yml: {s}: `--last` belongs to the write of the last attempt only (a lost write there fails, a lost write before it starts the next attempt)", .{name});
+            }
+        }
+    } else {
+        if (toolStep(job, "assume") != null or toolStep(job, "read") != null or toolStep(job, "write") != null) {
+            try c.problem(a, out, prefix ++ "release.yml: {s}: holds the signing key, so it must not assume a role, read or write the repository", .{name});
+        }
+        for ([_][]const u8{ "--true READ_ENABLED", "--true HAVE_KEY", "--env APT_GPG_FINGERPRINT" }) |flag| {
+            if (std.mem.indexOf(u8, gate_run, flag) == null) try c.problem(a, out, prefix ++ "release.yml: {s}: the gate must check {s}", .{ name, flag });
+        }
+        const want_read = try std.fmt.allocPrint(a, "${{{{ needs.{s}.outputs.enabled }}}}", .{read_name});
+        if (!envIs(job, "READ_ENABLED", want_read)) try c.problem(a, out, prefix ++ "release.yml: {s}: the gate must be given READ_ENABLED: {s}", .{ name, want_read });
+        if (!envIs(job, "HAVE_KEY", "${{ secrets.APT_GPG_PRIVATE_KEY != '' }}")) try c.problem(a, out, prefix ++ "release.yml: {s}: the gate must be given HAVE_KEY: ${{{{ secrets.APT_GPG_PRIVATE_KEY != '' }}}} (the key itself is only in the signing step)", .{name});
+        if (!c.isStr(c.get(c.get(job, "outputs"), "signed"), "${{ steps.sign.outputs.signed }}")) try c.problem(a, out, prefix ++ "release.yml: {s}: must output signed: ${{{{ steps.sign.outputs.signed }}}}", .{name});
+        const merge_at = toolStep(job, "index");
+        const sign_at = toolStep(job, "sign");
+        if (merge_at == null or sign_at == null or merge_at.? >= sign_at.? or sign_at.? <= g) {
+            try c.problem(a, out, prefix ++ "release.yml: {s}: must merge the index (`apt_publish index`) and then sign it (`apt_publish sign`), both after the gate", .{name});
+        }
+        const got = try downloaded(a, job);
+        if (!c.eqlList(got, &.{ current, "verified-assets" })) try c.problem(a, out, prefix ++ "release.yml: {s}: must download exactly the artifacts {s} and verified-assets, got {s}", .{ name, current, try c.inspectList(a, got) });
+        const up = try uploadedNames(a, job);
+        if (!c.eqlList(up, &.{next})) try c.problem(a, out, prefix ++ "release.yml: {s}: must upload exactly the artifact {s}, got {s}", .{ name, next, try c.inspectList(a, up) });
+    }
+}
+
+/// The puts of tools/apt_publish.zig, which `write` runs in the jobs that hold the role. The role's policy allows a PutObject below the product's
+/// pool directory only with If-None-Match, and below dists/ only with If-Match or If-None-Match; the tool must make exactly those, and in the order
+/// that never lists a file that is not there: the .debs, then the index (Packages before Release), then the invalidation. `src` is the tool.
+pub fn aptToolProblems(a: Allocator, src: []const u8, out: *Out) !void {
+    const f = prefix ++ "tools/apt_publish.zig: ";
+    const pool_put = "try std.fs.path.join(a, &.{ debs_dir, name }), .{ \"--if-none-match\", \"*\" })";
+    const index_put = "try std.fs.path.join(a, &.{ root, rel }), cond)";
+    const cond = "if (tag == null or std.mem.eql(u8, tag.?, state.absent)) .{ \"--if-none-match\", \"*\" } else .{ \"--if-match\", tag.? }";
+    const byhash_put = "state.byHashKey(a, rel, &hash)";
+    const byhash_cond = "put(a, aws_exe, bucket, key, file_path, .{ \"--if-none-match\", \"*\" })";
+    const pool_at = std.mem.indexOf(u8, src, pool_put);
+    const index_at = std.mem.indexOf(u8, src, index_put);
+    const byhash_at = std.mem.indexOf(u8, src, byhash_put);
+    if (pool_at == null) try c.problem(a, out, f ++ "a .deb must be put with If-None-Match (a released .deb is never replaced; the role may not put to the pool otherwise)", .{});
+    if (index_at == null) try c.problem(a, out, f ++ "every object of the index must be put with the condition `cond` (the role may not put to dists/ unconditionally)", .{});
+    if (std.mem.indexOf(u8, src, cond) == null) {
+        try c.problem(a, out, f ++ "the condition of an index put must be If-Match on the ETag that was read, or If-None-Match for an object that did not exist (and nothing else)", .{});
+    }
+    if (std.mem.count(u8, src, "\"put-object\"") != 1) try c.problem(a, out, f ++ "there must be exactly one put-object call, the one in `put`, which always carries a condition", .{});
+    if (std.mem.indexOf(u8, src, "\"--body\", body, cond[0], cond[1] }") == null) try c.problem(a, out, f ++ "`put` must pass its condition to put-object", .{});
+    if (std.mem.indexOf(u8, src, "\"get-object\"") == null) try c.problem(a, out, f ++ "the index must be read with s3api get-object (the CDN caches the index and hands back a stale ETag)", .{});
+    const inval_at = std.mem.indexOf(u8, src, "\"create-invalidation\"");
+    if (inval_at == null) try c.problem(a, out, f ++ "the index must be invalidated after the write", .{});
+    if (pool_at != null and index_at != null and pool_at.? > index_at.?) try c.problem(a, out, f ++ "the .debs must be put before the index (the index must never list a file that is not there)", .{});
+    if (byhash_at == null) try c.problem(a, out, f ++ "the Packages files must be written by their hash (by-hash/SHA256/<hash>) before the plain files change: a client that reads a Release must find the files it lists whatever part of the write has happened", .{});
+    if (std.mem.indexOf(u8, src, byhash_cond) == null) try c.problem(a, out, f ++ "a by-hash file must be put with If-None-Match (it is named by its content and never replaced)", .{});
+    if (byhash_at != null and index_at != null and byhash_at.? > index_at.?) try c.problem(a, out, f ++ "the by-hash files must be put before the plain files of the index", .{});
+    if (pool_at != null and byhash_at != null and pool_at.? > byhash_at.?) try c.problem(a, out, f ++ "the .debs must be put before the by-hash files (the index must never list a file that is not there)", .{});
+    if (inval_at != null and index_at != null and inval_at.? < index_at.?) try c.problem(a, out, f ++ "the invalidation must come after the index is written", .{});
 }
