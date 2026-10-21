@@ -349,7 +349,7 @@ test "actions/create-github-app-token is for release.yml alone, pinned by commit
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const pinned_use = try std.fmt.allocPrint(a, "{s}{s}    steps:\n      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1\n", .{ head, job_head });
+    const pinned_use = try std.fmt.allocPrint(a, "{s}{s}    steps:\n      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510\n", .{ head, job_head });
     try c.expectLines("release.yml", try lint(a, "release.yml", pinned_use), &.{});
     // Mutants: another workflow, and a tag instead of a commit.
     try c.expectLines("ci.yml", try lint(a, "ci.yml", pinned_use), &.{"only GitHub-owned actions pinned by full SHA"});
