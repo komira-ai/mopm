@@ -76,7 +76,7 @@ fn die(comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 fn usage() noreturn {
-    die("usage: cut_release [--gh <path>] [--cosign <path>] [--repo <owner/name>] plan [--sha <commit>] | tag --sha <commit> [--expect-version <v>] | verify-dir <version> <dir> --sha <commit> --source-ref <ref> --trigger <push|workflow_dispatch> | verify <version> <dir> | publish <version> <dir> --verified <file> --notes <file> | bump-internal --version <v> --sha <commit> --internal-repo <owner/name> --submodule <name> --workdir <dir> [--git <path>] | tap --version <v> --formula-file <file> --tap-repo <owner/name> --formula <name> --workdir <dir> [--git <path>]", .{});
+    die("usage: cut_release [--gh <path>] [--cosign <path>] [--cosign-retry-ms <n>] [--repo <owner/name>] plan [--sha <commit>] | tag --sha <commit> [--expect-version <v>] | verify-dir <version> <dir> --sha <commit> --source-ref <ref> --trigger <push|workflow_dispatch> | verify <version> <dir> | publish <version> <dir> --verified <file> --notes <file> | bump-internal --version <v> --sha <commit> --internal-repo <owner/name> --submodule <name> --workdir <dir> [--git <path>] | tap --version <v> --formula-file <file> --tap-repo <owner/name> --formula <name> --workdir <dir> [--git <path>]", .{});
 }
 
 fn out(comptime fmt: []const u8, args: anytype) void {
@@ -93,6 +93,8 @@ const Gh = struct {
     repo: []const u8,
     /// The `cosign` that checks signatures (`--cosign <path>`; the tests give a fake).
     cosign: []const u8 = "cosign",
+    /// The delay before the second try of a `cosign verify-blob` that could not fetch the trusted root; the third waits twice as long (`--cosign-retry-ms`).
+    cosign_retry_ms: u32 = 2000,
     /// The directory of the .deb metadata (`--packaging <dir>`), which verify uses to rebuild each .deb from its tarball.
     packaging: []const u8 = release_debs.default_packaging,
     /// `--packaging` was given.
@@ -503,9 +505,45 @@ fn checkSignatures(gh: Gh, dir_path: []const u8, payload: [][]const u8, source_r
     for (payload) |w| {
         const path = std.fs.path.join(a, &.{ dir_path, w }) catch @panic("oom");
         const bundle = std.fmt.allocPrint(a, "{s}{s}", .{ path, bundle_suffix }) catch @panic("oom");
-        const r = gh.runExe(gh.cosign, &.{ "verify-blob", "--bundle", bundle, "--certificate-identity", identity, "--certificate-oidc-issuer", oidc_issuer, "--certificate-github-workflow-sha", sha, "--certificate-github-workflow-trigger", trigger, "--certificate-github-workflow-repository", gh.repo, path });
-        if (!r.ok) die("cosign verify-blob refused {s}: {s}", .{ w, std.mem.trim(u8, r.stderr, " \r\n") });
+        const args = [_][]const u8{ "verify-blob", "--bundle", bundle, "--certificate-identity", identity, "--certificate-oidc-issuer", oidc_issuer, "--certificate-github-workflow-sha", sha, "--certificate-github-workflow-trigger", trigger, "--certificate-github-workflow-repository", gh.repo, path };
+        var attempt: u32 = 1;
+        while (true) : (attempt += 1) {
+            const r = gh.runExe(gh.cosign, &args);
+            if (r.ok) break;
+            const err = std.mem.trim(u8, r.stderr, " \r\n");
+            if (!isTrustedRootFetchFailure(r.stderr)) die("cosign verify-blob refused {s}: {s}", .{ w, err });
+            if (attempt >= cosign_tries) die("cosign verify-blob could not fetch the Sigstore trusted root for {s} in {d} tries (a network failure, not a verdict on the signature): {s}", .{ w, cosign_tries, err });
+            const wait_ms = @as(u64, gh.cosign_retry_ms) * attempt;
+            std.debug.print("cut_release: cosign verify-blob could not fetch the Sigstore trusted root for {s} (try {d} of {d}); retrying in {d} ms\n", .{ w, attempt, cosign_tries, wait_ms });
+            std.time.sleep(wait_ms * std.time.ns_per_ms);
+        }
     }
+}
+
+/// Tries of `cosign verify-blob` per file when it cannot fetch the Sigstore trusted root.
+const cosign_tries: u32 = 3;
+
+/// cosign's FINAL stderr line says the trusted root (the TUF repository) could not be fetched: a network failure that says nothing about the
+/// signature. Only these retry; any other refusal (a signature or certificate mismatch) is final. Only the last line counts: in legacy-bundle
+/// mode cosign prints the `Could not fetch trusted_root.json ... Continuing` warning and may then report a real mismatch, which is a verdict.
+/// One more shape retries: cosign v3.0.6 (cmd/cosign/cli/verify/common.go, under `co.TrustedMaterial == nil && !verifyOfflineWithKey`) ends a failed fetch with `trusted root is required when
+/// using new bundle format`, raised when the trusted material is nil after the fetch failed, and the fetch error itself is only an earlier warning line. That final
+/// line retries only when an earlier line holds one of the fetch markers; alone it says nothing about why the root is missing.
+fn isTrustedRootFetchFailure(stderr: []const u8) bool {
+    const text = std.mem.trim(u8, stderr, " \r\n");
+    const cut = std.mem.lastIndexOfScalar(u8, text, '\n');
+    const last = if (cut) |i| text[i + 1 ..] else text;
+    const earlier = if (cut) |i| text[0..i] else "";
+    const markers = [_][]const u8{ "tuf refresh failed", "Could not fetch trusted_root.json", "error getting live trusted root" };
+    for (markers) |m| {
+        if (std.mem.indexOf(u8, last, m) != null) return true;
+    }
+    if (std.mem.indexOf(u8, last, "trusted root is required when using new bundle format") != null) {
+        for (markers) |m| {
+            if (std.mem.indexOf(u8, earlier, m) != null) return true;
+        }
+    }
+    return false;
 }
 
 
@@ -821,6 +859,7 @@ pub fn main() !void {
     var notes: ?[]const u8 = null;
     var expect_version: ?[]const u8 = null;
     var cosign: []const u8 = "cosign";
+    var cosign_retry_ms: u32 = 2000;
     var packaging: []const u8 = release_debs.default_packaging;
     var packaging_given = false;
     var git_exe: []const u8 = "git";
@@ -843,6 +882,8 @@ pub fn main() !void {
                 gh_exe = v;
             } else if (std.mem.eql(u8, arg, "--cosign")) {
                 cosign = v;
+            } else if (std.mem.eql(u8, arg, "--cosign-retry-ms")) {
+                cosign_retry_ms = std.fmt.parseInt(u32, v, 10) catch usage();
             } else if (std.mem.eql(u8, arg, "--packaging")) {
                 packaging = v;
                 packaging_given = true;
@@ -888,7 +929,7 @@ pub fn main() !void {
         } else try pos.append(arg);
     }
     if (pos.items.len == 0) usage();
-    const gh = Gh{ .a = a, .exe = gh_exe, .repo = repo, .cosign = cosign, .packaging = packaging, .packaging_given = packaging_given };
+    const gh = Gh{ .a = a, .exe = gh_exe, .repo = repo, .cosign = cosign, .cosign_retry_ms = cosign_retry_ms, .packaging = packaging, .packaging_given = packaging_given };
     const cmd = pos.items[0];
     const n = pos.items.len;
     if (std.mem.eql(u8, cmd, "plan")) {

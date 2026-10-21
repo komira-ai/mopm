@@ -11,11 +11,18 @@
 //!       Fails when the identity, the issuer, the trigger or the repository is missing (a verification that pins nothing is
 //!       not one), when the bundle does not name this file's sha256 and exactly the trigger asked for, or when `cosign_refuse` holds
 //!       a name the file's path ends with (that file "has no valid signature").
+//!       Before all of that it fails with the trusted-root (TUF) fetch error, for the first N calls, when the file `cosign_tuf_fail` holds N;
+//!       the stderr is the file `cosign_tuf_text` when it exists. When the file `cosign_always_fail` exists, every call fails with its text as stderr.
 
 const std = @import("std");
 
 fn failWith(comptime msg: []const u8) noreturn {
-    std.io.getStdErr().writer().print("cosign: " ++ msg ++ "\n", .{}) catch {};
+    failText(msg);
+}
+
+/// Fails with `msg` verbatim on stderr (cosign prints its warnings first and its error last).
+fn failText(msg: []const u8) noreturn {
+    std.io.getStdErr().writer().print("cosign: {s}\n", .{msg}) catch {};
     std.process.exit(1);
 }
 
@@ -59,6 +66,16 @@ pub fn main() !void {
         try std.fs.cwd().writeFile(bundle, try bundleText(a, file, std.posix.getenv("FAKE_COSIGN_TRIGGER") orelse "push"));
     } else if (std.mem.eql(u8, args[0], "verify-blob")) {
         const bundle = flag(args, "--bundle") orelse failWith("verify-blob needs --bundle");
+        // A flaky network: the first N verify-blob calls (N in `cosign_tuf_fail`, counted down on disk) cannot fetch the trusted root.
+        if (dir.readFileAlloc(a, "cosign_tuf_fail", 1 << 8)) |counted| {
+            const left = std.fmt.parseInt(u32, std.mem.trim(u8, counted, " \n"), 10) catch 0;
+            if (left > 0) {
+                try dir.writeFile("cosign_tuf_fail", try std.fmt.allocPrint(a, "{d}\n", .{left - 1}));
+                const text = dir.readFileAlloc(a, "cosign_tuf_text", 1 << 12) catch "WARNING: Could not fetch trusted_root.json from the TUF repository: tuf refresh failed: Get https://tuf-repo-cdn.sigstore.dev/timestamp.json: dial tcp: i/o timeout\nError: error getting live trusted root: tuf refresh failed";
+                failText(text);
+            }
+        } else |_| {}
+        if (dir.readFileAlloc(a, "cosign_always_fail", 1 << 12)) |text| failText(text) else |_| {}
         if (flag(args, "--certificate-identity") == null) failWith("verify-blob needs --certificate-identity");
         if (flag(args, "--certificate-oidc-issuer") == null) failWith("verify-blob needs --certificate-oidc-issuer");
         const trigger = flag(args, "--certificate-github-workflow-trigger") orelse failWith("verify-blob needs --certificate-github-workflow-trigger");
