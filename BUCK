@@ -502,6 +502,20 @@ zig_test(  # buck-only: mopm build, run, repl with native libraries; the Zig por
     **_TOOLS
 )
 
+zig_exe(  # buck-only: the `mojo_compile` wrapper of the toolchain directory `mopm unit build` runs, for a real Mojo (the real wrapper is a buildrules program)
+    name = "mojo-compile-shim",
+    src = "tests/drivers/mojo_compile_shim.zig",
+    **_TOOLS
+)
+
+zig_test(  # buck-only: an archive in an empty-module package, from mopm pack and mopm lock to a test linked by mopm unit test, against the real Mojo
+    name = "native_static",
+    src = "tests/drivers/native_static_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig"],
+    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm", MOPM_FAKE_REGISTRY = ":mopm-fake-registry", MOJO_COMPILE_SHIM = ":mojo-compile-shim"),
+    **_TOOLS
+)
+
 zig_test(  # buck-only: mopm test --list against the real mojo; the Zig port of tests/e2e/test_discovery.sh
     name = "discovery",
     src = "tests/drivers/test_discovery_test.zig",

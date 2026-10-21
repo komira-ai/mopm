@@ -54,6 +54,11 @@ pub const NativeLib = struct {
     mode: metadata.Mode = .link,
     build: ?[]const u8 = null,
     outputs: []const []const u8 = &.{},
+    /// Sonames of other packages' native libraries this one needs (the static link order, and the diagnostics of a
+    /// closure that lacks one).
+    needs: []const []const u8 = &.{},
+    /// An exclusivity group: a closure may hold one owner per group. "" for none.
+    exclusive: []const u8 = "",
 };
 
 pub const Bin = struct { name: []const u8, path: []const u8 };
@@ -331,7 +336,7 @@ const Checker = struct {
                 return c.fail(e.pos, "native library id '{s}' must be a lowercase identifier (letters, digits, '_')", .{e.key});
             }
             const sub = try c.table(e, "[native]");
-            try c.onlyKeys(sub, in, &.{ "kind", "mode", "build", "outputs" });
+            try c.onlyKeys(sub, in, &.{ "kind", "mode", "build", "outputs", "needs", "exclusive" });
             var lib = NativeLib{ .id = e.key };
             if (sub.get("kind")) |k| {
                 const kind = try c.str(k, in);
@@ -345,6 +350,11 @@ const Checker = struct {
             }
             lib.build = try c.optStr(sub, "build", in);
             if (sub.get("outputs")) |o| lib.outputs = try c.strings(o, in);
+            if (sub.get("needs")) |o| lib.needs = try c.strings(o, in);
+            if (try c.optStr(sub, "exclusive", in)) |x| {
+                if (x.len == 0) return c.fail(sub.get("exclusive").?.pos, "'exclusive' in {s} must not be empty", .{in});
+                lib.exclusive = x;
+            }
             try out.append(lib);
         }
         return try out.toOwnedSlice();
@@ -495,6 +505,15 @@ fn writeNativeLib(w: anytype, l: NativeLib) !void {
     try jsonOpt(w, l.build);
     try w.writeAll(", \"outputs\": ");
     try jsonStrList(w, l.outputs);
+    // Left out when absent, so that the output for a manifest that never used them is what it was.
+    if (l.needs.len > 0) {
+        try w.writeAll(", \"needs\": ");
+        try jsonStrList(w, l.needs);
+    }
+    if (l.exclusive.len > 0) {
+        try w.writeAll(", \"exclusive\": ");
+        try jsonStr(w, l.exclusive);
+    }
     try w.writeAll("}");
 }
 

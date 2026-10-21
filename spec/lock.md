@@ -53,8 +53,17 @@ with. It does not duplicate package metadata; that stays in the installed
     one compiler, so it must equal `toolchain.mojo`.
   - `deps`: names of direct Mojo dependencies, each present in `packages`.
   - `native`: native libraries the package ships (`id`, `soname`, optional
-    `sha256` of the library file), copied from the package metadata so that
-    link planning can run from the lock alone.
+    `sha256` of the library file, `kind`, `needs`, `exclusive`), copied from the
+    package metadata so that link planning can run from the lock alone. `mopm
+    lock` writes `sha256`: it fetches the package file of a version that ships
+    natives (once, and not again while the old lock pins that file), checks its
+    size and sha256 against the channel's repodata, and hashes the library
+    file that carries `soname` (the shared object for `kind` shared or both, the
+    archive for static), which must be `lib/<soname>` in the package. `kind` is
+    `shared` (the default, left out), `static` or `both`; `needs` lists the
+    sonames of other packages' libraries this one needs; `exclusive` names a
+    group of which a closure may hold one library. All three are the package's
+    own declarations, left out when they are the default.
 
 ## Rules the schema cannot express
 

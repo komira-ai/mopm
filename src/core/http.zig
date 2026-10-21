@@ -28,6 +28,8 @@ pub const Options = struct {
     content_type: ?[]const u8 = "application/json",
     /// Sent as given (the presigned upload's headers).
     extra_headers: []const std.http.Header = &.{},
+    /// The most a body may hold; a longer one is `error.StreamTooLong`.
+    max_body: usize = 64 << 20,
 };
 
 pub fn request(arena: Allocator, method: std.http.Method, url: []const u8, options: Options) !Answer {
@@ -59,7 +61,7 @@ pub fn request(arena: Allocator, method: std.http.Method, url: []const u8, optio
         if (std.ascii.eqlIgnoreCase(h.name, "x-mopm-request-id")) answer.request_id = try arena.dupe(u8, h.value);
         if (std.ascii.eqlIgnoreCase(h.name, "retry-after")) answer.retry_after = std.fmt.parseInt(u32, h.value, 10) catch null;
     }
-    answer.body = try req.reader().readAllAlloc(arena, 64 << 20);
+    answer.body = try req.reader().readAllAlloc(arena, options.max_body);
     return answer;
 }
 

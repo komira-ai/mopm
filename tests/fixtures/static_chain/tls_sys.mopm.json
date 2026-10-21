@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "name": "tls_sys",
+  "version": "2.4.0",
+  "deps": [{"name": "crypto_sys"}],
+  "native": [
+    {
+      "id": "tls_sys",
+      "soname": "libtls_sys.a",
+      "kind": "static",
+      "static_file": "lib/libtls_sys.a",
+      "needs": ["libcrypto_sys.a"]
+    }
+  ]
+}

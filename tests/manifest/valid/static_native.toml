@@ -1,0 +1,15 @@
+# A package that ships a static archive (spec/mopm-toml.md, [native.<id>]).
+[package]
+name = "tls_sys"
+version = "2.4.0"
+
+[toolchain]
+mojo = "1.0.0"
+
+[dependencies]
+crypto_sys = "1.39"
+
+[native.tls_sys]
+kind = "static"
+needs = ["libcrypto_sys.a", "libz.so.1"]
+exclusive = "libtls"

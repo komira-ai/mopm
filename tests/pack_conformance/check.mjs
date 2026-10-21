@@ -90,5 +90,50 @@ const flipped = Buffer.from(bytes);
 flipped[50] ^= 0xff; // inside metadata.json: the zip CRC-32 no longer holds
 refused('a flipped byte', flipped, expectation('noarch'), 'archive_corrupt', 'archive_invalid');
 
+// A package that ships a static archive per platform: one .conda per subdir, each with lib/lib<stem>.a, the same
+// <name>.mopm.json (so one manifest_sha256), and the platform's facts in info/about.json. The validator must accept
+// both files, list the archive among the files, and see no native id among the dependencies.
+mkdirSync(join(work, 'nat', 'linux'), { recursive: true });
+mkdirSync(join(work, 'nat', 'osx'), { recursive: true });
+writeFileSync(
+  join(work, 'nat', 'mopm.toml'),
+  '[package]\nname = "natdemo"\nversion = "2.4.0"\n\n[toolchain]\nmojo = "1.0.0"\n\n[native.nat_sys]\nkind = "static"\nneeds = ["libz.a"]\nexclusive = "libnat"\n',
+);
+writeFileSync(join(work, 'nat', 'natdemo.mojoc'), mojoc);
+writeFileSync(join(work, 'nat', 'linux', 'libnat_sys.a'), '!<arch>\nlinux members\n');
+writeFileSync(join(work, 'nat', 'osx', 'libnat_sys.a'), '!<arch>\nosx members\n');
+const natOut = execFileSync(
+  mopm,
+  ['pack', '--compiler', '1.0.0',
+    '--mojoc', `linux-64=${join(work, 'nat', 'natdemo.mojoc')}`, '--mojoc', `osx-arm64=${join(work, 'nat', 'natdemo.mojoc')}`,
+    '--native', `nat_sys=linux-64:${join(work, 'nat', 'linux', 'libnat_sys.a')}`, '--native', `nat_sys=osx-arm64:${join(work, 'nat', 'osx', 'libnat_sys.a')}`,
+    '--manifest', join(work, 'nat', 'mopm.toml'), '-o', join(work, 'natdist')],
+  { encoding: 'utf8' },
+);
+const natPacked = [...natOut.matchAll(/packed (\S+)\n  sha256 ([0-9a-f]{64})\n  size (\d+)\n  manifest_sha256 ([0-9a-f]{64})/g)].map((m) => ({
+  path: m[1], sha256: m[2], size: Number(m[3]), manifestSha256: m[4],
+}));
+check('native: pack printed two files', natPacked.length === 2, natOut);
+check('native: both files carry the same metadata (one manifest_sha256)', natPacked.length === 2 && natPacked[0].manifestSha256 === natPacked[1].manifestSha256);
+const natFile = 'mojo-natdemo-2.4.0-mojo1.0.0_0.conda';
+for (const p of natPacked) {
+  const subdir = p.path.split('/').slice(-2)[0];
+  const nbytes = readFileSync(p.path);
+  const v = validatePackage(nbytes, { name: 'natdemo', version: '2.4.0', subdir, filename: natFile, sha256: p.sha256, manifestSha256: p.manifestSha256 });
+  check(`native ${subdir}: the validator accepts the package`, v.ok === true, JSON.stringify(v));
+  if (v.ok) {
+    check(`native ${subdir}: the archive is a file of the package, and no native id is a dependency`,
+      JSON.stringify(v.facts.files.map((f) => f.path).sort()) ===
+        JSON.stringify(['info/about.json', 'info/index.json', 'info/paths.json', 'lib/libnat_sys.a', 'lib/mojo/natdemo.mojoc', 'lib/mojo/natdemo.mopm.json']) &&
+        JSON.stringify(v.facts.mojoDeps) === JSON.stringify([]),
+      JSON.stringify(v.facts));
+  }
+}
+if (natPacked.length === 2) {
+  // Planted: a version that is not the metadata's is refused for a package with an archive as for any other.
+  const nbytes = readFileSync(natPacked[0].path);
+  refused('native: a version that is not the metadata\'s', nbytes, { name: 'natdemo', version: '2.4.1', subdir: natPacked[0].path.split('/').slice(-2)[0], filename: 'mojo-natdemo-2.4.1-mojo1.0.0_0.conda' }, 'version_mismatch', 'manifest_invalid');
+}
+
 console.log(failures === 0 ? 'pack conformance OK' : `${failures} failure(s)`);
 process.exit(failures === 0 ? 0 : 1);

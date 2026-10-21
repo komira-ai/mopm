@@ -263,8 +263,9 @@ writes), never both. Version requirements follow cargo: `"1.2"`, `"~1.2"`, `"=1.
 `"*"`. mopm refuses keys and tables it does not know, so a typo is an error; `mopm metadata` shows exactly how
 the file was read. Every key, with its type, default and allowed values, is in [configuration](configuration.md); `spec/mopm-toml.md` is the draft of the format, and where it differs from the parser, the configuration page says what the parser does.
 
-Not all of this is used end to end today: `[native-dependencies]` and `[native.<id>]` are checked and shown by
-`mopm metadata`, and `mopm pack` refuses a package that has either, for now.
+Not all of this is used end to end today: `[native-dependencies]` is checked and shown by `mopm metadata`, and
+`mopm pack` refuses a package that has it, for now. `[native.<id>]` with `kind = "static"` is packed: give the
+archive of each platform with `--native <id>=<subdir>:<file>` (see [configuration](configuration.md)).
 
 ### Registries and credentials
 

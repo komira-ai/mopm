@@ -20,7 +20,8 @@
       "native": [
         {
           "id": "crypto",
-          "soname": "libcrypto_native.so.1"
+          "soname": "libcrypto_native.so.1",
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
         }
       ]
     },
@@ -37,7 +38,8 @@
       "native": [
         {
           "id": "crypto",
-          "soname": "libcrypto_native.so.1"
+          "soname": "libcrypto_native.so.1",
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
         }
       ]
     },

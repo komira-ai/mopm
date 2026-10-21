@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "name": "crypto_sys",
+  "version": "1.39.0",
+  "native": [
+    {
+      "id": "crypto_sys",
+      "soname": "libcrypto_sys.a",
+      "kind": "static",
+      "static_file": "lib/libcrypto_sys.a"
+    }
+  ]
+}

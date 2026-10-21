@@ -1,12 +1,17 @@
 //! `mopm pack` and `mopm publish`: a package as a `.conda`, and onto a registry.
 //!
-//!   mopm pack    --compiler <version> --mojoc [<subdir>=]<path>... [--manifest <file>] [-o <dir>]
-//!   mopm publish --compiler <version> --mojoc [<subdir>=]<path>... [--manifest <file>]
-//!                [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
+//!   mopm pack    --compiler <version> --mojoc [<subdir>=]<file>... [--native <id>=<subdir>:<file>...]
+//!                [--manifest <file>] [-o <dir>]
+//!   mopm publish --compiler <version> --mojoc [<subdir>=]<file>... [--native <id>=<subdir>:<file>...]
+//!                [--manifest <file>] [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
 //!                [--readme <file>] [--dry-run]
 //!
 //! `pack` writes `<dir>/<subdir>/mojo-<name>-<version>-mojo<compiler>_0.conda`
-//! (src/core/conda.zig) and prints each file's sha256. `publish` packs the
+//! (src/core/conda.zig) and prints each file's sha256. A package that declares
+//! `[native.<id>] kind = "static"` gets its archive for each subdir from
+//! `--native <id>=<subdir>:<file>` (one per native and subdir; the `.conda` of a
+//! subdir holds that subdir's archives at `lib/lib<name>.a`), and a native
+//! library is never packed for `noarch`. `publish` packs the
 //! same way and then follows the registry's three steps (spec/api/openapi.yaml):
 //! begin an upload per file and PUT the bytes to the URL it names, commit the
 //! uploads, and poll the publish until it is `published` or `rejected`.
@@ -27,11 +32,14 @@ const credentials = core.credentials;
 const registry_cmd = @import("registry_cmd.zig");
 
 const usage =
-    \\usage: mopm pack    --compiler <mojo version> --mojoc [<subdir>=]<file>... [--manifest <mopm.toml>] [-o <dir>]
-    \\       mopm publish --compiler <mojo version> --mojoc [<subdir>=]<file>... [--manifest <mopm.toml>]
-    \\                    [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--readme <file>] [--dry-run]
+    \\usage: mopm pack    --compiler <mojo version> --mojoc [<subdir>=]<file>... [--native <id>=<subdir>:<file>...]
+    \\                    [--manifest <mopm.toml>] [-o <dir>]
+    \\       mopm publish --compiler <mojo version> --mojoc [<subdir>=]<file>... [--native <id>=<subdir>:<file>...]
+    \\                    [--manifest <mopm.toml>] [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
+    \\                    [--readme <file>] [--dry-run]
     \\
     \\  <subdir> is noarch (the default), linux-64, linux-aarch64 or osx-arm64.
+    \\  --native gives the static archive (lib<name>.a) of a [native.<id>] for one subdir; never noarch.
     \\  The token is $MOPM_TOKEN, else the one 'mopm login' stored.
     \\
 ;
@@ -50,9 +58,13 @@ pub const Cmd = enum { pack, publish };
 
 pub const Mojoc = struct { subdir: []const u8, path: []const u8 };
 
+/// `--native <id>=<subdir>:<file>`: the archive of native library `id` built for `subdir`.
+pub const NativeFile = struct { id: []const u8, subdir: []const u8, path: []const u8 };
+
 pub const Flags = struct {
     compiler: []const u8 = "",
     mojoc: []const Mojoc = &.{},
+    natives: []const NativeFile = &.{},
     manifest: []const u8 = "mopm.toml",
     out: []const u8 = "dist",
     registry: []const u8 = "prod",
@@ -68,7 +80,7 @@ fn bad(arena: Allocator, comptime fmt: []const u8, args: anytype) Allocator.Erro
 }
 
 fn takesValue(cmd: Cmd, flag: []const u8) bool {
-    const common = [_][]const u8{ "--compiler", "--mojoc", "--manifest" };
+    const common = [_][]const u8{ "--compiler", "--mojoc", "--manifest", "--native" };
     for (common) |c| {
         if (std.mem.eql(u8, c, flag)) return true;
     }
@@ -82,6 +94,7 @@ fn takesValue(cmd: Cmd, flag: []const u8) bool {
 pub fn parseFlags(arena: Allocator, cmd: Cmd, args: []const []const u8) Allocator.Error!Parsed {
     var f = Flags{};
     var mojoc = std.ArrayList(Mojoc).init(arena);
+    var natives = std.ArrayList(NativeFile).init(arena);
     var have_compiler = false;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
@@ -107,6 +120,24 @@ pub fn parseFlags(arena: Allocator, cmd: Cmd, args: []const []const u8) Allocato
             f.config_dir = v;
         } else if (std.mem.eql(u8, a, "--readme")) {
             f.readme = v;
+        } else if (std.mem.eql(u8, a, "--native")) {
+            // --native <id>=<subdir>:<file>
+            const eq = std.mem.indexOfScalar(u8, v, '=') orelse return bad(arena, "--native {s}: expected <id>=<subdir>:<file>", .{v});
+            const colon = std.mem.indexOfScalarPos(u8, v, eq + 1, ':') orelse return bad(arena, "--native {s}: expected <id>=<subdir>:<file>", .{v});
+            const entry = NativeFile{ .id = v[0..eq], .subdir = v[eq + 1 .. colon], .path = v[colon + 1 ..] };
+            if (entry.id.len == 0 or entry.path.len == 0) return bad(arena, "--native {s}: expected <id>=<subdir>:<file>", .{v});
+            if (!conda.isSubdir(entry.subdir)) {
+                return bad(arena, "--native {s}: '{s}' is not a subdir (linux-64, linux-aarch64, osx-arm64)", .{ v, entry.subdir });
+            }
+            if (std.mem.eql(u8, entry.subdir, "noarch")) {
+                return bad(arena, "--native {s}: an archive is built for one platform; it cannot be packed for noarch", .{v});
+            }
+            for (natives.items) |n| {
+                if (std.mem.eql(u8, n.id, entry.id) and std.mem.eql(u8, n.subdir, entry.subdir)) {
+                    return bad(arena, "--native names {s} for {s} twice", .{ entry.id, entry.subdir });
+                }
+            }
+            try natives.append(entry);
         } else {
             // --mojoc <path> or --mojoc <subdir>=<path>: a prefix before the
             // first '=' that has no '/' names a subdir.
@@ -129,6 +160,7 @@ pub fn parseFlags(arena: Allocator, cmd: Cmd, args: []const []const u8) Allocato
     if (!have_compiler) return bad(arena, "--compiler <exact mojo version> is required", .{});
     if (mojoc.items.len == 0) return bad(arena, "--mojoc <file> is required", .{});
     f.mojoc = mojoc.items;
+    f.natives = natives.items;
     return .{ .ok = f };
 }
 
@@ -202,6 +234,14 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
         error.OutOfMemory => return error.OutOfMemory,
     };
 
+    const native_files = switch (try nativeFiles(arena, m, f)) {
+        .ok => |files| files,
+        .bad => |reason| {
+            err("{s}\n", .{reason});
+            return null;
+        },
+    };
+
     var packs = std.ArrayList(conda.Packed).init(arena);
     for (f.mojoc) |entry| {
         const bytes = std.fs.cwd().readFileAlloc(arena, entry.path, 1 << 30) catch |e| {
@@ -219,6 +259,7 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
             .subdir = entry.subdir,
             .deps = deps,
             .mojoc = bytes,
+            .natives = native_files.get(entry.subdir) orelse &.{},
         });
         if (cmd == .publish and p.bytes.len > max_file_bytes) {
             err("{s} is {d} bytes; a package file is at most {d} bytes\n", .{ p.file_name, p.bytes.len, max_file_bytes });
@@ -231,6 +272,68 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
         return null;
     }
     return .{ .m = m, .packs = packs.items, .manifest_dir = std.fs.path.dirname(f.manifest) orelse "." };
+}
+
+/// What `nativeFiles` found: the archives by subdir, or why the package cannot be packed.
+const Files = union(enum) { ok: std.StringHashMap([]const conda.Native), bad: []const u8 };
+
+fn nativeBad(arena: Allocator, comptime fmt: []const u8, args: anytype) Allocator.Error!Files {
+    return .{ .bad = try std.fmt.allocPrint(arena, fmt, args) };
+}
+
+/// The static archives to pack, by subdir: for each `[native.<id>]` of `m` and each subdir `f.mojoc` packs, the file
+/// `--native` names, read and checked, or the reason it cannot be done. The registry wants every subdir's file to hold every
+/// native the metadata declares and every file of the version to carry the same `.mopm.json`, so a native without an
+/// archive for a subdir, a `--native` that nothing declares or packs, and a soname that differs between subdirs are
+/// refused here, before a byte is packed.
+fn nativeFiles(arena: Allocator, m: manifest.Manifest, f: Flags) anyerror!Files {
+    var by_subdir = std.StringHashMap([]const conda.Native).init(arena);
+    for (f.natives) |nf| {
+        var declared = false;
+        for (m.native) |n| declared = declared or std.mem.eql(u8, n.id, nf.id);
+        if (!declared) {
+            return nativeBad(arena, "--native {s}=...: {s} declares no [native.{s}]", .{ nf.id, f.manifest, nf.id });
+        }
+        var packed_here = false;
+        for (f.mojoc) |entry| packed_here = packed_here or std.mem.eql(u8, entry.subdir, nf.subdir);
+        if (!packed_here) {
+            return nativeBad(arena, "--native {s}={s}:...: no --mojoc packs the subdir {s}", .{ nf.id, nf.subdir, nf.subdir });
+        }
+    }
+    if (m.native.len == 0) return .{ .ok = by_subdir };
+    for (f.mojoc) |entry| {
+        if (std.mem.eql(u8, entry.subdir, "noarch")) {
+            return nativeBad(arena, "{s} declares native libraries, which are built for one platform; pack linux-64 (or another subdir), not noarch", .{f.manifest});
+        }
+    }
+    for (f.mojoc) |entry| {
+        var list = std.ArrayList(conda.Native).init(arena);
+        for (m.native) |n| {
+            var found: ?NativeFile = null;
+            for (f.natives) |nf| {
+                if (std.mem.eql(u8, nf.id, n.id) and std.mem.eql(u8, nf.subdir, entry.subdir)) found = nf;
+            }
+            const nf = found orelse {
+                return nativeBad(arena, "native library '{s}' has no archive for {s}: add --native {s}={s}:<lib<name>.a>", .{ n.id, entry.subdir, n.id, entry.subdir });
+            };
+            const bytes = std.fs.cwd().readFileAlloc(arena, nf.path, 1 << 30) catch |e| {
+                return nativeBad(arena, "{s}: {s}", .{ nf.path, @errorName(e) });
+            };
+            const native = conda.Native{ .id = n.id, .soname = std.fs.path.basename(nf.path), .needs = n.needs, .exclusive = n.exclusive, .archive = bytes };
+            if (try conda.nativeProblem(arena, native)) |why| {
+                return nativeBad(arena, "{s}: {s}", .{ nf.path, why });
+            }
+            // The first subdir fixes the name; a later one that differs would make a different `.mopm.json`.
+            for (by_subdir.get(f.mojoc[0].subdir) orelse &.{}) |first| {
+                if (std.mem.eql(u8, first.id, n.id) and !std.mem.eql(u8, first.soname, native.soname)) {
+                    return nativeBad(arena, "native library '{s}' is {s} for {s} but {s} for {s}; every subdir's file carries the same metadata, so the archive has one name", .{ n.id, first.soname, f.mojoc[0].subdir, native.soname, entry.subdir });
+                }
+            }
+            try list.append(native);
+        }
+        try by_subdir.put(entry.subdir, list.items);
+    }
+    return .{ .ok = by_subdir };
 }
 
 /// The version of the package each path dependency (with a version) names, read from its own mopm.toml beside
@@ -333,6 +436,7 @@ fn packCmd(arena: Allocator, f: Flags) anyerror!u8 {
         const path = try std.fs.path.join(arena, &.{ dir, p.file_name });
         try std.fs.cwd().writeFile(path, p.bytes);
         try out.print("packed {s}\n  sha256 {s}\n  size {d}\n  manifest_sha256 {s}\n", .{ path, &p.sha256, p.bytes.len, &p.manifest_sha256 });
+        for (p.natives) |n| try out.print("  native {s} sha256 {s} size {d}\n", .{ n.soname, &n.sha256, n.size });
     }
     return 0;
 }
@@ -564,6 +668,119 @@ test "pack and publish flags" {
     try parseBad(a, .publish, &.{ "--compiler", "1.0.0", "--mojoc", "a", "-o", "x" }, "unexpected argument");
     try parseBad(a, .publish, &.{ "--compiler", "1.0.0", "--mojoc" }, "needs a value");
     try parseBad(a, .publish, &.{ "--compiler", "1.0.0", "--mojoc", "linux-64=" }, "no file");
+}
+
+test "--native names an archive per native library and subdir, and nothing that is not one" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    const f = try parseOk(a, .pack, &.{ "--compiler", "1.0.0", "--mojoc", "linux-64=m", "--native", "tls_sys=linux-64:dist/libtls_sys.a", "--native", "tls_sys=osx-arm64:other/libtls_sys.a", "--native", "z=linux-64:a:b" });
+    try std.testing.expectEqual(@as(usize, 3), f.natives.len);
+    try std.testing.expectEqualStrings("tls_sys", f.natives[0].id);
+    try std.testing.expectEqualStrings("linux-64", f.natives[0].subdir);
+    try std.testing.expectEqualStrings("dist/libtls_sys.a", f.natives[0].path);
+    try std.testing.expectEqualStrings("osx-arm64", f.natives[1].subdir);
+    // The first colon after the id ends the subdir: the rest is a path, colons and all.
+    try std.testing.expectEqualStrings("a:b", f.natives[2].path);
+    // publish takes them too.
+    const g = try parseOk(a, .publish, &.{ "--compiler", "1.0.0", "--mojoc", "linux-64=m", "--native", "x=linux-64:p", "--dry-run" });
+    try std.testing.expectEqual(@as(usize, 1), g.natives.len);
+
+    try parseBad(a, .pack, &.{ "--compiler", "1.0.0", "--mojoc", "m", "--native", "libx.a" }, "expected <id>=<subdir>:<file>");
+    try parseBad(a, .pack, &.{ "--compiler", "1.0.0", "--mojoc", "m", "--native", "x=linux-64" }, "expected <id>=<subdir>:<file>");
+    try parseBad(a, .pack, &.{ "--compiler", "1.0.0", "--mojoc", "m", "--native", "=linux-64:p" }, "expected <id>=<subdir>:<file>");
+    try parseBad(a, .pack, &.{ "--compiler", "1.0.0", "--mojoc", "m", "--native", "x=linux-64:" }, "expected <id>=<subdir>:<file>");
+    try parseBad(a, .pack, &.{ "--compiler", "1.0.0", "--mojoc", "m", "--native", "x=win-64:p" }, "is not a subdir");
+    try parseBad(a, .pack, &.{ "--compiler", "1.0.0", "--mojoc", "m", "--native", "x=noarch:p" }, "cannot be packed for noarch");
+    try parseBad(a, .pack, &.{ "--compiler", "1.0.0", "--mojoc", "m", "--native", "x=linux-64:p", "--native", "x=linux-64:q" }, "--native names x for linux-64 twice");
+    try parseBad(a, .pack, &.{ "--compiler", "1.0.0", "--mojoc", "m", "--native" }, "needs a value");
+}
+
+const native_manifest_text =
+    \\[package]
+    \\name = "demo"
+    \\version = "0.1.0"
+    \\
+    \\[toolchain]
+    \\mojo = "1.0.0"
+    \\
+    \\[native.nat]
+    \\kind = "static"
+    \\needs = ["libz.a"]
+    \\exclusive = "libnat"
+    \\
+;
+
+fn nativeOk(a: Allocator, m: manifest.Manifest, f: Flags) !std.StringHashMap([]const conda.Native) {
+    const found = try nativeFiles(a, m, f);
+    // A refusal is the test's failure; its reason is what `expectEqualStrings` shows.
+    if (found == .bad) try std.testing.expectEqualStrings("", found.bad);
+    return found.ok;
+}
+
+fn nativeFlags(mojoc: []const Mojoc, natives: []const NativeFile) Flags {
+    return .{ .compiler = "1.0.0", .mojoc = mojoc, .natives = natives, .manifest = "m/mopm.toml" };
+}
+
+test "nativeFiles reads the archive of each native library for each subdir it packs, and refuses what the registry would" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makePath("linux");
+    try tmp.dir.makePath("osx");
+    try tmp.dir.writeFile("linux/libnat.a", "!<arch>\nlinux\n");
+    try tmp.dir.writeFile("osx/libnat.a", "!<arch>\nosx\n");
+    try tmp.dir.writeFile("osx/libother.a", "!<arch>\nosx\n");
+    try tmp.dir.makePath("bad");
+    try tmp.dir.writeFile("bad/libnat.a", "not an archive at all");
+    const root = try tmp.dir.realpathAlloc(a, ".");
+    const p = struct {
+        fn of(arena: Allocator, r: []const u8, rel: []const u8) []const u8 {
+            return std.fs.path.join(arena, &.{ r, rel }) catch unreachable;
+        }
+    }.of;
+    var diag: manifest.Diagnostic = .{};
+    const m = try manifest.parse(a, native_manifest_text, &diag);
+    const linux = Mojoc{ .subdir = "linux-64", .path = "x" };
+    const osx = Mojoc{ .subdir = "osx-arm64", .path = "x" };
+    const n_linux = NativeFile{ .id = "nat", .subdir = "linux-64", .path = p(a, root, "linux/libnat.a") };
+    const n_osx = NativeFile{ .id = "nat", .subdir = "osx-arm64", .path = p(a, root, "osx/libnat.a") };
+
+    // Both subdirs: each gets its own archive, named for the library, with the manifest's needs and group.
+    const got = try nativeOk(a, m, nativeFlags(&.{ linux, osx }, &.{ n_linux, n_osx }));
+    const l = got.get("linux-64").?;
+    try std.testing.expectEqual(@as(usize, 1), l.len);
+    try std.testing.expectEqualStrings("nat", l[0].id);
+    try std.testing.expectEqualStrings("libnat.a", l[0].soname);
+    try std.testing.expectEqualStrings("libz.a", l[0].needs[0]);
+    try std.testing.expectEqualStrings("libnat", l[0].exclusive);
+    try std.testing.expectEqualStrings("!<arch>\nlinux\n", l[0].archive);
+    try std.testing.expectEqualStrings("!<arch>\nosx\n", got.get("osx-arm64").?[0].archive);
+
+    // A manifest with no native libraries packs as it always did: no entries, whatever the subdirs.
+    const plain = try manifest.parse(a, "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n", &diag);
+    const none = try nativeOk(a, plain, nativeFlags(&.{.{ .subdir = "noarch", .path = "x" }}, &.{}));
+    try std.testing.expectEqual(@as(u32, 0), none.count());
+
+    // Each of these is a refusal, with its reason.
+    const noarch = Mojoc{ .subdir = "noarch", .path = "x" };
+    const Refusal = struct { flags: Flags, want: []const u8 };
+    const refusals = [_]Refusal{
+        .{ .flags = nativeFlags(&.{ linux, osx }, &.{n_linux}), .want = "native library 'nat' has no archive for osx-arm64" },
+        .{ .flags = nativeFlags(&.{linux}, &.{ n_linux, .{ .id = "other", .subdir = "linux-64", .path = "x" } }), .want = "declares no [native.other]" },
+        .{ .flags = nativeFlags(&.{linux}, &.{ n_linux, n_osx }), .want = "no --mojoc packs the subdir osx-arm64" },
+        .{ .flags = nativeFlags(&.{ linux, noarch }, &.{n_linux}), .want = "built for one platform" },
+        .{ .flags = nativeFlags(&.{linux}, &.{.{ .id = "nat", .subdir = "linux-64", .path = p(a, root, "bad/libnat.a") }}), .want = "is not a static archive (it does not start with !<arch>)" },
+        .{ .flags = nativeFlags(&.{linux}, &.{.{ .id = "nat", .subdir = "linux-64", .path = p(a, root, "absent.a") }}), .want = "FileNotFound" },
+        .{ .flags = nativeFlags(&.{ linux, osx }, &.{ n_linux, .{ .id = "nat", .subdir = "osx-arm64", .path = p(a, root, "osx/libother.a") } }), .want = "is libnat.a for linux-64 but libother.a for osx-arm64" },
+    };
+    for (refusals) |r| {
+        const found = try nativeFiles(a, m, r.flags);
+        try std.testing.expect(found == .bad);
+        try std.testing.expect(std.mem.indexOf(u8, found.bad, r.want) != null);
+    }
 }
 
 test "version refusals" {
