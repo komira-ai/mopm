@@ -327,7 +327,7 @@ jobs:
       - name: Render Formula/mopm.rb from the verified SHA256SUMS, with the flags the tap's guard expects
         env:
           VERSION: ${{ needs.tag.outputs.version }}
-        run: '"$RUNNER_TEMP/channels" formula --sums dist/SHA256SUMS --name mopm --version "$VERSION" --desc "Package manager for Mojo" --homepage "https://mopm.dev" --license "Apache-2.0" --repo "$GITHUB_REPOSITORY" --out "$RUNNER_TEMP/tap/mopm.rb"'
+        run: '"$RUNNER_TEMP/channels" formula --sums dist/SHA256SUMS --name mopm --version "$VERSION" --desc "Package manager for Mojo" --homepage "https://mopm.dev" --license "Apache-2.0" --repo "$GITHUB_REPOSITORY" --no-explicit-version --out "$RUNNER_TEMP/tap/mopm.rb"'
       - name: Mint the installation token of the release bot, for homebrew-tap only
         id: tapapp
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0

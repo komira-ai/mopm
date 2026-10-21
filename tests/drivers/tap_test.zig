@@ -7,7 +7,7 @@
 //! the version higher than the formula on main, the tag v<semver> existing. The good scenario checks each of those
 //! on the calls the tool made; then each test plants one defect (a mutant) and requires a refusal for that reason
 //! with no push and no pull request, so a refusal is the defect's doing. The formula used is the golden formula
-//! (tests/channels/golden/mopm.rb), which is the tap guard's own fixture.
+//! (tests/channels/golden/mopm.rb): the default render, which is the tap guard's fixture plus its version line.
 //!
 //! What it proves that a green run of the good scenario alone would not:
 //!   - monotonic: a tap that is ahead (numerically: 1.2.10 is above 1.2.3) is refused with no write; a tap at the
@@ -119,7 +119,7 @@ const World = struct {
     }
 };
 
-/// The formula of 1.2.3 as `channels formula` renders it (the golden file, the tap guard's own fixture).
+/// The formula of 1.2.3 as `channels formula` renders it (the golden file: the default render, with its version line).
 fn formula(a: Allocator) ![]const u8 {
     return h.readFile(a, "tests/channels/golden/mopm.rb");
 }

@@ -351,7 +351,10 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
         const copy = h.readFile(a, guard) catch "";
         rep.check("tap job: the copy of the tap's fixture names the commit of the tap it was taken from", h.contains(copy, "Source: komira-ai/homebrew-tap at commit ") and h.contains(copy, "(test/fixtures/mopm.rb)") and copy.len > 400, copy);
         const want = withoutHeader(copy);
-        rep.same("tap job: the copy of the tap's fixture is the golden formula", h.readFile(a, gold ++ "mopm.rb") catch "", want);
+        // The golden formula is the default render (with its version line); the tap's fixture is the same file without that line.
+        const golden = h.readFile(a, gold ++ "mopm.rb") catch "";
+        rep.same("tap job: the copy of the tap's fixture is the golden formula without its version line", try std.mem.replaceOwned(u8, a, golden, "  version \"1.2.3\"\n", ""), want);
+        rep.check("tap job: the copy of the tap's fixture has no version line", !h.contains(want, "  version "), want);
 
         const yml = h.readFile(a, ".github/workflows/release.yml") catch "";
         const marker = "run: '\"$RUNNER_TEMP/channels\" formula ";
@@ -376,13 +379,14 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
 
             // Mutants of the command line: each must produce a formula that is NOT the fixture (or no formula), so the compare is live.
             const plants = [_]struct { name: []const u8, extra: []const []const u8 }{
-                .{ .name = "no explicit version line", .extra = &.{"--no-explicit-version"} },
+                .{ .name = "the version line (flag dropped)", .extra = &.{} },
                 .{ .name = "another url base", .extra = &.{ "--url-base", "https://example.com/dl" } },
             };
-            for (plants) |p| {
-                const out_name = try h.fmt(a, "tap_mutant_{s}.rb", .{p.name});
+            for (plants, 0..) |p, pi| {
+                const out_name = try h.fmt(a, "tap_mutant_{d}.rb", .{pi});
                 var margs = std.ArrayList([]const u8).init(a);
                 for (args.items, 0..) |x, k| {
+                    if (pi == 0 and std.mem.eql(u8, x, "--no-explicit-version")) continue;
                     if (k > 0 and std.mem.eql(u8, args.items[k - 1], "--out")) {
                         try margs.append(w.path(out_name));
                     } else try margs.append(x);
