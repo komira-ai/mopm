@@ -53,6 +53,8 @@ Two builds describe the same program, and both stay.
   directory), komira's zig as the C compiler (`zig cc`, through
   `tests/drivers/zigcc.zig`: `mojo build` links through `cc` on `PATH`), and
   the built `mopm`; `//:mojo_probe` shows the toolchain works from this cell.
+  `//:native_static` (farm only, with `tests/drivers/mojo_compile_shim.zig` as the toolchain's `mojo_compile`) takes a
+  static archive in an empty-module package from `mopm pack` and `mopm lock` to a test linked by `mopm unit test`.
   The same drivers run natively on the GitHub runners (Linux x86_64, Linux
   aarch64, macOS arm64) from `ci.yml`: `zig build test-autolink`,
   `test-discovery`, `test-supervisor` and `test-flaky` (`test-e2e` runs all
