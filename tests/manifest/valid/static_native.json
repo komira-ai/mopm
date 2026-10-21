@@ -1,0 +1,26 @@
+{
+  "package": {
+    "name": "tls_sys",
+    "version": "2.4.0",
+    "description": null,
+    "license": null,
+    "repository": null,
+    "readme": null
+  },
+  "toolchain": {
+    "mojo": ["1.0.0"]
+  },
+  "dependencies": [
+    {"name": "crypto_sys", "version": "1.39"}
+  ],
+  "dev-dependencies": [],
+  "native-dependencies": [],
+  "native": [
+    {"id": "tls_sys", "kind": "static", "mode": "link", "build": null, "outputs": [], "needs": ["libcrypto_sys.a", "libz.so.1"], "exclusive": "libtls"}
+  ],
+  "targets": {
+    "lib": null,
+    "bins": [],
+    "tests": []
+  }
+}

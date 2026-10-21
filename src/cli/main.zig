@@ -60,7 +60,8 @@ const usage =
     \\                          write the package as a .conda per subdir
     \\                          (noarch, linux-64, linux-aarch64, osx-arm64) and
     \\                          print its sha256; --manifest <file> names another
-    \\                          mopm.toml
+    \\                          mopm.toml; --native <id>=<subdir>:<file> gives the
+    \\                          static archive of a [native.<id>] for one subdir
     \\  publish [pack options] [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
     \\          [--readme <file>] [--dry-run]
     \\                          pack and publish to a registry; the token is
