@@ -68,6 +68,16 @@ const World = struct {
         return h.readFile(w.a, w.path(name)) catch "";
     }
 
+    /// How many cosign calls start with `prefix`.
+    fn cosignCalls(w: World, prefix: []const u8) usize {
+        var n: usize = 0;
+        var lines = std.mem.splitScalar(u8, w.read("cosign_log"), '\n');
+        while (lines.next()) |l| {
+            if (std.mem.startsWith(u8, l, prefix)) n += 1;
+        }
+        return n;
+    }
+
     /// The three tarballs, the two .debs for `version` and SHA256SUMS in <root>/<sub>, as the build makes them.
     /// `extra`: an additional file packed into the linux-x86_64 tarball.
     fn assets(w: *World, sub: []const u8, version: []const u8, extra: ?[]const u8) !void {
@@ -494,6 +504,29 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         try w.put("assets/SHA256SUMS.sigstore.json", "fake-cosign-bundle sha256=" ++ "0" ** 64 ++ "\n");
         const t = try w.run(&.{ "verify-dir", "1.2.3", dir, "--sha", sha, "--source-ref", "refs/heads/main" });
         rep.check("verify-dir: a bundle that does not match its file is refused", t.code == 1 and h.contains(t.text, "cosign verify-blob refused SHA256SUMS"), t.text);
+
+        // A flaky Sigstore trusted-root fetch is retried (3 tries); a signature verdict never is.
+        {
+            const retry = [_][]const u8{ "verify-dir", "1.2.3", "", "--sha", sha, "--source-ref", "refs/heads/main", "--cosign-retry-ms", "1" };
+            var f = try goodVerify(a, tools, &tmp, "vd_tuf_twice", "1.2.3");
+            try f.put("cosign_tuf_fail", "2\n");
+            var args = retry;
+            args[2] = f.path("assets");
+            const twice = try f.run(&args);
+            rep.check("verify-dir: the trusted-root fetch failing twice, then working, passes", twice.code == 0 and f.cosignCalls("verify-blob ") == 8, f.read("cosign_log"));
+
+            var g = try goodVerify(a, tools, &tmp, "vd_tuf_thrice", "1.2.3");
+            try g.put("cosign_tuf_fail", "3\n");
+            args[2] = g.path("assets");
+            const thrice = try g.run(&args);
+            rep.check("verify-dir: the trusted-root fetch failing 3 times fails after exactly 3 tries, saying it is a fetch failure", thrice.code == 1 and g.cosignCalls("verify-blob ") == 3 and h.contains(thrice.text, "could not fetch the Sigstore trusted root") and h.contains(thrice.text, "in 3 tries"), thrice.text);
+
+            var m2 = try goodVerify(a, tools, &tmp, "vd_tuf_mismatch", "1.2.3");
+            try m2.put("assets/SHA256SUMS.sigstore.json", "fake-cosign-bundle sha256=" ++ "0" ** 64 ++ "\n");
+            args[2] = m2.path("assets");
+            const mis = try m2.run(&args);
+            rep.check("verify-dir: a signature mismatch is final on the first try (no retry: the SHA256SUMS bundle, the sixth file, is called once)", mis.code == 1 and h.contains(mis.text, "cosign verify-blob refused SHA256SUMS") and !h.contains(mis.text, "trusted root") and m2.cosignCalls("verify-blob ") == 6, mis.text);
+        }
 
         var w2 = try goodVerify(a, tools, &tmp, "vd_unsigned", "1.2.3");
         try std.fs.cwd().deleteFile(w2.path("assets/mopm-1.2.3-linux-x86_64.tar.gz.sigstore.json"));
