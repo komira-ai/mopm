@@ -43,7 +43,61 @@ pub const Input = struct {
     deps: []const Dep = &.{},
     /// The bytes of the `.mojoc`.
     mojoc: []const u8,
+    /// The static native libraries of this subdir: each one's archive goes to `lib/<soname>`.
+    natives: []const Native = &.{},
 };
+
+/// A static native library a package ships (`[native.<id>] kind = "static"`), as it is packed for one subdir.
+pub const Native = struct {
+    id: []const u8,
+    /// `lib<name>.a`: the archive's file name, which is also the soname consumers' `needs` name.
+    soname: []const u8,
+    /// Sonames of other packages' native libraries this one needs.
+    needs: []const []const u8 = &.{},
+    /// An exclusivity group, or "".
+    exclusive: []const u8 = "",
+    /// The bytes of the archive built for the subdir.
+    archive: []const u8,
+};
+
+/// The first four bytes of a Unix archive (`ar`) are `!<arch>`; the whole magic is eight.
+pub const ar_magic = "!<arch>\n";
+
+/// Why `n` cannot be packed as a static native library, or null. The registry holds the same names to the
+/// same rules (`lib/lib<stem>.a`, `static_file` resolved from `lib/mojo/`), so a refusal here is one the
+/// registry would make later.
+pub fn nativeProblem(arena: Allocator, n: Native) Allocator.Error!?[]const u8 {
+    if (!staticSoname(n.soname)) {
+        return try std.fmt.allocPrint(arena, "native '{s}': '{s}' is not a static archive name; it must be lib<name>.a with no other dot", .{ n.id, n.soname });
+    }
+    if (n.archive.len <= ar_magic.len or !std.mem.eql(u8, n.archive[0..ar_magic.len], ar_magic)) {
+        return try std.fmt.allocPrint(arena, "native '{s}': {s} is not a static archive (it does not start with {s})", .{ n.id, n.soname, "!<arch>" });
+    }
+    for (n.needs) |need| {
+        if (!validNeed(need)) return try std.fmt.allocPrint(arena, "native '{s}': '{s}' is not a library name (lib<name>.<suffix>)", .{ n.id, need });
+        if (std.mem.eql(u8, need, n.soname)) return try std.fmt.allocPrint(arena, "native '{s}' needs itself", .{n.id});
+    }
+    return null;
+}
+
+/// `lib<name>.a`: the registry's `SONAME_PATTERN` and its rule that a static file is `<soname up to the first dot>.a`.
+fn staticSoname(s: []const u8) bool {
+    if (!std.mem.startsWith(u8, s, "lib") or !std.mem.endsWith(u8, s, ".a")) return false;
+    const stem = s[3 .. s.len - 2];
+    if (stem.len == 0) return false;
+    for (stem) |c| {
+        if (c == '.' or c == '/') return false;
+    }
+    return true;
+}
+
+/// `lib<name>.<suffix>`: any library file name (a `needs` entry may name a shared library of another package).
+fn validNeed(s: []const u8) bool {
+    if (!std.mem.startsWith(u8, s, "lib")) return false;
+    const dot = std.mem.indexOfScalar(u8, s[3..], '.') orelse return false;
+    if (dot == 0 or 3 + dot + 1 >= s.len) return false;
+    return std.mem.indexOfScalar(u8, s, '/') == null;
+}
 
 pub const Packed = struct {
     subdir: []const u8,
@@ -55,9 +109,13 @@ pub const Packed = struct {
     /// Lowercase hex sha256 of `lib/mojo/<name>.mopm.json` as packed: what
     /// the commit step declares as `manifest_sha256`.
     manifest_sha256: [64]u8,
+    /// The archives packed, by id: what `mopm pack` prints, to compare with the sha256 `mopm lock` pins.
+    natives: []const NativeDigest = &.{},
 };
 
-pub const PackError = error{ BadCompiler, BadSubdir, BadVersion, PathTooLong, TooLarge, OutOfMemory };
+pub const NativeDigest = struct { soname: []const u8, sha256: [64]u8, size: u64 };
+
+pub const PackError = error{ BadCompiler, BadSubdir, BadVersion, BadNative, PathTooLong, TooLarge, OutOfMemory };
 
 /// MAJOR.MINOR.PATCH: three numbers of digits, no leading zero except "0",
 /// and nothing else (no pre-release, no build metadata, no missing part).
@@ -299,10 +357,49 @@ pub fn mopmJson(arena: Allocator, in: Input) Allocator.Error![]u8 {
     }
     try w.writeAll("],\"name\":");
     try jsonStr(w, in.name);
+    if (in.natives.len > 0) {
+        // By id, so that the order of the tables in mopm.toml does not change the bytes.
+        const sorted = try arena.dupe(Native, in.natives);
+        std.mem.sort(Native, sorted, {}, lessNative);
+        try w.writeAll(",\"native\":[");
+        for (sorted, 0..) |n, i| {
+            if (i > 0) try w.writeByte(',');
+            try w.writeByte('{');
+            if (n.exclusive.len > 0) {
+                try w.writeAll("\"exclusive\":");
+                try jsonStr(w, n.exclusive);
+                try w.writeByte(',');
+            }
+            try w.writeAll("\"id\":");
+            try jsonStr(w, n.id);
+            try w.writeAll(",\"kind\":\"static\",\"mode\":\"link\",\"needs\":[");
+            const needs = try arena.dupe([]const u8, n.needs);
+            std.mem.sort([]const u8, needs, {}, lessStr);
+            for (needs, 0..) |need, k| {
+                if (k > 0) try w.writeByte(',');
+                try jsonStr(w, need);
+            }
+            try w.writeAll("],\"soname\":");
+            try jsonStr(w, n.soname);
+            // The registry resolves a file named in this metadata against lib/mojo/, and wants it directly under lib/.
+            try w.writeAll(",\"static_file\":");
+            try jsonStr(w, try std.fmt.allocPrint(arena, "../{s}", .{n.soname}));
+            try w.writeByte('}');
+        }
+        try w.writeByte(']');
+    }
     try w.writeAll(",\"schema\":1,\"version\":");
     try jsonStr(w, in.version);
     try w.writeByte('}');
     return out.items;
+}
+
+fn lessNative(_: void, a: Native, b: Native) bool {
+    return std.mem.lessThan(u8, a.id, b.id);
+}
+
+fn lessStr(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.lessThan(u8, a, b);
 }
 
 fn hex(data: []const u8) [64]u8 {
@@ -328,25 +425,56 @@ pub fn pathsJson(arena: Allocator, files: []const File) Allocator.Error![]u8 {
     return out.items;
 }
 
+/// `info/about.json`: the facts about the archives of this one subdir's file, under `mopm_native` (the archive's file
+/// name, sha256 and size). `.mopm.json` is the same bytes in every subdir's file (the registry compares its hash
+/// with the version's), so what differs from one platform to the next is kept here, which no registry rule reads:
+/// it is informational. The consumer's anchor is the sha256 `mopm lock` takes of the archive itself.
+pub fn aboutJson(arena: Allocator, natives: []const Native) Allocator.Error![]u8 {
+    var out = std.ArrayList(u8).init(arena);
+    const w = out.writer();
+    const sorted = try arena.dupe(Native, natives);
+    std.mem.sort(Native, sorted, {}, lessNative);
+    try w.writeAll("{\"mopm_native\":[");
+    for (sorted, 0..) |n, i| {
+        if (i > 0) try w.writeByte(',');
+        try w.writeAll("{\"id\":");
+        try jsonStr(w, n.id);
+        try w.print(",\"sha256\":\"{s}\",\"size\":{d},\"soname\":", .{ hex(n.archive), n.archive.len });
+        try jsonStr(w, n.soname);
+        try w.writeByte('}');
+    }
+    try w.writeAll("]}");
+    return out.items;
+}
+
 /// Builds the `.conda` for `in`.
 pub fn pack(arena: Allocator, in: Input) PackError!Packed {
     if (!exactVersion(in.version)) return error.BadVersion;
     if (!validCompiler(in.compiler)) return error.BadCompiler;
     if (!isSubdir(in.subdir)) return error.BadSubdir;
 
+    for (in.natives) |n| {
+        if ((try nativeProblem(arena, n)) != null) return error.BadNative;
+    }
+
     const stem = try std.fmt.allocPrint(arena, "mojo-{s}-{s}-mojo{s}_0", .{ in.name, in.version, in.compiler });
     const mopm = try mopmJson(arena, in);
     const index = try indexJson(arena, in);
 
-    const pkg_files = [_]File{
-        .{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mojoc", .{in.name}), .data = in.mojoc },
-        .{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mopm.json", .{in.name}), .data = mopm },
-    };
-    const info_tar = try tar(arena, &.{
-        .{ .path = "info/index.json", .data = index },
-        .{ .path = "info/paths.json", .data = try pathsJson(arena, &pkg_files) },
-    });
-    const pkg_tar = try tar(arena, &pkg_files);
+    var pkg_files = std.ArrayList(File).init(arena);
+    try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mojoc", .{in.name}), .data = in.mojoc });
+    try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mopm.json", .{in.name}), .data = mopm });
+    for (in.natives) |n| try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/{s}", .{n.soname}), .data = n.archive });
+    std.mem.sort(File, pkg_files.items, {}, lessFile);
+    var info_files = std.ArrayList(File).init(arena);
+    try info_files.append(.{ .path = "info/index.json", .data = index });
+    try info_files.append(.{ .path = "info/paths.json", .data = try pathsJson(arena, pkg_files.items) });
+    // about.json goes into the info tar: the registry refuses an `info/` file in the package tar (conda_layout).
+    if (in.natives.len > 0) try info_files.append(.{ .path = "info/about.json", .data = try aboutJson(arena, in.natives) });
+    const info_tar = try tar(arena, info_files.items);
+    const pkg_tar = try tar(arena, pkg_files.items);
+    const digests = try arena.alloc(NativeDigest, in.natives.len);
+    for (in.natives, digests) |n, *d| d.* = .{ .soname = n.soname, .sha256 = hex(n.archive), .size = n.archive.len };
     const bytes = try zip(arena, &.{
         .{ .path = "metadata.json", .data = "{\"conda_pkg_format_version\": 2}" },
         .{ .path = try std.fmt.allocPrint(arena, "info-{s}.tar.zst", .{stem}), .data = try zstdStore(arena, info_tar) },
@@ -358,6 +486,7 @@ pub fn pack(arena: Allocator, in: Input) PackError!Packed {
         .bytes = bytes,
         .sha256 = hex(bytes),
         .manifest_sha256 = hex(mopm),
+        .natives = digests,
     };
 }
 
@@ -460,12 +589,18 @@ pub const path_unsatisfied_fmt = "dependency '{s}' requires version \"{s}\", but
 /// The Mojo dependencies of `m` as `Dep`s sorted by name, or `Unpackable`
 /// with `why` when `m` cannot be packed: a path dependency with no version,
 /// one whose package (in `path_versions`) does not satisfy its version,
-/// native libraries or native dependencies (a later change packs those).
+/// a native library that is not a linked static archive, or native dependencies (a later change packs those).
 /// A path dependency with a version is published as that version alone: the path is never written.
 pub fn depsOf(arena: Allocator, m: manifest.Manifest, path_versions: []const PathVersion, why: *[]const u8) error{ Unpackable, OutOfMemory }![]const Dep {
-    if (m.native.len > 0) {
-        why.* = "native libraries are not packed yet";
-        return error.Unpackable;
+    for (m.native) |n| {
+        if (n.kind != .static) {
+            why.* = try std.fmt.allocPrint(arena, "native library '{s}' is kind = \"{s}\"; only static archives are packed (kind = \"static\")", .{ n.id, @tagName(n.kind) });
+            return error.Unpackable;
+        }
+        if (n.mode != .link) {
+            why.* = try std.fmt.allocPrint(arena, "native library '{s}' is mode = \"load\"; only mode = \"link\" is packed", .{n.id});
+            return error.Unpackable;
+        }
     }
     if (m.native_dependencies.len > 0) {
         why.* = "native dependencies are not packed yet";
@@ -850,7 +985,7 @@ test "a manifest: dependencies, and what cannot be packed" {
         \\
     , &diag);
     try std.testing.expectError(error.Unpackable, depsOf(a, native, &.{}, &why));
-    try std.testing.expectEqualStrings("native libraries are not packed yet", why);
+    try std.testing.expectEqualStrings("native library 'zlib' is kind = \"shared\"; only static archives are packed (kind = \"static\")", why);
 }
 
 const path_dep_head =
@@ -945,4 +1080,193 @@ test "a path dependency that depsOf cannot judge is refused with the reason" {
     m.dependencies = bad;
     try std.testing.expectError(error.Unpackable, depsOf(a, m, &.{.{ .name = "local", .version = "0.3.0" }}, &why));
     try std.testing.expect(std.mem.startsWith(u8, why, "dependency 'local' = \"=>1\": "));
+}
+
+// ---------------------------------------------------------------------------
+// Static native libraries
+// ---------------------------------------------------------------------------
+
+const ar_x = ar_magic ++ "members of x\n";
+const ar_y = ar_magic ++ "members of y\n";
+
+fn nativeInput(a: Allocator, subdir: []const u8, archive: []const u8) !Input {
+    return .{
+        .name = "tls_sys",
+        .version = "2.4.0",
+        .compiler = "1.0.0",
+        .subdir = subdir,
+        .mojoc = "MOJOC",
+        .natives = try a.dupe(Native, &.{.{ .id = "tls_sys", .soname = "libtls_sys.a", .needs = &.{ "libcrypto_sys.a", "libc_sys.a" }, .exclusive = "libtls", .archive = archive }}),
+    };
+}
+
+// Defects it catches: an archive that is not in the package, or at another path than the registry requires
+// (`lib/lib<stem>.a`, named by `static_file` from `lib/mojo/`); metadata that declares a library with the wrong key,
+// kind or path; `about.json` in the package tar (the registry refuses an info/ file there); a native id written
+// into `depends` (the registry refuses one that is not allow-listed); paths.json that omits the archive (pixi
+// cannot link a package whose file it does not list). Mutants planted: the archive left out of pkg_files; written
+// to lib/mojo/; about.json appended to pkg_files; the id appended to `depends`.
+test "a package with a static archive: where each file is, and what the metadata says" {
+    var st = testArena();
+    defer st.deinit();
+    const a = st.allocator();
+    const p = try pack(a, try nativeInput(a, "linux-64", ar_x));
+    const entries = try readZip(a, p.bytes);
+    const info = try readTar(a, try unzstd(a, entries[1].data));
+    const pkg = try readTar(a, try unzstd(a, entries[2].data));
+
+    try std.testing.expectEqual(@as(usize, 3), pkg.len);
+    try std.testing.expectEqualStrings("lib/libtls_sys.a", pkg[0].path);
+    try std.testing.expectEqualStrings(ar_x, pkg[0].data);
+    try std.testing.expectEqualStrings("lib/mojo/tls_sys.mojoc", pkg[1].path);
+    try std.testing.expectEqualStrings("lib/mojo/tls_sys.mopm.json", pkg[2].path);
+    try std.testing.expectEqualStrings(
+        "{\"deps\":[],\"name\":\"tls_sys\",\"native\":[{\"exclusive\":\"libtls\",\"id\":\"tls_sys\",\"kind\":\"static\",\"mode\":\"link\"," ++
+            "\"needs\":[\"libc_sys.a\",\"libcrypto_sys.a\"],\"soname\":\"libtls_sys.a\",\"static_file\":\"../libtls_sys.a\"}],\"schema\":1,\"version\":\"2.4.0\"}",
+        pkg[2].data,
+    );
+    try std.testing.expectEqualSlices(u8, &p.manifest_sha256, &hex(pkg[2].data));
+
+    // info/: about.json is here and only here; depends names no native id.
+    try std.testing.expectEqual(@as(usize, 3), info.len);
+    try std.testing.expectEqualStrings("info/about.json", info[0].path);
+    try std.testing.expectEqualStrings("info/index.json", info[1].path);
+    try std.testing.expectEqualStrings("info/paths.json", info[2].path);
+    const about = try std.fmt.allocPrint(a, "{{\"mopm_native\":[{{\"id\":\"tls_sys\",\"sha256\":\"{s}\",\"size\":{d},\"soname\":\"libtls_sys.a\"}}]}}", .{ &hex(ar_x), ar_x.len });
+    try std.testing.expectEqualStrings(about, info[0].data);
+    try std.testing.expectEqualStrings("{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\"],\"name\":\"mojo-tls_sys\",\"subdir\":\"linux-64\",\"version\":\"2.4.0\"}", info[1].data);
+
+    // paths.json lists the archive, with its own sha256 and size.
+    const pj = try std.json.parseFromSlice(std.json.Value, a, info[2].data, .{});
+    const paths = pj.value.object.get("paths").?.array.items;
+    try std.testing.expectEqual(@as(usize, 3), paths.len);
+    try std.testing.expectEqualStrings("lib/libtls_sys.a", paths[0].object.get("_path").?.string);
+    try std.testing.expectEqualStrings(&hex(ar_x), paths[0].object.get("sha256").?.string);
+    try std.testing.expectEqual(@as(i64, ar_x.len), paths[0].object.get("size_in_bytes").?.integer);
+
+    // What `mopm pack` prints to compare with the lock.
+    try std.testing.expectEqual(@as(usize, 1), p.natives.len);
+    try std.testing.expectEqualStrings("libtls_sys.a", p.natives[0].soname);
+    try std.testing.expectEqualSlices(u8, &hex(ar_x), &p.natives[0].sha256);
+    try std.testing.expectEqual(@as(u64, ar_x.len), p.natives[0].size);
+}
+
+// Defect it catches: per-platform facts in `.mopm.json`, so that the files of one version carry different metadata and
+// the registry (which compares each file's metadata hash with the version's one `manifest_sha256`) rejects the
+// second platform. Mutant planted: the archive's size written into `static_file`.
+test "the metadata is the same bytes in every subdir; the archive, about.json and the file are not" {
+    var st = testArena();
+    defer st.deinit();
+    const a = st.allocator();
+    const linux = try pack(a, try nativeInput(a, "linux-64", ar_x));
+    const osx = try pack(a, try nativeInput(a, "osx-arm64", ar_y));
+    try std.testing.expectEqualSlices(u8, &linux.manifest_sha256, &osx.manifest_sha256);
+    try std.testing.expect(!std.mem.eql(u8, &linux.sha256, &osx.sha256));
+    const l_entries = try readZip(a, linux.bytes);
+    const o_entries = try readZip(a, osx.bytes);
+    const l_info = try readTar(a, try unzstd(a, l_entries[1].data));
+    const o_info = try readTar(a, try unzstd(a, o_entries[1].data));
+    try std.testing.expect(!std.mem.eql(u8, l_info[0].data, o_info[0].data)); // about.json
+    const l_pkg = try readTar(a, try unzstd(a, l_entries[2].data));
+    const o_pkg = try readTar(a, try unzstd(a, o_entries[2].data));
+    try std.testing.expectEqualStrings(l_pkg[2].data, o_pkg[2].data); // .mopm.json
+    try std.testing.expectEqualStrings(ar_x, l_pkg[0].data);
+    try std.testing.expectEqualStrings(ar_y, o_pkg[0].data);
+}
+
+test "a package with static archives is the same bytes however the natives and their needs are listed, and twice" {
+    var st = testArena();
+    defer st.deinit();
+    const a = st.allocator();
+    const one = [_]Native{
+        .{ .id = "a_sys", .soname = "liba_sys.a", .needs = &.{ "libz.so.1", "libb_sys.a" }, .archive = ar_x },
+        .{ .id = "b_sys", .soname = "libb_sys.a", .archive = ar_y },
+    };
+    const two = [_]Native{
+        .{ .id = "b_sys", .soname = "libb_sys.a", .archive = ar_y },
+        .{ .id = "a_sys", .soname = "liba_sys.a", .needs = &.{ "libb_sys.a", "libz.so.1" }, .archive = ar_x },
+    };
+    const base = Input{ .name = "pair", .version = "1.0.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "M" };
+    var in = base;
+    in.natives = &one;
+    const p1 = try pack(a, in);
+    const p1b = try pack(a, in);
+    in.natives = &two;
+    const p2 = try pack(a, in);
+    try std.testing.expectEqualSlices(u8, p1.bytes, p1b.bytes);
+    try std.testing.expectEqualSlices(u8, p1.bytes, p2.bytes);
+    // A package without natives is what it was: no native key, no about.json, no archive.
+    const plain = try pack(a, base);
+    const entries = try readZip(a, plain.bytes);
+    try std.testing.expectEqual(@as(usize, 2), (try readTar(a, try unzstd(a, entries[1].data))).len);
+    try std.testing.expectEqual(@as(usize, 2), (try readTar(a, try unzstd(a, entries[2].data))).len);
+}
+
+// Defects it catches: an archive the registry would refuse (or worse, would accept and a linker choke on) leaving
+// the packer: a file that is not an `ar` archive, a name that is not `lib<name>.a`, a need that is not a library name.
+// Mutants planted: the magic check dropped; staticSoname accepts any name ending `.a`; validNeed accepts any text.
+test "pack refuses a native library that is not a static archive named lib<name>.a, or a need that is not a library name" {
+    var st = testArena();
+    defer st.deinit();
+    const a = st.allocator();
+    const base = try nativeInput(a, "linux-64", ar_x);
+    const good = base.natives[0];
+
+    const Case = struct { n: Native, want: []const u8 };
+    const cases = [_]Case{
+        .{ .n = .{ .id = "t", .soname = "libt.a", .archive = "\x7fELF-not-an-archive" }, .want = "is not a static archive (it does not start with !<arch>)" },
+        .{ .n = .{ .id = "t", .soname = "libt.a", .archive = ar_magic }, .want = "is not a static archive" },
+        .{ .n = .{ .id = "t", .soname = "libt.so.1", .archive = ar_x }, .want = "is not a static archive name; it must be lib<name>.a with no other dot" },
+        .{ .n = .{ .id = "t", .soname = "t.a", .archive = ar_x }, .want = "is not a static archive name" },
+        .{ .n = .{ .id = "t", .soname = "lib.a", .archive = ar_x }, .want = "is not a static archive name" },
+        .{ .n = .{ .id = "t", .soname = "libt.1.a", .archive = ar_x }, .want = "is not a static archive name" },
+        .{ .n = .{ .id = "t", .soname = "libt/x.a", .archive = ar_x }, .want = "is not a static archive name" },
+        .{ .n = .{ .id = "t", .soname = "libt.a", .needs = &.{"zlib"}, .archive = ar_x }, .want = "'zlib' is not a library name" },
+        .{ .n = .{ .id = "t", .soname = "libt.a", .needs = &.{"libz."}, .archive = ar_x }, .want = "is not a library name" },
+        .{ .n = .{ .id = "t", .soname = "libt.a", .needs = &.{"lib/z.a"}, .archive = ar_x }, .want = "is not a library name" },
+        .{ .n = .{ .id = "t", .soname = "libt.a", .needs = &.{"libt.a"}, .archive = ar_x }, .want = "needs itself" },
+    };
+    for (cases) |c| {
+        const why = (try nativeProblem(a, c.n)) orelse {
+            std.debug.print("accepted, want: {s}\n", .{c.want});
+            return error.TestUnexpectedResult;
+        };
+        std.testing.expect(std.mem.indexOf(u8, why, c.want) != null) catch |e| {
+            std.debug.print("said '{s}', want '{s}'\n", .{ why, c.want });
+            return e;
+        };
+        var in = base;
+        in.natives = &.{c.n};
+        try std.testing.expectError(error.BadNative, pack(a, in));
+    }
+    try std.testing.expect((try nativeProblem(a, good)) == null);
+    // A shared library named in `needs` is a library name too.
+    try std.testing.expect((try nativeProblem(a, .{ .id = "t", .soname = "libt.a", .needs = &.{"libz.so.1"}, .archive = ar_x })) == null);
+}
+
+test "a manifest's native libraries: static, link mode packs; shared, both or load mode does not, and says why" {
+    var st = testArena();
+    defer st.deinit();
+    const a = st.allocator();
+    var diag: manifest.Diagnostic = .{};
+    var why: []const u8 = "";
+    const head = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n";
+    const ok = try manifest.parse(a, head ++ "[native.tls_sys]\nkind = \"static\"\nneeds = [\"libz.a\"]\nexclusive = \"libtls\"\n", &diag);
+    _ = try depsOf(a, ok, &.{}, &why);
+    try std.testing.expectEqualStrings("libz.a", ok.native[0].needs[0]);
+    try std.testing.expectEqualStrings("libtls", ok.native[0].exclusive);
+
+    for ([_][2][]const u8{
+        .{ "[native.s]\nkind = \"both\"\n", "native library 's' is kind = \"both\"; only static archives are packed (kind = \"static\")" },
+        .{ "[native.s]\n", "native library 's' is kind = \"shared\"; only static archives are packed (kind = \"static\")" },
+        .{ "[native.s]\nkind = \"static\"\nmode = \"load\"\n", "native library 's' is mode = \"load\"; only mode = \"link\" is packed" },
+    }) |c| {
+        const m = try manifest.parse(a, try std.mem.concat(a, u8, &.{ head, c[0] }), &diag);
+        try std.testing.expectError(error.Unpackable, depsOf(a, m, &.{}, &why));
+        try std.testing.expectEqualStrings(c[1], why);
+    }
+    // Native dependencies (libraries from outside the Mojo ecosystem) are still not packed.
+    const dep = try manifest.parse(a, head ++ "[native-dependencies]\nzlib = \">=1.2\"\n", &diag);
+    try std.testing.expectError(error.Unpackable, depsOf(a, dep, &.{}, &why));
+    try std.testing.expectEqualStrings("native dependencies are not packed yet", why);
 }

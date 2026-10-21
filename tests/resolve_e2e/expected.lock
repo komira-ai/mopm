@@ -14,13 +14,15 @@
       "subdir": "linux-64",
       "channel": "@CHANNEL@",
       "url": "@CHANNEL@linux-64/mojo-crypto-2.0.1-mojo1.0.0_0.conda",
-      "sha256": "e9fae3c619ce2cf7fdd9e16c4ad62a2df72d6b3a649a89330226d2afc5b95479",
-      "size": 4096,
+      "sha256": "@CRYPTO_LINUX_FILE_SHA@",
+      "size": @CRYPTO_LINUX_FILE_SIZE@,
       "mojo": "1.0.0",
       "native": [
         {
           "id": "crypto",
-          "soname": "libcrypto_native.so.1"
+          "soname": "libcrypto_native.a",
+          "sha256": "@CRYPTO_LINUX_NATIVE_SHA@",
+          "kind": "static"
         }
       ]
     },
@@ -31,13 +33,15 @@
       "subdir": "osx-arm64",
       "channel": "@CHANNEL@",
       "url": "@CHANNEL@osx-arm64/mojo-crypto-2.0.1-mojo1.0.0_0.conda",
-      "sha256": "5e0636c64cecf5d5da153570136c65ffded1ed411a430ac6f47eae7c84d32d21",
-      "size": 4096,
+      "sha256": "@CRYPTO_OSX_FILE_SHA@",
+      "size": @CRYPTO_OSX_FILE_SIZE@,
       "mojo": "1.0.0",
       "native": [
         {
           "id": "crypto",
-          "soname": "libcrypto_native.so.1"
+          "soname": "libcrypto_native.a",
+          "sha256": "@CRYPTO_OSX_NATIVE_SHA@",
+          "kind": "static"
         }
       ]
     },

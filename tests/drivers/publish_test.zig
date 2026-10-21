@@ -198,6 +198,99 @@ const Stub = struct {
     }
 };
 
+// ---------------------------------------------------------------- static natives
+
+fn sha256Of(a: Allocator, bytes: []const u8) ![]u8 {
+    var d: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(bytes, &d, .{});
+    return a.dupe(u8, &std.fmt.bytesToHex(d, .lower));
+}
+
+/// The value after `key ` on each line of `text` that has it.
+fn valuesOf(a: Allocator, text: []const u8, key: []const u8) ![]const []const u8 {
+    var out = std.ArrayList([]const u8).init(a);
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |l| {
+        const t = std.mem.trim(u8, l, " ");
+        if (std.mem.startsWith(u8, t, key) and t.len > key.len and t[key.len] == ' ') try out.append(t[key.len + 1 ..]);
+    }
+    return out.items;
+}
+
+/// `mopm pack` and `mopm publish --dry-run` of a package that ships a static archive per subdir: what is in each file,
+/// what is the same in all of them, and what is refused before a byte is packed.
+fn staticNatives(a: Allocator, rep: *h.Report, m: Mopm, work: []const u8, mojoc: []const u8, conf: []const u8) !void {
+    const dir = try h.join(a, &.{ work, "nat" });
+    const manifest = try h.join(a, &.{ dir, "mopm.toml" });
+    try h.writeFile(manifest, try tomlText(a, "natdemo", "0.1.0", "[native.nat_sys]\nkind = \"static\"\nneeds = [\"libz.a\"]\nexclusive = \"libnat\"\n"));
+    const ar_linux = "!<arch>\nlinux-members\n";
+    const ar_osx = "!<arch>\nosx-members\n";
+    const f_linux = try h.join(a, &.{ dir, "linux", "libnat_sys.a" });
+    const f_osx = try h.join(a, &.{ dir, "osx", "libnat_sys.a" });
+    try h.writeFile(f_linux, ar_linux);
+    try h.writeFile(f_osx, ar_osx);
+    const linux_mojoc = try std.fmt.allocPrint(a, "linux-64={s}", .{mojoc});
+    const osx_mojoc = try std.fmt.allocPrint(a, "osx-arm64={s}", .{mojoc});
+    const n_linux = try std.fmt.allocPrint(a, "nat_sys=linux-64:{s}", .{f_linux});
+    const n_osx = try std.fmt.allocPrint(a, "nat_sys=osx-arm64:{s}", .{f_osx});
+    const conda_name = "mojo-natdemo-0.1.0-mojo1.0.0_0.conda";
+    const out1 = try h.join(a, &.{ work, "nat_dist1" });
+    const out2 = try h.join(a, &.{ work, "nat_dist2" });
+
+    // The two subdirs: one archive each, one metadata (the same manifest_sha256) for both.
+    var r = try m.run(&.{ "pack", "--compiler", "1.0.0", "--mojoc", linux_mojoc, "--mojoc", osx_mojoc, "--native", n_linux, "--native", n_osx, "--manifest", manifest, "-o", out1 }, null);
+    rep.check("pack of a package with a static archive per subdir succeeds", r.code == 0, r.stderr);
+    const manifests = try valuesOf(a, r.stdout, "manifest_sha256");
+    rep.check("every subdir's file carries the same metadata (one manifest_sha256)", manifests.len == 2 and std.mem.eql(u8, manifests[0], manifests[1]), r.stdout);
+    const natives = try valuesOf(a, r.stdout, "native");
+    rep.check("pack prints the sha256 of each archive, to compare with the lock", natives.len == 2 and
+        std.mem.eql(u8, natives[0], try std.fmt.allocPrint(a, "libnat_sys.a sha256 {s} size {d}", .{ try sha256Of(a, ar_linux), ar_linux.len })) and
+        std.mem.eql(u8, natives[1], try std.fmt.allocPrint(a, "libnat_sys.a sha256 {s} size {d}", .{ try sha256Of(a, ar_osx), ar_osx.len })), r.stdout);
+    const linux_bytes = try h.readFile(a, try h.join(a, &.{ out1, "linux-64", conda_name }));
+    const osx_bytes = try h.readFile(a, try h.join(a, &.{ out1, "osx-arm64", conda_name }));
+    // A .conda stores its entries (and mopm's zstd frames are raw blocks), so the archive's bytes are in the file as they are.
+    rep.check("each subdir's file holds that subdir's archive at lib/libnat_sys.a, and not the other's", h.contains(linux_bytes, "lib/libnat_sys.a") and
+        h.contains(linux_bytes, "linux-members") and !h.contains(linux_bytes, "osx-members") and
+        h.contains(osx_bytes, "lib/libnat_sys.a") and h.contains(osx_bytes, "osx-members") and !h.contains(osx_bytes, "linux-members"), "the archives are not where they should be");
+    rep.check("each subdir's file has info/about.json, with mopm_native", h.contains(linux_bytes, "info/about.json") and h.contains(linux_bytes, "mopm_native") and
+        h.contains(osx_bytes, "info/about.json"), "no about.json");
+    rep.check("the metadata names the archive for the registry: lib/ from lib/mojo/, and the needs and the group", h.contains(linux_bytes, "\"static_file\":\"../libnat_sys.a\"") and
+        h.contains(linux_bytes, "\"needs\":[\"libz.a\"]") and h.contains(linux_bytes, "\"exclusive\":\"libnat\""), "the metadata is not what the registry reads");
+    r = try m.run(&.{ "pack", "--compiler", "1.0.0", "--mojoc", linux_mojoc, "--mojoc", osx_mojoc, "--native", n_osx, "--native", n_linux, "--manifest", manifest, "-o", out2 }, null);
+    rep.check("packing twice, the --native flags in the other order, gives the same bytes", r.code == 0 and
+        std.mem.eql(u8, linux_bytes, try h.readFile(a, try h.join(a, &.{ out2, "linux-64", conda_name }))) and
+        std.mem.eql(u8, osx_bytes, try h.readFile(a, try h.join(a, &.{ out2, "osx-arm64", conda_name }))), r.stderr);
+
+    // publish --dry-run sends nothing, and says what it would.
+    r = try m.run(&.{ "publish", "--compiler", "1.0.0", "--mojoc", linux_mojoc, "--native", n_linux, "--manifest", manifest, "--registry", dead, "--config-dir", conf, "--dry-run" }, null);
+    rep.check("publish --dry-run of a package with a static archive says it would upload the subdir's file", r.code == 0 and
+        h.contains(r.stdout, "would upload linux-64/" ++ conda_name) and h.contains(r.stdout, "dry run: nothing was sent"), r.stdout);
+
+    // What is refused, before a byte is packed (a pack never goes to the network, a publish is pointed at nothing).
+    const Refusal = struct { label: []const u8, args: []const []const u8, code: u8, want: []const u8 };
+    const bad_ar = try h.join(a, &.{ dir, "bad", "libnat_sys.a" });
+    try h.writeFile(bad_ar, "ELF, not an archive");
+    const other_name = try h.join(a, &.{ dir, "other", "libnat_other.a" });
+    try h.writeFile(other_name, ar_osx);
+    const cases = [_]Refusal{
+        .{ .label = "an archive missing for a subdir", .args = &.{ "pack", "--compiler", "1.0.0", "--mojoc", linux_mojoc, "--mojoc", osx_mojoc, "--native", n_linux, "--manifest", manifest }, .code = 1, .want = "native library 'nat_sys' has no archive for osx-arm64" },
+        .{ .label = "a --native that nothing declares", .args = &.{ "pack", "--compiler", "1.0.0", "--mojoc", linux_mojoc, "--native", n_linux, "--native", "other=linux-64:x.a", "--manifest", manifest }, .code = 1, .want = "declares no [native.other]" },
+        .{ .label = "a --native for a subdir no --mojoc packs", .args = &.{ "pack", "--compiler", "1.0.0", "--mojoc", linux_mojoc, "--native", n_linux, "--native", n_osx, "--manifest", manifest }, .code = 1, .want = "no --mojoc packs the subdir osx-arm64" },
+        .{ .label = "natives in a noarch package", .args = &.{ "pack", "--compiler", "1.0.0", "--mojoc", mojoc, "--manifest", manifest }, .code = 1, .want = "built for one platform" },
+        .{ .label = "an archive for noarch", .args = &.{ "pack", "--compiler", "1.0.0", "--mojoc", linux_mojoc, "--native", "nat_sys=noarch:x.a", "--manifest", manifest }, .code = 2, .want = "cannot be packed for noarch" },
+        .{ .label = "an unknown subdir for an archive", .args = &.{ "pack", "--compiler", "1.0.0", "--mojoc", linux_mojoc, "--native", "nat_sys=win-64:x.a", "--manifest", manifest }, .code = 2, .want = "is not a subdir" },
+        .{ .label = "a --native without a subdir", .args = &.{ "pack", "--compiler", "1.0.0", "--mojoc", linux_mojoc, "--native", "nat_sys=libnat_sys.a", "--manifest", manifest }, .code = 2, .want = "expected <id>=<subdir>:<file>" },
+        .{ .label = "an archive named twice", .args = &.{ "pack", "--compiler", "1.0.0", "--mojoc", linux_mojoc, "--native", n_linux, "--native", n_linux, "--manifest", manifest }, .code = 2, .want = "--native names nat_sys for linux-64 twice" },
+        .{ .label = "a file that is not an archive", .args = &.{ "pack", "--compiler", "1.0.0", "--mojoc", linux_mojoc, "--native", try std.fmt.allocPrint(a, "nat_sys=linux-64:{s}", .{bad_ar}), "--manifest", manifest }, .code = 1, .want = "is not a static archive (it does not start with !<arch>)" },
+        .{ .label = "an archive of another name in another subdir", .args = &.{ "pack", "--compiler", "1.0.0", "--mojoc", linux_mojoc, "--mojoc", osx_mojoc, "--native", n_linux, "--native", try std.fmt.allocPrint(a, "nat_sys=osx-arm64:{s}", .{other_name}), "--manifest", manifest }, .code = 1, .want = "is libnat_sys.a for linux-64 but libnat_other.a for osx-arm64" },
+        .{ .label = "an archive file that is not there", .args = &.{ "pack", "--compiler", "1.0.0", "--mojoc", linux_mojoc, "--native", try std.fmt.allocPrint(a, "nat_sys=linux-64:{s}/absent/libnat_sys.a", .{dir}), "--manifest", manifest }, .code = 1, .want = "FileNotFound" },
+    };
+    for (cases) |c| {
+        r = try m.run(c.args, null);
+        rep.check(try std.fmt.allocPrint(a, "refused: {s}", .{c.label}), r.code == c.code and h.contains(r.stderr, c.want), try std.fmt.allocPrint(a, "{d}: {s}", .{ r.code, r.stderr }));
+    }
+}
+
 // ------------------------------------------------------------------- the test
 
 test "mopm pack and publish against the fake registry, and a rejection against a stand-in" {
@@ -295,7 +388,9 @@ test "mopm pack and publish against the fake registry, and a rejection against a
     const native_manifest = try h.join(a, &.{ work, "native", "mopm.toml" });
     try h.writeFile(native_manifest, try tomlText(a, "pubdemo", "0.1.0", "[native.zlib]\nkind = \"shared\"\n"));
     r = try m.run(&.{ "publish", "--compiler", "1.0.0", "--mojoc", mojoc, "--manifest", native_manifest, "--registry", dead, "--config-dir", conf }, null);
-    rep.check("native libraries are refused before any request", r.code == 1 and h.contains(r.stderr, "native libraries are not packed yet") and !h.contains(r.stderr, "cannot reach"), r.stderr);
+    rep.check("a shared native library is refused before any request", r.code == 1 and h.contains(r.stderr, "native library 'zlib' is kind = \"shared\"; only static archives are packed") and !h.contains(r.stderr, "cannot reach"), r.stderr);
+
+    try staticNatives(a, &rep, m, work, mojoc, conf);
 
     // --- a path dependency with a version: the path package is read beside the manifest named, not beside the
     // directory mopm runs in; and it must be the package the dependency names.

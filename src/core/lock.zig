@@ -24,6 +24,7 @@ const std = @import("std");
 const testroot = @import("testroot.zig");
 const Allocator = std.mem.Allocator;
 const registry = @import("registry.zig");
+const metadata = @import("metadata.zig");
 
 /// The `lock_version` of a lock for one Mojo version (the `[toolchain]` form).
 pub const lock_version: i64 = 1;
@@ -49,10 +50,19 @@ pub const Closure = struct {
     sha256: []const u8,
 };
 
+/// A native library a package ships. `sha256` is the hash of the library file that carries `soname`
+/// (`mopm lock` fetches the package and hashes it); `kind`, `needs` and `exclusive` are the package's own
+/// declarations in its `<name>.mopm.json` (spec/package-metadata.schema.json), copied so that a unit graph
+/// can be made from the lock alone.
 pub const Native = struct {
     id: []const u8,
     soname: []const u8,
     sha256: ?[]const u8 = null,
+    kind: metadata.Kind = .shared,
+    /// Sonames of other packages' native libraries this one needs.
+    needs: []const []const u8 = &.{},
+    /// An exclusivity group, or "".
+    exclusive: []const u8 = "",
 };
 
 /// Where a locked package comes from.
@@ -243,6 +253,11 @@ pub fn check(arena: Allocator, l: Lock) Allocator.Error!?[]const u8 {
             var found = false;
             for (l.packages) |q| found = found or std.mem.eql(u8, q.name, d);
             if (!found) return try std.fmt.allocPrint(arena, "{s}: dependency {s} is not in packages", .{ p.name, d });
+        }
+        for (p.native) |n| {
+            for (n.needs) |need| {
+                if (std.mem.eql(u8, need, n.soname)) return try std.fmt.allocPrint(arena, "{s}: native library {s} needs itself ({s})", .{ p.name, n.id, need });
+            }
         }
         for (l.packages[0..i]) |q| {
             if (std.mem.eql(u8, q.name, p.name) and !std.mem.eql(u8, q.channel, p.channel)) {
@@ -442,9 +457,7 @@ pub fn parse(arena: Allocator, text: []const u8, why: *[]const u8) ParseError!Lo
         var natives = std.ArrayList(Native).init(arena);
         for (try r.array(o, "native", what, false)) |nv| {
             const no = try r.object(nv, "a native library");
-            var lib = Native{ .id = try r.string(no, "id", what), .soname = try r.string(no, "soname", what) };
-            if (no.get("sha256") != null) lib.sha256 = try r.sha(try r.string(no, "sha256", what), what);
-            try natives.append(lib);
+            try natives.append(try readNative(r, no, what));
         }
         p.native = natives.items;
         try packages.append(p);
@@ -462,6 +475,26 @@ fn lessClosure(_: void, a: Closure, b: Closure) bool {
 
 fn lessArtifact(_: void, a: Artifact, b: Artifact) bool {
     return std.mem.order(u8, a.mojo, b.mojo) == .lt;
+}
+
+/// One entry of a package's `native`.
+fn readNative(r: Reader, no: std.json.ObjectMap, what: []const u8) ParseError!Native {
+    var lib = Native{ .id = try r.string(no, "id", what), .soname = try r.string(no, "soname", what) };
+    if (no.get("sha256") != null) lib.sha256 = try r.sha(try r.string(no, "sha256", what), what);
+    if (no.get("kind") != null) {
+        const k = try r.string(no, "kind", what);
+        lib.kind = std.meta.stringToEnum(metadata.Kind, k) orelse return r.bad("{s}'s native library {s} has kind {s}; a kind is shared, static or both", .{ what, lib.id, k });
+    }
+    var needs = std.ArrayList([]const u8).init(r.arena);
+    for (try r.array(no, "needs", what, false)) |n| {
+        switch (n) {
+            .string => |s| try needs.append(s),
+            else => return r.bad("{s}'s native library {s} has a need that is not a string", .{ what, lib.id }),
+        }
+    }
+    lib.needs = needs.items;
+    if (no.get("exclusive") != null) lib.exclusive = try r.string(no, "exclusive", what);
+    return lib;
 }
 
 fn stringList(r: Reader, o: std.json.ObjectMap, what: []const u8) ParseError![]const []const u8 {
@@ -516,26 +549,11 @@ pub fn write(l: Lock, w: anytype) !void {
         try w.print(",\n      \"size\": {d},\n      \"mojo\": ", .{p.size});
         try str(w, p.mojo);
         try writeDeps(w, p.deps);
-        if (p.native.len > 0) {
-            try w.writeAll(",\n      \"native\": [");
-            for (p.native, 0..) |lib, n| {
-                try w.writeAll(if (n == 0) "\n        {\n          \"id\": " else ",\n        {\n          \"id\": ");
-                try str(w, lib.id);
-                try w.writeAll(",\n          \"soname\": ");
-                try str(w, lib.soname);
-                if (lib.sha256) |s| {
-                    try w.writeAll(",\n          \"sha256\": ");
-                    try str(w, s);
-                }
-                try w.writeAll("\n        }");
-            }
-            try w.writeAll("\n      ]");
-        }
+        try writeNatives(w, p.native);
         try w.writeAll("\n    }");
     }
     try w.writeAll(if (l.packages.len == 0) "]\n}\n" else "\n  ]\n}\n");
 }
-
 
 fn writeNatives(w: anytype, native: []const Native) !void {
     if (native.len == 0) return;
@@ -548,6 +566,19 @@ fn writeNatives(w: anytype, native: []const Native) !void {
         if (lib.sha256) |s| {
             try w.writeAll(",\n          \"sha256\": ");
             try str(w, s);
+        }
+        if (lib.kind != .shared) try w.print(",\n          \"kind\": \"{s}\"", .{@tagName(lib.kind)});
+        if (lib.needs.len > 0) {
+            try w.writeAll(",\n          \"needs\": [");
+            for (lib.needs, 0..) |need, k| {
+                try w.writeAll(if (k == 0) "\n            " else ",\n            ");
+                try str(w, need);
+            }
+            try w.writeAll("\n          ]");
+        }
+        if (lib.exclusive.len > 0) {
+            try w.writeAll(",\n          \"exclusive\": ");
+            try str(w, lib.exclusive);
         }
         try w.writeAll("\n        }");
     }
@@ -664,7 +695,7 @@ test "each valid example lock is read and written back byte for byte" {
             return e;
         };
     }
-    try std.testing.expect(seen >= 3);
+    try std.testing.expect(seen >= 5);
 }
 
 test "each invalid example lock is refused, for the reason its name gives" {
@@ -682,6 +713,8 @@ test "each invalid example lock is refused, for the reason its name gives" {
         .{ "missing_build.json", "has no build" },
         .{ "mojo_mismatch.json", "but the toolchain is mojo" },
         .{ "name_from_two_channels.json", "comes from two channels" },
+        .{ "native_bad_kind.json", "has kind weird; a kind is shared, static or both" },
+        .{ "native_need_not_string.json", "has a need that is not a string" },
         .{ "soname_clash.json", "is shipped by both" },
         .{ "unsorted.json", "not sorted by name, version and subdir" },
         .{ "url_mismatch.json", "url is " },
@@ -1005,4 +1038,48 @@ test "a version 2 lock that breaks its rules is refused, saying which" {
     const future = try std.mem.replaceOwned(u8, a, lock_v2_text, "\"lock_version\": 2", "\"lock_version\": 3");
     try std.testing.expectError(error.Invalid, parse(a, future, &why));
     try std.testing.expect(std.mem.indexOf(u8, why, "Update mopm.") != null);
+}
+
+test "a native library keeps its kind, needs and exclusive group through a read and a write; a shared one with none of them writes none" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var dir = try std.fs.cwd().openDir(try testroot.path(a, "tests/contract/examples/lock/valid"), .{});
+    defer dir.close();
+    const text = try dir.readFileAlloc(a, "static_natives.json", 1 << 20);
+    var why: []const u8 = "";
+    const l = try parse(a, text, &why);
+    try std.testing.expectEqual(@as(usize, 2), l.packages.len);
+    const crypto = l.packages[0].native[0];
+    try std.testing.expectEqual(metadata.Kind.static, crypto.kind);
+    try std.testing.expectEqualStrings("libcrypto", crypto.exclusive);
+    try std.testing.expectEqual(@as(usize, 0), crypto.needs.len);
+    try std.testing.expectEqualStrings("5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9", crypto.sha256.?);
+    const tls = l.packages[1].native[0];
+    try std.testing.expectEqual(metadata.Kind.static, tls.kind);
+    try std.testing.expectEqual(@as(usize, 1), tls.needs.len);
+    try std.testing.expectEqualStrings("libcrypto_sys.a", tls.needs[0]);
+    try std.testing.expectEqualStrings("", tls.exclusive);
+
+    // A native with only an id and a soname (every lock written before these keys) reads as a shared library, and writes back with no new key.
+    const plain = try std.mem.replaceOwned(u8, a, text, ",\n          \"kind\": \"static\",\n          \"exclusive\": \"libcrypto\"", "");
+    const p = try parse(a, plain, &why);
+    try std.testing.expectEqual(metadata.Kind.shared, p.packages[0].native[0].kind);
+    const written = try render(a, p);
+    try std.testing.expect(std.mem.indexOf(u8, written, "\"exclusive\"") == null);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, written, "\"kind\""));
+}
+
+test "a native library that needs its own soname is refused when the lock is read" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var dir = try std.fs.cwd().openDir(try testroot.path(a, "tests/contract/examples/lock/valid"), .{});
+    defer dir.close();
+    const text = try dir.readFileAlloc(a, "static_natives.json", 1 << 20);
+    const selfish = try std.mem.replaceOwned(u8, a, text, "\"libcrypto_sys.a\"\n          ]", "\"libtls_sys.a\"\n          ]");
+    try std.testing.expect(!std.mem.eql(u8, text, selfish));
+    var why: []const u8 = "";
+    try std.testing.expectError(error.Invalid, parse(a, selfish, &why));
+    try std.testing.expectEqualStrings("tls_sys: native library tls_sys needs itself (libtls_sys.a)", why);
 }

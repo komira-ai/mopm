@@ -66,7 +66,11 @@ tests = ["tests"]
   `[package]` and `[toolchain]` is an error.
 - `[native.<id>]`: a native library the package builds and ships. Its entry in
   the installed `<name>.mopm.json` (see `package-metadata.schema.json`) is what
-  consumers' tooling reads.
+  consumers' tooling reads. `needs` (sonames of other packages' libraries this
+  one needs) and `exclusive` (a group name) are copied into that entry. `mopm
+  pack` packs a library with `kind = "static"` and `mode = "link"`, from the
+  archive given per subdir (`--native <id>=<subdir>:<file>`); a package that
+  declares one has no `noarch` file.
 - `[targets]`: the library, executables and tests to build.
 
 ## Other tools' settings: `[package.metadata]`

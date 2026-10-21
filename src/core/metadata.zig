@@ -31,6 +31,8 @@ pub const Native = struct {
     static_file: []const u8 = "",
     /// Sonames of other native libraries (from other packages) this one needs.
     needs: []const []const u8 = &.{},
+    /// An exclusivity group (a native library several packages could provide, of which a closure may link one), or "".
+    exclusive: []const u8 = "",
 };
 
 pub const Metadata = struct {
@@ -165,4 +167,16 @@ test "natives are validated" {
     try std.testing.expectError(error.MissingFile, parse(a,
         \\{"schema": 1, "name": "x", "native": [{"id": "a", "soname": "liba.so.1", "kind": "both", "file": "f"}]}
     ));
+}
+
+test "a native library's exclusivity group is read, and is empty when the metadata names none" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const m = try parse(arenaFor(&t),
+        \\{"schema": 1, "name": "x", "native": [
+        \\  {"id": "a", "soname": "liba.a", "kind": "static", "static_file": "../liba.a", "exclusive": "libcrypto"},
+        \\  {"id": "b", "soname": "libb.a", "kind": "static", "static_file": "../libb.a"}]}
+    );
+    try std.testing.expectEqualStrings("libcrypto", m.native[0].exclusive);
+    try std.testing.expectEqualStrings("", m.native[1].exclusive);
 }

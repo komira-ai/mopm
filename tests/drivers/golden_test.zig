@@ -133,6 +133,7 @@ test "golden files: link-plan, metadata, new and init, build, run, repl, test --
         .{ .name = "missing", .want = 1, .pkgs = &.{"http_client"} },
         .{ .name = "dup", .want = 1, .pkgs = &.{ "pkg_a", "pkg_b" } },
         .{ .name = "static", .want = 1, .pkgs = &.{"staticpkg"} },
+        .{ .name = "static_chain", .want = 1, .pkgs = &.{ "crypto_sys", "tls_sys" } },
     };
     for (plans) |p| {
         var args = std.ArrayList([]const u8).init(a);
