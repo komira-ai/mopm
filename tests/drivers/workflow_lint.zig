@@ -202,6 +202,9 @@ fn eachPerm(a: Allocator, f: []const u8, base: []const u8, node: Value, path: *s
     }
 }
 
+/// The variable (lower case) that holds the publish role of the shared apt repository; release.yml may read it.
+const apt_role_variable = "apt_publish_role_arn";
+
 /// /\bvars\.\w*(?:ACCOUNT|REGION|ARN)\w*/i, each match (non-overlapping) reported.
 fn varsProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !void {
     const low = try c.lower(a, text);
@@ -214,6 +217,12 @@ fn varsProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !void 
         var j = p + 5;
         while (j < low.len and c.isWord(low[j])) j += 1;
         const w = low[p + 5 .. j];
+        // The one role ARN that is a variable: the apt repository's publish role, which its owner sets as a variable of the environment
+        // `apt-publish` (the role's name is public, the trust policy is what protects it). Only release.yml reads it.
+        if (std.mem.eql(u8, w, apt_role_variable) and std.mem.eql(u8, c.basename(f), release_file)) {
+            i = j;
+            continue;
+        }
         if (std.mem.indexOf(u8, w, "account") != null or std.mem.indexOf(u8, w, "region") != null or std.mem.indexOf(u8, w, "arn") != null) {
             try c.problem(a, out, prefix ++ "{s}: {s}: account, region and role ARNs come from environment secrets, not vars", .{ f, text[p..j] });
             i = j;

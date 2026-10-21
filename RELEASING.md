@@ -39,6 +39,7 @@ and `service-ci.yml` may run on `pull_request`, and every job of `ci.yml` other 
 | `tag` | `plan`, `build`, `beta-user`, `verify` | creates the annotated tag `v<version>` at the pushed commit, only after the files verified, so a failing attest, signature or verify leaves no orphan tag. The only write before the release. Refuses a superseded commit, and refuses unless the version it would take is the planned one (`--expect-version`), so the tested bytes are the released bytes. The tag ruleset admits only the GitHub App `komira-release-bot` to create `v*` tags, so the job mints that App's token for this repository alone (`repositories: mopm`, `permission-contents: write`, see "The tag token" below) and gives it to the tag step only; the job's own `GITHUB_TOKEN` holds `contents: read`. |
 | `publish` | `tag`, `verify` | creates the GitHub release for `v<version>` from exactly the verified files (artifacts `verified-assets` and `notes-pin`, nothing else). Runs only for a push to `main`, never a manual run. It holds `contents: write` for the release, and `gh release create` is always called with `--verify-tag`, so it can never create a tag (the lint pins that in `tools/cut_release.zig`). |
 | `bump` | `tag`, `publish` | opens the pull request in komira-internal that moves its `mopm` submodule to this release, with auto-merge (below). The last stage, and the only one that writes outside this repository; nothing needs it. |
+| `apt-deploy-read`, `apt-index`, `apt-deploy-write` (up to three attempts) | `publish` | puts the two `.deb`s into the shared apt repository (below). Three jobs per attempt so that no job holds both the signing key and the cloud role. Until the repository owner has made the settings, every one of them ends green with a notice and writes nothing. Nothing needs them: a red apt job goes red alone and un-releases nothing. |
 
 A push that changes only documentation or CI (`**.md`, `docs/**`, `.github/**`) does not release.
 Everything else does, including a change to `VERSION`.
@@ -105,6 +106,67 @@ when its `check` and `bump-guard` pass; nobody clicks.
   `bump` changes nothing else, it only shows the run as failed. To retry, re-run the `bump` job of that run (Actions, the
   run, "Re-run failed jobs" or the job's own re-run): it is safe to run again, it finds what exists and finishes the rest.
   If a newer release has already bumped, the re-run does nothing.
+
+## The apt repository
+
+After `publish`, the two `.deb`s of the release (the ones `verify` checked, artifact `verified-assets`) go into the apt repository that the products of this organization share
+(`tools/apt_publish.zig` is the command line the jobs run; `tools/channels apt-index` merges and renders the index, as for any apt repository). The repository is one tree: the
+`.deb`s of a product below its own pool directory (`pool/mopm/`), and one signed index (`dists/stable/`) that lists the packages of every product. mopm writes its own
+packages and keeps the rest of the index as it finds it.
+
+**Three jobs per attempt, and why.** Writing the index needs three things that must not meet in one job: the cloud role (to read and write the repository), the archive signing key
+(to sign the merged index), and the merged index itself (which needs the read before it and the signature before the write). So:
+
+| job | environment | holds | does |
+|---|---|---|---|
+| `apt-deploy-read` | `apt-publish` | the role (OIDC, `id-token: write`), no key | reads the current index and the ETag of every object of it from S3 (never through the CDN, which caches the index and would hand back a stale ETag) and passes it on as an artifact |
+| `apt-index` | `apt-signing` | the signing key, no role, no `id-token`, no cloud credential | merges the `.deb`s into the index that was read (`channels apt-index`) and signs `Release` with the signing subkey: `InRelease` and `Release.gpg` |
+| `apt-deploy-write` | `apt-publish` | the role (OIDC), no key | uploads the `.deb`s with `If-None-Match` (a `.deb` is never replaced), writes the index with `If-Match` on the ETag it was read with (`If-None-Match` for an object that did not exist yet), then invalidates `/apt/dists/*` |
+
+The job that can sign cannot write, and the job that can write cannot sign; the index travels between them as an artifact that only the workflow can create. The release lint holds
+that (`tests/drivers/release_lint.zig`): the key (`APT_GPG_*`) is named by the `apt-index` jobs alone, which hold `contents: read` and no `id-token`; the role (`APT_PUBLISH_*` and the
+OIDC exchange) by the `apt-deploy` jobs alone; `id-token: write` is held by those and by `attest` and by nothing else; each job declares its environment. The puts themselves are held
+by a second lint over `tools/apt_publish.zig` (every `.deb` put carries `If-None-Match`, every index put `If-Match` on the ETag that was read or `If-None-Match` when there was none, the
+`.debs` before the index and the invalidation last) and by `tests/drivers/apt_publish_test.zig`, which runs the real tool against a fake `aws` that refuses every call the role may not
+make, a fake `gpg` and a fake `curl`.
+
+**The order of the writes.** The pool first (the index must never list a file that is not there), then every `Packages` and `Packages.gz`, then `Release`, `InRelease` and `Release.gpg`
+(a reader that sees a `Release` finds the files it lists), then the invalidation. The OIDC exchange is the one `deploy.yml` makes (the runner's token request, then
+`sts assume-role-with-web-identity`, both masked), done by the tool so that no new third-party action is needed and the six jobs that need it do not each carry a copy of it.
+
+**A lost write.** Another product may publish between the read and the write. Every put of the index is conditional on the version that was read, so the loser gets a `412`: it writes
+nothing more, says so, and its output `conflict=true` starts the next attempt, which reads again, merges again and signs again. Three attempts at most (`apt-deploy-read-2`,
+`-3`, and so on); the write of the last one fails the job instead. A `.deb` that is already in the pool (a `412` on its put) is kept as it is: the release it belongs to was
+already published.
+
+**The settings, and what happens until they are made.** The repository owner makes them once:
+
+- the environment `apt-publish` (deployments from `main` only) with the variables `APT_PUBLISH_ROLE_ARN`, `APT_BUCKET`, `APT_DISTRIBUTION_ID` and `APT_HOSTNAME`;
+- the environment `apt-signing` (deployments from `main` only) with the secrets `APT_GPG_PRIVATE_KEY` and `APT_GPG_PASSPHRASE`, and `APT_GPG_FINGERPRINT`, the fingerprint of the signing
+  subkey, as a secret or as a variable (the jobs take whichever exists).
+
+**Fail-safe.** Every apt job has a step `gate` (`apt_publish gate`) that checks the settings it needs, after only the steps that set up the tools. When one is missing the gate prints a
+notice that names it (the names, never a value), and every later step of the job is skipped by `if: steps.gate.outputs.enabled == 'true'`: the job ends green and writes nothing. The
+lint holds that every step after the gate carries that condition and that no step before it touches a setting, a secret or the cloud. So a release of mopm that runs before the settings
+exist (or with only half of them) releases exactly as before and the apt jobs only leave a notice; a half-made setting (the role without the key, or the key without the role) leaves
+the repository unchanged. Once both are made, the next release publishes to the repository without any other change.
+
+The region of the repository is `us-east-1`. The first-publish probe of the repository's own documentation (prove the grants with a throwaway object before the first real write)
+is not part of these jobs: the writes are conditional, so a role with the wrong grants fails the first release's apt job loudly and changes nothing.
+
+### Installing from the apt repository
+
+*Available once the repository owner has made the settings above and uploaded the archive keyring; until then use the install script or the `.deb` of a release.*
+
+```sh
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://packages.komira.ai/apt/keyring.gpg | sudo tee /etc/apt/keyrings/packages.gpg > /dev/null
+echo "deb [signed-by=/etc/apt/keyrings/packages.gpg] https://packages.komira.ai/apt stable main" | sudo tee /etc/apt/sources.list.d/packages.list
+sudo apt update && sudo apt install mopm
+```
+
+The keyring is the public half of the archive signing key (binary format, as `signed-by` expects); its file name is decided when the owner uploads it, and the line above names the file
+the repository documents. `apt update` verifies `InRelease` against it before it trusts a `Packages` file.
 
 ## The user-level beta
 

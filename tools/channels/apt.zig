@@ -26,7 +26,7 @@ pub const Stanza = struct {
     text: []const u8,
 };
 
-pub const Error = error{ BadStanza, MissingField, VersionConflict, ArchitectureNotIndexed, BadKeep, BadName, BadArchitecture, ReservedField };
+pub const Error = error{ BadStanza, MissingField, VersionConflict, ArchitectureNotIndexed, BadKeep, BadName, BadArchitecture, ReservedField, BadPoolDir };
 
 /// Fields the index writes itself, from the file: a control file that carries one would forge the file's name, size or
 /// checksums. Field names are not case sensitive in Debian control files.
@@ -63,8 +63,34 @@ fn fromFields(a: Allocator, text: []const u8) !Stanza {
     };
 }
 
+/// A pool directory a product may own in a repository shared by several: `pool/` and then one or more path segments of
+/// lower-case letters, digits and `.+-_`, none empty, `.` or `..`, no leading or trailing slash (it becomes part of a key).
+pub fn validPoolDir(dir: []const u8) bool {
+    const head = "pool/";
+    if (!std.mem.startsWith(u8, dir, head) or dir.len == head.len) return false;
+    var segs = std.mem.splitScalar(u8, dir[head.len..], '/');
+    while (segs.next()) |seg| {
+        if (seg.len == 0 or std.mem.eql(u8, seg, ".") or std.mem.eql(u8, seg, "..")) return false;
+        for (seg) |ch| {
+            const ok = (ch >= 'a' and ch <= 'z') or (ch >= '0' and ch <= '9') or ch == '.' or ch == '+' or ch == '-' or ch == '_';
+            if (!ok) return false;
+        }
+    }
+    return true;
+}
+
 /// The index stanza of a .deb: its control fields, then Filename, Size and SHA256 of the file, Description last.
+/// The file is named in the layout of one repository of one product (`pool/main/<letter>/<package>/`).
 pub fn stanzaOf(a: Allocator, deb_bytes: []const u8) !Stanza {
+    return stanzaOfIn(a, deb_bytes, null);
+}
+
+/// Like `stanzaOf`, but with a `pool_dir` (see `validPoolDir`) the Filename is `<pool_dir>/<file>`: the layout of a repository
+/// shared by several products, each of which may write only below its own pool directory.
+pub fn stanzaOfIn(a: Allocator, deb_bytes: []const u8, pool_dir: ?[]const u8) !Stanza {
+    if (pool_dir) |d| {
+        if (!validPoolDir(d)) return error.BadPoolDir;
+    }
     const ctrl = try deb.readControl(a, deb_bytes);
     const fields = try control.parse(a, ctrl);
     const package = control.get(fields, "Package") orelse return error.MissingField;
@@ -90,7 +116,8 @@ pub fn stanzaOf(a: Allocator, deb_bytes: []const u8) !Stanza {
             try out.append(f);
         }
     }
-    try out.append(.{ .name = "Filename", .value = try poolPath(a, package, file_name) });
+    const filename = if (pool_dir) |d| try std.fmt.allocPrint(a, "{s}/{s}", .{ d, file_name }) else try poolPath(a, package, file_name);
+    try out.append(.{ .name = "Filename", .value = filename });
     try out.append(.{ .name = "Size", .value = try std.fmt.allocPrint(a, "{d}", .{deb_bytes.len}) });
     try out.append(.{ .name = "SHA256", .value = try a.dupe(u8, &sum) });
     if (description) |d| try out.append(d);
@@ -325,6 +352,24 @@ test "the stanza of a deb names its file, its size and the sha256 of its bytes, 
     try t.expectEqualStrings(try std.fmt.allocPrint(a, "{d}", .{bytes.len}), control.get(fields, "Size").?);
     try t.expectEqualStrings("Description", fields[fields.len - 1].name);
     try t.expectEqualStrings("Package", fields[0].name);
+}
+
+test "validPoolDir: pool/ and clean lower-case segments only" {
+    for ([_][]const u8{ "pool/mopm", "pool/a.b-c_d+e", "pool/mopm/x1" }) |d| try t.expect(validPoolDir(d));
+    for ([_][]const u8{ "", "pool", "pool/", "mopm", "/pool/mopm", "pool/mopm/", "pool//mopm", "pool/../x", "pool/./x", "pool/Mopm", "pool/a b", "pool/a\\b", "pool/mopm/.." }) |d| try t.expect(!validPoolDir(d));
+}
+
+test "a pool directory names the file below it, and a bad one is refused before anything is built" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const bytes = try sampleDeb(a, "1.2.3", "amd64", "payload");
+    const s = try stanzaOfIn(a, bytes, "pool/mopm");
+    try t.expectEqualStrings("pool/mopm/mopm_1.2.3_amd64.deb", control.get(try control.parse(a, s.text), "Filename").?);
+    // The checksum and size are the file's own, whatever the directory.
+    try t.expectEqualStrings(&sha256Hex(bytes), s.sha256);
+    try t.expectError(error.BadPoolDir, stanzaOfIn(a, bytes, "pool/../etc"));
+    try t.expectError(error.BadPoolDir, stanzaOfIn(a, bytes, "elsewhere"));
 }
 
 test "merge: new versions are added, newest first; the same file again is a no-op" {

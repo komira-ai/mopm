@@ -215,6 +215,28 @@ test "account, region and role ARNs are not repository variables" {
     });
 }
 
+test "the publish role of the apt repository is the one role ARN that release.yml may read from a variable" {
+    const role = head ++
+        \\jobs:
+        \\  j:
+        \\    runs-on: x
+        \\    env:
+        \\      A: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+        \\
+    ;
+    try expectLint("release.yml", role, &.{});
+    try expectLint("ci.yml", role, &.{"ci.yml: vars.APT_PUBLISH_ROLE_ARN: account, region and role ARNs come from environment secrets, not vars"});
+    try expectLint("release.yml", head ++
+        \\jobs:
+        \\  j:
+        \\    runs-on: x
+        \\    env:
+        \\      A: ${{ vars.APT_PUBLISH_ROLE_ARN_2 }}
+        \\      B: ${{ vars.OTHER_ROLE_ARN }}
+        \\
+    , &.{ "release.yml: vars.APT_PUBLISH_ROLE_ARN_2: account", "release.yml: vars.OTHER_ROLE_ARN: account" });
+}
+
 const promote_ok =
     \\name: p
     \\on:

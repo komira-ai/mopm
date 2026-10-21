@@ -234,12 +234,15 @@ const subject_check = "oidc-subject-check.yml";
 const farm_file = "farm.yml";
 /// release.yml publishes a release with build-provenance attestations, so its publish job holds an
 /// id-token grant (the attestation is signed with the job's OIDC token; no cloud access). Allowed only
-/// when the triggers are a push to main and a manual run, with no secret but the release bot's key, no
-/// environment but `release` (on exactly the jobs that read RELEASE_BOT_*) and no id-token on a job that
-/// calls another workflow.
+/// when the triggers are a push to main and a manual run, with no secret but the release bot's key and the
+/// archive signing key (the apt-index jobs), no environment but `release` (on exactly the jobs that read RELEASE_BOT_*),
+/// `apt-signing` (APT_GPG_*) and `apt-publish` (APT_PUBLISH_*), and no id-token on a job that calls another workflow.
 const release_file = "release.yml";
 /// The environment that holds the release bot's key, restricted to main.
 const release_environment = "release";
+/// The environments of the apt jobs: the variables of the shared repository and the role's trust (publish), the archive signing key (signing).
+const apt_publish_environment = "apt-publish";
+const apt_signing_environment = "apt-signing";
 
 /// The pull-request tier: a pull request runs build and unit tests only. These four workflows are the only ones that may
 /// run on pull_request (ci.yml: its unit jobs; lint.yml: the lints, the release lint included; farm.yml: the unit build on the test farm;
@@ -370,12 +373,19 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
             try c.problem(a, out, prefix ++ "{s}: must not use secrets or an environment", .{f});
         }
         for (jobs) |j| {
-            const reads_bot = std.mem.indexOf(u8, try c.inspect(a, j.node), "RELEASE_BOT") != null;
+            const body = try c.inspect(a, j.node);
+            const reads_bot = std.mem.indexOf(u8, body, "RELEASE_BOT") != null;
+            const reads_signing = std.mem.indexOf(u8, body, "APT_GPG") != null;
+            const reads_publish = std.mem.indexOf(u8, body, "APT_PUBLISH") != null;
             const env = c.get(j.node, "environment");
             if (reads_bot and !c.isStr(env, release_environment)) {
                 try c.problem(a, out, prefix ++ "{s}: job {s} reads RELEASE_BOT_* so it must declare environment {s}, got {s}", .{ f, j.name, release_environment, try c.inspect(a, env) });
-            } else if (!reads_bot and env != null) {
-                try c.problem(a, out, prefix ++ "{s}: job {s}: must not use secrets or an environment (only jobs that read RELEASE_BOT_* declare {s})", .{ f, j.name, release_environment });
+            } else if (reads_signing and !reads_bot and !c.isStr(env, apt_signing_environment)) {
+                try c.problem(a, out, prefix ++ "{s}: job {s} reads APT_GPG_* so it must declare environment {s}, got {s}", .{ f, j.name, apt_signing_environment, try c.inspect(a, env) });
+            } else if (reads_publish and !reads_bot and !reads_signing and !c.isStr(env, apt_publish_environment)) {
+                try c.problem(a, out, prefix ++ "{s}: job {s} reads APT_PUBLISH_* so it must declare environment {s}, got {s}", .{ f, j.name, apt_publish_environment, try c.inspect(a, env) });
+            } else if (!reads_bot and !reads_signing and !reads_publish and env != null) {
+                try c.problem(a, out, prefix ++ "{s}: job {s}: must not use secrets or an environment (only jobs that read RELEASE_BOT_*, APT_GPG_* or APT_PUBLISH_* declare one)", .{ f, j.name });
             }
         }
         for (jobs) |j| {
@@ -486,15 +496,30 @@ pub fn run(a: Allocator, files: []const File, structure: []const File, out: *Out
 
 pub const File = struct { path: []const u8, data: []const u8 };
 
-/// The text of release.yml (comments dropped) without its two allowed secret references: the tag job and the bump
-/// job each hand the key of the release bot's GitHub App to actions/create-github-app-token (release_lint.zig holds
-/// where). Exactly two are removed; a third, or any other `secrets.`, is still a finding.
+/// One reference to a secret that release.yml may make: how many times, and what it is for.
+const AllowedSecret = struct { ref: []const u8, times: usize };
+
+/// The secrets release.yml may reference, each exactly this many times at most. The tag job and the bump job each hand the key of the release
+/// bot's GitHub App to actions/create-github-app-token. The apt-index jobs (three attempts, release_lint.zig holds where) read the archive signing
+/// key in their signing step (the key and its passphrase), in their gate only whether the key exists (a comparison with the empty string,
+/// which puts no secret into the environment), and the fingerprint of the signing subkey, which may be a secret or a variable, in the gate and in the signing step.
+const allowed_secrets = [_]AllowedSecret{
+    .{ .ref = "${{ secrets.RELEASE_BOT_PRIVATE_KEY }}", .times = 2 },
+    .{ .ref = "${{ secrets.APT_GPG_PRIVATE_KEY }}", .times = 3 },
+    .{ .ref = "${{ secrets.APT_GPG_PASSPHRASE }}", .times = 3 },
+    .{ .ref = "${{ secrets.APT_GPG_PRIVATE_KEY != '' }}", .times = 3 },
+    .{ .ref = "${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}", .times = 6 },
+};
+
+/// The text of release.yml (comments dropped) without its allowed secret references (`allowed_secrets`). At most that many of each are removed;
+/// one more, or any other `secrets.`, is still a finding.
 fn releaseSecretFree(a: Allocator, text: []const u8) ![]u8 {
-    const ref = "${{ secrets.RELEASE_BOT_PRIVATE_KEY }}";
     var s = try c.nonCommentLines(a, text);
-    for (0..2) |_| {
-        const at = std.mem.indexOf(u8, s, ref) orelse break;
-        s = try std.mem.concat(a, u8, &.{ s[0..at], s[at + ref.len ..] });
+    for (allowed_secrets) |allowed| {
+        for (0..allowed.times) |_| {
+            const at = std.mem.indexOf(u8, s, allowed.ref) orelse break;
+            s = try std.mem.concat(a, u8, &.{ s[0..at], s[at + allowed.ref.len ..] });
+        }
     }
     return s;
 }

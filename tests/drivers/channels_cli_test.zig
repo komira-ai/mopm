@@ -196,6 +196,17 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
         rep.check("apt-index: the same .deb again adds nothing and succeeds", noop.code == 0 and h.contains(noop.text, "added 0"), noop.text);
         rep.same("apt-index: and the amd64 index is unchanged", w.read("r2/dists/stable/main/binary-amd64/Packages"), w.read("r4/dists/stable/main/binary-amd64/Packages"));
 
+        // A product's own pool directory (a repository several products share): the .debs are listed and written below it, the checksums are the files' own.
+        const shared = try w.index("r1", "r_shared", &.{ "one.deb", "arm.deb" }, &.{ "--pool-dir", "pool/mopm" });
+        const shared_packages = w.read("r_shared/dists/stable/main/binary-amd64/Packages");
+        rep.check("apt-index --pool-dir: succeeds, lists the new .deb below pool/mopm and keeps the old stanza as it was", shared.code == 0 and h.contains(shared_packages, "Filename: pool/mopm/mopm_1.2.3_amd64.deb\n") and h.contains(shared_packages, "Filename: pool/main/m/mopm/mopm_1.2.2_amd64.deb\n"), shared.text);
+        rep.same("apt-index --pool-dir: the .deb is written below the directory, as it was given", w.read("one.deb"), w.read("r_shared/pool/mopm/mopm_1.2.3_amd64.deb"));
+        rep.check("apt-index --pool-dir: nothing is written to pool/main", !w.has("r_shared/pool/main"), shared.text);
+        for ([_][]const u8{ "pool/../etc", "elsewhere", "pool/", "pool/Mopm" }) |bad| {
+            const refused = try w.index("r1", "r_badpool", &.{"one.deb"}, &.{ "--pool-dir", bad });
+            rep.check(try h.fmt(a, "mutant: apt-index --pool-dir {s} is refused, nothing written", .{bad}), refused.code == 1 and h.contains(refused.text, "BadPoolDir") and !w.has("r_badpool"), refused.text);
+        }
+
         // ---- planted defects: each is refused for its reason, and nothing at all is written ---------------------------
         const down = try w.index("r2", "r_down", &.{"d122a.deb"}, &.{});
         rep.check("mutant: an older version would move the channel down: refused, nothing written", down.code == 1 and h.contains(down.text, "refused") and h.contains(down.text, "down") and !w.has("r_down"), down.text);

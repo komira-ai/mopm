@@ -10,13 +10,14 @@
 //!       overrides, with the control fields from <dir>/control, <dir>/copyright and <dir>/lintian-overrides. The same
 //!       binary and metadata give the same bytes.
 //!   channels apt-index --repo <dir> --out <dir> --deb <path> [--deb ...] --date <epoch seconds>
-//!                --origin <text> --label <text> --description <text> [--arch <arch> ...] [--keep <N>]
+//!                --origin <text> --label <text> --description <text> [--arch <arch> ...] [--keep <N>] [--pool-dir pool/<name>]
 //!       Reads the Packages files under <dir>/dists/stable/main/binary-<arch>/ (none is an empty index) for the --arch
 //!       given (default amd64 and arm64) and for every other binary-<arch> the repository has, so none is dropped; adds the
 //!       .debs, and writes the new Packages, Packages.gz and Release under <out>/dists/stable and the .debs under
 //!       <out>/pool. Refuses (exit 1, nothing written) to list a version older than the newest one listed for its
 //!       package and architecture, or the same version with other bytes. Keeps the newest <N> (default 25) per
-//!       package and architecture. Signing is not done here.
+//!       package and architecture. Signing is not done here. With --pool-dir the .debs are listed and written below that
+//!       directory (`pool/mopm/<file>.deb`), the layout of a repository several products share, each below its own directory.
 //!   channels formula --sums <SHA256SUMS> --name <name> --version <X.Y.Z> --desc <text> --homepage <url>
 //!                --license <spdx> (--repo <owner/name> | --url-base <url>) [--no-explicit-version] --out <path.rb>
 //!       Renders the Homebrew formula from the checksums in the file and nothing else.
@@ -201,7 +202,7 @@ fn listedArchs(a: Allocator, repo: []const u8) ![]const []const u8 {
 
 fn cmdAptIndex(a: Allocator, args: []const []const u8) !void {
     const flags = try parseFlags(a, args, &.{
-        "--repo", "--out", "--deb", "--date", "--origin", "--label", "--description", "--arch", "--keep",
+        "--repo", "--out", "--deb", "--date", "--origin", "--label", "--description", "--arch", "--keep", "--pool-dir",
     }, &.{});
     const repo = need(flags, "--repo");
     const out_dir = need(flags, "--out");
@@ -231,11 +232,12 @@ fn cmdAptIndex(a: Allocator, args: []const []const u8) !void {
         try existing.appendSlice(parsed);
     }
 
+    const pool_dir = one(flags, "--pool-dir");
     var added = std.ArrayList(apt.Stanza).init(a);
     var debs = std.ArrayList([]const u8).init(a);
     for (try many(a, flags, "--deb")) |path| {
         const bytes = readFile(a, path);
-        const s = apt.stanzaOf(a, bytes) catch |err| die("{s}: not a usable .deb: {s}", .{ path, @errorName(err) });
+        const s = apt.stanzaOfIn(a, bytes, pool_dir) catch |err| die("{s}: not a usable .deb: {s}", .{ path, @errorName(err) });
         try added.append(s);
         try debs.append(bytes);
     }

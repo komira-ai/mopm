@@ -42,6 +42,10 @@ name: release
 #   bump       after publish, opens the komira-internal pull request that moves its `mopm` submodule to this release
 #              and turns auto-merge on (cut_release bump-internal), with the App token of komira-release-bot. It is
 #              the only job that holds that token (tag holds its own, for mopm), and nothing needs it: a failed bump goes red and un-releases nothing.
+#   apt        after publish, the .debs go into the shared apt repository (the apt-deploy-read, apt-index and apt-deploy-write jobs, in up to
+#              three attempts; tools/apt_publish.zig). No job holds both the signing key (environment apt-signing) and the cloud role
+#              (environment apt-publish, OIDC): one reads the index, one merges and signs it, one writes it. Until the repository owner
+#              has made the settings, every one of these jobs ends green with a notice and writes nothing. Nothing needs them.
 #
 # A manual run (workflow_dispatch) of main is a dry run: everything up to and including verify, then nothing:
 # tag, publish and bump do not run. From any other branch it builds and tests the candidate and stops before attest.
@@ -326,3 +330,503 @@ jobs:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           VERSION: ${{ needs.tag.outputs.version }}
         run: '"$RUNNER_TEMP/cut_release" --repo "$GITHUB_REPOSITORY" bump-internal --version "$VERSION" --sha "$GITHUB_SHA" --internal-repo komira-ai/komira-internal --submodule mopm --workdir "$RUNNER_TEMP/bump"'
+
+  # ---- The apt repository (RELEASING.md, "The apt repository"). Three jobs per attempt, split so that no job holds both the signing
+  # key and the cloud role: apt-deploy-read (the role, no key) reads the current index from S3; apt-index (the key, no cloud) merges
+  # the .debs into it with tools/channels and signs it; apt-deploy-write (the role, no key) uploads the .debs and writes the index
+  # with If-Match / If-None-Match. A lost write (412) hands over to the next attempt, which reads again; 3 attempts, the last
+  # one fails. Until the repository owner has made the settings (the variables of the environment apt-publish and the secrets of
+  # the environment apt-signing) every one of these jobs ends green with a notice and writes nothing. Nothing needs them: a red
+  # apt job goes red alone and un-releases nothing.
+
+  apt-deploy-read:
+    needs: [publish]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # The variables of the repository's apt settings; the role's trust names this environment.
+    environment: apt-publish
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      enabled: ${{ steps.gate.outputs.enabled }}
+    env:
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Build the apt publish tool
+        run: zig build-exe tools/apt_publish.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/apt_publish"
+      - name: Gate on the settings of the apt repository (a job without them does nothing and ends green)
+        id: gate
+        env:
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+        run: '"$RUNNER_TEMP/apt_publish" gate --label "apt publish (read)" --out "$GITHUB_OUTPUT" --env APT_PUBLISH_ROLE_ARN --env APT_BUCKET --env APT_DISTRIBUTION_ID --env APT_HOSTNAME'
+      - name: Assume the publish role through OIDC
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+        run: '"$RUNNER_TEMP/apt_publish" assume --env-file "$GITHUB_ENV"'
+      - name: Read the current index and its ETags from S3 (never through the CDN, which caches the index)
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+        run: '"$RUNNER_TEMP/apt_publish" read --bucket "$APT_BUCKET" --out "$RUNNER_TEMP/apt-current"'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-current
+          path: ${{ runner.temp }}/apt-current
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  apt-index:
+    needs: [apt-deploy-read]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # The signing key lives only in this environment; this job holds no cloud credential and no role.
+    environment: apt-signing
+    permissions:
+      contents: read
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Build the apt publish tool
+        run: zig build-exe tools/apt_publish.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/apt_publish"
+      - name: Build the channels tool
+        run: zig build-exe tools/channels/main.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/channels"
+      - name: Gate on the signing key and on the read (a job without them does nothing and ends green)
+        id: gate
+        env:
+          READ_ENABLED: ${{ needs.apt-deploy-read.outputs.enabled }}
+          HAVE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY != '' }}
+          APT_GPG_FINGERPRINT: ${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}
+        run: '"$RUNNER_TEMP/apt_publish" gate --label "apt index" --out "$GITHUB_OUTPUT" --true READ_ENABLED --true HAVE_KEY --env APT_GPG_FINGERPRINT'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-current
+          path: ${{ runner.temp }}/apt-current
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: verified-assets
+          path: ${{ runner.temp }}/apt-debs
+      - name: Merge the .debs into the index that was read (the index of every product is kept)
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: '"$RUNNER_TEMP/apt_publish" index --channels "$RUNNER_TEMP/channels" --current "$RUNNER_TEMP/apt-current" --out "$RUNNER_TEMP/apt-next" --debs "$RUNNER_TEMP/apt-debs" --origin "$OWNER" --label "$OWNER" --description "$OWNER packages"'
+      - name: Sign Release with the signing subkey (InRelease and Release.gpg)
+        id: sign
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+          APT_GPG_FINGERPRINT: ${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}
+        run: '"$RUNNER_TEMP/apt_publish" sign --dir "$RUNNER_TEMP/apt-next/dists/stable" --work "$RUNNER_TEMP/apt-sign" --fingerprint "$APT_GPG_FINGERPRINT" --out "$GITHUB_OUTPUT"'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-next
+          path: |
+            ${{ runner.temp }}/apt-next/dists
+            ${{ runner.temp }}/apt-next/etags.txt
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  apt-deploy-write:
+    needs: [apt-deploy-read, apt-index]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: apt-publish
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      conflict: ${{ steps.write.outputs.conflict }}
+    env:
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Build the apt publish tool
+        run: zig build-exe tools/apt_publish.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/apt_publish"
+      - name: Gate on the settings of the apt repository and on the signed index (a job without them does nothing and ends green)
+        id: gate
+        env:
+          READ_ENABLED: ${{ needs.apt-deploy-read.outputs.enabled }}
+          INDEX_SIGNED: ${{ needs.apt-index.outputs.signed }}
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+        run: '"$RUNNER_TEMP/apt_publish" gate --label "apt publish (write)" --out "$GITHUB_OUTPUT" --true READ_ENABLED --true INDEX_SIGNED --env APT_PUBLISH_ROLE_ARN --env APT_BUCKET --env APT_DISTRIBUTION_ID --env APT_HOSTNAME'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-next
+          path: ${{ runner.temp }}/apt-next
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: verified-assets
+          path: ${{ runner.temp }}/apt-debs
+      - name: Assume the publish role through OIDC
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+        run: '"$RUNNER_TEMP/apt_publish" assume --env-file "$GITHUB_ENV"'
+      - name: Upload the .debs (If-None-Match), write the signed index (If-Match on the ETag that was read), then invalidate /apt/dists/*
+        id: write
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+        run: '"$RUNNER_TEMP/apt_publish" write --bucket "$APT_BUCKET" --distribution "$APT_DISTRIBUTION_ID" --hostname "$APT_HOSTNAME" --next "$RUNNER_TEMP/apt-next" --debs "$RUNNER_TEMP/apt-debs" --out "$GITHUB_OUTPUT"'
+
+  apt-deploy-read-2:
+    needs: [apt-deploy-write]
+    if: ${{ needs.apt-deploy-write.outputs.conflict == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # The variables of the repository's apt settings; the role's trust names this environment.
+    environment: apt-publish
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      enabled: ${{ steps.gate.outputs.enabled }}
+    env:
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Build the apt publish tool
+        run: zig build-exe tools/apt_publish.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/apt_publish"
+      - name: Gate on the settings of the apt repository (a job without them does nothing and ends green)
+        id: gate
+        env:
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+        run: '"$RUNNER_TEMP/apt_publish" gate --label "apt publish (read)" --out "$GITHUB_OUTPUT" --env APT_PUBLISH_ROLE_ARN --env APT_BUCKET --env APT_DISTRIBUTION_ID --env APT_HOSTNAME'
+      - name: Assume the publish role through OIDC
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+        run: '"$RUNNER_TEMP/apt_publish" assume --env-file "$GITHUB_ENV"'
+      - name: Read the current index and its ETags from S3 (never through the CDN, which caches the index)
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+        run: '"$RUNNER_TEMP/apt_publish" read --bucket "$APT_BUCKET" --out "$RUNNER_TEMP/apt-current"'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-current-2
+          path: ${{ runner.temp }}/apt-current
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  apt-index-2:
+    needs: [apt-deploy-read-2]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # The signing key lives only in this environment; this job holds no cloud credential and no role.
+    environment: apt-signing
+    permissions:
+      contents: read
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Build the apt publish tool
+        run: zig build-exe tools/apt_publish.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/apt_publish"
+      - name: Build the channels tool
+        run: zig build-exe tools/channels/main.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/channels"
+      - name: Gate on the signing key and on the read (a job without them does nothing and ends green)
+        id: gate
+        env:
+          READ_ENABLED: ${{ needs.apt-deploy-read-2.outputs.enabled }}
+          HAVE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY != '' }}
+          APT_GPG_FINGERPRINT: ${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}
+        run: '"$RUNNER_TEMP/apt_publish" gate --label "apt index" --out "$GITHUB_OUTPUT" --true READ_ENABLED --true HAVE_KEY --env APT_GPG_FINGERPRINT'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-current-2
+          path: ${{ runner.temp }}/apt-current
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: verified-assets
+          path: ${{ runner.temp }}/apt-debs
+      - name: Merge the .debs into the index that was read (the index of every product is kept)
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: '"$RUNNER_TEMP/apt_publish" index --channels "$RUNNER_TEMP/channels" --current "$RUNNER_TEMP/apt-current" --out "$RUNNER_TEMP/apt-next" --debs "$RUNNER_TEMP/apt-debs" --origin "$OWNER" --label "$OWNER" --description "$OWNER packages"'
+      - name: Sign Release with the signing subkey (InRelease and Release.gpg)
+        id: sign
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+          APT_GPG_FINGERPRINT: ${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}
+        run: '"$RUNNER_TEMP/apt_publish" sign --dir "$RUNNER_TEMP/apt-next/dists/stable" --work "$RUNNER_TEMP/apt-sign" --fingerprint "$APT_GPG_FINGERPRINT" --out "$GITHUB_OUTPUT"'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-next-2
+          path: |
+            ${{ runner.temp }}/apt-next/dists
+            ${{ runner.temp }}/apt-next/etags.txt
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  apt-deploy-write-2:
+    needs: [apt-deploy-read-2, apt-index-2]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: apt-publish
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      conflict: ${{ steps.write.outputs.conflict }}
+    env:
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Build the apt publish tool
+        run: zig build-exe tools/apt_publish.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/apt_publish"
+      - name: Gate on the settings of the apt repository and on the signed index (a job without them does nothing and ends green)
+        id: gate
+        env:
+          READ_ENABLED: ${{ needs.apt-deploy-read-2.outputs.enabled }}
+          INDEX_SIGNED: ${{ needs.apt-index-2.outputs.signed }}
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+        run: '"$RUNNER_TEMP/apt_publish" gate --label "apt publish (write)" --out "$GITHUB_OUTPUT" --true READ_ENABLED --true INDEX_SIGNED --env APT_PUBLISH_ROLE_ARN --env APT_BUCKET --env APT_DISTRIBUTION_ID --env APT_HOSTNAME'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-next-2
+          path: ${{ runner.temp }}/apt-next
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: verified-assets
+          path: ${{ runner.temp }}/apt-debs
+      - name: Assume the publish role through OIDC
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+        run: '"$RUNNER_TEMP/apt_publish" assume --env-file "$GITHUB_ENV"'
+      - name: Upload the .debs (If-None-Match), write the signed index (If-Match on the ETag that was read), then invalidate /apt/dists/*
+        id: write
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+        run: '"$RUNNER_TEMP/apt_publish" write --bucket "$APT_BUCKET" --distribution "$APT_DISTRIBUTION_ID" --hostname "$APT_HOSTNAME" --next "$RUNNER_TEMP/apt-next" --debs "$RUNNER_TEMP/apt-debs" --out "$GITHUB_OUTPUT"'
+
+  apt-deploy-read-3:
+    needs: [apt-deploy-write-2]
+    if: ${{ needs.apt-deploy-write-2.outputs.conflict == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # The variables of the repository's apt settings; the role's trust names this environment.
+    environment: apt-publish
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      enabled: ${{ steps.gate.outputs.enabled }}
+    env:
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Build the apt publish tool
+        run: zig build-exe tools/apt_publish.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/apt_publish"
+      - name: Gate on the settings of the apt repository (a job without them does nothing and ends green)
+        id: gate
+        env:
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+        run: '"$RUNNER_TEMP/apt_publish" gate --label "apt publish (read)" --out "$GITHUB_OUTPUT" --env APT_PUBLISH_ROLE_ARN --env APT_BUCKET --env APT_DISTRIBUTION_ID --env APT_HOSTNAME'
+      - name: Assume the publish role through OIDC
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+        run: '"$RUNNER_TEMP/apt_publish" assume --env-file "$GITHUB_ENV"'
+      - name: Read the current index and its ETags from S3 (never through the CDN, which caches the index)
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+        run: '"$RUNNER_TEMP/apt_publish" read --bucket "$APT_BUCKET" --out "$RUNNER_TEMP/apt-current"'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-current-3
+          path: ${{ runner.temp }}/apt-current
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  apt-index-3:
+    needs: [apt-deploy-read-3]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # The signing key lives only in this environment; this job holds no cloud credential and no role.
+    environment: apt-signing
+    permissions:
+      contents: read
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Build the apt publish tool
+        run: zig build-exe tools/apt_publish.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/apt_publish"
+      - name: Build the channels tool
+        run: zig build-exe tools/channels/main.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/channels"
+      - name: Gate on the signing key and on the read (a job without them does nothing and ends green)
+        id: gate
+        env:
+          READ_ENABLED: ${{ needs.apt-deploy-read-3.outputs.enabled }}
+          HAVE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY != '' }}
+          APT_GPG_FINGERPRINT: ${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}
+        run: '"$RUNNER_TEMP/apt_publish" gate --label "apt index" --out "$GITHUB_OUTPUT" --true READ_ENABLED --true HAVE_KEY --env APT_GPG_FINGERPRINT'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-current-3
+          path: ${{ runner.temp }}/apt-current
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: verified-assets
+          path: ${{ runner.temp }}/apt-debs
+      - name: Merge the .debs into the index that was read (the index of every product is kept)
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: '"$RUNNER_TEMP/apt_publish" index --channels "$RUNNER_TEMP/channels" --current "$RUNNER_TEMP/apt-current" --out "$RUNNER_TEMP/apt-next" --debs "$RUNNER_TEMP/apt-debs" --origin "$OWNER" --label "$OWNER" --description "$OWNER packages"'
+      - name: Sign Release with the signing subkey (InRelease and Release.gpg)
+        id: sign
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+          APT_GPG_FINGERPRINT: ${{ secrets.APT_GPG_FINGERPRINT || vars.APT_GPG_FINGERPRINT }}
+        run: '"$RUNNER_TEMP/apt_publish" sign --dir "$RUNNER_TEMP/apt-next/dists/stable" --work "$RUNNER_TEMP/apt-sign" --fingerprint "$APT_GPG_FINGERPRINT" --out "$GITHUB_OUTPUT"'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-next-3
+          path: |
+            ${{ runner.temp }}/apt-next/dists
+            ${{ runner.temp }}/apt-next/etags.txt
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  apt-deploy-write-3:
+    needs: [apt-deploy-read-3, apt-index-3]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: apt-publish
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      conflict: ${{ steps.write.outputs.conflict }}
+    env:
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Build the apt publish tool
+        run: zig build-exe tools/apt_publish.zig -O ReleaseSafe -femit-bin="$RUNNER_TEMP/apt_publish"
+      - name: Gate on the settings of the apt repository and on the signed index (a job without them does nothing and ends green)
+        id: gate
+        env:
+          READ_ENABLED: ${{ needs.apt-deploy-read-3.outputs.enabled }}
+          INDEX_SIGNED: ${{ needs.apt-index-3.outputs.signed }}
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+        run: '"$RUNNER_TEMP/apt_publish" gate --label "apt publish (write)" --out "$GITHUB_OUTPUT" --true READ_ENABLED --true INDEX_SIGNED --env APT_PUBLISH_ROLE_ARN --env APT_BUCKET --env APT_DISTRIBUTION_ID --env APT_HOSTNAME'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: apt-next-3
+          path: ${{ runner.temp }}/apt-next
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          name: verified-assets
+          path: ${{ runner.temp }}/apt-debs
+      - name: Assume the publish role through OIDC
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}
+        run: '"$RUNNER_TEMP/apt_publish" assume --env-file "$GITHUB_ENV"'
+      - name: Upload the .debs (If-None-Match), write the signed index (If-Match on the ETag that was read), then invalidate /apt/dists/*
+        id: write
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          APT_BUCKET: ${{ vars.APT_BUCKET }}
+          APT_DISTRIBUTION_ID: ${{ vars.APT_DISTRIBUTION_ID }}
+          APT_HOSTNAME: ${{ vars.APT_HOSTNAME }}
+        run: '"$RUNNER_TEMP/apt_publish" write --bucket "$APT_BUCKET" --distribution "$APT_DISTRIBUTION_ID" --hostname "$APT_HOSTNAME" --next "$RUNNER_TEMP/apt-next" --debs "$RUNNER_TEMP/apt-debs" --out "$GITHUB_OUTPUT" --last'

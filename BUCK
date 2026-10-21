@@ -288,6 +288,57 @@ zig_test(  # buck-only: the channels CLI end to end: byte-determinism (twice, co
     **_TOOLS
 )
 
+# ---- tools/apt_publish: the publish half of the apt channel (gate, OIDC exchange, read, index, sign, write) -------------------
+# (tools/apt_publish.zig says what each command does. The fakes enforce the grants of the publish role and sign nothing.)
+_APT_PUBLISH_SRCS = glob(["tools/apt_publish/*.zig"], exclude = ["tools/apt_publish/lib.zig"])
+
+zig_test(  # buck-only: the unit tests of tools/apt_publish (the gate, the shape of the index and its ETags, the aws answers, the gpg command lines)
+    name = "apt_publish_test",
+    src = "tools/apt_publish/lib.zig",
+    imports = _APT_PUBLISH_SRCS,
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: tools/apt_publish.zig, not built unless the unit tests pass
+    name = "apt-publish",
+    src = "tools/apt_publish.zig",
+    imports = _APT_PUBLISH_SRCS,
+    unit_tests = [":apt_publish_test"],
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: an `aws` that is a small S3, CloudFront and STS and refuses what the publish role may not do, for :apt_publish
+    name = "fake-aws",
+    src = "tests/drivers/fake_aws.zig",
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: a `gpg` that signs nothing (a signature names the sha256 of what it covers), for :apt_publish
+    name = "fake-gpg",
+    src = "tests/drivers/fake_gpg.zig",
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: a `curl` that is the runner's OIDC token endpoint, for :apt_publish
+    name = "fake-curl",
+    src = "tests/drivers/fake_curl.zig",
+    **_TOOLS
+)
+
+zig_test(  # buck-only: apt_publish against the fake aws, gpg and curl: the order, If-None-Match, If-Match and the 412 retry, the signing, the gate
+    name = "apt_publish",
+    src = "tests/drivers/apt_publish_test.zig",
+    imports = ["tests/drivers/harness.zig"] + glob(["packaging/deb/*"]),
+    env_tools = {
+        "MOPM_APT_PUBLISH": ":apt-publish",
+        "MOPM_CHANNELS": ":channels",
+        "MOPM_FAKE_AWS": ":fake-aws",
+        "MOPM_FAKE_CURL": ":fake-curl",
+        "MOPM_FAKE_GPG": ":fake-gpg",
+    },
+    **_TOOLS
+)
+
 # ---- Contract checks, ported from Python (tests/contract, tests/resolve*) ------
 
 # The JSON Schema validator and what it needs, shared by the contract drivers.
@@ -708,7 +759,7 @@ zig_test(  # buck-only: release.yml's scopes, stage order and path filter (tests
     name = "release_workflow",
     src = "tests/drivers/release_lint_test.zig",
     imports = _LINT_LIBS + ["tests/drivers/release_lint.zig"],
-    data = dict({f: f for f in glob([".github/workflows/*.yml", ".github/workflows/*.yaml"])}, **{"tools/cut_release.zig": "tools/cut_release.zig"}),  # the tool: gh release create must carry --verify-tag
+    data = dict({f: f for f in glob([".github/workflows/*.yml", ".github/workflows/*.yaml"])}, **{"tools/cut_release.zig": "tools/cut_release.zig", "tools/apt_publish.zig": "tools/apt_publish.zig"}),  # the tools: gh release create must carry --verify-tag; the apt puts carry the conditions the role requires
     **_TOOLS
 )
 
@@ -826,6 +877,15 @@ zig_coverage(
 )
 
 zig_coverage(
+    name = "apt_publish_coverage",
+    blocks = False,
+    floor = "coverage/apt_publish.txt",
+    test_targets = [":apt_publish_test"],
+    # tools/apt_publish.zig, the command line, runs processes and is measured by :apt_publish (a process test), not here.
+    expect = glob(["tools/apt_publish/*.zig"]),
+)
+
+zig_coverage(
     name = "build_parity_coverage",
     blocks = False,
     floor = "coverage/build_parity.txt",
@@ -858,6 +918,7 @@ zig_coverage(
 filegroup(
     name = "coverage_floors",
     srcs = {
+        "apt_publish": ":apt_publish_coverage_floor",
         "build_parity": ":build_parity_coverage_floor",
         "channels": ":channels_coverage_floor",
         "cli": ":cli_coverage_floor",

@@ -150,7 +150,7 @@ test "mutant: publish behind an approval, or with more scopes than contents" {
 
 test "mutant: attest loses or gains a scope" {
     try mutant("attest without attestations", "      id-token: write\n      attestations: write\n", "      id-token: write\n", "attest: needs attestations: write");
-    try mutant("attest with contents write", "    permissions:\n      contents: read\n      id-token: write", "    permissions:\n      contents: write\n      id-token: write", "attest: contents: write is not allowed here");
+    try mutantAfter(release_path, "\n  attest:\n", "attest with contents write", "    permissions:\n      contents: read\n      id-token: write", "    permissions:\n      contents: write\n      id-token: write", "attest: contents: write is not allowed here");
     try mutant("the user-level beta with a scope", "  beta-user:\n    needs: [plan, build]\n    permissions:\n      contents: read\n", "  beta-user:\n    needs: [plan, build]\n    permissions:\n      contents: read\n      id-token: write\n", "beta-user: id-token: write is not allowed here");
 }
 
@@ -549,4 +549,150 @@ test "mutant: lintian runs before the .deb exists or after the upload" {
     // Lintian moved after the upload: an error no longer stops the leg before the .deb is carried on.
     const upload = "      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          name: release-${{ matrix.target }}\n          path: |\n            ${{ runner.temp }}/out/*.tar.gz\n            ${{ runner.temp }}/out/*.deb\n          if-no-files-found: error\n          retention-days: 7\n          overwrite: true\n";
     try buildMutant("lintian after the upload", lint_step ++ upload, upload ++ lint_step, "lintian must run before the artifact upload");
+}
+
+// ---- the apt jobs: read (the role), index (the signing key), write (the role), three attempts; a mutant for each rule ----
+
+const gate_if = "        if: steps.gate.outputs.enabled == 'true'\n";
+const read_head = "  apt-deploy-read:\n";
+const index_head = "  apt-index:\n";
+const write_head = "  apt-deploy-write:\n";
+
+fn aptMutant(anchor: []const u8, name: []const u8, from: []const u8, to: []const u8, needle: []const u8) !void {
+    return mutantAfter(release_path, anchor, name, from, to, needle);
+}
+
+test "mutant: the apt jobs' environments" {
+    try aptMutant(read_head, "the read without its environment", "    environment: apt-publish\n", "", "apt-deploy-read holds the publish role so it must declare `environment: apt-publish`");
+    try aptMutant(write_head, "the write in the signing environment", "    environment: apt-publish\n", "    environment: apt-signing\n", "apt-deploy-write holds the publish role so it must declare `environment: apt-publish`");
+    try aptMutant(index_head, "the index without its environment", "    environment: apt-signing\n", "", "apt-index holds the signing key so it must declare `environment: apt-signing`");
+    try aptMutant(index_head, "the index in the publish environment", "    environment: apt-signing\n", "    environment: apt-publish\n", "apt-index holds the signing key so it must declare `environment: apt-signing`");
+    try aptMutant("  apt-deploy-read-3:\n", "the third read in the release environment", "    environment: apt-publish\n", "    environment: release\n", "apt-deploy-read-3 holds the publish role so it must declare `environment: apt-publish`");
+    try aptMutant("\n  plan:\n", "plan in an environment", "    timeout-minutes: 10\n", "    timeout-minutes: 10\n    environment: apt-publish\n", "plan must not use an environment");
+}
+
+test "mutant: id-token only in the OIDC jobs and attest" {
+    try aptMutant(index_head, "the index with id-token", "    permissions:\n      contents: read\n    outputs:\n", "    permissions:\n      contents: read\n      id-token: write\n    outputs:\n", "apt-index: permissions must be exactly contents: read");
+    try aptMutant(write_head, "the write without id-token", "      contents: read\n      id-token: write\n", "      contents: read\n", "apt-deploy-write: permissions must be exactly contents: read and id-token: write");
+    try aptMutant(read_head, "the read with contents write", "      contents: read\n      id-token: write\n", "      contents: write\n      id-token: write\n", "apt-deploy-read: contents: write is not allowed here");
+    try aptMutant("\n  verify:\n", "verify with id-token", "      contents: read\n      attestations: read\n", "      contents: read\n      attestations: read\n      id-token: write\n", "verify: id-token: write is not allowed here");
+    try aptMutant("\n  tag:\n", "tag with id-token", "    permissions:\n      contents: read\n", "    permissions:\n      contents: read\n      id-token: write\n", "tag: id-token: write is not allowed here");
+    try aptMutant(write_head, "the write with attestations", "      contents: read\n      id-token: write\n", "      contents: read\n      id-token: write\n      attestations: write\n", "apt-deploy-write: attestations: write is not allowed here");
+}
+
+test "mutant: no job holds both the signing key and the role" {
+    const sign_env = "          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}\n";
+    try aptMutant(index_head, "the index job takes the role", sign_env, sign_env ++ "          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}\n", "apt-index holds both the signing key");
+    try aptMutant(index_head, "the index job assumes the role", "      - name: Sign Release", "      - name: Assume\n        run: '\"$RUNNER_TEMP/apt_publish\" assume --env-file \"$GITHUB_ENV\"'\n      - name: Sign Release", "apt-index holds both the signing key");
+    try aptMutant(write_head, "the write job takes the key", "          APT_BUCKET: ${{ vars.APT_BUCKET }}\n          APT_DISTRIBUTION_ID", "          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}\n          APT_BUCKET: ${{ vars.APT_BUCKET }}\n          APT_DISTRIBUTION_ID", "apt-deploy-write holds both the signing key");
+    try aptMutant(read_head, "the read job takes the key", "          APT_BUCKET: ${{ vars.APT_BUCKET }}\n        run: '\"$RUNNER_TEMP/apt_publish\" read", "          APT_BUCKET: ${{ vars.APT_BUCKET }}\n          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}\n        run: '\"$RUNNER_TEMP/apt_publish\" read", "apt-deploy-read holds both the signing key");
+    try aptMutant("\n  plan:\n", "plan names the key", "          GH_TOKEN: ${{ github.token }}\n", "          GH_TOKEN: ${{ github.token }}\n          K: ${{ secrets.APT_GPG_PRIVATE_KEY }}\n", "plan names the signing key (APT_GPG_*); only the apt-index jobs may");
+    try aptMutant("\n  verify:\n", "verify names the role", "          VERSION: ${{ needs.plan.outputs.version }}\n", "          VERSION: ${{ needs.plan.outputs.version }}\n          R: ${{ vars.APT_PUBLISH_ROLE_ARN }}\n", "verify names the publish role");
+    try aptMutant("\n  attest:\n", "attest (which holds id-token) names the key", "      - uses: sigstore/cosign-installer", "      - env:\n          K: ${{ secrets.APT_GPG_PRIVATE_KEY }}\n        run: 'true'\n      - uses: sigstore/cosign-installer", "attest holds both the signing key");
+    try mutant("the workflow's env holds the key", "permissions:\n  contents: read\n\n# One release run", "permissions:\n  contents: read\nenv:\n  K: ${{ secrets.APT_GPG_PRIVATE_KEY }}\n\n# One release run", "env names the apt signing key or the publish role");
+    try mutant("the workflow's env holds the role", "permissions:\n  contents: read\n\n# One release run", "permissions:\n  contents: read\nenv:\n  R: ${{ vars.APT_PUBLISH_ROLE_ARN }}\n\n# One release run", "env names the apt signing key or the publish role");
+}
+
+test "mutant: the fail-safe gate (without the owner's settings an apt job does nothing and ends green)" {
+    const assume = "      - name: Assume the publish role through OIDC\n" ++ gate_if;
+    try aptMutant(read_head, "the assume step without the gate", assume, "      - name: Assume the publish role through OIDC\n", "after the gate must carry `if: steps.gate.outputs.enabled == 'true'`");
+    try aptMutant(read_head, "the read step without the gate", "        " ++ "if: steps.gate.outputs.enabled == 'true'\n        env:\n          APT_BUCKET", "        env:\n          APT_BUCKET", "after the gate must carry `if: steps.gate.outputs.enabled == 'true'`");
+    try aptMutant(read_head, "the upload without the gate", "      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n" ++ gate_if, "      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n", "after the gate must carry `if: steps.gate.outputs.enabled == 'true'`");
+    try aptMutant(index_head, "the signing step without the gate", "        id: sign\n" ++ gate_if, "        id: sign\n", "after the gate must carry `if: steps.gate.outputs.enabled == 'true'`");
+    try aptMutant(index_head, "the merge without the gate", "      - name: Merge the .debs into the index that was read (the index of every product is kept)\n" ++ gate_if, "      - name: Merge the .debs into the index that was read (the index of every product is kept)\n", "after the gate must carry `if: steps.gate.outputs.enabled == 'true'`");
+    try aptMutant(write_head, "the write step without the gate", "        id: write\n" ++ gate_if, "        id: write\n", "after the gate must carry `if: steps.gate.outputs.enabled == 'true'`");
+    try aptMutant(write_head, "the write's assume step without the gate", assume, "      - name: Assume the publish role through OIDC\n", "after the gate must carry `if: steps.gate.outputs.enabled == 'true'`");
+    try aptMutant("  apt-deploy-write-3:\n", "the last write step with another condition", "        id: write\n" ++ gate_if, "        id: write\n        if: always()\n", "after the gate must carry `if: steps.gate.outputs.enabled == 'true'`");
+    try aptMutant(read_head, "no gate step", "        id: gate\n", "        id: gate2\n", "apt-deploy-read: has no step with id `gate`");
+    try aptMutant(index_head, "a gate that does not run the tool's gate", "gate --label \"apt index\"", "version --label \"apt index\"", "apt-index: the step `gate` must run `apt_publish gate`");
+    try aptMutant(read_head, "a gate that skips a variable", "--env APT_DISTRIBUTION_ID --env APT_HOSTNAME'", "--env APT_DISTRIBUTION_ID'", "apt-deploy-read: the gate must check --env APT_HOSTNAME");
+    try aptMutant(read_head, "a gate that skips the role", "--env APT_PUBLISH_ROLE_ARN --env APT_BUCKET", "--env APT_BUCKET", "apt-deploy-read: the gate must check --env APT_PUBLISH_ROLE_ARN");
+    try aptMutant(index_head, "a gate that skips the key", " --true HAVE_KEY", "", "apt-index: the gate must check --true HAVE_KEY");
+    try aptMutant(index_head, "a gate that skips the read", "--true READ_ENABLED --true HAVE_KEY", "--true HAVE_KEY", "apt-index: the gate must check --true READ_ENABLED");
+    try aptMutant(write_head, "a write gate that skips the signing", " --true INDEX_SIGNED", "", "apt-deploy-write: the gate must check --true INDEX_SIGNED");
+    try aptMutant(write_head, "a write gate that ignores the read", "READ_ENABLED: ${{ needs.apt-deploy-read.outputs.enabled }}", "READ_ENABLED: ${{ needs.apt-index.outputs.enabled }}", "apt-deploy-write: the gate must be given READ_ENABLED");
+    try aptMutant(write_head, "a write gate that ignores the signing", "INDEX_SIGNED: ${{ needs.apt-index.outputs.signed }}", "INDEX_SIGNED: ${{ needs.apt-deploy-read.outputs.signed }}", "apt-deploy-write: the gate must be given READ_ENABLED");
+    try aptMutant(index_head, "a gate that reads the key itself", "HAVE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY != '' }}", "HAVE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}", "apt-index: the gate must be given HAVE_KEY");
+    // A step before the gate that already reads a setting or reaches the cloud.
+    try aptMutant(read_head, "an early assume", "      - name: Build the apt publish tool\n", "      - name: Early\n        run: '\"$RUNNER_TEMP/apt_publish\" assume --env-file \"$GITHUB_ENV\"'\n      - name: Build the apt publish tool\n", "runs before the gate but reads a setting, a secret or the cloud");
+    try aptMutant(index_head, "an early secret", "      - name: Build the apt publish tool\n", "      - name: Early\n        env:\n          K: ${{ secrets.APT_GPG_PASSPHRASE }}\n        run: 'true'\n      - name: Build the apt publish tool\n", "runs before the gate but reads a setting, a secret or the cloud");
+    try aptMutant(write_head, "an early variable", "      - name: Build the apt publish tool\n", "      - name: Early\n        env:\n          B: ${{ vars.APT_BUCKET }}\n        run: 'true'\n      - name: Build the apt publish tool\n", "runs before the gate but reads a setting, a secret or the cloud");
+    // The assume comes after the gate and before the read or write that needs it.
+    try aptMutant(write_head, "a write that never assumes the role", "      - name: Assume the publish role through OIDC\n" ++ gate_if ++ "        env:\n          APT_PUBLISH_ROLE_ARN: ${{ vars.APT_PUBLISH_ROLE_ARN }}\n        run: '\"$RUNNER_TEMP/apt_publish\" assume --env-file \"$GITHUB_ENV\"'\n", "", "apt-deploy-write: must assume the publish role");
+}
+
+test "mutant: the order and the retries of the apt jobs" {
+    try aptMutant(read_head, "the read runs on a manual run", "    needs: [publish]\n    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}\n", "    needs: [publish]\n", "apt-deploy-read must run only under if");
+    try aptMutant(read_head, "the read without publish", "    needs: [publish]\n", "    needs: [verify]\n", "apt-deploy-read must need publish");
+    try aptMutant("  apt-deploy-read-2:\n", "a retry that always runs", "    if: ${{ needs.apt-deploy-write.outputs.conflict == 'true' }}\n", "    if: ${{ always() }}\n", "apt-deploy-read-2 must run only under if");
+    try aptMutant("  apt-deploy-read-3:\n", "a retry that starts on the wrong attempt", "    if: ${{ needs.apt-deploy-write-2.outputs.conflict == 'true' }}\n", "    if: ${{ needs.apt-deploy-write.outputs.conflict == 'true' }}\n", "apt-deploy-read-3 must run only under if");
+    try aptMutant("  apt-deploy-read-2:\n", "a retry that does not wait for the write", "    needs: [apt-deploy-write]\n", "    needs: [publish]\n", "apt-deploy-read-2 must need apt-deploy-write");
+    try aptMutant(write_head, "a write that does not wait for the index", "    needs: [apt-deploy-read, apt-index]\n", "    needs: [apt-deploy-read]\n", "apt-deploy-write must need apt-index");
+    try aptMutant(index_head, "an index that does not wait for the read", "    needs: [apt-deploy-read]\n", "    needs: [publish]\n", "apt-index must need apt-deploy-read");
+    try aptMutant("\n  bump:\n", "bump waits for an apt job", "    needs: [tag, publish]\n", "    needs: [tag, publish, apt-deploy-write]\n", "bump must not need apt-deploy-write");
+    try aptMutant("\n  publish:\n", "publish waits for an apt job", "    needs: [tag, verify]\n", "    needs: [tag, verify, apt-index]\n", "publish must not need apt-index");
+    try aptMutant(index_head, "an apt job that may fail quietly", "    environment: apt-signing\n", "    environment: apt-signing\n    continue-on-error: true\n", "apt-index must not set continue-on-error");
+    try aptMutant(write_head, "an apt job with an if of its own", "    environment: apt-publish\n", "    environment: apt-publish\n    if: ${{ always() }}\n", "apt-deploy-write must not have an if:");
+    try aptMutant("  apt-deploy-write-3:\n", "the last write without --last", " --out \"$GITHUB_OUTPUT\" --last'", " --out \"$GITHUB_OUTPUT\"'", "`--last` belongs to the write of the last attempt only");
+    try aptMutant(write_head, "the first write with --last", " --out \"$GITHUB_OUTPUT\"'", " --out \"$GITHUB_OUTPUT\" --last'", "`--last` belongs to the write of the last attempt only");
+}
+
+test "mutant: what the apt jobs pass on" {
+    try aptMutant("  apt-deploy-read-2:\n", "a read that uploads another name", "          name: apt-current-2\n", "          name: apt-current\n", "apt-deploy-read-2: must upload exactly the artifact apt-current-2");
+    try aptMutant("  apt-index-2:\n", "an index that downloads the first read", "          name: apt-current-2\n", "          name: apt-current\n", "apt-index-2: must download exactly the artifacts apt-current-2 and verified-assets");
+    try aptMutant(index_head, "an index that merges other .debs", "          name: verified-assets\n", "          name: signed-assets\n", "apt-index: must download exactly the artifacts apt-current and verified-assets");
+    try aptMutant(index_head, "an index that uploads another name", "          name: apt-next\n", "          name: release-apt\n", "apt-index: must upload exactly the artifact apt-next");
+    try aptMutant(write_head, "a write that uploads the .debs of another run", "          name: verified-assets\n", "          name: notes-pin\n", "apt-deploy-write: must download exactly the artifacts apt-next and verified-assets");
+    try aptMutant(write_head, "a write that reads the next attempt's index", "          name: apt-next\n", "          name: apt-next-2\n", "apt-deploy-write: must download exactly the artifacts apt-next and verified-assets");
+    try aptMutant(read_head, "a read that does not output the gate", "      enabled: ${{ steps.gate.outputs.enabled }}\n", "      enabled: ${{ steps.read.outputs.enabled }}\n", "apt-deploy-read: must output enabled");
+    try aptMutant(index_head, "an index that does not output signed", "      signed: ${{ steps.sign.outputs.signed }}\n", "      signed: 'true'\n", "apt-index: must output signed");
+    try aptMutant(write_head, "a write that does not output the conflict", "      conflict: ${{ steps.write.outputs.conflict }}\n", "      conflict: 'false'\n", "apt-deploy-write: must output conflict");
+    try aptMutant(index_head, "a merge after the signing", "      - name: Merge the .debs into the index that was read (the index of every product is kept)\n" ++ gate_if ++ "        env:\n          OWNER: ${{ github.repository_owner }}\n        run: '\"$RUNNER_TEMP/apt_publish\" index", "      - name: Sign first\n" ++ gate_if ++ "        run: '\"$RUNNER_TEMP/apt_publish\" sign --dir x --work y --fingerprint z'\n      - name: Merge the .debs into the index that was read (the index of every product is kept)\n" ++ gate_if ++ "        env:\n          OWNER: ${{ github.repository_owner }}\n        run: '\"$RUNNER_TEMP/apt_publish\" index", "apt-index: must merge the index");
+}
+
+// ---- tools/apt_publish.zig: the puts the publish role allows ----
+
+const apt_tool_path = "tools/apt_publish.zig";
+
+test "the real apt tool makes exactly the puts the role allows, in the right order" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var out = c.Out.init(a);
+    try rl.aptToolProblems(a, try real(a, apt_tool_path), &out);
+    for (out.items) |l| std.debug.print("{s}\n", .{l});
+    try std.testing.expectEqual(@as(usize, 0), out.items.len);
+}
+
+fn aptToolMutant(name: []const u8, from: []const u8, to: []const u8, needle: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const text = try real(a, apt_tool_path);
+    const planted = try std.mem.replaceOwned(u8, a, text, from, to);
+    if (std.mem.eql(u8, planted, text)) {
+        std.debug.print("apt tool mutant '{s}' does not apply\n", .{name});
+        return error.TestUnexpectedResult;
+    }
+    var out = c.Out.init(a);
+    try rl.aptToolProblems(a, planted, &out);
+    var found = false;
+    for (out.items) |l| {
+        if (std.mem.indexOf(u8, l, needle) != null) found = true;
+    }
+    std.debug.print("{s} mutant: {s} ({d} problem(s))\n", .{ if (found) "red " else "NOT RED", name, out.items.len });
+    if (!found) return error.TestUnexpectedResult;
+}
+
+test "mutant: the apt tool's puts" {
+    try aptToolMutant("a .deb put without If-None-Match", "try std.fs.path.join(a, &.{ debs_dir, name }), .{ \"--if-none-match\", \"*\" })", "try std.fs.path.join(a, &.{ debs_dir, name }), .{ \"--if-match\", \"x\" })", "a .deb must be put with If-None-Match");
+    try aptToolMutant("an index put that never uses If-Match", "else .{ \"--if-match\", tag.? }", "else .{ \"--if-none-match\", \"*\" }", "the condition of an index put must be If-Match on the ETag that was read");
+    try aptToolMutant("an index put that always creates", "if (tag == null or std.mem.eql(u8, tag.?, state.absent))", "if (true)", "the condition of an index put must be If-Match on the ETag that was read");
+    try aptToolMutant("an index put that drops its condition", "cond[0], cond[1] }", "}", "`put` must pass its condition to put-object");
+    try aptToolMutant("an index object put without the condition", "try std.fs.path.join(a, &.{ root, rel }), cond)", "try std.fs.path.join(a, &.{ root, rel }), .{ \"--if-none-match\", \"*\" })", "every object of the index must be put with the condition `cond`");
+    try aptToolMutant("a second put-object call", "\"cloudfront\", \"create-invalidation\"", "\"s3api\", \"put-object\"", "there must be exactly one put-object call");
+    try aptToolMutant("the index read through something else", "\"get-object\"", "\"head-object\"", "the index must be read with s3api get-object");
+    try aptToolMutant("no invalidation", "\"create-invalidation\"", "\"list-invalidations\"", "the index must be invalidated after the write");
+    try aptToolMutant("an invalidation before the index", "// The pool first:", "_ = aws(a, aws_exe, &.{ \"cloudfront\", \"create-invalidation\" });\n    // The pool first:", "the invalidation must come after the index is written");
+    try aptToolMutant("the index before the .debs", "// The pool first:", "// try std.fs.path.join(a, &.{ root, rel }), cond)\n    // The pool first:", "the .debs must be put before the index");
 }
