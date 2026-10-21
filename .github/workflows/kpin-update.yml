@@ -163,7 +163,7 @@ jobs:
           done <<< "$KPIN_SETS"
           # Cargo: resolution on this runner, then kpin reads. The compiler the overrides
           # must be derived for is the one komira pins, in the komira commit .buckconfig names.
-          komira=$(sed -n 's/^  commit_hash = \([0-9a-f]\{40\}\)$/\1/p' .buckconfig)
+          komira=$(sed -n '/^\[external_cell_komira\]/,/^\[/s/^  commit_hash = \([0-9a-f]\{40\}\)$/\1/p' .buckconfig)
           [ -n "$komira" ] || { echo "::error::cannot read the komira commit from .buckconfig"; exit 1; }
           rustc=$(curl -fsSL "https://raw.githubusercontent.com/komira-ai/komira/$komira/tools/build/toolchains/rust/BUCK" | sed -n 's/^    version = "\([0-9][0-9.]*\)",$/\1/p')
           case "$rustc" in

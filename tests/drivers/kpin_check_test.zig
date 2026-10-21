@@ -1,8 +1,13 @@
-//! //:kpin_check: `kpin check` (buildrules' kpin, the tool that writes the locks and
-//! the weekly update runs) over every pins.lock.bzl of the repository, run by Buck2 as
-//! a test: a lock that is stale (not what its pins.toml and package-lock.json produce,
-//! header included) fails it. Shown able to fail: the same lock with the header of
-//! another tool must be refused.
+//! //:kpin_check: `kpin check` (buildrules' kpin, the tool that writes the locks and the weekly
+//! update runs) over every pins.lock.bzl of the repository, run by Buck2 as a test.
+//! What it catches: a lock whose header, or whose sri512 integrity, is not what its
+//! pins.toml and package-lock.json produce. What it does NOT catch: a changed sha256 or
+//! size; those cannot be derived offline, and are caught only where a lock is consumed
+//! (npm_modules downloads verify the digest), which service/infra/{access,dns,stacks}
+//! and tools/node do. site/pins.lock.bzl and service/api/pins.lock.bzl are loaded by no
+//! BUCK file (those packages use buildrules.lock.bzl), so a tampered digest there is
+//! caught nowhere. Shown able to fail: the same lock with the header of another tool
+//! must be refused.
 //!
 //! The sets are the lines of KPIN_SETS in .github/workflows/kpin-update.yml; the test
 //! fails if the two lists differ, so a new lock cannot go unchecked.
@@ -30,7 +35,7 @@ fn kpinCheck(a: std.mem.Allocator, kpin: []const u8, work: []const u8, pins: []c
     return h.run(a, argv.items, &env, .{ .cwd = work });
 }
 
-test "kpin check passes for every lock" {
+test "kpin check accepts every lock (header and sri512 match pins.toml and package-lock.json)" {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena_state.allocator();
     try h.watchdog(300);
@@ -40,7 +45,7 @@ test "kpin check passes for every lock" {
     for (sets) |s| {
         const r = try kpinCheck(a, kpin, work, s.pins, s.lock, s.npm);
         std.debug.print("kpin check {s}: exit {d}\n{s}", .{ s.lock, r.code, r.text });
-        rep.check(s.lock, !r.signaled and r.code == 0, "kpin check refused the lock");
+        rep.check(s.lock, !r.signaled and r.code == 0, "kpin check refused the lock: header or sri512 differs from what its inputs produce");
     }
     try rep.finish();
 }
