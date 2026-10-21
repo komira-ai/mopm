@@ -4,7 +4,8 @@
 # `:typecheck_browser`), `npm test` is `:test`, and `npm run build` is three programs, each
 # a target (`:browser`, `:tools`, `:dist`). No install, no script, no network.
 
-load("@buildrules//rules/node:modules.bzl", "jest_test", "node_tree_build", "node_tree_test", "npm_modules", "tsc_build", "tsc_check")
+load("@buildrules//rules/node:modules.bzl", "node_tree_build", "node_tree_test", "npm_modules", "tsc_build", "tsc_check")
+load("//vendor/buildrules_coverage:jest_cover.bzl", "jest_coverage_floor", "jest_test")
 load(":pins.lock.bzl", "NPM")
 
 _NODE = "//tools/node:node"
@@ -80,6 +81,9 @@ jest_test(
     node = _NODE,
     srcs = _SRCS + ["check_dist.js"],
 )
+
+# The lines and branches of the package's own code that the tests above reach (jest --coverage), held to coverage_floor.txt (vendor/buildrules_coverage/README.md).
+jest_coverage_floor()
 
 # `npm run build`, step 1: `tsc -p tsconfig.browser.json`, the browser modules.
 tsc_build(

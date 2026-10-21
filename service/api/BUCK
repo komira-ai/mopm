@@ -4,7 +4,8 @@
 # `esbuild` (package.json "build"), whose output the infra stacks deploy. No install, no
 # script, no network. See service/README.md, "Building with Buck2".
 
-load("@buildrules//rules/node:modules.bzl", "jest_test", "node_tree_build", "node_tree_test", "npm_modules", "tsc_check")
+load("@buildrules//rules/node:modules.bzl", "node_tree_build", "node_tree_test", "npm_modules", "tsc_check")
+load("//vendor/buildrules_coverage:jest_cover.bzl", "jest_coverage_floor", "jest_test")
 load(":pins.lock.bzl", "NPM")
 
 _NODE = "//tools/node:node"
@@ -43,6 +44,9 @@ jest_test(
     srcs = _SRCS,
     tools = {"bzip2": "buildrules//rules/pins:busybox"},
 )
+
+# The lines and branches of the package's own code that the tests above reach (jest --coverage), held to coverage_floor.txt (vendor/buildrules_coverage/README.md).
+jest_coverage_floor()
 
 # `npm run build`: the handler bundle the API stack deploys. esbuild bundles each of the three
 # handlers (api, validator, index writer) with its own dependencies into one file; the AWS SDK
