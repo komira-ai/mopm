@@ -1,0 +1,83 @@
+# autopin-commit: the privileged half of the automatic pin update of a Dependabot pull request.
+#
+# It runs when autopin-compute finishes, from THIS file on the default branch (a workflow_run workflow always
+# does), so nothing a pull request edits decides what runs here. The job-level `if:` is checked before the
+# environment `autopin` is entered, so a run it rejects never sees the App's key.
+#
+# Step 1, `commit-check`, holds only the default token (read access). It reads the artifact of the compute run as
+# untrusted bytes, re-reads the pull request and its lockfile from the API, and writes the tables it will vouch
+# for; every doubt is a skip, never a commit. Only if it says there is something to commit is the App token minted
+# (contents write, for this repository only), and `commit-push` turns the checked tables into one commit on the
+# pull request's branch with the Git Data API, moving the branch with `force: false`. No checkout of pull request
+# code, no git push, no shell that reads the artifact.
+#
+# `workflow_run` is allowed in this file alone (tests/drivers/autopin_lint.zig); that lint also holds the gate, the
+# order of the steps, the token's scope and the concurrency group. Nothing runs live until the App `komira-autopin`
+# is installed and the environment `autopin` holds its key and id. The pinned tool must be a buildrules release that
+# has `autopin commit-check` and `autopin commit-push` (the same pin as the other two files).
+name: autopin-commit
+
+on:
+  workflow_run:
+    workflows:
+      - autopin-compute
+    types:
+      - completed
+
+# Nothing by default: the job names what it needs. (`none`, not `{}`: the lint reads `permissions` in block style.)
+permissions:
+  contents: none
+
+jobs:
+  commit:
+    name: autopin commit
+    # Compute succeeded, for a pull_request run of its own file in this repository, started and re-run by Dependabot.
+    # `path` proves the file name, not whose copy ran: the repository id and the API re-read below carry the weight.
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.path == '.github/workflows/autopin-compute.yml' && github.event.workflow_run.head_repository.id == github.event.repository.id && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.actor.login == 'dependabot[bot]' && github.event.workflow_run.triggering_actor.login == 'dependabot[bot]' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: autopin
+    # One commit at a time per pull request; a waiting one is never cancelled. The branch name is used here only,
+    # in an expression, and never reaches a script.
+    concurrency:
+      group: autopin-commit-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Fetch the buildrules release (checked against its sha256; never built from a pull request)
+        env:
+          BUILDRULES_VERSION: "0.0.18"
+          BUILDRULES_SHA256: "08cc93e5c71319d6e7de4cc6edd8411769df94c5ad4ca8e91a087a941e1d9947"
+        run: |
+          set -eu
+          name="buildrules-cli-${BUILDRULES_VERSION}-linux-x86_64"
+          curl -fsSLo "$RUNNER_TEMP/$name.tar.gz" "https://github.com/komira-ai/buildrules/releases/download/v${BUILDRULES_VERSION}/$name.tar.gz"
+          echo "${BUILDRULES_SHA256}  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/br"
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP/br" --strip-components=1
+      - name: Check the compute run's artifact and the pull request (read access only; every doubt is a skip)
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          "$RUNNER_TEMP/br/buildrules" autopin commit-check --event "$GITHUB_EVENT_PATH" --out "$RUNNER_TEMP/autopin-plan" --github-output "$GITHUB_OUTPUT" --app-login "komira-autopin[bot]" --set site=buildrules-lock --set service/api=buildrules-lock --set service/infra/stacks=pins-lock --set service/infra/dns=pins-lock --set service/infra/access=pins-lock
+      - name: Mint the installation token of the autopin App, for this repository only, contents write
+        id: mint
+        if: ${{ steps.check.outputs.has_change == 'true' }}
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.AUTOPIN_APP_ID }}
+          private-key: ${{ secrets.AUTOPIN_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - name: Commit the checked tables on the pull request's branch (Git Data API, force false)
+        if: ${{ steps.check.outputs.has_change == 'true' }}
+        env:
+          GH_TOKEN: ${{ steps.mint.outputs.token }}
+          AUTOPIN_APP_ID: ${{ vars.AUTOPIN_APP_ID }}
+        run: |
+          "$RUNNER_TEMP/br/buildrules" autopin commit-push --plan "$RUNNER_TEMP/autopin-plan" --author-name "komira-autopin[bot]" --author-email "${AUTOPIN_APP_ID}+komira-autopin[bot]@users.noreply.github.com" --set site=buildrules-lock --set service/api=buildrules-lock --set service/infra/stacks=pins-lock --set service/infra/dns=pins-lock --set service/infra/access=pins-lock

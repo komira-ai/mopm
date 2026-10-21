@@ -248,7 +248,11 @@ const apt_signing_environment = "apt-signing";
 /// run on pull_request (ci.yml: its unit jobs; lint.yml: the lints, the release lint included; farm.yml: the unit build on the test farm;
 /// service-ci.yml: the unit tests of the service packages). Everything else (the release machinery, the end-to-end runs) runs after the
 /// merge. The oidc files and farm.yml, release.yml have rules of their own above.
-const pr_files = [_][]const u8{ "ci.yml", "lint.yml", "farm.yml", "service-ci.yml" };
+const pr_files = [_][]const u8{ "ci.yml", "lint.yml", "farm.yml", "service-ci.yml", "autopin-compute.yml", "pin-verify.yml" };
+/// autopin-commit.yml is the privileged half of the Dependabot pin update: triggered by the end of autopin-compute alone, never by a
+/// pull request, and the one workflow outside the deploy ones that declares an environment (`autopin`, holding the App's key). It has
+/// no id-token. autopin_lint.zig holds the rest (the gate, the token's scope, the order of its steps).
+const autopin_commit_file = "autopin-commit.yml";
 /// The jobs of ci.yml that run on a pull request (the unit tier). Every other job of ci.yml is beta and must say `if: github.event_name != 'pull_request'`.
 const ci_unit_jobs = [_][]const u8{ "test", "registry-build" };
 
@@ -393,6 +397,14 @@ pub fn structureProblems(a: Allocator, f: []const u8, text: []const u8, out: *Ou
                 try c.problem(a, out, prefix ++ "{s}: job {s} calls a workflow and grants id-token", .{ f, j.name });
             }
         }
+        return;
+    }
+
+    if (std.mem.eql(u8, base, autopin_commit_file)) {
+        if (!(on.len == 1 and std.mem.eql(u8, on[0], "workflow_run"))) {
+            try c.problem(a, out, prefix ++ "{s}: triggers must be exactly workflow_run", .{f});
+        }
+        if (c.findKey(doc, "id-token")) try c.problem(a, out, prefix ++ "{s}: an id-token permission is only allowed in deploy.yml, e2e.yml, promote.yml", .{f});
         return;
     }
 
@@ -566,6 +578,42 @@ pub fn kpinSetsProblems(a: Allocator, workflow: []const u8, files: []const []con
             if (std.mem.eql(u8, f, l)) present = true;
         }
         if (!present) try c.problem(a, out, prefix ++ "kpin-update.yml: KPIN_SETS names {s}, which is not in the repository", .{l});
+    }
+}
+
+/// autopin-compute.yml's `--set DIR=KIND` arguments are SETS, the directories the Dependabot pin update may regenerate (autopin_lint.zig
+/// holds that the other autopin workflows carry the same list). A directory with a package-lock.json that SETS lacks is a package whose
+/// Dependabot pull requests are left to a person; a SETS entry without a package-lock.json would make every compute run fail. The same
+/// comparison as KPIN_SETS, on every pull request. `workflow` is the text of autopin-compute.yml, `files` the repository's paths.
+pub fn autopinSetsProblems(a: Allocator, workflow: []const u8, files: []const []const u8, out: *Out) !void {
+    var listed = std.ArrayList([]const u8).init(a);
+    var words = std.mem.tokenizeAny(u8, try c.nonCommentLines(a, workflow), " \t\r\n");
+    var after_set = false;
+    while (words.next()) |w| {
+        if (after_set) {
+            after_set = false;
+            const eq = std.mem.lastIndexOfScalar(u8, w, '=') orelse {
+                try c.problem(a, out, prefix ++ "autopin-compute.yml: --set {s} is not DIR=KIND", .{w});
+                continue;
+            };
+            try listed.append(w[0..eq]);
+            continue;
+        }
+        after_set = std.mem.eql(u8, w, "--set");
+    }
+    if (listed.items.len == 0) try c.problem(a, out, prefix ++ "autopin-compute.yml: no `--set DIR=KIND` argument", .{});
+    for (files) |f| {
+        if (!std.mem.eql(u8, c.basename(f), "package-lock.json")) continue;
+        const dir = std.fs.path.dirname(f) orelse ".";
+        if (!c.containsStr(listed.items, dir)) {
+            try c.problem(a, out, prefix ++ "autopin-compute.yml: no --set for {s} (it has a package-lock.json): its Dependabot pull requests would be left to a person", .{dir});
+        }
+    }
+    for (listed.items) |dir| {
+        const lock = if (std.mem.eql(u8, dir, ".")) "package-lock.json" else try std.fmt.allocPrint(a, "{s}/package-lock.json", .{dir});
+        if (!c.containsStr(files, lock)) {
+            try c.problem(a, out, prefix ++ "autopin-compute.yml: --set names {s}, which has no package-lock.json in the repository", .{dir});
+        }
     }
 }
 

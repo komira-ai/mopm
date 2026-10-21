@@ -1,6 +1,6 @@
 # The repository's own lints, on a GitHub-hosted runner for every pull request (forks
 # included) and for every push to main. They are the Zig tests behind the Buck2 targets
-# //:hygiene, //:workflows and //:lint_selftest (plus //:actionlint, the pinned actionlint over every workflow), run here with the Zig ci.yml installs.
+# //:hygiene, //:workflows, //:autopin_workflows and //:lint_selftest (plus //:actionlint, the pinned actionlint over every workflow), run here with the Zig ci.yml installs.
 # This job holds no secret, no id-token and a read-only token, so a fork's pull request
 # gets the same check as a branch of this repository; farm.yml runs the same targets on
 # the farm when it is configured, but is neither required nor run for a fork.
@@ -46,6 +46,9 @@ jobs:
       - name: release pipeline lint (scopes, stage order, path filter; each rule goes red on a planted mutant)
         if: ${{ !cancelled() }}
         run: zig test tests/drivers/release_lint_test.zig
+      - name: autopin lint (the Dependabot pin-update workflows, R1-R4, M2/M2b; each rule goes red on a planted mutant)
+        if: ${{ !cancelled() }}
+        run: zig test tests/drivers/autopin_lint_test.zig
       - name: actionlint (strict YAML parse and workflow check of every workflow; the pinned release, sha256-verified)
         if: ${{ !cancelled() }}
         run: |

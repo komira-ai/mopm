@@ -44,6 +44,7 @@ test "every file of the repository passes the text rules, and every workflow the
     for (tree.files) |f| try hyg.textProblems(a, f, try tree.read(a, f), &out);
     for (try c.workflowFiles(a, tree)) |f| try hyg.structureProblems(a, f, try tree.read(a, f), &out);
     try hyg.kpinSetsProblems(a, try tree.read(a, ".github/workflows/kpin-update.yml"), tree.files, &out);
+    try hyg.autopinSetsProblems(a, try tree.read(a, ".github/workflows/autopin-compute.yml"), tree.files, &out);
     try hyg.farmExclusionProblems(a, try tree.read(a, "BUCK"), try tree.read(a, ".github/workflows/farm.yml"), &out);
     try hyg.dependabotProblems(a, try tree.read(a, ".github/dependabot.yml"), tree, &out);
     for (out.items) |l| std.debug.print("{s}\n", .{l});
@@ -282,6 +283,57 @@ test "the pull-request tier: unit on a pull request, beta only after the merge" 
     , &.{"job installer is not a unit job"});
     // With no pull_request trigger every job of ci.yml is free.
     try expectStructure("ci.yml", header ++ "on: [push]\njobs:\n  mojo-e2e:\n    runs-on: x\n", &.{});
+}
+
+test "the autopin workflows: compute and pin-verify may run on a pull request, commit only on workflow_run and with an environment" {
+    // The two pull_request workflows are in the unit tier; the same trigger in a look-alike file name is not.
+    for ([_][]const u8{ "autopin-compute.yml", "pin-verify.yml" }) |ok| {
+        try expectStructure(ok, header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: x\n", &.{});
+    }
+    try expectStructure("autopin-compute2.yml", header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: x\n", &.{"a pull request runs build and unit tests only"});
+    // They may hold neither an environment nor an id-token on a pull request.
+    try expectStructure("autopin-compute.yml", header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: x\n    environment: autopin\n", &.{ "may use a deployment environment", "must not run on pull_request" });
+    // autopin-commit.yml: workflow_run alone, an environment allowed, no id-token.
+    try expectStructure("autopin-commit.yml", header ++ "on: [workflow_run]\njobs:\n  j:\n    runs-on: x\n    environment: autopin\n", &.{});
+    try expectStructure("autopin-commit.yml", header ++ "on: [workflow_run, pull_request]\njobs:\n  j:\n    runs-on: x\n    environment: autopin\n", &.{"triggers must be exactly workflow_run"});
+    try expectStructure("autopin-commit.yml", header ++ "on: [workflow_run]\njobs:\n  j:\n    runs-on: x\n    permissions:\n      id-token: write\n", &.{"an id-token permission is only allowed in"});
+    // The environment stays forbidden in any other file.
+    try expectStructure("autopin-commit2.yml", header ++ "on: [workflow_run]\njobs:\n  j:\n    runs-on: x\n    environment: autopin\n", &.{"may use a deployment environment"});
+}
+
+test "autopin-compute.yml: --set has a line for every package-lock.json, and only for those" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const wf =
+        \\# --set ignored/comment=pins-lock
+        \\          run: |
+        \\            buildrules autopin compute --event "$E" --set site=buildrules-lock --set service/api=pins-lock
+        \\
+    ;
+    const tree = [_][]const u8{ "site/package-lock.json", "service/api/package-lock.json", "README.md" };
+    var out = c.Out.init(a);
+    try hyg.autopinSetsProblems(a, wf, &tree, &out);
+    try c.expectLines("matching", out.items, &.{});
+    // Mutant: a package with a lock and no --set (its Dependabot pull requests would be left to a person).
+    out = c.Out.init(a);
+    try hyg.autopinSetsProblems(a, wf, &(tree ++ [_][]const u8{"service/new/package-lock.json"}), &out);
+    try c.expectLines("unlisted", out.items, &.{"no --set for service/new"});
+    // Mutant: a --set for a directory the tree does not have (every compute run would fail).
+    out = c.Out.init(a);
+    try hyg.autopinSetsProblems(a, wf, tree[1..], &out);
+    try c.expectLines("gone", out.items, &.{"--set names site, which has no package-lock.json"});
+    // Mutant: an argument that is not DIR=KIND, and no --set at all.
+    out = c.Out.init(a);
+    try hyg.autopinSetsProblems(a, "run: x --set site\n", &.{"site/package-lock.json"}, &out);
+    try c.expectLines("malformed", out.items, &.{ "--set site is not DIR=KIND", "no `--set DIR=KIND` argument", "no --set for site" });
+    out = c.Out.init(a);
+    try hyg.autopinSetsProblems(a, "jobs: {}\n", &tree, &out);
+    try c.expectLines("none", out.items, &.{ "no `--set DIR=KIND` argument", "no --set for site", "no --set for service/api" });
+    // The root directory spells itself `.`.
+    out = c.Out.init(a);
+    try hyg.autopinSetsProblems(a, "run: x --set .=pins-lock\n", &.{"package-lock.json"}, &out);
+    try c.expectLines("root", out.items, &.{});
 }
 
 const deploy_ok = header ++

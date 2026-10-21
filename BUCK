@@ -811,6 +811,14 @@ zig_test(  # buck-only: release.yml's scopes, stage order and path filter (tests
     **_TOOLS
 )
 
+zig_test(  # buck-only: the Dependabot autopin workflows (tests/drivers/autopin_lint.zig): their gates, tokens and step order, R1-R4, M2/M2b, with a planted mutant per rule
+    name = "autopin_workflows",
+    src = "tests/drivers/autopin_lint_test.zig",
+    imports = _LINT_LIBS + ["tests/drivers/autopin_lint.zig"],
+    data = {f: f for f in glob([".github/workflows/**", ".github/actions/**"])},  # every file there, not only the .yml: the lint refuses the others
+    **_TOOLS
+)
+
 zig_test(  # buck-only: both lints over the fixtures, against the table in the test
     name = "lint_selftest",
     src = "tests/drivers/lint_selftest_test.zig",
@@ -951,8 +959,9 @@ zig_coverage(
     name = "drivers_coverage",
     blocks = False,
     floor = "coverage/drivers.txt",
-    test_targets = [":contract", ":lock_golden", ":validator_corpus", ":hygiene", ":workflows", ":release_workflow", ":lint_selftest", ":gen_errors_current"],
+    test_targets = [":contract", ":lock_golden", ":validator_corpus", ":hygiene", ":workflows", ":release_workflow", ":autopin_workflows", ":lint_selftest", ":gen_errors_current"],
     expect = [
+        "tests/drivers/autopin_lint.zig",
         "tests/drivers/contract.zig",
         "tests/drivers/errors_gen.zig",
         "tests/drivers/hygiene.zig",
