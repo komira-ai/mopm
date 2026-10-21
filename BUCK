@@ -756,6 +756,15 @@ zig_test(  # buck-only: the hygiene scan, over every file of the repository
     **_TOOLS
 )
 
+zig_test(  # buck-only: `kpin check` (buildrules' kpin) over every pins.lock.bzl, with a stale lock shown refused
+    name = "kpin_check",
+    src = "tests/drivers/kpin_check_test.zig",
+    imports = ["tests/drivers/harness.zig"],
+    data = _REPO_FILES,
+    exec_tools = {"KPIN": "buildrules//rules/kpin:kpin"},
+    **_TOOLS
+)
+
 zig_test(  # buck-only: the workflow lint, over the workflows, with a stand-in for `bash -n`
     name = "workflows",
     src = "tests/drivers/workflow_lint_test.zig",

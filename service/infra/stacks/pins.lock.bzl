@@ -2208,13 +2208,13 @@ NPM = {
         "sha256": "a63a255ec20a935c3a3334a6645f9245db36e2319ddf1eb6bc0eab2bfe5b42d7",
         "size": 7479,
     },
-    "ts-jest@29.4.14": {
+    "ts-jest@29.4.15": {
         "name": "ts-jest",
-        "version": "29.4.14",
-        "url": "https://registry.npmjs.org/ts-jest/-/ts-jest-29.4.14.tgz",
-        "sri512": "sha512-+943G6wCX5E3VpzTQhBGBFntCmdT+QAkTvUlp03edTONFBvqskuXPhpyX16xdUotO4P5HQKyppldSWjocoltLQ==",
-        "sha256": "7ca70a3fa5162598d616d838ba28a9a7f6b6cccdaf196c2fdc6ab642e4ca4ac3",
-        "size": 77484,
+        "version": "29.4.15",
+        "url": "https://registry.npmjs.org/ts-jest/-/ts-jest-29.4.15.tgz",
+        "sri512": "sha512-s2qmEUYFRqbjz1wv0EmccNPVOb45HOFpFuhzQJLKShYVisuTbCFPIIAIV2EuK5rIxb4BejLDbH7dnBZfYjybUQ==",
+        "sha256": "656f5d9c108f0330c050bd0cd8de7fd88d394b6e1c889042be703c355877f8ce",
+        "size": 77779,
     },
     "ts-node@10.9.2": {
         "name": "ts-node",
