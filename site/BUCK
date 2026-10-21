@@ -35,6 +35,7 @@ _TEST_DATA = _DOCS | {
     ".github/workflows/service-ci.yml": "//:site.workflows.service-ci.yml",
     "service/api/src/validate/limits.ts": "//service/api:limits.ts",
     "spec/channel.md": "//:site.spec.channel.md",
+    "spec/package-metadata.schema.json": "//:site.spec.package-metadata.schema.json",
     "examples": "//:site_examples",
     "src/cli/main.zig": "//:site.src.cli.main.zig",
     "src/core/credentials.zig": "//:site.src.core.credentials.zig",

@@ -650,6 +650,12 @@ export_file(
 )
 
 export_file(
+    name = "site.spec.package-metadata.schema.json",
+    src = "spec/package-metadata.schema.json",
+    visibility = ["//site:"],
+)
+
+export_file(
     name = "site.src.core.credentials.zig",
     src = "src/core/credentials.zig",
     visibility = ["//site:"],

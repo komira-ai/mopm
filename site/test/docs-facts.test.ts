@@ -268,12 +268,49 @@ describe('a dependency with a path and a version', () => {
   test('the page says both are allowed, which one is used, and what pack writes', () => {
     expect(dependencies).toContain('An entry needs a `version`, a `path`, or both.');
     expect(dependencies).toContain('write the version into the package they make and never the path');
-    expect(dependencies).toContain('the path is what `mopm lock`');
+    expect(dependencies).toContain('the path is what `mopm lock`, `tree`, `plan`, `build` and `sync` use');
     expect(dependencies).not.toMatch(/sets both/);
     expect(dependencies).not.toMatch(/not together with `path`/);
   });
 
   test('the parser does not refuse both', () => {
     expect(read('src/core/manifest.zig')).not.toContain("sets both 'version' and 'path'");
+  });
+});
+
+// spec/mopm-toml.md says the same rule: its section on a dependency with a path is held to what the code does, with its
+// line breaks ignored. Mutants (planted, shown red): the sentence that pack checks the path package's version dropped; the
+// old line that the path is dropped at publish put back; the old text that the schema's dependentRequired is the rule of
+// the generated file put back; the list of commands that use the path cut short.
+describe('spec/mopm-toml.md, a dependency with a path', () => {
+  const spec = read('spec/mopm-toml.md');
+  const section = spec
+    .slice(spec.indexOf('## Dependencies with a path'), spec.indexOf('## `[package]` display fields'))
+    .replace(/\s+/g, ' ');
+
+  test('it finds the section', () => {
+    expect(section.length).toBeGreaterThan(500);
+  });
+
+  test('pack checks the path package version', () => {
+    expect(section).toContain("`mopm pack` checks the path package's version: it reads the `mopm.toml` at the path and refuses a package whose own version does not satisfy that requirement.");
+  });
+
+  test('the commands that use the path, and what pack and publish write', () => {
+    expect(section).toContain('`mopm lock`, `tree`, `plan`, `build` and `sync` use the path, not the registry');
+    expect(section).toContain('write the version requirement into the package and never the path');
+    expect(section).toContain('`mopm pack` and `mopm publish` refuse it before any file is made');
+  });
+
+  test('the stale lines are gone', () => {
+    expect(section).not.toContain('the path is dropped at publish');
+    expect(section).not.toContain('the registry refuses the package');
+    expect(section).not.toContain('carries the same rule');
+  });
+
+  test('the schema text it quotes is the schema', () => {
+    const schema = JSON.parse(read('spec/package-metadata.schema.json'));
+    expect(schema.properties.deps.items.dependentRequired).toEqual({ path: ['range'] });
+    expect(section).toContain('`package-metadata.schema.json` still says `dependentRequired` `path` needs `range`');
   });
 });
