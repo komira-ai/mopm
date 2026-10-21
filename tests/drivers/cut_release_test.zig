@@ -519,7 +519,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
             try f.put("cosign_tuf_fail", "2\n");
             args[2] = f.path("assets");
             const twice = try f.run(&args);
-            rep.check("verify-dir: the trusted-root fetch failing twice, then working, passes at the cost of two more calls", twice.code == 0 and f.cosignCalls("verify-blob ") == base + 2, f.read("cosign_log"));
+            rep.check("verify-dir: the trusted-root fetch failing twice, then working, passes at the cost of two more calls, waiting 1 ms then 2 ms (the wait scales with the try)", twice.code == 0 and f.cosignCalls("verify-blob ") == base + 2 and h.contains(twice.text, "retrying in 1 ms") and h.contains(twice.text, "retrying in 2 ms") and !h.contains(twice.text, "retrying in 3 ms"), f.read("cosign_log"));
 
             var g = try goodVerify(a, tools, &tmp, "vd_tuf_thrice", "1.2.3");
             try g.put("cosign_tuf_fail", "3\n");
@@ -542,7 +542,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
                 rep.check(try std.fmt.allocPrint(a, "verify-dir: the trusted-root marker {d} alone is retried once and then passes", .{i}), one.code == 0 and e.cosignCalls("verify-blob ") == base + 1, one.text);
             }
 
-            // The incident of the release run that this retry exists for (stderr of cosign v2.5, addresses elided): the fetch error is only a warning line,
+            // The incident of the release run that this retry exists for (stderr of cosign v3.0.6, addresses elided): the fetch error is only a warning line,
             // and the final line is the consequence. It is retried because the warning is there.
             const incident = "WARNING: Could not fetch trusted_root.json from the TUF repository. Continuing with individual targets. Error from TUF: error getting live trusted root: failed to create TUF client failed to load metadata: tuf refresh failed: Get \"https://tuf-repo-cdn.sigstore.dev/14.root.json\": read tcp ...: read: connection reset by peer\n" ++
                 "Error: trusted root is required when using new bundle format\n" ++

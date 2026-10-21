@@ -46,7 +46,7 @@ and `service-ci.yml` may run on `pull_request`, and every job of `ci.yml` other 
 TUF repository), the call is tried up to 3 times, waiting 2 s and then 4 s between the tries. Only the final line of cosign's error output decides:
 it must hold `tuf refresh failed`, `Could not fetch trusted_root.json` or `error getting live trusted root`. Any other refusal, a signature or
 certificate mismatch above all, is a finding on the first try; so is a mismatch that follows the legacy-bundle `Could not fetch trusted_root.json ... Continuing`
-warning. One more shape is retried: cosign v2.5 and v2.6 end a failed fetch with `trusted root is required when using new bundle format` (the fetch error is only the warning line before it), and that final line retries only when an earlier line holds one of the three fetch texts; alone it is a finding. An outage longer than about 6 s still fails the release, and the message says it is "a network failure, not a verdict on the signature"; re-run the job.
+warning. One more shape is retried: cosign v3.0.6 (the version the release installs) ends a failed fetch with `trusted root is required when using new bundle format` (the fetch error is only the warning line before it), and that final line retries only when an earlier line holds one of the three fetch texts; alone it is a finding. An outage longer than about 6 s still fails the release, and the message says it is "a network failure, not a verdict on the signature"; re-run the job.
 
 A push that changes only documentation or CI (`**.md`, `docs/**`, `.github/**`) does not release.
 Everything else does, including a change to `VERSION`.

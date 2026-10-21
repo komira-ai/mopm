@@ -513,7 +513,9 @@ fn checkSignatures(gh: Gh, dir_path: []const u8, payload: [][]const u8, source_r
             const err = std.mem.trim(u8, r.stderr, " \r\n");
             if (!isTrustedRootFetchFailure(r.stderr)) die("cosign verify-blob refused {s}: {s}", .{ w, err });
             if (attempt >= cosign_tries) die("cosign verify-blob could not fetch the Sigstore trusted root for {s} in {d} tries (a network failure, not a verdict on the signature): {s}", .{ w, cosign_tries, err });
-            std.time.sleep(@as(u64, gh.cosign_retry_ms) * attempt * std.time.ns_per_ms);
+            const wait_ms = @as(u64, gh.cosign_retry_ms) * attempt;
+            std.debug.print("cut_release: cosign verify-blob could not fetch the Sigstore trusted root for {s} (try {d} of {d}); retrying in {d} ms\n", .{ w, attempt, cosign_tries, wait_ms });
+            std.time.sleep(wait_ms * std.time.ns_per_ms);
         }
     }
 }
@@ -524,8 +526,8 @@ const cosign_tries: u32 = 3;
 /// cosign's FINAL stderr line says the trusted root (the TUF repository) could not be fetched: a network failure that says nothing about the
 /// signature. Only these retry; any other refusal (a signature or certificate mismatch) is final. Only the last line counts: in legacy-bundle
 /// mode cosign prints the `Could not fetch trusted_root.json ... Continuing` warning and may then report a real mismatch, which is a verdict.
-/// One more shape retries: cosign v2.5 and v2.6 (cmd/cosign/cli/verify/verify_blob.go) end a failed fetch with `trusted root is required when
-/// using new bundle format`, raised when the trusted material is nil, and the fetch error itself is only an earlier warning line. That final
+/// One more shape retries: cosign v3.0.6 (cmd/cosign/cli/verify/common.go, under `co.TrustedMaterial == nil && !verifyOfflineWithKey`) ends a failed fetch with `trusted root is required when
+/// using new bundle format`, raised when the trusted material is nil after the fetch failed, and the fetch error itself is only an earlier warning line. That final
 /// line retries only when an earlier line holds one of the fetch markers; alone it says nothing about why the root is missing.
 fn isTrustedRootFetchFailure(stderr: []const u8) bool {
     const text = std.mem.trim(u8, stderr, " \r\n");
