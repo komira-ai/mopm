@@ -3,6 +3,7 @@ module.exports = {
   maxWorkers: 2,
   workerIdleMemoryLimit: '1GB',
   testEnvironment: 'node',
+  setupFiles: ['<rootDir>/test/fc-seed.ts'],
   roots: ['<rootDir>/test'],
   // The package's own code, for jest --coverage (vendor/buildrules_coverage/README.md).
   collectCoverageFrom: ['src/**/*.ts'],
