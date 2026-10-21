@@ -731,6 +731,24 @@ test "mopm lock, update and tree resolve against the fake registry" {
         cx.ok("locking again changes nothing", r.code == 0 and std.mem.eql(u8, r.stdout, "locked 4 packages for mojo 1.0.0\n") and again != null and std.mem.eql(u8, again.?, expected), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
     }
 
+    // A version 1 lock too reuses the pins of the lock it replaces: with both package files of crypto gone from the channel,
+    // locking again still gives the same bytes (nothing is fetched), and with the old lock gone it cannot (HTTP 404).
+    {
+        var gone = std.ArrayList(struct { []const u8, []const u8 }).init(a);
+        for (reals) |real| {
+            const path = try h.join(a, &.{ work, "fake", "channel", real.subdir, real.filename });
+            try gone.append(.{ path, real.bytes });
+            try std.fs.cwd().deleteFile(path);
+        }
+        r = try cx.runReg(app, &.{"lock"});
+        const reused = try cx.lockOf(app);
+        cx.ok("a version 1 lock reuses the pinned natives: the package files are gone and lock still gives the same bytes", r.code == 0 and reused != null and std.mem.eql(u8, reused.?, expected), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
+        const no_old = try cx.project("app_no_old_lock", "http_client = \"0.4\"\ntls = \"1\"");
+        r = try cx.runReg(no_old, &.{"lock"});
+        cx.ok("with no old lock the same channel cannot be locked: the pin needs the package file", r.code == 1 and has(r.stderr, "answered HTTP 404") and (try cx.lockOf(no_old)) == null, try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+        for (gone.items) |g| try h.writeFile(g[0], g[1]);
+    }
+
     // A lock that pins an older http_core keeps it; update moves it.
     {
         const old_fn = "mojo-http_core-1.2.4-mojo1.0.0_0.conda";
