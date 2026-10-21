@@ -130,7 +130,7 @@ for (const p of natPacked) {
   }
 }
 if (natPacked.length === 2) {
-  // Planted: the archive's file claimed for the other subdir's file; the version of the metadata is another's.
+  // Planted: a version that is not the metadata's is refused for a package with an archive as for any other.
   const nbytes = readFileSync(natPacked[0].path);
   refused('native: a version that is not the metadata\'s', nbytes, { name: 'natdemo', version: '2.4.1', subdir: natPacked[0].path.split('/').slice(-2)[0], filename: 'mojo-natdemo-2.4.1-mojo1.0.0_0.conda' }, 'version_mismatch', 'manifest_invalid');
 }
