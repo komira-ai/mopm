@@ -499,12 +499,12 @@ pub const File = struct { path: []const u8, data: []const u8 };
 /// One reference to a secret that release.yml may make: how many times, and what it is for.
 const AllowedSecret = struct { ref: []const u8, times: usize };
 
-/// The secrets release.yml may reference, each exactly this many times at most. The tag job and the bump job each hand the key of the release
+/// The secrets release.yml may reference, each exactly this many times at most. The tag, tap and bump jobs each hand the key of the release
 /// bot's GitHub App to actions/create-github-app-token. The apt-index jobs (three attempts, release_lint.zig holds where) read the archive signing
 /// key in their signing step (the key and its passphrase), in their gate only whether the key exists (a comparison with the empty string,
 /// which puts no secret into the environment), and the fingerprint of the signing subkey, which may be a secret or a variable, in the gate and in the signing step.
 const allowed_secrets = [_]AllowedSecret{
-    .{ .ref = "${{ secrets.RELEASE_BOT_PRIVATE_KEY }}", .times = 2 },
+    .{ .ref = "${{ secrets.RELEASE_BOT_PRIVATE_KEY }}", .times = 3 },
     .{ .ref = "${{ secrets.APT_GPG_PRIVATE_KEY }}", .times = 3 },
     .{ .ref = "${{ secrets.APT_GPG_PASSPHRASE }}", .times = 3 },
     .{ .ref = "${{ secrets.APT_GPG_PRIVATE_KEY != '' }}", .times = 3 },

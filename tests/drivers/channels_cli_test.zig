@@ -94,6 +94,67 @@ fn sha256Hex(a: Allocator, bytes: []const u8) ![]u8 {
     return h.fmt(a, "{s}", .{std.fmt.bytesToHex(d, .lower)});
 }
 
+/// The words of a shell command line as the release workflow writes it: words split on spaces, "double quotes" group,
+/// `$NAME` is replaced from `vars` (an unknown name, a single quote or a backslash is an error: this reads the one line
+/// of the render step and nothing more).
+fn shellWords(a: Allocator, text: []const u8, vars: []const [2][]const u8) ![]const []const u8 {
+    var words = std.ArrayList([]const u8).init(a);
+    var cur = std.ArrayList(u8).init(a);
+    var in_word = false;
+    var quoted = false;
+    var i: usize = 0;
+    while (i < text.len) : (i += 1) {
+        const ch = text[i];
+        switch (ch) {
+            '\'', '\\' => return error.UnsupportedShell,
+            '"' => {
+                quoted = !quoted;
+                in_word = true;
+            },
+            ' ' => {
+                if (quoted) {
+                    try cur.append(ch);
+                } else if (in_word) {
+                    try words.append(try cur.toOwnedSlice());
+                    in_word = false;
+                }
+            },
+            '$' => {
+                var j = i + 1;
+                while (j < text.len and (std.ascii.isUpper(text[j]) or text[j] == '_')) j += 1;
+                const name = text[i + 1 .. j];
+                var found = false;
+                for (vars) |v| {
+                    if (std.mem.eql(u8, v[0], name)) {
+                        try cur.appendSlice(v[1]);
+                        found = true;
+                    }
+                }
+                if (!found) return error.UnknownVariable;
+                in_word = true;
+                i = j - 1;
+            },
+            else => {
+                try cur.append(ch);
+                in_word = true;
+            },
+        }
+    }
+    if (quoted) return error.UnterminatedQuote;
+    if (in_word) try words.append(try cur.toOwnedSlice());
+    return words.items;
+}
+
+/// What follows the leading comment lines (`# ...`) of the copy of the tap's fixture.
+fn withoutHeader(text: []const u8) []const u8 {
+    var rest = text;
+    while (std.mem.startsWith(u8, rest, "#")) {
+        const nl = std.mem.indexOfScalar(u8, rest, '\n') orelse return "";
+        rest = rest[nl + 1 ..];
+    }
+    return rest;
+}
+
 test "channels: determinism, goldens, the apt tree, the formula, and every planted defect refused" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -287,6 +348,76 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
 
         const wrong_version = try w.run(&.{ "formula", "--name", "mopm", "--version", "1.2.4", "--desc", "d", "--homepage", "https://mopm.dev", "--license", "Apache-2.0", "--repo", "komira-ai/mopm", "--sums", fx ++ "SHA256SUMS", "--out", w.path("v124.rb") });
         rep.check("mutant: SHA256SUMS of 1.2.3 for a 1.2.4 formula is refused", wrong_version.code == 1 and h.contains(wrong_version.text, "UnexpectedTarball") and !w.has("v124.rb"), wrong_version.text);
+    }
+
+    // ---- the release's `tap` job: its own render command, against the tap guard's fixture ------------------------------------
+    // The Homebrew tap admits a formula only if it is the renderer's exact output (an allow-list template in the tap's
+    // .github/guard/guard.js). The command below is read from .github/workflows/release.yml (the line release_lint.zig pins), its
+    // variables are filled in as the job has them, and the program runs on the fixture SHA256SUMS. The file it writes must be the
+    // tap's own fixture, byte for byte: tests/channels/tap_guard/mopm.rb, a copy that names the tap commit it was taken from.
+    // A flag that changes the output (no explicit version, another url base, another name) would make a pull request the guard
+    // refuses, and shows here, in the release's own tests, instead of as a stuck pull request after the release.
+    {
+        const guard = "tests/channels/tap_guard/mopm.rb";
+        const copy = h.readFile(a, guard) catch "";
+        rep.check("tap job: the copy of the tap's fixture names the commit of the tap it was taken from", h.contains(copy, "Source: komira-ai/homebrew-tap at commit ") and h.contains(copy, "(test/fixtures/mopm.rb)") and copy.len > 400, copy);
+        const want = withoutHeader(copy);
+        rep.same("tap job: the copy of the tap's fixture is the golden formula", h.readFile(a, gold ++ "mopm.rb") catch "", want);
+
+        const yml = h.readFile(a, ".github/workflows/release.yml") catch "";
+        const marker = "run: '\"$RUNNER_TEMP/channels\" formula ";
+        const at = std.mem.indexOf(u8, yml, marker);
+        rep.check("tap job: release.yml has exactly one render step", at != null and std.mem.count(u8, yml, marker) == 1, "release.yml");
+        if (at) |s| {
+            const start = s + "run: '".len;
+            const end = std.mem.indexOfScalarPos(u8, yml, start, '\n') orelse yml.len;
+            const line = std.mem.trimRight(u8, yml[start..end], " \r");
+            rep.check("tap job: the render command is a single-quoted YAML string", line.len > 2 and line[line.len - 1] == '\'', line);
+            const cmd = line[0 .. line.len - 1];
+            const vars = [_][2][]const u8{ .{ "RUNNER_TEMP", w.root }, .{ "VERSION", "1.2.3" }, .{ "GITHUB_REPOSITORY", "komira-ai/mopm" } };
+            const words = try shellWords(a, cmd, &vars);
+            var args = std.ArrayList([]const u8).init(a);
+            for (words[1..]) |x| try args.append(if (std.mem.eql(u8, x, "dist/SHA256SUMS")) fx ++ "SHA256SUMS" else x);
+            rep.check("tap job: the command runs the channels program built in the job, with the formula verb", std.mem.eql(u8, words[0], try h.join(a, &.{ w.root, "channels" })) and std.mem.eql(u8, words[1], "formula"), cmd);
+            rep.check("tap job: it reads the job's dist/SHA256SUMS and writes the file the tool step takes", h.contains(cmd, "--sums dist/SHA256SUMS") and h.contains(cmd, "--out \"$RUNNER_TEMP/tap/mopm.rb\""), cmd);
+
+            const good = try w.run(args.items);
+            rep.check("tap job: the exact command line renders", good.code == 0 and w.has("tap/mopm.rb"), good.text);
+            rep.same("tap job: ... and the file is the tap guard's fixture, byte for byte", want, w.read("tap/mopm.rb"));
+
+            // Mutants of the command line: each must produce a formula that is NOT the fixture (or no formula), so the compare is live.
+            const plants = [_]struct { name: []const u8, extra: []const []const u8 }{
+                .{ .name = "no explicit version line", .extra = &.{"--no-explicit-version"} },
+                .{ .name = "another url base", .extra = &.{ "--url-base", "https://example.com/dl" } },
+            };
+            for (plants) |p| {
+                const out_name = try h.fmt(a, "tap_mutant_{s}.rb", .{p.name});
+                var margs = std.ArrayList([]const u8).init(a);
+                for (args.items, 0..) |x, k| {
+                    if (k > 0 and std.mem.eql(u8, args.items[k - 1], "--out")) {
+                        try margs.append(w.path(out_name));
+                    } else try margs.append(x);
+                }
+                try margs.appendSlice(p.extra);
+                const r = try w.run(margs.items);
+                rep.check(try h.fmt(a, "tap job mutant: {s} does not render the tap guard's fixture", .{p.name}), r.code != 0 or !std.mem.eql(u8, w.read(out_name), want), r.text);
+            }
+            var no_repo = std.ArrayList([]const u8).init(a);
+            var skip: usize = 0;
+            for (args.items) |x| {
+                if (skip > 0) {
+                    skip -= 1;
+                    continue;
+                }
+                if (std.mem.eql(u8, x, "--repo")) {
+                    skip = 1;
+                    continue;
+                }
+                try no_repo.append(if (std.mem.eql(u8, x, w.path("tap/mopm.rb"))) w.path("tap_no_repo.rb") else x);
+            }
+            const nr = try w.run(no_repo.items);
+            rep.check("tap job mutant: no --repo (no release url) renders nothing", nr.code != 0 and !w.has("tap_no_repo.rb"), nr.text);
+        }
     }
 
     // ---- monotonic ----------------------------------------------------------------------------------------------------

@@ -29,7 +29,7 @@ the files `BUCK` leaves out of `expect`, with the reason beside each.
 coverage tools here are built by 0.15 and carry the block code (the process tests of `//:cov_zig_cover` run it), but a mopm package's tests are built by 0.12, so
 `zig_coverage(blocks = False)` and a floor file has no `branches` line. The packages build with 0.15 only after the code is ported.
 
-**Jest.** `jest --coverage` over `collectCoverageFrom` of the package's `jest.config.js` (its own source, not its tests); the target `:test` is the `coverage`
+**Jest.** `jest --coverage` over `collectCoverageFrom` of the package's `jest.config.js` (its own source, not its tests); the target `:coverage_run` (a second run beside npm_package's `:test`, which writes no coverage) is the `coverage`
 directory of the run, and `:coverage_floor` holds istanbul's `total` lines and branches to the package's `coverage_floor.txt`, with the same both-ways check.
 
 ## Raising a floor

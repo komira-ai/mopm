@@ -500,7 +500,7 @@ test "a workflow that cannot be read is a finding, not a pass" {
     try expectStructure("ci.yml", "on: [push\n", &.{"not readable as YAML"});
 }
 
-test "release.yml may name the release bot's key exactly twice (tag, bump), and no other secret" {
+test "release.yml may name the release bot's key exactly three times (tag, tap, bump), and no other secret" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -517,6 +517,13 @@ test "release.yml may name the release bot's key exactly twice (tag, bump), and 
         \\      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
         \\        with:
         \\          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+        \\  tap:
+        \\    environment: release
+        \\    runs-on: x
+        \\    steps:
+        \\      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        \\        with:
+        \\          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
         \\  bump:
         \\    environment: release
         \\    runs-on: x
@@ -527,17 +534,20 @@ test "release.yml may name the release bot's key exactly twice (tag, bump), and 
         \\
     ;
     try expectStructure("release.yml", release, &.{});
-    // Mutant: a third reference to the key.
+    // Mutant: a fourth reference to the key.
     try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "        env:\n          K: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n" }), &.{"must not use secrets or an environment"});
     // Mutants: the key under another name (the jobs then read nothing, so their environment is a finding too); another
     // secret beside the allowed one.
-    try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, "RELEASE_BOT_PRIVATE_KEY", "OTHER_KEY"), &.{ "must not use secrets or an environment", "job tag: must not use secrets or an environment", "job bump: must not use secrets or an environment" });
+    try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, "RELEASE_BOT_PRIVATE_KEY", "OTHER_KEY"), &.{ "must not use secrets or an environment", "job tag: must not use secrets or an environment", "job tap: must not use secrets or an environment", "job bump: must not use secrets or an environment" });
     try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "        env:\n          X: ${{ secrets.ANOTHER }}\n" }), &.{"must not use secrets or an environment"});
     // The environment of the jobs that read the key is `release`, and only theirs.
     const tag_env = "  tag:\n    environment: release\n";
     const bump_env = "  bump:\n    environment: release\n";
+    const tap_env = "  tap:\n    environment: release\n";
     try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, tag_env, "  tag:\n"), &.{"job tag reads RELEASE_BOT_* so it must declare environment release, got nil"});
     try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, bump_env, "  bump:\n"), &.{"job bump reads RELEASE_BOT_* so it must declare environment release, got nil"});
+    try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, tap_env, "  tap:\n"), &.{"job tap reads RELEASE_BOT_* so it must declare environment release, got nil"});
+    try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, tap_env, "  tap:\n    environment: prod\n"), &.{"job tap reads RELEASE_BOT_* so it must declare environment release, got \"prod\""});
     try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, tag_env, "  tag:\n    environment: relase\n"), &.{"job tag reads RELEASE_BOT_* so it must declare environment release, got \"relase\""});
     try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, bump_env, "  bump:\n    environment: prod\n"), &.{"job bump reads RELEASE_BOT_* so it must declare environment release, got \"prod\""});
     try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "  publish:\n    environment: release\n    runs-on: x\n" }), &.{"job publish: must not use secrets or an environment"});

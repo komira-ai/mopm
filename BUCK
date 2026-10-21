@@ -210,7 +210,7 @@ zig_exe(  # buck-only: tools/release.zig, whose `tarball` and `sums` make the fa
 zig_exe(  # buck-only: tools/cut_release.zig, the release run's steps (plan, tag, verify-dir, publish) and the read-only verify
     name = "cut-release",
     src = "tools/cut_release.zig",
-    imports = ["tools/bump_internal.zig", "tools/release_debs.zig"] + _CHANNELS_SRCS,
+    imports = ["tools/bump_internal.zig", "tools/ghtool.zig", "tools/tap.zig", "tools/release_debs.zig"] + _CHANNELS_SRCS,
     **_TOOLS
 )
 
@@ -226,7 +226,7 @@ zig_exe(  # buck-only: a `cosign` that signs nothing (a bundle names the file's 
     **_TOOLS
 )
 
-zig_exe(  # buck-only: a `git` whose answers are files, for :bump_internal
+zig_exe(  # buck-only: a `git` whose answers are files, for :bump_internal and :tap
     name = "fake-git",
     src = "tests/drivers/fake_git.zig",
     **_TOOLS
@@ -250,6 +250,18 @@ zig_test(  # buck-only: cut_release bump-internal against the fake gh and the fa
     name = "bump_internal",
     src = "tests/drivers/bump_internal_test.zig",
     imports = ["tests/drivers/harness.zig"],
+    env_tools = {
+        "MOPM_CUT_RELEASE": ":cut-release",
+        "MOPM_FAKE_GH": ":fake-gh",
+        "MOPM_FAKE_GIT": ":fake-git",
+    },
+    **_TOOLS
+)
+
+zig_test(  # buck-only: cut_release tap against the fake gh and the fake git, with planted defects it must refuse
+    name = "tap",
+    src = "tests/drivers/tap_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/channels/golden/mopm.rb"],
     env_tools = {
         "MOPM_CUT_RELEASE": ":cut-release",
         "MOPM_FAKE_GH": ":fake-gh",
@@ -285,6 +297,7 @@ zig_test(  # buck-only: the channels CLI end to end: byte-determinism (twice, co
     src = "tests/drivers/channels_cli_test.zig",
     imports = ["tests/drivers/harness.zig"] + _CHANNELS_DATA + glob(["packaging/deb/*"]),
     env_tools = {"CHANNELS": ":channels"},
+    data = {".github/workflows/release.yml": ".github/workflows/release.yml"},  # the render command of the release's tap job, run against the tap guard's fixture
     **_TOOLS
 )
 
