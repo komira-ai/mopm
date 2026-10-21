@@ -3,8 +3,8 @@
 
 SCHEMA = 1
 NODE = "24.21.0"
-PACKAGE_JSON_SHA256 = "86ec47ec2efe03d8b18fc651da517540aaae55641288571035abc8cb03ca21f3"
-PACKAGE_LOCK_SHA256 = "dcf37353190dad2a90fe79d1d62c172b5f4e2adb2a29025f96fae88cc31b3acb"
+PACKAGE_JSON_SHA256 = "5015d7c573fa98b60de52d0f45bdac367de6f1c353977dd18a4eebab461a95ff"
+PACKAGE_LOCK_SHA256 = "fd90785d9e707ba62d5a8fe400493c03ac68e683946c60f71e199eaaca6f3ab9"
 
 PACKAGE = {
     "name": "mopm-site",
@@ -2096,13 +2096,13 @@ NPM = {
         "sha256": "a63a255ec20a935c3a3334a6645f9245db36e2319ddf1eb6bc0eab2bfe5b42d7",
         "size": 7479,
     },
-    "ts-jest@29.4.14": {
+    "ts-jest@29.4.15": {
         "name": "ts-jest",
-        "version": "29.4.14",
-        "url": "https://registry.npmjs.org/ts-jest/-/ts-jest-29.4.14.tgz",
-        "sri512": "sha512-+943G6wCX5E3VpzTQhBGBFntCmdT+QAkTvUlp03edTONFBvqskuXPhpyX16xdUotO4P5HQKyppldSWjocoltLQ==",
-        "sha256": "7ca70a3fa5162598d616d838ba28a9a7f6b6cccdaf196c2fdc6ab642e4ca4ac3",
-        "size": 77484,
+        "version": "29.4.15",
+        "url": "https://registry.npmjs.org/ts-jest/-/ts-jest-29.4.15.tgz",
+        "sri512": "sha512-s2qmEUYFRqbjz1wv0EmccNPVOb45HOFpFuhzQJLKShYVisuTbCFPIIAIV2EuK5rIxb4BejLDbH7dnBZfYjybUQ==",
+        "sha256": "656f5d9c108f0330c050bd0cd8de7fd88d394b6e1c889042be703c355877f8ce",
+        "size": 77779,
     },
     "type-detect@4.0.8": {
         "name": "type-detect",
