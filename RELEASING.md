@@ -354,8 +354,8 @@ the steps in `autopin-commit.yml` and the artifact's name, with a planted mutant
 in `autopin-commit.yml` alone, `push` only for `main` or tags, what a pull request can reach (no environment, no secret, one
 farm id-token that skips a Dependabot branch), the files the lints can read, and that no workflow merges or approves a Dependabot pull request.
 
-**Nothing of this runs live until an owner has done the following** (the workflows do nothing and fail closed until the
-environment exists):
+**Nothing of this runs live until an owner has done the following** (the commit workflow fails closed until the App is
+installed and the environment `autopin` holds its key and id):
 
 1. Rulesets on the default branch (a pull request and one approval, the required checks including `pin-verify`
    pinned to the GitHub Actions integration (id 15368), no force push, no deletion, no bypass for the autopin App) and on tags
