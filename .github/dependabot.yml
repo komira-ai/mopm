@@ -11,10 +11,28 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+  # Every npm entry waits 7 days after a release before Dependabot proposes it (cooldown applies to
+  # version updates, not security updates): a newly published malicious version is usually pulled
+  # within days. tests/drivers/hygiene.zig refuses an npm entry without it, and an npm package
+  # (a package-lock.json) without an entry.
+  - package-ecosystem: npm
+    directory: /service/api
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      dev-tooling:
+        patterns: ["typescript", "ts-jest", "jest", "@types/*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: npm
     directory: /service/infra/stacks
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       aws-cdk:
         patterns: ["aws-cdk-lib", "aws-cdk", "constructs"]
@@ -27,6 +45,8 @@ updates:
     directory: /service/infra/access
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       aws-cdk:
         patterns: ["aws-cdk-lib", "aws-cdk", "constructs"]
@@ -39,6 +59,8 @@ updates:
     directory: /service/infra/dns
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       aws-cdk:
         patterns: ["aws-cdk-lib", "aws-cdk", "constructs"]
@@ -51,6 +73,8 @@ updates:
     directory: /site
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       dev-tooling:
         patterns: ["typescript", "ts-jest", "jest", "fast-check", "@types/*"]

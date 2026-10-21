@@ -4,9 +4,8 @@
 //! pins.toml and package-lock.json produce. What it does NOT catch: a changed sha256 or
 //! size; those cannot be derived offline, and are caught only where a lock is consumed
 //! (npm_modules downloads verify the digest), which service/infra/{access,dns,stacks}
-//! and tools/node do. site/pins.lock.bzl and service/api/pins.lock.bzl are loaded by no
-//! BUCK file (those packages use buildrules.lock.bzl), so a tampered digest there is
-//! caught nowhere. Shown able to fail: the same lock with the header of another tool
+//! and tools/node do. Every lock listed is loaded by a BUCK file (the site and the API use
+//! buildrules.lock.bzl, and their old kpin locks are gone). Shown able to fail: the same lock with the header of another tool
 //! must be refused.
 //!
 //! The sets are the lines of KPIN_SETS in .github/workflows/kpin-update.yml; the test
@@ -20,11 +19,9 @@ const Set = struct { pins: []const u8, lock: []const u8, npm: ?[]const u8 };
 
 const sets = [_]Set{
     .{ .pins = "tools/node/pins.toml", .lock = "tools/node/pins.lock.bzl", .npm = null },
-    .{ .pins = "service/pins.toml", .lock = "service/api/pins.lock.bzl", .npm = "service/api/package-lock.json" },
     .{ .pins = "service/pins.toml", .lock = "service/infra/access/pins.lock.bzl", .npm = "service/infra/access/package-lock.json" },
     .{ .pins = "service/pins.toml", .lock = "service/infra/dns/pins.lock.bzl", .npm = "service/infra/dns/package-lock.json" },
     .{ .pins = "service/pins.toml", .lock = "service/infra/stacks/pins.lock.bzl", .npm = "service/infra/stacks/package-lock.json" },
-    .{ .pins = "site/pins.toml", .lock = "site/pins.lock.bzl", .npm = "site/package-lock.json" },
 };
 
 fn kpinCheck(a: std.mem.Allocator, kpin: []const u8, work: []const u8, pins: []const u8, lock: []const u8, npm: ?[]const u8) !h.Ran {
@@ -56,7 +53,7 @@ test "kpin check refuses a lock that names another tool" {
     try h.watchdog(300);
     const kpin = try h.toolPathAbs(a, "KPIN");
     const work = try h.toolPathAbs(a, "BUILDRULES_TEST_WORK");
-    const s = sets[5];
+    const s = sets[sets.len - 1]; // an npm set (service/infra/stacks)
     const good = try h.readFile(a, try h.join(a, &.{ work, s.lock }));
     const want = "#   ./buck2 run buildrules//rules/kpin -- lock\n";
     const at = std.mem.indexOf(u8, good, want) orelse return error.TestUnexpectedResult;
