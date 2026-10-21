@@ -1119,6 +1119,12 @@ test "readFiles: a package tar that decompresses to more than the total is refus
     // Padding that is not wanted counts too: the wanted file is last, and the stream is over before it.
     try std.testing.expectError(error.BadConda, readFilesLimited(a, conda_bytes, window, &.{"nothing"}, .{ .total = 1500 }, &diag));
     try std.testing.expectError(error.BadConda, readFilesLimited(a, conda_bytes, window, &.{"lib/libx.a"}, .{ .total = tar_len - 1024 - 1 }, &diag));
+    // The boundary: the reader consumes the entries and the first block of the trailer, tar_len - 512 bytes. That many
+    // is enough, one fewer is not (the cap is the total itself, not one more).
+    const consumed = tar_len - 512;
+    const at = try readFilesLimited(a, conda_bytes, window, &.{"lib/libx.a"}, .{ .total = consumed }, &diag);
+    try std.testing.expectEqualStrings("wanted", at[0].?);
+    try std.testing.expectError(error.BadConda, readFilesLimited(a, conda_bytes, window, &.{"lib/libx.a"}, .{ .total = consumed - 1 }, &diag));
     const ok = try readFilesLimited(a, conda_bytes, window, &.{"lib/libx.a"}, .{ .total = tar_len }, &diag);
     try std.testing.expectEqualStrings("wanted", ok[0].?);
 }
