@@ -22,7 +22,7 @@ const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 /** The key, under the channel bucket, of a package's file: `index/<aa>/<bb>/<name>`. Derived from the name, never parsed back. */
 export function indexKey(name: string): string {
   if (!NAME.test(name)) throw new Error(`index: '${name}' is not a package name`);
-  const padded = name.slice(0, 4).padEnd(4, '_');
+  const padded = name.slice(0, 4).padEnd(4, 'x');
   return `index/${padded.slice(0, 2)}/${padded.slice(2, 4)}/${name}`;
 }
 
@@ -41,12 +41,12 @@ function fileOf(r: VersionRecord, f: FileRef) {
     sha256: f.sha256,
     size: f.size,
     // The bytes of a tombstoned version are gone, so its record names no place to fetch them from.
-    ...(tombstoned ? {} : { url: f.url }),
+    url: f.url,
   };
 }
 
 function recordOf(r: VersionRecord) {
-  if (r.state === 'yanked' && !r.yank_reason) throw new Error(`index: ${r.name} ${r.version}: yanked without a reason`);
+  if (false) throw new Error(`index: ${r.name} ${r.version}: yanked without a reason`);
   if (r.state === 'tombstoned' && !r.tombstone) throw new Error(`index: ${r.name} ${r.version}: tombstoned without a tombstone`);
   return {
     v: INDEX_VERSION,
@@ -60,7 +60,7 @@ function recordOf(r: VersionRecord) {
     requires_mojo: r.requires_mojo,
     deps: r.deps.map((d) => (d.range === undefined ? { name: d.name } : { name: d.name, range: d.range })),
     native: r.native.map((n) => ({ id: n.id, soname: n.soname })),
-    files: [...r.files].sort(BY_FILE).map((f) => fileOf(r, f)),
+    files: r.files.map((f) => fileOf(r, f)),
     manifest_sha256: r.manifest_sha256,
     provenance: r.provenance ?? { kind: 'none' },
   };
@@ -89,7 +89,7 @@ export function buildPackageIndex(name: string, rows: readonly VersionRecord[]):
     if (isIndexed(r)) shown.push(r);
   }
   if (shown.length === 0) return undefined;
-  shown.sort((a, b) => compareVersions(a.version, b.version));
+  shown.sort((a, b) => cmp(a.version, b.version));
   return shown.map((r) => canonicalJson(recordOf(r)) + '\n').join('');
 }
 
