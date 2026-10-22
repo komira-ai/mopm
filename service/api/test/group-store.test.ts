@@ -444,6 +444,20 @@ describe('the DynamoDB adapter sends only what the roles are granted', () => {
   });
 });
 
+describe('adopting a number on DynamoDB', () => {
+  test('a row that changes between the read and the takeover is lost: the takeover writes nothing, and the other writer\'s row stands', async () => {
+    const r = dynamoRig();
+    r.writeRow(staged('p', 'g0', 1, { rev: 3 }));
+    const out = await r.store.adoptVersion(reserved('p', 'g1'), audit('p', 'group_adopt', '1.0.0'), (cur) => {
+      r.writeRow({ ...cur, rev: cur.rev + 1 }); // another writer gets in after the read
+      return true;
+    });
+    expect(out).toEqual({ outcome: 'lost' });
+    expect(await raw(r)).toEqual(staged('p', 'g0', 1, { rev: 4 }));
+    expect(await actions(r, 'p')).toEqual([]);
+  });
+});
+
 describe('the commit on DynamoDB', () => {
   const commitSends = (r: Rig) => r.doc!.inputs.filter((i) => i.TransactItems?.[0]?.Put?.Item?.publish_id === 'grp#g1' && i.TransactItems[0].Put.Item.committed_at !== undefined);
 
