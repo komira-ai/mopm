@@ -1433,6 +1433,51 @@ fn graphWithGroups(a: Allocator, dir: []const u8, crypto_group: []const u8, tls_
     return build(a, .{ .dir = dir, .m = m, .members = &members, .l = l, .subdir = "linux-64", .mojo = "1.0.0", .toolchain = fakeToolchain("1.0.0") }, why);
 }
 
+/// The graph of lock_static_chain with the natives of tls_sys replaced by two (soname libtls_mid.a with no group, then
+/// libtls_z.a in `z_group`), so that the closure's natives by soname are crypto_sys' (group libcrypto), mid, z.
+fn graphWithThree(a: Allocator, dir: []const u8, z_group: []const u8, why: *[]const u8) !Graph {
+    var l = try lock.parse(a, try fill(a, lock_static_chain), why);
+    const pk = try a.dupe(lock.Package, l.packages);
+    for (pk) |*p| {
+        if (!std.mem.eql(u8, p.name, "tls_sys")) continue;
+        p.native = try a.dupe(lock.Native, &.{
+            .{ .id = "tls_mid", .soname = "libtls_mid.a", .sha256 = native_sha, .kind = .static },
+            .{ .id = "tls_z", .soname = "libtls_z.a", .sha256 = native_sha, .kind = .static, .exclusive = z_group },
+        });
+    }
+    l.packages = pk;
+    var diag: manifest.Diagnostic = .{};
+    const m = try manifest.parse(a, try std.mem.concat(a, u8, &.{ toml_app, toml_tls_dep }), &diag);
+    return build(a, .{ .dir = dir, .m = m, .members = &members, .l = l, .subdir = "linux-64", .mojo = "1.0.0", .toolchain = fakeToolchain("1.0.0") }, why);
+}
+
+// Defects it catches: a clash found only between natives that are next to each other in link order, so that a library
+// with no group between two of one group hides the second; and group names compared without regard to case, so that
+// `libcrypto` and `LibCrypto` are one group. Mutants planted: the inner loop looks only at `found[i + 1]`; the
+// comparison is `std.ascii.eqlIgnoreCase`.
+test "an exclusive clash is found between natives that are not next to each other; group names are exact, case included" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeWorkspace(tmp.dir, app_init);
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+
+    // By soname: libcrypto_sys.a (libcrypto), libtls_mid.a (none), libtls_z.a (libcrypto).
+    try std.testing.expectError(error.Refused, graphWithThree(a, dir, "libcrypto", &why));
+    try std.testing.expectEqualStrings(
+        id_app ++ ": native libraries libcrypto_sys.a of crypto_sys and libtls_z.a of tls_sys are both in exclusive group libcrypto; a unit links one library of a group",
+        why,
+    );
+    // The same names in another case are another group; so is a group that merely contains the other's name.
+    for ([_][]const u8{ "LibCrypto", "LIBCRYPTO", "libcrypto2", "libcrypt" }) |other| {
+        const g = try graphWithThree(a, dir, other, &why);
+        try std.testing.expectEqual(@as(usize, 3), g.units[g.find(id_app).?].natives.len);
+    }
+}
+
 // Defect it catches: a closure that links two libraries of one exclusive group (two copies of a crypto library, each
 // with its own error queue and CPU-capability word) and builds. Mutants planted: the comparison of the two groups is
 // negated; the check returns at once; the group is compared only when the two natives are of one package.

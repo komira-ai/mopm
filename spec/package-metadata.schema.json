@@ -59,11 +59,6 @@
             "description": "Sonames of native libraries from other packages this one needs.",
             "type": "array",
             "items": { "type": "string" }
-          },
-          "exclusive": {
-            "description": "An exclusivity group: a closure links at most one native library of a group.",
-            "type": "string",
-            "minLength": 1
           }
         },
         "allOf": [

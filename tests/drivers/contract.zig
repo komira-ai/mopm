@@ -175,8 +175,6 @@ pub fn lockProblems(a: Allocator, doc: Value) !Problems {
     const toolchain_mojo = getStr(get(doc, "toolchain") orelse .null, "mojo") orelse "";
     var chans_of = std.StringHashMap(std.StringHashMap(void)).init(a);
     var soname_owner = std.StringHashMap([]const u8).init(a);
-    // Rule 8: key "<subdir>\n<group>" -> the package that holds the group there.
-    var group_owner = std.StringHashMap([]const u8).init(a);
     for (pk) |p| {
         const name = getStr(p, "name") orelse "";
         const channel = getStr(p, "channel") orelse "";
@@ -202,12 +200,6 @@ pub fn lockProblems(a: Allocator, doc: Value) !Problems {
             if (!std.mem.eql(u8, owner.value_ptr.*, name)) {
                 try problem(a, &out, "soname {s} is shipped by {s} and {s}", .{ soname, owner.value_ptr.*, name });
             }
-            const group = getStr(n, "exclusive") orelse continue;
-            const key = try std.fmt.allocPrint(a, "{s}\n{s}", .{ getStr(p, "subdir") orelse "", group });
-            const held = try group_owner.getOrPut(key);
-            if (held.found_existing) {
-                try problem(a, &out, "exclusive group {s} is declared twice for {s}: by {s} and {s}", .{ group, getStr(p, "subdir") orelse "", held.value_ptr.*, name });
-            } else held.value_ptr.* = name;
         }
     }
     var it = chans_of.iterator();

@@ -172,9 +172,6 @@ fn check_native(item: &Value) -> Checked<NativeDecl> {
             return bad(format!("native '{id}': 'needs' must be an array of strings"));
         }
     }
-    if r.get("exclusive").is_some_and(|v| v.as_str().map_or(true, str::is_empty)) {
-        return bad(format!("native '{id}': 'exclusive' must be a non-empty string"));
-    }
     let file = str_of(r.get("file"));
     let static_file = str_of(r.get("static_file"));
     if matches!(kind, "shared" | "both") && file.is_none() {
@@ -389,8 +386,6 @@ mod tests {
             (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "mode": "x"}]}), "<name>.mopm.json: native 'z': 'mode' must be link or load"),
             (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "file": 1}]}), "<name>.mopm.json: native 'z': 'file' must be a string"),
             (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "needs": [1]}]}), "<name>.mopm.json: native 'z': 'needs' must be an array of strings"),
-            (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "exclusive": 1}]}), "<name>.mopm.json: native 'z': 'exclusive' must be a non-empty string"),
-            (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "exclusive": ""}]}), "<name>.mopm.json: native 'z': 'exclusive' must be a non-empty string"),
             (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so"}]}), "<name>.mopm.json: native 'z': kind shared needs 'file'"),
             (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "kind": "both", "file": "libz.so"}]}), "<name>.mopm.json: native 'z': kind both needs 'static_file'"),
         ];
