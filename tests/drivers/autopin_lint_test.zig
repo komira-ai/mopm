@@ -323,15 +323,18 @@ test "commit: the environment, the key and the id belong to this file alone" {
 
 test "pin-verify: every pull request, no condition, no secret, the required context, fails when a table would change" {
     try expectRepo(verify, "    timeout-minutes: 15\n", "    timeout-minutes: 15\n    if: github.actor != 'x'\n", &.{ "has an `if:`", "must not look at the actor" });
-    try expectRepo(verify, "      - name: No table would change\n", "      - if: always()\n        name: No table would change\n", &.{"no step condition"});
+    try expectRepo(verify, "      - name: Every pin table row is what", "      - if: always()\n        name: Every pin table row is what", &.{"no step condition"});
     try expectRepo(verify, "  pull_request:\n", "  pull_request:\n    paths:\n      - site/**\n", &.{"pull_request has no filter and no types"});
     try expectRepo(verify, "  pull_request:\n", "  pull_request:\n    branches:\n      - main\n", &.{"pull_request has no filter and no types"});
     try expectRepo(verify, "    name: pin-verify\n", "    name: pin verify\n", &.{"the job must be `pin-verify` with `name: pin-verify`"});
+    // Mutant: a second job beside the check (the lint reads exactly one job, so it would read neither).
+    try expectRepo(verify, "jobs:\n  pin-verify:\n", "jobs:\n  extra:\n    runs-on: ubuntu-24.04\n  pin-verify:\n", &.{ "pin-verify.yml: expected exactly one job, found 2", "pin-verify.yml: no run script carries `--set DIR=KIND`" });
     try expectRepo(verify, "  pin-verify:\n", "  verify:\n", &.{"the job must be `pin-verify` with `name: pin-verify`"});
     try expectRepo(verify, "    runs-on: ubuntu-24.04\n", "    runs-on: ubuntu-24.04\n    environment: autopin\n", &.{ "an environment is for autopin-commit.yml alone", "a pull_request workflow must not declare an environment" });
-    try expectRepo(verify, "        run: |\n          \"$RUNNER_TEMP/br/buildrules\" autopin compute", "        env:\n          T: ${{ secrets.T }}\n        run: |\n          \"$RUNNER_TEMP/br/buildrules\" autopin compute", &.{ "no secrets (this job runs for a pull request)", "a pull_request workflow must not reference secrets" });
-    try expectRepo(verify, "            exit 1\n", "", &.{"no step after the tool fails"});
-    try expectRepo(verify, "autopin compute --event", "autopin check --event", &.{ "no step runs `buildrules autopin compute`", "no step after the tool fails" });
+    try expectRepo(verify, "        run: |\n          \"$RUNNER_TEMP/br/buildrules\" autopin verify-pins", "        env:\n          T: ${{ secrets.T }}\n        run: |\n          \"$RUNNER_TEMP/br/buildrules\" autopin verify-pins", &.{ "no secrets (this job runs for a pull request)", "a pull_request workflow must not reference secrets" });
+    try expectRepo(verify, "autopin verify-pins --set", "autopin check --set", &.{"no step runs `buildrules autopin verify-pins`"});
+    // Mutant: the old command (compute only downloads the rows it has to add).
+    try expectRepo(verify, "autopin verify-pins --set", "autopin compute --set", &.{"no step runs `buildrules autopin verify-pins`"});
     try expectRepo(verify, "permissions:\n  contents: read\n\njobs:", "permissions:\n  contents: write\n\njobs:", &.{ "the top-level permissions must be exactly `contents: read`", "a pull_request workflow's top-level permissions must be exactly" });
     try expectRepo(verify, "        run: |\n          set -eu\n", "        continue-on-error: true\n        run: |\n          set -eu\n", &.{"no continue-on-error"});
     try expectRepo(verify, "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n", "      - uses: actions/cache@3d3c42e5aac5ba805825da76410c181273ba90b1\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n", &.{ "no cache and no setup-* action", "the first step must be actions/checkout pinned by full SHA" });
@@ -371,6 +374,8 @@ test "one SETS list in the four invocations: a directory dropped from any is red
     try expectRepo(commit, " --set service/api=buildrules-lock", "", &.{"autopin-commit.yml: a --set list differs from autopin-compute.yml's"});
     try expectRepo(commit, " --set service/api=buildrules-lock\n      - name: Mint", " --set service/api=buildrules-lock --set extra=pins-lock\n      - name: Mint", &.{"autopin-commit.yml: a --set list differs from autopin-compute.yml's"});
     try expectRepo(verify, " --set service/api=buildrules-lock", "", &.{"pin-verify.yml: a --set list differs from autopin-compute.yml's"});
+    // Mutant: an extra directory (an infra one, which the tool refuses) in one file.
+    try expectRepo(verify, " --set service/api=buildrules-lock", " --set service/api=buildrules-lock --set service/infra/dns=pins-lock", &.{"pin-verify.yml: a --set list differs from autopin-compute.yml's"});
     try expectRepo(compute, " --set site=buildrules-lock", "", &.{ "autopin-commit.yml: a --set list differs from", "autopin-commit.yml: a --set list differs from", "pin-verify.yml: a --set list differs from" });
 }
 

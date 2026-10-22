@@ -49,8 +49,8 @@ jobs:
     steps:
       - name: Fetch the buildrules release (checked against its sha256; never built from a pull request)
         env:
-          BUILDRULES_VERSION: "0.0.19"
-          BUILDRULES_SHA256: "94aec772f978d6297075c42a0833837780a8025bf1ef300a6739bc4830c23b3e"
+          BUILDRULES_VERSION: "0.0.21"
+          BUILDRULES_SHA256: "0e595ed9b5f7f01f0ab923ded5ce46ebba7a665ed58f46e11d8e75e8ba2483ee"
         run: |
           set -eu
           name="buildrules-cli-${BUILDRULES_VERSION}-linux-x86_64"

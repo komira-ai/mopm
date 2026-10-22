@@ -509,17 +509,14 @@ fn verifyFile(a: Allocator, f: []const u8, doc: Value, text: []const u8, out: *O
     if (!mapIs(c.get(job.node, "permissions"), &.{.{ .k = "contents", .v = "read" }})) try c.problem(a, out, prefix ++ "{s}: job {s}: permissions must be exactly `contents: read`", .{ f, job.name });
     try timeoutProblem(a, f, job, out);
     var runs_tool = false;
-    var fails = false;
     for (stepsOf(job.node), 0..) |st, i| {
         if (c.get(st, "if") != null) try c.problem(a, out, prefix ++ "{s}: {s} step {d}: no step condition: a skipped step is a check that did not run", .{ f, job.name, i });
         const run = runOf(st) orelse continue;
         try runProblems(a, f, job.name, i, run, &unprivileged_words, out);
         try envFileProblems(a, f, job.name, i, run, out);
-        if (contains(run, "autopin compute")) runs_tool = true;
-        if (runs_tool and contains(run, "exit 1")) fails = true;
+        if (contains(run, "autopin verify-pins")) runs_tool = true;
     }
-    if (!runs_tool) try c.problem(a, out, prefix ++ "{s}: no step runs `buildrules autopin compute`", .{f});
-    if (!fails) try c.problem(a, out, prefix ++ "{s}: no step after the tool fails (`exit 1`) when it would write a table", .{f});
+    if (!runs_tool) try c.problem(a, out, prefix ++ "{s}: no step runs `buildrules autopin verify-pins` (it exits 1 when a table row differs from its lockfile)", .{f});
     const co = if (stepsOf(job.node).len > 0) usesOf(stepsOf(job.node)[0]) orelse "" else "";
     if (!pinnedUses(co, "actions/checkout")) try c.problem(a, out, prefix ++ "{s}: the first step must be actions/checkout pinned by full SHA", .{f});
     return .{ .pin = try toolPin(a, f, doc, out), .sets = try setsOf(a, doc) };

@@ -3,7 +3,7 @@
 # When Dependabot opens or updates a pull request, this regenerates the pin tables the pull request's
 # lockfiles call for with a released `buildrules`, and uploads them as an artifact. The directories are the
 # `--set` arguments: site and service/api (buildrules.lock.bzl). The three service/infra packages are not in the
-# list on purpose: their lockfiles bundle packages (aws-cdk-lib), which `autopin compute` refuses, so a Dependabot
+# list on purpose: their lockfiles bundle packages (aws-cdk-lib, with transitive bundles), which the tool refuses, so a Dependabot
 # pull request there is pinned by a person with kpin, as before (tests/drivers/hygiene.zig names them). It writes nothing to the repository and holds nothing to steal: a read-only token, no secret, no
 # environment, no id-token, no cache. autopin-commit.yml, which runs from the default branch, reads the artifact
 # as untrusted bytes and decides whether to commit it.
@@ -44,8 +44,8 @@ jobs:
           persist-credentials: false
       - name: Fetch the buildrules release (checked against its sha256; never built from this pull request)
         env:
-          BUILDRULES_VERSION: "0.0.19"
-          BUILDRULES_SHA256: "94aec772f978d6297075c42a0833837780a8025bf1ef300a6739bc4830c23b3e"
+          BUILDRULES_VERSION: "0.0.21"
+          BUILDRULES_SHA256: "0e595ed9b5f7f01f0ab923ded5ce46ebba7a665ed58f46e11d8e75e8ba2483ee"
         run: |
           set -eu
           name="buildrules-cli-${BUILDRULES_VERSION}-linux-x86_64"

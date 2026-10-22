@@ -131,7 +131,7 @@ the tables of Dependabot's own pull requests with the released `buildrules autop
 (the design, the trust each workflow holds and what an owner sets up first: `RELEASING.md`, "The Dependabot pin update"; nothing of it runs
 before the GitHub App is installed). `pin-verify.yml` is the required check on every pull request that every table it covers (`site/` and `service/api/`) is what its lockfile
 calls for, so a hand-made `package-lock.json` change needs the same regenerated table: `./buck2 run buildrules//rules/kpin` for the
-infra packages, which the bot does not touch (their lockfiles bundle packages the tool refuses; `RELEASING.md` says which), `buildrules npm sync <dir>` for `site/` and `service/api/`. A bot-pinned pull request is not a reviewed
+infra packages, which the bot does not touch (their lockfiles bundle packages, aws-cdk-lib with transitive bundles, that the tool refuses; `RELEASING.md` says which), `buildrules npm sync <dir>` for `site/` and `service/api/`. A bot-pinned pull request is not a reviewed
 dependency: read the lockfile diff. A Dependabot branch gets no farm build (`farm.yml` skips it), and a pull request that touches
 `.github/` is never pinned by the bot and is checked by its own copy of `pin-verify.yml`, so read the workflow change. A new package with a
 `package-lock.json` needs a `--set` line in `autopin-compute.yml` (and the same in the other three invocations) and a `dependabot.yml` entry, or a place in `autopin_manual` of

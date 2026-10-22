@@ -1,13 +1,10 @@
 # pin-verify: the required, secretless check that the pin tables agree with the lockfiles, on every pull request.
 #
 # Without it a bot-pinned Dependabot pull request would prove only that a table equals itself. This runs the
-# released `buildrules autopin compute` over the pull request's checkout, the tool the autopin workflows use, and
-# fails when it would write anything: a lockfile entry the table lacks or disagrees with, a table row without an
-# entry, a stale PACKAGE_LOCK_SHA256, or a lockfile the tool refuses (an entry with no `integrity` or `resolved`,
-# a non-registry URL, an alias, a git or file dependency). A row it has to add is downloaded from
-# registry.npmjs.org and must have the lockfile's sha512. It does not re-fetch a row that is already in the table.
-# It covers the directories of the `--set` arguments (site and service/api); the service/infra lockfiles bundle packages
-# the tool refuses, so they are left out (see autopin-compute.yml).
+# released `buildrules autopin verify-pins` over the pull request's checkout and fails (exit 1) when a table is out of
+# step with its lockfile or a row differs: it downloads every row from registry.npmjs.org and compares sha512 with the
+# lockfile, sha256 and size with the row. It covers the directories of the `--set` arguments (site and service/api);
+# the service/infra lockfiles bundle packages the tool refuses, so they are left out (see autopin-compute.yml).
 #
 # The job holds a read-only token and no secret, environment, id-token or cache, and has no condition and no
 # filter: a skipped check is a check that did not run. It does not look at who the actor is. The tool is the
@@ -37,8 +34,8 @@ jobs:
           persist-credentials: false
       - name: Fetch the buildrules release (checked against its sha256; never built from this pull request)
         env:
-          BUILDRULES_VERSION: "0.0.19"
-          BUILDRULES_SHA256: "94aec772f978d6297075c42a0833837780a8025bf1ef300a6739bc4830c23b3e"
+          BUILDRULES_VERSION: "0.0.21"
+          BUILDRULES_SHA256: "0e595ed9b5f7f01f0ab923ded5ce46ebba7a665ed58f46e11d8e75e8ba2483ee"
         run: |
           set -eu
           name="buildrules-cli-${BUILDRULES_VERSION}-linux-x86_64"
@@ -46,14 +43,6 @@ jobs:
           echo "${BUILDRULES_SHA256}  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
           mkdir "$RUNNER_TEMP/br"
           tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP/br" --strip-components=1
-      - name: Every pin table is what its lockfile calls for
+      - name: Every pin table row is what its lockfile calls for (each tarball re-downloaded)
         run: |
-          "$RUNNER_TEMP/br/buildrules" autopin compute --event "$GITHUB_EVENT_PATH" --out "$RUNNER_TEMP/pin-verify" --set site=buildrules-lock --set service/api=buildrules-lock
-      - name: No table would change
-        run: |
-          stale="$(find "$RUNNER_TEMP/pin-verify" -type f ! -name manifest.json)"
-          if [ -n "$stale" ]; then
-            echo "pin-verify: a pin table is out of step with its lockfile; regenerate it:"
-            echo "$stale"
-            exit 1
-          fi
+          "$RUNNER_TEMP/br/buildrules" autopin verify-pins --set site=buildrules-lock --set service/api=buildrules-lock
