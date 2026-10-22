@@ -133,7 +133,7 @@ jobs:
           conda=$(jq -r .condaDomain "service/config/${STAGE}.json")
           api="https://${domain}/api/v1"
           out=$(mktemp)
-          # http <method> <url> [data]: prints the status code, leaves the body in $out. Retries connection failures and also HTTP 5xx and 429 answers; the status of the last attempt is what is returned.
+          # http <method> <url> [data]: prints the status code, leaves the body in $out. Retries only connection-level failures.
           http() {
             if [ -n "${3:-}" ]; then
               curl -sS --retry 5 --retry-delay 5 --retry-all-errors -o "$out" -w '%{http_code}' -X "$1" \
