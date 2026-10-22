@@ -11,6 +11,8 @@ import { parseDisplay } from './display';
 import type { DisplayMeta } from './display';
 import { invalidRequest, PublishError, uploadInvalid } from './errors';
 import type { ObjectStore, Presigner, PublishStore, Queue } from './ports';
+import { packageRev } from '../index-files';
+import { sendIndexPkg } from './indexer';
 import type { Actor, IndexMessage, PublishRecord, UploadRecord, ValidateMessage } from './types';
 
 export interface PublishServiceDeps {
@@ -305,7 +307,8 @@ export class PublishService {
 
   /**
    * setYanked: yank (with a reason) or unyank a version, then ask the index writer to rewrite every subdir the
-   * version has files in, so repodata `packages.conda` and `removed` follow the state. The state change comes first
+   * version has files in, so repodata `packages.conda` and `removed` follow the state, and the package's
+   * sparse-index file (a yank queues it at once; an unyank chains it after the last subdir, see IndexMessage.then). The state change comes first
    * (it is the truth); the messages come after it, and they are sent again on a repeat of the same request, so a
    * crash between the two leaves a state that the next identical request repairs. A repeat of a change already made
    * is a no-op for the record and still queues the rebuild (the FIFO dedup id is the record's revision, so a quick
@@ -330,10 +333,26 @@ export class PublishService {
       detail: { by: handle, ...(req.yanked ? { reason: req.reason } : {}) },
     };
     const after = await this.d.registry.updateVersion(name, version, req.yanked ? { type: 'yank', reason: req.reason } : { type: 'unyank' }, audit);
-    for (const subdir of [...new Set(after.files.map((f) => f.subdir))].sort()) {
+    const subdirs = [...new Set(after.files.map((f) => f.subdir))].sort();
+    const rev = packageRev(await this.d.registry.listVersions(name));
+    if (!req.yanked && subdirs.length > 0) {
+      // Unyank: the sparse index must not say `published` before repodata lists the file (the CLI fails closed on
+      // that). One chain, one subdir at a time; the last repodata job sends the `index_pkg`.
+      const first: IndexMessage = { type: 'index', subdir: subdirs[0]!, then: { name, rev, next: subdirs.slice(1) } };
+      await queue.send({ body: JSON.stringify(first), groupId: subdirs[0]!, dedupId: `rebuild:${after.canonical}:${name}:${after.rev}:${subdirs[0]}` });
+      return this.yankResult(after);
+    }
+    for (const subdir of subdirs) {
       const msg: IndexMessage = { type: 'index', subdir };
       await queue.send({ body: JSON.stringify(msg), groupId: subdir, dedupId: `rebuild:${after.canonical}:${name}:${after.rev}:${subdir}` });
     }
+    // Yank is the safe direction (an index that says `yanked` while repodata still lists the file is not picked by
+    // the CLI), so the index file is asked for at once.
+    await sendIndexPkg({ registry: this.d.registry, indexQueue: queue }, { name, rev });
+    return this.yankResult(after);
+  }
+
+  private yankResult(after: VersionRecord): YankResult {
     return {
       version: after.version,
       state: after.state,

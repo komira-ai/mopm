@@ -566,6 +566,9 @@ filegroup(
     srcs = {
         "api/openapi.yaml": "spec/api/openapi.yaml",
         "package-metadata.schema.json": "spec/package-metadata.schema.json",
+        "index-record.schema.json": "spec/index-record.schema.json",
+        "index-config.schema.json": "spec/index-config.schema.json",
+        "takedowns.schema.json": "spec/takedowns.schema.json",
     },
     visibility = ["//service/api:"],
 )

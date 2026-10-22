@@ -1,5 +1,4 @@
 import { MemoryStore } from '../../src/memory-store';
-import { indexSubdir } from '../../src/publish/indexer';
 import type { QueueMessage } from '../../src/publish/ports';
 import { validatePublish } from '../../src/publish/validator';
 import { Harness, pkg } from './harness';
@@ -57,7 +56,7 @@ async function twoPackagesOneSubdir(serialize: boolean) {
   const me = await h.account(1, 'a', ['pa', 'pb']);
   const p1 = pkg({ name: 'pa', version: '1.0.0', subdir: 'noarch' });
   const p2 = pkg({ name: 'pb', version: '1.0.0', subdir: 'noarch' });
-  const consumer = new Consumer(serialize, (m) => indexSubdir(h.indexerDeps, JSON.parse(m.body)));
+  const consumer = new Consumer(serialize, (m) => h.handleIndex(m));
 
   await h.publish(me.token, p1);
   await h.runValidator();
@@ -74,6 +73,7 @@ async function twoPackagesOneSubdir(serialize: boolean) {
   await turn();
   registry.release();
   await Promise.all([jobA, jobB]);
+  await h.runIndexer(); // the package index jobs the last repodata jobs queued
   return { h, files: Object.keys(h.repodata('noarch')['packages.conda']).sort(), p1, p2 };
 }
 
@@ -105,10 +105,11 @@ describe('two packages published into one subdir at the same time', () => {
     h.validateQueue.sent.length = 0;
     await Promise.all(queued.map((m) => validate.deliver(m)));
 
-    const index = new Consumer(true, (m) => indexSubdir(h.indexerDeps, JSON.parse(m.body)));
+    const index = new Consumer(true, (m) => h.handleIndex(m));
     const messages = [...h.indexQueue.sent];
     h.indexQueue.sent.length = 0;
     await Promise.all(messages.map((m) => index.deliver(m)));
+    await h.runIndexer(); // the package index jobs the last repodata jobs queued
 
     for (const sub of ['noarch', 'linux-64']) {
       const want = packs
@@ -199,10 +200,14 @@ describe('redelivery: SQS delivers at least once, and a Lambda can die between a
     const id = await h.publish(me.token, pkg({ name: 'demo', version: '1.0.0' }));
     await h.runValidator();
     const m = h.indexQueue.take()!;
-    await indexSubdir(h.indexerDeps, JSON.parse(m.body));
+    await h.handleIndex(m);
     const once = h.objects.objects.get('noarch/repodata.json')!.body.toString();
-    await indexSubdir(h.indexerDeps, JSON.parse(m.body));
+    await h.handleIndex(m);
     expect(h.objects.objects.get('noarch/repodata.json')!.body.toString()).toBe(once);
+    // Repodata is done; the publish waits for its package index file, which the last repodata job queued once.
+    expect((await h.status(me.token, id)).body.status).toBe('indexing');
+    expect(h.indexQueue.sent.map((x) => JSON.parse(x.body).type)).toEqual(['index_pkg']);
+    await h.runIndexer();
     expect((await h.status(me.token, id)).body.status).toBe('published');
   });
 });

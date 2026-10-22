@@ -29,6 +29,75 @@ old pinned-hash test guarded; the pin moved to `service/api/test/publish/empty-i
 - Rebuilding is always safe and idempotent: the writer derives the file from the registry's records. After a manual change to
   a version row, send the same message for each affected subdir.
 
+## The sparse index writer
+
+The index writer also owns `index/<aa>/<bb>/<name>` (one NDJSON file per package, `spec/index.md`) and
+`index/takedowns.json`, in the channel bucket. Nothing serves them yet (the reader is a separate change), and
+CloudFront refuses to serve `index/*` from the conda host.
+
+- Three message kinds on `mopm-<stage>-index.fifo`: `{"type":"index","subdir":...}` (repodata, as before),
+  `{"type":"index_pkg","name":...,"rev":N}` (group `pkg:<name>`, dedup id `<name>:<rev>`) and `{"type":"index_takedowns"}`
+  (group `takedowns`). `rev` is the sum of the revisions of the package's rows: it only separates dedup ids. A job never trusts
+  the message for content: it re-reads the package's rows and writes the whole file, so a late or repeated job writes the
+  newest state and cannot bring an older one back.
+- Order. Publish and unyank: the last repodata job queues `index_pkg`, so the index never runs ahead of repodata (the CLI
+  refuses an index that says `published` while repodata still lists the file as removed). Yank and takedown queue it at once.
+  The window that remains is repodata invalidation, which is requested and not awaited.
+  A yank or takedown job re-reads all of the package's rows, so it can also list another version whose publish is still
+  in flight: the validator marks the row `published` before the last repodata job lists the file. For that short window
+  the CLI fails closed on that package (index ahead of repodata) until repodata catches up. Publish and unyank are gated;
+  this cross-version case is not, and is accepted.
+- A package with no visible version (only a rejected publish) has no file; nothing is written.
+- A takedown is an operator action and nothing in the service calls it yet: no route does. After tombstoning the row,
+  call `queueTakedownIndex` (`src/publish/takedown.ts`), or send `index_pkg` for the package, `index` for each of its
+  subdirs and `index_takedowns` by hand. Until a route exists a takedown needs this manual send.
+- **Rollback.** Reverting the writer does not finish a publish that was in flight. Such a record has `status` `indexing`,
+  `remaining_subdirs` empty and `index_pending` true; the previous validator only re-sends repodata jobs for
+  `remaining_subdirs`, so it sends nothing, and the previous indexer drops `index_pkg` as unrecognised. The version row is
+  `published` and repodata lists it, so only the publish record is stale (a client polling it sees `indexing`). Find them
+  (`aws dynamodb scan --table-name mopm-<stage>-publishes --filter-expression 'index_pending = :t AND #s = :i'
+  --expression-attribute-names '{"#s":"status"}' --expression-attribute-values '{":t":{"BOOL":true},":i":{"S":"indexing"}}'`)
+  and, after confirming repodata lists the version, mark each published (a cloud write: needs the maintainers' go):
+  `aws dynamodb update-item --table-name mopm-<stage>-publishes --key '{"publish_id":{"S":"<id>"}}'
+  --condition-expression '#s = :i AND index_pending = :t' --update-expression 'SET #s = :p, index_pending = :f, rev = rev + :one'
+  --expression-attribute-names '{"#s":"status"}' --expression-attribute-values '{":i":{"S":"indexing"},":p":{"S":"published"},":t":{"BOOL":true},":f":{"BOOL":false},":one":{"N":"1"}}'`.
+  Or avoid it: do not revert while a publish is in flight (the DLQ and publish records show none).
+- **Rebuild everything**: send one `index_pkg` per package (any `rev`, with a dedup id that has not been used in five minutes) and
+  one `index_takedowns`. Every write is idempotent.
+- Old versions of `index/` files expire 30 days after they are replaced (bucket lifecycle rule `index-noncurrent-expiry`).
+
+### Held step: seed `index/takedowns.json` on each stage
+
+Nothing writes `index/takedowns.json` on a stage that has no takedown, so it does not exist until one message asks for it.
+Send it once per stage, after the writer is deployed to that stage. It is a cloud write: it needs the maintainers' go for
+each stage, and it is not part of any workflow. Dry run is the default; nothing is sent unless `APPLY=1`.
+
+```sh
+#!/usr/bin/env bash
+# Seed index/takedowns.json for one stage. Dry run unless APPLY=1.
+set -euo pipefail
+stage="${1:?usage: seed-takedowns.sh beta|gamma|prod}"
+case "$stage" in beta | gamma | prod) ;; *) echo "unknown stage: $stage" >&2; exit 2 ;; esac
+region="${AWS_REGION:-us-east-1}"
+account="$(aws sts get-caller-identity --query Account --output text)"
+queue_url="$(aws sqs get-queue-url --region "$region" --queue-name "mopm-${stage}-index.fifo" --query QueueUrl --output text)"
+bucket="mopm-${stage}-channel-${account}"
+dedup="seed-takedowns-${stage}-$(date -u +%Y%m%dT%H%M%SZ)"
+echo "stage:  $stage"
+echo "queue:  $queue_url"
+echo "object: s3://${bucket}/index/takedowns.json"
+echo "send:   {\"type\":\"index_takedowns\"}  group=takedowns  dedup=$dedup"
+if [ "${APPLY:-0}" != "1" ]; then echo "dry run: nothing sent (APPLY=1 to send)"; exit 0; fi
+aws sqs send-message --region "$region" --queue-url "$queue_url" \
+  --message-group-id takedowns --message-deduplication-id "$dedup" \
+  --message-body '{"type":"index_takedowns"}'
+echo "sent. In a minute: aws s3 cp s3://${bucket}/index/takedowns.json -"
+```
+
+Check the result: `aws s3 cp s3://mopm-<stage>-channel-<account>/index/takedowns.json -` prints exactly
+`{"index_version":1,"takedowns":[]}` and a newline. If it is missing after a few minutes, look at the index
+dead-letter queue and the indexer's logs (`index_takedowns` is logged on success). Sending it again is harmless.
+
 ## Publishing: how it runs and how to operate it
 
 `POST /packages/{name}/{version}/files` (begin) reserves the version number as `pending`, records the declared file
@@ -36,7 +105,9 @@ and answers with a presigned PUT into `quarantine/<upload id>/<file>` pinned to 
 `POST .../publish` (commit) takes the version lock, queues the publish on `mopm-<stage>-validate.fifo` (group = package) and answers 202.
 The validator Lambda reads the quarantined object, runs the validator, copies the file to `<subdir>/<file>`,
 publishes the version, and queues `mopm-<stage>-index.fifo` (group = subdir); the index writer rebuilds the subdir's
-repodata, invalidates its two CloudFront paths and marks the publish `published`.
+repodata and invalidates its two CloudFront paths. The job that lists the last subdir marks the publish `index_pending` and
+queues one `index_pkg` message (group `pkg:<name>`); that job writes the package's sparse-index file and only then marks the
+publish `published`. See "The sparse index writer" below.
 
 - **Read-only switch.** Put the item `{"key": "read_only", "value": true}` into the stage's `mopm-<stage>-config` table
   (`aws dynamodb put-item --table-name mopm-<stage>-config --item '{"key":{"S":"read_only"},"value":{"BOOL":true}}'`).

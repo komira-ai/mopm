@@ -1,0 +1,62 @@
+{
+  "description": "An index_pkg message for a package with no visible version reads the package's rows (a consistent Query on the versions table) and writes nothing: no file for a package nobody can resolve.",
+  "lambda": "indexer",
+  "env": {
+    "MOPM_STAGE": "beta",
+    "MOPM_CHANNEL_BUCKET": "channel-bucket",
+    "MOPM_DISTRIBUTION_ID": "DIST1",
+    "MOPM_INDEX_QUEUE_URL": "index-queue-url"
+  },
+  "invocations": [
+    {
+      "event": {
+        "Records": [
+          {
+            "messageId": "m1",
+            "receiptHandle": "handle-1",
+            "body": "{\"type\":\"index_pkg\",\"name\":\"demo\",\"rev\":0}",
+            "attributes": {
+              "MessageGroupId": "g"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          }
+        ]
+      },
+      "expect": {
+        "returns": null
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Query",
+        "table": "mopm-beta-versions",
+        "values": {
+          ":n": "demo"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": [
+      {
+        "stream": "log",
+        "line": {
+          "level": "info",
+          "msg": "index_pkg: the package has no visible version, no file written",
+          "name": "demo"
+        }
+      },
+      {
+        "stream": "log",
+        "line": {
+          "level": "info",
+          "msg": "index_pkg",
+          "name": "demo",
+          "rev": 0
+        }
+      }
+    ]
+  }
+}
