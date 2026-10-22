@@ -410,7 +410,9 @@ mod tests {
             (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "exclusive": " libx"}]}), "<name>.mopm.json: native 'z': 'exclusive' must be a non-empty string with no leading or trailing space and no control character"),
             (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "exclusive": "libx "}]}), "<name>.mopm.json: native 'z': 'exclusive' must be a non-empty string with no leading or trailing space and no control character"),
             (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "exclusive": "libx\n"}]}), "<name>.mopm.json: native 'z': 'exclusive' must be a non-empty string with no leading or trailing space and no control character"),
-            (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "exclusive": "lib\u{1}x"}]}), "<name>.mopm.json: native 'z': 'exclusive' must be a non-empty string with no leading or trailing space and no control character"),            (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so"}]}), "<name>.mopm.json: native 'z': kind shared needs 'file'"),
+            (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "exclusive": "lib\u{1}x"}]}), "<name>.mopm.json: native 'z': 'exclusive' must be a non-empty string with no leading or trailing space and no control character"),
+            (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "exclusive": "lib\u{7f}x"}]}), "<name>.mopm.json: native 'z': 'exclusive' must be a non-empty string with no leading or trailing space and no control character"),
+            (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so"}]}), "<name>.mopm.json: native 'z': kind shared needs 'file'"),
             (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "kind": "both", "file": "libz.so"}]}), "<name>.mopm.json: native 'z': kind both needs 'static_file'"),
         ];
         for (v, want) in table {

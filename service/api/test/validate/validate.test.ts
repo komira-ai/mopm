@@ -383,6 +383,8 @@ describe('metadata consistency', () => {
     ['an exclusive group with a trailing space', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: 'libx ' }] }],
     ['an exclusive group with a trailing newline', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: 'libx\n' }] }],
     ['an exclusive group with a control character inside', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: 'lib\u0001x' }] }],
+    ['an exclusive group with DEL inside', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: 'lib\u007fx' }] }],
+    ['an exclusive group with a tab inside', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: 'lib\tx' }] }],
     ['an exclusive group that is only a space', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: ' ' }] }],
   ];
   test.each(bad)('schema: %s', (_n, mopm) => {
