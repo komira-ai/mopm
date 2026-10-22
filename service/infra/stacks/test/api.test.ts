@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { App } from 'aws-cdk-lib';
 import { Match } from 'aws-cdk-lib/assertions';
-import { ApiStack, AUTH_GRANTS, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
+import { ApiStack, AUTH_GRANTS, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
 import { STAGES, stageConfig, tableName } from '../lib/config';
 import { DUMMY_ACCOUNT, tpl } from './util';
 
@@ -51,8 +51,14 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
   const { api: t } = tpl(stage);
   const host = stage === 'prod' ? 'api.mopm.dev' : `api.${stage}.mopm.dev`;
 
-  test('exactly one Node.js Lambda, from the built bundle, configured for its stage', () => {
-    t.resourceCountIs('AWS::Lambda::Function', 1);
+  test('two Node.js Lambdas, the API and the index reader, from the built bundle, configured for their stage', () => {
+    t.resourceCountIs('AWS::Lambda::Function', 2);
+    t.hasResourceProperties('AWS::Lambda::Function', {
+      Runtime: 'nodejs22.x',
+      Handler: 'http/index-lambda.handler',
+      Code: { S3Bucket: Match.anyValue(), S3Key: Match.stringLikeRegexp('\\.zip$') },
+      Environment: { Variables: { MOPM_STAGE: stage, MOPM_CHANNEL_BUCKET: `mopm-${stage}-channel-${DUMMY_ACCOUNT}` } },
+    });
     t.hasResourceProperties('AWS::Lambda::Function', {
       Runtime: 'nodejs22.x',
       Handler: 'http/lambda.handler',
@@ -76,13 +82,86 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
         'POST /api/v1/me/tokens',
         'GET /api/v1/me/tokens',
         'DELETE /api/v1/me/tokens/{token_id}',
+        'GET /index/config.json',
+        'GET /index/{proxy+}',
       ].sort(),
     );
     expect(AUTH_ROUTES).toHaveLength(6);
-    expect(keys).toHaveLength(READ_ROUTES.length + PUBLISH_ROUTES.length + AUTH_ROUTES.length);
+    expect(keys).toHaveLength(READ_ROUTES.length + PUBLISH_ROUTES.length + AUTH_ROUTES.length + 2);
     // Claim is not routed yet; yank (PUT) is.
     expect(keys.some((k) => /\/claim/.test(k))).toBe(false);
     expect(keys).toContain('PUT /api/v1/packages/{name}/{version}/yank');
+  });
+
+  // Which function answers a route: the literal config route and every /api/v1 route go to the API; the greedy index route to the reader.
+  const functionOf = (routeKey: string): string => {
+    const route: any = Object.values(t.findResources('AWS::ApiGatewayV2::Route')).find((r: any) => r.Properties.RouteKey === routeKey);
+    const target = flatten(route.Properties.Target);
+    const integration: any = (t.toJSON().Resources as any)[/"Ref":"([^"]+)"/.exec(target)![1]!];
+    const fn = flatten(integration.Properties.IntegrationUri);
+    return Object.entries(t.findResources('AWS::Lambda::Function')).find(([id]) => fn.includes(`"${id}"`))![1].Properties.Handler;
+  };
+
+  test('the index routes: the config route goes to the API function, the greedy route to the reader, neither has an authorizer', () => {
+    expect(INDEX_CONFIG_ROUTE).toBe('GET /index/config.json');
+    expect(INDEX_READER_ROUTE).toBe('GET /index/{proxy+}');
+    expect(functionOf(INDEX_CONFIG_ROUTE)).toBe('http/lambda.handler');
+    expect(functionOf(INDEX_READER_ROUTE)).toBe('http/index-lambda.handler');
+    expect(functionOf('GET /api/v1/health')).toBe('http/lambda.handler');
+    const routes = Object.values(t.findResources('AWS::ApiGatewayV2::Route')) as any[];
+    for (const r of routes.filter((x) => /\/index\//.test(x.Properties.RouteKey))) {
+      expect(r.Properties.AuthorizationType ?? 'NONE').toBe('NONE');
+      expect(r.Properties.AuthorizerId).toBeUndefined();
+    }
+    expect(t.findResources('AWS::ApiGatewayV2::Authorizer')).toEqual({});
+  });
+
+  test('the two index routes are throttled at the gateway; no function reserves concurrency', () => {
+    const stages = Object.values(t.findResources('AWS::ApiGatewayV2::Stage')) as any[];
+    expect(stages).toHaveLength(1);
+    const settings = stages[0].Properties.RouteSettings;
+    const limits = { ThrottlingRateLimit: INDEX_THROTTLE.rateLimit, ThrottlingBurstLimit: INDEX_THROTTLE.burstLimit };
+    expect(Object.keys(settings).sort()).toEqual([INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE].sort());
+    expect(settings[INDEX_CONFIG_ROUTE]).toEqual(limits);
+    expect(settings[INDEX_READER_ROUTE]).toEqual(limits);
+    for (const fn of Object.values(t.findResources('AWS::Lambda::Function')) as any[]) {
+      expect(fn.Properties.ReservedConcurrentExecutions).toBeUndefined();
+    }
+  });
+
+  // CloudFormation rejects a stage update that names a route which does not exist yet ("Unable to find Route by key ...
+  // within the provided RouteSettings"), so the stage must wait for every route its RouteSettings name.
+  test('the stage depends on every route its RouteSettings name', () => {
+    const stages = Object.entries(t.findResources('AWS::ApiGatewayV2::Stage')) as [string, any][];
+    expect(stages.length).toBeGreaterThan(0);
+    const routes = t.findResources('AWS::ApiGatewayV2::Route');
+    let named = 0;
+    for (const [, stageRes] of stages) {
+      const dependsOn: string[] = ([] as string[]).concat(stageRes.DependsOn ?? []);
+      for (const key of Object.keys(stageRes.Properties.RouteSettings ?? {})) {
+        named++;
+        const ids = Object.entries(routes).filter(([, r]: [string, any]) => r.Properties.RouteKey === key).map(([id]) => id);
+        expect({ key, routes: ids.length }).toEqual({ key, routes: 1 });
+        expect({ key, dependsOn: dependsOn.includes(ids[0]!) }).toEqual({ key, dependsOn: true });
+      }
+    }
+    expect(named).toBeGreaterThan(0);
+  });
+
+  // The deployed stage keeps its logical id (a failed update is recovered by naming it); this is what the L2 construct
+  // path Api/DefaultStage synthesises.
+  test('the default stage keeps its logical id', () => {
+    expect(Object.keys(t.findResources('AWS::ApiGatewayV2::Stage'))).toEqual(['ApiDefaultStage189A7074']);
+  });
+
+  test('the config the API serves is built from the stage hosts it is given', () => {
+    const c = stageConfig(stage);
+    t.hasResourceProperties('AWS::Lambda::Function', {
+      Handler: 'http/lambda.handler',
+      Environment: { Variables: Match.objectLike({ MOPM_API_DOMAIN: c.apiDomain, MOPM_CHANNEL_DOMAIN: c.condaDomain }) },
+    });
+    expect(c.apiDomain).toBe(host);
+    expect(c.condaDomain).toBe(stage === 'prod' ? 'conda.mopm.dev' : `conda.${stage}.mopm.dev`);
   });
 
   test('the handler is told where uploads go and where commits are queued, by name', () => {
@@ -208,8 +287,33 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     }
   });
 
+  test('the reader role: GetObject on index/* and ListBucket only with the prefix index/*, exactly, no wildcard', () => {
+    const bucket = `mopm-${stage}-channel-${DUMMY_ACCOUNT}`;
+    const read = statements().find((s) => s.Sid === 'ReadIndexObjects');
+    const list = statements().find((s) => s.Sid === 'ListIndexPrefix');
+    expect(read).toBeDefined();
+    expect(list).toBeDefined();
+    expect(read.Effect).toBe('Allow');
+    expect(acts(read)).toEqual(['s3:GetObject']);
+    expect(read.Resource).toBe(`arn:aws:s3:::${bucket}/index/*`);
+    expect(read.Condition).toBeUndefined();
+    expect(list.Effect).toBe('Allow');
+    expect(acts(list)).toEqual(['s3:ListBucket']);
+    expect(list.Resource).toBe(`arn:aws:s3:::${bucket}`);
+    expect(list.Condition).toEqual({ StringLike: { 's3:prefix': 'index/*' } });
+    // Nothing else is granted to the reader's role: its policy holds these two statements and no more.
+    const policies = Object.values(t.findResources('AWS::IAM::Policy')) as any[];
+    const mine = policies.filter((p) => p.Properties.PolicyDocument.Statement.some((x: any) => x.Sid === 'ReadIndexObjects'));
+    expect(mine).toHaveLength(1);
+    expect(mine[0].Properties.PolicyDocument.Statement.map((x: any) => x.Sid).sort()).toEqual(['ListIndexPrefix', 'ReadIndexObjects']);
+    for (const st of [read, list]) {
+      expect(acts(st).filter((a) => a === '*' || a.endsWith('*'))).toEqual([]);
+      expect(([] as any[]).concat(st.Resource)).not.toContain('*');
+    }
+  });
+
   test('S3 and SQS are reachable only where publishing needs them: quarantine/ and the validate queue', () => {
-    const s3 = statements().filter((s) => acts(s).some((a) => a.startsWith('s3:')));
+    const s3 = statements().filter((s) => acts(s).some((a) => a.startsWith('s3:')) && s.Sid === 'UploadToQuarantine');
     expect(s3).toHaveLength(1);
     expect(acts(s3[0]).sort()).toEqual(['s3:GetObject', 's3:PutObject']);
     expect(flatten(s3[0].Resource)).toContain('/quarantine/*');

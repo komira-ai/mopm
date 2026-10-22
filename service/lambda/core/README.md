@@ -7,7 +7,7 @@ Lambdas that come after it.
 | module | ports | held against |
 |---|---|---|
 | `version` | `version.ts`: `MAJOR.MINOR.PATCH`, no leading zeros, at most 128 bytes; numeric order of any length | the accepted and refused spellings and the ordering table of `test/version.test.ts` |
-| `types`, `state` | `types.ts`, `state.ts`: the records, and `pending -> published -> yanked <-> published`, any -> `tombstoned` | the 16-row transition table and the refused-message table of `test/state.test.ts`; JSON round trips of the stored shape (an optional field is absent, never `null`) |
+| `types`, `state` | `types.ts`, `state.ts`: the records, and `pending -> published -> yanked <-> published`, any -> `tombstoned` | the 16-row transition table and the refused-message table of `test/state.test.ts`; JSON round trips of the stored shape (an optional field is absent, never `null`); a pending row tagged with a `group_id` refuses a single `Publish` |
 | `canonical_json` | `canonical-json.ts`: keys sorted at every depth, compact, safe integers only | the TS examples, and the two JavaScript behaviours it depends on (UTF-16 key order, array-index keys first) |
 | `zstd` | `zstd.ts`: a frame of raw blocks | the exact bytes of frames of 0, 5, 131072 and 131073 bytes; a round trip of 0 to 300000 bytes through `ruzstd`, an independent decoder |
 | `repodata` | `repodata.ts`: `repodata.json` and its `.zst` | the three files `service/api/test/fixtures/repodata.*.json` that the TS writer produced, as bytes; order, determinism and state properties over generated record sets |
@@ -19,6 +19,17 @@ The oracles are files the TypeScript side already holds itself to, read by `incl
 (`service/api/test/fixtures/repodata.*.json`, `spec/api/openapi.yaml`, `tests/contract/api/errors.json`; `extra_srcs` in `BUCK` makes them inputs): a change to one of
 them that the Rust does not follow is a red build here. No Node ran to make a golden: expected values that are not
 in those files are derived from reading the TypeScript.
+
+## Group publish rows
+
+`VersionRecord` carries the optional `group_id` and `staged_attempt` that the TypeScript registry's group publish (a set of
+packages that become visible together) writes, so a row written by one implementation keeps them when the other rewrites it.
+No row has them until that feature is used. This crate does not publish groups and reads
+no group header, so it cannot tell that a group committed: every row with a `group_id` that is still `pending` is
+hidden (the index lists no `pending` row) and a single `Publish` of it is refused. A committed group's members show only
+after the group's own steps flip them to `published`, which the Rust port does not do. Moving traffic to the Rust port
+while any group is open, validating or committed and not yet visible is therefore wrong; `service/docs/runbook.md`
+("Cutting over to the Rust port") says when it is safe.
 
 ## Where Rust and TypeScript differ on purpose
 

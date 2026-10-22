@@ -8,6 +8,8 @@ import { routeAuth, type AuthServices } from './auth-routes';
 import { render } from './catalogue';
 import { templateFor } from './auth-catalogue';
 import { routePublish, type PublishApi } from './publish-routes';
+import { buildIndexConfig } from '../index-files';
+import { createHash } from 'node:crypto';
 
 export type Stage = 'beta' | 'gamma' | 'prod';
 
@@ -39,7 +41,11 @@ export interface RouterDeps {
   auth?: AuthServices;
   /** The publish operations (begin, commit, status). Absent: the router serves reads only. */
   publish?: PublishApi;
+  /** The hosts `GET /index/config.json` names (from the stage's configuration). Absent: that path answers 404. */
+  indexConfig?: { apiDomain: string; channelDomain: string };
 }
+
+export const INDEX_CONFIG_PATH = '/index/config.json';
 
 const PREFIX = '/api/v1';
 const NAME = /^[a-z][a-z0-9_]{1,63}$/;
@@ -306,9 +312,26 @@ function segments(path: string): string[] | undefined {
   }
 }
 
+/** `/index/config.json`, built from the stage's configuration and the live read-only switch. Nothing is read from a bucket. */
+function indexConfig(deps: RouterDeps, requestId: string): HttpResponse {
+  if (!deps.indexConfig) throw new RegistryError('route_not_found', 'no such operation');
+  const body = buildIndexConfig({ stage: deps.stage, ...deps.indexConfig, readOnly: deps.readOnly });
+  return {
+    statusCode: 200,
+    headers: {
+      'content-type': 'application/json',
+      'cache-control': 'public, max-age=60',
+      etag: `"${createHash('sha256').update(body).digest('hex')}"`,
+      'x-mopm-request-id': requestId,
+    },
+    body,
+  };
+}
+
 /** Handle one request. Never throws: every failure is an error body from the contract's catalogue. */
 export async function route(req: HttpRequest, deps: RouterDeps, requestId: string): Promise<HttpResponse> {
   try {
+    if (req.path === INDEX_CONFIG_PATH && req.method === 'GET') return indexConfig(deps, requestId);
     if (deps.publish) {
       const published = await routePublish(req, deps.publish, requestId);
       if (published) return published;

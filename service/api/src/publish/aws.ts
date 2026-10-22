@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Invalidator, ObjectStore, PresignedPut, Presigner, Queue, QueueMessage } from './ports';
-import { credentialsFromEnv, presignUrl, signRequest } from './sigv4';
+import { credentialsFromEnv, presignUrl, signRequest, uriEncode } from './sigv4';
 import type { AwsCredentials } from './sigv4';
 
 /**
@@ -55,10 +55,20 @@ export class S3Channel implements ObjectStore {
     this.now = o.now ?? (() => new Date());
   }
 
-  private request(method: string, key: string, headers: Record<string, string> = {}, body?: Buffer) {
+  private request(method: string, key: string, headers: Record<string, string> = {}, body?: Buffer, query: Array<[string, string]> = []) {
     const path = `/${key}`;
-    const signed = signRequest({ method, host: this.host, path, headers, body, region: this.o.region, service: 's3', creds: this.creds(), now: this.now(), s3: true });
-    return this.http(`https://${this.host}${encodePath(path)}`, { method, headers: signed, ...(body ? { body } : {}) });
+    const signed = signRequest({ method, host: this.host, path, query, headers, body, region: this.o.region, service: 's3', creds: this.creds(), now: this.now(), s3: true });
+    const qs = query.length ? `?${query.map(([k, v]) => `${uriEncode(k)}=${uriEncode(v)}`).join('&')}` : '';
+    return this.http(`https://${this.host}${encodePath(path)}${qs}`, { method, headers: signed, ...(body ? { body } : {}) });
+  }
+
+  /** Whether an object with exactly this key exists, by ListObjectsV2 with the key as the prefix. Throws on any failure. */
+  private async listsExactly(key: string) {
+    const r = await this.request('GET', '', {}, undefined, [['list-type', '2'], ['max-keys', '1'], ['prefix', key]]);
+    const xml = await r.text();
+    if (r.status !== 200) throw new AwsError('s3', r.status, `list ${key}: ${xml}`);
+    const keys = [...xml.matchAll(/<Key>([^<]*)<\/Key>/g)].map((m) => m[1]!.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&'));
+    return keys.some((k) => k === key);
   }
 
   /** Without s3:ListBucket a missing key answers 403, so 403 and 404 both mean "not there" for a read. */
@@ -74,6 +84,24 @@ export class S3Channel implements ObjectStore {
   async get(key: string) {
     const r = await this.request('GET', key);
     if (this.absent(r.status)) return undefined;
+    if (r.status !== 200) throw new AwsError('s3', r.status, await r.text());
+    return Buffer.from(await r.arrayBuffer());
+  }
+
+  /**
+   * The bytes of a key, or undefined only when the key does not exist. Every other failure throws: a reader that must
+   * tell "not there" from "not allowed" cannot use `get`, which folds the two together.
+   * S3 decides a missing key by s3:ListBucket without the prefix context, so a role whose ListBucket grant is
+   * prefix-conditioned gets 403 for it. On a 403 this lists with the key as the prefix (the grant allows that) and
+   * only an exact key match means present: absent gives undefined, present-but-forbidden throws.
+   */
+  async getExact(key: string) {
+    const r = await this.request('GET', key);
+    if (r.status === 404) return undefined;
+    if (r.status === 403) {
+      if (await this.listsExactly(key)) throw new AwsError('s3', 403, `${key} exists but may not be read`);
+      return undefined;
+    }
     if (r.status !== 200) throw new AwsError('s3', r.status, await r.text());
     return Buffer.from(await r.arrayBuffer());
   }

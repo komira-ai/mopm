@@ -74,6 +74,9 @@ function configure(): Configured {
       readOnly: envReadOnly,
       publish: publishApiFor(process.env, doc, stage, flags),
       auth: configureAuth(stage, doc, process.env),
+      ...(process.env.MOPM_API_DOMAIN && process.env.MOPM_CHANNEL_DOMAIN
+        ? { indexConfig: { apiDomain: process.env.MOPM_API_DOMAIN, channelDomain: process.env.MOPM_CHANNEL_DOMAIN } }
+        : {}),
     },
     flags,
     envReadOnly,
