@@ -207,6 +207,15 @@ describe('versions and states on the right line', () => {
     expect(lines(buildPackageIndex('pk', rs)).map((l) => l.version)).toEqual(['1.0.0']);
   });
 
+  test('a pending version that has files has no line', () => {
+    const pending = rows('pk', [{ ver: '1.5.0' }])[0]!;
+    const pendingRow = { ...pending, state: 'pending' as const };
+    expect(pendingRow.files.length).toBeGreaterThan(0);
+    const rs = [...rows('pk', [{ ver: '1.0.0' }]), pendingRow];
+    expect(lines(buildPackageIndex('pk', rs)).map((l) => l.version)).toEqual(['1.0.0']);
+    expect(buildPackageIndex('pk', [pendingRow])).toBeUndefined();
+  });
+
   test('a package with no visible version has no file at all', () => {
     expect(buildPackageIndex('pk', [])).toBeUndefined();
     expect(buildPackageIndex('pk', [rec({ name: 'pk', version: '1.0.0', state: 'pending', files: [] })])).toBeUndefined();
