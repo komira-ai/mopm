@@ -129,6 +129,31 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     }
   });
 
+  // CloudFormation rejects a stage update that names a route which does not exist yet ("Unable to find Route by key ...
+  // within the provided RouteSettings"), so the stage must wait for every route its RouteSettings name.
+  test('the stage depends on every route its RouteSettings name', () => {
+    const stages = Object.entries(t.findResources('AWS::ApiGatewayV2::Stage')) as [string, any][];
+    expect(stages.length).toBeGreaterThan(0);
+    const routes = t.findResources('AWS::ApiGatewayV2::Route');
+    let named = 0;
+    for (const [, stageRes] of stages) {
+      const dependsOn: string[] = ([] as string[]).concat(stageRes.DependsOn ?? []);
+      for (const key of Object.keys(stageRes.Properties.RouteSettings ?? {})) {
+        named++;
+        const ids = Object.entries(routes).filter(([, r]: [string, any]) => r.Properties.RouteKey === key).map(([id]) => id);
+        expect({ key, routes: ids.length }).toEqual({ key, routes: 1 });
+        expect({ key, dependsOn: dependsOn.includes(ids[0]!) }).toEqual({ key, dependsOn: true });
+      }
+    }
+    expect(named).toBeGreaterThan(0);
+  });
+
+  // The deployed stage keeps its logical id (a failed update is recovered by naming it); this is what the L2 construct
+  // path Api/DefaultStage synthesises.
+  test('the default stage keeps its logical id', () => {
+    expect(Object.keys(t.findResources('AWS::ApiGatewayV2::Stage'))).toEqual(['ApiDefaultStage189A7074']);
+  });
+
   test('the config the API serves is built from the stage hosts it is given', () => {
     const c = stageConfig(stage);
     t.hasResourceProperties('AWS::Lambda::Function', {

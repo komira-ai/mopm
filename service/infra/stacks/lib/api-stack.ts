@@ -291,16 +291,25 @@ export class ApiStack extends Stack {
     for (const r of AUTH_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
     for (const r of PUBLISH_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
     // The CLI sends no token: neither index route has an authorizer. The literal route wins over the greedy one.
-    this.api.addRoutes({ path: '/index/config.json', methods: [apigw.HttpMethod.GET], integration });
-    this.api.addRoutes({
+    const configRoutes = this.api.addRoutes({ path: '/index/config.json', methods: [apigw.HttpMethod.GET], integration });
+    const readerRoutes = this.api.addRoutes({
       path: '/index/{proxy+}',
       methods: [apigw.HttpMethod.GET],
       integration: new integrations.HttpLambdaIntegration('IndexReaderIntegration', this.indexReader),
     });
-    (this.api.defaultStage!.node.defaultChild as apigw.CfnStage).routeSettings = {
-      [INDEX_CONFIG_ROUTE]: { ThrottlingRateLimit: INDEX_THROTTLE.rateLimit, ThrottlingBurstLimit: INDEX_THROTTLE.burstLimit },
-      [INDEX_READER_ROUTE]: { ThrottlingRateLimit: INDEX_THROTTLE.rateLimit, ThrottlingBurstLimit: INDEX_THROTTLE.burstLimit },
+    // A route named in RouteSettings must exist when the stage is updated, so the stage depends on each such route.
+    // Without the dependency CloudFormation updates the stage first and fails: "Unable to find Route by key".
+    const throttled: Record<string, apigw.HttpRoute[]> = {
+      [INDEX_CONFIG_ROUTE]: configRoutes,
+      [INDEX_READER_ROUTE]: readerRoutes,
     };
+    const stage = this.api.defaultStage!;
+    const routeSettings: Record<string, { ThrottlingRateLimit: number; ThrottlingBurstLimit: number }> = {};
+    for (const [key, routes] of Object.entries(throttled)) {
+      routeSettings[key] = { ThrottlingRateLimit: INDEX_THROTTLE.rateLimit, ThrottlingBurstLimit: INDEX_THROTTLE.burstLimit };
+      stage.node.addDependency(...routes);
+    }
+    (stage.node.defaultChild as apigw.CfnStage).routeSettings = routeSettings;
 
     const target = route53.RecordTarget.fromAlias(
       new targets.ApiGatewayv2DomainProperties(domain.regionalDomainName, domain.regionalHostedZoneId),
