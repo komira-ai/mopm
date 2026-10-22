@@ -75,6 +75,15 @@ test "deploy.yml and e2e.yml: the guard gates the one credential job" {
     try expectRepo("e2e.yml", "      id-token: write\n", "      id-token: read\n", &.{"e2e.yml: expected exactly one job with id-token"});
 }
 
+test "e2e.yml: the index gate stays curl only, guarded, and asserts its three answers" {
+    try expectRepo("e2e.yml", "  index-gate:\n    needs: guard\n", "  index-gate:\n    needs: other\n", &.{"e2e.yml: index-gate must need the guard job"});
+    try expectRepo("e2e.yml", "    if: github.ref == 'refs/heads/main'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n", "    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n", &.{"e2e.yml: index-gate must run on main only"});
+    try expectRepo("e2e.yml", "    timeout-minutes: 10\n    permissions:\n      contents: read\n", "    timeout-minutes: 10\n    environment: ${{ inputs.stage }}\n    permissions:\n      contents: read\n", &.{"e2e.yml: index-gate must not declare an environment"});
+    try expectRepo("e2e.yml", "    timeout-minutes: 10\n    permissions:\n      contents: read\n", "    timeout-minutes: 10\n    permissions:\n      contents: read\n      id-token: write\n", &.{ "e2e.yml: expected exactly one job with id-token", "e2e.yml: index-gate must declare an environment", "e2e.yml: index-gate must grant exactly contents read" });
+    try expectRepo("e2e.yml", "code=$(get /takedowns.json)", "code=$(get /takedowns)", &.{"e2e.yml: index-gate script lost `get /takedowns.json`"});
+    try expectRepo("e2e.yml", "[ \"$code\" = \"404\" ]", "[ \"$code\" = \"403\" ]", &.{"e2e.yml: index-gate script lost `= \"404\"`"});
+}
+
 test "oidc-subject-check.yml: manual, guarded, beta or no environment, exact permissions" {
     try expectRepo("oidc-subject-check.yml", "    environment: beta\n", "    environment: prod\n", &.{
         "oidc-subject-check.yml: claims-environment-beta must not use environment \"prod\"",

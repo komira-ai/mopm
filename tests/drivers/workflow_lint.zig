@@ -563,6 +563,37 @@ fn idTokenWrite(job: Value) bool {
     return c.isStr(c.get(c.get(job, "permissions"), "id-token"), "write");
 }
 
+/// e2e.yml's index-gate job (Gate 1 of the sparse index): curl only, so it needs the guard, runs on main, holds no id-token and
+/// no environment, and reads the repository and nothing else. Its script must keep the three requests and the failure exit.
+fn indexGateProblems(a: Allocator, doc: Value, out: *Out) !void {
+    const job = c.get(c.get(doc, "jobs"), "index-gate") orelse return c.problem(a, out, prefix ++ "e2e.yml: the index-gate job is missing", .{});
+    if (!c.containsStr(try c.arrayOf(a, c.get(job, "needs")), "guard")) try c.problem(a, out, prefix ++ "e2e.yml: index-gate must need the guard job", .{});
+    if (!c.isStr(c.get(job, "if"), "github.ref == 'refs/heads/main'")) try c.problem(a, out, prefix ++ "e2e.yml: index-gate must run on main only", .{});
+    if (c.truthy(c.get(job, "environment"))) try c.problem(a, out, prefix ++ "e2e.yml: index-gate must not declare an environment", .{});
+    if (c.truthy(c.get(job, "continue-on-error"))) try c.problem(a, out, prefix ++ "e2e.yml: index-gate must not set continue-on-error", .{});
+    const perms = c.get(job, "permissions");
+    const exact = perms != null and perms.? == .object and perms.?.object.count() == 1 and c.isStr(c.get(perms, "contents"), "read");
+    if (!exact) try c.problem(a, out, prefix ++ "e2e.yml: index-gate must grant exactly contents read", .{});
+    var script = std.ArrayList(u8).init(a);
+    if (c.get(job, "steps")) |steps| if (steps == .array) {
+        for (steps.array.items) |st| if (c.str(c.get(st, "run"))) |r| {
+            try script.appendSlice(r);
+            try script.append('\n');
+        };
+    };
+    const needles = [_][]const u8{
+        "get /config.json",
+        "get /takedowns.json",
+        "get /e2/e_/e2e_no_such_package",
+        "!= \"200\"",
+        "= \"404\"",
+        "exit 1",
+    };
+    for (needles) |n| {
+        if (std.mem.indexOf(u8, script.items, n) == null) try c.problem(a, out, prefix ++ "e2e.yml: index-gate script lost `{s}`", .{n});
+    }
+}
+
 fn sortedKeys(a: Allocator, v: ?Value) ![]const []const u8 {
     const s = try a.dupe([]const u8, c.keys(v));
     std.mem.sort([]const u8, s, {}, lessThan);
@@ -641,6 +672,7 @@ pub fn repoProblems(a: Allocator, ctx: anytype, out: *Out) !void {
             if (!c.containsStr(try c.arrayOf(a, c.get(j, "needs")), "guard")) try c.problem(a, out, prefix ++ "{s}.yml: {s} must need the guard job", .{ w, jn });
             if (!c.truthy(c.get(j, "environment"))) try c.problem(a, out, prefix ++ "{s}.yml: {s} must declare an environment", .{ w, jn });
         }
+        if (std.mem.eql(u8, w, "e2e")) try indexGateProblems(a, doc, out);
     }
 
     // oidc-subject-check.yml: manual, main only, no environment except beta, no AWS.
