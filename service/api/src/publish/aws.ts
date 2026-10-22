@@ -68,7 +68,7 @@ export class S3Channel implements ObjectStore {
     const xml = await r.text();
     if (r.status !== 200) throw new AwsError('s3', r.status, `list ${key}: ${xml}`);
     const keys = [...xml.matchAll(/<Key>([^<]*)<\/Key>/g)].map((m) => m[1]!.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&'));
-    return keys.some((k) => k === key);
+    return keys.some((k) => k.startsWith(key));
   }
 
   /** Without s3:ListBucket a missing key answers 403, so 403 and 404 both mean "not there" for a read. */
