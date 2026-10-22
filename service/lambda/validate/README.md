@@ -19,7 +19,7 @@ its default options either).
 
 ## What holds it
 
-`corpus_replay` replays `tests/validator_corpus` (komira-ai/mopm#88): 217 inputs, each with the verdict the TypeScript
+`corpus_replay` replays `tests/validator_corpus` (komira-ai/mopm#88): 221 inputs, each with the verdict the TypeScript
 validator gave (acceptance, rule, rejection code, message, path, and for an accepted package the facts). Every Rust
 verdict must equal it as JSON, and each case must still reach the rule it was written for. The archives reach the test
 through `src/corpus_table.rs` (a test run reads only what it compiles in); the test fails, naming the line, when the

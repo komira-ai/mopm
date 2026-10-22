@@ -5,7 +5,7 @@ import fc from 'fast-check';
 import { DEFAULT_LIMITS } from '../../src/validate/limits';
 import { validatePackage, RULE_TO_REJECTION } from '../../src/validate';
 import type { PublishExpectation, RejectionCode, RuleCode, ValidatorOptions, Verdict } from '../../src/validate';
-import { METADATA_SCHEMA_VERSION, NATIVE_KINDS, NATIVE_MODES, SONAME_PATTERN } from '../../src/validate/metadata';
+import { METADATA_SCHEMA_VERSION, NATIVE_KINDS, NATIVE_MODES, SONAME_PATTERN, EXCLUSIVE_PATTERN } from '../../src/validate/metadata';
 import { buildConda, buildTarBz2, bzip2, tar, zip, zst, zstdRleBomb } from './builder';
 import type { Built, Spec } from './builder';
 
@@ -81,6 +81,14 @@ describe('a valid package', () => {
         { path: 'lib/libbar.so', data: 'x' },
         { path: 'lib/libbar.a', data: 'y' },
       ],
+    });
+    expect(check(b).ok).toBe(true);
+  });
+
+  test('an exclusive group is accepted as exact text: case and inner spaces are part of the name', () => {
+    const b = buildConda({
+      mopm: { native: [{ id: 'bar', soname: 'libbar.so', file: '../libbar.so', exclusive: 'Lib crypto' }] },
+      pkgExtra: [{ path: 'lib/libbar.so', data: 'x' }],
     });
     expect(check(b).ok).toBe(true);
   });
@@ -369,6 +377,15 @@ describe('metadata consistency', () => {
     ['a bad kind', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', kind: 'weird', file: '../libfoo.so' }] }],
     ['a bad mode', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', mode: 'x', file: '../libfoo.so' }] }],
     ['needs that is not strings', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', needs: [1] }] }],
+    ['an exclusive group that is not a string', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: 1 }] }],
+    ['an empty exclusive group', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: '' }] }],
+    ['an exclusive group with a leading space', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: ' libx' }] }],
+    ['an exclusive group with a trailing space', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: 'libx ' }] }],
+    ['an exclusive group with a trailing newline', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: 'libx\n' }] }],
+    ['an exclusive group with a control character inside', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: 'lib\u0001x' }] }],
+    ['an exclusive group with DEL inside', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: 'lib\u007fx' }] }],
+    ['an exclusive group with a tab inside', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: 'lib\tx' }] }],
+    ['an exclusive group that is only a space', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: ' ' }] }],
   ];
   test.each(bad)('schema: %s', (_n, mopm) => {
     refusedBuild({ mopm: JSON.stringify(mopm) }, 'manifest_schema');
@@ -495,7 +512,10 @@ describe('the verdict codes are the contract', () => {
     expect(native.properties.kind.enum).toEqual([...NATIVE_KINDS]);
     expect(native.properties.mode.enum).toEqual([...NATIVE_MODES]);
     expect(new RegExp(native.properties.soname.pattern).source).toBe(SONAME_PATTERN.source);
-    expect(Object.keys(native.properties).sort()).toEqual(['file', 'id', 'kind', 'mode', 'needs', 'soname', 'static_file']);
+    expect(Object.keys(native.properties).sort()).toEqual(['exclusive', 'file', 'id', 'kind', 'mode', 'needs', 'soname', 'static_file']);
+    expect(native.properties.exclusive.type).toBe('string');
+    expect(native.properties.exclusive.minLength).toBe(1);
+    expect(new RegExp(native.properties.exclusive.pattern).source).toBe(EXCLUSIVE_PATTERN.source);
     expect(Object.keys(schema.properties).sort()).toEqual(['deps', 'name', 'native', 'schema', 'version']);
   });
 });

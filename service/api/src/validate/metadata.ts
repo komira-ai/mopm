@@ -5,6 +5,8 @@ import { canonicalVersion, isValidVersion } from '../version';
 /** Constants drawn from spec/package-metadata.schema.json; a test fails if the schema file drifts from them. */
 export const METADATA_SCHEMA_VERSION = 1;
 export const SONAME_PATTERN = /^lib[^./]+\..+$/;
+/** An exclusivity group is compared exactly, so it has no edge space and no control character (tab, newline and DEL included). */
+export const EXCLUSIVE_PATTERN = /^[^ \u0000-\u001f\u007f](?:[^\u0000-\u001f\u007f]*[^ \u0000-\u001f\u007f])?$/;
 export const NATIVE_KINDS = ['shared', 'static', 'both'] as const;
 export const NATIVE_MODES = ['link', 'load'] as const;
 
@@ -82,6 +84,9 @@ export function checkMopm(o: Record<string, unknown>): Mopm {
       if (r.static_file !== undefined && !isStr(r.static_file)) return bad(`native '${r.id}': 'static_file' must be a string`);
       if (r.needs !== undefined && (!Array.isArray(r.needs) || !(r.needs as unknown[]).every(isStr))) {
         return bad(`native '${r.id}': 'needs' must be an array of strings`);
+      }
+      if (r.exclusive !== undefined && (!isStr(r.exclusive) || !EXCLUSIVE_PATTERN.test(r.exclusive))) {
+        return bad(`native '${r.id}': 'exclusive' must be a non-empty string with no leading or trailing space and no control character`);
       }
       if ((kind === 'shared' || kind === 'both') && r.file === undefined) return bad(`native '${r.id}': kind ${String(kind)} needs 'file'`);
       if ((kind === 'static' || kind === 'both') && r.static_file === undefined) return bad(`native '${r.id}': kind ${String(kind)} needs 'static_file'`);

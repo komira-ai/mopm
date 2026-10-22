@@ -279,6 +279,14 @@ const Parser = struct {
             'r' => .{ .single = '\r' },
             'f' => .{ .single = 12 },
             'v' => .{ .single = 11 },
+            // \uXXXX below 0x80 only: this engine works on bytes, so a code point above ASCII is not one byte.
+            'u' => blk: {
+                if (self.i + 4 > self.s.len) return self.fail("a \\u escape with fewer than four hex digits");
+                const v = std.fmt.parseInt(u16, self.s[self.i .. self.i + 4], 16) catch return self.fail("a \\u escape that is not four hex digits");
+                if (v > 0x7f) return self.fail("a \\u escape above \\u007f (the engine works on bytes)");
+                self.i += 4;
+                break :blk .{ .single = @intCast(v) };
+            },
             '^', '$', '\\', '.', '*', '+', '?', '(', ')', '[', ']', '{', '}', '|', '/', '-' => .{ .single = e },
             else => return self.fail("an escape other than \\s \\S \\d \\D \\w \\W \\n \\t \\r \\f \\v or a punctuation character"),
         };
@@ -428,13 +436,25 @@ test "regex: the subset the specs use, accepting and refusing" {
     try expectMatch(a, "^mopm_[a-z2-7]{32,64}$", "mopm_" ++ "a" ** 65, false);
     try expectMatch(a, "abc", "xxabcxx", true);
     try expectMatch(a, "^abc", "xxabc", false);
+    // The exclusivity-group pattern: no edge space, no control character (\u escapes below 0x80).
+    const group = "^[^ \\u0000-\\u001f\\u007f](?:[^\\u0000-\\u001f\\u007f]*[^ \\u0000-\\u001f\\u007f])?$";
+    try expectMatch(a, group, "libcrypto", true);
+    try expectMatch(a, group, "lib x", true);
+    try expectMatch(a, group, "x", true);
+    try expectMatch(a, group, " libx", false);
+    try expectMatch(a, group, "libx ", false);
+    try expectMatch(a, group, "libx\n", false);
+    try expectMatch(a, group, "lib\x01x", false);
+    try expectMatch(a, group, "lib\x7fx", false);
+    try expectMatch(a, group, "", false);
+    try expectMatch(a, "^\\u0041$", "A", true);
 }
 
 test "regex: what is not implemented is refused, not guessed" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    for ([_][]const u8{ "(?=a)", "(?<n>a)", "a*?", "a++", "\\bfoo", "\\p{L}", "(a", "a)", "a{x}", "[a", "*a", "\\1", "a\\" }) |bad| {
+    for ([_][]const u8{ "(?=a)", "(?<n>a)", "a*?", "a++", "\\bfoo", "\\p{L}", "(a", "a)", "a{x}", "[a", "*a", "\\1", "a\\", "\\u00e9", "\\u12", "\\uzzzz" }) |bad| {
         if (Regex.compile(a, bad)) |_| {
             std.debug.print("pattern {s} was accepted\n", .{bad});
             return error.TestUnexpectedResult;
