@@ -353,6 +353,7 @@ const Builder = struct {
         const files = switch (found) {
             .files => |f| f,
             .unmatched => |pat| return b.fail("{s}: {s} \"{s}\" of [native.{s}] matches no file", .{ file, what, pat, id }),
+            .link => |pat| return b.fail("{s}: {s} \"{s}\" of [native.{s}] is a symbolic link or passes through one; a unit graph reads the files of the member itself", .{ file, what, pat, id }),
         };
         var out = std.ArrayList(Src).init(b.arena);
         for (files) |f| try out.append(try b.src(try b.join(member_rel, f)));
@@ -379,6 +380,11 @@ const Builder = struct {
             const soname = try n.archiveName(b.arena);
             const srcs = try b.nativeFiles(file, n.id, "srcs", member_rel, n.srcs);
             const hdrs = try b.nativeFiles(file, n.id, "hdrs", member_rel, n.hdrs);
+            for (srcs) |s| {
+                for (hdrs) |h| {
+                    if (std.mem.eql(u8, s.path, h.path)) return b.fail("{s}: {s} is named by both srcs and hdrs of [native.{s}]", .{ file, s.path, n.id });
+                }
+            }
             const includes = if (n.includes.len > 0) n.includes else blk: {
                 var rels = std.ArrayList([]const u8).init(b.arena);
                 for (hdrs) |h| try rels.append(if (member_rel.len == 0) h.path else h.path[member_rel.len + 1 ..]);
@@ -1801,6 +1807,12 @@ test "a dependent member lists the native of the member it depends on after its 
     try std.testing.expectEqualStrings("extra", nu.includes[1]);
     try std.testing.expectEqualStrings("libcrypto_sys.a", nu.needs[0]);
     _ = g.find(id_native_app) orelse return error.NoSuchUnit;
+    // The native unit prints its needs (after its includes, before its deps), and they read back.
+    const text = try render(a, g);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"includes\": [\"native\", \"extra\"],\n      \"needs\": [\"libcrypto_sys.a\"],\n      \"deps\": []") != null);
+    const back = try parse(a, text);
+    try std.testing.expectEqualStrings("libcrypto_sys.a", back.units[back.find(id_native_util).?].needs[0]);
+    try std.testing.expectEqualStrings(text, try render(a, back));
 }
 
 // Defect it catches: a member native that is silently left out (or half-understood) so that the link fails late, far
@@ -1820,6 +1832,7 @@ test "a member's native that the graph cannot build is refused, naming the manif
         .{ .native = "kind = \"static\"\n", .want = "util/mopm.toml: [native.s] has no srcs" },
         .{ .native = "kind = \"static\"\nsrcs = [\"native/*.cc\"]\n", .want = "util/mopm.toml: srcs \"native/*.cc\" of [native.s] matches no file" },
         .{ .native = "kind = \"static\"\nsrcs = [\"native/*.c\"]\nhdrs = [\"native/*.hpp\"]\n", .want = "util/mopm.toml: hdrs \"native/*.hpp\" of [native.s] matches no file" },
+        .{ .native = "kind = \"static\"\nsrcs = [\"native/*.c\"]\nhdrs = [\"native/shim.c\"]\n", .want = "util/mopm.toml: util/native/shim.c is named by both srcs and hdrs of [native.s]" },
         .{ .native = "kind = \"static\"\nsrcs = [\"native/*.c\"]\nneeds = [\"libnothing.a\"]\n", .want = "native library libs.a of util needs libnothing.a, which no package in its dependency closure ships" },
     };
     for (cases) |c| {
@@ -1838,6 +1851,43 @@ test "a member's native that the graph cannot build is refused, naming the manif
     var why: []const u8 = "";
     try std.testing.expectError(error.Refused, graphOf(a, dir, toml_util_dep ++ "\n[native.s]\nkind = \"shared\"\nsrcs = [\"native/*.c\"]\n", lock_two, "1.0.0", &why));
     try std.testing.expect(std.mem.indexOf(u8, why, "mopm.toml: [native.s] is kind = \"shared\"") != null);
+}
+
+// Defect it catches: a source named by a link that leads out of the member, so the graph hashes (and a build system
+// compiles) a file the member does not hold, while a glob would have skipped it.
+test "a literal srcs or hdrs path that is a symbolic link or passes through one is refused; a glob skips links" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeNativeWorkspace(tmp.dir, toml_util);
+    try put(tmp.dir, "outside/x.c", "int outside(void) { return 0; }\n");
+    try tmp.dir.symLink("../../outside/x.c", "util/native/link.c", .{});
+    try tmp.dir.symLink("../outside", "util/ldir", .{ .is_directory = true });
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+
+    const Case = struct { native: []const u8, want: []const u8 };
+    const cases = [_]Case{
+        .{ .native = "srcs = [\"native/link.c\"]\n", .want = "util/mopm.toml: srcs \"native/link.c\" of [native.s] is a symbolic link or passes through one" },
+        .{ .native = "srcs = [\"native/shim.c\"]\nhdrs = [\"ldir/x.c\"]\n", .want = "util/mopm.toml: hdrs \"ldir/x.c\" of [native.s] is a symbolic link or passes through one" },
+        .{ .native = "srcs = [\"ldir/*.c\"]\n", .want = "util/mopm.toml: srcs \"ldir/*.c\" of [native.s] is a symbolic link or passes through one" },
+    };
+    for (cases) |c| {
+        try put(tmp.dir, "util/mopm.toml", try std.mem.concat(a, u8, &.{ toml_util, "\n[native.s]\nkind = \"static\"\n", c.native }));
+        try std.testing.expectError(error.Refused, graphOf(a, dir, toml_util_dep, lock_two, "1.0.0", &why));
+        if (std.mem.indexOf(u8, why, c.want) == null) {
+            std.debug.print("refused with '{s}', want '{s}'\n", .{ why, c.want });
+            return error.TestUnexpectedResult;
+        }
+    }
+    // A glob over the same directory skips the link: only the member's own file is a source.
+    try put(tmp.dir, "util/mopm.toml", try std.mem.concat(a, u8, &.{ toml_util, "\n[native.s]\nkind = \"static\"\nsrcs = [\"native/*.c\"]\n" }));
+    const g = try graphOf(a, dir, toml_util_dep, lock_two, "1.0.0", &why);
+    const nu = g.units[g.find("native:util/s") orelse return error.NoSuchUnit];
+    try std.testing.expectEqual(@as(usize, 1), nu.srcs.len);
+    try std.testing.expectEqualStrings("util/native/shim.c", nu.srcs[0].path);
 }
 
 // Defect it catches: a unit key that does not move when a native's C source, header or flags do, so a cached test

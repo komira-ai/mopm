@@ -180,8 +180,11 @@ soname = "libshim.a"               # optional; default lib<id>.a
 
 A glob is a `/`-separated path: `*`, `?` and `[abc]` match within a segment,
 a segment of `**` matches any number of directories. Names that start with
-`.` are never matched, and a pattern that matches no file is refused. A path
-may not be absolute or contain `..`. `cflags_by_os` knows `linux` and `macos`;
+`.` are never matched, symbolic links are never followed by a glob, and a
+pattern that matches no file is refused (a file an earlier pattern named
+counts as matched). A path may not be absolute or contain `..`, and a literal
+path may not be a symbolic link or pass through one. A file may not be in both
+`srcs` and `hdrs`. `cflags_by_os` knows `linux` and `macos`;
 any other key is refused. There is no CPU level in a manifest: the build system
 compiles at the platform's baseline.
 

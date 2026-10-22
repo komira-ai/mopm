@@ -116,6 +116,12 @@ pub fn main(arena: Allocator, args: []const []const u8) u8 {
     };
 }
 
+/// Why a graph of format `format` cannot be read, or null when this mopm reads it.
+pub fn formatProblem(arena: Allocator, path: []const u8, format: u32) Allocator.Error!?[]const u8 {
+    if (format == core.unit_graph.format_version) return null;
+    return try std.fmt.allocPrint(arena, "{s} is unit graph format {d}; this mopm reads {d}", .{ path, format, core.unit_graph.format_version });
+}
+
 fn run(arena: Allocator, a: Args, cpu: ?[]const u8) !u8 {
     const text = std.fs.cwd().readFileAlloc(arena, a.graph, 256 << 20) catch |e| {
         say("cannot read {s}: {s}\n", .{ a.graph, @errorName(e) });
@@ -125,8 +131,8 @@ fn run(arena: Allocator, a: Args, cpu: ?[]const u8) !u8 {
         say("{s} is not a unit graph: {s}\n", .{ a.graph, @errorName(e) });
         return 1;
     };
-    if (g.unit_graph != core.unit_graph.format_version) {
-        say("{s} is unit graph format {d}; this mopm reads {d}\n", .{ a.graph, g.unit_graph, core.unit_graph.format_version });
+    if (try formatProblem(arena, a.graph, g.unit_graph)) |why| {
+        say("{s}\n", .{why});
         return 1;
     }
     const idx = g.find(a.unit) orelse {
@@ -178,6 +184,65 @@ test "unit build and test take the unit, the graph, the output and the toolchain
     try std.testing.expectEqualStrings("x86-64-v3", parseArgs(&with_cpu).?.target_cpu.?);
     const empty_cpu = build ++ [_][]const u8{ "--target-cpu", "" };
     try std.testing.expect(parseArgs(&empty_cpu) == null);
+}
+
+const empty_graph =
+    \\{"unit_graph": @F@, "package": "p@1.0.0", "mojo": "1.0.0",
+    \\ "toolchain": {"mojo": "1.0.0", "subdir": "linux-64", "cc_target": "x86_64-linux-gnu.2.34", "closure_sha256": "c", "zig": {"version": "0.12.0", "url": "u", "sha256": "f", "size": 1}, "components": []},
+    \\ "units": [@U@]}
+;
+
+const lib_unit =
+    \\{"id": "p@1.0.0#mojo1.0.0/lib", "package": "p", "version": "1.0.0", "kind": "lib", "root": "src/p", "deps": [], "natives": [], "outputs": ["p.mojoc"]}
+;
+
+test "a unit graph of another format is refused with its message; this format is read" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_version)) == null);
+    try std.testing.expectEqualStrings("g.json is unit graph format 1; this mopm reads 2", (try formatProblem(a, "g.json", 1)).?);
+    try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_version + 1)) != null);
+
+    // `run` stops at a format 1 graph (exit 1) before it looks for the unit, and goes on with a format 2 one (the unit is unknown: exit 4).
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const no_units = try std.mem.replaceOwned(u8, a, empty_graph, "@U@", "");
+    try tmp.dir.writeFile("old.json", try std.mem.replaceOwned(u8, a, no_units, "@F@", "1"));
+    try tmp.dir.writeFile("new.json", try std.mem.replaceOwned(u8, a, no_units, "@F@", "2"));
+    try tmp.dir.writeFile("one.json", try std.mem.replaceOwned(u8, a, try std.mem.replaceOwned(u8, a, empty_graph, "@U@", lib_unit), "@F@", "2"));
+    try tmp.dir.writeFile("junk.json", "not json");
+    const root = try tmp.dir.realpathAlloc(a, ".");
+    const base = Args{ .verb = .build, .unit = "p@1.0.0#mojo1.0.0/lib", .graph = "", .out = "o", .toolchain = "t" };
+    var old = base;
+    old.graph = try std.fs.path.join(a, &.{ root, "old.json" });
+    try std.testing.expectEqual(@as(u8, 1), try run(a, old, null));
+    var new = base;
+    new.graph = try std.fs.path.join(a, &.{ root, "new.json" });
+    try std.testing.expectEqual(exit_refused, try run(a, new, null));
+    // A unit that is there is checked before anything runs: the toolchain directory is missing, so it is refused (4).
+    var one = base;
+    one.graph = try std.fs.path.join(a, &.{ root, "one.json" });
+    one.out = try std.fs.path.join(a, &.{ root, "out" });
+    one.toolchain = try std.fs.path.join(a, &.{ root, "no-toolchain" });
+    try std.testing.expectEqual(exit_refused, try run(a, one, null));
+    // With every input there, the wrapper is run; one that cannot be executed (not an executable file) is an error
+    // that is passed on, not a refusal.
+    try tmp.dir.makePath("tc");
+    try tmp.dir.writeFile("tc/CLOSURE_SHA256", "c\n");
+    try tmp.dir.writeFile("tc/mojo_compile", "not executable\n");
+    var spawn = one;
+    spawn.toolchain = try std.fs.path.join(a, &.{ root, "tc" });
+    if (run(a, spawn, null)) |_| {
+        return error.TestUnexpectedResult;
+    } else |e| try std.testing.expect(e != error.Refused);
+    // A graph that is not there, or is not a graph: exit 1.
+    var gone = base;
+    gone.graph = try std.fs.path.join(a, &.{ root, "gone.json" });
+    try std.testing.expectEqual(@as(u8, 1), try run(a, gone, null));
+    var junk = base;
+    junk.graph = try std.fs.path.join(a, &.{ root, "junk.json" });
+    try std.testing.expectEqual(@as(u8, 1), try run(a, junk, null));
 }
 
 test "--target-cpu: a known level resolves, none resolves to none, anything else is a usage error" {

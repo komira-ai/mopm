@@ -818,7 +818,7 @@ test "a member's native built from srcs is packed from the archive the build sys
     try std.testing.expect(found == .bad);
     try std.testing.expect(std.mem.indexOf(u8, found.bad, "native library 'shim' is built as libother.a") != null);
     try std.testing.expect(std.mem.indexOf(u8, found.bad, "the archive given is named libshim.a") != null);
-    // A native that the build system does not build (no srcs) keeps taking the name of the file it is given.
+    // Pack checks the name only for a native with `srcs`; one without keeps the name of the file it is given.
     const legacy = try manifest.parse(a, head ++ "[native.shim]\nkind = \"static\"\n", &diag);
     const other_file = NativeFile{ .id = "shim", .subdir = "linux-64", .path = try std.fs.path.join(a, &.{ root, "libother.a" }) };
     const kept = try nativeOk(a, legacy, nativeFlags(&.{linux}, &.{other_file}));

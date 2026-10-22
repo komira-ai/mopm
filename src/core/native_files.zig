@@ -62,14 +62,31 @@ pub const Expanded = union(enum) {
     files: []const []const u8,
     /// The first pattern that matched no file.
     unmatched: []const u8,
+    /// The first pattern whose literal path is a symbolic link or passes through one: a link can lead out of the
+    /// member, and a glob never follows one.
+    link: []const u8,
 };
+
+/// Whether `rel` (relative to `root`), or a directory on the way to it, is a symbolic link.
+fn throughLink(arena: Allocator, root: []const u8, rel: []const u8) !bool {
+    var end: usize = 0;
+    var it = std.mem.splitScalar(u8, rel, '/');
+    while (it.next()) |seg| {
+        end += seg.len;
+        const full = try std.fs.path.join(arena, &.{ root, rel[0..end] });
+        var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        if (std.fs.cwd().readLink(full, &buf)) |_| return true else |_| {}
+        end += 1;
+    }
+    return false;
+}
 
 /// The files `patterns` name below `root` (the member's directory).
 pub fn expand(arena: Allocator, root: []const u8, patterns: []const []const u8) !Expanded {
     var out = std.ArrayList([]const u8).init(arena);
     for (patterns) |pat| {
-        const before = out.items.len;
         const lp = literalPrefix(pat);
+        if (lp.dir.len > 0 and try throughLink(arena, root, lp.dir)) return .{ .link = pat };
         if (lp.literal) {
             const full = try std.fs.path.join(arena, &.{ root, pat });
             const st = std.fs.cwd().statFile(full) catch return .{ .unmatched = pat };
@@ -82,12 +99,17 @@ pub fn expand(arena: Allocator, root: []const u8, patterns: []const []const u8) 
         defer dir.close();
         var walker = try dir.walk(arena);
         defer walker.deinit();
+        // A pattern matches if it names a file at all, whether or not an earlier pattern named it too.
+        var matched = false;
         while (try walker.next()) |entry| {
             if (entry.kind != .file or hidden(entry.path)) continue;
             const rel = if (lp.dir.len == 0) try arena.dupe(u8, entry.path) else try std.fmt.allocPrint(arena, "{s}/{s}", .{ lp.dir, entry.path });
-            if (matches(pat, rel)) try add(&out, rel);
+            if (matches(pat, rel)) {
+                matched = true;
+                try add(&out, rel);
+            }
         }
-        if (out.items.len == before) return .{ .unmatched = pat };
+        if (!matched) return .{ .unmatched = pat };
     }
     std.mem.sort([]const u8, out.items, {}, lessPath);
     return .{ .files = out.items };
@@ -212,6 +234,49 @@ test "expand names the first pattern that matches nothing" {
     try std.testing.expectEqualStrings("dir", (try expand(a, root, &.{"dir"})).unmatched);
     // No patterns, no files.
     try std.testing.expectEqual(@as(usize, 0), (try expand(a, root, &.{})).files.len);
+}
+
+test "a pattern whose files an earlier pattern already named still matches" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try putFile(tmp.dir, "n/real.c");
+    const root = try tmp.dir.realpathAlloc(a, ".");
+    const both = try expand(a, root, &.{ "n/real.c", "n/*.c" });
+    try std.testing.expectEqualStrings("n/real.c", try joined(a, both.files));
+    const again = try expand(a, root, &.{ "n/*.c", "n/*.c", "n/real.c" });
+    try std.testing.expectEqualStrings("n/real.c", try joined(a, again.files));
+    // A pattern that names nothing is still refused, whatever came before it.
+    try std.testing.expectEqualStrings("n/*.cc", (try expand(a, root, &.{ "n/real.c", "n/*.cc" })).unmatched);
+}
+
+test "a literal path that is a symbolic link, or passes through one, is refused; a glob does not follow links" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try putFile(tmp.dir, "outside/x.c");
+    try putFile(tmp.dir, "member/n/real.c");
+    try tmp.dir.symLink("../../outside/x.c", "member/n/link.c", .{});
+    try tmp.dir.symLink("../outside", "member/ldir", .{ .is_directory = true });
+    const root = try tmp.dir.realpathAlloc(a, "member");
+
+    // The file link, the directory link, and a path through the directory link.
+    try std.testing.expectEqualStrings("n/link.c", (try expand(a, root, &.{ "n/real.c", "n/link.c" })).link);
+    try std.testing.expectEqualStrings("ldir", (try expand(a, root, &.{"ldir"})).link);
+    try std.testing.expectEqualStrings("ldir/x.c", (try expand(a, root, &.{"ldir/x.c"})).link);
+    // A glob below a directory link starts inside the link, so it is refused too.
+    try std.testing.expectEqualStrings("ldir/*.c", (try expand(a, root, &.{"ldir/*.c"})).link);
+    // A glob never follows a link: neither the file link nor the directory link is a match.
+    const globbed = try expand(a, root, &.{"**/*.c"});
+    try std.testing.expectEqualStrings("n/real.c", try joined(a, globbed.files));
+    const in_dir = try expand(a, root, &.{"n/*.c"});
+    try std.testing.expectEqualStrings("n/real.c", try joined(a, in_dir.files));
+    // A plain file is not a link.
+    try std.testing.expectEqualStrings("n/real.c", try joined(a, (try expand(a, root, &.{"n/real.c"})).files));
 }
 
 test "dirsOf lists each directory holding a file once, sorted, and . for the member directory" {
