@@ -5,6 +5,9 @@
 //! TypeScript registry is; an event that changes nothing (a second yank, a publish of a
 //! published version, a second tombstone) is [`Applied::Unchanged`] rather than a copy with
 //! a bumped `rev`.
+//!
+//! A `pending` row tagged with a `group_id` belongs to a group publish: a single `Publish` of it is
+//! refused (`invalid_transition`), so a single publish can neither take over nor show a group's member.
 
 use crate::error::{Detail, ErrorCode, RegistryError};
 use crate::types::{Dep, FileRef, NativeRef, Tombstone, VersionRecord, VersionState};
@@ -145,6 +148,8 @@ pub fn apply_event(rec: &VersionRecord, ev: &VersionEvent) -> Result<Applied, Re
         (S::Tombstoned, E::Tombstone { .. }) => Ok(Applied::Unchanged),
         (S::Tombstoned, _) => Err(illegal_transition(rec, ev)),
 
+        // A pending row that belongs to a group is published by the group's own steps, never by a single publish.
+        (S::Pending, E::Publish(_)) if rec.group_id.is_some() => Err(illegal_transition(rec, ev)),
         (S::Pending, E::Publish(f)) => Ok(changed(rec, |r| {
             r.state = S::Published;
             if let Some(f) = f {
@@ -184,7 +189,7 @@ pub fn apply_event(rec: &VersionRecord, ev: &VersionEvent) -> Result<Applied, Re
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixtures::{hex, rec};
+    use crate::fixtures::{group_row, hex, rec};
     use VersionState as S;
 
     fn yank() -> VersionEvent {
@@ -368,5 +373,64 @@ mod tests {
             assert!(apply_event(&t, &ev).is_err());
         }
         assert_eq!(apply_event(&t, &tomb()).unwrap(), Applied::Unchanged);
+    }
+
+    fn fill_for(version: &str) -> PublishFill {
+        PublishFill {
+            version: version.to_string(),
+            build: "mojo1.0.0_0".to_string(),
+            requires_mojo: "==1.0.0".to_string(),
+            deps: vec![],
+            native: vec![],
+            files: vec![],
+            manifest_sha256: hex('9'),
+            published_at: "2026-10-14T00:00:00Z".to_string(),
+            published_by: None,
+            description: None,
+            license: None,
+            repository: None,
+            homepage: None,
+            keywords: None,
+            readme: None,
+        }
+    }
+
+    #[test]
+    fn a_single_publish_refuses_a_pending_row_that_belongs_to_a_group() {
+        // Reserved (no stamp), staged now, and staged at an attempt that has since moved on: none is the single path's to publish.
+        for stamp in [None, Some(1), Some(7)] {
+            let row = group_row(at(S::Pending), "g1", stamp);
+            for ev in [VersionEvent::Publish(None), VersionEvent::Publish(Some(Box::new(fill_for("1.0.0"))))] {
+                let err = apply_event(&row, &ev).unwrap_err();
+                assert_eq!(err.code, ErrorCode::InvalidTransition, "stamp {stamp:?}");
+                assert_eq!(err.status(), 409);
+                assert_eq!(err.message, "Cannot publish 'p' 1.0.0: it is pending.");
+            }
+        }
+    }
+
+    #[test]
+    fn a_pending_row_without_a_group_still_publishes() {
+        // The guard is the group tag and nothing else: a stamp alone (it cannot occur without the tag) does not make a group row.
+        let mut row = at(S::Pending);
+        assert_eq!(apply_event(&row, &publish()).unwrap().into_record(&row).state, S::Published);
+        row.staged_attempt = Some(1);
+        assert_eq!(apply_event(&row, &publish()).unwrap().into_record(&row).state, S::Published);
+    }
+
+    #[test]
+    fn a_group_row_can_be_burned_and_a_published_one_is_changed_without_losing_its_group() {
+        // The group's own failure path burns its numbers: a tombstone is not refused, and it keeps the tag.
+        let staged = group_row(at(S::Pending), "g1", Some(2));
+        let burned = VersionEvent::Tombstone { reason_code: "rejected".to_string(), date: "2026-10-12".to_string(), unpublished: true };
+        let t = apply_event(&staged, &burned).unwrap().into_record(&staged);
+        assert_eq!((t.state, t.group_id.as_deref(), t.staged_attempt), (S::Tombstoned, Some("g1"), Some(2)));
+        // A row the group flipped ignores its group: single events act on it as on any published row, and the tag survives.
+        let flipped = VersionRecord { state: S::Published, ..group_row(at(S::Pending), "g1", Some(2)) };
+        assert_eq!(apply_event(&flipped, &publish()).unwrap(), Applied::Unchanged);
+        let y = apply_event(&flipped, &yank()).unwrap().into_record(&flipped);
+        assert_eq!((y.state, y.group_id.as_deref(), y.staged_attempt), (S::Yanked, Some("g1"), Some(2)));
+        let u = apply_event(&y, &VersionEvent::Unyank).unwrap().into_record(&y);
+        assert_eq!((u.state, u.group_id.as_deref(), u.staged_attempt), (S::Published, Some("g1"), Some(2)));
     }
 }
