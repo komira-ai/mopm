@@ -1,0 +1,61 @@
+{
+  "description": "An index_takedowns message rebuilds index/takedowns.json from every row of the registry (a Scan of the packages table, then each package's versions): on an empty registry it writes the empty log, which is also how a stage's takedown log is seeded. The object has no create-only condition, so a rebuild replaces it.",
+  "lambda": "indexer",
+  "env": {
+    "MOPM_STAGE": "beta",
+    "MOPM_CHANNEL_BUCKET": "channel-bucket",
+    "MOPM_DISTRIBUTION_ID": "DIST1",
+    "MOPM_INDEX_QUEUE_URL": "index-queue-url"
+  },
+  "invocations": [
+    {
+      "event": {
+        "Records": [
+          {
+            "messageId": "m1",
+            "receiptHandle": "handle-1",
+            "body": "{\"type\":\"index_takedowns\"}",
+            "attributes": {
+              "MessageGroupId": "g"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          }
+        ]
+      },
+      "expect": {
+        "returns": null
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Scan",
+        "table": "mopm-beta-packages"
+      }
+    ],
+    "aws_http": [
+      {
+        "method": "PUT",
+        "url": "https://channel-bucket.s3.us-east-1.amazonaws.com/index/takedowns.json",
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "public, max-age=60"
+        },
+        "body": {
+          "sha256": "936e857e5e343908da14a0eb33e54aa21aec4c4b06f47d65dab217b9ed22b4de"
+        }
+      }
+    ],
+    "logs": [
+      {
+        "stream": "log",
+        "line": {
+          "level": "info",
+          "msg": "index_takedowns"
+        }
+      }
+    ]
+  }
+}

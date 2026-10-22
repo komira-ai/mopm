@@ -92,22 +92,40 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     expect(all.filter((a) => /DeleteItem|DeleteObjectVersion|Scan|^cloudfront|\*/.test(a))).toEqual([]);
   });
 
-  test('the index writer role: repodata writes only, record reads, one invalidation on this distribution', () => {
+  test('the index writer role: repodata and index/ writes only, record reads, its own queue, one invalidation on this distribution', () => {
     const st = statementsOf(fn('publish/indexer-lambda.handler'));
     const own = st.filter((s) => s.Sid);
-    expect(own.map((s) => s.Sid).sort()).toEqual(['InvalidateChannelRepodata', 'ReadAndUpdatePublishes', 'ReadRegistryForIndex', 'WriteRepodata'].sort());
+    expect(own.map((s) => s.Sid).sort()).toEqual(
+      ['InvalidateChannelRepodata', 'ReadAndUpdatePublishes', 'ReadRegistryForIndex', 'SendPackageIndexJobs', 'WriteRepodata', 'WriteSparseIndex'].sort(),
+    );
     const by = (sid: string) => own.find((s) => s.Sid === sid);
     expect(acts(by('WriteRepodata'))).toEqual(['s3:PutObject']);
     const writes = res(by('WriteRepodata'));
     expect(writes).toContain(`${bucket}/noarch/repodata.json.zst`);
     expect(writes).not.toContain('mojo-');
     expect(writes).not.toContain('quarantine');
+    expect(writes).not.toContain('index/');
+    // The sparse index: PutObject on index/* and nothing else of the bucket.
+    expect(acts(by('WriteSparseIndex'))).toEqual(['s3:PutObject']);
+    expect(by('WriteSparseIndex').Effect).toBe('Allow');
+    expect(([] as any[]).concat(by('WriteSparseIndex').Resource)).toHaveLength(1);
+    expect(res(by('WriteSparseIndex'))).toContain(`${bucket}/index/*`);
+    expect(res(by('WriteSparseIndex'))).not.toContain('repodata');
+    expect(res(by('WriteSparseIndex'))).not.toContain('quarantine');
+    // Its own queue, send only (the package job of a publish is queued by the last repodata job).
+    expect(acts(by('SendPackageIndexJobs'))).toEqual(['sqs:SendMessage']);
+    expect(res(by('SendPackageIndexJobs'))).toContain('IndexQueue');
+    expect(res(by('SendPackageIndexJobs'))).not.toContain('Validate');
     expect(acts(by('InvalidateChannelRepodata'))).toEqual(['cloudfront:CreateInvalidation']);
     expect(res(by('InvalidateChannelRepodata'))).toContain('distribution/');
     expect(acts(by('ReadRegistryForIndex')).sort()).toEqual(['dynamodb:Query', 'dynamodb:Scan']);
     expect(res(by('ReadRegistryForIndex'))).toContain(`mopm-${stage}-packages`);
     expect(res(by('ReadRegistryForIndex'))).not.toContain(`mopm-${stage}-tokens`);
-    expect(st.flatMap(acts).some((a) => a === 's3:DeleteObject' || a === 's3:GetObject')).toBe(false);
+    // It never reads the bucket (a rebuild comes from the registry) and never deletes.
+    expect(st.flatMap(acts).some((a) => a === 's3:DeleteObject' || a === 's3:GetObject' || a === 's3:ListBucket')).toBe(false);
+    // Every S3 grant of the role is a PutObject on one of the two scoped sets.
+    const s3 = own.filter((s) => acts(s).some((a) => a.startsWith('s3:')));
+    expect(s3.map((s) => s.Sid).sort()).toEqual(['WriteRepodata', 'WriteSparseIndex']);
   });
 
   test('each dead-letter queue has an alarm that fires on a single message', () => {
@@ -128,7 +146,7 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     t.hasResourceProperties('AWS::Lambda::Function', { Handler: 'publish/validator-lambda.handler', MemorySize: 3008 });
   });
 
-  test('the validator knows the channel bucket, its public URL and the index queue; the indexer the distribution', () => {
+  test('the validator knows the channel bucket, its public URL and the index queue; the indexer the distribution and the index queue', () => {
     const host = stage === 'prod' ? 'conda.mopm.dev' : `conda.${stage}.mopm.dev`;
     t.hasResourceProperties('AWS::Lambda::Function', {
       Handler: 'publish/validator-lambda.handler',
@@ -136,8 +154,14 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     });
     t.hasResourceProperties('AWS::Lambda::Function', {
       Handler: 'publish/indexer-lambda.handler',
-      Environment: { Variables: Match.objectLike({ MOPM_CHANNEL_BUCKET: bucket, MOPM_DISTRIBUTION_ID: Match.anyValue() }) },
+      Environment: { Variables: Match.objectLike({ MOPM_CHANNEL_BUCKET: bucket, MOPM_DISTRIBUTION_ID: Match.anyValue(), MOPM_INDEX_QUEUE_URL: Match.anyValue() }) },
     });
+  });
+
+  test('the indexer is pointed at the index queue, and not the validate queue', () => {
+    const env = fn('publish/indexer-lambda.handler').Properties.Environment.Variables;
+    expect(JSON.stringify(env.MOPM_INDEX_QUEUE_URL)).toContain('IndexQueue');
+    expect(JSON.stringify(env.MOPM_INDEX_QUEUE_URL)).not.toContain('Validate');
   });
 
   test('the API stack sends to the validate queue (commits) and the index queue (yank rebuilds), send-only, and nowhere else', () => {

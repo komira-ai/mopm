@@ -53,6 +53,12 @@ export interface PublishRecord {
   files: PublishFile[];
   /** Subdirs whose repodata does not yet list this publish (set when the version is published). */
   remaining_subdirs: string[];
+  /**
+   * Set by the job that lists the last subdir: the repodata is done, the package's sparse-index file is not.
+   * The publish becomes `published` when that file is written. Separate from `remaining_subdirs`, which only
+   * ever holds conda subdirs.
+   */
+  index_pending?: boolean;
   created_at: string;
   updated_at: string;
   /** Optimistic-concurrency counter, +1 per change. */
@@ -69,4 +75,25 @@ export interface IndexMessage {
   type: 'index';
   subdir: string;
   publish_id?: string;
+  /**
+   * Gate for a change the CLI must not see in the sparse index before repodata shows it (unyank): once this
+   * subdir is rewritten, rewrite `next[0]` (carrying the rest), and after the last one send `index_pkg`.
+   */
+  then?: { name: string; rev: number; next: string[] };
 }
+/**
+ * Rewrite `index/<aa>/<bb>/<name>` from the package's rows as they are when the job runs (not as they were when
+ * it was sent). `rev` is `packageRev` at send time; it only separates dedup ids. FIFO group `pkg:<name>`.
+ */
+export interface IndexPkgMessage {
+  type: 'index_pkg';
+  name: string;
+  rev: number;
+  /** The publish to move to `published` once the file is written. */
+  publish_id?: string;
+}
+/** Rebuild `index/takedowns.json` from every tombstoned row. FIFO group `takedowns`. */
+export interface IndexTakedownsMessage {
+  type: 'index_takedowns';
+}
+export type IndexQueueMessage = IndexMessage | IndexPkgMessage | IndexTakedownsMessage;

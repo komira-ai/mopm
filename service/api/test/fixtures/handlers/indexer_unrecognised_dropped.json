@@ -4,7 +4,8 @@
   "env": {
     "MOPM_STAGE": "beta",
     "MOPM_CHANNEL_BUCKET": "channel-bucket",
-    "MOPM_DISTRIBUTION_ID": "DIST1"
+    "MOPM_DISTRIBUTION_ID": "DIST1",
+    "MOPM_INDEX_QUEUE_URL": "index-queue-url"
   },
   "invocations": [
     {
