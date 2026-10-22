@@ -1417,7 +1417,8 @@ test "a native library that needs its own soname is refused, shared or static, w
 }
 
 /// The graph of lock_static_chain with the exclusive group of each of its two natives set by hand into the parsed
-/// lock (the lock reader refuses two packages in one group, so the text cannot carry it; the graph must refuse it too).
+/// lock, so that one helper varies the group of both natives (the lock reader does not look at groups: a lock that holds
+/// two packages in one group parses, and the graph is where the clash is refused).
 fn graphWithGroups(a: Allocator, dir: []const u8, crypto_group: []const u8, tls_group: []const u8, why: *[]const u8) !Graph {
     var l = try lock.parse(a, try fill(a, lock_static_chain), why);
     const pk = try a.dupe(lock.Package, l.packages);

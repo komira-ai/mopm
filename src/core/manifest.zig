@@ -353,6 +353,12 @@ const Checker = struct {
             if (sub.get("needs")) |o| lib.needs = try c.strings(o, in);
             if (try c.optStr(sub, "exclusive", in)) |x| {
                 if (x.len == 0) return c.fail(sub.get("exclusive").?.pos, "'exclusive' in {s} must not be empty", .{in});
+                if (std.ascii.isWhitespace(x[0]) or std.ascii.isWhitespace(x[x.len - 1])) {
+                    return c.fail(sub.get("exclusive").?.pos, "'exclusive' in {s} must not start or end with whitespace (groups are compared exactly)", .{in});
+                }
+                for (x) |ch| {
+                    if (ch < 0x20 or ch == 0x7f) return c.fail(sub.get("exclusive").?.pos, "'exclusive' in {s} must not contain a control character", .{in});
+                }
                 lib.exclusive = x;
             }
             try out.append(lib);
