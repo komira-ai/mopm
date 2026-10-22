@@ -330,15 +330,15 @@ A Dependabot bump of a `package-lock.json` leaves its pin table (`buildrules.loc
 stale, and the table needs a sha256 and a size that only the tarball gives. Two workflows make the pull request green
 without a person, and a third checks the result. None of them merges or approves anything; the pull request still needs a
 person to read the lockfile diff. The three `service/infra/*` packages are not covered: their lockfiles bundle packages
-(aws-cdk-lib has many; an entry with no `resolved` and no `integrity`), which `autopin compute` refuses, and `pin-verify` runs
-the same tool over every directory it covers. A Dependabot pull request there is pinned by a person with kpin (CONTRIBUTING.md),
+(aws-cdk-lib has many, and bundles of bundles; an entry with no `resolved` and no `integrity`), which `autopin` does not accept, and `pin-verify`
+runs the same tool over every directory it covers. A Dependabot pull request there is pinned by a person with kpin (CONTRIBUTING.md),
 and `tests/drivers/hygiene.zig` names these three (`autopin_manual`) so that a fourth package cannot be forgotten.
 
 | workflow | trigger | holds | does |
 |---|---|---|---|
 | `autopin-compute.yml` | `pull_request` of Dependabot's own pull request, run for Dependabot, from a branch of this repository (job-level `if:`) | a read-only token; no secret, environment, id-token or cache | runs the released `buildrules autopin compute` over the checkout of the pull request's head and uploads the regenerated tables as the artifact `autopin-<run id>-<attempt>` (never overwritten) |
 | `autopin-commit.yml` | `workflow_run` of the compute run completing (this file on the default branch is the one that runs) | environment `autopin` (the App's id and key), entered only after the job-level `if:` passed; read access until it mints | `autopin commit-check` reads the artifact as untrusted bytes and the pull request and its lockfile from the API and writes the tables it will vouch for; only then is the App token minted (contents write, this repository only) and `autopin commit-push` makes one commit on the pull request's branch with the Git Data API, moving the branch with `force: false` |
-| `pin-verify.yml` | every pull request | a read-only token and nothing else | the required check `pin-verify`: runs the same tool and fails if any table would change. It checks that the tables equal compute's output over every `--set` directory; it is not an independent re-fetch of every row (that is `autopin verify-pins`, not released yet) |
+| `pin-verify.yml` | every pull request | a read-only token and nothing else | the required check `pin-verify`: runs `autopin verify-pins` over every `--set` directory, which downloads every row and compares sha512, sha256 and size with the lock and the table |
 
 The App's own push has the pull request's author but not its actor, so the compute job skips it: that is what stops the loop.
 The commit carries `[dependabot skip]`, so Dependabot keeps managing the pull request and a later Dependabot update replaces it.
