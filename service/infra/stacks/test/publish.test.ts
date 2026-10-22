@@ -110,6 +110,9 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     expect(by('WriteSparseIndex').Effect).toBe('Allow');
     expect(([] as any[]).concat(by('WriteSparseIndex').Resource)).toHaveLength(1);
     expect(res(by('WriteSparseIndex'))).toContain(`${bucket}/index/*`);
+    // The one resource is the ARN of exactly `<bucket>/index/*`: no prefix wildcard before `index/`, nothing after it.
+    const leaves = (v: any): string[] => (typeof v === 'string' ? [v] : v && typeof v === 'object' ? Object.values(v).flatMap(leaves) : []);
+    expect(leaves(by('WriteSparseIndex').Resource).join('').endsWith(`:::${bucket}/index/*`)).toBe(true);
     expect(res(by('WriteSparseIndex'))).not.toContain('repodata');
     expect(res(by('WriteSparseIndex'))).not.toContain('quarantine');
     // Its own queue, send only (the package job of a publish is queued by the last repodata job).

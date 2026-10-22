@@ -43,9 +43,25 @@ CloudFront refuses to serve `index/*` from the conda host.
 - Order. Publish and unyank: the last repodata job queues `index_pkg`, so the index never runs ahead of repodata (the CLI
   refuses an index that says `published` while repodata still lists the file as removed). Yank and takedown queue it at once.
   The window that remains is repodata invalidation, which is requested and not awaited.
+  A yank or takedown job re-reads all of the package's rows, so it can also list another version whose publish is still
+  in flight: the validator marks the row `published` before the last repodata job lists the file. For that short window
+  the CLI fails closed on that package (index ahead of repodata) until repodata catches up. Publish and unyank are gated;
+  this cross-version case is not, and is accepted.
 - A package with no visible version (only a rejected publish) has no file; nothing is written.
-- A takedown is an operator action: tombstone the row, then call `queueTakedownIndex` (`src/publish/takedown.ts`), or send
-  `index_pkg` for the package, `index` for each of its subdirs and `index_takedowns` by hand.
+- A takedown is an operator action and nothing in the service calls it yet: no route does. After tombstoning the row,
+  call `queueTakedownIndex` (`src/publish/takedown.ts`), or send `index_pkg` for the package, `index` for each of its
+  subdirs and `index_takedowns` by hand. Until a route exists a takedown needs this manual send.
+- **Rollback.** Reverting the writer does not finish a publish that was in flight. Such a record has `status` `indexing`,
+  `remaining_subdirs` empty and `index_pending` true; the previous validator only re-sends repodata jobs for
+  `remaining_subdirs`, so it sends nothing, and the previous indexer drops `index_pkg` as unrecognised. The version row is
+  `published` and repodata lists it, so only the publish record is stale (a client polling it sees `indexing`). Find them
+  (`aws dynamodb scan --table-name mopm-<stage>-publishes --filter-expression 'index_pending = :t AND #s = :i'
+  --expression-attribute-names '{"#s":"status"}' --expression-attribute-values '{":t":{"BOOL":true},":i":{"S":"indexing"}}'`)
+  and, after confirming repodata lists the version, mark each published (a cloud write: needs the maintainers' go):
+  `aws dynamodb update-item --table-name mopm-<stage>-publishes --key '{"publish_id":{"S":"<id>"}}'
+  --condition-expression '#s = :i AND index_pending = :t' --update-expression 'SET #s = :p, index_pending = :f, rev = rev + :one'
+  --expression-attribute-names '{"#s":"status"}' --expression-attribute-values '{":i":{"S":"indexing"},":p":{"S":"published"},":t":{"BOOL":true},":f":{"BOOL":false},":one":{"N":"1"}}'`.
+  Or avoid it: do not revert while a publish is in flight (the DLQ and publish records show none).
 - **Rebuild everything**: send one `index_pkg` per package (any `rev`, with a dedup id that has not been used in five minutes) and
   one `index_takedowns`. Every write is idempotent.
 - Old versions of `index/` files expire 30 days after they are replaced (bucket lifecycle rule `index-noncurrent-expiry`).
