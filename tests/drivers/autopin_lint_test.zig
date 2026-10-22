@@ -327,6 +327,8 @@ test "pin-verify: every pull request, no condition, no secret, the required cont
     try expectRepo(verify, "  pull_request:\n", "  pull_request:\n    paths:\n      - site/**\n", &.{"pull_request has no filter and no types"});
     try expectRepo(verify, "  pull_request:\n", "  pull_request:\n    branches:\n      - main\n", &.{"pull_request has no filter and no types"});
     try expectRepo(verify, "    name: pin-verify\n", "    name: pin verify\n", &.{"the job must be `pin-verify` with `name: pin-verify`"});
+    // Mutant: a second job beside the check (the lint reads exactly one job, so it would read neither).
+    try expectRepo(verify, "jobs:\n  pin-verify:\n", "jobs:\n  extra:\n    runs-on: ubuntu-24.04\n  pin-verify:\n", &.{ "pin-verify.yml: expected exactly one job, found 2", "pin-verify.yml: no run script carries `--set DIR=KIND`" });
     try expectRepo(verify, "  pin-verify:\n", "  verify:\n", &.{"the job must be `pin-verify` with `name: pin-verify`"});
     try expectRepo(verify, "    runs-on: ubuntu-24.04\n", "    runs-on: ubuntu-24.04\n    environment: autopin\n", &.{ "an environment is for autopin-commit.yml alone", "a pull_request workflow must not declare an environment" });
     try expectRepo(verify, "        run: |\n          \"$RUNNER_TEMP/br/buildrules\" autopin verify-pins", "        env:\n          T: ${{ secrets.T }}\n        run: |\n          \"$RUNNER_TEMP/br/buildrules\" autopin verify-pins", &.{ "no secrets (this job runs for a pull request)", "a pull_request workflow must not reference secrets" });
