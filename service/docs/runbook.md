@@ -166,3 +166,23 @@ publish `published`. See "The sparse index writer" below.
 - **Limits** (defaults in `service/api/src/publish/config.ts`; the API Lambda reads `MOPM_RATE_PER_ACCOUNT_DAY` and
   `MOPM_RATE_PER_TOKEN_DAY`, set from the `limits` prop of the API stack): 100 MB per package, 10 GB per project (counts published and
   yanked files; a full project refuses new publishes and nothing is ever deleted), 2000 begins per account and 1000 per token per UTC day.
+
+## Cutting over to the Rust port
+
+Every route is TypeScript today (`/api/v1/health` reports `impl: ts` and `e2e.yml` asserts it). Before any route of a stage
+is served by the Rust functions (`service/lambda`, the stage config's `rustRoutes`), check all of these on that stage:
+
+1. **No group publish is in flight.** The Rust port keeps and hides a group's members (a version row with a `group_id` that is
+   still `pending`) but does not publish a group or flip its members, and it reads no group header. A group that is open,
+   validating, or committed and not yet visible would be stuck behind it. Read-only check, no row may come back:
+   `aws dynamodb scan --table-name mopm-<stage>-versions --filter-expression 'attribute_exists(group_id) AND #s = :p'
+   --expression-attribute-names '{"#s":"state"}' --expression-attribute-values '{":p":{"S":"pending"}}' --select COUNT`.
+   A row left by a group that was aborted or expired also shows up here: look at it before going on.
+   Until the group publish is in use, no row carries a `group_id` and the count is 0.
+2. **No group can start during the cutover.** Group creation stays switched off (or limited to actors who are told) until the
+   cutover is done or rolled back.
+3. **Group-aware Rust comes first once groups are in use on the stage.** Showing a committed group's members, the order in
+   which its files are released and the flip are implemented in TypeScript only. A stage that publishes groups does not move
+   to Rust until the Rust port does the same.
+4. **`EXPECTED_IMPL` in `.github/workflows/e2e.yml`** is changed in the same change as the route list, so the smoke test still says
+   which implementation answered.

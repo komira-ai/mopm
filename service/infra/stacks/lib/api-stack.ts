@@ -103,6 +103,16 @@ export const AUTH_GRANTS: Record<string, { actions: string[]; indexes?: string[]
   owners: { actions: ['dynamodb:GetItem', 'dynamodb:Query'], indexes: ['by_github_id'] },
 };
 
+/** `GET /index/config.json` is built from code by the API Lambda; every other file under /index/ is read from the bucket by the reader. */
+export const INDEX_CONFIG_ROUTE = 'GET /index/config.json';
+export const INDEX_READER_ROUTE = 'GET /index/{proxy+}';
+/**
+ * The reader is unauthenticated and has no CDN in front, so each request is an invocation. The gateway throttles the two
+ * index routes (requests per second, with a burst) so a scrape cannot take the account's Lambda concurrency from publish
+ * and the read API. (A reservation on the function is not used: Lambda refuses one that leaves the unreserved pool under 10.)
+ */
+export const INDEX_THROTTLE = { rateLimit: 50, burstLimit: 100 };
+
 /** Methods a browser may use on the read API. HEAD and OPTIONS are listed for preflight; only GET routes exist. */
 export const CORS_METHODS = [apigw.CorsHttpMethod.GET, apigw.CorsHttpMethod.HEAD, apigw.CorsHttpMethod.OPTIONS];
 /** How long a browser may cache a preflight answer. */
@@ -115,6 +125,7 @@ export const siteOrigin = (c: StageConfig) => `https://${c.siteDomain}`;
 export class ApiStack extends Stack {
   readonly api: apigw.HttpApi;
   readonly handler: lambda.Function;
+  readonly indexReader: lambda.Function;
 
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
@@ -148,6 +159,9 @@ export class ApiStack extends Stack {
         // service/infra/access/lib/oauth-secret.ts; until it exists the device login routes answer 503.
         MOPM_OAUTH_SECRET_NAME: oauthSecretName(c.stage),
         MOPM_REQUIRE_2FA: String(props.require2fa ?? true),
+        // The hosts GET /index/config.json names, from the stage's configuration.
+        MOPM_API_DOMAIN: c.apiDomain,
+        MOPM_CHANNEL_DOMAIN: c.condaDomain,
         // Where uploads go (a presigned PUT into quarantine/) and where a commit is queued. Built from names, not
         // references, so this stack does not depend on the publish stack's exports.
         MOPM_CHANNEL_BUCKET: channelBucketName(c.stage, this.account),
@@ -236,6 +250,35 @@ export class ApiStack extends Stack {
       }),
     );
 
+    // The index reader: its own function and role, so the API role keeps its single quarantine statement. It may read
+    // objects under index/ and list the bucket only with that prefix. S3 answers 403 (not 404) for a key that is not
+    // there, because that decision ignores the prefix condition; the reader then lists with the exact key as the prefix,
+    // which the grant allows, and answers 404 only when no listed key equals it. Any other S3 answer is 502.
+    const bucketArn = `arn:aws:s3:::${channelBucketName(c.stage, this.account)}`;
+    this.indexReader = new lambda.Function(this, 'IndexReader', {
+      runtime: lambda.Runtime.NODEJS_22_X,
+      handler: 'http/index-lambda.handler',
+      code: lambda.Code.fromAsset(handlerDir),
+      memorySize: 256,
+      timeout: Duration.seconds(10),
+      logGroup: new logs.LogGroup(this, 'IndexReaderLogs', {
+        retention: logs.RetentionDays.ONE_MONTH,
+        removalPolicy: removalPolicyFor(c),
+      }),
+      environment: { MOPM_STAGE: c.stage, MOPM_CHANNEL_BUCKET: channelBucketName(c.stage, this.account) },
+    });
+    this.indexReader.addToRolePolicy(
+      new iam.PolicyStatement({ sid: 'ReadIndexObjects', actions: ['s3:GetObject'], resources: [`${bucketArn}/index/*`] }),
+    );
+    this.indexReader.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: 'ListIndexPrefix',
+        actions: ['s3:ListBucket'],
+        resources: [bucketArn],
+        conditions: { StringLike: { 's3:prefix': 'index/*' } },
+      }),
+    );
+
     const zone = lookupZone(this, c);
     const cert = new acm.Certificate(this, 'Cert', {
       domainName: c.apiDomain,
@@ -262,6 +305,26 @@ export class ApiStack extends Stack {
     }
     for (const r of AUTH_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
     for (const r of PUBLISH_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
+    // The CLI sends no token: neither index route has an authorizer. The literal route wins over the greedy one.
+    const configRoutes = this.api.addRoutes({ path: '/index/config.json', methods: [apigw.HttpMethod.GET], integration });
+    const readerRoutes = this.api.addRoutes({
+      path: '/index/{proxy+}',
+      methods: [apigw.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration('IndexReaderIntegration', this.indexReader),
+    });
+    // A route named in RouteSettings must exist when the stage is updated, so the stage depends on each such route.
+    // Without the dependency CloudFormation updates the stage first and fails: "Unable to find Route by key".
+    const throttled: Record<string, apigw.HttpRoute[]> = {
+      [INDEX_CONFIG_ROUTE]: configRoutes,
+      [INDEX_READER_ROUTE]: readerRoutes,
+    };
+    const stage = this.api.defaultStage!;
+    const routeSettings: Record<string, { ThrottlingRateLimit: number; ThrottlingBurstLimit: number }> = {};
+    for (const [key, routes] of Object.entries(throttled)) {
+      routeSettings[key] = { ThrottlingRateLimit: INDEX_THROTTLE.rateLimit, ThrottlingBurstLimit: INDEX_THROTTLE.burstLimit };
+      stage.node.addDependency(...routes);
+    }
+    (stage.node.defaultChild as apigw.CfnStage).routeSettings = routeSettings;
 
     const target = route53.RecordTarget.fromAlias(
       new targets.ApiGatewayv2DomainProperties(domain.regionalDomainName, domain.regionalHostedZoneId),
