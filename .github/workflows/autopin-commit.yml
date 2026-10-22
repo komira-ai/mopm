@@ -63,7 +63,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          "$RUNNER_TEMP/br/buildrules" autopin commit-check --event "$GITHUB_EVENT_PATH" --out "$RUNNER_TEMP/autopin-plan" --github-output "$GITHUB_OUTPUT" --app-login "komira-autopin[bot]" --set site=buildrules-lock --set service/api=buildrules-lock --set service/infra/stacks=pins-lock --set service/infra/dns=pins-lock --set service/infra/access=pins-lock
+          "$RUNNER_TEMP/br/buildrules" autopin commit-check --event "$GITHUB_EVENT_PATH" --out "$RUNNER_TEMP/autopin-plan" --github-output "$GITHUB_OUTPUT" --app-login "komira-autopin[bot]" --set site=buildrules-lock --set service/api=buildrules-lock
       - name: Mint the installation token of the autopin App, for this repository only, contents write
         id: mint
         if: ${{ steps.check.outputs.has_change == 'true' }}
@@ -80,4 +80,4 @@ jobs:
           GH_TOKEN: ${{ steps.mint.outputs.token }}
           AUTOPIN_APP_ID: ${{ vars.AUTOPIN_APP_ID }}
         run: |
-          "$RUNNER_TEMP/br/buildrules" autopin commit-push --plan "$RUNNER_TEMP/autopin-plan" --author-name "komira-autopin[bot]" --author-email "${AUTOPIN_APP_ID}+komira-autopin[bot]@users.noreply.github.com" --set site=buildrules-lock --set service/api=buildrules-lock --set service/infra/stacks=pins-lock --set service/infra/dns=pins-lock --set service/infra/access=pins-lock
+          "$RUNNER_TEMP/br/buildrules" autopin commit-push --plan "$RUNNER_TEMP/autopin-plan" --author-name "komira-autopin[bot]" --author-email "${AUTOPIN_APP_ID}+komira-autopin[bot]@users.noreply.github.com" --set site=buildrules-lock --set service/api=buildrules-lock

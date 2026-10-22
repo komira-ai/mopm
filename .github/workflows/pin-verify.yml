@@ -6,6 +6,8 @@
 # entry, a stale PACKAGE_LOCK_SHA256, or a lockfile the tool refuses (an entry with no `integrity` or `resolved`,
 # a non-registry URL, an alias, a git or file dependency). A row it has to add is downloaded from
 # registry.npmjs.org and must have the lockfile's sha512. It does not re-fetch a row that is already in the table.
+# It covers the directories of the `--set` arguments (site and service/api); the service/infra lockfiles bundle packages
+# the tool refuses, so they are left out (see autopin-compute.yml).
 #
 # The job holds a read-only token and no secret, environment, id-token or cache, and has no condition and no
 # filter: a skipped check is a check that did not run. It does not look at who the actor is. The tool is the
@@ -46,7 +48,7 @@ jobs:
           tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP/br" --strip-components=1
       - name: Every pin table is what its lockfile calls for
         run: |
-          "$RUNNER_TEMP/br/buildrules" autopin compute --event "$GITHUB_EVENT_PATH" --out "$RUNNER_TEMP/pin-verify" --set site=buildrules-lock --set service/api=buildrules-lock --set service/infra/stacks=pins-lock --set service/infra/dns=pins-lock --set service/infra/access=pins-lock
+          "$RUNNER_TEMP/br/buildrules" autopin compute --event "$GITHUB_EVENT_PATH" --out "$RUNNER_TEMP/pin-verify" --set site=buildrules-lock --set service/api=buildrules-lock
       - name: No table would change
         run: |
           stale="$(find "$RUNNER_TEMP/pin-verify" -type f ! -name manifest.json)"

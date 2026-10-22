@@ -1,8 +1,10 @@
 # autopin-compute: the unprivileged half of the automatic pin update of a Dependabot pull request.
 #
 # When Dependabot opens or updates a pull request, this regenerates the pin tables the pull request's
-# lockfiles call for (buildrules.lock.bzl, pins.lock.bzl) with a released `buildrules`, and uploads them as an
-# artifact. It writes nothing to the repository and holds nothing to steal: a read-only token, no secret, no
+# lockfiles call for with a released `buildrules`, and uploads them as an artifact. The directories are the
+# `--set` arguments: site and service/api (buildrules.lock.bzl). The three service/infra packages are not in the
+# list on purpose: their lockfiles bundle packages (aws-cdk-lib), which `autopin compute` refuses, so a Dependabot
+# pull request there is pinned by a person with kpin, as before (tests/drivers/hygiene.zig names them). It writes nothing to the repository and holds nothing to steal: a read-only token, no secret, no
 # environment, no id-token, no cache. autopin-commit.yml, which runs from the default branch, reads the artifact
 # as untrusted bytes and decides whether to commit it.
 #
@@ -53,7 +55,7 @@ jobs:
           tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP/br" --strip-components=1
       - name: Regenerate the pin tables the lockfiles call for
         run: |
-          "$RUNNER_TEMP/br/buildrules" autopin compute --event "$GITHUB_EVENT_PATH" --out "$RUNNER_TEMP/autopin-out" --set site=buildrules-lock --set service/api=buildrules-lock --set service/infra/stacks=pins-lock --set service/infra/dns=pins-lock --set service/infra/access=pins-lock
+          "$RUNNER_TEMP/br/buildrules" autopin compute --event "$GITHUB_EVENT_PATH" --out "$RUNNER_TEMP/autopin-out" --set site=buildrules-lock --set service/api=buildrules-lock
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: autopin-${{ github.run_id }}-${{ github.run_attempt }}

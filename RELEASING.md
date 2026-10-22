@@ -16,7 +16,7 @@ verifying, and no beta. The tiers:
 |---|---|---|
 | unit (each library) | `ci.yml` `test` (`zig build test`) and `registry-build`; `service-ci.yml` (typecheck and tests of the API, site, stacks, DNS and access packages, and the CDK synth with dummy values); `farm.yml` (on the test farm, the tests are welded into the targets: a pull request builds every target except the beta ones that run against the real Mojo, `//:autolink`, `//:discovery`, `//:flaky`, `//:install_e2e`, `//:mojo_probe`, `//:native_static`, `//:supervisor` and `//:user_beta`; a push to main builds `//...`) | every pull request, and a push to main |
 | lint | `lint.yml`: hygiene, workflow lint, lint self-test, **the release lint of `release.yml`** (so a broken `release.yml` still fails a pull request) and actionlint | every pull request, and a push to main |
-| pin check | `pin-verify.yml`: every pin table (`buildrules.lock.bzl`, `pins.lock.bzl`) is what its `package-lock.json` calls for; secretless, no condition, so it always reports (`autopin-compute.yml` runs only for Dependabot's own pull requests; see "The Dependabot pin update") | every pull request |
+| pin check | `pin-verify.yml`: every pin table it covers (`site/` and `service/api/`) is what its `package-lock.json` calls for; secretless, no condition, so it always reports (`autopin-compute.yml` runs only for Dependabot's own pull requests; see "The Dependabot pin update") | every pull request |
 | beta (each component) | `ci.yml` `mojo-e2e`, `pack-conformance` and `installer`; then `release-beta-user.yml`, the candidate used as a user | after the merge only: `release.yml` stage `beta` (the whole of `ci.yml`) and stage `beta-user` |
 | gamma (the whole system, real consumers) | `promote.yml` (`deploy.yml`, `e2e.yml`) | after a release, never on a pull request |
 
@@ -326,10 +326,13 @@ It prints the pin for the `linux-x86_64` tarball. It changes nothing.
 
 ## The Dependabot pin update (`autopin-compute.yml`, `autopin-commit.yml`, `pin-verify.yml`)
 
-A Dependabot bump of a `package-lock.json` leaves its pin table (`buildrules.lock.bzl` in `site/` and `service/api/`,
-`pins.lock.bzl` in `service/infra/*`) stale, and the table needs a sha256 and a size that only the tarball gives. Two
-workflows make the pull request green without a person, and a third checks the result. None of them merges or approves
-anything; the pull request still needs a person to read the lockfile diff.
+A Dependabot bump of a `package-lock.json` leaves its pin table (`buildrules.lock.bzl` in `site/` and `service/api/`)
+stale, and the table needs a sha256 and a size that only the tarball gives. Two workflows make the pull request green
+without a person, and a third checks the result. None of them merges or approves anything; the pull request still needs a
+person to read the lockfile diff. The three `service/infra/*` packages are not covered: their lockfiles bundle packages
+(aws-cdk-lib has many; an entry with no `resolved` and no `integrity`), which `autopin compute` refuses, and `pin-verify` runs
+the same tool over every directory it covers. A Dependabot pull request there is pinned by a person with kpin (CONTRIBUTING.md),
+and `tests/drivers/hygiene.zig` names these three (`autopin_manual`) so that a fourth package cannot be forgotten.
 
 | workflow | trigger | holds | does |
 |---|---|---|---|
@@ -348,7 +351,7 @@ Dependabot's 7-day `cooldown` and the person who reads the lockfile diff.
 The tool is the released `buildrules`, fetched by tag and checked with `sha256sum -c` against a sha256 written in each of the three
 files (`BUILDRULES_VERSION` and `BUILDRULES_SHA256`), never built from a pull request. To move it, bump all three in one pull request to
 main; `tests/drivers/autopin_lint.zig` fails when they differ. The directories the tool may write are the `--set` arguments, the same
-in all four invocations; `//:hygiene` fails a package with a `package-lock.json` that has no `--set`.
+in all four invocations; `//:hygiene` fails a package with a `package-lock.json` that has no `--set` and is not in its list of packages left to a person.
 `tests/drivers/autopin_lint.zig` (`//:autopin_workflows`, run by `lint.yml`) holds the gates, the scope of every token, the order of
 the steps in `autopin-commit.yml` and the artifact's name, with a planted mutant per rule, and for every workflow: `workflow_run`
 in `autopin-commit.yml` alone, `push` only for `main` or tags, what a pull request can reach (no environment, no secret, one
