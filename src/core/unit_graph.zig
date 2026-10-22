@@ -270,8 +270,19 @@ const Builder = struct {
 
     /// A member's directory must sit below the workspace: Buck2 inputs do.
     fn checkBelow(b: *Builder, what: []const u8, rel: []const u8) !void {
+        return b.checkBelowWritten(what, rel, rel);
+    }
+
+    /// As `checkBelow`, for a path written in a manifest or lock as `written` that resolves to `rel`: the refusal
+    /// shows the path as written, and the resolved one when it differs (`.` is the workspace itself).
+    fn checkBelowWritten(b: *Builder, what: []const u8, written: []const u8, rel: []const u8) !void {
         if (rel.len == 0 or rel[0] == '/' or std.mem.eql(u8, rel, "..") or std.mem.startsWith(u8, rel, "../") or std.mem.indexOf(u8, rel, "/../") != null or std.mem.endsWith(u8, rel, "/..")) {
-            return b.fail("{s} is {s}, which is not below the workspace {s}; a unit graph takes members below the workspace only", .{ what, rel, b.in.dir });
+            const resolved = if (rel.len == 0) "." else rel;
+            const shown = if (written.len == 0) "." else written;
+            if (std.mem.eql(u8, shown, resolved)) {
+                return b.fail("{s} is {s}, which is not below the workspace {s}; a unit graph takes members below the workspace only", .{ what, shown, b.in.dir });
+            }
+            return b.fail("{s} is {s} (resolves to {s}), which is not below the workspace {s}; a unit graph takes members below the workspace only", .{ what, shown, resolved, b.in.dir });
         }
     }
 
@@ -380,7 +391,7 @@ const Builder = struct {
         if (p.source == .path) {
             const mp = try b.fromWorkspace(b.in.pkg, p.path);
             const what = try std.fmt.allocPrint(b.arena, "the path dependency {s}", .{name});
-            try b.checkBelow(what, mp);
+            try b.checkBelowWritten(what, p.path, mp);
             const file = try b.join(mp, "mopm.toml");
             const text = try b.readRel(file);
             var diag: manifest.Diagnostic = .{};
@@ -1692,8 +1703,16 @@ test "the root package's tests are planned from its own directory, named from th
     const dir = try tmp.dir.realpathAlloc(a, ".");
     var why: []const u8 = "";
     const g = try siblingGraph(a, dir, "app", "b = { path = \"../b\" }\n", try sibLock(a, sib_b_to_c), &why);
+    // b, c and d each have tests/test_<name>.mojo; none of them is a unit, and no unit lists one as a source.
     try std.testing.expectEqual(@as(usize, 1), countKind(g, "test"));
-    const t = g.units[g.find("app@1.0.0#mojo1.0.0/test:app/tests/test_app.mojo") orelse return error.NoSuchUnit];
+    for (g.units) |u| {
+        if (std.mem.eql(u8, u.kind, "test")) try std.testing.expectEqualStrings("app", u.package);
+        for (u.srcs) |s| {
+            try std.testing.expect(std.mem.indexOf(u8, s.path, "test_b.mojo") == null);
+            try std.testing.expect(std.mem.indexOf(u8, s.path, "test_c.mojo") == null);
+        }
+    }
+    const t =g.units[g.find("app@1.0.0#mojo1.0.0/test:app/tests/test_app.mojo") orelse return error.NoSuchUnit];
     try std.testing.expectEqualStrings("app/tests/test_app.mojo", t.srcs[0].path);
     try std.testing.expectEqualStrings("test_app.pass", t.outputs[0]);
 }
@@ -1730,7 +1749,7 @@ test "a member outside the workspace root is refused, naming the member and the 
         \\{"name": "outside", "version": "0.1.0", "source": "path", "path": "../../outside"}
     );
     try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "outside = { path = \"../../outside\" }\n", lock_text, &why));
-    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency outside is ../outside") != null);
+    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency outside is ../../outside (resolves to ../outside), which is not below the workspace ") != null);
     try std.testing.expect(std.mem.indexOf(u8, why, "not below the workspace ") != null);
     try std.testing.expect(std.mem.indexOf(u8, why, dir) != null);
 }
@@ -1752,7 +1771,94 @@ test "a member reached through another member is checked against the workspace r
         \\{"name": "far", "version": "0.1.0", "source": "path", "path": "../../far"}
     );
     try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "b = { path = \"../b\" }\n", lock_text, &why));
-    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency far is ../far") != null);
+    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency far is ../../far (resolves to ../far), which is not below the workspace ") != null);
+}
+
+test "a path that goes up and back down shows as written and as resolved" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeSibling(a, tmp.dir, "repo/app", "app", "x = { path = \"../x/../../x\" }\n");
+    try writeSibling(a, tmp.dir, "x", "x", "");
+    const dir = try tmp.dir.realpathAlloc(a, "repo");
+    var why: []const u8 = "";
+    const lock_text = try sibLock(a,
+        \\{"name": "x", "version": "0.1.0", "source": "path", "path": "../x/../../x"}
+    );
+    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "x = { path = \"../x/../../x\" }\n", lock_text, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency x is ../x/../../x (resolves to ../x), which is not below the workspace ") != null);
+}
+
+test "a member that is the workspace itself is refused with a path shown, not an empty one" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeSibling(a, tmp.dir, "repo/app", "app", "top = { path = \"..\" }\n");
+    try put(tmp.dir, "repo/mopm.toml", "[package]\nname = \"top\"\nversion = \"0.1.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n");
+    const dir = try tmp.dir.realpathAlloc(a, "repo");
+    var why: []const u8 = "";
+    const lock_text = try sibLock(a,
+        \\{"name": "top", "version": "0.1.0", "source": "path", "path": ".."}
+    );
+    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "top = { path = \"..\" }\n", lock_text, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency top is .. (resolves to .), which is not below the workspace ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, why, " is , ") == null);
+}
+
+test "a path written with ./ segments or a trailing slash is the same member as the plain one" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeSiblings(a, tmp.dir);
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    const lock_text = try sibLock(a,
+        \\{"name": "b", "version": "0.1.0", "source": "path", "path": "./../b/./", "deps": ["c"]},
+        \\{"name": "c", "version": "0.1.0", "source": "path", "path": "../c/"}
+    );
+    const g = try siblingGraph(a, dir, "app", "b = { path = \"./../b/./\" }\n", lock_text, &why);
+    const plain = try siblingGraph(a, dir, "app", "b = { path = \"../b\" }\n", try sibLock(a, sib_b_to_c), &why);
+    try std.testing.expectEqual(@as(usize, 3), countKind(g, "lib"));
+    const b = g.units[g.find("b@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("b/src/b", b.root);
+    try std.testing.expectEqualStrings("b/src/b/__init__.mojo", b.srcs[0].path);
+    const c = g.units[g.find("c@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("c/src/c", c.root);
+    try std.testing.expectEqualStrings(try render(a, plain), try render(a, g));
+}
+
+test "a library that points into a sibling whose name starts with its package's name is refused" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // app and app2 side by side: ../app2/... starts with "app" but is not inside app. Likewise mem and mem2 for a member.
+    try writeSibling(a, tmp.dir, "app", "app", "");
+    try writeSibling(a, tmp.dir, "app2", "app2", "");
+    try writeSibling(a, tmp.dir, "mem", "mem", "");
+    try writeSibling(a, tmp.dir, "mem2", "mem2", "");
+    try put(tmp.dir, "mem/mopm.toml", "[package]\nname = \"mem\"\nversion = \"0.1.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n\n[targets]\nlib = { path = \"../mem2/src/mem2\" }\n");
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var diag: manifest.Diagnostic = .{};
+
+    var why: []const u8 = "";
+    const m = try manifest.parse(a, try std.mem.concat(a, u8, &.{ sib_root_toml, "\n[targets]\nlib = { path = \"../app2/src/app2\" }\n" }), &diag);
+    const l = try lock.parse(a, try sibLock(a, ""), &why);
+    try std.testing.expectError(error.Refused, build(a, .{ .dir = dir, .pkg = "app", .m = m, .members = &.{}, .l = l, .subdir = "linux-64", .mojo = "1.0.0", .toolchain = fakeToolchain("1.0.0") }, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "the library of the root package is app2/src/app2, which is not inside its package app") != null);
+
+    const lock_text = try sibLock(a,
+        \\{"name": "mem", "version": "0.1.0", "source": "path", "path": "../mem"}
+    );
+    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "mem = { path = \"../mem\" }\n", lock_text, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "the library of a path dependency is mem2/src/mem2, which is not inside its package mem") != null);
 }
 
 test "without a workspace root a sibling is refused as it always was: the workspace is the package directory" {

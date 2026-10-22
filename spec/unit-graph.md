@@ -181,6 +181,11 @@ directory (compared after resolving links). Then:
 - the package's own library, binaries and tests are found in its directory, as
   they are without the flag; a library or binary the manifest points at outside
   the package is refused. Tests of members are not planned;
+- the "below `<dir>`" check is lexical: `.` and `..` in the paths of `mopm.toml`
+  and `mopm.lock` are resolved as text, and symlinks inside `<dir>` are neither
+  followed nor checked. A member that is a symlink pointing outside `<dir>` is
+  accepted, as it is without the flag. A refusal shows the path as written and,
+  when it differs, the resolved one (`.` for `<dir>` itself);
 - a unit's `key` hashes its rendering, so it depends on the path from `<dir>`
   and not on where `<dir>` is on disk: the same repository checked out
   elsewhere gives the same graph.
