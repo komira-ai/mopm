@@ -70,7 +70,9 @@ tests = ["tests"]
   one needs) and `exclusive` (a group name) are copied into that entry. `mopm
   pack` packs a library with `kind = "static"` and `mode = "link"`, from the
   archive given per subdir (`--native <id>=<subdir>:<file>`); a package that
-  declares one has no `noarch` file.
+  declares one has no `noarch` file. A static library can also give `srcs`,
+  `hdrs`, `cflags`, `cflags_by_os`, `includes` and `soname`: the C sources a
+  build system compiles into its archive (`unit-graph.md`, "Member natives").
 - `[targets]`: the library, executables and tests to build.
 
 ## Other tools' settings: `[package.metadata]`
