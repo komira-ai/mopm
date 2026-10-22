@@ -6,6 +6,7 @@ import { validatePackage } from '../validate';
 import type { PackageFacts, RejectionCode, ValidatorOptions } from '../validate';
 import type { PublishConfig } from './config';
 import type { ObjectStore, PublishStore, Queue } from './ports';
+import { sendIndexPkg } from './indexer';
 import { liveBytes } from './service';
 import type { IndexMessage, PublishFile, PublishRecord } from './types';
 
@@ -179,6 +180,11 @@ async function moveToIndexing(d: ValidatorDeps, rec: PublishRecord): Promise<voi
 }
 
 async function sendIndex(d: ValidatorDeps, rec: PublishRecord): Promise<void> {
+  if (rec.remaining_subdirs.length === 0 && rec.index_pending) {
+    // A retry after the last repodata job: only the package's index file is left to ask for.
+    await sendIndexPkg({ registry: d.registry, indexQueue: d.indexQueue }, { name: rec.name, publishId: rec.publish_id });
+    return;
+  }
   for (const subdir of rec.remaining_subdirs) {
     const msg: IndexMessage = { type: 'index', subdir, publish_id: rec.publish_id };
     // One group per subdir: its repodata is rewritten by one job at a time.

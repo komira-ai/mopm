@@ -1,10 +1,11 @@
 {
-  "description": "An index message with a publish id also moves that publish on, after the files are written: the subdir leaves remaining_subdirs and, when none is left, the status becomes published (a compare-and-swap Put on rev, rev + 1, updated_at from the clock).",
+  "description": "An index message with a publish id also moves that publish on, after the files are written: the subdir leaves remaining_subdirs and, when none is left, the publish is marked index_pending (a compare-and-swap Put on rev, rev + 1, updated_at from the clock; the status stays indexing) and the package's index job is queued in the package's FIFO group, with the package revision read from the registry. The publish becomes published only when that job has written the package's index file.",
   "lambda": "indexer",
   "env": {
     "MOPM_STAGE": "beta",
     "MOPM_CHANNEL_BUCKET": "channel-bucket",
-    "MOPM_DISTRIBUTION_ID": "DIST1"
+    "MOPM_DISTRIBUTION_ID": "DIST1",
+    "MOPM_INDEX_QUEUE_URL": "index-queue-url"
   },
   "dynamo": [
     {
@@ -21,7 +22,8 @@
             "noarch"
           ],
           "rev": 3,
-          "updated_at": "2026-09-30T00:00:00.000Z"
+          "updated_at": "2026-09-30T00:00:00.000Z",
+          "name": "demo"
         }
       }
     }
@@ -66,10 +68,19 @@
         "condition": "#r = :r",
         "item": {
           "publish_id": "pub_abc",
-          "status": "published",
+          "status": "indexing",
           "remaining_subdirs": [],
           "rev": 4,
-          "updated_at": "2026-10-01T00:00:00.000Z"
+          "updated_at": "2026-10-01T00:00:00.000Z",
+          "name": "demo",
+          "index_pending": true
+        }
+      },
+      {
+        "op": "Query",
+        "table": "mopm-beta-versions",
+        "values": {
+          ":n": "demo"
         }
       }
     ],
@@ -175,6 +186,15 @@
           "content-type": "text/xml"
         },
         "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><InvalidationBatch xmlns=\"http://cloudfront.amazonaws.com/doc/2020-05-31/\"><Paths><Quantity>2</Quantity><Items><Path>/noarch/repodata.json</Path><Path>/noarch/repodata.json.zst</Path></Items></Paths><CallerReference>index-noarch-pub_abc-1790812800000</CallerReference></InvalidationBatch>"
+      },
+      {
+        "method": "POST",
+        "url": "https://sqs.us-east-1.amazonaws.com/",
+        "headers": {
+          "content-type": "application/x-amz-json-1.0",
+          "x-amz-target": "AmazonSQS.SendMessage"
+        },
+        "body": "{\"QueueUrl\":\"index-queue-url\",\"MessageBody\":\"{\\\"type\\\":\\\"index_pkg\\\",\\\"name\\\":\\\"demo\\\",\\\"rev\\\":0,\\\"publish_id\\\":\\\"pub_abc\\\"}\",\"MessageGroupId\":\"pkg:demo\",\"MessageDeduplicationId\":\"demo:0:pub_abc\"}"
       }
     ],
     "logs": [

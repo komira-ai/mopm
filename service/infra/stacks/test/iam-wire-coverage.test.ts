@@ -102,6 +102,15 @@ describe('wire goldens', () => {
       expect([...refused].map(([k, v]) => `${k}  <- ${[...v].join(', ')}`).sort()).toEqual([]);
     });
 
+    // Yank and unyank read every row of the package (listVersions) to put its revision on the index job they queue, so
+    // the API role needs this exact call, and no Scan: the writer's whole-registry read stays with the index writer.
+    test('the package-revision read of a yank (a Query of the versions table) is allowed, and the API role still has no Scan', () => {
+      const q = calls.find((c) => c.action === 'dynamodb:Query' && c.table === 'versions' && !c.index);
+      expect(q).toBeDefined();
+      expect(covered(q!, allowed())).toBe(true);
+      expect(allowed().flatMap(acts).filter((a) => a === 'dynamodb:Scan')).toEqual([]);
+    });
+
     test('NOT_ROUTED lists only calls the goldens make and the policy refuses', () => {
       const st = allowed();
       for (const k of Object.keys(NOT_ROUTED)) {
