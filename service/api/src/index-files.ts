@@ -138,6 +138,7 @@ export function buildIndexConfig(c: IndexConfigInput): string {
   for (const [what, host] of [['apiDomain', c.apiDomain], ['channelDomain', c.channelDomain]] as const) {
     if (!HOST.test(host)) throw new Error(`index config: ${what} '${host}' is not a bare host name`);
   }
+  if (!c.channelDomain.startsWith('conda.')) throw new Error(`index config: channelDomain '${c.channelDomain}' must start with 'conda.'`);
   return (
     canonicalJson({
       index_version: INDEX_VERSION,

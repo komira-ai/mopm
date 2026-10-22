@@ -129,6 +129,12 @@ describe('config values', () => {
   });
 });
 
+describe('channel host of the config', () => {
+  test.each(['mopm.dev', 'api.mopm.dev', 'channel.mopm.dev'])('refuses the channel host %j without the conda. prefix', (h) => {
+    expect(() => buildIndexConfig({ stage: 'prod', apiDomain: 'api.mopm.dev', channelDomain: h, readOnly: false })).toThrow(/must start with 'conda\.'/);
+  });
+});
+
 describe('path of a package', () => {
   test.each([
     ['http_client', 'index/ht/tp/http_client'],
