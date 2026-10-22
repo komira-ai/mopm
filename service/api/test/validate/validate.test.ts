@@ -369,6 +369,8 @@ describe('metadata consistency', () => {
     ['a bad kind', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', kind: 'weird', file: '../libfoo.so' }] }],
     ['a bad mode', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', mode: 'x', file: '../libfoo.so' }] }],
     ['needs that is not strings', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', needs: [1] }] }],
+    ['an exclusive group that is not a string', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: 1 }] }],
+    ['an empty exclusive group', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: '' }] }],
   ];
   test.each(bad)('schema: %s', (_n, mopm) => {
     refusedBuild({ mopm: JSON.stringify(mopm) }, 'manifest_schema');
@@ -495,7 +497,8 @@ describe('the verdict codes are the contract', () => {
     expect(native.properties.kind.enum).toEqual([...NATIVE_KINDS]);
     expect(native.properties.mode.enum).toEqual([...NATIVE_MODES]);
     expect(new RegExp(native.properties.soname.pattern).source).toBe(SONAME_PATTERN.source);
-    expect(Object.keys(native.properties).sort()).toEqual(['file', 'id', 'kind', 'mode', 'needs', 'soname', 'static_file']);
+    expect(Object.keys(native.properties).sort()).toEqual(['exclusive', 'file', 'id', 'kind', 'mode', 'needs', 'soname', 'static_file']);
+    expect(native.properties.exclusive).toEqual({ description: expect.any(String), type: 'string', minLength: 1 });
     expect(Object.keys(schema.properties).sort()).toEqual(['deps', 'name', 'native', 'schema', 'version']);
   });
 });

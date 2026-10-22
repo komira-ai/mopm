@@ -2356,6 +2356,15 @@
       }
     },
     {
+      "id": "meta_manifest_native_bad_exclusive",
+      "verdict": {
+        "ok": false,
+        "rejection_code": "manifest_invalid",
+        "rule": "manifest_schema",
+        "message": "<name>.mopm.json: native 'a': 'exclusive' must be a non-empty string"
+      }
+    },
+    {
       "id": "meta_native_path_climbs",
       "verdict": {
         "ok": false,
