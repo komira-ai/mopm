@@ -75,13 +75,17 @@ test "deploy.yml and e2e.yml: the guard gates the one credential job" {
     try expectRepo("e2e.yml", "      id-token: write\n", "      id-token: read\n", &.{"e2e.yml: expected exactly one job with id-token"});
 }
 
-test "e2e.yml: the index gate stays curl only, guarded, and asserts its three answers" {
+test "e2e.yml: the index gate stays curl only, guarded, and asserts its three answers exactly" {
     try expectRepo("e2e.yml", "  index-gate:\n    needs: guard\n", "  index-gate:\n    needs: other\n", &.{"e2e.yml: index-gate must need the guard job"});
     try expectRepo("e2e.yml", "    if: github.ref == 'refs/heads/main'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n", "    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n", &.{"e2e.yml: index-gate must run on main only"});
     try expectRepo("e2e.yml", "    timeout-minutes: 10\n    permissions:\n      contents: read\n", "    timeout-minutes: 10\n    environment: ${{ inputs.stage }}\n    permissions:\n      contents: read\n", &.{"e2e.yml: index-gate must not declare an environment"});
     try expectRepo("e2e.yml", "    timeout-minutes: 10\n    permissions:\n      contents: read\n", "    timeout-minutes: 10\n    permissions:\n      contents: read\n      id-token: write\n", &.{ "e2e.yml: expected exactly one job with id-token", "e2e.yml: index-gate must declare an environment", "e2e.yml: index-gate must grant exactly contents read" });
     try expectRepo("e2e.yml", "code=$(get /takedowns.json)", "code=$(get /takedowns)", &.{"e2e.yml: index-gate script lost `get /takedowns.json`"});
-    try expectRepo("e2e.yml", "[ \"$code\" = \"404\" ]", "[ \"$code\" = \"403\" ]", &.{"e2e.yml: index-gate script lost `= \"404\"`"});
+    try expectRepo("e2e.yml", "[ \"$code\" = \"404\" ]", "[ \"$code\" = \"403\" ]", &.{ "e2e.yml: index-gate script lost `= \"404\"`", "e2e.yml: index-gate script lost `if [ \"$code\" = \"404\" ]; then`" });
+    try expectRepo("e2e.yml", "          [ \"$failed\" = \"0\" ] || { echo \"sparse index gate failed on stage ${STAGE}\" >&2; exit 1; }\n", "", &.{"e2e.yml: index-gate script lost `\n[ \"$failed\" = \"0\" ] || { echo \"sparse index gate failed on stage ${STAGE}\" >&2; exit 1; }\n`"});
+    try expectRepo("e2e.yml", "                 and .stage == $stage\n", "", &.{"e2e.yml: index-gate script lost `and .stage == $stage`"});
+    try expectRepo("e2e.yml", "(.index_version | type == \"number\" and . == 1) and (.takedowns", "(.index_version | type == \"number\") and (.takedowns", &.{"e2e.yml: index-gate script lost `(.index_version | type == \"number\" and . == 1)` (config.json and takedowns.json both need it)"});
+    try expectRepo("e2e.yml", "if [ \"$code\" = \"404\" ]; then", "if [ \"$code\" = \"404\" ] || [ \"$code\" = \"403\" ]; then", &.{ "e2e.yml: index-gate script lost `if [ \"$code\" = \"404\" ]; then`", "e2e.yml: index-gate must accept only 404 for the absent package" });
 }
 
 test "oidc-subject-check.yml: manual, guarded, beta or no environment, exact permissions" {

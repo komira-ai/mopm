@@ -564,7 +564,7 @@ fn idTokenWrite(job: Value) bool {
 }
 
 /// e2e.yml's index-gate job (Gate 1 of the sparse index): curl only, so it needs the guard, runs on main, holds no id-token and
-/// no environment, and reads the repository and nothing else. Its script must keep the three requests and the failure exit.
+/// no environment, and reads the repository and nothing else. Its script must keep the three requests and the final failing exit.
 fn indexGateProblems(a: Allocator, doc: Value, out: *Out) !void {
     const job = c.get(c.get(doc, "jobs"), "index-gate") orelse return c.problem(a, out, prefix ++ "e2e.yml: the index-gate job is missing", .{});
     if (!c.containsStr(try c.arrayOf(a, c.get(job, "needs")), "guard")) try c.problem(a, out, prefix ++ "e2e.yml: index-gate must need the guard job", .{});
@@ -587,11 +587,18 @@ fn indexGateProblems(a: Allocator, doc: Value, out: *Out) !void {
         "get /e2/e_/e2e_no_such_package",
         "!= \"200\"",
         "= \"404\"",
-        "exit 1",
+        "if [ \"$code\" = \"404\" ]; then",
+        "and .stage == $stage",
+        "\n[ \"$failed\" = \"0\" ] || { echo \"sparse index gate failed on stage ${STAGE}\" >&2; exit 1; }\n",
     };
     for (needles) |n| {
         if (std.mem.indexOf(u8, script.items, n) == null) try c.problem(a, out, prefix ++ "e2e.yml: index-gate script lost `{s}`", .{n});
     }
+    // Both the config and the takedown log must pin index_version to the number 1.
+    const version_pin = "(.index_version | type == \"number\" and . == 1)";
+    if (std.mem.count(u8, script.items, version_pin) < 2) try c.problem(a, out, prefix ++ "e2e.yml: index-gate script lost `{s}` (config.json and takedowns.json both need it)", .{version_pin});
+    // The absent package is accepted on exactly 404: no other status is compared for equality.
+    if (std.mem.count(u8, script.items, "\"$code\" = ") != 1) try c.problem(a, out, prefix ++ "e2e.yml: index-gate must accept only 404 for the absent package", .{});
 }
 
 fn sortedKeys(a: Allocator, v: ?Value) ![]const []const u8 {
