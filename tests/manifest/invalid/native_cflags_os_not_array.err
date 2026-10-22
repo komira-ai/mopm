@@ -1,0 +1,1 @@
+9:1: 'macos' in cflags_by_os of [native.shim] must be an array of strings, not a string

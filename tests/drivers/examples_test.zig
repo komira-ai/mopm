@@ -287,7 +287,7 @@ fn toolchain(cx: *Cx) !void {
     try cx.prints("toolchain: mopm lock", "toolchain", &.{ "lock", "--registry", dead_registry }, "toolchain/expected/lock.txt");
     cx.rep.same("toolchain: a version 2 lock with the closure hash of the pinned toolchain", try cx.committed("toolchain/expected/mopm.lock"), try scrub(cx.a, try cx.copied("toolchain/mopm.lock")));
     const plan = try cx.run("toolchain", &.{ "plan", "--unit-graph", "--locked" });
-    cx.rep.check("toolchain: mopm plan prints the unit graph of the lock", plan.code == 0 and h.contains(plan.stdout, "\"unit_graph\": 1") and h.contains(plan.stdout, "\"id\": \"pinned@0.1.0#mojo1.0.0/lib\"") and h.contains(plan.stdout, "\"closure_sha256\": \""), try cx.fmt("exit {d}: {s}{s}", .{ plan.code, plan.stdout, plan.stderr }));
+    cx.rep.check("toolchain: mopm plan prints the unit graph of the lock", plan.code == 0 and h.contains(plan.stdout, "\"unit_graph\": 2") and h.contains(plan.stdout, "\"id\": \"pinned@0.1.0#mojo1.0.0/lib\"") and h.contains(plan.stdout, "\"closure_sha256\": \""), try cx.fmt("exit {d}: {s}{s}", .{ plan.code, plan.stdout, plan.stderr }));
     // A Mojo version mopm pins no toolchain for cannot be listed.
     try cx.variant("toolchain_unpinned", "toolchain/mopm.toml", "mojo = [\"1.0.0\"]", "mojo = [\"1.0.0\", \"1.1.0\"]");
     try cx.put("toolchain_unpinned/src/pinned/__init__.mojo", try cx.committed("toolchain/src/pinned/__init__.mojo"));

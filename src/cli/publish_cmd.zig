@@ -323,6 +323,13 @@ fn nativeFiles(arena: Allocator, m: manifest.Manifest, f: Flags) anyerror!Files 
             if (try conda.nativeProblem(arena, native)) |why| {
                 return nativeBad(arena, "{s}: {s}", .{ nf.path, why });
             }
+            // A native the build system builds from `srcs` has the name the unit graph gave its archive; consumers' `needs` name it.
+            if (n.srcs.len > 0) {
+                const want = try n.archiveName(arena);
+                if (!std.mem.eql(u8, want, native.soname)) {
+                    return nativeBad(arena, "{s}: native library '{s}' is built as {s} (its soname in {s}); the archive given is named {s}", .{ nf.path, n.id, want, f.manifest, native.soname });
+                }
+            }
             // The first subdir fixes the name; a later one that differs would make a different `.mopm.json`.
             for (by_subdir.get(f.mojoc[0].subdir) orelse &.{}) |first| {
                 if (std.mem.eql(u8, first.id, n.id) and !std.mem.eql(u8, first.soname, native.soname)) {
@@ -781,6 +788,41 @@ test "nativeFiles reads the archive of each native library for each subdir it pa
         try std.testing.expect(found == .bad);
         try std.testing.expect(std.mem.indexOf(u8, found.bad, r.want) != null);
     }
+}
+
+test "a member's native built from srcs is packed from the archive the build system gives, under the soname the graph names" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile("libshim.a", "!<arch>\nshim\n");
+    try tmp.dir.writeFile("libother.a", "!<arch>\nother\n");
+    const root = try tmp.dir.realpathAlloc(a, ".");
+    var diag: manifest.Diagnostic = .{};
+    const head = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n";
+    const m = try manifest.parse(a, head ++ "[native.shim]\nkind = \"static\"\nsrcs = [\"native/*.c\"]\n", &diag);
+    const renamed = try manifest.parse(a, head ++ "[native.shim]\nkind = \"static\"\nsrcs = [\"native/*.c\"]\nsoname = \"libother.a\"\n", &diag);
+    const linux = Mojoc{ .subdir = "linux-64", .path = "x" };
+    const file = NativeFile{ .id = "shim", .subdir = "linux-64", .path = try std.fs.path.join(a, &.{ root, "libshim.a" }) };
+
+    // The archive is packed as a registry native is; its name is lib<id>.a, the soname the unit graph gave it.
+    const got = try nativeOk(a, m, nativeFlags(&.{linux}, &.{file}));
+    const packed_native = got.get("linux-64").?[0];
+    try std.testing.expectEqualStrings("shim", packed_native.id);
+    try std.testing.expectEqualStrings("libshim.a", packed_native.soname);
+    try std.testing.expectEqualStrings("!<arch>\nshim\n", packed_native.archive);
+
+    // An archive under another name than the unit's soname is refused: consumers' `needs` name the soname.
+    const found = try nativeFiles(a, renamed, nativeFlags(&.{linux}, &.{file}));
+    try std.testing.expect(found == .bad);
+    try std.testing.expect(std.mem.indexOf(u8, found.bad, "native library 'shim' is built as libother.a") != null);
+    try std.testing.expect(std.mem.indexOf(u8, found.bad, "the archive given is named libshim.a") != null);
+    // A native that the build system does not build (no srcs) keeps taking the name of the file it is given.
+    const legacy = try manifest.parse(a, head ++ "[native.shim]\nkind = \"static\"\n", &diag);
+    const other_file = NativeFile{ .id = "shim", .subdir = "linux-64", .path = try std.fs.path.join(a, &.{ root, "libother.a" }) };
+    const kept = try nativeOk(a, legacy, nativeFlags(&.{linux}, &.{other_file}));
+    try std.testing.expectEqualStrings("libother.a", kept.get("linux-64").?[0].soname);
 }
 
 test "version refusals" {

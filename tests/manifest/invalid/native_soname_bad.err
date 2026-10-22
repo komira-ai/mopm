@@ -1,0 +1,1 @@
+7:1: 'soname' in [native.shim] must be an archive name lib<name>.a with no other dot, not "libshim.so.1"
