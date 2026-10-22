@@ -338,7 +338,7 @@ and `tests/drivers/hygiene.zig` names these three (`autopin_manual`) so that a f
 |---|---|---|---|
 | `autopin-compute.yml` | `pull_request` of Dependabot's own pull request, run for Dependabot, from a branch of this repository (job-level `if:`) | a read-only token; no secret, environment, id-token or cache | runs the released `buildrules autopin compute` over the checkout of the pull request's head and uploads the regenerated tables as the artifact `autopin-<run id>-<attempt>` (never overwritten) |
 | `autopin-commit.yml` | `workflow_run` of the compute run completing (this file on the default branch is the one that runs) | environment `autopin` (the App's id and key), entered only after the job-level `if:` passed; read access until it mints | `autopin commit-check` reads the artifact as untrusted bytes and the pull request and its lockfile from the API and writes the tables it will vouch for; only then is the App token minted (contents write, this repository only) and `autopin commit-push` makes one commit on the pull request's branch with the Git Data API, moving the branch with `force: false` |
-| `pin-verify.yml` | every pull request | a read-only token and nothing else | the required check `pin-verify`: runs the same tool and fails if any table would change |
+| `pin-verify.yml` | every pull request | a read-only token and nothing else | the required check `pin-verify`: runs the same tool and fails if any table would change. It checks that the tables equal compute's output over every `--set` directory; it is not an independent re-fetch of every row (that is `autopin verify-pins`, not released yet) |
 
 The App's own push has the pull request's author but not its actor, so the compute job skips it: that is what stops the loop.
 The commit carries `[dependabot skip]`, so Dependabot keeps managing the pull request and a later Dependabot update replaces it.
@@ -365,11 +365,15 @@ installed and the environment `autopin` holds its key and id):
    (`~ALL`, only the release bot may create), applied before the App's key exists in GitHub.
 2. The GitHub App `komira-autopin` (Contents write and Metadata read, nothing else), installed on this repository, on no bypass list.
 3. The environment `autopin` (deployment branches: `main` only), then the variable `AUTOPIN_APP_ID` and the secret
-   `AUTOPIN_APP_PRIVATE_KEY` in it. Never a repository or Dependabot secret.
+   `AUTOPIN_APP_PRIVATE_KEY` in it. Never a repository or Dependabot secret. This pull request's commit workflow must be
+   merged only after the environment exists with the `main` policy, read back by the owner's setup script: GitHub creates a
+   missing environment on first use, with no deployment branch policy, so a workflow merged earlier would run in an unrestricted one.
 4. The farm's workload-identity trust refusing a `dependabot/*` `head_ref` (a setting outside this repository; `farm.yml` already skips such a branch).
 5. Four probes settle behaviours the GitHub documentation leaves open, before the first live run: T1 the `workflow_run` payload
    (which actor fields a re-run and an `@dependabot` command set, the artifact download's redirect host) and whether a Dependabot-actor
-   run can read an environment secret; T2 that `[dependabot skip]` makes Dependabot keep the pull request; T3 whether a run started by the App's push waits for
+   run can read an environment secret, whether a run the job-level `if:` skips holds the pending slot of the commit workflow's concurrency
+   group (a fork branch named `dependabot/...` shares the `head_branch`; the group is keyed on the pull request number for that reason),
+   and one real `upload-artifact` zip saved as the fixture for the tool's zip reader; T2 that `[dependabot skip]` makes Dependabot keep the pull request; T3 whether a run started by the App's push waits for
    approval; T4 what a Git Data API commit by the App shows (verification, `author.login`, the exact non-fast-forward error).
 
 ## What the CEO has to do before the first release

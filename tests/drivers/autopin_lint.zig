@@ -31,7 +31,8 @@ const environment_name = "autopin";
 const key_secret = "AUTOPIN_APP_PRIVATE_KEY";
 const farm_file = "farm.yml";
 /// The autopin App's bot: its login and the noreply address of its user (the id is the bot user's, not the App's).
-const bot_login = "komira-autopin[bot]";
+const concurrency_group = "autopin-commit-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_branch }}";
+const bot_login ="komira-autopin[bot]";
 const bot_email = "345942487+komira-autopin[bot]@users.noreply.github.com";
 
 /// The job-level gate of autopin-compute.yml: Dependabot's pull request, run for Dependabot, from a branch of this repository.
@@ -406,8 +407,10 @@ fn commitFile(a: Allocator, f: []const u8, doc: Value, text: []const u8, out: *O
     // One commit at a time per pull request, never cancelled; the branch name stays in the expression.
     const conc = c.get(job.node, "concurrency");
     const group = c.str(c.get(conc, "group")) orelse "";
-    if (!contains(group, "${{ github.event.workflow_run.head_branch }}") or !std.mem.startsWith(u8, group, "autopin-commit-") or !isFalse(c.get(conc, "cancel-in-progress"))) {
-        try c.problem(a, out, prefix ++ "{s}: job {s}: concurrency must be `group: autopin-commit-${{{{ github.event.workflow_run.head_branch }}}}` with `cancel-in-progress: false` (one commit at a time per pull request)", .{ f, job.name });
+    // Keyed on the pull request's number; the branch name only when the event lists no pull request. A fork's branch named `dependabot/...`
+    // shares the head_branch of Dependabot's, and must not be able to hold the slot of the real pull request.
+    if (!std.mem.eql(u8, group, concurrency_group) or !isFalse(c.get(conc, "cancel-in-progress"))) {
+        try c.problem(a, out, prefix ++ "{s}: job {s}: concurrency must be `group: {s}` with `cancel-in-progress: false` (one commit at a time per pull request)", .{ f, job.name, concurrency_group });
     }
     const body = try c.nonCommentLines(a, text);
     if (nth(body, "head_branch") != 1) try c.problem(a, out, prefix ++ "{s}: head_branch may appear only in the concurrency group's expression, never in a script or an env", .{f});

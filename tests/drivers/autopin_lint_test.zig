@@ -242,7 +242,11 @@ test "commit: the trigger is the end of the compute workflow, nothing by default
 }
 
 test "commit: one commit at a time per pull request, and the branch name never reaches a script" {
-    try expectRepo(commit, "group: autopin-commit-${{ github.event.workflow_run.head_branch }}", "group: autopin-commit", &.{ "concurrency must be", "head_branch may appear only" });
+    try expectRepo(commit, "group: autopin-commit-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_branch }}", "group: autopin-commit", &.{ "concurrency must be", "head_branch may appear only" });
+    // The group keyed on the branch name alone (a fork's `dependabot/...` branch shares it), on the number alone, or on another element.
+    try expectRepo(commit, "pull_requests[0].number || github.event.workflow_run.head_branch }}", "head_branch }}", &.{"concurrency must be"});
+    try expectRepo(commit, "pull_requests[0].number || github.event.workflow_run.head_branch }}", "pull_requests[0].number }}", &.{ "concurrency must be", "head_branch may appear only" });
+    try expectRepo(commit, "pull_requests[0].number", "pull_requests[1].number", &.{"concurrency must be"});
     try expectRepo(commit, "cancel-in-progress: false", "cancel-in-progress: true", &.{"concurrency must be"});
     try expectRepo(commit, "--app-login \"komira-autopin[bot]\"", "--app-login \"komira-autopin[bot]\" --note head_branch", &.{"head_branch may appear only"});
     try expectRepo(commit, "--app-login \"komira-autopin[bot]\"", "--app-login \"komira-autopin[bot]\" --note github.event.workflow_run.head_branch", &.{ "reads github.event or github.head_ref", "head_branch may appear only" });

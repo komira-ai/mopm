@@ -40,7 +40,7 @@ jobs:
     # One commit at a time per pull request; a waiting one is never cancelled. The branch name is used here only,
     # in an expression, and never reaches a script.
     concurrency:
-      group: autopin-commit-${{ github.event.workflow_run.head_branch }}
+      group: autopin-commit-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_branch }}
       cancel-in-progress: false
     permissions:
       actions: read
