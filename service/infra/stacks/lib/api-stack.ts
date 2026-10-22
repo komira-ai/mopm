@@ -307,7 +307,7 @@ export class ApiStack extends Stack {
     const routeSettings: Record<string, { ThrottlingRateLimit: number; ThrottlingBurstLimit: number }> = {};
     for (const [key, routes] of Object.entries(throttled)) {
       routeSettings[key] = { ThrottlingRateLimit: INDEX_THROTTLE.rateLimit, ThrottlingBurstLimit: INDEX_THROTTLE.burstLimit };
-      stage.node.addDependency(...routes);
+      void routes;
     }
     (stage.node.defaultChild as apigw.CfnStage).routeSettings = routeSettings;
 
