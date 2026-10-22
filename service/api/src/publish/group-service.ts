@@ -240,11 +240,13 @@ export class GroupService {
       const slot = await this.takeSlot(actor, gid, req, now);
       try {
         pre = await this.preflight(gid, req, new Set(slot.supersede), now);
-        await this.charge(p, req, now);
+        const refund = await this.charge(p, req, now);
         await this.supersede(actor, slot.supersede, now);
         const opened = await this.open(actor, gid, req, header, deadline, now);
         header = opened.header;
         created = opened.created;
+        // Another create of the same request wrote the header (or reopened the group) first: that one is the attempt that is charged.
+        if (!created) await refund();
       } catch (err) {
         // The place was taken for a group that will not exist: give it back, so it does not count against the cap.
         await this.releaseSlot(actor, gid).catch(() => undefined);
@@ -302,17 +304,20 @@ export class GroupService {
       return { header: made.header, created: made.created };
     }
     const attempt = dead.attempt + 1;
+    // Set by the last run of the function: the run that wrote the header, or one that found it already reopened.
+    let wrote = false;
     const after = await reg.updateGroup(
       gid,
       (cur) => {
-        if (!isDead(cur.status)) return undefined;
+        wrote = isDead(cur.status);
+        if (!wrote) return undefined;
         const { cursor: _c, yank: _y, repodata_released: _r, index_released: _i, write_order: _w, expires_at: _e, ...rest } = cur;
         return { ...rest, status: 'open', attempt: cur.attempt + 1, deadline_at: deadline, progress_at: at, reserved: '', validated: '', staged: '', copied: '', flipped: '', resend: 0, sweep_pk: 'active', sweep_at: at };
       },
       groupAudit(gid, `a_${gid}_reopen_${attempt}`, 'group_reopen', at, actor, { attempt: String(attempt) }),
     );
     const header = after ?? dead;
-    return { header, created: after !== undefined && after.attempt === attempt && after.status === 'open' };
+    return { header, created: wrote };
   }
 
   /** What every member needs once the group is past reserving: nothing. */
@@ -461,8 +466,10 @@ export class GroupService {
   /**
    * Charge the group counters for the attempt: one hit of the size of the group's file count, on the counter of the token
    * and then on that of the account. They are not the singles' counters, so a group never uses up the singles' budget.
+   * Returns the way to give the charge back: two identical creates at once both charge before either has written the
+   * header, and the one that did not write it gives its charge back, so an attempt is charged once.
    */
-  private async charge(p: Principal, req: GroupRequest, now: Date): Promise<void> {
+  private async charge(p: Principal, req: GroupRequest, now: Date): Promise<() => Promise<void>> {
     const cfg = this.d.config;
     const files = req.members.reduce((n, m) => n + m.files.length, 0);
     const day = dayOf(now);
@@ -476,6 +483,10 @@ export class GroupService {
         throw new PublishError('rate_limited', 'Too many requests.', { retry_after: String(retryAfter) }, retryAfter);
       }
     }
+    // A hit of minus `files` always fits under the limit. Best effort: a failure leaves the attempt charged, as it was.
+    return async () => {
+      for (const [key, limit] of hits) await this.d.publishes.hit(key, limit, expiresAt, -files).catch(() => undefined);
+    };
   }
 
   /** Supersede the actor's own open groups that share a member. A group that began validating meanwhile is never superseded: that refuses the create. */

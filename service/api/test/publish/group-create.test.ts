@@ -1,4 +1,5 @@
 import { bitmapHas, type GroupRecord, type GroupStatus } from '../../src/group-store';
+import { expireIfDue } from '../../src/publish/group-lifecycle';
 import { groupIdFor } from '../../src/publish/group-service';
 import { rec } from '../helpers';
 import { RIGS, reserved, type Rig } from '../group-rig';
@@ -138,6 +139,34 @@ describe.each(RIGS)('groups over the registry: %s', (_label, make) => {
       expect(r.statusCode).toBe(201);
       expect(json(r)).toMatchObject({ group_id: gid, attempt: 2 });
       expect(await actions(rig, 'grp#' + gid)).toEqual(['group_create', 'group_expire', 'group_reopen']);
+    });
+
+    test('a group that is validating stays validating past its deadline: a status read and an identical create leave it as it is', async () => {
+      const me = await env.account(1, 'octocat', ['alpha']);
+      const gid = json(await env.create(me, [env.member('alpha')])).group_id as string;
+      await rig.store.updateGroup(gid, (cur) => ({ ...cur, status: 'validating' }));
+      env.clock.advance(13 * HOUR);
+
+      expect(json(await env.get(me, gid))).toMatchObject({ group_id: gid, status: 'validating', attempt: 1 });
+      const r = await env.create(me, [env.member('alpha')]);
+      expect(r.statusCode).toBe(200);
+      expect(json(r)).toMatchObject({ group_id: gid, status: 'validating', attempt: 1 });
+      expect(await rig.store.getGroup(gid)).toMatchObject({ status: 'validating', attempt: 1 });
+      expect(await actions(rig, 'grp#' + gid)).toEqual(['group_create']);
+    });
+
+    test('an open header read before the group began validating does not expire it: the change is made only to a group that is still open', async () => {
+      const me = await env.account(1, 'octocat', ['alpha']);
+      const gid = json(await env.create(me, [env.member('alpha')])).group_id as string;
+      const staleRead = (await rig.store.getGroup(gid))!;
+      expect(staleRead.status).toBe('open');
+      await rig.store.updateGroup(gid, (cur) => ({ ...cur, status: 'validating' }));
+      env.clock.advance(13 * HOUR);
+
+      const after = await expireIfDue(rig.store, staleRead, env.clock.now());
+      expect(after.status).toBe('validating');
+      expect(await rig.store.getGroup(gid)).toMatchObject({ status: 'validating' });
+      expect(await actions(rig, 'grp#' + gid)).toEqual(['group_create']);
     });
 
     test('a group that is validating, committed or visible is returned as it is (200, every member skip_identical, no URL); a failed one refuses with group_conflict', async () => {
@@ -373,6 +402,23 @@ describe.each(RIGS)('groups over the registry: %s', (_label, make) => {
       expect((await env.begin(me, 'gamma')).statusCode).toBe(200);
       expect(errorCode(await env.begin(me, 'gamma'))).toBe('rate_limited');
       expect(Object.keys(counters()).sort()).toEqual(['rl#gt#<token>#2026-10-14', 'rl#gu#1#2026-10-14', 'rl#t#<token>#2026-10-14', 'rl#u#1#2026-10-14']);
+    });
+
+    test('two identical creates at once charge the counters once, for a new group and for one that is reopened; the other create is a resume', async () => {
+      const me = await env.account(1, 'octocat', ['alpha', 'beta']);
+      const members = [env.member('alpha'), env.member('beta')];
+      const counters = () => Object.fromEntries([...env.publishes.counters].map(([k, v]) => [k.replace(/#tok_[0-9a-z]+#/, '#<token>#'), v]));
+
+      const first = await Promise.all([env.create(me, members), env.create(me, members)]);
+      expect(first.map((r) => r.statusCode).sort()).toEqual([200, 201]);
+      expect(json(first[0]!).group_id).toBe(json(first[1]!).group_id);
+      expect(counters()).toEqual({ 'rl#gu#1#2026-10-14': 2, 'rl#gt#<token>#2026-10-14': 2 });
+
+      await env.abort(me, json(first[0]!).group_id);
+      const again = await Promise.all([env.create(me, members), env.create(me, members)]);
+      expect(again.map((r) => r.statusCode).sort()).toEqual([200, 201]);
+      expect(json(again[0]!)).toMatchObject({ attempt: 2 });
+      expect(counters()).toEqual({ 'rl#gu#1#2026-10-14': 4, 'rl#gt#<token>#2026-10-14': 4 });
     });
 
     test('a group over what is left of the day is rate_limited with Retry-After, creates nothing and charges nothing', async () => {
