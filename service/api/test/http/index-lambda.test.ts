@@ -4,10 +4,11 @@ const CREDS = { AWS_ACCESS_KEY_ID: 'AKIDEXAMPLE', AWS_SECRET_ACCESS_KEY: 'exampl
 const event = (rawPath: string, method = 'GET') => ({ rawPath, requestContext: { requestId: 'r-1', http: { method } } });
 
 /** Loads the handler afresh (a container keeps its configuration), with `fetch` replaced by a scripted S3. */
-async function load(env: Record<string, string>, reply: (url: string) => { status: number; body?: string }) {
+async function load(env: Record<string, string>, reply: (url: string) => { status: number; body?: string }, dropRegion = false) {
   jest.resetModules();
   const saved = { ...process.env };
   Object.assign(process.env, CREDS, env);
+  if (dropRegion) delete process.env.AWS_REGION;
   const urls: string[] = [];
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async (url: string) => {
@@ -41,6 +42,16 @@ describe('the reader function', () => {
       expect(res.statusCode).toBe(200);
       expect(res.body).toBe('{"v":1}\n');
       expect(t.urls).toEqual([`https://chan.s3.us-east-1.amazonaws.com/${indexKey('http_client')}`]);
+    } finally {
+      t.restore();
+    }
+  });
+
+  test('without AWS_REGION the bucket is addressed in us-east-1', async () => {
+    const t = await load({ MOPM_CHANNEL_BUCKET: 'chan' }, () => ({ status: 200, body: 'x\n' }), true);
+    try {
+      expect((await t.handler(event('/index/ht/tp/http_client'))).statusCode).toBe(200);
+      expect(t.urls[0]).toContain('chan.s3.us-east-1.amazonaws.com');
     } finally {
       t.restore();
     }
