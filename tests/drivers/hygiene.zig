@@ -585,6 +585,12 @@ pub fn kpinSetsProblems(a: Allocator, workflow: []const u8, files: []const []con
 /// holds that the other autopin workflows carry the same list). A directory with a package-lock.json that SETS lacks is a package whose
 /// Dependabot pull requests are left to a person; a SETS entry without a package-lock.json would make every compute run fail. The same
 /// comparison as KPIN_SETS, on every pull request. `workflow` is the text of autopin-compute.yml, `files` the repository's paths.
+///
+/// `autopin_manual` are the packages left to a person on purpose, each with its reason: `autopin compute` refuses a lockfile with a
+/// bundled package (an entry with no `resolved` and no `integrity`, which aws-cdk-lib's lock has many of), and `pin-verify` runs the same
+/// tool over every SETS directory, so a directory it refuses cannot be in SETS without turning the required check red on every pull
+/// request. Such a directory must have a package-lock.json, must not be in SETS, and is pinned by kpin-update.yml / `kpin` as before.
+pub const autopin_manual = [_][]const u8{ "service/infra/access", "service/infra/dns", "service/infra/stacks" };
 
 pub fn autopinSetsProblems(a: Allocator, workflow: []const u8, files: []const []const u8, out: *Out) !void {
     var listed = std.ArrayList([]const u8).init(a);
@@ -606,8 +612,17 @@ pub fn autopinSetsProblems(a: Allocator, workflow: []const u8, files: []const []
     for (files) |f| {
         if (!std.mem.eql(u8, c.basename(f), "package-lock.json")) continue;
         const dir = std.fs.path.dirname(f) orelse ".";
-        if (!c.containsStr(listed.items, dir)) {
-            try c.problem(a, out, prefix ++ "autopin-compute.yml: no --set for {s} (it has a package-lock.json): its Dependabot pull requests would be left to a person; list it", .{dir});
+        if (!c.containsStr(listed.items, dir) and !c.containsStr(&autopin_manual, dir)) {
+            try c.problem(a, out, prefix ++ "autopin-compute.yml: no --set for {s} (it has a package-lock.json): its Dependabot pull requests would be left to a person; list it, or name it in autopin_manual with the reason", .{dir});
+        }
+    }
+    for (&autopin_manual) |dir| {
+        if (c.containsStr(listed.items, dir)) {
+            try c.problem(a, out, prefix ++ "autopin-compute.yml: --set names {s}, which is left to a person on purpose (its lockfile bundles packages the tool refuses): pin-verify would be red on every pull request", .{dir});
+        }
+        const lock = try std.fmt.allocPrint(a, "{s}/package-lock.json", .{dir});
+        if (!c.containsStr(files, lock)) {
+            try c.problem(a, out, prefix ++ "autopin_manual names {s}, which has no package-lock.json in the repository", .{dir});
         }
     }
     for (listed.items) |dir| {

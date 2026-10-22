@@ -370,10 +370,10 @@ test "one pinned tool in the three files: a differing sha256 or version in any i
 
 test "one SETS list in the four invocations: a directory dropped from any is red" {
     try expectRepo(commit, " --set service/api=buildrules-lock", "", &.{"autopin-commit.yml: a --set list differs from autopin-compute.yml's"});
-    try expectRepo(commit, " --set service/infra/stacks=pins-lock\n      - name: Mint", " --set service/infra/stacks=pins-lock --set extra=pins-lock\n      - name: Mint", &.{"autopin-commit.yml: a --set list differs from autopin-compute.yml's"});
+    try expectRepo(commit, " --set service/api=buildrules-lock\n      - name: Mint", " --set service/api=buildrules-lock --set extra=pins-lock\n      - name: Mint", &.{"autopin-commit.yml: a --set list differs from autopin-compute.yml's"});
     try expectRepo(verify, " --set service/api=buildrules-lock", "", &.{"pin-verify.yml: a --set list differs from autopin-compute.yml's"});
-    // Mutant: an infra directory missing from one file.
-    try expectRepo(verify, " --set service/infra/dns=pins-lock", "", &.{"pin-verify.yml: a --set list differs from autopin-compute.yml's"});
+    // Mutant: an extra directory (an infra one, which the tool refuses) in one file.
+    try expectRepo(verify, " --set service/api=buildrules-lock", " --set service/api=buildrules-lock --set service/infra/dns=pins-lock", &.{"pin-verify.yml: a --set list differs from autopin-compute.yml's"});
     try expectRepo(compute, " --set site=buildrules-lock", "", &.{ "autopin-commit.yml: a --set list differs from", "autopin-commit.yml: a --set list differs from", "pin-verify.yml: a --set list differs from" });
 }
 

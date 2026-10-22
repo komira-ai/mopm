@@ -326,11 +326,13 @@ It prints the pin for the `linux-x86_64` tarball. It changes nothing.
 
 ## The Dependabot pin update (`autopin-compute.yml`, `autopin-commit.yml`, `pin-verify.yml`)
 
-A Dependabot bump of a `package-lock.json` leaves its pin table
+A Dependabot bump of a `package-lock.json` leaves its pin table (`buildrules.lock.bzl` in `site/` and `service/api/`)
 stale, and the table needs a sha256 and a size that only the tarball gives. Two workflows make the pull request green
 without a person, and a third checks the result. None of them merges or approves anything; the pull request still needs a
-person to read the lockfile diff. The directories are `site/`, `service/api/` (`buildrules.lock.bzl`) and the three
-`service/infra/*` packages (`pins.lock.bzl`); `tests/drivers/hygiene.zig` fails a package with a `package-lock.json` that has no `--set`.
+person to read the lockfile diff. The three `service/infra/*` packages are not covered: their lockfiles bundle packages
+(aws-cdk-lib has many, and bundles of bundles; an entry with no `resolved` and no `integrity`), which `autopin` does not accept, and `pin-verify`
+runs the same tool over every directory it covers. A Dependabot pull request there is pinned by a person with kpin (CONTRIBUTING.md),
+and `tests/drivers/hygiene.zig` names these three (`autopin_manual`) so that a fourth package cannot be forgotten.
 
 | workflow | trigger | holds | does |
 |---|---|---|---|
@@ -349,7 +351,7 @@ Dependabot's 7-day `cooldown` and the person who reads the lockfile diff.
 The tool is the released `buildrules`, fetched by tag and checked with `sha256sum -c` against a sha256 written in each of the three
 files (`BUILDRULES_VERSION` and `BUILDRULES_SHA256`), never built from a pull request. To move it, bump all three in one pull request to
 main; `tests/drivers/autopin_lint.zig` fails when they differ. The directories the tool may write are the `--set` arguments, the same
-in all four invocations; `//:hygiene` fails a package with a `package-lock.json` that has no `--set`.
+in all four invocations; `//:hygiene` fails a package with a `package-lock.json` that has no `--set` and is not in its list of packages left to a person.
 `tests/drivers/autopin_lint.zig` (`//:autopin_workflows`, run by `lint.yml`) holds the gates, the scope of every token, the order of
 the steps in `autopin-commit.yml` and the artifact's name, with a planted mutant per rule, and for every workflow: `workflow_run`
 in `autopin-commit.yml` alone, `push` only for `main` or tags, what a pull request can reach (no environment, no secret, one

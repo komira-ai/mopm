@@ -3,8 +3,8 @@
 # Without it a bot-pinned Dependabot pull request would prove only that a table equals itself. This runs the
 # released `buildrules autopin verify-pins` over the pull request's checkout and fails (exit 1) when a table is out of
 # step with its lockfile or a row differs: it downloads every row from registry.npmjs.org and compares sha512 with the
-# lockfile, sha256 and size with the row. It covers the directories of the `--set` arguments (site, service/api and
-# the three service/infra packages).
+# lockfile, sha256 and size with the row. It covers the directories of the `--set` arguments (site and service/api);
+# the service/infra lockfiles bundle packages the tool refuses, so they are left out (see autopin-compute.yml).
 #
 # The job holds a read-only token and no secret, environment, id-token or cache, and has no condition and no
 # filter: a skipped check is a check that did not run. It does not look at who the actor is. The tool is the
@@ -45,4 +45,4 @@ jobs:
           tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP/br" --strip-components=1
       - name: Every pin table row is what its lockfile calls for (each tarball re-downloaded)
         run: |
-          "$RUNNER_TEMP/br/buildrules" autopin verify-pins --set site=buildrules-lock --set service/api=buildrules-lock --set service/infra/access=pins-lock --set service/infra/dns=pins-lock --set service/infra/stacks=pins-lock
+          "$RUNNER_TEMP/br/buildrules" autopin verify-pins --set site=buildrules-lock --set service/api=buildrules-lock
