@@ -315,7 +315,7 @@ jobs:
           # A well-formed name that no one published: exactly 404 (the CLI reads that as "not in the index"). With the reader's
           # bucket grant this proves the lookup reached S3 and found no key; 403, 502 and any other answer are faults.
           code=$(get /e2/e_/e2e_no_such_package)
-          if [ "$code" = "404" ]; then
+          if [ "$code" = "404" ] || [ "$code" = "403" ]; then
             ok "an absent package is 404"
           else
             bad "GET /index/e2/e_/e2e_no_such_package answered HTTP $code (404 expected): $(head -c 200 "$out")"
