@@ -16,11 +16,12 @@ verifying, and no beta. The tiers:
 |---|---|---|
 | unit (each library) | `ci.yml` `test` (`zig build test`) and `registry-build`; `service-ci.yml` (typecheck and tests of the API, site, stacks, DNS and access packages, and the CDK synth with dummy values); `farm.yml` (on the test farm, the tests are welded into the targets: a pull request builds every target except the beta ones that run against the real Mojo, `//:autolink`, `//:discovery`, `//:flaky`, `//:install_e2e`, `//:mojo_probe`, `//:native_static`, `//:supervisor` and `//:user_beta`; a push to main builds `//...`) | every pull request, and a push to main |
 | lint | `lint.yml`: hygiene, workflow lint, lint self-test, **the release lint of `release.yml`** (so a broken `release.yml` still fails a pull request) and actionlint | every pull request, and a push to main |
+| pin check | `pin-verify.yml`: every pin table it covers (`site/` and `service/api/`) is what its `package-lock.json` calls for; secretless, no condition, so it always reports (`autopin-compute.yml` runs only for Dependabot's own pull requests; see "The Dependabot pin update") | every pull request |
 | beta (each component) | `ci.yml` `mojo-e2e`, `pack-conformance` and `installer`; then `release-beta-user.yml`, the candidate used as a user | after the merge only: `release.yml` stage `beta` (the whole of `ci.yml`) and stage `beta-user` |
 | gamma (the whole system, real consumers) | `promote.yml` (`deploy.yml`, `e2e.yml`) | after a release, never on a pull request |
 
-No job of this repository measures coverage today, so none is reported. `tests/drivers/hygiene.zig` holds the split: only `ci.yml`, `lint.yml`, `farm.yml`
-and `service-ci.yml` may run on `pull_request`, and every job of `ci.yml` other than `test` and `registry-build` must carry
+No job of this repository measures coverage today, so none is reported. `tests/drivers/hygiene.zig` holds the split: only `ci.yml`, `lint.yml`, `farm.yml`,
+`service-ci.yml`, `pin-verify.yml` and `autopin-compute.yml` may run on `pull_request`, and every job of `ci.yml` other than `test` and `registry-build` must carry
 `if: github.event_name != 'pull_request'`. The `.deb` checks (dpkg and lintian) run inside `release-build.yml`, in the `build` stage.
 
 ## What happens on a push to main
@@ -322,6 +323,58 @@ Maintainers can repeat all the checks against GitHub with the read-only `verify 
     <path> verify 0.0.1 <empty dir>
 
 It prints the pin for the `linux-x86_64` tarball. It changes nothing.
+
+## The Dependabot pin update (`autopin-compute.yml`, `autopin-commit.yml`, `pin-verify.yml`)
+
+A Dependabot bump of a `package-lock.json` leaves its pin table (`buildrules.lock.bzl` in `site/` and `service/api/`)
+stale, and the table needs a sha256 and a size that only the tarball gives. Two workflows make the pull request green
+without a person, and a third checks the result. None of them merges or approves anything; the pull request still needs a
+person to read the lockfile diff. The three `service/infra/*` packages are not covered: their lockfiles bundle packages
+(aws-cdk-lib has many; an entry with no `resolved` and no `integrity`), which `autopin compute` refuses, and `pin-verify` runs
+the same tool over every directory it covers. A Dependabot pull request there is pinned by a person with kpin (CONTRIBUTING.md),
+and `tests/drivers/hygiene.zig` names these three (`autopin_manual`) so that a fourth package cannot be forgotten.
+
+| workflow | trigger | holds | does |
+|---|---|---|---|
+| `autopin-compute.yml` | `pull_request` of Dependabot's own pull request, run for Dependabot, from a branch of this repository (job-level `if:`) | a read-only token; no secret, environment, id-token or cache | runs the released `buildrules autopin compute` over the checkout of the pull request's head and uploads the regenerated tables as the artifact `autopin-<run id>-<attempt>` (never overwritten) |
+| `autopin-commit.yml` | `workflow_run` of the compute run completing (this file on the default branch is the one that runs) | environment `autopin` (the App's id and key), entered only after the job-level `if:` passed; read access until it mints | `autopin commit-check` reads the artifact as untrusted bytes and the pull request and its lockfile from the API and writes the tables it will vouch for; only then is the App token minted (contents write, this repository only) and `autopin commit-push` makes one commit on the pull request's branch with the Git Data API, moving the branch with `force: false` |
+| `pin-verify.yml` | every pull request | a read-only token and nothing else | the required check `pin-verify`: runs the same tool and fails if any table would change. It checks that the tables equal compute's output over every `--set` directory; it is not an independent re-fetch of every row (that is `autopin verify-pins`, not released yet) |
+
+The App's own push has the pull request's author but not its actor, so the compute job skips it: that is what stops the loop.
+The commit carries `[dependabot skip]`, so Dependabot keeps managing the pull request and a later Dependabot update replaces it.
+Anything but lockfile, `package.json` and table changes in the pull request (a `.github/` file, a build file, a script) is
+left for a person, and a pull request that touches `.github/` is checked by its own copy of `pin-verify.yml`, so a person must read it.
+
+What the tool trusts is the Dependabot bump itself: a newly published malicious version pins consistently. What stops it is
+Dependabot's 7-day `cooldown` and the person who reads the lockfile diff.
+
+The tool is the released `buildrules`, fetched by tag and checked with `sha256sum -c` against a sha256 written in each of the three
+files (`BUILDRULES_VERSION` and `BUILDRULES_SHA256`), never built from a pull request. To move it, bump all three in one pull request to
+main; `tests/drivers/autopin_lint.zig` fails when they differ. The directories the tool may write are the `--set` arguments, the same
+in all four invocations; `//:hygiene` fails a package with a `package-lock.json` that has no `--set` and is not in its list of packages left to a person.
+`tests/drivers/autopin_lint.zig` (`//:autopin_workflows`, run by `lint.yml`) holds the gates, the scope of every token, the order of
+the steps in `autopin-commit.yml` and the artifact's name, with a planted mutant per rule, and for every workflow: `workflow_run`
+in `autopin-commit.yml` alone, `push` only for `main` or tags, what a pull request can reach (no environment, no secret, one
+farm id-token that skips a Dependabot branch), the files the lints can read, and that no workflow merges or approves a Dependabot pull request.
+
+**Nothing of this runs live until an owner has done the following** (the commit workflow fails closed until the App is
+installed and the environment `autopin` holds its key and id):
+
+1. Rulesets on the default branch (a pull request and one approval, the required checks including `pin-verify`
+   pinned to the GitHub Actions integration (id 15368), no force push, no deletion, no bypass for the autopin App) and on tags
+   (`~ALL`, only the release bot may create), applied before the App's key exists in GitHub.
+2. The GitHub App `komira-autopin` (Contents write and Metadata read, nothing else), installed on this repository, on no bypass list.
+3. The environment `autopin` (deployment branches: `main` only), then the variable `AUTOPIN_APP_ID` and the secret
+   `AUTOPIN_APP_PRIVATE_KEY` in it. Never a repository or Dependabot secret. This pull request's commit workflow must be
+   merged only after the environment exists with the `main` policy, read back by the owner's setup script: GitHub creates a
+   missing environment on first use, with no deployment branch policy, so a workflow merged earlier would run in an unrestricted one.
+4. The farm's workload-identity trust refusing a `dependabot/*` `head_ref` (a setting outside this repository; `farm.yml` already skips such a branch).
+5. Four probes settle behaviours the GitHub documentation leaves open, before the first live run: T1 the `workflow_run` payload
+   (which actor fields a re-run and an `@dependabot` command set, the artifact download's redirect host) and whether a Dependabot-actor
+   run can read an environment secret, whether a run the job-level `if:` skips holds the pending slot of the commit workflow's concurrency
+   group (a fork branch named `dependabot/...` shares the `head_branch`; the group is keyed on the pull request number for that reason),
+   and one real `upload-artifact` zip saved as the fixture for the tool's zip reader; T2 that `[dependabot skip]` makes Dependabot keep the pull request; T3 whether a run started by the App's push waits for
+   approval; T4 what a Git Data API commit by the App shows (verification, `author.login`, the exact non-fast-forward error).
 
 ## What the CEO has to do before the first release
 

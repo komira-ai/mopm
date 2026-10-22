@@ -37,8 +37,10 @@ concurrency:
 
 jobs:
   build:
-    # A push to main, or a pull request from a branch of this repository, and nothing else.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    # A push to main, or a pull request from a branch of this repository that is not Dependabot's, and nothing else. A Dependabot
+    # branch gets no farm login (the farm's trust refuses its `head_ref` too, a setting outside this repository): the pin check
+    # that stands in for the build is pin-verify.yml, and the pull request template says the farm did not build it.
+    if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && !startsWith(github.head_ref, 'dependabot/'))
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
