@@ -297,8 +297,8 @@ export class ApiStack extends Stack {
       integration: new integrations.HttpLambdaIntegration('IndexReaderIntegration', this.indexReader),
     });
     (this.api.defaultStage!.node.defaultChild as apigw.CfnStage).routeSettings = {
-      [INDEX_CONFIG_ROUTE]: { throttlingRateLimit: INDEX_THROTTLE.rateLimit, throttlingBurstLimit: INDEX_THROTTLE.burstLimit },
-      [INDEX_READER_ROUTE]: { throttlingRateLimit: INDEX_THROTTLE.rateLimit, throttlingBurstLimit: INDEX_THROTTLE.burstLimit },
+      [INDEX_CONFIG_ROUTE]: { ThrottlingRateLimit: INDEX_THROTTLE.rateLimit, ThrottlingBurstLimit: INDEX_THROTTLE.burstLimit },
+      [INDEX_READER_ROUTE]: { ThrottlingRateLimit: INDEX_THROTTLE.rateLimit, ThrottlingBurstLimit: INDEX_THROTTLE.burstLimit },
     };
 
     const target = route53.RecordTarget.fromAlias(
