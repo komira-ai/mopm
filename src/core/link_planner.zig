@@ -17,6 +17,10 @@
 //!     archive, so it may not need one).
 //!   * One owner per native library: two packages shipping one soname are
 //!     refused.
+//!   * One library per exclusive group: two native libraries that declare the
+//!     same `exclusive` group (two copies of one C library under different
+//!     names) link without error and run with two copies of its state, so a
+//!     closure holding two is refused.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -34,6 +38,7 @@ pub const Input = struct {
 pub const Code = enum {
     duplicate_package,
     duplicate_owner,
+    exclusive_conflict,
     missing_package,
     missing_library,
     not_in_preload_set,
@@ -133,6 +138,28 @@ pub fn plan(arena: Allocator, inputs: []const Input) Allocator.Error!Plan {
                         arena,
                         "{s} is provided by both {s} and {s}; one owner per native library",
                         .{ n.soname, r.value_ptr.*, inp.meta.name },
+                    ),
+                });
+            }
+        }
+    }
+
+    // Pass 2b: at most one native library per exclusive group.
+    var group_owner = std.StringHashMap(GroupOwner).init(arena);
+    for (inputs) |inp| {
+        for (inp.meta.native) |n| {
+            if (n.exclusive.len == 0) continue;
+            const r = try group_owner.getOrPut(n.exclusive);
+            if (!r.found_existing) {
+                r.value_ptr.* = .{ .package = inp.meta.name, .id = n.id };
+            } else if (!std.mem.eql(u8, r.value_ptr.package, inp.meta.name) or !std.mem.eql(u8, r.value_ptr.id, n.id)) {
+                try diags.append(.{
+                    .code = .exclusive_conflict,
+                    .command = .all,
+                    .message = try std.fmt.allocPrint(
+                        arena,
+                        "{s} (native {s}) and {s} (native {s}) are both in exclusive group {s}; a closure links one library of a group",
+                        .{ r.value_ptr.package, r.value_ptr.id, inp.meta.name, n.id, n.exclusive },
                     ),
                 });
             }
@@ -246,6 +273,7 @@ pub fn plan(arena: Allocator, inputs: []const Input) Allocator.Error!Plan {
 }
 
 /// A static archive on the link line.
+const GroupOwner = struct { package: []const u8, id: []const u8 };
 const Archive = struct { soname: []const u8, needs: []const []const u8, path: []const u8 };
 
 /// Appends the paths of `archives` to `build_args`, each before every archive it needs; archives that do not constrain
@@ -644,4 +672,47 @@ test "a library that needs its own soname is refused" {
     )});
     try std.testing.expect(has(p, .needs_cycle, .all));
     try std.testing.expect(!has(p, .missing_library, .all));
+}
+
+fn groupPkg(a: Allocator, name: []const u8, soname: []const u8, group: []const u8) !Input {
+    const stem = soname[0 .. soname.len - 2];
+    const text = try std.fmt.allocPrint(a,
+        \\{{"schema": 1, "name": "{s}", "native": [
+        \\  {{"id": "{s}", "soname": "{s}", "kind": "static", "static_file": "lib/{s}"{s}{s}{s}}}]}}
+    , .{ name, stem, soname, soname, if (group.len > 0) ", \"exclusive\": \"" else "", group, if (group.len > 0) "\"" else "" });
+    return mk(a, "d", text);
+}
+
+// Defect it catches: two copies of one C library (say two prefixed builds of a crypto library) in one closure, which
+// link without error and run with two copies of its state. Mutants planted: the groups are compared with `!`; the
+// pass is removed; a library with no group is made to conflict with another with none.
+test "two native libraries of one exclusive group are refused, naming both; other groups and no group are not" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const bad = try plan(a, &.{ try groupPkg(a, "crypto_a", "libca.a", "libcrypto"), try groupPkg(a, "crypto_b", "libcb.a", "libcrypto") });
+    try std.testing.expect(has(bad, .exclusive_conflict, .all));
+    var found: usize = 0;
+    for (bad.diagnostics) |d| {
+        if (d.code != .exclusive_conflict) continue;
+        found += 1;
+        try std.testing.expectEqualStrings("crypto_a (native libca) and crypto_b (native libcb) are both in exclusive group libcrypto; a closure links one library of a group", d.message);
+    }
+    try std.testing.expectEqual(@as(usize, 1), found);
+    // Distinct groups, no group, and a group held once are all fine.
+    const other = try plan(a, &.{ try groupPkg(a, "crypto_a", "libca.a", "libcrypto"), try groupPkg(a, "tls_b", "libcb.a", "libtls") });
+    try std.testing.expect(!has(other, .exclusive_conflict, .all));
+    const none = try plan(a, &.{ try groupPkg(a, "crypto_a", "libca.a", ""), try groupPkg(a, "crypto_b", "libcb.a", "") });
+    try std.testing.expect(!has(none, .exclusive_conflict, .all));
+    // The same package given twice is duplicate_package and nothing more: its one library is not "two in the group".
+    const twice = try plan(a, &.{ try groupPkg(a, "crypto_a", "libca.a", "libcrypto"), try groupPkg(a, "crypto_a", "libca.a", "libcrypto") });
+    try std.testing.expect(has(twice, .duplicate_package, .all));
+    try std.testing.expect(!has(twice, .exclusive_conflict, .all));
+    // Two libraries of one package in one group are two libraries too.
+    const same_pkg = try plan(a, &.{try mk(a, "d",
+        \\{"schema": 1, "name": "both", "native": [
+        \\  {"id": "x", "soname": "libx.a", "kind": "static", "static_file": "lib/libx.a", "exclusive": "g"},
+        \\  {"id": "y", "soname": "liby.a", "kind": "static", "static_file": "lib/liby.a", "exclusive": "g"}]}
+    )});
+    try std.testing.expect(has(same_pkg, .exclusive_conflict, .all));
 }
