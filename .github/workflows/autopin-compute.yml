@@ -44,8 +44,8 @@ jobs:
           persist-credentials: false
       - name: Fetch the buildrules release (checked against its sha256; never built from this pull request)
         env:
-          BUILDRULES_VERSION: "0.0.18"
-          BUILDRULES_SHA256: "08cc93e5c71319d6e7de4cc6edd8411769df94c5ad4ca8e91a087a941e1d9947"
+          BUILDRULES_VERSION: "0.0.19"
+          BUILDRULES_SHA256: "94aec772f978d6297075c42a0833837780a8025bf1ef300a6739bc4830c23b3e"
         run: |
           set -eu
           name="buildrules-cli-${BUILDRULES_VERSION}-linux-x86_64"
