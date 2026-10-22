@@ -208,23 +208,40 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     }
   });
 
-  test('S3 and SQS are reachable only where publishing needs them: quarantine/ and the validate queue', () => {
+  test('S3 and SQS are reachable only where publishing needs them: quarantine/ and the validate, group and index queues', () => {
     const s3 = statements().filter((s) => acts(s).some((a) => a.startsWith('s3:')));
     expect(s3).toHaveLength(1);
     expect(acts(s3[0]).sort()).toEqual(['s3:GetObject', 's3:PutObject']);
     expect(flatten(s3[0].Resource)).toContain('/quarantine/*');
     expect(flatten(s3[0].Resource)).toContain(`mopm-${stage}-channel-${DUMMY_ACCOUNT}`);
     const q = statements().filter((s) => acts(s).some((a) => a.startsWith('sqs:')));
-    // Two statements, send-only: the validate queue (publish) and the index queue (yank and unyank rebuild repodata).
-    expect(q).toHaveLength(2);
+    // Three statements, send-only: the validate queue (publish), the group queue (a group's commit) and the index queue (yank and unyank rebuild repodata).
+    expect(q).toHaveLength(3);
     for (const st of q) expect(acts(st)).toEqual(['sqs:SendMessage']);
     const validate = q.find((st) => st.Sid === 'QueueCommits') ?? q[0];
+    const group = q.find((st) => st.Sid === 'QueueGroupCommits');
     const index = q.find((st) => st.Sid === 'QueueIndexRebuilds');
     expect(index).toBeDefined();
+    expect(group).toBeDefined();
     expect(flatten(validate.Resource)).toContain(`mopm-${stage}-validate.fifo`);
     expect(flatten(validate.Resource)).not.toContain('index');
+    expect(flatten(validate.Resource)).not.toContain('group');
+    expect(flatten(group.Resource)).toContain(`mopm-${stage}-group.fifo`);
+    expect(flatten(group.Resource)).not.toContain('validate');
     expect(flatten(index.Resource)).toContain(`mopm-${stage}-index.fifo`);
     expect(flatten(index.Resource)).not.toContain('validate');
+    expect(flatten(index.Resource)).not.toContain('group');
+  });
+
+  test('the handler is told the group queue by name (the commit of a group queues its validation there), and the commit route is deployed', () => {
+    t.hasResourceProperties('AWS::Lambda::Function', {
+      Handler: 'http/lambda.handler',
+      Environment: { Variables: Match.objectLike({ MOPM_GROUP_QUEUE_URL: Match.anyValue() }) },
+    });
+    const env = (Object.values(t.findResources('AWS::Lambda::Function')) as any[]).find((f) => f.Properties.Handler === 'http/lambda.handler').Properties.Environment.Variables;
+    expect(flatten(env.MOPM_GROUP_QUEUE_URL)).toContain(`mopm-${stage}-group.fifo`);
+    expect(PUBLISH_ROUTES.map((r) => `${r.method} ${r.path}`)).toContain('POST /api/v1/groups/{group_id}/commit');
+    t.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: 'POST /api/v1/groups/{group_id}/commit' });
   });
 
   test('custom domain with a DNS-validated certificate', () => {

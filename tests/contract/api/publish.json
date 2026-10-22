@@ -1338,6 +1338,115 @@
         "body": {}
       },
       "expect": "invalid"
+    },
+    {
+      "name": "group status rejected, with why",
+      "operationId": "getGroup",
+      "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "auth": "publishToken" },
+      "response": {
+        "status": 200,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "rejected",
+          "attempt": 1,
+          "created_at": "2026-10-13T12:00:00Z",
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "member_count": 1,
+          "failure": { "code": "archive_invalid", "message": "mojo-http_client-0.4.0-mojo1.0.0_0.conda: the archive has no info/index.json", "member": "http_client" },
+          "members": [ { "name": "http_client", "version": "0.4.0", "state": "staged" } ]
+        }
+      }
+    },
+    {
+      "name": "group status failed, with a failure that has no code",
+      "operationId": "getGroup",
+      "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "auth": "publishToken" },
+      "response": {
+        "status": 200,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "failed",
+          "attempt": 1,
+          "created_at": "2026-10-13T12:00:00Z",
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "member_count": 1,
+          "failure": { "message": "the upload changed after it was validated" },
+          "members": [ { "name": "http_client", "version": "0.4.0", "state": "staged" } ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "commit a group",
+      "operationId": "commitGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "body": {
+          "members": [
+            { "name": "http_client", "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae", "description": "HTTP/1.1 client", "license": "MIT OR Apache-2.0" },
+            { "name": "json", "manifest_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08" }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": { "group_id": "grp_0123456789abcdef0123456789abcdef", "status": "validating", "attempt": 1, "status_url": "/api/v1/groups/grp_0123456789abcdef0123456789abcdef" }
+      }
+    },
+    {
+      "name": "commit a group that had already committed",
+      "operationId": "commitGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "body": { "members": [ { "name": "http_client", "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae" } ] },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": { "group_id": "grp_0123456789abcdef0123456789abcdef", "status": "committed", "attempt": 1, "status_url": "/api/v1/groups/grp_0123456789abcdef0123456789abcdef" }
+      }
+    },
+    {
+      "name": "commit a group with no members",
+      "operationId": "commitGroup",
+      "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "body": { "members": [] }, "auth": "publishToken" },
+      "response": {
+        "status": 202,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": { "group_id": "grp_0123456789abcdef0123456789abcdef", "status": "validating", "attempt": 1, "status_url": "/api/v1/groups/grp_0123456789abcdef0123456789abcdef" }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "commit a group with a member that has no manifest",
+      "operationId": "commitGroup",
+      "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "body": { "members": [ { "name": "http_client" } ] }, "auth": "publishToken" },
+      "response": {
+        "status": 202,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": { "group_id": "grp_0123456789abcdef0123456789abcdef", "status": "validating", "attempt": 1, "status_url": "/api/v1/groups/grp_0123456789abcdef0123456789abcdef" }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "commit a group answered with a status url on another path",
+      "operationId": "commitGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "body": { "members": [ { "name": "http_client", "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae" } ] },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": { "group_id": "grp_0123456789abcdef0123456789abcdef", "status": "validating", "attempt": 1, "status_url": "/status/grp_0123456789abcdef0123456789abcdef" }
+      },
+      "expect": "invalid"
     }
   ]
 }

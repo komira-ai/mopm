@@ -30,6 +30,10 @@ export interface PublishConfig {
   groupDeadlineHours: number;
   /** Time a create call spends reserving members before it answers `reserving` (milliseconds; the API Lambda's timeout is 10 s). */
   groupCreateBudgetMs: number;
+  /** Hours the validator reserves for a group out of the quarantine prefix's day: an upload older than 24 minus this is rejected before anything is copied. */
+  groupValidateHours: number;
+  /** Milliseconds one validator invocation spends starting members before it saves its progress and queues itself again (the Lambda's timeout is 300 s). */
+  groupBudgetMs: number;
   /** Other groups of the same actor that one create may supersede. */
   groupSupersedeMax: number;
 }
@@ -48,6 +52,8 @@ export const DEFAULT_PUBLISH_CONFIG: PublishConfig = {
   groupRatePerTokenPerDay: 1000,
   groupDeadlineHours: 12,
   groupCreateBudgetMs: 7000,
+  groupValidateHours: 6,
+  groupBudgetMs: 240_000,
   groupSupersedeMax: 3,
 };
 
@@ -76,6 +82,10 @@ export function publishConfigFromEnv(env: Record<string, string | undefined> = p
     // Under the 24 hours the quarantine prefix keeps an upload (a group's files are copied from it after the deadline's work begins).
     groupDeadlineHours: Math.min(18, intFrom(env, 'MOPM_GROUP_DEADLINE_HOURS', d.groupDeadlineHours, 1)),
     groupCreateBudgetMs: Math.min(9000, intFrom(env, 'MOPM_GROUP_CREATE_BUDGET_MS', d.groupCreateBudgetMs, 100)),
+    // The quarantine prefix keeps an upload for a day; the validator's hours come out of it, so they are at most 23.
+    groupValidateHours: Math.min(23, intFrom(env, 'MOPM_GROUP_VALIDATE_HOURS', d.groupValidateHours, 1)),
+    // Under the 300 s the Lambda may run, with room for the member in flight.
+    groupBudgetMs: Math.min(270_000, intFrom(env, 'MOPM_GROUP_BUDGET_MS', d.groupBudgetMs, 1)),
     groupSupersedeMax: d.groupSupersedeMax,
   };
 }

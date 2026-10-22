@@ -46,6 +46,15 @@ describe('publish configuration', () => {
     expect(() => publishConfigFromEnv({ MOPM_GROUP_MAX_MEMBERS: '0' })).toThrow('MOPM_GROUP_MAX_MEMBERS');
   });
 
+  test('the group validator: six hours of the quarantine day reserved for validation, and a time budget under the Lambda\'s 300 seconds', () => {
+    expect(DEFAULT_PUBLISH_CONFIG).toMatchObject({ groupValidateHours: 6, groupBudgetMs: 240_000 });
+    expect(publishConfigFromEnv({ MOPM_GROUP_VALIDATE_HOURS: '3', MOPM_GROUP_BUDGET_MS: '60000' })).toMatchObject({ groupValidateHours: 3, groupBudgetMs: 60_000 });
+    // The hours cannot be more than the day has, and the budget cannot reach the function's timeout.
+    expect(publishConfigFromEnv({ MOPM_GROUP_VALIDATE_HOURS: '99', MOPM_GROUP_BUDGET_MS: '900000' })).toMatchObject({ groupValidateHours: 23, groupBudgetMs: 270_000 });
+    expect(() => publishConfigFromEnv({ MOPM_GROUP_VALIDATE_HOURS: '0' })).toThrow('MOPM_GROUP_VALIDATE_HOURS');
+    expect(() => publishConfigFromEnv({ MOPM_GROUP_BUDGET_MS: 'soon' })).toThrow('MOPM_GROUP_BUDGET_MS');
+  });
+
   test('the upload URL lifetime cannot be configured above the contract\'s five minutes', () => {
     expect(publishConfigFromEnv({ MOPM_UPLOAD_URL_TTL_SECONDS: '3600' }).uploadUrlTtlSeconds).toBe(300);
     expect(publishConfigFromEnv({ MOPM_UPLOAD_URL_TTL_SECONDS: '60' }).uploadUrlTtlSeconds).toBe(60);

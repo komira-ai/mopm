@@ -1221,6 +1221,47 @@
         }
       },
       "expect": "invalid"
+    },
+    {
+      "name": "error group_commit_refused",
+      "operationId": "commitGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "body": { "members": [ { "name": "http_client", "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae" } ] },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_commit_refused",
+            "message": "The group cannot be committed: group grp_0123456789abcdef0123456789abcdef expired at 2026-10-14T00:00:00.000Z.",
+            "hint": "Read the group with its status request; create it again with the same request to open it again."
+          }
+        }
+      }
+    },
+    {
+      "name": "group_commit_refused answered 400 instead of 409",
+      "operationId": "commitGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "body": { "members": [ { "name": "http_client", "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae" } ] },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 400,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_commit_refused",
+            "message": "The group cannot be committed: group grp_0123456789abcdef0123456789abcdef expired at 2026-10-14T00:00:00.000Z.",
+            "hint": "Read the group with its status request; create it again with the same request to open it again."
+          }
+        }
+      },
+      "expect": "invalid"
     }
   ]
 }

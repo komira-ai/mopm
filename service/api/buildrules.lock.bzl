@@ -3,14 +3,14 @@
 
 SCHEMA = 1
 NODE = "24.21.0"
-PACKAGE_JSON_SHA256 = "9ec18deb6f7bd0350b60da55e77fa1809d56171d74ce0e5ad380e7d411221dea"
+PACKAGE_JSON_SHA256 = "9a716cc4e7b772d686e10f00a8570cacb92ea884a2457cabe837c0f264accb04"
 PACKAGE_LOCK_SHA256 = "c2c81760c280a0a78e9d4e5378018c9587b07ad3c79c26275606965b8803595a"
 
 PACKAGE = {
     "name": "mopm-registry-api",
     "version": "0.0.0",
     "scripts": {
-        "build": "esbuild src/http/lambda.ts src/publish/validator-lambda.ts src/publish/indexer-lambda.ts --bundle --platform=node --target=node22 --format=cjs '--external:@aws-sdk/*' --outbase=src --outdir=dist --log-level=warning",
+        "build": "esbuild src/http/lambda.ts src/publish/validator-lambda.ts src/publish/indexer-lambda.ts src/publish/group-validator-lambda.ts src/publish/sweeper-lambda.ts src/ops/group-ops-bin.ts --bundle --platform=node --target=node22 --format=cjs '--external:@aws-sdk/*' --outbase=src --outdir=dist --log-level=warning",
         "build:validate-lib": "esbuild src/validate/index.ts --bundle --platform=node --target=node22 --format=cjs --outbase=src --outdir=dist-validate --log-level=warning",
         "test": "jest --ci",
         "typecheck": "tsc --noEmit",

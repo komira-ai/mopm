@@ -168,6 +168,48 @@ export class SqsFifoQueue implements Queue {
   }
 }
 
+/**
+ * The depth of a queue, for the operator's tool (src/ops/group-ops.ts): `GetQueueUrl` by name, then `GetQueueAttributes`.
+ * Messages waiting, and messages being worked on (in flight): a queue is empty when both are 0.
+ */
+export class SqsQueueDepth {
+  private readonly host: string;
+  private readonly http: HttpFn;
+  private readonly creds: () => AwsCredentials;
+  private readonly now: () => Date;
+  constructor(private readonly o: AwsOptions) {
+    this.host = `sqs.${o.region}.amazonaws.com`;
+    this.http = o.http ?? defaultHttp;
+    this.creds = o.credentials ?? (() => credentialsFromEnv());
+    this.now = o.now ?? (() => new Date());
+  }
+
+  private async call(target: string, payload: Record<string, unknown>): Promise<Record<string, any>> { // eslint-disable-line @typescript-eslint/no-explicit-any
+    const body = JSON.stringify(payload);
+    const headers = signRequest({
+      method: 'POST',
+      host: this.host,
+      path: '/',
+      headers: { 'content-type': 'application/x-amz-json-1.0', 'x-amz-target': `AmazonSQS.${target}` },
+      body,
+      region: this.o.region,
+      service: 'sqs',
+      creds: this.creds(),
+      now: this.now(),
+    });
+    const r = await this.http(`https://${this.host}/`, { method: 'POST', headers, body });
+    const text = await r.text();
+    if (r.status !== 200) throw new AwsError('sqs', r.status, text);
+    return JSON.parse(text) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  }
+
+  async depth(queueName: string): Promise<{ queue: string; visible: number; in_flight: number }> {
+    const url = (await this.call('GetQueueUrl', { QueueName: queueName })).QueueUrl as string;
+    const attrs = (await this.call('GetQueueAttributes', { QueueUrl: url, AttributeNames: ['ApproximateNumberOfMessages', 'ApproximateNumberOfMessagesNotVisible'] })).Attributes as Record<string, string>;
+    return { queue: queueName, visible: Number(attrs.ApproximateNumberOfMessages ?? 0), in_flight: Number(attrs.ApproximateNumberOfMessagesNotVisible ?? 0) };
+  }
+}
+
 // --- CloudFront -----------------------------------------------------------------------------------------------
 
 /** CreateInvalidation on one distribution. The caller reference makes a repeat of the same batch harmless. */

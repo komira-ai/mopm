@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { CloudFrontInvalidator, S3Channel, SqsFifoQueue, type HttpFn, type HttpResponse } from '../../src/publish/aws';
+import { CloudFrontInvalidator, S3Channel, SqsFifoQueue, SqsQueueDepth, type HttpFn, type HttpResponse } from '../../src/publish/aws';
 
 const CREDS = { accessKeyId: 'AKIDTEST', secretAccessKey: 'secret', sessionToken: 'SESSION' };
 const NOW = new Date('2026-10-14T12:00:00Z');
@@ -111,6 +111,23 @@ describe('SqsFifoQueue', () => {
   test('a refusal is an error (the caller\'s request then fails, or the validator message is retried)', async () => {
     const q = new SqsFifoQueue('u', opts(fakeHttp({ status: 400, body: 'AccessDenied' }).http));
     await expect(q.send({ body: 'b', groupId: 'g', dedupId: 'd' })).rejects.toThrow('sqs answered 400');
+  });
+});
+
+describe('SqsQueueDepth', () => {
+  test('GetQueueUrl by name, then GetQueueAttributes: the messages waiting and the messages in flight', async () => {
+    const { http, seen } = fakeHttp({ status: 200, body: JSON.stringify({ QueueUrl: QUEUE_URL }) }, { status: 200, body: JSON.stringify({ Attributes: { ApproximateNumberOfMessages: '3', ApproximateNumberOfMessagesNotVisible: '1' } }) });
+    expect(await new SqsQueueDepth(opts(http)).depth('mopm-beta-group.fifo')).toEqual({ queue: 'mopm-beta-group.fifo', visible: 3, in_flight: 1 });
+    expect(seen.map((r) => r.headers['x-amz-target'])).toEqual(['AmazonSQS.GetQueueUrl', 'AmazonSQS.GetQueueAttributes']);
+    expect(JSON.parse(seen[0]!.body as string)).toEqual({ QueueName: 'mopm-beta-group.fifo' });
+    expect(JSON.parse(seen[1]!.body as string)).toEqual({ QueueUrl: QUEUE_URL, AttributeNames: ['ApproximateNumberOfMessages', 'ApproximateNumberOfMessagesNotVisible'] });
+    expect(seen[1]!.headers.authorization).toContain('/us-east-1/sqs/aws4_request');
+  });
+
+  test('a queue that does not report a count is empty, and a refusal is an error', async () => {
+    const { http } = fakeHttp({ status: 200, body: JSON.stringify({ QueueUrl: QUEUE_URL }) }, { status: 200, body: JSON.stringify({ Attributes: {} }) });
+    expect(await new SqsQueueDepth(opts(http)).depth('q')).toEqual({ queue: 'q', visible: 0, in_flight: 0 });
+    await expect(new SqsQueueDepth(opts(fakeHttp({ status: 400, body: 'AccessDenied' }).http)).depth('q')).rejects.toThrow('sqs answered 400');
   });
 });
 
