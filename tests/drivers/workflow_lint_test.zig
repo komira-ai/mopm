@@ -70,7 +70,7 @@ test "deploy.yml and e2e.yml: the guard gates the one credential job" {
     try expectRepo("deploy.yml", "    needs: guard\n", "    needs: other\n", &.{"deploy.yml: deploy must need the guard job"});
     try expectRepo("deploy.yml", "    environment: ${{ inputs.stage }}\n", "", &.{"deploy.yml: deploy must declare an environment"});
     try expectRepo("deploy.yml", "      id-token: write\n", "      id-token: read\n", &.{"deploy.yml: expected exactly one job with id-token"});
-    try expectRepo("e2e.yml", "    needs: guard\n", "    needs: other\n", &.{"e2e.yml: smoke-linux must need the guard job"});
+    try expectRepo("e2e.yml", "    needs: guard\n", "    needs: other\n", &.{ "e2e.yml: smoke-linux must need the guard job", "e2e.yml: index-gate must need the guard job" });
     try expectRepo("e2e.yml", "    environment: ${{ inputs.stage }}\n", "", &.{"e2e.yml: smoke-linux must declare an environment"});
     try expectRepo("e2e.yml", "      id-token: write\n", "      id-token: read\n", &.{"e2e.yml: expected exactly one job with id-token"});
 }
