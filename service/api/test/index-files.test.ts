@@ -190,20 +190,20 @@ describe('versions and states on the right line', () => {
   });
 
   test('pending versions and rejected publishes (tombstoned, no files) have no line', () => {
-    const rejected = applyEvent(rec({ name: 'p', version: '2.0.0', state: 'pending', files: [] }), {
+    const rejected = applyEvent(rec({ name: 'pk', version: '2.0.0', state: 'pending', files: [] }), {
       type: 'tombstone',
       reason_code: 'rejected',
       date: '2026-10-14',
       unpublished: true,
     });
-    const rs = [...rows('p', [{ ver: '1.0.0' }]), rec({ name: 'p', version: '1.5.0', state: 'pending', files: [] }), rejected];
+    const rs = [...rows('pk', [{ ver: '1.0.0' }]), rec({ name: 'pk', version: '1.5.0', state: 'pending', files: [] }), rejected];
     expect(rejected.files).toEqual([]);
-    expect(lines(buildPackageIndex('p', rs)).map((l) => l.version)).toEqual(['1.0.0']);
+    expect(lines(buildPackageIndex('pk', rs)).map((l) => l.version)).toEqual(['1.0.0']);
   });
 
   test('a package with no visible version has no file at all', () => {
-    expect(buildPackageIndex('p', [])).toBeUndefined();
-    expect(buildPackageIndex('p', [rec({ name: 'p', version: '1.0.0', state: 'pending', files: [] })])).toBeUndefined();
+    expect(buildPackageIndex('pk', [])).toBeUndefined();
+    expect(buildPackageIndex('pk', [rec({ name: 'pk', version: '1.0.0', state: 'pending', files: [] })])).toBeUndefined();
   });
 
   test('a version with files in two subdirs is one line with both files, ordered by subdir', () => {
@@ -360,16 +360,16 @@ describe('rows the builder refuses', () => {
     expect(() => buildPackageIndex('tls', [rec({ name: 'other', version: '1.0.0' })])).toThrow(/does not belong/);
   });
   test('the same version twice', () => {
-    expect(() => buildPackageIndex('p', [rec({ name: 'p', version: '1.0.0' }), rec({ name: 'p', version: '1.0.0' })])).toThrow(/twice/);
+    expect(() => buildPackageIndex('pk', [rec({ name: 'pk', version: '1.0.0' }), rec({ name: 'pk', version: '1.0.0' })])).toThrow(/twice/);
   });
   test('a published file with no url', () => {
-    const r = rec({ name: 'p', version: '1.0.0' });
-    expect(() => buildPackageIndex('p', [{ ...r, files: [{ ...r.files[0]!, url: undefined }] }])).toThrow(/no url/);
+    const r = rec({ name: 'pk', version: '1.0.0' });
+    expect(() => buildPackageIndex('pk', [{ ...r, files: [{ ...r.files[0]!, url: undefined }] }])).toThrow(/no url/);
   });
   test('a yank without a reason, and a tombstone without its object', () => {
-    expect(() => buildPackageIndex('p', [rec({ name: 'p', version: '1.0.0', state: 'yanked' })])).toThrow(/without a reason/);
-    expect(() => buildPackageIndex('p', [rec({ name: 'p', version: '1.0.0', state: 'tombstoned' })])).toThrow(/without a tombstone/);
-    expect(() => buildTakedowns([rec({ name: 'p', version: '1.0.0', state: 'tombstoned' })])).toThrow(/without a tombstone/);
+    expect(() => buildPackageIndex('pk', [rec({ name: 'pk', version: '1.0.0', state: 'yanked' })])).toThrow(/without a reason/);
+    expect(() => buildPackageIndex('pk', [rec({ name: 'pk', version: '1.0.0', state: 'tombstoned' })])).toThrow(/without a tombstone/);
+    expect(() => buildTakedowns([rec({ name: 'pk', version: '1.0.0', state: 'tombstoned' })])).toThrow(/without a tombstone/);
   });
   test('a package name that is not a name', () => {
     expect(() => buildPackageIndex('../x', [])).toThrow(/not a package name/);
