@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
+import { indexKey } from '../../src/index-files';
 import { Authenticator, MemoryAuthStore, mintToken } from '../../src/auth';
 import type { PublishApi } from '../../src/http/publish-routes';
 import { route, type HttpResponse, type RouterDeps } from '../../src/http/router';
 import { MemoryStore } from '../../src/memory-store';
 import { DEFAULT_PUBLISH_CONFIG, type PublishConfig } from '../../src/publish/config';
-import { indexSubdir, type IndexerDeps } from '../../src/publish/indexer';
+import { parseIndexMessage, processIndexMessage, type IndexerDeps } from '../../src/publish/indexer';
 import { FakeS3Upload, MemoryInvalidator, MemoryObjectStore, MemoryPresigner, MemoryPublishStore, MemoryQueue } from '../../src/publish/memory';
 import type { Flags } from '../../src/publish/ports';
 import { PublishService } from '../../src/publish/service';
@@ -108,6 +109,7 @@ export class Harness {
       publishes: this.publishes,
       objects: this.objects,
       invalidator: this.invalidator,
+      indexQueue: this.indexQueue,
       now,
       log: (l) => this.logs.push(l),
       ensured: new Set(),
@@ -199,13 +201,25 @@ export class Harness {
     }
   }
 
-  /** Run every queued index message, one after the other. */
+  /** Run one index-queue message the way the Lambda does. */
+  async handleIndex(m: { body: string }) {
+    const msg = parseIndexMessage(JSON.parse(m.body));
+    if (!msg) throw new Error(`the harness was given a message the writer does not understand: ${m.body}`);
+    await processIndexMessage(this.indexerDeps, msg);
+  }
+
+  /** Run every queued index message, one after the other (including the ones the jobs queue meanwhile). */
   async runIndexer() {
-    for (let m = this.indexQueue.take(); m; m = this.indexQueue.take()) await indexSubdir(this.indexerDeps, JSON.parse(m.body));
+    for (let m = this.indexQueue.take(); m; m = this.indexQueue.take()) await this.handleIndex(m);
+  }
+
+  /** The sparse-index file of a package as the channel holds it, or undefined. */
+  indexFile(name: string): string | undefined {
+    return this.objects.objects.get(indexKey(name))?.body.toString('utf8');
   }
 
   /** The repodata.json the channel currently serves for a subdir. */
-  repodata(subdir: string): { 'packages.conda': Record<string, { name: string; version: string; sha256: string }>; removed: string[] } {
+  repodata(subdir: string): { 'packages.conda': Record<string, { name: string; version: string; sha256: string; size: number }>; removed: string[] } {
     const o = this.objects.objects.get(`${subdir}/repodata.json`);
     if (!o) throw new Error(`no repodata for ${subdir}`);
     return JSON.parse(o.body.toString('utf8'));

@@ -73,6 +73,14 @@ function recordOf(r: VersionRecord) {
 export const isIndexed = (r: VersionRecord): boolean => r.state !== 'pending' && r.files.length > 0;
 
 /**
+ * The revision of a package as the index sees it: the sum of its rows' revision counters. Every change to a row
+ * adds one and rows are never removed, so a later state of the package always has a larger number. A queue
+ * message carries it so that the dedup id (`name:rev`) separates two changes of one package, whichever versions
+ * they touch.
+ */
+export const packageRev = (rows: readonly VersionRecord[]): number => rows.reduce((n, r) => n + r.rev, 0);
+
+/**
  * The NDJSON file of one package, from all its version rows: one line per indexed version, oldest first
  * (numeric), each line compact JSON with sorted keys, the whole ending in a newline. A version's files in
  * every subdir are listed in that one line. Returns undefined when no version is indexed: the service

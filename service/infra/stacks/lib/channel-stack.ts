@@ -40,6 +40,10 @@ export class ChannelStack extends Stack {
           noncurrentVersionExpiration: Duration.days(1),
           abortIncompleteMultipartUploadAfter: Duration.days(1),
         },
+        // The index writer rewrites index/ files in place; on a versioned bucket every rewrite leaves a noncurrent
+        // version. The current object is never expired. Lifecycle expiry is done by the service, so the delete deny
+        // below (an IAM-level deny) does not stand in its way.
+        { id: 'index-noncurrent-expiry', prefix: 'index/', noncurrentVersionExpiration: Duration.days(30) },
         { id: 'abort-multipart', abortIncompleteMultipartUploadAfter: Duration.days(1) },
       ],
     });
@@ -79,6 +83,18 @@ export class ChannelStack extends Stack {
         principals: [new iam.ServicePrincipal('cloudfront.amazonaws.com')],
         actions: ['s3:GetObject'],
         resources: [this.bucket.arnForObjects('quarantine/*')],
+      }),
+    );
+
+    // The sparse index is served by the API host, never from this one: a year of caching an index file would be
+    // wrong the moment it is rewritten. Same explicit deny as quarantine/.
+    this.bucket.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: 'DenyCloudFrontIndex',
+        effect: iam.Effect.DENY,
+        principals: [new iam.ServicePrincipal('cloudfront.amazonaws.com')],
+        actions: ['s3:GetObject'],
+        resources: [this.bucket.arnForObjects('index/*')],
       }),
     );
 

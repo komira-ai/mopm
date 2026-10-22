@@ -27,9 +27,11 @@ describe('yank and unyank rebuild the index', () => {
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toMatchObject({ version: '1.0.0', state: 'yanked', yank_reason: 'broken build' });
     // The index writer's FIFO group is the subdir, as for a publish; no publish id: a plain rebuild.
+    // Then the package's sparse-index file, in the package's own group (demo: published rev 1, yanked rev 2).
     expect(h.indexQueue.sent.map((m) => [m.groupId, JSON.parse(m.body)]).sort()).toEqual([
       ['linux-64', { type: 'index', subdir: 'linux-64' }],
       ['osx-arm64', { type: 'index', subdir: 'osx-arm64' }],
+      ['pkg:demo', { type: 'index_pkg', name: 'demo', rev: 2 }],
     ]);
     await h.runIndexer();
     for (const [subdir, f] of [['linux-64', a], ['osx-arm64', b]] as const) {
@@ -43,7 +45,10 @@ describe('yank and unyank rebuild the index', () => {
     expect(back.statusCode).toBe(200);
     expect(JSON.parse(back.body)).toMatchObject({ state: 'published' });
     expect(JSON.parse(back.body)).not.toHaveProperty('yank_reason');
-    expect(h.indexQueue.sent).toHaveLength(2);
+    // Unyank is gated: one chain, starting at the first subdir; the package index file comes after the last.
+    expect(h.indexQueue.sent.map((m) => [m.groupId, JSON.parse(m.body)])).toEqual([
+      ['linux-64', { type: 'index', subdir: 'linux-64', then: { name: 'demo', rev: 3, next: ['osx-arm64'] } }],
+    ]);
     await h.runIndexer();
     expect(Object.keys(h.repodata('linux-64')['packages.conda'])).toEqual([a.filename]);
     expect(h.repodata('linux-64').removed).toEqual([]);
@@ -67,7 +72,7 @@ describe('yank and unyank rebuild the index', () => {
     const again = await h.call('PUT', yankUrl('demo', '1.0.0'), me.token, { yanked: true, reason: 'other words' });
     expect(again.statusCode).toBe(200);
     expect(JSON.parse(again.body)).toMatchObject({ state: 'yanked', yank_reason: 'bad' });
-    expect(h.indexQueue.sent).toHaveLength(2);
+    expect(h.indexQueue.sent).toHaveLength(3); // two subdirs and the package file
     expect((await h.registry.getVersion('demo', '1.0.0'))?.rev).toBe(2); // the repeat changed nothing
     await h.runIndexer();
     expect(h.repodata('linux-64').removed).toEqual([a.filename]);

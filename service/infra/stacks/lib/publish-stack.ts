@@ -37,11 +37,13 @@ export const MAX_RECEIVES = 3;
  *
  *  - validate queue (group = package): the validator reads the quarantined upload, runs validatePackage, copies the
  *    files into the channel, publishes the version, then sends one message per affected subdir to
- *  - index queue (group = subdir): the index writer rebuilds that subdir's repodata from the registry's records,
- *    writes it, invalidates its two CloudFront paths and marks the publish published.
+ *  - index queue (group = subdir, `pkg:<name>` or `takedowns`): the index writer rebuilds a subdir's repodata from the
+ *    registry's records, writes it and invalidates its two CloudFront paths; the last subdir job of a publish queues
+ *    the package's job, which writes the package's sparse-index file and marks the publish published.
  *
  * Two roles, because they need different things: the validator reads and deletes quarantine, writes package files
- * and moves a version to published; the index writer writes only the repodata files and the invalidation.
+ * and moves a version to published; the index writer writes only the repodata files, the files under index/, the
+ * messages of its own queue and the invalidation.
  */
 export class PublishStack extends Stack {
   readonly validateQueue: sqs.Queue;
@@ -158,6 +160,7 @@ export class PublishStack extends Stack {
         MOPM_STAGE: c.stage,
         MOPM_CHANNEL_BUCKET: bucketName,
         MOPM_DISTRIBUTION_ID: props.channel.distribution.distributionId,
+        MOPM_INDEX_QUEUE_URL: this.indexQueue.queueUrl,
       },
     });
     this.indexer.addToRolePolicy(
@@ -166,6 +169,19 @@ export class PublishStack extends Stack {
         actions: ['s3:PutObject'],
         resources: CHANNEL_SUBDIRS.flatMap((s) => [`${bucketArn}/${s}/repodata.json`, `${bucketArn}/${s}/repodata.json.zst`]),
       }),
+    );
+    // The sparse index (spec/index.md): one file per package and the takedown log, all under index/. PutObject only:
+    // the writer never reads its own output (it rebuilds from the registry's rows).
+    this.indexer.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: 'WriteSparseIndex',
+        actions: ['s3:PutObject'],
+        resources: [`${bucketArn}/index/*`],
+      }),
+    );
+    // The last repodata job of a publish (or an unyank chain) queues the package's index job on this same queue.
+    this.indexer.addToRolePolicy(
+      new iam.PolicyStatement({ sid: 'SendPackageIndexJobs', actions: ['sqs:SendMessage'], resources: [this.indexQueue.queueArn] }),
     );
     // The index is rebuilt from every record: the package names (a Scan of the small packages table) and their versions.
     this.indexer.addToRolePolicy(
