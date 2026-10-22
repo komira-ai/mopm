@@ -77,15 +77,47 @@ describe('S3Channel', () => {
     await expect(new S3Channel('bkt', opts(fakeHttp({ status: 500 }).http)).get('k')).rejects.toThrow('s3 answered 500');
   });
 
-  test('getExact: 200 gives the bytes, 404 is absent, and 403 and every other answer throw (they are not "absent")', async () => {
+  test('getExact: 200 gives the bytes, 404 is absent, and every other answer throws', async () => {
     const got = fakeHttp({ status: 200, body: 'bytes!' });
     expect((await new S3Channel('bkt', opts(got.http)).getExact('index/ht/tp/http_client'))!.toString()).toBe('bytes!');
+    expect(got.seen.length).toBe(1);
     expect(got.seen[0]!.method).toBe('GET');
     expect(got.seen[0]!.url).toBe('https://bkt.s3.us-east-1.amazonaws.com/index/ht/tp/http_client');
     expect(await new S3Channel('bkt', opts(fakeHttp({ status: 404 }).http)).getExact('k')).toBeUndefined();
-    for (const status of [403, 400, 500, 503]) {
+    for (const status of [400, 500, 503]) {
       await expect(new S3Channel('bkt', opts(fakeHttp({ status, body: '<Error/>' }).http)).getExact('k')).rejects.toThrow(`s3 answered ${status}`);
     }
+  });
+
+  const listing = (...keys: string[]) => ({ status: 200, body: `<?xml version="1.0"?><ListBucketResult><KeyCount>${keys.length}</KeyCount>${keys.map((k) => `<Contents><Key>${k}</Key></Contents>`).join('')}</ListBucketResult>` });
+
+  test('getExact on 403 lists with the exact key as the prefix, one key at most, signed; an empty listing is absent', async () => {
+    const t = fakeHttp({ status: 403, body: '<Error/>' }, listing());
+    expect(await new S3Channel('bkt', opts(t.http)).getExact('index/ab/cd/abcd')).toBeUndefined();
+    expect(t.seen.length).toBe(2);
+    expect(t.seen[1]!.method).toBe('GET');
+    expect(t.seen[1]!.url).toBe('https://bkt.s3.us-east-1.amazonaws.com/?list-type=2&max-keys=1&prefix=index%2Fab%2Fcd%2Fabcd');
+    expect(t.seen[1]!.headers.authorization).toContain('AWS4-HMAC-SHA256');
+  });
+
+  test('getExact on 403 where the listing has the exact key: present but forbidden throws', async () => {
+    const t = fakeHttp({ status: 403, body: '<Error/>' }, listing('index/ab/cd/abcd'));
+    await expect(new S3Channel('bkt', opts(t.http)).getExact('index/ab/cd/abcd')).rejects.toThrow('s3 answered 403');
+  });
+
+  test('getExact on 403 where the listing has only a longer key: that is not the key, so absent', async () => {
+    const t = fakeHttp({ status: 403, body: '<Error/>' }, listing('index/ab/cd/abcde'));
+    expect(await new S3Channel('bkt', opts(t.http)).getExact('index/ab/cd/abcd')).toBeUndefined();
+  });
+
+  test('getExact on 403 where the listing call fails throws', async () => {
+    const t = fakeHttp({ status: 403, body: '<Error/>' }, { status: 503, body: '<Error/>' });
+    await expect(new S3Channel('bkt', opts(t.http)).getExact('index/ab/cd/abcd')).rejects.toThrow('s3 answered 503');
+  });
+
+  test('getExact on 403 reads an XML-escaped key in the listing as the key it names', async () => {
+    const t = fakeHttp({ status: 403 }, listing('a&amp;b'));
+    await expect(new S3Channel('bkt', opts(t.http)).getExact('a&b')).rejects.toThrow('s3 answered 403');
   });
 
   test('delete accepts 204, and 404 (already gone); a server error throws', async () => {

@@ -57,8 +57,8 @@ describe('the reader function', () => {
     }
   });
 
-  test('S3 404 is 404; S3 403 is 502', async () => {
-    for (const [status, want] of [[404, 404], [403, 502], [500, 502]] as const) {
+  test('S3 404 is 404; any other S3 failure is 502', async () => {
+    for (const [status, want] of [[404, 404], [400, 502], [500, 502]] as const) {
       const t = await load({ MOPM_CHANNEL_BUCKET: 'chan' }, () => ({ status, body: '<Error/>' }));
       const spy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
       try {
@@ -67,6 +67,54 @@ describe('the reader function', () => {
         spy.mockRestore();
         t.restore();
       }
+    }
+  });
+
+  const KEY = indexKey('http_client');
+  const listOf = (...keys: string[]) => ({ status: 200, body: `<ListBucketResult>${keys.map((k) => `<Contents><Key>${k}</Key></Contents>`).join('')}</ListBucketResult>` });
+  const s3 = (list: { status: number; body?: string }) => (url: string) => (url.includes('list-type=2') ? list : { status: 403, body: '<Error>AccessDenied</Error>' });
+
+  test('S3 403 and an empty listing for the exact key (a never-published package) is 404', async () => {
+    const t = await load({ MOPM_CHANNEL_BUCKET: 'chan' }, s3(listOf()));
+    try {
+      expect((await t.handler(event('/index/ht/tp/http_client'))).statusCode).toBe(404);
+      expect(t.urls[1]).toContain('prefix=' + encodeURIComponent(KEY));
+      expect(t.urls[1]).toContain('max-keys=1');
+    } finally {
+      t.restore();
+    }
+  });
+
+  test('S3 403 and a listing with the exact key (present but forbidden) is 502, logged', async () => {
+    const t = await load({ MOPM_CHANNEL_BUCKET: 'chan' }, s3(listOf(KEY)));
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      expect((await t.handler(event('/index/ht/tp/http_client'))).statusCode).toBe(502);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+      t.restore();
+    }
+  });
+
+  test('S3 403 and a listing with only a longer name under the same prefix is 404', async () => {
+    const t = await load({ MOPM_CHANNEL_BUCKET: 'chan' }, s3(listOf(`${KEY}2`)));
+    try {
+      expect((await t.handler(event('/index/ht/tp/http_client'))).statusCode).toBe(404);
+    } finally {
+      t.restore();
+    }
+  });
+
+  test('S3 403 and a failing listing is 502, logged', async () => {
+    const t = await load({ MOPM_CHANNEL_BUCKET: 'chan' }, s3({ status: 500, body: '<Error/>' }));
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      expect((await t.handler(event('/index/ht/tp/http_client'))).statusCode).toBe(502);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+      t.restore();
     }
   });
 

@@ -236,8 +236,9 @@ export class ApiStack extends Stack {
     );
 
     // The index reader: its own function and role, so the API role keeps its single quarantine statement. It may read
-    // objects under index/ and list the bucket only with that prefix, which is what makes S3 answer 404 (not 403) for a
-    // key that is not there; the reader maps any other S3 answer, 403 included, to 502.
+    // objects under index/ and list the bucket only with that prefix. S3 answers 403 (not 404) for a key that is not
+    // there, because that decision ignores the prefix condition; the reader then lists with the exact key as the prefix,
+    // which the grant allows, and answers 404 only when no listed key equals it. Any other S3 answer is 502.
     const bucketArn = `arn:aws:s3:::${channelBucketName(c.stage, this.account)}`;
     this.indexReader = new lambda.Function(this, 'IndexReader', {
       runtime: lambda.Runtime.NODEJS_22_X,
