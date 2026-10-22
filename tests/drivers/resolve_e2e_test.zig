@@ -522,6 +522,29 @@ fn offlineLock(cx: *Cx) !void {
     try cx.package(try h.join(cx.a, &.{ nested, "local" }), "local", "0.3.0", "legacy = \"1\"");
     r = try cx.run(nested, &.{ "lock", "--registry", dead_registry });
     cx.ok("can fail: nor is a registry dependency of a path dependency", r.code == 1 and has(r.stderr, "cannot reach http://127.0.0.1:1") and (try cx.lockOf(nested)) == null, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+
+    // A project with no dependency at all: the toolchain (the manifest's Mojo version) is pinned inside mopm, so
+    // it needs no registry either.
+    const none = try cx.project("offline_none", "");
+    r = try cx.run(none, &.{ "lock", "--registry", dead_registry });
+    cx.ok("a project with no dependency at all locks with the registry down", r.code == 0 and has(r.stdout, "locked 0 packages for mojo 1.0.0\n") and r.stderr.len == 0, try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+    const none_text = (try cx.lockOf(none)) orelse "";
+    cx.ok("its lock holds the toolchain and the default channel and no package", has(none_text, "\"mojo\": \"1.0.0\"") and has(none_text, "\"channels\": [\n    \"https://conda.mopm.dev/\"\n  ]") and !has(none_text, "\"name\":"), none_text);
+    r = try cx.run(none, &.{ "tree" });
+    cx.ok("tree reads that lock", r.code == 0, try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
+    r = try cx.run(none, &.{ "update", "--registry", dead_registry });
+    cx.ok("update of it needs no registry either", r.code == 0 and r.stderr.len == 0, try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+
+    // A manifest that is only a package and a toolchain: no [dependencies] table at all.
+    const bare = try h.join(cx.a, &.{ cx.work, "offline_bare" });
+    try h.writeFile(try h.join(cx.a, &.{ bare, "mopm.toml" }), "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n");
+    r = try cx.run(bare, &.{ "lock", "--registry", dead_registry });
+    cx.ok("a manifest with only [package] and [toolchain] locks with the registry down", r.code == 0 and has(r.stdout, "locked 0 packages for mojo 1.0.0\n") and r.stderr.len == 0, try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+
+    // The same with `[package] mojo`, which makes a version 2 lock.
+    const none_all = try unitProject(cx, "offline_none_all", "[\"1.0.0\"]", "");
+    r = try cx.run(none_all, &.{ "lock", "--registry", dead_registry });
+    cx.ok("a project with no dependency and [package] mojo locks with the registry down", r.code == 0 and r.stderr.len == 0 and (try cx.lockOf(none_all)) != null, try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
 }
 
 // ------------------------------------------------- mopm add and mopm remove
