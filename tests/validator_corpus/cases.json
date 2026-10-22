@@ -1532,6 +1532,16 @@
       "note": ""
     },
     {
+      "id": "meta_manifest_native_space_exclusive",
+      "archive": "meta_manifest_native_space_exclusive.conda",
+      "intent": "manifest_schema",
+      "what": "a native exclusive group with a leading space",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
       "id": "meta_native_path_climbs",
       "archive": "meta_native_path_climbs.conda",
       "intent": "native_path",

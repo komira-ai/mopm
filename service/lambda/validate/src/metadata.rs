@@ -89,6 +89,12 @@ fn soname_ok(s: &str) -> bool {
     !tail.is_empty() && !tail.contains(['\n', '\r', '\u{2028}', '\u{2029}'])
 }
 
+/// `^[^ \u0000-\u001f\u007f](?:[^\u0000-\u001f\u007f]*[^ \u0000-\u001f\u007f])?$`: an exclusivity group is not empty, has
+/// no space at either end and no control character.
+fn exclusive_ok(s: &str) -> bool {
+    !s.is_empty() && !s.starts_with(' ') && !s.ends_with(' ') && !s.chars().any(|c| c < ' ' || c == '\u{7f}')
+}
+
 /// Validate `<name>.mopm.json` against spec/package-metadata.schema.json.
 pub fn check_mopm(o: &Map<String, Value>) -> Checked<Mopm> {
     if !o.get("schema").is_some_and(|v| v.as_f64() == Some(METADATA_SCHEMA_VERSION as f64)) {
@@ -172,8 +178,8 @@ fn check_native(item: &Value) -> Checked<NativeDecl> {
             return bad(format!("native '{id}': 'needs' must be an array of strings"));
         }
     }
-    if r.get("exclusive").is_some_and(|v| v.as_str().map_or(true, str::is_empty)) {
-        return bad(format!("native '{id}': 'exclusive' must be a non-empty string"));
+    if r.get("exclusive").is_some_and(|v| v.as_str().map_or(true, |s| !exclusive_ok(s))) {
+        return bad(format!("native '{id}': 'exclusive' must be a non-empty string with no leading or trailing space and no control character"));
     }
     let file = str_of(r.get("file"));
     let static_file = str_of(r.get("static_file"));
@@ -343,6 +349,16 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn an_exclusive_group_is_exact_text_with_no_edge_space_and_no_control_character() {
+        for ok in ["libcrypto", "lib x", "LibCrypto", "é", "a\u{80}"] {
+            assert!(exclusive_ok(ok), "{ok:?}");
+        }
+        for bad in ["", " ", " a", "a ", "a\t", "\ta", "a\nb", "a\u{0}b", "a\u{7f}"] {
+            assert!(!exclusive_ok(bad), "{bad:?}");
+        }
+    }
+
     fn obj(v: Value) -> Map<String, Value> {
         v.as_object().unwrap().clone()
     }
@@ -389,9 +405,12 @@ mod tests {
             (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "mode": "x"}]}), "<name>.mopm.json: native 'z': 'mode' must be link or load"),
             (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "file": 1}]}), "<name>.mopm.json: native 'z': 'file' must be a string"),
             (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "needs": [1]}]}), "<name>.mopm.json: native 'z': 'needs' must be an array of strings"),
-            (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "exclusive": 1}]}), "<name>.mopm.json: native 'z': 'exclusive' must be a non-empty string"),
-            (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "exclusive": ""}]}), "<name>.mopm.json: native 'z': 'exclusive' must be a non-empty string"),
-            (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so"}]}), "<name>.mopm.json: native 'z': kind shared needs 'file'"),
+            (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "exclusive": 1}]}), "<name>.mopm.json: native 'z': 'exclusive' must be a non-empty string with no leading or trailing space and no control character"),
+            (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "exclusive": ""}]}), "<name>.mopm.json: native 'z': 'exclusive' must be a non-empty string with no leading or trailing space and no control character"),
+            (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "exclusive": " libx"}]}), "<name>.mopm.json: native 'z': 'exclusive' must be a non-empty string with no leading or trailing space and no control character"),
+            (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "exclusive": "libx "}]}), "<name>.mopm.json: native 'z': 'exclusive' must be a non-empty string with no leading or trailing space and no control character"),
+            (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "exclusive": "libx\n"}]}), "<name>.mopm.json: native 'z': 'exclusive' must be a non-empty string with no leading or trailing space and no control character"),
+            (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "exclusive": "lib\u{1}x"}]}), "<name>.mopm.json: native 'z': 'exclusive' must be a non-empty string with no leading or trailing space and no control character"),            (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so"}]}), "<name>.mopm.json: native 'z': kind shared needs 'file'"),
             (json!({"schema": 1, "name": "d", "native": [{"id": "z", "soname": "libz.so", "kind": "both", "file": "libz.so"}]}), "<name>.mopm.json: native 'z': kind both needs 'static_file'"),
         ];
         for (v, want) in table {

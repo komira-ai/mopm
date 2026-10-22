@@ -61,9 +61,10 @@
             "items": { "type": "string" }
           },
           "exclusive": {
-            "description": "An exclusivity group: a closure links at most one native library of a group.",
+            "description": "An exclusivity group: a closure links at most one native library of a group. Names are compared exactly: no leading or trailing space, no control character.",
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "pattern": "^[^ \\u0000-\\u001f\\u007f](?:[^\\u0000-\\u001f\\u007f]*[^ \\u0000-\\u001f\\u007f])?$"
           }
         },
         "allOf": [
