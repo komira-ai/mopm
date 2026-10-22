@@ -84,6 +84,10 @@ check them on every read. A violation is an error, not a warning.
    configured channel is a hard error: it is the shape of a dependency
    confusion attack.
 7. No two packages declare the same `soname` in `native`.
+8. No two native libraries declare the same `exclusive` group for one `subdir`,
+   in two packages or in one. `mopm lock` refuses to write such a lock, naming
+   both libraries. (A unit graph applies the same rule to the closure of each
+   unit.)
 
 ## Install and update behaviour (what the lock promises)
 

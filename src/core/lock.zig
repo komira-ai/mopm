@@ -259,6 +259,7 @@ pub fn check(arena: Allocator, l: Lock) Allocator.Error!?[]const u8 {
                 if (std.mem.eql(u8, need, n.soname)) return try std.fmt.allocPrint(arena, "{s}: native library {s} needs itself ({s})", .{ p.name, n.id, need });
             }
         }
+        if (try exclusiveProblem(arena, l.packages, i)) |why| return why;
         for (l.packages[0..i]) |q| {
             if (std.mem.eql(u8, q.name, p.name) and !std.mem.eql(u8, q.channel, p.channel)) {
                 return try std.fmt.allocPrint(arena, "{s} comes from two channels, {s} and {s}", .{ p.name, q.channel, p.channel });
@@ -269,6 +270,29 @@ pub fn check(arena: Allocator, l: Lock) Allocator.Error!?[]const u8 {
                     if (std.mem.eql(u8, n.soname, m.soname)) {
                         return try std.fmt.allocPrint(arena, "soname {s} is shipped by both {s} and {s}", .{ n.soname, q.name, p.name });
                     }
+                }
+            }
+        }
+    }
+    return null;
+}
+
+/// Rule 8, for `packages[i]` against itself and the entries before it: no two native libraries of one subdir declare
+/// the same `exclusive` group (a closure links one library of a group). Worded, or null.
+pub fn exclusiveProblem(arena: Allocator, packages: []const Package, i: usize) Allocator.Error!?[]const u8 {
+    const p = packages[i];
+    for (p.native, 0..) |n, k| {
+        if (n.exclusive.len == 0) continue;
+        for (p.native[0..k]) |m| {
+            if (std.mem.eql(u8, m.exclusive, n.exclusive)) {
+                return try std.fmt.allocPrint(arena, "{s}: native libraries {s} and {s} are both in exclusive group {s}; a closure links one library of a group", .{ p.name, m.soname, n.soname, n.exclusive });
+            }
+        }
+        for (packages[0..i]) |q| {
+            if (!std.mem.eql(u8, q.subdir, p.subdir)) continue;
+            for (q.native) |m| {
+                if (std.mem.eql(u8, m.exclusive, n.exclusive)) {
+                    return try std.fmt.allocPrint(arena, "exclusive group {s} is declared by both {s} ({s}) and {s} ({s}) for {s}; a closure links one library of a group", .{ n.exclusive, q.name, m.soname, p.name, n.soname, p.subdir });
                 }
             }
         }
@@ -708,6 +732,7 @@ test "each invalid example lock is refused, for the reason its name gives" {
         .{ "channel_not_listed.json", "is not in channels" },
         .{ "dep_not_in_lock.json", "is not in packages" },
         .{ "duplicate_entry.json", "not sorted by name, version and subdir with no repeats" },
+        .{ "exclusive_clash.json", "exclusive group libcrypto is declared by both crypto_sys (libcrypto_sys.a) and tls_sys (libtls_sys.a) for linux-64" },
         .{ "future_lock_version.json", "Update mopm." },
         .{ "http_non_loopback_channel.json", "channel http://conda.mopm.dev/channel/ is refused" },
         .{ "missing_build.json", "has no build" },
@@ -1082,4 +1107,50 @@ test "a native library that needs its own soname is refused when the lock is rea
     var why: []const u8 = "";
     try std.testing.expectError(error.Invalid, parse(a, selfish, &why));
     try std.testing.expectEqualStrings("tls_sys: native library tls_sys needs itself (libtls_sys.a)", why);
+}
+
+// Defects it catches: a lock that holds two libraries of one exclusive group for one platform (two copies of one C
+// library) read back as sound; and the opposite, a group refused because another platform's package holds it too.
+// Mutants planted: the subdir comparison removed (the osx case goes red); the whole check returns null (the clash goes
+// red); the in-package loop removed (the one-package case goes red).
+test "an exclusive group is held once per subdir: two packages or two libraries of one package in it are refused, one per platform is not" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var bad_dir = try std.fs.cwd().openDir(try testroot.path(a, "tests/contract/examples/lock/invalid"), .{});
+    defer bad_dir.close();
+    var good_dir = try std.fs.cwd().openDir(try testroot.path(a, "tests/contract/examples/lock/valid"), .{});
+    defer good_dir.close();
+    var why: []const u8 = "";
+
+    const clash = try bad_dir.readFileAlloc(a, "exclusive_clash.json", 1 << 20);
+    try std.testing.expectError(error.Invalid, parse(a, clash, &why));
+    try std.testing.expectEqualStrings("exclusive group libcrypto is declared by both crypto_sys (libcrypto_sys.a) and tls_sys (libtls_sys.a) for linux-64; a closure links one library of a group", why);
+
+    // The same two libraries for different platforms are two closures, not one.
+    const apart = try std.mem.replaceOwned(
+        u8,
+        a,
+        clash,
+        "\"subdir\": \"linux-64\",\n      \"channel\": \"https://conda.mopm.dev/\",\n      \"url\": \"https://conda.mopm.dev/linux-64/mojo-tls_sys",
+        "\"subdir\": \"osx-arm64\",\n      \"channel\": \"https://conda.mopm.dev/\",\n      \"url\": \"https://conda.mopm.dev/osx-arm64/mojo-tls_sys",
+    );
+    try std.testing.expect(!std.mem.eql(u8, clash, apart));
+    _ = parse(a, apart, &why) catch |e| {
+        std.debug.print("refused: {s}\n", .{why});
+        return e;
+    };
+
+    // Two libraries of one package in one group.
+    const valid = try good_dir.readFileAlloc(a, "static_natives.json", 1 << 20);
+    const twice = try std.mem.replaceOwned(
+        u8,
+        a,
+        valid,
+        "\"exclusive\": \"libcrypto\"\n        }\n      ]",
+        "\"exclusive\": \"libcrypto\"\n        },\n        {\"id\": \"c2\", \"soname\": \"libc2.a\", \"kind\": \"static\", \"exclusive\": \"libcrypto\"}\n      ]",
+    );
+    try std.testing.expect(!std.mem.eql(u8, valid, twice));
+    try std.testing.expectError(error.Invalid, parse(a, twice, &why));
+    try std.testing.expectEqualStrings("crypto_sys: native libraries libcrypto_sys.a and libc2.a are both in exclusive group libcrypto; a closure links one library of a group", why);
 }

@@ -93,7 +93,7 @@ lock whose recorded hash is not the one this mopm computes.
 | `root` | `lib`: the package directory, relative to the workspace |
 | `srcs` | `path` (relative to the workspace) and `sha256` of each source, sorted by path |
 | `deps` | ids of the units this one imports, in the order `mopm.toml` lists them (order is significant) |
-| `natives` | `id`, `soname`, `sha256`, `package` of every native library in the unit's dependency closure, and `kind`, `needs`, `exclusive` when the lock gives them (left out when `shared`, empty, none), in link order: a library before every library it `needs`, the sonames' order between libraries that do not constrain one another |
+| `natives` | `id`, `soname`, `sha256`, `package` of every native library in the unit's dependency closure, and `kind`, `needs`, `exclusive` when the lock gives them (left out when `shared`, empty, none), in link order: a library before every library it `needs`, the sonames' order between libraries that do not constrain one another. A closure holding two libraries of one `exclusive` group is refused, naming both |
 | `artifact` | `prebuilt`: `url`, `sha256`, `size` of the `.conda` for `M` (from the lock) |
 | `mojoc` | `prebuilt`: the `.mojoc` inside that package |
 | `profile` | `opt`, `assert`, `debug`: the compiler profile of a `lib`, `test` or `bin` |

@@ -83,6 +83,9 @@ export function checkMopm(o: Record<string, unknown>): Mopm {
       if (r.needs !== undefined && (!Array.isArray(r.needs) || !(r.needs as unknown[]).every(isStr))) {
         return bad(`native '${r.id}': 'needs' must be an array of strings`);
       }
+      if (r.exclusive !== undefined && (!isStr(r.exclusive) || r.exclusive.length < 1)) {
+        return bad(`native '${r.id}': 'exclusive' must be a non-empty string`);
+      }
       if ((kind === 'shared' || kind === 'both') && r.file === undefined) return bad(`native '${r.id}': kind ${String(kind)} needs 'file'`);
       if ((kind === 'static' || kind === 'both') && r.static_file === undefined) return bad(`native '${r.id}': kind ${String(kind)} needs 'static_file'`);
       const paths: string[] = [];

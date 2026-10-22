@@ -133,6 +133,10 @@ pub fn buildLock(arena: Allocator, res: resolve.Resolution, channel_url: []const
         }
     }
     lock.sortPackages(packages.items);
+    // Two packages' libraries in one exclusive group would be a lock that cannot be read back: refuse it here, with the reason.
+    for (packages.items, 0..) |_, i| {
+        if (try lock.exclusiveProblem(arena, packages.items, i)) |why| return bad(arena, diag, "{s}", .{why});
+    }
     const channels = try arena.alloc([]const u8, 1);
     channels[0] = channel_url;
     return .{ .mojo = res.mojo, .channels = channels, .packages = packages.items };
@@ -872,12 +876,17 @@ fn repoJson(a: Allocator, subdir: []const u8, entries: []const []const u8) ![]co
 }
 
 fn world(a: Allocator) !World {
+    return worldWith(a, "");
+}
+
+/// The world with the exclusive group of tls_sys' library set (crypto_sys' is libcrypto).
+fn worldWith(a: Allocator, tls_group: []const u8) !World {
     const crypto_linux_archive = ar ++ "crypto-linux-members\n";
     const crypto_osx_archive = ar ++ "crypto-osx-members\n";
     const tls_archive = ar ++ "tls-members\n";
     const crypto_native = [_]conda.Native{.{ .id = "crypto_sys", .soname = "libcrypto_sys.a", .exclusive = "libcrypto", .archive = crypto_linux_archive }};
     const crypto_osx_native = [_]conda.Native{.{ .id = "crypto_sys", .soname = "libcrypto_sys.a", .exclusive = "libcrypto", .archive = crypto_osx_archive }};
-    const tls_native = [_]conda.Native{.{ .id = "tls_sys", .soname = "libtls_sys.a", .needs = &.{"libcrypto_sys.a"}, .archive = tls_archive }};
+    const tls_native = [_]conda.Native{.{ .id = "tls_sys", .soname = "libtls_sys.a", .needs = &.{"libcrypto_sys.a"}, .exclusive = tls_group, .archive = tls_archive }};
     const cl = try conda.pack(a, .{ .name = "crypto_sys", .version = "1.39.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "MOJOC", .natives = &crypto_native });
     const co = try conda.pack(a, .{ .name = "crypto_sys", .version = "1.39.0", .compiler = "1.0.0", .subdir = "osx-arm64", .mojoc = "MOJOC", .natives = &crypto_osx_native });
     const tl = try conda.pack(a, .{
@@ -965,6 +974,26 @@ test "mopm lock pins each native library: the sha256 of the library file, per su
         return e;
     };
     try std.testing.expectEqualStrings(text, try lock.render(a, again));
+}
+
+// Defect it catches: `mopm lock` writing a lock in which two packages' libraries share an exclusive group (two copies
+// of one C library), which every later read then refuses without saying how it came about. Mutant planted: the
+// loop over the finished entries is removed from `buildLock`.
+test "mopm lock refuses two packages whose natives are in one exclusive group, naming both; another group locks" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var diag: Diagnostic = .{};
+    const clash = try worldWith(a, "libcrypto");
+    try std.testing.expectError(error.ResolveFailed, worldLock(a, clash, null, &diag));
+    try std.testing.expectEqualStrings(
+        "exclusive group libcrypto is declared by both crypto_sys (libcrypto_sys.a) and tls_sys (libtls_sys.a) for linux-64; a closure links one library of a group",
+        diag.message,
+    );
+    // The crypto library is also published for osx-arm64, where nothing else is in its group: only linux-64 clashes.
+    const other = try worldWith(a, "libtls");
+    const l = try worldLock(a, other, null, &diag);
+    try std.testing.expectEqualStrings("libtls", nativeOf(l, "tls_sys", "linux-64").?.exclusive);
 }
 
 // Defects it catches: a downloaded file believed without checking that it is the file the repodata and index agreed
