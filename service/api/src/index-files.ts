@@ -70,7 +70,7 @@ function recordOf(r: VersionRecord) {
  * Whether a row appears in the index. Pending rows are only a reserved number. A rejected publish is
  * tombstoned with no files, and a record needs at least one file.
  */
-export const isIndexed = (r: VersionRecord): boolean => r.state !== 'pending' && r.files.length > 0;
+export const isIndexed = (r: VersionRecord): boolean => r.files.length > 0;
 
 /**
  * The NDJSON file of one package, from all its version rows: one line per indexed version, oldest first
