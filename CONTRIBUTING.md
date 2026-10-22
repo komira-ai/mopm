@@ -126,6 +126,18 @@ it has one). kpin's fetcher speaks TLS 1.3 only (buildrules' `rules/kpin/README.
 answers TLS 1.2 only, so `update` cannot fetch a new npm tarball from a runner or from here today, and the job
 fails on a lock that lacks one.
 
+A Dependabot bump of a `package-lock.json` leaves its pin table stale. `autopin-compute.yml` and `autopin-commit.yml` regenerate
+the tables of Dependabot's own pull requests with the released `buildrules autopin` and commit them to the pull request's branch
+(the design, the trust each workflow holds and what an owner sets up first: `RELEASING.md`, "The Dependabot pin update"; nothing of it runs
+before the GitHub App is installed). `pin-verify.yml` is the required check on every pull request that every table it covers (`site/` and `service/api/`) is what its lockfile
+calls for, so a hand-made `package-lock.json` change needs the same regenerated table: `./buck2 run buildrules//rules/kpin` for the
+infra packages, which the bot does not touch (their lockfiles bundle packages the tool refuses; `RELEASING.md` says which), `buildrules npm sync <dir>` for `site/` and `service/api/`. A bot-pinned pull request is not a reviewed
+dependency: read the lockfile diff. A Dependabot branch gets no farm build (`farm.yml` skips it), and a pull request that touches
+`.github/` is never pinned by the bot and is checked by its own copy of `pin-verify.yml`, so read the workflow change. A new package with a
+`package-lock.json` needs a `--set` line in `autopin-compute.yml` (and the same in the other three invocations) and a `dependabot.yml` entry, or a place in `autopin_manual` of
+`tests/drivers/hygiene.zig` with the reason; `//:hygiene` fails the pull request that adds one without. Changes to the autopin workflows are held by `tests/drivers/autopin_lint.zig`
+(`zig test tests/drivers/autopin_lint_test.zig`, also `//:autopin_workflows`): add a planted mutant with any rule you add.
+
 `.github/workflows/advisories.yml` scans every tracked `package-lock.json` and `Cargo.lock` for known
 vulnerabilities once a day (and on demand), with a pinned, sha256-verified OSV-Scanner
 (`tools/install_osv_scanner.zig`). It only reports: findings go to the job summary and to one issue titled

@@ -1,0 +1,65 @@
+# autopin-compute: the unprivileged half of the automatic pin update of a Dependabot pull request.
+#
+# When Dependabot opens or updates a pull request, this regenerates the pin tables the pull request's
+# lockfiles call for with a released `buildrules`, and uploads them as an artifact. The directories are the
+# `--set` arguments: site and service/api (buildrules.lock.bzl). The three service/infra packages are not in the
+# list on purpose: their lockfiles bundle packages (aws-cdk-lib), which `autopin compute` refuses, so a Dependabot
+# pull request there is pinned by a person with kpin, as before (tests/drivers/hygiene.zig names them). It writes nothing to the repository and holds nothing to steal: a read-only token, no secret, no
+# environment, no id-token, no cache. autopin-commit.yml, which runs from the default branch, reads the artifact
+# as untrusted bytes and decides whether to commit it.
+#
+# The job runs only for a pull request of this repository that Dependabot authored AND that Dependabot's own run
+# triggered (author, actor, triggering actor and the head repository's id). A push of the autopin App to the
+# branch is therefore skipped: that is what stops the loop. The tool is the released binary, fetched by tag and
+# checked against a sha256 written here; it is never built from the pull request, and a bump of the pin is a
+# pull request to main. The same pin is in autopin-commit.yml and pin-verify.yml (the workflow lint compares).
+#
+# tests/drivers/autopin_lint.zig holds every line of this file to its rules, each with a planted mutant.
+name: autopin-compute
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+
+jobs:
+  compute:
+    name: autopin compute
+    # Dependabot's own pull request, run for Dependabot, from a branch of this repository. At job level, so a
+    # run that fails it never starts a step.
+    if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' && github.actor == 'dependabot[bot]' && github.triggering_actor == 'dependabot[bot]' && github.event.pull_request.head.repo.id == github.event.repository.id && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Fetch the buildrules release (checked against its sha256; never built from this pull request)
+        env:
+          BUILDRULES_VERSION: "0.0.19"
+          BUILDRULES_SHA256: "94aec772f978d6297075c42a0833837780a8025bf1ef300a6739bc4830c23b3e"
+        run: |
+          set -eu
+          name="buildrules-cli-${BUILDRULES_VERSION}-linux-x86_64"
+          curl -fsSLo "$RUNNER_TEMP/$name.tar.gz" "https://github.com/komira-ai/buildrules/releases/download/v${BUILDRULES_VERSION}/$name.tar.gz"
+          echo "${BUILDRULES_SHA256}  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/br"
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP/br" --strip-components=1
+      - name: Regenerate the pin tables the lockfiles call for
+        run: |
+          "$RUNNER_TEMP/br/buildrules" autopin compute --event "$GITHUB_EVENT_PATH" --out "$RUNNER_TEMP/autopin-out" --set site=buildrules-lock --set service/api=buildrules-lock
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: autopin-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/autopin-out
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: false

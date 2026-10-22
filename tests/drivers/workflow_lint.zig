@@ -36,6 +36,9 @@ const kpin_writes = [_][]const u8{ "contents", "pull-requests" };
 /// holds each of them to the one job that may have it, and hygiene holds its triggers.
 const release_file = "release.yml";
 const release_writes = [_][]const u8{ "contents", "id-token", "attestations" };
+/// autopin-commit.yml (the privileged half of the Dependabot pin update) is the one workflow that may be triggered by `workflow_run`, and
+/// the one other that mints an App token (the autopin App, contents write). autopin_lint.zig holds everything else about it.
+const autopin_commit_file = "autopin-commit.yml";
 /// Names whose values must never reach a log: no echo/printf/cat/tee of them.
 const secret_names = [_][]const u8{ "AWS_ACCOUNT_ID", "AWS_REGION", "ROLE_ARN", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN" };
 const owned_actions = [_][]const u8{ "checkout", "setup-node", "upload-artifact", "download-artifact", "attest-build-provenance" };
@@ -352,6 +355,7 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
     // The privileged PR trigger is spelled in two pieces so hygiene does not flag this file.
     const on = try c.onKeys(a, doc);
     for ([_][]const u8{ "pull_request_" ++ "target", "workflow_run", "issue_comment" }) |t| {
+        if (std.mem.eql(u8, t, "workflow_run") and std.mem.eql(u8, base, autopin_commit_file)) continue;
         if (c.containsStr(on, t)) try c.problem(a, out, prefix ++ "{s}: trigger {s} is not allowed", .{ f, t });
     }
 
@@ -376,7 +380,7 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
                 // release.yml signs with Sigstore's installer (not GitHub-owned), pinned by commit like the rest.
                 const cosign_installer = std.mem.eql(u8, base, release_file) and pinned(u, "sigstore/cosign-installer");
                 // ... and so is the action that mints the release bot's App token (release_lint.zig holds that only the tag, tap and bump jobs use it).
-                const app_token = std.mem.eql(u8, base, release_file) and pinned(u, "actions/create-github-app-token");
+                const app_token = (std.mem.eql(u8, base, release_file) or std.mem.eql(u8, base, autopin_commit_file)) and pinned(u, "actions/create-github-app-token");
                 if (!farm_connect and !cosign_installer and !app_token and !ownedActionPinned(u)) {
                     try c.problem(a, out, prefix ++ "{s}: {s} step {d}: only GitHub-owned actions pinned by full SHA are allowed: {s}", .{ f, jn, i, u });
                 }
