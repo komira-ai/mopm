@@ -1,6 +1,6 @@
 # mopm_validate: the package validator, ported from service/api/src/validate. Pure: bytes in, verdict out.
 # Its tests are `:test`, among them the replay of the validator corpus (tests/validator_corpus,
-# komira-ai/mopm#88): the Rust verdict of every one of its 217 inputs must equal the one the TypeScript gave. The
+# komira-ai/mopm#88): the Rust verdict of every one of its 218 inputs must equal the one the TypeScript gave. The
 # corpus is a directory of the root package that the sources `include_bytes!` at its real path.
 load("//:buildrules.bzl", "cargo_package")
 

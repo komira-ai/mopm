@@ -1,4 +1,4 @@
-//! Phase A's validator corpus (`tests/validator_corpus`, komira-ai/mopm#88): 217 inputs and the verdict the
+//! Phase A's validator corpus (`tests/validator_corpus`, komira-ai/mopm#88): 218 inputs and the verdict the
 //! TypeScript validator gave each. The Rust validator must answer the same, for every input: same
 //! acceptance, same rule, same rejection code, same message and path, and for an accepted package the same facts.
 //! "Same" is compared as JSON values, so only meaning counts, not key order. Inputs that are wrong in two ways fix
@@ -77,7 +77,7 @@ fn outcome(v: &Value) -> String {
 #[test]
 fn the_corpus_is_what_the_replay_expects() {
     let cases = cases();
-    assert_eq!(cases.len(), 217, "the corpus of komira-ai/mopm#88");
+    assert_eq!(cases.len(), 218, "the corpus of komira-ai/mopm#88");
     let verdicts = verdicts();
     assert_eq!(verdicts.len(), cases.len());
     for (c, v) in cases.iter().zip(&verdicts) {
