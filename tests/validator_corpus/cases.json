@@ -1522,6 +1522,16 @@
       "note": ""
     },
     {
+      "id": "meta_manifest_native_empty_exclusive",
+      "archive": "meta_manifest_native_empty_exclusive.conda",
+      "intent": "manifest_schema",
+      "what": "a native exclusive group that is an empty string",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
       "id": "meta_native_path_climbs",
       "archive": "meta_native_path_climbs.conda",
       "intent": "native_path",
