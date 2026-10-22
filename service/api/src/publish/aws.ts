@@ -78,6 +78,18 @@ export class S3Channel implements ObjectStore {
     return Buffer.from(await r.arrayBuffer());
   }
 
+  /**
+   * The bytes of a key, or undefined only when S3 says the key does not exist (404). Every other answer, 403 included,
+   * throws: a reader that must tell "not there" from "not allowed" cannot use `get`, which folds the two together.
+   * A 404 is only truthful when the role may s3:ListBucket (otherwise S3 answers 403 for a missing key).
+   */
+  async getExact(key: string) {
+    const r = await this.request('GET', key);
+    if (r.status === 404) return undefined;
+    if (r.status !== 200) throw new AwsError('s3', r.status, await r.text());
+    return Buffer.from(await r.arrayBuffer());
+  }
+
   async put(key: string, body: Buffer, opts: { contentType: string; cacheControl?: string; createOnly?: boolean }) {
     const headers: Record<string, string> = {
       'content-type': opts.contentType,

@@ -77,6 +77,17 @@ describe('S3Channel', () => {
     await expect(new S3Channel('bkt', opts(fakeHttp({ status: 500 }).http)).get('k')).rejects.toThrow('s3 answered 500');
   });
 
+  test('getExact: 200 gives the bytes, 404 is absent, and 403 and every other answer throw (they are not "absent")', async () => {
+    const got = fakeHttp({ status: 200, body: 'bytes!' });
+    expect((await new S3Channel('bkt', opts(got.http)).getExact('index/ht/tp/http_client'))!.toString()).toBe('bytes!');
+    expect(got.seen[0]!.method).toBe('GET');
+    expect(got.seen[0]!.url).toBe('https://bkt.s3.us-east-1.amazonaws.com/index/ht/tp/http_client');
+    expect(await new S3Channel('bkt', opts(fakeHttp({ status: 404 }).http)).getExact('k')).toBeUndefined();
+    for (const status of [403, 400, 500, 503]) {
+      await expect(new S3Channel('bkt', opts(fakeHttp({ status, body: '<Error/>' }).http)).getExact('k')).rejects.toThrow(`s3 answered ${status}`);
+    }
+  });
+
   test('delete accepts 204, and 404 (already gone); a server error throws', async () => {
     for (const status of [204, 404]) await new S3Channel('bkt', opts(fakeHttp({ status }).http)).delete('k');
     await expect(new S3Channel('bkt', opts(fakeHttp({ status: 503 }).http)).delete('k')).rejects.toThrow('s3 answered 503');
