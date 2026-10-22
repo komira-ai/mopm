@@ -1116,6 +1116,111 @@
         }
       },
       "expect": "invalid"
+    },
+    {
+      "name": "error group_not_found",
+      "operationId": "getGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 404,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_not_found",
+            "message": "There is no such group.",
+            "hint": "Group ids are only valid for the caller who made them, or for an owner of every package in the group."
+          }
+        }
+      }
+    },
+    {
+      "name": "error group_not_open",
+      "operationId": "abortGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_not_open",
+            "message": "Group grp_0123456789abcdef0123456789abcdef is validating; only an open group can be aborted.",
+            "hint": "Create the group again with the same request to open it again."
+          }
+        }
+      }
+    },
+    {
+      "name": "error group_conflict",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            { "name": "http_client", "version": "0.4.0", "files": [{ "subdir": "linux-64", "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "size": 123456 }] }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_conflict",
+            "message": "The group cannot be created: you already have 5 open groups, and at most 5 may be open; abort one first.",
+            "hint": "Abort or finish your other groups, or publish a new version."
+          }
+        }
+      }
+    },
+    {
+      "name": "group_conflict answered 400 instead of 409",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            { "name": "http_client", "version": "0.4.0", "files": [{ "subdir": "linux-64", "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "size": 123456 }] }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 400,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_conflict",
+            "message": "The group cannot be created: you already have 5 open groups, and at most 5 may be open; abort one first.",
+            "hint": "Abort or finish your other groups, or publish a new version."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "group_not_found with the hint of another code",
+      "operationId": "getGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 404,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_not_found",
+            "message": "There is no such group.",
+            "hint": "Publish ids are only valid for the caller who made them."
+          }
+        }
+      },
+      "expect": "invalid"
     }
   ]
 }

@@ -183,7 +183,7 @@ export class MemoryStore implements Store, GroupStore {
     if (!cur) return { outcome: 'missing' };
     if (cur.committed_at !== undefined) return { outcome: 'already', header: cur };
     if (cur.status !== 'validating' || cur.rev !== c.rev) return { outcome: 'conflict', header: cur };
-    if (Date.parse(c.now) > Date.parse(cur.deadline_at)) return { outcome: 'deadline', header: cur };
+    if (!(Date.parse(c.now) <= Date.parse(cur.deadline_at))) return { outcome: 'deadline', header: cur }; // a deadline that is not a time is past
     const next = committedRecord(cur, c.writeOrder, c.now);
     this.groups.put(headerKey(gid), groupItem(next));
     this.audit.push(copy(c.audit));
@@ -192,6 +192,13 @@ export class MemoryStore implements Store, GroupStore {
 
   async adoptVersion(rec: VersionRecord, audit: AuditEntry, free: (cur: VersionRecord) => boolean): Promise<AdoptOutcome> {
     if (rec.state !== 'pending' || rec.group_id === undefined) throw new Error('adoptVersion takes a pending row that names a group');
+    return this.adopt(rec, audit, free);
+  }
+  async adoptSingle(rec: VersionRecord, audit: AuditEntry, free: (cur: VersionRecord) => boolean): Promise<AdoptOutcome> {
+    if (rec.state !== 'pending' || rec.group_id !== undefined) throw new Error('adoptSingle takes a pending row that names no group');
+    return this.adopt(rec, audit, free);
+  }
+  private adopt(rec: VersionRecord, audit: AuditEntry, free: (cur: VersionRecord) => boolean): AdoptOutcome {
     const canonical = canonicalVersion(rec.version);
     const key = `${rec.name}\0${canonical}`;
     const fresh = { ...rec, canonical };

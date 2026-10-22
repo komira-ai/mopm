@@ -1,6 +1,8 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import { Match } from 'aws-cdk-lib/assertions';
 import { STAGES } from '../lib/config';
-import { INDEXER_TIMEOUT_SECONDS, MAX_RECEIVES, VALIDATOR_MAX_CONCURRENCY, VALIDATOR_TIMEOUT_SECONDS } from '../lib/publish-stack';
+import { GROUP_ALARMS, INDEXER_TIMEOUT_SECONDS, MAX_RECEIVES, METRICS_NAMESPACE, VALIDATOR_MAX_CONCURRENCY, VALIDATOR_TIMEOUT_SECONDS } from '../lib/publish-stack';
 import { DUMMY_ACCOUNT, tpl } from './util';
 
 describe.each(STAGES)('PublishStack %s', (stage) => {
@@ -142,7 +144,39 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
         TreatMissingData: 'notBreaching',
       });
     }
-    t.resourceCountIs('AWS::CloudWatch::Alarm', 2);
+    // ... and three more watch the group metrics (the next test).
+    t.resourceCountIs('AWS::CloudWatch::Alarm', 2 + GROUP_ALARMS.length);
+  });
+
+  test('three alarms watch the group metrics, in the namespace the handlers write them to; a metric nobody has written yet does not breach', () => {
+    // The namespace is the one the handlers' embedded-metric-format lines name (service/api/src/metrics.ts).
+    const metrics = fs.readFileSync(path.resolve(__dirname, '../../../api/src/metrics.ts'), 'utf8');
+    expect(/METRICS_NAMESPACE = '([^']+)'/.exec(metrics)![1]).toBe(METRICS_NAMESPACE);
+    // ... and so are the metric names, which the group code emits (group_pending_rows_per_package_max, group_invariant) or will (the sweeper).
+    const emitted = [
+      fs.readFileSync(path.resolve(__dirname, '../../../api/src/group.ts'), 'utf8'),
+      fs.readFileSync(path.resolve(__dirname, '../../../api/src/publish/group-service.ts'), 'utf8'),
+    ].join('\n');
+    expect(emitted).toContain("name: 'group_invariant'");
+    expect(emitted).toContain("name: 'group_pending_rows_per_package_max'");
+
+    expect(GROUP_ALARMS.map((a) => a.metric)).toEqual(['group_invariant', 'group_pending_rows_per_package_max', 'group_oldest_nonterminal_age_seconds']);
+    for (const a of GROUP_ALARMS) {
+      t.hasResourceProperties('AWS::CloudWatch::Alarm', {
+        AlarmName: `mopm-${stage}-${a.name}`,
+        MetricName: a.metric,
+        Namespace: 'Mopm/Registry',
+        Statistic: a.statistic,
+        Period: 300,
+        EvaluationPeriods: 1,
+        Threshold: a.threshold,
+        ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+        TreatMissingData: 'notBreaching',
+      });
+    }
+    // Any one invariant violation, 30 minutes for a group that is validating or committed.
+    expect(GROUP_ALARMS.find((a) => a.metric === 'group_invariant')).toMatchObject({ threshold: 1, statistic: 'Sum' });
+    expect(GROUP_ALARMS.find((a) => a.metric === 'group_oldest_nonterminal_age_seconds')).toMatchObject({ threshold: 1800 });
   });
 
   test('the validator has room for a 100 MB archive that unpacks to 512 MB', () => {

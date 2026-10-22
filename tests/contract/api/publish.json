@@ -924,6 +924,420 @@
         }
       },
       "expect": "invalid"
+    },
+    {
+      "name": "create a group",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            {
+              "name": "http_client",
+              "version": "0.4.0",
+              "files": [
+                { "subdir": "linux-64", "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "size": 123456 }
+              ]
+            },
+            {
+              "name": "json",
+              "version": "1.2.0",
+              "files": [
+                { "subdir": "noarch", "filename": "mojo-json-1.2.0-mojo1.0.0_0.conda", "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae", "size": 4096 }
+              ]
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 201,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "members": [
+            {
+              "name": "http_client",
+              "version": "0.4.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "linux-64",
+                  "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_g0123456789abcdef0123456789abcd",
+                  "uploaded": false,
+                  "put_url": "https://uploads.example.invalid/q/upl_g0123456789abcdef0123456789abcd/mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                  "put_headers": { "content-length": "123456", "x-amz-checksum-sha256": "nhjQgIhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg=" },
+                  "expires_at": "2026-10-13T12:05:00Z"
+                }
+              ]
+            },
+            {
+              "name": "json",
+              "version": "1.2.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-json-1.2.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_g89abcdef0123456789abcdef012345",
+                  "uploaded": false,
+                  "put_url": "https://uploads.example.invalid/q/upl_g89abcdef0123456789abcdef012345/mojo-json-1.2.0-mojo1.0.0_0.conda",
+                  "put_headers": { "content-length": "4096", "x-amz-checksum-sha256": "LCa0a2j/xo/5m0U8HTBBNBNCLXBkg7+g+YpeiGJm564=" },
+                  "expires_at": "2026-10-13T12:05:00Z"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "create the same group again while it is open, and the call ran out of time before the last member",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            { "name": "http_client", "version": "0.4.0", "files": [{ "subdir": "linux-64", "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "size": 123456 }] },
+            { "name": "json", "version": "1.2.0", "files": [{ "subdir": "noarch", "filename": "mojo-json-1.2.0-mojo1.0.0_0.conda", "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae", "size": 4096 }] }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "reserving": { "done": 1, "total": 2 },
+          "members": [
+            {
+              "name": "http_client",
+              "version": "0.4.0",
+              "action": "join",
+              "files": [
+                { "subdir": "linux-64", "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda", "upload_id": "upl_g0123456789abcdef0123456789abcd", "uploaded": true }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "create a group that is already committed",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            { "name": "http_client", "version": "0.4.0", "files": [{ "subdir": "linux-64", "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "size": 123456 }] }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "committed",
+          "attempt": 1,
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "members": [{ "name": "http_client", "version": "0.4.0", "action": "skip_identical", "files": [] }]
+        }
+      }
+    },
+    {
+      "name": "a created group with a status that is not one",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            { "name": "http_client", "version": "0.4.0", "files": [{ "subdir": "linux-64", "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "size": 123456 }] }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 201,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "running",
+          "attempt": 1,
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "members": [{ "name": "http_client", "version": "0.4.0", "action": "skip_identical", "files": [] }]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a created group with a member action that is not one",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            { "name": "http_client", "version": "0.4.0", "files": [{ "subdir": "linux-64", "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "size": 123456 }] }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 201,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "members": [{ "name": "http_client", "version": "0.4.0", "action": "created", "files": [] }]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a created group answered 202, which the operation does not declare",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            { "name": "http_client", "version": "0.4.0", "files": [{ "subdir": "linux-64", "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "size": 123456 }] }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "members": [{ "name": "http_client", "version": "0.4.0", "action": "new", "files": [] }]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a created group with no members in the answer",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            { "name": "http_client", "version": "0.4.0", "files": [{ "subdir": "linux-64", "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "size": 123456 }] }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 201,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "deadline_at": "2026-10-14T00:00:00Z"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a group with no members in the request",
+      "operationId": "createGroup",
+      "request": { "body": { "members": [] }, "auth": "publishToken" },
+      "response": {
+        "status": 201,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "members": []
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a group member with a file whose sha256 is not one",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            { "name": "http_client", "version": "0.4.0", "files": [{ "subdir": "linux-64", "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda", "sha256": "9F86D081", "size": 123456 }] }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 201,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "members": [{ "name": "http_client", "version": "0.4.0", "action": "new", "files": [] }]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a yank-only token cannot create a group",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            { "name": "http_client", "version": "0.4.0", "files": [{ "subdir": "linux-64", "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "size": 123456 }] }
+          ]
+        },
+        "auth": "yankToken"
+      },
+      "response": {
+        "status": 201,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "members": [{ "name": "http_client", "version": "0.4.0", "action": "new", "files": [] }]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "group status open",
+      "operationId": "getGroup",
+      "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "auth": "publishToken" },
+      "response": {
+        "status": 200,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "created_at": "2026-10-13T12:00:00Z",
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "member_count": 2,
+          "members": [
+            { "name": "http_client", "version": "0.4.0", "state": "reserved" },
+            { "name": "json", "version": "1.2.0", "state": "pending" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "group status committed",
+      "operationId": "getGroup",
+      "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "auth": "publishToken" },
+      "response": {
+        "status": 200,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "committed",
+          "attempt": 2,
+          "created_at": "2026-10-13T12:00:00Z",
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "committed_at": "2026-10-13T12:30:00Z",
+          "member_count": 1,
+          "members": [{ "name": "http_client", "version": "0.4.0", "state": "staged" }]
+        }
+      }
+    },
+    {
+      "name": "group status with a group id that is not one",
+      "operationId": "getGroup",
+      "request": { "path": { "group_id": "grp_xyz" }, "auth": "publishToken" },
+      "response": {
+        "status": 200,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "created_at": "2026-10-13T12:00:00Z",
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "member_count": 1,
+          "members": [{ "name": "http_client", "version": "0.4.0", "state": "reserved" }]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "group status with a member state that is not one",
+      "operationId": "getGroup",
+      "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "auth": "publishToken" },
+      "response": {
+        "status": 200,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "created_at": "2026-10-13T12:00:00Z",
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "member_count": 1,
+          "members": [{ "name": "http_client", "version": "0.4.0", "state": "uploaded" }]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "group status with no member count",
+      "operationId": "getGroup",
+      "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "auth": "publishToken" },
+      "response": {
+        "status": 200,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "created_at": "2026-10-13T12:00:00Z",
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "members": [{ "name": "http_client", "version": "0.4.0", "state": "reserved" }]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "abort a group",
+      "operationId": "abortGroup",
+      "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "auth": "publishToken" },
+      "response": {
+        "status": 200,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "aborted",
+          "attempt": 1,
+          "created_at": "2026-10-13T12:00:00Z",
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "member_count": 2,
+          "members": [
+            { "name": "http_client", "version": "0.4.0", "state": "reserved" },
+            { "name": "json", "version": "1.2.0", "state": "reserved" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "abort a group answered 204",
+      "operationId": "abortGroup",
+      "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "auth": "publishToken" },
+      "response": {
+        "status": 204,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {}
+      },
+      "expect": "invalid"
     }
   ]
 }

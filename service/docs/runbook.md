@@ -114,6 +114,17 @@ publish `published`. See "The sparse index writer" below.
   Within about five seconds begin and commit answer 503 `read_only_mode` and `/api/v1/health` reports `read_only: true`; reads,
   installs, publish status and publishes already accepted continue. Set `value` to `false` (or delete the item with
   the cleanup/takedown role) to lift it. If the table cannot be read, begin and commit answer 503 `unavailable` (they fail closed).
+- **Groups switch.** `POST /groups`, `GET /groups/{id}` and `DELETE /groups/{id}` are deployed with the API, and a create is
+  answered 404 `route_not_found` unless the item `groups_enabled` of the stage's config table admits the caller. The item is
+  `{"key": "groups_enabled", "mode": "allow", "actors": ["u:<github id>"]}` for a list of accounts, or `{"key": "groups_enabled", "mode":
+  "all", "deny": ["u:<github id>"]}` for everybody but the actors in `deny` (a `deny` list also applies to `allow`). No item, any other
+  mode, or a value that is not a list admits nobody. It gates creation only: a group that exists is still read and aborted with it off, and
+  `read_only` refuses a create but not a read or an abort. Takes effect within about five seconds. This change creates, shows and aborts
+  groups; nothing yet validates or publishes one.
+- **Group alarms.** `mopm-<stage>-group-invariant` (a committed group had a member a reader could not account for),
+  `mopm-<stage>-group-pending-rows` (a package holds 100 or more pending rows, which dead groups leave behind) and
+  `mopm-<stage>-group-oldest-active` (nothing writes its metric yet). The index `by_sweep` on the publishes table holds the headers of
+  groups that are not over, for the sweeper that is not built yet.
 - **Dead-letter queues.** A message that fails three times lands in `mopm-<stage>-validate-dlq.fifo` or
   `mopm-<stage>-index-dlq.fifo`, and the alarm `mopm-<stage>-{validate,index}-dlq-depth` fires. The Lambda logs say why. The publish stays
   `validating` or `indexing`. After fixing the cause, redrive the message from the console or CLI (`start-message-move-task`); both

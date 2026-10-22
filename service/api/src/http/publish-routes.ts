@@ -3,7 +3,9 @@ import type { Authenticator, Principal } from '../auth';
 import { errorView } from '../publish/catalogue';
 import { PublishError, invalidRequest } from '../publish/errors';
 import type { Flags } from '../publish/ports';
-import type { PublishService } from '../publish/service';
+import type { GroupRequest, GroupService } from '../publish/group-service';
+import { actorOf, type PublishService } from '../publish/service';
+import { RegistryError } from '../errors';
 import type { HttpRequest, HttpResponse } from './router';
 
 /** What the publish operations need: who is calling, what they may do, and whether uploads are allowed at all. */
@@ -11,6 +13,8 @@ export interface PublishApi {
   auth: Authenticator;
   service: PublishService;
   flags: Flags;
+  /** The group routes. Absent: they are not routes of this deployment, and the router answers route_not_found. */
+  groups?: GroupService;
 }
 
 const PREFIX = '/api/v1';
@@ -51,7 +55,8 @@ function jsonBody(req: HttpRequest): unknown {
 
 /**
  * The four publish operations: PUT /packages/{name}/{version}/yank, POST /packages/{name}/{version}/files, POST /packages/{name}/{version}/publish
- * and GET /publishes/{publish_id}. Returns undefined for any other request, which the read router then handles.
+ * and GET /publishes/{publish_id}; and, when the deployment has a GroupService, POST /groups, GET /groups/{group_id} and
+ * DELETE /groups/{group_id}. Returns undefined for any other request, which the read router then handles.
  *
  * Order of checks: read-only mode first (a read-only registry says so to everyone, signed in or not), then the
  * token, then the scope for this package and version, then the request itself.
@@ -63,10 +68,54 @@ export async function routePublish(req: HttpRequest, api: PublishApi, requestId:
   const isCommit = req.method === 'POST' && seg.length === 4 && seg[0] === 'packages' && seg[3] === 'publish';
   const isStatus = req.method === 'GET' && seg.length === 2 && seg[0] === 'publishes';
   const isYank = req.method === 'PUT' && seg.length === 4 && seg[0] === 'packages' && seg[3] === 'yank';
-  if (!isBegin && !isCommit && !isStatus && !isYank) return undefined;
+  const isGroupCreate = api.groups !== undefined && req.method === 'POST' && seg.length === 1 && seg[0] === 'groups';
+  const isGroupGet = api.groups !== undefined && req.method === 'GET' && seg.length === 2 && seg[0] === 'groups';
+  const isGroupAbort = api.groups !== undefined && req.method === 'DELETE' && seg.length === 2 && seg[0] === 'groups';
+  if (!isBegin && !isCommit && !isStatus && !isYank && !isGroupCreate && !isGroupGet && !isGroupAbort) return undefined;
+
+  const refuseIfReadOnly = async () => {
+    let readOnly: boolean;
+    try {
+      readOnly = await api.flags.readOnly();
+    } catch (err) {
+      // Writers fail closed: if the switch cannot be read, nothing is accepted.
+      console.error(JSON.stringify({ level: 'error', requestId, msg: 'read-only switch unreadable', error: String(err) }));
+      throw new PublishError('unavailable', 'The registry is temporarily unavailable.');
+    }
+    if (readOnly) throw new PublishError('read_only_mode', 'The registry is read-only right now; new uploads are refused.');
+  };
 
   try {
     const authorization = req.headers?.authorization;
+
+    // Reading and aborting a group stay available when read-only mode is on and when groups are not enabled: they only
+    // look at, or end, a group that exists.
+    if (isGroupGet || isGroupAbort) {
+      const principal = await api.auth.authenticate(authorization);
+      requirePublishScope(principal);
+      const groups = api.groups!;
+      return respond(200, requestId, isGroupGet ? await groups.get(principal, seg[1]!) : await groups.abort(principal, seg[1]!));
+    }
+
+    if (isGroupCreate) {
+      await refuseIfReadOnly();
+      const principal = await api.auth.authenticate(authorization);
+      let enabled: boolean;
+      try {
+        enabled = await api.flags.groupsFor(actorOf(principal));
+      } catch (err) {
+        console.error(JSON.stringify({ level: 'error', requestId, msg: 'groups switch unreadable', error: String(err) }));
+        throw new PublishError('unavailable', 'The registry is temporarily unavailable.');
+      }
+      // Off, the operation does not exist as far as the caller can tell.
+      if (!enabled) throw new RegistryError('route_not_found', 'There is no such operation.');
+      const groups = api.groups!;
+      const parsed = groups.parse(jsonBody(req));
+      authorizeGroup(api.auth, principal, parsed);
+      const made = await groups.create(principal, parsed);
+      return respond(made.created ? 201 : 200, requestId, made.body);
+    }
+
     if (isStatus) {
       const principal = await api.auth.authenticate(authorization);
       requirePublishScope(principal);
@@ -80,15 +129,7 @@ export async function routePublish(req: HttpRequest, api: PublishApi, requestId:
       return respond(200, requestId, await api.service.setYanked(principal, seg[1]!, seg[2]!, jsonBody(req)));
     }
 
-    let readOnly: boolean;
-    try {
-      readOnly = await api.flags.readOnly();
-    } catch (err) {
-      // Writers fail closed: if the switch cannot be read, nothing is accepted.
-      console.error(JSON.stringify({ level: 'error', requestId, msg: 'read-only switch unreadable', error: String(err) }));
-      throw new PublishError('unavailable', 'The registry is temporarily unavailable.');
-    }
-    if (readOnly) throw new PublishError('read_only_mode', 'The registry is read-only right now; new uploads are refused.');
+    await refuseIfReadOnly();
 
     const name = seg[1]!;
     const version = seg[2]!;
@@ -109,6 +150,14 @@ function authorizeYank(auth: Authenticator, p: Principal, name: string, version:
   } catch (err) {
     if (!(err instanceof AuthError) || err.code !== 'scope_missing') throw err;
     auth.publishToken(p, name, version);
+  }
+}
+
+/** A group is created with an API token that has `publish` for every member's package (a CI identity token is valid for one version of one package). The first member it does not cover is named. */
+function authorizeGroup(auth: Authenticator, p: Principal, req: GroupRequest): void {
+  for (const m of req.members) {
+    if (p.kind !== 'api') throw new AuthError('scope_missing', `The token does not have the 'publish' scope for '${m.name}'.`, { scope: 'publish', name: m.name });
+    auth.publishToken(p, m.name, m.version);
   }
 }
 
