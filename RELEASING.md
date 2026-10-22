@@ -326,19 +326,17 @@ It prints the pin for the `linux-x86_64` tarball. It changes nothing.
 
 ## The Dependabot pin update (`autopin-compute.yml`, `autopin-commit.yml`, `pin-verify.yml`)
 
-A Dependabot bump of a `package-lock.json` leaves its pin table (`buildrules.lock.bzl` in `site/` and `service/api/`)
+A Dependabot bump of a `package-lock.json` leaves its pin table
 stale, and the table needs a sha256 and a size that only the tarball gives. Two workflows make the pull request green
 without a person, and a third checks the result. None of them merges or approves anything; the pull request still needs a
-person to read the lockfile diff. The three `service/infra/*` packages are not covered: their lockfiles bundle packages
-(aws-cdk-lib has many; an entry with no `resolved` and no `integrity`), which `autopin compute` refuses, and `pin-verify` runs
-the same tool over every directory it covers. A Dependabot pull request there is pinned by a person with kpin (CONTRIBUTING.md),
-and `tests/drivers/hygiene.zig` names these three (`autopin_manual`) so that a fourth package cannot be forgotten.
+person to read the lockfile diff. The directories are `site/`, `service/api/` (`buildrules.lock.bzl`) and the three
+`service/infra/*` packages (`pins.lock.bzl`); `tests/drivers/hygiene.zig` fails a package with a `package-lock.json` that has no `--set`.
 
 | workflow | trigger | holds | does |
 |---|---|---|---|
 | `autopin-compute.yml` | `pull_request` of Dependabot's own pull request, run for Dependabot, from a branch of this repository (job-level `if:`) | a read-only token; no secret, environment, id-token or cache | runs the released `buildrules autopin compute` over the checkout of the pull request's head and uploads the regenerated tables as the artifact `autopin-<run id>-<attempt>` (never overwritten) |
 | `autopin-commit.yml` | `workflow_run` of the compute run completing (this file on the default branch is the one that runs) | environment `autopin` (the App's id and key), entered only after the job-level `if:` passed; read access until it mints | `autopin commit-check` reads the artifact as untrusted bytes and the pull request and its lockfile from the API and writes the tables it will vouch for; only then is the App token minted (contents write, this repository only) and `autopin commit-push` makes one commit on the pull request's branch with the Git Data API, moving the branch with `force: false` |
-| `pin-verify.yml` | every pull request | a read-only token and nothing else | the required check `pin-verify`: runs the same tool and fails if any table would change. It checks that the tables equal compute's output over every `--set` directory; it is not an independent re-fetch of every row (that is `autopin verify-pins`, not released yet) |
+| `pin-verify.yml` | every pull request | a read-only token and nothing else | the required check `pin-verify`: runs `autopin verify-pins` over every `--set` directory, which downloads every row and compares sha512, sha256 and size with the lock and the table |
 
 The App's own push has the pull request's author but not its actor, so the compute job skips it: that is what stops the loop.
 The commit carries `[dependabot skip]`, so Dependabot keeps managing the pull request and a later Dependabot update replaces it.
@@ -351,7 +349,7 @@ Dependabot's 7-day `cooldown` and the person who reads the lockfile diff.
 The tool is the released `buildrules`, fetched by tag and checked with `sha256sum -c` against a sha256 written in each of the three
 files (`BUILDRULES_VERSION` and `BUILDRULES_SHA256`), never built from a pull request. To move it, bump all three in one pull request to
 main; `tests/drivers/autopin_lint.zig` fails when they differ. The directories the tool may write are the `--set` arguments, the same
-in all four invocations; `//:hygiene` fails a package with a `package-lock.json` that has no `--set` and is not in its list of packages left to a person.
+in all four invocations; `//:hygiene` fails a package with a `package-lock.json` that has no `--set`.
 `tests/drivers/autopin_lint.zig` (`//:autopin_workflows`, run by `lint.yml`) holds the gates, the scope of every token, the order of
 the steps in `autopin-commit.yml` and the artifact's name, with a planted mutant per rule, and for every workflow: `workflow_run`
 in `autopin-commit.yml` alone, `push` only for `main` or tags, what a pull request can reach (no environment, no secret, one

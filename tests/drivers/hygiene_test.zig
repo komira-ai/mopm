@@ -308,11 +308,10 @@ test "autopin-compute.yml: --set has a line for every package-lock.json, and onl
     const wf =
         \\# --set ignored/comment=pins-lock
         \\          run: |
-        \\            buildrules autopin compute --event "$E" --set site=buildrules-lock --set service/api=pins-lock
+        \\            buildrules autopin compute --event "$E" --set site=buildrules-lock --set service/api=pins-lock --set service/infra/dns=pins-lock
         \\
     ;
-    const manual = [_][]const u8{ "service/infra/access/package-lock.json", "service/infra/dns/package-lock.json", "service/infra/stacks/package-lock.json" };
-    const tree = [_][]const u8{ "site/package-lock.json", "service/api/package-lock.json", "README.md" } ++ manual;
+    const tree = [_][]const u8{ "site/package-lock.json", "service/api/package-lock.json", "README.md", "service/infra/dns/package-lock.json" };
     var out = c.Out.init(a);
     try hyg.autopinSetsProblems(a, wf, &tree, &out);
     try c.expectLines("matching", out.items, &.{});
@@ -326,25 +325,16 @@ test "autopin-compute.yml: --set has a line for every package-lock.json, and onl
     try c.expectLines("gone", out.items, &.{"--set names site, which has no package-lock.json"});
     // Mutant: an argument that is not DIR=KIND, and no --set at all.
     out = c.Out.init(a);
-    try hyg.autopinSetsProblems(a, "run: x --set site\n", &([_][]const u8{"site/package-lock.json"} ++ manual), &out);
+    try hyg.autopinSetsProblems(a, "run: x --set site\n", &[_][]const u8{"site/package-lock.json"}, &out);
     try c.expectLines("malformed", out.items, &.{ "--set site is not DIR=KIND", "no `--set DIR=KIND` argument", "no --set for site" });
     out = c.Out.init(a);
     try hyg.autopinSetsProblems(a, "jobs: {}\n", &tree, &out);
-    try c.expectLines("none", out.items, &.{ "no `--set DIR=KIND` argument", "no --set for site", "no --set for service/api" });
+    try c.expectLines("none", out.items, &.{ "no `--set DIR=KIND` argument", "no --set for site", "no --set for service/api", "no --set for service/infra/dns" });
     // The root directory spells itself `.`.
     out = c.Out.init(a);
-    try hyg.autopinSetsProblems(a, "run: x --set .=pins-lock\n", &([_][]const u8{"package-lock.json"} ++ manual), &out);
+    try hyg.autopinSetsProblems(a, "run: x --set .=pins-lock\n", &[_][]const u8{"package-lock.json"}, &out);
     try c.expectLines("root", out.items, &.{});
-    // The infra packages are left to a person (their locks bundle packages the tool refuses): not in SETS, and the lock must exist.
-    // Mutant: one of them is in SETS (pin-verify would be red on every pull request).
-    out = c.Out.init(a);
-    try hyg.autopinSetsProblems(a, wf ++ "            x --set service/infra/dns=pins-lock\n", &tree, &out);
-    try c.expectLines("manual in SETS", out.items, &.{"--set names service/infra/dns, which is left to a person on purpose"});
-    // Mutant: one of them is gone from the tree (the list would rot).
-    out = c.Out.init(a);
-    try hyg.autopinSetsProblems(a, wf, tree[0..tree.len - 1], &out);
-    try c.expectLines("manual gone", out.items, &.{"autopin_manual names service/infra/stacks, which has no package-lock.json"});
-    // Mutant: a new infra package is neither in SETS nor in the list.
+    // Mutant: a new infra package is not in SETS.
     out = c.Out.init(a);
     try hyg.autopinSetsProblems(a, wf, &(tree ++ [_][]const u8{"service/infra/new/package-lock.json"}), &out);
     try c.expectLines("new infra", out.items, &.{"no --set for service/infra/new"});
