@@ -78,6 +78,5 @@ jobs:
         if: ${{ steps.check.outputs.has_change == 'true' }}
         env:
           GH_TOKEN: ${{ steps.mint.outputs.token }}
-          AUTOPIN_APP_ID: ${{ vars.AUTOPIN_APP_ID }}
         run: |
-          "$RUNNER_TEMP/br/buildrules" autopin commit-push --plan "$RUNNER_TEMP/autopin-plan" --author-name "komira-autopin[bot]" --author-email "${AUTOPIN_APP_ID}+komira-autopin[bot]@users.noreply.github.com" --set site=buildrules-lock --set service/api=buildrules-lock
+          "$RUNNER_TEMP/br/buildrules" autopin commit-push --plan "$RUNNER_TEMP/autopin-plan" --author-name "komira-autopin[bot]" --author-email "345942487+komira-autopin[bot]@users.noreply.github.com" --set site=buildrules-lock --set service/api=buildrules-lock

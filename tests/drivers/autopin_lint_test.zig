@@ -92,6 +92,7 @@ test "every workflow of the repository passes the autopin rules, and the three f
     try std.testing.expect(repo.names.len >= 12);
     var out = c.Out.init(a);
     try ap.treeProblems(a, repo.tree.files, &out);
+    try ap.linkProblems(a, repo.tree.links, &out);
     try ap.repoProblems(a, repo, repo.names, &out);
     for (out.items) |l| std.debug.print("{s}\n", .{l});
     try std.testing.expectEqual(@as(usize, 0), out.items.len);
@@ -287,7 +288,11 @@ test "commit: the App token is minted after the check, for this repository, cont
     try expectRepo(commit, "          GH_TOKEN: ${{ steps.mint.outputs.token }}", "          GH_TOKEN: ${{ github.token }}", &.{"commit-push holds the App token"});
     try expectRepo(commit, "    permissions:\n      actions: read", "    env:\n      GH_TOKEN: ${{ github.token }}\n    permissions:\n      actions: read", &.{"GH_TOKEN is set on a step alone"});
     try expectRepo(commit, "private-key: ${{ secrets.AUTOPIN_APP_PRIVATE_KEY }}", "private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}", &.{"the mint step reads the key as"});
-    try expectRepo(commit, "          AUTOPIN_APP_ID: ${{ vars.AUTOPIN_APP_ID }}\n", "          AUTOPIN_APP_ID: ${{ vars.AUTOPIN_APP_ID }}\n          EXTRA: ${{ secrets.OTHER }}\n", &.{"the key is named by the mint step alone"});
+    try expectRepo(commit, "        with:\n          app-id:", "        env:\n          EXTRA: ${{ secrets.OTHER }}\n        with:\n          app-id:", &.{"the key is named by the mint step alone"});
+    // The commit's author and committer are the bot, with its real user id as a literal.
+    try expectRepo(commit, "345942487+komira-autopin[bot]@users", "5414025+komira-autopin[bot]@users", &.{"commit-push must set `--author-name"});
+    try expectRepo(commit, "--author-email \"345942487+komira-autopin[bot]@users.noreply.github.com\"", "--author-email \"${AUTOPIN_APP_ID}+komira-autopin[bot]@users.noreply.github.com\"", &.{"commit-push must set `--author-name"});
+    try expectRepo(commit, "--author-name \"komira-autopin[bot]\"", "--author-name \"dependabot[bot]\"", &.{"commit-push must set `--author-name"});
     try expectRepo(commit, "        id: check\n", "", &.{ "the commit-check step needs an `id:`", "the mint step runs only", "the commit-push step runs only" });
     try expectRepo(commit, "buildrules\" autopin commit-check", "buildrules\" autopin commit-x", &.{"no step runs `buildrules autopin commit-check`"});
     try expectRepo(commit, "buildrules\" autopin commit-push", "buildrules\" autopin commit-y", &.{"no step runs `buildrules autopin commit-push`"});
@@ -467,6 +472,17 @@ test "M2: only .yml files directly under .github/workflows, no composite action,
     out = c.Out.init(a);
     try ap.treeProblems(a, &(good ++ [_][]const u8{".github/actions/x/action.yml"}), &out);
     try c.expectLines("composite", out.items, &.{"a composite action is not read by the lints, and none is listed"});
+
+    // A symbolic link is refused (the tree walkers list links apart from files).
+    out = c.Out.init(a);
+    try ap.linkProblems(a, &.{ "README.md", "docs/link", ".github/dependabot.yml" }, &out);
+    try c.expectLines("no link", out.items, &.{});
+    out = c.Out.init(a);
+    try ap.linkProblems(a, &.{".github/workflows/ci.yml"}, &out);
+    try c.expectLines("link", out.items, &.{"ci.yml: a symbolic link under .github/workflows or .github/actions is not allowed"});
+    out = c.Out.init(a);
+    try ap.linkProblems(a, &.{ ".github/actions/x", "docs/link" }, &out);
+    try c.expectLines("action link", out.items, &.{".github/actions/x: a symbolic link"});
 
     // `true:` for `on:` (YAML 1.1) hides the triggers: refused by name. The quoted spellings are read as `on`.
     try expectExtra("other.yml", other_pre ++ "true:\n  push:\n" ++ other_post, &.{ "top-level key `true` is not one the lints read", "no `on:`" });

@@ -27,6 +27,8 @@ pub const Tree = struct {
     root: []const u8,
     /// Paths relative to `root`, sorted.
     files: []const []const u8,
+    /// Paths relative to `root` that are symbolic links (not in `files`: nothing reads through them).
+    links: []const []const u8 = &.{},
 
     pub fn read(self: Tree, a: Allocator, rel: []const u8) ![]u8 {
         const path = try std.fs.path.join(a, &.{ self.root, rel });
@@ -47,11 +49,13 @@ pub fn loadTree(a: Allocator) !Tree {
     var walker = try dir.walk(a);
     defer walker.deinit();
     var files = std.ArrayList([]const u8).init(a);
+    var links = std.ArrayList([]const u8).init(a);
     while (try walker.next()) |e| {
         if (e.kind == .file) try files.append(try a.dupe(u8, e.path));
+        if (e.kind == .sym_link) try links.append(try a.dupe(u8, e.path));
     }
     std.mem.sort([]const u8, files.items, {}, lessThan);
-    return .{ .root = root, .files = files.items };
+    return .{ .root = root, .files = files.items, .links = links.items };
 }
 
 /// The files git tracks under the current directory, which must be the repository root.
@@ -69,16 +73,22 @@ fn trackedTree(a: Allocator) !Tree {
         return error.NoTestWork;
     }
     var files = std.ArrayList([]const u8).init(a);
+    var links = std.ArrayList([]const u8).init(a);
     var it = std.mem.splitScalar(u8, r.stdout, 0);
     while (it.next()) |p| {
         if (p.len == 0) continue;
+        // A tracked symlink stays a file to scan (the lints read through it), and is also listed as a link.
+        var link_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        if (std.fs.cwd().readLink(p, &link_buf)) |_| {
+            try links.append(p);
+        } else |_| {}
         // A path git lists but the checkout lacks (a submodule, a deletion) has nothing to scan.
         const st = std.fs.cwd().statFile(p) catch continue;
         if (st.kind != .file) continue;
         try files.append(p);
     }
     std.mem.sort([]const u8, files.items, {}, lessThan);
-    return .{ .root = ".", .files = files.items };
+    return .{ .root = ".", .files = files.items, .links = links.items };
 }
 
 fn lessThan(_: void, x: []const u8, y: []const u8) bool {

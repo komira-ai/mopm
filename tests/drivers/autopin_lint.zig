@@ -30,6 +30,9 @@ pub const artifact_name = "autopin-${{ github.run_id }}-${{ github.run_attempt }
 const environment_name = "autopin";
 const key_secret = "AUTOPIN_APP_PRIVATE_KEY";
 const farm_file = "farm.yml";
+/// The autopin App's bot: its login and the noreply address of its user (the id is the bot user's, not the App's).
+const bot_login = "komira-autopin[bot]";
+const bot_email = "345942487+komira-autopin[bot]@users.noreply.github.com";
 
 /// The job-level gate of autopin-compute.yml: Dependabot's pull request, run for Dependabot, from a branch of this repository.
 /// The actor conjunct is the one that stops the loop (the App's push has the pull request's author but not its actor).
@@ -469,7 +472,12 @@ fn commitFile(a: Allocator, f: []const u8, doc: Value, text: []const u8, out: *O
         const st = steps[pi];
         const want_if = try std.fmt.allocPrint(a, "${{{{ steps.{s}.outputs.has_change == 'true' }}}}", .{check_id});
         if (check_i != null and !c.isStr(c.get(st, "if"), want_if)) try c.problem(a, out, prefix ++ "{s}: the commit-push step runs only `if: {s}`", .{ f, want_if });
-        const want_token = try std.fmt.allocPrint(a, "${{{{ steps.{s}.outputs.token }}}}", .{mint_id});
+        // The author and committer of the commit are the App's bot, written out: its real user id, not derived from a variable.
+        const run = runOf(st) orelse "";
+        if (!contains(run, "--author-name \"" ++ bot_login ++ "\"") or !contains(run, "--author-email \"" ++ bot_email ++ "\"")) {
+            try c.problem(a, out, prefix ++ "{s}: commit-push must set `--author-name \"{s}\"` and `--author-email \"{s}\"` as literals", .{ f, bot_login, bot_email });
+        }
+        const want_token = try std.fmt.allocPrint(a,"${{{{ steps.{s}.outputs.token }}}}", .{mint_id});
         if (!c.isStr(c.get(c.get(st, "env"), "GH_TOKEN"), want_token)) try c.problem(a, out, prefix ++ "{s}: commit-push holds the App token: `GH_TOKEN: {s}`", .{ f, want_token });
     }
     // The token is a step's own env, never the job's or the workflow's.
@@ -546,6 +554,16 @@ pub fn treeProblems(a: Allocator, files: []const []const u8, out: *Out) !void {
         }
         if (std.mem.startsWith(u8, f, ".github/actions/")) {
             try c.problem(a, out, prefix ++ "{s}: a composite action is not read by the lints, and none is listed", .{f});
+        }
+    }
+}
+
+/// M2: a symbolic link under .github/workflows or .github/actions is refused: the lints read the file it points to by the link's
+/// name and the runner reads the target, which may be anywhere in the checkout.
+pub fn linkProblems(a: Allocator, links: []const []const u8, out: *Out) !void {
+    for (links) |l| {
+        if (std.mem.startsWith(u8, l, ".github/workflows/") or std.mem.startsWith(u8, l, ".github/actions/")) {
+            try c.problem(a, out, prefix ++ "{s}: a symbolic link under .github/workflows or .github/actions is not allowed", .{l});
         }
     }
 }
