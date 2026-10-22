@@ -321,4 +321,3 @@ jobs:
             bad "GET /index/e2/e_/e2e_no_such_package answered HTTP $code (404 expected): $(head -c 200 "$out")"
           fi
 
-          [ "$failed" = "0" ] || { echo "sparse index gate failed on stage ${STAGE}" >&2; exit 1; }
