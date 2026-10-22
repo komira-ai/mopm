@@ -589,6 +589,7 @@ fn indexGateProblems(a: Allocator, doc: Value, out: *Out) !void {
         "= \"404\"",
         "if [ \"$code\" = \"404\" ]; then",
         "and .stage == $stage",
+        "and .channel_url == $ch",
         "\n[ \"$failed\" = \"0\" ] || { echo \"sparse index gate failed on stage ${STAGE}\" >&2; exit 1; }\n",
     };
     for (needles) |n| {

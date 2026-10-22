@@ -84,6 +84,7 @@ test "e2e.yml: the index gate stays curl only, guarded, and asserts its three an
     try expectRepo("e2e.yml", "[ \"$code\" = \"404\" ]", "[ \"$code\" = \"403\" ]", &.{ "e2e.yml: index-gate script lost `= \"404\"`", "e2e.yml: index-gate script lost `if [ \"$code\" = \"404\" ]; then`" });
     try expectRepo("e2e.yml", "          [ \"$failed\" = \"0\" ] || { echo \"sparse index gate failed on stage ${STAGE}\" >&2; exit 1; }\n", "", &.{"e2e.yml: index-gate script lost `\n[ \"$failed\" = \"0\" ] || { echo \"sparse index gate failed on stage ${STAGE}\" >&2; exit 1; }\n`"});
     try expectRepo("e2e.yml", "                 and .stage == $stage\n", "", &.{"e2e.yml: index-gate script lost `and .stage == $stage`"});
+    try expectRepo("e2e.yml", "                 and .channel_url == $ch\n", "", &.{"e2e.yml: index-gate script lost `and .channel_url == $ch`"});
     try expectRepo("e2e.yml", "(.index_version | type == \"number\" and . == 1) and (.takedowns", "(.index_version | type == \"number\") and (.takedowns", &.{"e2e.yml: index-gate script lost `(.index_version | type == \"number\" and . == 1)` (config.json and takedowns.json both need it)"});
     try expectRepo("e2e.yml", "if [ \"$code\" = \"404\" ]; then", "if [ \"$code\" = \"404\" ] || [ \"$code\" = \"403\" ]; then", &.{ "e2e.yml: index-gate script lost `if [ \"$code\" = \"404\" ]; then`", "e2e.yml: index-gate must accept only 404 for the absent package" });
 }
