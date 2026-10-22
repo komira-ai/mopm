@@ -1,6 +1,6 @@
 import { compareVersions } from './version';
 import type { View } from './group';
-import type { VersionEvent } from './state';
+import type { UserEvent } from './state';
 import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, VersionRecord } from './types';
 
 /**
@@ -33,9 +33,10 @@ export interface Store {
   getVersion(name: string, version: string): Promise<VersionRecord | undefined>;
   /**
    * Apply an event through the state machine and persist it with its audit entry, retrying on a
-   * concurrent change. Throws version_not_found (missing, or an event the state refuses).
+   * concurrent change. Throws version_not_found (missing, or an event the state refuses). The two events only a group
+   * sends (`stage`, `group_publish`) are not accepted here: they go through `GroupStore.applyGroupEvent` (src/group-store.ts).
    */
-  updateVersion(name: string, version: string, event: VersionEvent, audit: AuditEntry): Promise<VersionRecord>;
+  updateVersion(name: string, version: string, event: UserEvent, audit: AuditEntry): Promise<VersionRecord>;
   /** Oldest to newest by conda ordering. */
   listVersions(name: string): Promise<VersionRecord[]>;
   /**
