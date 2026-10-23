@@ -260,6 +260,7 @@
         {
           "target": "Scan",
           "body": {
+            "ConsistentRead": true,
             "ExpressionAttributeNames": {
               "#n": "name"
             },
@@ -270,6 +271,7 @@
         {
           "target": "Scan",
           "body": {
+            "ConsistentRead": true,
             "ExclusiveStartKey": {
               "name": {
                 "S": "alpha"
@@ -2475,6 +2477,247 @@
           "actor": "u:583231",
           "action": "publish",
           "version": "0.4.0"
+        }
+      ]
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "getVersion",
+    "args": [
+      "grouped",
+      "1.0.0"
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "name": "grouped",
+            "build": "mojo1.0.0_0",
+            "state": "pending",
+            "published_at": "2026-10-13T12:00:00Z",
+            "requires_mojo": "==1.0.0",
+            "deps": [],
+            "native": [],
+            "files": [
+              {
+                "subdir": "linux-64",
+                "filename": "mojo-grouped-1.0.0-mojo1.0.0_0.conda",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 1000,
+                "url": "channel-url/linux-64/mojo-grouped-1.0.0-mojo1.0.0_0.conda"
+              }
+            ],
+            "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "group_id": "g1",
+            "staged_attempt": 1,
+            "rev": 1,
+            "version": "1.0.0",
+            "version_spelling": "1.0.0"
+          }
+        }
+      },
+      {
+        "body": {
+          "Item": {
+            "publish_id": "grp#g1",
+            "status": "committed",
+            "attempt": 1,
+            "committed_at": "2026-10-13T13:00:00Z",
+            "rev": 3
+          }
+        }
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "name": {
+                "S": "grouped"
+              },
+              "version": {
+                "S": "1.0.0"
+              }
+            },
+            "TableName": "mopm-beta-versions"
+          }
+        },
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "publish_id": {
+                "S": "grp#g1"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        }
+      ],
+      "returns": {
+        "name": "grouped",
+        "build": "mojo1.0.0_0",
+        "state": "published",
+        "published_at": "2026-10-13T13:00:00Z",
+        "requires_mojo": "==1.0.0",
+        "deps": [],
+        "native": [],
+        "files": [
+          {
+            "subdir": "linux-64",
+            "filename": "mojo-grouped-1.0.0-mojo1.0.0_0.conda",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 1000,
+            "url": "channel-url/linux-64/mojo-grouped-1.0.0-mojo1.0.0_0.conda"
+          }
+        ],
+        "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "group_id": "g1",
+        "staged_attempt": 1,
+        "rev": 1,
+        "version": "1.0.0",
+        "canonical": "1.0.0"
+      }
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "listVersions",
+    "args": [
+      "grouped"
+    ],
+    "replies": [
+      {
+        "body": {
+          "Items": [
+            {
+              "name": "grouped",
+              "build": "mojo1.0.0_0",
+              "state": "pending",
+              "published_at": "2026-10-13T12:00:00Z",
+              "requires_mojo": "==1.0.0",
+              "deps": [],
+              "native": [],
+              "files": [
+                {
+                  "subdir": "linux-64",
+                  "filename": "mojo-grouped-1.0.0-mojo1.0.0_0.conda",
+                  "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "size": 1000,
+                  "url": "channel-url/linux-64/mojo-grouped-1.0.0-mojo1.0.0_0.conda"
+                }
+              ],
+              "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+              "group_id": "g1",
+              "staged_attempt": 1,
+              "rev": 1,
+              "version": "1.0.0",
+              "version_spelling": "1.0.0"
+            }
+          ]
+        }
+      },
+      {
+        "body": {
+          "Item": {
+            "publish_id": "grp#g1",
+            "status": "committed",
+            "attempt": 1,
+            "committed_at": "2026-10-13T13:00:00Z",
+            "rev": 3
+          }
+        }
+      },
+      {
+        "body": {
+          "Item": {
+            "publish_id": "grpm#g1",
+            "members": [
+              {
+                "name": "grouped",
+                "version": "1.0.0",
+                "canonical": "1.0.0",
+                "subdirs": [
+                  "linux-64"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "Query",
+          "body": {
+            "ConsistentRead": true,
+            "ExpressionAttributeNames": {
+              "#n": "name"
+            },
+            "ExpressionAttributeValues": {
+              ":n": {
+                "S": "grouped"
+              }
+            },
+            "KeyConditionExpression": "#n = :n",
+            "TableName": "mopm-beta-versions"
+          }
+        },
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "publish_id": {
+                "S": "grp#g1"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        },
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "publish_id": {
+                "S": "grpm#g1"
+              }
+            },
+            "TableName": "mopm-beta-publishes"
+          }
+        }
+      ],
+      "returns": [
+        {
+          "name": "grouped",
+          "build": "mojo1.0.0_0",
+          "state": "published",
+          "published_at": "2026-10-13T13:00:00Z",
+          "requires_mojo": "==1.0.0",
+          "deps": [],
+          "native": [],
+          "files": [
+            {
+              "subdir": "linux-64",
+              "filename": "mojo-grouped-1.0.0-mojo1.0.0_0.conda",
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "size": 1000,
+              "url": "channel-url/linux-64/mojo-grouped-1.0.0-mojo1.0.0_0.conda"
+            }
+          ],
+          "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "group_id": "g1",
+          "staged_attempt": 1,
+          "rev": 1,
+          "version": "1.0.0",
+          "canonical": "1.0.0"
         }
       ]
     }

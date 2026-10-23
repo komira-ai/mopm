@@ -7,14 +7,14 @@ use std::sync::Arc;
 use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_dynamodb::Client;
 use mopm_core::state::VersionEvent;
-use mopm_core::types::{OwnerRecord, PackageRecord, PackageState};
+use mopm_core::types::{OwnerRecord, PackageRecord, PackageState, VersionRecord, VersionState};
 use mopm_ports::auth::AuthStore;
 use mopm_ports::publish::PublishStore;
 use mopm_ports::store::Store;
 use mopm_ports::types::{DeviceLoginRecord, TokenKind, TokenRecord, TokenScope, TrustedPublisher};
 use mopm_testing::env::FixedClock;
 use mopm_testing::fake_dynamo::{FakeConfig, FakeDynamo, Grants};
-use mopm_testing::records::{audit, rec};
+use mopm_testing::records::{audit, group_row, rec, with_state};
 use serde_json::{json, Value};
 
 use crate::dynamo::{AuthTables, DynamoAuthStore, DynamoPublishStore, DynamoStore, PublishTables, Tables, SEARCH_INDEX};
@@ -582,6 +582,49 @@ async fn a_consistent_read_of_an_index_is_refused() {
         .await;
     let e = aws_sdk_dynamodb::error::DisplayErrorContext(&r.unwrap_err()).to_string();
     assert!(e.contains("Consistent reads"), "{e}");
+}
+
+// ---- rows that belong to a group publish ---------------------------------------------------------------
+
+#[tokio::test]
+async fn a_group_member_row_carries_its_group_and_stamp_as_attributes_and_a_reserved_one_has_no_stamp() {
+    let (s, fake) = rig();
+    s.create_version(&group_row(rec("p", "1.0.0"), "g1", Some(2)), &audit("p", "stage", None)).await.unwrap();
+    s.create_version(&group_row(rec("p", "1.1.0"), "g1", None), &audit("p", "reserve", None)).await.unwrap();
+    let rows = fake.dump("mopm-t-versions");
+    let row = |spelling: &str| rows.iter().find(|r| r["version_spelling"] == json!({"S": spelling})).unwrap().clone();
+    let (staged, reserved) = (row("1.0.0"), row("1.1.0"));
+    assert_eq!((&staged["state"], &staged["group_id"], &staged["staged_attempt"]), (&json!({"S": "pending"}), &json!({"S": "g1"}), &json!({"N": "2"})));
+    assert_eq!((&reserved["state"], &reserved["group_id"]), (&json!({"S": "pending"}), &json!({"S": "g1"})));
+    assert!(reserved.get("staged_attempt").is_none(), "absent, not null");
+    assert_eq!(s.get_version("p", "1.0.0").await.unwrap().unwrap().staged_attempt, Some(2));
+    assert_eq!(s.get_version("p", "1.1.0").await.unwrap().unwrap().staged_attempt, None);
+}
+
+#[tokio::test]
+async fn a_row_with_no_group_is_written_with_no_group_attribute_and_a_single_publish_of_a_group_row_writes_nothing() {
+    let (s, fake) = rig();
+    s.create_version(&with_state(rec("p", "1.0.0"), VersionState::Pending), &audit("p", "begin", None)).await.unwrap();
+    s.create_version(&group_row(rec("p", "2.0.0"), "g1", Some(1)), &audit("p", "stage", None)).await.unwrap();
+    s.update_version("p", "1.0.0", &VersionEvent::Publish(None), &audit("p", "publish", None)).await.unwrap();
+    let writes = bodies(&fake, "TransactWriteItems").len();
+    assert_eq!(writes, 3, "two creates and one publish");
+    assert!(s.update_version("p", "2.0.0", &VersionEvent::Publish(None), &audit("p", "publish", None)).await.is_err());
+    assert_eq!(bodies(&fake, "TransactWriteItems").len(), writes, "the refusal happened before any write");
+    for r in fake.dump("mopm-t-versions") {
+        let own_group = r["version_spelling"] == json!({"S": "2.0.0"});
+        assert_eq!((r.get("group_id").is_some(), r.get("staged_attempt").is_some()), (own_group, own_group), "{r}");
+    }
+}
+
+#[tokio::test]
+async fn a_yank_by_the_rust_port_keeps_the_group_attributes_of_a_flipped_row() {
+    let (s, fake) = rig();
+    let flipped = VersionRecord { state: VersionState::Published, ..group_row(rec("p", "1.0.0"), "g1", Some(3)) };
+    s.create_version(&flipped, &audit("p", "flip", None)).await.unwrap();
+    s.update_version("p", "1.0.0", &VersionEvent::Yank { reason: "bad".into() }, &audit("p", "yank", None)).await.unwrap();
+    let rows = fake.dump("mopm-t-versions");
+    assert_eq!((&rows[0]["state"], &rows[0]["group_id"], &rows[0]["staged_attempt"], &rows[0]["rev"]), (&json!({"S": "yanked"}), &json!({"S": "g1"}), &json!({"N": "3"}), &json!({"N": "1"})));
 }
 
 #[tokio::test]

@@ -6,6 +6,7 @@ import { validatePackage } from '../validate';
 import type { PackageFacts, RejectionCode, ValidatorOptions } from '../validate';
 import type { PublishConfig } from './config';
 import type { ObjectStore, PublishStore, Queue } from './ports';
+import { sendIndexPkg } from './indexer';
 import { liveBytes } from './service';
 import type { IndexMessage, PublishFile, PublishRecord } from './types';
 
@@ -65,6 +66,11 @@ export async function validatePublish(d: ValidatorDeps, publishId: string): Prom
   rec = (await d.publishes.updatePublish(publishId, (c) => (c.status === 'pending' ? touch(d, { ...c, status: 'validating' }) : undefined)))!;
 
   const version = await d.registry.getVersion(rec.name, rec.version);
+  if (version?.group_id !== undefined) {
+    // Not a verdict on the archives and not ours to settle: the number belongs to a group, and only the group's own
+    // job fills, publishes or burns its rows. Thrown so the message is retried and then dead-lettered with its alarm.
+    throw new Error(`publish ${rec.publish_id}: ${rec.name} ${rec.version} belongs to group ${version.group_id}; the single validator does not touch it`);
+  }
   if (version?.state === 'tombstoned') {
     // A previous attempt burned the number and died before recording the verdict.
     await markRejected(d, rec, (version.tombstone?.reason_code as RejectionCode | undefined) ?? 'archive_invalid', 'the publish was rejected');
@@ -179,6 +185,11 @@ async function moveToIndexing(d: ValidatorDeps, rec: PublishRecord): Promise<voi
 }
 
 async function sendIndex(d: ValidatorDeps, rec: PublishRecord): Promise<void> {
+  if (rec.remaining_subdirs.length === 0 && rec.index_pending) {
+    // A retry after the last repodata job: only the package's index file is left to ask for.
+    await sendIndexPkg({ registry: d.registry, indexQueue: d.indexQueue }, { name: rec.name, publishId: rec.publish_id });
+    return;
+  }
   for (const subdir of rec.remaining_subdirs) {
     const msg: IndexMessage = { type: 'index', subdir, publish_id: rec.publish_id };
     // One group per subdir: its repodata is rewritten by one job at a time.

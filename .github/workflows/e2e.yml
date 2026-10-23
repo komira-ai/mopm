@@ -235,3 +235,129 @@ jobs:
           code=$(get /nope.txt)
           [ "$code" = "404" ] || fail "/nope.txt answered HTTP $code (404 expected)"
           echo "ok: /nope.txt is 404"
+
+  # Gate 1 of the sparse index (spec/index.md): the three requests a `mopm lock` makes of a registry before it reads any package,
+  # answered by the stage that was just deployed. Curl only, no token and no AWS credentials, so it needs no environment and
+  # holds no id-token. Every check runs and reports, so one red run names everything that is wrong. A red run here stops
+  # promote.yml from deploying the next stage. Gate 2 (a real `mopm lock` of a published fixture) is a separate change.
+  index-gate:
+    needs: guard
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate stage
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: |
+          case "$STAGE" in beta|gamma|prod) ;; *) echo "bad stage" >&2; exit 1 ;; esac
+      - name: Sparse index, config and reachability
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: |
+          set -uo pipefail
+          domain=$(jq -r .apiDomain "service/config/${STAGE}.json")
+          conda=$(jq -r .condaDomain "service/config/${STAGE}.json")
+          base="https://${domain}/index"
+          out=$(mktemp)
+          hdr=$(mktemp)
+          failed=0
+          # get <path>: prints the status code; the body is left in $out and the headers in $hdr. Retries connection failures and also HTTP 5xx and 429 answers; the status of the last attempt is what is returned.
+          get() {
+            curl -sS --retry 5 --retry-delay 5 --retry-all-errors -D "$hdr" -o "$out" -w '%{http_code}' "${base}$1"
+          }
+          # header <name>: the last value of that response header, lowercased, without the CR.
+          header() {
+            { grep -i "^$1:" "$hdr" || true; } | tail -n 1 | cut -d: -f2- | tr -d '\r' | tr 'A-Z' 'a-z' | sed 's/^ *//'
+          }
+          bad() { echo "FAIL: $1" >&2; failed=1; }
+          ok() { echo "ok: $1"; }
+
+          # config.json: what the CLI reads first. The values come from the stage's own config.
+          code=$(get /config.json)
+          if [ "$code" != "200" ]; then
+            bad "GET /index/config.json answered HTTP $code (200 expected): $(head -c 200 "$out")"
+          else
+            case "$(header content-type)" in
+              application/json*) ok "config.json is application/json" ;;
+              *) bad "config.json has content-type '$(header content-type)'" ;;
+            esac
+            if jq -e --arg stage "$STAGE" --arg api "https://${domain}/api/v1" --arg ch "https://${conda}/" '
+                 type == "object"
+                 and (.index_version | type == "number" and . == 1)
+                 and .stage == $stage
+                 and .api_url == $api
+                 and .channel_url == $ch
+                 and (.min_cli_version | type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
+                 and (.read_only | type == "boolean")' "$out" >/dev/null; then
+              ok "config.json names stage ${STAGE}, https://${domain}/api/v1 and https://${conda}/"
+            else
+              bad "config.json has the wrong content: $(head -c 400 "$out")"
+            fi
+          fi
+
+          # takedowns.json is written to the channel bucket, so a 200 means the reader reached S3 and may read index/. A broken
+          # grant is a 502 here (never a 404), and a stage whose log was never seeded is a 404.
+          code=$(get /takedowns.json)
+          if [ "$code" != "200" ]; then
+            bad "GET /index/takedowns.json answered HTTP $code (200 expected): $(head -c 200 "$out")"
+          elif jq -e '(.index_version | type == "number" and . == 1) and (.takedowns | type == "array")' "$out" >/dev/null; then
+            ok "takedowns.json is a version 1 takedown log"
+          else
+            bad "takedowns.json has the wrong content: $(head -c 400 "$out")"
+          fi
+
+          # A well-formed name that no one published: exactly 404 (the CLI reads that as "not in the index"). With the reader's
+          # bucket grant this proves the lookup reached S3 and found no key; 403, 502 and any other answer are faults.
+          code=$(get /e2/e_/e2e_no_such_package)
+          if [ "$code" = "404" ]; then
+            ok "an absent package is 404"
+          else
+            bad "GET /index/e2/e_/e2e_no_such_package answered HTTP $code (404 expected): $(head -c 200 "$out")"
+          fi
+
+          [ "$failed" = "0" ] || { echo "sparse index gate failed on stage ${STAGE}" >&2; exit 1; }
+
+  # Group publishing, end to end, as an authenticated actor: a three-package chain published as one group, a group with a
+  # rejected member, the expiry probe, and the yank and unyank of the group, against the stage that was just deployed
+  # (tests/drivers/group_e2e.zig says what it publishes, in which namespace, and what it asserts). It runs only here: after the
+  # stage's deploy (promote.yml calls this workflow for beta and gamma) or by hand with workflow_dispatch, never for a pull
+  # request, because a pull request must not hold the token. The one secret it reads is the repository secret
+  # MOPM_E2E_GROUP_TOKEN, on the step that runs the check and on no other (the workflow lint holds that). With no secret, or with
+  # the stage's groups switch off for the e2e actor, the check SKIPs with one line in the job summary and the job is green, so
+  # this job changes nothing until the secret is set and the switch is on. Its checks need no AWS credential and no id-token. prod
+  # is never exercised: the job is skipped there.
+  group-e2e:
+    needs: guard
+    if: github.ref == 'refs/heads/main' && inputs.stage != 'prod'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate stage
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: |
+          case "$STAGE" in beta|gamma) ;; *) echo "bad stage" >&2; exit 1 ;; esac
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Build the CLI and the group check
+        run: zig build -Doptimize=ReleaseSafe
+      - name: Group publish end to end
+        env:
+          STAGE: ${{ inputs.stage }}
+          MOPM_E2E_TOKEN: ${{ secrets.MOPM_E2E_GROUP_TOKEN }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          ./zig-out/bin/mopm-group-e2e --stage "$STAGE" --mopm ./zig-out/bin/mopm --work "$RUNNER_TEMP/group-e2e" --run-id "$RUN_ID" --attempt "$RUN_ATTEMPT" --summary "$GITHUB_STEP_SUMMARY"
