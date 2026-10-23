@@ -17,7 +17,8 @@ pub const implemented = [_][]const u8{
     "getHealth",        "startDeviceLogin", "pollDeviceLogin", "getMe",            "createToken",    "listTokens",
     "revokeToken",      "exchangeOidcToken", "searchPackages", "getPackage",       "claimPackage",   "listVersions",
     "listOwners",       "inviteOwner",      "removeOwner",     "listInvitations",  "acceptInvitation", "beginUpload",
-    "commitPublish",    "getPublishStatus", "setYanked",       "getVersion",
+    "commitPublish",    "getPublishStatus", "setYanked",       "getVersion",       "createGroup",    "getGroup",
+    "abortGroup",       "commitGroup",      "yankGroup",
 };
 
 /// What a recipe asks the replay to assert about the live answer, besides the
@@ -44,6 +45,8 @@ pub const Check = enum {
     detail_yanked,
     detail_tombstoned,
     detail_published,
+    group_failure,
+    group_yank_state,
 };
 
 pub const After = enum { none, read_only_off, project_limit_restore };
@@ -74,6 +77,7 @@ pub const Kind = enum {
     begin, begin_too_big, begin_limit, begin_version, begin_read_only,
     commit, commit_version, publish_missing, status, rejected,
     yank, detail, version_invalid, version_missing,
+    group_create, group_get, group_abort, group_commit, group_yank, group_error,
 };
 
 pub const Entry = struct { op: []const u8, name: []const u8, kind: Kind, arg: []const u8 = "" };
@@ -168,5 +172,22 @@ pub const table = [_]Entry{
     .{ .op = "getVersion", .name = "version detail with the mopm.toml display fields", .kind = .detail, .arg = "published" },
     .{ .op = "getVersion", .name = "yanked version keeps its files and says why", .kind = .detail, .arg = "yanked" },
     .{ .op = "getVersion", .name = "tombstoned version has no url", .kind = .detail, .arg = "tombstoned" },
+    // Group publishing. The fake runs a group one stage per poll, and a rejection is a file whose bytes start with REJECT:<code>.
+    .{ .op = "createGroup", .name = "create a group", .kind = .group_create, .arg = "new" },
+    .{ .op = "createGroup", .name = "create the same group again while it is open, and the call ran out of time before the last member", .kind = .group_create, .arg = "again" },
+    .{ .op = "createGroup", .name = "create a group that is already committed", .kind = .group_create, .arg = "committed" },
+    .{ .op = "getGroup", .name = "group status open", .kind = .group_get, .arg = "open" },
+    .{ .op = "getGroup", .name = "group status committed", .kind = .group_get, .arg = "committed" },
+    .{ .op = "getGroup", .name = "group status rejected, with why", .kind = .group_get, .arg = "rejected" },
+    .{ .op = "abortGroup", .name = "abort a group", .kind = .group_abort },
+    .{ .op = "commitGroup", .name = "commit a group", .kind = .group_commit, .arg = "fresh" },
+    .{ .op = "commitGroup", .name = "commit a group that had already committed", .kind = .group_commit, .arg = "again" },
+    .{ .op = "yankGroup", .name = "yank a group", .kind = .group_yank, .arg = "yank" },
+    .{ .op = "yankGroup", .name = "unyank a group that is already restored", .kind = .group_yank, .arg = "restored" },
+    .{ .op = "getGroup", .name = "error group_not_found", .kind = .group_error, .arg = "not_found" },
+    .{ .op = "abortGroup", .name = "error group_not_open", .kind = .group_error, .arg = "not_open" },
+    .{ .op = "createGroup", .name = "error group_conflict", .kind = .group_error, .arg = "conflict" },
+    .{ .op = "commitGroup", .name = "error group_commit_refused", .kind = .group_error, .arg = "commit_refused" },
+    .{ .op = "yankGroup", .name = "error group_not_settled", .kind = .group_error, .arg = "not_settled" },
 };
 

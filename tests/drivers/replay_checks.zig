@@ -101,6 +101,12 @@ pub fn runCheck(f: *F, s: Step, body: Value) !bool {
             const reason = c.getStr(c.get(body, "tombstone") orelse .null, "reason_code") orelse "";
             return stateIs(body, "tombstoned") and files.len > 0 and c.get(files[0], "url") == null and std.mem.eql(u8, reason, "malware");
         },
+        .group_failure => {
+            const failure = c.get(body, "failure") orelse return false;
+            return std.mem.eql(u8, c.getStr(body, "status") orelse "", a0) and std.mem.eql(u8, c.getStr(failure, "code") orelse "", s.args[1]) and
+                (c.getStr(failure, "member") orelse "").len > 0;
+        },
+        .group_yank_state => return std.mem.eql(u8, c.getStr(c.get(body, "yank") orelse .null, "state") orelse "", a0),
         .detail_published => {
             const prov = c.get(body, "provenance") orelse .null;
             return stateIs(body, "published") and std.mem.eql(u8, c.getStr(body, "requires_mojo") orelse "", "==1.0.0") and

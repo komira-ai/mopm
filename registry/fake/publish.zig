@@ -22,7 +22,7 @@ const channel = @import("files.zig");
 
 const subdirs = [_][]const u8{ "linux-64", "linux-aarch64", "osx-arm64", "noarch" };
 
-const rejection_codes = [_][]const u8{
+pub const rejection_codes = [_][]const u8{
     "archive_invalid",  "path_not_allowed", "limit_exceeded",         "manifest_invalid",
     "filename_mismatch", "sha256_mismatch", "dependency_not_allowed",
 };
@@ -72,7 +72,7 @@ fn target(ctx: *Ctx, name: []const u8, version: []const u8) Allocator.Error!Targ
 }
 
 /// The version of `p` equal to `version` under conda ordering, in any state.
-fn findVersion(p: *st.Package, version: []const u8) ?*st.Version {
+pub fn findVersion(p: *st.Package, version: []const u8) ?*st.Version {
     for (p.versions.items) |v| {
         if (versions.same(v.version, version)) return v;
     }
@@ -155,6 +155,13 @@ pub fn beginUpload(ctx: *Ctx, params: []const []const u8) anyerror!Response {
 pub fn uploadBytes(ctx: *Ctx, id: []const u8) anyerror!Response {
     if (ctx.method != .PUT) return resp.invalid(ctx.arena, "an upload URL takes PUT");
     const s = ctx.state;
+    if (s.put_fault_after) |n| {
+        if (n == 0) {
+            s.put_fault_after = null;
+            return resp.fail(ctx.arena, .unavailable, &.{});
+        }
+        s.put_fault_after = n - 1;
+    }
     for (s.uploads.items) |u| {
         if (!std.mem.eql(u8, u.id, id)) continue;
         if (s.now() >= u.expires_at) return resp.invalid(ctx.arena, "the upload URL expired");
@@ -214,6 +221,20 @@ pub fn commitPublish(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         try ids.append(u.id);
     }
 
+    // A number a group holds is the group's: a single publish does not join it. The exception is a group that has ended
+    // (or is open past its deadline): its numbers are free, and the single takes this one over.
+    if (findVersion(p, params[1])) |held| {
+        if (held.group) |g| {
+            if (!st.groupIsDead(g.status) and !(g.status == .open and s.now() >= g.deadline_at)) {
+                return resp.fail(ctx.arena, .version_exists, &.{
+                    .{ "name", p.name },
+                    .{ "version", held.version },
+                    .{ "sha256", held.manifest_sha256 },
+                });
+            }
+            held.group = null;
+        }
+    }
     if (findVersion(p, params[1])) |existing| {
         if (existing.state == .pending) {
             // The same upload ids again resume the publish already running.

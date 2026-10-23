@@ -11,6 +11,7 @@ const publish_cmd = @import("publish_cmd.zig");
 const install_cmd = @import("install_cmd.zig");
 const plan_cmd = @import("plan_cmd.zig");
 const unit_cmd = @import("unit_cmd.zig");
+const yank_cmd = @import("yank_cmd.zig");
 
 /// The release version, from the build (`zig build -Dversion=`; the dev default in build_options.zig).
 pub const version = @import("build_options").version;
@@ -67,6 +68,18 @@ const usage =
     \\                          pack and publish to a registry; the token is
     \\                          $MOPM_TOKEN, else the one 'mopm login' stored;
     \\                          --dry-run packs and prints what would be sent
+    \\  publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>]
+    \\          [--wait <seconds>] [--dry-run]
+    \\                          publish a staged set (plan.json and the files it
+    \\                          names, spec/staged-set.md) through one group:
+    \\                          every member is visible together, or none is.
+    \\                          --registry is required; a rerun after a failure
+    \\                          resumes the same group (state.json); report.json
+    \\                          says what each member came to
+    \\  yank --group <id> --registry <prod|gamma|beta|url> --reason <text>
+    \\       --group <id> --registry <...> --unyank
+    \\                          yank every version a group published, or restore
+    \\                          the ones its yank changed
     \\  lock [--registry <prod|gamma|beta|url>] [--overlay <staged set>]
     \\                          resolve mopm.toml's dependencies against the
     \\                          registry's index and write mopm.lock (keeping
@@ -319,7 +332,7 @@ fn getEnv(arena: std.mem.Allocator, key: []const u8) ?[]const u8 {
 /// 127 when the program does not exist, 126 otherwise (the shell's codes).
 fn execMojo(arena: std.mem.Allocator, name: []const u8, cmd: mojo_cmd.Command) u8 {
     const err = std.io.getStdErr().writer();
-    var env_map = std.process.getEnvMap(arena) catch |e| {
+    var env_map = core.child_env.forChild(arena) catch |e| {
         err.print("mopm {s}: reading the environment: {s}\n", .{ name, @errorName(e) }) catch {};
         return 1;
     };
@@ -423,6 +436,7 @@ fn run(arena: std.mem.Allocator) u8 {
     if (std.mem.eql(u8, cmd, "pack") or std.mem.eql(u8, cmd, "publish")) {
         return publish_cmd.main(arena, cmd, args[2..], version);
     }
+    if (std.mem.eql(u8, cmd, "yank")) return yank_cmd.main(arena, args[2..], version);
     if (std.mem.eql(u8, cmd, "lock")) return install_cmd.main(arena, .lock, args[2..], version);
     if (std.mem.eql(u8, cmd, "update")) return install_cmd.main(arena, .update, args[2..], version);
     if (std.mem.eql(u8, cmd, "tree")) return install_cmd.main(arena, .tree, args[2..], version);
@@ -452,6 +466,10 @@ test {
     _ = install_cmd;
     _ = plan_cmd;
     _ = unit_cmd;
+    _ = yank_cmd;
+    _ = @import("group_plan.zig");
+    _ = @import("group_publish.zig");
+    _ = @import("group_publish_test.zig");
 }
 
 test "planned commands are recognised, working ones are not planned" {
