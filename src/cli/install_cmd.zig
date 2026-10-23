@@ -595,7 +595,9 @@ fn install(arena: Allocator, whole: lock.Lock, pixi: []const u8) !u8 {
     const channel = try inst.fileUrl(arena, try cwd.realpathAlloc(arena, inst.channel_dir));
     try cwd.writeFile(inst.pixi_manifest, try inst.pixiToml(arena, channel, subdir, l.mojo, pkgs));
 
+    var pixi_env = try core.child_env.forChild(arena);
     var child = std.ChildProcess.init(&.{ pixi, "install", "--manifest-path", inst.pixi_manifest }, arena);
+    child.env_map = &pixi_env;
     const term = child.spawnAndWait() catch |e| {
         err(.sync, "cannot run {s}: {s}; pass --pixi <path to pixi>\n", .{ pixi, @errorName(e) });
         return 1;
