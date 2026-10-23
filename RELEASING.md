@@ -311,7 +311,8 @@ next release would get. It creates no tag and publishes nothing (`tag`, `publish
   (`needs.plan.outputs.complete != 'true'`), and every job after them waits for them, so the run ends green with nothing built, signed, tagged or published.
   A release with a file missing (an upload that died halfway), a different hash, an extra asset or a draft is not complete: the whole pipeline runs, and `publish`
   adds the missing files or refuses the difference as above. A release that cannot be read is not complete either: not knowing costs a build, never a skipped release.
-  `beta` and `lint` still run first.
+  `beta` and `lint` still run first. Every later job is skipped too, `bump`, `tap` and the apt deploy among them, so a "Re-run all jobs" of a complete release
+  retries none of them: re-run only the failed job. "Complete" here means the files agree with the release's own SHA256SUMS; they are not compared with a build of the commit.
 - If `bump` fails, the release stands (it is already published and verified). Re-run the `bump` job; see "The komira-internal
   bump". A bump that cannot succeed because the tag or the old gitlink does not allow it (it refuses with the reason) is
   fixed in komira-internal by hand: move the submodule there with an ordinary pull request.
