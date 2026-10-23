@@ -150,6 +150,25 @@ describe.each(RIGS)('the chain after a commit: %s', (_label, make) => {
       expect((await header(s)).status).toBe('visible');
     });
 
+    test('the first index hop is held until every subdir of the group has its repodata released, though nothing precedes it in the write order', async () => {
+      const s = await committed();
+      // Only the first repodata hop (linux-64) has run; noarch is still to come.
+      await chain.step();
+      expect((await header(s)).repodata_released).toEqual(['linux-64']);
+      const first = { type: 'index_pkg', name: 'base', rev: 0, group: { group_id: s.gid, attempt: 1, resend: 0, position: 0 } };
+      await chain.runIndex({ body: JSON.stringify(first), groupId: 'pkg:base', dedupId: 'first-early' });
+      expect((await header(s)).index_released ?? []).toEqual([]);
+      expect(indexed()).toEqual([]);
+      expect(env.objects.keys('index/')).toEqual([]);
+      expect(chain.log.some((l) => String(l.msg).includes('arrived before the steps it follows'))).toBe(true);
+      // Once the last subdir is released the same hop is accepted.
+      await chain.step();
+      expect((await header(s)).repodata_released!.sort()).toEqual(['linux-64', 'noarch']);
+      await chain.runIndex({ body: JSON.stringify(first), groupId: 'pkg:base', dedupId: 'first-on-time' });
+      expect((await header(s)).index_released).toEqual([0]);
+      expect(indexed()).toEqual(['base']);
+    });
+
     test('dependency order holds at every step: a package has its file only after the packages it depends on, and a hop sent out of order releases nothing', async () => {
       const s = await committed();
       const dependenciesFirst = async () => {
