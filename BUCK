@@ -703,6 +703,78 @@ export_file(
 )
 
 export_file(
+    name = "site.src.cli.install_cmd.zig",
+    src = "src/cli/install_cmd.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.cli.publish_cmd.zig",
+    src = "src/cli/publish_cmd.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.cli.test_cmd.zig",
+    src = "src/cli/test_cmd.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.core.closure.zig",
+    src = "src/core/closure.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.core.conda_unpack.zig",
+    src = "src/core/conda_unpack.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.core.env.zig",
+    src = "src/core/env.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.core.metadata.zig",
+    src = "src/core/metadata.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.core.registry.zig",
+    src = "src/core/registry.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.core.toml.zig",
+    src = "src/core/toml.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.core.unit_graph.zig",
+    src = "src/core/unit_graph.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.tools.cut_release.zig",
+    src = "tools/cut_release.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.tools.release.zig",
+    src = "tools/release.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
     name = "site.tests.drivers.examples_test.zig",
     src = "tests/drivers/examples_test.zig",
     visibility = ["//site:"],

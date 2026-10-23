@@ -48,7 +48,8 @@ test('the install note names the platforms the releases serve', () => {
 });
 
 // macos-x86_64 (an Intel Mac) is no longer a release platform (release/drop-macos-x86_64): no part of the home page names
-// it as one. Mutants: TARGETS (tools/pages.ts) with macos-x86_64 back in it; the install note saying "macOS (x86_64, arm64)".
+// it as one, neither in TARGETS (tools/pages.ts) nor in the install note. docs-values.test.ts holds the list to the targets
+// the release tools build.
 test('the home page names no Intel Mac release, and lists exactly the three release targets', () => {
   expect(home).not.toMatch(/macos-x86_64|macOS \(x86_64|Intel Mac/i);
   const files = /<p[^>]* id="release-files"[^>]*>(.*?)<\/p>/s.exec(home);

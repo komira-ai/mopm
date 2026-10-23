@@ -26,7 +26,8 @@ _DOCS = {
 # published docs, spec/channel.md, README.md, src/cli/main.zig and the scaffold golden
 # tests/new/lib (test/layout.test.ts holds the home page copy to them), the validator's limits.ts, the two
 # workflows whose page lists test/pages-lists.test.ts compares with DOC_PAGES, the parsers whose keys
-# test/docs-facts.test.ts requires on the configuration page (src/core/manifest.zig, lock.zig, credentials.zig) and the
+# test/docs-facts.test.ts requires on the configuration page (src/core/manifest.zig, lock.zig, credentials.zig), the
+# sources of the sizes, registries, allowed values, variables and platforms test/docs-values.test.ts reads, and the
 # worked examples test/docs-examples.test.ts holds the examples page to (and the driver that runs them, tests/drivers/examples_test.zig).
 _TEST_DATA = _DOCS | {
     "README.md": "//:site.README.md",
@@ -37,11 +38,23 @@ _TEST_DATA = _DOCS | {
     "spec/channel.md": "//:site.spec.channel.md",
     "spec/package-metadata.schema.json": "//:site.spec.package-metadata.schema.json",
     "examples": "//:site_examples",
+    "src/cli/install_cmd.zig": "//:site.src.cli.install_cmd.zig",
     "src/cli/main.zig": "//:site.src.cli.main.zig",
+    "src/cli/publish_cmd.zig": "//:site.src.cli.publish_cmd.zig",
+    "src/cli/test_cmd.zig": "//:site.src.cli.test_cmd.zig",
+    "src/core/closure.zig": "//:site.src.core.closure.zig",
+    "src/core/conda_unpack.zig": "//:site.src.core.conda_unpack.zig",
     "src/core/credentials.zig": "//:site.src.core.credentials.zig",
+    "src/core/env.zig": "//:site.src.core.env.zig",
     "src/core/lock.zig": "//:site.src.core.lock.zig",
     "src/core/conda.zig": "//:site.src.core.conda.zig",
     "src/core/manifest.zig": "//:site.src.core.manifest.zig",
+    "src/core/metadata.zig": "//:site.src.core.metadata.zig",
+    "src/core/registry.zig": "//:site.src.core.registry.zig",
+    "src/core/toml.zig": "//:site.src.core.toml.zig",
+    "src/core/unit_graph.zig": "//:site.src.core.unit_graph.zig",
+    "tools/cut_release.zig": "//:site.tools.cut_release.zig",
+    "tools/release.zig": "//:site.tools.release.zig",
     "tests/contract/api": "//:contract_api",
     "tests/drivers/examples_test.zig": "//:site.tests.drivers.examples_test.zig",
     "tests/new/lib": "//:site_new_lib",
