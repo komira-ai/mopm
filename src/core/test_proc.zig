@@ -33,6 +33,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const child_env = @import("child_env.zig");
 const posix = std.posix;
 const Allocator = std.mem.Allocator;
 
@@ -279,12 +280,22 @@ pub fn run(arena: Allocator, s: Spawn, limits: Limits) !Result {
         own_env = try std.process.getEnvMap(arena);
         break :blk &own_env;
     };
-    const envp = try arena.allocSentinel(?[*:0]const u8, env_map.count(), null);
+    // The registry token is never handed to a test (child_env.zig), whether the environment is this process's or a caller's.
+    var passed: usize = 0;
+    {
+        var count_it = env_map.iterator();
+        while (count_it.next()) |kv| {
+            if (!child_env.isScrubbed(kv.key_ptr.*)) passed += 1;
+        }
+    }
+    const envp = try arena.allocSentinel(?[*:0]const u8, passed, null);
     {
         var it = env_map.iterator();
         var i: usize = 0;
-        while (it.next()) |kv| : (i += 1) {
+        while (it.next()) |kv| {
+            if (child_env.isScrubbed(kv.key_ptr.*)) continue;
             envp[i] = (try std.fmt.allocPrintZ(arena, "{s}={s}", .{ kv.key_ptr.*, kv.value_ptr.* })).ptr;
+            i += 1;
         }
     }
     const out = try std.fs.cwd().createFile(s.stdout_path, .{ .truncate = true });
@@ -434,6 +445,31 @@ test "exit status, output to the files" {
     const p = try tmpPaths(a, &tmp);
     try std.testing.expectEqualStrings("to-out\n", try std.fs.cwd().readFileAlloc(a, p[0], 1024));
     try std.testing.expectEqualStrings("to-err\n", try std.fs.cwd().readFileAlloc(a, p[1], 1024));
+}
+
+test "the registry token is not in the environment a test process gets" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const p = try tmpPaths(a, &tmp);
+    var env = std.process.EnvMap.init(a);
+    try env.put("MOPM_TOKEN", "mopm_secret_token");
+    try env.put("MOPM_TOKEN_NOT", "a different variable");
+    try env.put("MOPM_KEEP", "kept");
+    // `env` prints what the process got: proc_child's env_to_stdout where there is no /bin/sh, else the program itself.
+    const argv: []const []const u8 = if (std.posix.getenv("MOPM_TEST_CHILD")) |child_z|
+        try std.mem.concat(a, []const u8, &.{ &[_][]const u8{child_z}, &[_][]const u8{"env_to_stdout"} })
+    else
+        &.{ "/bin/sh", "-c", "env" };
+    const r = try run(a, .{ .argv = argv, .stdout_path = p[0], .stderr_path = p[1], .env = &env }, .{ .deadline_ns = 20 * second });
+    try std.testing.expectEqual(Term{ .exited = 0 }, r.term);
+    const printed = try std.fs.cwd().readFileAlloc(a, p[0], 1 << 16);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "mopm_secret_token") == null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "MOPM_TOKEN=") == null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "MOPM_TOKEN_NOT=a different variable") != null);
+    try std.testing.expect(std.mem.indexOf(u8, printed, "MOPM_KEEP=kept") != null);
 }
 
 test "death by a signal is reported with that signal" {

@@ -287,6 +287,263 @@ pub const Release = struct {
     }
 };
 
+// ------------------------------------------------------------------ groups
+
+/// One account that owns `names.len` packages and a token that may publish and yank them: the caller of a group.
+pub const Grp = struct {
+    f: *F,
+    session: []const u8,
+    token: []const u8,
+    names: []const []const u8,
+    /// The first member's bytes: a marker the fake reads as a rejection, or its ordinary bytes.
+    reject: ?[]const u8 = null,
+
+    pub fn init(f: *F, count: usize) !Grp {
+        const handle = try f.user();
+        const session = try f.session(handle, true);
+        var names = std.ArrayList([]const u8).init(f.a);
+        var quoted = std.ArrayList(u8).init(f.a);
+        for (0..count) |i| {
+            const pkg = try f.name("grp");
+            try f.claim(session, pkg);
+            try names.append(pkg);
+            if (i != 0) try quoted.append(',');
+            try quoted.writer().print("\"{s}\"", .{pkg});
+        }
+        const tok = try f.apiToken(session, "[\"publish\",\"yank\"]", try f.fmt("[{s}]", .{quoted.items}), 30);
+        return .{ .f = f, .session = session, .token = c.getStr(tok, "token") orelse return error.NoToken, .names = names.items };
+    }
+
+    pub fn data(g: Grp, i: usize) ![]const u8 {
+        if (i == 0) {
+            if (g.reject) |r| return r;
+        }
+        return g.f.fmt("conda bytes of {s}", .{g.names[i]});
+    }
+
+    /// The create request for `version` of every member.
+    pub fn body(g: Grp, version: []const u8) ![]u8 {
+        var out = std.ArrayList(u8).init(g.f.a);
+        try out.appendSlice("{\"members\":[");
+        for (g.names, 0..) |n, i| {
+            if (i != 0) try out.append(',');
+            const bytes = try g.data(i);
+            try out.writer().print(
+                "{{\"name\":\"{s}\",\"version\":\"{s}\",\"files\":[{{\"subdir\":\"linux-64\",\"filename\":\"mojo-{s}-{s}-{s}.conda\",\"sha256\":\"{s}\",\"size\":{d}}}]}}",
+                .{ n, version, n, version, BUILD, try sha256Hex(g.f.a, bytes), bytes.len },
+            );
+        }
+        try out.appendSlice("]}");
+        return out.items;
+    }
+
+    pub fn commitBody(g: Grp) ![]u8 {
+        var out = std.ArrayList(u8).init(g.f.a);
+        try out.appendSlice("{\"members\":[");
+        for (g.names, 0..) |n, i| {
+            if (i != 0) try out.append(',');
+            try out.writer().print("{{\"name\":\"{s}\",\"manifest_sha256\":\"{s}\"}}", .{ n, try sha256Hex(g.f.a, "manifest") });
+        }
+        try out.appendSlice("]}");
+        return out.items;
+    }
+
+    /// Creates the group; its id. `uploaded`: the bytes are PUT as well.
+    pub fn create(g: Grp, version: []const u8, uploaded: bool) ![]const u8 {
+        const rsp = try g.f.req("POST", "/api/v1/groups", try g.body(version), g.token);
+        if (rsp.status != 201 and rsp.status != 200) {
+            std.debug.print("createGroup answered {d}\n", .{rsp.status});
+            return error.CreateFailed;
+        }
+        const out = rsp.body orelse return error.CreateFailed;
+        if (uploaded) {
+            for (c.getArr(out, "members"), 0..) |m, i| {
+                for (c.getArr(m, "files")) |file| try g.put(file, try g.data(i));
+            }
+        }
+        return c.getStr(out, "group_id") orelse error.NoGroupId;
+    }
+
+    fn put(g: Grp, file: Value, bytes: []const u8) !void {
+        const url = c.getStr(file, "put_url") orelse return;
+        const scheme = "http://";
+        if (!std.mem.startsWith(u8, url, scheme)) return error.PutUrlNotHttp;
+        const slash = std.mem.indexOfScalarPos(u8, url, scheme.len, '/') orelse url.len;
+        var headers = std.ArrayList(h.Header).init(g.f.a);
+        if (c.get(file, "put_headers")) |ph| {
+            if (ph == .object) {
+                var it = ph.object.iterator();
+                while (it.next()) |e| {
+                    if (e.value_ptr.* == .string) try headers.append(.{ .name = e.key_ptr.*, .value = e.value_ptr.*.string });
+                }
+            }
+        }
+        const r = try h.requestFull(g.f.a, "PUT", url[0..slash], url[slash..], bytes, null, "application/x-www-form-urlencoded", headers.items);
+        if (r.status != 200) return error.PutFailed;
+    }
+
+    pub fn commit(g: Grp, id: []const u8) !u16 {
+        return (try g.f.req("POST", try g.f.fmt("/api/v1/groups/{s}/commit", .{id}), try g.commitBody(), g.token)).status;
+    }
+
+    /// `times` reads of the group; the last answer. Each moves the group one stage.
+    pub fn poll(g: Grp, id: []const u8, times: usize) !Value {
+        var out: Value = .null;
+        for (0..times) |_| {
+            const rsp = try g.f.req("GET", try g.f.fmt("/api/v1/groups/{s}", .{id}), null, g.token);
+            if (rsp.status != 200) return error.PollFailed;
+            out = rsp.body orelse .null;
+        }
+        return out;
+    }
+
+    /// A group created, uploaded, committed and polled until it is visible.
+    pub fn visible(g: Grp, version: []const u8) ![]const u8 {
+        const id = try g.create(version, true);
+        if (try g.commit(id) != 202) return error.CommitFailed;
+        _ = try g.poll(id, 3);
+        return id;
+    }
+
+    pub fn path(g: Grp, id: []const u8) !Value {
+        return g.f.json("{{\"group_id\":\"{s}\"}}", .{id});
+    }
+
+    pub fn yankPath(g: Grp, id: []const u8) ![]u8 {
+        return g.f.fmt("/api/v1/groups/{s}/yank", .{id});
+    }
+};
+
+fn groupStep(g: Grp, op: []const u8, id: []const u8) !Step {
+    var s = step(op);
+    s.path = try g.path(id);
+    s.token = g.token;
+    s.auth = "publishToken";
+    return s;
+}
+
+fn groupRecipe(f: *F, e: Entry) !Step {
+    switch (e.kind) {
+        .group_create => {
+            const g = try Grp.init(f, 3);
+            var s = step("createGroup");
+            s.body = try g.body("0.4.0");
+            s.token = g.token;
+            s.auth = "publishToken";
+            s.check = .status_is;
+            if (std.mem.eql(u8, e.arg, "new")) {
+                s.args[0] = "open";
+            } else if (std.mem.eql(u8, e.arg, "again")) {
+                _ = try g.create("0.4.0", false);
+                s.args[0] = "open";
+            } else {
+                _ = try g.visible("0.4.0");
+                s.args[0] = "visible";
+            }
+            return s;
+        },
+        .group_get => {
+            var g = try Grp.init(f, 3);
+            var shown: []const u8 = "open";
+            if (std.mem.eql(u8, e.arg, "rejected")) g.reject = "REJECT:archive_invalid from the replay";
+            const id = try g.create("0.4.0", !std.mem.eql(u8, e.arg, "open"));
+            var s = try groupStep(g, "getGroup", id);
+            if (!std.mem.eql(u8, e.arg, "open")) {
+                if (try g.commit(id) != 202) return error.CommitFailed;
+                if (std.mem.eql(u8, e.arg, "committed")) {
+                    _ = try g.poll(id, 1);
+                    shown = "committed";
+                } else {
+                    _ = try g.poll(id, 2);
+                    shown = "rejected";
+                    s.check = .group_failure;
+                    s.args[1] = "archive_invalid";
+                }
+            }
+            s.args[0] = shown;
+            if (s.check == .none) s.check = .status_is;
+            return s;
+        },
+        .group_abort => {
+            const g = try Grp.init(f, 2);
+            const id = try g.create("0.4.0", false);
+            var s = try groupStep(g, "abortGroup", id);
+            s.check = .status_is;
+            s.args[0] = "aborted";
+            return s;
+        },
+        .group_commit => {
+            const g = try Grp.init(f, 3);
+            const id = try g.create("0.4.0", true);
+            var s = try groupStep(g, "commitGroup", id);
+            s.body = try g.commitBody();
+            s.check = .status_is;
+            if (std.mem.eql(u8, e.arg, "again")) {
+                if (try g.commit(id) != 202) return error.CommitFailed;
+                _ = try g.poll(id, 1);
+                s.args[0] = "committed";
+            } else {
+                s.args[0] = "validating";
+            }
+            return s;
+        },
+        .group_yank => {
+            const g = try Grp.init(f, 3);
+            const id = try g.visible("0.4.0");
+            var s = try groupStep(g, "yankGroup", id);
+            s.auth = "yankToken";
+            s.check = .group_yank_state;
+            if (std.mem.eql(u8, e.arg, "yank")) {
+                s.body = YANK_BODY;
+                s.args[0] = "yanking";
+            } else {
+                // Yanked, then unyanked, and polled until the unyank has ended: nothing left to restore.
+                _ = try f.req("PUT", try g.yankPath(id), YANK_BODY, g.token);
+                _ = try g.poll(id, 2);
+                _ = try f.req("PUT", try g.yankPath(id), "{\"yanked\":false}", g.token);
+                _ = try g.poll(id, 2);
+                s.body = "{\"yanked\":false}";
+                s.args[0] = "restored";
+            }
+            return s;
+        },
+        .group_error => {
+            if (std.mem.eql(u8, e.arg, "not_found")) {
+                const g = try Grp.init(f, 1);
+                return groupStep(g, "getGroup", "grp_00000000000000000000000000000000");
+            }
+            if (std.mem.eql(u8, e.arg, "conflict")) {
+                // The caller may have five groups open: a sixth, sharing nothing with them, has no place.
+                const g = try Grp.init(f, 1);
+                for ([_][]const u8{ "0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0" }) |v| _ = try g.create(v, false);
+                var s = step("createGroup");
+                s.body = try g.body("0.6.0");
+                s.token = g.token;
+                s.auth = "publishToken";
+                return s;
+            }
+            const g = try Grp.init(f, 2);
+            const id = try g.create("0.4.0", true);
+            if (std.mem.eql(u8, e.arg, "not_open")) {
+                if (try g.commit(id) != 202) return error.CommitFailed;
+                return groupStep(g, "abortGroup", id);
+            }
+            if (std.mem.eql(u8, e.arg, "commit_refused")) {
+                _ = try f.req("DELETE", try f.fmt("/api/v1/groups/{s}", .{id}), null, g.token);
+                var s = try groupStep(g, "commitGroup", id);
+                s.body = try g.commitBody();
+                return s;
+            }
+            // not_settled: a group that has not committed cannot be yanked.
+            var s = try groupStep(g, "yankGroup", id);
+            s.auth = "yankToken";
+            s.body = YANK_BODY;
+            return s;
+        },
+        else => unreachable,
+    }
+}
+
 // ----------------------------------------------------------------- recipes
 
 fn step(op: []const u8) Step {
@@ -744,6 +1001,7 @@ pub fn build(f: *F, e: Entry) !Step {
             s.path = try f.json("{{\"name\":\"{s}\",\"version\":\"9.9.9\"}}", .{(try f.claimed()).name});
             return s;
         },
+        .group_create, .group_get, .group_abort, .group_commit, .group_yank, .group_error => return groupRecipe(f, e),
         .detail => {
             const r = try Release.init(f);
             try r.publish("0.4.0", "conda bytes");
