@@ -1,20 +1,69 @@
 import { RegistryError, versionExists } from './errors';
-import { applyEvent, type VersionEvent } from './state';
-import { auditSortKey, byVersion, type Store } from './store';
+import { API_VIEW, headerKey, membersKey, parseHeader, parseMembers, VersionFunnel, type FunnelOptions, type GroupReader, type View } from './group';
+import type { RawVersionPort } from './raw-port';
+import { applyEvent, IllegalTransition, type VersionEvent } from './state';
+import { auditSortKey, type Store } from './store';
 import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, VersionRecord } from './types';
 import { canonicalVersion } from './version';
 
 const copy = <T>(v: T): T => structuredClone(v);
 
+const MAX_UPDATE_ATTEMPTS = 5;
+
+/** The group items of the `publishes` table, in memory: what a test (or the local mode) puts there is what the funnel reads. */
+export class MemoryGroupItems implements GroupReader {
+  private readonly items = new Map<string, Record<string, unknown>>();
+  /** The keys read, in order, so a test can assert what a read asked for. */
+  readonly reads: string[] = [];
+  /** When set, every read throws it (a throttle, an outage). */
+  failure?: Error;
+
+  put(key: string, item: Record<string, unknown>): void {
+    this.items.set(key, copy(item));
+  }
+  private read(key: string) {
+    this.reads.push(key);
+    if (this.failure) throw this.failure;
+    const i = this.items.get(key);
+    return i && copy(i);
+  }
+  async header(gid: string) {
+    const i = this.read(headerKey(gid));
+    return i && parseHeader(i);
+  }
+  async members(gid: string) {
+    const i = this.read(membersKey(gid));
+    return i && parseMembers(i);
+  }
+}
+
 /**
- * In-memory adapter. Every method runs its read-check-write without awaiting in between, so each is
- * atomic on the event loop, which is the property DynamoDB gives the other adapter with conditions.
+ * In-memory adapter. Every method runs its read-check-write without awaiting in between (an update re-checks the
+ * revision after its reads), so each is atomic on the event loop, which is the property DynamoDB gives the other
+ * adapter with conditions.
  */
 export class MemoryStore implements Store {
   private packages = new Map<string, PackageRecord>();
   private versions = new Map<string, VersionRecord>(); // `${name}\0${canonical}`
   private owners = new Map<string, OwnerRecord>(); // `${name}\0${github_id}`
   private audit: AuditEntry[] = [];
+
+  /** The rows as stored (src/raw-port.ts): for the group module and for tests that must see the stored form. */
+  readonly raw: RawVersionPort = {
+    rawGet: async (name, version) => {
+      const r = this.versions.get(`${name}\0${canonicalVersion(version)}`);
+      return r && copy(r);
+    },
+    rawQuery: async (name) => [...this.versions.values()].filter((v) => v.name === name).map(copy),
+  };
+  private readonly funnel: VersionFunnel;
+
+  constructor(
+    readonly groups: MemoryGroupItems = new MemoryGroupItems(),
+    funnel: FunnelOptions = {},
+  ) {
+    this.funnel = new VersionFunnel(this.raw, groups, funnel);
+  }
 
   async createPackage(pkg: PackageRecord): Promise<void> {
     if (this.packages.has(pkg.name)) throw new RegistryError('name_taken', `'${pkg.name}' is already taken.`, { name: pkg.name });
@@ -45,22 +94,30 @@ export class MemoryStore implements Store {
     this.audit.push(copy(audit));
   }
   async getVersion(name: string, version: string) {
-    const r = this.versions.get(`${name}\0${canonicalVersion(version)}`);
-    return r && copy(r);
+    return this.funnel.getOne(name, version);
   }
   async updateVersion(name: string, version: string, event: VersionEvent, audit: AuditEntry): Promise<VersionRecord> {
     const key = `${name}\0${canonicalVersion(version)}`;
-    const cur = this.versions.get(key);
-    if (!cur) throw new RegistryError('version_not_found', `'${name}' has no version '${version}'.`, { name, version });
-    const next = applyEvent(cur, event);
-    if (next !== cur) {
+    for (let attempt = 0; attempt < MAX_UPDATE_ATTEMPTS; attempt++) {
+      // The row as a reader sees it: a member of a committed group is `published` here, and one of a group that has
+      // not committed stays `pending` and cannot be changed through this port.
+      const cur = await this.funnel.getOne(name, version);
+      if (!cur) throw new RegistryError('version_not_found', `'${name}' has no version '${version}'.`, { name, version });
+      if (cur.group_id !== undefined && cur.state === 'pending') throw new IllegalTransition(cur, event);
+      const next = applyEvent(cur, event);
+      if (next === cur) return copy(cur);
+      if (this.versions.get(key)?.rev !== cur.rev) continue; // changed while the group was being read
       this.versions.set(key, copy(next));
       this.audit.push(copy(audit));
+      return copy(next);
     }
-    return copy(next);
+    throw new RegistryError('internal_error', `'${name}' ${version} changed too often while updating.`, { name, version });
   }
   async listVersions(name: string) {
-    return [...this.versions.values()].filter((v) => v.name === name).map(copy).sort(byVersion);
+    return (await this.versionsOf([name], API_VIEW)).get(name)!;
+  }
+  async versionsOf(names: readonly string[], view: View) {
+    return this.funnel.versionsOf(names, view);
   }
 
   async addOwner(o: OwnerRecord): Promise<void> {

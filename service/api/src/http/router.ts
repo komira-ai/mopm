@@ -1,4 +1,5 @@
 import { RegistryError, HTTP_STATUS } from '../errors';
+import { API_VIEW } from '../group';
 import type { Store } from '../store';
 import { README_MAX_BYTES, type PackageRecord, type PackageSummaryRecord, type VersionRecord } from '../types';
 import { canonicalVersion, compareVersions } from '../version';
@@ -7,6 +8,8 @@ import { routeAuth, type AuthServices } from './auth-routes';
 import { render } from './catalogue';
 import { templateFor } from './auth-catalogue';
 import { routePublish, type PublishApi } from './publish-routes';
+import { buildIndexConfig } from '../index-files';
+import { createHash } from 'node:crypto';
 
 export type Stage = 'beta' | 'gamma' | 'prod';
 
@@ -38,7 +41,11 @@ export interface RouterDeps {
   auth?: AuthServices;
   /** The publish operations (begin, commit, status). Absent: the router serves reads only. */
   publish?: PublishApi;
+  /** The hosts `GET /index/config.json` names (from the stage's configuration). Absent: that path answers 404. */
+  indexConfig?: { apiDomain: string; channelDomain: string };
 }
+
+export const INDEX_CONFIG_PATH = '/index/config.json';
 
 const PREFIX = '/api/v1';
 const NAME = /^[a-z][a-z0-9_]{1,63}$/;
@@ -218,7 +225,14 @@ async function searchPackages(deps: RouterDeps, query: HttpRequest['query']) {
   const prefix = normaliseQuery(q);
   const after = query.cursor === undefined ? undefined : decodeCursor(query.cursor, sort);
 
-  const summarise = async (p: PackageSummaryRecord) => packageSummary(p, visible(await deps.store.listVersions(p.name)));
+  // One read for the whole page, so that a group's members are all shown or all hidden (src/group.ts).
+  const summarise = async (ps: PackageSummaryRecord[]) => {
+    const byName = await deps.store.versionsOf(
+      ps.map((p) => p.name),
+      API_VIEW,
+    );
+    return ps.map((p) => packageSummary(p, visible(byName.get(p.name)!)));
+  };
 
   if (sort === 'name') {
     // A name cursor continues the index at that name; one that does not start with this query's prefix is for
@@ -228,7 +242,7 @@ async function searchPackages(deps: RouterDeps, query: HttpRequest['query']) {
     const found = await deps.store.searchPackages(prefix, after?.after, limit + 1);
     const page = found.slice(0, limit);
     return {
-      packages: await Promise.all(page.map(summarise)),
+      packages: await summarise(page),
       next_cursor: found.length > limit ? encodeCursor({ k: 'name', after: page[page.length - 1]!.name }) : null,
     };
   }
@@ -242,7 +256,7 @@ async function searchPackages(deps: RouterDeps, query: HttpRequest['query']) {
     if (chunk.length < SEARCH_PAGE) break;
     last = chunk[chunk.length - 1]!.name;
   }
-  let all = await Promise.all(matches.map(summarise));
+  let all = await summarise(matches);
   all.sort((a, b) => (a.updated_at === b.updated_at ? (a.name < b.name ? -1 : 1) : a.updated_at < b.updated_at ? 1 : -1));
   if (after && after.k === 'updated') {
     all = all.filter((s) => s.updated_at < after.ts || (s.updated_at === after.ts && s.name > after.after));
@@ -298,9 +312,26 @@ function segments(path: string): string[] | undefined {
   }
 }
 
+/** `/index/config.json`, built from the stage's configuration and the live read-only switch. Nothing is read from a bucket. */
+function indexConfig(deps: RouterDeps, requestId: string): HttpResponse {
+  if (!deps.indexConfig) throw new RegistryError('route_not_found', 'no such operation');
+  const body = buildIndexConfig({ stage: deps.stage, ...deps.indexConfig, readOnly: deps.readOnly });
+  return {
+    statusCode: 200,
+    headers: {
+      'content-type': 'application/json',
+      'cache-control': 'public, max-age=60',
+      etag: `"${createHash('sha256').update(body).digest('hex')}"`,
+      'x-mopm-request-id': requestId,
+    },
+    body,
+  };
+}
+
 /** Handle one request. Never throws: every failure is an error body from the contract's catalogue. */
 export async function route(req: HttpRequest, deps: RouterDeps, requestId: string): Promise<HttpResponse> {
   try {
+    if (req.path === INDEX_CONFIG_PATH && req.method === 'GET') return indexConfig(deps, requestId);
     if (deps.publish) {
       const published = await routePublish(req, deps.publish, requestId);
       if (published) return published;

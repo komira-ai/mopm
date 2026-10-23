@@ -120,6 +120,16 @@ pub struct VersionRecord {
     /// Markdown, at most [`README_MAX_BYTES`] of UTF-8.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub readme: Option<String>,
+    /// The group publish that reserved this row. Absent on every row a single publish wrote. A `pending`
+    /// row that has one belongs to its group: only the group's own steps may publish it, so a single publish
+    /// refuses it ([`crate::state::apply_event`]) and it is not served as a version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<String>,
+    /// The attempt of the group at which the validator staged this row (filled it in). A staged row is shown
+    /// only once its group has committed at that same attempt; until then it stays `pending`. The Rust port
+    /// reads no group header, so it never shows one. It keeps both fields when it rewrites a row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staged_attempt: Option<u64>,
     /// Optimistic-concurrency counter: starts at 0, +1 on every state change.
     pub rev: u64,
 }
@@ -184,7 +194,7 @@ mod tests {
         assert_eq!(back, r);
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         let keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
-        for absent in ["yank_reason", "tombstone", "published_by", "provenance", "description", "license", "repository", "homepage", "keywords", "readme"] {
+        for absent in ["yank_reason", "tombstone", "published_by", "provenance", "description", "license", "repository", "homepage", "keywords", "readme", "group_id", "staged_attempt"] {
             assert!(!keys.contains(&absent), "{absent} must be absent, not null: {text}");
         }
         assert_eq!(v["state"], "published");
@@ -201,6 +211,20 @@ mod tests {
         assert_eq!(r.provenance.as_ref().unwrap().kind, ProvenanceKind::Oidc);
         assert_eq!(r.files[0].url, None);
         assert_eq!(r.rev, 3);
+    }
+
+    #[test]
+    fn a_row_staged_by_a_group_keeps_its_group_fields_through_a_round_trip() {
+        let text = r#"{"name":"p","version":"1.0.0","canonical":"1.0.0","build":"b","state":"pending","published_at":"t","requires_mojo":"==1","deps":[],"native":[],"files":[],"manifest_sha256":"f","group_id":"g1","staged_attempt":2,"rev":1}"#;
+        let r: VersionRecord = serde_json::from_str(text).unwrap();
+        assert_eq!((r.group_id.as_deref(), r.staged_attempt, r.state), (Some("g1"), Some(2), VersionState::Pending));
+        let v: serde_json::Value = serde_json::to_value(&r).unwrap();
+        assert_eq!((v["group_id"].as_str(), v["staged_attempt"].as_u64()), (Some("g1"), Some(2)));
+        // A reserved row has the tag and no stamp yet: the stamp is absent, not null.
+        let reserved = text.replace(r#""staged_attempt":2,"#, "");
+        let r: VersionRecord = serde_json::from_str(&reserved).unwrap();
+        assert_eq!((r.group_id.as_deref(), r.staged_attempt), (Some("g1"), None));
+        assert!(serde_json::to_value(&r).unwrap().get("staged_attempt").is_none());
     }
 
     #[test]

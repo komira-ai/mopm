@@ -1,4 +1,5 @@
 import { compareVersions } from './version';
+import type { View } from './group';
 import type { VersionEvent } from './state';
 import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, VersionRecord } from './types';
 
@@ -10,6 +11,9 @@ import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, Vers
  *   version_exists, whatever state the first one is in (a tombstone keeps the number burned). Two concurrent creates: exactly one wins.
  * - Every change to a version also appends its audit entry, atomically with it.
  * - Version rows are never deleted.
+ * - Every read of a version row (`getVersion`, `listVersions`, `versionsOf`, and the row `updateVersion` starts
+ *   from) returns the projection of src/group.ts: a row that belongs to a group that has not committed is
+ *   `pending`; one that has is `published`. A row without a group is returned as stored, at no extra read.
  */
 export interface Store {
   /** Create-once. Throws name_taken when the package exists. */
@@ -34,6 +38,13 @@ export interface Store {
   updateVersion(name: string, version: string, event: VersionEvent, audit: AuditEntry): Promise<VersionRecord>;
   /** Oldest to newest by conda ordering. */
   listVersions(name: string): Promise<VersionRecord[]>;
+  /**
+   * The rows of several packages in one call, as `view` shows them (src/group.ts): every row of a package, each
+   * package oldest to newest. The result has an entry for each name asked for; a repodata build also gets the
+   * packages of the members of a committed group that the caller had not listed. Search and the builders read
+   * through this, so that a group is seen whole or not at all within one call.
+   */
+  versionsOf(names: readonly string[], view: View): Promise<Map<string, VersionRecord[]>>;
 
   addOwner(owner: OwnerRecord): Promise<void>; // already_owner
   removeOwner(name: string, githubId: number): Promise<void>; // owner_not_found

@@ -70,9 +70,139 @@ test "deploy.yml and e2e.yml: the guard gates the one credential job" {
     try expectRepo("deploy.yml", "    needs: guard\n", "    needs: other\n", &.{"deploy.yml: deploy must need the guard job"});
     try expectRepo("deploy.yml", "    environment: ${{ inputs.stage }}\n", "", &.{"deploy.yml: deploy must declare an environment"});
     try expectRepo("deploy.yml", "      id-token: write\n", "      id-token: read\n", &.{"deploy.yml: expected exactly one job with id-token"});
-    try expectRepo("e2e.yml", "    needs: guard\n", "    needs: other\n", &.{"e2e.yml: smoke-linux must need the guard job"});
+    try expectRepo("e2e.yml", "    needs: guard\n", "    needs: other\n", &.{ "e2e.yml: smoke-linux must need the guard job", "e2e.yml: index-gate must need the guard job", "e2e.yml: group-e2e must need the guard job" });
     try expectRepo("e2e.yml", "    environment: ${{ inputs.stage }}\n", "", &.{"e2e.yml: smoke-linux must declare an environment"});
     try expectRepo("e2e.yml", "      id-token: write\n", "      id-token: read\n", &.{"e2e.yml: expected exactly one job with id-token"});
+}
+
+test "e2e.yml: the index gate stays curl only, guarded, and asserts its three answers exactly" {
+    try expectRepo("e2e.yml", "  index-gate:\n    needs: guard\n", "  index-gate:\n    needs: other\n", &.{"e2e.yml: index-gate must need the guard job"});
+    try expectRepo("e2e.yml", "    if: github.ref == 'refs/heads/main'\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n", "    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n", &.{"e2e.yml: index-gate must run on main only"});
+    try expectRepo("e2e.yml", "    timeout-minutes: 10\n    permissions:\n      contents: read\n", "    timeout-minutes: 10\n    environment: ${{ inputs.stage }}\n    permissions:\n      contents: read\n", &.{"e2e.yml: index-gate must not declare an environment"});
+    try expectRepo("e2e.yml", "    timeout-minutes: 10\n    permissions:\n      contents: read\n", "    timeout-minutes: 10\n    permissions:\n      contents: read\n      id-token: write\n", &.{ "e2e.yml: expected exactly one job with id-token", "e2e.yml: index-gate must declare an environment", "e2e.yml: index-gate must grant exactly contents read" });
+    try expectRepo("e2e.yml", "code=$(get /takedowns.json)", "code=$(get /takedowns)", &.{"e2e.yml: index-gate script lost `get /takedowns.json`"});
+    try expectRepo("e2e.yml", "[ \"$code\" = \"404\" ]", "[ \"$code\" = \"403\" ]", &.{ "e2e.yml: index-gate script lost `= \"404\"`", "e2e.yml: index-gate script lost `if [ \"$code\" = \"404\" ]; then`" });
+    try expectRepo("e2e.yml", "          [ \"$failed\" = \"0\" ] || { echo \"sparse index gate failed on stage ${STAGE}\" >&2; exit 1; }\n", "", &.{"e2e.yml: index-gate script lost `\n[ \"$failed\" = \"0\" ] || { echo \"sparse index gate failed on stage ${STAGE}\" >&2; exit 1; }\n`"});
+    try expectRepo("e2e.yml", "                 and .stage == $stage\n", "", &.{"e2e.yml: index-gate script lost `and .stage == $stage`"});
+    try expectRepo("e2e.yml", "                 and .channel_url == $ch\n", "", &.{"e2e.yml: index-gate script lost `and .channel_url == $ch`"});
+    try expectRepo("e2e.yml", "(.index_version | type == \"number\" and . == 1) and (.takedowns", "(.index_version | type == \"number\") and (.takedowns", &.{"e2e.yml: index-gate script lost `(.index_version | type == \"number\" and . == 1)` (config.json and takedowns.json both need it)"});
+    try expectRepo("e2e.yml", "if [ \"$code\" = \"404\" ]; then", "if [ \"$code\" = \"404\" ] || [ \"$code\" = \"403\" ]; then", &.{ "e2e.yml: index-gate script lost `if [ \"$code\" = \"404\" ]; then`", "e2e.yml: index-gate must accept only 404 for the absent package" });
+}
+
+/// The workflow `name` of the repository with `from` replaced by `to`, linted file by file.
+fn expectFile(name: []const u8, from: []const u8, to: []const u8, want: []const []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const tree = try c.loadTree(a);
+    const text = try tree.read(a, try std.fmt.allocPrint(a, ".github/workflows/{s}", .{name}));
+    if (std.mem.indexOf(u8, text, from) == null) {
+        std.debug.print("the change does not apply to {s}: {s} is not in it\n", .{ name, from });
+        return error.TestUnexpectedResult;
+    }
+    try c.expectLines(name, try lint(a, name, try std.mem.replaceOwned(u8, a, text, from, to)), want);
+}
+
+const group_secret_line = "          MOPM_E2E_TOKEN: ${{ secrets.MOPM_E2E_GROUP_TOKEN }}\n";
+const group_checkout = "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Validate stage\n        env:\n          STAGE: ${{ inputs.stage }}\n        run: |\n          case \"$STAGE\" in beta|gamma) ;;";
+
+test "e2e.yml: the group e2e job never runs for a pull request, and runs only after a deploy or by hand" {
+    try expectRepo("e2e.yml", "on:\n  workflow_call:\n", "on:\n  pull_request:\n  workflow_call:\n", &.{"e2e.yml: triggers must be exactly workflow_call and workflow_dispatch (a pull request must not hold the group e2e token), got [\"pull_request\", \"workflow_call\", \"workflow_dispatch\"]"});
+    try expectRepo("e2e.yml", "on:\n  workflow_call:\n", "on:\n  push:\n  workflow_call:\n", &.{"e2e.yml: triggers must be exactly workflow_call and workflow_dispatch (a pull request must not hold the group e2e token), got [\"push\", \"workflow_call\", \"workflow_dispatch\"]"});
+    try expectRepo("e2e.yml", "  workflow_dispatch:\n    inputs:", "  workflow_dispatch:\n  schedule:\n    inputs:", &.{"e2e.yml: triggers must be exactly workflow_call and workflow_dispatch"});
+    try expectRepo("e2e.yml", "  group-e2e:\n    needs: guard\n", "  group-e2e:\n    needs: other\n", &.{"e2e.yml: group-e2e must need the guard job"});
+    try expectRepo("e2e.yml", " && inputs.stage != 'prod'\n", "\n", &.{"e2e.yml: group-e2e must run on main only, and never for prod"});
+    try expectRepo("e2e.yml", "    if: github.ref == 'refs/heads/main' && inputs.stage != 'prod'\n", "", &.{"e2e.yml: group-e2e must run on main only, and never for prod"});
+}
+
+test "e2e.yml: the group e2e job holds a read-only token, no environment, no id-token, and the pinned checkout alone" {
+    try expectRepo("e2e.yml", "    timeout-minutes: 45\n", "    timeout-minutes: 45\n    environment: ${{ inputs.stage }}\n", &.{"e2e.yml: group-e2e must not declare an environment"});
+    try expectRepo("e2e.yml", "    timeout-minutes: 45\n", "    timeout-minutes: 45\n    continue-on-error: true\n", &.{"e2e.yml: group-e2e must not set continue-on-error"});
+    try expectRepo("e2e.yml", "    timeout-minutes: 45\n", "    timeout-minutes: 45\n    env:\n      X: y\n", &.{"e2e.yml: group-e2e must not set env at job level"});
+    try expectRepo("e2e.yml", "    timeout-minutes: 45\n    permissions:\n      contents: read\n", "    timeout-minutes: 45\n    permissions:\n      contents: read\n      id-token: write\n", &.{ "e2e.yml: expected exactly one job with id-token", "e2e.yml: group-e2e must declare an environment", "e2e.yml: group-e2e must grant exactly contents read" });
+    try expectRepo("e2e.yml", "    timeout-minutes: 45\n    permissions:\n      contents: read\n", "    timeout-minutes: 45\n    permissions:\n      contents: read\n      issues: read\n", &.{"e2e.yml: group-e2e must grant exactly contents read"});
+    try expectRepo("e2e.yml", "      - name: Install Zig 0.12.0 (sha256-pinned)\n        run: echo \"$(tools/install_zig.sh \"$RUNNER_TEMP/zig\")\" >> \"$GITHUB_PATH\"\n", "      - uses: actions/setup-node@3d3c42e5aac5ba805825da76410c181273ba90b1\n", &.{"e2e.yml: group-e2e step 2: only actions/checkout pinned by full SHA is allowed here: actions/setup-node@3d3c42e5aac5ba805825da76410c181273ba90b1"});
+    try expectRepo("e2e.yml", group_checkout, "      - uses: actions/checkout@v4\n        with:\n          persist-credentials: false\n      - name: Validate stage\n        env:\n          STAGE: ${{ inputs.stage }}\n        run: |\n          case \"$STAGE\" in beta|gamma) ;;", &.{"e2e.yml: group-e2e step 0: only actions/checkout pinned by full SHA is allowed here: actions/checkout@v4"});
+    // The same unpinned action is refused by the per-file rule that holds every workflow.
+    try expectFile("e2e.yml", group_checkout, "      - uses: actions/checkout@v4\n        with:\n          persist-credentials: false\n      - name: Validate stage\n        env:\n          STAGE: ${{ inputs.stage }}\n        run: |\n          case \"$STAGE\" in beta|gamma) ;;", &.{"e2e.yml: group-e2e step 0: only GitHub-owned actions pinned by full SHA are allowed: actions/checkout@v4"});
+}
+
+test "e2e.yml: the repository secret is read once, as MOPM_E2E_TOKEN, by the step that runs the check" {
+    // A second reader: another step of another job.
+    try expectRepo("e2e.yml", "          EXPECTED_IMPL: ts\n", "          EXPECTED_IMPL: ts\n          LEAK: ${{ secrets.MOPM_E2E_GROUP_TOKEN }}\n", &.{ "e2e.yml: secrets.MOPM_E2E_GROUP_TOKEN must be referenced exactly once, on the step that runs the check, got 2", "e2e.yml: job smoke-linux reads MOPM_E2E_GROUP_TOKEN; only group-e2e may" });
+    // A second reader in the same job, and the step before the check.
+    try expectRepo("e2e.yml", "        env:\n          STAGE: ${{ inputs.stage }}\n        run: |\n          case \"$STAGE\" in beta|gamma) ;;", "        env:\n          STAGE: ${{ inputs.stage }}\n" ++ group_secret_line ++ "        run: |\n          case \"$STAGE\" in beta|gamma) ;;", &.{ "e2e.yml: secrets.MOPM_E2E_GROUP_TOKEN must be referenced exactly once, on the step that runs the check, got 2", "e2e.yml: exactly one step of group-e2e must read the token, got 2" });
+    // Another name for the variable.
+    try expectRepo("e2e.yml", group_secret_line, "          TOKEN: ${{ secrets.MOPM_E2E_GROUP_TOKEN }}\n", &.{"e2e.yml: group-e2e step 4: the secret goes in as the variable MOPM_E2E_TOKEN, set to secrets.MOPM_E2E_GROUP_TOKEN and nothing around it, not as TOKEN"});
+    // Wrapped in something else.
+    try expectRepo("e2e.yml", group_secret_line, "          MOPM_E2E_TOKEN: x-${{ secrets.MOPM_E2E_GROUP_TOKEN }}\n", &.{"e2e.yml: group-e2e step 4: the secret goes in as the variable MOPM_E2E_TOKEN"});
+    // Another secret in the job.
+    try expectRepo("e2e.yml", "          RUN_ID: ${{ github.run_id }}\n", "          RUN_ID: ${{ github.run_id }}\n          AWS_REGION: ${{ secrets.AWS_REGION }}\n", &.{"e2e.yml: group-e2e step 4: reads AWS_REGION from secrets; the job reads no secret but MOPM_E2E_GROUP_TOKEN"});
+    // The secret through with:, and at the top of the workflow.
+    try expectRepo("e2e.yml", "      - name: Build the CLI and the group check\n        run: zig build -Doptimize=ReleaseSafe\n", "      - name: Build the CLI and the group check\n        with:\n          t: ${{ secrets.AWS_REGION }}\n        run: zig build -Doptimize=ReleaseSafe\n", &.{"e2e.yml: group-e2e step 3: passes a secret through with:"});
+    try expectRepo("e2e.yml", "permissions:\n  contents: read\n\njobs:\n", "permissions:\n  contents: read\n\nenv:\n  X: ${{ secrets.AWS_REGION }}\n\njobs:\n", &.{"e2e.yml: the workflow must not set env from secrets"});
+    // The step that holds it must run the check, and the check must say why it skipped.
+    try expectRepo("e2e.yml", "./zig-out/bin/mopm-group-e2e --stage", "./zig-out/bin/other --stage", &.{"e2e.yml: the step of group-e2e that holds the token must run mopm-group-e2e"});
+    try expectRepo("e2e.yml", " --summary \"$GITHUB_STEP_SUMMARY\"\n", "\n", &.{"e2e.yml: the step of group-e2e that holds the token must pass --summary"});
+    // The job itself is missing (renamed): its secret is then read by a job that may not.
+    try expectRepo("e2e.yml", "  group-e2e:\n    needs: guard\n", "  group-e2f:\n    needs: guard\n", &.{ "e2e.yml: job group-e2f reads MOPM_E2E_GROUP_TOKEN; only group-e2e may", "e2e.yml: the group-e2e job is missing" });
+}
+
+test "the group e2e token is read by e2e.yml and no other workflow, and no step prints it" {
+    try expectLint("ci.yml", head ++
+        \\jobs:
+        \\  j:
+        \\    runs-on: x
+        \\    steps:
+        \\      - run: ./t
+        \\        env:
+        \\          T: ${{ secrets.MOPM_E2E_GROUP_TOKEN }}
+        \\
+    , &.{"ci.yml: secrets.MOPM_E2E_GROUP_TOKEN is for the group-e2e job of e2e.yml alone"});
+    try expectLint("e2e.yml", head ++
+        \\jobs:
+        \\  j:
+        \\    runs-on: x
+        \\    steps:
+        \\      - run: ./t
+        \\        env:
+        \\          T: ${{ secrets.MOPM_E2E_GROUP_TOKEN }}
+        \\
+    , &.{});
+    try expectRun("echo \"$MOPM_E2E_TOKEN\"", &.{"ci.yml: j step 0: prints a secret-bearing variable: echo \"$MOPM_E2E_TOKEN\""});
+    try expectRun("printf '%s' \"${MOPM_E2E_GROUP_TOKEN}\"", &.{"prints a secret-bearing variable"});
+}
+
+const leak_job_head =
+    \\jobs:
+    \\  j:
+    \\    runs-on: x
+    \\    steps:
+    \\      - run: ./t
+    \\        env:
+    \\
+;
+
+test "the group e2e token is matched without regard to case" {
+    try expectLint("ci.yml", head ++ leak_job_head ++ "          T: ${{ secrets.mopm_e2e_group_token }}\n", &.{"ci.yml: secrets.MOPM_E2E_GROUP_TOKEN is for the group-e2e job of e2e.yml alone"});
+    try expectLint("ci.yml", head ++ leak_job_head ++ "          T: ${{ SECRETS.Mopm_E2E_Group_Token }}\n", &.{"ci.yml: secrets.MOPM_E2E_GROUP_TOKEN is for the group-e2e job of e2e.yml alone"});
+    // In e2e.yml itself: a second reader in another job, by a lower-case spelling, is counted and named.
+    try expectRepo("e2e.yml", "          EXPECTED_IMPL: ts\n", "          EXPECTED_IMPL: ts\n          LEAK: ${{ secrets.mopm_e2e_group_token }}\n", &.{ "e2e.yml: secrets.MOPM_E2E_GROUP_TOKEN must be referenced exactly once, on the step that runs the check, got 2", "e2e.yml: job smoke-linux reads MOPM_E2E_GROUP_TOKEN; only group-e2e may" });
+}
+
+test "no workflow dumps the secrets context or indexes it" {
+    const dumped = "ci.yml: toJSON(secrets) reads secrets without naming them";
+    const indexed = "ci.yml: an index expression secrets[...] reads secrets without naming them";
+    try expectLint("ci.yml", head ++ leak_job_head ++ "          ALL: ${{ toJSON(secrets) }}\n", &.{dumped});
+    try expectLint("ci.yml", head ++ leak_job_head ++ "          ALL: ${{ tojson( secrets ) }}\n", &.{dumped});
+    try expectLint("ci.yml", head ++ leak_job_head ++ "          ALL: ${{ fromJSON(toJSON(secrets)).x }}\n", &.{dumped});
+    try expectLint("ci.yml", head ++ leak_job_head ++ "          T: ${{ secrets['MOPM_E2E_GROUP_TOKEN'] }}\n", &.{indexed});
+    try expectLint("ci.yml", head ++ leak_job_head ++ "          T: ${{ secrets [format('MOPM_E2E_{0}', 'GROUP_TOKEN')] }}\n", &.{indexed});
+    // The same in e2e.yml, which holds the one allowed reader: it names its secret with the dotted form, so these are refused there too.
+    try expectFile("e2e.yml", "          EXPECTED_IMPL: ts\n", "          EXPECTED_IMPL: ts\n          ALL: ${{ toJSON(secrets) }}\n", &.{"e2e.yml: toJSON(secrets) reads secrets without naming them"});
+    try expectFile("e2e.yml", "          EXPECTED_IMPL: ts\n", "          EXPECTED_IMPL: ts\n          T: ${{ secrets['MOPM_E2E_GROUP_TOKEN'] }}\n", &.{"e2e.yml: an index expression secrets[...] reads secrets without naming them"});
+    // A comment that mentions them, and the dotted form, are not refused.
+    try expectLint("ci.yml", head ++ "# never toJSON(secrets) or secrets['X']\n" ++ leak_job_head ++ "          T: ${{ secrets.OTHER }}\n", &.{});
 }
 
 test "oidc-subject-check.yml: manual, guarded, beta or no environment, exact permissions" {

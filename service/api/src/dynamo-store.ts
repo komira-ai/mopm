@@ -7,8 +7,10 @@ import {
   TransactWriteCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { RegistryError, versionExists } from './errors';
-import { applyEvent, type VersionEvent } from './state';
-import { auditSortKey, byVersion, type Store } from './store';
+import { API_VIEW, headerKey, membersKey, parseHeader, parseMembers, VersionFunnel, type FunnelOptions, type GroupReader, type View } from './group';
+import type { RawVersionPort } from './raw-port';
+import { applyEvent, IllegalTransition, type VersionEvent } from './state';
+import { auditSortKey, type Store } from './store';
 import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, VersionRecord } from './types';
 import { canonicalVersion } from './version';
 
@@ -23,6 +25,8 @@ export interface Tables {
   versions: string;
   owners: string;
   audit: string;
+  /** The publish pipeline's table: it also holds the group headers and member lists a version read consults (src/group.ts). */
+  publishes: string;
 }
 
 export const tablesFor = (stage: string): Tables => ({
@@ -30,6 +34,7 @@ export const tablesFor = (stage: string): Tables => ({
   versions: `mopm-${stage}-versions`,
   owners: `mopm-${stage}-owners`,
   audit: `mopm-${stage}-audit`,
+  publishes: `mopm-${stage}-publishes`,
 });
 
 const MAX_UPDATE_ATTEMPTS = 5;
@@ -84,11 +89,45 @@ const cancelledByCondition = (err: unknown, index: number): boolean => {
   return e?.name === 'TransactionCanceledException' && e.CancellationReasons?.[index]?.Code === 'ConditionalCheckFailed';
 };
 
+/**
+ * A group's header and member list, read from the `publishes` table (key attribute `publish_id`, as for its other
+ * rows). Both reads are consistent: a reader that has seen a commit must not be answered from before it.
+ */
+class DynamoGroupReader implements GroupReader {
+  constructor(
+    private readonly doc: DocClient,
+    private readonly table: string,
+  ) {}
+  private async item(key: string): Promise<Item | undefined> {
+    const r = await this.doc.send(new GetCommand({ TableName: this.table, Key: { publish_id: key }, ConsistentRead: true }));
+    return r.Item as Item | undefined;
+  }
+  async header(gid: string) {
+    const i = await this.item(headerKey(gid));
+    return i && parseHeader(i);
+  }
+  async members(gid: string) {
+    const i = await this.item(membersKey(gid));
+    return i && parseMembers(i);
+  }
+}
+
 export class DynamoStore implements Store {
+  private readonly funnel: VersionFunnel;
+  /** The rows as stored (src/raw-port.ts): for the group module and for tests that must see the stored form. */
+  readonly raw: RawVersionPort;
+
   constructor(
     private readonly doc: DocClient,
     private readonly tables: Tables,
-  ) {}
+    funnel: FunnelOptions = {},
+  ) {
+    this.raw = {
+      rawGet: (name, version) => this.rowOf(name, version),
+      rawQuery: (name) => this.rowsOf(name),
+    };
+    this.funnel = new VersionFunnel(this.raw, new DynamoGroupReader(doc, tables.publishes), funnel);
+  }
 
   async createPackage(pkg: PackageRecord): Promise<void> {
     try {
@@ -115,8 +154,16 @@ export class DynamoStore implements Store {
     const names: string[] = [];
     let start: Item | undefined;
     do {
+      // Consistent: the builders list the packages to read, and a package claimed a moment ago must be in the list.
+      // (A package claimed after the scan started is covered by the builders widening their read, src/group.ts.)
       const r = await this.doc.send(
-        new ScanCommand({ TableName: this.tables.packages, ProjectionExpression: '#n', ExpressionAttributeNames: { '#n': 'name' }, ExclusiveStartKey: start }),
+        new ScanCommand({
+          TableName: this.tables.packages,
+          ProjectionExpression: '#n',
+          ExpressionAttributeNames: { '#n': 'name' },
+          ConsistentRead: true,
+          ExclusiveStartKey: start,
+        }),
       );
       for (const i of r.Items ?? []) names.push(i.name);
       start = r.LastEvaluatedKey;
@@ -186,17 +233,26 @@ export class DynamoStore implements Store {
     }
   }
   async getVersion(name: string, version: string) {
+    return this.funnel.getOne(name, version);
+  }
+  private async rowOf(name: string, version: string) {
     const r = await this.doc.send(
       new GetCommand({ TableName: this.tables.versions, Key: { name, version: canonicalVersion(version) }, ConsistentRead: true }),
     );
     return r.Item ? fromItem(r.Item) : undefined;
   }
 
-  /** Read, apply the state machine, write back only if `rev` is unchanged; on a lost race read again. */
+  /**
+   * Read (as a reader sees the row), apply the state machine, write back only if `rev` is unchanged; on a lost race
+   * read again. A member of a committed group is `published` here, and its `rev` is the stored one, so the write
+   * that follows is an ordinary one. A member of a group that has not committed is refused: only the group's own
+   * code may change it.
+   */
   async updateVersion(name: string, version: string, event: VersionEvent, audit: AuditEntry): Promise<VersionRecord> {
     for (let attempt = 0; attempt < MAX_UPDATE_ATTEMPTS; attempt++) {
       const cur = await this.getVersion(name, version);
       if (!cur) throw new RegistryError('version_not_found', `'${name}' has no version '${version}'.`, { name, version });
+      if (cur.group_id !== undefined && cur.state === 'pending') throw new IllegalTransition(cur, event);
       const next = applyEvent(cur, event);
       if (next === cur) return cur;
       try {
@@ -232,6 +288,12 @@ export class DynamoStore implements Store {
     throw new RegistryError('internal_error', `'${name}' ${version} changed too often while updating.`, { name, version });
   }
   async listVersions(name: string) {
+    return (await this.versionsOf([name], API_VIEW)).get(name)!;
+  }
+  async versionsOf(names: readonly string[], view: View) {
+    return this.funnel.versionsOf(names, view);
+  }
+  private async rowsOf(name: string) {
     const out: VersionRecord[] = [];
     let start: Item | undefined;
     do {
@@ -248,7 +310,7 @@ export class DynamoStore implements Store {
       for (const i of r.Items ?? []) out.push(fromItem(i));
       start = r.LastEvaluatedKey;
     } while (start);
-    return out.sort(byVersion);
+    return out;
   }
 
   // Owners: sort key github_id is a string in the table.

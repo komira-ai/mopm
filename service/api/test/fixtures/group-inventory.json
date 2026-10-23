@@ -1,0 +1,31 @@
+{
+  "routes": [
+    { "route": "GET /api/v1/health", "no_version_rows": "reports the stage and the build; reads no version row" },
+    { "route": "GET /api/v1/packages", "case": "GET /packages" },
+    { "route": "GET /api/v1/packages/{name}", "case": "GET /packages/{name}" },
+    { "route": "GET /api/v1/packages/{name}/versions", "case": "GET /packages/{name}/versions" },
+    { "route": "GET /api/v1/packages/{name}/owners", "no_version_rows": "lists the package's owners; reads no version row" },
+    { "route": "GET /api/v1/packages/{name}/{version}", "case": "GET /packages/{name}/{version}" },
+    { "route": "POST /api/v1/packages/{name}/{version}/files", "case": "begin: project quota counts the live bytes" },
+    { "route": "POST /api/v1/packages/{name}/{version}/publish", "case": "single commit refuses a number a group holds" },
+    { "route": "GET /api/v1/publishes/{publish_id}", "case": "the status route answers only for a publish record" },
+    { "route": "PUT /api/v1/packages/{name}/{version}/yank", "case": "setYanked: only a shown version can be yanked" }
+  ],
+  "non_routes": [
+    { "name": "repodata builder (indexSubdir)", "case": "indexSubdir(linux-64)" },
+    { "name": "package index writer (indexPackage)", "case": "indexPackage" },
+    { "name": "takedown log builder (indexTakedowns)", "case": "takedowns" },
+    { "name": "queue helpers (sendIndexPkg, queueTakedownIndex) read the package revision", "case": "store.listVersions" },
+    { "name": "single reserve (begin joins a pending number)", "case": "single begin refuses a number a group holds" },
+    { "name": "single validator (validatePublish)", "case": "single validator refuses a number a group holds" },
+    { "name": "validator quota check (checkTotal)", "case": "store.listVersions" },
+    { "name": "search page", "case": "store.versionsOf(api)" }
+  ],
+  "readers": {
+    "http/router.ts": ["GET /packages", "GET /packages/{name}", "GET /packages/{name}/versions", "GET /packages/{name}/{version}"],
+    "publish/indexer.ts": ["indexSubdir(linux-64)", "indexPackage", "takedowns"],
+    "publish/service.ts": ["begin: project quota counts the live bytes", "setYanked: only a shown version can be yanked", "single begin refuses a number a group holds", "single commit refuses a number a group holds"],
+    "publish/takedown.ts": ["store.listVersions"],
+    "publish/validator.ts": ["single validator refuses a number a group holds", "store.listVersions"]
+  }
+}

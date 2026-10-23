@@ -39,6 +39,8 @@ pub fn rec(name: &str, version: &str) -> VersionRecord {
         homepage: None,
         keywords: None,
         readme: None,
+        group_id: None,
+        staged_attempt: None,
         rev: 0,
     }
 }
@@ -46,6 +48,11 @@ pub fn rec(name: &str, version: &str) -> VersionRecord {
 pub fn with_state(mut r: VersionRecord, state: VersionState) -> VersionRecord {
     r.state = state;
     r
+}
+
+/// `r` as a member of group `group` that is not shown: `pending`, stamped at `attempt` when it was staged.
+pub fn group_row(r: VersionRecord, group: &str, attempt: Option<u64>) -> VersionRecord {
+    VersionRecord { state: VersionState::Pending, group_id: Some(group.to_string()), staged_attempt: attempt, ..r }
 }
 
 static AUDIT_SEQ: AtomicU64 = AtomicU64::new(0);
