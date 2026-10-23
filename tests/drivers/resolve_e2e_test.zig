@@ -524,6 +524,103 @@ fn offlineLock(cx: *Cx) !void {
     cx.ok("can fail: nor is a registry dependency of a path dependency", r.code == 1 and has(r.stderr, "cannot reach http://127.0.0.1:1") and (try cx.lockOf(nested)) == null, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
 }
 
+// ------------------------------------------ sibling packages and mopm plan --workspace-root
+
+/// How many times `needle` is in `hay`.
+fn occurrences(hay: []const u8, needle: []const u8) usize {
+    var n: usize = 0;
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, hay, from, needle)) |at| {
+        n += 1;
+        from = at + needle.len;
+    }
+    return n;
+}
+
+/// Four packages side by side as a repository holds them: app depends on b and d, b and d on c. Each has a library;
+/// app, b and c have a test file. Returns app's directory.
+fn siblingRepo(cx: *Cx, repo: []const u8) ![]u8 {
+    const app = try cx.project(try cx.fmt("{s}/app", .{repo}), "b = { path = \"../b\" }\nd = { path = \"../d\" }");
+    const root = try h.join(cx.a, &.{ cx.work, repo });
+    const pkgs = [_]struct { name: []const u8, deps: []const u8 }{
+        .{ .name = "b", .deps = "c = { path = \"../c\" }" },
+        .{ .name = "c", .deps = "" },
+        .{ .name = "d", .deps = "c = { path = \"../c\" }" },
+    };
+    for (pkgs) |p| try cx.package(try h.join(cx.a, &.{ root, p.name }), p.name, "0.1.0", p.deps);
+    for ([_][]const u8{ "app", "b", "c", "d" }) |name| {
+        try h.writeFile(try h.join(cx.a, &.{ root, name, "src", name, "__init__.mojo" }), try cx.fmt("def {s}_fn():\n    pass\n", .{name}));
+    }
+    for ([_][]const u8{ "app", "b", "c" }) |name| {
+        try h.writeFile(try h.join(cx.a, &.{ root, name, "tests", try cx.fmt("test_{s}.mojo", .{name}) }), "def main():\n    pass\n");
+    }
+    return app;
+}
+
+/// `mopm plan --unit-graph --workspace-root DIR` over sibling packages: the graph's paths are relative to DIR, a
+/// package or member outside DIR is refused, and what is refused is refused with the exit status the spec names.
+fn siblingWorkspace(cx: *Cx) !void {
+    h.stage = "sibling workspace";
+    const app = try siblingRepo(cx, "sib");
+    var r = try cx.run(app, &.{ "lock", "--registry", dead_registry });
+    cx.ok("sibling path dependencies (app, b, c, d) lock offline", r.code == 0 and has(r.stdout, "locked 3 packages for mojo 1.0.0\n"), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+
+    r = try cx.run(app, &.{ "plan", "--unit-graph", "--locked", "--workspace-root", ".." });
+    const graph = r.stdout;
+    cx.ok("plan --workspace-root over siblings succeeds", r.code == 0 and r.stderr.len == 0, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+    cx.ok("unit roots are relative to the workspace root: app, b, c and d each under their own directory", has(graph, "\"root\": \"app/src/app\"") and has(graph, "\"root\": \"b/src/b\"") and has(graph, "\"root\": \"c/src/c\"") and has(graph, "\"root\": \"d/src/d\""), graph);
+    cx.ok("sources are relative to the workspace root", has(graph, "{\"path\": \"b/src/b/__init__.mojo\", \"sha256\": \"") and has(graph, "{\"path\": \"app/src/app/__init__.mojo\", \"sha256\": \""), graph);
+    cx.ok("no path in the graph has a '..' in it", !has(graph, ".."), graph);
+    cx.ok("a nested sibling (app, b, c) and a diamond (b and d both use c) give c exactly one unit", occurrences(graph, "\"id\": \"c@0.1.0#mojo1.0.0/lib\"") == 1 and occurrences(graph, "\"package\": \"c\"") == 1, graph);
+    cx.ok("the root package's tests are planned, named from the workspace root", has(graph, "\"id\": \"app@0.1.0#mojo1.0.0/test:app/tests/test_app.mojo\"") and has(graph, "{\"path\": \"app/tests/test_app.mojo\""), graph);
+    cx.ok("the members' tests are not planned", !has(graph, "test_b.mojo") and !has(graph, "test_c.mojo"), graph);
+
+    r = try cx.run(app, &.{ "plan", "--unit-graph", "--locked", "--workspace-root", try h.join(cx.a, &.{ cx.work, "sib" }) });
+    cx.ok("the workspace root may be absolute: the same graph as the relative one", r.code == 0 and std.mem.eql(u8, r.stdout, graph), try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+
+    const copy = try siblingRepo(cx, "elsewhere");
+    r = try cx.run(copy, &.{ "lock", "--registry", dead_registry });
+    r = try cx.run(copy, &.{ "plan", "--unit-graph", "--locked", "--workspace-root", ".." });
+    cx.ok("the same repository elsewhere on disk gives the same graph bytes", r.code == 0 and std.mem.eql(u8, r.stdout, graph), try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+
+    // Refusals: each is a project that differs from the good one in the root alone.
+    r = try cx.run(app, &.{ "plan", "--unit-graph", "--locked", "--workspace-root", "." });
+    cx.ok("a sibling is refused when the workspace root is the package itself, naming the member and the root (4)", r.code == 4 and has(r.stderr, "error: the path dependency ") and has(r.stderr, " is ../") and has(r.stderr, ", which is not below the workspace .;") and r.stdout.len == 0, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+    r = try cx.run(app, &.{ "plan", "--unit-graph", "--locked" });
+    cx.ok("with no --workspace-root a sibling is refused as before (4)", r.code == 4 and has(r.stderr, "error: the path dependency ") and has(r.stderr, " is ../") and has(r.stderr, ", which is not below the workspace .;"), try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+
+    const b_dir = try h.join(cx.a, &.{ cx.work, "sib", "b" });
+    r = try cx.run(app, &.{ "plan", "--unit-graph", "--locked", "--workspace-root", b_dir });
+    cx.ok("a package outside the workspace root is refused, naming both (4)", r.code == 4 and has(r.stderr, "is not below --workspace-root") and has(r.stderr, b_dir) and has(r.stderr, "/sib/app") and r.stdout.len == 0, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+    r = try cx.run(app, &.{ "plan", "--unit-graph", "--locked", "--workspace-root", "../nothing_here" });
+    cx.ok("a workspace root that does not exist is refused, naming it and the package directory (4)", r.code == 4 and has(r.stderr, "--workspace-root ../nothing_here") and has(r.stderr, "/sib/app") and r.stdout.len == 0, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+    r = try cx.run(app, &.{ "plan", "--unit-graph", "--locked", "--workspace-root", "../b/mopm.toml" });
+    cx.ok("a workspace root that is a file is refused (4)", r.code == 4 and has(r.stderr, "--workspace-root ../b/mopm.toml"), try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+    r = try cx.run(app, &.{ "plan", "--locked", "--workspace-root", ".." });
+    cx.ok("--workspace-root without --unit-graph is a usage error (2) that says so", r.code == 2 and has(r.stderr, "--workspace-root belongs to --unit-graph") and r.stdout.len == 0, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+    r = try cx.run(app, &.{ "plan", "--unit-graph", "--locked", "--workspace-root" });
+    cx.ok("--workspace-root with no directory is a usage error (2)", r.code == 2, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+
+    // A lock that no longer fits mopm.toml is stale under --workspace-root too, and plan does not repair it.
+    const stale = try siblingRepo(cx, "stale");
+    r = try cx.run(stale, &.{ "lock", "--registry", dead_registry });
+    try h.writeFile(try h.join(cx.a, &.{ stale, "mopm.toml" }), try cx.fmt("{s}b = {{ path = \"../b\" }}\n", .{MANIFEST_HEAD}));
+    r = try cx.run(stale, &.{ "plan", "--unit-graph", "--locked", "--workspace-root", ".." });
+    cx.ok("a stale lock is refused (3) under --workspace-root, and nothing is printed", r.code == 3 and has(r.stderr, "out of date") and r.stdout.len == 0, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+
+    // Without the flag nothing changes: a project whose members are below it plans the same bytes, flag or not.
+    const below = try cx.project("below", "local = { path = \"local\" }");
+    try cx.package(try h.join(cx.a, &.{ below, "local" }), "local", "0.3.0", "");
+    try h.writeFile(try h.join(cx.a, &.{ below, "local", "src", "local", "__init__.mojo" }), "def f():\n    pass\n");
+    try h.writeFile(try h.join(cx.a, &.{ below, "src", "app", "__init__.mojo" }), "def g():\n    pass\n");
+    r = try cx.run(below, &.{ "lock", "--registry", dead_registry });
+    r = try cx.run(below, &.{ "plan", "--unit-graph", "--locked" });
+    const plain = r.stdout;
+    cx.ok("a project with members below it plans: roots relative to the package, as before", r.code == 0 and has(plain, "\"root\": \"local/src/local\"") and has(plain, "\"root\": \"src/app\""), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+    r = try cx.run(below, &.{ "plan", "--unit-graph", "--locked", "--workspace-root", "." });
+    cx.ok("--workspace-root naming the package itself prints the bytes the plain plan prints", r.code == 0 and std.mem.eql(u8, r.stdout, plain), try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
+}
+
 // ------------------------------------------------- mopm add and mopm remove
 
 /// `s` with every comment (and the blanks before it) cut from each line.
@@ -877,6 +974,7 @@ test "mopm lock, update and tree resolve against the fake registry" {
     try addRemove(&cx);
     try unitGraph(&cx);
     try offlineLock(&cx);
+    try siblingWorkspace(&cx);
 
     try rep.finish();
 }

@@ -210,8 +210,11 @@ pub fn toolchainFor(arena: Allocator, mojo: []const u8, subdir: []const u8, why:
 // ---------------------------------------------------------------------- build
 
 pub const Input = struct {
-    /// The workspace directory: every path below is relative to it.
+    /// The workspace directory: every path in the graph is relative to it.
     dir: []const u8,
+    /// The root package's directory relative to `dir`, `/`-separated, without `.` or `..` ("" when it is `dir`). The
+    /// path dependencies in `members` are relative to this directory; the graph's paths are relative to `dir`.
+    pkg: []const u8 = "",
     m: manifest.Manifest,
     /// The path dependencies of the project at any depth (workspace members).
     members: []const install_plan.PathDep,
@@ -284,9 +287,50 @@ const Builder = struct {
 
     /// A member's directory must sit below the workspace: Buck2 inputs do.
     fn checkBelow(b: *Builder, what: []const u8, rel: []const u8) !void {
+        return b.checkBelowWritten(what, rel, rel);
+    }
+
+    /// As `checkBelow`, for a path written in a manifest or lock as `written` that resolves to `rel`: the refusal
+    /// shows the path as written, and the resolved one when it differs (`.` is the workspace itself).
+    fn checkBelowWritten(b: *Builder, what: []const u8, written: []const u8, rel: []const u8) !void {
         if (rel.len == 0 or rel[0] == '/' or std.mem.eql(u8, rel, "..") or std.mem.startsWith(u8, rel, "../") or std.mem.indexOf(u8, rel, "/../") != null or std.mem.endsWith(u8, rel, "/..")) {
-            return b.fail("{s} is {s}, which is not below the workspace; a unit graph takes members below the workspace only", .{ what, rel });
+            const resolved = if (rel.len == 0) "." else rel;
+            const shown = if (written.len == 0) "." else written;
+            if (std.mem.eql(u8, shown, resolved)) {
+                return b.fail("{s} is {s}, which is not below the workspace {s}; a unit graph takes members below the workspace only", .{ what, shown, b.in.dir });
+            }
+            return b.fail("{s} is {s} (resolves to {s}), which is not below the workspace {s}; a unit graph takes members below the workspace only", .{ what, shown, resolved, b.in.dir });
         }
+    }
+
+    /// `rel`, a path written in the manifest of the package at `owner` (relative to the workspace), as a path relative
+    /// to the workspace. With the workspace at the root package (`in.pkg` empty) it is the plain join, as it always
+    /// was; otherwise `.` and `..` are resolved, so that a path leaving the workspace shows as a leading `..`.
+    fn fromWorkspace(b: *Builder, owner: []const u8, rel: []const u8) ![]const u8 {
+        if (b.in.pkg.len == 0) return b.join(owner, rel);
+        if (rel.len > 0 and rel[0] == '/') return rel;
+        var parts = std.ArrayList([]const u8).init(b.arena);
+        for ([_][]const u8{ owner, rel }) |text| {
+            var it = std.mem.splitScalar(u8, text, '/');
+            while (it.next()) |seg| {
+                if (seg.len == 0 or std.mem.eql(u8, seg, ".")) continue;
+                if (std.mem.eql(u8, seg, "..")) {
+                    if (parts.items.len > 0 and !std.mem.eql(u8, parts.items[parts.items.len - 1], "..")) {
+                        _ = parts.pop();
+                        continue;
+                    }
+                }
+                try parts.append(seg);
+            }
+        }
+        return std.mem.join(b.arena, "/", parts.items);
+    }
+
+    /// The library or source `rel` of the package at `owner` must stay inside that package.
+    fn checkInside(b: *Builder, what: []const u8, owner: []const u8, rel: []const u8) !void {
+        if (owner.len == 0) return;
+        if (rel.len > owner.len and std.mem.startsWith(u8, rel, owner) and rel[owner.len] == '/') return;
+        return b.fail("{s} is {s}, which is not inside its package {s}", .{ what, rel, owner });
     }
 
     /// The `.mojo` files under `lib_rel` (relative to the workspace), sorted,
@@ -320,11 +364,11 @@ const Builder = struct {
 
     fn defaultLib(b: *Builder, m: manifest.Manifest, member_rel: []const u8) !?[]const u8 {
         const rel = m.targets.lib orelse try std.fmt.allocPrint(b.arena, "src/{s}", .{m.package.name});
-        const at = try b.join(member_rel, rel);
-        const full = try std.fs.path.join(b.arena, &.{ b.in.dir, at });
+        const lib_at = try b.fromWorkspace(member_rel, rel);
+        const full = try std.fs.path.join(b.arena, &.{ b.in.dir, lib_at });
         var d = std.fs.cwd().openDir(full, .{}) catch return null;
         d.close();
-        return at;
+        return lib_at;
     }
 
     fn lib_profile() Profile {
@@ -427,18 +471,21 @@ const Builder = struct {
         const ids = try b.depIds(name, p.deps);
         for (p.deps) |d| try todo.append(d);
         if (p.source == .path) {
-            try b.checkBelow("the path dependency", p.path);
-            const file = try b.join(p.path, "mopm.toml");
+            const mp = try b.fromWorkspace(b.in.pkg, p.path);
+            const what = try std.fmt.allocPrint(b.arena, "the path dependency {s}", .{name});
+            try b.checkBelowWritten(what, p.path, mp);
+            const file = try b.join(mp, "mopm.toml");
             const text = try b.readRel(file);
             var diag: manifest.Diagnostic = .{};
             const pm = manifest.parse(b.arena, text, &diag) catch |e| {
                 return b.fail("{s}:{d}:{d}: {s}", .{ file, diag.pos.line, diag.pos.col, if (e == error.Invalid) diag.message else @errorName(e) });
             };
             try b.listsMojo(file, pm);
-            const lib_rel = (try b.defaultLib(pm, p.path)) orelse return b.fail("{s} has no library directory (src/{s} or [targets] lib)", .{ file, pm.package.name });
+            const lib_rel = (try b.defaultLib(pm, mp)) orelse return b.fail("{s} has no library directory (src/{s} or [targets] lib)", .{ file, pm.package.name });
             try b.checkBelow("the library of a path dependency", lib_rel);
-            try b.addLib(pm, p.path, ids, lib_rel);
-            try b.addNatives(pm, p.path, file);
+            try b.checkInside("the library of a path dependency", mp, lib_rel);
+            try b.addLib(pm, mp, ids, lib_rel);
+            try b.addNatives(pm, mp, file);
             return;
         }
         // A registry package: a prebuilt .mojoc for the consumer's Mojo,
@@ -664,24 +711,27 @@ pub fn build(arena: Allocator, in: Input, why: *[]const u8) !Graph {
     const dev_ids = try b.depIds(root_id, dev_names.items);
 
     // The root package: its library, its binaries, its tests.
-    const lib_rel = try b.defaultLib(m, "");
+    const lib_rel = try b.defaultLib(m, in.pkg);
     var lib_id: ?[]const u8 = null;
     if (lib_rel) |lr| {
         try b.checkBelow("the library of the root package", lr);
-        try b.addLib(m, "", dep_ids, lr);
+        try b.checkInside("the library of the root package", in.pkg, lr);
+        try b.addLib(m, in.pkg, dep_ids, lr);
         lib_id = b.units.items[b.units.items.len - 1].id;
     }
-    try b.addNatives(m, "", "mopm.toml");
+    try b.addNatives(m, in.pkg, try b.join(in.pkg, "mopm.toml"));
     var bin_deps = std.ArrayList([]const u8).init(arena);
     if (lib_id) |id| try bin_deps.append(id) else try bin_deps.appendSlice(dep_ids);
     for (m.targets.bins) |bin| {
-        try b.checkBelow("a binary's source", bin.path);
+        const bin_at = try b.fromWorkspace(in.pkg, bin.path);
+        try b.checkBelow("a binary's source", bin_at);
+        try b.checkInside("a binary's source", in.pkg, bin_at);
         try b.units.append(.{
             .id = try std.fmt.allocPrint(arena, "{s}/bin:{s}", .{ root_id, bin.name }),
             .package = m.package.name,
             .version = m.package.version,
             .kind = "bin",
-            .srcs = try arena.dupe(Src, &.{try b.src(bin.path)}),
+            .srcs = try arena.dupe(Src, &.{try b.src(bin_at)}),
             .deps = bin_deps.items,
             .profile = .{ .opt = 3, .assert = "none", .debug = false },
             .outputs = try arena.dupe([]const u8, &.{bin.name}),
@@ -694,15 +744,18 @@ pub fn build(arena: Allocator, in: Input, why: *[]const u8) !Graph {
         for (test_deps.items) |t| have = have or std.mem.eql(u8, t, d);
         if (!have) try test_deps.append(d);
     }
-    const files = try test_harness.findTestFiles(arena, in.dir);
+    // The root package's tests are found in the package directory, whatever the workspace; the unit names them by
+    // their path from the workspace.
+    const files = try test_harness.findTestFiles(arena, try std.fs.path.join(arena, &.{ in.dir, in.pkg }));
     for (files) |f| {
         const stem = std.fs.path.stem(f);
+        const test_at = try b.join(in.pkg, f);
         try b.units.append(.{
-            .id = try std.fmt.allocPrint(arena, "{s}/test:{s}", .{ root_id, f }),
+            .id = try std.fmt.allocPrint(arena, "{s}/test:{s}", .{ root_id, test_at }),
             .package = m.package.name,
             .version = m.package.version,
             .kind = "test",
-            .srcs = try arena.dupe(Src, &.{try b.src(f)}),
+            .srcs = try arena.dupe(Src, &.{try b.src(test_at)}),
             .deps = test_deps.items,
             .profile = Builder.lib_profile(),
             .outputs = try arena.dupe([]const u8, &.{try std.fmt.allocPrint(arena, "{s}.pass", .{stem})}),
@@ -2102,4 +2155,404 @@ test "golden: the unit graph of a package with a native of its own, a binary and
         std.debug.print("---- actual ----\n{s}---- end ----\n", .{text});
         return e;
     };
+}
+
+// ------------------------------------------------- sibling members under a workspace root
+
+const sib_root_toml = "[package]\nname = \"app\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n";
+
+/// A lock of path packages only; `packages` is the JSON of the entries.
+fn sibLock(a: Allocator, packages: []const u8) ![]const u8 {
+    const head =
+        \\{"lock_version": 2, "mojo": ["1.0.0"], "toolchain": {"1.0.0": {"linux-64": "@C@"}}, "channels": ["https://conda.mopm.dev/"], "packages": [
+    ;
+    return fill(a, try std.mem.concat(a, u8, &.{ head, packages, "]}\n" }));
+}
+
+const sib_b_to_c =
+    \\{"name": "b", "version": "0.1.0", "source": "path", "path": "../b", "deps": ["c"]},
+    \\{"name": "c", "version": "0.1.0", "source": "path", "path": "../c"}
+;
+const sib_diamond =
+    \\{"name": "b", "version": "0.1.0", "source": "path", "path": "../b", "deps": ["c"]},
+    \\{"name": "c", "version": "0.1.0", "source": "path", "path": "../c"},
+    \\{"name": "d", "version": "0.1.0", "source": "path", "path": "../d", "deps": ["c"]}
+;
+
+/// A package `name` at `at` (relative to `dir`) with a library, a test and a manifest listing `deps` (TOML lines).
+fn writeSibling(a: Allocator, dir: std.fs.Dir, at: []const u8, name: []const u8, deps: []const u8) !void {
+    const toml = try std.fmt.allocPrint(a, "[package]\nname = \"{s}\"\nversion = \"0.1.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n{s}", .{ name, deps });
+    try put(dir, try std.fmt.allocPrint(a, "{s}/mopm.toml", .{at}), toml);
+    try put(dir, try std.fmt.allocPrint(a, "{s}/src/{s}/__init__.mojo", .{ at, name }), try std.fmt.allocPrint(a, "def {s}_fn():\n    pass\n", .{name}));
+    try put(dir, try std.fmt.allocPrint(a, "{s}/tests/test_{s}.mojo", .{ at, name }), test_app);
+}
+
+/// The graph of the package `app` at `pkg` under `dir`, whose manifest lists `deps`, from `lock_text`.
+fn siblingGraph(a: Allocator, dir: []const u8, pkg: []const u8, deps: []const u8, lock_text: []const u8, why: *[]const u8) !Graph {
+    var diag: manifest.Diagnostic = .{};
+    const m = try manifest.parse(a, try std.mem.concat(a, u8, &.{ sib_root_toml, deps }), &diag);
+    const l = try lock.parse(a, lock_text, why);
+    return build(a, .{ .dir = dir, .pkg = pkg, .m = m, .members = &.{}, .l = l, .subdir = "linux-64", .mojo = "1.0.0", .toolchain = fakeToolchain("1.0.0") }, why);
+}
+
+/// Sibling packages app, b, c, d side by side under `dir`, as a repository holds them.
+fn writeSiblings(a: Allocator, dir: std.fs.Dir) !void {
+    try writeSibling(a, dir, "app", "app", "b = { path = \"../b\" }\n");
+    try writeSibling(a, dir, "b", "b", "c = { path = \"../c\" }\n");
+    try writeSibling(a, dir, "c", "c", "");
+    try writeSibling(a, dir, "d", "d", "c = { path = \"../c\" }\n");
+}
+
+fn countKind(g: Graph, kind: []const u8) usize {
+    var n: usize = 0;
+    for (g.units) |u| {
+        if (std.mem.eql(u8, u.kind, kind)) n += 1;
+    }
+    return n;
+}
+
+fn noDotDot(g: Graph) !void {
+    for (g.units) |u| {
+        try std.testing.expect(std.mem.indexOf(u8, u.root, "..") == null);
+        try std.testing.expect(std.mem.indexOf(u8, u.id, "..") == null);
+        for (u.srcs) |s| try std.testing.expect(std.mem.indexOf(u8, s.path, "..") == null);
+    }
+}
+
+test "sibling members under a workspace root have workspace-relative roots and sources, and the root package's own are too" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeSiblings(a, tmp.dir);
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    const g = siblingGraph(a, dir, "app", "b = { path = \"../b\" }\n", try sibLock(a, sib_b_to_c), &why) catch |e| {
+        std.debug.print("refused: {s}\n", .{why});
+        return e;
+    };
+    const app = g.units[g.find(id_app) orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("app/src/app", app.root);
+    try std.testing.expectEqualStrings("app/src/app/__init__.mojo", app.srcs[0].path);
+    const b = g.units[g.find("b@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("b/src/b", b.root);
+    try std.testing.expectEqual(@as(usize, 1), b.srcs.len);
+    try std.testing.expectEqualStrings("b/src/b/__init__.mojo", b.srcs[0].path);
+    try std.testing.expectEqualStrings("b@0.1.0#mojo1.0.0/lib", app.deps[0]);
+    try noDotDot(g);
+}
+
+test "a nested sibling (app, b, c) gives c one unit, the dependency of b" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeSiblings(a, tmp.dir);
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    const g = try siblingGraph(a, dir, "app", "b = { path = \"../b\" }\n", try sibLock(a, sib_b_to_c), &why);
+    var c_units: usize = 0;
+    for (g.units) |u| {
+        if (std.mem.eql(u8, u.package, "c")) c_units += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), c_units);
+    const c = g.units[g.find("c@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("c/src/c", c.root);
+    const b = g.units[g.find("b@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
+    try std.testing.expectEqual(@as(usize, 1), b.deps.len);
+    try std.testing.expectEqualStrings("c@0.1.0#mojo1.0.0/lib", b.deps[0]);
+    try noDotDot(g);
+}
+
+test "a diamond (b and d both use c) gives c exactly one unit, and both depend on it" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeSiblings(a, tmp.dir);
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    const g = try siblingGraph(a, dir, "app", "b = { path = \"../b\" }\nd = { path = \"../d\" }\n", try sibLock(a, sib_diamond), &why);
+    var c_units: usize = 0;
+    for (g.units) |u| {
+        if (std.mem.eql(u8, u.package, "c")) c_units += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), c_units);
+    try std.testing.expectEqual(@as(usize, 4), countKind(g, "lib"));
+    for ([_][]const u8{ "b@0.1.0#mojo1.0.0/lib", "d@0.1.0#mojo1.0.0/lib" }) |id| {
+        const u = g.units[g.find(id) orelse return error.NoSuchUnit];
+        try std.testing.expectEqualStrings("c@0.1.0#mojo1.0.0/lib", u.deps[0]);
+    }
+    try noDotDot(g);
+}
+
+test "the root package's tests are planned from its own directory, named from the workspace; members' tests are not planned" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeSiblings(a, tmp.dir);
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    const g = try siblingGraph(a, dir, "app", "b = { path = \"../b\" }\n", try sibLock(a, sib_b_to_c), &why);
+    // b, c and d each have tests/test_<name>.mojo; none of them is a unit, and no unit lists one as a source.
+    try std.testing.expectEqual(@as(usize, 1), countKind(g, "test"));
+    for (g.units) |u| {
+        if (std.mem.eql(u8, u.kind, "test")) try std.testing.expectEqualStrings("app", u.package);
+        for (u.srcs) |s| {
+            try std.testing.expect(std.mem.indexOf(u8, s.path, "test_b.mojo") == null);
+            try std.testing.expect(std.mem.indexOf(u8, s.path, "test_c.mojo") == null);
+        }
+    }
+    const t =g.units[g.find("app@1.0.0#mojo1.0.0/test:app/tests/test_app.mojo") orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("app/tests/test_app.mojo", t.srcs[0].path);
+    try std.testing.expectEqualStrings("test_app.pass", t.outputs[0]);
+}
+
+test "a graph is the same bytes wherever the workspace is on disk" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var one = std.testing.tmpDir(.{});
+    defer one.cleanup();
+    var two = std.testing.tmpDir(.{});
+    defer two.cleanup();
+    try writeSiblings(a, one.dir);
+    try writeSiblings(a, two.dir);
+    var why: []const u8 = "";
+    const lock_text = try sibLock(a, sib_b_to_c);
+    const g1 = try siblingGraph(a, try one.dir.realpathAlloc(a, "."), "app", "b = { path = \"../b\" }\n", lock_text, &why);
+    const g2 = try siblingGraph(a, try two.dir.realpathAlloc(a, "."), "app", "b = { path = \"../b\" }\n", lock_text, &why);
+    try std.testing.expectEqualStrings(try render(a, g1), try render(a, g2));
+}
+
+test "a member outside the workspace root is refused, naming the member and the root" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // repo/app depends on ../../outside: below tmp, but not below the root repo.
+    try writeSibling(a, tmp.dir, "repo/app", "app", "outside = { path = \"../../outside\" }\n");
+    try writeSibling(a, tmp.dir, "outside", "outside", "");
+    const dir = try tmp.dir.realpathAlloc(a, "repo");
+    var why: []const u8 = "";
+    const lock_text = try sibLock(a,
+        \\{"name": "outside", "version": "0.1.0", "source": "path", "path": "../../outside"}
+    );
+    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "outside = { path = \"../../outside\" }\n", lock_text, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency outside is ../../outside (resolves to ../outside), which is not below the workspace ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, why, "not below the workspace ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, why, dir) != null);
+}
+
+test "a member reached through another member is checked against the workspace root too" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeSibling(a, tmp.dir, "repo/app", "app", "b = { path = \"../b\" }\n");
+    try writeSibling(a, tmp.dir, "repo/b", "b", "far = { path = \"../../far\" }\n");
+    try writeSibling(a, tmp.dir, "far", "far", "");
+    const dir = try tmp.dir.realpathAlloc(a, "repo");
+    var why: []const u8 = "";
+    // The lock holds every member's path relative to the package, whatever member names it.
+    const lock_text = try sibLock(a,
+        \\{"name": "b", "version": "0.1.0", "source": "path", "path": "../b", "deps": ["far"]},
+        \\{"name": "far", "version": "0.1.0", "source": "path", "path": "../../far"}
+    );
+    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "b = { path = \"../b\" }\n", lock_text, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency far is ../../far (resolves to ../far), which is not below the workspace ") != null);
+}
+
+test "a path that goes up and back down shows as written and as resolved" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeSibling(a, tmp.dir, "repo/app", "app", "x = { path = \"../x/../../x\" }\n");
+    try writeSibling(a, tmp.dir, "x", "x", "");
+    const dir = try tmp.dir.realpathAlloc(a, "repo");
+    var why: []const u8 = "";
+    const lock_text = try sibLock(a,
+        \\{"name": "x", "version": "0.1.0", "source": "path", "path": "../x/../../x"}
+    );
+    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "x = { path = \"../x/../../x\" }\n", lock_text, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency x is ../x/../../x (resolves to ../x), which is not below the workspace ") != null);
+}
+
+test "a member that is the workspace itself is refused with a path shown, not an empty one" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeSibling(a, tmp.dir, "repo/app", "app", "top = { path = \"..\" }\n");
+    try put(tmp.dir, "repo/mopm.toml", "[package]\nname = \"top\"\nversion = \"0.1.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n");
+    const dir = try tmp.dir.realpathAlloc(a, "repo");
+    var why: []const u8 = "";
+    const lock_text = try sibLock(a,
+        \\{"name": "top", "version": "0.1.0", "source": "path", "path": ".."}
+    );
+    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "top = { path = \"..\" }\n", lock_text, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency top is .. (resolves to .), which is not below the workspace ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, why, " is , ") == null);
+}
+
+test "a path written with ./ segments or a trailing slash is the same member as the plain one" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeSiblings(a, tmp.dir);
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    const lock_text = try sibLock(a,
+        \\{"name": "b", "version": "0.1.0", "source": "path", "path": "./../b/./", "deps": ["c"]},
+        \\{"name": "c", "version": "0.1.0", "source": "path", "path": "../c/"}
+    );
+    const g = try siblingGraph(a, dir, "app", "b = { path = \"./../b/./\" }\n", lock_text, &why);
+    const plain = try siblingGraph(a, dir, "app", "b = { path = \"../b\" }\n", try sibLock(a, sib_b_to_c), &why);
+    try std.testing.expectEqual(@as(usize, 3), countKind(g, "lib"));
+    const b = g.units[g.find("b@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("b/src/b", b.root);
+    try std.testing.expectEqualStrings("b/src/b/__init__.mojo", b.srcs[0].path);
+    const c = g.units[g.find("c@0.1.0#mojo1.0.0/lib") orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("c/src/c", c.root);
+    try std.testing.expectEqualStrings(try render(a, plain), try render(a, g));
+}
+
+test "a library that points into a sibling whose name starts with its package's name is refused" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // app and app2 side by side: ../app2/... starts with "app" but is not inside app. Likewise mem and mem2 for a member.
+    try writeSibling(a, tmp.dir, "app", "app", "");
+    try writeSibling(a, tmp.dir, "app2", "app2", "");
+    try writeSibling(a, tmp.dir, "mem", "mem", "");
+    try writeSibling(a, tmp.dir, "mem2", "mem2", "");
+    try put(tmp.dir, "mem/mopm.toml", "[package]\nname = \"mem\"\nversion = \"0.1.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n\n[targets]\nlib = { path = \"../mem2/src/mem2\" }\n");
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var diag: manifest.Diagnostic = .{};
+
+    var why: []const u8 = "";
+    const m = try manifest.parse(a, try std.mem.concat(a, u8, &.{ sib_root_toml, "\n[targets]\nlib = { path = \"../app2/src/app2\" }\n" }), &diag);
+    const l = try lock.parse(a, try sibLock(a, ""), &why);
+    try std.testing.expectError(error.Refused, build(a, .{ .dir = dir, .pkg = "app", .m = m, .members = &.{}, .l = l, .subdir = "linux-64", .mojo = "1.0.0", .toolchain = fakeToolchain("1.0.0") }, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "the library of the root package is app2/src/app2, which is not inside its package app") != null);
+
+    const lock_text = try sibLock(a,
+        \\{"name": "mem", "version": "0.1.0", "source": "path", "path": "../mem"}
+    );
+    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "app", "mem = { path = \"../mem\" }\n", lock_text, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "the library of a path dependency is mem2/src/mem2, which is not inside its package mem") != null);
+}
+
+test "without a workspace root a sibling is refused as it always was: the workspace is the package directory" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeSiblings(a, tmp.dir);
+    const dir = try tmp.dir.realpathAlloc(a, "app");
+    var why: []const u8 = "";
+    try std.testing.expectError(error.Refused, siblingGraph(a, dir, "", "b = { path = \"../b\" }\n", try sibLock(a, sib_b_to_c), &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "the path dependency b is ../b, which is not below the workspace ") != null);
+}
+
+test "a library or binary that leaves its package for a sibling's directory is refused" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeSiblings(a, tmp.dir);
+    try put(tmp.dir, "b/src/other/__init__.mojo", util_init);
+    // app's [targets] lib points into b's tree, which is below the workspace root but not inside app.
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    var diag: manifest.Diagnostic = .{};
+    const m = try manifest.parse(a, try std.mem.concat(a, u8, &.{ sib_root_toml, "b = { path = \"../b\" }\n\n[targets]\nlib = { path = \"../b/src/other\" }\n" }), &diag);
+    const l = try lock.parse(a, try sibLock(a, sib_b_to_c), &why);
+    try std.testing.expectError(error.Refused, build(a, .{ .dir = dir, .pkg = "app", .m = m, .members = &.{}, .l = l, .subdir = "linux-64", .mojo = "1.0.0", .toolchain = fakeToolchain("1.0.0") }, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "the library of the root package is b/src/other, which is not inside its package app") != null);
+}
+
+// ----------------------------------------- a member's natives under a workspace root
+
+fn nativeSection(a: Allocator, id: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(a, "\n[native.{s}]\nkind = \"static\"\nsrcs = [\"native/*.c\"]\nhdrs = [\"native/*.h\"]\n", .{id});
+}
+
+// Defect it catches: a member's native named, or its sources located, by where the package sits in the workspace
+// instead of by the package, so that with --workspace-root the unit is `native:src/app/...` or reads files from the
+// workspace root (the plan refuses or builds the wrong sources).
+test "with a workspace root, the root package's and a sibling's own natives are native:<package>/<id> with workspace paths" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeSiblings(a, tmp.dir);
+    try put(tmp.dir, "app/native/app.c", c_app);
+    try put(tmp.dir, "app/native/app.h", h_app);
+    try put(tmp.dir, "b/native/shim.c", c_util);
+    try put(tmp.dir, "b/native/shim.h", h_util);
+    // b's manifest, as writeSibling made it, with a native of its own.
+    try put(tmp.dir, "b/mopm.toml", try std.mem.concat(a, u8, &.{
+        "[package]\nname = \"b\"\nversion = \"0.1.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\nc = { path = \"../c\" }\n",
+        try nativeSection(a, "b_shim"),
+    }));
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    const deps = try std.mem.concat(a, u8, &.{ "b = { path = \"../b\" }\n", try nativeSection(a, "app_shim") });
+    const g = siblingGraph(a, dir, "app", deps, try sibLock(a, sib_b_to_c), &why) catch |e| {
+        std.debug.print("refused: {s}\n", .{why});
+        return e;
+    };
+
+    // The root package's native: named by the package, its files by their path from the workspace.
+    const na = g.units[g.find("native:app/app_shim") orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("app", na.package);
+    try std.testing.expectEqualStrings("libapp_shim.a", na.soname);
+    try std.testing.expectEqual(@as(usize, 1), na.srcs.len);
+    try std.testing.expectEqualStrings("app/native/app.c", na.srcs[0].path);
+    try std.testing.expectEqualStrings(try sha256Hex(a, c_app), na.srcs[0].sha256);
+    try std.testing.expectEqualStrings("app/native/app.h", na.hdrs[0].path);
+    // Its include directory is relative to the member.
+    try std.testing.expectEqualStrings("native", na.includes[0]);
+
+    // The sibling's native, reached through a path dependency.
+    const nb = g.units[g.find("native:b/b_shim") orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("b", nb.package);
+    try std.testing.expectEqualStrings("b/native/shim.c", nb.srcs[0].path);
+    try std.testing.expectEqualStrings("b/native/shim.h", nb.hdrs[0].path);
+    try std.testing.expectEqualStrings("native", nb.includes[0]);
+    try std.testing.expectEqual(@as(usize, 2), countKind(g, "native"));
+
+    // The root's library links both (neither needs the other), each listed as built by its own unit.
+    const app = g.units[g.find(id_app).?];
+    try std.testing.expectEqual(@as(usize, 2), app.natives.len);
+    var saw_a = false;
+    var saw_b = false;
+    for (app.natives) |n| {
+        if (std.mem.eql(u8, n.built, "native:app/app_shim")) saw_a = true;
+        if (std.mem.eql(u8, n.built, "native:b/b_shim")) saw_b = true;
+    }
+    try std.testing.expect(saw_a and saw_b);
+    // b's library lists only its own.
+    const bl = g.units[g.find("b@0.1.0#mojo1.0.0/lib").?];
+    try std.testing.expectEqual(@as(usize, 1), bl.natives.len);
+    try std.testing.expectEqualStrings("native:b/b_shim", bl.natives[0].built);
+    try noDotDot(g);
 }

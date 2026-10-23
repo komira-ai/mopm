@@ -92,8 +92,8 @@ lock whose recorded hash is not the one this mopm computes.
 | `id` | the unit id above |
 | `package`, `version` | the package |
 | `kind` | `lib`, `test`, `bin`, `prebuilt` or `native` |
-| `root` | `lib`: the package directory, relative to the workspace |
-| `srcs` | `path` (relative to the workspace) and `sha256` of each source, sorted by path (for a `native` unit: its C sources) |
+| `root` | `lib`: the package directory, relative to the workspace (never containing `..`) |
+| `srcs` | `path` (relative to the workspace, never containing `..`) and `sha256` of each source, sorted by path (for a `native` unit: its C sources) |
 | `soname`, `hdrs`, `cflags`, `cflags_by_os`, `includes`, `needs` | `native`: see "Member natives" |
 | `deps` | ids of the units this one imports, in the order `mopm.toml` lists them (order is significant) |
 | `natives` | `id`, `soname`, `sha256`, `package` of every prebuilt native library in the unit's dependency closure, and `kind`, `needs`, `exclusive` when the lock gives them (left out when `shared`, empty, none); a workspace member's own native library is listed with `id`, `soname`, `package`, `kind`, `needs`, `exclusive` (the same omissions) and `built`, the id of the `native` unit that builds it, and no `sha256`. They are in link order: a library before every library it `needs`, the sonames' order between libraries that do not constrain one another. A closure holding two libraries of one `exclusive` group is refused, naming both (group names are compared exactly: `libcrypto` and `LibCrypto` are two groups; `mopm.toml` refuses a name with leading or trailing whitespace or a control character). The refusal is graph-wide: one unit with a clash refuses the whole graph, so a clash reached only through a dev-only dependency, and so only by the `test:` unit, blocks the build |
@@ -108,7 +108,7 @@ member; `mojo precompile` takes a whole package, so nothing is finer. A
 registry dependency is a `prebuilt` unit: a `.conda` holding a `.mojoc`, fetched
 by url and checked by sha256, never compiled. Workspace members (path
 dependencies at any depth) compile from the tree; each must list `M` in its own
-`mojo`, and each must be below the workspace directory. Two libraries of one
+`mojo`, and each must be below the workspace directory (see "The workspace"). Two libraries of one
 name are refused: a package is imported by name.
 
 The prebuilt `natives` of a package are declared inputs. A lock
@@ -222,15 +222,61 @@ static native; its file name must be the `soname` of the unit. `mopm lock` of
 a project that depends on the published package pins the archive's sha256, so
 consumers get a prebuilt entry.
 
+With `--workspace-root` (see "The workspace") a native is named, as any unit of
+the member is, by the package and not by where the package sits: a member at
+`src/app` that builds `[native.shim]` gives the unit `native:app/shim`, whose
+`srcs` and `hdrs` are paths from the workspace (`src/app/native/shim.c`), while
+its `includes` stay relative to the member. This holds for the root package
+and for a path dependency at any depth.
+
+## The workspace
+
+Every path in the graph (`root`, the `path` of each source, the file named by a
+`test:` unit id) is relative to one directory, the **workspace**, and a path
+never contains `..`. By default the workspace is the directory `mopm plan` runs
+in, so every member is below the package: a path dependency written `../util`
+is refused.
+
+    mopm plan --unit-graph --locked --workspace-root <dir>
+
+makes `<dir>` the workspace, for packages that sit beside their dependencies in
+one repository (a repository's `src/` holding a directory per package, each
+with `{ path = "../other" }`). `<dir>` is relative to the current directory or
+absolute, and must be an existing directory that contains the package's
+directory (compared after resolving links). Then:
+
+- the paths in the graph are relative to `<dir>`: a package at `<dir>/src/app`
+  with the sibling `<dir>/src/util` has the units' roots `src/app/src/app` and
+  `src/util/src/util`, and the package's tests are `src/app/tests/...`;
+- every path dependency, at any depth, must be below `<dir>` (its path is
+  resolved from the package's directory, as `mopm.lock` records it, whichever
+  member names it); one that is not is refused, naming the member and `<dir>`.
+  A member two others share, or that is reached through another member, is one
+  unit;
+- the package's own library, binaries and tests are found in its directory, as
+  they are without the flag; a library or binary the manifest points at outside
+  the package is refused. Tests of members are not planned;
+- the "below `<dir>`" check is lexical: `.` and `..` in the paths of `mopm.toml`
+  and `mopm.lock` are resolved as text, and symlinks inside `<dir>` are neither
+  followed nor checked. A member that is a symlink pointing outside `<dir>` is
+  accepted, as it is without the flag. A refusal shows the path as written and,
+  when it differs, the resolved one (`.` for `<dir>` itself);
+- a unit's `key` hashes its rendering, so it depends on the path from `<dir>`
+  and not on where `<dir>` is on disk: the same repository checked out
+  elsewhere gives the same graph.
+
+Without the flag the workspace is the current directory and the output is what
+it was before the flag existed. The flag is valid only with `--unit-graph`.
+
 ## Exit status of `mopm plan`
 
 | status | meaning |
 |---|---|
 | 0 | the graph was printed |
 | 1 | any other failure |
-| 2 | a usage error: `--unit-graph` and `--locked` are both required; `--mojo` is required when `mopm.toml` lists several versions |
+| 2 | a usage error: `--unit-graph` and `--locked` are both required; `--mojo` is required when `mopm.toml` lists several versions; `--workspace-root` needs a directory and is valid only with `--unit-graph` |
 | 3 | there is no usable lock, or it is out of date with `mopm.toml` (a requirement, a path dependency or the Mojo versions changed). Run `mopm lock`; `plan` never repairs |
-| 4 | the graph cannot be made from this project and lock: no toolchain pinned for `M`, a lock that does not lock `M` or records another closure, no `.mojoc` for `M`, a native library without sha256, a member outside the workspace or not listing `M`, a missing source |
+| 4 | the graph cannot be made from this project and lock: no toolchain pinned for `M`, a lock that does not lock `M` or records another closure, no `.mojoc` for `M`, a native library without sha256, a member outside the workspace or not listing `M`, a missing source, a `--workspace-root` that is not an existing directory or does not contain the package |
 
 A refusal is one line on standard error, `error: <reason>`.
 
