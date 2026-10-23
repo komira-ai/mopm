@@ -30,7 +30,7 @@ Two builds describe the same program, and both stay.
   (`//:mopm` is not built unless `//:core_test` and `//:cli_test` passed).
   The Zig drivers in `tests/drivers` run the built programs: `//:golden` (the
   golden files; it replaced `tests/run_golden.sh`), `//:registry_login` and
-  `//:registry_publish` (the former `tests/registry_e2e/*.py`), `//:install_e2e`
+  `//:registry_publish` (the former `tests/registry_e2e/*.py`), `//:group_publish` (`mopm publish --staged` and `mopm yank --group` against the fake registry), `//:install_e2e`
   (`mopm sync`, the former `tests/install_e2e/run.py`; pixi is
   `tests/drivers/fake_pixi.zig` there), `//:gen_errors_current` (the committed
   `registry/fake/errors.zig` is what `./buck2 run //:gen_errors -- spec/api/openapi.yaml registry/fake/errors.zig`

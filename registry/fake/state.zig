@@ -82,6 +82,9 @@ pub const Version = struct {
     tombstone_at: i64 = 0,
     /// The CI repository when published with an OIDC token.
     provenance: ?[]const u8 = null,
+    /// The group that reserved this number (a `pending` row of a group), or null. The group may have ended: its
+    /// rows are then free for another group or a single publish to take.
+    group: ?*Group = null,
 
     /// Shown by getVersion and listed: every state but pending and rejected.
     pub fn visible(v: *const Version) bool {
@@ -113,6 +116,64 @@ pub const Publish = struct {
     /// moves one step.
     stage: u8 = 0,
     rejection: ?[]const u8 = null,
+};
+
+/// Where a group is (the `GroupStatusName` of the contract).
+pub const GroupStatus = enum { open, validating, committed, visible, rejected, failed, expired, aborted, superseded };
+
+/// A group that has ended without committing: its numbers are free.
+pub fn groupIsDead(s: GroupStatus) bool {
+    return switch (s) {
+        .rejected, .expired, .aborted, .superseded => true,
+        else => false,
+    };
+}
+
+pub const YankState = enum { yanking, yanked, unyanking, restored };
+
+/// One declared file of a group member, and the upload that carries its bytes.
+pub const GroupFile = struct {
+    subdir: []const u8,
+    filename: []const u8,
+    sha256: []const u8,
+    size: u64,
+    upload: *Upload,
+};
+
+pub const GroupMember = struct {
+    package: *Package,
+    version: []const u8,
+    files: []const GroupFile,
+    /// The row that holds the number (`pending` until the group is visible).
+    row: *Version,
+    manifest_sha256: []const u8 = "",
+    /// Set when the group's yank changed this member: an unyank restores these and no others.
+    yanked_by_group: bool = false,
+};
+
+pub const GroupFailure = struct { code: []const u8, message: []const u8, member: ?[]const u8 = null };
+
+pub const GroupYank = struct {
+    state: YankState,
+    reason: []const u8,
+    requested_at: i64,
+};
+
+/// A set of versions declared up front and published together (spec/api/openapi.yaml, `createGroup`).
+pub const Group = struct {
+    id: []const u8,
+    user: *User,
+    attempt: u32 = 1,
+    status: GroupStatus = .open,
+    created_at: i64,
+    deadline_at: i64,
+    committed_at: i64 = 0,
+    failure: ?GroupFailure = null,
+    /// In package-name order.
+    members: []GroupMember,
+    /// What the commit request said, as one string; a different request for the same group is refused.
+    commit_hash: []const u8 = "",
+    yank: ?GroupYank = null,
 };
 
 pub const PackageState = enum { claimed, active };
@@ -188,6 +249,15 @@ pub const State = struct {
     invitations: std.ArrayListUnmanaged(*Invitation) = .{},
     uploads: std.ArrayListUnmanaged(*Upload) = .{},
     publishes: std.ArrayListUnmanaged(*Publish) = .{},
+    groups: std.ArrayListUnmanaged(*Group) = .{},
+    /// Whether the registry has group publishing on. Off, `createGroup` answers `route_not_found`, as a registry that
+    /// has not enabled groups for the caller does.
+    groups_enabled: bool = true,
+    /// The PUT of an upload answers 503 once, after this many more PUTs have succeeded (`/_fake/put_fault`).
+    put_fault_after: ?u32 = null,
+    /// The clock moves forward by this many seconds when the next group commit arrives, once (`/_fake/commit_clock`):
+    /// time passing between the create and the commit.
+    clock_jump_on_commit: i64 = 0,
 
     pub fn now(s: *const State) i64 {
         return std.time.timestamp() + s.clock_offset;
