@@ -60,6 +60,14 @@ export interface VersionRecord {
   keywords?: string[];
   /** Markdown, at most README_MAX_BYTES of UTF-8. */
   readme?: string;
+  /**
+   * The group this version is a member of, when it was published as part of one. Absent on every row written by a
+   * single publish. A `pending` row with a group is shown as `published` only through the store's projection
+   * (src/group.ts): when the group's header is committed and `staged_attempt` is the header's `attempt`.
+   */
+  group_id?: string;
+  /** The group attempt that filled this row. Set in the same write that fills a group member; absent before. */
+  staged_attempt?: number;
   /** Optimistic-concurrency counter: starts at 0, +1 on every state change. */
   rev: number;
 }
