@@ -24,7 +24,7 @@ export const OPENING_SENTENCE =
 /** README.md's "Status: early." list of commands that work today, in its order. */
 export const WORKING_TODAY = [
   '--version', 'link-plan', 'metadata', 'new', 'init', 'build', 'run', 'repl', 'test',
-  'login', 'logout', 'whoami', 'pack', 'publish', 'lock', 'update', 'tree', 'sync', 'add', 'remove', 'plan', 'unit',
+  'login', 'logout', 'whoami', 'pack', 'publish', 'lock', 'update', 'tree', 'sync', 'add', 'remove', 'plan', 'unit', 'yank',
 ];
 
 /** The command that installs mopm: README.md's, and the first line of site/static/install.sh's header. */

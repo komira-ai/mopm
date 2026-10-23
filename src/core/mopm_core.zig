@@ -21,6 +21,7 @@ pub const autolink = @import("autolink.zig");
 pub const test_proc = @import("test_proc.zig");
 pub const test_report = @import("test_report.zig");
 pub const test_filter = @import("test_filter.zig");
+pub const child_env = @import("child_env.zig");
 pub const http = @import("http.zig");
 pub const registry = @import("registry.zig");
 pub const credentials = @import("credentials.zig");

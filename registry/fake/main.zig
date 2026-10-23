@@ -141,5 +141,7 @@ test {
     _ = @import("packages.zig");
     _ = @import("versions.zig");
     _ = @import("publish.zig");
+    _ = @import("groups.zig");
+    _ = @import("groups_test.zig");
     _ = @import("files.zig");
 }

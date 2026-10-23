@@ -1116,6 +1116,193 @@
         }
       },
       "expect": "invalid"
+    },
+    {
+      "name": "error group_not_found",
+      "operationId": "getGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 404,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_not_found",
+            "message": "There is no such group.",
+            "hint": "Group ids are only valid for the caller who made them, or for an owner of every package in the group."
+          }
+        }
+      }
+    },
+    {
+      "name": "error group_not_open",
+      "operationId": "abortGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_not_open",
+            "message": "Group grp_0123456789abcdef0123456789abcdef is validating; only an open group can be aborted.",
+            "hint": "Create the group again with the same request to open it again."
+          }
+        }
+      }
+    },
+    {
+      "name": "error group_conflict",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            { "name": "http_client", "version": "0.4.0", "files": [{ "subdir": "linux-64", "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "size": 123456 }] }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_conflict",
+            "message": "The group cannot be created: you already have 5 open groups, and at most 5 may be open; abort one first.",
+            "hint": "Abort or finish your other groups, or publish a new version."
+          }
+        }
+      }
+    },
+    {
+      "name": "group_conflict answered 400 instead of 409",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            { "name": "http_client", "version": "0.4.0", "files": [{ "subdir": "linux-64", "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "size": 123456 }] }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 400,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_conflict",
+            "message": "The group cannot be created: you already have 5 open groups, and at most 5 may be open; abort one first.",
+            "hint": "Abort or finish your other groups, or publish a new version."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "group_not_found with the hint of another code",
+      "operationId": "getGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 404,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_not_found",
+            "message": "There is no such group.",
+            "hint": "Publish ids are only valid for the caller who made them."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "error group_commit_refused",
+      "operationId": "commitGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "body": { "members": [ { "name": "http_client", "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae" } ] },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_commit_refused",
+            "message": "The group cannot be committed: group grp_0123456789abcdef0123456789abcdef expired at 2026-10-14T00:00:00.000Z.",
+            "hint": "Read the group with its status request; create it again with the same request to open it again."
+          }
+        }
+      }
+    },
+    {
+      "name": "group_commit_refused answered 400 instead of 409",
+      "operationId": "commitGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "body": { "members": [ { "name": "http_client", "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae" } ] },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 400,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_commit_refused",
+            "message": "The group cannot be committed: group grp_0123456789abcdef0123456789abcdef expired at 2026-10-14T00:00:00.000Z.",
+            "hint": "Read the group with its status request; create it again with the same request to open it again."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "error group_not_settled",
+      "operationId": "yankGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "body": { "yanked": true, "reason": "the release is broken" },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_not_settled",
+            "message": "Group grp_0123456789abcdef0123456789abcdef cannot be yanked or unyanked now: it is committed; a group can be yanked once it is visible.",
+            "hint": "A group is yanked once it is visible, and not while another yank or unyank of it is running; read the group with its status request."
+          }
+        }
+      }
+    },
+    {
+      "name": "group_not_settled answered 400 instead of 409",
+      "operationId": "yankGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "body": { "yanked": true, "reason": "the release is broken" },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 400,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_not_settled",
+            "message": "Group grp_0123456789abcdef0123456789abcdef cannot be yanked or unyanked now: it is committed; a group can be yanked once it is visible.",
+            "hint": "A group is yanked once it is visible, and not while another yank or unyank of it is running; read the group with its status request."
+          }
+        }
+      },
+      "expect": "invalid"
     }
   ]
 }
