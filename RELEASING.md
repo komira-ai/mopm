@@ -305,6 +305,13 @@ next release would get. It creates no tag and publishes nothing (`tag`, `publish
 - If `publish` fails half-way, re-running creates no second release and replaces no asset: every asset the
   release already holds must match the verified file byte for byte, and only missing ones are added. A
   mismatch fails the run and changes nothing; a draft release of the tag fails it too (delete the draft by hand).
+- A second push run for a commit whose release is already complete builds nothing. For a commit whose tag exists, `plan` (`cut_release plan --held-dir`) downloads
+  the release and prints `complete=true` when it is published (not a draft, the prerelease flag its version calls for), holds exactly the twelve files, none empty,
+  and SHA256SUMS lists each tarball and `.deb` once with the hash the file has (the checks `verify` uses). `build` and `beta-user` run only without it
+  (`needs.plan.outputs.complete != 'true'`), and every job after them waits for them, so the run ends green with nothing built, signed, tagged or published.
+  A release with a file missing (an upload that died halfway), a different hash, an extra asset or a draft is not complete: the whole pipeline runs, and `publish`
+  adds the missing files or refuses the difference as above. A release that cannot be read is not complete either: not knowing costs a build, never a skipped release.
+  `beta` and `lint` still run first.
 - If `bump` fails, the release stands (it is already published and verified). Re-run the `bump` job; see "The komira-internal
   bump". A bump that cannot succeed because the tag or the old gitlink does not allow it (it refuses with the reason) is
   fixed in komira-internal by hand: move the submodule there with an ordinary pull request.

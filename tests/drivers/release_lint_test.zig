@@ -100,6 +100,10 @@ fn userMutant(name: []const u8, from: []const u8, to: []const u8, needle: []cons
 
 const push_main = "if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}";
 const tag_head = "  tag:\n    needs: [plan, build, beta-user, verify]\n    ";
+/// The headers of build and beta-user as release.yml spells them, with the `if:` that skips them for a release that is complete.
+const not_complete_if = "    if: ${{ needs.plan.outputs.complete != 'true' }}\n";
+const build_if_head = "  build:\n    needs: plan\n" ++ not_complete_if;
+const user_if_head = "  beta-user:\n    needs: [plan, build]\n" ++ not_complete_if;
 
 test "mutant: publish does not need verify" {
     try mutant("publish without verify", "  publish:\n    needs: [tag, verify]", "  publish:\n    needs: [tag]", "publish must need verify");
@@ -151,15 +155,15 @@ test "mutant: publish behind an approval, or with more scopes than contents" {
 test "mutant: attest loses or gains a scope" {
     try mutant("attest without attestations", "      id-token: write\n      attestations: write\n", "      id-token: write\n", "attest: needs attestations: write");
     try mutantAfter(release_path, "\n  attest:\n", "attest with contents write", "    permissions:\n      contents: read\n      id-token: write", "    permissions:\n      contents: write\n      id-token: write", "attest: contents: write is not allowed here");
-    try mutant("the user-level beta with a scope", "  beta-user:\n    needs: [plan, build]\n    permissions:\n      contents: read\n", "  beta-user:\n    needs: [plan, build]\n    permissions:\n      contents: read\n      id-token: write\n", "beta-user: id-token: write is not allowed here");
+    try mutant("the user-level beta with a scope", user_if_head ++ "    permissions:\n      contents: read\n", user_if_head ++ "    permissions:\n      contents: read\n      id-token: write\n", "beta-user: id-token: write is not allowed here");
 }
 
 test "mutant: a bare write-all, a continue-on-error, an if where none belongs" {
     try mutant("verify with write-all", "    permissions:\n      contents: read\n      attestations: read\n", "    permissions: write-all\n", "grants every scope");
     try mutant("beta continue-on-error", "  beta:\n    permissions:\n      contents: read\n", "  beta:\n    continue-on-error: true\n    permissions:\n      contents: read\n", "beta must not set continue-on-error");
     try mutant("beta-user continue-on-error", "  beta-user:\n    needs: [plan, build]\n", "  beta-user:\n    needs: [plan, build]\n    continue-on-error: true\n", "beta-user must not set continue-on-error");
-    try mutant("build with an if", "  build:\n    needs: plan\n", "  build:\n    needs: plan\n    if: ${{ always() }}\n", "build must not have an if:");
-    try mutant("beta-user with an if", "  beta-user:\n    needs: [plan, build]\n", "  beta-user:\n    needs: [plan, build]\n    if: ${{ github.event_name == 'push' }}\n", "beta-user must not have an if:");
+    try mutant("build with another if", build_if_head, "  build:\n    needs: plan\n    if: ${{ always() }}\n", "build must run only under if:");
+    try mutant("beta-user with another if", user_if_head, "  beta-user:\n    needs: [plan, build]\n    if: ${{ github.event_name == 'push' }}\n", "beta-user must run only under if:");
     try mutant("plan with an if", "  plan:\n    needs: [beta, lint]\n", "  plan:\n    needs: [beta, lint]\n    if: ${{ github.event_name == 'workflow_dispatch' }}\n", "plan must not have an if:");
 }
 
@@ -167,6 +171,21 @@ test "mutant: the order of the stages" {
     try mutant("build without plan", "  build:\n    needs: plan", "  build:\n    needs: beta", "build must need plan");
     try mutant("attest without build", "  attest:\n    needs: [plan, build, beta-user]", "  attest:\n    needs: [plan, beta-user]", "attest must need build");
     try mutant("attest without beta-user (it would sign untested files)", "  attest:\n    needs: [plan, build, beta-user]", "  attest:\n    needs: [plan, build]", "attest must need beta-user");
+}
+
+test "release.yml: a release the plan found complete is not built or tested again, and the stages after the build wait for it" {
+    // build and beta-user: that `if:` exactly, so neither runs for a complete release nor is skipped for another reason
+    try mutant("build without the if", build_if_head, "  build:\n    needs: plan\n", "build must run only under if:");
+    try mutant("beta-user without the if", user_if_head, "  beta-user:\n    needs: [plan, build]\n", "beta-user must run only under if:");
+    try mutant("build skipped for an incomplete release", build_if_head, "  build:\n    needs: plan\n    if: ${{ needs.plan.outputs.complete == 'true' }}\n", "build must run only under if:");
+    try mutant("beta-user skipped for an incomplete release", user_if_head, "  beta-user:\n    needs: [plan, build]\n    if: ${{ needs.plan.outputs.complete == 'false' }}\n", "beta-user must run only under if:");
+    // the plan says whether the release is complete, and is able to find out
+    try mutant("plan does not output complete", "      complete: ${{ steps.plan.outputs.complete }}\n", "", "plan must output complete");
+    try mutant("plan is not given the directory to hold the release in", " --held-dir \"$RUNNER_TEMP/held\"", "", "plan must pass --held-dir");
+    // nothing after the build can run without it: each stage waits for the one before, and none has an if: that could run it anyway
+    try mutant("attest without build", "  attest:\n    needs: [plan, build, beta-user]", "  attest:\n    needs: [plan, beta-user]", "attest must need build");
+    try mutant("verify without attest", "  verify:\n    needs: [plan, build, attest]", "  verify:\n    needs: [plan, build]", "verify must need attest");
+    try mutantAfter(release_path, "\n  publish:\n", "publish with an if of its own", push_main, "if: ${{ always() }}", "publish must run only under if:");
 }
 
 test "mutant: the data flow (the tested version is the tagged and released version)" {

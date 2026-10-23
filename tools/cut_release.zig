@@ -9,7 +9,7 @@
 //! `--repo <owner/name>` another repository. A release is made by release.yml alone, on a push to main
 //! (RELEASING.md); nobody runs `plan`, `tag` or `publish` by hand.
 //!
-//!   cut_release plan [--sha <commit>] [--version-file VERSION] [--out <file>]
+//!   cut_release plan [--sha <commit>] [--version-file VERSION] [--out <file>] [--held-dir <dir>]
 //!       Reads the base MAJOR.MINOR from the file and prints the version the next release would get:
 //!       the highest PATCH among the tags v<base>.N and the releases (draft or published) of the
 //!       repository, plus one; 1 when there is none (the first release of 0.0 is 0.0.1). Changes nothing.
@@ -76,7 +76,7 @@ fn die(comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 fn usage() noreturn {
-    die("usage: cut_release [--gh <path>] [--cosign <path>] [--cosign-retry-ms <n>] [--cosign-wait-budget-ms <n>] [--repo <owner/name>] plan [--sha <commit>] | tag --sha <commit> [--expect-version <v>] | verify-dir <version> <dir> --sha <commit> --source-ref <ref> --trigger <push|workflow_dispatch> | verify <version> <dir> | publish <version> <dir> --verified <file> --notes <file> | bump-internal --version <v> --sha <commit> --internal-repo <owner/name> --submodule <name> --workdir <dir> [--git <path>] | tap --version <v> --formula-file <file> --tap-repo <owner/name> --formula <name> --workdir <dir> [--git <path>]", .{});
+    die("usage: cut_release [--gh <path>] [--cosign <path>] [--cosign-retry-ms <n>] [--cosign-wait-budget-ms <n>] [--repo <owner/name>] plan [--sha <commit>] [--held-dir <dir>] | tag --sha <commit> [--expect-version <v>] | verify-dir <version> <dir> --sha <commit> --source-ref <ref> --trigger <push|workflow_dispatch> | verify <version> <dir> | publish <version> <dir> --verified <file> --notes <file> | bump-internal --version <v> --sha <commit> --internal-repo <owner/name> --submodule <name> --workdir <dir> [--git <path>] | tap --version <v> --formula-file <file> --tap-repo <owner/name> --formula <name> --workdir <dir> [--git <path>]", .{});
 }
 
 fn out(comptime fmt: []const u8, args: anytype) void {
@@ -334,7 +334,49 @@ fn appendOut(path: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
 
 // ---- plan and tag ----------------------------------------------------------------------
 
-fn planCmd(gh: Gh, sha: ?[]const u8, version_file: []const u8, out_path: ?[]const u8) void {
+/// True when the release of `version` already exists, is published, and holds exactly the twelve files with the digests its SHA256SUMS lists, so a run for
+/// the commit it was made from has nothing left to build or publish. The files are downloaded into `held_dir` (made empty first), and judged by the checks
+/// verify uses: `namesProblem` (exactly the twelve names) and `sumsProblem` (each tarball and .deb has the hash SHA256SUMS lists, SHA256SUMS lists all five),
+/// and every file has bytes. A missing release, a draft, a wrong prerelease flag, a missing or extra file, a different digest, and any call that fails
+/// are all false: the build then runs and publish adds the missing files or refuses the difference. Changes nothing on GitHub.
+fn releaseComplete(gh: Gh, version: []const u8, held_dir: []const u8) bool {
+    const a = gh.a;
+    const tag = std.fmt.allocPrint(a, "v{s}", .{version}) catch @panic("oom");
+    const viewed = gh.run(&.{ "release", "view", tag, "-R", gh.repo, "--json", "isDraft,isPrerelease,assets" });
+    if (!viewed.ok) {
+        out("the release {s} cannot be read, so it is not taken to be complete: {s}\n", .{ tag, std.mem.trim(u8, viewed.stderr, " \r\n") });
+        return false;
+    }
+    const View = struct { isDraft: bool = false, isPrerelease: bool = false };
+    const view = std.json.parseFromSlice(View, a, viewed.stdout, .{ .ignore_unknown_fields = true }) catch return false;
+    if (view.value.isDraft or view.value.isPrerelease != (std.mem.indexOfScalar(u8, version, '-') != null)) return false;
+    std.fs.cwd().deleteTree(held_dir) catch return false;
+    std.fs.cwd().makePath(held_dir) catch return false;
+    if (!gh.run(&.{ "release", "download", tag, "-R", gh.repo, "-D", held_dir, "--pattern", "*" }).ok) return false;
+    var dir = std.fs.cwd().openDir(held_dir, .{ .iterate = true }) catch return false;
+    defer dir.close();
+    const want = wantAssets(a, version);
+    if (namesProblem(a, dir, held_dir, want)) |p| {
+        out("the release {s} is not complete: {s}\n", .{ tag, p });
+        return false;
+    }
+    for (want) |w| {
+        const st = dir.statFile(w) catch return false;
+        if (st.size == 0) {
+            out("the release {s} is not complete: {s} is empty\n", .{ tag, w });
+            return false;
+        }
+    }
+    if (sumsProblem(a, dir, payloadAssets(a, version))) |p| {
+        out("the release {s} is not complete: {s}\n", .{ tag, p });
+        return false;
+    }
+    return true;
+}
+
+/// With `held_dir`, plan also says whether the release of the version it prints is already complete (`complete=true`), which only a re-run of a run that
+/// tagged this commit can be; without it the answer is not asked for and no `complete` line is printed.
+fn planCmd(gh: Gh, sha: ?[]const u8, version_file: []const u8, out_path: ?[]const u8, held_dir: ?[]const u8) void {
     const base = readBase(gh.a, version_file);
     requireBaseNotBehind(gh, base);
     const tags = tagNames(gh, base);
@@ -344,13 +386,16 @@ fn planCmd(gh: Gh, sha: ?[]const u8, version_file: []const u8, out_path: ?[]cons
         // A re-run of a run that already tagged this commit: that tag's version.
         if (highest(base, tags)) |h| {
             if (std.mem.eql(u8, commitOf(gh, h.name), s)) {
-                appendOut(out_path, "version={s}.{d}\n", .{ base, h.patch });
+                const version = std.fmt.allocPrint(gh.a, "{s}.{d}", .{ base, h.patch }) catch @panic("oom");
+                appendOut(out_path, "version={s}\n", .{version});
+                if (held_dir) |d| appendOut(out_path, "complete={s}\n", .{if (releaseComplete(gh, version, d)) "true" else "false"});
                 return;
             }
         }
     }
     const version = std.fmt.allocPrint(gh.a, "{s}.{d}", .{ base, nextPatch(base, takenNames(gh, tags)) }) catch @panic("oom");
     appendOut(out_path, "version={s}\n", .{version});
+    if (held_dir != null) appendOut(out_path, "complete=false\n", .{});
 }
 
 fn tagCmd(gh: Gh, sha: []const u8, expect_version: ?[]const u8, version_file: []const u8, out_path: ?[]const u8) void {
@@ -451,8 +496,8 @@ fn wantAssets(a: Allocator, version: []const u8) [][]const u8 {
     return want.items;
 }
 
-/// <dir> holds exactly the twelve files, by name (sorted names are returned).
-fn checkNames(a: Allocator, dir: std.fs.Dir, where: []const u8, want: [][]const u8) void {
+/// What is wrong with the names in <dir>, or null when it holds exactly the files of `want` (the twelve), by name.
+fn namesProblem(a: Allocator, dir: std.fs.Dir, where: []const u8, want: [][]const u8) ?[]const u8 {
     var have = std.ArrayList([]const u8).init(a);
     var it = dir.iterate();
     while (it.next() catch |err| die("cannot list {s}: {s}", .{ where, @errorName(err) })) |e| {
@@ -461,31 +506,43 @@ fn checkNames(a: Allocator, dir: std.fs.Dir, where: []const u8, want: [][]const 
     std.mem.sort([]const u8, have.items, {}, lessThan);
     const sorted = a.dupe([]const u8, want) catch @panic("oom");
     std.mem.sort([]const u8, sorted, {}, lessThan);
-    if (have.items.len != sorted.len) die("{s} holds {d} files, expected exactly {d}: {s}", .{ where, have.items.len, sorted.len, std.mem.join(a, " ", have.items) catch "" });
+    if (have.items.len != sorted.len) return std.fmt.allocPrint(a, "{s} holds {d} files, expected exactly {d}: {s}", .{ where, have.items.len, sorted.len, std.mem.join(a, " ", have.items) catch "" }) catch @panic("oom");
     for (have.items, sorted) |h, w| {
-        if (!std.mem.eql(u8, h, w)) die("{s} does not hold the expected set: found {s} where {s} was expected", .{ where, h, w });
+        if (!std.mem.eql(u8, h, w)) return std.fmt.allocPrint(a, "{s} does not hold the expected set: found {s} where {s} was expected", .{ where, h, w }) catch @panic("oom");
     }
+    return null;
 }
 
-/// SHA256SUMS lists each of the three tarballs and the two .debs, once, with the hash the file has.
-fn checkSums(a: Allocator, dir: std.fs.Dir, want: [][]const u8) void {
+/// <dir> holds exactly the twelve files, by name.
+fn checkNames(a: Allocator, dir: std.fs.Dir, where: []const u8, want: [][]const u8) void {
+    if (namesProblem(a, dir, where, want)) |p| die("{s}", .{p});
+}
+
+/// What is wrong with SHA256SUMS in <dir>, or null when it lists each of the three tarballs and the two .debs, once, with the hash the file has.
+fn sumsProblem(a: Allocator, dir: std.fs.Dir, want: [][]const u8) ?[]const u8 {
     const sums = readAll(a, dir, sums_name);
     var listed: usize = 0;
     var lines = std.mem.splitScalar(u8, sums, '\n');
     while (lines.next()) |line| {
         if (line.len == 0) continue;
-        if (line.len < 67 or !std.mem.eql(u8, line[64..66], "  ")) die("malformed SHA256SUMS line: {s}", .{line});
+        if (line.len < 67 or !std.mem.eql(u8, line[64..66], "  ")) return std.fmt.allocPrint(a, "malformed SHA256SUMS line: {s}", .{line}) catch @panic("oom");
         const file = line[66..];
         var known = false;
         for (want) |w| {
             if (std.mem.eql(u8, w, file) and (std.mem.endsWith(u8, w, ".tar.gz") or std.mem.endsWith(u8, w, ".deb"))) known = true;
         }
-        if (!known) die("SHA256SUMS lists {s}, which is not one of the three tarballs and two .debs", .{file});
+        if (!known) return std.fmt.allocPrint(a, "SHA256SUMS lists {s}, which is not one of the three tarballs and two .debs", .{file}) catch @panic("oom");
         const got = sha256Hex(a, readAll(a, dir, file));
-        if (!std.mem.eql(u8, line[0..64], got)) die("{s}: sha256 is {s}, SHA256SUMS lists {s}", .{ file, got, line[0..64] });
+        if (!std.mem.eql(u8, line[0..64], got)) return std.fmt.allocPrint(a, "{s}: sha256 is {s}, SHA256SUMS lists {s}", .{ file, got, line[0..64] }) catch @panic("oom");
         listed += 1;
     }
-    if (listed != targets.len + release_debs.debs.len) die("SHA256SUMS lists {d} files, expected {d}", .{ listed, targets.len + release_debs.debs.len });
+    if (listed != targets.len + release_debs.debs.len) return std.fmt.allocPrint(a, "SHA256SUMS lists {d} files, expected {d}", .{ listed, targets.len + release_debs.debs.len }) catch @panic("oom");
+    return null;
+}
+
+/// SHA256SUMS lists each of the three tarballs and the two .debs, once, with the hash the file has.
+fn checkSums(a: Allocator, dir: std.fs.Dir, want: [][]const u8) void {
+    if (sumsProblem(a, dir, want)) |p| die("{s}", .{p});
 }
 
 /// Every file is attested by this repository's release workflow, for `source_ref` and `sha`.
@@ -884,6 +941,7 @@ pub fn main() !void {
     var submodule: ?[]const u8 = null;
     var bump_version: ?[]const u8 = null;
     var workdir: ?[]const u8 = null;
+    var held_dir: ?[]const u8 = null;
     var tap_repo: ?[]const u8 = null;
     var formula_name: ?[]const u8 = null;
     var formula_file: ?[]const u8 = null;
@@ -916,6 +974,8 @@ pub fn main() !void {
                 bump_version = v;
             } else if (std.mem.eql(u8, arg, "--workdir")) {
                 workdir = v;
+            } else if (std.mem.eql(u8, arg, "--held-dir")) {
+                held_dir = v;
             } else if (std.mem.eql(u8, arg, "--tap-repo")) {
                 tap_repo = v;
             } else if (std.mem.eql(u8, arg, "--formula")) {
@@ -953,7 +1013,7 @@ pub fn main() !void {
     const n = pos.items.len;
     if (std.mem.eql(u8, cmd, "plan")) {
         if (n != 1) usage();
-        return planCmd(gh, sha, version_file, out_path);
+        return planCmd(gh, sha, version_file, out_path, held_dir);
     }
     if (std.mem.eql(u8, cmd, "tag")) {
         if (n != 1) usage();
