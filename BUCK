@@ -1002,7 +1002,7 @@ zig_exe(  # buck-only: installs the pinned OSV-Scanner for advisories.yml (sha25
 cov_tools()
 
 # Each package: the unit tests of its sources run again under kcov (the same compile and environment), and `<package>_coverage_floor`
-# holds the lines they reach to coverage/<package>.txt, both ways: a fall fails, and so does a rise the floor has not been raised to.
+# holds the lines they reach to coverage/<package>.txt, as a minimum: a fall below the floor fails, a figure above it passes and a hint says the floor may be raised.
 # The packages are built by zig 0.12, which has no block counters (-ffuzz), so the report is lines only (`blocks = False`).
 # `expect` is the package's own sources; a file in it that no listed test compiled fails the summary. Process tests (a test that runs a built
 # program, `env_tools`) measure the program's behaviour, not its sources, and are not listed.
