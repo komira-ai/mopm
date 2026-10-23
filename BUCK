@@ -197,6 +197,24 @@ zig_test(  # buck-only: mopm pack and publish against the fake registry and a st
     **_TOOLS
 )
 
+zig_exe(  # buck-only: stands in for mojo in :group_publish; prints whether MOPM_TOKEN reached it
+    name = "env-probe",
+    src = "tests/drivers/env_probe.zig",
+    **_TOOLS
+)
+
+zig_test(  # buck-only: mopm publish --staged and mopm yank --group against the fake registry
+    name = "group_publish",
+    src = "tests/drivers/group_publish_test.zig",
+    imports = ["tests/drivers/harness.zig"],
+    env_tools = {
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+        "MOPM_ENV_PROBE": ":env-probe",
+    },
+    **_TOOLS
+)
+
 # tools/channels' sources, named by a glob so a new file is picked up. The release tools import the .deb writer from there.
 _CHANNELS_SRCS = glob(["tools/channels/*.zig"], exclude = ["tools/channels/channels.zig", "tools/channels/main.zig"])
 
