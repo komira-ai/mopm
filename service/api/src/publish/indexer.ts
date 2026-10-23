@@ -1,4 +1,5 @@
 import { buildPackageIndex, buildTakedowns, indexKey, packageRev, TAKEDOWNS_KEY } from '../index-files';
+import { INDEX_VIEW, repodataView, TAKEDOWNS_VIEW, type View } from '../group';
 import { buildRepodata } from '../repodata';
 import type { Store } from '../store';
 import { SUBDIRS_V1 } from '../types';
@@ -24,7 +25,6 @@ export const repodataKeys = (subdir: string) => ({ json: `${subdir}/repodata.jso
 
 const REPODATA_CACHE = 'public, max-age=60';
 const INDEX_CACHE = 'public, max-age=60';
-const CONCURRENCY = 8;
 
 /**
  * Process one `index` message: rebuild the subdir's repodata from the registry's records, write it, refresh the
@@ -51,7 +51,7 @@ export async function indexSubdir(d: IndexerDeps, msg: IndexMessage): Promise<vo
   }
   await ensureEmptyIndexes(d, msg.subdir);
 
-  const records = await allRecords(d.registry);
+  const records = await allRecords(d.registry, repodataView(msg.subdir));
   const files = buildRepodata(msg.subdir, records);
   const keys = repodataKeys(msg.subdir);
   // The .json first: a reader that finds the .zst new finds the .json new too.
@@ -112,7 +112,7 @@ export async function sendIndexPkg(d: Pick<IndexerDeps, 'registry' | 'indexQueue
  */
 export async function indexPackage(d: IndexerDeps, msg: IndexPkgMessage): Promise<void> {
   const log = d.log ?? ((l: Record<string, unknown>) => console.log(JSON.stringify(l)));
-  const rows = await d.registry.listVersions(msg.name);
+  const rows = (await d.registry.versionsOf([msg.name], INDEX_VIEW)).get(msg.name)!;
   const body = buildPackageIndex(msg.name, rows);
   if (body === undefined) {
     log({ level: 'info', msg: 'index_pkg: the package has no visible version, no file written', name: msg.name });
@@ -129,7 +129,7 @@ export async function indexPackage(d: IndexerDeps, msg: IndexPkgMessage): Promis
 
 /** Process one `index_takedowns` message: rebuild `index/takedowns.json` from every row of the registry (an empty log when none). */
 export async function indexTakedowns(d: IndexerDeps): Promise<void> {
-  const body = buildTakedowns(await allRecords(d.registry));
+  const body = buildTakedowns(await allRecords(d.registry, TAKEDOWNS_VIEW));
   await d.objects.put(TAKEDOWNS_KEY, Buffer.from(body, 'utf8'), { contentType: 'application/json', cacheControl: INDEX_CACHE });
 }
 
@@ -169,15 +169,14 @@ export async function processIndexMessage(d: IndexerDeps, msg: IndexQueueMessage
   return indexTakedowns(d);
 }
 
-/** Every version of every package: the truth the index is derived from. */
-export async function allRecords(registry: Store): Promise<VersionRecord[]> {
+/**
+ * Every version of every package, as `view` shows them: the truth the channel's files are derived from. The read
+ * is one `versionsOf`, which also brings in the package of every member of a committed group that was claimed
+ * after the package list was read, so a group's members are all in or all out of one build.
+ */
+export async function allRecords(registry: Store, view: View): Promise<VersionRecord[]> {
   const names = await registry.listPackageNames();
-  const out: VersionRecord[] = [];
-  for (let i = 0; i < names.length; i += CONCURRENCY) {
-    const batch = await Promise.all(names.slice(i, i + CONCURRENCY).map((n) => registry.listVersions(n)));
-    for (const vs of batch) out.push(...vs);
-  }
-  return out;
+  return [...(await registry.versionsOf(names, view)).values()].flat();
 }
 
 /** The empty index of a subdir, as the writer produces it (also what a fresh channel serves before any publish). */

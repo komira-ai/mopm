@@ -1,9 +1,13 @@
+import type { View } from '../../src/group';
 import { MemoryStore } from '../../src/memory-store';
 import type { QueueMessage } from '../../src/publish/ports';
 import { validatePublish } from '../../src/publish/validator';
 import { Harness, pkg } from './harness';
 
-/** A registry whose next listVersions call stops after reading, until released: the interleaving of two index jobs, made deterministic. */
+/**
+ * A registry whose next read of package rows by the index builder (versionsOf, which `allRecords` calls) stops after
+ * reading, until released: the interleaving of two index jobs, made deterministic.
+ */
 class GatedStore extends MemoryStore {
   private gate?: Promise<void>;
   private open?: () => void;
@@ -16,8 +20,8 @@ class GatedStore extends MemoryStore {
   release() {
     this.open?.();
   }
-  async listVersions(name: string) {
-    const out = await super.listVersions(name);
+  async versionsOf(names: readonly string[], view: View) {
+    const out = await super.versionsOf(names, view);
     const g = this.gate;
     if (g) {
       this.gate = undefined;

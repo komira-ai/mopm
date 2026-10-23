@@ -91,6 +91,15 @@ filegroup(
     visibility = ["//service/infra/stacks:"],
 )
 
+# The inventory of the readers of version rows and their leak cases (test/group-guards.test.ts): the stacks' test checks
+# that every route the API serves is in it.
+export_file(
+    name = "group-inventory.json",
+    src = "test/fixtures/group-inventory.json",
+    mode = "reference",
+    visibility = ["//service/infra/stacks:"],
+)
+
 # This package's files, for //:hygiene (the repository-wide scan reads every file, and a
 # package boundary hides these from the root package's glob). A copy of the tree, staged
 # by path from this package.

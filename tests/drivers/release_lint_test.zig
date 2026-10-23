@@ -212,7 +212,18 @@ test "mutant: an artifact attest's release-* download would merge into dist" {
 
 test "mutant: no signatures" {
     try mutant("attest does not sign", "        run: '\"$RUNNER_TEMP/release\" sign dist'", "        run: '\"$RUNNER_TEMP/release\" check dist'", "attest must sign the files");
-    try mutant("verify without cosign", "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n      - name: Build the release tool\n        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/cut_release\"\n      - name: Verify", "      - name: Build the release tool\n        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/cut_release\"\n      - name: Verify", "verify needs cosign");
+    try mutant("verify without cosign", "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n        with:\n          cosign-release: 'v3.0.6'\n      - name: Build the release tool\n        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/cut_release\"\n      - name: Verify", "      - name: Build the release tool\n        run: zig build-exe tools/cut_release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/cut_release\"\n      - name: Verify", "verify needs cosign");
+}
+
+test "release.yml: each install of cosign names the release the retry reads" {
+    // The install in `verify` and the one in `attest`: the action's default, another release, and a renamed input are each refused.
+    const step = "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n        with:\n          cosign-release: 'v3.0.6'\n";
+    const bare = "      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2\n";
+    const needle = "installs cosign without `cosign-release: v3.0.6`";
+    try mutantAfter(release_path, "\n  verify:\n", "verify takes the action's default", step, bare, needle);
+    try mutantAfter(release_path, "\n  attest:\n", "attest takes the action's default", step, bare, needle);
+    try mutantAfter(release_path, "\n  verify:\n", "verify installs another release", "cosign-release: 'v3.0.6'", "cosign-release: 'v3.0.5'", needle);
+    try mutantAfter(release_path, "\n  attest:\n", "attest names the input wrongly", "cosign-release: 'v3.0.6'", "cosign-version: 'v3.0.6'", needle);
 }
 
 test "mutant: triggers and concurrency" {

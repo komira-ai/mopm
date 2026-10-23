@@ -328,6 +328,7 @@ describe('DynamoDB adapter specifics', () => {
       versions: 'mopm-beta-versions',
       owners: 'mopm-beta-owners',
       audit: 'mopm-beta-audit',
+      publishes: 'mopm-beta-publishes',
     });
   });
 });

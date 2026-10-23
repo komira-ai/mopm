@@ -10,7 +10,9 @@
 //! - a group past its deadline when the commit arrives is refused, and a rerun opens it again and finishes;
 //! - a rerun after a failed PUT must ask for the same group (the id in state.json) and send only the files the registry
 //!   does not hold; a registry with no group publish (404) must get nothing uploaded; a 429 must stop the run where it is;
-//! - the token must be in no program mopm starts (a stand-in for mojo prints its environment), and in nothing mopm prints;
+//! - the token must be in no program mopm starts (one stand-in plays mojo, the test binary and pixi, and records its
+//!   environment: `mopm run`, the compile and the `--skip-all` listing of `mopm test`, and the installer of `mopm sync`),
+//!   and in nothing mopm prints;
 //! - a yank of the group yanks its members, and an unyank restores those and not the one yanked by hand before.
 
 const std = @import("std");
@@ -327,6 +329,52 @@ fn theTokenIsInNoChildEnvironment(w: World, probe: []const u8) !void {
         h.contains(r.text, "MOPM_PROBE_MARK=kept") and !h.contains(r.text, w.token), r.text);
 }
 
+/// The lines the stand-in program appended to `path`, or "" when there are none.
+fn probeLines(w: World, path: []const u8) []const u8 {
+    return std.fs.cwd().readFileAlloc(w.a, path, 1 << 16) catch "";
+}
+
+/// Whether the stand-in reported, as `role`, an environment with no MOPM_TOKEN and the other variable as it was.
+fn probeSawNoToken(lines: []const u8, role: []const u8, a: Allocator) !bool {
+    return h.contains(lines, try std.fmt.allocPrint(a, "{s}: MOPM_TOKEN=<unset> MOPM_PROBE_MARK=kept\n", .{role}));
+}
+
+/// The compiler `mopm test` runs, the test binary it lists with `--skip-all`, and the installer `mopm sync` runs each get an
+/// environment without the token (`mopm run` is checked above). One stand-in plays all three: `mojo build` leaves a copy of it
+/// as the test binary, so a single `mopm test` starts two programs, and each appends a line saying what it was given.
+fn theTokenIsInNoTestOrInstallerEnvironment(w: World, probe: []const u8) !void {
+    const a = w.a;
+    const prefix = try w.dir("prefix_test");
+    try std.fs.cwd().makePath(try h.join(a, &.{ prefix, "lib", "mojo" }));
+    try std.fs.cwd().makePath(try h.join(a, &.{ prefix, "bin" }));
+    try std.fs.cwd().copyFile(probe, std.fs.cwd(), try h.join(a, &.{ prefix, "bin", "mojo" }), .{});
+
+    // `mopm test`: the compile line and the `--skip-all` listing.
+    const proj = try w.dir("proj_test");
+    try std.fs.cwd().makePath(try h.join(a, &.{ proj, "tests" }));
+    try h.writeFile(try h.join(a, &.{ proj, "tests", "test_probe.mojo" }), "def test_probe() raises:\n    pass\n");
+    const out_test = try h.join(a, &.{ w.work, "probe_test.txt" });
+    var env = try h.cloneEnv(a, &w.m.env);
+    try env.put("MOPM_TOKEN", w.token);
+    try env.put("MOPM_PROBE_MARK", "kept");
+    try env.put("MOPM_PROBE_OUT", out_test);
+    const t = try h.run(a, &.{ w.m.exe, "test", "--prefix", prefix, "tests/test_probe.mojo" }, &env, .{ .cwd = proj });
+    const seen = probeLines(w, out_test);
+    w.rep.check("mopm test starts the compiler and the test binary, and neither has MOPM_TOKEN in its environment", (try probeSawNoToken(seen, "build", a)) and
+        (try probeSawNoToken(seen, "--skip-all", a)) and !h.contains(seen, w.token) and !h.contains(t.text, w.token), try std.fmt.allocPrint(a, "{s}\n{s}", .{ seen, t.text }));
+
+    // `mopm sync`: the installer. A project with no dependency is locked with no registry.
+    const sync_dir = try w.dir("proj_sync");
+    try std.fs.cwd().makePath(sync_dir);
+    try h.writeFile(try h.join(a, &.{ sync_dir, "mopm.toml" }), "[package]\nname = \"probe_sync\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n");
+    const out_sync = try h.join(a, &.{ w.work, "probe_sync.txt" });
+    try env.put("MOPM_PROBE_OUT", out_sync);
+    const s = try h.run(a, &.{ w.m.exe, "sync", "--pixi", probe }, &env, .{ .cwd = sync_dir });
+    const installed = probeLines(w, out_sync);
+    w.rep.check("mopm sync starts the installer, and it has no MOPM_TOKEN in its environment", (try probeSawNoToken(installed, "install", a)) and
+        !h.contains(installed, w.token) and !h.contains(s.text, w.token), try std.fmt.allocPrint(a, "{s}\n{s}", .{ installed, s.text }));
+}
+
 fn yankAndUnyank(w: World) !void {
     const a = w.a;
     const staged = try w.dir("chain");
@@ -460,6 +508,7 @@ test "mopm publish --staged and mopm yank --group against the fake registry" {
     try noGroupPublish(w);
     try rateLimited(w);
     try theTokenIsInNoChildEnvironment(w, probe);
+    try theTokenIsInNoTestOrInstallerEnvironment(w, probe);
     try yankAndUnyank(w);
     try refusalsBeforeAnyRequest(w);
 

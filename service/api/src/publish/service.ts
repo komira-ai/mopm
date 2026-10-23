@@ -220,6 +220,9 @@ export class PublishService {
     // The number exists. A pending one that no commit has taken is still only a reservation: join it.
     const current = await this.d.registry.getVersion(name, version);
     if (!current) throw versionExists(name, version, sha256);
+    // A number held by a group is the group's: whether it has committed (the row reads `published`) or not (it reads
+    // `pending`), a single publish does not join it.
+    if (current.group_id !== undefined) throw versionExists(name, version, current.files[0]?.sha256 ?? current.manifest_sha256);
     if (current.state !== 'pending' || (await this.d.publishes.versionHolder(name, canonical)) !== undefined) {
       throw versionExists(name, version, current.files[0]?.sha256 ?? current.manifest_sha256);
     }
@@ -264,7 +267,8 @@ export class PublishService {
 
     const v = await this.d.registry.getVersion(name, version);
     if (!v) throw new RegistryError('version_not_found', `'${name}' has no version '${version}'.`, { name, version });
-    if (v.state !== 'pending') throw versionExists(name, version, v.files[0]?.sha256 ?? v.manifest_sha256);
+    // A group's number is the group's: a single commit does not take it, whatever state it reads.
+    if (v.state !== 'pending' || v.group_id !== undefined) throw versionExists(name, version, v.files[0]?.sha256 ?? v.manifest_sha256);
     const holder = await this.d.publishes.claimVersion(name, canonical, publishId);
     if (holder !== publishId) {
       const other = await this.d.publishes.getPublish(holder);
@@ -364,7 +368,9 @@ export class PublishService {
   // --- status ---------------------------------------------------------------------------------------------
 
   async status(p: Principal, publishId: string): Promise<PublishStatusBody> {
-    const rec = await this.d.publishes.getPublish(publishId);
+    // The table also holds the commit locks, the rate counters and the groups' items under other prefixes: only a
+    // publish record is a publish, so nothing else is ever read or returned through this route.
+    const rec = publishId.startsWith('pub_') ? await this.d.publishes.getPublish(publishId) : undefined;
     if (!rec || rec.actor !== actorOf(p)) throw new PublishError('publish_not_found', 'There is no such publish.');
     return {
       publish_id: rec.publish_id,
