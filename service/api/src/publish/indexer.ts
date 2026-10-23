@@ -6,6 +6,7 @@ import type { Store } from '../store';
 import { SUBDIRS_V1 } from '../types';
 import type { VersionRecord } from '../types';
 import { advance, releaseIndex, releaseRepodata } from './group-chain';
+import { advanceYank, releaseYankIndex, releaseYankRepodata } from './group-yank';
 import { GROUP_ID } from './group-keys';
 import type { Invalidator, ObjectStore, PublishStore, Queue } from './ports';
 import type { GroupHop, IndexMessage, IndexPkgMessage, IndexQueueMessage } from './types';
@@ -62,7 +63,8 @@ export async function indexSubdir(d: IndexerDeps, msg: IndexMessage): Promise<vo
   // between this hop and the next) lists the group's members, and no build before it does. A hop that is not for a group in its
   // chain does nothing at all.
   const hop = msg.then && 'group' in msg.then ? msg.then.group : undefined;
-  if (hop && (await releaseRepodata(chainDeps(d), hop, msg.subdir)) === undefined) return;
+  // A hop of a group's yank or unyank (src/publish/group-yank.ts) releases its own gate, on the header's `yank`.
+  if (hop && (await (isYankHop(hop) ? releaseYankRepodata(chainDeps(d), hop, msg.subdir) : releaseRepodata(chainDeps(d), hop, msg.subdir))) === undefined) return;
   await ensureEmptyIndexes(d, msg.subdir);
 
   const records = await allRecords(d.registry, repodataView(msg.subdir));
@@ -90,7 +92,7 @@ export async function indexSubdir(d: IndexerDeps, msg: IndexMessage): Promise<vo
       await sendIndexPkg(d, { name: cur.name, publishId: cur.publish_id });
     }
   }
-  if (hop) await advance(chainDeps(d), chainQueues(d), hop);
+  if (hop) await (isYankHop(hop) ? advanceYank(chainDeps(d), chainQueues(d), hop) : advance(chainDeps(d), chainQueues(d), hop));
   else if (msg.then && 'next' in msg.then) {
     const { name, rev, next } = msg.then;
     if (next.length > 0) {
@@ -132,7 +134,7 @@ export async function indexPackage(d: IndexerDeps, msg: IndexPkgMessage): Promis
   // before the steps it follows sends the missing one instead and writes nothing.
   const hop = msg.group;
   if (hop) {
-    const gate = await releaseIndex(chainDeps(d), chainQueues(d), hop, msg.name);
+    const gate = await (isYankHop(hop) ? releaseYankIndex(chainDeps(d), chainQueues(d), hop, msg.name) : releaseIndex(chainDeps(d), chainQueues(d), hop, msg.name));
     if (gate === undefined || gate === 'redirected') return;
   }
   const rows = (await d.registry.versionsOf([msg.name], INDEX_VIEW)).get(msg.name)!;
@@ -143,7 +145,7 @@ export async function indexPackage(d: IndexerDeps, msg: IndexPkgMessage): Promis
     if (!hop && msg.rev < packageRev(rows)) log({ level: 'info', msg: 'index_pkg: the message is older than the registry, writing the current state', name: msg.name, rev: msg.rev });
     await d.objects.put(indexKey(msg.name), Buffer.from(body, 'utf8'), { contentType: 'application/x-ndjson', cacheControl: INDEX_CACHE });
   }
-  if (hop) await advance(chainDeps(d), chainQueues(d), hop);
+  if (hop) await (isYankHop(hop) ? advanceYank(chainDeps(d), chainQueues(d), hop) : advance(chainDeps(d), chainQueues(d), hop));
   if (msg.publish_id === undefined) return;
   await d.publishes.updatePublish(msg.publish_id, (c) => {
     if (c.status !== 'indexing' || c.remaining_subdirs.length > 0) return undefined;
@@ -170,12 +172,19 @@ export async function indexTakedowns(d: IndexerDeps): Promise<void> {
 const PKG_NAME = /^[a-z][a-z0-9_]{1,63}$/;
 const isRev = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
 
-/** A chain hop (the group, the attempt that committed, the resend count) as a GroupHop, or undefined when it is not one. */
+/** A hop of a group's yank or unyank (it names the yank), not of the commit's chain. */
+const isYankHop = (hop: GroupHop): hop is GroupHop & { yank: NonNullable<GroupHop['yank']> } => hop.yank !== undefined;
+
+/** A chain hop (the group, the attempt that committed, the resend count, and for a yank or unyank which one) as a GroupHop, or undefined when it is not one. */
 function parseHop(raw: unknown): GroupHop | undefined {
   if (typeof raw !== 'object' || raw === null) return undefined;
   const g = raw as Record<string, unknown>;
   if (typeof g.group_id !== 'string' || !GROUP_ID.test(g.group_id) || !isRev(g.attempt) || !isRev(g.resend)) return undefined;
-  return { group_id: g.group_id, attempt: g.attempt, resend: g.resend };
+  const hop = { group_id: g.group_id, attempt: g.attempt, resend: g.resend };
+  if (g.yank === undefined) return hop;
+  const y = g.yank as Record<string, unknown> | null;
+  if (typeof y !== 'object' || y === null || (y.op !== 'yank' && y.op !== 'unyank') || !isRev(y.seq)) return undefined;
+  return { ...hop, yank: { op: y.op, seq: y.seq } };
 }
 
 /**

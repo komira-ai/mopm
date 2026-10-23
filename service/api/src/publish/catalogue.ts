@@ -33,6 +33,7 @@ export const PUBLISH_CATALOGUE: Record<string, { status: number; message: string
   group_not_open: { status: 409, message: 'Group {group_id} is {status}; only an open group can be aborted.', hint: 'Create the group again with the same request to open it again.' },
   group_conflict: { status: 409, message: 'The group cannot be created: {detail}.', hint: 'Abort or finish your other groups, or publish a new version.' },
   group_commit_refused: { status: 409, message: 'The group cannot be committed: {detail}.', hint: 'Read the group with its status request; create it again with the same request to open it again.' },
+  group_not_settled: { status: 409, message: 'Group {group_id} cannot be yanked or unyanked now: {detail}.', hint: 'A group is yanked once it is visible, and not while another yank or unyank of it is running; read the group with its status request.' },
   payload_too_large: { status: 413, message: 'The file is larger than the limit of {limit} bytes.', hint: 'Reduce the package size.' },
   rate_limited: { status: 429, message: 'Too many requests.', hint: 'Wait {retry_after} seconds; the Retry-After header says how long.' },
   internal_error: { status: 500, message: 'Something went wrong on our side.', hint: 'Try again; report the request id if it persists.' },

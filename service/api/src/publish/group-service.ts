@@ -5,7 +5,7 @@ import { NAME_PATTERN } from '../auth';
 import { AuthError } from '../auth/errors';
 import { RegistryError, versionExists } from '../errors';
 import { API_VIEW, type GroupMembers } from '../group';
-import { bitmapHas, bitmapSet, memberAuditId, type GroupFailure, type GroupRecord, type GroupStore } from '../group-store';
+import { bitmapHas, bitmapIndexes, bitmapSet, memberAuditId, type GroupFailure, type GroupRecord, type GroupStore } from '../group-store';
 import { Metrics } from '../metrics';
 import type { Store } from '../store';
 import type { AuditEntry, VersionRecord } from '../types';
@@ -14,6 +14,7 @@ import type { PublishConfig } from './config';
 import { groupConflict, groupNotFound, groupNotOpen, invalidRequest, PublishError } from './errors';
 import { ended, expireIfDue, freeAfterFor, groupAudit, isDead, orphanFree } from './group-lifecycle';
 import { GroupCommitter, type GroupCommitBody } from './group-commit';
+import { GroupYanker } from './group-yank-request';
 import { GROUP_ID, quarantineKeyFor, uploadIdFor } from './group-keys';
 import type { ActorGroup, ObjectStore, Presigner, PublishStore, Queue } from './ports';
 import { actorOf, liveBytes, parseFileFacts, requireOwner } from './service';
@@ -163,7 +164,9 @@ export interface GroupStatusBody {
   /** Why a group that was rejected or failed ended. */
   failure?: GroupFailure;
   member_count: number;
-  members: Array<{ name: string; version: string; state: 'pending' | 'reserved' | 'staged' | 'published' }>;
+  /** Present once the group has been yanked: where the yank is. */
+  yank?: { state: 'yanking' | 'yanked' | 'unyanking' | 'restored'; reason: string; requested_at: string; yanked_members: number };
+  members: Array<{ name: string; version: string; state: 'pending' | 'reserved' | 'staged' | 'published' | 'yanked' }>;
 }
 
 /** The row a member reserves: pending, the declared files (no urls), named by the group. */
@@ -219,16 +222,27 @@ export class GroupService {
   private readonly clock: () => number;
   private readonly metrics: Metrics;
   private readonly committer: GroupCommitter;
+  private readonly yanker: GroupYanker;
   constructor(private readonly d: GroupServiceDeps) {
     this.now = d.now ?? (() => new Date());
     this.clock = d.clock ?? (() => performance.now());
     this.metrics = d.metrics ?? new Metrics();
     this.committer = new GroupCommitter({ registry: d.registry, objects: d.objects, config: d.config, ...(d.groupQueue ? { groupQueue: d.groupQueue } : {}), ...(d.now ? { now: d.now } : {}) }, this);
+    this.yanker = new GroupYanker({ registry: d.registry, ...(d.groupQueue ? { groupQueue: d.groupQueue } : {}), ...(d.now ? { now: d.now } : {}) }, this);
   }
 
   /** POST /groups/{id}/commit: see src/publish/group-commit.ts. */
   commit(p: Principal, id: string, body: unknown): Promise<{ started: boolean; body: GroupCommitBody }> {
     return this.committer.commit(p, id, body);
+  }
+
+  /**
+   * PUT /groups/{id}/yank: yank or unyank a visible group (src/publish/group-yank.ts). `authorize` is given the member list once the
+   * caller is known to see the group, and throws when the token does not cover every member.
+   */
+  async setYanked(p: Principal, id: string, body: unknown, authorize?: (members: GroupMembers) => void): Promise<{ started: boolean; body: GroupStatusBody }> {
+    const done = await this.yanker.set(p, id, body, authorize);
+    return { started: done.started, body: statusBody(done.header, done.members) };
   }
 
   parse(body: unknown): GroupRequest {
@@ -700,8 +714,10 @@ function membersOf(req: GroupRequest): GroupMembers {
 }
 
 function statusBody(h: GroupRecord, members: GroupMembers): GroupStatusBody {
+  // A member the group's yank changed is `yanked` from the yank until the unyank has ended (the unyank restores them one batch at a time).
+  const yankedNow = (i: number) => h.yank !== undefined && h.yank.state !== 'restored' && bitmapHas(h.yank.yanked_set, i);
   const state = (i: number) =>
-    h.status === 'visible' || bitmapHas(h.flipped, i) ? 'published' : bitmapHas(h.staged, i) ? 'staged' : bitmapHas(h.reserved, i) ? 'reserved' : 'pending';
+    yankedNow(i) ? 'yanked' : h.status === 'visible' || bitmapHas(h.flipped, i) ? 'published' : bitmapHas(h.staged, i) ? 'staged' : bitmapHas(h.reserved, i) ? 'reserved' : 'pending';
   return {
     group_id: h.group_id,
     status: h.status,
@@ -711,6 +727,7 @@ function statusBody(h: GroupRecord, members: GroupMembers): GroupStatusBody {
     ...(h.committed_at !== undefined ? { committed_at: h.committed_at } : {}),
     ...(h.failure ? { failure: h.failure } : {}),
     member_count: h.member_count,
+    ...(h.yank ? { yank: { state: h.yank.state, reason: h.yank.reason, requested_at: h.yank.requested_at, yanked_members: bitmapIndexes(h.yank.yanked_set).length } } : {}),
     members: members.members.map((m, i) => ({ name: m.name, version: m.version, state: state(i) })),
   };
 }

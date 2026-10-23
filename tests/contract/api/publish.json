@@ -1447,6 +1447,89 @@
         "body": { "group_id": "grp_0123456789abcdef0123456789abcdef", "status": "validating", "attempt": 1, "status_url": "/status/grp_0123456789abcdef0123456789abcdef" }
       },
       "expect": "invalid"
+    },
+    {
+      "name": "yank a group",
+      "operationId": "yankGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "body": { "yanked": true, "reason": "the release is broken" },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "visible",
+          "attempt": 1,
+          "created_at": "2026-10-13T12:00:00Z",
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "committed_at": "2026-10-13T13:00:00Z",
+          "member_count": 2,
+          "yank": { "state": "yanking", "reason": "the release is broken", "requested_at": "2026-10-13T14:00:00Z", "yanked_members": 1 },
+          "members": [ { "name": "http_client", "version": "0.4.0", "state": "yanked" }, { "name": "json", "version": "1.2.0", "state": "published" } ]
+        }
+      }
+    },
+    {
+      "name": "unyank a group that is already restored",
+      "operationId": "yankGroup",
+      "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "body": { "yanked": false }, "auth": "yankToken" },
+      "response": {
+        "status": 200,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "visible",
+          "attempt": 1,
+          "created_at": "2026-10-13T12:00:00Z",
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "committed_at": "2026-10-13T13:00:00Z",
+          "member_count": 1,
+          "yank": { "state": "restored", "reason": "the release is broken", "requested_at": "2026-10-13T14:00:00Z", "yanked_members": 1 },
+          "members": [ { "name": "http_client", "version": "0.4.0", "state": "published" } ]
+        }
+      }
+    },
+    {
+      "name": "yank a group without a reason",
+      "operationId": "yankGroup",
+      "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "body": { "yanked": true }, "auth": "publishToken" },
+      "response": {
+        "status": 202,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "visible",
+          "attempt": 1,
+          "created_at": "2026-10-13T12:00:00Z",
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "member_count": 1,
+          "members": [ { "name": "http_client", "version": "0.4.0", "state": "published" } ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "group status with a yank that has an unknown state",
+      "operationId": "getGroup",
+      "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "auth": "publishToken" },
+      "response": {
+        "status": 200,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "visible",
+          "attempt": 1,
+          "created_at": "2026-10-13T12:00:00Z",
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "member_count": 1,
+          "yank": { "state": "paused", "reason": "the release is broken", "requested_at": "2026-10-13T14:00:00Z", "yanked_members": 1 },
+          "members": [ { "name": "http_client", "version": "0.4.0", "state": "yanked" } ]
+        }
+      },
+      "expect": "invalid"
     }
   ]
 }

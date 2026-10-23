@@ -19,13 +19,31 @@ export type GroupStatus = 'open' | 'validating' | 'committed' | 'visible' | 'rej
 /** The statuses of a group that has committed. The marker is `committed_at`; a status never stands in for it. */
 export const COMMITTED_STATUSES: readonly GroupStatus[] = ['committed', 'visible'];
 
-/** The yank intent of a group (written by the group yank; the store only keeps it). */
+/** Where a group yank is: `yanking` and `unyanking` are running, `yanked` and `restored` are at rest. A group that was never yanked has no `yank`. */
+export type GroupYankState = 'yanking' | 'yanked' | 'unyanking' | 'restored';
+
+/**
+ * The yank intent of a group (src/publish/group-yank.ts), on the header of a group that is `visible`. The group stays `visible` while it
+ * is yanked: its rows are `yanked` rows, and the readers' projection (src/group.ts) only ever looks at `pending` ones.
+ */
 export interface GroupYank {
   reason: string;
+  /** The actor that asked for the yank. */
   by: string;
   requested_at: string;
-  /** Bitmap of the members this yank changed. */
+  /** Bitmap of the members this yank changed: the only ones an unyank restores. Saved after each batch of rows. */
   yanked_set: string;
+  /** The number of this yank (1 for a group's first, +1 for each yank after an unyank). Rows the yank changed carry it (`group_yank_seq`). */
+  seq: number;
+  state: GroupYankState;
+  /** The running yank or unyank has changed every row it will: what is left is the repodata hops, the index hops and the end. */
+  rows_done?: boolean;
+  /** Gates of the running yank or unyank's own hops (the repodata subdirs, and positions in `write_order`), as `repodata_released` and `index_released` are for the commit's chain. */
+  repodata_done?: string[];
+  index_done?: number[];
+  /** Who asked for the unyank, and when. */
+  unyank_by?: string;
+  unyank_at?: string;
 }
 
 /** A group's header item, `grp#<group id>`. A few KB at the largest group, because the member list is its own item. */

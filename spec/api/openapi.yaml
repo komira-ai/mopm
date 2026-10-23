@@ -724,6 +724,50 @@ paths:
               schema: { $ref: "#/components/schemas/CommitGroupResponse" }
         default: { $ref: "#/components/responses/Error" }
 
+  /groups/{group_id}/yank:
+    put:
+      operationId: yankGroup
+      tags: [publish]
+      summary: Yank or unyank every version a group published.
+      description: |
+        The body is that of `setYanked`. `yanked: true` yanks the group's versions that are `published`; `yanked: false` restores
+        exactly the versions that yank changed. Allowed for the group's creator or an owner of every package in it, with a token
+        that has the `yank` or `publish` scope for every member (read-only mode refuses it).
+
+        Only a group that is `visible` can be yanked or unyanked; a group that has not committed, or whose files are still being
+        released after the commit, is refused with `group_not_settled`, as is a yank while an unyank of the group is running and the
+        other way round. Asynchronous: the request records the intent, answers 202 and returns the group; the versions are yanked
+        (or restored) by a job, then repodata and the sparse index follow, and the group's `yank.state` reaches `yanked` (or
+        `restored`) when they are written. A version somebody yanked by hand before the group's yank stays yanked, and is not
+        restored by the group's unyank. The same request again while the yank or unyank runs answers 202 as it is; a group already as
+        asked (yanked and `yanked: true`, or never yanked or restored and `yanked: false`) answers 200 as it is.
+      security:
+        - yankToken: []
+        - publishToken: []
+      parameters:
+        - { $ref: "#/components/parameters/GroupId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/YankRequest" }
+      responses:
+        "202":
+          description: The yank or unyank is running.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        "200":
+          description: The group is already as asked.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        default: { $ref: "#/components/responses/Error" }
+
   /packages/{name}/{version}/yank:
     put:
       operationId: setYanked
@@ -1000,6 +1044,7 @@ components:
         - group_not_open
         - group_conflict
         - group_commit_refused
+        - group_not_settled
         - invalid_transition
         - invitation_expired
         - payload_too_large
@@ -1573,6 +1618,21 @@ components:
               description: The package the verdict is about, when it is about one.
               type: string
         member_count: { type: integer, minimum: 1 }
+        yank:
+          description: Present once the group has been yanked (`yankGroup`): where the yank is.
+          type: object
+          required: [state, reason, requested_at, yanked_members]
+          properties:
+            state:
+              description: "`yanking` and `unyanking` are running; `yanked` and `restored` are at rest."
+              type: string
+              enum: [yanking, yanked, unyanking, restored]
+            reason: { type: string, maxLength: 280 }
+            requested_at: { $ref: "#/components/schemas/Timestamp" }
+            yanked_members:
+              description: The members the yank has changed so far; an unyank restores these and no others.
+              type: integer
+              minimum: 0
         members:
           type: array
           items:
@@ -1583,7 +1643,7 @@ components:
               version: { $ref: "#/components/schemas/Version" }
               state:
                 type: string
-                enum: [pending, reserved, staged, published]
+                enum: [pending, reserved, staged, published, yanked]
     YankRequest:
       type: object
       required: [yanked]
@@ -1633,6 +1693,7 @@ x-mopm-errors:
   group_not_open:        { status: 409, message: "Group {group_id} is {status}; only an open group can be aborted.", hint: "Create the group again with the same request to open it again." }
   group_conflict:        { status: 409, message: "The group cannot be created: {detail}.", hint: "Abort or finish your other groups, or publish a new version." }
   group_commit_refused:  { status: 409, message: "The group cannot be committed: {detail}.", hint: "Read the group with its status request; create it again with the same request to open it again." }
+  group_not_settled:     { status: 409, message: "Group {group_id} cannot be yanked or unyanked now: {detail}.", hint: "A group is yanked once it is visible, and not while another yank or unyank of it is running; read the group with its status request." }
   invalid_transition:    { status: 409, message: "Cannot {action} '{name}' {version}: it is {state}.", hint: "Only a published version can be yanked, only a yanked version can be unyanked, and a tombstoned version never changes." }
   invitation_expired:    { status: 410, message: "The invitation expired.", hint: "Ask the owner to invite you again." }
   payload_too_large:     { status: 413, message: "The file is larger than the limit of {limit} bytes.", hint: "Reduce the package size." }

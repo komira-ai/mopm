@@ -35,7 +35,7 @@ export function touchedSubdirs(members: GroupMembers): string[] {
 /** The header is of a group that committed at `attempt` and is not visible yet: the only group whose chain runs. */
 export const chainLive = (h: GroupRecord | undefined, attempt: number): h is GroupRecord => h !== undefined && h.attempt === attempt && h.committed_at !== undefined && h.status === 'committed';
 
-const writeOrderOf = (h: GroupRecord, members: GroupMembers): number[] => {
+export const writeOrderOf = (h: GroupRecord, members: GroupMembers): number[] => {
   const order = h.write_order;
   if (order === undefined || order.length !== members.members.length) {
     throw new Error(`group ${h.group_id}: the header's write_order does not list the ${members.members.length} members`);
@@ -109,7 +109,7 @@ export async function requireMembers(groups: GroupStore, gid: string): Promise<G
 }
 
 /** A hop made progress: the clock the sweeper reads moves, and its resend count starts again. */
-const progressed = (at: string): Pick<GroupRecord, 'progress_at' | 'sweep_at' | 'resend'> => ({ progress_at: at, sweep_at: at, resend: 0 });
+export const progressed = (at: string): Pick<GroupRecord, 'progress_at' | 'sweep_at' | 'resend'> => ({ progress_at: at, sweep_at: at, resend: 0 });
 
 export interface HopDeps {
   groups: GroupStore;
@@ -161,7 +161,7 @@ export async function releaseIndex(d: HopDeps, q: ChainQueues, hop: GroupHop & {
   return 'redirected';
 }
 
-function stale(d: HopDeps, hop: GroupHop, what: string): undefined {
+export function stale(d: HopDeps, hop: GroupHop, what: string): undefined {
   d.log({ level: 'info', msg: `group chain: ${what}; nothing done`, group_id: hop.group_id, attempt: hop.attempt });
   return undefined;
 }

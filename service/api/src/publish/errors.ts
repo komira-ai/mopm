@@ -8,6 +8,7 @@ export type PublishErrorCode =
   | 'group_not_open'
   | 'group_conflict'
   | 'group_commit_refused'
+  | 'group_not_settled'
   | 'not_owner'
   | 'upload_used'
   | 'payload_too_large'
@@ -38,3 +39,5 @@ export const groupNotOpen = (groupId: string, status: string) =>
   new PublishError('group_not_open', `Group ${groupId} is ${status}; only an open group can be aborted.`, { group_id: groupId, status });
 export const groupConflict = (detail: string) => new PublishError('group_conflict', `The group cannot be created: ${detail}.`, { detail });
 export const groupCommitRefused = (detail: string) => new PublishError('group_commit_refused', `The group cannot be committed: ${detail}.`, { detail });
+export const groupNotSettled = (groupId: string, detail: string) =>
+  new PublishError('group_not_settled', `Group ${groupId} cannot be yanked or unyanked now: ${detail}.`, { group_id: groupId, detail });

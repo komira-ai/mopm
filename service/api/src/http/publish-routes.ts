@@ -56,7 +56,7 @@ function jsonBody(req: HttpRequest): unknown {
 /**
  * The four publish operations: PUT /packages/{name}/{version}/yank, POST /packages/{name}/{version}/files, POST /packages/{name}/{version}/publish
  * and GET /publishes/{publish_id}; and, when the deployment has a GroupService, POST /groups, GET /groups/{group_id} and
- * DELETE /groups/{group_id}, and POST /groups/{group_id}/commit. Returns undefined for any other request, which the read router then handles.
+ * DELETE /groups/{group_id}, POST /groups/{group_id}/commit and PUT /groups/{group_id}/yank. Returns undefined for any other request, which the read router then handles.
  *
  * Order of checks: read-only mode first (a read-only registry says so to everyone, signed in or not), then the
  * token, then the scope for this package and version, then the request itself.
@@ -72,7 +72,8 @@ export async function routePublish(req: HttpRequest, api: PublishApi, requestId:
   const isGroupGet = api.groups !== undefined && req.method === 'GET' && seg.length === 2 && seg[0] === 'groups';
   const isGroupAbort = api.groups !== undefined && req.method === 'DELETE' && seg.length === 2 && seg[0] === 'groups';
   const isGroupCommit = api.groups !== undefined && req.method === 'POST' && seg.length === 3 && seg[0] === 'groups' && seg[2] === 'commit';
-  if (!isBegin && !isCommit && !isStatus && !isYank && !isGroupCreate && !isGroupGet && !isGroupAbort && !isGroupCommit) return undefined;
+  const isGroupYank = api.groups !== undefined && req.method === 'PUT' && seg.length === 3 && seg[0] === 'groups' && seg[2] === 'yank';
+  if (!isBegin && !isCommit && !isStatus && !isYank && !isGroupCreate && !isGroupGet && !isGroupAbort && !isGroupCommit && !isGroupYank) return undefined;
 
   const refuseIfReadOnly = async () => {
     let readOnly: boolean;
@@ -105,6 +106,17 @@ export async function routePublish(req: HttpRequest, api: PublishApi, requestId:
       const principal = await api.auth.authenticate(authorization);
       requirePublishScope(principal);
       const done = await api.groups!.commit(principal, seg[1]!, jsonBody(req));
+      return respond(done.started ? 202 : 200, requestId, done.body);
+    }
+
+    // Yanking or unyanking a group is a write (read-only mode refuses it, unlike a single version's yank) and not a create: a group that
+    // exists is yanked whatever the groups switch says. The token must be allowed to yank every member.
+    if (isGroupYank) {
+      await refuseIfReadOnly();
+      const principal = await api.auth.authenticate(authorization);
+      const done = await api.groups!.setYanked(principal, seg[1]!, jsonBody(req), (members) => {
+        for (const m of members.members) authorizeYank(api.auth, principal, m.name, m.version);
+      });
       return respond(done.started ? 202 : 200, requestId, done.body);
     }
 

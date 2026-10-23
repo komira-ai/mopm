@@ -36,7 +36,7 @@ describe.each(RIGS)('the group sweeper: %s', (_label, make) => {
     const s = await stalled();
     env.clock.advance(STALL_MS - MINUTE);
     const r = await sweep();
-    expect(r).toEqual({ validating: 1, committed: 0, resent: [], gaveUp: [], oldestSeconds: (STALL_MS - MINUTE) / 1000 });
+    expect(r).toEqual({ validating: 1, committed: 0, yanking: 0, resent: [], gaveUp: [], oldestSeconds: (STALL_MS - MINUTE) / 1000 });
     expect(env.groupQueue.sent).toEqual([]);
     expect((await s.header())!.resend).toBe(0);
   });
@@ -131,7 +131,7 @@ describe.each(RIGS)('the group sweeper: %s', (_label, make) => {
     expect((await env.abort(aborted.token, aborted.gid)).statusCode).toBe(200);
     env.clock.advance(STALL_MS * 2);
     const r = await sweep();
-    expect(r).toEqual({ validating: 0, committed: 0, resent: [], gaveUp: [], oldestSeconds: 0 });
+    expect(r).toEqual({ validating: 0, committed: 0, yanking: 0, resent: [], gaveUp: [], oldestSeconds: 0 });
     expect(env.groupQueue.sent).toEqual([]);
     expect(env.indexQueue.sent).toEqual([]);
     expect((await open.header())!.status).toBe('open');

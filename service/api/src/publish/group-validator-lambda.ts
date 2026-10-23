@@ -4,6 +4,7 @@ import { publishConfigFromEnv } from './config';
 import { DynamoPublishStore, publishTablesFor } from './dynamo-publish-store';
 import { flipGroup } from './group-chain';
 import { GROUP_ID } from './group-keys';
+import { yankRows } from './group-yank';
 import { validateGroup, type GroupValidatorDeps } from './group-validator';
 import { documentClient, regionOf, required, stageOf } from './wiring';
 
@@ -39,11 +40,17 @@ function configure(): GroupValidatorDeps {
 export const handler = async (event: SqsEvent): Promise<void> => {
   deps ??= configure();
   for (const r of event.Records) {
-    const msg = JSON.parse(r.body) as { type?: string; group_id?: unknown; attempt?: unknown; n?: unknown; resend?: unknown };
+    const msg = JSON.parse(r.body) as { type?: string; group_id?: unknown; attempt?: unknown; n?: unknown; resend?: unknown; seq?: unknown; op?: unknown };
     if (msg.type === 'flip_group' && typeof msg.group_id === 'string' && GROUP_ID.test(msg.group_id) && isCount(msg.attempt) && isCount(msg.resend)) {
       const flip = { groups: deps.registry, indexQueue: deps.indexQueue, groupQueue: deps.groupQueue, now: () => new Date(), log: (l: Record<string, unknown>) => console.log(JSON.stringify(l)) };
       const outcome = await flipGroup(flip, { type: 'flip_group', group_id: msg.group_id, attempt: msg.attempt, resend: msg.resend });
       console.log(JSON.stringify({ level: 'info', msg: 'flip_group', group_id: msg.group_id, outcome }));
+      continue;
+    }
+    if (msg.type === 'yank_group' && typeof msg.group_id === 'string' && GROUP_ID.test(msg.group_id) && isCount(msg.attempt) && isCount(msg.resend) && isCount(msg.seq) && (msg.op === 'yank' || msg.op === 'unyank')) {
+      const yank = { groups: deps.registry, indexQueue: deps.indexQueue, groupQueue: deps.groupQueue, now: () => new Date(), log: (l: Record<string, unknown>) => console.log(JSON.stringify(l)) };
+      const outcome = await yankRows(yank, { type: 'yank_group', group_id: msg.group_id, attempt: msg.attempt, op: msg.op, seq: msg.seq, resend: msg.resend });
+      console.log(JSON.stringify({ level: 'info', msg: 'yank_group', group_id: msg.group_id, op: msg.op, outcome }));
       continue;
     }
     if (msg.type !== 'validate_group' || typeof msg.group_id !== 'string' || typeof msg.attempt !== 'number') {

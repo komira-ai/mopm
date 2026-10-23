@@ -25,11 +25,18 @@ export type UserEvent =
  *   becomes `tombstoned` (nothing of it was ever published, so no file is kept); a row in any other state is left as it
  *   is, and a burn repeated is a no-op. It is the group's counterpart of the `tombstone` of a rejected single publish,
  *   which the store refuses for a row that belongs to a group.
+ * - `group_yank`: the group yank (src/publish/group-yank.ts). A `published` member becomes `yanked` and carries `seq`, the number of
+ *   that yank, in `group_yank_seq`. A member in any other state is left as it is: one somebody yanked by hand stays theirs (it has no
+ *   marker, so the group unyank leaves it alone), a tombstone stays a tombstone, and a repeat of the same yank changes nothing.
+ * - `group_unyank`: the group unyank. A `yanked` member that still carries `seq` becomes `published`; any other row is left as it is
+ *   (a member yanked by hand carries no marker, and one restored or taken down since needs nothing). A repeat changes nothing.
  */
 export type GroupEvent =
   | { type: 'stage'; group_id: string; attempt: number; fill: PublishFill }
   | { type: 'group_publish'; group_id: string; attempt: number; committed_at: string }
-  | { type: 'group_burn'; group_id: string; reason_code: string; date: string };
+  | { type: 'group_burn'; group_id: string; reason_code: string; date: string }
+  | { type: 'group_yank'; group_id: string; seq: number; reason: string }
+  | { type: 'group_unyank'; group_id: string; seq: number };
 
 export type VersionEvent = UserEvent | GroupEvent;
 
@@ -86,6 +93,15 @@ function applyGroupEvent(rec: VersionRecord, ev: GroupEvent): VersionRecord {
     // The row keeps its free_after: a group that ends after staging (rejected) must leave rows that are free once its header is gone.
     return next({ ...ev.fill, staged_attempt: ev.attempt });
   }
+  if (ev.type === 'group_yank') {
+    if (rec.state !== 'published') return rec;
+    return next({ state: 'yanked', yank_reason: ev.reason, group_yank_seq: ev.seq });
+  }
+  if (ev.type === 'group_unyank') {
+    if (rec.state !== 'yanked' || rec.group_yank_seq !== ev.seq) return rec;
+    const { yank_reason: _reason, group_yank_seq: _seq, ...rest } = rec;
+    return { ...rest, state: 'published', rev: rec.rev + 1 };
+  }
   if (ev.type === 'group_burn') {
     if (rec.state !== 'pending') return rec;
     return tombstoned(rec, { type: 'tombstone', reason_code: ev.reason_code, date: ev.date, unpublished: true }, next);
@@ -102,7 +118,7 @@ function applyGroupEvent(rec: VersionRecord, ev: GroupEvent): VersionRecord {
  * publish of a published one, tombstone of a tombstoned one); otherwise a new object with `rev` + 1.
  */
 export function applyEvent(rec: VersionRecord, ev: VersionEvent): VersionRecord {
-  if (ev.type === 'stage' || ev.type === 'group_publish' || ev.type === 'group_burn') return applyGroupEvent(rec, ev);
+  if (ev.type === 'stage' || ev.type === 'group_publish' || ev.type === 'group_burn' || ev.type === 'group_yank' || ev.type === 'group_unyank') return applyGroupEvent(rec, ev);
   const next = (patch: Partial<VersionRecord>): VersionRecord => ({ ...rec, ...patch, rev: rec.rev + 1 });
   switch (rec.state) {
     case 'tombstoned':
@@ -123,7 +139,7 @@ export function applyEvent(rec: VersionRecord, ev: VersionEvent): VersionRecord 
     case 'yanked':
       if (ev.type === 'yank') return rec;
       if (ev.type === 'unyank') {
-        const { yank_reason: _drop, ...rest } = rec;
+        const { yank_reason: _drop, group_yank_seq: _seq, ...rest } = rec;
         return { ...rest, state: 'published', rev: rec.rev + 1 };
       }
       if (ev.type === 'tombstone') return tombstoned(rec, ev, next);
@@ -140,6 +156,7 @@ function tombstoned(
   const files = rec.state === 'pending' && ev.unpublished ? [] : rec.files.map(({ url: _url, ...f }) => f);
   const out = next({ state: 'tombstoned', tombstone: { reason_code: ev.reason_code, date: ev.date }, files });
   delete out.yank_reason;
+  delete out.group_yank_seq;
   delete out.free_after;
   return out;
 }

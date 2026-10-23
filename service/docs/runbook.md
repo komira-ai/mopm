@@ -132,6 +132,19 @@ publish `published`. See "The sparse index writer" below.
   the message, says which step is next, so a message delivered twice or late does no harm. Installs see a group's packages arrive one at a
   time, over as many hops as it has subdirs and members: this is not atomic, and the CDN's cache adds up to a minute. The dedup id of a
   step is `grp:<group id>:<attempt>:<step>:<resend>`.
+- **Yank and unyank of a group.** `PUT /api/v1/groups/{id}/yank` with the body of a single version's yank (`{"yanked": true, "reason": "..."}`
+  or `{"yanked": false}`); read-only mode refuses it, the groups switch does not gate it, and the token needs `yank` or `publish` for every
+  member. Only a `visible` group can be yanked or unyanked (`group_not_settled`, 409, otherwise, and for a yank while an unyank runs and
+  the other way round). The request writes the intent on the header (`yank`: state `yanking`, the reason, a sequence number, `yanked_set`)
+  by a compare-and-set and queues `yank_group` on the group queue; the group stays `visible`. The job yanks each member that is
+  `published` (a member somebody yanked by hand, or took down, is left as it is), marks each row it changes with the yank's sequence number
+  and records those members in `yanked_set`, sixteen at a time. Then the files follow, as for a single yank: a repodata hop for each
+  subdir the yanked members have files in, an index hop for each of them in `write_order`, and the end (`yanked`). The unyank restores
+  only the members of `yanked_set` whose row still carries the marker (a member yanked by hand is not restored), then repodata hops, index
+  hops, and the end (`restored`). As for a single version, the rows come first: a build nobody asked for between the rows and the hops of
+  an unyank can write a restored member into the sparse index before repodata lists it, which installs refuse until the hops finish. While
+  a yank or unyank runs the group is in the sweeper's index again, so the group tool's status lists it (`yank` says where it is) and says
+  it is not safe to revert. Dedup ids: `grp:<group id>:<attempt>:y<seq>:<step>:<resend>` for a yank and `...:u<seq>:...` for an unyank.
 - **How a group is validated.** The commit moves the group to `validating` and queues `mopm-<stage>-group.fifo` (one FIFO group per
   group id; at most two validations run at once, and the single validator keeps its own five). The group validator Lambda checks every
   member's archives and stages its row (phase 1; a bad member, an upload older than 18 hours, a deadline that passed or too many bytes
@@ -142,9 +155,9 @@ publish `published`. See "The sparse index writer" below.
   invocations. Abort and expiry end only a group that is `open`; a validating group finishes or fails. `GET /groups/{id}` shows `failure`
   (`code`, `message`, the `member`) for a group that was rejected or failed.
 - **The sweeper.** The Lambda `mopm-<stage>-...GroupSweeper` runs every five minutes (rule `mopm-<stage>-group-sweeper`), reads the index
-  `by_sweep` (the headers of groups that are not over: a group leaves it when it is `visible`) and sends the validate message again for a
+  `by_sweep` (the headers of groups that are not over: a group leaves it when it is `visible`, and a yank puts it back until it ends) and sends the validate message again for a
   group that is `validating` and has shown no sign of life for 35 minutes (a message in flight is invisible for 30), and the step of the
-  chain that is next for a group that is `committed` and has shown none for 10 minutes (a hop is seconds), with a new dedup id each time,
+  chain that is next for a group that is `committed`, or the step of the yank or unyank that is next for a visible group that has one running, and has shown none for 10 minutes (a hop is seconds), with a new dedup id each time,
   at most three times. It never ends or burns a group. After the third resend it only counts the group in `group_sweeper_gave_up`,
   which raises `mopm-<stage>-group-stalled`.
 - **The group tool** (`service/api/src/ops/group-ops.ts`, built to `dist/ops/group-ops-bin.js`; run with the stage's credentials,

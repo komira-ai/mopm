@@ -6,8 +6,9 @@ import { ended, groupAudit } from '../publish/group-lifecycle';
  * Two modes, both flags (`--mode=status`, `--mode=fail`), run by a person with the stage's credentials from a built copy
  * (`npm run build` writes dist/ops/group-ops-bin.js; `node dist/ops/group-ops-bin.js --stage=<stage> --mode=status`).
  *
- *   status  Read-only. Lists every group that is not over (open, validating, or committed and not yet visible) with its phase,
- *           the age of its last sign of life and, for a committed one, its members not yet flipped, and the depth of the
+ *   status  Read-only. Lists every group that is not over (open, validating, committed and not yet visible, or visible with a yank or
+ *           unyank running: its `yank` says which) with its phase, the age of its last sign of life and, for a committed one, its
+ *           members not yet flipped, and the depth of the
  *           queues. It ends with one `verdict` line: `safe_to_revert` is true only when no group is in that list and the queues
  *           are empty. Exit status 0 when it is safe, 3 when it is not: run it before any revert is merged, because an older
  *           receiver acknowledges the messages of a newer one and loses them (design: rollback).
@@ -94,6 +95,9 @@ async function status(d: OpsDeps, now: Date): Promise<number> {
       committed: h.committed_at !== undefined,
       members,
       unflipped: h.committed_at !== undefined ? members - popcount(h.flipped, members) : null,
+      // A visible group is listed only while its yank or unyank is running: where it is, and how many members the yank has changed so far.
+      yank: h.yank ? h.yank.state : null,
+      yanked_members: h.yank ? popcount(h.yank.yanked_set, members) : null,
       last_sign_of_life_seconds: Math.max(0, Math.floor((now.getTime() - Math.max(Date.parse(h.progress_at), Date.parse(h.sweep_at ?? h.progress_at))) / 1000)),
       resend: h.resend,
       deadline_at: h.deadline_at,
