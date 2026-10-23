@@ -30,6 +30,7 @@ const conda = core.conda;
 const registry = core.registry;
 const credentials = core.credentials;
 const registry_cmd = @import("registry_cmd.zig");
+const group_publish = @import("group_publish.zig");
 
 const usage =
     \\usage: mopm pack    --compiler <mojo version> --mojoc [<subdir>=]<file>... [--native <id>=<subdir>:<file>...]
@@ -414,6 +415,7 @@ fn loadReadme(arena: Allocator, f: Flags, prep: Prepared, refused: *bool) anyerr
 }
 
 pub fn main(arena: Allocator, cmd_name: []const u8, args: []const []const u8, cli_version: []const u8) u8 {
+    if (std.mem.eql(u8, cmd_name, "publish") and group_publish.wants(args)) return group_publish.main(arena, args, cli_version);
     const cmd: Cmd = if (std.mem.eql(u8, cmd_name, "pack")) .pack else .publish;
     const parsed = parseFlags(arena, cmd, args) catch return 1;
     const f = switch (parsed) {
@@ -449,7 +451,7 @@ fn packCmd(arena: Allocator, f: Flags) anyerror!u8 {
 }
 
 /// `$MOPM_TOKEN` if set and not empty, else the stored credential.
-fn findToken(s: registry_cmd.Session) anyerror!?[]const u8 {
+pub fn findToken(s: registry_cmd.Session) anyerror!?[]const u8 {
     if (std.process.getEnvVarOwned(s.arena, "MOPM_TOKEN")) |t| {
         const trimmed = std.mem.trim(u8, t, " \t\r\n");
         if (trimmed.len > 0) return trimmed;
@@ -522,6 +524,30 @@ fn publishCmd(arena: Allocator, f: Flags, cli_version: []const u8) anyerror!u8 {
     return waitForPublish(s, token, status_url, name, version);
 }
 
+/// Every header the registry named for a PUT, as given (the client sets Content-Length itself from the body, to the same
+/// value); null after printing why not, when a header's value is not text.
+pub fn putHeaders(arena: Allocator, put_headers: ?std.json.Value) Allocator.Error!?[]const std.http.Header {
+    var headers = std.ArrayList(std.http.Header).init(arena);
+    if (put_headers) |ph| switch (ph) {
+        .object => |o| {
+            var it = o.iterator();
+            while (it.next()) |e| {
+                const value = switch (e.value_ptr.*) {
+                    .string => |v| v,
+                    else => {
+                        err("the registry named an upload header that is not text\n", .{});
+                        return null;
+                    },
+                };
+                if (std.ascii.eqlIgnoreCase(e.key_ptr.*, "content-length")) continue;
+                try headers.append(.{ .name = e.key_ptr.*, .value = value });
+            }
+        },
+        else => {},
+    };
+    return headers.items;
+}
+
 /// Begins the upload of `p` and PUTs its bytes; the upload id, or null after
 /// printing why not.
 fn uploadFile(s: registry_cmd.Session, token: []const u8, name: []const u8, version: []const u8, p: conda.Packed) anyerror!?[]const u8 {
@@ -547,31 +573,12 @@ fn uploadFile(s: registry_cmd.Session, token: []const u8, name: []const u8, vers
         return null;
     }
 
-    // Every header the registry named, as given. The client sets
-    // Content-Length itself from the body, to the same value.
-    var headers = std.ArrayList(std.http.Header).init(arena);
-    if (up.put_headers) |ph| switch (ph) {
-        .object => |o| {
-            var it = o.iterator();
-            while (it.next()) |e| {
-                const value = switch (e.value_ptr.*) {
-                    .string => |v| v,
-                    else => {
-                        err("the registry named an upload header that is not text\n", .{});
-                        return null;
-                    },
-                };
-                if (std.ascii.eqlIgnoreCase(e.key_ptr.*, "content-length")) continue;
-                try headers.append(.{ .name = e.key_ptr.*, .value = value });
-            }
-        },
-        else => {},
-    };
+    const headers = (try putHeaders(arena, up.put_headers)) orelse return null;
     // No bearer token: the URL is presigned.
     const put = try http.request(arena, .PUT, up.put_url, .{
         .body = p.bytes,
         .content_type = null,
-        .extra_headers = headers.items,
+        .extra_headers = headers,
     });
     if (!put.ok()) {
         err("uploading {s} failed: the storage answered HTTP {d}\n", .{ p.file_name, put.status });
@@ -854,6 +861,24 @@ test "the readme limit is 64 KiB" {
     try std.testing.expect(std.mem.indexOf(u8, why, "at most 65536 bytes") != null);
     try std.testing.expect((try readmeProblem(a, "README.md", "\xff\xfe")) != null);
     try std.testing.expect((try readmeProblem(a, "README.md", "# caf\xc3\xa9\n")) == null);
+}
+
+test "a PUT carries the headers the registry named, as given, except the length the client sets itself" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    const named = try std.json.parseFromSliceLeaky(std.json.Value, a, "{\"x-amz-checksum-sha256\":\"abc=\",\"Content-Length\":\"7\",\"x-amz-meta-n\":\"v\"}", .{});
+    const headers = (try putHeaders(a, named)).?;
+    try std.testing.expectEqual(@as(usize, 2), headers.len);
+    try std.testing.expectEqualStrings("x-amz-checksum-sha256", headers[0].name);
+    try std.testing.expectEqualStrings("abc=", headers[0].value);
+    try std.testing.expectEqualStrings("x-amz-meta-n", headers[1].name);
+    // None named, or not an object: none sent.
+    try std.testing.expectEqual(@as(usize, 0), (try putHeaders(a, null)).?.len);
+    try std.testing.expectEqual(@as(usize, 0), (try putHeaders(a, .{ .string = "x" })).?.len);
+    // A value that is not text is refused.
+    const odd = try std.json.parseFromSliceLeaky(std.json.Value, a, "{\"x-n\":3}", .{});
+    try std.testing.expect((try putHeaders(a, odd)) == null);
 }
 
 test "the status URL resolves against the API host" {
