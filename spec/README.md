@@ -14,6 +14,7 @@ contract. Nothing here describes the registry's internals.
 | `index.md`, `index-record.schema.json`, `index-config.schema.json`, `takedowns.schema.json` | the static sparse index the CLI reads |
 | `lock.md`, `lock.schema.json` | `mopm.lock`, the resolved closure (version 2: one build per Mojo version) |
 | `unit-graph.md` | `mopm plan --unit-graph`, the unit ids with their Mojo version, and `mopm unit build` and `mopm unit test` |
+| `staged-set.md` | the staged set `mopm publish --staged` publishes through one group, its `plan.json`, `state.json` and `report.json`, and `mopm yank --group` |
 
 ## How the pieces fit
 
