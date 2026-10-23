@@ -173,6 +173,38 @@ test "the group e2e token is read by e2e.yml and no other workflow, and no step 
     try expectRun("printf '%s' \"${MOPM_E2E_GROUP_TOKEN}\"", &.{"prints a secret-bearing variable"});
 }
 
+const leak_job_head =
+    \\jobs:
+    \\  j:
+    \\    runs-on: x
+    \\    steps:
+    \\      - run: ./t
+    \\        env:
+    \\
+;
+
+test "the group e2e token is matched without regard to case" {
+    try expectLint("ci.yml", head ++ leak_job_head ++ "          T: ${{ secrets.mopm_e2e_group_token }}\n", &.{"ci.yml: secrets.MOPM_E2E_GROUP_TOKEN is for the group-e2e job of e2e.yml alone"});
+    try expectLint("ci.yml", head ++ leak_job_head ++ "          T: ${{ SECRETS.Mopm_E2E_Group_Token }}\n", &.{"ci.yml: secrets.MOPM_E2E_GROUP_TOKEN is for the group-e2e job of e2e.yml alone"});
+    // In e2e.yml itself: a second reader in another job, by a lower-case spelling, is counted and named.
+    try expectRepo("e2e.yml", "          EXPECTED_IMPL: ts\n", "          EXPECTED_IMPL: ts\n          LEAK: ${{ secrets.mopm_e2e_group_token }}\n", &.{ "e2e.yml: secrets.MOPM_E2E_GROUP_TOKEN must be referenced exactly once, on the step that runs the check, got 2", "e2e.yml: job smoke-linux reads MOPM_E2E_GROUP_TOKEN; only group-e2e may" });
+}
+
+test "no workflow dumps the secrets context or indexes it" {
+    const dumped = "ci.yml: toJSON(secrets) reads secrets without naming them";
+    const indexed = "ci.yml: an index expression secrets[...] reads secrets without naming them";
+    try expectLint("ci.yml", head ++ leak_job_head ++ "          ALL: ${{ toJSON(secrets) }}\n", &.{dumped});
+    try expectLint("ci.yml", head ++ leak_job_head ++ "          ALL: ${{ tojson( secrets ) }}\n", &.{dumped});
+    try expectLint("ci.yml", head ++ leak_job_head ++ "          ALL: ${{ fromJSON(toJSON(secrets)).x }}\n", &.{dumped});
+    try expectLint("ci.yml", head ++ leak_job_head ++ "          T: ${{ secrets['MOPM_E2E_GROUP_TOKEN'] }}\n", &.{indexed});
+    try expectLint("ci.yml", head ++ leak_job_head ++ "          T: ${{ secrets [format('MOPM_E2E_{0}', 'GROUP_TOKEN')] }}\n", &.{indexed});
+    // The same in e2e.yml, which holds the one allowed reader: it names its secret with the dotted form, so these are refused there too.
+    try expectFile("e2e.yml", "          EXPECTED_IMPL: ts\n", "          EXPECTED_IMPL: ts\n          ALL: ${{ toJSON(secrets) }}\n", &.{"e2e.yml: toJSON(secrets) reads secrets without naming them"});
+    try expectFile("e2e.yml", "          EXPECTED_IMPL: ts\n", "          EXPECTED_IMPL: ts\n          T: ${{ secrets['MOPM_E2E_GROUP_TOKEN'] }}\n", &.{"e2e.yml: an index expression secrets[...] reads secrets without naming them"});
+    // A comment that mentions them, and the dotted form, are not refused.
+    try expectLint("ci.yml", head ++ "# never toJSON(secrets) or secrets['X']\n" ++ leak_job_head ++ "          T: ${{ secrets.OTHER }}\n", &.{});
+}
+
 test "oidc-subject-check.yml: manual, guarded, beta or no environment, exact permissions" {
     try expectRepo("oidc-subject-check.yml", "    environment: beta\n", "    environment: prod\n", &.{
         "oidc-subject-check.yml: claims-environment-beta must not use environment \"prod\"",

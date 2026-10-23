@@ -29,6 +29,12 @@ const Probe = enum { fresh, still_open, reopened };
 const Mode = struct {
     /// POST /groups is route_not_found (the stage's switch is off for this caller).
     groups_off: bool = false,
+    /// POST /groups is a 404 with this error code instead (empty: not used). Only `route_not_found` means the switch is off.
+    groups_404_code: []const u8 = "",
+    /// A new group (not the probe) answers `reserving` this many times before it has reached every member.
+    reserving_rounds: u32 = 0,
+    /// The chain's first member is already in storage when its group is created (`uploaded: true`, no upload URL).
+    prefilled_core: bool = false,
     /// The stage this registry says it is.
     stage: []const u8 = "beta",
     /// Members are readable while their group is still validating.
@@ -85,6 +91,7 @@ const Grp = struct {
     yank: ?[]const u8 = null,
     yank_polls: u32 = 0,
     failure_member: ?[]const u8 = null,
+    reserving_left: u32 = 0,
 };
 
 fn statusName(s: Status) []const u8 {
@@ -232,6 +239,7 @@ const Stub = struct {
     fn create(s: *Stub, a: Allocator, body: []const u8, authorization: ?[]const u8) !Reply {
         if (!s.authorized(authorization)) return fail(a, .unauthorized, "token_invalid", "the token is not valid");
         if (s.mode.groups_off) return fail(a, .not_found, "route_not_found", "no such route");
+        if (s.mode.groups_404_code.len > 0) return fail(a, .not_found, s.mode.groups_404_code, "not found");
         s.group_creates += 1;
         const sa = s.arena.allocator();
         const input = std.json.parseFromSliceLeaky(CreateIn, sa, body, .{ .ignore_unknown_fields = true }) catch return fail(a, .bad_request, "invalid_request", "not a group");
@@ -266,10 +274,18 @@ const Stub = struct {
                     .reopened => attempt = 2,
                 }
             }
-            try s.groups.append(.{ .id = id, .attempt = attempt, .members = members, .created = now, .deadline = now + s.mode.deadline_secs });
+            // The chain's core package (version 1.x.y, no dependency) is built here the way the check builds it.
+            if (s.mode.prefilled_core and !probe and std.mem.startsWith(u8, members[0].version, "1.") and std.mem.eql(u8, members[0].name, g.pkg_core)) {
+                const pkg = try g.buildPkg(sa, members[0].name, members[0].version, "", "");
+                if (std.mem.eql(u8, pkg.sha256, members[0].sha256)) members[0].bytes = pkg.bytes;
+            }
+            try s.groups.append(.{ .id = id, .attempt = attempt, .members = members, .created = now, .deadline = now + s.mode.deadline_secs, .reserving_left = if (probe) 0 else s.mode.reserving_rounds });
             existing = s.groups.items.len - 1;
         }
-        const gr = s.groups.items[existing.?];
+        const gr = &s.groups.items[existing.?];
+        const Reserving = struct { done: u64, total: u64 };
+        const still_reserving = gr.reserving_left > 0;
+        if (still_reserving) gr.reserving_left -= 1;
         const Up = struct { subdir: []const u8, filename: []const u8, upload_id: []const u8, uploaded: bool, put_url: ?[]const u8 = null, put_headers: ?struct { @"x-amz-meta-e2e": []const u8 } = null };
         const Ans = struct { name: []const u8, version: []const u8, action: []const u8, files: []const Up };
         const answers = try a.alloc(Ans, gr.members.len);
@@ -291,6 +307,7 @@ const Stub = struct {
             .status = statusName(gr.status),
             .attempt = gr.attempt,
             .deadline_at = try rfc3339(a, gr.deadline),
+            .reserving = if (still_reserving) Reserving{ .done = gr.reserving_left, .total = gr.reserving_left + 1 } else null,
             .members = answers,
         });
     }
@@ -730,6 +747,47 @@ test "the stage's groups switch is off: the run skips after one create and publi
     try std.testing.expectEqual(@as(usize, 0), ran.stub.storage_puts);
     // The health read and the one create that was refused.
     try std.testing.expectEqual(@as(usize, 2), ran.stub.requests);
+}
+
+test "a 404 whose error code is not route_not_found is a failure, not a skip" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const a = arena.allocator();
+    try guard();
+    const ran = try runCheck(a, .{ .groups_404_code = "group_not_found" }, test_token, "beta");
+    try std.testing.expect(!ran.result.skipped);
+    try std.testing.expect(failed(ran.result, "the switch: the e2e actor may create groups"));
+    try std.testing.expect(std.mem.startsWith(u8, ran.result.line, "group-e2e: FAIL beta: "));
+    try std.testing.expectEqual(@as(usize, 0), ran.stub.storage_puts);
+}
+
+test "a member the registry already holds is not uploaded again" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const a = arena.allocator();
+    try guard();
+    const ran = try runCheck(a, .{ .prefilled_core = true }, test_token, "beta");
+    for (ran.result.notes) |n| std.debug.print("{s}", .{n});
+    try std.testing.expect(!ran.result.skipped);
+    try std.testing.expectEqual(@as(usize, 0), ran.result.failures);
+    // Four files go to the storage, not five: the chain's first member was there already.
+    try std.testing.expectEqual(@as(usize, 4), ran.stub.storage_puts);
+    try std.testing.expect(passed(ran.result, "chain: the group becomes visible"));
+    try std.testing.expect(passed(ran.result, "lock: zz_e2e_core is locked at the uploaded file"));
+}
+
+test "a group that is still reserving its members is created again until it has reached them all" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const a = arena.allocator();
+    try guard();
+    const ran = try runCheck(a, .{ .reserving_rounds = 2 }, test_token, "beta");
+    for (ran.result.notes) |n| std.debug.print("{s}", .{n});
+    try std.testing.expect(!ran.result.skipped);
+    try std.testing.expectEqual(@as(usize, 0), ran.result.failures);
+    // The probe once; the chain and the rejected group three times each (two answers of `reserving`, then the full one).
+    try std.testing.expectEqual(@as(usize, 7), ran.stub.group_creates);
+    // The creating call was the 201; the calls after it did not make a second group.
+    try std.testing.expect(passed(ran.result, "chain: the group is created open"));
+    try std.testing.expectEqual(@as(usize, 3), ran.stub.groups.items.len);
+    try std.testing.expectEqual(@as(usize, 5), ran.stub.storage_puts);
 }
 
 test "prod is never exercised" {

@@ -297,8 +297,15 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
     try varsProblems(a, f, text, out);
 
     // The e2e actor's token is read by one job of e2e.yml (groupE2eProblems holds that job to its conditions) and by nothing else.
-    if (!std.mem.eql(u8, base, "e2e.yml") and std.mem.indexOf(u8, try c.nonCommentLines(a, text), "secrets." ++ group_secret) != null) {
+    // GitHub reads context names and function names without regard to case, so the match does too.
+    const live_lower = try std.ascii.allocLowerString(a, try c.nonCommentLines(a, text));
+    if (!std.mem.eql(u8, base, "e2e.yml") and std.mem.indexOf(u8, live_lower, "secrets." ++ group_secret_lower) != null) {
         try c.problem(a, out, prefix ++ "{s}: secrets." ++ group_secret ++ " is for the " ++ group_job ++ " job of e2e.yml alone", .{f});
+    }
+    // A name can be built or the whole context dumped without ever writing the secret's name, so neither form is allowed in any
+    // workflow: the group-e2e step names its one secret with the dotted form.
+    if (secretsDump(live_lower)) |what| {
+        try c.problem(a, out, prefix ++ "{s}: {s} reads secrets without naming them; name each secret with secrets.NAME", .{ f, what });
     }
 
     // Only promote.yml passes secrets to its reusable calls, and it must do so on every call.
@@ -610,6 +617,32 @@ fn indexGateProblems(a: Allocator, doc: Value, out: *Out) !void {
 /// The repository secret of the group end-to-end check: the token of the e2e actor, which may create groups on beta and gamma.
 const group_secret = "MOPM_E2E_GROUP_TOKEN";
 const group_secret_ref = "${{ secrets." ++ group_secret ++ " }}";
+const group_secret_lower = "mopm_e2e_group_token";
+
+/// An expression that reaches secrets without the dotted name, in lower-cased text: `toJSON(secrets)` (spaces allowed) or an
+/// index `secrets[...]`. Returns what it found, or null.
+fn secretsDump(s: []const u8) ?[]const u8 {
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, s, from, "secrets")) |i| : (from = i + 1) {
+        if (!c.boundaryBefore(s, i)) continue;
+        var j = i + "secrets".len;
+        while (j < s.len and c.isSpace(s[j])) j += 1;
+        if (j < s.len and s[j] == '[') return "an index expression secrets[...]";
+        // toJSON( secrets ): walk back over spaces and the opening parenthesis.
+        var k = i;
+        while (k > 0 and c.isSpace(s[k - 1])) k -= 1;
+        if (k == 0 or s[k - 1] != '(') continue;
+        k -= 1;
+        while (k > 0 and c.isSpace(s[k - 1])) k -= 1;
+        if (k >= 6 and std.mem.eql(u8, s[k - 6 .. k], "tojson")) return "toJSON(secrets)";
+    }
+    return null;
+}
+
+/// How many times `needle` (lower case) occurs in `hay` without regard to case.
+fn countFold(a: Allocator, hay: []const u8, needle: []const u8) !usize {
+    return std.mem.count(u8, try std.ascii.allocLowerString(a, hay), needle);
+}
 const group_job = "group-e2e";
 const group_token_env = "MOPM_E2E_TOKEN";
 
@@ -619,7 +652,7 @@ fn envHolding(env: ?Value, needle: []const u8) ?[]const u8 {
     if (m != .object) return null;
     var it = m.object.iterator();
     while (it.next()) |e| {
-        if (e.value_ptr.* == .string and std.mem.indexOf(u8, e.value_ptr.string, needle) != null) return e.key_ptr.*;
+        if (e.value_ptr.* == .string and std.ascii.indexOfIgnoreCase(e.value_ptr.string, needle) != null) return e.key_ptr.*;
     }
     return null;
 }
@@ -639,7 +672,7 @@ fn groupE2eProblems(a: Allocator, doc: Value, text: []const u8, out: *Out) !void
     const jobs = c.get(doc, "jobs");
     // The secret is named once in the file, outside comments, and the workflow itself carries no env.
     const live = try c.nonCommentLines(a, text);
-    const mentions = std.mem.count(u8, live, "secrets." ++ group_secret);
+    const mentions = try countFold(a, live, "secrets." ++ group_secret_lower);
     if (mentions != 1) try c.problem(a, out, prefix ++ "e2e.yml: secrets." ++ group_secret ++ " must be referenced exactly once, on the step that runs the check, got {d}", .{mentions});
     if (envHolding(c.get(doc, "env"), "secrets.") != null) try c.problem(a, out, prefix ++ "e2e.yml: the workflow must not set env from secrets (a secret belongs to the step that reads it)", .{});
     if (jobs) |js| if (js == .object) {
@@ -647,7 +680,7 @@ fn groupE2eProblems(a: Allocator, doc: Value, text: []const u8, out: *Out) !void
         while (it.next()) |e| {
             const jn = e.key_ptr.*;
             if (std.mem.eql(u8, jn, group_job)) continue;
-            if (std.mem.indexOf(u8, try c.inspect(a, e.value_ptr.*), group_secret) != null) {
+            if (try countFold(a, try c.inspect(a, e.value_ptr.*), group_secret_lower) != 0) {
                 try c.problem(a, out, prefix ++ "e2e.yml: job {s} reads " ++ group_secret ++ "; only " ++ group_job ++ " may", .{jn});
             }
         }

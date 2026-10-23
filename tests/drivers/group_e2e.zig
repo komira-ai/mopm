@@ -424,9 +424,11 @@ const pre_commit = [_][]const u8{ "open", "validating" };
 const ended = [_][]const u8{ "rejected", "failed", "expired", "aborted", "superseded" };
 
 /// Create a group (again, while it says it has not reached every member) and return the answer that holds every member.
-fn createGroup(cx: *Cx, label: []const u8, pkgs: []const Pkg) !?struct { ans: http.Answer, created: Created } {
+fn createGroup(cx: *Cx, label: []const u8, pkgs: []const Pkg) !?struct { ans: http.Answer, created: Created, first_status: u16 } {
     const body = try groupBody(cx.a, pkgs);
     var rounds: u32 = 0;
+    // The first call is the one that makes the group (201); the calls after it only ask whether it has reached every member.
+    var first_status: ?u16 = null;
     while (rounds < 20) : (rounds += 1) {
         const ans = try cx.api(.POST, "/groups", body);
         if (ans.status != 201 and ans.status != 200) {
@@ -437,7 +439,8 @@ fn createGroup(cx: *Cx, label: []const u8, pkgs: []const Pkg) !?struct { ans: ht
             cx.fail(try std.fmt.allocPrint(cx.a, "{s}: the create answer is a group", .{label}), ans.body);
             return null;
         };
-        if (created.reserving == null) return .{ .ans = ans, .created = created };
+        if (first_status == null) first_status = ans.status;
+        if (created.reserving == null) return .{ .ans = ans, .created = created, .first_status = first_status orelse ans.status };
     }
     cx.fail(try std.fmt.allocPrint(cx.a, "{s}: the registry reserved every member", .{label}), "still reserving after 20 calls");
     return null;
@@ -585,7 +588,7 @@ fn chainStep(cx: *Cx) !?Chain {
     };
     const L = "chain";
     const made = (try createGroup(cx, L, &pkgs)) orelse return null;
-    cx.check("chain: the group is created open", made.ans.status == 201 and std.mem.eql(u8, made.created.status, "open") and made.created.attempt == 1, made.created.status);
+    cx.check("chain: the group is created open", made.first_status == 201 and std.mem.eql(u8, made.created.status, "open") and made.created.attempt == 1, made.created.status);
     var all_new = made.created.members.len == 3;
     for (made.created.members) |m| {
         if (!std.mem.eql(u8, m.action, "new")) all_new = false;
