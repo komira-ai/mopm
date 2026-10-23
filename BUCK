@@ -197,7 +197,7 @@ zig_test(  # buck-only: mopm pack and publish against the fake registry and a st
     **_TOOLS
 )
 
-zig_exe(  # buck-only: stands in for mojo in :group_publish; prints whether MOPM_TOKEN reached it
+zig_exe(  # buck-only: stands in for mojo, the test binary and pixi in :group_publish; records whether MOPM_TOKEN reached it
     name = "env-probe",
     src = "tests/drivers/env_probe.zig",
     **_TOOLS
