@@ -607,7 +607,7 @@ fn buildFile(arena: std.mem.Allocator, tc: autolink.Toolchain, f: File, src: []c
         .out = bin,
         .flags = flags,
     }, tc.plan);
-    var env_map = try std.process.getEnvMap(arena);
+    var env_map = try core.child_env.forChild(arena);
     try mojo_cmd.applyEnv(&env_map, cmd.env);
     const r = std.ChildProcess.run(.{ .allocator = arena, .argv = cmd.argv, .env_map = &env_map, .max_output_bytes = 16 << 20 }) catch |e| {
         try err.print("mopm test: {s}: cannot run {s}: {s}\n", .{ f.display, cmd.argv[0], @errorName(e) });
@@ -627,7 +627,8 @@ const Checked = enum { same, warned, failed, protocol };
 /// List the built binary with `--skip-all` and compare with the scan.
 fn check(arena: std.mem.Allocator, o: Opts, f: File, sc: test_scan.Scan, bin: []const u8) !Checked {
     const err = std.io.getStdErr().writer();
-    const listed = try std.ChildProcess.run(.{ .allocator = arena, .argv = &.{ bin, "--skip-all" }, .max_output_bytes = 16 << 20 });
+    var listed_env = try core.child_env.forChild(arena);
+    const listed = try std.ChildProcess.run(.{ .allocator = arena, .argv = &.{ bin, "--skip-all" }, .env_map = &listed_env, .max_output_bytes = 16 << 20 });
     if (!exitedZero(listed.term)) {
         try err.print("mopm test: {s}: `{s} --skip-all` failed:\n{s}{s}", .{ f.display, bin, listed.stdout, listed.stderr });
         return .failed;

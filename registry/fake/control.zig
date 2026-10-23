@@ -77,6 +77,29 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
         try s.faults.append(s.alloc, .{ .operation = try s.alloc.dupe(u8, op), .code = code });
         return resp.json(ctx.arena, .ok, .{});
     }
+    // {"enabled"}: whether group publishing is on. Off, createGroup answers
+    // route_not_found, as a registry that has not enabled groups does.
+    if (std.mem.eql(u8, path, "/groups")) {
+        s.groups_enabled = util.getBool(obj, "enabled") orelse return resp.invalid(ctx.arena, "'enabled' must be a boolean");
+        return resp.json(ctx.arena, .ok, .{});
+    }
+    // {"advance_seconds"}: the clock moves forward by that much when the next
+    // group commit arrives (once), so a group can pass its deadline between
+    // the create and the commit.
+    if (std.mem.eql(u8, path, "/commit_clock")) {
+        const secs = util.getInt(obj, "advance_seconds") orelse return resp.invalid(ctx.arena, "'advance_seconds' must be an integer");
+        if (secs < 0) return resp.invalid(ctx.arena, "the clock only moves forward");
+        s.clock_jump_on_commit = secs;
+        return resp.json(ctx.arena, .ok, .{});
+    }
+    // {"after"}: after that many more PUTs of upload bytes, the next one answers
+    // unavailable (once), as storage can fail in the middle of a group.
+    if (std.mem.eql(u8, path, "/put_fault")) {
+        const n = util.getInt(obj, "after") orelse return resp.invalid(ctx.arena, "'after' must be an integer");
+        if (n < 0) return resp.invalid(ctx.arena, "'after' must not be negative");
+        s.put_fault_after = @intCast(n);
+        return resp.json(ctx.arena, .ok, .{});
+    }
     // {"name", "repository"}: a trusted publisher of the package, so a CI
     // identity token whose repository claim is that repository may publish.
     if (std.mem.eql(u8, path, "/trusted")) {

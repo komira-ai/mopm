@@ -32,6 +32,7 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const tar_read = @import("tar_read.zig");
 const prefix_mod = @import("conda_prefix.zig");
+const child_env = @import("child_env.zig");
 
 /// The size of the zstd window buffer `install` needs: conda packages use
 /// windows of up to 8 MiB (zstd level 19) and mopm accepts up to 64 MiB.
@@ -539,6 +540,8 @@ const Unpacker = struct {
     fn codesign(self: *Unpacker, rel: []const u8) !void {
         const abs = try self.opts.dest.realpathAlloc(self.arena, rel);
         var child = std.process.Child.init(&.{ "codesign", "--force", "--sign", "-", abs }, self.arena);
+        var child_env_map = try child_env.forChild(self.arena);
+        child.env_map = &child_env_map;
         child.stdout_behavior = .Ignore;
         child.stderr_behavior = .Ignore;
         const term = child.spawnAndWait() catch |err|

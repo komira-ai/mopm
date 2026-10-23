@@ -26,6 +26,7 @@ line. The API is under `/api/v1`. It answers one request at a time.
 | packages | `searchPackages` (name prefix, `sort`, cursors), `getPackage`, `claimPackage`, `listVersions` |
 | owners | `listOwners`, `inviteOwner`, `removeOwner`, `listInvitations`, `acceptInvitation` |
 | publish | `beginUpload` (the `put_url` is the fake's own `/_fake/upload/<id>`, which refuses bytes of another size or sha256), `commitPublish` (single-use uploads, resume while pending, `version_exists` for a version that exists; versions are `MAJOR.MINOR.PATCH` only, anything else is `invalid_version`; `limit_exceeded` when a file would take a package over its byte limit, 10 GB unless `/_fake/limits` lowers it), `getPublishStatus`, `setYanked`, `getVersion` |
+| groups | `createGroup`, `getGroup`, `abortGroup`, `commitGroup`, `yankGroup` (spec/staged-set.md; groups.zig). A group's id is a function of the caller and the declared set, so the same request is the same group; it is open for 12 hours of the fake's clock (an open group past that is expired by the next request that meets it) and reopens with the next `attempt` if it ended without committing. After the commit it runs one stage per status poll, as a single publish does: `validating`, `committed`, `visible`; a file whose bytes start with `REJECT:<rejection code>` ends it `rejected` and nothing is visible. A group yank or unyank moves one stage per poll too (`yanking`, `yanked`; `unyanking`, `restored`). The fake keeps no rate counter for groups: use `/_fake/fault`. |
 
 Claims follow the fake's own rules: `mopm`, `mojo`, `max`, `modular`, `std`
 and `stdlib` are reserved, and a name is too similar to another when the two
@@ -56,6 +57,9 @@ Not part of the contract. Each is a POST with a JSON object body.
 | `/_fake/fault` | `{"operation", "code"}` | the next request to that operationId answers that error code |
 | `/_fake/trusted` | `{"name", "repository"}` | a trusted publisher of a package, for `exchangeOidcToken` |
 | `/_fake/tombstone` | `{"name", "version", "reason_code"}` | an administrator's takedown: no `url`, the sha256 stays |
+| `/_fake/groups` | `{"enabled"}` | group publishing on (the default) or off: off, `createGroup` answers `route_not_found`, as a registry that has not enabled groups does |
+| `/_fake/put_fault` | `{"after"}` | after that many more PUTs of upload bytes, the next one answers `unavailable` (once), as storage can fail in the middle of a group |
+| `/_fake/commit_clock` | `{"advance_seconds"}` | the clock moves forward by that much when the next group commit arrives (once), so a group can pass its deadline between the create and the commit |
 
 ## Tested how
 
