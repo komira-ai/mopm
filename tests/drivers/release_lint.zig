@@ -455,10 +455,12 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
         if (!c.eqlList(got, &.{"signed-assets"})) try c.problem(a, out, prefix ++ "release.yml: verify must download exactly the artifact signed-assets, got {s}", .{try c.inspectList(a, got)});
         if (stepRunContaining(verify, "verify-dir") == null) try c.problem(a, out, prefix ++ "release.yml: verify must run cut_release verify-dir", .{});
         if (!usesAction(verify, "sigstore/cosign-installer@")) try c.problem(a, out, prefix ++ "release.yml: verify needs cosign (sigstore/cosign-installer) to check the signatures", .{});
+        if (usesAction(verify, "sigstore/cosign-installer@") and !cosignReleasePinned(verify)) try c.problem(a, out, prefix ++ "release.yml: verify installs cosign without `cosign-release: " ++ cosign_release ++ "` (the retry of the trusted-root fetch reads that release's stderr)", .{});
     }
     if (c.get(jv, "attest")) |attest| {
         if (stepRunContaining(attest, "release\" sign dist") == null) try c.problem(a, out, prefix ++ "release.yml: attest must sign the files (`release sign dist`)", .{});
         if (!usesAction(attest, "sigstore/cosign-installer@")) try c.problem(a, out, prefix ++ "release.yml: attest needs cosign (sigstore/cosign-installer) to sign", .{});
+        if (usesAction(attest, "sigstore/cosign-installer@") and !cosignReleasePinned(attest)) try c.problem(a, out, prefix ++ "release.yml: attest installs cosign without `cosign-release: " ++ cosign_release ++ "` (the retry of the trusted-root fetch reads that release's stderr)", .{});
         // The tarballs attested are the tarballs the user beta passed.
         const tested_at = stepIndexRunContaining(attest, "release\" tested ");
         const sums_at = stepIndexRunContaining(attest, "release\" sums ");
@@ -874,6 +876,22 @@ fn hasWords(line: []const u8, words: []const u8) bool {
 }
 
 /// Does some step of `job` use an action starting with `prefix_text`?
+/// The cosign that the release installs. The retry of the trusted-root fetch in tools/cut_release.zig reads that release's stderr, so every install names it.
+const cosign_release = "v3.0.6";
+
+/// Every cosign-installer step of `job` has `with.cosign-release` equal to `cosign_release`.
+fn cosignReleasePinned(job: Value) bool {
+    const steps = c.get(job, "steps") orelse return false;
+    if (steps != .array) return false;
+    for (steps.array.items) |st| {
+        const u = c.str(c.get(st, "uses")) orelse continue;
+        if (!std.mem.startsWith(u8, u, "sigstore/cosign-installer@")) continue;
+        const given = c.str(c.get(c.get(st, "with") orelse return false, "cosign-release")) orelse return false;
+        if (!std.mem.eql(u8, given, cosign_release)) return false;
+    }
+    return true;
+}
+
 fn usesAction(job: Value, prefix_text: []const u8) bool {
     const steps = c.get(job, "steps") orelse return false;
     if (steps != .array) return false;
