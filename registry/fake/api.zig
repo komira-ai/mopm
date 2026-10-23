@@ -13,6 +13,7 @@ const auth = @import("auth.zig");
 const control = @import("control.zig");
 const packages = @import("packages.zig");
 const publish = @import("publish.zig");
+const groups = @import("groups.zig");
 const files = @import("files.zig");
 
 /// One request, with everything a handler reads.
@@ -70,6 +71,11 @@ const routes = [_]Route{
     .{ .method = .POST, .pattern = &.{ "packages", "{}", "{}", "publish" }, .operation = "commitPublish", .handler = publish.commitPublish },
     .{ .method = .GET, .pattern = &.{ "publishes", "{}" }, .operation = "getPublishStatus", .handler = publish.getPublishStatus },
     .{ .method = .PUT, .pattern = &.{ "packages", "{}", "{}", "yank" }, .operation = "setYanked", .handler = publish.setYanked },
+    .{ .method = .POST, .pattern = &.{"groups"}, .operation = "createGroup", .handler = groups.createGroup },
+    .{ .method = .GET, .pattern = &.{ "groups", "{}" }, .operation = "getGroup", .handler = groups.getGroup },
+    .{ .method = .DELETE, .pattern = &.{ "groups", "{}" }, .operation = "abortGroup", .handler = groups.abortGroup },
+    .{ .method = .POST, .pattern = &.{ "groups", "{}", "commit" }, .operation = "commitGroup", .handler = groups.commitGroup },
+    .{ .method = .PUT, .pattern = &.{ "groups", "{}", "yank" }, .operation = "yankGroup", .handler = groups.yankGroup },
 };
 
 /// The `{}` segments of `segs` if it matches `pattern`, else null.
