@@ -109,9 +109,10 @@ export async function routePublish(req: HttpRequest, api: PublishApi, requestId:
       return respond(done.started ? 202 : 200, requestId, done.body);
     }
 
-    // Yanking or unyanking a group is not gated by read-only mode, as a single version's yank is not: it is what an owner reaches for in an incident. It is not a create: a group that
+    // Yanking or unyanking a group is a write (read-only mode refuses it, unlike a single version's yank) and not a create: a group that
     // exists is yanked whatever the groups switch says. The token must be allowed to yank every member.
     if (isGroupYank) {
+      await refuseIfReadOnly();
       const principal = await api.auth.authenticate(authorization);
       const done = await api.groups!.setYanked(principal, seg[1]!, jsonBody(req), (members) => {
         for (const m of members.members) authorizeYank(api.auth, principal, m.name, m.version);

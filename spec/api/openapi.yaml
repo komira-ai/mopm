@@ -733,7 +733,7 @@ paths:
         The body is that of `setYanked`. `yanked: true` yanks the group's versions that are `published`; `yanked: false` restores
         exactly the versions that yank changed. Allowed for an account that owns every package in it now, whether or not it created the
         group (a token outlives an ownership change; an account that has lost one refuses with `not_owner`), with a token
-        that has the `yank` or `publish` scope for every member. Read-only mode does not refuse it, as it does not refuse a single version's yank.
+        that has the `yank` or `publish` scope for every member (read-only mode refuses it).
 
         Only a group that is `visible` can be yanked or unyanked; a group that has not committed, or whose files are still being
         released after the commit, is refused with `group_not_settled`, as is a yank while an unyank of the group is running and the

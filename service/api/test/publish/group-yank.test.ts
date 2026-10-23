@@ -281,24 +281,14 @@ describe.each(RIGS)('the yank of a group: %s', (_label, make) => {
       expect(indexState('lib')).toBe('yanked');
     });
 
-    test('read-only mode does not stop a yank or an unyank, as it does not stop a single version\'s: both are accepted and their chains run', async () => {
-      const s = await visible();
-      env.flags.ro = true;
-      expect((await yank(s)).statusCode).toBe(202);
-      await finish();
-      expect((await header(s)).yank).toMatchObject({ state: 'yanked', reason: REASON });
-      for (const n of NAMES) expect(await stored(n)).toMatchObject({ state: 'yanked' });
-      expect(indexState('lib')).toBe('yanked');
-      expect((await unyank(s)).statusCode).toBe(202);
-      await finish();
-      expect((await header(s)).yank).toMatchObject({ state: 'restored' });
-      for (const n of NAMES) expect(await stored(n)).toMatchObject({ state: 'published' });
-      expect(indexState('lib')).toBe('published');
-    });
-
-    test('a token that does not cover every member, an unknown group and a stranger are refused, and so is a bad body; the group is unchanged', async () => {
+    test('read-only mode refuses it, and so does a token that does not cover every member, an unknown group and a stranger; the body is checked', async () => {
       const s = await visible();
       const before = await header(s);
+      env.flags.ro = true;
+      const ro = await yank(s);
+      expect(ro.statusCode).toBe(503);
+      expect(errorCode(ro)).toBe('read_only_mode');
+      env.flags.ro = false;
 
       const partial = await env.token(1, ['app', 'base']);
       const scope = await put(s, { yanked: true, reason: REASON }, partial);
