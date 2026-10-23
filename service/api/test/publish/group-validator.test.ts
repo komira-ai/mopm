@@ -37,7 +37,7 @@ describe.each(RIGS)('the group validator: %s', (_label, make) => {
       expect(h).toMatchObject({ status: 'committed', attempt: 1, phase: 3, resend: 0, write_order: [0, 1, 2] });
       expect(h.committed_at).toBeDefined();
       for (const field of ['validated', 'staged', 'copied'] as const) expect(bitmapIndexes(h[field])).toEqual([0, 1, 2]);
-      // The header stays in the sweeper's index until the chain that follows a commit exists; nothing here ends it.
+      // The header stays in the sweeper's index until the chain that follows a commit has made it visible; nothing here ends it.
       expect(h.sweep_pk).toBe('active');
       expect(h.expires_at).toBeUndefined();
 

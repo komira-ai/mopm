@@ -76,10 +76,22 @@ export interface IndexMessage {
   subdir: string;
   publish_id?: string;
   /**
-   * Gate for a change the CLI must not see in the sparse index before repodata shows it (unyank): once this
-   * subdir is rewritten, rewrite `next[0]` (carrying the rest), and after the last one send `index_pkg`.
+   * What follows this job. Either the gate for a change the CLI must not see in the sparse index before repodata shows it
+   * (unyank): once this subdir is rewritten, rewrite `next[0]` (carrying the rest), and after the last one send `index_pkg`.
+   * Or `group`: this job is a repodata hop of a committed group's chain (src/publish/group-chain.ts): it releases the subdir on
+   * the group's header, rewrites the repodata, and sends the chain's next step, which the header says.
    */
-  then?: { name: string; rev: number; next: string[] };
+  then?: { name: string; rev: number; next: string[] } | { group: GroupHop };
+}
+/**
+ * The chain of a committed group (repodata hops, index hops, the flip) is made of messages that name the group, the attempt that
+ * committed and the resend count: the sweeper's resends of a step carry a higher count, so that each is a message of its own (a
+ * FIFO queue drops a repeated dedup id for five minutes).
+ */
+export interface GroupHop {
+  group_id: string;
+  attempt: number;
+  resend: number;
 }
 /**
  * Rewrite `index/<aa>/<bb>/<name>` from the package's rows as they are when the job runs (not as they were when
@@ -91,6 +103,8 @@ export interface IndexPkgMessage {
   rev: number;
   /** The publish to move to `published` once the file is written. */
   publish_id?: string;
+  /** Set when this is an index hop of a committed group's chain: `position` is the package's place in the header's `write_order`. */
+  group?: GroupHop & { position: number };
 }
 /** Rebuild `index/takedowns.json` from every tombstoned row. FIFO group `takedowns`. */
 export interface IndexTakedownsMessage {
@@ -107,4 +121,15 @@ export interface ValidateGroupMessage {
   group_id: string;
   attempt: number;
   n: number;
+}
+
+/**
+ * What the group queue carries after a group's index hops: flip the members of a committed group to `published` and make the
+ * group `visible` (src/publish/group-chain.ts). FIFO group: the group id.
+ */
+export interface FlipGroupMessage {
+  type: 'flip_group';
+  group_id: string;
+  attempt: number;
+  resend: number;
 }

@@ -83,6 +83,7 @@ export class GroupEnv {
       publishes: this.publishes,
       objects: this.objects,
       groupQueue: this.groupQueue,
+      indexQueue: this.indexQueue,
       config: this.config,
       channelUrl: 'https://conda.example.invalid',
       now: this.clock.now,

@@ -98,7 +98,7 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     const st = statementsOf(fn('publish/indexer-lambda.handler'));
     const own = st.filter((s) => s.Sid);
     expect(own.map((s) => s.Sid).sort()).toEqual(
-      ['InvalidateChannelRepodata', 'ReadAndUpdatePublishes', 'ReadRegistryForIndex', 'SendPackageIndexJobs', 'WriteRepodata', 'WriteSparseIndex'].sort(),
+      ['InvalidateChannelRepodata', 'ReadAndUpdatePublishes', 'ReadRegistryForIndex', 'SendFlipMessages', 'SendPackageIndexJobs', 'WriteRepodata', 'WriteSparseIndex'].sort(),
     );
     const by = (sid: string) => own.find((s) => s.Sid === sid);
     expect(acts(by('WriteRepodata'))).toEqual(['s3:PutObject']);
@@ -121,6 +121,11 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     expect(acts(by('SendPackageIndexJobs'))).toEqual(['sqs:SendMessage']);
     expect(res(by('SendPackageIndexJobs'))).toContain('IndexQueue');
     expect(res(by('SendPackageIndexJobs'))).not.toContain('Validate');
+    // The last index hop of a group's chain queues the flip on the group queue: send only, that queue and no other.
+    expect(acts(by('SendFlipMessages'))).toEqual(['sqs:SendMessage']);
+    expect(res(by('SendFlipMessages'))).toContain('GroupQueue');
+    expect(res(by('SendFlipMessages'))).not.toContain('IndexQueue');
+    expect(res(by('SendFlipMessages'))).not.toContain('Validate');
     expect(acts(by('InvalidateChannelRepodata'))).toEqual(['cloudfront:CreateInvalidation']);
     expect(res(by('InvalidateChannelRepodata'))).toContain('distribution/');
     expect(acts(by('ReadRegistryForIndex')).sort()).toEqual(['dynamodb:Query', 'dynamodb:Scan']);
@@ -199,10 +204,11 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     });
   });
 
-  test('the indexer is pointed at the index queue, and not the validate queue', () => {
+  test('the indexer is pointed at the index queue, and not the validate queue; the group queue is where it sends the flip', () => {
     const env = fn('publish/indexer-lambda.handler').Properties.Environment.Variables;
     expect(JSON.stringify(env.MOPM_INDEX_QUEUE_URL)).toContain('IndexQueue');
     expect(JSON.stringify(env.MOPM_INDEX_QUEUE_URL)).not.toContain('Validate');
+    expect(JSON.stringify(env.MOPM_GROUP_QUEUE_URL)).toContain('GroupQueue');
   });
 
   test('the API stack sends to the validate queue (commits), the group queue (group commits) and the index queue (yank rebuilds), send-only, and nowhere else', () => {
@@ -247,7 +253,7 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
   test('the group validator role: quarantine read+delete, channel file read+write, registry reads and puts, its own queue; nothing else', () => {
     const st = statementsOf(fn('publish/group-validator-lambda.handler'));
     const own = st.filter((s) => s.Sid);
-    expect(own.map((s) => s.Sid).sort()).toEqual(['ReadAndDeleteQuarantine', 'ReadAndWritePackageFiles', 'ReadRegistry', 'SendGroupMessages', 'WriteVersionsAndGroups'].sort());
+    expect(own.map((s) => s.Sid).sort()).toEqual(['ReadAndDeleteQuarantine', 'ReadAndWritePackageFiles', 'ReadRegistry', 'SendChainMessages', 'SendGroupMessages', 'WriteVersionsAndGroups'].sort());
     const by = (sid: string) => own.find((s) => s.Sid === sid);
     expect(acts(by('ReadAndDeleteQuarantine')).sort()).toEqual(['s3:DeleteObject', 's3:GetObject']);
     expect(res(by('ReadAndDeleteQuarantine'))).toContain(`${bucket}/quarantine/*`);
@@ -262,11 +268,18 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     expect(acts(by('WriteVersionsAndGroups'))).toEqual(['dynamodb:PutItem']);
     for (const table of ['versions', 'audit', 'publishes']) expect(res(by('WriteVersionsAndGroups'))).toContain(`mopm-${stage}-${table}`);
     expect(res(by('WriteVersionsAndGroups'))).not.toContain(`mopm-${stage}-packages`);
-    // It sends to the group queue (its own continuation) and consumes it; it cannot send to the single or the index queue.
+    // It sends to the group queue (its own continuation) and consumes it; to the index queue only the first hop of a committed group's
+    // chain; never to the single validate queue.
     expect(acts(by('SendGroupMessages'))).toEqual(['sqs:SendMessage']);
     expect(res(by('SendGroupMessages'))).toContain('GroupQueue');
     expect(res(by('SendGroupMessages'))).not.toContain('Validate');
     expect(res(by('SendGroupMessages'))).not.toContain('IndexQueue');
+    expect(acts(by('SendChainMessages'))).toEqual(['sqs:SendMessage']);
+    expect(res(by('SendChainMessages'))).toContain('IndexQueue');
+    expect(res(by('SendChainMessages'))).not.toContain('Validate');
+    expect(res(by('SendChainMessages'))).not.toContain('GroupQueue');
+    const env = fn('publish/group-validator-lambda.handler').Properties.Environment.Variables;
+    expect(JSON.stringify(env.MOPM_INDEX_QUEUE_URL)).toContain('IndexQueue');
     const all = st.flatMap(acts);
     expect(all.filter((a) => /DeleteItem|DeleteObjectVersion|Scan|^cloudfront|\*/.test(a))).toEqual([]);
   });
@@ -282,7 +295,7 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     });
     const st = statementsOf(fn('publish/sweeper-lambda.handler'));
     const own = st.filter((s) => s.Sid);
-    expect(own.map((s) => s.Sid).sort()).toEqual(['QuerySweepIndex', 'ReadGroups', 'SendGroupMessages', 'WriteGroupHeaders']);
+    expect(own.map((s) => s.Sid).sort()).toEqual(['QuerySweepIndex', 'ReadGroups', 'SendChainMessages', 'SendGroupMessages', 'WriteGroupHeaders']);
     const by = (sid: string) => own.find((s) => s.Sid === sid);
     expect(acts(by('QuerySweepIndex'))).toEqual(['dynamodb:Query']);
     expect(res(by('QuerySweepIndex'))).toContain(`mopm-${stage}-publishes`);
@@ -294,6 +307,11 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     expect(res(by('WriteGroupHeaders'))).not.toContain(`mopm-${stage}-versions`);
     expect(acts(by('SendGroupMessages'))).toEqual(['sqs:SendMessage']);
     expect(res(by('SendGroupMessages'))).toContain('GroupQueue');
+    // A stalled chain is resent on the index queue (a hop) or the group queue (the flip); send only.
+    expect(acts(by('SendChainMessages'))).toEqual(['sqs:SendMessage']);
+    expect(res(by('SendChainMessages'))).toContain('IndexQueue');
+    expect(res(by('SendChainMessages'))).not.toContain('Validate');
+    expect(JSON.stringify(fn('publish/sweeper-lambda.handler').Properties.Environment.Variables.MOPM_INDEX_QUEUE_URL)).toContain('IndexQueue');
     // No bucket, no version rows, no delete, no scan.
     const all = st.flatMap(acts);
     expect(all.some((a) => a.startsWith('s3:'))).toBe(false);

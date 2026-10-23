@@ -30,6 +30,20 @@
         "MOPM_STAGE": "beta",
         "MOPM_GROUP_QUEUE_URL": "group-queue-url"
       },
+      "event": {},
+      "expect": {
+        "rejects": {
+          "name": "Error",
+          "message": "MOPM_INDEX_QUEUE_URL is not set"
+        }
+      }
+    },
+    {
+      "env": {
+        "MOPM_STAGE": "beta",
+        "MOPM_GROUP_QUEUE_URL": "group-queue-url",
+        "MOPM_INDEX_QUEUE_URL": "index-queue-url"
+      },
       "event": {
         "version": "0",
         "source": "aws.events",
@@ -81,6 +95,7 @@
           "level": "info",
           "msg": "sweep",
           "validating": 0,
+          "committed": 0,
           "resent": [],
           "gave_up": [],
           "oldest_seconds": 0

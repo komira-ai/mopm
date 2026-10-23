@@ -1,6 +1,7 @@
 import { Metrics } from '../../src/metrics';
 import { MAX_RESENDS, STALL_MS, sweepGroups } from '../../src/publish/group-sweeper';
 import { RIGS, type Rig } from '../group-rig';
+import { Chain } from './group-chain-env';
 import { GroupEnv } from './group-env';
 import { Scenario } from './group-scenario';
 
@@ -21,7 +22,7 @@ describe.each(RIGS)('the group sweeper: %s', (_label, make) => {
     env = new GroupEnv(rig);
     lines = [];
   });
-  const sweep = () => sweepGroups({ groups: rig.store, groupQueue: env.groupQueue, now: env.clock.now, metrics: new Metrics((l) => lines.push(l)), log: (l) => env.jobLogs.push(l) });
+  const sweep = () => sweepGroups({ groups: rig.store, groupQueue: env.groupQueue, indexQueue: env.indexQueue, now: env.clock.now, metrics: new Metrics((l) => lines.push(l)), log: (l) => env.jobLogs.push(l) });
   const metric = (name: string) => lines.map((l) => l[name]).filter((v) => v !== undefined);
 
   /** A group that is validating whose message was lost: the commit queued it and the queue lost it. */
@@ -35,7 +36,7 @@ describe.each(RIGS)('the group sweeper: %s', (_label, make) => {
     const s = await stalled();
     env.clock.advance(STALL_MS - MINUTE);
     const r = await sweep();
-    expect(r).toEqual({ validating: 1, resent: [], gaveUp: [], oldestSeconds: (STALL_MS - MINUTE) / 1000 });
+    expect(r).toEqual({ validating: 1, committed: 0, resent: [], gaveUp: [], oldestSeconds: (STALL_MS - MINUTE) / 1000 });
     expect(env.groupQueue.sent).toEqual([]);
     expect((await s.header())!.resend).toBe(0);
   });
@@ -119,16 +120,20 @@ describe.each(RIGS)('the group sweeper: %s', (_label, make) => {
     expect((await s.header())!.resend).toBe(0);
   });
 
-  test('only a validating group is looked after: an open group, a committed one and a group that is over are not', async () => {
+  test('only a group that is validating or committed is looked after: an open group, a visible one and a group that is over are not', async () => {
     const open = await new Scenario(env, [{ name: 'alpha' }]).create();
     const done = await new Scenario(env, [{ name: 'beta' }], 2).start();
     expect(await done.runAll()).toEqual(['committed']);
+    // Its chain runs to the end: the group is visible and has left the sweeper's index.
+    await new Chain(env).drain();
+    expect((await done.header())!.status).toBe('visible');
     const aborted = await new Scenario(env, [{ name: 'gamma' }], 3).create();
     expect((await env.abort(aborted.token, aborted.gid)).statusCode).toBe(200);
     env.clock.advance(STALL_MS * 2);
     const r = await sweep();
-    expect(r).toEqual({ validating: 0, resent: [], gaveUp: [], oldestSeconds: 0 });
+    expect(r).toEqual({ validating: 0, committed: 0, resent: [], gaveUp: [], oldestSeconds: 0 });
     expect(env.groupQueue.sent).toEqual([]);
+    expect(env.indexQueue.sent).toEqual([]);
     expect((await open.header())!.status).toBe('open');
     expect(metric('group_oldest_nonterminal_age_seconds')).toEqual([0]);
   });

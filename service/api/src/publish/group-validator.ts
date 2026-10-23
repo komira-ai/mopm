@@ -6,6 +6,7 @@ import type { Store } from '../store';
 import type { AuditEntry, VersionRecord } from '../types';
 import type { ValidatorOptions } from '../validate';
 import type { PublishConfig } from './config';
+import { sendNext } from './group-chain';
 import { sendValidateGroup } from './group-commit';
 import { quarantineKeyFor, uploadIdFor } from './group-keys';
 import { ended, groupAudit, pastDeadline } from './group-lifecycle';
@@ -33,7 +34,7 @@ import { fillFrom, Rejected, validateArchives } from './validator';
  *      committed: the one write that makes it visible to the API (`commitGroup`).
  *
  * Every step is idempotent, and after the commit nothing here is done again: a message for a committed group does no more
- * than delete what is left in quarantine. What follows a commit (repodata, the sparse index, the flip) is a later change.
+ * than delete what is left in quarantine and queue the first step of the chain that follows (repodata hops, index hops, the flip: group-chain.ts).
  *
  * A defect in our own code (anything that is not a verdict) is thrown, so the message is retried and, after the queue's
  * receive limit, lands in the dead-letter queue, which has an alarm. A group whose rows are not as staged is such a defect:
@@ -45,7 +46,9 @@ export interface GroupValidatorDeps {
   /** Only `getUpload`: the record of an upload says when it was begun. */
   publishes: Pick<PublishStore, 'getUpload'>;
   objects: ObjectStore;
-  /** The group queue: a validator that runs out of time sends its own continuation. */
+  /** The index queue: the repodata hops of a committed group's chain start here. */
+  indexQueue: Queue;
+  /** The group queue: a validator that runs out of time sends its own continuation, and the flip that ends the chain is sent here. */
   groupQueue: Queue;
   config: PublishConfig;
   /** https://conda.<stage>.mopm.dev: the channel's public base, for the file URLs of published versions. */
@@ -127,9 +130,11 @@ class GroupJob {
     if (!members) throw new Error(`group ${this.gid}: its member list is missing`);
     this.members = members;
 
-    // After the commit nothing is decided again: only what the commit left behind is cleared.
+    // After the commit nothing is decided again: what the commit left behind is cleared, and the chain that follows it is started (or
+    // started again: a message that sees a committed group that is not visible may be the redelivery of one whose send was lost).
     if (this.h.committed_at !== undefined) {
       await this.clearQuarantine();
+      await this.startChain();
       return 'already';
     }
     // A group that failed (by a validator that died after saying so, or by the operator's script) still has its numbers to burn.
@@ -298,8 +303,10 @@ class GroupJob {
         case 'committed':
           this.log({ level: 'info', msg: 'group committed', group_id: this.gid, attempt: cur.attempt });
           await this.clearQuarantine();
+          await this.startChain();
           return 'committed';
         case 'already':
+          await this.startChain();
           return 'already';
         case 'deadline':
           throw verdict('deadline_passed', `the group's deadline, ${cur.deadline_at}, passed before it could be committed`, true);
@@ -347,6 +354,12 @@ class GroupJob {
         ),
       );
     }
+  }
+
+  /** Queue the first step the header shows undone (src/publish/group-chain.ts): the repodata hops follow the commit. None for a group that is visible. */
+  private async startChain(): Promise<void> {
+    const step = await sendNext(this.d.registry, this.d, this.gid, this.h.attempt);
+    if (step) this.log({ level: 'info', msg: 'group chain started', group_id: this.gid, step: step.kind });
   }
 
   /** Delete the group's quarantine objects. A failure is only logged: the bucket's lifecycle rule expires quarantine/ after a day. */

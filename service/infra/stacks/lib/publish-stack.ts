@@ -176,6 +176,7 @@ export class PublishStack extends Stack {
         MOPM_CHANNEL_BUCKET: bucketName,
         MOPM_DISTRIBUTION_ID: props.channel.distribution.distributionId,
         MOPM_INDEX_QUEUE_URL: this.indexQueue.queueUrl,
+        MOPM_GROUP_QUEUE_URL: this.groupQueue.queueUrl,
       },
     });
     this.indexer.addToRolePolicy(
@@ -197,6 +198,11 @@ export class PublishStack extends Stack {
     // The last repodata job of a publish (or an unyank chain) queues the package's index job on this same queue.
     this.indexer.addToRolePolicy(
       new iam.PolicyStatement({ sid: 'SendPackageIndexJobs', actions: ['sqs:SendMessage'], resources: [this.indexQueue.queueArn] }),
+    );
+    // The last index hop of a committed group's chain queues the flip on the group queue (src/publish/group-chain.ts). The hops release
+    // their gates on the group's header with the PutItem on the publishes table below; the flip itself is the group validator's.
+    this.indexer.addToRolePolicy(
+      new iam.PolicyStatement({ sid: 'SendFlipMessages', actions: ['sqs:SendMessage'], resources: [this.groupQueue.queueArn] }),
     );
     // The index is rebuilt from every record: the package names (a Scan of the small packages table) and their versions.
     this.indexer.addToRolePolicy(
@@ -238,6 +244,7 @@ export class PublishStack extends Stack {
         MOPM_CHANNEL_BUCKET: bucketName,
         MOPM_CHANNEL_URL: `https://${c.condaDomain}`,
         MOPM_GROUP_QUEUE_URL: this.groupQueue.queueUrl,
+        MOPM_INDEX_QUEUE_URL: this.indexQueue.queueUrl,
       },
     });
     this.groupValidator.addToRolePolicy(
@@ -273,6 +280,11 @@ export class PublishStack extends Stack {
     this.groupValidator.addToRolePolicy(
       new iam.PolicyStatement({ sid: 'SendGroupMessages', actions: ['sqs:SendMessage'], resources: [this.groupQueue.queueArn] }),
     );
+    // A committed group's chain starts with a repodata hop on the index queue (src/publish/group-chain.ts); the flip that ends it is
+    // a message on the group queue, which this function consumes.
+    this.groupValidator.addToRolePolicy(
+      new iam.PolicyStatement({ sid: 'SendChainMessages', actions: ['sqs:SendMessage'], resources: [this.indexQueue.queueArn] }),
+    );
     this.groupQueue.grantConsumeMessages(this.groupValidator);
     new lambda.EventSourceMapping(this, 'GroupValidatorTrigger', {
       target: this.groupValidator,
@@ -282,7 +294,7 @@ export class PublishStack extends Stack {
     });
 
     // --- the group sweeper -----------------------------------------------------------------------------------
-    // Every SWEEPER_PERIOD_MINUTES: find a group whose validation has stopped and send its validate message again
+    // Every SWEEPER_PERIOD_MINUTES: find a group that has stopped (validating, or committed and not yet visible) and send its message again
     // (src/publish/group-sweeper.ts). It reads the sparse index of groups that are not over, and writes only the header's
     // resend counter. It ends and burns nothing.
     this.sweeper = new lambda.Function(this, 'GroupSweeper', {
@@ -295,6 +307,7 @@ export class PublishStack extends Stack {
       environment: {
         MOPM_STAGE: c.stage,
         MOPM_GROUP_QUEUE_URL: this.groupQueue.queueUrl,
+        MOPM_INDEX_QUEUE_URL: this.indexQueue.queueUrl,
       },
     });
     this.sweeper.addToRolePolicy(
@@ -320,6 +333,10 @@ export class PublishStack extends Stack {
     );
     this.sweeper.addToRolePolicy(
       new iam.PolicyStatement({ sid: 'SendGroupMessages', actions: ['sqs:SendMessage'], resources: [this.groupQueue.queueArn] }),
+    );
+    // A stalled chain is resent from the step the header says is next: a repodata or index hop on the index queue, or the flip on the group queue.
+    this.sweeper.addToRolePolicy(
+      new iam.PolicyStatement({ sid: 'SendChainMessages', actions: ['sqs:SendMessage'], resources: [this.indexQueue.queueArn] }),
     );
     const schedule = new events.Rule(this, 'GroupSweeperSchedule', {
       ruleName: `mopm-${c.stage}-group-sweeper`,
@@ -372,8 +389,8 @@ export const METRICS_NAMESPACE = 'Mopm/Registry';
  * Alarms on the group metrics. `group_invariant` is written by a reader that found a committed group with a member it
  * cannot account for; `group_pending_rows_per_package_max` by group creation (the most pending rows any member's package
  * holds: dead groups leave theirs behind); `group_oldest_nonterminal_age_seconds` is written by the group sweeper: seconds since the
- * least recently active group that is validating showed a sign of life (a committed group that is not yet visible is not counted
- * until the chain that makes it so exists); `group_sweeper_gave_up` counts the stalled groups it has resent as often as it will.
+ * least recently active group that is validating, or committed and not yet visible, showed a sign of life
+ * (a visible group has left the sweeper's index); `group_sweeper_gave_up` counts the stalled groups it has resent as often as it will.
  */
 export const GROUP_ALARMS: Array<{ id: string; name: string; metric: string; statistic: string; threshold: number; description: string }> = [
   {
@@ -398,7 +415,7 @@ export const GROUP_ALARMS: Array<{ id: string; name: string; metric: string; sta
     metric: 'group_oldest_nonterminal_age_seconds',
     statistic: 'Maximum',
     threshold: 1800,
-    description: 'A group that is validating has shown no sign of life for 30 minutes. The sweeper resends its validate message after 35; look at the logs.',
+    description: 'A group that is validating or committed (and not yet visible) has shown no sign of life for 30 minutes. The sweeper resends a validate message after 35 minutes and a step of the chain after 10; look at the logs.',
   },
   {
     id: 'GroupStalledAlarm',

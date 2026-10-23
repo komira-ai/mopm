@@ -196,7 +196,7 @@ describe.each(RIGS)('the validator and sweeper at their edges: %s', (_label, mak
   });
 
   describe('the sweeper reads an index that may be stale', () => {
-    const sweep = () => sweepGroups({ groups: rig.store, groupQueue: env.groupQueue, now: env.clock.now, metrics: new Metrics(() => undefined), log: () => undefined });
+    const sweep = () => sweepGroups({ groups: rig.store, groupQueue: env.groupQueue, indexQueue: env.indexQueue, now: env.clock.now, metrics: new Metrics(() => undefined), log: () => undefined });
 
     test('an entry whose group is gone, or whose header says it is moving, is not resent', async () => {
       const s = await new Scenario(env, [{ name: 'alpha' }]).start();

@@ -26,7 +26,8 @@
     { "name": "search page", "case": "store.versionsOf(api)" },
     { "name": "group create (reads the rows its members would take)", "case": "group create: a number the registry shows is version_exists" },
     { "name": "group commit (reads the group's pending rows to find their uploads)", "case": "store.versionsOf(api)" },
-    { "name": "group validator job (reads the group's pending rows, and the project totals of its packages)", "case": "store.versionsOf(api)" }
+    { "name": "group validator job (reads the group's pending rows, and the project totals of its packages)", "case": "store.versionsOf(api)" },
+    { "name": "chain hops of a committed group (the repodata hop is indexSubdir and the index hop is indexPackage, each after releasing its gate on the header)", "case": "indexSubdir(linux-64)" }
   ],
   "readers": {
     "http/router.ts": ["GET /packages", "GET /packages/{name}", "GET /packages/{name}/versions", "GET /packages/{name}/{version}"],
