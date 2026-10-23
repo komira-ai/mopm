@@ -9,6 +9,7 @@
 //!   bg_sleep_wait   start a `sleep 60` child in this process group, wait for it
 //!   bg_sleep_exit0  start a `sleep 60` child, exit 0 without waiting
 //!   exit0           exit 0
+//!   env_to_stdout   print the environment, NAME=value per line
 //!   --source-root=<dir> ...   a stand-in for the `mojo_compile` wrapper (fakeMojoCompile)
 //!   (no arguments)  as a test binary built by that stand-in: writes its environment to <argv0>.env
 
@@ -126,6 +127,11 @@ pub fn main() !void {
         _ = try child.wait();
     } else if (std.mem.eql(u8, mode, "bg_sleep_exit0")) {
         _ = try startSleeper(a);
+    } else if (std.mem.eql(u8, mode, "env_to_stdout")) {
+        var env = try std.process.getEnvMap(a);
+        var it = env.iterator();
+        const out = std.io.getStdOut().writer();
+        while (it.next()) |e| try out.print("{s}={s}\n", .{ e.key_ptr.*, e.value_ptr.* });
     } else if (std.mem.eql(u8, mode, "exit0")) {
         // nothing
     } else {
