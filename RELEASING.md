@@ -177,13 +177,19 @@ is not part of these jobs: the writes are conditional, so a role with the wrong 
 
 ```sh
 sudo install -d -m 0755 /etc/apt/keyrings
-curl -fsSL https://packages.komira.ai/apt/keyring.gpg | sudo tee /etc/apt/keyrings/packages.gpg > /dev/null
-echo "deb [signed-by=/etc/apt/keyrings/packages.gpg] https://packages.komira.ai/apt stable main" | sudo tee /etc/apt/sources.list.d/packages.list
+sudo curl -fsSL -o /etc/apt/keyrings/komira-archive-keyring.gpg https://packages.komira.ai/apt/komira-archive-keyring.gpg
+sudo tee /etc/apt/sources.list.d/komira.sources > /dev/null <<'EOF'
+Types: deb
+URIs: https://packages.komira.ai/apt
+Suites: stable
+Components: main
+Signed-By: /etc/apt/keyrings/komira-archive-keyring.gpg
+EOF
 sudo apt update && sudo apt install mopm
 ```
 
-The keyring is the public half of the archive signing key (binary format, as `signed-by` expects); its file name is decided when the owner uploads it, and the line above names the file
-the repository documents. `apt update` verifies `InRelease` against it before it trusts a `Packages` file.
+The keyring is the public half of the archive signing key (binary format, as `Signed-By` expects); the repository serves it as `apt/komira-archive-keyring.gpg` (an armored copy,
+`komira-archive-keyring.asc`, is beside it), and `Signed-By` names the path the first command installs it to. `apt update` verifies `InRelease` against it before it trusts a `Packages` file.
 
 ## The Homebrew tap (the `tap` stage)
 

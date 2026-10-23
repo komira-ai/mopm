@@ -30,6 +30,7 @@ _DOCS = {
 # worked examples test/docs-examples.test.ts holds the examples page to (and the driver that runs them, tests/drivers/examples_test.zig).
 _TEST_DATA = _DOCS | {
     "README.md": "//:site.README.md",
+    "RELEASING.md": "//:site.RELEASING.md",
     "VERSION": "//:site.VERSION",
     ".github/workflows/promote.yml": "//:site.workflows.promote.yml",
     ".github/workflows/service-ci.yml": "//:site.workflows.service-ci.yml",
