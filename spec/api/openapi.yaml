@@ -672,6 +672,103 @@ paths:
               schema: { $ref: "#/components/schemas/Group" }
         default: { $ref: "#/components/responses/Error" }
 
+  /groups/{group_id}/commit:
+    post:
+      operationId: commitGroup
+      tags: [publish]
+      summary: Say that a group's files are uploaded and ask for the group to be validated and committed.
+      description: |
+        Asynchronous. The caller has created the group and PUT every file to the URL it was given; this call hands over what
+        the archives cannot say for themselves, one entry per member: the `manifest_sha256` of its embedded manifest and the
+        optional display fields (the same rules as `commitPublish`). Every member of the group is listed exactly once.
+
+        The registry checks that the group is `open`, not past its `deadline_at`, that every member is reserved and that every
+        file is in storage at its declared size, stores the request, moves the group to `validating` and answers 202. It then
+        validates every member's archives; if every one is valid it copies the files into the channel and commits the group:
+        the members become visible together to the read API, as `published` at the commit time. A member whose archive is not
+        valid, a deadline that passes, or an upload more than 18 hours old ends the group `rejected` before anything is copied
+        (its version numbers are free again); a failure after the copies began ends it `failed`, and its version numbers are
+        burned. Read `getGroup` for where it is: `status` and, for a group that ended, `failure`.
+
+        The same request again resumes: while the group is `validating` it queues the validation again (one job), and for a
+        group that has committed it answers `200` as it is. A different request for a group that already has one is refused.
+        A group that is not open (`aborted`, `expired`, `rejected`, ...) is refused with `group_commit_refused`; create it
+        again with the same request to open it again. A commit is a write: read-only mode refuses it. It is not gated by the
+        switch that enables group creation, since a group that exists is finished whatever the switch says.
+
+        The request is one body: it holds the display fields of every member (a readme is up to 64 KiB), so a group of many
+        members with readmes can exceed what the gateway accepts.
+      security:
+        - publishToken: []
+      parameters:
+        - { $ref: "#/components/parameters/GroupId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommitGroupRequest" }
+      responses:
+        "202":
+          description: The group is validating; its validation is queued.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommitGroupResponse" }
+        "200":
+          description: The group had already committed; it is returned as it is.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommitGroupResponse" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /groups/{group_id}/yank:
+    put:
+      operationId: yankGroup
+      tags: [publish]
+      summary: Yank or unyank every version a group published.
+      description: |
+        The body is that of `setYanked`. `yanked: true` yanks the group's versions that are `published`; `yanked: false` restores
+        exactly the versions that yank changed. Allowed for an account that owns every package in it now, whether or not it created the
+        group (a token outlives an ownership change; an account that has lost one refuses with `not_owner`), with a token
+        that has the `yank` or `publish` scope for every member (read-only mode refuses it).
+
+        Only a group that is `visible` can be yanked or unyanked; a group that has not committed, or whose files are still being
+        released after the commit, is refused with `group_not_settled`, as is a yank while an unyank of the group is running and the
+        other way round. Asynchronous: the request records the intent, answers 202 and returns the group; the versions are yanked
+        (or restored) by a job, then repodata and the sparse index follow, and the group's `yank.state` reaches `yanked` (or
+        `restored`) when they are written. A version somebody yanked by hand before the group's yank stays yanked, and is not
+        restored by the group's unyank. The same request again while the yank or unyank runs answers 202 as it is; a group already as
+        asked (yanked and `yanked: true`, or never yanked or restored and `yanked: false`) answers 200 as it is.
+      security:
+        - yankToken: []
+        - publishToken: []
+      parameters:
+        - { $ref: "#/components/parameters/GroupId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/YankRequest" }
+      responses:
+        "202":
+          description: The yank or unyank is running.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        "200":
+          description: The group is already as asked.
+          headers:
+            x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        default: { $ref: "#/components/responses/Error" }
+
   /packages/{name}/{version}/yank:
     put:
       operationId: setYanked
@@ -947,6 +1044,8 @@ components:
         - upload_used
         - group_not_open
         - group_conflict
+        - group_commit_refused
+        - group_not_settled
         - invalid_transition
         - invitation_expired
         - payload_too_large
@@ -1461,6 +1560,39 @@ components:
         members:
           type: array
           items: { $ref: "#/components/schemas/GroupMemberAnswer" }
+    CommitGroupMember:
+      type: object
+      required: [name, manifest_sha256]
+      properties:
+        name: { $ref: "#/components/schemas/Name" }
+        manifest_sha256: { $ref: "#/components/schemas/Sha256" }
+        description: { type: string, minLength: 1, maxLength: 512, description: "As in `CommitPublishRequest`." }
+        license: { type: string, minLength: 1, maxLength: 128, description: "As in `CommitPublishRequest`." }
+        repository: { type: string, format: uri, maxLength: 2048, description: An https URL. }
+        homepage: { type: string, format: uri, maxLength: 2048, description: An https URL. }
+        keywords: { $ref: "#/components/schemas/Keywords" }
+        readme: { type: string, maxLength: 65536, description: "Untrusted Markdown of at most 64 KiB, as in `CommitPublishRequest`." }
+    CommitGroupRequest:
+      type: object
+      required: [members]
+      properties:
+        members:
+          description: One entry for each member of the group, and no other.
+          type: array
+          minItems: 1
+          maxItems: 500
+          items: { $ref: "#/components/schemas/CommitGroupMember" }
+    CommitGroupResponse:
+      type: object
+      required: [group_id, status, attempt, status_url]
+      properties:
+        group_id: { $ref: "#/components/schemas/GroupId" }
+        status: { $ref: "#/components/schemas/GroupStatusName" }
+        attempt: { type: integer, minimum: 1 }
+        status_url:
+          description: Path on the same host. GET it with the same token.
+          type: string
+          pattern: "^/api/v1/groups/"
     GroupId:
       type: string
       pattern: "^grp_[0-9a-f]{32}$"
@@ -1474,7 +1606,34 @@ components:
         created_at: { $ref: "#/components/schemas/Timestamp" }
         deadline_at: { $ref: "#/components/schemas/Timestamp" }
         committed_at: { $ref: "#/components/schemas/Timestamp" }
+        failure:
+          description: Why a group that was `rejected` or `failed` ended.
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              description: A rejection code of the validator, or one of `deadline_passed`, `upload_too_old`, `upload_missing`, `sha256_mismatch`, `limit_exceeded`, `operator`.
+              type: string
+            message: { type: string }
+            member:
+              description: The package the verdict is about, when it is about one.
+              type: string
         member_count: { type: integer, minimum: 1 }
+        yank:
+          description: Present once the group has been yanked (`yankGroup`): where the yank is.
+          type: object
+          required: [state, reason, requested_at, yanked_members]
+          properties:
+            state:
+              description: "`yanking` and `unyanking` are running; `yanked` and `restored` are at rest."
+              type: string
+              enum: [yanking, yanked, unyanking, restored]
+            reason: { type: string, maxLength: 280 }
+            requested_at: { $ref: "#/components/schemas/Timestamp" }
+            yanked_members:
+              description: The members the yank has changed so far; an unyank restores these and no others.
+              type: integer
+              minimum: 0
         members:
           type: array
           items:
@@ -1485,7 +1644,7 @@ components:
               version: { $ref: "#/components/schemas/Version" }
               state:
                 type: string
-                enum: [pending, reserved, staged, published]
+                enum: [pending, reserved, staged, published, yanked]
     YankRequest:
       type: object
       required: [yanked]
@@ -1534,6 +1693,8 @@ x-mopm-errors:
   upload_used:           { status: 409, message: "The upload '{upload_id}' was already used.", hint: "Begin a new upload." }
   group_not_open:        { status: 409, message: "Group {group_id} is {status}; only an open group can be aborted.", hint: "Create the group again with the same request to open it again." }
   group_conflict:        { status: 409, message: "The group cannot be created: {detail}.", hint: "Abort or finish your other groups, or publish a new version." }
+  group_commit_refused:  { status: 409, message: "The group cannot be committed: {detail}.", hint: "Read the group with its status request; create it again with the same request to open it again." }
+  group_not_settled:     { status: 409, message: "Group {group_id} cannot be yanked or unyanked now: {detail}.", hint: "A group is yanked once it is visible, and not while another yank or unyank of it is running; read the group with its status request." }
   invalid_transition:    { status: 409, message: "Cannot {action} '{name}' {version}: it is {state}.", hint: "Only a published version can be yanked, only a yanked version can be unyanked, and a tombstoned version never changes." }
   invitation_expired:    { status: 410, message: "The invitation expired.", hint: "Ask the owner to invite you again." }
   payload_too_large:     { status: 413, message: "The file is larger than the limit of {limit} bytes.", hint: "Reduce the package size." }

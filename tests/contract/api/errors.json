@@ -1221,6 +1221,88 @@
         }
       },
       "expect": "invalid"
+    },
+    {
+      "name": "error group_commit_refused",
+      "operationId": "commitGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "body": { "members": [ { "name": "http_client", "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae" } ] },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_commit_refused",
+            "message": "The group cannot be committed: group grp_0123456789abcdef0123456789abcdef expired at 2026-10-14T00:00:00.000Z.",
+            "hint": "Read the group with its status request; create it again with the same request to open it again."
+          }
+        }
+      }
+    },
+    {
+      "name": "group_commit_refused answered 400 instead of 409",
+      "operationId": "commitGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "body": { "members": [ { "name": "http_client", "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae" } ] },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 400,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_commit_refused",
+            "message": "The group cannot be committed: group grp_0123456789abcdef0123456789abcdef expired at 2026-10-14T00:00:00.000Z.",
+            "hint": "Read the group with its status request; create it again with the same request to open it again."
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "error group_not_settled",
+      "operationId": "yankGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "body": { "yanked": true, "reason": "the release is broken" },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_not_settled",
+            "message": "Group grp_0123456789abcdef0123456789abcdef cannot be yanked or unyanked now: it is committed; a group can be yanked once it is visible.",
+            "hint": "A group is yanked once it is visible, and not while another yank or unyank of it is running; read the group with its status request."
+          }
+        }
+      }
+    },
+    {
+      "name": "group_not_settled answered 400 instead of 409",
+      "operationId": "yankGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "body": { "yanked": true, "reason": "the release is broken" },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 400,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_not_settled",
+            "message": "Group grp_0123456789abcdef0123456789abcdef cannot be yanked or unyanked now: it is committed; a group can be yanked once it is visible.",
+            "hint": "A group is yanked once it is visible, and not while another yank or unyank of it is running; read the group with its status request."
+          }
+        }
+      },
+      "expect": "invalid"
     }
   ]
 }

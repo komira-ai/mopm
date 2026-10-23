@@ -41,6 +41,8 @@ const EXPECTED: Record<string, ErrorKind> = {
   group_not_found: 'notFound',
   group_not_open: 'invalid',
   group_conflict: 'invalid',
+  group_commit_refused: 'invalid',
+  group_not_settled: 'invalid',
   name_taken: 'invalid',
   name_too_similar: 'invalid',
   version_exists: 'invalid',
