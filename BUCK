@@ -147,6 +147,17 @@ zig_test(
     **_TOOLS
 )
 
+# ---- The group-publish end-to-end check (run by the group-e2e job of .github/workflows/e2e.yml) ----------
+
+zig_exe(
+    name = "mopm-group-e2e",
+    src = "tests/drivers/group_e2e.zig",
+    imports = ["tests/drivers/harness.zig"],
+    deps = [":mopm_core"],
+    visibility = ["PUBLIC"],
+    **_TOOLS
+)
+
 # ---- Helper programs of the tests (no /bin/sh, no #! scripts on the farm) -----
 
 zig_exe(  # buck-only: the child processes of src/core/test_proc.zig's tests
@@ -439,6 +450,7 @@ zig_test(  # buck-only: tools/build_parity.zig reads build.zig and this file
         "src/cli/build_options.zig",
         "tools/closure_gen.zig",
         "registry/fake/main.zig",
+        "tests/drivers/group_e2e.zig",
     ],
     **_TOOLS
 )
@@ -484,6 +496,15 @@ _AUTOLINK_DATA = [
     "tests/e2e/repl.stdin",
     "tests/e2e/repl_outer.stdin",
 ]
+zig_test(  # buck-only: the group-publish check (tests/drivers/group_e2e.zig) against a loopback registry that serves the group routes
+    name = "group_e2e",
+    src = "tests/drivers/group_e2e_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/group_e2e.zig"],
+    deps = [":mopm_core"],
+    env_tools = {"MOPM": ":mopm"},
+    **_TOOLS
+)
+
 zig_test(  # buck-only: the user-level beta walk (tests/drivers/user_beta.zig) in its farm form: no pixi, no installer
     name = "user_beta",
     src = "tests/drivers/user_beta_test.zig",
@@ -619,6 +640,12 @@ export_file(
 )
 
 export_file(
+    name = "site.RELEASING.md",
+    src = "RELEASING.md",
+    visibility = ["//site:"],
+)
+
+export_file(
     name = "site.VERSION",
     src = "VERSION",
     visibility = ["//site:"],
@@ -699,6 +726,78 @@ export_file(
 export_file(
     name = "site.src.cli.main.zig",
     src = "src/cli/main.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.cli.install_cmd.zig",
+    src = "src/cli/install_cmd.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.cli.publish_cmd.zig",
+    src = "src/cli/publish_cmd.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.cli.test_cmd.zig",
+    src = "src/cli/test_cmd.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.core.closure.zig",
+    src = "src/core/closure.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.core.conda_unpack.zig",
+    src = "src/core/conda_unpack.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.core.env.zig",
+    src = "src/core/env.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.core.metadata.zig",
+    src = "src/core/metadata.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.core.registry.zig",
+    src = "src/core/registry.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.core.toml.zig",
+    src = "src/core/toml.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.core.unit_graph.zig",
+    src = "src/core/unit_graph.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.tools.cut_release.zig",
+    src = "tools/cut_release.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.tools.release.zig",
+    src = "tools/release.zig",
     visibility = ["//site:"],
 )
 
@@ -959,6 +1058,16 @@ zig_coverage(
 )
 
 zig_coverage(
+    name = "group_e2e_coverage",
+    blocks = False,
+    floor = "coverage/group_e2e.txt",
+    test_targets = [":group_e2e"],
+    # The check the group-e2e job runs, driven here against a loopback registry that serves the group routes (the test file's own
+    # lines are not counted: they are the registry).
+    expect = ["tests/drivers/group_e2e.zig"],
+)
+
+zig_coverage(
     name = "drivers_coverage",
     blocks = False,
     floor = "coverage/drivers.txt",
@@ -991,6 +1100,7 @@ filegroup(
         "core": ":core_coverage_floor",
         "drivers": ":drivers_coverage_floor",
         "fake_registry": ":fake_registry_coverage_floor",
+        "group_e2e": ":group_e2e_coverage_floor",
         "service_api": "//service/api:coverage_floor",
         "service_infra_access": "//service/infra/access:coverage_floor",
         "service_infra_dns": "//service/infra/dns:coverage_floor",

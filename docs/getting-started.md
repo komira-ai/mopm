@@ -61,8 +61,14 @@ Debian and Ubuntu can install mopm from an apt repository, which every release p
 
 ```sh
 sudo install -d -m 0755 /etc/apt/keyrings
-curl -fsSL https://packages.komira.ai/apt/keyring.gpg | sudo tee /etc/apt/keyrings/packages.gpg > /dev/null
-echo "deb [signed-by=/etc/apt/keyrings/packages.gpg] https://packages.komira.ai/apt stable main" | sudo tee /etc/apt/sources.list.d/packages.list
+sudo curl -fsSL -o /etc/apt/keyrings/komira-archive-keyring.gpg https://packages.komira.ai/apt/komira-archive-keyring.gpg
+sudo tee /etc/apt/sources.list.d/komira.sources > /dev/null <<'EOF'
+Types: deb
+URIs: https://packages.komira.ai/apt
+Suites: stable
+Components: main
+Signed-By: /etc/apt/keyrings/komira-archive-keyring.gpg
+EOF
 sudo apt update && sudo apt install mopm
 ```
 

@@ -322,3 +322,42 @@ jobs:
           fi
 
           [ "$failed" = "0" ] || { echo "sparse index gate failed on stage ${STAGE}" >&2; exit 1; }
+
+  # Group publishing, end to end, as an authenticated actor: a three-package chain published as one group, a group with a
+  # rejected member, the expiry probe, and the yank and unyank of the group, against the stage that was just deployed
+  # (tests/drivers/group_e2e.zig says what it publishes, in which namespace, and what it asserts). It runs only here: after the
+  # stage's deploy (promote.yml calls this workflow for beta and gamma) or by hand with workflow_dispatch, never for a pull
+  # request, because a pull request must not hold the token. The one secret it reads is the repository secret
+  # MOPM_E2E_GROUP_TOKEN, on the step that runs the check and on no other (the workflow lint holds that). With no secret, or with
+  # the stage's groups switch off for the e2e actor, the check SKIPs with one line in the job summary and the job is green, so
+  # this job changes nothing until the secret is set and the switch is on. Its checks need no AWS credential and no id-token. prod
+  # is never exercised: the job is skipped there.
+  group-e2e:
+    needs: guard
+    if: github.ref == 'refs/heads/main' && inputs.stage != 'prod'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate stage
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: |
+          case "$STAGE" in beta|gamma) ;; *) echo "bad stage" >&2; exit 1 ;; esac
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Build the CLI and the group check
+        run: zig build -Doptimize=ReleaseSafe
+      - name: Group publish end to end
+        env:
+          STAGE: ${{ inputs.stage }}
+          MOPM_E2E_TOKEN: ${{ secrets.MOPM_E2E_GROUP_TOKEN }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          ./zig-out/bin/mopm-group-e2e --stage "$STAGE" --mopm ./zig-out/bin/mopm --work "$RUNNER_TEMP/group-e2e" --run-id "$RUN_ID" --attempt "$RUN_ATTEMPT" --summary "$GITHUB_STEP_SUMMARY"
