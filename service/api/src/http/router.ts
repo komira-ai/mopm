@@ -1,4 +1,5 @@
 import { RegistryError, HTTP_STATUS } from '../errors';
+import { API_VIEW } from '../group';
 import type { Store } from '../store';
 import { README_MAX_BYTES, type PackageRecord, type PackageSummaryRecord, type VersionRecord } from '../types';
 import { canonicalVersion, compareVersions } from '../version';
@@ -224,7 +225,14 @@ async function searchPackages(deps: RouterDeps, query: HttpRequest['query']) {
   const prefix = normaliseQuery(q);
   const after = query.cursor === undefined ? undefined : decodeCursor(query.cursor, sort);
 
-  const summarise = async (p: PackageSummaryRecord) => packageSummary(p, visible(await deps.store.listVersions(p.name)));
+  // One read for the whole page, so that a group's members are all shown or all hidden (src/group.ts).
+  const summarise = async (ps: PackageSummaryRecord[]) => {
+    const byName = await deps.store.versionsOf(
+      ps.map((p) => p.name),
+      API_VIEW,
+    );
+    return ps.map((p) => packageSummary(p, visible(byName.get(p.name)!)));
+  };
 
   if (sort === 'name') {
     // A name cursor continues the index at that name; one that does not start with this query's prefix is for
@@ -234,7 +242,7 @@ async function searchPackages(deps: RouterDeps, query: HttpRequest['query']) {
     const found = await deps.store.searchPackages(prefix, after?.after, limit + 1);
     const page = found.slice(0, limit);
     return {
-      packages: await Promise.all(page.map(summarise)),
+      packages: await summarise(page),
       next_cursor: found.length > limit ? encodeCursor({ k: 'name', after: page[page.length - 1]!.name }) : null,
     };
   }
@@ -248,7 +256,7 @@ async function searchPackages(deps: RouterDeps, query: HttpRequest['query']) {
     if (chunk.length < SEARCH_PAGE) break;
     last = chunk[chunk.length - 1]!.name;
   }
-  let all = await Promise.all(matches.map(summarise));
+  let all = await summarise(matches);
   all.sort((a, b) => (a.updated_at === b.updated_at ? (a.name < b.name ? -1 : 1) : a.updated_at < b.updated_at ? 1 : -1));
   if (after && after.k === 'updated') {
     all = all.filter((s) => s.updated_at < after.ts || (s.updated_at === after.ts && s.name > after.after));

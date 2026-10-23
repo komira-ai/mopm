@@ -58,6 +58,8 @@ const KEYS: Record<string, KeyDef> = {
   'mopm-t-versions': { pk: 'name', sk: 'version' },
   'mopm-t-owners': { pk: 'name', sk: 'github_id' },
   'mopm-t-audit': { pk: 'name', sk: 'ts_seq' },
+  // The publish pipeline's table (single-attribute key); the store reads the group items in it.
+  'mopm-t-publishes': { pk: 'publish_id' },
 };
 
 /**
