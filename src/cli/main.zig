@@ -67,21 +67,24 @@ const usage =
     \\                          pack and publish to a registry; the token is
     \\                          $MOPM_TOKEN, else the one 'mopm login' stored;
     \\                          --dry-run packs and prints what would be sent
-    \\  lock [--registry <prod|gamma|beta|url>]
+    \\  lock [--registry <prod|gamma|beta|url>] [--overlay <staged set>]
     \\                          resolve mopm.toml's dependencies against the
     \\                          registry's index and write mopm.lock (keeping
     \\                          locked versions that still fit)
+    \\                          --overlay <dir> reads a staged set as a local
+    \\                          channel ahead of the registry (also for sync and
+    \\                          add); it is never written to a lock or manifest
     \\  update [<package>...] [--registry ...]
     \\                          the same, moving the named packages (all, with
     \\                          none named) to the newest versions that fit
     \\  tree                    draw the dependency graph mopm.lock holds
-    \\  sync [--locked] [--registry ...] [--pixi <path>]
+    \\  sync [--locked] [--registry ...] [--overlay <staged set>] [--pixi <path>]
     \\                          install mopm.lock into .mopm/ (locking first
     \\                          when it is missing or out of date with
     \\                          mopm.toml; --locked fails instead). Every
     \\                          download is checked against the lock's sha256
     \\                          and size; build with --prefix .mopm/.pixi/envs/default
-    \\  add <package>[@<req>] [--dev] [--path <dir>] [--registry ...]
+    \\  add <package>[@<req>] [--dev] [--path <dir>] [--registry ...] [--overlay <staged set>]
     \\                          add a dependency to mopm.toml ([dev-dependencies]
     \\                          with --dev): <req>, else ^ the newest version
     \\                          that fits, or { path = "<dir>" }; then lock.

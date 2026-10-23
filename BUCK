@@ -408,6 +408,18 @@ zig_test(  # buck-only: tests/resolve_e2e/run.py: mopm lock, update and tree aga
     **_TOOLS
 )
 
+zig_test(  # buck-only: mopm add, lock and sync with --overlay (a staged set) against the fake registry and a request-recording stand-in
+    name = "overlay_e2e",
+    src = "tests/drivers/overlay_e2e_test.zig",
+    imports = ["tests/drivers/harness.zig"],
+    env_tools = {
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+        "FAKE_PIXI": ":fake-pixi",
+    },
+    **_TOOLS
+)
+
 zig_test(  # buck-only: tests/resolve/check_golden.py: the goldens pass the lock contract, a faulty writer's output does not
     name = "lock_golden",
     src = "tests/drivers/lock_golden_test.zig",
