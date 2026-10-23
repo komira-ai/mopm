@@ -377,10 +377,22 @@ fn cmdWrite(a: Allocator, args: []const []const u8) !void {
     const debs_dir = need(flags, "--debs");
     for (listDebs(a, debs_dir)) |name| {
         const key = state.poolKey(a, pool_dir, name) catch |err| die("{s}: {s}", .{ name, @errorName(err) });
-        const r = put(a, aws_exe, bucket, key, try std.fs.path.join(a, &.{ debs_dir, name }), .{ "--if-none-match", "*" });
+        const deb_path = try std.fs.path.join(a, &.{ debs_dir, name });
+        const r = put(a, aws_exe, bucket, key, deb_path, .{ "--if-none-match", "*" });
         switch (r.result) {
             .ok => say("uploaded {s}\n", .{key}),
-            .lost => say("{s} exists already; it is kept as it is\n", .{key}),
+            .lost => {
+                // Kept as it is, but only if it is the same file: a different one under this name is a release whose bytes changed (a
+                // rebuild that is not reproducible, or a version published twice), and the index must not list a file that is not this one.
+                const there = try std.fs.path.join(a, &.{ next, "pool-check.deb" });
+                const g = aws(a, aws_exe, &.{ "s3api", "get-object", "--bucket", bucket, "--key", key, there });
+                if (!g.ok) die("{s} exists already and could not be read to compare it with the file to publish: {s}", .{ key, trimmed(g.stderr) });
+                const have = state.sha256Hex(readFile(a, there));
+                const want = state.sha256Hex(readFile(a, deb_path));
+                std.fs.cwd().deleteFile(there) catch {};
+                if (!std.mem.eql(u8, &have, &want)) die("{s} exists already with different bytes (sha256 {s} there, {s} here): a .deb is never overwritten, and a different file under the same name is a failure", .{ key, &have, &want });
+                say("{s} exists already, with the same bytes; it is kept as it is\n", .{key});
+            },
             .failed => die("put-object {s} failed: {s}", .{ key, r.stderr }),
         }
     }
