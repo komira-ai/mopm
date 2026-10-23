@@ -621,6 +621,32 @@ test "the staged plan is the one publish --staged reads: members, files and hash
     try std.testing.expectEqualStrings(before, try fx.read("round/plan.json"));
 }
 
+test "the plan's manifest_sha256 is the manifest hash mopm pack prints, not the hash of the file" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    try fx.member("pkg_a", "1.0.0", "");
+    try fx.member("pkg_b", "1.0.0", try fx.pathDep("pkg_a", "1"));
+    try fx.put("art/linux-64/pkg_a.mojoc", "the linux mojoc of pkg_a");
+    var stub = newStub(a);
+    const r = try runStage(fx, &stub, "manifest", &.{});
+    try std.testing.expectEqual(@as(u8, 0), r.code);
+    const plan = try readPlan(fx, "manifest");
+    try std.testing.expectEqualStrings("pkg_a", plan.members[0].name);
+    // pkg_a has no dependencies, so the same input packed here is what the stage packed.
+    const want = try conda.pack(a, .{ .name = "pkg_a", .version = "1.0.0", .compiler = "1.0.0", .subdir = "noarch", .mojoc = "the mojoc of pkg_a" });
+    try std.testing.expectEqualStrings(&want.manifest_sha256, plan.members[0].manifest_sha256);
+    // It is the same for the other platform's file, and it is not the hash of any file.
+    const linux = try conda.pack(a, .{ .name = "pkg_a", .version = "1.0.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "the linux mojoc of pkg_a" });
+    try std.testing.expectEqualStrings(&linux.manifest_sha256, plan.members[0].manifest_sha256);
+    for (plan.members) |m| {
+        try std.testing.expectEqual(@as(usize, 64), m.manifest_sha256.len);
+        for (m.files) |f| try std.testing.expect(!std.mem.eql(u8, m.manifest_sha256, f.sha256));
+    }
+}
+
 test "a stage over a directory that holds an old plan replaces it" {
     var st = arenaTest();
     defer st.deinit();
