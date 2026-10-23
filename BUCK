@@ -619,6 +619,12 @@ export_file(
 )
 
 export_file(
+    name = "site.RELEASING.md",
+    src = "RELEASING.md",
+    visibility = ["//site:"],
+)
+
+export_file(
     name = "site.VERSION",
     src = "VERSION",
     visibility = ["//site:"],
