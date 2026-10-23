@@ -45,6 +45,14 @@ const Mode = struct {
     index_lies: bool = false,
     /// The group yank leaves the second member published.
     yank_partial: bool = false,
+    /// Creating a group other than the probe is refused.
+    create_refused: bool = false,
+    /// The storage refuses every upload.
+    storage_refuses: bool = false,
+    /// The commit is refused.
+    commit_refused: bool = false,
+    /// The group yank is refused.
+    yank_refused: bool = false,
     /// The probe group's deadline is this many seconds after the call.
     deadline_secs: i64 = 12 * 3600,
     probe: Probe = .fresh,
@@ -239,6 +247,7 @@ const Stub = struct {
         const hex = std.fmt.bytesToHex(digest, .lower);
         const id = try std.fmt.allocPrint(sa, "grp_{s}", .{hex[0..32]});
         const probe = std.mem.eql(u8, input.members[0].version, g.probe_version);
+        if (s.mode.create_refused and !probe) return fail(a, .conflict, "group_conflict", "the group cannot be created");
         var existing = s.find(id);
         var status: std.http.Status = .created;
         if (existing) |i| {
@@ -289,6 +298,7 @@ const Stub = struct {
     fn upload(s: *Stub, a: Allocator, method: std.http.Method, rest: []const u8, body: []const u8, authorization: ?[]const u8, has_upload_header: bool) !Reply {
         if (method != .PUT) return fail(a, .method_not_allowed, "route_not_found", "PUT only");
         s.storage_puts += 1;
+        if (s.mode.storage_refuses) return fail(a, .forbidden, "signature_mismatch", "the storage refuses the upload");
         if (authorization != null) s.storage_auth_seen = true;
         if (!has_upload_header) {
             s.storage_header_missing = true;
@@ -310,6 +320,7 @@ const Stub = struct {
     fn commit(s: *Stub, a: Allocator, gi: usize, body: []const u8) !Reply {
         const gr = &s.groups.items[gi];
         const sa = s.arena.allocator();
+        if (s.mode.commit_refused) return fail(a, .conflict, "group_commit_refused", "the group cannot be committed");
         if (gr.status != .open) return fail(a, .conflict, "group_commit_refused", "the group is not open");
         const input = std.json.parseFromSliceLeaky(CommitIn, sa, body, .{ .ignore_unknown_fields = true }) catch return fail(a, .bad_request, "invalid_request", "not a commit");
         if (input.members.len != gr.members.len) return fail(a, .conflict, "group_commit_refused", "every member is listed exactly once");
@@ -428,6 +439,7 @@ const Stub = struct {
     fn yank(s: *Stub, a: Allocator, gi: usize, body: []const u8) !Reply {
         const gr = &s.groups.items[gi];
         const input = std.json.parseFromSliceLeaky(YankIn, a, body, .{ .ignore_unknown_fields = true }) catch return fail(a, .bad_request, "invalid_request", "not a yank");
+        if (s.mode.yank_refused) return fail(a, .conflict, "group_not_settled", "the group is not visible");
         if (gr.status != .visible) return fail(a, .conflict, "group_not_settled", "the group is not visible");
         gr.yank = if (input.yanked) "yanking" else "unyanking";
         gr.yank_polls = 0;
@@ -647,7 +659,8 @@ test "a registry that does it all right passes every check, and the token goes o
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
     try guard();
-    const ran = try runCheck(a, .{}, test_token, "beta");
+    // The secret holds a token for each stage; this stage's is the one used.
+    const ran = try runCheck(a, .{}, "gamma=mopm_nottherightonenottherightonenotri\nbeta=" ++ test_token ++ "\n", "beta");
     for (ran.result.notes) |n| std.debug.print("{s}", .{n});
     try std.testing.expect(!ran.result.skipped);
     try std.testing.expectEqual(@as(usize, 0), ran.result.failures);
@@ -678,6 +691,32 @@ test "no token: the run skips, says which secret is missing, and sends nothing" 
     try std.testing.expect(ran.result.skipped);
     try std.testing.expectEqualStrings("group-e2e: SKIP beta: the repository secret MOPM_E2E_GROUP_TOKEN is not set", ran.result.line);
     try std.testing.expectEqual(@as(usize, 0), ran.stub.requests);
+}
+
+test "a secret that holds a token for another stage only: the run skips and sends nothing" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const a = arena.allocator();
+    try guard();
+    const ran = try runCheck(a, .{ .stage = "gamma" }, "beta=" ++ test_token, "gamma");
+    try std.testing.expect(ran.result.skipped);
+    try std.testing.expectEqualStrings("group-e2e: SKIP gamma: the repository secret MOPM_E2E_GROUP_TOKEN holds no token for gamma", ran.result.line);
+    try std.testing.expectEqual(@as(usize, 0), ran.stub.requests);
+    // Only separators: the same as no secret.
+    const blank = try runCheck(a, .{}, " \n,\n", "beta");
+    try std.testing.expectEqualStrings("group-e2e: SKIP beta: the repository secret MOPM_E2E_GROUP_TOKEN is not set", blank.result.line);
+}
+
+test "the token of a stage: one token for any stage, or an entry for each" {
+    try std.testing.expectEqualStrings("mopm_a", g.tokenFor("mopm_a", "beta"));
+    try std.testing.expectEqualStrings("mopm_a", g.tokenFor("  mopm_a\r\n", "gamma"));
+    try std.testing.expectEqualStrings("mopm_b", g.tokenFor("beta=mopm_b\ngamma=mopm_g\n", "beta"));
+    try std.testing.expectEqualStrings("mopm_g", g.tokenFor("beta=mopm_b\r\ngamma=mopm_g\r\n", "gamma"));
+    try std.testing.expectEqualStrings("mopm_g", g.tokenFor("beta=mopm_b, gamma=mopm_g", "gamma"));
+    try std.testing.expectEqualStrings("", g.tokenFor("beta=mopm_b", "gamma"));
+    try std.testing.expectEqualStrings("", g.tokenFor("", "beta"));
+    // A stage name is matched whole, and an entry with no name is not one.
+    try std.testing.expectEqualStrings("", g.tokenFor("beta2=mopm_b\n=mopm_x", "beta"));
+    try std.testing.expectEqualStrings("mopm_b", g.tokenFor("junk\nbeta=mopm_b", "beta"));
 }
 
 test "the stage's groups switch is off: the run skips after one create and publishes nothing" {
@@ -770,6 +809,31 @@ test "an index that lists another sha256 than the one uploaded is a failure" {
 
 test "a group yank that leaves a member published is a failure" {
     try expectRedOn(.{ .yank_partial = true }, "yank: the sparse index lists zz_e2e_mid");
+}
+
+test "a refused create, upload, commit or yank is a failure that names the step, and an open group is not left behind" {
+    try expectRedOn(.{ .create_refused = true }, "chain: the group is created");
+    try expectRedOn(.{ .create_refused = true }, "rejected: the group is created");
+    try expectRedOn(.{ .storage_refuses = true }, "chain: zz_e2e_core is uploaded");
+    try expectRedOn(.{ .yank_refused = true }, "yank: the group yank is accepted");
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const a = arena.allocator();
+    try guard();
+    const ran = try runCheck(a, .{ .commit_refused = true }, test_token, "beta");
+    try std.testing.expect(failed(ran.result, "chain: the commit is accepted"));
+    try std.testing.expect(failed(ran.result, "rejected: the commit is accepted"));
+    // The two groups that could not be committed were aborted, so they do not hold one of the actor's open slots until the
+    // deadline; the expiry probe is meant to stay open.
+    var aborted: usize = 0;
+    for (ran.stub.groups.items) |gr| {
+        if (gr.status == .aborted) aborted += 1;
+        if (gr.status == .open) try std.testing.expectEqualStrings(g.probe_version, gr.members[0].version);
+    }
+    try std.testing.expectEqual(@as(usize, 2), aborted);
+    const stuck = try runCheck(a, .{ .storage_refuses = true }, test_token, "beta");
+    for (stuck.stub.groups.items) |gr| {
+        if (gr.status == .open) try std.testing.expectEqualStrings(g.probe_version, gr.members[0].version);
+    }
 }
 
 test "a registry that does not answer is a failed check, not a crash" {

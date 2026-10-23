@@ -5,7 +5,9 @@
 //!                    [--summary <file>] [--wait-seconds <n>]
 //!
 //! The token is the environment variable MOPM_E2E_TOKEN (the job maps the repository secret MOPM_E2E_GROUP_TOKEN to
-//! it on this one step); it is never passed to a child process and never printed.
+//! it on this one step); it is never passed to a child process and never printed. Each stage keeps its own tokens, so the
+//! one secret holds either a single token or a token for each stage, `beta=<token>` and `gamma=<token>` on lines of their
+//! own (tokenFor): a stage with no entry skips.
 //!
 //! What it publishes. The e2e account owns a fixed set of throwaway packages (zz_e2e_core, zz_e2e_mid, zz_e2e_app;
 //! the package name pattern has no hyphen, so the namespace is spelled zz_e2e_*), and the token lists exactly those. A
@@ -103,6 +105,22 @@ pub fn indexPath(arena: Allocator, name: []const u8) ![]u8 {
     var pad: [4]u8 = .{ '_', '_', '_', '_' };
     @memcpy(pad[0..@min(name.len, 4)], name[0..@min(name.len, 4)]);
     return std.fmt.allocPrint(arena, "index/{s}/{s}/{s}", .{ pad[0..2], pad[2..4], name });
+}
+
+const token_separators = " \t\r\n,";
+
+/// The token for `stage` in the value of MOPM_E2E_TOKEN. Each stage keeps its own tokens, and the job has one repository secret,
+/// so the value is either one token (taken for any stage) or entries `<stage>=<token>` separated by white space or commas,
+/// one for beta and one for gamma, added as each stage's switch is turned on. Empty when there is none for the stage.
+pub fn tokenFor(bundle: []const u8, stage: []const u8) []const u8 {
+    const all = std.mem.trim(u8, bundle, token_separators);
+    if (std.mem.indexOfScalar(u8, all, '=') == null) return all;
+    var it = std.mem.tokenizeAny(u8, all, token_separators);
+    while (it.next()) |entry| {
+        const eq = std.mem.indexOfScalar(u8, entry, '=') orelse continue;
+        if (std.mem.eql(u8, entry[0..eq], stage)) return entry[eq + 1 ..];
+    }
+    return "";
 }
 
 pub fn sha256Hex(bytes: []const u8) [64]u8 {
@@ -247,7 +265,8 @@ pub const Opts = struct {
     /// The registry's base URL, without a trailing slash (https://api.beta.mopm.dev).
     base: []const u8,
     stage: []const u8,
-    /// Empty: the secret is not set, and the run SKIPs.
+    /// The value of MOPM_E2E_TOKEN: one token, or a token for each stage (`tokenFor` says how). Empty: the secret is not set, and
+    /// the run SKIPs.
     token: []const u8,
     mopm: ?[]const u8 = null,
     work: []const u8,
@@ -280,6 +299,8 @@ const Cx = struct {
     o: Opts,
     checks: usize = 0,
     notes: std.ArrayList([]const u8),
+    /// The bearer token of this stage.
+    token: []const u8 = "",
     /// A step the rest cannot go on without failed.
     stop: bool = false,
 
@@ -303,7 +324,7 @@ const Cx = struct {
     fn send(self: *Cx, method: std.http.Method, full_url: []const u8, body: ?[]const u8, auth: bool) !http.Answer {
         var tries: u32 = 0;
         while (true) : (tries += 1) {
-            const ans = http.request(self.a, method, full_url, .{ .token = if (auth) self.o.token else null, .body = body }) catch |e| {
+            const ans = http.request(self.a, method, full_url, .{ .token = if (auth) self.token else null, .body = body }) catch |e| {
                 if (tries >= 3) return e;
                 std.time.sleep(self.o.retry_ms * std.time.ns_per_ms);
                 continue;
@@ -865,7 +886,11 @@ fn yankStep(cx: *Cx, chain: Chain) !void {
 pub fn run(a: Allocator, rep: *h.Report, o: Opts) !Result {
     var cx = Cx{ .a = a, .rep = rep, .o = o, .notes = std.ArrayList([]const u8).init(a) };
     if (std.mem.eql(u8, o.stage, "prod")) return skipped(a, o, "this check never runs on prod");
-    if (o.token.len == 0) return skipped(a, o, "the repository secret " ++ secret_name ++ " is not set");
+    if (std.mem.trim(u8, o.token, token_separators).len == 0) return skipped(a, o, "the repository secret " ++ secret_name ++ " is not set");
+    cx.token = tokenFor(o.token, o.stage);
+    if (cx.token.len == 0) {
+        return skipped(a, o, try std.fmt.allocPrint(a, "the repository secret " ++ secret_name ++ " holds no token for {s}", .{o.stage}));
+    }
 
     const before = rep.failures;
     // An error out of a step (the registry did not answer, an answer was not JSON) is a failed check, not a crash.
