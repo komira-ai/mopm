@@ -2,8 +2,9 @@
 // source of the parsers (src/core/manifest.zig, lock.zig, credentials.zig), not written again here, so a key added to a
 // parser without a row on the page, a row for a key the parser refuses, or a key moved from one table to another all
 // fail. The page's tables of keys all have the same columns, and each row says its type, default, allowed values and an
-// example. Mutants (each planted and shown red when this test was written): a key added to a parser's list without the
-// page; a row of the page renamed; a row dropped from the page; a table of the parser with no section on the page.
+// example. It fails on: a key added to a parser's list without the page; a row of the page renamed; a row dropped from
+// the page; a table of the parser with no section on the page. (Sizes, registries, allowed values, environment
+// variables, messages and platforms are held by docs-values.test.ts.)
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { REPO_ROOT } from './build-fixture';
@@ -242,10 +243,8 @@ test('the extractors find what they are written to find', () => {
 
 // The rule of a dependency that has both a `path` and a `version`, and the two refusals of `mopm pack` that go with it,
 // are on the page in the words conda.zig prints (the fixed text of each message, read from its format string), so
-// changing a message, or dropping the rule from the page, fails here. Mutants (each planted and shown red when this
-// test was written): the page's old sentence that a dependency with both is refused put back; a word of the
-// path-without-version message changed in conda.zig; a word of the unsatisfied-version message changed in conda.zig;
-// the page's sentence that the path is not written into the package dropped.
+// changing a message, or dropping the rule from the page, fails here, as does the page saying again that a dependency
+// with both is refused, or dropping its sentence that the path is not written into the package.
 function formatFragments(src: string, name: string): string[] {
   const m = new RegExp(`pub const ${name} = "((?:[^"\\\\]|\\\\.)*)";`).exec(src);
   if (!m) throw new Error(`conda.zig: no declaration of ${name}`);
@@ -279,9 +278,9 @@ describe('a dependency with a path and a version', () => {
 });
 
 // spec/mopm-toml.md says the same rule: its section on a dependency with a path is held to what the code does, with its
-// line breaks ignored. Mutants (planted, shown red): the sentence that pack checks the path package's version dropped; the
-// old line that the path is dropped at publish put back; the old text that the schema's dependentRequired is the rule of
-// the generated file put back; the list of commands that use the path cut short.
+// line breaks ignored: the sentence that pack checks the path package's version, the list of commands that use the path,
+// and the schema's dependentRequired text are required, and the older lines (the path dropped at publish, the schema as
+// the rule of the generated file) are refused.
 describe('spec/mopm-toml.md, a dependency with a path', () => {
   const spec = read('spec/mopm-toml.md');
   const section = spec
