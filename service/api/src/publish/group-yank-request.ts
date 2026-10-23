@@ -1,18 +1,20 @@
 import type { Principal } from '../auth';
 import type { GroupMembers } from '../group';
 import type { GroupRecord, GroupStore } from '../group-store';
+import type { Store } from '../store';
 import { groupNotSettled, invalidRequest, PublishError } from './errors';
 import type { GroupAccess } from './group-commit';
 import { groupAudit } from './group-lifecycle';
 import { MAX_REASON, sendYankRows } from './group-yank';
 import type { Queue } from './ports';
-import { actorOf, parseYank } from './service';
+import { actorOf, parseYank, requireOwner } from './service';
 
 /**
  * PUT /groups/{group_id}/yank (spec/api/openapi.yaml: yankGroup), with the body of a single version's yank: `{yanked: true, reason}` or
  * `{yanked: false}`. Writes the intent on the header with a compare-and-set and queues the rows (src/publish/group-yank.ts does the
  * rest); nothing else happens in the request.
  *
+ *   - the caller must own every member now, creator or not: 403 `not_owner` (src/publish/service.ts: requireOwner);
  *   - not `visible`: 409 `group_not_settled` (the commit's chain is still running, or the group never committed);
  *   - yank: a group never yanked or `restored` begins a yank; `yanking` or `yanked` answers as it is (a repeat of a yank whose rows were
  *     not yet queued queues them); `unyanking` is 409 `group_not_settled`;
@@ -20,8 +22,10 @@ import { actorOf, parseYank } from './service';
  *     that was never yanked or is `restored` has nothing to restore and answers as it is.
  */
 
+const BATCH = 16;
+
 export interface GroupYankDeps {
-  registry: GroupStore;
+  registry: Store & GroupStore;
   /** The group queue: the request queues the rows on it. Absent, a request answers `unavailable`. */
   groupQueue?: Queue;
   now?: () => Date;
@@ -51,6 +55,7 @@ export class GroupYanker {
     if (!queue) throw new PublishError('unavailable', 'The registry is temporarily unavailable.');
     const { header: first, members } = await this.access.load(p, id);
     authorize?.(members);
+    await this.requireOwners(p, members);
     const by = actorOf(p);
     for (let tries = 0; tries < 3; tries++) {
       const header = tries === 0 ? first : ((await this.d.registry.getGroup(id)) ?? first);
@@ -58,6 +63,19 @@ export class GroupYanker {
       if (done) return done;
     }
     throw groupNotSettled(id, 'it changed while the request was being handled; repeat the request');
+  }
+
+  /**
+   * The caller owns every member now, as a single version's yank requires (a token outlives an ownership change). `load` lets the group's
+   * creator through whatever they own today, so this is checked for every caller before the intent is written. The first member (in
+   * member order) that fails refuses the request.
+   */
+  private async requireOwners(p: Principal, members: GroupMembers): Promise<void> {
+    // A CI identity token cannot reach here: it is not the creator of a group and owns nothing, so `load` has refused it.
+    for (let i = 0; i < members.members.length; i += BATCH) {
+      const results = await Promise.allSettled(members.members.slice(i, i + BATCH).map((m) => requireOwner(this.d.registry, p, m.name)));
+      for (const r of results) if (r.status === 'rejected') throw r.reason;
+    }
   }
 
   private async yank(queue: Queue, header: GroupRecord, members: GroupMembers, by: string, reason: string): Promise<GroupYankAnswer | undefined> {

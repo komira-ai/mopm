@@ -316,6 +316,27 @@ describe.each(RIGS)('the yank of a group: %s', (_label, make) => {
       expect((await put(s, { yanked: true, reason: REASON }, yankOnly.secret)).statusCode).toBe(202);
     });
 
+    test('the creator who is no longer an owner of one member is refused a yank and an unyank with 403 not_owner, the token still holding its scopes, and nothing is written; an owner of every member is not', async () => {
+      const s = await visible();
+      expect((await yank(s)).statusCode).toBe(202);
+      await finish();
+      const yanked = await header(s);
+      await rig.store.removeOwner('lib', 1);
+      const messages = queued();
+      for (const body of [{ yanked: false }, { yanked: true, reason: 'again' }]) {
+        const r = await put(s, body);
+        expect(r.statusCode).toBe(403);
+        expect(errorCode(r)).toBe('not_owner');
+        expect(json(r).error.message).toContain("'lib'");
+      }
+      expect(await header(s)).toEqual(yanked);
+      expect(queued()).toBe(messages);
+      expect(await actions(`grp#${s.gid}`)).not.toContain('group_unyank_request');
+      // Owning every member again restores the right to unyank.
+      await rig.store.addOwner({ name: 'lib', github_id: 1, handle: 'owner', added_at: env.clock.now().toISOString() });
+      expect((await unyank(s)).statusCode).toBe(202);
+    });
+
     test('a deployment without the group queue answers unavailable and writes nothing', async () => {
       const s = await visible();
       const before = await header(s);

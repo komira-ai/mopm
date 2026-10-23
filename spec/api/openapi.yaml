@@ -731,7 +731,8 @@ paths:
       summary: Yank or unyank every version a group published.
       description: |
         The body is that of `setYanked`. `yanked: true` yanks the group's versions that are `published`; `yanked: false` restores
-        exactly the versions that yank changed. Allowed for the group's creator or an owner of every package in it, with a token
+        exactly the versions that yank changed. Allowed for an account that owns every package in it now, whether or not it created the
+        group (a token outlives an ownership change; an account that has lost one refuses with `not_owner`), with a token
         that has the `yank` or `publish` scope for every member (read-only mode refuses it).
 
         Only a group that is `visible` can be yanked or unyanked; a group that has not committed, or whose files are still being
