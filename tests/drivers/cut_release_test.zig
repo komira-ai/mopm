@@ -527,6 +527,20 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
             const thrice = try g.run(&args);
             rep.check("verify-dir: the trusted-root fetch failing 3 times fails after exactly 3 tries, saying it is a fetch failure", thrice.code == 1 and g.cosignCalls("verify-blob ") == 3 and h.contains(thrice.text, "could not fetch the Sigstore trusted root") and h.contains(thrice.text, "in 3 tries"), thrice.text);
 
+            // The total wait is bounded: with a budget of 5 ms and waits of 3 ms then 6 ms, the first wait is made and the second would pass the budget, so the run
+            // stops after 2 tries, saying so, instead of waiting out the third.
+            var bud = try goodVerify(a, tools, &tmp, "vd_tuf_budget", "1.2.3");
+            try bud.put("cosign_tuf_fail", "1000\n");
+            const bargs = [_][]const u8{ "verify-dir", "1.2.3", bud.path("assets"), "--sha", sha, "--source-ref", "refs/heads/main", "--cosign-retry-ms", "3", "--cosign-wait-budget-ms", "5" };
+            const budget = try bud.run(&bargs);
+            rep.check("verify-dir: the waits of the retries together stay within the budget: the wait that would pass it is not made", budget.code == 1 and bud.cosignCalls("verify-blob ") == 2 and h.contains(budget.text, "retrying in 3 ms") and !h.contains(budget.text, "retrying in 6 ms") and h.contains(budget.text, "in 2 tries"), budget.text);
+
+            // The default wait is 2000 ms: one fetch failure, with no --cosign-retry-ms given, waits that long once (and then passes).
+            var dflt = try goodVerify(a, tools, &tmp, "vd_tuf_default", "1.2.3");
+            try dflt.put("cosign_tuf_fail", "1\n");
+            const waited_default = try dflt.run(&.{ "verify-dir", "1.2.3", dflt.path("assets"), "--sha", sha, "--source-ref", "refs/heads/main" });
+            rep.check("verify-dir: the default wait before the second try is 2000 ms", waited_default.code == 0 and h.contains(waited_default.text, "retrying in 2000 ms"), waited_default.text);
+
             // Each marker alone, as the final line, is retried (dropping any one of them from the list turns exactly its case red).
             const alone = [_][]const u8{
                 "Error: tuf refresh failed: Get https://tuf-repo-cdn.sigstore.dev/timestamp.json: i/o timeout",

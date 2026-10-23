@@ -55,6 +55,17 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(fake);
 
+    // The authenticated group-publish check the `group-e2e` job of .github/workflows/e2e.yml runs against beta and gamma
+    // (tests/drivers/group_e2e.zig says what it does).
+    const group_e2e = b.addExecutable(.{
+        .name = "mopm-group-e2e",
+        .root_source_file = b.path("tests/drivers/group_e2e.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    group_e2e.root_module.addImport("mopm_core", core);
+    b.installArtifact(group_e2e);
+
     // `zig build test` is run from the repository root: the golden tests read
     // tests/fixtures and tests/golden relative to the cwd, unless
     // MOPM_SOURCE_ROOT names the root (src/core/testroot.zig), for a runner

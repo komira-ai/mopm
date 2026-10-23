@@ -1,9 +1,9 @@
 // docs/examples.md quotes the files of examples/, and only those, and every one of them: a block of the page is its file
 // byte for byte, a file that is not on the page is an example nobody can read, and a block that quotes no file is text
 // that nothing keeps true. The examples are run by the built mopm in the CI (tests/drivers/examples_test.zig, the Buck2
-// target //:examples), so the page, the files and the program cannot drift apart. Mutants (each planted and shown red
-// when this test was written): a character of a file changed; a file added under examples/; a block deleted from the
-// page; a block that quotes a path that is no file; a section dropped.
+// target //:examples), so the page, the files and the program cannot drift apart. It fails on: a character of a file
+// changed; a file added under examples/; a block deleted from the page; a block that quotes a path that is no file; a
+// section dropped.
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { REPO_ROOT } from './build-fixture';
