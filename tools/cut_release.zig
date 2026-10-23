@@ -76,7 +76,7 @@ fn die(comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 fn usage() noreturn {
-    die("usage: cut_release [--gh <path>] [--cosign <path>] [--cosign-retry-ms <n>] [--repo <owner/name>] plan [--sha <commit>] | tag --sha <commit> [--expect-version <v>] | verify-dir <version> <dir> --sha <commit> --source-ref <ref> --trigger <push|workflow_dispatch> | verify <version> <dir> | publish <version> <dir> --verified <file> --notes <file> | bump-internal --version <v> --sha <commit> --internal-repo <owner/name> --submodule <name> --workdir <dir> [--git <path>] | tap --version <v> --formula-file <file> --tap-repo <owner/name> --formula <name> --workdir <dir> [--git <path>]", .{});
+    die("usage: cut_release [--gh <path>] [--cosign <path>] [--cosign-retry-ms <n>] [--cosign-wait-budget-ms <n>] [--repo <owner/name>] plan [--sha <commit>] | tag --sha <commit> [--expect-version <v>] | verify-dir <version> <dir> --sha <commit> --source-ref <ref> --trigger <push|workflow_dispatch> | verify <version> <dir> | publish <version> <dir> --verified <file> --notes <file> | bump-internal --version <v> --sha <commit> --internal-repo <owner/name> --submodule <name> --workdir <dir> [--git <path>] | tap --version <v> --formula-file <file> --tap-repo <owner/name> --formula <name> --workdir <dir> [--git <path>]", .{});
 }
 
 fn out(comptime fmt: []const u8, args: anytype) void {
@@ -94,7 +94,9 @@ const Gh = struct {
     /// The `cosign` that checks signatures (`--cosign <path>`; the tests give a fake).
     cosign: []const u8 = "cosign",
     /// The delay before the second try of a `cosign verify-blob` that could not fetch the trusted root; the third waits twice as long (`--cosign-retry-ms`).
-    cosign_retry_ms: u32 = 2000,
+    cosign_retry_ms: u32 = default_cosign_retry_ms,
+    /// The most that all the retries of one verification wait in total (`--cosign-wait-budget-ms`).
+    cosign_wait_budget_ms: u64 = max_cosign_wait_ms,
     /// The directory of the .deb metadata (`--packaging <dir>`), which verify uses to rebuild each .deb from its tarball.
     packaging: []const u8 = release_debs.default_packaging,
     /// `--packaging` was given.
@@ -502,6 +504,7 @@ fn checkAttestations(gh: Gh, dir_path: []const u8, want: [][]const u8, source_re
 fn checkSignatures(gh: Gh, dir_path: []const u8, payload: [][]const u8, source_ref: []const u8, sha: []const u8, trigger: []const u8) void {
     const a = gh.a;
     const identity = std.fmt.allocPrint(a, "https://github.com/{s}/.github/workflows/release.yml@{s}", .{ gh.repo, source_ref }) catch @panic("oom");
+    var waited_ms: u64 = 0; // all the waiting of the retries below, bounded by gh.cosign_wait_budget_ms
     for (payload) |w| {
         const path = std.fs.path.join(a, &.{ dir_path, w }) catch @panic("oom");
         const bundle = std.fmt.allocPrint(a, "{s}{s}", .{ path, bundle_suffix }) catch @panic("oom");
@@ -512,8 +515,10 @@ fn checkSignatures(gh: Gh, dir_path: []const u8, payload: [][]const u8, source_r
             if (r.ok) break;
             const err = std.mem.trim(u8, r.stderr, " \r\n");
             if (!isTrustedRootFetchFailure(r.stderr)) die("cosign verify-blob refused {s}: {s}", .{ w, err });
-            if (attempt >= cosign_tries) die("cosign verify-blob could not fetch the Sigstore trusted root for {s} in {d} tries (a network failure, not a verdict on the signature): {s}", .{ w, cosign_tries, err });
             const wait_ms = @as(u64, gh.cosign_retry_ms) * attempt;
+            // out of tries, or the wait would pass the budget of all the retries of this run: a fetch failure, said at once
+            if (attempt >= cosign_tries or waited_ms + wait_ms > gh.cosign_wait_budget_ms) die("cosign verify-blob could not fetch the Sigstore trusted root for {s} in {d} tries (a network failure, not a verdict on the signature): {s}", .{ w, attempt, err });
+            waited_ms += wait_ms;
             std.debug.print("cut_release: cosign verify-blob could not fetch the Sigstore trusted root for {s} (try {d} of {d}); retrying in {d} ms\n", .{ w, attempt, cosign_tries, wait_ms });
             std.time.sleep(wait_ms * std.time.ns_per_ms);
         }
@@ -522,6 +527,17 @@ fn checkSignatures(gh: Gh, dir_path: []const u8, payload: [][]const u8, source_r
 
 /// Tries of `cosign verify-blob` per file when it cannot fetch the Sigstore trusted root.
 const cosign_tries: u32 = 3;
+
+/// The default delay (ms) before the second try; the third waits twice as long.
+const default_cosign_retry_ms: u32 = 2000;
+
+/// The most (ms) that all the retries of one verification wait in total, across every file. The default waits cost 6000 ms for a file whose fetch never
+/// works, so the budget lets two such files retry fully and no more: a long outage does not hold the release file after file.
+const max_cosign_wait_ms: u64 = 12_000;
+
+comptime {
+    std.debug.assert(default_cosign_retry_ms == 2000 and max_cosign_wait_ms == 12_000);
+}
 
 /// cosign's FINAL stderr line says the trusted root (the TUF repository) could not be fetched: a network failure that says nothing about the
 /// signature. Only these retry; any other refusal (a signature or certificate mismatch) is final. Only the last line counts: in legacy-bundle
@@ -859,7 +875,8 @@ pub fn main() !void {
     var notes: ?[]const u8 = null;
     var expect_version: ?[]const u8 = null;
     var cosign: []const u8 = "cosign";
-    var cosign_retry_ms: u32 = 2000;
+    var cosign_retry_ms: u32 = default_cosign_retry_ms;
+    var cosign_wait_budget_ms: u64 = max_cosign_wait_ms;
     var packaging: []const u8 = release_debs.default_packaging;
     var packaging_given = false;
     var git_exe: []const u8 = "git";
@@ -884,6 +901,8 @@ pub fn main() !void {
                 cosign = v;
             } else if (std.mem.eql(u8, arg, "--cosign-retry-ms")) {
                 cosign_retry_ms = std.fmt.parseInt(u32, v, 10) catch usage();
+            } else if (std.mem.eql(u8, arg, "--cosign-wait-budget-ms")) {
+                cosign_wait_budget_ms = std.fmt.parseInt(u64, v, 10) catch usage();
             } else if (std.mem.eql(u8, arg, "--packaging")) {
                 packaging = v;
                 packaging_given = true;
@@ -929,7 +948,7 @@ pub fn main() !void {
         } else try pos.append(arg);
     }
     if (pos.items.len == 0) usage();
-    const gh = Gh{ .a = a, .exe = gh_exe, .repo = repo, .cosign = cosign, .cosign_retry_ms = cosign_retry_ms, .packaging = packaging, .packaging_given = packaging_given };
+    const gh = Gh{ .a = a, .exe = gh_exe, .repo = repo, .cosign = cosign, .cosign_retry_ms = cosign_retry_ms, .cosign_wait_budget_ms = cosign_wait_budget_ms, .packaging = packaging, .packaging_given = packaging_given };
     const cmd = pos.items[0];
     const n = pos.items.len;
     if (std.mem.eql(u8, cmd, "plan")) {
