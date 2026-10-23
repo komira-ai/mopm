@@ -12,6 +12,7 @@ const install_cmd = @import("install_cmd.zig");
 const plan_cmd = @import("plan_cmd.zig");
 const unit_cmd = @import("unit_cmd.zig");
 const yank_cmd = @import("yank_cmd.zig");
+const stage_cmd = @import("stage_cmd.zig");
 
 /// The release version, from the build (`zig build -Dversion=`; the dev default in build_options.zig).
 pub const version = @import("build_options").version;
@@ -76,6 +77,16 @@ const usage =
     \\                          --registry is required; a rerun after a failure
     \\                          resumes the same group (state.json); report.json
     \\                          says what each member came to
+    \\  stage --workspace-root <dir> [<package>...] --artifacts <dir> --compiler <mojo version>
+    \\        --out <dir> --registry <prod|gamma|beta|url>
+    \\                          pack the workspace's members (the named ones and
+    \\                          what they depend on, or all) in dependency order
+    \\                          from <artifacts>/<subdir>/<name>.mojoc, with path
+    \\                          dependencies dropped and versions kept; check each
+    \\                          version against the registry (yanked, burned or
+    \\                          other bytes: refused; same bytes: skipped); write
+    \\                          the staged set for 'publish --staged'. Reads no
+    \\                          token; --registry is required
     \\  yank --group <id> --registry <prod|gamma|beta|url> --reason <text>
     \\       --group <id> --registry <...> --unyank
     \\                          yank every version a group published, or restore
@@ -434,6 +445,7 @@ fn run(arena: std.mem.Allocator) u8 {
         return publish_cmd.main(arena, cmd, args[2..], version);
     }
     if (std.mem.eql(u8, cmd, "yank")) return yank_cmd.main(arena, args[2..], version);
+    if (std.mem.eql(u8, cmd, "stage")) return stage_cmd.main(arena, args[2..], version);
     if (std.mem.eql(u8, cmd, "lock")) return install_cmd.main(arena, .lock, args[2..], version);
     if (std.mem.eql(u8, cmd, "update")) return install_cmd.main(arena, .update, args[2..], version);
     if (std.mem.eql(u8, cmd, "tree")) return install_cmd.main(arena, .tree, args[2..], version);
@@ -467,6 +479,8 @@ test {
     _ = @import("group_plan.zig");
     _ = @import("group_publish.zig");
     _ = @import("group_publish_test.zig");
+    _ = stage_cmd;
+    _ = @import("stage_test.zig");
 }
 
 test "planned commands are recognised, working ones are not planned" {
