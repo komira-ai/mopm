@@ -40,7 +40,7 @@ const release_writes = [_][]const u8{ "contents", "id-token", "attestations" };
 /// the one other that mints an App token (the autopin App, contents write). autopin_lint.zig holds everything else about it.
 const autopin_commit_file = "autopin-commit.yml";
 /// Names whose values must never reach a log: no echo/printf/cat/tee of them.
-const secret_names = [_][]const u8{ "AWS_ACCOUNT_ID", "AWS_REGION", "ROLE_ARN", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN" };
+const secret_names = [_][]const u8{ "AWS_ACCOUNT_ID", "AWS_REGION", "ROLE_ARN", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "MOPM_E2E_GROUP_TOKEN", "MOPM_E2E_TOKEN" };
 const owned_actions = [_][]const u8{ "checkout", "setup-node", "upload-artifact", "download-artifact", "attest-build-provenance" };
 
 // ---- secret-bearing variables -----------------------------------------------
@@ -295,6 +295,18 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
     try eachPerm(a, f, base, doc, &path, out);
 
     try varsProblems(a, f, text, out);
+
+    // The e2e actor's token is read by one job of e2e.yml (groupE2eProblems holds that job to its conditions) and by nothing else.
+    // GitHub reads context names and function names without regard to case, so the match does too.
+    const live_lower = try std.ascii.allocLowerString(a, try c.nonCommentLines(a, text));
+    if (!std.mem.eql(u8, base, "e2e.yml") and std.mem.indexOf(u8, live_lower, "secrets." ++ group_secret_lower) != null) {
+        try c.problem(a, out, prefix ++ "{s}: secrets." ++ group_secret ++ " is for the " ++ group_job ++ " job of e2e.yml alone", .{f});
+    }
+    // A name can be built or the whole context dumped without ever writing the secret's name, so neither form is allowed in any
+    // workflow: the group-e2e step names its one secret with the dotted form.
+    if (secretsDump(live_lower)) |what| {
+        try c.problem(a, out, prefix ++ "{s}: {s} reads secrets without naming them; name each secret with secrets.NAME", .{ f, what });
+    }
 
     // Only promote.yml passes secrets to its reusable calls, and it must do so on every call.
     if (std.mem.eql(u8, base, "promote.yml")) {
@@ -611,6 +623,128 @@ fn indexGateProblems(a: Allocator, doc: Value, out: *Out) !void {
     if (std.mem.count(u8, script.items, "\"$code\" = ") != 1) try c.problem(a, out, prefix ++ "e2e.yml: index-gate must accept only 404 for the absent package", .{});
 }
 
+/// The repository secret of the group end-to-end check: the token of the e2e actor, which may create groups on beta and gamma.
+const group_secret = "MOPM_E2E_GROUP_TOKEN";
+const group_secret_ref = "${{ secrets." ++ group_secret ++ " }}";
+const group_secret_lower = "mopm_e2e_group_token";
+
+/// An expression that reaches secrets without the dotted name, in lower-cased text: `toJSON(secrets)` (spaces allowed) or an
+/// index `secrets[...]`. Returns what it found, or null.
+fn secretsDump(s: []const u8) ?[]const u8 {
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, s, from, "secrets")) |i| : (from = i + 1) {
+        if (!c.boundaryBefore(s, i)) continue;
+        var j = i + "secrets".len;
+        while (j < s.len and c.isSpace(s[j])) j += 1;
+        if (j < s.len and s[j] == '[') return "an index expression secrets[...]";
+        // toJSON( secrets ): walk back over spaces and the opening parenthesis.
+        var k = i;
+        while (k > 0 and c.isSpace(s[k - 1])) k -= 1;
+        if (k == 0 or s[k - 1] != '(') continue;
+        k -= 1;
+        while (k > 0 and c.isSpace(s[k - 1])) k -= 1;
+        if (k >= 6 and std.mem.eql(u8, s[k - 6 .. k], "tojson")) return "toJSON(secrets)";
+    }
+    return null;
+}
+
+/// How many times `needle` (lower case) occurs in `hay` without regard to case.
+fn countFold(a: Allocator, hay: []const u8, needle: []const u8) !usize {
+    return std.mem.count(u8, try std.ascii.allocLowerString(a, hay), needle);
+}
+const group_job = "group-e2e";
+const group_token_env = "MOPM_E2E_TOKEN";
+
+/// The key of the first entry of the mapping `env` whose value contains `needle`, or null.
+fn envHolding(env: ?Value, needle: []const u8) ?[]const u8 {
+    const m = env orelse return null;
+    if (m != .object) return null;
+    var it = m.object.iterator();
+    while (it.next()) |e| {
+        if (e.value_ptr.* == .string and std.ascii.indexOfIgnoreCase(e.value_ptr.string, needle) != null) return e.key_ptr.*;
+    }
+    return null;
+}
+
+/// e2e.yml's group-e2e job (the authenticated group publish, run after a stage's deploy or by hand). The workflow it sits in is
+/// called by promote.yml and started by hand, never by a pull request, because a pull request must not hold the token. The job
+/// is guarded, runs on main for beta and gamma, holds a read-only token and no id-token or environment, uses only the pinned
+/// checkout, and the repository secret is read once: on the step that runs the check, as MOPM_E2E_TOKEN, and nowhere else in the
+/// repository (fileProblems holds the other workflows to that).
+fn groupE2eProblems(a: Allocator, doc: Value, text: []const u8, out: *Out) !void {
+    const on = try c.onKeys(a, doc);
+    const sorted = try a.dupe([]const u8, on);
+    std.mem.sort([]const u8, sorted, {}, lessThan);
+    if (!c.eqlList(sorted, &.{ "workflow_call", "workflow_dispatch" })) {
+        try c.problem(a, out, prefix ++ "e2e.yml: triggers must be exactly workflow_call and workflow_dispatch (a pull request must not hold the group e2e token), got {s}", .{try c.inspectList(a, on)});
+    }
+    const jobs = c.get(doc, "jobs");
+    // The secret is named once in the file, outside comments, and the workflow itself carries no env.
+    const live = try c.nonCommentLines(a, text);
+    const mentions = try countFold(a, live, "secrets." ++ group_secret_lower);
+    if (mentions != 1) try c.problem(a, out, prefix ++ "e2e.yml: secrets." ++ group_secret ++ " must be referenced exactly once, on the step that runs the check, got {d}", .{mentions});
+    if (envHolding(c.get(doc, "env"), "secrets.") != null) try c.problem(a, out, prefix ++ "e2e.yml: the workflow must not set env from secrets (a secret belongs to the step that reads it)", .{});
+    if (jobs) |js| if (js == .object) {
+        var it = js.object.iterator();
+        while (it.next()) |e| {
+            const jn = e.key_ptr.*;
+            if (std.mem.eql(u8, jn, group_job)) continue;
+            if (try countFold(a, try c.inspect(a, e.value_ptr.*), group_secret_lower) != 0) {
+                try c.problem(a, out, prefix ++ "e2e.yml: job {s} reads " ++ group_secret ++ "; only " ++ group_job ++ " may", .{jn});
+            }
+        }
+    };
+
+    const job = c.get(jobs, group_job) orelse return c.problem(a, out, prefix ++ "e2e.yml: the " ++ group_job ++ " job is missing", .{});
+    if (!c.containsStr(try c.arrayOf(a, c.get(job, "needs")), "guard")) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " must need the guard job", .{});
+    if (!c.isStr(c.get(job, "if"), "github.ref == 'refs/heads/main' && inputs.stage != 'prod'")) {
+        try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " must run on main only, and never for prod (`if: github.ref == 'refs/heads/main' && inputs.stage != 'prod'`)", .{});
+    }
+    if (c.truthy(c.get(job, "environment"))) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " must not declare an environment (the token is a repository secret)", .{});
+    if (c.truthy(c.get(job, "continue-on-error"))) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " must not set continue-on-error", .{});
+    if (c.truthy(c.get(job, "uses"))) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " must not call a workflow", .{});
+    if (c.truthy(c.get(job, "env"))) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " must not set env at job level (the token is for one step)", .{});
+    const perms = c.get(job, "permissions");
+    const exact = perms != null and perms.? == .object and perms.?.object.count() == 1 and c.isStr(c.get(perms, "contents"), "read");
+    if (!exact) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " must grant exactly contents read", .{});
+
+    var holders: usize = 0;
+    var runs_check = false;
+    var passes_summary = false;
+    const steps = c.get(job, "steps");
+    if (steps != null and steps.? == .array) {
+        for (steps.?.array.items, 0..) |st, i| {
+            if (c.str(c.get(st, "uses"))) |u| {
+                if (!pinned(u, "actions/checkout")) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: only actions/checkout pinned by full SHA is allowed here: {s}", .{ i, u });
+            }
+            const env = c.get(st, "env");
+            const holds = envHolding(env, group_secret);
+            if (holds) |key| {
+                holders += 1;
+                if (!std.mem.eql(u8, key, group_token_env) or !c.isStr(c.get(env, key), group_secret_ref)) {
+                    try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: the secret goes in as the variable " ++ group_token_env ++ ", set to secrets." ++ group_secret ++ " and nothing around it, not as {s}", .{ i, key });
+                }
+                const run = c.str(c.get(st, "run")) orelse "";
+                runs_check = std.mem.indexOf(u8, run, "mopm-group-e2e") != null;
+                passes_summary = std.mem.indexOf(u8, run, "--summary \"$GITHUB_STEP_SUMMARY\"") != null;
+            }
+            // No other secret in the job, and none through `with:`.
+            if (env) |m| if (m == .object) {
+                var eit = m.object.iterator();
+                while (eit.next()) |ee| {
+                    if (ee.value_ptr.* == .string and std.mem.indexOf(u8, ee.value_ptr.string, "secrets.") != null and !(holds != null and std.mem.eql(u8, holds.?, ee.key_ptr.*))) {
+                        try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: reads {s} from secrets; the job reads no secret but " ++ group_secret, .{ i, ee.key_ptr.* });
+                    }
+                }
+            };
+            if (envHolding(c.get(st, "with"), "secrets.") != null) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: passes a secret through with:", .{i});
+        }
+    }
+    if (holders != 1) try c.problem(a, out, prefix ++ "e2e.yml: exactly one step of " ++ group_job ++ " must read the token, got {d}", .{holders});
+    if (holders == 1 and !runs_check) try c.problem(a, out, prefix ++ "e2e.yml: the step of " ++ group_job ++ " that holds the token must run mopm-group-e2e", .{});
+    if (holders == 1 and !passes_summary) try c.problem(a, out, prefix ++ "e2e.yml: the step of " ++ group_job ++ " that holds the token must pass --summary \"$GITHUB_STEP_SUMMARY\" (a skip says why there)", .{});
+}
+
 fn sortedKeys(a: Allocator, v: ?Value) ![]const []const u8 {
     const s = try a.dupe([]const u8, c.keys(v));
     std.mem.sort([]const u8, s, {}, lessThan);
@@ -669,7 +803,8 @@ pub fn repoProblems(a: Allocator, ctx: anytype, out: *Out) !void {
     // deploy.yml and e2e.yml: the guard job gates the credential job.
     for ([_][]const u8{ "deploy", "e2e" }) |w| {
         const name = try std.fmt.allocPrint(a, "{s}.yml", .{w});
-        const doc = c.load(a, try ctx.read(a, name)) catch |err| {
+        const wf_text = try ctx.read(a, name);
+        const doc = c.load(a, wf_text) catch |err| {
             try c.problem(a, out, prefix ++ "{s}: not readable as YAML: {s}", .{ name, @errorName(err) });
             continue;
         };
@@ -689,7 +824,10 @@ pub fn repoProblems(a: Allocator, ctx: anytype, out: *Out) !void {
             if (!c.containsStr(try c.arrayOf(a, c.get(j, "needs")), "guard")) try c.problem(a, out, prefix ++ "{s}.yml: {s} must need the guard job", .{ w, jn });
             if (!c.truthy(c.get(j, "environment"))) try c.problem(a, out, prefix ++ "{s}.yml: {s} must declare an environment", .{ w, jn });
         }
-        if (std.mem.eql(u8, w, "e2e")) try indexGateProblems(a, doc, out);
+        if (std.mem.eql(u8, w, "e2e")) {
+            try indexGateProblems(a, doc, out);
+            try groupE2eProblems(a, doc, wf_text, out);
+        }
     }
 
     // oidc-subject-check.yml: manual, main only, no environment except beta, no AWS.

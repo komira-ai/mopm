@@ -47,7 +47,7 @@ No job of this repository measures coverage today, so none is reported. `tests/d
 TUF repository), the call is tried up to 3 times, waiting 2 s and then 4 s between the tries. Only the final line of cosign's error output decides:
 it must hold `tuf refresh failed`, `Could not fetch trusted_root.json` or `error getting live trusted root`. Any other refusal, a signature or
 certificate mismatch above all, is a finding on the first try; so is a mismatch that follows the legacy-bundle `Could not fetch trusted_root.json ... Continuing`
-warning. One more shape is retried: cosign v3.0.6 (the version the release installs) ends a failed fetch with `trusted root is required when using new bundle format` (the fetch error is only the warning line before it), and that final line retries only when an earlier line holds one of the three fetch texts; alone it is a finding. An outage longer than about 6 s still fails the release, and the message says it is "a network failure, not a verdict on the signature"; re-run the job.
+warning. One more shape is retried: cosign v3.0.6 (the version the release installs) ends a failed fetch with `trusted root is required when using new bundle format` (the fetch error is only the warning line before it), and that final line retries only when an earlier line holds one of the three fetch texts; alone it is a finding. Both installs of cosign in the workflow name `cosign-release: 'v3.0.6'` (the release lint refuses an install that does not), because the retry reads that release's error text. The waits of all the retries of one run together never pass 12 s (`--cosign-wait-budget-ms`), so a long outage does not hold the release file after file. An outage longer than about 6 s still fails the release, and the message says it is "a network failure, not a verdict on the signature"; re-run the job.
 
 A push that changes only documentation or CI (`**.md`, `docs/**`, `.github/**`) does not release.
 Everything else does, including a change to `VERSION`.
@@ -177,13 +177,19 @@ is not part of these jobs: the writes are conditional, so a role with the wrong 
 
 ```sh
 sudo install -d -m 0755 /etc/apt/keyrings
-curl -fsSL https://packages.komira.ai/apt/keyring.gpg | sudo tee /etc/apt/keyrings/packages.gpg > /dev/null
-echo "deb [signed-by=/etc/apt/keyrings/packages.gpg] https://packages.komira.ai/apt stable main" | sudo tee /etc/apt/sources.list.d/packages.list
+sudo curl -fsSL -o /etc/apt/keyrings/komira-archive-keyring.gpg https://packages.komira.ai/apt/komira-archive-keyring.gpg
+sudo tee /etc/apt/sources.list.d/komira.sources > /dev/null <<'EOF'
+Types: deb
+URIs: https://packages.komira.ai/apt
+Suites: stable
+Components: main
+Signed-By: /etc/apt/keyrings/komira-archive-keyring.gpg
+EOF
 sudo apt update && sudo apt install mopm
 ```
 
-The keyring is the public half of the archive signing key (binary format, as `signed-by` expects); its file name is decided when the owner uploads it, and the line above names the file
-the repository documents. `apt update` verifies `InRelease` against it before it trusts a `Packages` file.
+The keyring is the public half of the archive signing key (binary format, as `Signed-By` expects); the repository serves it as `apt/komira-archive-keyring.gpg` (an armored copy,
+`komira-archive-keyring.asc`, is beside it), and `Signed-By` names the path the first command installs it to. `apt update` verifies `InRelease` against it before it trusts a `Packages` file.
 
 ## The Homebrew tap (the `tap` stage)
 
