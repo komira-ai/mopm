@@ -7,11 +7,17 @@
 //!
 //! Run under any other name (the executable `mojo build` wrote), it prints the line the README program of the group check
 //! prints and exits 0. Any other use of `mojo` ends 2, so a walk that asks the compiler for something else is red.
+//!
+//! A test that needs a program which exits 0 and prints another line sets `FAKE_TOOLCHAIN_PROGRAM_OUTPUT` in the environment of its
+//! own run: the program then prints that text instead.
 
 const std = @import("std");
 
 /// What the README program of the group check prints (tests/drivers/group_e2e.zig, readme_output).
 const program_output = "zz_e2e total 3\n";
+
+/// The variable that replaces `program_output` for one run.
+const output_env = "FAKE_TOOLCHAIN_PROGRAM_OUTPUT";
 
 /// The file named by the last `-o` among `args`, or null.
 fn outputOf(args: []const []const u8) ?[]const u8 {
@@ -28,7 +34,8 @@ pub fn main() !u8 {
     const a = arena_state.allocator();
     const args = try std.process.argsAlloc(a);
     if (!std.mem.eql(u8, std.fs.path.basename(args[0]), "mojo")) {
-        try std.io.getStdOut().writer().writeAll(program_output);
+        const line: []const u8 = std.process.getEnvVarOwned(a, output_env) catch @as([]const u8, program_output);
+        try std.io.getStdOut().writer().writeAll(line);
         return 0;
     }
     if (args.len < 2) return 2;
