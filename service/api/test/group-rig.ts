@@ -1,6 +1,7 @@
 import { GetCommand } from '@aws-sdk/lib-dynamodb';
 import { DynamoStore, tablesFor } from '../src/dynamo-store';
 import { headerKey, type FunnelOptions } from '../src/group';
+import type { GroupStore } from '../src/group-store';
 import { MemoryStore } from '../src/memory-store';
 import { Metrics } from '../src/metrics';
 import type { RawVersionPort } from '../src/raw-port';
@@ -15,7 +16,9 @@ import { audit, FakeDocClient, rec } from './helpers';
  */
 export interface Rig {
   label: string;
-  store: Store & { raw: RawVersionPort };
+  store: Store & GroupStore & { raw: RawVersionPort };
+  /** The fake DynamoDB client under the store (the DynamoDB rig only): to see exactly what was sent, and to interleave writers. */
+  doc?: FakeDocClient;
   /** Log lines of the funnel (errors, with the group id). */
   logs: Array<Record<string, unknown>>;
   /** The embedded-metric lines the funnel emitted. */
@@ -98,6 +101,7 @@ export function dynamoRig(opts: FunnelOptions = {}): Rig {
   };
   return {
     ...common('dynamodb (fake client)', store, logs, lines),
+    doc,
     writeRow: (r) => {
       const { canonical, version, ...rest } = r;
       doc.tables.get('mopm-t-versions')!.set(`${r.name}\u0000${canonical}`, { ...rest, version: canonical, version_spelling: version });

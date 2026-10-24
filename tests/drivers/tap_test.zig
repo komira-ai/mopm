@@ -112,6 +112,10 @@ const World = struct {
             }
             try argv.appendSlice(&.{ k, val });
         }
+        // A flag the good arguments do not carry (--asset) is added as given.
+        for (over) |o| {
+            if (std.mem.eql(u8, o[0], "--asset")) try argv.appendSlice(&.{ o[0], o[1] });
+        }
         return w.run(argv.items);
     }
 
@@ -265,6 +269,45 @@ test "tap: the pull request the tap's guard admits, and every planted defect ref
         try w.put("tap_read_error", "");
         const unread = try w.go();
         rep.check("failure: a tap that cannot be read (HTTP 500, not 404) is red, not treated as empty", unread.code == 1 and h.contains(unread.text, "cannot read Formula/mopm.rb at main") and untouched(w) and w.cloned() == 0, unread.text);
+    }
+
+    // ---- --asset: the file-name stem of the urls, when it is not the formula's name -------------------
+    {
+        // The formula whose tarballs are named mopm-cli-<V>-<target>.tar.gz (the formula itself is still `mopm`).
+        const staged = try std.mem.replaceOwned(u8, a, golden, "mopm-1.2.3-", "mopm-cli-1.2.3-");
+        var w = try fresh(a, tools, &tmp, "asset_good");
+        try w.put("mopm.rb", staged);
+        const ok = try w.runWith(&.{.{ "--asset", "mopm-cli" }});
+        rep.check("asset: a formula whose urls carry the stem given by --asset is opened as the same pull request", ok.code == 0 and h.contains(ok.text, "opened " ++ pr_url ++ "100: mopm v1.2.3") and w.created() == 1 and w.pushed() == 1 and std.mem.eql(u8, std.mem.trim(u8, w.read("pushed"), "\n"), "HEAD:refs/heads/" ++ branch), ok.text);
+        rep.same("asset: the file in the clone is the rendered formula, byte for byte", staged, h.readFile(a, w.path("wd/Formula/mopm.rb")) catch "");
+
+        w = try fresh(a, tools, &tmp, "asset_missing");
+        try w.put("mopm.rb", staged);
+        const no_flag = try w.go();
+        rep.check("asset: without --asset the stem is the formula's name, so a formula whose urls carry another stem is refused", no_flag.code == 1 and h.contains(no_flag.text, "does not have the file name mopm-1.2.3-<target>.tar.gz") and untouched(w) and w.cloned() == 0, no_flag.text);
+
+        w = try fresh(a, tools, &tmp, "asset_wrong");
+        const wrong = try w.runWith(&.{.{ "--asset", "mopm-cli" }});
+        rep.check("asset: --asset names a stem the urls do not carry: refused, nothing cloned, pushed or opened", wrong.code == 1 and h.contains(wrong.text, "does not have the file name mopm-cli-1.2.3-<target>.tar.gz") and untouched(w) and w.cloned() == 0, wrong.text);
+
+        w = try fresh(a, tools, &tmp, "asset_live_older");
+        try w.put("mopm.rb", staged);
+        try w.put("tap_main_formula", try std.mem.replaceOwned(u8, a, try formulaAt(a, "1.2.2"), "mopm-1.2.2-", "mopm-cli-1.2.2-"));
+        const live_older = try w.runWith(&.{.{ "--asset", "mopm-cli" }});
+        rep.check("asset: the formula on the tap is read with the same stem: v1.2.2 is moved up to v1.2.3", live_older.code == 0 and w.created() == 1 and w.pushed() == 1, live_older.text);
+
+        w = try fresh(a, tools, &tmp, "asset_live_ahead");
+        try w.put("mopm.rb", staged);
+        try w.put("tap_main_formula", try std.mem.replaceOwned(u8, a, try formulaAt(a, "1.2.10"), "mopm-1.2.10-", "mopm-cli-1.2.10-"));
+        const live_ahead = try w.runWith(&.{.{ "--asset", "mopm-cli" }});
+        rep.check("asset: a tap ahead (v1.2.10) whose urls carry the stem is still refused as moving down", live_ahead.code == 1 and h.contains(live_ahead.text, "a tap never moves down") and untouched(w), live_ahead.text);
+
+        const bad = [_][]const u8{ "../mopm", "mopm cli", ".mopm" };
+        for (bad) |b| {
+            w = try fresh(a, tools, &tmp, try h.fmt(a, "asset_bad_{d}", .{b.len}));
+            const r = try w.runWith(&.{.{ "--asset", b }});
+            rep.check(try h.fmt(a, "asset: --asset '{s}' is not a file name stem: refused before anything is read or written", .{b}), r.code == 1 and h.contains(r.text, "is not a file name stem") and w.read("log").len == 0 and untouched(w) and w.cloned() == 0, r.text);
+        }
     }
 
     // ---- idempotence and ordering against the pull requests that exist -----------------------------
