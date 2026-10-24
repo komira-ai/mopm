@@ -126,6 +126,55 @@ fn listsBuiltShim(u: Value) bool {
     return false;
 }
 
+/// What a build system needs to build the archive of a native: the sources (from the workspace), the flags and the include
+/// directories (from the member).
+const NativeSpec = struct {
+    package: []const u8,
+    soname: []const u8,
+    srcs: []const []const u8,
+    cflags: []const []const u8,
+    cflags_linux: []const []const u8,
+    cflags_macos: []const []const u8,
+    includes: []const []const u8,
+};
+
+/// The native of tests/e2e/natws/shimlib/mopm.toml, written out, for a machine whose unit graph mopm cannot make (see
+/// `have_graph` in `run`). On linux-64 the spec comes from the graph, and a check holds it to this one.
+const manifest_spec = NativeSpec{
+    .package = "shimlib",
+    .soname = "libshim.a",
+    .srcs = &.{ "shimlib/native/scale.c", "shimlib/native/shim.c" },
+    .cflags = &.{ "-O1", "-DSHIM_SCALE=6" },
+    .cflags_linux = &.{"-DSHIM_OS_ADD=0"},
+    .cflags_macos = &.{"-DSHIM_OS_ADD=1"},
+    .includes = &.{"native"},
+};
+
+/// The spec the `native` unit `unit` of a graph gives.
+fn specOf(a: Allocator, unit: Value) !NativeSpec {
+    var srcs = std.ArrayList([]const u8).init(a);
+    for (items(unit, "srcs")) |s| try srcs.append(h.jsonString(s, "path") orelse return error.BadGraph);
+    var cflags = std.ArrayList([]const u8).init(a);
+    for (items(unit, "cflags")) |f| try cflags.append(f.string);
+    var linux = std.ArrayList([]const u8).init(a);
+    var macos = std.ArrayList([]const u8).init(a);
+    if (unit.object.get("cflags_by_os")) |by_os| {
+        for (items(by_os, "linux")) |f| try linux.append(f.string);
+        for (items(by_os, "macos")) |f| try macos.append(f.string);
+    }
+    var includes = std.ArrayList([]const u8).init(a);
+    for (items(unit, "includes")) |i| try includes.append(i.string);
+    return .{
+        .package = h.jsonString(unit, "package") orelse return error.BadGraph,
+        .soname = h.jsonString(unit, "soname") orelse return error.BadGraph,
+        .srcs = srcs.items,
+        .cflags = cflags.items,
+        .cflags_linux = linux.items,
+        .cflags_macos = macos.items,
+        .includes = includes.items,
+    };
+}
+
 const Ctx = struct {
     a: Allocator,
     rep: *h.Report,
@@ -171,27 +220,38 @@ const Ctx = struct {
         return h.run(c.a, argv.items, &e, .{});
     }
 
-    /// Builds the archive of the `native` unit `unit` of a graph, as a build system does: `cc -c` of each source with
-    /// the unit's flags (`cflags`, then the `cflags_by_os` of this operating system) and one `-I` per include
-    /// directory (relative to the member, which here sits at <ws>/<package>), then `ar` of the objects, in the order
-    /// of the sources, into `<natives>/<soname>`.
-    fn buildNative(c: *Ctx, unit: Value, ws: []const u8, natives: []const u8) !void {
+    /// The program `path` run in an empty environment: with the real Mojo it prints what the C code computes (and the
+    /// Mojo above it adds); the stand-in prints a fixed line, so there only the exit status is checked.
+    fn runProgram(c: *Ctx, what: []const u8, path: []const u8) !void {
         const a = c.a;
-        const package = h.jsonString(unit, "package") orelse return error.BadGraph;
-        const soname = h.jsonString(unit, "soname") orelse return error.BadGraph;
+        var empty = std.process.EnvMap.init(a);
+        const r = try h.run(a, &.{path}, &empty, .{});
+        if (c.stand_in == null) {
+            c.rep.check(try h.fmt(a, "{s}: runs in an empty environment and prints what the C code computes", .{what}), !r.signaled and r.code == 0 and
+                h.contains(r.text, try h.fmt(a, "shim {s}\n", .{shim_value})) and h.contains(r.text, try h.fmt(a, "app {s}\n", .{app_value})), try h.fmt(a, "exit {d}: {s}", .{ r.code, r.text }));
+        } else {
+            c.rep.check(try h.fmt(a, "{s}: the stand-in program runs (the unit tier does not check the values it prints)", .{what}), !r.signaled and r.code == 0, try h.fmt(a, "exit {d}: {s}", .{ r.code, r.text }));
+        }
+    }
+
+    /// Builds the archive of a native from its spec, as a build system does: `cc -c` of each source with the flags
+    /// (`cflags`, then the `cflags_by_os` of this operating system) and one `-I` per include directory (relative to
+    /// the member, which here sits at <ws>/<package>), then `ar` of the objects, in the order of the sources, into
+    /// `<natives>/<soname>`.
+    fn buildNative(c: *Ctx, spec: NativeSpec, ws: []const u8, natives: []const u8) !void {
+        const a = c.a;
+        const package = spec.package;
+        const soname = spec.soname;
         const member = try h.join(a, &.{ ws, package });
         var flags = std.ArrayList([]const u8).init(a);
         try flags.appendSlice(&.{ "-c", "-fPIC" });
-        for (items(unit, "cflags")) |f| try flags.append(f.string);
-        if (unit.object.get("cflags_by_os")) |by_os| {
-            for (items(by_os, if (is_macos) "macos" else "linux")) |f| try flags.append(f.string);
-        }
-        for (items(unit, "includes")) |inc| try flags.append(try h.fmt(a, "-I{s}", .{try h.join(a, &.{ member, inc.string })}));
+        try flags.appendSlice(spec.cflags);
+        try flags.appendSlice(if (is_macos) spec.cflags_macos else spec.cflags_linux);
+        for (spec.includes) |inc| try flags.append(try h.fmt(a, "-I{s}", .{try h.join(a, &.{ member, inc })}));
         const objdir = try h.join(a, &.{ c.work, "obj" });
         try std.fs.cwd().makePath(objdir);
         var objs = std.ArrayList([]const u8).init(a);
-        for (items(unit, "srcs")) |s| {
-            const path = h.jsonString(s, "path") orelse return error.BadGraph;
+        for (spec.srcs) |path| {
             const obj = try h.join(a, &.{ objdir, try h.fmt(a, "{s}.o", .{std.fs.path.stem(path)}) });
             var argv = std.ArrayList([]const u8).init(a);
             try argv.appendSlice(flags.items);
@@ -285,9 +345,26 @@ fn run(a: Allocator, rep: *h.Report) !void {
     try c.must("mopm lock of the workspace (the member is a path dependency, offline)", r);
     const lock_text = try h.readFile(a, try h.join(a, &.{ ws, "mopm.lock" }));
     rep.check("the lock names the member", h.contains(lock_text, "shimlib"), lock_text);
+    // mopm makes a unit graph (and `mopm unit` runs one) for mojo 1.0.0 on linux-64 only today (unit_graph.zig, `supported`): the
+    // graph is what a build farm reads, and the farm is linux-64. On the other platforms the walk keeps every step that
+    // does not need it: this driver builds the native from the sources of the manifest (a check on linux-64 holds
+    // `manifest_spec` to the graph's), and the compiler builds the libraries and the program directly.
+    const have_graph = std.mem.eql(u8, subdir, "linux-64");
     const graph_path = try h.join(a, &.{ work, "graph.json" });
-    r = try c.mopmRun(&env, ws, &.{ "plan", "--unit-graph", "--locked", "--mojo", "1.0.0", "--subdir", subdir, "-o", graph_path });
-    try c.must("mopm plan --unit-graph of the workspace", r);
+    const native_id = "native:shimlib/shim";
+    const lib_shim = "shimlib@1.0.0#mojo1.0.0/lib";
+    const lib_app = "nativeapp@1.0.0#mojo1.0.0/lib";
+    const bin_demo = "nativeapp@1.0.0#mojo1.0.0/bin:demo";
+    if (have_graph) {
+        r = try c.mopmRun(&env, ws, &.{ "plan", "--unit-graph", "--locked", "--mojo", "1.0.0", "--subdir", subdir, "-o", graph_path });
+        try c.must("mopm plan --unit-graph of the workspace", r);
+    } else {
+        r = try c.mopmRun(&env, ws, &.{ "plan", "--unit-graph", "--locked", "--mojo", "1.0.0", "--subdir", subdir, "-o", graph_path });
+        rep.check("control: mopm plan --unit-graph refuses this platform, naming the toolchain it pins (the reason the graph steps are skipped here)", r.code == 4 and h.contains(r.text, "has no pinned toolchain for mojo 1.0.0 on"), try h.fmt(a, "exit {d}: {s}", .{ r.code, r.text }));
+        std.debug.print("SKIP the unit graph, mopm unit build: mopm pins its unit-graph toolchain for mojo 1.0.0 on linux-64 only; {s} builds the native from the manifest's sources and the libraries and the program with the compiler directly\n", .{subdir});
+    }
+    var spec = manifest_spec;
+    if (have_graph) {
     const graph = try h.parseJson(a, try h.readFile(a, graph_path));
     const closure = blk: {
         const tcv = graph.object.get("toolchain") orelse return error.BadGraph;
@@ -295,14 +372,11 @@ fn run(a: Allocator, rep: *h.Report) !void {
     };
     try h.writeFile(try h.join(a, &.{ tc, "CLOSURE_SHA256" }), try h.fmt(a, "{s}\n", .{closure}));
 
-    const native_id = "native:shimlib/shim";
-    const lib_shim = "shimlib@1.0.0#mojo1.0.0/lib";
-    const lib_app = "nativeapp@1.0.0#mojo1.0.0/lib";
-    const bin_demo = "nativeapp@1.0.0#mojo1.0.0/bin:demo";
     const native_unit = unitById(graph, native_id) orelse {
         rep.check("the graph holds the native unit native:shimlib/shim", false, "no such unit");
         return error.Fatal;
     };
+    spec = try specOf(a, native_unit);
     rep.check("the native unit names the archive libshim.a and the member's sources, sorted", std.mem.eql(u8, h.jsonString(native_unit, "kind") orelse "", "native") and
         std.mem.eql(u8, h.jsonString(native_unit, "soname") orelse "", "libshim.a") and
         std.mem.eql(u8, try pathsOf(a, native_unit, "srcs"), "shimlib/native/scale.c shimlib/native/shim.c"), "kind, soname or srcs differ");
@@ -315,10 +389,21 @@ fn run(a: Allocator, rep: *h.Report) !void {
         const u = unitById(graph, id);
         rep.check(try h.fmt(a, "{s} lists the built native libshim.a of native:shimlib/shim", .{id}), u != null and listsBuiltShim(u.?), "the unit is missing or does not list the built native");
     }
+    {
+        const want = manifest_spec;
+        const same = std.mem.eql(u8, spec.package, want.package) and std.mem.eql(u8, spec.soname, want.soname) and
+            std.mem.eql(u8, try std.mem.join(a, " ", spec.srcs), try std.mem.join(a, " ", want.srcs)) and
+            std.mem.eql(u8, try std.mem.join(a, " ", spec.cflags), try std.mem.join(a, " ", want.cflags)) and
+            std.mem.eql(u8, try std.mem.join(a, " ", spec.cflags_linux), try std.mem.join(a, " ", want.cflags_linux)) and
+            std.mem.eql(u8, try std.mem.join(a, " ", spec.cflags_macos), try std.mem.join(a, " ", want.cflags_macos)) and
+            std.mem.eql(u8, try std.mem.join(a, " ", spec.includes), try std.mem.join(a, " ", want.includes));
+        rep.check("the graph's native is the one this driver writes out for the platforms that have no graph", same, "manifest_spec differs from the native unit");
+    }
+    }
 
     // 2. The member's native, built from its C sources.
     const natives = try h.join(a, &.{ work, "natives" });
-    try c.buildNative(native_unit, ws, natives);
+    try c.buildNative(spec, ws, natives);
     const archive_path = try h.join(a, &.{ natives, "libshim.a" });
     const archive_bytes = try h.readFile(a, archive_path);
     rep.check("libshim.a is an ar archive", std.mem.startsWith(u8, archive_bytes, "!<arch>\n"), "the archive does not begin with !<arch>");
@@ -328,6 +413,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     const deps = try h.join(a, &.{ work, "deps" });
     const lib_out = try h.join(a, &.{ work, "lib_out" });
     try cwd.makePath(deps);
+    if (have_graph) {
     for ([_]struct { id: []const u8, name: []const u8 }{ .{ .id = lib_shim, .name = "shimlib" }, .{ .id = lib_app, .name = "nativeapp" } }) |l| {
         r = try c.mopmRun(&env, ws, &.{ "unit", "build", "--unit", l.id, "--graph", graph_path, "--out", lib_out, "--toolchain", tc, "--src", ".", "--deps", deps, "--natives", natives, "--stage", try h.fmt(a, "{s}/stage_{s}", .{ work, l.name }) });
         try c.must(try h.fmt(a, "mopm unit build: the library {s}", .{l.name}), r);
@@ -336,14 +422,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     const bin_out = try h.join(a, &.{ work, "bin_out" });
     r = try c.mopmRun(&env, ws, &.{ "unit", "build", "--unit", bin_demo, "--graph", graph_path, "--out", bin_out, "--toolchain", tc, "--src", ".", "--deps", deps, "--natives", natives, "--stage", try h.join(a, &.{ work, "stage_demo" }) });
     try c.must("mopm unit build: the program demo, with libshim.a in --natives", r);
-    var empty = std.process.EnvMap.init(a);
-    r = try h.run(a, &.{try h.join(a, &.{ bin_out, "demo" })}, &empty, .{});
-    if (stand_in == null) {
-        rep.check("the program runs in an empty environment and prints what the C code computes", !r.signaled and r.code == 0 and
-            h.contains(r.text, try h.fmt(a, "shim {s}\n", .{shim_value})) and h.contains(r.text, try h.fmt(a, "app {s}\n", .{app_value})), try h.fmt(a, "exit {d}: {s}", .{ r.code, r.text }));
-    } else {
-        rep.check("the stand-in program runs (the unit tier does not check the values it prints)", !r.signaled and r.code == 0, try h.fmt(a, "exit {d}: {s}", .{ r.code, r.text }));
-    }
+    try c.runProgram("the program built by mopm unit build", try h.join(a, &.{ bin_out, "demo" }));
     const logged = try h.readFile(a, log);
     var with_operand: usize = 0;
     var build_lines: usize = 0;
@@ -372,6 +451,27 @@ fn run(a: Allocator, rep: *h.Report) !void {
     try h.writeFile(try h.join(a, &.{ not_ar, "libshim.a" }), "this is not an archive\n");
     r = try c.mopmRun(&env, ws, &.{ "unit", "build", "--unit", bin_demo, "--graph", graph_path, "--out", try h.join(a, &.{ work, "out_b" }), "--toolchain", tc, "--src", ".", "--deps", deps, "--natives", not_ar, "--stage", try h.join(a, &.{ work, "stage_b" }) });
     rep.check("control: a file that is not an archive is refused (4), naming libshim.a", !r.signaled and r.code == 4 and h.contains(r.text, "libshim.a"), try h.fmt(a, "exit {d}: {s}", .{ r.code, r.text }));
+
+    } else {
+        // No unit graph here: the compiler builds the libraries and the program directly (the same sources, the same
+        // archive on the link line). Each directory given with -I holds one .mojoc.
+        const inc_shim = try h.join(a, &.{ work, "inc/shimlib" });
+        const inc_app = try h.join(a, &.{ work, "inc/nativeapp" });
+        try cwd.makePath(inc_shim);
+        try cwd.makePath(inc_app);
+        const shim_mojoc = try h.join(a, &.{ deps, "shimlib.mojoc" });
+        const app_mojoc = try h.join(a, &.{ deps, "nativeapp.mojoc" });
+        r = try m.run(pixi, &.{ "precompile", try h.join(a, &.{ ws, "shimlib/src/shimlib" }), "-o", shim_mojoc }, null);
+        try c.must("mojo precompile shimlib", r);
+        try cwd.copyFile(shim_mojoc, cwd, try h.join(a, &.{ inc_shim, "shimlib.mojoc" }), .{});
+        r = try m.run(pixi, &.{ "precompile", try h.fmt(a, "-I{s}", .{inc_shim}), try h.join(a, &.{ ws, "src/nativeapp" }), "-o", app_mojoc }, null);
+        try c.must("mojo precompile nativeapp", r);
+        try cwd.copyFile(app_mojoc, cwd, try h.join(a, &.{ inc_app, "nativeapp.mojoc" }), .{});
+        const demo = try h.join(a, &.{ work, "demo" });
+        r = try m.run(pixi, &.{ "build", try h.fmt(a, "-I{s}", .{inc_shim}), try h.fmt(a, "-I{s}", .{inc_app}), try h.join(a, &.{ ws, "bin/demo.mojo" }), "-o", demo, "-Xlinker", archive_path }, null);
+        try c.must("mojo build: the program demo, with libshim.a as a linker operand", r);
+        try c.runProgram("the program built by the compiler", demo);
+    }
 
     // 4. mopm pack of both packages, for this platform; the staged set.
     const dist = try h.join(a, &.{ work, "dist" });
@@ -432,12 +532,8 @@ fn run(a: Allocator, rep: *h.Report) !void {
     const consumer_bin = try h.join(a, &.{ work, "consumer_demo" });
     r = try c.mopmRun(&build_env, consumer, &.{ "build", "main.mojo", "-o", consumer_bin, "--prefix", env_dir });
     try c.must("mopm build: the program that imports both packages, against the installed set", r);
-    r = try h.run(a, &.{consumer_bin}, &empty, .{});
-    if (stand_in == null) {
-        rep.check("the program built against the installed set runs and prints what the C code computes", !r.signaled and r.code == 0 and
-            h.contains(r.text, try h.fmt(a, "shim {s}\n", .{shim_value})) and h.contains(r.text, try h.fmt(a, "app {s}\n", .{app_value})), try h.fmt(a, "exit {d}: {s}", .{ r.code, r.text }));
-    } else {
-        rep.check("the stand-in program built against the installed set runs", !r.signaled and r.code == 0, try h.fmt(a, "exit {d}: {s}", .{ r.code, r.text }));
+    try c.runProgram("the program built by mopm build against the installed set", consumer_bin);
+    if (stand_in != null) {
         const consumer_logged = try h.readFile(a, consumer_log);
         rep.check("the link line of mopm build holds the installed archive as a linker operand", h.contains(consumer_logged, "-Xlinker ") and h.contains(consumer_logged, "/.pixi/envs/default/lib/libshim.a"), consumer_logged);
     }
