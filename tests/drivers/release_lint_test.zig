@@ -836,7 +836,7 @@ fn aptToolMutant(name: []const u8, from: []const u8, to: []const u8, needle: []c
 }
 
 test "mutant: the apt tool's puts" {
-    try aptToolMutant("a .deb put without If-None-Match", "try std.fs.path.join(a, &.{ debs_dir, name }), .{ \"--if-none-match\", \"*\" })", "try std.fs.path.join(a, &.{ debs_dir, name }), .{ \"--if-match\", \"x\" })", "a .deb must be put with If-None-Match");
+    try aptToolMutant("a .deb put without If-None-Match", "deb_path, .{ \"--if-none-match\", \"*\" })", "deb_path, .{ \"--if-match\", \"x\" })", "a .deb must be put with If-None-Match");
     try aptToolMutant("an index put that never uses If-Match", "else .{ \"--if-match\", tag.? }", "else .{ \"--if-none-match\", \"*\" }", "the condition of an index put must be If-Match on the ETag that was read");
     try aptToolMutant("an index put that always creates", "if (tag == null or std.mem.eql(u8, tag.?, state.absent))", "if (true)", "the condition of an index put must be If-Match on the ETag that was read");
     try aptToolMutant("an index put that drops its condition", "cond[0], cond[1] }", "}", "`put` must pass its condition to put-object");

@@ -1376,7 +1376,7 @@ fn aptJobProblems(a: Allocator, name: []const u8, job: Value, out: *Out) !void {
 /// that never lists a file that is not there: the .debs, then the index (Packages before Release), then the invalidation. `src` is the tool.
 pub fn aptToolProblems(a: Allocator, src: []const u8, out: *Out) !void {
     const f = prefix ++ "tools/apt_publish.zig: ";
-    const pool_put = "try std.fs.path.join(a, &.{ debs_dir, name }), .{ \"--if-none-match\", \"*\" })";
+    const pool_put = "deb_path, .{ \"--if-none-match\", \"*\" })";
     const index_put = "try std.fs.path.join(a, &.{ root, rel }), cond)";
     const cond = "if (tag == null or std.mem.eql(u8, tag.?, state.absent)) .{ \"--if-none-match\", \"*\" } else .{ \"--if-match\", tag.? }";
     const byhash_put = "state.byHashKey(a, rel, &hash)";

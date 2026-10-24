@@ -78,6 +78,24 @@ describe('wire goldens', () => {
     expect(calls.map(keyOf)).toContain('dynamodb:Query tokens/index/by_github_id');
   });
 
+  // A group is written with conditional Puts and transactions of Puts, never with an update or a delete: the roles have
+  // GetItem and PutItem on these tables, and the data stack denies delete (infra/stacks/lib/data-stack.ts).
+  test('the group writers (group.json) call GetItem and PutItem only: no UpdateItem, no DeleteItem, no ConditionCheck, no Scan', () => {
+    const group = calls.filter((c) => c.via.startsWith('group.json '));
+    expect(group.map((c) => c.via.split(' ')[1]).filter((v, i, all) => all.indexOf(v) === i)).toEqual([
+      'store.createGroup',
+      'store.getGroup',
+      'store.getGroupMembers',
+      'store.updateGroup',
+      'store.commitGroup',
+      'store.adoptVersion',
+      'store.applyGroupEvent',
+      'publish.hit',
+    ]);
+    expect([...new Set(group.map((c) => c.action))].sort()).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem']);
+    expect([...new Set(group.map((c) => c.table))].sort()).toEqual(['audit', 'publishes', 'versions']);
+  });
+
   describe.each(STAGES)('against the ApiStack %s policy', (stage) => {
     let cache: any[] | undefined;
     const allowed = (): any[] =>
