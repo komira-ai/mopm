@@ -247,7 +247,8 @@ fn aFailedPutThenARerun(w: World) !void {
     const members = chain("1.3.0", "the bytes of b");
     try stage(a, staged, &members);
     _ = try w.fake.control(a, "/put_fault", "{\"after\":1}");
-    const r = try w.publish(staged, &.{});
+    // --retries 0: this scenario is about the resume, so the failed PUT must end the run (the next scenario retries it).
+    const r = try w.publish(staged, &.{ "--retries", "0" });
     const id = try w.groupId(staged);
     w.rep.check("a failed PUT ends the run 1, says which file, and says to run the same command again", r.code == 1 and h.contains(r.stderr, "uploading mojo-grp_b-1.3.0-mojo1.0.0_0.conda failed") and
         h.contains(r.stderr, "run the same command again to resume group grp_") and h.contains(r.stderr, id), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
@@ -257,6 +258,34 @@ fn aFailedPutThenARerun(w: World) !void {
     const report = try w.reportJson(staged);
     w.rep.check("the rerun resumes the SAME group, sends only what is missing, and publishes", again.code == 0 and std.mem.eql(u8, h.jsonString(report, "group_id") orelse "", id) and
         std.mem.eql(u8, try w.groupId(staged), id) and h.contains(again.stdout, "1 file(s) were already in the registry's storage") and try w.allIn("1.3.0", "published"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ again.code, again.stdout, again.stderr }));
+}
+
+fn transientFailuresAreRetried(w: World) !void {
+    const a = w.a;
+    // A storage that fails one PUT with a 503: the run repeats it and publishes, in one run, with no rerun.
+    const put = try w.dir("retried_put");
+    const m1 = chain("1.6.0", "the bytes of b");
+    try stage(a, put, &m1);
+    _ = try w.fake.control(a, "/put_fault", "{\"after\":1}");
+    const r1 = try w.publish(put, &.{});
+    w.rep.check("a PUT answered 503 once is repeated, and the one run publishes the chain", r1.code == 0 and try w.allIn("1.6.0", "published") and
+        h.contains(r1.stdout, "uploaded mojo-grp_b-1.6.0") and !h.contains(r1.stderr, "failed"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r1.code, r1.stdout, r1.stderr }));
+
+    // The poll for the group's state fails once with 503: asked again, and the run still ends 0.
+    const poll = try w.dir("retried_poll");
+    const m2 = chain("1.6.1", "the bytes of b");
+    try stage(a, poll, &m2);
+    _ = try w.fake.control(a, "/fault", "{\"operation\":\"getGroup\",\"code\":\"unavailable\"}");
+    const r2 = try w.publish(poll, &.{});
+    w.rep.check("a poll answered 503 once is asked again, and the run publishes", r2.code == 0 and try w.allIn("1.6.1", "published"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r2.code, r2.stdout, r2.stderr }));
+
+    // A 4xx is final: the same single fault, a 403, is not asked again, so the run ends 1 and the group is not published by it.
+    const refused = try w.dir("final_poll");
+    const m3 = chain("1.6.2", "the bytes of b");
+    try stage(a, refused, &m3);
+    _ = try w.fake.control(a, "/fault", "{\"operation\":\"getGroup\",\"code\":\"not_owner\"}");
+    const r3 = try w.publish(refused, &.{});
+    w.rep.check("a poll answered 403 is not asked again: the run ends 1 and says what the registry said", r3.code == 1 and h.contains(r3.stderr, "You are not an owner"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r3.code, r3.stdout, r3.stderr }));
 }
 
 fn noGroupPublish(w: World) !void {
@@ -505,6 +534,7 @@ test "mopm publish --staged and mopm yank --group against the fake registry" {
     try aRejectedMember(w);
     try anExpiredGroup(w);
     try aFailedPutThenARerun(w);
+    try transientFailuresAreRetried(w);
     try noGroupPublish(w);
     try rateLimited(w);
     try theTokenIsInNoChildEnvironment(w, probe);

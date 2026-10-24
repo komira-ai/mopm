@@ -29,8 +29,10 @@ pub const Script = struct {
         status: u16,
         body: []const u8 = "",
         retry_after: ?u32 = null,
+        /// The request fails with this error, as a broken or silent connection does, and gets no answer.
+        err: ?anyerror = null,
     };
-    pub const Seen = struct { method: std.http.Method, url: []const u8, token: ?[]const u8, body: ?[]const u8, content_type_set: bool };
+    pub const Seen = struct { method: std.http.Method, url: []const u8, token: ?[]const u8, body: ?[]const u8, content_type_set: bool, timeout_secs: u32 };
 
     steps: []const Step,
     next: usize = 0,
@@ -46,7 +48,7 @@ pub const Script = struct {
 
     fn request(ptr: *anyopaque, arena: Allocator, method: std.http.Method, url: []const u8, options: http.Options) anyerror!http.Answer {
         const s: *Script = @ptrCast(@alignCast(ptr));
-        try s.seen.append(.{ .method = method, .url = url, .token = options.token, .body = options.body, .content_type_set = options.content_type != null });
+        try s.seen.append(.{ .method = method, .url = url, .token = options.token, .body = options.body, .content_type_set = options.content_type != null, .timeout_secs = options.timeout_secs });
         const idx = @min(s.next, s.steps.len - 1);
         s.next += 1;
         const step = s.steps[idx];
@@ -54,6 +56,7 @@ pub const Script = struct {
             s.mismatch = try std.fmt.allocPrint(arena, "request {d} was {s} {s}; the script has {s} ...{s}", .{ s.next, @tagName(method), url, @tagName(step.method), step.suffix });
             return error.ConnectionRefused;
         }
+        if (step.err) |e| return e;
         return .{ .status = step.status, .body = step.body, .request_id = "req-test", .retry_after = step.retry_after };
     }
 
@@ -369,6 +372,201 @@ test "a 429 stops the run where it is, and says when to come back" {
     }
 }
 
+/// The requests of a run that goes through: the create, the three PUTs, the commit and one poll that finds the group visible.
+/// `put_b` is what stands in for b's PUT, so a test can fail it first.
+fn throughWith(comptime put_b: []const Script.Step) []const Script.Step {
+    return comptime blk: {
+        const all = [_]Script.Step{
+            .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+            .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
+        } ++ put_b[0..put_b.len].* ++ [_]Script.Step{
+            .{ .method = .PUT, .suffix = "/put/c", .status = 200 },
+            .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
+            .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
+        };
+        break :blk &all;
+    };
+}
+
+test "a PUT the storage answers 503 once is repeated after a wait, and the run publishes" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    var script = newScript(a, throughWith(&.{
+        .{ .method = .PUT, .suffix = "/put/b", .status = 503, .body = "<Error><Code>SlowDown</Code></Error>" },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 200 },
+    }));
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    const result = p.run();
+    try std.testing.expectEqual(Result.published, result);
+    try std.testing.expect(script.mismatch == null);
+    // b's file was sent twice, the same bytes to the same URL; a and c once.
+    try std.testing.expectEqual(@as(usize, 4), script.count(.PUT));
+    try std.testing.expectEqualStrings(url_b, script.seen.items[2].url);
+    try std.testing.expectEqualStrings(url_b, script.seen.items[3].url);
+    try std.testing.expectEqualStrings("b-bytes", script.seen.items[2].body.?);
+    try std.testing.expectEqualStrings("b-bytes", script.seen.items[3].body.?);
+    // One wait, of the first retry's size (1 to 2 seconds); the poll found the group visible and waited for nothing.
+    try std.testing.expect(script.slept >= 1 and script.slept <= 2);
+    // Every request carried the default time limit.
+    for (script.seen.items) |x| try std.testing.expectEqual(http.default_timeout_secs, x.timeout_secs);
+    const state = (try plan_mod.loadState(a, tmp.dir)).ok;
+    try std.testing.expectEqual(@as(usize, 3), state.uploaded.len);
+    try std.testing.expect(!contains(console.err.items, "failed"));
+}
+
+test "a PUT that breaks or times out is repeated, and so is one the server asked to slow down" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    var script = newScript(a, throughWith(&.{
+        .{ .method = .PUT, .suffix = "/put/b", .status = 0, .err = error.RequestTimedOut },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 0, .err = error.ConnectionResetByPeer },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 429, .retry_after = 5 },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 200 },
+    }));
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    p.net.policy.retries = 3;
+    try std.testing.expectEqual(Result.published, p.run());
+    try std.testing.expectEqual(@as(usize, 6), script.count(.PUT));
+    // The 429 named 5 seconds, the least that wait could be.
+    try std.testing.expect(script.slept >= 1 + 1 + 5);
+}
+
+test "a 4xx other than 429 is final: the PUT is not repeated, though the next try would have worked" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    for ([_]u16{ 400, 403, 404, 409 }) |status| {
+        var script = newScript(a, &.{
+            .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+            .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
+            .{ .method = .PUT, .suffix = "/put/b", .status = status },
+            .{ .method = .PUT, .suffix = "/put/b", .status = 200 },
+        });
+        var console = Console.init(a, null);
+        var p = publisher(a, &tmp, plan, &script, &console);
+        try std.testing.expectEqual(Result.failed, p.run());
+        try std.testing.expectEqual(@as(usize, 2), script.count(.PUT));
+        try std.testing.expectEqual(@as(u64, 0), script.slept);
+        try expectContains(console.err.items, try std.fmt.allocPrint(a, "uploading mojo-b-1.0.0-x.conda failed: the storage answered HTTP {d}; run the same command again to resume group " ++ gid, .{status}));
+        try std.testing.expect(!contains(script.seen.items[script.seen.items.len - 1].url, "commit"));
+    }
+}
+
+test "retries are bounded: a storage that keeps failing is tried retries plus one times, then the run stops and says so" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    const steps = [_]Script.Step{
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+        .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 503 },
+    };
+    const wants_tries = [_]struct { retries: u8, puts: usize }{ .{ .retries = 3, .puts = 1 + 4 }, .{ .retries = 0, .puts = 1 + 1 }, .{ .retries = 1, .puts = 1 + 2 } };
+    for (wants_tries) |w| {
+        var script = newScript(a, &steps);
+        var console = Console.init(a, null);
+        var p = publisher(a, &tmp, plan, &script, &console);
+        p.net.policy.retries = w.retries;
+        try std.testing.expectEqual(Result.failed, p.run());
+        try std.testing.expectEqual(w.puts, script.count(.PUT));
+        try expectContains(console.err.items, "failed: the storage answered HTTP 503; run the same command again to resume group " ++ gid);
+    }
+    // With the default three, the waits were 1-2, 2-4 and 4-8 seconds.
+    var last = newScript(a, &steps);
+    var last_console = Console.init(a, null);
+    var last_run = publisher(a, &tmp, plan, &last, &last_console);
+    try std.testing.expectEqual(Result.failed, last_run.run());
+    try std.testing.expect(last.slept >= 7 and last.slept <= 14);
+}
+
+test "only requests that can be repeated are: the create and the commit are sent once, a poll is repeated" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    var create = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 503 },
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+    });
+    var c1 = Console.init(a, null);
+    var p1 = publisher(a, &tmp, plan, &create, &c1);
+    try std.testing.expectEqual(Result.failed, p1.run());
+    try std.testing.expectEqual(@as(usize, 1), create.seen.items.len);
+
+    var commit = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+        .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/c", .status = 200 },
+        .{ .method = .POST, .suffix = "/commit", .status = 503 },
+        .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
+    });
+    var c2 = Console.init(a, null);
+    var p2 = publisher(a, &tmp, plan, &commit, &c2);
+    try std.testing.expectEqual(Result.failed, p2.run());
+    try std.testing.expectEqual(@as(usize, 2), commit.count(.POST));
+
+    // A poll the registry fails once is asked again; one it refuses is not.
+    var poll = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 200, .body = createAnswer("validating", .{ true, true, true }) },
+        .{ .method = .GET, .suffix = gid, .status = 503 },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
+    });
+    var c3 = Console.init(a, null);
+    var p3 = publisher(a, &tmp, plan, &poll, &c3);
+    try std.testing.expectEqual(Result.published, p3.run());
+    try std.testing.expectEqual(@as(usize, 2), poll.count(.GET));
+
+    var refused = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 200, .body = createAnswer("validating", .{ true, true, true }) },
+        .{ .method = .GET, .suffix = gid, .status = 403 },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
+    });
+    var c4 = Console.init(a, null);
+    var p4 = publisher(a, &tmp, plan, &refused, &c4);
+    try std.testing.expectEqual(Result.failed, p4.run());
+    try std.testing.expectEqual(@as(usize, 1), refused.count(.GET));
+}
+
+test "the time limit and the retries the flags name are the ones every request runs under" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    const f = (try parseFlags(a, &.{ "--staged", "s", "--registry", "beta", "--timeout", "7", "--retries", "0" })).ok;
+    var script = newScript(a, throughWith(&.{.{ .method = .PUT, .suffix = "/put/b", .status = 503 }}));
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    p.net.policy = gp.policyOf(f);
+    try std.testing.expectEqual(Result.failed, p.run());
+    // retries 0: b's 503 ended the run after one try, and every request that was made carried 7 seconds.
+    try std.testing.expectEqual(@as(usize, 2), script.count(.PUT));
+    for (script.seen.items) |x| try std.testing.expectEqual(@as(u32, 7), x.timeout_secs);
+    const defaults = gp.policyOf((try parseFlags(a, &.{ "--staged", "s", "--registry", "beta" })).ok);
+    try std.testing.expectEqual(http.default_timeout_secs, defaults.timeout_secs);
+    try std.testing.expectEqual(http.default_retries, defaults.retries);
+}
+
 test "a rejected member ends the group: it is named, and none is published" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
@@ -574,6 +772,12 @@ test "flags" {
     const g = (try parseFlags(a, &.{ "--registry", "prod", "--staged", "s" })).ok;
     try std.testing.expectEqual(default_wait_secs, g.wait_secs);
     try std.testing.expect(!g.dry_run and g.config_dir == null);
+    try std.testing.expectEqual(http.default_timeout_secs, g.timeout_secs);
+    try std.testing.expectEqual(http.default_retries, g.retries);
+    const t = (try parseFlags(a, &.{ "--registry", "prod", "--staged", "s", "--timeout", "90", "--retries", "10" })).ok;
+    try std.testing.expectEqual(@as(u32, 90), t.timeout_secs);
+    try std.testing.expectEqual(@as(u8, 10), t.retries);
+    try std.testing.expectEqual(@as(u8, 0), (try parseFlags(a, &.{ "--registry", "prod", "--staged", "s", "--retries", "0" })).ok.retries);
     try std.testing.expect(wants(&.{ "--registry", "x", "--staged", "s" }));
     try std.testing.expect(!wants(&.{ "--compiler", "1.0.0" }));
 
@@ -584,6 +788,12 @@ test "flags" {
         .{ .args = &.{ "--staged", "s", "--registry" }, .want = "--registry needs a value" },
         .{ .args = &.{ "--staged", "s", "--registry", "beta", "--wait", "soon" }, .want = "a number of seconds" },
         .{ .args = &.{ "--staged", "s", "--registry", "beta", "--wait", "-1" }, .want = "not negative" },
+        .{ .args = &.{ "--staged", "s", "--registry", "beta", "--timeout", "0" }, .want = "--timeout is 1 to 3600 seconds" },
+        .{ .args = &.{ "--staged", "s", "--registry", "beta", "--timeout", "3601" }, .want = "--timeout is 1 to 3600 seconds" },
+        .{ .args = &.{ "--staged", "s", "--registry", "beta", "--timeout", "-3" }, .want = "--timeout -3: a number of seconds" },
+        .{ .args = &.{ "--staged", "s", "--registry", "beta", "--retries", "11" }, .want = "--retries is 0 to 10" },
+        .{ .args = &.{ "--staged", "s", "--registry", "beta", "--retries", "many" }, .want = "--retries many: a number from 0 to 10" },
+        .{ .args = &.{ "--staged", "s", "--registry", "beta", "--retries" }, .want = "--retries needs a value" },
         .{ .args = &.{ "--staged", "s", "--registry", "beta", "--mojoc", "x" }, .want = "--mojoc packs one package" },
         .{ .args = &.{ "--staged", "s", "--registry", "beta", "--compiler", "1.0.0" }, .want = "packs one package" },
         .{ .args = &.{ "--staged", "s", "--registry", "beta", "--frobnicate" }, .want = "unexpected argument '--frobnicate'" },
