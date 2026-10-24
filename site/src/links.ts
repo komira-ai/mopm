@@ -19,6 +19,7 @@ export const DOC_PAGES: readonly { slug: string; source: string }[] = [
   { slug: 'examples', source: 'docs/examples.md' },
   { slug: 'mopm-toml', source: 'spec/mopm-toml.md' },
   { slug: 'mopm-test', source: 'docs/mopm-test.md' },
+  { slug: 'publish-workspace', source: 'docs/publishing-a-workspace.md' },
 ];
 
 const ALLOWED_SCHEMES: ReadonlySet<string> = new Set(['https:', 'http:', 'mailto:']);

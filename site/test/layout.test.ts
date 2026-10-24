@@ -44,10 +44,10 @@ function byId(html: string, id: string): string {
 }
 
 // The pages the build writes: the home page, the 404, the app shell, the docs index and one page per doc.
-const DOC_HTML = ['docs/why/index.html', 'docs/getting-started/index.html', 'docs/configuration/index.html', 'docs/examples/index.html', 'docs/mopm-toml/index.html', 'docs/mopm-test/index.html'];
+const DOC_HTML = ['docs/why/index.html', 'docs/getting-started/index.html', 'docs/configuration/index.html', 'docs/examples/index.html', 'docs/mopm-toml/index.html', 'docs/mopm-test/index.html', 'docs/publish-workspace/index.html'];
 const ALL_PAGES = ['404.html', 'app.html', 'docs/index.html', ...DOC_HTML, 'index.html'];
 
-test('the ten pages are built', () => {
+test('the eleven pages are built', () => {
   expect([...pages].sort()).toEqual([...ALL_PAGES].sort());
 });
 
@@ -175,6 +175,7 @@ describe('the docs pages', () => {
     ['docs/examples/index.html', 'docs/examples.md'],
     ['docs/mopm-toml/index.html', 'spec/mopm-toml.md'],
     ['docs/mopm-test/index.html', 'docs/mopm-test.md'],
+    ['docs/publish-workspace/index.html', 'docs/publishing-a-workspace.md'],
   ])('%s: the title is the first heading of %s, and the Source link is that file on GitHub', (page, source) => {
     const html = read(page);
     expect(html).toContain(`<title>${firstHeading(source)} · mopm</title>`);
@@ -199,11 +200,12 @@ describe('the docs pages', () => {
     ['docs/examples/index.html', '/docs/examples/'],
     ['docs/mopm-toml/index.html', '/docs/mopm-toml/'],
     ['docs/mopm-test/index.html', '/docs/mopm-test/'],
+    ['docs/publish-workspace/index.html', '/docs/publish-workspace/'],
   ])('%s: the docs nav lists every docs page and marks this one', (page, self) => {
     const html = read(page);
     const nav = html.slice(html.indexOf('<nav class="docs-nav" aria-label="Docs pages">'));
     const list = nav.slice(0, nav.indexOf('</nav>'));
-    expect([...list.matchAll(/<a href="([^"]+)"/g)].map((m) => m[1])).toEqual(['/docs/', '/docs/why/', '/docs/getting-started/', '/docs/configuration/', '/docs/examples/', '/docs/mopm-toml/', '/docs/mopm-test/']);
+    expect([...list.matchAll(/<a href="([^"]+)"/g)].map((m) => m[1])).toEqual(['/docs/', '/docs/why/', '/docs/getting-started/', '/docs/configuration/', '/docs/examples/', '/docs/mopm-toml/', '/docs/mopm-test/', '/docs/publish-workspace/']);
     expect([...list.matchAll(/<a href="([^"]+)" aria-current="page">/g)].map((m) => m[1])).toEqual([self]);
     // Each doc's title read here from its source's first '# ' heading, not through docTitle.
     const titles = DOC_PAGES.map((d) => {

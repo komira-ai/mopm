@@ -324,6 +324,16 @@
       "view": null
     },
     {
+      "path": "/docs/publish-workspace",
+      "edge": "/docs/publish-workspace/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/publish-workspace/",
+      "edge": "/docs/publish-workspace/index.html",
+      "view": null
+    },
+    {
       "path": "/docs/Bad_Slug",
       "edge": "pass",
       "view": null

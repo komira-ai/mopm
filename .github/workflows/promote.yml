@@ -20,6 +20,7 @@ on:
       - 'docs/getting-started.md'
       - 'docs/configuration.md'
       - 'docs/examples.md'
+      - 'docs/publishing-a-workspace.md'
       - '.github/workflows/promote.yml'
       - '.github/workflows/deploy.yml'
       - '.github/workflows/e2e.yml'

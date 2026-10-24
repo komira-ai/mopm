@@ -717,6 +717,50 @@ export_file(
 )
 
 export_file(
+    name = "site.docs.publishing-a-workspace.md",
+    src = "docs/publishing-a-workspace.md",
+    visibility = ["//site:"],
+)
+
+# What the group docs state is read from these (site/test/docs-group.test.ts): the runbook, the changelog, the staged-set spec and
+# the three commands' sources.
+export_file(
+    name = "site.service.docs.runbook.md",
+    src = "service/docs/runbook.md",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.CHANGELOG.md",
+    src = "CHANGELOG.md",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.spec.staged-set.md",
+    src = "spec/staged-set.md",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.cli.stage_cmd.zig",
+    src = "src/cli/stage_cmd.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.cli.group_publish.zig",
+    src = "src/cli/group_publish.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.cli.yank_cmd.zig",
+    src = "src/cli/yank_cmd.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
     name = "site.docs.why-and-design.md",
     src = "docs/why-and-design.md",
     visibility = ["//site:"],
@@ -851,6 +895,12 @@ export_file(
 export_file(
     name = "site.workflows.promote.yml",
     src = ".github/workflows/promote.yml",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.workflows.e2e.yml",
+    src = ".github/workflows/e2e.yml",
     visibility = ["//site:"],
 )
 
