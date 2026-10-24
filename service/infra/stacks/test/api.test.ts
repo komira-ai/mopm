@@ -1,10 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { App } from 'aws-cdk-lib';
-import { Match } from 'aws-cdk-lib/assertions';
+import { Match, Template } from 'aws-cdk-lib/assertions';
 import { ApiStack, AUTH_GRANTS, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
 import { STAGES, stageConfig, tableName } from '../lib/config';
-import { DUMMY_ACCOUNT, tpl } from './util';
+import { DUMMY_ACCOUNT, HANDLER_STUB_DIR, tpl } from './util';
 
 const acts = (s: any): string[] => ([] as string[]).concat(s.Action);
 const flat = (v: any): string => (typeof v === 'string' ? v : JSON.stringify(v));
@@ -392,6 +392,30 @@ test('a missing handler bundle stops the synth with the fix in the message', () 
         handlerDir: '/nonexistent/handler',
       }),
   ).toThrow(/npm run build/);
+});
+
+describe('the daily limits a stage may tune', () => {
+  const handlerEnv = (limits?: ConstructorParameters<typeof ApiStack>[2]['limits']) => {
+    const stack = new ApiStack(new App(), 'x', {
+      env: { account: DUMMY_ACCOUNT, region: 'us-east-1' },
+      config: stageConfig('beta', 'Z0DUMMYZONE'),
+      version: 'v',
+      commit: 'c',
+      handlerDir: HANDLER_STUB_DIR,
+      limits,
+    });
+    const fns = Object.values(Template.fromStack(stack).findResources('AWS::Lambda::Function')) as any[];
+    return fns.find((f) => f.Properties.Handler === 'http/lambda.handler').Properties.Environment.Variables;
+  };
+
+  test('the group counters reach the handler as the environment variables the service reads, and are absent when not set', () => {
+    const env = handlerEnv({ groupRatePerAccountPerDay: 123, groupRatePerTokenPerDay: 45 });
+    expect(env.MOPM_GROUP_RATE_PER_ACCOUNT_DAY).toBe('123');
+    expect(env.MOPM_GROUP_RATE_PER_TOKEN_DAY).toBe('45');
+    const none = handlerEnv();
+    expect(none.MOPM_GROUP_RATE_PER_ACCOUNT_DAY).toBeUndefined();
+    expect(none.MOPM_GROUP_RATE_PER_TOKEN_DAY).toBeUndefined();
+  });
 });
 
 // The adapter tests in service/api run under exactly these grants (test/fixtures/lambda-auth-grants.json, enforced by
