@@ -274,7 +274,7 @@ fn publish(cx: *Cx) !void {
     try cx.refuses("publish: pack refuses a path whose package does not satisfy the version", "publish_pathver_old", &args, 1, "dependency 'text_tools' requires version \"0.4\", but the package at '../text_tools' is version 0.3.4");
     try cx.variant("publish_native", "publish/mopm.toml", "[targets]", "[native-dependencies]\nzlib = \"1.2\"\n\n[targets]");
     try cx.put("publish_native/slug.mojoc", stand_in);
-    try cx.refuses("publish: native dependencies cannot be packed yet", "publish_native", &args, 1, "native dependencies are not packed yet");
+    try cx.refuses("publish: native dependencies to link cannot be packed yet", "publish_native", &args, 1, "native dependency 'zlib' is mode = \"link\"; only mode = \"load\" is packed");
     try cx.variant("publish_compiler", "publish/mopm.toml", "mojo = [\"1.0.0\"]", "mojo = [\"1.0.0\"]");
     try cx.put("publish_compiler/slug.mojoc", stand_in);
     const bad_compiler = [_][]const u8{ "pack", "--compiler", "v1", "--mojoc", "linux-64=slug.mojoc", "-o", "dist" };

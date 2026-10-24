@@ -107,9 +107,11 @@ One entry per library, `name = "1.6"` or `name = { version = ..., kind = ..., mo
 
 | key | type | default | allowed | example |
 |---|---|---|---|---|
-| `version` | string | none | any string; it is not interpreted | `version = ">=1.2"` |
+| `version` | string | none | a version requirement as for a dependency; `pack` writes it in the conda spelling after the package name, and refuses one with a pre-release; every other command leaves it alone | `version = ">=1.2"` |
 | `kind` | string | none | `"shared"` or `"static"` | `kind = "shared"` |
 | `mode` | string | `"link"` | `"link"`: mopm computes the linker flags; `"load"`: the package opens the library itself | `mode = "load"` |
+
+`mopm pack`, `mopm publish` and `mopm stage` record each library with `mode = "load"` (and `kind` shared or not set) in `depends` of `info/index.json`, after the compiler and the Mojo dependencies, so that installing the package installs the library: `lz4 = { version = ">=1.9.3", mode = "load" }` becomes `lz4-c >=1.9.3`. The name is the conda package name, except for these libraries, which are mapped from their name, their library name (`lib` before it) or their file name (`liblz4.so.1`): `lz4` to `lz4-c`, `z` and `zlib` to `libzlib`, `bz2` to `bzip2`, `lzma` and `xz` to `xz`, `zstd` to `zstd`. Two entries for one conda package, a name with an upper case letter and a name starting with `mojo-` are refused. The registry accepts such a package only when it has the conda package on its list of native libraries (spec/channel.md). A library with `mode = "link"` is not packed yet.
 
 ### Native libraries: `[native.<id>]`
 
@@ -162,14 +164,14 @@ Accepted does not mean used. This table says, for every table and key, which com
 | `package.metadata` | metadata only |
 | `dependencies` | `lock`, `update`, `tree`, `sync`, `plan`; `pack` writes them as the package's conda dependencies |
 | `dev-dependencies` | `lock`, `tree`, `plan`; not packed |
-| `native-dependencies` | metadata only; `pack` refuses a package that has any ("native dependencies are not packed yet") |
+| `native-dependencies` | `pack`, `publish` and `stage` write each one with `mode = "load"` as a conda dependency (see Native dependencies) and refuse one with `mode = "link"` or `kind = "static"` |
 | `native` | `pack` and `publish` pack a library with `kind = "static"` and `mode = "link"` (`needs` and `exclusive` go into the package's metadata) and refuse any other kind or mode; `metadata` shows it |
 | `targets.lib`, `targets.bins` | `plan`, which makes a unit of each |
 | `targets.tests` | metadata only: `mopm test` and `mopm plan` find the tests by their path |
 
 ### What pack and publish refuse
 
-`mopm pack` and `mopm publish` read the manifest first and refuse, before any request: a version that is not exactly `MAJOR.MINOR.PATCH` ("digits, no leading zeros, no pre-release or build part"), a path dependency with no version or one whose package is outside its version, a requirement with a pre-release, any `[native-dependencies]`, a `[native.<id>]` that is not a static archive in link mode, a native library without an archive for a subdir it packs (or any native library in a `noarch` file), an archive that does not begin with `!<arch>` or is not named `lib<name>.a`, a compiler that is not digits and dots, and an empty `.mojoc` file. `mopm publish` also refuses a readme over 64 KiB or not UTF-8, a package file over 100 MB, and more than 20 files for one version. The registry has its own limits, which [getting started](getting-started.md) lists.
+`mopm pack` and `mopm publish` read the manifest first and refuse, before any request: a version that is not exactly `MAJOR.MINOR.PATCH` ("digits, no leading zeros, no pre-release or build part"), a path dependency with no version or one whose package is outside its version, a requirement with a pre-release, a `[native-dependencies]` entry that is not `mode = "load"` and `kind = "shared"`, a `[native.<id>]` that is not a static archive in link mode, a native library without an archive for a subdir it packs (or any native library in a `noarch` file), an archive that does not begin with `!<arch>` or is not named `lib<name>.a`, a compiler that is not digits and dots, and an empty `.mojoc` file. `mopm publish` also refuses a readme over 64 KiB or not UTF-8, a package file over 100 MB, and more than 20 files for one version. The registry has its own limits, which [getting started](getting-started.md) lists.
 
 ## mopm.lock
 
