@@ -360,6 +360,26 @@ describe.each(RIGS)('the group validator: %s', (_label, make) => {
   });
 
   describe('a group that is validating', () => {
+    test('a job does not start a member that could not finish before the Lambda timeout, even with budget left', async () => {
+      const slow = new GroupEnv(make(), { groupBudgetMs: 240_000 });
+      const s = await new Scenario(slow, Array.from({ length: 10 }, (_x, i) => ({ name: `pkg${i}` }))).start();
+      let t = 0;
+      const startedAt: number[] = [];
+      const stage = slow.rig.store.applyGroupEvent.bind(slow.rig.store);
+      slow.rig.store.applyGroupEvent = async (...args) => {
+        // Each member takes 100 s to validate; the event is its last step.
+        startedAt.push(t);
+        t += 100_000;
+        return stage(...args);
+      };
+
+      expect(await slow.runGroupJob({ clock: () => t })).toBe('requeued');
+      // The first member took 100 s; another could take as long again and the invocation would pass 280 s, so none is started.
+      expect(startedAt).toEqual([0]);
+      expect(Math.max(...startedAt)).toBeLessThanOrEqual(200_000);
+      expect(bitmapIndexes((await s.header())!.validated)).toEqual([0]);
+    });
+
     test('is not ended by abort or expiry: both only end a group that is open', async () => {
       const s = await new Scenario(env, [{ name: 'alpha' }, { name: 'beta' }]).start();
       const seen: unknown[] = [];
