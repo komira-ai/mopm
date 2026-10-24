@@ -446,10 +446,13 @@ test "the run gives up waiting, and says how to go on" {
     var console = Console.init(a, null);
     var p = publisher(a, &tmp, plan, &script, &console);
     p.wait_secs = 5;
+    p.rerun = try gp.rerunCommand(a, .{ .staged = "out/staged", .registry = "beta", .config_dir = "my cfg", .wait_secs = 5, .dry_run = true });
     const result = p.run();
     try std.testing.expectEqual(Result.timed_out, result);
     try std.testing.expectEqual(@as(u64, 5), script.slept);
-    try expectContains(console.err.items, "gave up waiting after 5 seconds: group " ++ gid ++ " is committed");
+    try expectContains(console.err.items, "gave up waiting after 5 seconds: group " ++ gid ++ " is committed and still in progress");
+    try expectContains(console.err.items, "to keep waiting (nothing is sent again), run: mopm publish --staged out/staged --registry beta --config-dir 'my cfg' --wait 5\n");
+    try std.testing.expect(!contains(console.err.items, "--dry-run"));
     try std.testing.expectEqual(@as(u8, 1), p.finish(result));
     const report = try std.json.parseFromSliceLeaky(std.json.Value, a, try tmp.dir.readFileAlloc(a, plan_mod.report_name, 1 << 16), .{});
     try std.testing.expectEqualStrings("timed_out", report.object.get("outcome").?.string);
@@ -561,6 +564,32 @@ test "transport errors and a state that cannot be written stop the run" {
     try std.testing.expectEqual(@as(usize, 0), untouched.seen.items.len);
 }
 
+test "the default wait is the base plus an allowance for each member, and a short group waits no less than the base" {
+    try std.testing.expectEqual(@as(i64, 600), default_wait_secs);
+    try std.testing.expectEqual(@as(i64, 5), gp.wait_per_member_secs);
+    try std.testing.expectEqual(@as(i64, 600), gp.defaultWaitFor(0));
+    try std.testing.expectEqual(@as(i64, 615), gp.defaultWaitFor(3));
+    try std.testing.expectEqual(@as(i64, 1450), gp.defaultWaitFor(170));
+    try std.testing.expectEqual(@as(i64, 2100), gp.defaultWaitFor(300));
+    // The slowest estimate (25 minutes at 300 members, 12 at 170) is inside the default.
+    try std.testing.expect(gp.defaultWaitFor(300) > 25 * 60);
+    try std.testing.expect(gp.defaultWaitFor(170) > 12 * 60);
+}
+
+test "the command to keep waiting names the flags of the run and quotes what a shell would split" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    try std.testing.expectEqualStrings(
+        "mopm publish --staged ./s --registry prod",
+        try gp.rerunCommand(a, .{ .staged = "./s", .registry = "prod" }),
+    );
+    try std.testing.expectEqualStrings(
+        "mopm publish --staged 'a b' --registry 'it'\\''s'",
+        try gp.rerunCommand(a, .{ .staged = "a b", .registry = "it's" }),
+    );
+}
+
 test "flags" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
@@ -569,10 +598,10 @@ test "flags" {
     try std.testing.expectEqualStrings("s", f.staged);
     try std.testing.expectEqualStrings("beta", f.registry);
     try std.testing.expectEqualStrings("c", f.config_dir.?);
-    try std.testing.expectEqual(@as(i64, 9), f.wait_secs);
+    try std.testing.expectEqual(@as(?i64, 9), f.wait_secs);
     try std.testing.expect(f.dry_run);
     const g = (try parseFlags(a, &.{ "--registry", "prod", "--staged", "s" })).ok;
-    try std.testing.expectEqual(default_wait_secs, g.wait_secs);
+    try std.testing.expectEqual(@as(?i64, null), g.wait_secs);
     try std.testing.expect(!g.dry_run and g.config_dir == null);
     try std.testing.expect(wants(&.{ "--registry", "x", "--staged", "s" }));
     try std.testing.expect(!wants(&.{ "--compiler", "1.0.0" }));
