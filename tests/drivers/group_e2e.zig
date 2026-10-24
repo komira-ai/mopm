@@ -2,15 +2,18 @@
 //! `group-e2e` job of .github/workflows/e2e.yml after that stage's deploy, or by hand with workflow_dispatch.
 //!
 //!     mopm-group-e2e --stage beta|gamma [--registry <name|url>] --mopm <exe> --work <dir> --run-id <n> --attempt <n>
+//!                    --pixi <exe> [--pixi-manifest <pixi.toml> | --mojo-env <prefix>]
 //!                    [--summary <file>] [--wait-seconds <n>]
 //!
 //! The token is the environment variable MOPM_E2E_TOKEN (the job maps the repository secret MOPM_E2E_GROUP_TOKEN to
-//! it on this one step); it is never passed to a child process and never printed. Each stage keeps its own tokens, so the
-//! one secret holds either a single token or a token for each stage, `beta=<token>` and `gamma=<token>` on lines of their
+//! it on this one step). It reaches one child, `mopm publish --staged`, as MOPM_TOKEN, as a person's CI would give it,
+//! and is never printed; no other child gets it (toolEnv, childEnv). Each stage keeps its own tokens, so the one
+//! secret holds either a single token or a token for each stage, `beta=<token>` and `gamma=<token>` on lines of their
 //! own (tokenFor): a stage with no entry skips.
 //!
-//! What it publishes. The e2e account owns a fixed set of throwaway packages (zz_e2e_core, zz_e2e_mid, zz_e2e_app;
-//! the package name pattern has no hyphen, so the namespace is spelled zz_e2e_*), and the token lists exactly those. A
+//! This is the path of a person who publishes a workspace, run with the real CLI, the real Mojo toolchain and the
+//! real pixi. The e2e account owns a fixed set of throwaway packages (zz_e2e_core, zz_e2e_mid, zz_e2e_app; the
+//! package name pattern has no hyphen, so the namespace is spelled zz_e2e_*), and the token lists exactly those. A
 //! version is never deleted, so every run uses numbers no run has used: MAJOR is the case, MINOR the run id of the
 //! workflow run and PATCH its attempt.
 //!
@@ -19,26 +22,36 @@
 //!                      is the one expiry check a run can make: a deadline is hours away, so the probe group stays
 //!                      open, and the first run after its deadline finds it ended and opened again (attempt 2 or
 //!                      more). It also pins the deadline to between 30 minutes and 19 hours after the call.
-//!   2  the chain       zz_e2e_core <- zz_e2e_mid <- zz_e2e_app, real packages made by `mopm pack`'s writer, created,
-//!                      uploaded and committed as one group. While the group is open or validating no member is
-//!                      readable (a read of all three, with the group still before its commit on both sides of
-//!                      it, shows none). Once it is `visible`, every member's version, the sparse index, the channel's
-//!                      repodata and `mopm add` of the top package agree with the bytes that were uploaded, and
-//!                      the lock holds the whole chain with the sha256 of each file; each locked file is downloaded
-//!                      and hashed.
-//!   3  a rejected member   a group of two where one archive is not a package: it ends `rejected`, names that
-//!                      member, and neither member is ever readable, in the API, the index or the channel.
+//!   2  the chain       zz_e2e_core <- zz_e2e_mid <- zz_e2e_app, three Mojo packages of a workspace, in three steps:
+//!      a stage         `mojo precompile` builds each one; `mopm stage` packs them against the stage's registry and
+//!                      writes the staged set (no token, nothing written to the registry).
+//!      b overlay       A fresh project locks and syncs the staged set with `--overlay` while the registry holds
+//!                      none of it, builds the program of the app's README, and runs it. Its lock names every file
+//!                      with the sha256 of the staged one.
+//!      c publish       `mopm publish --staged` publishes the set as one group. While it runs, the API is read: no
+//!                      member is readable before the group commits, and the members appear all at once, never some.
+//!                      report.json says the set was published, with every planned file. Once the group is `visible`,
+//!                      every member's version, the sparse index, the channel's repodata and `mopm add` of the top
+//!                      package agree with the bytes that were staged, the lock equals the one the overlay made, and
+//!                      each locked file is downloaded and hashed.
+//!   3  a rejected member   a staged set of two where one file is not a package: `publish --staged` ends 1, the group ends
+//!                      `rejected`, names that member, and neither member is ever readable, in the API, the index or
+//!                      the channel.
 //!   4  yank and unyank the chain group is yanked as a whole, then restored: the API and the index follow each time.
 //!
-//! The pure parts (the version numbers, the dependency ranges, the time arithmetic, the environment of a child) are
-//! unit tests below; tests/drivers/group_e2e_test.zig runs the whole walk against a loopback registry that serves the
-//! group routes, and with each way the registry could go wrong.
+//! A skip has two causes and no more: the secret holds no token for the stage, or the registry says (route_not_found
+//! to the probe) that groups are off for the actor. Both end the run with a SKIP line in the job summary and a
+//! workflow warning annotation that names the reason. With a token and groups on, nothing is skipped: a missing
+//! piece of the toolchain (--mopm, --pixi, a Mojo environment) is a failed check.
+//!
+//! The pure parts (the version numbers, the dependency ranges, the time arithmetic, the environments of a child, the
+//! README program) are unit tests below; tests/drivers/group_e2e_test.zig runs the whole walk against a loopback registry that
+//! serves the group routes, with the farm's Mojo toolchain and a stand-in pixi, and with each way the registry could go wrong.
 
 const std = @import("std");
 const core = @import("mopm_core");
 const h = @import("harness.zig");
 const http = core.http;
-const conda = core.conda;
 const registry = core.registry;
 const lock = core.lock;
 const semver = core.semver;
@@ -52,12 +65,16 @@ pub const secret_name = "MOPM_E2E_GROUP_TOKEN";
 pub const pkg_core = "zz_e2e_core";
 pub const pkg_mid = "zz_e2e_mid";
 pub const pkg_app = "zz_e2e_app";
+/// The packages of the chain, each after the ones it depends on.
+pub const members = [_][]const u8{ pkg_core, pkg_mid, pkg_app };
 /// The Mojo version every package is built for.
 pub const compiler = "1.0.0";
 /// The subdir every package is published for: the platform of the runner that resolves them (ubuntu-24.04, x86_64).
 pub const subdir = "linux-64";
 /// The version of the expiry probe: never uploaded, never committed, so never burned.
 pub const probe_version = "0.0.1";
+/// What the program of the app's README prints.
+pub const readme_output = "zz_e2e total 3\n";
 
 pub const Case = enum(u8) { chain = 1, rejected = 2 };
 
@@ -91,12 +108,36 @@ pub fn epochOf(s: []const u8) ?i64 {
     return days * 86400 + hh * 3600 + mm * 60 + ss;
 }
 
-/// The environment a child process (`mopm`) gets: the path and a home inside the work directory, and nothing else.
+/// The environment a `mopm` child gets: the path and a home inside the work directory, and nothing else.
 /// In particular not the token.
 pub fn childEnv(a: Allocator, parent: *const std.process.EnvMap, home: []const u8) !std.process.EnvMap {
     var env = std.process.EnvMap.init(a);
     if (parent.get("PATH")) |p| try env.put("PATH", p);
     try env.put("HOME", home);
+    return env;
+}
+
+/// Whether the runner's variable `name` is withheld from the toolchain: the token, and the credentials of the cloud and the workflow.
+fn withheld(name: []const u8) bool {
+    for ([_][]const u8{ token_env, "MOPM_TOKEN", "GITHUB_TOKEN", "GH_TOKEN" }) |n| {
+        if (std.mem.eql(u8, name, n)) return true;
+    }
+    for ([_][]const u8{ "AWS_", "ACTIONS_", "INPUT_" }) |p| {
+        if (std.mem.startsWith(u8, name, p)) return true;
+    }
+    return false;
+}
+
+/// The environment of a child that runs the toolchain (mojo, pixi, `mopm sync` and `mopm build`, the program built): the
+/// parent's, because the compiler and the linker need what the runner set up (HOME, TMPDIR, the library path), without the
+/// token and without the credentials the runner holds.
+pub fn toolEnv(a: Allocator, parent: *const std.process.EnvMap) !std.process.EnvMap {
+    var env = std.process.EnvMap.init(a);
+    var it = parent.iterator();
+    while (it.next()) |e| {
+        if (withheld(e.key_ptr.*)) continue;
+        try env.put(e.key_ptr.*, e.value_ptr.*);
+    }
     return env;
 }
 
@@ -129,31 +170,92 @@ pub fn sha256Hex(bytes: []const u8) [64]u8 {
     return std.fmt.bytesToHex(d, .lower);
 }
 
+// ---- the workspace --------------------------------------------------------------------------------------------------
+
+/// The package a member of the chain depends on, or null.
+pub fn depOf(name: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, name, pkg_mid)) return pkg_core;
+    if (std.mem.eql(u8, name, pkg_app)) return pkg_mid;
+    return null;
+}
+
+/// The mopm.toml of a member at `version`: a path dependency on the member below it, which the package keeps as a requirement
+/// for that version or a newer one of the same major.
+pub fn memberToml(a: Allocator, name: []const u8, version: []const u8) ![]u8 {
+    const head = try std.fmt.allocPrint(a, "[package]\nname = \"{s}\"\nversion = \"{s}\"\nmojo = [\"{s}\"]\n\n[dependencies]\n", .{ name, version, compiler });
+    const dep = depOf(name) orelse return head;
+    return std.fmt.allocPrint(a, "{s}{s} = {{ path = \"../{s}\", version = \"^{s}\" }}\n", .{ head, dep, dep, version });
+}
+
+/// The Mojo source of a member (src/<name>/__init__.mojo): each package adds one to the one below it.
+pub fn sourceOf(name: []const u8) []const u8 {
+    if (std.mem.eql(u8, name, pkg_mid)) return "from zz_e2e_core import base\n\n\ndef middle() -> Int:\n    return base() + 1\n";
+    if (std.mem.eql(u8, name, pkg_app)) return "from zz_e2e_mid import middle\n\n\ndef total() -> Int:\n    return middle() + 1\n";
+    return "def base() -> Int:\n    return 1\n";
+}
+
+/// The README of a member. The app's holds the program a reader of the package page would copy.
+pub fn readmeOf(a: Allocator, name: []const u8) ![]u8 {
+    if (std.mem.eql(u8, name, pkg_app)) {
+        return std.fmt.allocPrint(a, "# {s}\n\nA throwaway package of the group publishing end-to-end check. Install it, then:\n\n```mojo\nfrom zz_e2e_app import total\n\n\ndef main():\n    print(\"zz_e2e total\", total())\n```\n\nIt prints `zz_e2e total 3`.\n", .{name});
+    }
+    return std.fmt.allocPrint(a, "# {s}\n\nA throwaway package of the group publishing end-to-end check.\n", .{name});
+}
+
+/// The first ```mojo block of a README, or null.
+pub fn readmeProgram(text: []const u8) ?[]const u8 {
+    const open = "```mojo\n";
+    const start = std.mem.indexOf(u8, text, open) orelse return null;
+    const body = text[start + open.len ..];
+    const end = std.mem.indexOf(u8, body, "```") orelse return null;
+    return body[0..end];
+}
+
+/// Writes the workspace of `names` at `version` under `ws`: for each member its mopm.toml, README.md and source.
+pub fn writeWorkspace(a: Allocator, ws: []const u8, version: []const u8, names: []const []const u8) !void {
+    for (names) |name| {
+        const dir = try std.fs.path.join(a, &.{ ws, name });
+        try h.writeFile(try std.fs.path.join(a, &.{ dir, "mopm.toml" }), try memberToml(a, name, version));
+        try h.writeFile(try std.fs.path.join(a, &.{ dir, "README.md" }), try readmeOf(a, name));
+        try h.writeFile(try std.fs.path.join(a, &.{ dir, "src", name, "__init__.mojo" }), sourceOf(name));
+    }
+}
+
+/// Builds the `.mojoc` of the three members of `ws`, each after the ones below it, with `<mojo_env>/bin/mojo`, into
+/// `<art>/<subdir>/<name>.mojoc` (the layout `mopm stage --artifacts` reads). Null when they are built, else what went wrong.
+pub fn precompileAll(a: Allocator, mojo_env: []const u8, parent: *const std.process.EnvMap, ws: []const u8, art: []const u8) !?[]const u8 {
+    var env = try toolEnv(a, parent);
+    try env.put("MODULAR_HOME", try std.fmt.allocPrint(a, "{s}/share/max", .{mojo_env}));
+    const mojo = try std.fs.path.join(a, &.{ mojo_env, "bin", "mojo" });
+    var dep_flags = std.ArrayList([]const u8).init(a);
+    for (members) |name| {
+        const out_dir = try std.fs.path.join(a, &.{ art, "deps", name });
+        try std.fs.cwd().makePath(out_dir);
+        const out = try std.fs.path.join(a, &.{ out_dir, try std.fmt.allocPrint(a, "{s}.mojoc", .{name}) });
+        var argv = std.ArrayList([]const u8).init(a);
+        try argv.appendSlice(&.{ mojo, "precompile" });
+        try argv.appendSlice(dep_flags.items);
+        try argv.appendSlice(&.{ name, "-o", out });
+        const ran = try h.run(a, argv.items, &env, .{ .cwd = try std.fs.path.join(a, &.{ ws, name, "src" }) });
+        if (ran.code != 0 or ran.signaled) return try std.fmt.allocPrint(a, "mojo precompile {s} ended {d}: {s}", .{ name, ran.code, tailOf(ran.text) });
+        try dep_flags.append(try std.fmt.allocPrint(a, "-I{s}", .{out_dir}));
+        const staged = try std.fs.path.join(a, &.{ art, subdir, try std.fmt.allocPrint(a, "{s}.mojoc", .{name}) });
+        try std.fs.cwd().makePath(try std.fs.path.join(a, &.{ art, subdir }));
+        try std.fs.cwd().copyFile(out, std.fs.cwd(), staged, .{});
+    }
+    return null;
+}
+
 // ---- what is sent and what comes back -------------------------------------------------------------------------------
 
 const FileDecl = struct { subdir: []const u8, filename: []const u8, sha256: []const u8, size: u64 };
 const MemberDecl = struct { name: []const u8, version: []const u8, files: []const FileDecl };
 const CreateBody = struct { members: []const MemberDecl };
-const CommitMember = struct { name: []const u8, manifest_sha256: []const u8 };
-const CommitBody = struct { members: []const CommitMember };
-
-const UploadFile = struct {
-    subdir: []const u8 = "",
-    filename: []const u8 = "",
-    upload_id: []const u8 = "",
-    uploaded: bool = false,
-    put_url: ?[]const u8 = null,
-    put_headers: ?std.json.Value = null,
-};
-const MemberAnswer = struct { name: []const u8, version: []const u8, action: []const u8 = "", files: []const UploadFile = &.{} };
-const Reserving = struct { done: u64 = 0, total: u64 = 0 };
 const Created = struct {
     group_id: []const u8,
     status: []const u8,
     attempt: u64,
     deadline_at: []const u8 = "",
-    reserving: ?Reserving = null,
-    members: []const MemberAnswer = &.{},
 };
 const Failure = struct { code: []const u8 = "", message: []const u8 = "", member: ?[]const u8 = null };
 const YankInfo = struct { state: []const u8 = "", yanked_members: u64 = 0 };
@@ -193,6 +295,21 @@ const ErrorBody = struct { @"error": struct { code: []const u8 = "", message: []
 const RepoEntry = struct { sha256: []const u8 = "", size: u64 = 0, version: []const u8 = "" };
 const Repodata = struct { @"packages.conda": std.json.ArrayHashMap(RepoEntry) = .{} };
 
+/// plan.json of a staged set (spec/staged-set.md), the parts this check reads.
+const PlanMember = struct {
+    name: []const u8 = "",
+    version: []const u8 = "",
+    action: []const u8 = "",
+    manifest_sha256: []const u8 = "",
+    files: []const FileRef = &.{},
+};
+const Plan = struct { members: []const PlanMember = &.{} };
+/// report.json, which `mopm publish --staged` writes into the staged directory.
+const ReportMember = struct { name: []const u8 = "", version: []const u8 = "", outcome: []const u8 = "", code: ?[]const u8 = null, files: []const FileRef = &.{} };
+const PublishReport = struct { group_id: []const u8 = "", group_status: []const u8 = "", outcome: []const u8 = "", members: []const ReportMember = &.{} };
+/// state.json, which names the group before any file is sent.
+const StateFile = struct { group_id: []const u8 = "" };
+
 fn parse(comptime T: type, a: Allocator, body: []const u8) ?T {
     return std.json.parseFromSliceLeaky(T, a, body, .{ .ignore_unknown_fields = true }) catch null;
 }
@@ -204,6 +321,11 @@ fn errorCode(a: Allocator, body: []const u8) []const u8 {
 
 fn excerpt(s: []const u8) []const u8 {
     return s[0..@min(s.len, 300)];
+}
+
+/// The last 400 bytes of the output of a program: where it says why it stopped.
+fn tailOf(s: []const u8) []const u8 {
+    return s[s.len -| 400 ..];
 }
 
 // ---- the package files ----------------------------------------------------------------------------------------------
@@ -218,46 +340,6 @@ const Pkg = struct {
     /// The version a dependency of this package asks for, "" for none.
     dep: []const u8 = "",
 };
-
-fn mojocOf(a: Allocator, name: []const u8, version: []const u8) ![]u8 {
-    return std.fmt.allocPrint(a, "e2e mojoc {s} {s}\n", .{ name, version });
-}
-
-/// A package as `mopm pack` writes it, depending on `dep_name` at `dep_version` or newer ("" for none).
-pub fn buildPkg(a: Allocator, name: []const u8, version: []const u8, dep_name: []const u8, dep_version: []const u8) !Pkg {
-    var deps = std.ArrayList(conda.Dep).init(a);
-    if (dep_name.len > 0) try deps.append(.{ .name = dep_name, .range = try rangeFrom(a, dep_version) });
-    const p = try conda.pack(a, .{
-        .name = name,
-        .version = version,
-        .compiler = compiler,
-        .subdir = subdir,
-        .deps = deps.items,
-        .mojoc = try mojocOf(a, name, version),
-    });
-    return .{
-        .name = name,
-        .version = version,
-        .file_name = p.file_name,
-        .bytes = p.bytes,
-        .sha256 = try a.dupe(u8, &p.sha256),
-        .manifest_sha256 = try a.dupe(u8, &p.manifest_sha256),
-        .dep = dep_version,
-    };
-}
-
-/// The right file name with bytes that are not an archive: the registry must refuse it.
-pub fn badPkg(a: Allocator, name: []const u8, version: []const u8) !Pkg {
-    const bytes = try std.fmt.allocPrint(a, "this is not a conda package: {s} {s}\n", .{ name, version });
-    return .{
-        .name = name,
-        .version = version,
-        .file_name = try std.fmt.allocPrint(a, "mojo-{s}-{s}-mojo{s}_0.conda", .{ name, version, compiler }),
-        .bytes = bytes,
-        .sha256 = try a.dupe(u8, &sha256Hex(bytes)),
-        .manifest_sha256 = try a.dupe(u8, &sha256Hex(name)),
-    };
-}
 
 // ---- the run --------------------------------------------------------------------------------------------------------
 
@@ -279,12 +361,25 @@ pub const Opts = struct {
     poll_ms: u64 = 3000,
     /// Where a transport error or a 429 waits before the call is made again.
     retry_ms: u64 = 2000,
-    /// The environment of this process, for the PATH a child gets.
+    /// The environment of this process: what the toolchain children start from, and the PATH of the others.
     parent_env: ?*const std.process.EnvMap = null,
+    /// pixi: `mopm sync` installs through it, and, with no `mojo_env`, it creates the Mojo environment from `pixi_manifest`.
+    pixi: ?[]const u8 = null,
+    pixi_manifest: ?[]const u8 = null,
+    /// A Mojo environment that exists (`bin/mojo`, `lib/mojo`): then no environment is created.
+    mojo_env: ?[]const u8 = null,
+    /// Packages already built: `<dir>/linux-64/<name>.mojoc` for the three. Then none is precompiled.
+    prebuilt: ?[]const u8 = null,
+    /// Lays the Mojo toolchain into the environment `mopm sync` made, for a stand-in pixi that installs packages and nothing else.
+    after_sync: ?*const fn (Allocator, []const u8) anyerror!void = null,
 };
+
+/// Why a run did nothing.
+pub const SkipReason = enum { none, prod, no_secret, no_stage_token, groups_off };
 
 pub const Result = struct {
     skipped: bool,
+    skip_reason: SkipReason = .none,
     /// The one line the run ends with: PASS, FAIL or SKIP, the stage and why.
     line: []const u8,
     checks: usize,
@@ -303,6 +398,13 @@ const Cx = struct {
     token: []const u8 = "",
     /// A step the rest cannot go on without failed.
     stop: bool = false,
+    /// The environment when the run was given none.
+    empty: std.process.EnvMap,
+    /// The Mojo environment, once there is one.
+    mojo_prefix: ?[]const u8 = null,
+    /// The built packages, once there are some; `art_tried` is set when they were asked for, built or not.
+    art: ?[]const u8 = null,
+    art_tried: bool = false,
 
     fn check(self: *Cx, name: []const u8, ok: bool, detail: []const u8) void {
         self.checks += 1;
@@ -318,6 +420,14 @@ const Cx = struct {
 
     fn url(self: *Cx, path: []const u8) ![]u8 {
         return std.fmt.allocPrint(self.a, "{s}/api/v1{s}", .{ self.o.base, path });
+    }
+
+    fn parent(self: *Cx) *const std.process.EnvMap {
+        return self.o.parent_env orelse &self.empty;
+    }
+
+    fn join(self: *Cx, parts: []const []const u8) ![]u8 {
+        return std.fs.path.join(self.a, parts);
     }
 
     /// One call, with a pause and another try on a transport error, and on a 429.
@@ -339,8 +449,8 @@ const Cx = struct {
         }
     }
 
-    fn api(self: *Cx, method: std.http.Method, path: []const u8, body: ?[]const u8) !http.Answer {
-        return self.send(method, try self.url(path), body, true);
+    fn api(self: *Cx, method: std.http.Method, p: []const u8, body: ?[]const u8) !http.Answer {
+        return self.send(method, try self.url(p), body, true);
     }
 
     fn getGroup(self: *Cx, id: []const u8) !?Group {
@@ -387,22 +497,40 @@ const Cx = struct {
         }
         return null;
     }
+
+    /// The home of every child: below the work directory.
+    fn home(self: *Cx) ![]u8 {
+        const p = try self.join(&.{ self.o.work, "home" });
+        try std.fs.cwd().makePath(p);
+        return p;
+    }
+
+    /// `mopm <args>` in `dir`, with the path and a home and nothing else; with `token`, also MOPM_TOKEN, as a person's CI sets it.
+    fn mopmRun(self: *Cx, dir: ?[]const u8, args: []const []const u8, with_token: bool) !h.Ran {
+        const mopm = self.o.mopm orelse return error.NoMopm;
+        var env = try childEnv(self.a, self.parent(), try self.home());
+        if (with_token) try env.put("MOPM_TOKEN", self.token);
+        var argv = std.ArrayList([]const u8).init(self.a);
+        try argv.append(mopm);
+        try argv.appendSlice(args);
+        return h.run(self.a, argv.items, &env, .{ .cwd = dir });
+    }
+
+    /// A program of the toolchain (`mopm sync`, `mopm build`, the program built), with the runner's environment less its credentials.
+    fn toolRun(self: *Cx, dir: ?[]const u8, argv: []const []const u8) !h.Ran {
+        var env = try toolEnv(self.a, self.parent());
+        return h.run(self.a, argv, &env, .{ .cwd = dir });
+    }
 };
 
 fn groupBody(a: Allocator, pkgs: []const Pkg) ![]u8 {
-    const members = try a.alloc(MemberDecl, pkgs.len);
-    for (pkgs, members) |p, *m| {
+    const mems = try a.alloc(MemberDecl, pkgs.len);
+    for (pkgs, mems) |p, *m| {
         const files = try a.alloc(FileDecl, 1);
         files[0] = .{ .subdir = subdir, .filename = p.file_name, .sha256 = p.sha256, .size = p.bytes.len };
         m.* = .{ .name = p.name, .version = p.version, .files = files };
     }
-    return std.json.stringifyAlloc(a, CreateBody{ .members = members }, .{});
-}
-
-fn commitBody(a: Allocator, pkgs: []const Pkg) ![]u8 {
-    const members = try a.alloc(CommitMember, pkgs.len);
-    for (pkgs, members) |p, *m| m.* = .{ .name = p.name, .manifest_sha256 = p.manifest_sha256 };
-    return std.json.stringifyAlloc(a, CommitBody{ .members = members }, .{});
+    return std.json.stringifyAlloc(a, CreateBody{ .members = mems }, .{});
 }
 
 fn validGroupId(id: []const u8) bool {
@@ -421,98 +549,6 @@ fn isOneOf(s: []const u8, set: []const []const u8) bool {
 }
 
 const pre_commit = [_][]const u8{ "open", "validating" };
-const ended = [_][]const u8{ "rejected", "failed", "expired", "aborted", "superseded" };
-
-/// Create a group (again, while it says it has not reached every member) and return the answer that holds every member.
-fn createGroup(cx: *Cx, label: []const u8, pkgs: []const Pkg) !?struct { ans: http.Answer, created: Created, first_status: u16 } {
-    const body = try groupBody(cx.a, pkgs);
-    var rounds: u32 = 0;
-    // The first call is the one that makes the group (201); the calls after it only ask whether it has reached every member.
-    var first_status: ?u16 = null;
-    while (rounds < 20) : (rounds += 1) {
-        const ans = try cx.api(.POST, "/groups", body);
-        if (ans.status != 201 and ans.status != 200) {
-            cx.fail(try std.fmt.allocPrint(cx.a, "{s}: the group is created", .{label}), try std.fmt.allocPrint(cx.a, "HTTP {d}: {s}", .{ ans.status, excerpt(ans.body) }));
-            return null;
-        }
-        const created = parse(Created, cx.a, ans.body) orelse {
-            cx.fail(try std.fmt.allocPrint(cx.a, "{s}: the create answer is a group", .{label}), ans.body);
-            return null;
-        };
-        if (first_status == null) first_status = ans.status;
-        if (created.reserving == null) return .{ .ans = ans, .created = created, .first_status = first_status orelse ans.status };
-    }
-    cx.fail(try std.fmt.allocPrint(cx.a, "{s}: the registry reserved every member", .{label}), "still reserving after 20 calls");
-    return null;
-}
-
-/// PUT every file the registry has not got yet, with the headers it named, exactly.
-fn uploadAll(cx: *Cx, label: []const u8, created: Created, pkgs: []const Pkg) !bool {
-    var ok = created.members.len == pkgs.len;
-    for (created.members) |m| {
-        const p = for (pkgs) |q| {
-            if (std.mem.eql(u8, q.name, m.name)) break q;
-        } else {
-            ok = false;
-            continue;
-        };
-        for (m.files) |f| {
-            if (f.uploaded) continue;
-            const put_url = f.put_url orelse {
-                ok = false;
-                continue;
-            };
-            var headers = std.ArrayList(std.http.Header).init(cx.a);
-            if (f.put_headers) |ph| switch (ph) {
-                .object => |obj| {
-                    var it = obj.iterator();
-                    while (it.next()) |e| {
-                        if (std.ascii.eqlIgnoreCase(e.key_ptr.*, "content-length")) continue;
-                        if (e.value_ptr.* == .string) try headers.append(.{ .name = e.key_ptr.*, .value = e.value_ptr.string });
-                    }
-                },
-                else => {},
-            };
-            // The URL is presigned: no bearer token goes to the storage.
-            const put = http.request(cx.a, .PUT, put_url, .{ .body = p.bytes, .content_type = null, .extra_headers = headers.items }) catch |e| {
-                cx.check(try std.fmt.allocPrint(cx.a, "{s}: {s} is uploaded", .{ label, p.name }), false, @errorName(e));
-                ok = false;
-                continue;
-            };
-            if (!put.ok()) {
-                cx.check(try std.fmt.allocPrint(cx.a, "{s}: {s} is uploaded", .{ label, p.name }), false, try std.fmt.allocPrint(cx.a, "the storage answered HTTP {d}", .{put.status}));
-                ok = false;
-            }
-        }
-    }
-    return ok;
-}
-
-const Waited = struct { group: Group, timed_out: bool };
-
-/// Poll a group until its status is one of `until`, or it ended, or `wait_ms` is over. While the group is before its
-/// commit, on both sides of a read of every member, no member may be readable.
-fn waitGroup(cx: *Cx, label: []const u8, id: []const u8, pkgs: []const Pkg, until: []const []const u8) !Waited {
-    const start = std.time.milliTimestamp();
-    var reported = false;
-    while (true) {
-        const g1 = (try cx.getGroup(id)) orelse {
-            cx.fail(try std.fmt.allocPrint(cx.a, "{s}: the group can be read", .{label}), "GET /groups/{id} did not answer 200");
-            return error.GroupUnreadable;
-        };
-        if (isOneOf(g1.status, until) or isOneOf(g1.status, &ended)) return .{ .group = g1, .timed_out = false };
-        if (isOneOf(g1.status, &pre_commit)) {
-            const n = try cx.shown(pkgs);
-            const g2 = (try cx.getGroup(id)) orelse g1;
-            if (n > 0 and isOneOf(g2.status, &pre_commit) and !reported) {
-                reported = true;
-                cx.check(try std.fmt.allocPrint(cx.a, "{s}: no member is readable before the commit", .{label}), false, "a member was readable while the group was still before its commit");
-            }
-        }
-        if (std.time.milliTimestamp() - start > @as(i64, @intCast(cx.o.wait_ms))) return .{ .group = g1, .timed_out = true };
-        std.time.sleep(cx.o.poll_ms * std.time.ns_per_ms);
-    }
-}
 
 /// Run `f` until it returns true or `wait_ms` is over; the last answer's text is the reason.
 fn eventually(cx: *Cx, comptime Ctx: type, ctx: Ctx, comptime f: fn (*Cx, Ctx, *[]const u8) anyerror!bool, why: *[]const u8) !bool {
@@ -576,67 +612,318 @@ fn probeStep(cx: *Cx) !bool {
     return true;
 }
 
-const Chain = struct { id: []const u8, pkgs: []const Pkg };
-
-/// Step 2. The chain group, committed and visible; null when it did not get that far.
-fn chainStep(cx: *Cx) !?Chain {
-    const ver = try versionOf(cx.a, .chain, cx.o.run_id, cx.o.attempt);
-    const pkgs = [_]Pkg{
-        try buildPkg(cx.a, pkg_core, ver, "", ""),
-        try buildPkg(cx.a, pkg_mid, ver, pkg_core, ver),
-        try buildPkg(cx.a, pkg_app, ver, pkg_mid, ver),
+/// The Mojo environment: the one given, or one pixi creates from the manifest. Null (a failed check says why) when there is none.
+fn toolchain(cx: *Cx) !?[]const u8 {
+    if (cx.mojo_prefix) |p| return p;
+    if (cx.o.mojo_env) |p| {
+        cx.mojo_prefix = p;
+        return p;
+    }
+    const pixi = cx.o.pixi orelse {
+        cx.fail("toolchain: --pixi (or --mojo-env) names the Mojo environment", "neither was given");
+        return null;
     };
-    const L = "chain";
-    const made = (try createGroup(cx, L, &pkgs)) orelse return null;
-    cx.check("chain: the group is created open", made.first_status == 201 and std.mem.eql(u8, made.created.status, "open") and made.created.attempt == 1, made.created.status);
-    var all_new = made.created.members.len == 3;
-    for (made.created.members) |m| {
-        if (!std.mem.eql(u8, m.action, "new")) all_new = false;
-    }
-    cx.check("chain: every member's number is new", all_new, "a member was not `new`");
-    const id = made.created.group_id;
-    errdefer abort(cx, id);
-    if (!try uploadAll(cx, L, made.created, &pkgs)) {
-        cx.stop = true;
-        abort(cx, id);
+    const manifest = cx.o.pixi_manifest orelse {
+        cx.fail("toolchain: --pixi-manifest names the Mojo environment pixi creates", "no --pixi-manifest");
         return null;
-    }
-    cx.check("chain: nothing is readable once the files are uploaded", (try cx.shown(&pkgs)) == 0, "a member is readable before the commit");
-    const commit = try cx.api(.POST, try std.fmt.allocPrint(cx.a, "/groups/{s}/commit", .{id}), try commitBody(cx.a, &pkgs));
-    cx.check("chain: the commit is accepted", commit.status == 202, try std.fmt.allocPrint(cx.a, "HTTP {d}: {s}", .{ commit.status, excerpt(commit.body) }));
-    if (commit.status != 202) {
-        cx.stop = true;
-        abort(cx, id);
+    };
+    const dir = try cx.join(&.{ cx.o.work, "mojo-env" });
+    const toml = try cx.join(&.{ dir, "pixi.toml" });
+    h.writeFile(toml, try h.readFile(cx.a, manifest)) catch |e| {
+        cx.fail("toolchain: the pixi manifest is copied", @errorName(e));
         return null;
-    }
-
-    const first = try waitGroup(cx, L, id, &pkgs, &.{ "committed", "visible" });
-    if (first.timed_out or !isOneOf(first.group.status, &.{ "committed", "visible" })) {
-        cx.fail("chain: the group commits", try std.fmt.allocPrint(cx.a, "status {s}{s}", .{ first.group.status, if (first.timed_out) " (timed out)" else "" }));
-        return null;
-    }
-    // The API shows a committed group's members at once, all of them.
-    const live = try cx.shown(&pkgs);
-    cx.check("chain: once committed, all three members are readable at once", live == 3, try std.fmt.allocPrint(cx.a, "{d} of 3", .{live}));
-    const done = try waitGroup(cx, L, id, &pkgs, &.{"visible"});
-    cx.check("chain: the group becomes visible", std.mem.eql(u8, done.group.status, "visible"), try std.fmt.allocPrint(cx.a, "status {s}{s}", .{ done.group.status, if (done.timed_out) " (timed out)" else "" }));
-    if (!std.mem.eql(u8, done.group.status, "visible")) {
+    };
+    const ran = try cx.toolRun(null, &.{ pixi, "install", "--manifest-path", toml });
+    cx.check("toolchain: pixi creates the Mojo environment", ran.code == 0 and !ran.signaled, tailOf(ran.text));
+    if (ran.code != 0 or ran.signaled) {
         cx.stop = true;
         return null;
     }
-    cx.check("chain: the group names its three members", done.group.member_count == 3 and done.group.members.len == 3, "member_count");
-    var all_pub = true;
-    for (done.group.members) |m| {
-        if (!std.mem.eql(u8, m.state, "published")) all_pub = false;
-    }
-    cx.check("chain: every member is published", all_pub, "a member is not published");
-    try readBack(cx, L, &pkgs, "published");
-    return .{ .id = id, .pkgs = try cx.a.dupe(Pkg, &pkgs) };
+    const prefix = try cx.join(&.{ dir, ".pixi", "envs", "default" });
+    cx.mojo_prefix = prefix;
+    return prefix;
 }
 
+/// The `.mojoc` of the three packages (`<dir>/linux-64/<name>.mojoc`): the ones given, or built once with the toolchain. Null (a
+/// failed check says why) when they cannot be had.
+fn artifacts(cx: *Cx) !?[]const u8 {
+    if (cx.art) |p| return p;
+    if (cx.o.prebuilt) |p| {
+        cx.art = p;
+        return p;
+    }
+    if (cx.art_tried) return null;
+    cx.art_tried = true;
+    const mojo = (try toolchain(cx)) orelse return null;
+    const ws = try cx.join(&.{ cx.o.work, "ws_build" });
+    const art = try cx.join(&.{ cx.o.work, "art" });
+    try writeWorkspace(cx.a, ws, "0.0.1", &members);
+    const why = try precompileAll(cx.a, mojo, cx.parent(), ws, art);
+    cx.check("packages: mojo precompile builds the three packages", why == null, why orelse "");
+    if (why != null) {
+        cx.stop = true;
+        return null;
+    }
+    cx.art = art;
+    return art;
+}
+
+/// `mopm stage` of the first `names.len` members of the workspace at `ws` into `out`, and the plan it wrote as packages. Null when the
+/// set is not as it should be (a failed check says why).
+fn stageStep(cx: *Cx, label: []const u8, ws: []const u8, art: []const u8, out: []const u8, names: []const []const u8) !?[]const Pkg {
+    const ran = cx.mopmRun(null, &.{ "stage", "--workspace-root", ws, "--artifacts", art, "--compiler", compiler, "--out", out, "--registry", cx.o.base }, false) catch |e| {
+        cx.fail(try std.fmt.allocPrint(cx.a, "{s}: mopm stage runs", .{label}), @errorName(e));
+        return null;
+    };
+    const summary = try std.fmt.allocPrint(cx.a, "{d} to upload, 0 skipped, 0 refused", .{names.len});
+    cx.check(try std.fmt.allocPrint(cx.a, "{s}: mopm stage packs the workspace, with no token, and every member is an upload", .{label}), ran.code == 0 and h.contains(ran.text, summary), tailOf(ran.text));
+    if (ran.code != 0) {
+        cx.stop = true;
+        return null;
+    }
+    const plan_text = h.readFile(cx.a, try cx.join(&.{ out, "plan.json" })) catch {
+        cx.fail(try std.fmt.allocPrint(cx.a, "{s}: the staged set has a plan.json", .{label}), "no plan.json");
+        return null;
+    };
+    const plan = parse(Plan, cx.a, plan_text) orelse {
+        cx.fail(try std.fmt.allocPrint(cx.a, "{s}: plan.json is a plan", .{label}), excerpt(plan_text));
+        return null;
+    };
+    var pkgs = std.ArrayList(Pkg).init(cx.a);
+    var ok = plan.members.len == names.len;
+    var why: []const u8 = "";
+    if (ok) for (names, plan.members) |name, m| {
+        const one = m.files.len == 1;
+        if (!std.mem.eql(u8, m.name, name) or !std.mem.eql(u8, m.action, "upload") or !one or !std.mem.eql(u8, m.files[0].subdir, subdir) or m.manifest_sha256.len != 64) {
+            ok = false;
+            why = m.name;
+            break;
+        }
+        const bytes = h.readFile(cx.a, try cx.join(&.{ out, subdir, m.files[0].filename })) catch {
+            ok = false;
+            why = m.files[0].filename;
+            break;
+        };
+        if (!std.mem.eql(u8, &sha256Hex(bytes), m.files[0].sha256) or bytes.len != m.files[0].size) {
+            ok = false;
+            why = m.files[0].filename;
+            break;
+        }
+        try pkgs.append(.{
+            .name = m.name,
+            .version = m.version,
+            .file_name = m.files[0].filename,
+            .bytes = bytes,
+            .sha256 = m.files[0].sha256,
+            .manifest_sha256 = m.manifest_sha256,
+            .dep = if (depOf(name) != null) m.version else "",
+        });
+    };
+    cx.check(try std.fmt.allocPrint(cx.a, "{s}: the plan lists the members in dependency order, each with one {s} file that hashes as planned", .{ label, subdir }), ok, why);
+    if (!ok) {
+        cx.stop = true;
+        return null;
+    }
+    return pkgs.items;
+}
+
+/// A project that depends on nothing yet, named `consumer`, in `dir`.
+fn writeConsumer(cx: *Cx, dir: []const u8) !void {
+    try h.writeFile(try cx.join(&.{ dir, "mopm.toml" }), "[package]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"" ++ compiler ++ "\"\n\n[dependencies]\n");
+}
+
+/// Step 2b. A fresh project locks and installs the staged set (`--overlay`) before the registry holds any of it, and builds and
+/// runs the program of the app's README. Returns the lock the overlay made, "" when it made none.
+fn overlayStep(cx: *Cx, label: []const u8, staged: []const u8, pkgs: []const Pkg) ![]const u8 {
+    const dir = try cx.join(&.{ cx.o.work, "overlay_consumer" });
+    try writeConsumer(cx, dir);
+    const app = pkgs[pkgs.len - 1];
+    const spec = try std.fmt.allocPrint(cx.a, "{s}@={s}", .{ app.name, app.version });
+    var ran = try cx.mopmRun(dir, &.{ "add", spec, "--registry", cx.o.base, "--overlay", staged }, false);
+    const add_name = try std.fmt.allocPrint(cx.a, "{s}: mopm add --overlay locks the staged set", .{label});
+    cx.check(add_name, ran.code == 0, tailOf(ran.text));
+    if (ran.code != 0) return "";
+    const lock_text = h.readFile(cx.a, try cx.join(&.{ dir, "mopm.lock" })) catch "";
+    try lockCheck(cx, "overlay", pkgs, lock_text, false);
+
+    const pixi = cx.o.pixi orelse {
+        cx.fail(try std.fmt.allocPrint(cx.a, "{s}: --pixi names pixi, which mopm sync installs through", .{label}), "no --pixi");
+        return lock_text;
+    };
+    const mopm = cx.o.mopm orelse return lock_text;
+    ran = try cx.toolRun(dir, &.{ mopm, "sync", "--locked", "--overlay", staged, "--registry", cx.o.base, "--pixi", pixi });
+    const want = try std.fmt.allocPrint(cx.a, "read {d} packages from the staged set", .{pkgs.len});
+    cx.check(try std.fmt.allocPrint(cx.a, "{s}: mopm sync --overlay installs the whole set from the staged set", .{label}), ran.code == 0 and h.contains(ran.text, want), tailOf(ran.text));
+    if (ran.code != 0) return lock_text;
+    const env = try cx.join(&.{ dir, ".mopm", ".pixi", "envs", "default" });
+    if (cx.o.after_sync) |lay| {
+        lay(cx.a, env) catch |e| {
+            cx.fail(try std.fmt.allocPrint(cx.a, "{s}: the toolchain is laid into the environment", .{label}), @errorName(e));
+            return lock_text;
+        };
+    }
+
+    // The README of the top package is what a person copies: its program must build against the installed set and print what it says.
+    const readme = h.readFile(cx.a, try cx.join(&.{ staged, app.name, "README.md" })) catch "";
+    const program = readmeProgram(readme) orelse {
+        cx.fail(try std.fmt.allocPrint(cx.a, "{s}: the staged README of {s} holds a mojo program", .{ label, app.name }), excerpt(readme));
+        return lock_text;
+    };
+    try h.writeFile(try cx.join(&.{ dir, "readme_main.mojo" }), program);
+    const bin = try cx.join(&.{ cx.o.work, "readme_bin" });
+    ran = try cx.toolRun(dir, &.{ mopm, "build", "readme_main.mojo", "-o", bin, "--prefix", env });
+    cx.check(try std.fmt.allocPrint(cx.a, "{s}: the README's program builds against the installed set", .{label}), ran.code == 0, tailOf(ran.text));
+    if (ran.code == 0) {
+        ran = try cx.toolRun(dir, &.{bin});
+        cx.check(try std.fmt.allocPrint(cx.a, "{s}: the README's program runs and prints what the README says", .{label}), ran.code == 0 and std.mem.eql(u8, ran.text, readme_output), tailOf(ran.text));
+    }
+    cx.check(try std.fmt.allocPrint(cx.a, "{s}: after all that the registry still shows none of the set", .{label}), (try cx.shown(pkgs)) == 0, "a member is readable before it was published");
+    return lock_text;
+}
+
+/// What the publish child did, and what the API showed while it ran.
+const Published = struct {
+    code: u8 = 255,
+    text: []const u8 = "",
+    report: ?PublishReport = null,
+    group_id: []const u8 = "",
+    /// A member was readable while its group was still before its commit.
+    early: bool = false,
+    /// Some of the members, and not all, were readable at once.
+    partial: bool = false,
+};
+
+/// `mopm publish --staged` run on its own thread, so that the API can be read while it works.
+const PublishJob = struct {
+    argv: []const []const u8,
+    env: *const std.process.EnvMap,
+    done: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    code: u8 = 255,
+    text: []const u8 = "",
+
+    fn work(self: *PublishJob) void {
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+        if (h.run(arena.allocator(), self.argv, self.env, .{})) |ran| {
+            self.code = if (ran.signaled) 255 else ran.code;
+            self.text = std.heap.page_allocator.dupe(u8, ran.text) catch "";
+        } else |_| {}
+        self.done.store(true, .release);
+    }
+};
+
+/// The group a staged directory names in its state.json, once `publish --staged` has written one.
+fn stateGroupId(cx: *Cx, staged: []const u8) []const u8 {
+    const text = h.readFile(cx.a, cx.join(&.{ staged, "state.json" }) catch return "") catch return "";
+    return (parse(StateFile, cx.a, text) orelse return "").group_id;
+}
+
+/// `mopm publish --staged <staged>` with the token. With `watch`, the API is read every poll while it runs.
+fn publishRun(cx: *Cx, staged: []const u8, pkgs: []const Pkg, watch: bool) !Published {
+    const mopm = cx.o.mopm orelse return error.NoMopm;
+    const wait = try std.fmt.allocPrint(cx.a, "{d}", .{@max(cx.o.wait_ms / 1000, 1)});
+    const argv = [_][]const u8{ mopm, "publish", "--staged", staged, "--registry", cx.o.base, "--wait", wait };
+    var env = try childEnv(cx.a, cx.parent(), try cx.home());
+    try env.put("MOPM_TOKEN", cx.token);
+    var out = Published{};
+    if (!watch) {
+        const ran = try h.run(cx.a, &argv, &env, .{});
+        out.code = if (ran.signaled) 255 else ran.code;
+        out.text = ran.text;
+    } else {
+        var job = PublishJob{ .argv = &argv, .env = &env };
+        const thread = try std.Thread.spawn(.{}, PublishJob.work, .{&job});
+        var id: []const u8 = "";
+        while (!job.done.load(.acquire)) {
+            if (id.len == 0) id = stateGroupId(cx, staged);
+            const g1: ?Group = if (id.len > 0) (cx.getGroup(id) catch null) else null;
+            const n = cx.shown(pkgs) catch pkgs.len + 1;
+            const g2: ?Group = if (id.len > 0) (cx.getGroup(id) catch null) else null;
+            if (n != 0 and n != pkgs.len and n <= pkgs.len) out.partial = true;
+            if (n > 0 and n <= pkgs.len and g1 != null and g2 != null and isOneOf(g1.?.status, &pre_commit) and isOneOf(g2.?.status, &pre_commit)) out.early = true;
+            std.time.sleep(cx.o.poll_ms * std.time.ns_per_ms);
+        }
+        thread.join();
+        out.code = job.code;
+        out.text = job.text;
+    }
+    const report_text = h.readFile(cx.a, try cx.join(&.{ staged, "report.json" })) catch "";
+    out.report = parse(PublishReport, cx.a, report_text);
+    out.group_id = if (out.report) |r| r.group_id else "";
+    if (out.group_id.len == 0) out.group_id = stateGroupId(cx, staged);
+    return out;
+}
+
+/// Abort a group that a failed publish left open, so it does not hold one of the actor's open slots until its deadline. An ended
+/// group refuses (409), which is fine.
 fn abort(cx: *Cx, id: []const u8) void {
-    const path = std.fmt.allocPrint(cx.a, "/groups/{s}", .{id}) catch return;
-    _ = cx.api(.DELETE, path, null) catch return;
+    if (id.len == 0) return;
+    const p = std.fmt.allocPrint(cx.a, "/groups/{s}", .{id}) catch return;
+    _ = cx.api(.DELETE, p, null) catch return;
+}
+
+const Chain = struct { id: []const u8, pkgs: []const Pkg, overlay_lock: []const u8 };
+
+/// Step 2. The chain: stage, the overlay and the README, and one group published; null when it did not get as far as a visible group.
+fn chainStep(cx: *Cx) !?Chain {
+    const L = "chain";
+    if (cx.o.mopm == null) {
+        cx.fail("chain: --mopm names the CLI", "no --mopm");
+        return null;
+    }
+    const art = (try artifacts(cx)) orelse return null;
+    const ver = try versionOf(cx.a, .chain, cx.o.run_id, cx.o.attempt);
+    const ws = try cx.join(&.{ cx.o.work, "ws_chain" });
+    const staged = try cx.join(&.{ cx.o.work, "staged_chain" });
+    try writeWorkspace(cx.a, ws, ver, &members);
+    const pkgs = (try stageStep(cx, L, ws, art, staged, &members)) orelse return null;
+    const overlay_lock = try overlayStep(cx, L, staged, pkgs);
+    cx.stop = false;
+
+    const res = try publishRun(cx, staged, pkgs, true);
+    cx.check("chain: mopm publish --staged publishes the set", res.code == 0, tailOf(res.text));
+    cx.check("chain: the token is not in what publish printed", std.mem.indexOf(u8, res.text, cx.token) == null, "the output holds the token");
+    const status = if (res.report) |r| r.group_status else "(no report.json)";
+    cx.check("chain: the group becomes visible", res.code == 0 and std.mem.eql(u8, status, "visible"), try std.fmt.allocPrint(cx.a, "status {s}", .{status}));
+    if (res.code != 0 or !std.mem.eql(u8, status, "visible")) {
+        abort(cx, res.group_id);
+        cx.stop = true;
+        return null;
+    }
+    const id = res.group_id;
+    cx.check("chain: the group id has the contract's shape", validGroupId(id), id);
+    cx.check("chain: no member is readable before the commit", !res.early, "a member was readable while the group was still before its commit");
+    cx.check("chain: the members appear all at once, never some of them", !res.partial, "some of the members, and not all, were readable at once");
+    reportCheck(cx, L, res.report.?, pkgs);
+    // The API shows a committed group's members at once, all of them.
+    const live = try cx.shown(pkgs);
+    cx.check("chain: once committed, all three members are readable at once", live == pkgs.len, try std.fmt.allocPrint(cx.a, "{d} of {d}", .{ live, pkgs.len }));
+    if (try cx.getGroup(id)) |g| {
+        cx.check("chain: the group names its three members", g.member_count == pkgs.len and g.members.len == pkgs.len, "member_count");
+        var all_pub = true;
+        for (g.members) |m| {
+            if (!std.mem.eql(u8, m.state, "published")) all_pub = false;
+        }
+        cx.check("chain: every member is published", all_pub, "a member is not published");
+    } else {
+        cx.check("chain: the group can be read", false, "GET /groups/{id} did not answer 200");
+    }
+    try readBack(cx, L, pkgs, "published");
+    return .{ .id = id, .pkgs = pkgs, .overlay_lock = overlay_lock };
+}
+
+/// report.json says the set was published: the run, the group and every member with the files the plan named.
+fn reportCheck(cx: *Cx, label: []const u8, report: PublishReport, pkgs: []const Pkg) void {
+    var ok = std.mem.eql(u8, report.outcome, "published") and report.members.len == pkgs.len;
+    if (ok) for (pkgs, report.members) |p, m| {
+        if (!std.mem.eql(u8, m.name, p.name) or !std.mem.eql(u8, m.version, p.version) or !std.mem.eql(u8, m.outcome, "published") or
+            m.files.len != 1 or !std.mem.eql(u8, m.files[0].sha256, p.sha256) or !std.mem.eql(u8, m.files[0].filename, p.file_name))
+        {
+            ok = false;
+        }
+    };
+    const name = std.fmt.allocPrint(cx.a, "{s}: report.json says every member was published, with the planned file", .{label}) catch return;
+    cx.check(name, ok, report.outcome);
 }
 
 /// The API, the index and the channel agree with the bytes that were uploaded.
@@ -739,46 +1026,22 @@ fn channelHas(cx: *Cx, cf: ChannelFile, why: *[]const u8) !bool {
     return true;
 }
 
-/// `mopm add` of the top package resolves the whole chain from the index, and the lock pins what was uploaded.
-fn lockStep(cx: *Cx, chain: Chain) !void {
-    const mopm = cx.o.mopm orelse {
-        cx.check("lock: --mopm names the CLI", false, "no --mopm");
-        return;
-    };
-    const dir = try std.fs.path.join(cx.a, &.{ cx.o.work, "consumer" });
-    const home = try std.fs.path.join(cx.a, &.{ cx.o.work, "home" });
-    try std.fs.cwd().makePath(home);
-    try std.fs.cwd().makePath(try std.fs.path.join(cx.a, &.{ dir, "src", "consumer" }));
-    try h.writeFile(try std.fs.path.join(cx.a, &.{ dir, "mopm.toml" }), "[package]\nname = \"consumer\"\nversion = \"0.1.0\"\nmojo = [\"" ++ compiler ++ "\"]\n\n[dependencies]\n");
-    try h.writeFile(try std.fs.path.join(cx.a, &.{ dir, "src", "consumer", "__init__.mojo" }), "def run():\n    pass\n");
-    var parent = std.process.EnvMap.init(cx.a);
-    if (cx.o.parent_env) |p| {
-        if (p.get("PATH")) |v| try parent.put("PATH", v);
-    }
-    var env = try childEnv(cx.a, &parent, home);
-    defer env.deinit();
-    const app = chain.pkgs[2];
-    const spec = try std.fmt.allocPrint(cx.a, "{s}@={s}", .{ app.name, app.version });
-    const ran = try h.run(cx.a, &.{ mopm, "add", spec, "--registry", cx.o.base }, &env, .{ .cwd = dir });
-    cx.check("lock: mopm add of the top package resolves", ran.code == 0, ran.text);
-    if (ran.code != 0) return;
-    const text = h.readFile(cx.a, try std.fs.path.join(cx.a, &.{ dir, "mopm.lock" })) catch {
-        cx.check("lock: mopm add wrote a lock", false, "no mopm.lock");
-        return;
-    };
+/// A lock holds the whole chain with the sha256 of each staged file, and the top package's entry names the middle one. With
+/// `download`, each locked file is fetched and hashed.
+fn lockCheck(cx: *Cx, label: []const u8, pkgs: []const Pkg, text: []const u8, download: bool) !void {
     var why: []const u8 = "";
     const parsed = lock.parse(cx.a, text, &why) catch {
-        cx.check("lock: the lock is a lock", false, why);
+        cx.check(try std.fmt.allocPrint(cx.a, "{s}: the lock is a lock", .{label}), false, why);
         return;
     };
     // A lock may hold one build per Mojo version: the one this check built for.
     const l = try lock.forMojo(cx.a, parsed, compiler);
-    for (chain.pkgs) |p| {
+    for (pkgs) |p| {
         var found: ?lock.Package = null;
         for (l.packages) |lp| {
             if (std.mem.eql(u8, lp.name, p.name)) found = lp;
         }
-        const name = try std.fmt.allocPrint(cx.a, "lock: {s} is locked at the uploaded file", .{p.name});
+        const name = try std.fmt.allocPrint(cx.a, "{s}: {s} is locked at the uploaded file", .{ label, p.name });
         const lp = found orelse {
             cx.check(name, false, "not in the lock");
             continue;
@@ -788,9 +1051,10 @@ fn lockStep(cx: *Cx, chain: Chain) !void {
         const newer = !mine and isNewerSameMajor(lp.version, p.version);
         const sha_ok = if (mine) std.mem.eql(u8, lp.sha256, p.sha256) and lp.size == p.bytes.len else newer;
         cx.check(name, sha_ok and std.mem.eql(u8, lp.subdir, subdir), try std.fmt.allocPrint(cx.a, "version {s}, sha256 {s}", .{ lp.version, lp.sha256 }));
+        if (!download) continue;
         // Installing downloads this URL and checks the sha256.
         const file = try cx.send(.GET, lp.url, null, false);
-        cx.check(try std.fmt.allocPrint(cx.a, "lock: the file {s} pins downloads and hashes to the lock's sha256", .{p.name}), file.status == 200 and std.mem.eql(u8, &sha256Hex(file.body), lp.sha256), try std.fmt.allocPrint(cx.a, "HTTP {d}", .{file.status}));
+        cx.check(try std.fmt.allocPrint(cx.a, "{s}: the file {s} pins downloads and hashes to the lock's sha256", .{ label, p.name }), file.status == 200 and std.mem.eql(u8, &sha256Hex(file.body), lp.sha256), try std.fmt.allocPrint(cx.a, "HTTP {d}", .{file.status}));
     }
     var app_deps_mid = false;
     for (l.packages) |lp| {
@@ -800,7 +1064,27 @@ fn lockStep(cx: *Cx, chain: Chain) !void {
             }
         }
     }
-    cx.check("lock: the top package's entry names the middle one as its dependency", app_deps_mid, "no dependency edge");
+    cx.check(try std.fmt.allocPrint(cx.a, "{s}: the top package's entry names the middle one as its dependency", .{label}), app_deps_mid, "no dependency edge");
+}
+
+/// `mopm add` of the top package against the registry resolves the whole chain from the index, and the lock pins what was
+/// published: the lock the overlay made before the publish.
+fn lockStep(cx: *Cx, chain: Chain) !void {
+    const dir = try cx.join(&.{ cx.o.work, "consumer" });
+    try writeConsumer(cx, dir);
+    const app = chain.pkgs[chain.pkgs.len - 1];
+    const spec = try std.fmt.allocPrint(cx.a, "{s}@={s}", .{ app.name, app.version });
+    const ran = try cx.mopmRun(dir, &.{ "add", spec, "--registry", cx.o.base }, false);
+    cx.check("lock: mopm add of the top package resolves", ran.code == 0, tailOf(ran.text));
+    if (ran.code != 0) return;
+    const text = h.readFile(cx.a, try cx.join(&.{ dir, "mopm.lock" })) catch {
+        cx.check("lock: mopm add wrote a lock", false, "no mopm.lock");
+        return;
+    };
+    try lockCheck(cx, "lock", chain.pkgs, text, true);
+    if (chain.overlay_lock.len > 0) {
+        cx.check("lock: the lock the staged set made is, byte for byte, the lock the registry gives once the set is published", std.mem.eql(u8, chain.overlay_lock, text), "the two locks differ");
+    }
 }
 
 fn isNewerSameMajor(got: []const u8, want: []const u8) bool {
@@ -809,35 +1093,61 @@ fn isNewerSameMajor(got: []const u8, want: []const u8) bool {
     return g.major == w.major and semver.compare(g, w) == .gt;
 }
 
-/// Step 3. A group where one member is not a package.
+/// Replace the file of member `index` of a staged set by `bytes`, and say so in plan.json (the file's sha256 and size).
+fn replaceStaged(cx: *Cx, staged: []const u8, index: usize, filename: []const u8, bytes: []const u8) !void {
+    try h.writeFile(try cx.join(&.{ staged, subdir, filename }), bytes);
+    const plan_path = try cx.join(&.{ staged, "plan.json" });
+    var doc = try std.json.parseFromSliceLeaky(std.json.Value, cx.a, try h.readFile(cx.a, plan_path), .{});
+    const mem = &doc.object.getPtr("members").?.array.items[index];
+    const file = &mem.object.getPtr("files").?.array.items[0];
+    try file.object.put("sha256", .{ .string = try cx.a.dupe(u8, &sha256Hex(bytes)) });
+    try file.object.put("size", .{ .integer = @intCast(bytes.len) });
+    try h.writeFile(plan_path, try std.json.stringifyAlloc(cx.a, doc, .{}));
+}
+
+/// Step 3. A staged set of two where one file is not a package.
 fn rejectedStep(cx: *Cx) !void {
-    const ver = try versionOf(cx.a, .rejected, cx.o.run_id, cx.o.attempt);
-    const pkgs = [_]Pkg{
-        try buildPkg(cx.a, pkg_core, ver, "", ""),
-        try badPkg(cx.a, pkg_mid, ver),
-    };
     const L = "rejected";
-    const made = (try createGroup(cx, L, &pkgs)) orelse return;
-    const id = made.created.group_id;
-    if (!try uploadAll(cx, L, made.created, &pkgs)) {
-        cx.stop = true;
+    if (cx.o.mopm == null) {
+        cx.fail("rejected: --mopm names the CLI", "no --mopm");
+        return;
+    }
+    const art = (try artifacts(cx)) orelse return;
+    const ver = try versionOf(cx.a, .rejected, cx.o.run_id, cx.o.attempt);
+    const names = members[0..2];
+    const ws = try cx.join(&.{ cx.o.work, "ws_rejected" });
+    const staged = try cx.join(&.{ cx.o.work, "staged_rejected" });
+    try writeWorkspace(cx.a, ws, ver, names);
+    const staged_pkgs = (try stageStep(cx, L, ws, art, staged, names)) orelse return;
+    const bad_bytes = try std.fmt.allocPrint(cx.a, "this is not a conda package: {s} {s}\n", .{ pkg_mid, ver });
+    try replaceStaged(cx, staged, 1, staged_pkgs[1].file_name, bad_bytes);
+    var pkgs = try cx.a.dupe(Pkg, staged_pkgs);
+    pkgs[1].bytes = bad_bytes;
+    pkgs[1].sha256 = try cx.a.dupe(u8, &sha256Hex(bad_bytes));
+
+    const res = try publishRun(cx, staged, pkgs, false);
+    cx.check("rejected: mopm publish --staged ends 1 and publishes nothing", res.code == 1, try std.fmt.allocPrint(cx.a, "exit {d}: {s}", .{ res.code, tailOf(res.text) }));
+    const id = res.group_id;
+    const g: ?Group = if (id.len > 0) (try cx.getGroup(id)) else null;
+    if (g != null and std.mem.eql(u8, g.?.status, "open")) {
+        // The publish stopped before the commit: the group is still open, and must not hold a slot until its deadline.
+        cx.check("rejected: the group ends rejected", false, "status open");
         abort(cx, id);
         return;
     }
-    const commit = try cx.api(.POST, try std.fmt.allocPrint(cx.a, "/groups/{s}/commit", .{id}), try commitBody(cx.a, &pkgs));
-    cx.check("rejected: the commit is accepted (the archive is read after it)", commit.status == 202, try std.fmt.allocPrint(cx.a, "HTTP {d}: {s}", .{ commit.status, excerpt(commit.body) }));
-    if (commit.status != 202) {
-        cx.stop = true;
-        abort(cx, id);
-        return;
-    }
-    const w = try waitGroup(cx, L, id, &pkgs, &.{ "committed", "visible" });
-    cx.check("rejected: the group ends rejected", std.mem.eql(u8, w.group.status, "rejected"), try std.fmt.allocPrint(cx.a, "status {s}{s}", .{ w.group.status, if (w.timed_out) " (timed out)" else "" }));
-    if (w.group.failure) |f| {
+    const status = if (g) |x| x.status else "(no group)";
+    cx.check("rejected: the group ends rejected", std.mem.eql(u8, status, "rejected"), try std.fmt.allocPrint(cx.a, "status {s}", .{status}));
+    if (g != null and g.?.failure != null) {
+        const f = g.?.failure.?;
         cx.check("rejected: the failure names the member that is not a package", f.member != null and std.mem.eql(u8, f.member.?, pkg_mid) and f.code.len > 0, try std.fmt.allocPrint(cx.a, "code {s}, member {s}", .{ f.code, f.member orelse "(none)" }));
     } else {
         cx.check("rejected: the failure names the member that is not a package", false, "no failure on the group");
     }
+    var reported = false;
+    if (res.report) |r| {
+        reported = r.members.len == 2 and std.mem.eql(u8, r.members[1].name, pkg_mid) and std.mem.eql(u8, r.members[1].outcome, "rejected") and !std.mem.eql(u8, r.members[0].outcome, "published");
+    }
+    cx.check("rejected: report.json names the rejected member and publishes none", reported, "report.json lacks the rejected member");
     // The good sibling is as invisible as the bad one: in the API, the index and the channel.
     for (pkgs) |p| {
         const hidden = (try cx.getVersion(p.name, p.version)) == null;
@@ -855,8 +1165,10 @@ fn rejectedStep(cx: *Cx) !void {
         .bad => |why| cx.check("rejected: the registry's index config is readable", false, why),
     }
     // A group that ended is not open: the abort that follows is refused, and nothing is left holding a slot.
-    const again = try cx.api(.DELETE, try std.fmt.allocPrint(cx.a, "/groups/{s}", .{id}), null);
-    cx.check("rejected: an ended group cannot be aborted", again.status == 409, try std.fmt.allocPrint(cx.a, "HTTP {d}", .{again.status}));
+    if (id.len > 0) {
+        const again = try cx.api(.DELETE, try std.fmt.allocPrint(cx.a, "/groups/{s}", .{id}), null);
+        cx.check("rejected: an ended group cannot be aborted", again.status == 409, try std.fmt.allocPrint(cx.a, "HTTP {d}", .{again.status}));
+    }
 }
 
 fn yankState(cx: *Cx, id: []const u8, want: []const u8) !bool {
@@ -872,13 +1184,13 @@ fn yankState(cx: *Cx, id: []const u8, want: []const u8) !bool {
 
 /// Step 4. The chain group, yanked as a whole and restored.
 fn yankStep(cx: *Cx, chain: Chain) !void {
-    const path = try std.fmt.allocPrint(cx.a, "/groups/{s}/yank", .{chain.id});
-    const yank = try cx.api(.PUT, path, "{\"yanked\":true,\"reason\":\"group end-to-end check\"}");
+    const p = try std.fmt.allocPrint(cx.a, "/groups/{s}/yank", .{chain.id});
+    const yank = try cx.api(.PUT, p, "{\"yanked\":true,\"reason\":\"group end-to-end check\"}");
     cx.check("yank: the group yank is accepted", yank.status == 202 or yank.status == 200, try std.fmt.allocPrint(cx.a, "HTTP {d}: {s}", .{ yank.status, excerpt(yank.body) }));
     if (yank.status != 202 and yank.status != 200) return;
     cx.check("yank: the group reaches yanked", try yankState(cx, chain.id, "yanked"), "yank.state did not reach yanked");
     try readBack(cx, "yank", chain.pkgs, "yanked");
-    const restore = try cx.api(.PUT, path, "{\"yanked\":false}");
+    const restore = try cx.api(.PUT, p, "{\"yanked\":false}");
     cx.check("unyank: the group unyank is accepted", restore.status == 202 or restore.status == 200, try std.fmt.allocPrint(cx.a, "HTTP {d}: {s}", .{ restore.status, excerpt(restore.body) }));
     if (restore.status != 202 and restore.status != 200) return;
     cx.check("unyank: the group reaches restored", try yankState(cx, chain.id, "restored"), "yank.state did not reach restored");
@@ -886,13 +1198,20 @@ fn yankStep(cx: *Cx, chain: Chain) !void {
 }
 
 /// Everything, in order. The result says whether it ran and the one line it ends with.
-pub fn run(a: Allocator, rep: *h.Report, o: Opts) !Result {
-    var cx = Cx{ .a = a, .rep = rep, .o = o, .notes = std.ArrayList([]const u8).init(a) };
-    if (std.mem.eql(u8, o.stage, "prod")) return skipped(a, o, "this check never runs on prod");
-    if (std.mem.trim(u8, o.token, token_separators).len == 0) return skipped(a, o, "the repository secret " ++ secret_name ++ " is not set");
+pub fn run(a: Allocator, rep: *h.Report, given: Opts) !Result {
+    // The children start in other directories: every path they are given is absolute.
+    var o = given;
+    o.work = try absolute(a, o.work);
+    if (o.mopm) |p| o.mopm = try absolute(a, p);
+    if (o.pixi) |p| o.pixi = try absolute(a, p);
+    if (o.mojo_env) |p| o.mojo_env = try absolute(a, p);
+    if (o.prebuilt) |p| o.prebuilt = try absolute(a, p);
+    var cx = Cx{ .a = a, .rep = rep, .o = o, .notes = std.ArrayList([]const u8).init(a), .empty = std.process.EnvMap.init(a) };
+    if (std.mem.eql(u8, o.stage, "prod")) return skipped(a, o, .prod, "this check never runs on prod");
+    if (std.mem.trim(u8, o.token, token_separators).len == 0) return skipped(a, o, .no_secret, "the repository secret " ++ secret_name ++ " is not set");
     cx.token = tokenFor(o.token, o.stage);
     if (cx.token.len == 0) {
-        return skipped(a, o, try std.fmt.allocPrint(a, "the repository secret " ++ secret_name ++ " holds no token for {s}", .{o.stage}));
+        return skipped(a, o, .no_stage_token, try std.fmt.allocPrint(a, "the repository secret " ++ secret_name ++ " holds no token for {s}", .{o.stage}));
     }
 
     const before = rep.failures;
@@ -901,15 +1220,26 @@ pub fn run(a: Allocator, rep: *h.Report, o: Opts) !Result {
         cx.check("the walk ends without an error", false, @errorName(e));
         break :blk false;
     };
-    if (not_enabled) return skipped(a, o, "group publishing is not enabled for the e2e actor on this stage (creating a group answered route_not_found)");
+    if (not_enabled) return skipped(a, o, .groups_off, "group publishing is not enabled for the e2e actor on this stage (creating a group answered route_not_found)");
     return finish(&cx, before);
 }
 
+/// `p` as an absolute path when it names a file (it has a slash); a bare name is left to the PATH.
+pub fn absolute(a: Allocator, p: []const u8) ![]const u8 {
+    if (std.mem.indexOfScalar(u8, p, '/') == null or std.fs.path.isAbsolute(p)) return p;
+    return std.fs.path.resolve(a, &.{ try std.process.getCwdAlloc(a), p });
+}
+
+/// The job summary of a run that did nothing: loud, with the reason.
+pub fn skipSummary(a: Allocator, stage: []const u8, line: []const u8) ![]u8 {
+    return std.fmt.allocPrint(a, "### group end-to-end, {s}: SKIPPED\n\n{s}\n\nNothing was published and nothing was checked on this stage. The job is green because it did nothing; it will fail, not skip, once the secret holds a token for {s} and the stage has groups on.\n\n", .{ stage, line, stage });
+}
+
 /// A run that did nothing, and says so on one line, in the job summary too.
-fn skipped(a: Allocator, o: Opts, why: []const u8) !Result {
+fn skipped(a: Allocator, o: Opts, reason: SkipReason, why: []const u8) !Result {
     const line = try std.fmt.allocPrint(a, "group-e2e: SKIP {s}: {s}", .{ o.stage, why });
-    if (o.summary) |path| try appendTo(path, try std.fmt.allocPrint(a, "{s}\n", .{line}));
-    return .{ .skipped = true, .line = line, .checks = 0, .failures = 0 };
+    if (o.summary) |path| try appendTo(path, try skipSummary(a, o.stage, line));
+    return .{ .skipped = true, .skip_reason = reason, .line = line, .checks = 0, .failures = 0 };
 }
 
 /// The four cases in order. True when the stage's groups switch is off for this actor (nothing was published).
@@ -959,7 +1289,7 @@ pub fn appendTo(path: []const u8, text: []const u8) !void {
 
 // ---- the command line -----------------------------------------------------------------------------------------------
 
-const usage = "usage: mopm-group-e2e --stage beta|gamma --mopm <exe> --work <dir> --run-id <n> --attempt <n> [--registry <name|url>] [--summary <file>] [--wait-seconds <n>]\n";
+const usage = "usage: mopm-group-e2e --stage beta|gamma --mopm <exe> --work <dir> --run-id <n> --attempt <n> --pixi <exe> [--pixi-manifest <pixi.toml> | --mojo-env <prefix>] [--registry <name|url>] [--summary <file>] [--wait-seconds <n>]\n";
 
 /// The command line, flag by flag; null when it is not one this program takes.
 pub const Args = struct {
@@ -972,6 +1302,9 @@ pub const Args = struct {
     attempt: u64,
     summary: ?[]const u8 = null,
     wait_seconds: u64 = 600,
+    pixi: ?[]const u8 = null,
+    pixi_manifest: ?[]const u8 = null,
+    mojo_env: ?[]const u8 = null,
 };
 
 pub fn parseArgs(argv: []const []const u8) ?Args {
@@ -1001,6 +1334,12 @@ pub fn parseArgs(argv: []const []const u8) ?Args {
             out.summary = value;
         } else if (std.mem.eql(u8, flag, "--wait-seconds")) {
             out.wait_seconds = std.fmt.parseInt(u64, value, 10) catch return null;
+        } else if (std.mem.eql(u8, flag, "--pixi")) {
+            out.pixi = value;
+        } else if (std.mem.eql(u8, flag, "--pixi-manifest")) {
+            out.pixi_manifest = value;
+        } else if (std.mem.eql(u8, flag, "--mojo-env")) {
+            out.mojo_env = value;
         } else return null;
     }
     out.stage = stage orelse return null;
@@ -1035,8 +1374,13 @@ pub fn main() !void {
         .summary = args.summary,
         .wait_ms = args.wait_seconds * 1000,
         .parent_env = &env,
+        .pixi = args.pixi,
+        .pixi_manifest = args.pixi_manifest,
+        .mojo_env = args.mojo_env,
     });
     std.debug.print("{s}\n", .{result.line});
+    // A skip is loud: a workflow annotation names the reason, so a green job that did nothing is not mistaken for a pass.
+    if (result.skipped) std.io.getStdOut().writer().print("::warning title=group-e2e SKIPPED on {s}::{s}\n", .{ args.stage, result.line }) catch {};
     if (result.failures != 0) std.process.exit(1);
 }
 
@@ -1044,4 +1388,3 @@ fn usageExit() noreturn {
     std.debug.print("{s}", .{usage});
     std.process.exit(2);
 }
-

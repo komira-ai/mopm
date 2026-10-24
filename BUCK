@@ -540,9 +540,20 @@ _AUTOLINK_DATA = [
 zig_test(  # buck-only: the group-publish check (tests/drivers/group_e2e.zig) against a loopback registry that serves the group routes
     name = "group_e2e",
     src = "tests/drivers/group_e2e_test.zig",
-    imports = ["tests/drivers/harness.zig", "tests/drivers/group_e2e.zig"],
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig", "tests/drivers/group_e2e.zig"],
     deps = [":mopm_core"],
-    env_tools = {"MOPM": ":mopm"},
+    # The unit tier: the walk is the real one but for the compiler and pixi. The built CLI stages, installs the staged set and
+    # publishes it; a stand-in compiler writes the stand-in packages and the README program; a stand-in pixi installs them.
+    env_tools = {"MOPM": ":mopm", "FAKE_PIXI": ":fake-pixi", "FAKE_TOOLCHAIN": ":fake-toolchain"},
+    **_TOOLS
+)
+
+zig_test(  # buck-only: the same walk with the farm's real Mojo 1.0.0, which builds the packages and the README program
+    name = "group_e2e_mojo",
+    src = "tests/drivers/group_e2e_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig", "tests/drivers/group_e2e.zig"],
+    deps = [":mopm_core"],
+    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm", FAKE_PIXI = ":fake-pixi"),
     **_TOOLS
 )
 
@@ -1030,6 +1041,12 @@ zig_test(  # buck-only: both lints over the fixtures, against the table in the t
 zig_exe(  # buck-only: stands in for pixi in install_e2e: unpacks the pinned conda files into the environment
     name = "fake-pixi",
     src = "tests/drivers/fake_pixi.zig",
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: stands in for the Mojo compiler in the unit tier of group_e2e: writes stand-in .mojoc files and executables
+    name = "fake-toolchain",
+    src = "tests/drivers/fake_toolchain.zig",
     **_TOOLS
 )
 

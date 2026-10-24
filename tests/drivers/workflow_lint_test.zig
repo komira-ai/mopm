@@ -133,11 +133,11 @@ test "e2e.yml: the repository secret is read once, as MOPM_E2E_TOKEN, by the ste
     // A second reader in the same job, and the step before the check.
     try expectRepo("e2e.yml", "        env:\n          STAGE: ${{ inputs.stage }}\n        run: |\n          case \"$STAGE\" in beta|gamma) ;;", "        env:\n          STAGE: ${{ inputs.stage }}\n" ++ group_secret_line ++ "        run: |\n          case \"$STAGE\" in beta|gamma) ;;", &.{ "e2e.yml: secrets.MOPM_E2E_GROUP_TOKEN must be referenced exactly once, on the step that runs the check, got 2", "e2e.yml: exactly one step of group-e2e must read the token, got 2" });
     // Another name for the variable.
-    try expectRepo("e2e.yml", group_secret_line, "          TOKEN: ${{ secrets.MOPM_E2E_GROUP_TOKEN }}\n", &.{"e2e.yml: group-e2e step 4: the secret goes in as the variable MOPM_E2E_TOKEN, set to secrets.MOPM_E2E_GROUP_TOKEN and nothing around it, not as TOKEN"});
+    try expectRepo("e2e.yml", group_secret_line, "          TOKEN: ${{ secrets.MOPM_E2E_GROUP_TOKEN }}\n", &.{"e2e.yml: group-e2e step 5: the secret goes in as the variable MOPM_E2E_TOKEN, set to secrets.MOPM_E2E_GROUP_TOKEN and nothing around it, not as TOKEN"});
     // Wrapped in something else.
-    try expectRepo("e2e.yml", group_secret_line, "          MOPM_E2E_TOKEN: x-${{ secrets.MOPM_E2E_GROUP_TOKEN }}\n", &.{"e2e.yml: group-e2e step 4: the secret goes in as the variable MOPM_E2E_TOKEN"});
+    try expectRepo("e2e.yml", group_secret_line, "          MOPM_E2E_TOKEN: x-${{ secrets.MOPM_E2E_GROUP_TOKEN }}\n", &.{"e2e.yml: group-e2e step 5: the secret goes in as the variable MOPM_E2E_TOKEN"});
     // Another secret in the job.
-    try expectRepo("e2e.yml", "          RUN_ID: ${{ github.run_id }}\n", "          RUN_ID: ${{ github.run_id }}\n          AWS_REGION: ${{ secrets.AWS_REGION }}\n", &.{"e2e.yml: group-e2e step 4: reads AWS_REGION from secrets; the job reads no secret but MOPM_E2E_GROUP_TOKEN"});
+    try expectRepo("e2e.yml", "          RUN_ID: ${{ github.run_id }}\n", "          RUN_ID: ${{ github.run_id }}\n          AWS_REGION: ${{ secrets.AWS_REGION }}\n", &.{"e2e.yml: group-e2e step 5: reads AWS_REGION from secrets; the job reads no secret but MOPM_E2E_GROUP_TOKEN"});
     // The secret through with:, and at the top of the workflow.
     try expectRepo("e2e.yml", "      - name: Build the CLI and the group check\n        run: zig build -Doptimize=ReleaseSafe\n", "      - name: Build the CLI and the group check\n        with:\n          t: ${{ secrets.AWS_REGION }}\n        run: zig build -Doptimize=ReleaseSafe\n", &.{"e2e.yml: group-e2e step 3: passes a secret through with:"});
     try expectRepo("e2e.yml", "permissions:\n  contents: read\n\njobs:\n", "permissions:\n  contents: read\n\nenv:\n  X: ${{ secrets.AWS_REGION }}\n\njobs:\n", &.{"e2e.yml: the workflow must not set env from secrets"});
@@ -146,6 +146,24 @@ test "e2e.yml: the repository secret is read once, as MOPM_E2E_TOKEN, by the ste
     try expectRepo("e2e.yml", " --summary \"$GITHUB_STEP_SUMMARY\"\n", "\n", &.{"e2e.yml: the step of group-e2e that holds the token must pass --summary"});
     // The job itself is missing (renamed): its secret is then read by a job that may not.
     try expectRepo("e2e.yml", "  group-e2e:\n    needs: guard\n", "  group-e2f:\n    needs: guard\n", &.{ "e2e.yml: job group-e2f reads MOPM_E2E_GROUP_TOKEN; only group-e2e may", "e2e.yml: the group-e2e job is missing" });
+}
+
+test "e2e.yml: the group e2e job runs the real path with its tools, and nothing in it can be skipped or failed quietly" {
+    const check_head = "      - name: Group publish end to end\n        env:\n";
+    // pixi is installed (pinned) before the check; without it the Mojo environment and the staged set's install cannot be made.
+    try expectRepo("e2e.yml", "      - name: Install pixi 0.79.0 (sha256-pinned)\n        run: echo \"$(tools/install_pixi.sh \"$RUNNER_TEMP/pixi\")\" >> \"$GITHUB_PATH\"\n", "", &.{"e2e.yml: group-e2e must install the pinned pixi (tools/install_pixi.sh) before the check"});
+    // The check is given the CLI by its absolute path, pixi, and the manifest of the Mojo environment, and stops at the first failure.
+    try expectRepo("e2e.yml", "--mopm \"$PWD/zig-out/bin/mopm\"", "--mopm ./zig-out/bin/mopm", &.{"e2e.yml: group-e2e step 5: the check must be run with `--mopm \"$PWD/zig-out/bin/mopm\"`"});
+    try expectRepo("e2e.yml", " --pixi \"$(command -v pixi)\"", "", &.{"e2e.yml: group-e2e step 5: the check must be run with `--pixi \"$(command -v pixi)\"`"});
+    try expectRepo("e2e.yml", " --pixi-manifest tests/e2e/pixi.toml", "", &.{"e2e.yml: group-e2e step 5: the check must be run with `--pixi-manifest tests/e2e/pixi.toml`"});
+    try expectRepo("e2e.yml", "          set -euo pipefail\n          ./zig-out/bin/mopm-group-e2e", "          ./zig-out/bin/mopm-group-e2e", &.{"e2e.yml: group-e2e step 5: the check must be run with `set -euo pipefail`"});
+    // No green-by-skip: no step of the job is conditional or allowed to fail, and the check's failure is not swallowed.
+    try expectRepo("e2e.yml", check_head, "      - name: Group publish end to end\n        if: always()\n        env:\n", &.{"e2e.yml: group-e2e step 5: must not have an `if`"});
+    try expectRepo("e2e.yml", "      - name: Install pixi 0.79.0 (sha256-pinned)\n", "      - name: Install pixi 0.79.0 (sha256-pinned)\n        if: ${{ inputs.stage == 'gamma' }}\n", &.{"e2e.yml: group-e2e step 4: must not have an `if`"});
+    try expectRepo("e2e.yml", "      - name: Build the CLI and the group check\n", "      - name: Build the CLI and the group check\n        continue-on-error: true\n", &.{"e2e.yml: group-e2e step 3: must not set continue-on-error"});
+    try expectRepo("e2e.yml", " --summary \"$GITHUB_STEP_SUMMARY\"\n", " --summary \"$GITHUB_STEP_SUMMARY\" || true\n", &.{"e2e.yml: group-e2e step 5: the check must not tolerate a failure (`|| true`)"});
+    try expectRepo("e2e.yml", " --summary \"$GITHUB_STEP_SUMMARY\"\n", " --summary \"$GITHUB_STEP_SUMMARY\" || :\n", &.{"e2e.yml: group-e2e step 5: the check must not tolerate a failure (`|| :`)"});
+    try expectRepo("e2e.yml", "          set -euo pipefail\n          ./zig-out/bin/mopm-group-e2e", "          set -euo pipefail\n          set +e\n          ./zig-out/bin/mopm-group-e2e", &.{"e2e.yml: group-e2e step 5: the check must not tolerate a failure (`set +e`)"});
 }
 
 test "the group e2e token is read by e2e.yml and no other workflow, and no step prints it" {
