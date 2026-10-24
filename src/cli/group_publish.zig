@@ -236,6 +236,8 @@ pub const Publisher = struct {
     failure: ?Failure = null,
     /// Seconds the registry asked the client to wait, when it answered 429.
     retry_after: ?u32 = null,
+    /// Where the bytes of one file are held while it is uploaded; freed after each file.
+    scratch: Allocator = std.heap.page_allocator,
 
     fn call(p: *Publisher, method: std.http.Method, path: []const u8, body: ?[]const u8) Stop!http.Answer {
         const url = try std.fmt.allocPrint(p.arena, "{s}{s}", .{ p.api_url, path });
@@ -420,7 +422,11 @@ pub const Publisher = struct {
             return error.Failed;
         }
         const headers = (publish_cmd.putHeaders(p.arena, af.put_headers) catch return error.OutOfMemory) orelse return error.Failed;
-        const bytes = switch (try plan_mod.readChecked(p.arena, p.dir, f)) {
+        // The file's bytes, the request and its answer live only for this PUT: one file at a time is held, not the whole set.
+        var each = std.heap.ArenaAllocator.init(p.scratch);
+        defer each.deinit();
+        const scratch = each.allocator();
+        const bytes = switch (try plan_mod.readChecked(scratch, p.dir, f)) {
             .bytes => |b| b,
             .bad => |why| {
                 p.console.fail("{s}; nothing more was uploaded\n", .{why});
@@ -428,7 +434,7 @@ pub const Publisher = struct {
             },
         };
         // No bearer token: the URL is presigned.
-        const r = p.net.request(p.arena, .PUT, url, .{ .body = bytes, .content_type = null, .extra_headers = headers }) catch |e| {
+        const r = p.net.request(scratch, .PUT, url, .{ .body = bytes, .content_type = null, .extra_headers = headers }) catch |e| {
             p.console.fail("uploading {s} failed: {s}; run the same command again to resume group {s}\n", .{ f.filename, @errorName(e), p.state.group_id });
             return error.Failed;
         };
