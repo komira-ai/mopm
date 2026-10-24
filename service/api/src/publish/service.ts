@@ -427,7 +427,7 @@ export function liveBytes(versions: readonly VersionRecord[]): number {
   return n;
 }
 
-function parseYank(body: unknown): { yanked: true; reason: string } | { yanked: false } {
+export function parseYank(body: unknown): { yanked: true; reason: string } | { yanked: false } {
   if (!isObject(body)) throw invalidRequest('the body is not a JSON object');
   const { yanked, reason } = body;
   if (typeof yanked !== 'boolean') throw invalidRequest("'yanked' must be a boolean");

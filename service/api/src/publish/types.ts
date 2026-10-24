@@ -92,6 +92,12 @@ export interface GroupHop {
   group_id: string;
   attempt: number;
   resend: number;
+  /**
+   * Set when this is a hop of a group yank or unyank (src/publish/group-yank.ts) and not of the commit's chain: which of the two, and the
+   * number of the yank (`GroupYank.seq`). The hop then releases its gate on the header's `yank` and not on `repodata_released` and
+   * `index_released`, and what follows it is the yank's next step.
+   */
+  yank?: { op: 'yank' | 'unyank'; seq: number };
 }
 /**
  * Rewrite `index/<aa>/<bb>/<name>` from the package's rows as they are when the job runs (not as they were when
@@ -131,5 +137,18 @@ export interface FlipGroupMessage {
   type: 'flip_group';
   group_id: string;
   attempt: number;
+  resend: number;
+}
+
+/**
+ * What the group queue carries to change the rows of a group yank or unyank (src/publish/group-yank.ts): yank (or restore) the members,
+ * then send the first hop. `seq` is the number of the yank, `resend` the sweeper's count (part of the dedup id). FIFO group: the group id.
+ */
+export interface YankGroupMessage {
+  type: 'yank_group';
+  group_id: string;
+  attempt: number;
+  op: 'yank' | 'unyank';
+  seq: number;
   resend: number;
 }

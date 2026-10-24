@@ -13,7 +13,8 @@
     { "route": "POST /api/v1/groups", "case": "group create: a number the registry shows is version_exists" },
     { "route": "GET /api/v1/groups/{group_id}", "no_version_rows": "shows a group's header and member list from the group's own items; reads no version row" },
     { "route": "DELETE /api/v1/groups/{group_id}", "no_version_rows": "ends an open group by a compare-and-set on its header; reads no version row" },
-    { "route": "POST /api/v1/groups/{group_id}/commit", "case": "store.versionsOf(api)" }
+    { "route": "POST /api/v1/groups/{group_id}/commit", "case": "store.versionsOf(api)" },
+    { "route": "PUT /api/v1/groups/{group_id}/yank", "no_version_rows": "writes the yank intent on a visible group's header by a compare-and-set; the job it queues changes the rows as stored (applyGroupEvent), and a yanked row is read like any other by every reader" }
   ],
   "non_routes": [
     { "name": "repodata builder (indexSubdir)", "case": "indexSubdir(linux-64)" },

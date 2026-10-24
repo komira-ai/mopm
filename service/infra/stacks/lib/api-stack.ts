@@ -64,6 +64,8 @@ export const PUBLISH_ROUTES: Array<{ method: apigw.HttpMethod; path: string }> =
   { method: apigw.HttpMethod.DELETE, path: '/api/v1/groups/{group_id}' },
   // Commit: queues the group's validation on the group queue. Not gated by the groups switch (a group that exists is finished).
   { method: apigw.HttpMethod.POST, path: '/api/v1/groups/{group_id}/commit' },
+  // Yank and unyank of a visible group: queues the rows of the yank on the group queue. Not gated by the groups switch either.
+  { method: apigw.HttpMethod.PUT, path: '/api/v1/groups/{group_id}/yank' },
 ];
 /**
  * What the handler may write, table by table (the reviewed list; api.test.ts pins it). No DeleteItem, no Scan, no
