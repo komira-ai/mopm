@@ -6,13 +6,17 @@
 //! committed, a group with one archive that is not a package ends rejected and shows none of its members, the storage
 //! takes the headers the registry named and no bearer token, and the group yank moves every member.
 //!
-//! One test walks the whole check against a registry that does all of it right. Each of the others breaks one rule in
-//! the registry and asserts that the check goes red on the line that names it (or SKIPs, when that is the point).
-//! The built CLI is MOPM: `mopm add` resolves the chain from the index this registry serves.
+//! One test walks the whole check against a registry that does all of it right, with nothing stubbed on the client side
+//! but pixi: the farm's Mojo 1.0.0 precompiles the three packages, the built CLI (MOPM) stages them, locks and installs the
+//! staged set with --overlay (FAKE_PIXI stands in for pixi, which the farm lacks), the program of the app's README is built
+//! with the farm's compiler and run, and `mopm publish --staged` sends the set to this registry. Each of the other tests breaks
+//! one rule in the registry (or leaves a piece of the client out) and asserts that the check goes red on the line that names
+//! it (or SKIPs, when that is the point). The packages the other tests need are precompiled once.
 
 const std = @import("std");
 const core = @import("mopm_core");
 const h = @import("harness.zig");
+const mojo_env = @import("mojo_env.zig");
 const g = @import("group_e2e.zig");
 const Allocator = std.mem.Allocator;
 
@@ -33,8 +37,6 @@ const Mode = struct {
     groups_404_code: []const u8 = "",
     /// A new group (not the probe) answers `reserving` this many times before it has reached every member.
     reserving_rounds: u32 = 0,
-    /// The chain's first member is already in storage when its group is created (`uploaded: true`, no upload URL).
-    prefilled_core: bool = false,
     /// The stage this registry says it is.
     stage: []const u8 = "beta",
     /// Members are readable while their group is still validating.
@@ -273,11 +275,6 @@ const Stub = struct {
                     .still_open => status = .ok,
                     .reopened => attempt = 2,
                 }
-            }
-            // The chain's core package (version 1.x.y, no dependency) is built here the way the check builds it.
-            if (s.mode.prefilled_core and !probe and std.mem.startsWith(u8, members[0].version, "1.") and std.mem.eql(u8, members[0].name, g.pkg_core)) {
-                const pkg = try g.buildPkg(sa, members[0].name, members[0].version, "", "");
-                if (std.mem.eql(u8, pkg.sha256, members[0].sha256)) members[0].bytes = pkg.bytes;
             }
             try s.groups.append(.{ .id = id, .attempt = attempt, .members = members, .created = now, .deadline = now + s.mode.deadline_secs, .reserving_left = if (probe) 0 else s.mode.reserving_rounds });
             existing = s.groups.items.len - 1;
@@ -604,24 +601,132 @@ var watchdog_armed = false;
 fn guard() !void {
     if (watchdog_armed) return;
     watchdog_armed = true;
-    try h.watchdog(1500);
+    try h.watchdog(3000);
+}
+
+/// What every run shares: the Mojo environment, the built CLI, the stand-in pixi, and the three packages precompiled once (the walk
+/// that precompiles them itself is the first test). Lives for the whole process.
+///
+/// Two tiers run this file. The beta tier (//:group_e2e_mojo) has the farm's Mojo 1.0.0 (MOJO_TOOLCHAIN): the compiler builds the
+/// packages and the README program for real. The unit tier (//:group_e2e) has none: a stand-in `mojo` (tests/drivers/fake_toolchain.zig)
+/// writes stand-in packages and a program that prints the README's line, and everything else is the same walk with the same
+/// registry, CLI and checks.
+const Tools = struct {
+    real: ?mojo_env.Mojo,
+    /// A writable directory that lives as long as the process.
+    work: []const u8,
+    /// The Mojo environment: bin/mojo and what it needs.
+    prefix: []const u8,
+    /// The stand-in compiler, when there is no real one.
+    fake: []const u8,
+    /// The environment of the toolchain children.
+    env: *const std.process.EnvMap,
+    mopm: []const u8,
+    pixi: []const u8,
+    prebuilt: []const u8,
+};
+
+var tools_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+var tools_cache: ?Tools = null;
+var tools_tmp: ?std.testing.TmpDir = null;
+
+fn tools() !*const Tools {
+    if (tools_cache) |*t| return t;
+    const a = tools_arena.allocator();
+    const real = std.process.hasEnvVar(a, "MOJO_TOOLCHAIN") catch false;
+    var t: Tools = undefined;
+    var work: []const u8 = undefined;
+    if (real) {
+        const m = try mojo_env.Mojo.init(a);
+        work = m.work;
+        t.real = m;
+        t.env = &t.real.?.base;
+        t.fake = "";
+        t.prefix = try h.join(a, &.{ work, "env" });
+        try m.prefix(t.prefix, true);
+        t.mopm = try h.toolPathAbs(a, "MOPM");
+        t.pixi = try h.toolPathAbs(a, "FAKE_PIXI");
+    } else {
+        tools_tmp = std.testing.tmpDir(.{});
+        work = try h.tmpPath(a, &tools_tmp.?);
+        const env = try a.create(std.process.EnvMap);
+        env.* = try std.process.getEnvMap(a);
+        t.real = null;
+        t.env = env;
+        t.fake = try h.toolPath(a, "FAKE_TOOLCHAIN");
+        t.prefix = try h.join(a, &.{ work, "env" });
+        try layFake(t.fake, t.prefix);
+        t.mopm = try h.toolPath(a, "MOPM");
+        t.pixi = try h.toolPath(a, "FAKE_PIXI");
+    }
+    const ws = try h.join(a, &.{ work, "prebuilt_ws" });
+    const art = try h.join(a, &.{ work, "prebuilt_art" });
+    try g.writeWorkspace(a, ws, "0.0.1", &g.members);
+    if (try g.precompileAll(a, t.prefix, t.env, ws, art)) |why| {
+        std.debug.print("precompiling the packages failed: {s}\n", .{why});
+        return error.PrecompileFailed;
+    }
+    t.prebuilt = art;
+    t.work = work;
+    tools_cache = t;
+    // The environment points into the cached copy, not into this frame.
+    if (tools_cache.?.real != null) tools_cache.?.env = &tools_cache.?.real.?.base;
+    return &tools_cache.?;
+}
+
+/// `<prefix>/bin/mojo` is the stand-in compiler.
+fn layFake(fake: []const u8, prefix: []const u8) !void {
+    const a = tools_arena.allocator();
+    const cwd = std.fs.cwd();
+    try cwd.makePath(try h.join(a, &.{ prefix, "bin" }));
+    try cwd.makePath(try h.join(a, &.{ prefix, "share", "max" }));
+    const dest = try h.join(a, &.{ prefix, "bin", "mojo" });
+    cwd.deleteFile(dest) catch {};
+    try cwd.copyFile(fake, cwd, dest, .{});
+    const f = try cwd.openFile(dest, .{});
+    defer f.close();
+    try f.chmod(0o755);
+}
+
+/// The stand-in pixi installs packages and nothing else; the Mojo toolchain goes into the environment it made, as a pixi
+/// environment holds it beside the packages.
+fn layToolchain(a: Allocator, env: []const u8) anyerror!void {
+    _ = a;
+    const t = try tools();
+    if (t.real) |m| {
+        try m.prefix(env, true);
+    } else {
+        try layFake(t.fake, env);
+    }
 }
 
 /// One run of the check against a registry with `mode`. The result and the registry, stopped, for what it saw.
 const Ran = struct { result: g.Result, stub: *Stub };
 
-/// The two things a few tests change about a run: a file for the job summary, and a registry that is already gone.
-const Extras = struct { summary: ?[]const u8 = null, registry_down: bool = false };
+/// What a few tests change about a run: a file for the job summary, a registry that is already gone, a piece of the client that is
+/// left out, and the packages precompiled by the run itself.
+const Extras = struct {
+    summary: ?[]const u8 = null,
+    registry_down: bool = false,
+    no_mopm: bool = false,
+    no_pixi: bool = false,
+    /// No Mojo environment is given and no packages: with a pixi and its manifest the run makes the environment, else it has none.
+    no_toolchain: bool = false,
+    /// The manifest the run's pixi creates the Mojo environment from.
+    pixi_manifest: ?[]const u8 = null,
+    /// Precompile the packages in the run (the farm's compiler), instead of using the ones built once.
+    precompile: bool = false,
+};
 
 fn runCheck(a: Allocator, mode: Mode, token: []const u8, stage: []const u8) !Ran {
     return runCheckWith(a, mode, token, stage, .{});
 }
 
 fn runCheckWith(a: Allocator, mode: Mode, token: []const u8, stage: []const u8, extras: Extras) !Ran {
+    const t = try tools();
     const stub = try Stub.start(mode);
     errdefer if (!extras.registry_down) stub.stop();
     if (extras.registry_down) stub.stop();
-    var env = try std.process.getEnvMap(a);
     work_counter += 1;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -631,15 +736,20 @@ fn runCheckWith(a: Allocator, mode: Mode, token: []const u8, stage: []const u8, 
         .base = stub.base,
         .stage = stage,
         .token = token,
-        .mopm = try h.toolPath(a, "MOPM"),
+        .mopm = if (extras.no_mopm) null else t.mopm,
         .work = work,
         .run_id = 4242000 + work_counter,
         .attempt = 1,
         .summary = extras.summary,
-        .wait_ms = 4000,
+        .wait_ms = 8000,
         .poll_ms = 10,
         .retry_ms = 10,
-        .parent_env = &env,
+        .parent_env = t.env,
+        .pixi = if (extras.no_pixi) null else t.pixi,
+        .pixi_manifest = extras.pixi_manifest,
+        .mojo_env = if (extras.no_toolchain) null else t.prefix,
+        .prebuilt = if (extras.precompile or extras.no_toolchain) null else t.prebuilt,
+        .after_sync = layToolchain,
     });
     if (!extras.registry_down) stub.stop();
     return .{ .result = result, .stub = stub };
@@ -676,13 +786,28 @@ test "a registry that does it all right passes every check, and the token goes o
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
     try guard();
-    // The secret holds a token for each stage; this stage's is the one used.
-    const ran = try runCheck(a, .{}, "gamma=mopm_nottherightonenottherightonenotri\nbeta=" ++ test_token ++ "\n", "beta");
+    // The secret holds a token for each stage; this stage's is the one used. The run precompiles the packages itself.
+    const ran = try runCheckWith(a, .{}, "gamma=mopm_nottherightonenottherightonenotri\nbeta=" ++ test_token ++ "\n", "beta", .{ .precompile = true });
     for (ran.result.notes) |n| std.debug.print("{s}", .{n});
     try std.testing.expect(!ran.result.skipped);
     try std.testing.expectEqual(@as(usize, 0), ran.result.failures);
     try std.testing.expect(std.mem.startsWith(u8, ran.result.line, "group-e2e: PASS beta: "));
-    // The four cases of the check, each on a line of its own.
+    // The real user path, each step on a line of its own: the farm's compiler builds the packages, `mopm stage` packs them, the
+    // staged set installs through --overlay while the registry has none of it, the program of the README builds against it
+    // and prints what the README says, and one `publish --staged` makes the group.
+    try std.testing.expect(passed(ran.result, "packages: mojo precompile builds the three packages"));
+    try std.testing.expect(passed(ran.result, "chain: mopm stage packs the workspace, with no token, and every member is an upload"));
+    try std.testing.expect(passed(ran.result, "overlay: zz_e2e_app is locked at the uploaded file"));
+    try std.testing.expect(passed(ran.result, "chain: mopm sync --overlay installs the whole set from the staged set"));
+    try std.testing.expect(passed(ran.result, "chain: the README's program builds against the installed set"));
+    try std.testing.expect(passed(ran.result, "chain: the README's program runs and prints what the README says"));
+    try std.testing.expect(passed(ran.result, "chain: after all that the registry still shows none of the set"));
+    try std.testing.expect(passed(ran.result, "chain: mopm publish --staged publishes the set"));
+    try std.testing.expect(passed(ran.result, "chain: the token is not in what publish printed"));
+    try std.testing.expect(passed(ran.result, "chain: no member is readable before the commit"));
+    try std.testing.expect(passed(ran.result, "chain: the members appear all at once, never some of them"));
+    try std.testing.expect(passed(ran.result, "chain: report.json says every member was published, with the planned file"));
+    try std.testing.expect(passed(ran.result, "lock: the lock the staged set made is, byte for byte, the lock the registry gives once the set is published"));
     try std.testing.expect(passed(ran.result, "chain: the group becomes visible"));
     try std.testing.expect(passed(ran.result, "chain: once committed, all three members are readable at once"));
     try std.testing.expect(passed(ran.result, "lock: zz_e2e_core is locked at the uploaded file"));
@@ -706,6 +831,7 @@ test "no token: the run skips, says which secret is missing, and sends nothing" 
     try guard();
     const ran = try runCheck(a, .{}, "", "beta");
     try std.testing.expect(ran.result.skipped);
+    try std.testing.expectEqual(g.SkipReason.no_secret, ran.result.skip_reason);
     try std.testing.expectEqualStrings("group-e2e: SKIP beta: the repository secret MOPM_E2E_GROUP_TOKEN is not set", ran.result.line);
     try std.testing.expectEqual(@as(usize, 0), ran.stub.requests);
 }
@@ -716,6 +842,7 @@ test "a secret that holds a token for another stage only: the run skips and send
     try guard();
     const ran = try runCheck(a, .{ .stage = "gamma" }, "beta=" ++ test_token, "gamma");
     try std.testing.expect(ran.result.skipped);
+    try std.testing.expectEqual(g.SkipReason.no_stage_token, ran.result.skip_reason);
     try std.testing.expectEqualStrings("group-e2e: SKIP gamma: the repository secret MOPM_E2E_GROUP_TOKEN holds no token for gamma", ran.result.line);
     try std.testing.expectEqual(@as(usize, 0), ran.stub.requests);
     // Only separators: the same as no secret.
@@ -742,6 +869,7 @@ test "the stage's groups switch is off: the run skips after one create and publi
     try guard();
     const ran = try runCheck(a, .{ .groups_off = true }, test_token, "beta");
     try std.testing.expect(ran.result.skipped);
+    try std.testing.expectEqual(g.SkipReason.groups_off, ran.result.skip_reason);
     try std.testing.expect(std.mem.startsWith(u8, ran.result.line, "group-e2e: SKIP beta: group publishing is not enabled for the e2e actor on this stage"));
     try std.testing.expectEqual(@as(usize, 0), ran.stub.group_creates);
     try std.testing.expectEqual(@as(usize, 0), ran.stub.storage_puts);
@@ -760,18 +888,44 @@ test "a 404 whose error code is not route_not_found is a failure, not a skip" {
     try std.testing.expectEqual(@as(usize, 0), ran.stub.storage_puts);
 }
 
-test "a member the registry already holds is not uploaded again" {
+/// A run with a token and with groups on, minus a piece of the client, is a failure that names the piece, never a skip: the
+/// registry has already said groups are on, so nothing is left that may quietly do nothing.
+fn expectFailsNotSkips(extras: Extras, name: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
     try guard();
-    const ran = try runCheck(a, .{ .prefilled_core = true }, test_token, "beta");
-    for (ran.result.notes) |n| std.debug.print("{s}", .{n});
-    try std.testing.expect(!ran.result.skipped);
-    try std.testing.expectEqual(@as(usize, 0), ran.result.failures);
-    // Four files go to the storage, not five: the chain's first member was there already.
-    try std.testing.expectEqual(@as(usize, 4), ran.stub.storage_puts);
-    try std.testing.expect(passed(ran.result, "chain: the group becomes visible"));
-    try std.testing.expect(passed(ran.result, "lock: zz_e2e_core is locked at the uploaded file"));
+    const ran = try runCheckWith(a, .{}, test_token, "beta", extras);
+    if (ran.result.skipped or ran.result.skip_reason != .none or ran.result.failures == 0 or !failed(ran.result, name)) {
+        std.debug.print("expected a failure naming `{s}`, not a skip; the run said: {s}\n", .{ name, ran.result.line });
+        for (ran.result.notes) |n| std.debug.print("{s}", .{n});
+        return error.TestUnexpectedResult;
+    }
+    try std.testing.expect(std.mem.startsWith(u8, ran.result.line, "group-e2e: FAIL beta: "));
+}
+
+test "with a token and groups on, a piece of the client that is missing is a failure, not a skip" {
+    // The CLI, pixi, and the Mojo environment (none given, no pixi to make one; a pixi with no manifest).
+    try expectFailsNotSkips(.{ .no_mopm = true }, "chain: --mopm names the CLI");
+    try expectFailsNotSkips(.{ .no_pixi = true }, "chain: --pixi names pixi, which mopm sync installs through");
+    try expectFailsNotSkips(.{ .no_toolchain = true, .no_pixi = true }, "toolchain: --pixi (or --mojo-env) names the Mojo environment");
+    try expectFailsNotSkips(.{ .no_toolchain = true }, "toolchain: --pixi-manifest names the Mojo environment pixi creates");
+    // The same, for the rejected case, which needs the packages too: nothing there is skipped either.
+    try expectFailsNotSkips(.{ .no_mopm = true }, "rejected: --mopm names the CLI");
+}
+
+test "pixi makes the Mojo environment: the run uses what it made, and a manifest it cannot make one from, or one with no compiler, fails" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const a = arena.allocator();
+    try guard();
+    const t = try tools();
+    const ok_manifest = try h.join(a, &.{ t.work, "pixi_env_ok.toml" });
+    try h.writeFile(ok_manifest, "[workspace]\nname = \"empty\"\nchannels = [\"file:///nonexistent\"]\nplatforms = [\"linux-64\"]\n");
+    // The stand-in pixi installs no compiler, so the environment it makes has none: the build of the packages fails, on its line.
+    try expectFailsNotSkips(.{ .no_toolchain = true, .pixi_manifest = ok_manifest }, "packages: mojo precompile builds the three packages");
+    // A manifest the stand-in refuses: pixi fails, on its line.
+    const bad_manifest = try h.join(a, &.{ t.work, "pixi_env_bad.toml" });
+    try h.writeFile(bad_manifest, "[workspace]\nname = \"broken\"\n");
+    try expectFailsNotSkips(.{ .no_toolchain = true, .pixi_manifest = bad_manifest }, "toolchain: pixi creates the Mojo environment");
 }
 
 test "a group that is still reserving its members is created again until it has reached them all" {
@@ -782,10 +936,11 @@ test "a group that is still reserving its members is created again until it has 
     for (ran.result.notes) |n| std.debug.print("{s}", .{n});
     try std.testing.expect(!ran.result.skipped);
     try std.testing.expectEqual(@as(usize, 0), ran.result.failures);
-    // The probe once; the chain and the rejected group three times each (two answers of `reserving`, then the full one).
+    // The probe once; the chain and the rejected group three times each (two answers of `reserving`, then the full one), asked
+    // again by `mopm publish --staged` itself.
     try std.testing.expectEqual(@as(usize, 7), ran.stub.group_creates);
-    // The creating call was the 201; the calls after it did not make a second group.
-    try std.testing.expect(passed(ran.result, "chain: the group is created open"));
+    // The calls after the first did not make a second group.
+    try std.testing.expect(passed(ran.result, "chain: mopm publish --staged publishes the set"));
     try std.testing.expectEqual(@as(usize, 3), ran.stub.groups.items.len);
     try std.testing.expectEqual(@as(usize, 5), ran.stub.storage_puts);
 }
@@ -870,16 +1025,16 @@ test "a group yank that leaves a member published is a failure" {
 }
 
 test "a refused create, upload, commit or yank is a failure that names the step, and an open group is not left behind" {
-    try expectRedOn(.{ .create_refused = true }, "chain: the group is created");
-    try expectRedOn(.{ .create_refused = true }, "rejected: the group is created");
-    try expectRedOn(.{ .storage_refuses = true }, "chain: zz_e2e_core is uploaded");
+    try expectRedOn(.{ .create_refused = true }, "chain: mopm publish --staged publishes the set");
+    try expectRedOn(.{ .create_refused = true }, "rejected: the group ends rejected");
+    try expectRedOn(.{ .storage_refuses = true }, "chain: mopm publish --staged publishes the set");
     try expectRedOn(.{ .yank_refused = true }, "yank: the group yank is accepted");
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
     try guard();
     const ran = try runCheck(a, .{ .commit_refused = true }, test_token, "beta");
-    try std.testing.expect(failed(ran.result, "chain: the commit is accepted"));
-    try std.testing.expect(failed(ran.result, "rejected: the commit is accepted"));
+    try std.testing.expect(failed(ran.result, "chain: mopm publish --staged publishes the set"));
+    try std.testing.expect(failed(ran.result, "rejected: the group ends rejected"));
     // The two groups that could not be committed were aborted, so they do not hold one of the actor's open slots until the
     // deadline; the expiry probe is meant to stay open.
     var aborted: usize = 0;
@@ -913,11 +1068,16 @@ test "the job summary: one line for a skip, the line and every check for a run" 
     const dir = try h.tmpPath(a, &tmp);
     const skip_file = try h.join(a, &.{ dir, "skip.md" });
     _ = try runCheckWith(a, .{}, "", "beta", .{ .summary = skip_file });
-    try std.testing.expectEqualStrings("group-e2e: SKIP beta: the repository secret MOPM_E2E_GROUP_TOKEN is not set\n", try h.readFile(a, skip_file));
+    // A skip is loud in the summary: its own heading, the line with the reason, and what it means.
+    const once = try h.readFile(a, skip_file);
+    try std.testing.expect(std.mem.startsWith(u8, once, "### group end-to-end, beta: SKIPPED\n\ngroup-e2e: SKIP beta: the repository secret MOPM_E2E_GROUP_TOKEN is not set\n\n"));
+    try std.testing.expect(std.mem.indexOf(u8, once, "Nothing was published and nothing was checked on this stage.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, once, "it will fail, not skip, once the secret holds a token for beta and the stage has groups on") != null);
     // The file is appended to, as $GITHUB_STEP_SUMMARY is: the steps of a job write to one file.
     _ = try runCheckWith(a, .{ .groups_off = true }, test_token, "beta", .{ .summary = skip_file });
     const twice = try h.readFile(a, skip_file);
-    try std.testing.expect(std.mem.indexOf(u8, twice, "is not set\ngroup-e2e: SKIP beta: group publishing is not enabled") != null);
+    try std.testing.expect(std.mem.indexOf(u8, twice, "is not set\n\nNothing was published") != null);
+    try std.testing.expect(std.mem.indexOf(u8, twice, "\ngroup-e2e: SKIP beta: group publishing is not enabled for the e2e actor on this stage (creating a group answered route_not_found)\n") != null);
     const run_file = try h.join(a, &.{ dir, "run.md" });
     const ran = try runCheckWith(a, .{ .half_commit = true }, test_token, "beta", .{ .summary = run_file });
     const text = try h.readFile(a, run_file);
@@ -928,7 +1088,10 @@ test "the job summary: one line for a skip, the line and every check for a run" 
 }
 
 test "the command line: every flag, and the ways it is wrong" {
-    const ok = g.parseArgs(&.{ "--stage", "gamma", "--mopm", "/m", "--work", "/w", "--run-id", "123", "--attempt", "2", "--summary", "/s", "--wait-seconds", "30", "--registry", "http://127.0.0.1:9" }).?;
+    const ok = g.parseArgs(&.{ "--stage", "gamma", "--mopm", "/m", "--work", "/w", "--run-id", "123", "--attempt", "2", "--summary", "/s", "--wait-seconds", "30", "--registry", "http://127.0.0.1:9", "--pixi", "/p", "--pixi-manifest", "/p.toml", "--mojo-env", "/env" }).?;
+    try std.testing.expectEqualStrings("/p", ok.pixi.?);
+    try std.testing.expectEqualStrings("/p.toml", ok.pixi_manifest.?);
+    try std.testing.expectEqualStrings("/env", ok.mojo_env.?);
     try std.testing.expectEqualStrings("gamma", ok.stage);
     try std.testing.expectEqualStrings("/m", ok.mopm.?);
     try std.testing.expectEqualStrings("/w", ok.work);
@@ -1010,19 +1173,84 @@ test "the index path of a package is derived from its name" {
     try std.testing.expectEqualStrings("index/ab/__/ab", try g.indexPath(a, "ab"));
 }
 
-test "the packages are real archives that carry their dependency, and the bad one is not" {
+test "the range the check expects of a dependency is the one mopm writes for the requirement of the manifest" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const mid = try g.buildPkg(a, g.pkg_mid, "1.5.1", g.pkg_core, "1.5.1");
-    try std.testing.expectEqualStrings("mojo-zz_e2e_mid-1.5.1-mojo1.0.0_0.conda", mid.file_name);
-    try std.testing.expect(std.mem.indexOf(u8, mid.bytes, "{\"deps\":[{\"name\":\"zz_e2e_core\",\"range\":\">=1.5.1,<2\"}]") != null);
-    const first = try g.buildPkg(a, g.pkg_core, "1.5.1", "", "");
-    try std.testing.expect(std.mem.indexOf(u8, first.bytes, "{\"deps\":[]") != null);
-    try std.testing.expect(!std.mem.eql(u8, mid.sha256, first.sha256));
-    const bad = try g.badPkg(a, g.pkg_mid, "2.5.1");
-    try std.testing.expectEqualStrings("mojo-zz_e2e_mid-2.5.1-mojo1.0.0_0.conda", bad.file_name);
-    try std.testing.expect(std.mem.indexOf(u8, bad.bytes, "PK") == null);
-    try std.testing.expectEqualSlices(u8, &g.sha256Hex(bad.bytes), bad.sha256);
+    // memberToml asks for ^VERSION; the index and the registry's API show what `mopm pack` made of it.
+    var why: []const u8 = "";
+    for ([_][]const u8{ "1.5.1", "1.4242001.1", "1.77.1" }) |v| {
+        const req = try std.fmt.allocPrint(a, "^{s}", .{v});
+        try std.testing.expectEqualStrings(try g.rangeFrom(a, v), try core.conda.condaRange(a, req, &why));
+    }
+}
+
+test "the workspace: each member depends on the one below it, by path and by version, and the app's README holds the program" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expectEqualStrings("[package]\nname = \"zz_e2e_core\"\nversion = \"1.5.1\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n", try g.memberToml(a, g.pkg_core, "1.5.1"));
+    try std.testing.expectEqualStrings("[package]\nname = \"zz_e2e_mid\"\nversion = \"1.5.1\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\nzz_e2e_core = { path = \"../zz_e2e_core\", version = \"^1.5.1\" }\n", try g.memberToml(a, g.pkg_mid, "1.5.1"));
+    try std.testing.expectEqualStrings(g.pkg_mid, g.depOf(g.pkg_app).?);
+    try std.testing.expect(g.depOf(g.pkg_core) == null);
+    // The sources chain: the app imports the middle package, which imports the core.
+    try std.testing.expect(std.mem.indexOf(u8, g.sourceOf(g.pkg_app), "from zz_e2e_mid import") != null);
+    try std.testing.expect(std.mem.indexOf(u8, g.sourceOf(g.pkg_mid), "from zz_e2e_core import") != null);
+    // The README program is the first mojo block of the app's README, and a README without one has none.
+    const readme = try g.readmeOf(a, g.pkg_app);
+    const program = g.readmeProgram(readme).?;
+    try std.testing.expect(std.mem.startsWith(u8, program, "from zz_e2e_app import total\n"));
+    try std.testing.expect(std.mem.indexOf(u8, program, "```") == null);
+    try std.testing.expect(g.readmeProgram(try g.readmeOf(a, g.pkg_core)) == null);
+    try std.testing.expect(g.readmeProgram("```mojo\nno closing fence") == null);
+    // The writer puts every file of every member in place.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const ws = try h.tmpPath(a, &tmp);
+    try g.writeWorkspace(a, ws, "1.5.1", g.members[0..2]);
+    try std.testing.expectEqualStrings(g.sourceOf(g.pkg_mid), try h.readFile(a, try h.join(a, &.{ ws, g.pkg_mid, "src", g.pkg_mid, "__init__.mojo" })));
+    try std.testing.expectEqualStrings(try g.memberToml(a, g.pkg_core, "1.5.1"), try h.readFile(a, try h.join(a, &.{ ws, g.pkg_core, "mopm.toml" })));
+    try std.testing.expectError(error.FileNotFound, h.readFile(a, try h.join(a, &.{ ws, g.pkg_app, "mopm.toml" })));
+}
+
+test "a toolchain child gets the runner's environment, less the token and the credentials the runner holds" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var parent = std.process.EnvMap.init(a);
+    try parent.put("PATH", "/bin");
+    try parent.put("HOME", "/home/runner");
+    try parent.put("LD_LIBRARY_PATH", "/tc/lib");
+    try parent.put("MOPM_ZIG", "/zig");
+    try parent.put(g.token_env, "mopm_secretsecretsecretsecretsecretse");
+    try parent.put("MOPM_TOKEN", "mopm_secretsecretsecretsecretsecretse");
+    try parent.put("GITHUB_TOKEN", "x");
+    try parent.put("AWS_SESSION_TOKEN", "x");
+    try parent.put("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "x");
+    var env = try g.toolEnv(a, &parent);
+    try std.testing.expectEqualStrings("/bin", env.get("PATH").?);
+    try std.testing.expectEqualStrings("/home/runner", env.get("HOME").?);
+    try std.testing.expectEqualStrings("/tc/lib", env.get("LD_LIBRARY_PATH").?);
+    try std.testing.expectEqualStrings("/zig", env.get("MOPM_ZIG").?);
+    try std.testing.expectEqual(@as(u32, 4), env.count());
+}
+
+test "a path the check is given is made absolute, because its children start in other directories; a bare name is left to the PATH" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expectEqualStrings("/abs/mopm", try g.absolute(a, "/abs/mopm"));
+    try std.testing.expectEqualStrings("pixi", try g.absolute(a, "pixi"));
+    const rel = try g.absolute(a, "./zig-out/bin/mopm");
+    try std.testing.expect(std.fs.path.isAbsolute(rel));
+    try std.testing.expect(std.mem.endsWith(u8, rel, "/zig-out/bin/mopm"));
+    try std.testing.expect(std.mem.indexOf(u8, rel, "/./") == null);
+}
+
+test "the summary of a skip says it was a skip, why, and when it stops being one" {
+    const a = std.testing.allocator;
+    const s = try g.skipSummary(a, "gamma", "group-e2e: SKIP gamma: why");
+    defer a.free(s);
+    try std.testing.expectEqualStrings("### group end-to-end, gamma: SKIPPED\n\ngroup-e2e: SKIP gamma: why\n\nNothing was published and nothing was checked on this stage. The job is green because it did nothing; it will fail, not skip, once the secret holds a token for gamma and the stage has groups on.\n\n", s);
 }
 

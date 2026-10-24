@@ -711,22 +711,38 @@ fn groupE2eProblems(a: Allocator, doc: Value, text: []const u8, out: *Out) !void
     var holders: usize = 0;
     var runs_check = false;
     var passes_summary = false;
+    var pixi_step: ?usize = null;
+    var check_step: ?usize = null;
     const steps = c.get(job, "steps");
     if (steps != null and steps.? == .array) {
         for (steps.?.array.items, 0..) |st, i| {
             if (c.str(c.get(st, "uses"))) |u| {
                 if (!pinned(u, "actions/checkout")) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: only actions/checkout pinned by full SHA is allowed here: {s}", .{ i, u });
             }
+            // No green-by-skip: a step that is skipped, or whose failure is tolerated, is a run that did nothing and says green.
+            if (c.truthy(c.get(st, "if"))) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: must not have an `if` (a skipped step is a green run that did nothing; the check decides what to skip, and says why in the summary)", .{i});
+            if (c.truthy(c.get(st, "continue-on-error"))) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: must not set continue-on-error", .{i});
+            const step_run = c.str(c.get(st, "run")) orelse "";
+            if (std.mem.indexOf(u8, step_run, "tools/install_pixi.sh") != null and pixi_step == null) pixi_step = i;
             const env = c.get(st, "env");
             const holds = envHolding(env, group_secret);
             if (holds) |key| {
                 holders += 1;
+                check_step = i;
                 if (!std.mem.eql(u8, key, group_token_env) or !c.isStr(c.get(env, key), group_secret_ref)) {
                     try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: the secret goes in as the variable " ++ group_token_env ++ ", set to secrets." ++ group_secret ++ " and nothing around it, not as {s}", .{ i, key });
                 }
-                const run = c.str(c.get(st, "run")) orelse "";
+                const run = step_run;
                 runs_check = std.mem.indexOf(u8, run, "mopm-group-e2e") != null;
                 passes_summary = std.mem.indexOf(u8, run, "--summary \"$GITHUB_STEP_SUMMARY\"") != null;
+                // The real path needs the CLI by its absolute path (it is started in other directories), pixi, and pixi's manifest; the
+                // script stops at the first failure and tolerates none.
+                if (runs_check) for ([_][]const u8{ "--mopm \"$PWD/zig-out/bin/mopm\"", "--pixi \"$(command -v pixi)\"", "--pixi-manifest tests/e2e/pixi.toml", "set -euo pipefail" }) |want| {
+                    if (std.mem.indexOf(u8, run, want) == null) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: the check must be run with `{s}`", .{ i, want });
+                };
+                if (runs_check) for ([_][]const u8{ "|| true", "|| :", "set +e" }) |banned| {
+                    if (std.mem.indexOf(u8, run, banned) != null) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: the check must not tolerate a failure (`{s}`)", .{ i, banned });
+                };
             }
             // No other secret in the job, and none through `with:`.
             if (env) |m| if (m == .object) {
@@ -738,6 +754,13 @@ fn groupE2eProblems(a: Allocator, doc: Value, text: []const u8, out: *Out) !void
                 }
             };
             if (envHolding(c.get(st, "with"), "secrets.") != null) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: passes a secret through with:", .{i});
+        }
+    }
+    if (holders == 1) {
+        if (pixi_step == null) {
+            try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " must install the pinned pixi (tools/install_pixi.sh) before the check, which makes the Mojo environment and installs the staged set with it", .{});
+        } else if (pixi_step.? > check_step.?) {
+            try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " installs pixi (step {d}) after the check (step {d})", .{ pixi_step.?, check_step.? });
         }
     }
     if (holders != 1) try c.problem(a, out, prefix ++ "e2e.yml: exactly one step of " ++ group_job ++ " must read the token, got {d}", .{holders});
