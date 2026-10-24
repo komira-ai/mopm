@@ -66,6 +66,10 @@ export interface PublishStore {
    */
   updatePublish(id: string, fn: (cur: PublishRecord) => PublishRecord | undefined): Promise<PublishRecord | undefined>;
 
-  /** Count one hit on `key` unless it already has `limit`. `expiresAt` is epoch seconds (TTL cleanup). */
-  hit(key: string, limit: number, expiresAt: number): Promise<{ ok: boolean; count: number }>;
+  /**
+   * Count `n` hits (one by default) on `key` unless that would take it past `limit`: then nothing is counted and `ok` is
+   * false. `expiresAt` is epoch seconds (TTL cleanup). A group charges all its files at once with one `n`; the
+   * counter is one item, so the charge is one conditional write, all or nothing.
+   */
+  hit(key: string, limit: number, expiresAt: number, n?: number): Promise<{ ok: boolean; count: number }>;
 }

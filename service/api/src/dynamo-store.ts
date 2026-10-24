@@ -7,9 +7,21 @@ import {
   TransactWriteCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { RegistryError, versionExists } from './errors';
-import { API_VIEW, headerKey, membersKey, parseHeader, parseMembers, VersionFunnel, type FunnelOptions, type GroupReader, type View } from './group';
+import { API_VIEW, headerKey, membersKey, parseHeader, parseMembers, VersionFunnel, type FunnelOptions, type GroupMembers, type GroupReader, type View } from './group';
+import {
+  checkHeaderWrite,
+  commitToken,
+  committedRecord,
+  groupItem,
+  membersItem,
+  parseGroupRecord,
+  type AdoptOutcome,
+  type CommitOutcome,
+  type GroupRecord,
+  type GroupStore,
+} from './group-store';
 import type { RawVersionPort } from './raw-port';
-import { applyEvent, IllegalTransition, type VersionEvent } from './state';
+import { applyEvent, IllegalTransition, type GroupEvent, type UserEvent, type VersionEvent } from './state';
 import { auditSortKey, type Store } from './store';
 import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, VersionRecord } from './types';
 import { canonicalVersion } from './version';
@@ -88,6 +100,8 @@ const cancelledByCondition = (err: unknown, index: number): boolean => {
   const e = err as { name?: string; CancellationReasons?: { Code?: string }[] };
   return e?.name === 'TransactionCanceledException' && e.CancellationReasons?.[index]?.Code === 'ConditionalCheckFailed';
 };
+/** A single conditional Put that lost: `ConditionalCheckFailedException`. */
+const putLost = (err: unknown): boolean => (err as { name?: string })?.name === 'ConditionalCheckFailedException';
 
 /**
  * A group's header and member list, read from the `publishes` table (key attribute `publish_id`, as for its other
@@ -112,7 +126,7 @@ class DynamoGroupReader implements GroupReader {
   }
 }
 
-export class DynamoStore implements Store {
+export class DynamoStore implements Store, GroupStore {
   private readonly funnel: VersionFunnel;
   /** The rows as stored (src/raw-port.ts): for the group module and for tests that must see the stored form. */
   readonly raw: RawVersionPort;
@@ -248,37 +262,23 @@ export class DynamoStore implements Store {
    * that follows is an ordinary one. A member of a group that has not committed is refused: only the group's own
    * code may change it.
    */
-  async updateVersion(name: string, version: string, event: VersionEvent, audit: AuditEntry): Promise<VersionRecord> {
+  async updateVersion(name: string, version: string, event: UserEvent, audit: AuditEntry): Promise<VersionRecord> {
+    return this.change(name, version, event, audit, true);
+  }
+
+  /**
+   * Read the row, apply the state machine, write back only if `rev` is unchanged; on a lost race read again. `asReader`:
+   * the row is read as a reader sees it (see updateVersion's note); otherwise as stored, for a group's own event.
+   */
+  private async change(name: string, version: string, event: VersionEvent, audit: AuditEntry, asReader: boolean): Promise<VersionRecord> {
     for (let attempt = 0; attempt < MAX_UPDATE_ATTEMPTS; attempt++) {
-      const cur = await this.getVersion(name, version);
+      const cur = asReader ? await this.getVersion(name, version) : await this.rowOf(name, version);
       if (!cur) throw new RegistryError('version_not_found', `'${name}' has no version '${version}'.`, { name, version });
-      if (cur.group_id !== undefined && cur.state === 'pending') throw new IllegalTransition(cur, event);
+      if (asReader && cur.group_id !== undefined && cur.state === 'pending') throw new IllegalTransition(cur, event);
       const next = applyEvent(cur, event);
       if (next === cur) return cur;
       try {
-        await this.doc.send(
-          new TransactWriteCommand({
-            TransactItems: [
-              {
-                Put: {
-                  TableName: this.tables.versions,
-                  Item: toItem(next),
-                  ConditionExpression: '#r = :r',
-                  ExpressionAttributeNames: { '#r': 'rev' },
-                  ExpressionAttributeValues: { ':r': cur.rev },
-                },
-              },
-              {
-                Put: {
-                  TableName: this.tables.audit,
-                  Item: auditItem(audit),
-                  ConditionExpression: 'attribute_not_exists(#n)',
-                  ExpressionAttributeNames: { '#n': 'name' },
-                },
-              },
-            ],
-          }),
-        );
+        await this.doc.send(new TransactWriteCommand({ TransactItems: [this.versionPut(next, '#r = :r', { '#r': 'rev' }, { ':r': cur.rev }), this.auditPut(audit)] }));
         return next;
       } catch (err) {
         if (cancelledByCondition(err, 0)) continue;
@@ -286,6 +286,146 @@ export class DynamoStore implements Store {
       }
     }
     throw new RegistryError('internal_error', `'${name}' ${version} changed too often while updating.`, { name, version });
+  }
+  private versionPut(rec: VersionRecord, cond: string, names: Record<string, string>, values?: Record<string, unknown>) {
+    return {
+      Put: {
+        TableName: this.tables.versions,
+        Item: toItem(rec),
+        ConditionExpression: cond,
+        ExpressionAttributeNames: names,
+        ...(values ? { ExpressionAttributeValues: values } : {}),
+      },
+    };
+  }
+  private auditPut(audit: AuditEntry) {
+    return {
+      Put: {
+        TableName: this.tables.audit,
+        Item: auditItem(audit),
+        ConditionExpression: 'attribute_not_exists(#n)',
+        ExpressionAttributeNames: { '#n': 'name' },
+      },
+    };
+  }
+
+  // --- the writers of a group (src/group-store.ts) ----------------------------------------------------------------
+
+  private async publishItem(key: string): Promise<Item | undefined> {
+    const r = await this.doc.send(new GetCommand({ TableName: this.tables.publishes, Key: { publish_id: key }, ConsistentRead: true }));
+    return r.Item as Item | undefined;
+  }
+  private publishPut(item: Item, cond: string, names: Record<string, string>, values?: Record<string, unknown>) {
+    return {
+      Put: {
+        TableName: this.tables.publishes,
+        Item: item,
+        ConditionExpression: cond,
+        ExpressionAttributeNames: names,
+        ...(values ? { ExpressionAttributeValues: values } : {}),
+      },
+    };
+  }
+
+  async getGroup(gid: string): Promise<GroupRecord | undefined> {
+    const i = await this.publishItem(headerKey(gid));
+    return i && parseGroupRecord(i);
+  }
+  async getGroupMembers(gid: string): Promise<GroupMembers | undefined> {
+    const i = await this.publishItem(membersKey(gid));
+    return i && parseMembers(i);
+  }
+
+  async createGroup(header: GroupRecord, members: GroupMembers, audit: AuditEntry): Promise<{ created: boolean; header: GroupRecord }> {
+    checkHeaderWrite(undefined, header);
+    const gid = header.group_id;
+    const list = membersItem(gid, members);
+    try {
+      await this.doc.send(new PutCommand({ TableName: this.tables.publishes, Item: list, ConditionExpression: 'attribute_not_exists(#k)', ExpressionAttributeNames: { '#k': 'publish_id' } }));
+    } catch (err) {
+      if (!putLost(err)) throw err;
+      // Written before (a retried create): it is the same list, or this is not the same group.
+      if (JSON.stringify(await this.getGroupMembers(gid)) !== JSON.stringify(parseMembers(list))) throw new Error(`group ${gid} already has another member list`);
+    }
+    try {
+      await this.doc.send(new TransactWriteCommand({ TransactItems: [this.publishPut(groupItem(header), 'attribute_not_exists(#k)', { '#k': 'publish_id' }), this.auditPut(audit)] }));
+      return { created: true, header };
+    } catch (err) {
+      if (!cancelledByCondition(err, 0)) throw err;
+      return { created: false, header: (await this.getGroup(gid))! };
+    }
+  }
+
+  async updateGroup(gid: string, fn: (cur: GroupRecord) => GroupRecord | undefined, audit?: AuditEntry): Promise<GroupRecord | undefined> {
+    for (let attempt = 0; attempt < MAX_UPDATE_ATTEMPTS; attempt++) {
+      const cur = await this.getGroup(gid);
+      if (!cur) return undefined;
+      const changed = fn(structuredClone(cur));
+      if (changed === undefined) return cur;
+      const next = { ...changed, rev: cur.rev + 1 };
+      checkHeaderWrite(cur, next);
+      const put = this.publishPut(groupItem(next), '#r = :r', { '#r': 'rev' }, { ':r': cur.rev });
+      try {
+        if (audit) await this.doc.send(new TransactWriteCommand({ TransactItems: [put, this.auditPut(audit)] }));
+        else await this.doc.send(new PutCommand(put.Put));
+        return next;
+      } catch (err) {
+        if (putLost(err) || cancelledByCondition(err, 0)) continue;
+        throw err;
+      }
+    }
+    throw new RegistryError('internal_error', `Group ${gid} changed too often while updating.`, { group_id: gid });
+  }
+
+  async commitGroup(gid: string, c: { rev: number; writeOrder: number[]; now: string; audit: AuditEntry }): Promise<CommitOutcome> {
+    // Read first: a commit whose answer was lost shows up here as the marker, and a stale `rev` must not look like a conflict.
+    const cur = await this.getGroup(gid);
+    if (!cur) return { outcome: 'missing' };
+    if (cur.committed_at !== undefined) return { outcome: 'already', header: cur };
+    if (cur.status !== 'validating' || cur.rev !== c.rev) return { outcome: 'conflict', header: cur };
+    if (Date.parse(c.now) > Date.parse(cur.deadline_at)) return { outcome: 'deadline', header: cur };
+    const next = committedRecord(cur, c.writeOrder, c.now);
+    try {
+      await this.doc.send(
+        new TransactWriteCommand({
+          ClientRequestToken: commitToken(gid, cur.attempt),
+          TransactItems: [
+            this.publishPut(groupItem(next), '#s = :s AND #r = :r', { '#s': 'status', '#r': 'rev' }, { ':s': 'validating', ':r': cur.rev }),
+            this.auditPut(c.audit),
+          ],
+        }),
+      );
+      return { outcome: 'committed', header: next };
+    } catch (err) {
+      if (!cancelledByCondition(err, 0)) throw err;
+      const now = (await this.getGroup(gid))!;
+      return now.committed_at !== undefined ? { outcome: 'already', header: now } : { outcome: 'conflict', header: now };
+    }
+  }
+
+  async adoptVersion(rec: VersionRecord, audit: AuditEntry, free: (cur: VersionRecord) => boolean): Promise<AdoptOutcome> {
+    if (rec.state !== 'pending' || rec.group_id === undefined) throw new Error('adoptVersion takes a pending row that names a group');
+    const fresh = { ...rec, canonical: canonicalVersion(rec.version) };
+    try {
+      await this.doc.send(new TransactWriteCommand({ TransactItems: [this.versionPut(fresh, 'attribute_not_exists(#n)', { '#n': 'name' }), this.auditPut(audit)] }));
+      return { outcome: 'created', record: fresh };
+    } catch (err) {
+      if (!cancelledByCondition(err, 0)) throw err;
+    }
+    const cur = (await this.rowOf(rec.name, rec.version))!; // rows are never deleted, so the one that stopped the create is still there
+    if (cur.state !== 'pending' || !free(cur)) return { outcome: 'taken', existing: cur };
+    const next = { ...fresh, rev: cur.rev + 1 };
+    try {
+      await this.doc.send(new TransactWriteCommand({ TransactItems: [this.versionPut(next, '#r = :r', { '#r': 'rev' }, { ':r': cur.rev }), this.auditPut(audit)] }));
+      return { outcome: 'adopted', record: next };
+    } catch (err) {
+      if (cancelledByCondition(err, 0)) return { outcome: 'lost' };
+      throw err;
+    }
+  }
+
+  async applyGroupEvent(name: string, version: string, event: GroupEvent, audit: AuditEntry): Promise<VersionRecord> {
+    return this.change(name, version, event, audit, false);
   }
   async listVersions(name: string) {
     return (await this.versionsOf([name], API_VIEW)).get(name)!;

@@ -28,8 +28,9 @@ const condFailed = (err: unknown) => (err as { name?: string })?.name === 'Condi
 
 /**
  * DynamoDB adapter. Every mutation is a conditional PutItem (create-once, or compare-and-swap on `rev`), so the
- * role needs GetItem and PutItem only. `publishes` is keyed by `publish_id` and holds three kinds of row, told
- * apart by the key's prefix: `pub_...` publish records, `ver#<name>#<canonical>` commit locks, `rl#...` counters.
+ * role needs GetItem and PutItem only. `publishes` is keyed by `publish_id` and holds five kinds of row, told
+ * apart by the key's prefix: `pub_...` publish records, `ver#<name>#<canonical>` commit locks, `rl#...` counters, and
+ * `grp#<id>` and `grpm#<id>`, a group's header and member list (written by the version store, src/group-store.ts).
  */
 export class DynamoPublishStore implements PublishStore {
   constructor(
@@ -140,19 +141,20 @@ export class DynamoPublishStore implements PublishStore {
     throw new Error(`publish ${id} changed too often while updating`);
   }
 
-  async hit(key: string, limit: number, expiresAt: number): Promise<{ ok: boolean; count: number }> {
+  async hit(key: string, limit: number, expiresAt: number, n = 1): Promise<{ ok: boolean; count: number }> {
     for (let i = 0; i < MAX_HIT_ATTEMPTS; i++) {
       const cur = await this.get(this.tables.publishes, 'publish_id', key);
       if (!cur) {
-        if (await this.putIfAbsent(this.tables.publishes, 'publish_id', { publish_id: key, count: 1, rev: 0, expires_at: expiresAt })) {
-          return { ok: true, count: 1 };
+        if (n > limit) return { ok: false, count: 0 };
+        if (await this.putIfAbsent(this.tables.publishes, 'publish_id', { publish_id: key, count: n, rev: 0, expires_at: expiresAt })) {
+          return { ok: true, count: n };
         }
         continue;
       }
       const count = cur.count as number;
-      if (count >= limit) return { ok: false, count };
-      if (await this.swap(this.tables.publishes, { ...cur, count: count + 1, rev: (cur.rev as number) + 1 }, cur.rev as number)) {
-        return { ok: true, count: count + 1 };
+      if (count + n > limit) return { ok: false, count };
+      if (await this.swap(this.tables.publishes, { ...cur, count: count + n, rev: (cur.rev as number) + 1 }, cur.rev as number)) {
+        return { ok: true, count: count + n };
       }
     }
     throw new Error(`counter ${key} changed too often`);
