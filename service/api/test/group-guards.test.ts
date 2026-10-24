@@ -37,7 +37,8 @@ const READ_DEFINITIONS = ['store.ts', 'group.ts', ...ADAPTERS];
 const NAMES_VERSIONS_TABLE = /\btables\.versions\b|['"`]mopm-[^'"`]*versions|TableName:[^\n]*\bversions\b/;
 const USES_RAW_PORT = /from\s+['"][^'"]*raw-port['"]|\braw(Get|Query)\b|\.raw\b/;
 const IMPORTS_DYNAMO = /@aws-sdk\/(lib|client)-dynamodb/;
-const GROUP_WRITER_CALL = /\.(createGroup|updateGroup|commitGroup|adoptVersion|applyGroupEvent)\(/;
+const GROUP_WRITER_CALL = /\.(createGroup|updateGroup|commitGroup|adoptVersion|adoptSingle|applyGroupEvent)\(/;
+const COMMIT_OR_STAGE_CALL = /\.(commitGroup|applyGroupEvent)\(/;
 const READS_VERSIONS = /\.(listVersions|getVersion|versionsOf)\(|\ballRecords\(/;
 
 const filesMatching = (files: Record<string, string>, re: RegExp, except: readonly string[] = []) =>
@@ -71,12 +72,19 @@ describe('the sources', () => {
     expect(filesMatching(files, READS_VERSIONS, READ_DEFINITIONS)).toEqual(Object.keys(INVENTORY.readers).sort());
   });
 
-  // This change ships the writers of a group dark: nothing calls them, so no route, queue handler or job can create,
-  // commit or fill a group. The change that adds the first caller changes this list on purpose.
-  test('no source file calls a writer of a group: the adapters define them, and nothing uses them', () => {
-    expect(filesMatching(files, GROUP_WRITER_CALL)).toEqual([]);
-    expect(filesMatching({ 'x.ts': 'await store.commitGroup(gid, args);', 'y.ts': 'registry.applyGroupEvent(n, v, ev, a)' }, GROUP_WRITER_CALL)).toEqual(['x.ts', 'y.ts']);
+  // The group routes create, read and abort a group, and the single publish takes over a dead group's number; those are the
+  // callers of the writers below. Nothing commits a group or fills or flips a member (commitGroup, applyGroupEvent): no
+  // route, queue handler or job can make a group visible. The change that adds the first caller of those two changes this
+  // list on purpose.
+  test('the callers of the writers of a group are the group service, its lifecycle helper and the single publish', () => {
+    expect(filesMatching(files, GROUP_WRITER_CALL)).toEqual(['publish/group-lifecycle.ts', 'publish/group-service.ts', 'publish/service.ts']);
+    expect(filesMatching({ 'x.ts': 'await store.commitGroup(gid, args);', 'y.ts': 'registry.applyGroupEvent(n, v, ev, a)', 'z.ts': 'groups.adoptSingle(r, a, f)' }, GROUP_WRITER_CALL)).toEqual(['x.ts', 'y.ts', 'z.ts']);
     expect(filesMatching(files, /\bclass\s+\w+\s+implements\s+[^{]*\bGroupStore\b/)).toEqual([...ADAPTERS].sort());
+  });
+
+  test('no source file commits a group or fills or flips a member: the adapters define those writers and nothing calls them', () => {
+    expect(filesMatching(files, COMMIT_OR_STAGE_CALL)).toEqual([]);
+    expect(filesMatching({ 'x.ts': 'await store.commitGroup(gid, args);', 'y.ts': 'registry.applyGroupEvent(n, v, ev, a)', 'z.ts': 'registry.adoptVersion(r, a, f)' }, COMMIT_OR_STAGE_CALL)).toEqual(['x.ts', 'y.ts']);
   });
 
   test('the rules refuse what they are for', () => {

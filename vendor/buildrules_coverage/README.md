@@ -18,8 +18,8 @@ the five `site/` and `service/` BUCK files, and the targets `cov_tools()` define
 
 **Zig, lines.** The unit tests of a package (`zig_test` targets that run no built program) are built again with kcov's line tables and run under kcov, in one action
 each; `//:<package>_coverage` is the lines hit and recorded per file, and the total over the package's own sources (`expect`). `//:<package>_coverage_floor`
-holds the total to `coverage/<package>.txt` (`lines NN.NN`, hit over recorded rounded down to a hundredth): a figure below the floor fails, and so does one above it,
-naming the number to write, so a floor is always what the tests reach and only rises.
+holds the total to `coverage/<package>.txt` (`lines NN.NN`, hit over recorded rounded down to a hundredth): a figure below the floor fails, naming the floor and the measure; a figure at or
+above it passes, and above it a hint says the floor may be raised. A floor is a minimum, never an exact match.
 
 What the figure leaves out: code the compiler emitted nothing for (zig analyses what is referenced, so a function no unit test reaches has no line and
 no row: the percentage is an upper bound); code of a built program that a process test runs (`env_tools`, `exec_tools`: the process is not instrumented);
@@ -30,9 +30,9 @@ coverage tools here are built by 0.15 and carry the block code (the process test
 `zig_coverage(blocks = False)` and a floor file has no `branches` line. The packages build with 0.15 only after the code is ported.
 
 **Jest.** `jest --coverage` over `collectCoverageFrom` of the package's `jest.config.js` (its own source, not its tests); the target `:coverage_run` (a second run beside npm_package's `:test`, which writes no coverage) is the `coverage`
-directory of the run, and `:coverage_floor` holds istanbul's `total` lines and branches to the package's `coverage_floor.txt`, with the same both-ways check.
+directory of the run, and `:coverage_floor` holds istanbul's `total` lines and branches to the package's `coverage_floor.txt`, with the same minimum check.
 
 ## Raising a floor
 
-Build the package's floor target; when the tests reach more than the floor, it fails and names the number: write it in the floor file in the same change as the tests.
+Raising is optional. Build the package's floor target; when the tests reach more than the floor, it passes and prints a hint with the measure: write that number in the floor file, in the same change as the tests or a later one. A floor never has to equal the measure, so two changes that each add tests can both land.
 `./buck2 build //:coverage_floors` builds them all; the pull-request build (`farm.yml`, every target but the end-to-end ones) includes it.

@@ -22,6 +22,7 @@ export const PUBLISH_CATALOGUE: Record<string, { status: number; message: string
   package_not_found: { status: 404, message: "There is no package '{name}'.", hint: 'Check the spelling, or claim the name.' },
   version_not_found: { status: 404, message: "'{name}' has no version '{version}'.", hint: "List the versions with 'mopm info {name}'." },
   publish_not_found: { status: 404, message: 'There is no such publish.', hint: 'Publish ids are only valid for the caller who made them.' },
+  group_not_found: { status: 404, message: 'There is no such group.', hint: 'Group ids are only valid for the caller who made them, or for an owner of every package in the group.' },
   version_exists: { status: 409, message: "'{name}' {version} already exists (sha256 {sha256}); versions are immutable.", hint: 'Publish a new version.' },
   invalid_transition: {
     status: 409,
@@ -29,11 +30,14 @@ export const PUBLISH_CATALOGUE: Record<string, { status: number; message: string
     hint: 'Only a published version can be yanked, only a yanked version can be unyanked, and a tombstoned version never changes.',
   },
   upload_used: { status: 409, message: "The upload '{upload_id}' was already used.", hint: 'Begin a new upload.' },
+  group_not_open: { status: 409, message: 'Group {group_id} is {status}; only an open group can be aborted.', hint: 'Create the group again with the same request to open it again.' },
+  group_conflict: { status: 409, message: 'The group cannot be created: {detail}.', hint: 'Abort or finish your other groups, or publish a new version.' },
   payload_too_large: { status: 413, message: 'The file is larger than the limit of {limit} bytes.', hint: 'Reduce the package size.' },
   rate_limited: { status: 429, message: 'Too many requests.', hint: 'Wait {retry_after} seconds; the Retry-After header says how long.' },
   internal_error: { status: 500, message: 'Something went wrong on our side.', hint: 'Try again; report the request id if it persists.' },
   read_only_mode: { status: 503, message: 'The registry is read-only right now; new uploads are refused.', hint: 'Installs still work. Try again later.' },
   unavailable: { status: 503, message: 'The registry is temporarily unavailable.', hint: 'Try again shortly.' },
+  route_not_found: { status: 404, message: 'There is no such operation.', hint: 'Check the request against the API documentation; update mopm if it is old.' },
 };
 
 export interface ErrorView {

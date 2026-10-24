@@ -22,6 +22,10 @@ _SRCS = glob(["bin/**", "lib/**", "test/**"]) + [
 
 _DATA = {
     "service/api/dist": "//service/api:dist",
+    "service/api/src/group.ts": "//service/api:src_group.ts",
+    "service/api/src/group-store.ts": "//service/api:src_group-store.ts",
+    "service/api/src/metrics.ts": "//service/api:src_metrics.ts",
+    "service/api/src/publish/group-service.ts": "//service/api:src_group-service.ts",
     "service/api/test/fixtures/group-inventory.json": "//service/api:group-inventory.json",
     "service/api/test/fixtures/lambda-auth-grants.json": "//service/api:lambda-auth-grants.json",
     "service/api/test/fixtures/wire": "//service/api:wire_goldens",

@@ -9,7 +9,10 @@
     { "route": "POST /api/v1/packages/{name}/{version}/files", "case": "begin: project quota counts the live bytes" },
     { "route": "POST /api/v1/packages/{name}/{version}/publish", "case": "single commit refuses a number a group holds" },
     { "route": "GET /api/v1/publishes/{publish_id}", "case": "the status route answers only for a publish record" },
-    { "route": "PUT /api/v1/packages/{name}/{version}/yank", "case": "setYanked: only a shown version can be yanked" }
+    { "route": "PUT /api/v1/packages/{name}/{version}/yank", "case": "setYanked: only a shown version can be yanked" },
+    { "route": "POST /api/v1/groups", "case": "group create: a number the registry shows is version_exists" },
+    { "route": "GET /api/v1/groups/{group_id}", "no_version_rows": "shows a group's header and member list from the group's own items; reads no version row" },
+    { "route": "DELETE /api/v1/groups/{group_id}", "no_version_rows": "ends an open group by a compare-and-set on its header; reads no version row" }
   ],
   "non_routes": [
     { "name": "repodata builder (indexSubdir)", "case": "indexSubdir(linux-64)" },
@@ -19,10 +22,12 @@
     { "name": "single reserve (begin joins a pending number)", "case": "single begin refuses a number a group holds" },
     { "name": "single validator (validatePublish)", "case": "single validator refuses a number a group holds" },
     { "name": "validator quota check (checkTotal)", "case": "store.listVersions" },
-    { "name": "search page", "case": "store.versionsOf(api)" }
+    { "name": "search page", "case": "store.versionsOf(api)" },
+    { "name": "group create (reads the rows its members would take)", "case": "group create: a number the registry shows is version_exists" }
   ],
   "readers": {
     "http/router.ts": ["GET /packages", "GET /packages/{name}", "GET /packages/{name}/versions", "GET /packages/{name}/{version}"],
+    "publish/group-service.ts": ["group create: a number the registry shows is version_exists"],
     "publish/indexer.ts": ["indexSubdir(linux-64)", "indexPackage", "takedowns"],
     "publish/service.ts": ["begin: project quota counts the live bytes", "setYanked: only a shown version can be yanked", "single begin refuses a number a group holds", "single commit refuses a number a group holds"],
     "publish/takedown.ts": ["store.listVersions"],

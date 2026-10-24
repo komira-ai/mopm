@@ -1,6 +1,6 @@
 import { GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import type { DocClient } from '../dynamo-store';
-import type { PublishStore } from './ports';
+import type { ActorGroup, ActorGroups, PublishStore } from './ports';
 import type { PublishRecord, UploadRecord } from './types';
 
 /** Table names (service/infra/stacks/lib/config.ts: `mopm-<stage>-<table>`) the publish path uses. */
@@ -28,9 +28,10 @@ const condFailed = (err: unknown) => (err as { name?: string })?.name === 'Condi
 
 /**
  * DynamoDB adapter. Every mutation is a conditional PutItem (create-once, or compare-and-swap on `rev`), so the
- * role needs GetItem and PutItem only. `publishes` is keyed by `publish_id` and holds five kinds of row, told
- * apart by the key's prefix: `pub_...` publish records, `ver#<name>#<canonical>` commit locks, `rl#...` counters, and
- * `grp#<id>` and `grpm#<id>`, a group's header and member list (written by the version store, src/group-store.ts).
+ * role needs GetItem and PutItem only. `publishes` is keyed by `publish_id` and holds six kinds of row, told
+ * apart by the key's prefix: `pub_...` publish records, `ver#<name>#<canonical>` commit locks, `rl#...` counters,
+ * `grp#<id>` and `grpm#<id>`, a group's header and member list (written by the version store, src/group-store.ts), and
+ * `grpa#<actor>`, the list of groups an actor has open.
  */
 export class DynamoPublishStore implements PublishStore {
   constructor(
@@ -158,5 +159,15 @@ export class DynamoPublishStore implements PublishStore {
       }
     }
     throw new Error(`counter ${key} changed too often`);
+  }
+
+  private actorKey = (actor: string) => `grpa#${actor}`;
+  async getActorGroups(actor: string): Promise<ActorGroups | undefined> {
+    const i = await this.get(this.tables.publishes, 'publish_id', this.actorKey(actor));
+    return i && { actor, groups: i.groups as ActorGroup[], rev: i.rev as number };
+  }
+  async putActorGroups(actor: string, groups: ActorGroup[], rev: number | undefined): Promise<boolean> {
+    if (typeof rev !== 'number') return this.putIfAbsent(this.tables.publishes, 'publish_id', { publish_id: this.actorKey(actor), actor, groups, rev: 0 });
+    return this.swap(this.tables.publishes, { publish_id: this.actorKey(actor), actor, groups, rev: rev + 1 }, rev);
   }
 }

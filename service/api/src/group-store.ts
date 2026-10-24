@@ -111,6 +111,9 @@ export const committedRecord = (cur: GroupRecord, writeOrder: number[], now: str
  * is, and `committed_at` is present exactly while the status is one of a committed group. Throws.
  */
 export function checkHeaderWrite(cur: GroupRecord | undefined, next: GroupRecord): void {
+  // The commit refuses a group past its deadline by comparing times; a deadline that is not a time compares as neither
+  // past nor not, so it must never be stored.
+  if (!Number.isFinite(Date.parse(next.deadline_at))) throw new Error(`group ${next.group_id}: deadline_at '${String(next.deadline_at)}' is not a time`);
   if (cur !== undefined && cur.group_id !== next.group_id) throw new Error(`group ${next.group_id}: the header read is group ${cur.group_id}`);
   if (next.committed_at !== cur?.committed_at) throw new Error(`group ${next.group_id}: committed_at is written by commitGroup alone`);
   if ((next.committed_at !== undefined) !== COMMITTED_STATUSES.includes(next.status)) {
@@ -176,6 +179,12 @@ export interface GroupStore {
    * it over if `free` says so and it is `pending`. The takeover is a compare-and-set on the row's `rev`.
    */
   adoptVersion(rec: VersionRecord, audit: AuditEntry, free: (cur: VersionRecord) => boolean): Promise<AdoptOutcome>;
+  /**
+   * The same takeover for a single publish: `rec` is a `pending` row with no `group_id` (the single's reservation), which
+   * replaces a `pending` row that `free` accepts, a compare-and-set on the row's `rev`. A single uses it to take the
+   * number of a group that is dead.
+   */
+  adoptSingle(rec: VersionRecord, audit: AuditEntry, free: (cur: VersionRecord) => boolean): Promise<AdoptOutcome>;
   /**
    * Apply a `stage` or `group_publish` to the row as stored (not as a reader sees it), with its audit row, compare-and-set
    * on `rev`. An event that changes nothing writes nothing (and no audit row). Throws version_not_found, and
