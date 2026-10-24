@@ -54,6 +54,7 @@ const probe_toml =
     \\
     \\[native.probe_sys]
     \\kind = "static"
+    \\srcs = ["native/probe_sys.c"]
     \\needs = ["libbase_sys.a"]
     \\
 ;
@@ -66,6 +67,7 @@ const base_toml =
     \\
     \\[native.base_sys]
     \\kind = "static"
+    \\srcs = ["native/base_sys.c"]
     \\
 ;
 
@@ -234,6 +236,10 @@ fn run(a: Allocator, rep: *h.Report) !void {
     const ws = try h.join(a, &.{ work, "ws" });
     try h.writeFile(try h.join(a, &.{ ws, "mopm.toml" }), probe_toml);
     try h.writeFile(try h.join(a, &.{ ws, "src/probe_sys/__init__.mojo" }), "");
+    // A unit graph builds a member's native from its C sources, so each member declares them (the archives the
+    // test links are the ones built above; these sources only satisfy the manifests).
+    try h.writeFile(try h.join(a, &.{ ws, "native/probe_sys.c" }), c_probe);
+    try h.writeFile(try h.join(a, &.{ ws, "base/native/base_sys.c" }), c_base);
     try h.writeFile(try h.join(a, &.{ ws, "base/mopm.toml" }), base_toml);
     try h.writeFile(try h.join(a, &.{ ws, "base/src/base_sys/__init__.mojo" }), "");
     var r = try c.mopmRun(ws, &.{"lock"});
@@ -252,7 +258,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     try cwd.makePath(deps);
     const lib_out = try h.join(a, &.{ work, "lib_out" });
     for ([_][]const u8{ "base_sys", "probe_sys" }) |name| {
-        r = try c.mopmRun(ws, &.{ "unit", "build", "--unit", try h.fmt(a, "{s}@1.0.0#mojo1.0.0/lib", .{name}), "--graph", ws_graph, "--out", lib_out, "--toolchain", tc, "--src", ".", "--deps", deps, "--stage", try h.fmt(a, "{s}/stage_{s}", .{ work, name }) });
+        r = try c.mopmRun(ws, &.{ "unit", "build", "--unit", try h.fmt(a, "{s}@1.0.0#mojo1.0.0/lib", .{name}), "--graph", ws_graph, "--out", lib_out, "--toolchain", tc, "--src", ".", "--deps", deps, "--natives", natives, "--stage", try h.fmt(a, "{s}/stage_{s}", .{ work, name }) });
         try c.must(try h.fmt(a, "mopm unit build: the empty module {s} through the real `mojo precompile`", .{name}), r);
         const mojoc = try h.join(a, &.{ lib_out, try h.fmt(a, "{s}.mojoc", .{name}) });
         try cwd.copyFile(mojoc, cwd, try h.join(a, &.{ deps, try h.fmt(a, "{s}.mojoc", .{name}) }), .{});
