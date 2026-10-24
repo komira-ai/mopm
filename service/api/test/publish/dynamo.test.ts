@@ -114,6 +114,25 @@ describe.each<[string, () => PublishStore]>([
     expect((await s.hit('rl#u#2#2026-10-14', 5, 1_792_000_000)).ok).toBe(true);
     expect((await s.hit('rl#u#1#2026-10-15', 5, 1_792_000_000)).ok).toBe(true);
   });
+
+  test('a charge of n counts n at once, or nothing: one that would pass the limit leaves the counter as it was', async () => {
+    const s = make();
+    const key = 'rl#g#1#2026-10-14';
+    expect(await s.hit(key, 10, 1_792_000_000, 4)).toEqual({ ok: true, count: 4 });
+    expect(await s.hit(key, 10, 1_792_000_000, 7)).toEqual({ ok: false, count: 4 });
+    expect(await s.hit(key, 10, 1_792_000_000, 6)).toEqual({ ok: true, count: 10 });
+    expect(await s.hit(key, 10, 1_792_000_000)).toEqual({ ok: false, count: 10 });
+    // A first charge over the limit creates nothing.
+    expect(await s.hit('rl#g#2#2026-10-14', 10, 1_792_000_000, 11)).toEqual({ ok: false, count: 0 });
+    expect(await s.hit('rl#g#2#2026-10-14', 10, 1_792_000_000, 10)).toEqual({ ok: true, count: 10 });
+  });
+
+  test('charges of n under concurrency: the limit holds and each success counts its whole n', async () => {
+    const s = make();
+    const results = await Promise.all(Array.from({ length: 9 }, () => s.hit('rl#g#3#2026-10-14', 10, 1_792_000_000, 3)));
+    expect(results.filter((r) => r.ok).map((r) => r.count).sort()).toEqual([3, 6, 9]);
+    expect(results.filter((r) => !r.ok).every((r) => r.count === 9)).toBe(true);
+  });
 });
 
 describe('DynamoPublishStore rows', () => {
@@ -140,6 +159,7 @@ describe('DynamoPublishStore rows', () => {
     await s.createPublish(publish('p'));
     await s.updatePublish('p', (c) => ({ ...c, status: 'validating' }));
     await s.hit('k', 3, 1);
+    await s.hit('k2', 3, 1, 2);
     expect(new Set(doc.sent)).toEqual(new Set(['GetCommand', 'PutCommand']));
   });
 });

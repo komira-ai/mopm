@@ -53,7 +53,7 @@
 //!       The last step, after publish (tools/bump_internal.zig): opens the pull request that moves the
 //!       internal repository's submodule to --sha, as the release bot, with auto-merge. Needs `git` as well
 //!       as `gh` (--git <path>), and GH_TOKEN in the environment (never an argument). Idempotent.
-//!   cut_release tap --version <v> --formula-file <file> --tap-repo <owner/name> --formula <name> --workdir <dir>
+//!   cut_release tap --version <v> --formula-file <file> --tap-repo <owner/name> --formula <name> [--asset <stem>] --workdir <dir>
 //!       The stage after publish (tools/tap.zig): opens the pull request in the Homebrew tap that adds or updates
 //!       Formula/<name>.rb with the formula `channels formula` rendered from the verified SHA256SUMS, as the release
 //!       bot, and asks for auto-merge with squash (a tap without required checks refuses it: the pull request then
@@ -76,7 +76,7 @@ fn die(comptime fmt: []const u8, args: anytype) noreturn {
 }
 
 fn usage() noreturn {
-    die("usage: cut_release [--gh <path>] [--cosign <path>] [--cosign-retry-ms <n>] [--cosign-wait-budget-ms <n>] [--repo <owner/name>] plan [--sha <commit>] | tag --sha <commit> [--expect-version <v>] | verify-dir <version> <dir> --sha <commit> --source-ref <ref> --trigger <push|workflow_dispatch> | verify <version> <dir> | publish <version> <dir> --verified <file> --notes <file> | bump-internal --version <v> --sha <commit> --internal-repo <owner/name> --submodule <name> --workdir <dir> [--git <path>] | tap --version <v> --formula-file <file> --tap-repo <owner/name> --formula <name> --workdir <dir> [--git <path>]", .{});
+    die("usage: cut_release [--gh <path>] [--cosign <path>] [--cosign-retry-ms <n>] [--cosign-wait-budget-ms <n>] [--repo <owner/name>] plan [--sha <commit>] | tag --sha <commit> [--expect-version <v>] | verify-dir <version> <dir> --sha <commit> --source-ref <ref> --trigger <push|workflow_dispatch> | verify <version> <dir> | publish <version> <dir> --verified <file> --notes <file> | bump-internal --version <v> --sha <commit> --internal-repo <owner/name> --submodule <name> --workdir <dir> [--git <path>] | tap --version <v> --formula-file <file> --tap-repo <owner/name> --formula <name> [--asset <stem>] --workdir <dir> [--git <path>]", .{});
 }
 
 fn out(comptime fmt: []const u8, args: anytype) void {
@@ -886,6 +886,7 @@ pub fn main() !void {
     var workdir: ?[]const u8 = null;
     var tap_repo: ?[]const u8 = null;
     var formula_name: ?[]const u8 = null;
+    var asset: []const u8 = "";
     var formula_file: ?[]const u8 = null;
     var pos = std.ArrayList([]const u8).init(a);
     var i: usize = 1;
@@ -920,6 +921,8 @@ pub fn main() !void {
                 tap_repo = v;
             } else if (std.mem.eql(u8, arg, "--formula")) {
                 formula_name = v;
+            } else if (std.mem.eql(u8, arg, "--asset")) {
+                asset = v;
             } else if (std.mem.eql(u8, arg, "--formula-file")) {
                 formula_file = v;
             } else if (std.mem.eql(u8, arg, "--expect-version")) {
@@ -992,6 +995,7 @@ pub fn main() !void {
             .repo = repo,
             .tap_repo = tap_repo orelse usage(),
             .formula = formula_name orelse usage(),
+            .asset = asset,
             .version = bump_version orelse usage(),
             .formula_file = formula_file orelse usage(),
             .workdir = workdir orelse usage(),
