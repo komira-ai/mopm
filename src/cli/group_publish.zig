@@ -42,6 +42,8 @@ const usage =
 pub const default_wait_secs: i64 = 600;
 /// The most times one create is repeated while the registry answers `reserving`.
 pub const max_reserving_rounds: usize = 50;
+/// The registry signs upload URLs for 300 seconds. A URL older than this is not used: the run asks for fresh ones first.
+pub const url_refresh_secs: i64 = 240;
 
 pub const Flags = struct {
     staged: []const u8,
@@ -233,6 +235,8 @@ pub const Publisher = struct {
     wait_secs: i64,
     state: plan_mod.State,
     group_status: ?[]const u8 = null,
+    /// When the registry last signed the upload URLs in hand (`net.now()` at the create that returned them).
+    urls_signed_at: i64 = 0,
     failure: ?Failure = null,
     /// Seconds the registry asked the client to wait, when it answered 429.
     retry_after: ?u32 = null,
@@ -346,7 +350,10 @@ pub const Publisher = struct {
                 p.console.fail("the registry named a group id that is not one: {s}\n", .{made.group_id});
                 return error.Failed;
             }
-            if (made.reserving == null) return made;
+            if (made.reserving == null) {
+                p.urls_signed_at = p.net.now();
+                return made;
+            }
             p.console.say("reserving: {d} of {d} members\n", .{ made.reserving.?.done, made.reserving.?.total });
         }
         p.console.fail("the registry is still reserving the members after {d} requests\n", .{max_reserving_rounds});
@@ -384,33 +391,62 @@ pub const Publisher = struct {
     }
 
     /// PUTs every file the registry does not hold, member by member in the plan's order.
-    fn upload(p: *Publisher, answer: CreateAnswer) Stop!void {
+    fn upload(p: *Publisher, first: CreateAnswer) Stop!void {
+        var answer = first;
         var held: usize = 0;
         for (p.plan.members) |m| {
             if (m.action != .upload) continue;
-            const am = findMember(answer, m.name, m.version) orelse {
-                p.console.fail("the registry's answer has no reservation for {s} {s}\n", .{ m.name, m.version });
-                return error.Failed;
-            };
             for (m.files) |f| {
-                const af = findFile(am, f) orelse {
-                    p.console.fail("the registry's answer has no upload for {s}/{s} of {s}\n", .{ f.subdir, f.filename, m.name });
-                    return error.Failed;
-                };
                 const key = try std.fmt.allocPrint(p.arena, "{s}/{s}/{s}", .{ m.name, f.subdir, f.filename });
+                // The URLs expire; a long run asks for fresh ones before the old ones are about to lapse.
+                if (p.net.now() - p.urls_signed_at >= url_refresh_secs) answer = try p.refresh(answer);
+                var af = try p.answerFor(answer, m, f);
                 if (af.uploaded) {
                     held += 1;
                     try p.markUploaded(key);
                     continue;
                 }
-                try p.put(m, f, af);
+                // A storage refusal (HTTP 403) is how an expired URL answers: ask for fresh URLs and try once more.
+                if (!try p.put(m, f, af, true)) {
+                    answer = try p.refresh(answer);
+                    af = try p.answerFor(answer, m, f);
+                    if (af.uploaded) {
+                        held += 1;
+                        try p.markUploaded(key);
+                        continue;
+                    }
+                    _ = try p.put(m, f, af, false);
+                }
                 try p.markUploaded(key);
             }
         }
         if (held > 0) p.console.say("{d} file(s) were already in the registry's storage\n", .{held});
     }
 
-    fn put(p: *Publisher, m: plan_mod.Member, f: plan_mod.File, af: FileAnswer) Stop!void {
+    fn answerFor(p: *Publisher, answer: CreateAnswer, m: plan_mod.Member, f: plan_mod.File) Stop!FileAnswer {
+        const am = findMember(answer, m.name, m.version) orelse {
+            p.console.fail("the registry's answer has no reservation for {s} {s}\n", .{ m.name, m.version });
+            return error.Failed;
+        };
+        return findFile(am, f) orelse {
+            p.console.fail("the registry's answer has no upload for {s}/{s} of {s}\n", .{ f.subdir, f.filename, m.name });
+            return error.Failed;
+        };
+    }
+
+    /// Asks again for the same group: for a group still open the registry writes nothing, signs the URLs anew and
+    /// reports the files it already holds as uploaded.
+    fn refresh(p: *Publisher, old: CreateAnswer) Stop!CreateAnswer {
+        const made = try p.create();
+        if (!std.mem.eql(u8, made.group_id, old.group_id) or !std.mem.eql(u8, made.status, "open")) {
+            p.console.fail("asking for fresh upload URLs of group {s}, the registry answered group {s} in the state '{s}'; run the same command again to resume\n", .{ old.group_id, made.group_id, made.status });
+            return error.Failed;
+        }
+        return made;
+    }
+
+    /// PUTs one file. With `may_retry`, a 403 is not a failure but a `false`: the caller refreshes the URLs and tries again.
+    fn put(p: *Publisher, m: plan_mod.Member, f: plan_mod.File, af: FileAnswer, may_retry: bool) Stop!bool {
         const url = af.put_url orelse {
             p.console.fail("the registry gave no upload URL for {s} of {s}\n", .{ f.filename, m.name });
             return error.Failed;
@@ -433,11 +469,13 @@ pub const Publisher = struct {
             return error.Failed;
         };
         if (r.status == 429) return p.refuse(r);
+        if (r.status == 403 and may_retry) return false;
         if (!r.ok()) {
             p.console.fail("uploading {s} failed: the storage answered HTTP {d}; run the same command again to resume group {s}\n", .{ f.filename, r.status, p.state.group_id });
             return error.Failed;
         }
         p.console.say("uploaded {s} ({s}) of {s}\n", .{ f.filename, f.subdir, m.name });
+        return true;
     }
 
     fn commit(p: *Publisher) Stop!void {
