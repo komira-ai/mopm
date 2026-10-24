@@ -71,6 +71,13 @@ export interface GroupJobMessage {
 
 /** Members saved to the header at a time. A crash loses at most this many members' work, which is repeated harmlessly. */
 const FLUSH_EVERY = 8;
+
+/**
+ * The latest an invocation may be able to finish a member, in milliseconds: the Lambda's 300 s timeout less 20 s for saving and
+ * queueing the continuation. A member is started only when it could take twice as long as the slowest one this invocation has
+ * seen and still end by then; a timeout loses the unsaved members and hides the message for the queue's whole visibility timeout.
+ */
+const SAFE_END_MS = 280_000;
 const PARALLEL = 16;
 const sha256Hex = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
 
@@ -104,6 +111,10 @@ class GroupJob {
   private members!: GroupMembers;
   /** Members started in this invocation: it always starts at least one, so every invocation makes progress. */
   private startedMembers = 0;
+  /** The longest a member took in this invocation (0 until one has been timed; the first member is always started, so it is timed before it is read). */
+  private slowest = 0;
+  /** The clock at the last check; before the first member, the invocation's start. */
+  private lastCheck = 0;
 
   constructor(
     private readonly d: GroupValidatorDeps,
@@ -113,6 +124,7 @@ class GroupJob {
     this.clock = d.clock ?? (() => performance.now());
     this.log = d.log ?? ((l) => console.log(JSON.stringify(l)));
     this.began = this.clock();
+    this.lastCheck = this.began;
     this.gid = msg.group_id;
   }
 
@@ -407,7 +419,13 @@ class GroupJob {
   }
 
   private overBudget(): boolean {
-    return this.startedMembers > 0 && this.clock() - this.began >= this.d.config.groupBudgetMs;
+    if (this.startedMembers === 0) return false;
+    const at = this.clock();
+    // The time since the last check is the member started then (with its periodic save, if it had one): the longest is the one to fear.
+    this.slowest = Math.max(this.slowest, at - this.lastCheck);
+    this.lastCheck = at;
+    const elapsed = at - this.began;
+    return elapsed >= this.d.config.groupBudgetMs || elapsed + 2 * this.slowest > SAFE_END_MS;
   }
 
   // --- the rows -----------------------------------------------------------------------------------------------------
