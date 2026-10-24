@@ -817,8 +817,14 @@ test "advisories.yml: report only, a finding is never a failure" {
     try expectAdvisories("    timeout-minutes: 15\n", "    timeout-minutes: 15\n    continue-on-error: true\n", &.{"job scan: continue-on-error is not allowed"});
     try expectAdvisories("      - name: Install Zig 0.12.0 (sha256-pinned)\n", "      - name: Install Zig 0.12.0 (sha256-pinned)\n        continue-on-error: true\n", &.{"continue-on-error is not allowed"});
     try expectAdvisories("cat \"$body\" >> \"$GITHUB_STEP_SUMMARY\"", "cat \"$body\"", &.{"findings must go to the job summary"});
-    try expectAdvisories("gh issue create --title Advisories", "gh issue create --title Other", &.{"findings must go to one issue titled Advisories"});
+    try expectAdvisories("gh issue create --title Advisories", "gh issue create --title Other", &.{ "findings must go to one issue titled Advisories", "must be created with `--label advisory`" });
     try expectAdvisories("gh issue close \"$number\"", "gh issue view \"$number\"", &.{"closed when there are no findings"});
+}
+
+test "advisories.yml: the issue carries the advisory label, created before use and kept on update" {
+    try expectAdvisories("gh issue create --title Advisories --label advisory ", "gh issue create --title Advisories ", &.{"must be created with `--label advisory`"});
+    try expectAdvisories("--add-label advisory ", "", &.{"must keep the label on update"});
+    try expectAdvisories("gh label create advisory --force ", "gh label create other --force ", &.{"label must be ensured before it is used"});
 }
 
 test "advisories.yml: set +e before the scanner and set -e after it (bash -e would turn findings red)" {
