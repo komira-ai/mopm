@@ -13,7 +13,7 @@
 # actionlint (exact release, sha256 constant, refuses on a mismatch). `npm audit` needs node and npm on the runner, and
 # `cargo audit` is a crate to build or a second download to pin; neither adds anything here. No third-party action.
 #
-# Where findings go: the job summary, and ONE issue titled `Advisories` (created or updated while there are findings,
+# Where findings go: the job summary, and ONE issue titled `Advisories` and labelled `advisory` (created or updated while there are findings,
 # reopened if it was closed, closed when there are none). A finding is never an exit code. The job fails only when the
 # scan cannot run: the download does not match its sha256, or osv-scanner exits with more than 1 (0 = clean,
 # 1 = vulnerabilities found). That red appears on this scheduled run alone.
@@ -104,10 +104,11 @@ jobs:
           fi
           if [ "$listed" = 1 ]; then
             if [ "$count" -gt 0 ]; then
+              gh label create advisory --force --color fbca04 --description "Findings of the daily lockfile scan" || echo "::warning::could not ensure the advisory label"
               if [ -z "$number" ]; then
-                gh issue create --title Advisories --body-file "$body" || echo "::warning::could not create the Advisories issue"
+                gh issue create --title Advisories --label advisory --body-file "$body" || echo "::warning::could not create the Advisories issue"
               else
-                gh issue edit "$number" --body-file "$body" || echo "::warning::could not update the Advisories issue"
+                gh issue edit "$number" --add-label advisory --body-file "$body" || echo "::warning::could not update the Advisories issue"
                 if [ "$state" = CLOSED ]; then
                   gh issue reopen "$number" || echo "::warning::could not reopen the Advisories issue"
                 fi

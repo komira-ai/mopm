@@ -8,8 +8,8 @@
 `zig_coverage(name = "coverage", test_targets = [...], expect = [...])` runs each `zig_test` named in `test_targets` again, as the same compile and the same
 environment (its root, target, data and tools), but built with block counters and under kcov (tools/zig_cover.zig, one action per test), and
 folds the reports of all of them into `coverage.txt`: lines hit and recorded per file, then the same for blocks, and the totals over `expect`, the
-package's own sources. `<name>_floor` holds that text to the package's `coverage_floor.txt` (tools/cov_floor.zig), both ways: a fall fails, and so
-does a rise that the floor has not been raised to.
+package's own sources. `<name>_floor` holds that text to the package's `coverage_floor.txt` (tools/cov_floor.zig), as a minimum: a fall fails, and a figure above the floor
+passes with a hint that the floor may be raised.
 
 Block counters need the zig 0.15 of `rules/pins:zig_next` (0.12 has no `-ffuzz`); a package whose tests are built by 0.12 sets `blocks = False` and has lines
 only. linux x86_64 only.
