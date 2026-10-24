@@ -52,11 +52,11 @@ export class MemoryPublishStore implements PublishStore {
     this.publishes.set(id, copy({ ...next, rev: cur.rev + 1 }));
     return copy(this.publishes.get(id)!);
   }
-  async hit(key: string, limit: number) {
-    const n = this.counters.get(key) ?? 0;
-    if (n >= limit) return { ok: false, count: n };
-    this.counters.set(key, n + 1);
-    return { ok: true, count: n + 1 };
+  async hit(key: string, limit: number, _expiresAt?: number, n = 1) {
+    const count = this.counters.get(key) ?? 0;
+    if (count + n > limit) return { ok: false, count };
+    this.counters.set(key, count + n);
+    return { ok: true, count: count + n };
   }
 }
 

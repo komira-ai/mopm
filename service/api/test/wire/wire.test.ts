@@ -32,7 +32,7 @@ import { DynamoFlags } from '../../src/publish/flags';
  */
 
 const DIR = path.join(__dirname, '..', 'fixtures', 'wire');
-const FILES = ['auth.json', 'flags.json', 'publish.json', 'store.json'];
+const FILES = ['auth.json', 'flags.json', 'group.json', 'publish.json', 'store.json'];
 const FIXED_NOW = '2026-10-01T00:00:00.000Z';
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
@@ -81,8 +81,11 @@ class Recorder {
     const target = String(req.headers['x-amz-target'] ?? req.headers['X-Amz-Target']).split('.').pop()!;
     const body = JSON.parse(String(req.body));
     if (target === 'TransactWriteItems') {
-      expect(String(body.ClientRequestToken)).toMatch(UUID);
-      body.ClientRequestToken = '<uuid>';
+      // A transaction the adapter gives no token gets a UUID from the SDK, which differs on every run. The group commit
+      // sets its own: 32 hex characters, the same for the same group and attempt, so it stays in the golden as it is.
+      const token = String(body.ClientRequestToken);
+      expect(token).toMatch(/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32})$/);
+      if (UUID.test(token)) body.ClientRequestToken = '<uuid>';
     }
     this.requests.push({ target, body });
     const r = wireReply(this.replies.shift() ?? {});
