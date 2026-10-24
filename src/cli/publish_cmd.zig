@@ -234,6 +234,13 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
         },
         error.OutOfMemory => return error.OutOfMemory,
     };
+    const native_deps = conda.nativeDepsOf(arena, m, &why) catch |e| switch (e) {
+        error.Unpackable => {
+            err("{s}: {s}\n", .{ f.manifest, why });
+            return null;
+        },
+        error.OutOfMemory => return error.OutOfMemory,
+    };
 
     const native_files = switch (try nativeFiles(arena, m, f)) {
         .ok => |files| files,
@@ -259,6 +266,7 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
             .compiler = f.compiler,
             .subdir = entry.subdir,
             .deps = deps,
+            .native_deps = native_deps,
             .mojoc = bytes,
             .natives = native_files.get(entry.subdir) orelse &.{},
         });
