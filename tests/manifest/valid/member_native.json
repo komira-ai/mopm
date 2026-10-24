@@ -1,0 +1,25 @@
+{
+  "package": {
+    "name": "zlib_sys",
+    "version": "1.3.1",
+    "description": null,
+    "license": null,
+    "repository": null,
+    "readme": null
+  },
+  "toolchain": {
+    "mojo": ["1.0.0"]
+  },
+  "dependencies": [],
+  "dev-dependencies": [],
+  "native-dependencies": [],
+  "native": [
+    {"id": "zlib_sys", "kind": "static", "mode": "link", "build": null, "outputs": [], "needs": ["libc_sys.a"], "soname": "libz_sys.a", "srcs": ["native/*.c", "native/impl/**/*.c"], "hdrs": ["native/*.h"], "cflags": ["-O2", "-DZLIB_CONST"], "includes": ["native", "."], "cflags_by_os": {"linux": ["-D_LARGEFILE64_SOURCE=1"], "macos": ["-DHAVE_UNISTD_H"]}},
+    {"id": "plain_shim", "kind": "static", "mode": "link", "build": null, "outputs": [], "srcs": ["shim.c"], "cflags_by_os": {"macos": ["-DAPPLE"]}}
+  ],
+  "targets": {
+    "lib": null,
+    "bins": [],
+    "tests": []
+  }
+}

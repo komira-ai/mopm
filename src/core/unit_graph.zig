@@ -23,8 +23,10 @@ const test_harness = @import("test_harness.zig");
 const resolve = @import("resolve.zig");
 const semver = @import("semver.zig");
 const metadata = @import("metadata.zig");
+const native_files = @import("native_files.zig");
 
-pub const format_version: u32 = 1;
+/// 2: a `native` unit, and a `built` entry (no `sha256`) in `natives`, for a workspace member's own native libraries.
+pub const format_version: u32 = 2;
 
 pub const Src = struct { path: []const u8, sha256: []const u8 };
 /// A native library in a unit's dependency closure: pinned by `sha256`, from `package`. `kind`, `needs` and `exclusive`
@@ -32,11 +34,15 @@ pub const Src = struct { path: []const u8, sha256: []const u8 };
 pub const NativeRef = struct {
     id: []const u8,
     soname: []const u8,
-    sha256: []const u8,
+    /// Empty for a `built` native: its archive is a product of this build, so no hash can be known before it.
+    sha256: []const u8 = "",
     package: []const u8,
     kind: metadata.Kind = .shared,
     needs: []const []const u8 = &.{},
     exclusive: []const u8 = "",
+    /// The id of the `native` unit (`native:<package>/<id>`) that builds this library, for a workspace member's own
+    /// native; empty for a prebuilt one, which `sha256` pins.
+    built: []const u8 = "",
 };
 /// A prebuilt unit's download: the `.conda` holding its `.mojoc`.
 pub const Archive = struct { url: []const u8, sha256: []const u8, size: u64 };
@@ -46,11 +52,20 @@ pub const Unit = struct {
     id: []const u8,
     package: []const u8,
     version: []const u8,
-    /// `lib`, `test`, `bin` or `prebuilt`.
+    /// `lib`, `test`, `bin`, `prebuilt` or `native`.
     kind: []const u8,
     /// lib: the package directory, relative to the workspace.
     root: []const u8 = "",
+    /// native: the archive's file name.
+    soname: []const u8 = "",
     srcs: []const Src = &.{},
+    /// native: the headers, the flags (common, then per OS), the include directories (relative to the member) and
+    /// the sonames of the libraries this one needs.
+    hdrs: []const Src = &.{},
+    cflags: []const []const u8 = &.{},
+    cflags_by_os: manifest.OsFlags = .{},
+    includes: []const []const u8 = &.{},
+    needs: []const []const u8 = &.{},
     deps: []const []const u8 = &.{},
     natives: []const NativeRef = &.{},
     /// prebuilt: the `.conda` and the `.mojoc` inside it.
@@ -216,6 +231,8 @@ const Builder = struct {
     in: Input,
     why: *[]const u8,
     units: std.ArrayList(Unit),
+    /// The natives a workspace member builds, by package name: what its units link (see `addNatives`).
+    member_natives: std.StringHashMap([]const NativeRef),
     closure: []const u8 = "",
 
     fn fail(b: *Builder, comptime fmt: []const u8, args: anytype) (Refused || Allocator.Error) {
@@ -372,6 +389,71 @@ const Builder = struct {
         });
     }
 
+    /// The files `patterns` of `[native.<id>]` `what` name below the member, as sources of the graph (paths relative
+    /// to the workspace, sorted), or a refusal naming the pattern that matches nothing.
+    fn nativeFiles(b: *Builder, file: []const u8, id: []const u8, what: []const u8, member_rel: []const u8, patterns: []const []const u8) ![]const Src {
+        const root = try std.fs.path.join(b.arena, &.{ b.in.dir, member_rel });
+        const found = try native_files.expand(b.arena, root, patterns);
+        const files = switch (found) {
+            .files => |f| f,
+            .unmatched => |pat| return b.fail("{s}: {s} \"{s}\" of [native.{s}] matches no file", .{ file, what, pat, id }),
+            .link => |pat| return b.fail("{s}: {s} \"{s}\" of [native.{s}] is a symbolic link or passes through one; a unit graph reads the files of the member itself", .{ file, what, pat, id }),
+        };
+        var out = std.ArrayList(Src).init(b.arena);
+        for (files) |f| try out.append(try b.src(try b.join(member_rel, f)));
+        return out.items;
+    }
+
+    /// A workspace member's own natives (`[native.<id>]` of its mopm.toml `file`): one `native` unit each, which the
+    /// build system builds, and the entries that the member's units, and those of every package that depends on it,
+    /// list in `natives` as `built`. Only a static archive made from `srcs` can be built; the others are refused,
+    /// so that a native is never dropped from a graph without a word.
+    fn addNatives(b: *Builder, m: manifest.Manifest, member_rel: []const u8, file: []const u8) !void {
+        if (m.native.len == 0) return;
+        var refs = std.ArrayList(NativeRef).init(b.arena);
+        for (m.native) |n| {
+            if (n.kind != .static) {
+                return b.fail("{s}: [native.{s}] is kind = \"{s}\"; a unit graph builds a member's native as a static archive only (kind = \"static\")", .{ file, n.id, @tagName(n.kind) });
+            }
+            if (n.mode != .link) {
+                return b.fail("{s}: [native.{s}] is mode = \"load\"; a static archive is linked, not loaded", .{ file, n.id });
+            }
+            if (n.srcs.len == 0) {
+                return b.fail("{s}: [native.{s}] has no srcs; a unit graph builds a member's native from its C sources", .{ file, n.id });
+            }
+            const soname = try n.archiveName(b.arena);
+            const srcs = try b.nativeFiles(file, n.id, "srcs", member_rel, n.srcs);
+            const hdrs = try b.nativeFiles(file, n.id, "hdrs", member_rel, n.hdrs);
+            for (srcs) |s| {
+                for (hdrs) |h| {
+                    if (std.mem.eql(u8, s.path, h.path)) return b.fail("{s}: {s} is named by both srcs and hdrs of [native.{s}]", .{ file, s.path, n.id });
+                }
+            }
+            const includes = if (n.includes.len > 0) n.includes else blk: {
+                var rels = std.ArrayList([]const u8).init(b.arena);
+                for (hdrs) |h| try rels.append(if (member_rel.len == 0) h.path else h.path[member_rel.len + 1 ..]);
+                break :blk try native_files.dirsOf(b.arena, rels.items);
+            };
+            const id = try std.fmt.allocPrint(b.arena, "native:{s}/{s}", .{ m.package.name, n.id });
+            try b.units.append(.{
+                .id = id,
+                .package = m.package.name,
+                .version = m.package.version,
+                .kind = "native",
+                .soname = soname,
+                .srcs = srcs,
+                .hdrs = hdrs,
+                .cflags = n.cflags,
+                .cflags_by_os = n.cflags_by_os,
+                .includes = includes,
+                .needs = n.needs,
+                .outputs = try b.arena.dupe([]const u8, &.{soname}),
+            });
+            try refs.append(.{ .id = n.id, .soname = soname, .package = m.package.name, .kind = .static, .needs = n.needs, .exclusive = n.exclusive, .built = id });
+        }
+        try b.member_natives.put(m.package.name, refs.items);
+    }
+
     /// The unit ids of dependencies named in `names`, in order.
     fn depIds(b: *Builder, owner: []const u8, names: []const []const u8) ![]const []const u8 {
         var out = std.ArrayList([]const u8).init(b.arena);
@@ -403,6 +485,7 @@ const Builder = struct {
             try b.checkBelow("the library of a path dependency", lib_rel);
             try b.checkInside("the library of a path dependency", mp, lib_rel);
             try b.addLib(pm, mp, ids, lib_rel);
+            try b.addNatives(pm, mp, file);
             return;
         }
         // A registry package: a prebuilt .mojoc for the consumer's Mojo,
@@ -434,7 +517,9 @@ const Builder = struct {
     fn natives(b: *Builder) !void {
         var index = std.StringHashMap(usize).init(b.arena);
         for (b.units.items, 0..) |u, i| try index.put(u.id, i);
-        for (b.units.items, 0..) |_, i| {
+        for (b.units.items, 0..) |start, i| {
+            // A `native` unit is built, not linked: it lists no natives.
+            if (std.mem.eql(u8, start.kind, "native")) continue;
             var found = std.ArrayList(NativeRef).init(b.arena);
             var seen = std.StringHashMap(void).init(b.arena);
             var todo = std.ArrayList(usize).init(b.arena);
@@ -448,6 +533,13 @@ const Builder = struct {
                     for (p.native) |n| {
                         const sha = n.sha256 orelse return b.fail("{s} {s}: its native library {s} ({s}) has no sha256 in mopm.lock; a unit graph takes only pinned natives", .{ p.name, p.version, n.id, n.soname });
                         try found.append(.{ .id = n.id, .soname = n.soname, .sha256 = sha, .package = p.name, .kind = n.kind, .needs = n.needs, .exclusive = n.exclusive });
+                    }
+                } else if (b.member_natives.get(u.package)) |built| {
+                    // A member's lib, tests and binaries all link its natives; each is listed once.
+                    for (built) |n| {
+                        var have = false;
+                        for (found.items) |f| have = have or std.mem.eql(u8, f.built, n.built);
+                        if (!have) try found.append(n);
                     }
                 }
                 for (u.deps) |d| {
@@ -476,6 +568,14 @@ const Builder = struct {
             for (found[i + 1 ..]) |m| {
                 if (std.mem.eql(u8, n.exclusive, m.exclusive)) {
                     return b.fail("{s}: native libraries {s} of {s} and {s} of {s} are both in exclusive group {s}; a unit links one library of a group", .{ owner, n.soname, n.package, m.soname, m.package, n.exclusive });
+                }
+            }
+        }
+        // The natives directory holds one file per soname: a built archive cannot share its name with another library.
+        for (found, 0..) |n, i| {
+            for (found[i + 1 ..]) |m| {
+                if ((n.built.len > 0 or m.built.len > 0) and std.mem.eql(u8, n.soname, m.soname)) {
+                    return b.fail("{s}: native library {s} of {s} ({s}) and {s} of {s} ({s}) have one name; a unit links one library of a name", .{ owner, n.soname, n.package, n.id, m.soname, m.package, m.id });
                 }
             }
         }
@@ -549,6 +649,14 @@ const Builder = struct {
             h.update("\n");
             h.update(b.units.items[di].key);
         }
+        // A built archive is linked into this unit: when its sources, headers or flags change, so does the result.
+        for (b.units.items[i].natives) |n| {
+            if (n.built.len == 0) continue;
+            const ni =index.get(n.built) orelse return b.fail("{s} links {s}, which is no unit", .{ b.units.items[i].id, n.built });
+            try b.keyOf(ni, index, state);
+            h.update("\nnative ");
+            h.update(b.units.items[ni].key);
+        }
         var d: [32]u8 = undefined;
         h.final(&d);
         const hex = std.fmt.bytesToHex(d, .lower);
@@ -565,7 +673,7 @@ const Builder = struct {
 /// the lock, the toolchain or the sources cannot make one. Reads the member
 /// sources below `in.dir`; no network, no run of any program.
 pub fn build(arena: Allocator, in: Input, why: *[]const u8) !Graph {
-    var b = Builder{ .arena = arena, .in = in, .why = why, .units = std.ArrayList(Unit).init(arena) };
+    var b = Builder{ .arena = arena, .in = in, .why = why, .units = std.ArrayList(Unit).init(arena), .member_natives = std.StringHashMap([]const NativeRef).init(arena) };
     const tc = if (in.toolchain) |t| t else toolchainFor(arena, in.mojo, in.subdir, why) catch |e| switch (e) {
         error.BadPins => return refuse(arena, why, "the toolchain pins compiled into this mopm are unreadable", .{}),
         else => |x| return x,
@@ -611,6 +719,7 @@ pub fn build(arena: Allocator, in: Input, why: *[]const u8) !Graph {
         try b.addLib(m, in.pkg, dep_ids, lr);
         lib_id = b.units.items[b.units.items.len - 1].id;
     }
+    try b.addNatives(m, in.pkg, try b.join(in.pkg, "mopm.toml"));
     var bin_deps = std.ArrayList([]const u8).init(arena);
     if (lib_id) |id| try bin_deps.append(id) else try bin_deps.appendSlice(dep_ids);
     for (m.targets.bins) |bin| {
@@ -688,6 +797,20 @@ fn strList(w: anytype, items: []const []const u8) !void {
     try w.writeAll("]");
 }
 
+/// `"<key>": [{"path": ..., "sha256": ...}, ...]` on its own lines (after a comma); nothing for no sources.
+fn srcList(w: anytype, ind: []const u8, key: []const u8, items: []const Src) !void {
+    if (items.len == 0) return;
+    try w.print(",\n{s}  \"{s}\": [", .{ ind, key });
+    for (items, 0..) |s, i| {
+        try w.print("{s}\n{s}    {{\"path\": ", .{ if (i == 0) "" else ",", ind });
+        try str(w, s.path);
+        try w.writeAll(", \"sha256\": ");
+        try str(w, s.sha256);
+        try w.writeAll("}");
+    }
+    try w.print("\n{s}  ]", .{ind});
+}
+
 /// One unit as an object, indented by `ind` (the object's own indent); the
 /// key is printed only when set.
 pub fn writeUnit(w: anytype, u: Unit, ind: []const u8) !void {
@@ -703,16 +826,39 @@ pub fn writeUnit(w: anytype, u: Unit, ind: []const u8) !void {
         try w.print(",\n{s}  \"root\": ", .{ind});
         try str(w, u.root);
     }
-    if (u.srcs.len > 0) {
-        try w.print(",\n{s}  \"srcs\": [", .{ind});
-        for (u.srcs, 0..) |s, i| {
-            try w.print("{s}\n{s}    {{\"path\": ", .{ if (i == 0) "" else ",", ind });
-            try str(w, s.path);
-            try w.writeAll(", \"sha256\": ");
-            try str(w, s.sha256);
+    const is_native = std.mem.eql(u8, u.kind, "native");
+    if (is_native) {
+        try w.print(",\n{s}  \"soname\": ", .{ind});
+        try str(w, u.soname);
+    }
+    try srcList(w, ind, "srcs", u.srcs);
+    if (is_native) {
+        try srcList(w, ind, "hdrs", u.hdrs);
+        if (u.cflags.len > 0) {
+            try w.print(",\n{s}  \"cflags\": ", .{ind});
+            try strList(w, u.cflags);
+        }
+        if (u.cflags_by_os.linux.len > 0 or u.cflags_by_os.macos.len > 0) {
+            try w.print(",\n{s}  \"cflags_by_os\": {{", .{ind});
+            if (u.cflags_by_os.linux.len > 0) {
+                try w.writeAll("\"linux\": ");
+                try strList(w, u.cflags_by_os.linux);
+            }
+            if (u.cflags_by_os.macos.len > 0) {
+                if (u.cflags_by_os.linux.len > 0) try w.writeAll(", ");
+                try w.writeAll("\"macos\": ");
+                try strList(w, u.cflags_by_os.macos);
+            }
             try w.writeAll("}");
         }
-        try w.print("\n{s}  ]", .{ind});
+        if (u.includes.len > 0) {
+            try w.print(",\n{s}  \"includes\": ", .{ind});
+            try strList(w, u.includes);
+        }
+        if (u.needs.len > 0) {
+            try w.print(",\n{s}  \"needs\": ", .{ind});
+            try strList(w, u.needs);
+        }
     }
     if (u.artifact) |c| {
         try w.print(",\n{s}  \"artifact\": {{\"url\": ", .{ind});
@@ -730,8 +876,10 @@ pub fn writeUnit(w: anytype, u: Unit, ind: []const u8) !void {
         try str(w, n.id);
         try w.writeAll(", \"soname\": ");
         try str(w, n.soname);
-        try w.writeAll(", \"sha256\": ");
-        try str(w, n.sha256);
+        if (n.sha256.len > 0) {
+            try w.writeAll(", \"sha256\": ");
+            try str(w, n.sha256);
+        }
         try w.writeAll(", \"package\": ");
         try str(w, n.package);
         // Left out when they are what a lock written before them means, so such a graph (and each key) is what it was.
@@ -743,6 +891,10 @@ pub fn writeUnit(w: anytype, u: Unit, ind: []const u8) !void {
         if (n.exclusive.len > 0) {
             try w.writeAll(", \"exclusive\": ");
             try str(w, n.exclusive);
+        }
+        if (n.built.len > 0) {
+            try w.writeAll(", \"built\": ");
+            try str(w, n.built);
         }
         try w.writeAll("}");
     }
@@ -946,7 +1098,7 @@ const id_util = "util@0.3.0#mojo1.0.0/lib";
 
 const golden_1_0_0 =
     \\{
-    \\  "unit_graph": 1,
+    \\  "unit_graph": 2,
     \\  "package": "app@1.0.0",
     \\  "mojo": "1.0.0",
     \\  "toolchain": {
@@ -1561,6 +1713,450 @@ test "two natives of one exclusive group in a unit's closure are refused, naming
     try std.testing.expectEqual(@as(usize, 2), one.units[one.find(id_app).?].natives.len);
 }
 
+// ------------------------------------------------------- a member's own natives
+
+const c_app = "int app_shim(void) { return 1; }\n";
+const h_app = "int app_shim(void);\n";
+const c_util = "int util_shim(void) { return 7; }\n";
+const h_util = "int util_shim(void);\n";
+const main_src = "def main():\n    pass\n";
+
+const id_bin = "app@1.0.0#mojo1.0.0/bin:appbin";
+const id_crypto = "crypto_sys@1.39.0#mojo1.0.0/lib";
+const id_native_app = "native:app/app_shim";
+const id_native_util = "native:util/util_shim";
+
+const toml_bin = "\n[targets]\nbins = [{ name = \"appbin\", path = \"src/main.mojo\" }]\n";
+const toml_crypto_dep = "crypto_sys = \"1\"\n";
+/// app's own native, with flags for every OS and one OS each, and no needs.
+const toml_app_alone = "\n[native.app_shim]\nkind = \"static\"\nsrcs = [\"native/*.c\"]\nhdrs = [\"native/*.h\"]\ncflags = [\"-O2\"]\ncflags_by_os = { linux = [\"-DLINUX\"], macos = [\"-DMACOS\"] }\n";
+/// app's own native, which needs the native of util.
+const toml_app_needs_util = "\n[native.app_shim]\nkind = \"static\"\nsrcs = [\"native/*.c\"]\nhdrs = [\"native/*.h\"]\nneeds = [\"libutil_shim.a\"]\n";
+/// util's native, which needs a prebuilt archive; its include directories are given.
+const toml_util_native = toml_util ++ "\n[native.util_shim]\nkind = \"static\"\nsrcs = [\"native/*.c\"]\nhdrs = [\"native/*.h\"]\ncflags = [\"-O2\"]\nincludes = [\"native\", \"extra\"]\nneeds = [\"libcrypto_sys.a\"]\n";
+
+/// crypto_sys (a prebuilt archive in the group libcrypto) and util, which is a member that depends on it.
+const lock_member_chain =
+    \\{
+    \\  "lock_version": 1,
+    \\  "toolchain": {"mojo": "1.0.0"},
+    \\  "channels": ["https://conda.mopm.dev/"],
+    \\  "packages": [
+    \\    {"name": "crypto_sys", "version": "1.39.0", "build": "mojo1.0.0_0", "subdir": "linux-64", "channel": "https://conda.mopm.dev/",
+    \\     "url": "https://conda.mopm.dev/linux-64/mojo-crypto_sys-1.39.0-mojo1.0.0_0.conda", "sha256": "@A@", "size": 1000, "mojo": "1.0.0",
+    \\     "native": [{"id": "crypto_sys", "soname": "libcrypto_sys.a", "sha256": "@N@", "kind": "static", "exclusive": "libcrypto"}]},
+    \\    {"name": "util", "version": "0.3.0", "source": "path", "path": "util", "deps": ["crypto_sys"]}
+    \\  ]
+    \\}
+    \\
+;
+
+/// The fixture workspace with the sources of the native libraries of app and util, and a binary for app.
+fn writeNativeWorkspace(dir: std.fs.Dir, util_toml: []const u8) !void {
+    try writeWorkspace(dir, app_init);
+    try put(dir, "util/mopm.toml", util_toml);
+    try put(dir, "src/main.mojo", main_src);
+    try put(dir, "native/app.c", c_app);
+    try put(dir, "native/app.h", h_app);
+    try put(dir, "util/native/shim.c", c_util);
+    try put(dir, "util/native/shim.h", h_util);
+}
+
+fn natives_of(a: Allocator, g: Graph, id: []const u8) ![]const u8 {
+    return nativeSonames(a, g.units[g.find(id) orelse return error.NoSuchUnit]);
+}
+
+// Defect it catches: a member's own C library missing from the graph, so a build system links a test without it (or
+// builds nothing for it); an archive entry that carries a hash it cannot have before it is built.
+test "a member's static native is a native unit, and its lib, test and bin units list it as built" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeNativeWorkspace(tmp.dir, toml_util);
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    const g = graphOf(a, dir, toml_util_dep ++ toml_bin ++ toml_app_alone, lock_two, "1.0.0", &why) catch |e| {
+        std.debug.print("refused: {s}\n", .{why});
+        return e;
+    };
+
+    // The native unit: what the build system compiles, and the name of the archive it makes.
+    const nu = g.units[g.find(id_native_app) orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("native", nu.kind);
+    try std.testing.expectEqualStrings("app", nu.package);
+    try std.testing.expectEqualStrings("libapp_shim.a", nu.soname);
+    try std.testing.expectEqual(@as(usize, 1), nu.srcs.len);
+    try std.testing.expectEqualStrings("native/app.c", nu.srcs[0].path);
+    try std.testing.expectEqualStrings(try sha256Hex(a, c_app), nu.srcs[0].sha256);
+    try std.testing.expectEqualStrings("native/app.h", nu.hdrs[0].path);
+    try std.testing.expectEqualStrings(try sha256Hex(a, h_app), nu.hdrs[0].sha256);
+    try std.testing.expectEqualStrings("native", nu.includes[0]);
+    try std.testing.expectEqualStrings("-O2", nu.cflags[0]);
+    try std.testing.expectEqualStrings("-DLINUX", nu.cflags_by_os.linux[0]);
+    try std.testing.expectEqualStrings("-DMACOS", nu.cflags_by_os.macos[0]);
+    try std.testing.expectEqualStrings("libapp_shim.a", nu.outputs[0]);
+    try std.testing.expect(nu.artifact == null);
+    try std.testing.expectEqual(@as(usize, 0), nu.natives.len);
+    try std.testing.expectEqual(@as(usize, 64), nu.key.len);
+
+    // The root's lib, its test and its binary all link it; util, which does not depend on app, does not.
+    for ([_][]const u8{ id_app, id_test, id_bin }) |id| {
+        const u = g.units[g.find(id) orelse return error.NoSuchUnit];
+        try std.testing.expectEqual(@as(usize, 1), u.natives.len);
+        const n = u.natives[0];
+        try std.testing.expectEqualStrings("app_shim", n.id);
+        try std.testing.expectEqualStrings("libapp_shim.a", n.soname);
+        try std.testing.expectEqualStrings("app", n.package);
+        try std.testing.expectEqual(metadata.Kind.static, n.kind);
+        try std.testing.expectEqualStrings(id_native_app, n.built);
+        try std.testing.expectEqualStrings("", n.sha256);
+    }
+    try std.testing.expectEqual(@as(usize, 0), g.units[g.find(id_util).?].natives.len);
+
+    // What is printed has no sha256 for the built entry, and reads back as the same graph.
+    const text = try render(a, g);
+    try std.testing.expect(std.mem.indexOf(u8, text, "{\"id\": \"app_shim\", \"soname\": \"libapp_shim.a\", \"package\": \"app\", \"kind\": \"static\", \"built\": \"native:app/app_shim\"}") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"sha256\": \"\"") == null);
+    const back = try parse(a, text);
+    try std.testing.expectEqualStrings(text, try render(a, back));
+    try std.testing.expectEqualStrings(id_native_app, back.units[back.find(id_test).?].natives[0].built);
+}
+
+// Defect it catches: a dependent member's link order that is the soname order, or that drops the dependency's archive:
+// an archive then comes before the archive it leaves its symbols to. Here libapp_shim.a needs libutil_shim.a, which needs
+// the prebuilt libcrypto_sys.a; by soname the prebuilt archive would sit between the two.
+test "a dependent member lists the native of the member it depends on after its own and before what that needs" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeNativeWorkspace(tmp.dir, toml_util_native);
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    const g = graphOf(a, dir, toml_crypto_dep ++ toml_util_dep ++ toml_app_needs_util, lock_member_chain, "1.0.0", &why) catch |e| {
+        std.debug.print("refused: {s}\n", .{why});
+        return e;
+    };
+    try std.testing.expectEqualStrings("libapp_shim.a libutil_shim.a libcrypto_sys.a", try natives_of(a, g, id_app));
+    try std.testing.expectEqualStrings("libapp_shim.a libutil_shim.a libcrypto_sys.a", try natives_of(a, g, id_test));
+    // util's own unit links its native, then the prebuilt archive it needs; the prebuilt package links its own only.
+    try std.testing.expectEqualStrings("libutil_shim.a libcrypto_sys.a", try natives_of(a, g, id_util));
+    try std.testing.expectEqualStrings("libcrypto_sys.a", try natives_of(a, g, id_crypto));
+    // Built entries carry no hash; the prebuilt entry keeps its own.
+    const u = g.units[g.find(id_app).?];
+    try std.testing.expectEqualStrings("", u.natives[1].sha256);
+    try std.testing.expectEqualStrings(id_native_util, u.natives[1].built);
+    try std.testing.expectEqualStrings("libcrypto_sys.a", u.natives[1].needs[0]);
+    try std.testing.expectEqualStrings(native_sha, u.natives[2].sha256);
+    try std.testing.expectEqualStrings("", u.natives[2].built);
+    // Both natives are units; util's keeps the include directories it was given, whatever holds its headers.
+    const nu = g.units[g.find(id_native_util).?];
+    try std.testing.expectEqualStrings("util/native/shim.c", nu.srcs[0].path);
+    try std.testing.expectEqualStrings("util/native/shim.h", nu.hdrs[0].path);
+    try std.testing.expectEqual(@as(usize, 2), nu.includes.len);
+    try std.testing.expectEqualStrings("extra", nu.includes[1]);
+    try std.testing.expectEqualStrings("libcrypto_sys.a", nu.needs[0]);
+    _ = g.find(id_native_app) orelse return error.NoSuchUnit;
+    // The native unit prints its needs (after its includes, before its deps), and they read back.
+    const text = try render(a, g);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"includes\": [\"native\", \"extra\"],\n      \"needs\": [\"libcrypto_sys.a\"],\n      \"deps\": []") != null);
+    const back = try parse(a, text);
+    try std.testing.expectEqualStrings("libcrypto_sys.a", back.units[back.find(id_native_util).?].needs[0]);
+    try std.testing.expectEqualStrings(text, try render(a, back));
+}
+
+// Defect it catches: a member native that is silently left out (or half-understood) so that the link fails late, far
+// from the manifest that caused it.
+test "a member's native that the graph cannot build is refused, naming the manifest and the native" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const Case = struct { native: []const u8, want: []const u8 };
+    const cases = [_]Case{
+        .{ .native = "kind = \"shared\"\nsrcs = [\"native/*.c\"]\n", .want = "util/mopm.toml: [native.s] is kind = \"shared\"; a unit graph builds a member's native as a static archive only" },
+        .{ .native = "srcs = [\"native/*.c\"]\n", .want = "util/mopm.toml: [native.s] is kind = \"shared\"" },
+        .{ .native = "kind = \"both\"\nsrcs = [\"native/*.c\"]\n", .want = "util/mopm.toml: [native.s] is kind = \"both\"" },
+        .{ .native = "kind = \"static\"\nmode = \"load\"\nsrcs = [\"native/*.c\"]\n", .want = "util/mopm.toml: [native.s] is mode = \"load\"" },
+        .{ .native = "kind = \"static\"\n", .want = "util/mopm.toml: [native.s] has no srcs" },
+        .{ .native = "kind = \"static\"\nsrcs = [\"native/*.cc\"]\n", .want = "util/mopm.toml: srcs \"native/*.cc\" of [native.s] matches no file" },
+        .{ .native = "kind = \"static\"\nsrcs = [\"native/*.c\"]\nhdrs = [\"native/*.hpp\"]\n", .want = "util/mopm.toml: hdrs \"native/*.hpp\" of [native.s] matches no file" },
+        .{ .native = "kind = \"static\"\nsrcs = [\"native/*.c\"]\nhdrs = [\"native/shim.c\"]\n", .want = "util/mopm.toml: util/native/shim.c is named by both srcs and hdrs of [native.s]" },
+        .{ .native = "kind = \"static\"\nsrcs = [\"native/*.c\"]\nneeds = [\"libnothing.a\"]\n", .want = "native library libs.a of util needs libnothing.a, which no package in its dependency closure ships" },
+    };
+    for (cases) |c| {
+        try writeNativeWorkspace(tmp.dir, try std.mem.concat(a, u8, &.{ toml_util, "\n[native.s]\n", c.native }));
+        const dir = try tmp.dir.realpathAlloc(a, ".");
+        var why: []const u8 = "";
+        try std.testing.expectError(error.Refused, graphOf(a, dir, toml_util_dep, lock_two, "1.0.0", &why));
+        if (std.mem.indexOf(u8, why, c.want) == null) {
+            std.debug.print("refused with '{s}', want '{s}'\n", .{ why, c.want });
+            return error.TestUnexpectedResult;
+        }
+    }
+    // The root package's own native is held to the same rules.
+    try writeNativeWorkspace(tmp.dir, toml_util);
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    try std.testing.expectError(error.Refused, graphOf(a, dir, toml_util_dep ++ "\n[native.s]\nkind = \"shared\"\nsrcs = [\"native/*.c\"]\n", lock_two, "1.0.0", &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "mopm.toml: [native.s] is kind = \"shared\"") != null);
+}
+
+// Defect it catches: a source named by a link that leads out of the member, so the graph hashes (and a build system
+// compiles) a file the member does not hold, while a glob would have skipped it.
+test "a literal srcs or hdrs path that is a symbolic link or passes through one is refused; a glob skips links" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeNativeWorkspace(tmp.dir, toml_util);
+    try put(tmp.dir, "outside/x.c", "int outside(void) { return 0; }\n");
+    try tmp.dir.symLink("../../outside/x.c", "util/native/link.c", .{});
+    try tmp.dir.symLink("../outside", "util/ldir", .{ .is_directory = true });
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+
+    const Case = struct { native: []const u8, want: []const u8 };
+    const cases = [_]Case{
+        .{ .native = "srcs = [\"native/link.c\"]\n", .want = "util/mopm.toml: srcs \"native/link.c\" of [native.s] is a symbolic link or passes through one" },
+        .{ .native = "srcs = [\"native/shim.c\"]\nhdrs = [\"ldir/x.c\"]\n", .want = "util/mopm.toml: hdrs \"ldir/x.c\" of [native.s] is a symbolic link or passes through one" },
+        .{ .native = "srcs = [\"ldir/*.c\"]\n", .want = "util/mopm.toml: srcs \"ldir/*.c\" of [native.s] is a symbolic link or passes through one" },
+    };
+    for (cases) |c| {
+        try put(tmp.dir, "util/mopm.toml", try std.mem.concat(a, u8, &.{ toml_util, "\n[native.s]\nkind = \"static\"\n", c.native }));
+        try std.testing.expectError(error.Refused, graphOf(a, dir, toml_util_dep, lock_two, "1.0.0", &why));
+        if (std.mem.indexOf(u8, why, c.want) == null) {
+            std.debug.print("refused with '{s}', want '{s}'\n", .{ why, c.want });
+            return error.TestUnexpectedResult;
+        }
+    }
+    // A glob over the same directory skips the link: only the member's own file is a source.
+    try put(tmp.dir, "util/mopm.toml", try std.mem.concat(a, u8, &.{ toml_util, "\n[native.s]\nkind = \"static\"\nsrcs = [\"native/*.c\"]\n" }));
+    const g = try graphOf(a, dir, toml_util_dep, lock_two, "1.0.0", &why);
+    const nu = g.units[g.find("native:util/s") orelse return error.NoSuchUnit];
+    try std.testing.expectEqual(@as(usize, 1), nu.srcs.len);
+    try std.testing.expectEqualStrings("util/native/shim.c", nu.srcs[0].path);
+}
+
+// Defect it catches: a unit key that does not move when a native's C source, header or flags do, so a cached test
+// or binary is reused with an archive it was not linked with.
+test "the graph key changes when a native's source, header, flags or file set change, and only for what links it" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeNativeWorkspace(tmp.dir, toml_util_native);
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    const deps = toml_crypto_dep ++ toml_util_dep ++ toml_app_needs_util;
+    const base = try graphOf(a, dir, deps, lock_member_chain, "1.0.0", &why);
+    const again = try graphOf(a, dir, deps, lock_member_chain, "1.0.0", &why);
+    for (base.units) |u| try std.testing.expectEqualStrings(u.key, try keyOfId(again, u.id));
+
+    const Change = struct { what: []const u8, path: []const u8, bytes: []const u8 };
+    const changes = [_]Change{
+        .{ .what = "a C source", .path = "util/native/shim.c", .bytes = c_util ++ "// edited\n" },
+        .{ .what = "a header", .path = "util/native/shim.h", .bytes = h_util ++ "// edited\n" },
+        .{ .what = "another file the glob names", .path = "util/native/more.c", .bytes = "int more(void) { return 2; }\n" },
+    };
+    for (changes) |c| {
+        try put(tmp.dir, c.path, c.bytes);
+        const g = try graphOf(a, dir, deps, lock_member_chain, "1.0.0", &why);
+        // The native unit, and what links it: util's lib, app's lib and test. Not what does not.
+        for ([_][]const u8{ id_native_util, id_util, id_app, id_test }) |id| {
+            if (std.mem.eql(u8, try keyOfId(base, id), try keyOfId(g, id))) {
+                std.debug.print("{s}: the key of {s} did not change\n", .{ c.what, id });
+                return error.TestUnexpectedResult;
+            }
+        }
+        for ([_][]const u8{ id_native_app, id_crypto }) |id| try std.testing.expectEqualStrings(try keyOfId(base, id), try keyOfId(g, id));
+        // Put it back.
+        if (std.mem.eql(u8, c.path, "util/native/more.c")) {
+            try tmp.dir.deleteFile(c.path);
+        } else {
+            try put(tmp.dir, c.path, if (std.mem.endsWith(u8, c.path, ".c")) c_util else h_util);
+        }
+    }
+    try std.testing.expectEqualStrings(try keyOfId(base, id_native_util), try keyOfId(try graphOf(a, dir, deps, lock_member_chain, "1.0.0", &why), id_native_util));
+
+    // Its flags are part of what it is.
+    try put(tmp.dir, "util/mopm.toml", try std.mem.replaceOwned(u8, a, toml_util_native, "cflags = [\"-O2\"]", "cflags = [\"-O3\"]"));
+    const flags = try graphOf(a, dir, deps, lock_member_chain, "1.0.0", &why);
+    try std.testing.expect(!std.mem.eql(u8, try keyOfId(base, id_native_util), try keyOfId(flags, id_native_util)));
+    try std.testing.expect(!std.mem.eql(u8, try keyOfId(base, id_test), try keyOfId(flags, id_test)));
+    try put(tmp.dir, "util/mopm.toml", try std.mem.replaceOwned(u8, a, toml_util_native, "includes = [\"native\", \"extra\"]", "includes = [\"native\"]"));
+    const inc = try graphOf(a, dir, deps, lock_member_chain, "1.0.0", &why);
+    try std.testing.expect(!std.mem.eql(u8, try keyOfId(base, id_native_util), try keyOfId(inc, id_native_util)));
+    try put(tmp.dir, "util/mopm.toml", toml_util_native);
+
+    // A Mojo source of util moves util's lib and what imports it, and leaves the native alone.
+    try put(tmp.dir, "util/src/util/__init__.mojo", util_init ++ "\ndef more():\n    pass\n");
+    const mojo_edit = try graphOf(a, dir, deps, lock_member_chain, "1.0.0", &why);
+    try std.testing.expect(!std.mem.eql(u8, try keyOfId(base, id_util), try keyOfId(mojo_edit, id_util)));
+    try std.testing.expectEqualStrings(try keyOfId(base, id_native_util), try keyOfId(mojo_edit, id_native_util));
+}
+
+// Defect it catches: two copies of one library's state in a binary, because the exclusive check looked only at
+// prebuilt archives; and two archives of one file name, only one of which the natives directory can hold.
+test "a built native and a prebuilt one in one exclusive group, or with one soname, are refused" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const deps = toml_crypto_dep ++ toml_util_dep;
+    var why: []const u8 = "";
+
+    // util's native joins the group of the prebuilt crypto_sys.
+    try writeNativeWorkspace(tmp.dir, try std.mem.replaceOwned(u8, a, toml_util_native, "needs = [\"libcrypto_sys.a\"]", "needs = [\"libcrypto_sys.a\"]\nexclusive = \"libcrypto\""));
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    try std.testing.expectError(error.Refused, graphOf(a, dir, deps, lock_member_chain, "1.0.0", &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "native libraries libcrypto_sys.a of crypto_sys and libutil_shim.a of util are both in exclusive group libcrypto; a unit links one library of a group") != null);
+
+    // Another group, or none, is no clash.
+    try put(tmp.dir, "util/mopm.toml", try std.mem.replaceOwned(u8, a, toml_util_native, "needs = [\"libcrypto_sys.a\"]", "needs = [\"libcrypto_sys.a\"]\nexclusive = \"libutil\""));
+    const other = try graphOf(a, dir, deps, lock_member_chain, "1.0.0", &why);
+    try std.testing.expectEqualStrings("libutil_shim.a libcrypto_sys.a", try natives_of(a, other, id_util));
+
+    // Two built natives of one group are a clash too.
+    try put(tmp.dir, "util/mopm.toml", try std.mem.replaceOwned(u8, a, toml_util_native, "needs = [\"libcrypto_sys.a\"]", "needs = [\"libcrypto_sys.a\"]\nexclusive = \"libutil\""));
+    try std.testing.expectError(error.Refused, graphOf(a, dir, deps ++ "\n[native.app_shim]\nkind = \"static\"\nsrcs = [\"native/*.c\"]\nexclusive = \"libutil\"\n", lock_member_chain, "1.0.0", &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "libapp_shim.a of app and libutil_shim.a of util are both in exclusive group libutil") != null);
+
+    // A built archive named like a prebuilt one.
+    try put(tmp.dir, "util/mopm.toml", try std.mem.replaceOwned(u8, a, toml_util_native, "needs = [\"libcrypto_sys.a\"]", "soname = \"libcrypto_sys.a\""));
+    try std.testing.expectError(error.Refused, graphOf(a, dir, deps, lock_member_chain, "1.0.0", &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "have one name; a unit links one library of a name") != null);
+    try std.testing.expect(std.mem.indexOf(u8, why, "(util_shim)") != null);
+}
+
+const golden_member_natives =
+    \\{
+    \\  "unit_graph": 2,
+    \\  "package": "app@1.0.0",
+    \\  "mojo": "1.0.0",
+    \\  "toolchain": {
+    \\    "mojo": "1.0.0",
+    \\    "subdir": "linux-64",
+    \\    "cc_target": "x86_64-linux-gnu.2.34",
+    \\    "closure_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    \\    "zig": {"version": "0.12.0", "url": "https://example.invalid/zig.tar.xz", "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "size": 1},
+    \\    "components": [
+    \\    ]
+    \\  },
+    \\  "units": [
+    \\    {
+    \\      "id": "app@1.0.0#mojo1.0.0/bin:appbin",
+    \\      "package": "app",
+    \\      "version": "1.0.0",
+    \\      "kind": "bin",
+    \\      "srcs": [
+    \\        {"path": "src/main.mojo", "sha256": "cde0429ba5478089419b8a36797f74089554914623c732054e04dd6eb2e49afd"}
+    \\      ],
+    \\      "deps": ["app@1.0.0#mojo1.0.0/lib"],
+    \\      "natives": [
+    \\        {"id": "app_shim", "soname": "libapp_shim.a", "package": "app", "kind": "static", "built": "native:app/app_shim"}
+    \\      ],
+    \\      "profile": {"opt": 3, "assert": "none", "debug": false},
+    \\      "outputs": ["appbin"],
+    \\      "key": "20b78a507eab7d5f20a459fbbe9c768b7fded9ed2d8f104d6da8c05430b16d4c"
+    \\    },
+    \\    {
+    \\      "id": "app@1.0.0#mojo1.0.0/lib",
+    \\      "package": "app",
+    \\      "version": "1.0.0",
+    \\      "kind": "lib",
+    \\      "root": "src/app",
+    \\      "srcs": [
+    \\        {"path": "src/app/__init__.mojo", "sha256": "3e506d235e62bd8c64c14afbc28e1b4bdb66724f64110066d425f438d6f0486e"}
+    \\      ],
+    \\      "deps": ["util@0.3.0#mojo1.0.0/lib"],
+    \\      "natives": [
+    \\        {"id": "app_shim", "soname": "libapp_shim.a", "package": "app", "kind": "static", "built": "native:app/app_shim"}
+    \\      ],
+    \\      "profile": {"opt": 1, "assert": "all", "debug": false},
+    \\      "outputs": ["app.mojoc"],
+    \\      "key": "eab3b60d4e62aa9d64846d3d8e1e773cfa222e07af0bb9e4ef128381d710bcf9"
+    \\    },
+    \\    {
+    \\      "id": "app@1.0.0#mojo1.0.0/test:tests/test_app.mojo",
+    \\      "package": "app",
+    \\      "version": "1.0.0",
+    \\      "kind": "test",
+    \\      "srcs": [
+    \\        {"path": "tests/test_app.mojo", "sha256": "2abc11daffb9e8bcb9eb8bbd62b0fd4d9754b3fed5647f63ef18f49dfd669b1b"}
+    \\      ],
+    \\      "deps": ["app@1.0.0#mojo1.0.0/lib"],
+    \\      "natives": [
+    \\        {"id": "app_shim", "soname": "libapp_shim.a", "package": "app", "kind": "static", "built": "native:app/app_shim"}
+    \\      ],
+    \\      "profile": {"opt": 1, "assert": "all", "debug": false},
+    \\      "outputs": ["test_app.pass"],
+    \\      "key": "73c89c1ac5716316d081d9cfc2542bc0da7b964e7cc1047552ee69fa9e057683"
+    \\    },
+    \\    {
+    \\      "id": "native:app/app_shim",
+    \\      "package": "app",
+    \\      "version": "1.0.0",
+    \\      "kind": "native",
+    \\      "soname": "libapp_shim.a",
+    \\      "srcs": [
+    \\        {"path": "native/app.c", "sha256": "1638151a5212fd7d82fd67f02d5a8835830a933385978f3b5d4eb2f2ee9be968"}
+    \\      ],
+    \\      "hdrs": [
+    \\        {"path": "native/app.h", "sha256": "2e0a7f87a41ccb68ef9db68d87c46b0ca8bd57ad6115cca26d0fffb5f3e13e8a"}
+    \\      ],
+    \\      "cflags": ["-O2"],
+    \\      "cflags_by_os": {"linux": ["-DLINUX"], "macos": ["-DMACOS"]},
+    \\      "includes": ["native"],
+    \\      "deps": [],
+    \\      "natives": [],
+    \\      "outputs": ["libapp_shim.a"],
+    \\      "key": "0b9b4f0ae92bd2c62207a527dcbe979123d1547c9e289e8f65627d586aa016ce"
+    \\    },
+    \\    {
+    \\      "id": "util@0.3.0#mojo1.0.0/lib",
+    \\      "package": "util",
+    \\      "version": "0.3.0",
+    \\      "kind": "lib",
+    \\      "root": "util/src/util",
+    \\      "srcs": [
+    \\        {"path": "util/src/util/__init__.mojo", "sha256": "e3163528c26697e825dd5eec25279a8679ef2c05095c92a8a952de7fe7514ea5"}
+    \\      ],
+    \\      "deps": [],
+    \\      "natives": [],
+    \\      "profile": {"opt": 1, "assert": "all", "debug": false},
+    \\      "outputs": ["util.mojoc"],
+    \\      "key": "1872d9824509bfd4943fffe927349417aef361fc70a880fa5c281e4ce9535c9e"
+    \\    }
+    \\  ]
+    \\}
+;
+
+// The whole graph of a root that builds its own native, with a binary: the exact bytes.
+test "golden: the unit graph of a package with a native of its own, a binary and a test" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeNativeWorkspace(tmp.dir, toml_util);
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    const g = try graphOf(a, dir, toml_util_dep ++ toml_bin ++ toml_app_alone, lock_two, "1.0.0", &why);
+    const text = try render(a, g);
+    std.testing.expectEqualStrings(golden_member_natives ++ "\n", text) catch |e| {
+        std.debug.print("---- actual ----\n{s}---- end ----\n", .{text});
+        return e;
+    };
+}
+
 // ------------------------------------------------- sibling members under a workspace root
 
 const sib_root_toml = "[package]\nname = \"app\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n";
@@ -1890,4 +2486,73 @@ test "a library or binary that leaves its package for a sibling's directory is r
     const l = try lock.parse(a, try sibLock(a, sib_b_to_c), &why);
     try std.testing.expectError(error.Refused, build(a, .{ .dir = dir, .pkg = "app", .m = m, .members = &.{}, .l = l, .subdir = "linux-64", .mojo = "1.0.0", .toolchain = fakeToolchain("1.0.0") }, &why));
     try std.testing.expect(std.mem.indexOf(u8, why, "the library of the root package is b/src/other, which is not inside its package app") != null);
+}
+
+// ----------------------------------------- a member's natives under a workspace root
+
+fn nativeSection(a: Allocator, id: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(a, "\n[native.{s}]\nkind = \"static\"\nsrcs = [\"native/*.c\"]\nhdrs = [\"native/*.h\"]\n", .{id});
+}
+
+// Defect it catches: a member's native named, or its sources located, by where the package sits in the workspace
+// instead of by the package, so that with --workspace-root the unit is `native:src/app/...` or reads files from the
+// workspace root (the plan refuses or builds the wrong sources).
+test "with a workspace root, the root package's and a sibling's own natives are native:<package>/<id> with workspace paths" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeSiblings(a, tmp.dir);
+    try put(tmp.dir, "app/native/app.c", c_app);
+    try put(tmp.dir, "app/native/app.h", h_app);
+    try put(tmp.dir, "b/native/shim.c", c_util);
+    try put(tmp.dir, "b/native/shim.h", h_util);
+    // b's manifest, as writeSibling made it, with a native of its own.
+    try put(tmp.dir, "b/mopm.toml", try std.mem.concat(a, u8, &.{
+        "[package]\nname = \"b\"\nversion = \"0.1.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\nc = { path = \"../c\" }\n",
+        try nativeSection(a, "b_shim"),
+    }));
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    const deps = try std.mem.concat(a, u8, &.{ "b = { path = \"../b\" }\n", try nativeSection(a, "app_shim") });
+    const g = siblingGraph(a, dir, "app", deps, try sibLock(a, sib_b_to_c), &why) catch |e| {
+        std.debug.print("refused: {s}\n", .{why});
+        return e;
+    };
+
+    // The root package's native: named by the package, its files by their path from the workspace.
+    const na = g.units[g.find("native:app/app_shim") orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("app", na.package);
+    try std.testing.expectEqualStrings("libapp_shim.a", na.soname);
+    try std.testing.expectEqual(@as(usize, 1), na.srcs.len);
+    try std.testing.expectEqualStrings("app/native/app.c", na.srcs[0].path);
+    try std.testing.expectEqualStrings(try sha256Hex(a, c_app), na.srcs[0].sha256);
+    try std.testing.expectEqualStrings("app/native/app.h", na.hdrs[0].path);
+    // Its include directory is relative to the member.
+    try std.testing.expectEqualStrings("native", na.includes[0]);
+
+    // The sibling's native, reached through a path dependency.
+    const nb = g.units[g.find("native:b/b_shim") orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("b", nb.package);
+    try std.testing.expectEqualStrings("b/native/shim.c", nb.srcs[0].path);
+    try std.testing.expectEqualStrings("b/native/shim.h", nb.hdrs[0].path);
+    try std.testing.expectEqualStrings("native", nb.includes[0]);
+    try std.testing.expectEqual(@as(usize, 2), countKind(g, "native"));
+
+    // The root's library links both (neither needs the other), each listed as built by its own unit.
+    const app = g.units[g.find(id_app).?];
+    try std.testing.expectEqual(@as(usize, 2), app.natives.len);
+    var saw_a = false;
+    var saw_b = false;
+    for (app.natives) |n| {
+        if (std.mem.eql(u8, n.built, "native:app/app_shim")) saw_a = true;
+        if (std.mem.eql(u8, n.built, "native:b/b_shim")) saw_b = true;
+    }
+    try std.testing.expect(saw_a and saw_b);
+    // b's library lists only its own.
+    const bl = g.units[g.find("b@0.1.0#mojo1.0.0/lib").?];
+    try std.testing.expectEqual(@as(usize, 1), bl.natives.len);
+    try std.testing.expectEqualStrings("native:b/b_shim", bl.natives[0].built);
+    try noDotDot(g);
 }

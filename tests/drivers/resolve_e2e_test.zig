@@ -426,7 +426,7 @@ fn unitGraph(cx: *Cx) !void {
     cx.ok("the lock is version 2: mojo, a closure hash, one artifact per Mojo version", has(lock_text, "\"lock_version\": 2") and has(lock_text, "\"mojo\": [\n    \"1.0.0\"\n  ]") and has(lock_text, "\"toolchain\": {\n    \"1.0.0\": {\n      \"linux-64\": \"") and has(lock_text, "\"artifacts\": {\n        \"1.0.0\": {"), lock_text);
 
     r = try cx.run(ok_dir, &.{ "plan", "--unit-graph", "--locked" });
-    cx.ok("plan prints the graph: units named for the Mojo version, the dependency prebuilt", r.code == 0 and has(r.stdout, "\"unit_graph\": 1") and has(r.stdout, "\"id\": \"app@0.1.0#mojo1.0.0/lib\"") and has(r.stdout, "\"id\": \"legacy@1.1.0#mojo1.0.0/lib\"") and has(r.stdout, "\"kind\": \"prebuilt\"") and has(r.stdout, "\"closure_sha256\": \""), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
+    cx.ok("plan prints the graph: units named for the Mojo version, the dependency prebuilt", r.code == 0 and has(r.stdout, "\"unit_graph\": 2") and has(r.stdout, "\"id\": \"app@0.1.0#mojo1.0.0/lib\"") and has(r.stdout, "\"id\": \"legacy@1.1.0#mojo1.0.0/lib\"") and has(r.stdout, "\"kind\": \"prebuilt\"") and has(r.stdout, "\"closure_sha256\": \""), try cx.fmt("{s}{s}", .{ r.stdout, r.stderr }));
     const first = r.stdout;
     r = try cx.run(ok_dir, &.{ "plan", "--unit-graph", "--locked", "--mojo", "1.0.0" });
     cx.ok("plan prints the same bytes again", r.code == 0 and std.mem.eql(u8, first, r.stdout), r.stderr);

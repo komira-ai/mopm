@@ -59,6 +59,28 @@ pub const NativeLib = struct {
     needs: []const []const u8 = &.{},
     /// An exclusivity group: a closure may hold one owner per group. "" for none.
     exclusive: []const u8 = "",
+    /// The archive's file name (`lib<name>.a`); "" for `lib<id>.a`. Meant for a native the build system builds (`srcs`).
+    soname: []const u8 = "",
+    /// Globs, relative to the package, of the C sources and headers of a native the build system builds.
+    srcs: []const []const u8 = &.{},
+    hdrs: []const []const u8 = &.{},
+    /// Compiler flags for every platform, then those of one OS appended after them.
+    cflags: []const []const u8 = &.{},
+    cflags_by_os: OsFlags = .{},
+    /// Include directories, relative to the package; empty means the directories holding `hdrs` files.
+    includes: []const []const u8 = &.{},
+
+    /// The archive file name: `soname`, else `lib<id>.a`.
+    pub fn archiveName(self: NativeLib, arena: Allocator) Allocator.Error![]const u8 {
+        if (self.soname.len > 0) return self.soname;
+        return std.fmt.allocPrint(arena, "lib{s}.a", .{self.id});
+    }
+};
+
+/// `cflags_by_os`: the operating systems a native's flags can be given for.
+pub const OsFlags = struct {
+    linux: []const []const u8 = &.{},
+    macos: []const []const u8 = &.{},
 };
 
 pub const Bin = struct { name: []const u8, path: []const u8 };
@@ -336,7 +358,7 @@ const Checker = struct {
                 return c.fail(e.pos, "native library id '{s}' must be a lowercase identifier (letters, digits, '_')", .{e.key});
             }
             const sub = try c.table(e, "[native]");
-            try c.onlyKeys(sub, in, &.{ "kind", "mode", "build", "outputs", "needs", "exclusive" });
+            try c.onlyKeys(sub, in, &.{ "kind", "mode", "build", "outputs", "needs", "exclusive", "soname", "srcs", "hdrs", "cflags", "cflags_by_os", "includes" });
             var lib = NativeLib{ .id = e.key };
             if (sub.get("kind")) |k| {
                 const kind = try c.str(k, in);
@@ -361,9 +383,43 @@ const Checker = struct {
                 }
                 lib.exclusive = x;
             }
+            if (try c.optStr(sub, "soname", in)) |s| {
+                if (!isArchiveName(s)) {
+                    return c.fail(sub.get("soname").?.pos, "'soname' in {s} must be an archive name lib<name>.a with no other dot, not \"{s}\"", .{ in, s });
+                }
+                lib.soname = s;
+            }
+            lib.srcs = try c.memberPaths(sub, "srcs", in, false);
+            lib.hdrs = try c.memberPaths(sub, "hdrs", in, false);
+            lib.includes = try c.memberPaths(sub, "includes", in, true);
+            if (sub.get("cflags")) |o| lib.cflags = try c.strings(o, in);
+            if (sub.get("cflags_by_os")) |o| {
+                const by_os = try c.table(o, in);
+                const where = try std.fmt.allocPrint(c.arena, "cflags_by_os of {s}", .{in});
+                for (by_os.entries.items) |*oe| {
+                    if (std.mem.eql(u8, oe.key, "linux")) {
+                        lib.cflags_by_os.linux = try c.strings(oe, where);
+                    } else if (std.mem.eql(u8, oe.key, "macos")) {
+                        lib.cflags_by_os.macos = try c.strings(oe, where);
+                    } else {
+                        return c.fail(oe.pos, "unknown operating system '{s}' in {s}; the known ones are linux and macos", .{ oe.key, where });
+                    }
+                }
+            }
             try out.append(lib);
         }
         return try out.toOwnedSlice();
+    }
+
+    /// The array of package-relative paths or globs at `key` of `sub` (empty when absent); a path that is empty,
+    /// absolute or leaves the package is refused. `dot_ok`: a lone "." (the package directory) is allowed.
+    fn memberPaths(c: *Checker, sub: Table, key: []const u8, in: []const u8, dot_ok: bool) Error![]const []const u8 {
+        const e = sub.get(key) orelse return &.{};
+        const items = try c.strings(e, in);
+        for (items) |p| {
+            if (memberPathProblem(p, dot_ok)) |why| return c.fail(e.pos, "'{s}' in {s}: \"{s}\" {s}", .{ key, in, p, why });
+        }
+        return items;
     }
 
     fn targets(c: *Checker, t: Table) Error!Targets {
@@ -403,6 +459,31 @@ fn isIdentifier(s: []const u8) bool {
     if (s.len == 0 or !std.ascii.isLower(s[0])) return false;
     for (s) |b| {
         if (!std.ascii.isLower(b) and !std.ascii.isDigit(b) and b != '_') return false;
+    }
+    return true;
+}
+
+/// Why `p` is not a path inside the package, or null.
+fn memberPathProblem(p: []const u8, dot_ok: bool) ?[]const u8 {
+    if (p.len == 0) return "is empty";
+    if (p[0] == '/') return "is absolute; write it relative to the package";
+    if (dot_ok and std.mem.eql(u8, p, ".")) return null;
+    var it = std.mem.splitScalar(u8, p, '/');
+    while (it.next()) |seg| {
+        if (seg.len == 0) return "has an empty path segment";
+        if (std.mem.eql(u8, seg, "..")) return "leaves the package with '..'";
+        if (std.mem.eql(u8, seg, ".")) return "has a '.' segment; leave it out";
+    }
+    return null;
+}
+
+/// `lib<name>.a`, the name of a static archive: no other dot, no slash.
+fn isArchiveName(s: []const u8) bool {
+    if (!std.mem.startsWith(u8, s, "lib") or !std.mem.endsWith(u8, s, ".a")) return false;
+    const stem = s[3 .. s.len - 2];
+    if (stem.len == 0) return false;
+    for (stem) |ch| {
+        if (ch == '.' or ch == '/') return false;
     }
     return true;
 }
@@ -519,6 +600,36 @@ fn writeNativeLib(w: anytype, l: NativeLib) !void {
     if (l.exclusive.len > 0) {
         try w.writeAll(", \"exclusive\": ");
         try jsonStr(w, l.exclusive);
+    }
+    if (l.soname.len > 0) {
+        try w.writeAll(", \"soname\": ");
+        try jsonStr(w, l.soname);
+    }
+    const lists = [_]struct { key: []const u8, items: []const []const u8 }{
+        .{ .key = "srcs", .items = l.srcs },
+        .{ .key = "hdrs", .items = l.hdrs },
+        .{ .key = "cflags", .items = l.cflags },
+        .{ .key = "includes", .items = l.includes },
+    };
+    for (lists) |x| {
+        if (x.items.len == 0) continue;
+        try w.print(", \"{s}\": ", .{x.key});
+        try jsonStrList(w, x.items);
+    }
+    if (l.cflags_by_os.linux.len > 0 or l.cflags_by_os.macos.len > 0) {
+        try w.writeAll(", \"cflags_by_os\": {");
+        var first = true;
+        if (l.cflags_by_os.linux.len > 0) {
+            try w.writeAll("\"linux\": ");
+            try jsonStrList(w, l.cflags_by_os.linux);
+            first = false;
+        }
+        if (l.cflags_by_os.macos.len > 0) {
+            if (!first) try w.writeAll(", ");
+            try w.writeAll("\"macos\": ");
+            try jsonStrList(w, l.cflags_by_os.macos);
+        }
+        try w.writeAll("}");
     }
     try w.writeAll("}");
 }

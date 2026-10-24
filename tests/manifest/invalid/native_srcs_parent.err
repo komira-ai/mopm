@@ -1,0 +1,1 @@
+7:1: 'srcs' in [native.shim]: "native/../../x.c" leaves the package with '..'

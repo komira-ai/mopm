@@ -70,6 +70,10 @@ pub fn verify(arena: Allocator, g: unit_graph.Graph, idx: usize, d: Dirs, why: *
         return refuse(arena, why, "{s} is a prebuilt unit: its .mojoc is fetched and unpacked, not built", .{u.id});
     }
 
+    if (std.mem.eql(u8, u.kind, "native")) {
+        return refuse(arena, why, "{s} is a native unit: the build system compiles its C sources into {s}; 'mopm unit build' builds Mojo units", .{ u.id, u.soname });
+    }
+
     // The toolchain: the closure the graph pins, and the wrapper.
     const pinned = readInput(arena, d.toolchain, closure_file) orelse {
         return refuse(arena, why, "missing input: {s}/{s}; the toolchain directory must name its closure", .{ d.toolchain, closure_file });
@@ -109,6 +113,11 @@ pub fn verify(arena: Allocator, g: unit_graph.Graph, idx: usize, d: Dirs, why: *
 
     // The native libraries, each by sha256.
     for (u.natives) |n| {
+        if (n.built.len > 0) {
+            // A product of this build, so no hash is known before it: the file must be there and be an archive.
+            try verifyBuilt(arena, u, n, d, why);
+            continue;
+        }
         const bytes = readInput(arena, d.natives, n.soname) orelse {
             return refuse(arena, why, "missing input: native library {s} ({s}) is not in {s}", .{ n.soname, n.id, d.natives });
         };
@@ -116,6 +125,23 @@ pub fn verify(arena: Allocator, g: unit_graph.Graph, idx: usize, d: Dirs, why: *
         if (!std.mem.eql(u8, got, n.sha256)) {
             return refuse(arena, why, "native library {s} has sha256 {s}, but the graph declares {s}", .{ n.soname, got, n.sha256 });
         }
+    }
+}
+
+/// The first bytes of a Unix archive (`ar`).
+const ar_magic = "!<arch>\n";
+
+/// A `built` native of unit `u`: `<soname>` in the natives directory, and an archive (it starts with `!<arch>\n`).
+fn verifyBuilt(arena: Allocator, u: unit_graph.Unit, n: unit_graph.NativeRef, d: Dirs, why: *[]const u8) !void {
+    const full = try join(arena, d.natives, n.soname);
+    const file = std.fs.cwd().openFile(full, .{}) catch {
+        return refuse(arena, why, "missing input: {s}, the archive of {s} (a native library of {s}) is not in {s}", .{ n.soname, n.built, u.id, d.natives });
+    };
+    defer file.close();
+    var head: [ar_magic.len]u8 = undefined;
+    const got = file.readAll(&head) catch 0;
+    if (got != ar_magic.len or !std.mem.eql(u8, &head, ar_magic)) {
+        return refuse(arena, why, "native library {s}, the archive of {s} (a native library of {s}), is not a static archive: it does not start with !<arch>", .{ n.soname, n.built, u.id });
     }
 }
 
@@ -688,4 +714,65 @@ test "a static archive is a linker input in the order the unit gives, and is not
     _ = try tmp.dir.statFile("out/lib/libn.so.1");
     try std.testing.expectError(error.FileNotFound, tmp.dir.statFile("out/lib/libtls_sys.a"));
     try std.testing.expectError(error.FileNotFound, tmp.dir.statFile("out/lib/libcrypto_sys.a"));
+}
+
+// Defects it catches: a built archive taken on trust when it is missing or is not an archive (the link then fails with
+// the linker's words, or links a text file's worth of nothing); a hash demanded of a file that is a product of this very
+// build; an archive in the natives directory ordered after the library it is needed by.
+test "a built native must be in the natives directory and be an archive, but has no hash to match; its native unit is not built by mopm" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeInputs(tmp.dir);
+
+    var g = try fixtureGraph(a);
+    const tid = g.find("p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?;
+    const built_id = "native:p/shim";
+    const units = try a.alloc(unit_graph.Unit, g.units.len + 1);
+    @memcpy(units[0..g.units.len], g.units);
+    units[g.units.len] = .{ .id = built_id, .package = "p", .version = "2.0.0", .kind = "native", .soname = "libshim.a", .outputs = &.{"libshim.a"} };
+    // The shim comes first in the test's link line, before the prebuilt shared library.
+    units[tid].natives = try a.dupe(unit_graph.NativeRef, &.{
+        .{ .id = "shim", .soname = "libshim.a", .package = "p", .kind = .static, .built = built_id },
+        .{ .id = "n", .soname = "libn.so.1", .sha256 = try sha(a, native_bytes), .package = "d" },
+    });
+    g.units = units;
+    const root = try tmp.dir.realpathAlloc(a, ".");
+    const d = try dirsIn(a, root);
+    const who = "(a native library of p@2.0.0#mojo1.0.0/test:tests/test_p.mojo)";
+
+    // Not there.
+    try expectRefusal(a, g, tid, d, "missing input: libshim.a, the archive of native:p/shim " ++ who);
+    // Not an archive: text, the magic cut short, nothing at all.
+    for ([_][]const u8{ "int shim(void);\n", "!<arch>", "" }) |bytes| {
+        try tmp.dir.writeFile("natives/libshim.a", bytes);
+        try expectRefusal(a, g, tid, d, "native library libshim.a, the archive of native:p/shim " ++ who ++ ", is not a static archive: it does not start with !<arch>");
+    }
+    // An archive, whatever its bytes: there is no hash to hold it to.
+    var why: []const u8 = "";
+    try tmp.dir.writeFile("natives/libshim.a", "!<arch>\nfirst build\n");
+    try verify(a, g, tid, d, &why);
+    try tmp.dir.writeFile("natives/libshim.a", "!<arch>\nanother build, other bytes\n");
+    try verify(a, g, tid, d, &why);
+    // The prebuilt library beside it is still held to its hash.
+    try tmp.dir.writeFile("natives/libn.so.1", "ELF-other\n");
+    try expectRefusal(a, g, tid, d, "native library libn.so.1 has sha256");
+    try tmp.dir.writeFile("natives/libn.so.1", native_bytes);
+
+    // The archive is a linker input, in the order the unit gives; it is not copied beside the binary.
+    const plan = try argv(a, g, tid, d);
+    var linked = std.ArrayList([]const u8).init(a);
+    for (plan.argv, 0..) |x, i| {
+        if (std.mem.eql(u8, x, "-Xlinker")) try linked.append(std.fs.path.basename(plan.argv[i + 1]));
+    }
+    try std.testing.expectEqual(@as(usize, 2), linked.items.len);
+    try std.testing.expectEqualStrings("libshim.a", linked.items[0]);
+    try std.testing.expectEqualStrings("libn.so.1", linked.items[1]);
+    try stage(a, g, tid, d);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile("out/lib/libshim.a"));
+
+    // The native unit itself is the build system's to build.
+    try expectRefusal(a, g, g.find(built_id).?, d, "native:p/shim is a native unit: the build system compiles its C sources into libshim.a");
 }

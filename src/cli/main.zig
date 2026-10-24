@@ -514,6 +514,7 @@ test "new and init arguments" {
     try std.testing.expectEqualStrings("demo", scaffoldArgs("new", &.{ "demo", "--bin" }).?.name.?);
     try std.testing.expectEqual(core.scaffold.Kind.bin, scaffoldArgs("new", &.{ "--bin", "demo" }).?.kind);
     try std.testing.expectEqual(core.scaffold.Kind.lib, scaffoldArgs("new", &.{"demo"}).?.kind);
+    try std.testing.expectEqual(core.scaffold.Kind.lib, scaffoldArgs("new", &.{ "--bin", "--lib", "demo" }).?.kind);
     try std.testing.expect(scaffoldArgs("new", &.{}) == null);
     try std.testing.expect(scaffoldArgs("new", &.{ "a", "b" }) == null);
     try std.testing.expect(scaffoldArgs("new", &.{ "--name", "a" }) == null);

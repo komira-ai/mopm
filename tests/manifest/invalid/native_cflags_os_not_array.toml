@@ -1,0 +1,9 @@
+[package]
+name = "a"
+version = "0.1.0"
+
+[native.shim]
+kind = "static"
+
+[native.shim.cflags_by_os]
+macos = "-O2"
