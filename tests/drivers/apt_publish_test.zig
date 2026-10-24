@@ -12,8 +12,9 @@
 //!   - a Release that exists keeps its Origin, Label and Description (the repository is shared with other products);
 //!   - a put of a .deb that fails for another reason than a 412 fails the job before anything of the index is written; a Release.gpg that does
 //!     not verify fails the signing, and nothing is written; a Packages file that is not the one its Release lists is not uploaded;
-//!   - If-None-Match on every .deb, so a released .deb is never replaced, and a 412 on one is "exists", not a failure; the fake refuses a put to the
-//!     pool without the header, so a tool that dropped it goes red;
+//!   - If-None-Match on every .deb, so a released .deb is never replaced, and a 412 on one is "exists" only when the object in the pool has the same bytes
+//!     (the tool reads it back and compares): other bytes, or an object the role cannot read, fail the write before any object of the index; the
+//!     fake refuses a put to the pool without the header, so a tool that dropped it goes red;
 //!   - If-Match on the ETag that was READ for every object of an index that exists, If-None-Match for one that does not; the fake refuses an unconditional put
 //!     to the index, so a tool that dropped either header goes red;
 //!   - the retry: when another writer changes an object between the read and the write, the write loses (412), says so and exits 0 with conflict=true; a second
@@ -459,13 +460,35 @@ test "apt_publish: gate, OIDC exchange, read, index, sign, write, with every pla
         try std.fs.cwd().makePath(w.path("gpg"));
         try w.deb("debs", "1.2.3", "amd64");
         try w.deb("debs", "1.2.3", "arm64");
-        try w.put("aws/store/apt/pool/mopm/mopm_1.2.3_amd64.deb", "already there\n");
+        // The same bytes are already there: it is kept, and the publish goes on.
+        const same = w.read("debs/mopm_1.2.3_amd64.deb");
+        try w.put("aws/store/apt/pool/mopm/mopm_1.2.3_amd64.deb", same);
         try w.put("aws/etag/apt/pool/mopm/mopm_1.2.3_amd64.deb", "\"old\"");
         _ = try w.run(&.{ "assume", "--env-file", w.path("github_env"), "--curl", t.curl, "--aws", t.aws });
         const p = try w.pipeline("one", "debs", false, false);
-        rep.check("exists: a 412 on a .deb of the pool is 'exists', and the publish goes on", std.mem.eql(u8, p.stage, "write") and p.ran.code == 0 and h.contains(p.ran.text, "exists already"), p.ran.text);
-        rep.check("exists: the old .deb was not replaced", std.mem.eql(u8, w.read("aws/store/apt/pool/mopm/mopm_1.2.3_amd64.deb"), "already there\n"), "");
+        rep.check("exists: a 412 on a .deb of the pool with the same bytes is 'exists', and the publish goes on", std.mem.eql(u8, p.stage, "write") and p.ran.code == 0 and h.contains(p.ran.text, "exists already, with the same bytes"), p.ran.text);
+        rep.check("exists: the old .deb was not replaced", std.mem.eql(u8, w.read("aws/store/apt/pool/mopm/mopm_1.2.3_amd64.deb"), same), "");
         rep.check("exists: the other .deb was uploaded", w.has("aws/store/apt/pool/mopm/mopm_1.2.3_arm64.deb"), "");
+    }
+
+    // ---- a .deb that is in the pool with other bytes is a failure; one that cannot be read to compare is too -----------------
+    {
+        n += 1;
+        const w = World{ .a = a, .t = t, .root = try h.join(a, &.{ try h.tmpPath(a, &tmp), try h.fmt(a, "differs{d}", .{n}) }) };
+        try std.fs.cwd().makePath(w.path("aws"));
+        try std.fs.cwd().makePath(w.path("gpg"));
+        try w.deb("debs", "1.2.3", "amd64");
+        try w.deb("debs", "1.2.3", "arm64");
+        try w.put("aws/store/apt/pool/mopm/mopm_1.2.3_amd64.deb", "already there, but not this file\n");
+        try w.put("aws/etag/apt/pool/mopm/mopm_1.2.3_amd64.deb", "\"old\"");
+        _ = try w.run(&.{ "assume", "--env-file", w.path("github_env"), "--curl", t.curl, "--aws", t.aws });
+        const p = try w.pipeline("one", "debs", false, false);
+        rep.check("differs: a .deb in the pool with other bytes fails the write, naming the key and both hashes", std.mem.eql(u8, p.stage, "write") and p.ran.code != 0 and h.contains(p.ran.text, "mopm_1.2.3_amd64.deb exists already with different bytes") and h.contains(p.ran.text, "sha256"), p.ran.text);
+        rep.check("differs: the pool object was not replaced and no index object was written", std.mem.eql(u8, w.read("aws/store/apt/pool/mopm/mopm_1.2.3_amd64.deb"), "already there, but not this file\n") and !w.has("aws/store/apt/dists/stable/InRelease"), "");
+        // The same, when the role may not read the pool: the comparison cannot be made, so the write stops.
+        try w.put("aws/deny_pool_get", "");
+        const p2 = try w.pipeline("two", "debs", false, false);
+        rep.check("differs: a pool object that cannot be read to compare is a failure, not a pass", std.mem.eql(u8, p2.stage, "write") and p2.ran.code != 0 and h.contains(p2.ran.text, "could not be read to compare"), p2.ran.text);
     }
 
     // ---- a missing key that S3 answers with AccessDenied is absent ---------------------------------------------
@@ -543,8 +566,8 @@ test "apt_publish: gate, OIDC exchange, read, index, sign, write, with every pla
         rep.check("fake aws: an unconditional put to the pool is AccessDenied", r.code != 0 and h.contains(r.text, "AccessDenied"), r.text);
         r = try h.run(a, &.{ t.aws, "s3api", "put-object", "--bucket", bucket, "--key", "apt/pool/other/x.deb", "--body", w.path("u_next/dists/stable/Release"), "--if-none-match", "*" }, &e2, .{});
         rep.check("fake aws: a put below another product's pool is AccessDenied", r.code != 0 and h.contains(r.text, "AccessDenied"), r.text);
-        r = try h.run(a, &.{ t.aws, "s3api", "get-object", "--bucket", bucket, "--key", "apt/pool/mopm/x.deb", w.path("x") }, &e2, .{});
-        rep.check("fake aws: a get below the pool is AccessDenied", r.code != 0 and h.contains(r.text, "AccessDenied"), r.text);
+        r = try h.run(a, &.{ t.aws, "s3api", "get-object", "--bucket", bucket, "--key", "apt/pool/other/x.deb", w.path("x") }, &e2, .{});
+        rep.check("fake aws: a get below another product's pool is AccessDenied", r.code != 0 and h.contains(r.text, "AccessDenied"), r.text);
     }
 
     // ---- two signing keys: one --local-user for each, for InRelease and Release.gpg ------------------------------------------
