@@ -11,6 +11,7 @@ function configure(): SweeperDeps {
   return {
     groups: new DynamoStore(doc, tablesFor(stageOf(env))),
     groupQueue: new SqsFifoQueue(required(env, 'MOPM_GROUP_QUEUE_URL'), { region: regionOf(env) }),
+    indexQueue: new SqsFifoQueue(required(env, 'MOPM_INDEX_QUEUE_URL'), { region: regionOf(env) }),
   };
 }
 
@@ -18,5 +19,5 @@ function configure(): SweeperDeps {
 export const handler = async (): Promise<void> => {
   deps ??= configure();
   const r = await sweepGroups(deps);
-  console.log(JSON.stringify({ level: 'info', msg: 'sweep', validating: r.validating, resent: r.resent, gave_up: r.gaveUp, oldest_seconds: r.oldestSeconds }));
+  console.log(JSON.stringify({ level: 'info', msg: 'sweep', validating: r.validating, committed: r.committed, resent: r.resent, gave_up: r.gaveUp, oldest_seconds: r.oldestSeconds }));
 };

@@ -14,7 +14,7 @@ import type { PublishConfig } from './config';
 import { groupConflict, groupNotFound, groupNotOpen, invalidRequest, PublishError } from './errors';
 import { ended, expireIfDue, freeAfterFor, groupAudit, isDead, orphanFree } from './group-lifecycle';
 import { GroupCommitter, type GroupCommitBody } from './group-commit';
-import { quarantineKeyFor, uploadIdFor } from './group-keys';
+import { GROUP_ID, quarantineKeyFor, uploadIdFor } from './group-keys';
 import type { ActorGroup, ObjectStore, Presigner, PublishStore, Queue } from './ports';
 import { actorOf, liveBytes, parseFileFacts, requireOwner } from './service';
 import type { UploadRecord } from './types';
@@ -122,7 +122,7 @@ export function groupIdFor(actor: string, req: GroupRequest): string {
   const set = req.members.map((m) => [m.name, m.canonical, m.files.map((f) => [f.subdir, f.filename, f.sha256, f.size])]);
   return `grp_${createHash('sha256').update(JSON.stringify([actor, set])).digest('hex').slice(0, 32)}`;
 }
-export const GROUP_ID = /^grp_[0-9a-f]{32}$/;
+
 
 
 // --- the answers ---------------------------------------------------------------------------------------------------

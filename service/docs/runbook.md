@@ -120,8 +120,18 @@ publish `published`. See "The sparse index writer" below.
   "all", "deny": ["u:<github id>"]}` for everybody but the actors in `deny` (a `deny` list also applies to `allow`). No item, any other
   mode, or a value that is not a list admits nobody. It gates creation only: a group that exists is still read and aborted with it off, and
   `read_only` refuses a create but not a read or an abort. Takes effect within about five seconds. A group is created, read, aborted,
-  committed to validation (`POST /groups/{id}/commit`, which `read_only` also refuses) and validated; what follows a commit (repodata,
-  the sparse index, the flip to `visible`) is not built yet, so a group that has committed stays `committed`.
+  committed to validation (`POST /groups/{id}/commit`, which `read_only` also refuses), validated, committed and then released into the
+  channel's files and made `visible` (the chain, below).
+- **The chain after a commit.** A commit makes the group's members show in the API at once. The channel's files follow, one step at a
+  time, and each step is a message: a repodata hop for each subdir the group has files in (index queue, FIFO group = the subdir), then
+  an index hop for each member in the header's `write_order` (dependencies first; a dependency cycle is ordered by name; FIFO group
+  `pkg:<name>`), then the flip (group queue): every member row becomes `published` at the commit time (a yanked or taken-down member is
+  left as it is) and the header becomes `visible`, which also takes it out of the sweeper's index. A hop first sets its gate on the
+  header (`repodata_released`, `index_released`) and then builds, so any other build between two hops (a yank, a rebuild, another
+  publish) lists the members released so far and no others; no index file is written before every repodata gate is set. The header, not
+  the message, says which step is next, so a message delivered twice or late does no harm. Installs see a group's packages arrive one at a
+  time, over as many hops as it has subdirs and members: this is not atomic, and the CDN's cache adds up to a minute. The dedup id of a
+  step is `grp:<group id>:<attempt>:<step>:<resend>`.
 - **How a group is validated.** The commit moves the group to `validating` and queues `mopm-<stage>-group.fifo` (one FIFO group per
   group id; at most two validations run at once, and the single validator keeps its own five). The group validator Lambda checks every
   member's archives and stages its row (phase 1; a bad member, an upload older than 18 hours, a deadline that passed or too many bytes
@@ -132,10 +142,11 @@ publish `published`. See "The sparse index writer" below.
   invocations. Abort and expiry end only a group that is `open`; a validating group finishes or fails. `GET /groups/{id}` shows `failure`
   (`code`, `message`, the `member`) for a group that was rejected or failed.
 - **The sweeper.** The Lambda `mopm-<stage>-...GroupSweeper` runs every five minutes (rule `mopm-<stage>-group-sweeper`), reads the index
-  `by_sweep` (the headers of groups that are not over) and sends the validate message again for a group that is `validating` and has
-  shown no sign of life for 35 minutes (a message in flight is invisible for 30), with a new dedup id each time, at most three times. It
-  never ends or burns a group. After the third resend it only counts the group in `group_sweeper_gave_up`, which raises
-  `mopm-<stage>-group-stalled`.
+  `by_sweep` (the headers of groups that are not over: a group leaves it when it is `visible`) and sends the validate message again for a
+  group that is `validating` and has shown no sign of life for 35 minutes (a message in flight is invisible for 30), and the step of the
+  chain that is next for a group that is `committed` and has shown none for 10 minutes (a hop is seconds), with a new dedup id each time,
+  at most three times. It never ends or burns a group. After the third resend it only counts the group in `group_sweeper_gave_up`,
+  which raises `mopm-<stage>-group-stalled`.
 - **The group tool** (`service/api/src/ops/group-ops.ts`, built to `dist/ops/group-ops-bin.js`; run with the stage's credentials,
   `node group-ops-bin.js --stage=<stage> --mode=status`; flags only). `--mode=status` is read-only: the groups that are not over, with
   their phase, their last sign of life and, for a committed one, the members not yet flipped; the depth of the six queues; and a final
@@ -152,7 +163,7 @@ publish `published`. See "The sparse index writer" below.
   items (`grpc#...`) expire seven days after the group's deadline.
 - **Group alarms.** `mopm-<stage>-group-invariant` (a committed group had a member a reader could not account for),
   `mopm-<stage>-group-pending-rows` (a package holds 100 or more pending rows, which dead groups leave behind),
-  `mopm-<stage>-group-oldest-active` (a validating group has shown no sign of life for 30 minutes) and `mopm-<stage>-group-stalled` (the
+  `mopm-<stage>-group-oldest-active` (a validating or committed group has shown no sign of life for 30 minutes) and `mopm-<stage>-group-stalled` (the
   sweeper has resent a group's message three times and it still does not move). The group queue has its own dead-letter queue and alarm,
   `mopm-<stage>-group-dlq-depth`: a message that fails three times lands in `mopm-<stage>-group-dlq.fifo`; the logs of the group validator
   say why (a defect, or a member row that is not as it was staged, which is never committed). Redrive it after the fix, or end the group

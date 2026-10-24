@@ -48,7 +48,24 @@
       "env": {
         "MOPM_STAGE": "beta",
         "MOPM_CHANNEL_BUCKET": "channel-bucket",
+        "MOPM_GROUP_QUEUE_URL": "group-queue-url"
+      },
+      "event": {
+        "Records": []
+      },
+      "expect": {
+        "rejects": {
+          "name": "Error",
+          "message": "MOPM_INDEX_QUEUE_URL is not set"
+        }
+      }
+    },
+    {
+      "env": {
+        "MOPM_STAGE": "beta",
+        "MOPM_CHANNEL_BUCKET": "channel-bucket",
         "MOPM_GROUP_QUEUE_URL": "group-queue-url",
+        "MOPM_INDEX_QUEUE_URL": "index-queue-url",
         "MOPM_GROUP_BUDGET_MS": "soon"
       },
       "event": {
@@ -65,7 +82,8 @@
       "env": {
         "MOPM_STAGE": "beta",
         "MOPM_CHANNEL_BUCKET": "channel-bucket",
-        "MOPM_GROUP_QUEUE_URL": "group-queue-url"
+        "MOPM_GROUP_QUEUE_URL": "group-queue-url",
+        "MOPM_INDEX_QUEUE_URL": "index-queue-url"
       },
       "event": {
         "Records": []
@@ -82,6 +100,7 @@
         "MOPM_STAGE": "beta",
         "MOPM_CHANNEL_BUCKET": "channel-bucket",
         "MOPM_GROUP_QUEUE_URL": "group-queue-url",
+        "MOPM_INDEX_QUEUE_URL": "index-queue-url",
         "MOPM_CHANNEL_URL": "channel-url"
       },
       "event": {
