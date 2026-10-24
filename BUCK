@@ -589,6 +589,32 @@ zig_test(  # buck-only: an archive in an empty-module package, from mopm pack an
     **_TOOLS
 )
 
+zig_test(  # buck-only: a workspace member with its own C library and a package that links it, from mopm lock to an installed --overlay set, against the real Mojo (the beta tier of native_workspace)
+    name = "native_workspace_mojo",
+    src = "tests/drivers/native_workspace_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig"],
+    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm", MOPM_FAKE_REGISTRY = ":mopm-fake-registry", FAKE_PIXI = ":fake-pixi", MOJO_COMPILE_SHIM = ":mojo-compile-shim"),
+    data = ["tests/e2e/natws"],
+    **_TOOLS
+)
+
+zig_test(  # buck-only: the same walk with a stand-in compiler and pixi (tests/drivers/fake_toolchain.zig, fake_pixi.zig): the graph, the C build, the link line, the packed archive, the lock and the install; it runs on every pull request
+    name = "native_workspace",
+    src = "tests/drivers/native_workspace_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig"],
+    exec_tools = {
+        "CC_SHIM": ":zigcc",
+        "ZIG_DIR": "buildrules//rules/pins:zig",
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+        "FAKE_PIXI": ":fake-pixi",
+        "FAKE_TOOLCHAIN": ":fake-toolchain",
+        "MOJO_COMPILE_SHIM": ":mojo-compile-shim",
+    },
+    data = ["tests/e2e/natws"],
+    **_TOOLS
+)
+
 zig_test(  # buck-only: mopm test --list against the real mojo; the Zig port of tests/e2e/test_discovery.sh
     name = "discovery",
     src = "tests/drivers/test_discovery_test.zig",
