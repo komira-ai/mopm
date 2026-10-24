@@ -219,6 +219,104 @@ fn countFiles(w: World, sub: []const u8) usize {
     return n;
 }
 
+/// `plan --sha <sha> --held-dir <dir>` on the scenario of `goodVerify` with base 1.2: the text it printed, and whether it said `complete=true`.
+const Planned = struct { code: u8, text: []const u8, complete: bool, version_ok: bool };
+
+fn planHeld(a: Allocator, w: World) !Planned {
+    const r = try w.runV(&.{ "plan", "--sha", sha, "--held-dir", try h.join(a, &.{ w.root, "held" }) });
+    return .{ .code = r.code, .text = r.text, .complete = h.contains(r.text, "complete=true\n"), .version_ok = h.contains(r.text, "version=1.2.3\n") };
+}
+
+/// The same bytes with one bit of the middle byte flipped.
+fn flipBit(a: Allocator, bytes: []const u8) ![]const u8 {
+    const copy = try a.dupe(u8, bytes);
+    copy[copy.len / 2] ^= 0x01;
+    return copy;
+}
+
+test "cut_release: plan says whether the release of a tagged commit is already complete" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try h.watchdog(600);
+    const tools = Tools{
+        .cut = try h.toolPath(a, "MOPM_CUT_RELEASE"),
+        .gh = try h.toolPath(a, "MOPM_FAKE_GH"),
+        .release = try h.toolPath(a, "MOPM_RELEASE_TOOL"),
+        .cosign = try h.toolPath(a, "MOPM_FAKE_COSIGN"),
+        .channels = try h.toolPath(a, "MOPM_CHANNELS"),
+    };
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var rep = h.Report{};
+
+    // One release of 1.2.3: its twelve files, tagged at `sha`, published. Every case below changes the files and puts them back.
+    const w = try goodVerify(a, tools, &tmp, "plan_complete", "1.2.3");
+    try w.put("VERSION", "1.2\n");
+    try w.put("release_state", "false false\n");
+    const good = try planHeld(a, w);
+    rep.check("plan: a published release that holds the twelve files with the digests of its SHA256SUMS is complete", good.code == 0 and good.complete and good.version_ok, good.text);
+    rep.check("plan: and the check only reads (no tag, release or upload)", w.calls("api -X POST") == 0 and w.calls("release create") == 0 and w.calls("release upload") == 0, w.log());
+
+    // Any one of the twelve files missing (an upload that died halfway), or empty, is not complete.
+    var wrong_missing: usize = 0;
+    var wrong_empty: usize = 0;
+    var wrong_flipped: usize = 0;
+    for (names12) |n| {
+        const bytes = try h.readFile(a, w.path(try h.join(a, &.{ "assets", n })));
+        const p = w.path(try h.join(a, &.{ "assets", n }));
+        try std.fs.cwd().deleteFile(p);
+        const gone = try planHeld(a, w);
+        if (gone.complete or gone.code != 0 or !gone.version_ok) wrong_missing += 1;
+        try h.writeFile(p, "");
+        const empty = try planHeld(a, w);
+        if (empty.complete or empty.code != 0) wrong_empty += 1;
+        // The six payload files held with other bytes than SHA256SUMS lists; a bundle is another signing of the same file and only has to be there.
+        try h.writeFile(p, try flipBit(a, bytes));
+        const other_bytes = try planHeld(a, w);
+        if (other_bytes.complete != std.mem.endsWith(u8, n, ".sigstore.json")) wrong_flipped += 1;
+        try h.writeFile(p, bytes);
+    }
+    rep.check("plan: any one of the twelve files missing makes the release not complete, and the plan still prints the version", wrong_missing == 0, "a release missing a file was called complete");
+    rep.check("plan: any one of the twelve files empty makes the release not complete", wrong_empty == 0, "a release with an empty file was called complete");
+    rep.check("plan: a tarball or .deb with other bytes than SHA256SUMS lists, or a changed SHA256SUMS, is not complete; a bundle with other bytes still is", wrong_flipped == 0, "a changed file was judged wrongly");
+    const restored = try planHeld(a, w);
+    rep.check("plan: with every file put back the release is complete again", restored.complete, restored.text);
+
+    // An asset that is not one of the twelve.
+    try w.put("assets/extra.txt", "x\n");
+    const extra = try planHeld(a, w);
+    rep.check("plan: a thirteenth asset makes the release not complete", extra.code == 0 and !extra.complete, extra.text);
+    try std.fs.cwd().deleteFile(w.path("assets/extra.txt"));
+
+    // The state of the release.
+    try w.put("release_state", "true false\n");
+    const draft = try planHeld(a, w);
+    try w.put("release_state", "false true\n");
+    const pre = try planHeld(a, w);
+    try w.put("release_state", "false false\n");
+    rep.check("plan: a draft release, and a prerelease flag its version does not call for, are not complete", draft.code == 0 and !draft.complete and pre.code == 0 and !pre.complete, draft.text);
+    try std.fs.cwd().deleteFile(w.path("release_exists"));
+    const downloads_before = w.calls("release download");
+    const none = try planHeld(a, w);
+    rep.check("plan: a tag with no release is not complete, and nothing is downloaded", none.code == 0 and !none.complete and none.version_ok and w.calls("release download") == downloads_before, none.text);
+    try w.put("release_exists", "");
+    try w.put("release_error", "");
+    const broken = try planHeld(a, w);
+    rep.check("plan: a GitHub that cannot answer is not complete, and the plan still goes on", broken.code == 0 and !broken.complete and broken.version_ok, broken.text);
+    try std.fs.cwd().deleteFile(w.path("release_error"));
+
+    // Without --held-dir the plan asks nothing about the release and prints no `complete` line; a commit with no tag of its own is new.
+    const plain = try w.runV(&.{ "plan", "--sha", sha });
+    rep.check("plan: without --held-dir there is no complete line", plain.code == 0 and h.contains(plain.text, "version=1.2.3\n") and !h.contains(plain.text, "complete"), plain.text);
+    const fresh_sha = try fresh(a, tools, &tmp, "plan_complete_new");
+    try fresh_sha.put("VERSION", "1.2\n");
+    try fresh_sha.put("tags", "v1.2.3 " ++ sha ++ "\n");
+    const next = try fresh_sha.runV(&.{ "plan", "--sha", other, "--held-dir", try h.join(a, &.{ fresh_sha.root, "held" }) });
+    rep.check("plan: a commit after the last release is a new release and is not complete", next.code == 0 and h.contains(next.text, "version=1.2.4\ncomplete=false\n") and fresh_sha.calls("release view") == 0, next.text);
+    try rep.finish();
+}
+
 test "cut_release: plan, tag, verify-dir, publish, verify, and every planted defect is refused" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
