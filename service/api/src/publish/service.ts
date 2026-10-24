@@ -11,7 +11,7 @@ import type { PublishConfig } from './config';
 import { parseDisplay } from './display';
 import type { DisplayMeta } from './display';
 import { invalidRequest, PublishError, uploadInvalid } from './errors';
-import { expireIfDue, isDead } from './group-lifecycle';
+import { expireIfDue, isDead, orphanFree } from './group-lifecycle';
 import type { ObjectStore, Presigner, PublishStore, Queue } from './ports';
 import { packageRev } from '../index-files';
 import { sendIndexPkg } from './indexer';
@@ -220,11 +220,16 @@ export class PublishService {
   private async adoptFromDeadGroup(current: VersionRecord, rec: VersionRecord, audit: AuditEntry): Promise<boolean> {
     const groups = this.d.groups;
     if (!groups || current.group_id === undefined) return false;
-    let header = await groups.getGroup(current.group_id);
-    if (!header) return false;
-    header = await expireIfDue(groups, header, this.now());
-    if (!isDead(header.status)) return false;
     const gid = current.group_id;
+    const header = await groups.getGroup(gid);
+    // A row with no header is free only when its own free_after has passed (a dead group's header was removed by the table's TTL).
+    const now = this.now();
+    if (!header) {
+      if (!orphanFree(current, now)) return false;
+      const out = await groups.adoptSingle(rec, { ...audit, action: 'publish_adopt', detail: { group_id: gid } }, (cur) => cur.group_id === gid && orphanFree(cur, this.now()));
+      return out.outcome === 'created' || out.outcome === 'adopted';
+    }
+    if (!isDead((await expireIfDue(groups, header, now)).status)) return false;
     const out = await groups.adoptSingle(rec, { ...audit, action: 'publish_adopt', detail: { group_id: gid } }, (cur) => cur.group_id === gid);
     return out.outcome === 'created' || out.outcome === 'adopted';
   }

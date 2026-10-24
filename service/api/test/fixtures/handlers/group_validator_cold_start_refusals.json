@@ -1,0 +1,100 @@
+{
+  "description": "Each missing or bad setting stops the group validator's cold start with its own message (checked in this order), the invocation is rejected so SQS retries it, and nothing is kept; the last invocation, with everything set, starts and returns.",
+  "lambda": "group_validator",
+  "env": {},
+  "invocations": [
+    {
+      "env": {},
+      "event": {
+        "Records": []
+      },
+      "expect": {
+        "rejects": {
+          "name": "Error",
+          "message": "MOPM_STAGE is not set"
+        }
+      }
+    },
+    {
+      "env": {
+        "MOPM_STAGE": "beta"
+      },
+      "event": {
+        "Records": []
+      },
+      "expect": {
+        "rejects": {
+          "name": "Error",
+          "message": "MOPM_CHANNEL_BUCKET is not set"
+        }
+      }
+    },
+    {
+      "env": {
+        "MOPM_STAGE": "beta",
+        "MOPM_CHANNEL_BUCKET": "channel-bucket"
+      },
+      "event": {
+        "Records": []
+      },
+      "expect": {
+        "rejects": {
+          "name": "Error",
+          "message": "MOPM_GROUP_QUEUE_URL is not set"
+        }
+      }
+    },
+    {
+      "env": {
+        "MOPM_STAGE": "beta",
+        "MOPM_CHANNEL_BUCKET": "channel-bucket",
+        "MOPM_GROUP_QUEUE_URL": "group-queue-url",
+        "MOPM_GROUP_BUDGET_MS": "soon"
+      },
+      "event": {
+        "Records": []
+      },
+      "expect": {
+        "rejects": {
+          "name": "Error",
+          "message": "MOPM_GROUP_BUDGET_MS must be an integer of at least 1"
+        }
+      }
+    },
+    {
+      "env": {
+        "MOPM_STAGE": "beta",
+        "MOPM_CHANNEL_BUCKET": "channel-bucket",
+        "MOPM_GROUP_QUEUE_URL": "group-queue-url"
+      },
+      "event": {
+        "Records": []
+      },
+      "expect": {
+        "rejects": {
+          "name": "Error",
+          "message": "MOPM_CHANNEL_URL is not set"
+        }
+      }
+    },
+    {
+      "env": {
+        "MOPM_STAGE": "beta",
+        "MOPM_CHANNEL_BUCKET": "channel-bucket",
+        "MOPM_GROUP_QUEUE_URL": "group-queue-url",
+        "MOPM_CHANNEL_URL": "channel-url"
+      },
+      "event": {
+        "Records": []
+      },
+      "expect": {
+        "returns": null
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [],
+    "aws_http": [],
+    "logs": []
+  }
+}

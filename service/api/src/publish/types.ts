@@ -97,3 +97,14 @@ export interface IndexTakedownsMessage {
   type: 'index_takedowns';
 }
 export type IndexQueueMessage = IndexMessage | IndexPkgMessage | IndexTakedownsMessage;
+
+/**
+ * What the group queue carries: run (or go on with) the validation of one attempt of a group. `n` counts the messages
+ * a validator sent itself to go on after its time budget (it is part of their dedup id).
+ */
+export interface ValidateGroupMessage {
+  type: 'validate_group';
+  group_id: string;
+  attempt: number;
+  n: number;
+}

@@ -119,12 +119,44 @@ publish `published`. See "The sparse index writer" below.
   `{"key": "groups_enabled", "mode": "allow", "actors": ["u:<github id>"]}` for a list of accounts, or `{"key": "groups_enabled", "mode":
   "all", "deny": ["u:<github id>"]}` for everybody but the actors in `deny` (a `deny` list also applies to `allow`). No item, any other
   mode, or a value that is not a list admits nobody. It gates creation only: a group that exists is still read and aborted with it off, and
-  `read_only` refuses a create but not a read or an abort. Takes effect within about five seconds. This change creates, shows and aborts
-  groups; nothing yet validates or publishes one.
+  `read_only` refuses a create but not a read or an abort. Takes effect within about five seconds. A group is created, read, aborted,
+  committed to validation (`POST /groups/{id}/commit`, which `read_only` also refuses) and validated; what follows a commit (repodata,
+  the sparse index, the flip to `visible`) is not built yet, so a group that has committed stays `committed`.
+- **How a group is validated.** The commit moves the group to `validating` and queues `mopm-<stage>-group.fifo` (one FIFO group per
+  group id; at most two validations run at once, and the single validator keeps its own five). The group validator Lambda checks every
+  member's archives and stages its row (phase 1; a bad member, an upload older than 18 hours, a deadline that passed or too many bytes
+  ends the group `rejected` and frees its numbers), copies the files into the channel with create-only writes (phase 2; any failure
+  from here ends it `failed` and burns its numbers: bytes under those names may be public, and they stay), then checks every row again,
+  checks the project totals again and commits (phase 3). It saves its progress in the header every eight members and stops starting
+  members after about four minutes (`MOPM_GROUP_BUDGET_MS`), queueing the rest as a message of its own, so a large group takes several
+  invocations. Abort and expiry end only a group that is `open`; a validating group finishes or fails. `GET /groups/{id}` shows `failure`
+  (`code`, `message`, the `member`) for a group that was rejected or failed.
+- **The sweeper.** The Lambda `mopm-<stage>-...GroupSweeper` runs every five minutes (rule `mopm-<stage>-group-sweeper`), reads the index
+  `by_sweep` (the headers of groups that are not over) and sends the validate message again for a group that is `validating` and has
+  shown no sign of life for 35 minutes (a message in flight is invisible for 30), with a new dedup id each time, at most three times. It
+  never ends or burns a group. After the third resend it only counts the group in `group_sweeper_gave_up`, which raises
+  `mopm-<stage>-group-stalled`.
+- **The group tool** (`service/api/src/ops/group-ops.ts`, built to `dist/ops/group-ops-bin.js`; run with the stage's credentials,
+  `node group-ops-bin.js --stage=<stage> --mode=status`; flags only). `--mode=status` is read-only: the groups that are not over, with
+  their phase, their last sign of life and, for a committed one, the members not yet flipped; the depth of the six queues; and a final
+  `verdict` line. It exits 0 only when no group is in that list and the queues are empty. **Run it before any revert of this service is
+  merged**: an older receiver acknowledges the messages of a newer one and loses them, and a revert deploys to PROD at once.
+  `--mode=fail --group=<id>` ends a group that is validating and stuck. Without `--apply` it prints the plan and changes nothing. With
+  it, the header is changed first (a compare-and-set that holds only while the group is validating): `rejected` if no copy began (its
+  numbers are free), `failed` if one did, and then the numbers are burned. A commit that starts after that loses.
+- **Groups that ended.** A group that ended without committing (`aborted`, `expired`, `superseded`, `rejected`, `failed`) has its header
+  and member list removed by the table's TTL: the header expires seven days after the later of its end and its deadline, the member list
+  two days after that. Its reserved rows stay in the versions table (rows are never deleted) and become free to take, by a group or a
+  single publish, at the same moment (`free_after` on the row), so a number never stays stuck behind a header that is gone. A row of a
+  group that is alive, or of one that committed (whose header never expires), is never free that way. The commit request's per-member
+  items (`grpc#...`) expire seven days after the group's deadline.
 - **Group alarms.** `mopm-<stage>-group-invariant` (a committed group had a member a reader could not account for),
-  `mopm-<stage>-group-pending-rows` (a package holds 100 or more pending rows, which dead groups leave behind) and
-  `mopm-<stage>-group-oldest-active` (nothing writes its metric yet). The index `by_sweep` on the publishes table holds the headers of
-  groups that are not over, for the sweeper that is not built yet.
+  `mopm-<stage>-group-pending-rows` (a package holds 100 or more pending rows, which dead groups leave behind),
+  `mopm-<stage>-group-oldest-active` (a validating group has shown no sign of life for 30 minutes) and `mopm-<stage>-group-stalled` (the
+  sweeper has resent a group's message three times and it still does not move). The group queue has its own dead-letter queue and alarm,
+  `mopm-<stage>-group-dlq-depth`: a message that fails three times lands in `mopm-<stage>-group-dlq.fifo`; the logs of the group validator
+  say why (a defect, or a member row that is not as it was staged, which is never committed). Redrive it after the fix, or end the group
+  with the tool.
 - **Dead-letter queues.** A message that fails three times lands in `mopm-<stage>-validate-dlq.fifo` or
   `mopm-<stage>-index-dlq.fifo`, and the alarm `mopm-<stage>-{validate,index}-dlq-depth` fires. The Lambda logs say why. The publish stays
   `validating` or `indexing`. After fixing the cause, redrive the message from the console or CLI (`start-message-move-task`); both

@@ -68,6 +68,13 @@ export interface VersionRecord {
   group_id?: string;
   /** The group attempt that filled this row. Set in the same write that fills a group member; absent before. */
   staged_attempt?: number;
+  /**
+   * Epoch seconds. Set on a reserved row of a group (the end of the group's deadline plus a tail), and removed by the write
+   * that publishes or burns the row. Once it has passed, a `pending` row whose group header is gone (a dead group's header
+   * is given a TTL, see src/publish/group-lifecycle.ts) is free for any group or single to take. A row without it is never
+   * free that way, and a committed group's header never expires.
+   */
+  free_after?: number;
   /** Optimistic-concurrency counter: starts at 0, +1 on every state change. */
   rev: number;
 }

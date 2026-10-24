@@ -124,15 +124,29 @@ describe('the deployed Lambda assets', () => {
     loadFrom(dir, 'ok.js', 'handler');
   });
 
-  test('the four functions are the API, the index reader, the validator and the index writer', () => {
+  test('the six functions are the API, the index reader, the validator, the index writer, the group validator and the group sweeper', () => {
     expect(
       deployedFunctions()
         .map((f) => f.handler)
         .sort(),
-    ).toEqual(['http/index-lambda.handler', 'http/lambda.handler', 'publish/indexer-lambda.handler', 'publish/validator-lambda.handler']);
+    ).toEqual([
+      'http/index-lambda.handler',
+      'http/lambda.handler',
+      'publish/group-validator-lambda.handler',
+      'publish/indexer-lambda.handler',
+      'publish/sweeper-lambda.handler',
+      'publish/validator-lambda.handler',
+    ]);
   });
 
-  test.each(['http/lambda.handler', 'http/index-lambda.handler', 'publish/validator-lambda.handler', 'publish/indexer-lambda.handler'])(
+  test.each([
+    'http/lambda.handler',
+    'http/index-lambda.handler',
+    'publish/validator-lambda.handler',
+    'publish/indexer-lambda.handler',
+    'publish/group-validator-lambda.handler',
+    'publish/sweeper-lambda.handler',
+  ])(
     '%s loads from the asset CDK uploads, with no node_modules in reach',
     (handler) => {
       const f = deployedFunctions().find((d) => d.handler === handler);
