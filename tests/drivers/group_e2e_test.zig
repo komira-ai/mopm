@@ -24,6 +24,8 @@ const test_token = "mopm_e2etokene2etokene2etokene2etoke";
 const upload_header = "x-amz-meta-e2e";
 /// The release of the first member that another run is made to have published (Mode.newer_release): a newer 1.x than any run's.
 const rival_version = "1.99999999.1";
+/// The release of the first member that Mode.rival_major makes another run have published: the next major.
+const rival_major_version = "2.0.0";
 /// The variable the stand-in compiler's programs read for the line they print (tests/drivers/fake_toolchain.zig).
 const program_output_env = "FAKE_TOOLCHAIN_PROGRAM_OUTPUT";
 /// An empty JSON list (an empty byte array would be written as a string).
@@ -70,6 +72,9 @@ const Mode = struct {
     size_differs: ?usize = null,
     /// Another run's newer release (1.99999999.1) of the first member is already published when the set's group is created.
     newer_release: bool = false,
+    /// Another run's release of the first member at the next MAJOR (2.0.0) is already published when the set's group is created, and
+    /// the registry tells every dependency range of the set with no upper bound, so a reader's lock names that release.
+    rival_major: bool = false,
     /// A member of the set is readable in the API from the moment the staged set has been installed, before it is published.
     shows_during_overlay: bool = false,
     /// The probe group's deadline is this many seconds after the call.
@@ -272,7 +277,7 @@ const Stub = struct {
         const id = try std.fmt.allocPrint(sa, "grp_{s}", .{hex[0..32]});
         const probe = std.mem.eql(u8, input.members[0].version, g.probe_version);
         if (s.mode.create_refused and !probe) return fail(a, .conflict, "group_conflict", "the group cannot be created");
-        if (s.mode.newer_release and !probe and !s.rival_seeded) try s.seedRival();
+        if ((s.mode.newer_release or s.mode.rival_major) and !probe and !s.rival_seeded) try s.seedRival();
         var existing = s.find(id);
         var status: std.http.Status = .created;
         if (existing) |i| {
@@ -330,10 +335,11 @@ const Stub = struct {
         s.rival_seeded = true;
         const bytes = "PK stand-in package of another run\n";
         const found = try sa.alloc(Member, 1);
+        const rival = if (s.mode.rival_major) rival_major_version else rival_version;
         found[0] = .{
             .name = g.pkg_core,
-            .version = rival_version,
-            .filename = "mojo-" ++ g.pkg_core ++ "-" ++ rival_version ++ "-mojo1.0.0_0.conda",
+            .version = rival,
+            .filename = try std.fmt.allocPrint(sa, "mojo-{s}-{s}-mojo1.0.0_0.conda", .{ g.pkg_core, rival }),
             .sha256 = try sa.dupe(u8, &g.sha256Hex(bytes)),
             .size = bytes.len,
             .bytes = bytes,
@@ -346,7 +352,7 @@ const Stub = struct {
     /// The size the readers of the index and the repodata are told for member `i` of a group.
     fn shownSize(s: *Stub, m: Member, i: usize) u64 {
         const at = s.mode.size_differs orelse return m.size;
-        return if (at == i and !std.mem.eql(u8, m.version, rival_version)) m.size + 1 else m.size;
+        return if (at == i and !std.mem.eql(u8, m.version, rival_version) and !std.mem.eql(u8, m.version, rival_major_version)) m.size + 1 else m.size;
     }
 
     fn upload(s: *Stub, a: Allocator, method: std.http.Method, rest: []const u8, body: []const u8, authorization: ?[]const u8, has_upload_header: bool) !Reply {
@@ -428,7 +434,14 @@ const Stub = struct {
                     gr.status = .rejected;
                     gr.failure_member = bad;
                 } else {
-                    for (gr.members) |*m| m.deps = depsOf(sa, m.*);
+                    for (gr.members) |*m| {
+                        m.deps = depsOf(sa, m.*);
+                        if (s.mode.rival_major) {
+                            const open: []Dep = sa.dupe(Dep, m.deps) catch continue;
+                            for (open) |*d| d.range = ">=0.0.0";
+                            m.deps = open;
+                        }
+                    }
                     gr.status = .committed;
                     gr.polls = 0;
                 }
@@ -1120,6 +1133,20 @@ test "a newer release of a set package that another run published meanwhile is t
     try std.testing.expect(!both.result.skipped);
     try std.testing.expect(failed(both.result, lock_same));
     try std.testing.expect(!passed(both.result, "lock: the locks differ only in a newer release"));
+}
+
+test "a release of a set package at another major that another run published meanwhile is a failure of the lock comparison, naming that entry" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const a = arena.allocator();
+    try guard();
+    // The registry's lock names the other run's 2.0.0 for the first member. Only a newer release of the SAME major is the other
+    // run's file the comparison lets by; this one is neither the uploaded file nor that, so the entry fails and the locks differ.
+    const ran = try runCheck(a, .{ .rival_major = true }, test_token, "beta");
+    try std.testing.expect(!ran.result.skipped);
+    try std.testing.expect(failed(ran.result, "lock: zz_e2e_core is locked at the uploaded file"));
+    try std.testing.expect(failed(ran.result, lock_same));
+    try std.testing.expect(!passed(ran.result, "lock: the locks differ only in a newer release"));
+    try std.testing.expect(passed(ran.result, "lock: zz_e2e_mid is locked at the uploaded file"));
 }
 
 test "a README program that exits 0 and prints another line is a failure" {
