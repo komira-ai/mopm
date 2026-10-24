@@ -264,6 +264,12 @@ export const REQUIRED: Record<string, Needs> = {
     ),
     ...each(['lambda:CreateEventSourceMapping', 'lambda:GetFunction'], functionArn(c, r.Properties.FunctionName)),
   ],
+  // The group sweeper's schedule. The policy's NameScopedServices allows events:* on rule/mopm-<stage>-* (the rule is named explicitly, so its name is in the scope); the Lambda permission that lets it invoke the function is an AWS::Lambda::Permission, which is mapped above.
+  'AWS::Events::Rule': (_r, id, c) =>
+    each(
+      ['events:PutRule', 'events:DescribeRule', 'events:DeleteRule', 'events:PutTargets', 'events:RemoveTargets', 'events:EnableRule', 'events:DisableRule', 'events:TagResource', 'events:UntagResource', 'events:ListTagsForResource'],
+      `arn:aws:events:${REGION}:${c.account}:rule/${physical(c, id, 'Name')}`,
+    ),
   'AWS::CloudWatch::Alarm': (_r, id, c) =>
     each(
       ['cloudwatch:PutMetricAlarm', 'cloudwatch:DeleteAlarms', 'cloudwatch:DescribeAlarms', 'cloudwatch:TagResource', 'cloudwatch:ListTagsForResource'],

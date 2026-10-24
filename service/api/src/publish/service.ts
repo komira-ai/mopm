@@ -2,14 +2,16 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { Principal } from '../auth';
 import { NAME_PATTERN } from '../auth';
 import { RegistryError, versionExists } from '../errors';
+import type { GroupStore } from '../group-store';
 import type { Store } from '../store';
-import type { VersionRecord } from '../types';
+import type { AuditEntry, VersionRecord } from '../types';
 import { SUBDIRS_V1 } from '../types';
 import { canonicalVersion } from '../version';
 import type { PublishConfig } from './config';
 import { parseDisplay } from './display';
 import type { DisplayMeta } from './display';
 import { invalidRequest, PublishError, uploadInvalid } from './errors';
+import { expireIfDue, isDead, orphanFree } from './group-lifecycle';
 import type { ObjectStore, Presigner, PublishStore, Queue } from './ports';
 import { packageRev } from '../index-files';
 import { sendIndexPkg } from './indexer';
@@ -17,6 +19,8 @@ import type { Actor, IndexMessage, PublishRecord, UploadRecord, ValidateMessage 
 
 export interface PublishServiceDeps {
   registry: Store;
+  /** The registry's group side (the same adapter object). With it, a single publish can take over the number of a dead group; without it, it never does. */
+  groups?: GroupStore;
   publishes: PublishStore;
   /** Only `head` is used here: commit checks that the bytes arrived. */
   objects: Pick<ObjectStore, 'head'>;
@@ -127,34 +131,11 @@ export class PublishService {
   }
 
   private parseBegin(name: string, version: string, body: unknown) {
-    if (!isObject(body)) throw invalidRequest('the body is not a JSON object');
-    const { subdir, filename, sha256, size } = body;
-    if (typeof subdir !== 'string' || !SUBDIRS_V1.includes(subdir)) throw invalidRequest("'subdir' is not a known subdir");
-    if (typeof filename !== 'string' || !SAFE_FILENAME.test(filename)) throw invalidRequest("'filename' must be a plain file name");
-    if (typeof sha256 !== 'string' || !SHA256.test(sha256)) throw invalidRequest("'sha256' is 64 lowercase hex digits");
-    if (typeof size !== 'number' || !Number.isSafeInteger(size) || size < 1) throw invalidRequest("'size' must be a positive integer");
-    if (size > this.d.config.maxArchiveBytes) {
-      throw new PublishError('payload_too_large', 'The file is larger than the limit.', { limit: String(this.d.config.maxArchiveBytes) });
-    }
-    const prefix = `mojo-${name}-${version}-`;
-    const build = filename.startsWith(prefix) && filename.endsWith('.conda') ? filename.slice(prefix.length, -'.conda'.length) : undefined;
-    if (build === undefined || !BUILD.test(build)) {
-      throw uploadInvalid(`the file name must be ${prefix}<build>.conda`);
-    }
-    return { subdir, filename, sha256, size };
+    return parseFileFacts(this.d.config, name, version, body);
   }
 
-  /** The package must exist (claimed); an account token must belong to a current owner (a token outlives an ownership change). */
-  private async requireOwner(p: Principal, name: string): Promise<string> {
-    const pkg = await this.d.registry.getPackage(name);
-    if (!pkg) throw new PublishError('package_not_found', `There is no package '${name}'.`, { name });
-    if (p.github_id !== undefined) {
-      const owner = (await this.d.registry.listOwners(name)).find((o) => o.github_id === p.github_id);
-      if (!owner) throw new PublishError('not_owner', `You are not an owner of '${name}'.`, { name });
-      return owner.handle;
-    }
-    // A CI identity token was issued for exactly this package and version by a matching trusted publisher.
-    return 'ci';
+  private requireOwner(p: Principal, name: string): Promise<string> {
+    return requireOwner(this.d.registry, p, name);
   }
 
   private async rateLimit(p: Principal): Promise<void> {
@@ -221,11 +202,36 @@ export class PublishService {
     const current = await this.d.registry.getVersion(name, version);
     if (!current) throw versionExists(name, version, sha256);
     // A number held by a group is the group's: whether it has committed (the row reads `published`) or not (it reads
-    // `pending`), a single publish does not join it.
-    if (current.group_id !== undefined) throw versionExists(name, version, current.files[0]?.sha256 ?? current.manifest_sha256);
+    // `pending`), a single publish does not join it. The one exception is a group that is dead: its number is free, and
+    // the single takes it over (a compare-and-set on the row, so a group or another single that got there first wins).
+    if (current.group_id !== undefined) {
+      if (current.state === 'pending' && (await this.adoptFromDeadGroup(current, rec, audit))) return;
+      throw versionExists(name, version, current.files[0]?.sha256 ?? current.manifest_sha256);
+    }
     if (current.state !== 'pending' || (await this.d.publishes.versionHolder(name, canonical)) !== undefined) {
       throw versionExists(name, version, current.files[0]?.sha256 ?? current.manifest_sha256);
     }
+  }
+
+  /**
+   * Take the number a dead group's row holds for this single publish. False (nothing written) when there is no group
+   * store, the row has no header (hidden, and not adoptable), the group is not dead, or the row changed first.
+   */
+  private async adoptFromDeadGroup(current: VersionRecord, rec: VersionRecord, audit: AuditEntry): Promise<boolean> {
+    const groups = this.d.groups;
+    if (!groups || current.group_id === undefined) return false;
+    const gid = current.group_id;
+    const header = await groups.getGroup(gid);
+    // A row with no header is free only when its own free_after has passed (a dead group's header was removed by the table's TTL).
+    const now = this.now();
+    if (!header) {
+      if (!orphanFree(current, now)) return false;
+      const out = await groups.adoptSingle(rec, { ...audit, action: 'publish_adopt', detail: { group_id: gid } }, (cur) => cur.group_id === gid && orphanFree(cur, this.now()));
+      return out.outcome === 'created' || out.outcome === 'adopted';
+    }
+    if (!isDead((await expireIfDue(groups, header, now)).status)) return false;
+    const out = await groups.adoptSingle(rec, { ...audit, action: 'publish_adopt', detail: { group_id: gid } }, (cur) => cur.group_id === gid);
+    return out.outcome === 'created' || out.outcome === 'adopted';
   }
 
   // --- commit ---------------------------------------------------------------------------------------------
@@ -380,6 +386,38 @@ export class PublishService {
       ...(rec.status === 'rejected' ? { rejection_code: rec.rejection_code, message: rec.message } : {}),
     };
   }
+}
+
+/** The facts one file of a version declares (begin-upload's body, and a member's file in a group): checked against the limits and the file name rule. */
+export function parseFileFacts(config: PublishConfig, name: string, version: string, body: unknown) {
+  if (!isObject(body)) throw invalidRequest('the body is not a JSON object');
+  const { subdir, filename, sha256, size } = body;
+  if (typeof subdir !== 'string' || !SUBDIRS_V1.includes(subdir)) throw invalidRequest("'subdir' is not a known subdir");
+  if (typeof filename !== 'string' || !SAFE_FILENAME.test(filename)) throw invalidRequest("'filename' must be a plain file name");
+  if (typeof sha256 !== 'string' || !SHA256.test(sha256)) throw invalidRequest("'sha256' is 64 lowercase hex digits");
+  if (typeof size !== 'number' || !Number.isSafeInteger(size) || size < 1) throw invalidRequest("'size' must be a positive integer");
+  if (size > config.maxArchiveBytes) {
+    throw new PublishError('payload_too_large', 'The file is larger than the limit.', { limit: String(config.maxArchiveBytes) });
+  }
+  const prefix = `mojo-${name}-${version}-`;
+  const build = filename.startsWith(prefix) && filename.endsWith('.conda') ? filename.slice(prefix.length, -'.conda'.length) : undefined;
+  if (build === undefined || !BUILD.test(build)) {
+    throw uploadInvalid(`the file name must be ${prefix}<build>.conda`);
+  }
+  return { subdir, filename, sha256, size };
+}
+
+/** The package must exist (claimed); an account token must belong to a current owner (a token outlives an ownership change). */
+export async function requireOwner(registry: Store, p: Principal, name: string): Promise<string> {
+  const pkg = await registry.getPackage(name);
+  if (!pkg) throw new PublishError('package_not_found', `There is no package '${name}'.`, { name });
+  if (p.github_id !== undefined) {
+    const owner = (await registry.listOwners(name)).find((o) => o.github_id === p.github_id);
+    if (!owner) throw new PublishError('not_owner', `You are not an owner of '${name}'.`, { name });
+    return owner.handle;
+  }
+  // A CI identity token was issued for exactly this package and version by a matching trusted publisher.
+  return 'ci';
 }
 
 /** Bytes of the files that are still on the channel: published and yanked versions (a tombstone's bytes are gone). */

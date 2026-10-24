@@ -3,6 +3,8 @@ import { indexKey } from '../src/index-files';
 import { indexPackage, indexSubdir, indexTakedowns, type IndexerDeps } from '../src/publish/indexer';
 import { DEFAULT_PUBLISH_CONFIG } from '../src/publish/config';
 import { MemoryInvalidator, MemoryObjectStore, MemoryPresigner, MemoryPublishStore, MemoryQueue } from '../src/publish/memory';
+import { GroupService } from '../src/publish/group-service';
+import { Metrics } from '../src/metrics';
 import { PublishError } from '../src/publish/errors';
 import { PublishService } from '../src/publish/service';
 import { RegistryError } from '../src/errors';
@@ -24,6 +26,7 @@ import { COMMITTED_AT, flipped, header, reserved, seedGroup, staged, type Rig } 
  *   h1              a staged row that names group gh, which has no header
  *   s1              group gs, committed at attempt 2; the row carries attempt 1 (only with `stale`)
  */
+export const GROUP_CREATE_CASE = 'group create: a number the registry shows is version_exists';
 export const PLAIN = ['plain'];
 export const GROUP_MEMBERS = ['u1', 'u2', 'c1', 'c2', 'f1', 'f2', 'r1', 'r2', 'h1'];
 export const STALE_MEMBER = 's1';
@@ -139,6 +142,27 @@ export const API_SURFACES: Record<string, Surface> = {
     );
     return shown(names, yanked);
   },
+};
+
+API_SURFACES[GROUP_CREATE_CASE] = async (r, names) => {
+  for (const n of names) await r.store.addOwner({ name: n, github_id: 7, handle: 'octocat', added_at: COMMITTED_AT });
+  const config = { ...DEFAULT_PUBLISH_CONFIG };
+  const groups = new GroupService({ registry: r.store, publishes: new MemoryPublishStore(), objects: new MemoryObjectStore(), presigner: new MemoryPresigner(), config, now: () => new Date('2026-10-14T10:00:00Z'), metrics: new Metrics(() => undefined) });
+  const refused: boolean[] = [];
+  // One after the other: they are one actor's creates, which take their place on the actor's list one at a time.
+  for (const n of names) {
+    const files = [{ subdir: 'linux-64', filename: `mojo-${n}-1.0.0-mojo1.0.0_0.conda`, sha256: hex('b'), size: 600 }];
+    try {
+      await groups.create(principal, groups.parse({ members: [{ name: n, version: '1.0.0', files }] }));
+      refused.push(false);
+    } catch (err) {
+      // A number a published version holds is version_exists; one a group that has not committed holds (or that has no header) is group_conflict.
+      if (err instanceof RegistryError && err.code === 'version_exists') refused.push(true);
+      else if (err instanceof PublishError && err.code === 'group_conflict') refused.push(false);
+      else throw err;
+    }
+  }
+  return shown(names, refused);
 };
 
 /** Surfaces over the build view: the repodata of linux-64 lists the gated members, and the package index files hold the index-gated ones. */

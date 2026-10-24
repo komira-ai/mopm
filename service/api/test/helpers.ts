@@ -68,6 +68,8 @@ const KEYS: Record<string, KeyDef> = {
  */
 const INDEXES: Record<string, Record<string, { pk: string; sk: string; projected: readonly string[] }>> = {
   'mopm-t-packages': { by_search_bucket: { pk: 'search_bucket', sk: 'name', projected: ['description', 'state', 'created_at'] } },
+  // The sweeper's sparse index of groups that are not over (the stacks' data stack defines it): the table's own key is always projected too.
+  'mopm-t-publishes': { by_sweep: { pk: 'sweep_pk', sk: 'sweep_at', projected: ['publish_id', 'status', 'attempt', 'actor', 'rev', 'progress_at', 'deadline_at', 'resend'] } },
 };
 
 /**
@@ -193,10 +195,15 @@ export class FakeDocClient {
         throw new Error('fake: the starting key is outside the query boundaries');
       }
     }
-    const rows = [...this.table(TableName).values()]
-      .filter((i) => i[ix.pk] === bucket && ix.sk in i && (i[ix.sk] as string).startsWith(prefix))
-      .sort((a, b) => (a[ix.sk] < b[ix.sk] ? -1 : 1));
-    const from = ExclusiveStartKey ? rows.findIndex((i) => i[ix.sk] > ExclusiveStartKey[ix.sk]) : 0;
+    // Items with the same sort value are ordered by the table's own key, and a page boundary names it too, as DynamoDB's does.
+    const tableKey = KEYS[TableName]!;
+    const order = (a: Item, b: Item) => {
+      if (a[ix.sk] !== b[ix.sk]) return a[ix.sk] < b[ix.sk] ? -1 : 1;
+      const [ka, kb] = [this.keyOf(TableName, a), this.keyOf(TableName, b)];
+      return ka < kb ? -1 : ka > kb ? 1 : 0;
+    };
+    const rows = [...this.table(TableName).values()].filter((i) => i[ix.pk] === bucket && ix.sk in i && (i[ix.sk] as string).startsWith(prefix)).sort(order);
+    const from = ExclusiveStartKey ? rows.findIndex((i) => order(i, ExclusiveStartKey) > 0) : 0;
     const rest = from < 0 ? [] : rows.slice(from);
     const take = Math.min(Limit, this.pageSize);
     const slice = rest.slice(0, take);
@@ -205,7 +212,7 @@ export class FakeDocClient {
     return {
       Items: slice.map((i) => Object.fromEntries(Object.entries(structuredClone(i)).filter(([k]) => keep.has(k)))),
       // A page ended by Limit or by size reports where to continue, as DynamoDB does.
-      LastEvaluatedKey: rest.length > take && last ? { [ix.pk]: last[ix.pk], [ix.sk]: last[ix.sk] } : undefined,
+      LastEvaluatedKey: rest.length > take && last ? { [ix.pk]: last[ix.pk], [ix.sk]: last[ix.sk], [tableKey.pk]: last[tableKey.pk], ...(tableKey.sk ? { [tableKey.sk]: last[tableKey.sk] } : {}) } : undefined,
     };
   }
 

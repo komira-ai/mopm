@@ -66,6 +66,8 @@ export const validateQueueName = (s: Stage) => `mopm-${s}-validate.fifo`;
 export const validateDlqName = (s: Stage) => `mopm-${s}-validate-dlq.fifo`;
 export const indexQueueName = (s: Stage) => `mopm-${s}-index.fifo`;
 export const indexDlqName = (s: Stage) => `mopm-${s}-index-dlq.fifo`;
+export const groupQueueName = (s: Stage) => `mopm-${s}-group.fifo`;
+export const groupDlqName = (s: Stage) => `mopm-${s}-group-dlq.fifo`;
 
 /** The four subdirs every channel has (spec/channel.md, Layout). Same list as SUBDIRS_V1 in service/api (a test compares them). */
 export const CHANNEL_SUBDIRS = ['noarch', 'linux-64', 'linux-aarch64', 'osx-arm64'] as const;

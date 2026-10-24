@@ -1,0 +1,73 @@
+{
+  "description": "A flip_group message for a group the table does not hold is acknowledged (the invocation succeeds) with the outcome skipped: one consistent read of the header, nothing else is read or written. A flip_group whose group id is not a group id is dropped like any message the validator does not understand.",
+  "lambda": "group_validator",
+  "env": {
+    "MOPM_STAGE": "beta",
+    "MOPM_CHANNEL_BUCKET": "channel-bucket",
+    "MOPM_GROUP_QUEUE_URL": "group-queue-url",
+    "MOPM_INDEX_QUEUE_URL": "index-queue-url",
+    "MOPM_CHANNEL_URL": "channel-url"
+  },
+  "invocations": [
+    {
+      "event": {
+        "Records": [
+          {
+            "messageId": "m1",
+            "receiptHandle": "handle-1",
+            "body": "{\"type\":\"flip_group\",\"group_id\":\"grp_0123456789abcdef0123456789abcdef\",\"attempt\":1,\"resend\":0}",
+            "attributes": {
+              "MessageGroupId": "grp_0123456789abcdef0123456789abcdef"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          },
+          {
+            "messageId": "m2",
+            "receiptHandle": "handle-2",
+            "body": "{\"type\":\"flip_group\",\"group_id\":\"grp_0123\",\"attempt\":1,\"resend\":0}",
+            "attributes": {
+              "MessageGroupId": "grp_0123"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          }
+        ]
+      },
+      "expect": {
+        "returns": null
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-publishes",
+        "key": {
+          "publish_id": "grp#grp_0123456789abcdef0123456789abcdef"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": [
+      {
+        "stream": "log",
+        "line": {
+          "level": "info",
+          "msg": "flip_group",
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "outcome": "skipped"
+        }
+      },
+      {
+        "stream": "error",
+        "line": {
+          "level": "error",
+          "msg": "unrecognised message dropped",
+          "messageId": "m2"
+        }
+      }
+    ]
+  }
+}

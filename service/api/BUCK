@@ -100,6 +100,21 @@ export_file(
     visibility = ["//service/infra/stacks:"],
 )
 
+# The sources that name the group metrics and their namespace, and the header's sweeper keys: the stacks' tests hold the alarms
+# and the sweeper's index to the names the code writes.
+[export_file(
+    name = "src_" + name,
+    src = path,
+    mode = "reference",
+    visibility = ["//service/infra/stacks:"],
+) for name, path in {
+    "metrics.ts": "src/metrics.ts",
+    "group.ts": "src/group.ts",
+    "group-service.ts": "src/publish/group-service.ts",
+    "group-store.ts": "src/group-store.ts",
+    "group-sweeper.ts": "src/publish/group-sweeper.ts",
+}.items()]
+
 # This package's files, for //:hygiene (the repository-wide scan reads every file, and a
 # package boundary hides these from the root package's glob). A copy of the tree, staged
 # by path from this package.

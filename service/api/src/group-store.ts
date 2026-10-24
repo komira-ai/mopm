@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { headerKey, membersKey, type GroupMembers } from './group';
 import type { GroupEvent } from './state';
+import type { DisplayMeta } from './publish/display';
 import type { AuditEntry, VersionRecord } from './types';
 
 /**
@@ -54,14 +55,57 @@ export interface GroupRecord {
   /** Release gates of the builders. */
   repodata_released?: string[];
   index_released?: number[];
+  /**
+   * Resends of the validate message by the sweeper since the group last made progress (the validator sets it back to 0
+   * when it does). Part of the dedup id of a resend, so each resend is a new message.
+   */
   resend: number;
   cursor?: number;
   yank?: GroupYank;
+  /** How far validation got: 1 while the archives are checked, 2 once copying into the channel has begun, 3 once every file is there. Set before the step it names starts. */
+  phase?: number;
+  /** Hash of the commit request the group is validating (see `commitRequestHash`): the commit inputs are stored under it. */
+  commit_hash?: string;
+  /** Why a group was rejected or failed. */
+  failure?: GroupFailure;
   /** Present while the group is not terminal (for the sweeper's index). */
   sweep_pk?: string;
   sweep_at?: string;
-  /** Epoch seconds. Only a dead group has one. */
+  /**
+   * Epoch seconds, the table's TTL. Only a group that ended without committing has one (`ended`, src/publish/group-lifecycle.ts); a
+   * group that committed never does (`checkHeaderWrite`).
+   */
   expires_at?: number;
+}
+
+/** The verdict that ended a group: a stable code, and the words for the caller. `member` names the package it is about, when it is about one. */
+export interface GroupFailure {
+  code: string;
+  message: string;
+  member?: string;
+}
+
+/** The statuses of a group that ended without committing: the only ones a header may carry an expiry in. */
+export const UNCOMMITTED_END: readonly GroupStatus[] = ['rejected', 'failed', 'expired', 'aborted', 'superseded'];
+
+/** The manifest and display fields the commit request carried for one member. They are too large for the header, so each member's are an item of their own. */
+export interface CommitInput {
+  name: string;
+  manifest_sha256: string;
+  display?: DisplayMeta;
+}
+
+/** A group in the sweeper's index: what the `by_sweep` index projects (the stacks' data stack), not the whole header. */
+export interface ActiveGroup {
+  group_id: string;
+  status: GroupStatus;
+  attempt: number;
+  actor: string;
+  rev: number;
+  progress_at: string;
+  sweep_at: string;
+  deadline_at: string;
+  resend: number;
 }
 
 type Item = Record<string, unknown>;
@@ -111,12 +155,26 @@ export const committedRecord = (cur: GroupRecord, writeOrder: number[], now: str
  * is, and `committed_at` is present exactly while the status is one of a committed group. Throws.
  */
 export function checkHeaderWrite(cur: GroupRecord | undefined, next: GroupRecord): void {
+  // The commit refuses a group past its deadline by comparing times; a deadline that is not a time compares as neither
+  // past nor not, so it must never be stored.
+  if (!Number.isFinite(Date.parse(next.deadline_at))) throw new Error(`group ${next.group_id}: deadline_at '${String(next.deadline_at)}' is not a time`);
   if (cur !== undefined && cur.group_id !== next.group_id) throw new Error(`group ${next.group_id}: the header read is group ${cur.group_id}`);
   if (next.committed_at !== cur?.committed_at) throw new Error(`group ${next.group_id}: committed_at is written by commitGroup alone`);
   if ((next.committed_at !== undefined) !== COMMITTED_STATUSES.includes(next.status)) {
     throw new Error(`group ${next.group_id}: status ${next.status} does not match committed_at`);
   }
+  // An expiry is for a group that ended without committing. A committed group is never given one, whatever else is wrong:
+  // the TTL would delete the marker its readers test.
+  if (next.expires_at !== undefined && (next.committed_at !== undefined || !UNCOMMITTED_END.includes(next.status))) {
+    throw new Error(`group ${next.group_id}: expires_at is only for a group that ended without committing (status ${next.status})`);
+  }
 }
+
+/** First 16 hex characters of the sha256 of the commit request's canonical form: names the set of inputs the request stored. */
+export const commitRequestHash = (canonical: string): string => createHash('sha256').update(canonical).digest('hex').slice(0, 16);
+
+/** `publishes` key of one member's commit input. */
+export const commitInputKey = (gid: string, hash: string, index: number): string => `grpc#${gid}#${hash}#${index}`;
 
 /**
  * The id of the audit row of a change to a member. Deterministic, so that a redelivered write meets its own audit row and
@@ -177,9 +235,44 @@ export interface GroupStore {
    */
   adoptVersion(rec: VersionRecord, audit: AuditEntry, free: (cur: VersionRecord) => boolean): Promise<AdoptOutcome>;
   /**
+   * The same takeover for a single publish: `rec` is a `pending` row with no `group_id` (the single's reservation), which
+   * replaces a `pending` row that `free` accepts, a compare-and-set on the row's `rev`. A single uses it to take the
+   * number of a group that is dead.
+   */
+  adoptSingle(rec: VersionRecord, audit: AuditEntry, free: (cur: VersionRecord) => boolean): Promise<AdoptOutcome>;
+  /**
    * Apply a `stage` or `group_publish` to the row as stored (not as a reader sees it), with its audit row, compare-and-set
    * on `rev`. An event that changes nothing writes nothing (and no audit row). Throws version_not_found, and
    * invalid_transition for a row of another group or a state the event refuses.
    */
   applyGroupEvent(name: string, version: string, event: GroupEvent, audit: AuditEntry): Promise<VersionRecord>;
+  /**
+   * Store the commit request's per-member inputs under `hash` (see `commitInputKey`). Overwriting is harmless: the key holds
+   * its content's hash, so the same key is the same input. `expiresAt` (epoch seconds) is the items' TTL.
+   */
+  putCommitInputs(gid: string, hash: string, inputs: readonly CommitInput[], expiresAt: number): Promise<void>;
+  /** One member's commit input (the member's index in the group's member list), or undefined. A consistent read. */
+  getCommitInput(gid: string, hash: string, index: number): Promise<CommitInput | undefined>;
+  /**
+   * The groups that are not over, from the sweeper's sparse index (an eventually consistent read; the sweeper reads the header of
+   * each before it acts). Every page is followed.
+   */
+  listActiveGroups(): Promise<ActiveGroup[]>;
 }
+
+/** Seconds a dead group's member list outlives its header: the header goes first, so a reopened group never finds a header without its list. */
+export const MEMBERS_TTL_EXTRA_SECONDS = 2 * 86_400;
+
+/** The member-list item with the expiry that goes with a header's `expires_at` (none when the header has none, which is also how a reopened group clears it). */
+export function membersWithExpiry(item: Record<string, unknown>, headerExpiresAt: number | undefined): Record<string, unknown> {
+  const { expires_at: _drop, ...rest } = item;
+  return headerExpiresAt === undefined ? rest : { ...rest, expires_at: headerExpiresAt + MEMBERS_TTL_EXTRA_SECONDS };
+}
+
+/** A commit input as the item stored under its key. `expires_at` is the item's TTL. */
+export const commitInputItem = (key: string, i: CommitInput, expiresAt: number): Record<string, unknown> => ({ publish_id: key, name: i.name, manifest_sha256: i.manifest_sha256, ...(i.display ? { display: JSON.parse(JSON.stringify(i.display)) } : {}), expires_at: expiresAt });
+export const parseCommitInput = (item: Record<string, unknown>): CommitInput => ({
+  name: String(item.name),
+  manifest_sha256: String(item.manifest_sha256),
+  ...(item.display && typeof item.display === 'object' ? { display: item.display as DisplayMeta } : {}),
+});

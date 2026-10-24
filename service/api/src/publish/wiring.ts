@@ -7,6 +7,7 @@ import { publishConfigFromEnv } from './config';
 import { DynamoPublishStore, publishTablesFor } from './dynamo-publish-store';
 import { AnyFlag, DynamoFlags, StaticFlags } from './flags';
 import type { Flags } from './ports';
+import { GroupService } from './group-service';
 import { PublishService } from './service';
 
 type Env = Record<string, string | undefined>;
@@ -38,18 +39,29 @@ export function publishApiFor(env: Env, doc: ReturnType<typeof documentClient>, 
   const bucket = env.MOPM_CHANNEL_BUCKET;
   const queueUrl = env.MOPM_VALIDATE_QUEUE_URL;
   const indexQueueUrl = env.MOPM_INDEX_QUEUE_URL;
+  const groupQueueUrl = env.MOPM_GROUP_QUEUE_URL;
   if (!bucket || !queueUrl) return undefined;
   const region = regionOf(env);
   const t = publishTablesFor(stage);
+  const registry = new DynamoStore(doc, tablesFor(stage));
+  const publishes = new DynamoPublishStore(doc, t);
+  const objects = new S3Channel(bucket, { region });
+  const presigner = new S3Presigner(bucket, { region });
+  const config = publishConfigFromEnv(env);
   const service = new PublishService({
-    registry: new DynamoStore(doc, tablesFor(stage)),
-    publishes: new DynamoPublishStore(doc, t),
-    objects: new S3Channel(bucket, { region }),
-    presigner: new S3Presigner(bucket, { region }),
+    registry,
+    // A single publish may take over the number of a group that is dead.
+    groups: registry,
+    publishes,
+    objects,
+    presigner,
     validateQueue: new SqsFifoQueue(queueUrl, { region }),
     // Yank and unyank ask the index writer to rewrite repodata; without the queue they answer `unavailable`.
     ...(indexQueueUrl ? { indexQueue: new SqsFifoQueue(indexQueueUrl, { region }) } : {}),
-    config: publishConfigFromEnv(env),
+    config,
   });
-  return { auth: new Authenticator({ store: new DynamoAuthStore(doc, authTablesFor(stage)) }), service, flags };
+  // The group routes exist, and answer route_not_found until the `groups_enabled` item of the config table admits the caller.
+  // A commit queues the group's validation on the group queue; without the queue it answers `unavailable`.
+  const groups = new GroupService({ registry, publishes, objects, presigner, config, ...(groupQueueUrl ? { groupQueue: new SqsFifoQueue(groupQueueUrl, { region }) } : {}) });
+  return { auth: new Authenticator({ store: new DynamoAuthStore(doc, authTablesFor(stage)) }), service, flags, groups };
 }
