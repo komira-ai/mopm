@@ -5,23 +5,26 @@ import { NAME_PATTERN } from '../auth';
 import { AuthError } from '../auth/errors';
 import { RegistryError, versionExists } from '../errors';
 import { API_VIEW, type GroupMembers } from '../group';
-import { bitmapHas, bitmapSet, memberAuditId, type GroupRecord, type GroupStore } from '../group-store';
+import { bitmapHas, bitmapSet, memberAuditId, type GroupFailure, type GroupRecord, type GroupStore } from '../group-store';
 import { Metrics } from '../metrics';
 import type { Store } from '../store';
 import type { AuditEntry, VersionRecord } from '../types';
 import { canonicalVersion } from '../version';
 import type { PublishConfig } from './config';
 import { groupConflict, groupNotFound, groupNotOpen, invalidRequest, PublishError } from './errors';
-import { ended, expireIfDue, groupAudit, isDead } from './group-lifecycle';
-import type { ActorGroup, ObjectStore, Presigner, PublishStore } from './ports';
+import { ended, expireIfDue, freeAfterFor, groupAudit, isDead, orphanFree } from './group-lifecycle';
+import { GroupCommitter, type GroupCommitBody } from './group-commit';
+import { GROUP_ID, quarantineKeyFor, uploadIdFor } from './group-keys';
+import type { ActorGroup, ObjectStore, Presigner, PublishStore, Queue } from './ports';
 import { actorOf, liveBytes, parseFileFacts, requireOwner } from './service';
 import type { UploadRecord } from './types';
 
 /**
- * The group routes' logic: POST /groups, GET /groups/{id} and DELETE /groups/{id} (spec/api/openapi.yaml: createGroup,
- * getGroup, abortGroup). A group is a set of versions, one per package, declared up front and published together
- * (design: group publish). This change creates, shows and aborts a group; nothing here validates, commits or publishes
- * one, and the routes are off unless the `groups_enabled` item of the config table admits the caller (src/publish/flags.ts).
+ * The group routes' logic: POST /groups, GET /groups/{id}, DELETE /groups/{id} and POST /groups/{id}/commit (spec/api/openapi.yaml:
+ * createGroup, getGroup, abortGroup, commitGroup). A group is a set of versions, one per package, declared up front and published
+ * together (design: group publish). This file creates, shows and aborts a group, and hands the commit to group-commit.ts, which only
+ * moves the group to validation; the validation itself is src/publish/group-validator.ts. Creation is off unless the `groups_enabled`
+ * item of the config table admits the caller (src/publish/flags.ts); a group that exists is finished whatever that says.
  *
  * Creation, in order:
  *   1. every member's package must exist and the caller must own it (the first that fails refuses the whole group, by name);
@@ -45,6 +48,8 @@ export interface GroupServiceDeps {
   objects: Pick<ObjectStore, 'head'>;
   presigner: Presigner;
   config: PublishConfig;
+  /** The group queue: a commit queues the group's validation on it. Absent, the commit answers `unavailable`. */
+  groupQueue?: Queue;
   now?: () => Date;
   /** Milliseconds on a monotonic clock, for the creation budget. */
   clock?: () => number;
@@ -117,10 +122,8 @@ export function groupIdFor(actor: string, req: GroupRequest): string {
   const set = req.members.map((m) => [m.name, m.canonical, m.files.map((f) => [f.subdir, f.filename, f.sha256, f.size])]);
   return `grp_${createHash('sha256').update(JSON.stringify([actor, set])).digest('hex').slice(0, 32)}`;
 }
-export const GROUP_ID = /^grp_[0-9a-f]{32}$/;
 
-const uploadIdFor = (gid: string, m: GroupMemberRequest, f: GroupFileRequest) =>
-  `upl_g${createHash('sha256').update(JSON.stringify([gid, m.name, m.canonical, f.subdir, f.filename, f.sha256])).digest('hex').slice(0, 31)}`;
+
 
 // --- the answers ---------------------------------------------------------------------------------------------------
 
@@ -157,12 +160,14 @@ export interface GroupStatusBody {
   created_at: string;
   deadline_at: string;
   committed_at?: string;
+  /** Why a group that was rejected or failed ended. */
+  failure?: GroupFailure;
   member_count: number;
   members: Array<{ name: string; version: string; state: 'pending' | 'reserved' | 'staged' | 'published' }>;
 }
 
 /** The row a member reserves: pending, the declared files (no urls), named by the group. */
-function reservedRow(gid: string, m: GroupMemberRequest, handle: string, at: string): VersionRecord {
+function reservedRow(gid: string, m: GroupMemberRequest, handle: string, at: string, deadlineAt: string): VersionRecord {
   return {
     name: m.name,
     version: m.version,
@@ -178,8 +183,20 @@ function reservedRow(gid: string, m: GroupMemberRequest, handle: string, at: str
     // As a single's reservation: the sha256 of the first declared file is what version_exists reports for this number.
     manifest_sha256: m.files[0]!.sha256,
     group_id: gid,
+    free_after: freeAfterFor(deadlineAt),
     rev: 0,
   };
+}
+
+/**
+ * What the preflight found: which members already have their row for this group (`mine`), the groups whose pending rows may be
+ * taken over (`dead`: ended groups, and the ones about to be superseded), and the groups with no header whose rows may be taken
+ * once their own `free_after` has passed (`orphans`).
+ */
+interface Pre {
+  mine: Set<number>;
+  dead: Set<string>;
+  orphans: Set<string>;
 }
 
 /** A member reserved for the group could not be taken. Internal: the create aborts the group and answers group_conflict. */
@@ -201,10 +218,17 @@ export class GroupService {
   private readonly now: () => Date;
   private readonly clock: () => number;
   private readonly metrics: Metrics;
+  private readonly committer: GroupCommitter;
   constructor(private readonly d: GroupServiceDeps) {
     this.now = d.now ?? (() => new Date());
     this.clock = d.clock ?? (() => performance.now());
     this.metrics = d.metrics ?? new Metrics();
+    this.committer = new GroupCommitter({ registry: d.registry, objects: d.objects, config: d.config, ...(d.groupQueue ? { groupQueue: d.groupQueue } : {}), ...(d.now ? { now: d.now } : {}) }, this);
+  }
+
+  /** POST /groups/{id}/commit: see src/publish/group-commit.ts. */
+  commit(p: Principal, id: string, body: unknown): Promise<{ started: boolean; body: GroupCommitBody }> {
+    return this.committer.commit(p, id, body);
   }
 
   parse(body: unknown): GroupRequest {
@@ -232,7 +256,7 @@ export class GroupService {
     }
 
     let created = false;
-    let pre: { dead: Set<string>; mine: Set<number> } = { dead: new Set(), mine: new Set() };
+    let pre: Pre = { dead: new Set(), orphans: new Set(), mine: new Set() };
     if (header === undefined || isDead(header.status)) {
       // The deadline first: a header is never written with one that is not a time, and nothing is written before it is known to be.
       const deadline = deadlineFor(now, this.d.config.groupDeadlineHours);
@@ -311,7 +335,7 @@ export class GroupService {
       (cur) => {
         wrote = isDead(cur.status);
         if (!wrote) return undefined;
-        const { cursor: _c, yank: _y, repodata_released: _r, index_released: _i, write_order: _w, expires_at: _e, ...rest } = cur;
+        const { cursor: _c, yank: _y, repodata_released: _r, index_released: _i, write_order: _w, expires_at: _e, phase: _p, commit_hash: _h, failure: _f, ...rest } = cur;
         return { ...rest, status: 'open', attempt: cur.attempt + 1, deadline_at: deadline, progress_at: at, reserved: '', validated: '', staged: '', copied: '', flipped: '', resend: 0, sweep_pk: 'active', sweep_at: at };
       },
       groupAudit(gid, `a_${gid}_reopen_${attempt}`, 'group_reopen', at, actor, { attempt: String(attempt) }),
@@ -409,7 +433,7 @@ export class GroupService {
    * is full. Returns which members already have their row for this group and the groups whose rows may be taken over (dead
    * ones, and the ones about to be superseded).
    */
-  private async preflight(gid: string, req: GroupRequest, superseding: Set<string>, now: Date): Promise<{ mine: Set<number>; dead: Set<string> }> {
+  private async preflight(gid: string, req: GroupRequest, superseding: Set<string>, now: Date): Promise<Pre> {
     const reg = this.d.registry;
     const quota = this.d.config.projectQuotaBytes;
     const rows = await reg.versionsOf(
@@ -417,6 +441,7 @@ export class GroupService {
       API_VIEW,
     );
     const mine = new Set<number>();
+    const orphans = new Set<string>();
     const dead = new Set<string>(superseding);
     const headers = new Map<string, GroupRecord | undefined>();
     const headerOf = async (id: string) => {
@@ -444,7 +469,13 @@ export class GroupService {
         mine.add(idx);
       } else if (row.group_id !== undefined) {
         const h = await headerOf(row.group_id);
-        if (!h) throw groupConflict(`${m.name} ${m.version} belongs to group ${row.group_id}, which has no header and so cannot be taken over`);
+        if (!h) {
+          // No header: either a create that wrote the row before the header (it cannot; the header comes first), or a dead group
+          // whose header the table's TTL removed. The row says which: it is free once its own free_after has passed.
+          if (!orphanFree(row, now)) throw groupConflict(`${m.name} ${m.version} belongs to group ${row.group_id}, which has no header and so cannot be taken over`);
+          orphans.add(row.group_id);
+          continue;
+        }
         if (isDead(h.status)) dead.add(row.group_id);
         else if (!dead.has(row.group_id)) throw groupConflict(`${m.name} ${m.version} is held by group ${row.group_id}, which is ${h.status}`);
       } else if ((await this.d.publishes.versionHolder(m.name, m.canonical)) !== undefined) {
@@ -452,7 +483,7 @@ export class GroupService {
       }
     }
     this.metrics.emit([{ name: 'group_pending_rows_per_package_max', value: pendingMax }]);
-    return { mine, dead };
+    return { mine, dead, orphans };
   }
 
   /** A group with more files than a day's counter can ever hold is refused outright: a rate limit would not clear. */
@@ -507,7 +538,7 @@ export class GroupService {
    * batch the header's `reserved` checkpoint is written; when the budget is spent the members not yet answered are left
    * for the next call. A number taken from under the group in the meantime aborts the group and refuses the call.
    */
-  private async reserveAll(p: Principal, handle: string, start: GroupRecord, req: GroupRequest, pre: { dead: Set<string>; mine: Set<number> }, started: number) {
+  private async reserveAll(p: Principal, handle: string, start: GroupRecord, req: GroupRequest, pre: Pre, started: number) {
     const reg = this.d.registry;
     const gid = start.group_id;
     let header = start;
@@ -550,7 +581,7 @@ export class GroupService {
     return after ?? header;
   }
 
-  private async member(p: Principal, handle: string, header: GroupRecord, idx: number, m: GroupMemberRequest, pre: { dead: Set<string>; mine: Set<number> }) {
+  private async member(p: Principal, handle: string, header: GroupRecord, idx: number, m: GroupMemberRequest, pre: Pre) {
     const gid = header.group_id;
     const has = bitmapHas(header.reserved, idx);
     let action: 'new' | 'join' = 'join';
@@ -566,7 +597,11 @@ export class GroupService {
         detail: { group_id: gid },
       };
       // Free for the group: the row of a single's reservation that nobody committed, or of a group that is over.
-      const out = await this.d.registry.adoptVersion(reservedRow(gid, m, handle, at), audit, (cur) => cur.group_id === undefined || pre.dead.has(cur.group_id));
+      const out = await this.d.registry.adoptVersion(
+        reservedRow(gid, m, handle, at, header.deadline_at),
+        audit,
+        (cur) => cur.group_id === undefined || pre.dead.has(cur.group_id) || (pre.orphans.has(cur.group_id) && orphanFree(cur, this.now())),
+      );
       if (out.outcome === 'created') action = 'new';
       else if (out.outcome === 'taken' && out.existing.group_id === gid && out.existing.state === 'pending') action = 'join';
       else if (out.outcome !== 'adopted') throw new Taken(`${m.name} ${m.version} was taken by another publish while the group was being created`);
@@ -581,7 +616,7 @@ export class GroupService {
     return Promise.all(
       m.files.map(async (f) => {
         const uploadId = uploadIdFor(gid, m, f);
-        const key = `quarantine/${uploadId}/${f.filename}`;
+        const key = quarantineKeyFor(uploadId, f.filename);
         if (!(await this.d.publishes.getUpload(uploadId))) {
           const rec: UploadRecord = {
             upload_id: uploadId,
@@ -638,7 +673,7 @@ export class GroupService {
   }
 
   /** The group as the caller may see it: its creator, or an owner of every package in it. Anyone else gets group_not_found. */
-  private async load(p: Principal, id: string): Promise<{ header: GroupRecord; members: GroupMembers }> {
+  async load(p: Principal, id: string): Promise<{ header: GroupRecord; members: GroupMembers }> {
     const reg = this.d.registry;
     if (!GROUP_ID.test(id)) throw groupNotFound();
     let header = await reg.getGroup(id);
@@ -674,6 +709,7 @@ function statusBody(h: GroupRecord, members: GroupMembers): GroupStatusBody {
     created_at: h.created_at,
     deadline_at: h.deadline_at,
     ...(h.committed_at !== undefined ? { committed_at: h.committed_at } : {}),
+    ...(h.failure ? { failure: h.failure } : {}),
     member_count: h.member_count,
     members: members.members.map((m, i) => ({ name: m.name, version: m.version, state: state(i) })),
   };

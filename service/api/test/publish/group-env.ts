@@ -3,6 +3,7 @@ import { route, type HttpResponse, type RouterDeps } from '../../src/http/router
 import { Metrics } from '../../src/metrics';
 import { DEFAULT_PUBLISH_CONFIG, type PublishConfig } from '../../src/publish/config';
 import { GroupService } from '../../src/publish/group-service';
+import { validateGroup, type GroupJobOutcome, type GroupValidatorDeps } from '../../src/publish/group-validator';
 import { MemoryObjectStore, MemoryPresigner, MemoryPublishStore, MemoryQueue } from '../../src/publish/memory';
 import { PublishService } from '../../src/publish/service';
 import { TestClock } from '../auth-helpers';
@@ -28,6 +29,13 @@ export class GroupEnv {
   objects = new MemoryObjectStore();
   flags = new MutableFlags();
   metricLines: Array<Record<string, unknown>> = [];
+  /** The group queue (a commit queues the group's validation here) and the single validator's queue, which a group never touches. */
+  groupQueue = new MemoryQueue();
+  validateQueue = new MemoryQueue();
+  indexQueue = new MemoryQueue();
+  /** The monotonic clock of a group job's time budget, in milliseconds, and the log lines the job wrote. */
+  jobClock = 0;
+  jobLogs: Array<Record<string, unknown>> = [];
   readonly config: PublishConfig;
   readonly groups: GroupService;
   readonly single: PublishService;
@@ -49,6 +57,7 @@ export class GroupEnv {
       config: this.config,
       now,
       clock: () => this.mono,
+      groupQueue: this.groupQueue,
       metrics: new Metrics((l) => this.metricLines.push(l)),
     });
     this.single = new PublishService({
@@ -57,8 +66,8 @@ export class GroupEnv {
       publishes: this.publishes,
       objects: this.objects,
       presigner,
-      validateQueue: new MemoryQueue(),
-      indexQueue: new MemoryQueue(),
+      validateQueue: this.validateQueue,
+      indexQueue: this.indexQueue,
       config: this.config,
       now,
       newId: () => (++this.n).toString(16).padStart(32, '0'),
@@ -66,6 +75,42 @@ export class GroupEnv {
     const auth = new Authenticator({ store: this.authStore, now });
     this.deps = { store: rig.store, stage: 'beta', version: 't', commit: 't', readOnly: false, publish: { auth, service: this.single, flags: this.flags, groups: this.groups } };
   }
+
+  /** The deps of a group's validator job on this environment's ports (`over` replaces any of them). */
+  validatorDeps(over: Partial<GroupValidatorDeps> = {}): GroupValidatorDeps {
+    return {
+      registry: this.rig.store,
+      publishes: this.publishes,
+      objects: this.objects,
+      groupQueue: this.groupQueue,
+      indexQueue: this.indexQueue,
+      config: this.config,
+      channelUrl: 'https://conda.example.invalid',
+      now: this.clock.now,
+      clock: () => this.jobClock,
+      log: (l) => this.jobLogs.push(l),
+      ...over,
+    };
+  }
+
+  /** Run the next message of the group queue the way the Lambda does. */
+  async runGroupJob(over: Partial<GroupValidatorDeps> = {}): Promise<GroupJobOutcome> {
+    const m = this.groupQueue.take();
+    if (!m) throw new Error('the group queue is empty');
+    const msg = JSON.parse(m.body) as { group_id: string; attempt: number; n: number };
+    return validateGroup(this.validatorDeps(over), msg);
+  }
+
+  /** Run the group queue until it is empty (a job that runs out of time queues its continuation). Returns each job's outcome. */
+  async runGroupJobs(over: Partial<GroupValidatorDeps> = {}, limit = 50): Promise<GroupJobOutcome[]> {
+    const out: GroupJobOutcome[] = [];
+    while (this.groupQueue.sent.length > 0) {
+      if (out.length >= limit) throw new Error(`the group queue did not drain in ${limit} jobs`);
+      out.push(await this.runGroupJob(over));
+    }
+    return out;
+  }
+
 
   /** Let the group routes admit these accounts (by GitHub id). */
   allow(...githubIds: number[]) {

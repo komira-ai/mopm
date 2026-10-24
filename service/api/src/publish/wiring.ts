@@ -39,6 +39,7 @@ export function publishApiFor(env: Env, doc: ReturnType<typeof documentClient>, 
   const bucket = env.MOPM_CHANNEL_BUCKET;
   const queueUrl = env.MOPM_VALIDATE_QUEUE_URL;
   const indexQueueUrl = env.MOPM_INDEX_QUEUE_URL;
+  const groupQueueUrl = env.MOPM_GROUP_QUEUE_URL;
   if (!bucket || !queueUrl) return undefined;
   const region = regionOf(env);
   const t = publishTablesFor(stage);
@@ -60,6 +61,7 @@ export function publishApiFor(env: Env, doc: ReturnType<typeof documentClient>, 
     config,
   });
   // The group routes exist, and answer route_not_found until the `groups_enabled` item of the config table admits the caller.
-  const groups = new GroupService({ registry, publishes, objects, presigner, config });
+  // A commit queues the group's validation on the group queue; without the queue it answers `unavailable`.
+  const groups = new GroupService({ registry, publishes, objects, presigner, config, ...(groupQueueUrl ? { groupQueue: new SqsFifoQueue(groupQueueUrl, { region }) } : {}) });
   return { auth: new Authenticator({ store: new DynamoAuthStore(doc, authTablesFor(stage)) }), service, flags, groups };
 }

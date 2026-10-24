@@ -1,0 +1,107 @@
+{
+  "description": "A repodata hop and an index hop of a group's chain for a group the table does not hold are logged and acknowledged (the invocation succeeds): the hop reads the group's member list (and, for an index hop, its header) with consistent reads, finds no group, and does nothing else: no repodata or index file is written, nothing is queued, no invalidation is sent.",
+  "lambda": "indexer",
+  "env": {
+    "MOPM_STAGE": "beta",
+    "MOPM_CHANNEL_BUCKET": "channel-bucket",
+    "MOPM_DISTRIBUTION_ID": "DIST1",
+    "MOPM_INDEX_QUEUE_URL": "index-queue-url",
+    "MOPM_GROUP_QUEUE_URL": "group-queue-url"
+  },
+  "invocations": [
+    {
+      "event": {
+        "Records": [
+          {
+            "messageId": "m1",
+            "receiptHandle": "handle-1",
+            "body": "{\"type\":\"index\",\"subdir\":\"noarch\",\"then\":{\"group\":{\"group_id\":\"grp_0123456789abcdef0123456789abcdef\",\"attempt\":1,\"resend\":0}}}",
+            "attributes": {
+              "MessageGroupId": "noarch"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          },
+          {
+            "messageId": "m2",
+            "receiptHandle": "handle-2",
+            "body": "{\"type\":\"index_pkg\",\"name\":\"base\",\"rev\":0,\"group\":{\"group_id\":\"grp_0123456789abcdef0123456789abcdef\",\"attempt\":1,\"resend\":0,\"position\":0}}",
+            "attributes": {
+              "MessageGroupId": "pkg:base"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          }
+        ]
+      },
+      "expect": {
+        "returns": null
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-publishes",
+        "key": {
+          "publish_id": "grpm#grp_0123456789abcdef0123456789abcdef"
+        }
+      },
+      {
+        "op": "Get",
+        "table": "mopm-beta-publishes",
+        "key": {
+          "publish_id": "grpm#grp_0123456789abcdef0123456789abcdef"
+        }
+      },
+      {
+        "op": "Get",
+        "table": "mopm-beta-publishes",
+        "key": {
+          "publish_id": "grp#grp_0123456789abcdef0123456789abcdef"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": [
+      {
+        "stream": "log",
+        "line": {
+          "level": "info",
+          "msg": "group chain: a repodata hop for a group that has no member list; nothing done",
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "attempt": 1
+        }
+      },
+      {
+        "stream": "log",
+        "line": {
+          "level": "info",
+          "msg": "index",
+          "subdir": "noarch",
+          "group_id": "grp_0123456789abcdef0123456789abcdef"
+        }
+      },
+      {
+        "stream": "log",
+        "line": {
+          "level": "info",
+          "msg": "group chain: an index hop for a group that is not committed at that attempt; nothing done",
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "attempt": 1
+        }
+      },
+      {
+        "stream": "log",
+        "line": {
+          "level": "info",
+          "msg": "index_pkg",
+          "name": "base",
+          "rev": 0,
+          "group_id": "grp_0123456789abcdef0123456789abcdef"
+        }
+      }
+    ]
+  }
+}

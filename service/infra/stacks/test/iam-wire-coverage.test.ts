@@ -28,6 +28,7 @@ const NOT_ROUTED: Record<string, string> = {
   'dynamodb:DeleteItem owners': 'removeOwner: no route; a real delete',
   'dynamodb:PutItem packages': 'createPackage: package claim is not routed',
   'dynamodb:Scan packages': 'listPackageNames: used by the index writer, never by a route; the API role gets no Scan',
+  'dynamodb:Query publishes': 'listActiveGroups: the group sweeper reads the sparse index by_sweep; no route does, and the API role has no Query on the table or the index',
 };
 
 interface Call {
@@ -80,7 +81,7 @@ describe('wire goldens', () => {
 
   // A group is written with conditional Puts and transactions of Puts, never with an update or a delete: the roles have
   // GetItem and PutItem on these tables, and the data stack denies delete (infra/stacks/lib/data-stack.ts).
-  test('the group writers (group.json) call GetItem and PutItem only: no UpdateItem, no DeleteItem, no ConditionCheck, no Scan', () => {
+  test('the group writers (group.json) call GetItem and PutItem only, and one Query of the sweep index: no UpdateItem, no DeleteItem, no ConditionCheck, no Scan', () => {
     const group = calls.filter((c) => c.via.startsWith('group.json '));
     expect(group.map((c) => c.via.split(' ')[1]).filter((v, i, all) => all.indexOf(v) === i)).toEqual([
       'store.createGroup',
@@ -94,8 +95,13 @@ describe('wire goldens', () => {
       'store.adoptSingle',
       'publish.getActorGroups',
       'publish.putActorGroups',
+      'store.putCommitInputs',
+      'store.getCommitInput',
+      'store.listActiveGroups',
     ]);
-    expect([...new Set(group.map((c) => c.action))].sort()).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem']);
+    expect([...new Set(group.map((c) => c.action))].sort()).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query']);
+    // The Query is the sweeper's, of its sparse index and nothing else.
+    expect(group.filter((c) => c.action === 'dynamodb:Query').map(keyOf)).toEqual(['dynamodb:Query publishes/index/by_sweep', 'dynamodb:Query publishes/index/by_sweep']);
     expect([...new Set(group.map((c) => c.table))].sort()).toEqual(['audit', 'publishes', 'versions']);
   });
 

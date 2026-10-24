@@ -21,10 +21,15 @@ export type UserEvent =
  *   refused.
  * - `group_publish`: the flip. A `pending` member that carries the attempt becomes `published` at the commit time. A
  *   row in any other state is left as it is: a yanked member stays yanked, so the flip never unyanks.
+ * - `group_burn`: a group that failed after its files were copied burns its numbers. A `pending` member of the group
+ *   becomes `tombstoned` (nothing of it was ever published, so no file is kept); a row in any other state is left as it
+ *   is, and a burn repeated is a no-op. It is the group's counterpart of the `tombstone` of a rejected single publish,
+ *   which the store refuses for a row that belongs to a group.
  */
 export type GroupEvent =
   | { type: 'stage'; group_id: string; attempt: number; fill: PublishFill }
-  | { type: 'group_publish'; group_id: string; attempt: number; committed_at: string };
+  | { type: 'group_publish'; group_id: string; attempt: number; committed_at: string }
+  | { type: 'group_burn'; group_id: string; reason_code: string; date: string };
 
 export type VersionEvent = UserEvent | GroupEvent;
 
@@ -78,12 +83,18 @@ function applyGroupEvent(rec: VersionRecord, ev: GroupEvent): VersionRecord {
     if (rec.staged_attempt === ev.attempt) return rec;
     // A stage of an older attempt (a message that outlived a reopen) must not overwrite a newer fill.
     if (rec.staged_attempt !== undefined && rec.staged_attempt > ev.attempt) throw new IllegalTransition(rec, ev);
+    // The row keeps its free_after: a group that ends after staging (rejected) must leave rows that are free once its header is gone.
     return next({ ...ev.fill, staged_attempt: ev.attempt });
+  }
+  if (ev.type === 'group_burn') {
+    if (rec.state !== 'pending') return rec;
+    return tombstoned(rec, { type: 'tombstone', reason_code: ev.reason_code, date: ev.date, unpublished: true }, next);
   }
   // The flip: only a filled member of this attempt is published; every other state is left alone (never unyanks).
   if (rec.state !== 'pending') return rec;
   if (rec.staged_attempt !== ev.attempt) throw new IllegalTransition(rec, ev);
-  return next({ state: 'published', published_at: ev.committed_at });
+  const { free_after: _free, ...rest } = rec;
+  return { ...rest, state: 'published', published_at: ev.committed_at, rev: rec.rev + 1 };
 }
 
 /**
@@ -91,7 +102,7 @@ function applyGroupEvent(rec: VersionRecord, ev: GroupEvent): VersionRecord {
  * publish of a published one, tombstone of a tombstoned one); otherwise a new object with `rev` + 1.
  */
 export function applyEvent(rec: VersionRecord, ev: VersionEvent): VersionRecord {
-  if (ev.type === 'stage' || ev.type === 'group_publish') return applyGroupEvent(rec, ev);
+  if (ev.type === 'stage' || ev.type === 'group_publish' || ev.type === 'group_burn') return applyGroupEvent(rec, ev);
   const next = (patch: Partial<VersionRecord>): VersionRecord => ({ ...rec, ...patch, rev: rec.rev + 1 });
   switch (rec.state) {
     case 'tombstoned':
@@ -129,5 +140,6 @@ function tombstoned(
   const files = rec.state === 'pending' && ev.unpublished ? [] : rec.files.map(({ url: _url, ...f }) => f);
   const out = next({ state: 'tombstoned', tombstone: { reason_code: ev.reason_code, date: ev.date }, files });
   delete out.yank_reason;
+  delete out.free_after;
   return out;
 }

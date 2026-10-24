@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import * as path from 'path';
 
 /**
- * Characterisation of the three Lambda entry points (`http/lambda.ts`, `publish/validator-lambda.ts`,
+ * Characterisation of the Lambda entry points (`http/lambda.ts`, `publish/validator-lambda.ts`, `publish/group-validator-lambda.ts`, `publish/sweeper-lambda.ts`,
  * `publish/indexer-lambda.ts`) and the `configure()` each one runs on a cold start.
  *
  * What it pins: not the routes (router.test.ts does) but the seam around them, which is the part another
@@ -29,6 +29,8 @@ const LAMBDA_MODULE = {
   api: '../../src/http/lambda',
   validator: '../../src/publish/validator-lambda',
   indexer: '../../src/publish/indexer-lambda',
+  group_validator: '../../src/publish/group-validator-lambda',
+  sweeper: '../../src/publish/sweeper-lambda',
 } as const;
 // The credentials the SigV4 adapters read from the environment of a real Lambda: invented, from the AWS documentation's style.
 const TEST_CREDENTIALS = { AWS_ACCESS_KEY_ID: 'AKIDEXAMPLE', AWS_SECRET_ACCESS_KEY: 'example-secret' };
@@ -227,13 +229,19 @@ describe('lambda entry points on recorded events', () => {
       'api_publish_unwired.json',
       'api_search_query.json',
       'api_unknown_package.json',
+      'group_validator_cold_start_refusals.json',
+      'group_validator_drops_unrecognised.json',
+      'group_validator_flip_unknown_group.json',
+      'group_validator_unknown_group.json',
       'indexer_cloudfront_failure_is_rethrown.json',
+      'indexer_group_hop_for_unknown_group.json',
       'indexer_package_without_version_writes_nothing.json',
       'indexer_publish_progress.json',
       'indexer_rebuild_keeps_ensured_set.json',
       'indexer_takedowns_seed.json',
       'indexer_unknown_subdir.json',
       'indexer_unrecognised_dropped.json',
+      'sweeper_cold_start_refusals.json',
       'validator_cold_start_refusals.json',
       'validator_drops_unrecognised.json',
       'validator_error_stops_the_batch.json',

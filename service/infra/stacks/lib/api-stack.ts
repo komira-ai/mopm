@@ -10,7 +10,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import { Construct } from 'constructs';
-import { StageConfig, channelBucketName, indexQueueName, oauthSecretName, tableName, validateQueueName } from './config';
+import { StageConfig, channelBucketName, groupQueueName, indexQueueName, oauthSecretName, tableName, validateQueueName } from './config';
 import { assertRegion, lookupZone, removalPolicyFor } from './common';
 
 export interface ApiStackProps extends StackProps {
@@ -58,10 +58,12 @@ export const PUBLISH_ROUTES: Array<{ method: apigw.HttpMethod; path: string }> =
   { method: apigw.HttpMethod.POST, path: '/api/v1/packages/{name}/{version}/publish' },
   { method: apigw.HttpMethod.GET, path: '/api/v1/publishes/{publish_id}' },
   { method: apigw.HttpMethod.PUT, path: '/api/v1/packages/{name}/{version}/yank' },
-  // Groups: create, read and abort. The handler answers `route_not_found` to a create until the stage's `groups_enabled` item admits the caller.
+  // Groups: create, read, abort and commit. The handler answers `route_not_found` to a create until the stage's `groups_enabled` item admits the caller.
   { method: apigw.HttpMethod.POST, path: '/api/v1/groups' },
   { method: apigw.HttpMethod.GET, path: '/api/v1/groups/{group_id}' },
   { method: apigw.HttpMethod.DELETE, path: '/api/v1/groups/{group_id}' },
+  // Commit: queues the group's validation on the group queue. Not gated by the groups switch (a group that exists is finished).
+  { method: apigw.HttpMethod.POST, path: '/api/v1/groups/{group_id}/commit' },
 ];
 /**
  * What the handler may write, table by table (the reviewed list; api.test.ts pins it). No DeleteItem, no Scan, no
@@ -166,6 +168,8 @@ export class ApiStack extends Stack {
         MOPM_VALIDATE_QUEUE_URL: `https://sqs.${this.region}.amazonaws.com/${this.account}/${validateQueueName(c.stage)}`,
         // Yank and unyank queue a repodata rewrite of the version's subdirs on the index writer's FIFO queue.
         MOPM_INDEX_QUEUE_URL: `https://sqs.${this.region}.amazonaws.com/${this.account}/${indexQueueName(c.stage)}`,
+        // A group's commit queues its validation on the group queue (its own queue, so a group never takes a single publish's slot).
+        MOPM_GROUP_QUEUE_URL: `https://sqs.${this.region}.amazonaws.com/${this.account}/${groupQueueName(c.stage)}`,
         ...(props.limits?.ratePerAccountPerDay !== undefined ? { MOPM_RATE_PER_ACCOUNT_DAY: String(props.limits.ratePerAccountPerDay) } : {}),
         ...(props.limits?.ratePerTokenPerDay !== undefined ? { MOPM_RATE_PER_TOKEN_DAY: String(props.limits.ratePerTokenPerDay) } : {}),
       },
@@ -236,6 +240,13 @@ export class ApiStack extends Stack {
         sid: 'QueueIndexRebuilds',
         actions: ['sqs:SendMessage'],
         resources: [this.formatArn({ service: 'sqs', resource: indexQueueName(c.stage) })],
+      }),
+    );
+    this.handler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: 'QueueGroupCommits',
+        actions: ['sqs:SendMessage'],
+        resources: [this.formatArn({ service: 'sqs', resource: groupQueueName(c.stage) })],
       }),
     );
 
