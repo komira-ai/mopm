@@ -968,6 +968,9 @@ test "remove of an absent dependency is an error, and so is the other table's" {
     defer arena_state.deinit();
     const a = arena_state.allocator();
     try std.testing.expectEqualStrings("nosuch is not a dependency: [dependencies] of mopm.toml does not name it", (try editText(a, .remove, golden_before, false, "nosuch", "")).bad);
+    // A value that would leave mopm.toml unreadable is refused with the file, the entry and the table named.
+    const unreadable = (try editText(a, .add, golden_before, false, "tls", "\"1.0\"\nbroken = =")).bad;
+    try std.testing.expectEqualStrings("mopm.toml with tls = \"1.0\"\nbroken = = in [dependencies] would not be a TOML file mopm reads", unreadable);
     // tls is in [dependencies], not [dev-dependencies].
     try std.testing.expectEqualStrings("tls is not a dependency: [dev-dependencies] of mopm.toml does not name it", (try editText(a, .remove, golden_before, true, "tls", "")).bad);
     // No [dev-dependencies] table at all.

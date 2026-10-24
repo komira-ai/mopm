@@ -180,6 +180,13 @@ test "unit build and test take the unit, the graph, the output and the toolchain
     try std.testing.expectEqualStrings("w", b.src);
     try std.testing.expectEqualStrings("s", b.stage.?);
     try std.testing.expect(b.target_cpu == null);
+    // The dependency and native-library directories a unit is built against (a member's natives are found through --natives).
+    const dirs = build ++ [_][]const u8{ "--deps", "d", "--natives", "n" };
+    const c = parseArgs(&dirs).?;
+    try std.testing.expectEqualStrings("d", c.deps);
+    try std.testing.expectEqualStrings("n", c.natives);
+    try std.testing.expectEqualStrings("deps", b.deps);
+    try std.testing.expectEqualStrings("natives", b.natives);
     const with_cpu = build ++ [_][]const u8{ "--target-cpu", "x86-64-v3" };
     try std.testing.expectEqualStrings("x86-64-v3", parseArgs(&with_cpu).?.target_cpu.?);
     const empty_cpu = build ++ [_][]const u8{ "--target-cpu", "" };
