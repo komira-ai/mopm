@@ -75,7 +75,7 @@ jobs:
           cp tests/e2e/pixi.toml "$RUNNER_TEMP/mojo-env/pixi.toml"
           pixi install --manifest-path "$RUNNER_TEMP/mojo-env/pixi.toml"
       # The Zig drivers of tests/drivers, run natively by build.zig (the farm runs the same
-      # files as //:autolink, //:discovery, //:supervisor and //:flaky on Linux x86_64 only).
+      # files as //:autolink, //:discovery, //:supervisor, //:flaky and //:native_workspace_mojo on Linux x86_64 only).
       # The REPL checks of the autolink driver run where the environment has bin/mojo-lldb.
       - name: mopm build, run and repl against the real mojo (autolink)
         run: zig build test-autolink -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
@@ -88,6 +88,13 @@ jobs:
       - name: mopm test --retries, --deny-flaky and filters on deterministic flaky fixtures (flaky)
         if: ${{ !cancelled() }}
         run: zig build test-flaky -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
+      # A workspace member that ships its own C library ([native.<id>] with srcs) and a package that links it: mopm lock and
+      # plan, the native built from its C sources, mopm unit build, mopm pack, and an --overlay install of the packed set in a
+      # fresh project where the program is built and run again (tests/drivers/native_workspace_test.zig; the farm runs the
+      # same file as //:native_workspace_mojo on Linux x86_64 and, with a stand-in compiler, as //:native_workspace on every pull request).
+      - name: native library from C sources, pack and --overlay install, against the real mojo (native-workspace)
+        if: ${{ !cancelled() }}
+        run: zig build test-native-workspace -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
 
   registry-build:
     name: build cli and fake registry (${{ matrix.os }})

@@ -9,7 +9,8 @@
 //! prints and exits 0. Any other use of `mojo` ends 2, so a walk that asks the compiler for something else is red.
 //!
 //! A test that needs a program which exits 0 and prints another line sets `FAKE_TOOLCHAIN_PROGRAM_OUTPUT` in the environment of its
-//! own run: the program then prints that text instead.
+//! own run: the program then prints that text instead. A test that checks what the compiler was asked sets `FAKE_TOOLCHAIN_LOG` to a
+//! file: every run of `mojo` appends its command line to it.
 
 const std = @import("std");
 
@@ -18,6 +19,9 @@ const program_output = "zz_e2e total 3\n";
 
 /// The variable that replaces `program_output` for one run.
 const output_env = "FAKE_TOOLCHAIN_PROGRAM_OUTPUT";
+
+/// The variable that names a file the compiler appends its command line to.
+const log_env = "FAKE_TOOLCHAIN_LOG";
 
 /// The file named by the last `-o` among `args`, or null.
 fn outputOf(args: []const []const u8) ?[]const u8 {
@@ -39,6 +43,15 @@ pub fn main() !u8 {
         return 0;
     }
     if (args.len < 2) return 2;
+    // A test that checks the command line the compiler was given (the link line) names a file here: one line per run.
+    if (std.process.getEnvVarOwned(a, log_env)) |log| {
+        var f = try std.fs.cwd().createFile(log, .{ .truncate = false });
+        defer f.close();
+        try f.seekFromEnd(0);
+        const w = f.writer();
+        for (args, 0..) |s, k| try w.print("{s}{s}", .{ if (k == 0) "" else " ", s });
+        try w.writeByte('\n');
+    } else |_| {}
     const target = outputOf(args) orelse return 2;
     const cwd = std.fs.cwd();
     if (std.mem.eql(u8, args[1], "precompile")) {
