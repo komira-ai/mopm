@@ -5,6 +5,7 @@ import type { AuditEntry, Dep, FileRef, NativeRef } from '../types';
 import { validatePackage } from '../validate';
 import type { PackageFacts, RejectionCode, ValidatorOptions } from '../validate';
 import type { PublishConfig } from './config';
+import type { DisplayMeta } from './display';
 import type { ObjectStore, PublishStore, Queue } from './ports';
 import { sendIndexPkg } from './indexer';
 import { liveBytes } from './service';
@@ -27,7 +28,7 @@ const sha256Hex = (b: Uint8Array) => createHash('sha256').update(b).digest('hex'
 const MAX_MESSAGE = 500;
 
 /** A pass over one publish ended in a verdict that is final. */
-class Rejected extends Error {
+export class Rejected extends Error {
   constructor(
     readonly code: RejectionCode,
     message: string,
@@ -104,14 +105,28 @@ export async function validatePublish(d: ValidatorDeps, publishId: string): Prom
 }
 
 async function validateAll(d: ValidatorDeps, rec: PublishRecord): Promise<PackageFacts[]> {
+  return validateArchives(d.objects, d.validatorOptions, rec, rec.files);
+}
+
+/**
+ * Validate every archive of one version, each on its own pass (the bytes are dropped after each, so memory stays at one
+ * archive), and check that they agree on build, dependencies and native libraries. The single publish and the group's
+ * validator both run exactly this. Throws `Rejected` for a verdict on the archives.
+ */
+export async function validateArchives(
+  objects: Pick<ObjectStore, 'get'>,
+  options: ValidatorOptions | undefined,
+  version: { name: string; version: string; manifest_sha256: string },
+  files: ReadonlyArray<Pick<PublishFile, 'key' | 'subdir' | 'filename' | 'sha256'>>,
+): Promise<PackageFacts[]> {
   const out: PackageFacts[] = [];
-  for (const f of rec.files) {
-    const bytes = await d.objects.get(f.key);
+  for (const f of files) {
+    const bytes = await objects.get(f.key);
     if (!bytes) throw new Rejected('archive_invalid', `the upload of ${f.filename} is missing from quarantine`);
     const verdict = validatePackage(
       bytes,
-      { name: rec.name, version: rec.version, subdir: f.subdir, filename: f.filename, sha256: f.sha256, manifestSha256: rec.manifest_sha256 },
-      d.validatorOptions,
+      { name: version.name, version: version.version, subdir: f.subdir, filename: f.filename, sha256: f.sha256, manifestSha256: version.manifest_sha256 },
+      options,
     );
     if (!verdict.ok) throw new Rejected(verdict.rejection_code, `${f.filename}: ${verdict.message}`);
     out.push(verdict.facts);
@@ -120,7 +135,7 @@ async function validateAll(d: ValidatorDeps, rec: PublishRecord): Promise<Packag
   const first = out[0]!;
   for (const [i, facts] of out.entries()) {
     const same = facts.build === first.build && JSON.stringify(depsOf(facts)) === JSON.stringify(depsOf(first)) && JSON.stringify(nativeOf(facts)) === JSON.stringify(nativeOf(first));
-    if (!same) throw new Rejected('manifest_invalid', `${rec.files[i]!.filename} disagrees with ${rec.files[0]!.filename} on build, dependencies or native libraries`);
+    if (!same) throw new Rejected('manifest_invalid', `${files[i]!.filename} disagrees with ${files[0]!.filename} on build, dependencies or native libraries`);
   }
   return out;
 }
@@ -152,25 +167,39 @@ const depsOf = (f: PackageFacts): Dep[] => f.metadata.deps.map((x) => (x.range =
 const nativeOf = (f: PackageFacts): NativeRef[] => f.metadata.native.map((n) => ({ id: n.id, soname: n.soname }));
 
 function buildFill(d: ValidatorDeps, rec: PublishRecord, facts: PackageFacts[]): PublishFill {
+  return fillFrom(d.channelUrl, (d.now ?? (() => new Date()))(), rec, rec.files, facts);
+}
+
+/**
+ * What a version row holds once its archives are validated: the facts the archives stated, the files with their public
+ * URLs, the display fields of the request and who published it. Pure. The single publish and the group's staging write this.
+ */
+export function fillFrom(
+  channelUrl: string,
+  now: Date,
+  version: { version: string; display?: DisplayMeta; published_by: string },
+  declared: ReadonlyArray<Pick<PublishFile, 'subdir' | 'filename' | 'sha256' | 'size'>>,
+  facts: PackageFacts[],
+): PublishFill {
   const first = facts[0]!;
-  const files: FileRef[] = rec.files.map((f) => ({
+  const files: FileRef[] = declared.map((f) => ({
     subdir: f.subdir,
     filename: f.filename,
     sha256: f.sha256,
     size: f.size,
-    url: `${d.channelUrl.replace(/\/+$/, '')}/${f.subdir}/${f.filename}`,
+    url: `${channelUrl.replace(/\/+$/, '')}/${f.subdir}/${f.filename}`,
   }));
   return {
-    version: rec.version,
+    version: version.version,
     build: first.build,
     requires_mojo: `==${first.compiler}`,
     deps: depsOf(first),
     native: nativeOf(first),
     files,
     manifest_sha256: first.manifestSha256,
-    ...(rec.display ?? {}),
-    published_at: (d.now ?? (() => new Date()))().toISOString(),
-    published_by: rec.published_by,
+    ...(version.display ?? {}),
+    published_at: now.toISOString(),
+    published_by: version.published_by,
   };
 }
 

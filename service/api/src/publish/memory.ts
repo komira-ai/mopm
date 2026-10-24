@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { Invalidator, ObjectStore, PresignedPut, Presigner, PublishStore, Queue, QueueMessage } from './ports';
+import type { ActorGroup, ActorGroups, Invalidator, ObjectStore, PresignedPut, Presigner, PublishStore, Queue, QueueMessage } from './ports';
 import type { PublishRecord, UploadRecord } from './types';
 
 const copy = <T>(v: T): T => structuredClone(v);
@@ -57,6 +57,17 @@ export class MemoryPublishStore implements PublishStore {
     if (count + n > limit) return { ok: false, count };
     this.counters.set(key, count + n);
     return { ok: true, count: count + n };
+  }
+  actorGroups = new Map<string, ActorGroups>();
+  async getActorGroups(actor: string) {
+    const g = this.actorGroups.get(actor);
+    return g && copy(g);
+  }
+  async putActorGroups(actor: string, groups: ActorGroup[], rev: number | undefined) {
+    const cur = this.actorGroups.get(actor);
+    if (cur?.rev !== rev) return false;
+    this.actorGroups.set(actor, { actor, groups: copy(groups), rev: (rev ?? -1) + 1 });
+    return true;
   }
 }
 

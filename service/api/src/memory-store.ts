@@ -2,13 +2,20 @@ import { RegistryError, versionExists } from './errors';
 import { API_VIEW, headerKey, membersKey, parseHeader, parseMembers, VersionFunnel, type FunnelOptions, type GroupMembers, type GroupReader, type View } from './group';
 import {
   checkHeaderWrite,
+  commitInputItem,
+  commitInputKey,
   committedRecord,
   groupItem,
   membersItem,
+  membersWithExpiry,
+  parseCommitInput,
   parseGroupRecord,
+  type ActiveGroup,
   type AdoptOutcome,
+  type CommitInput,
   type CommitOutcome,
   type GroupRecord,
+  type GroupStatus,
   type GroupStore,
 } from './group-store';
 import type { RawVersionPort } from './raw-port';
@@ -42,6 +49,10 @@ export class MemoryGroupItems implements GroupReader {
   peek(key: string): Record<string, unknown> | undefined {
     const i = this.items.get(key);
     return i && copy(i);
+  }
+  /** Every item with its key, for the writers' scans (the sweeper's index). */
+  entries(): Array<[string, Record<string, unknown>]> {
+    return [...this.items.entries()].map(([k, v]) => [k, copy(v)]);
   }
   private read(key: string) {
     this.reads.push(key);
@@ -174,6 +185,11 @@ export class MemoryStore implements Store, GroupStore {
     const next = { ...changed, rev: cur.rev + 1 };
     checkHeaderWrite(cur, next);
     this.groups.put(headerKey(gid), groupItem(next));
+    // A header that gains or loses its expiry takes its member list along (as the DynamoDB adapter does, in one transaction).
+    if (next.expires_at !== cur.expires_at) {
+      const list = this.groups.peek(membersKey(gid));
+      if (list) this.groups.put(membersKey(gid), membersWithExpiry(list, next.expires_at));
+    }
     if (audit) this.audit.push(copy(audit));
     return next;
   }
@@ -183,7 +199,7 @@ export class MemoryStore implements Store, GroupStore {
     if (!cur) return { outcome: 'missing' };
     if (cur.committed_at !== undefined) return { outcome: 'already', header: cur };
     if (cur.status !== 'validating' || cur.rev !== c.rev) return { outcome: 'conflict', header: cur };
-    if (Date.parse(c.now) > Date.parse(cur.deadline_at)) return { outcome: 'deadline', header: cur };
+    if (!(Date.parse(c.now) <= Date.parse(cur.deadline_at))) return { outcome: 'deadline', header: cur }; // a deadline that is not a time is past
     const next = committedRecord(cur, c.writeOrder, c.now);
     this.groups.put(headerKey(gid), groupItem(next));
     this.audit.push(copy(c.audit));
@@ -192,6 +208,13 @@ export class MemoryStore implements Store, GroupStore {
 
   async adoptVersion(rec: VersionRecord, audit: AuditEntry, free: (cur: VersionRecord) => boolean): Promise<AdoptOutcome> {
     if (rec.state !== 'pending' || rec.group_id === undefined) throw new Error('adoptVersion takes a pending row that names a group');
+    return this.adopt(rec, audit, free);
+  }
+  async adoptSingle(rec: VersionRecord, audit: AuditEntry, free: (cur: VersionRecord) => boolean): Promise<AdoptOutcome> {
+    if (rec.state !== 'pending' || rec.group_id !== undefined) throw new Error('adoptSingle takes a pending row that names no group');
+    return this.adopt(rec, audit, free);
+  }
+  private adopt(rec: VersionRecord, audit: AuditEntry, free: (cur: VersionRecord) => boolean): AdoptOutcome {
     const canonical = canonicalVersion(rec.version);
     const key = `${rec.name}\0${canonical}`;
     const fresh = { ...rec, canonical };
@@ -217,6 +240,36 @@ export class MemoryStore implements Store, GroupStore {
     this.versions.set(key, copy(next));
     this.audit.push(copy(audit));
     return copy(next);
+  }
+
+  async putCommitInputs(gid: string, hash: string, inputs: readonly CommitInput[], expiresAt: number): Promise<void> {
+    inputs.forEach((input, i) => {
+      const key = commitInputKey(gid, hash, i);
+      this.groups.put(key, commitInputItem(key, input, expiresAt));
+    });
+  }
+  async getCommitInput(gid: string, hash: string, index: number): Promise<CommitInput | undefined> {
+    const i = this.groups.peek(commitInputKey(gid, hash, index));
+    return i && parseCommitInput(i);
+  }
+
+  async listActiveGroups(): Promise<ActiveGroup[]> {
+    const out: ActiveGroup[] = [];
+    for (const [key, i] of this.groups.entries()) {
+      if (!key.startsWith('grp#') || i.sweep_pk !== 'active') continue;
+      out.push({
+        group_id: key.slice('grp#'.length),
+        status: i.status as GroupStatus,
+        attempt: Number(i.attempt),
+        actor: String(i.actor),
+        rev: Number(i.rev),
+        progress_at: String(i.progress_at),
+        sweep_at: String(i.sweep_at),
+        deadline_at: String(i.deadline_at),
+        resend: Number(i.resend ?? 0),
+      });
+    }
+    return out;
   }
 
   async listVersions(name: string) {

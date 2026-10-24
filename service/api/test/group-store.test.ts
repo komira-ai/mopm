@@ -678,3 +678,73 @@ describe('pure parts', () => {
     expect(() => applyEvent(row, flip('g1', 2))).toThrow(/Cannot group_publish/);
   });
 });
+
+describe.each(RIGS)('deadlines and single takeovers: %s', (_label, make) => {
+  let r: Rig;
+  beforeEach(() => {
+    r = make();
+  });
+
+  test.each(['', 'soon', 'NaN', '2026-13-45T99:00:00Z', 'tomorrow at noon'])('a header whose deadline_at is %j (not a time) is refused at create, with nothing written', async (deadline) => {
+    await expect(r.store.createGroup(group({ status: 'open', deadline_at: deadline }), memberList('p'), gaudit('x'))).rejects.toThrow(/is not a time/);
+    expect(await r.store.getGroup('g1')).toBeUndefined();
+    expect(await r.store.getGroupMembers('g1')).toBeUndefined();
+    expect(await actions(r, 'grp#g1')).toEqual([]);
+  });
+
+  test('an update cannot give a header a deadline that is not a time either: the header stays as it was', async () => {
+    await r.store.createGroup(group({ status: 'open' }), memberList('p'), gaudit('x'));
+    await expect(r.store.updateGroup('g1', (c) => ({ ...c, deadline_at: 'soon' }))).rejects.toThrow(/is not a time/);
+    expect(await r.store.getGroup('g1')).toEqual(group({ status: 'open' }));
+  });
+
+  test('the commit refuses a group whose stored deadline is not a time (it is past, not never), commits at the deadline itself and refuses after it', async () => {
+    r.putGroupItem(headerKey('g1'), groupItem(group({ status: 'validating', deadline_at: 'soon' })));
+    expect(await r.store.commitGroup('g1', commitArgs())).toMatchObject({ outcome: 'deadline' });
+    expect((await r.store.getGroup('g1'))!.committed_at).toBeUndefined();
+
+    r.putGroupItem(headerKey('g1'), groupItem(group({ status: 'validating', deadline_at: COMMITTED_AT })));
+    expect(await r.store.commitGroup('g1', commitArgs({ now: '2026-10-14T09:00:00.001Z' }))).toMatchObject({ outcome: 'deadline' });
+    expect(await r.store.commitGroup('g1', commitArgs({ now: COMMITTED_AT }))).toMatchObject({ outcome: 'committed' });
+  });
+
+  test('adoptSingle: creates a reservation where there is none, takes a free pending row one revision on (the stored row names no group), and leaves a row that is not free', async () => {
+    const single = (over: Partial<VersionRecord> = {}) => rec({ name: 'p', version: '1.0.0', state: 'pending', files: [], build: '', requires_mojo: '', ...over });
+    const a = audit('p', 'publish_adopt', '1.0.0');
+    expect((await r.store.adoptSingle(single(), a, () => true)).outcome).toBe('created');
+    expect(await raw(r)).toMatchObject({ state: 'pending', rev: 0 });
+
+    r.writeRow(reserved('p', 'g1'));
+    const taken = await r.store.adoptSingle(single(), audit('p', 'publish_adopt', '1.0.0'), () => false);
+    expect(taken).toMatchObject({ outcome: 'taken', existing: { group_id: 'g1' } });
+    expect(await raw(r)).toMatchObject({ group_id: 'g1', rev: 0 });
+
+    const adopted = await r.store.adoptSingle(single({ published_by: 'octocat' }), audit('p', 'publish_adopt', '1.0.0'), (cur) => cur.group_id === 'g1');
+    expect(adopted).toMatchObject({ outcome: 'adopted', record: { rev: 1, published_by: 'octocat' } });
+    const stored = (await raw(r))!;
+    expect(stored.group_id).toBeUndefined();
+    expect(stored).toMatchObject({ state: 'pending', rev: 1, published_by: 'octocat' });
+
+    r.writeRow(rec({ name: 'p', version: '1.0.0', state: 'published', rev: 5 }));
+    expect(await r.store.adoptSingle(single(), audit('p', 'publish_adopt', '1.0.0'), () => true)).toMatchObject({ outcome: 'taken', existing: { state: 'published' } });
+    expect(await raw(r)).toMatchObject({ state: 'published', rev: 5 });
+  });
+
+  test('adoptSingle takes a row that names no group, and adoptVersion one that does: each refuses the other\'s', async () => {
+    await expect(r.store.adoptSingle(reserved('p', 'g1'), audit('p', 'x', '1.0.0'), () => true)).rejects.toThrow(/names no group/);
+    await expect(r.store.adoptSingle(rec({ name: 'p', version: '1.0.0', state: 'published' }), audit('p', 'x', '1.0.0'), () => true)).rejects.toThrow(/names no group/);
+    await expect(r.store.adoptVersion(rec({ name: 'p', version: '1.0.0', state: 'pending' }), audit('p', 'x', '1.0.0'), () => true)).rejects.toThrow(/names a group/);
+  });
+
+  test('adoptSingle loses a race for the row cleanly (DynamoDB: the revision moved between the read and the write)', async () => {
+    if (!r.doc) return;
+    r.writeRow(reserved('p', 'g1'));
+    const out = await r.store.adoptSingle(rec({ name: 'p', version: '1.0.0', state: 'pending', files: [], build: '', requires_mojo: '' }), audit('p', 'publish_adopt', '1.0.0'), (cur) => {
+      r.writeRow({ ...cur, rev: cur.rev + 1 });
+      return true;
+    });
+    expect(out).toEqual({ outcome: 'lost' });
+    expect(await raw(r)).toMatchObject({ group_id: 'g1', rev: 1 });
+    expect(await actions(r, 'p')).toEqual([]);
+  });
+});

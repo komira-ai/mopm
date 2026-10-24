@@ -109,5 +109,90 @@
       {"body": {}}
     ],
     "expect": {"requests":[{"target":"GetItem","body":{"ConsistentRead":true,"Key":{"publish_id":{"S":"rl#grp#4242#2026-10-14"}},"TableName":"mopm-beta-publishes"}},{"target":"PutItem","body":{"ConditionExpression":"#r = :r","ExpressionAttributeNames":{"#r":"rev"},"ExpressionAttributeValues":{":r":{"N":"6"}},"Item":{"publish_id":{"S":"rl#grp#4242#2026-10-14"},"count":{"N":"507"},"rev":{"N":"7"},"expires_at":{"N":"1792000000"}},"TableName":"mopm-beta-publishes"}}],"returns":{"ok":true,"count":507}}
+  },
+  {
+    "adapter": "store",
+    "method": "adoptSingle",
+    "args": [
+      {"name": "p", "version": "1.0.0", "canonical": "1.0.0", "build": "", "state": "pending", "published_at": "2026-10-13T12:00:00Z", "requires_mojo": "", "deps": [], "native": [], "files": [], "manifest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "rev": 0},
+      {"name": "p", "ts": "2026-10-14T08:05:00Z", "id": "a_single_adopt", "actor": "u:1", "action": "publish_adopt", "version": "1.0.0"},
+      null
+    ],
+    "replies": [{"body": {}}],
+    "expect": {"requests":[{"target":"TransactWriteItems","body":{"ClientRequestToken":"<uuid>","TransactItems":[{"Put":{"ConditionExpression":"attribute_not_exists(#n)","ExpressionAttributeNames":{"#n":"name"},"Item":{"name":{"S":"p"},"build":{"S":""},"state":{"S":"pending"},"published_at":{"S":"2026-10-13T12:00:00Z"},"requires_mojo":{"S":""},"deps":{"L":[]},"native":{"L":[]},"files":{"L":[]},"manifest_sha256":{"S":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"},"rev":{"N":"0"},"version":{"S":"1.0.0"},"version_spelling":{"S":"1.0.0"}},"TableName":"mopm-beta-versions"}},{"Put":{"ConditionExpression":"attribute_not_exists(#n)","ExpressionAttributeNames":{"#n":"name"},"Item":{"name":{"S":"p"},"ts":{"S":"2026-10-14T08:05:00Z"},"id":{"S":"a_single_adopt"},"actor":{"S":"u:1"},"action":{"S":"publish_adopt"},"version":{"S":"1.0.0"},"ts_seq":{"S":"2026-10-14T08:05:00Z#a_single_adopt"}},"TableName":"mopm-beta-audit"}}]}}],"returns":{"outcome":"created","record":{"name":"p","version":"1.0.0","canonical":"1.0.0","build":"","state":"pending","published_at":"2026-10-13T12:00:00Z","requires_mojo":"","deps":[],"native":[],"files":[],"manifest_sha256":"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","rev":0}}}
+  },
+  {
+    "adapter": "publish",
+    "method": "getActorGroups",
+    "args": ["u:1"],
+    "replies": [{"body": {}}],
+    "expect": {"requests":[{"target":"GetItem","body":{"ConsistentRead":true,"Key":{"publish_id":{"S":"grpa#u:1"}},"TableName":"mopm-beta-publishes"}}],"returns":null}
+  },
+  {
+    "adapter": "publish",
+    "method": "getActorGroups",
+    "args": ["u:1"],
+    "replies": [
+      {"body": {"Item": {"publish_id": "grpa#u:1", "actor": "u:1", "groups": [{"id": "grp_a", "at": "2026-10-14T12:00:00Z"}], "rev": 3}}}
+    ],
+    "expect": {"requests":[{"target":"GetItem","body":{"ConsistentRead":true,"Key":{"publish_id":{"S":"grpa#u:1"}},"TableName":"mopm-beta-publishes"}}],"returns":{"actor":"u:1","groups":[{"id":"grp_a","at":"2026-10-14T12:00:00Z"}],"rev":3}}
+  },
+  {
+    "adapter": "publish",
+    "method": "putActorGroups",
+    "args": ["u:1", [{"id": "grp_a", "at": "2026-10-14T12:00:00Z"}], null],
+    "replies": [{"body": {}}],
+    "expect": {"requests":[{"target":"PutItem","body":{"ConditionExpression":"attribute_not_exists(#k)","ExpressionAttributeNames":{"#k":"publish_id"},"Item":{"publish_id":{"S":"grpa#u:1"},"actor":{"S":"u:1"},"groups":{"L":[{"M":{"id":{"S":"grp_a"},"at":{"S":"2026-10-14T12:00:00Z"}}}]},"rev":{"N":"0"}},"TableName":"mopm-beta-publishes"}}],"returns":true}
+  },
+  {
+    "adapter": "publish",
+    "method": "putActorGroups",
+    "args": ["u:1", [{"id": "grp_a", "at": "2026-10-14T12:00:00Z"}, {"id": "grp_b", "at": "2026-10-14T12:05:00Z"}], 2],
+    "replies": [{"body": {}}],
+    "expect": {"requests":[{"target":"PutItem","body":{"ConditionExpression":"#r = :r","ExpressionAttributeNames":{"#r":"rev"},"ExpressionAttributeValues":{":r":{"N":"2"}},"Item":{"publish_id":{"S":"grpa#u:1"},"actor":{"S":"u:1"},"groups":{"L":[{"M":{"id":{"S":"grp_a"},"at":{"S":"2026-10-14T12:00:00Z"}}},{"M":{"id":{"S":"grp_b"},"at":{"S":"2026-10-14T12:05:00Z"}}}]},"rev":{"N":"3"}},"TableName":"mopm-beta-publishes"}}],"returns":true}
+  },
+  {
+    "adapter": "publish",
+    "method": "putActorGroups",
+    "args": ["u:1", [], 2],
+    "replies": [{"error": "ConditionalCheckFailedException"}],
+    "expect": {"requests":[{"target":"PutItem","body":{"ConditionExpression":"#r = :r","ExpressionAttributeNames":{"#r":"rev"},"ExpressionAttributeValues":{":r":{"N":"2"}},"Item":{"publish_id":{"S":"grpa#u:1"},"actor":{"S":"u:1"},"groups":{"L":[]},"rev":{"N":"3"}},"TableName":"mopm-beta-publishes"}}],"returns":false}
+  },
+  {
+    "adapter": "store",
+    "method": "putCommitInputs",
+    "args": ["g1", "0123456789abcdef", [{"name": "a", "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, {"name": "b", "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "display": {"description": "B", "keywords": ["k"]}}], 1900000000],
+    "replies": [{"body": {}}, {"body": {}}],
+    "expect": {"requests":[{"target":"PutItem","body":{"Item":{"publish_id":{"S":"grpc#g1#0123456789abcdef#0"},"name":{"S":"a"},"manifest_sha256":{"S":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"expires_at":{"N":"1900000000"}},"TableName":"mopm-beta-publishes"}},{"target":"PutItem","body":{"Item":{"publish_id":{"S":"grpc#g1#0123456789abcdef#1"},"name":{"S":"b"},"manifest_sha256":{"S":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"display":{"M":{"description":{"S":"B"},"keywords":{"L":[{"S":"k"}]}}},"expires_at":{"N":"1900000000"}},"TableName":"mopm-beta-publishes"}}],"returns":null}
+  },
+  {
+    "adapter": "store",
+    "method": "getCommitInput",
+    "args": ["g1", "0123456789abcdef", 1],
+    "replies": [
+      {"body": {"Item": {"publish_id": "grpc#g1#0123456789abcdef#1", "name": "b", "manifest_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "display": {"description": "B", "keywords": ["k"]}, "expires_at": 1900000000}}}
+    ],
+    "expect": {"requests":[{"target":"GetItem","body":{"ConsistentRead":true,"Key":{"publish_id":{"S":"grpc#g1#0123456789abcdef#1"}},"TableName":"mopm-beta-publishes"}}],"returns":{"name":"b","manifest_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","display":{"description":"B","keywords":["k"]}}}
+  },
+  {
+    "adapter": "store",
+    "method": "listActiveGroups",
+    "args": [],
+    "replies": [
+      {"body": {"Items": [{"publish_id": "grp#g1", "sweep_pk": "active", "sweep_at": "2026-10-14T08:30:00Z", "status": "validating", "attempt": 1, "actor": "u:1", "rev": 4, "progress_at": "2026-10-14T08:30:00Z", "deadline_at": "2026-10-14T20:00:00Z", "resend": 1}], "LastEvaluatedKey": {"publish_id": "grp#g1", "sweep_pk": "active", "sweep_at": "2026-10-14T08:30:00Z"}}},
+      {"body": {"Items": [{"publish_id": "grp#g2", "sweep_pk": "active", "sweep_at": "2026-10-14T08:40:00Z", "status": "open", "attempt": 2, "actor": "u:2", "rev": 0, "progress_at": "2026-10-14T08:40:00Z", "deadline_at": "2026-10-14T20:40:00Z"}, {"publish_id": "grpm#g2", "sweep_pk": "active", "sweep_at": "x"}]}}
+    ],
+    "expect": {"requests":[{"target":"Query","body":{"ExpressionAttributeNames":{"#p":"sweep_pk"},"ExpressionAttributeValues":{":p":{"S":"active"}},"IndexName":"by_sweep","KeyConditionExpression":"#p = :p","Limit":100,"TableName":"mopm-beta-publishes"}},{"target":"Query","body":{"ExclusiveStartKey":{"publish_id":{"S":"grp#g1"},"sweep_pk":{"S":"active"},"sweep_at":{"S":"2026-10-14T08:30:00Z"}},"ExpressionAttributeNames":{"#p":"sweep_pk"},"ExpressionAttributeValues":{":p":{"S":"active"}},"IndexName":"by_sweep","KeyConditionExpression":"#p = :p","Limit":100,"TableName":"mopm-beta-publishes"}}],"returns":[{"group_id":"g1","status":"validating","attempt":1,"actor":"u:1","rev":4,"progress_at":"2026-10-14T08:30:00Z","sweep_at":"2026-10-14T08:30:00Z","deadline_at":"2026-10-14T20:00:00Z","resend":1},{"group_id":"g2","status":"open","attempt":2,"actor":"u:2","rev":0,"progress_at":"2026-10-14T08:40:00Z","sweep_at":"2026-10-14T08:40:00Z","deadline_at":"2026-10-14T20:40:00Z","resend":0}]}
+  },
+  {
+    "adapter": "store",
+    "method": "updateGroup",
+    "args": ["g1", {"$set": {"status": "aborted", "expires_at": 1800000000}}, {"name": "grp#g1", "ts": "2026-10-14T08:10:00Z", "id": "a_g1_abort", "actor": "u:1", "action": "group_abort"}],
+    "replies": [
+      {"body": {"Item": {"publish_id": "grp#g1", "group_id": "g1", "status": "open", "attempt": 1, "rev": 0, "actor": "u:1", "member_count": 1, "created_at": "2026-10-14T08:00:00Z", "deadline_at": "2026-10-14T20:00:00Z", "progress_at": "2026-10-14T08:00:00Z", "reserved": "", "validated": "", "staged": "", "copied": "", "flipped": "", "resend": 0}}},
+      {"body": {"Item": {"publish_id": "grpm#g1", "members": [{"name": "p", "version": "1.0.0", "canonical": "1.0.0", "subdirs": ["linux-64"]}]}}},
+      {"body": {}}
+    ],
+    "expect": {"requests":[{"target":"GetItem","body":{"ConsistentRead":true,"Key":{"publish_id":{"S":"grp#g1"}},"TableName":"mopm-beta-publishes"}},{"target":"GetItem","body":{"ConsistentRead":true,"Key":{"publish_id":{"S":"grpm#g1"}},"TableName":"mopm-beta-publishes"}},{"target":"TransactWriteItems","body":{"ClientRequestToken":"<uuid>","TransactItems":[{"Put":{"ConditionExpression":"#r = :r","ExpressionAttributeNames":{"#r":"rev"},"ExpressionAttributeValues":{":r":{"N":"0"}},"Item":{"group_id":{"S":"g1"},"status":{"S":"aborted"},"attempt":{"N":"1"},"rev":{"N":"1"},"actor":{"S":"u:1"},"member_count":{"N":"1"},"created_at":{"S":"2026-10-14T08:00:00Z"},"deadline_at":{"S":"2026-10-14T20:00:00Z"},"progress_at":{"S":"2026-10-14T08:00:00Z"},"reserved":{"S":""},"validated":{"S":""},"staged":{"S":""},"copied":{"S":""},"flipped":{"S":""},"resend":{"N":"0"},"expires_at":{"N":"1800000000"},"publish_id":{"S":"grp#g1"}},"TableName":"mopm-beta-publishes"}},{"Put":{"ConditionExpression":"attribute_not_exists(#n)","ExpressionAttributeNames":{"#n":"name"},"Item":{"name":{"S":"grp#g1"},"ts":{"S":"2026-10-14T08:10:00Z"},"id":{"S":"a_g1_abort"},"actor":{"S":"u:1"},"action":{"S":"group_abort"},"ts_seq":{"S":"2026-10-14T08:10:00Z#a_g1_abort"}},"TableName":"mopm-beta-audit"}},{"Put":{"Item":{"publish_id":{"S":"grpm#g1"},"members":{"L":[{"M":{"name":{"S":"p"},"version":{"S":"1.0.0"},"canonical":{"S":"1.0.0"},"subdirs":{"L":[{"S":"linux-64"}]}}}]},"expires_at":{"N":"1800172800"}},"TableName":"mopm-beta-publishes"}}]}}],"returns":{"group_id":"g1","status":"aborted","attempt":1,"rev":1,"actor":"u:1","member_count":1,"created_at":"2026-10-14T08:00:00Z","deadline_at":"2026-10-14T20:00:00Z","progress_at":"2026-10-14T08:00:00Z","reserved":"","validated":"","staged":"","copied":"","flipped":"","resend":0,"expires_at":1800000000}}
   }
 ]

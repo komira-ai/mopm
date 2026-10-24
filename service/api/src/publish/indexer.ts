@@ -1,11 +1,14 @@
 import { buildPackageIndex, buildTakedowns, indexKey, packageRev, TAKEDOWNS_KEY } from '../index-files';
 import { INDEX_VIEW, repodataView, TAKEDOWNS_VIEW, type View } from '../group';
+import type { GroupStore } from '../group-store';
 import { buildRepodata } from '../repodata';
 import type { Store } from '../store';
 import { SUBDIRS_V1 } from '../types';
 import type { VersionRecord } from '../types';
+import { advance, releaseIndex, releaseRepodata } from './group-chain';
+import { GROUP_ID } from './group-keys';
 import type { Invalidator, ObjectStore, PublishStore, Queue } from './ports';
-import type { IndexMessage, IndexPkgMessage, IndexQueueMessage } from './types';
+import type { GroupHop, IndexMessage, IndexPkgMessage, IndexQueueMessage } from './types';
 
 export interface IndexerDeps {
   registry: Store;
@@ -14,6 +17,12 @@ export interface IndexerDeps {
   invalidator: Invalidator;
   /** The index queue itself: the last repodata job asks for the package's sparse-index file. */
   indexQueue: Queue;
+  /**
+   * The chain of a committed group (src/publish/group-chain.ts): the header the hops release gates on, and the group queue the
+   * last index hop sends the flip to. A hop of a group arriving where these are absent is a defect of the deployment: it throws.
+   */
+  groups?: GroupStore;
+  groupQueue?: Queue;
   now?: () => Date;
   log?: (line: Record<string, unknown>) => void;
   /** Subdirs whose empty index this container already made sure of. */
@@ -49,6 +58,11 @@ export async function indexSubdir(d: IndexerDeps, msg: IndexMessage): Promise<vo
     log({ level: 'error', msg: 'index message for an unknown subdir', subdir: msg.subdir });
     return;
   }
+  // A repodata hop of a group's chain: the subdir is released on the group's header first, so that this build (and any build
+  // between this hop and the next) lists the group's members, and no build before it does. A hop that is not for a group in its
+  // chain does nothing at all.
+  const hop = msg.then && 'group' in msg.then ? msg.then.group : undefined;
+  if (hop && (await releaseRepodata(chainDeps(d), hop, msg.subdir)) === undefined) return;
   await ensureEmptyIndexes(d, msg.subdir);
 
   const records = await allRecords(d.registry, repodataView(msg.subdir));
@@ -76,7 +90,8 @@ export async function indexSubdir(d: IndexerDeps, msg: IndexMessage): Promise<vo
       await sendIndexPkg(d, { name: cur.name, publishId: cur.publish_id });
     }
   }
-  if (msg.then) {
+  if (hop) await advance(chainDeps(d), chainQueues(d), hop);
+  else if (msg.then && 'next' in msg.then) {
     const { name, rev, next } = msg.then;
     if (next.length > 0) {
       const follow: IndexMessage = { type: 'index', subdir: next[0]!, then: { name, rev, next: next.slice(1) } };
@@ -112,19 +127,38 @@ export async function sendIndexPkg(d: Pick<IndexerDeps, 'registry' | 'indexQueue
  */
 export async function indexPackage(d: IndexerDeps, msg: IndexPkgMessage): Promise<void> {
   const log = d.log ?? ((l: Record<string, unknown>) => console.log(JSON.stringify(l)));
+  // An index hop of a group's chain: the package is released on the group's header first (only once every repodata gate is set and
+  // every package it may depend on is released), so that this file lists the member and no earlier build does. A hop that arrives
+  // before the steps it follows sends the missing one instead and writes nothing.
+  const hop = msg.group;
+  if (hop) {
+    const gate = await releaseIndex(chainDeps(d), chainQueues(d), hop, msg.name);
+    if (gate === undefined || gate === 'redirected') return;
+  }
   const rows = (await d.registry.versionsOf([msg.name], INDEX_VIEW)).get(msg.name)!;
   const body = buildPackageIndex(msg.name, rows);
   if (body === undefined) {
     log({ level: 'info', msg: 'index_pkg: the package has no visible version, no file written', name: msg.name });
   } else {
-    if (msg.rev < packageRev(rows)) log({ level: 'info', msg: 'index_pkg: the message is older than the registry, writing the current state', name: msg.name, rev: msg.rev });
+    if (!hop && msg.rev < packageRev(rows)) log({ level: 'info', msg: 'index_pkg: the message is older than the registry, writing the current state', name: msg.name, rev: msg.rev });
     await d.objects.put(indexKey(msg.name), Buffer.from(body, 'utf8'), { contentType: 'application/x-ndjson', cacheControl: INDEX_CACHE });
   }
+  if (hop) await advance(chainDeps(d), chainQueues(d), hop);
   if (msg.publish_id === undefined) return;
   await d.publishes.updatePublish(msg.publish_id, (c) => {
     if (c.status !== 'indexing' || c.remaining_subdirs.length > 0) return undefined;
     return { ...c, status: 'published', index_pending: false, updated_at: now(d).toISOString() };
   });
+}
+
+/** The group store and clock the chain's gates work on. A hop where the deployment gave no group store is a defect: it throws (retry, then the dead-letter queue and its alarm). */
+function chainDeps(d: IndexerDeps) {
+  if (!d.groups) throw new Error('a group hop reached an index writer that has no group store');
+  return { groups: d.groups, now: () => now(d), log: d.log ?? ((l: Record<string, unknown>) => console.log(JSON.stringify(l))) };
+}
+function chainQueues(d: IndexerDeps) {
+  if (!d.groupQueue) throw new Error('a group hop reached an index writer that has no group queue');
+  return { indexQueue: d.indexQueue, groupQueue: d.groupQueue };
 }
 
 /** Process one `index_takedowns` message: rebuild `index/takedowns.json` from every row of the registry (an empty log when none). */
@@ -135,6 +169,14 @@ export async function indexTakedowns(d: IndexerDeps): Promise<void> {
 
 const PKG_NAME = /^[a-z][a-z0-9_]{1,63}$/;
 const isRev = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+
+/** A chain hop (the group, the attempt that committed, the resend count) as a GroupHop, or undefined when it is not one. */
+function parseHop(raw: unknown): GroupHop | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const g = raw as Record<string, unknown>;
+  if (typeof g.group_id !== 'string' || !GROUP_ID.test(g.group_id) || !isRev(g.attempt) || !isRev(g.resend)) return undefined;
+  return { group_id: g.group_id, attempt: g.attempt, resend: g.resend };
+}
 
 /**
  * An index-queue message body as a typed message, or undefined when it is none of the three kinds (the caller
@@ -149,12 +191,21 @@ export function parseIndexMessage(raw: unknown): IndexQueueMessage | undefined {
       if (typeof m.subdir !== 'string') return undefined;
       const t = m.then as Record<string, unknown> | undefined;
       if (t === undefined) return { type: 'index', subdir: m.subdir, ...publishId };
+      if (typeof t !== 'object' || t === null) return undefined;
+      if ('group' in t) {
+        const group = parseHop(t.group);
+        return group && !('name' in t) && !('next' in t) ? { type: 'index', subdir: m.subdir, ...publishId, then: { group } } : undefined;
+      }
       if (typeof t.name !== 'string' || !PKG_NAME.test(t.name) || !isRev(t.rev) || !Array.isArray(t.next) || !t.next.every((x) => typeof x === 'string')) return undefined;
       return { type: 'index', subdir: m.subdir, ...publishId, then: { name: t.name, rev: t.rev, next: t.next as string[] } };
     }
-    case 'index_pkg':
+    case 'index_pkg': {
       if (typeof m.name !== 'string' || !PKG_NAME.test(m.name) || !isRev(m.rev)) return undefined;
-      return { type: 'index_pkg', name: m.name, rev: m.rev, ...publishId };
+      if (m.group === undefined) return { type: 'index_pkg', name: m.name, rev: m.rev, ...publishId };
+      const hop = parseHop(m.group);
+      const position = (m.group as Record<string, unknown>).position;
+      return hop && isRev(position) ? { type: 'index_pkg', name: m.name, rev: m.rev, ...publishId, group: { ...hop, position } } : undefined;
+    }
     case 'index_takedowns':
       return { type: 'index_takedowns' };
     default:

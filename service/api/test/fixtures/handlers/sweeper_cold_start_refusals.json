@@ -1,0 +1,106 @@
+{
+  "description": "Each missing or bad setting stops the sweeper's cold start with its own message (checked in this order) and fails the run; the last invocation, with everything set, reads the sweeper's index once and returns.",
+  "lambda": "sweeper",
+  "env": {},
+  "invocations": [
+    {
+      "env": {},
+      "event": {},
+      "expect": {
+        "rejects": {
+          "name": "Error",
+          "message": "MOPM_STAGE is not set"
+        }
+      }
+    },
+    {
+      "env": {
+        "MOPM_STAGE": "beta"
+      },
+      "event": {},
+      "expect": {
+        "rejects": {
+          "name": "Error",
+          "message": "MOPM_GROUP_QUEUE_URL is not set"
+        }
+      }
+    },
+    {
+      "env": {
+        "MOPM_STAGE": "beta",
+        "MOPM_GROUP_QUEUE_URL": "group-queue-url"
+      },
+      "event": {},
+      "expect": {
+        "rejects": {
+          "name": "Error",
+          "message": "MOPM_INDEX_QUEUE_URL is not set"
+        }
+      }
+    },
+    {
+      "env": {
+        "MOPM_STAGE": "beta",
+        "MOPM_GROUP_QUEUE_URL": "group-queue-url",
+        "MOPM_INDEX_QUEUE_URL": "index-queue-url"
+      },
+      "event": {
+        "version": "0",
+        "source": "aws.events",
+        "detail-type": "Scheduled Event"
+      },
+      "expect": {
+        "returns": null
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Query",
+        "table": "mopm-beta-publishes",
+        "index": "by_sweep",
+        "values": {
+          ":p": "active"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": [
+      {
+        "stream": "log",
+        "line": {
+          "group_oldest_nonterminal_age_seconds": 0,
+          "group_sweeper_resends": 0,
+          "group_sweeper_gave_up": 0,
+          "_aws": {
+            "Timestamp": 1790812800000,
+            "CloudWatchMetrics": [
+              {
+                "Namespace": "Mopm/Registry",
+                "Dimensions": [[]],
+                "Metrics": [
+                  { "Name": "group_oldest_nonterminal_age_seconds", "Unit": "Seconds" },
+                  { "Name": "group_sweeper_resends", "Unit": "Count" },
+                  { "Name": "group_sweeper_gave_up", "Unit": "Count" }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        "stream": "log",
+        "line": {
+          "level": "info",
+          "msg": "sweep",
+          "validating": 0,
+          "committed": 0,
+          "resent": [],
+          "gave_up": [],
+          "oldest_seconds": 0
+        }
+      }
+    ]
+  }
+}

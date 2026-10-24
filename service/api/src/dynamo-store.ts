@@ -10,14 +10,21 @@ import { RegistryError, versionExists } from './errors';
 import { API_VIEW, headerKey, membersKey, parseHeader, parseMembers, VersionFunnel, type FunnelOptions, type GroupMembers, type GroupReader, type View } from './group';
 import {
   checkHeaderWrite,
+  commitInputItem,
+  commitInputKey,
   commitToken,
   committedRecord,
   groupItem,
   membersItem,
+  membersWithExpiry,
+  parseCommitInput,
   parseGroupRecord,
+  type ActiveGroup,
   type AdoptOutcome,
+  type CommitInput,
   type CommitOutcome,
   type GroupRecord,
+  type GroupStatus,
   type GroupStore,
 } from './group-store';
 import type { RawVersionPort } from './raw-port';
@@ -365,8 +372,12 @@ export class DynamoStore implements Store, GroupStore {
       const next = { ...changed, rev: cur.rev + 1 };
       checkHeaderWrite(cur, next);
       const put = this.publishPut(groupItem(next), '#r = :r', { '#r': 'rev' }, { ':r': cur.rev });
+      // A header that gains or loses its expiry (a group that ended, or was opened again) takes its member list along, in the
+      // same transaction: the list expires after the header, and a reopened group keeps it.
+      const list = next.expires_at !== cur.expires_at ? await this.publishItem(membersKey(gid)) : undefined;
+      const together = list ? [{ Put: { TableName: this.tables.publishes, Item: membersWithExpiry(list, next.expires_at) } }] : [];
       try {
-        if (audit) await this.doc.send(new TransactWriteCommand({ TransactItems: [put, this.auditPut(audit)] }));
+        if (audit || together.length > 0) await this.doc.send(new TransactWriteCommand({ TransactItems: [put, ...(audit ? [this.auditPut(audit)] : []), ...together] }));
         else await this.doc.send(new PutCommand(put.Put));
         return next;
       } catch (err) {
@@ -383,7 +394,7 @@ export class DynamoStore implements Store, GroupStore {
     if (!cur) return { outcome: 'missing' };
     if (cur.committed_at !== undefined) return { outcome: 'already', header: cur };
     if (cur.status !== 'validating' || cur.rev !== c.rev) return { outcome: 'conflict', header: cur };
-    if (Date.parse(c.now) > Date.parse(cur.deadline_at)) return { outcome: 'deadline', header: cur };
+    if (!(Date.parse(c.now) <= Date.parse(cur.deadline_at))) return { outcome: 'deadline', header: cur }; // a deadline that is not a time is past
     const next = committedRecord(cur, c.writeOrder, c.now);
     try {
       await this.doc.send(
@@ -405,6 +416,13 @@ export class DynamoStore implements Store, GroupStore {
 
   async adoptVersion(rec: VersionRecord, audit: AuditEntry, free: (cur: VersionRecord) => boolean): Promise<AdoptOutcome> {
     if (rec.state !== 'pending' || rec.group_id === undefined) throw new Error('adoptVersion takes a pending row that names a group');
+    return this.adopt(rec, audit, free);
+  }
+  async adoptSingle(rec: VersionRecord, audit: AuditEntry, free: (cur: VersionRecord) => boolean): Promise<AdoptOutcome> {
+    if (rec.state !== 'pending' || rec.group_id !== undefined) throw new Error('adoptSingle takes a pending row that names no group');
+    return this.adopt(rec, audit, free);
+  }
+  private async adopt(rec: VersionRecord, audit: AuditEntry, free: (cur: VersionRecord) => boolean): Promise<AdoptOutcome> {
     const fresh = { ...rec, canonical: canonicalVersion(rec.version) };
     try {
       await this.doc.send(new TransactWriteCommand({ TransactItems: [this.versionPut(fresh, 'attribute_not_exists(#n)', { '#n': 'name' }), this.auditPut(audit)] }));
@@ -426,6 +444,54 @@ export class DynamoStore implements Store, GroupStore {
 
   async applyGroupEvent(name: string, version: string, event: GroupEvent, audit: AuditEntry): Promise<VersionRecord> {
     return this.change(name, version, event, audit, false);
+  }
+
+  async putCommitInputs(gid: string, hash: string, inputs: readonly CommitInput[], expiresAt: number): Promise<void> {
+    // Sixteen at a time: a group has up to 500 members, and the call that stores them has a few seconds.
+    for (let i = 0; i < inputs.length; i += 16) {
+      await Promise.all(
+        inputs.slice(i, i + 16).map((input, k) => this.doc.send(new PutCommand({ TableName: this.tables.publishes, Item: commitInputItem(commitInputKey(gid, hash, i + k), input, expiresAt) }))),
+      );
+    }
+  }
+  async getCommitInput(gid: string, hash: string, index: number): Promise<CommitInput | undefined> {
+    const i = await this.publishItem(commitInputKey(gid, hash, index));
+    return i && parseCommitInput(i);
+  }
+
+  async listActiveGroups(): Promise<ActiveGroup[]> {
+    const out: ActiveGroup[] = [];
+    let start: Item | undefined;
+    do {
+      const r = await this.doc.send(
+        new QueryCommand({
+          TableName: this.tables.publishes,
+          IndexName: 'by_sweep',
+          KeyConditionExpression: '#p = :p',
+          ExpressionAttributeNames: { '#p': 'sweep_pk' },
+          ExpressionAttributeValues: { ':p': 'active' },
+          Limit: 100,
+          ExclusiveStartKey: start,
+        }),
+      );
+      for (const i of r.Items ?? []) {
+        const key = String(i.publish_id);
+        if (!key.startsWith('grp#')) continue;
+        out.push({
+          group_id: key.slice('grp#'.length),
+          status: i.status as GroupStatus,
+          attempt: Number(i.attempt),
+          actor: String(i.actor),
+          rev: Number(i.rev),
+          progress_at: String(i.progress_at),
+          sweep_at: String(i.sweep_at),
+          deadline_at: String(i.deadline_at),
+          resend: Number(i.resend ?? 0),
+        });
+      }
+      start = r.LastEvaluatedKey;
+    } while (start);
+    return out;
   }
   async listVersions(name: string) {
     return (await this.versionsOf([name], API_VIEW)).get(name)!;

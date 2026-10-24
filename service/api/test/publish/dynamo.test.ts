@@ -1,5 +1,6 @@
 import { DynamoPublishStore } from '../../src/publish/dynamo-publish-store';
-import { AnyFlag, DynamoFlags, StaticFlags } from '../../src/publish/flags';
+import { AnyFlag, DynamoFlags, parseGroupsPolicy, policyAllows, StaticFlags } from '../../src/publish/flags';
+import { flagsFor } from '../../src/publish/wiring';
 import { MemoryPublishStore } from '../../src/publish/memory';
 import type { PublishStore } from '../../src/publish/ports';
 import type { PublishRecord, UploadRecord } from '../../src/publish/types';
@@ -133,6 +134,30 @@ describe.each<[string, () => PublishStore]>([
     expect(results.filter((r) => r.ok).map((r) => r.count).sort()).toEqual([3, 6, 9]);
     expect(results.filter((r) => !r.ok).every((r) => r.count === 9)).toBe(true);
   });
+
+  test('an actor\'s list of groups: none at first, created once, then replaced only from the revision read', async () => {
+    const s = make();
+    const at = '2026-10-14T12:00:00Z';
+    expect(await s.getActorGroups('u:1')).toBeUndefined();
+    expect(await s.putActorGroups('u:1', [{ id: 'grp_a', at }], undefined)).toBe(true);
+    expect(await s.putActorGroups('u:1', [{ id: 'grp_b', at }], undefined)).toBe(false); // it exists now
+    expect(await s.getActorGroups('u:1')).toEqual({ actor: 'u:1', groups: [{ id: 'grp_a', at }], rev: 0 });
+    expect(await s.putActorGroups('u:1', [{ id: 'grp_a', at }, { id: 'grp_b', at }], 0)).toBe(true);
+    expect(await s.putActorGroups('u:1', [], 0)).toBe(false); // read at revision 0, which is no longer the list's
+    expect(await s.getActorGroups('u:1')).toEqual({ actor: 'u:1', groups: [{ id: 'grp_a', at }, { id: 'grp_b', at }], rev: 1 });
+    expect(await s.getActorGroups('u:2')).toBeUndefined();
+  });
+
+  test('an actor\'s list of groups under concurrency: of writers that read the same revision exactly one wins', async () => {
+    const s = make();
+    const at = '2026-10-14T12:00:00Z';
+    await s.putActorGroups('u:1', [], undefined);
+    const wins = await Promise.all(Array.from({ length: 8 }, (_, i) => s.putActorGroups('u:1', [{ id: `grp_${i}`, at }], 0)));
+    expect(wins.filter(Boolean)).toHaveLength(1);
+    expect((await s.getActorGroups('u:1'))!.rev).toBe(1);
+    const firsts = await Promise.all(Array.from({ length: 8 }, (_, i) => s.putActorGroups('u:9', [{ id: `grp_${i}`, at }], undefined)));
+    expect(firsts.filter(Boolean)).toHaveLength(1);
+  });
 });
 
 describe('DynamoPublishStore rows', () => {
@@ -160,7 +185,11 @@ describe('DynamoPublishStore rows', () => {
     await s.updatePublish('p', (c) => ({ ...c, status: 'validating' }));
     await s.hit('k', 3, 1);
     await s.hit('k2', 3, 1, 2);
+    await s.putActorGroups('u:1', [], undefined);
+    await s.putActorGroups('u:1', [{ id: 'grp_a', at: '2026-10-14T12:00:00Z' }], 0);
+    await s.getActorGroups('u:1');
     expect(new Set(doc.sent)).toEqual(new Set(['GetCommand', 'PutCommand']));
+    expect([...doc.table('t-publishes').keys()]).toContain('grpa#u:1');
   });
 });
 
@@ -195,5 +224,86 @@ describe('the read-only switch', () => {
   test('AnyFlag: either switch is enough; StaticFlags is fixed', async () => {
     expect(await new AnyFlag([new StaticFlags(false), new StaticFlags(false)]).readOnly()).toBe(false);
     expect(await new AnyFlag([new StaticFlags(false), new StaticFlags(true)]).readOnly()).toBe(true);
+  });
+});
+
+describe('the groups switch', () => {
+  const put = (doc: FakeDoc, item: Record<string, unknown> | undefined) => {
+    if (item) doc.table('t-config').set('groups_enabled', { key: 'groups_enabled', ...item });
+    else doc.table('t-config').delete('groups_enabled');
+  };
+
+  test('absent, it is off for everybody: the default, and what ships', async () => {
+    const flags = new DynamoFlags(docFor(), 't-config', 0);
+    expect(await flags.groupsFor('u:1')).toBe(false);
+    expect(await flags.groupsFor('ci:tok_1')).toBe(false);
+  });
+
+  test('allow admits only the actors it lists, and an empty list admits nobody', async () => {
+    const doc = docFor();
+    const flags = new DynamoFlags(doc, 't-config', 0);
+    put(doc, { mode: 'allow', actors: ['u:1', 'u:3'] });
+    expect([await flags.groupsFor('u:1'), await flags.groupsFor('u:2'), await flags.groupsFor('u:3')]).toEqual([true, false, true]);
+    put(doc, { mode: 'allow', actors: [] });
+    expect(await flags.groupsFor('u:1')).toBe(false);
+    put(doc, { mode: 'allow' });
+    expect(await flags.groupsFor('u:1')).toBe(false);
+  });
+
+  test('all admits everybody, and the deny list is a kill switch for one actor in either mode', async () => {
+    const doc = docFor();
+    const flags = new DynamoFlags(doc, 't-config', 0);
+    put(doc, { mode: 'all', deny: ['u:2'] });
+    expect([await flags.groupsFor('u:1'), await flags.groupsFor('u:2')]).toEqual([true, false]);
+    put(doc, { mode: 'allow', actors: ['u:1', 'u:2'], deny: ['u:2'] });
+    expect([await flags.groupsFor('u:1'), await flags.groupsFor('u:2')]).toEqual([true, false]);
+  });
+
+  test('an item that is not understood is off: a mode that is unknown, off, missing or not a string, and lists that are not lists', async () => {
+    const doc = docFor();
+    const flags = new DynamoFlags(doc, 't-config', 0);
+    for (const item of [{ mode: 'everyone' }, { mode: 'off', actors: ['u:1'] }, {}, { mode: 1 }, { value: true }, { mode: 'allow', actors: 'u:1' }, { mode: 'ALL' }]) {
+      put(doc, item);
+      expect(await flags.groupsFor('u:1')).toBe(false);
+    }
+    put(doc, { mode: 'all', deny: 'u:1' }); // a deny that is not a list denies nobody
+    expect(await flags.groupsFor('u:1')).toBe(true);
+  });
+
+  test('the item is cached for a few seconds apart from the read-only switch, and a failed read throws', async () => {
+    const doc = docFor();
+    let t = 1000;
+    const flags = new DynamoFlags(doc, 't-config', 5000, () => t);
+    put(doc, { mode: 'allow', actors: ['u:1'] });
+    expect(await flags.groupsFor('u:1')).toBe(true);
+    put(doc, undefined);
+    t += 4000;
+    expect(await flags.groupsFor('u:1')).toBe(true); // cached
+    t += 2000;
+    expect(await flags.groupsFor('u:1')).toBe(false); // refreshed
+    expect(await flags.readOnly()).toBe(false);
+    expect(doc.sent.every((s) => s === 'GetCommand')).toBe(true);
+    const broken = new DynamoFlags({ send: async () => { throw new Error('AccessDenied'); } }, 't', 5000, () => t);
+    await expect(broken.groupsFor('u:1')).rejects.toThrow('AccessDenied');
+  });
+
+  test('StaticFlags is off unless given a policy; AnyFlag admits an actor when any of its flags does', async () => {
+    expect(await new StaticFlags(false).groupsFor('u:1')).toBe(false);
+    expect(await new StaticFlags(false, { mode: 'all', deny: [] }).groupsFor('u:1')).toBe(true);
+    const doc = docFor();
+    put(doc, { mode: 'allow', actors: ['u:1'] });
+    const any = new AnyFlag([new StaticFlags(false), new DynamoFlags(doc, 't-config', 0)]);
+    expect([await any.groupsFor('u:1'), await any.groupsFor('u:2')]).toEqual([true, false]);
+    expect(parseGroupsPolicy(undefined)).toEqual({ mode: 'off' });
+    expect(policyAllows({ mode: 'off' }, 'u:1')).toBe(false);
+  });
+
+  test('wired as the API Lambda is, with no item in the config table, groups are off', async () => {
+    const doc = new FakeDoc({ 'mopm-beta-config': 'key' });
+    const flags = flagsFor({}, doc as never, 'beta');
+    expect(await flags.groupsFor('u:1')).toBe(false);
+    doc.table('mopm-beta-config').set('groups_enabled', { key: 'groups_enabled', mode: 'allow', actors: ['u:1'] });
+    // The cache of the wired flags is five seconds; a fresh reader sees the item at once.
+    expect(await new DynamoFlags(doc, 'mopm-beta-config', 0).groupsFor('u:1')).toBe(true);
   });
 });

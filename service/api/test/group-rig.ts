@@ -27,6 +27,10 @@ export interface Rig {
   writeRow(r: VersionRecord): void;
   /** Put an item of the `publishes` table (`grp#...` or `grpm#...`), keyed by its first argument. */
   putGroupItem(key: string, item: Record<string, unknown>): void;
+  /** An item of the `publishes` table as stored, or undefined. */
+  groupItem(key: string): Record<string, unknown> | undefined;
+  /** Remove an item of the `publishes` table, as the table's TTL does once an item has expired. */
+  dropGroupItem(key: string): void;
   /** Keys of the group items read so far, in order. */
   groupReads(): string[];
   /** Run `fn` before every group item read (null removes it). */
@@ -74,6 +78,10 @@ export function memoryRig(opts: FunnelOptions = {}): Rig {
     ...common('memory', store, logs, lines),
     writeRow: (r) => (store as unknown as { versions: Map<string, VersionRecord> }).versions.set(`${r.name}\0${r.canonical}`, structuredClone(r)),
     putGroupItem: (key, item) => store.groups.put(key, item),
+    groupItem: (key) => store.groups.peek(key),
+    dropGroupItem: (key) => {
+      (store.groups as unknown as { items: Map<string, unknown> }).items.delete(key);
+    },
     groupReads: () => [...store.groups.reads],
     beforeGroupRead: (fn) => {
       hook = fn;
@@ -109,6 +117,13 @@ export function dynamoRig(opts: FunnelOptions = {}): Rig {
     putGroupItem: (key, item) => {
       // The fake keys a single-attribute table by the key value and an empty sort part.
       doc.tables.get('mopm-t-publishes')!.set(`${key}\u0000`, { ...structuredClone(item), publish_id: key });
+    },
+    groupItem: (key) => {
+      const i = doc.tables.get('mopm-t-publishes')!.get(`${key}\u0000`);
+      return i && structuredClone(i);
+    },
+    dropGroupItem: (key) => {
+      doc.tables.get('mopm-t-publishes')!.delete(`${key}\u0000`);
     },
     groupReads: () => doc.inputs.filter((i) => i.TableName === 'mopm-t-publishes' && i.Key).map((i) => i.Key.publish_id as string),
     beforeGroupRead: (fn) => {
