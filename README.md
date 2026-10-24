@@ -7,7 +7,7 @@ registry at [mopm.dev](https://mopm.dev).
 **Status: early.** `mopm --version`, `mopm link-plan`, `mopm metadata`,
 `mopm new`, `mopm init`, `mopm build`, `mopm run`, `mopm repl`, `mopm test`, `mopm login`, `mopm logout`,
 `mopm whoami`, `mopm pack`, `mopm publish`, `mopm lock`, `mopm update`, `mopm tree`, `mopm sync`, `mopm add`,
-`mopm remove`, `mopm plan`, `mopm unit` and `mopm yank` work today.
+`mopm remove`, `mopm plan`, `mopm unit`, `mopm yank` and `mopm stage` work today.
 Everything else below is a plan, and the design may change. The documentation is on
 [mopm.dev/docs](https://mopm.dev/docs/): [why mopm and how it is built](docs/why-and-design.md) and
 [getting started](docs/getting-started.md).
