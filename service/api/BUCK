@@ -74,6 +74,20 @@ export_file(
     visibility = ["//site:"],
 )
 
+# The sources that decide what the group docs state (test/docs-group.test.ts of the site): the values of the groups switch, the
+# group tool's flags and exit statuses, its queues, and how the validator writes the channel's files.
+[export_file(
+    name = "site_" + name,
+    src = path,
+    mode = "reference",
+    visibility = ["//site:"],
+) for name, path in {
+    "flags.ts": "src/publish/flags.ts",
+    "group-ops.ts": "src/ops/group-ops.ts",
+    "group-ops-main.ts": "src/ops/group-ops-main.ts",
+    "group-validator.ts": "src/publish/group-validator.ts",
+}.items()]
+
 # The repodata the TS index writer produced for the golden records: the Rust core
 # (service/lambda/core) must write the same bytes.
 [export_file(

@@ -103,7 +103,7 @@ jobs:
       - name: Build the site
         run: |
           npm run build
-          for f in index.html app.html 404.html docs/index.html docs/why/index.html docs/getting-started/index.html docs/configuration/index.html docs/examples/index.html docs/mopm-toml/index.html docs/mopm-test/index.html install.sh; do
+          for f in index.html app.html 404.html docs/index.html docs/why/index.html docs/getting-started/index.html docs/configuration/index.html docs/examples/index.html docs/mopm-toml/index.html docs/mopm-test/index.html docs/publish-workspace/index.html install.sh; do
             test -f "dist/$f" || { echo "dist/$f is missing" >&2; exit 1; }
           done
           ls dist/assets/*/main.js dist/assets/*/site.css

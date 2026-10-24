@@ -191,6 +191,112 @@ publish `published`. See "The sparse index writer" below.
   `MOPM_RATE_PER_TOKEN_DAY`, set from the `limits` prop of the API stack): 100 MB per package, 10 GB per project (counts published and
   yanked files; a full project refuses new publishes and nothing is ever deleted), 2000 begins per account and 1000 per token per UTC day.
 
+## Groups: enabling, rolling out and recovering
+
+The mechanics of a group are under "Publishing" above; this section is the order of work for an operator. Users' side is
+`docs/publishing-a-workspace.md`. Group publish is deployed dark: until `groups_enabled` says otherwise a create answers 404
+`route_not_found` and the CLI reports that the registry has no group publish.
+
+### The `groups_enabled` item
+
+One item of the stage's `mopm-<stage>-config` table, read with a consistent read and cached for five seconds in each API container
+(`service/api/src/publish/flags.ts`). It gates the creation of a group only: a group that exists is still read, committed, validated,
+chained, aborted and yanked with it off. A `put-item` replaces the whole item, so give the complete value each time.
+
+| `mode` | who may create a group | extra fields |
+|---|---|---|
+| `off` | nobody; also what an absent item, an unknown mode and a field that is not a list mean | none |
+| `allow` | the actors in `actors` | `actors`, and `deny` |
+| `all` | everybody | `deny` |
+
+An actor in `deny` is refused in every mode: it is the kill switch for one account. An actor is written `u:<github id>`.
+
+```text
+# off (the default; deleting the item is the same)
+aws dynamodb put-item --table-name mopm-<stage>-config --item '{"key":{"S":"groups_enabled"},"mode":{"S":"off"}}'
+# a canary: only these actors
+aws dynamodb put-item --table-name mopm-<stage>-config --item '{"key":{"S":"groups_enabled"},"mode":{"S":"allow"},"actors":{"L":[{"S":"u:<github id>"}]}}'
+# everybody, except the actors in deny
+aws dynamodb put-item --table-name mopm-<stage>-config --item '{"key":{"S":"groups_enabled"},"mode":{"S":"all"},"deny":{"L":[{"S":"u:<github id>"}]}}'
+```
+
+Each flip is one stage and one deliberate action by the person who owns that stage; none is part of a deploy. Switching to `off`
+stops new groups within about five seconds and lets the ones in flight finish.
+
+### The order: beta, gamma, then a canary on prod
+
+1. **beta.** Set `allow` with the actor of the end-to-end job only. The `group-e2e` job of `e2e.yml` (it runs after the deploy of beta
+   and of gamma, never on prod) skips with one line in its summary while the switch is off for its actor, so it is green before the
+   switch and proves something after it. Go on only when it has passed on beta: a three-package chain, a group with a rejected
+   member, and the yank and unyank of a group.
+2. **gamma.** The same `allow`, and the same job. Measure how long one hop takes here (a large group has as many hops
+   as it has subdirs plus members) before telling users a figure.
+3. **prod, canary.** `allow` with one actor who has been told. Publish one real group and watch it with the group tool (below) until it is
+   `visible`; run `--mode=status` and read the queues.
+4. **prod, everybody.** `all`, with `deny` empty. Only after the canary group has been published, read and yanked and unyanked.
+
+To go back at any stage, set `off`. To stop one account without stopping the rest, put it in `deny`.
+
+### The group tool
+
+`service/api/src/ops/group-ops.ts`, built by `npm run build` in `service/api` to `dist/ops/group-ops-bin.js`. Run it with the stage's
+credentials; every setting is a flag.
+
+```text
+node dist/ops/group-ops-bin.js --stage=<beta|gamma|prod> [--region=<region>] --mode=status
+node dist/ops/group-ops-bin.js --stage=<beta|gamma|prod> [--region=<region>] --mode=fail --group=<group id> [--apply]
+```
+
+- `--mode=status` is read-only (it takes neither `--group` nor `--apply`). It prints one JSON line for each group that is not over (kind
+  `group`: status, phase, attempt, members, `unflipped`, `yank` and the seconds since its last sign of life), one for each of the six
+  queues (kind `queue`: `visible` and `in_flight`), and a last line of kind `verdict` with `safe_to_revert`. Exit status 0 when there is no
+  such group and the queues are empty, 3 when not.
+- `--mode=fail` ends a group that is `validating` and has not committed, by id. **It is a dry run unless `--apply` is given**: it prints
+  a `plan` line (`dry_run: true`, the status the group would take, and whether that burns its numbers) and changes nothing. With
+  `--apply` it first changes the header with a compare-and-set that holds only while the group is validating, so a commit that starts
+  meanwhile loses: `rejected` if no copy began (its numbers are free again), `failed` if one did (its numbers are burned). Exit status
+  0 done, 2 refused (no such group, or it is not validating or has committed), 4 lost a race (the group changed first: read its status
+  and run it again if it is still stuck). It never touches a group that has committed; a committed group is rolled forward by the sweeper.
+
+### Redriving the group queue
+
+A group message that fails three times lands in `mopm-<stage>-group-dlq.fifo` and the alarm `mopm-<stage>-group-dlq-depth` fires. The
+index queue has the same arrangement for the hops (`mopm-<stage>-index-dlq.fifo`).
+
+1. Read the logs of the group validator Lambda for the group id. Fix the cause first (a defect, or a member row that is not as it was
+   staged, which is never committed). Redriving a message into the defect that sank it only fills the queue again.
+2. Redrive. The handlers are idempotent and a step is decided by the group's header, not by the message:
+   `aws sqs start-message-move-task --source-arn <arn of mopm-<stage>-group-dlq.fifo>` (the ARN is
+   `aws sqs get-queue-attributes --queue-url <url> --attribute-names QueueArn`; the move goes back to the queue the messages came from).
+3. If the group will not move, or the fix is not coming, do not redrive: end it with the group tool if it is still `validating`.
+4. Run `--mode=status`: the group queue and its dead-letter queue must be empty before you call it done.
+
+### Public bytes after a failed group
+
+A group ends `failed` when something goes wrong after the validator began to copy files (phase 2). By then some of its files may already
+be in the channel under `<subdir>/<file>`, written create-only with a one-year immutable cache header, and the CDN may have served them.
+What that means:
+
+- Nothing lists them. A group that did not commit never reached the chain, so neither the repodata nor the sparse index names the files and
+  no resolver will pick them. A reader who knows the URL can still fetch them.
+- The version numbers of its members are burned (a tombstone for each, as for a rejected single publish), because the files under those
+  names cannot be told apart from a release. The next publish needs new version numbers. Nothing deletes the files.
+- A group that was `rejected` (a phase 1 failure, or the group tool before any copy) copied nothing, and its numbers are free again.
+- If the bytes must not stay public (a secret in a package), that is a takedown, not a retry. It is the stage owner's to carry out with the takedown role (the group tool does not do it), and
+  the owner of the package is told.
+
+### The rollback precheck
+
+A revert under `service/**` deploys to prod at once, and an older receiver acknowledges the messages of a newer one and loses them. Before
+any revert is merged:
+
+1. Set `groups_enabled` to `off` on the stage and wait a few seconds.
+2. Run `--mode=status` until the verdict says `safe_to_revert: true`: no group is `open`, `validating`, or committed and not yet
+   `visible` (a visible group whose yank or unyank is running is listed too), and every queue and dead-letter queue is empty.
+3. Only then merge the revert.
+
+A group that is stuck at step 2 is rolled forward (the sweeper, or a redrive) or ended with the group tool; it is not reverted around.
+
 ## Cutting over to the Rust port
 
 Every route is TypeScript today (`/api/v1/health` reports `impl: ts` and `e2e.yml` asserts it). Before any route of a stage

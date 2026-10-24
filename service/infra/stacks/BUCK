@@ -95,3 +95,14 @@ filegroup(
     copy = True,
     visibility = ["//:"],
 )
+
+# The sources that name the queues and the alarms the runbook states (site/test/docs-group.test.ts).
+[export_file(
+    name = "site_" + name,
+    src = path,
+    mode = "reference",
+    visibility = ["//site:"],
+) for name, path in {
+    "config.ts": "lib/config.ts",
+    "publish-stack.ts": "lib/publish-stack.ts",
+}.items()]
