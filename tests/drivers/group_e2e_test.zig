@@ -22,6 +22,10 @@ const Allocator = std.mem.Allocator;
 
 const test_token = "mopm_e2etokene2etokene2etokene2etoke";
 const upload_header = "x-amz-meta-e2e";
+/// The release of the first member that another run is made to have published (Mode.newer_release): a newer 1.x than any run's.
+const rival_version = "1.99999999.1";
+/// The variable the stand-in compiler's programs read for the line they print (tests/drivers/fake_toolchain.zig).
+const program_output_env = "FAKE_TOOLCHAIN_PROGRAM_OUTPUT";
 /// An empty JSON list (an empty byte array would be written as a string).
 const no_strings: []const []const u8 = &.{};
 
@@ -61,6 +65,13 @@ const Mode = struct {
     commit_refused: bool = false,
     /// The group yank is refused.
     yank_refused: bool = false,
+    /// Once the set is published, the sparse index and the repodata give this member of the set (0 is the first) another size than
+    /// the file uploaded, so the lock a reader makes differs from the one the staged set made.
+    size_differs: ?usize = null,
+    /// Another run's newer release (1.99999999.1) of the first member is already published when the set's group is created.
+    newer_release: bool = false,
+    /// A member of the set is readable in the API from the moment the staged set has been installed, before it is published.
+    shows_during_overlay: bool = false,
     /// The probe group's deadline is this many seconds after the call.
     deadline_secs: i64 = 12 * 3600,
     probe: Probe = .fresh,
@@ -114,6 +125,9 @@ const Stub = struct {
     storage_puts: usize = 0,
     storage_auth_seen: bool = false,
     storage_header_missing: bool = false,
+    /// `shows_during_overlay`: set by the run once the staged set is installed.
+    squatting: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    rival_seeded: bool = false,
 
     fn start(mode: Mode) !*Stub {
         const s = try std.heap.page_allocator.create(Stub);
@@ -258,6 +272,7 @@ const Stub = struct {
         const id = try std.fmt.allocPrint(sa, "grp_{s}", .{hex[0..32]});
         const probe = std.mem.eql(u8, input.members[0].version, g.probe_version);
         if (s.mode.create_refused and !probe) return fail(a, .conflict, "group_conflict", "the group cannot be created");
+        if (s.mode.newer_release and !probe and !s.rival_seeded) try s.seedRival();
         var existing = s.find(id);
         var status: std.http.Status = .created;
         if (existing) |i| {
@@ -307,6 +322,31 @@ const Stub = struct {
             .reserving = if (still_reserving) Reserving{ .done = gr.reserving_left, .total = gr.reserving_left + 1 } else null,
             .members = answers,
         });
+    }
+
+    /// Another run's release of the first member, in a group of its own that is already visible: a newer 1.x than the set's.
+    fn seedRival(s: *Stub) !void {
+        const sa = s.arena.allocator();
+        s.rival_seeded = true;
+        const bytes = "PK stand-in package of another run\n";
+        const found = try sa.alloc(Member, 1);
+        found[0] = .{
+            .name = g.pkg_core,
+            .version = rival_version,
+            .filename = "mojo-" ++ g.pkg_core ++ "-" ++ rival_version ++ "-mojo1.0.0_0.conda",
+            .sha256 = try sa.dupe(u8, &g.sha256Hex(bytes)),
+            .size = bytes.len,
+            .bytes = bytes,
+            .manifest_sha256 = "1" ** 64,
+        };
+        const now = std.time.timestamp();
+        try s.groups.append(.{ .id = "grp_" ++ "0" ** 32, .status = .visible, .members = found, .created = now, .deadline = now + 3600 });
+    }
+
+    /// The size the readers of the index and the repodata are told for member `i` of a group.
+    fn shownSize(s: *Stub, m: Member, i: usize) u64 {
+        const at = s.mode.size_differs orelse return m.size;
+        return if (at == i and !std.mem.eql(u8, m.version, rival_version)) m.size + 1 else m.size;
     }
 
     fn upload(s: *Stub, a: Allocator, method: std.http.Method, rest: []const u8, body: []const u8, authorization: ?[]const u8, has_upload_header: bool) !Reply {
@@ -467,6 +507,9 @@ const Stub = struct {
         var parts = std.mem.splitScalar(u8, rest, '/');
         const name = parts.next() orelse "";
         const ver = parts.next() orelse "";
+        if (s.squatting.load(.acquire) and std.mem.eql(u8, name, g.pkg_mid)) {
+            return json(a, .ok, .{ .name = name, .version = ver, .state = "published" });
+        }
         for (s.groups.items) |gr| {
             for (gr.members, 0..) |m, i| {
                 if (!s.shows(gr, i) or !std.mem.eql(u8, m.name, name) or !std.mem.eql(u8, m.version, ver)) continue;
@@ -524,7 +567,7 @@ const Stub = struct {
                 for (m.deps, deps) |d, *dout| dout.* = .{ .name = d.name, .range = d.range };
                 const lie = s.mode.index_lies and i == 0;
                 const sha = if (lie) try a.dupe(u8, "0" ** 64) else m.sha256;
-                const files = [_]Fr{.{ .filename = m.filename, .sha256 = sha, .size = m.size, .subdir = g.subdir, .url = try s.fileUrl(a, m) }};
+                const files = [_]Fr{.{ .filename = m.filename, .sha256 = sha, .size = s.shownSize(m, i), .subdir = g.subdir, .url = try s.fileUrl(a, m) }};
                 try std.json.stringify(.{
                     .build = "mojo1.0.0_0",
                     .deps = deps,
@@ -562,7 +605,7 @@ const Stub = struct {
                     if (!first) try w.writeByte(',');
                     first = false;
                     try w.print("\"{s}\":", .{m.filename});
-                    try std.json.stringify(.{ .build = "mojo1.0.0_0", .build_number = 0, .depends = no_strings, .name = try std.fmt.allocPrint(a, "mojo-{s}", .{m.name}), .sha256 = m.sha256, .size = m.size, .subdir = g.subdir, .version = m.version }, .{}, w);
+                    try std.json.stringify(.{ .build = "mojo1.0.0_0", .build_number = 0, .depends = no_strings, .name = try std.fmt.allocPrint(a, "mojo-{s}", .{m.name}), .sha256 = m.sha256, .size = s.shownSize(m, i), .subdir = g.subdir, .version = m.version }, .{}, w);
                 }
             }
             try w.writeAll("},\"removed\":[]}\n");
@@ -700,6 +743,14 @@ fn layToolchain(a: Allocator, env: []const u8) anyerror!void {
     }
 }
 
+/// The registry of the run that has `shows_during_overlay`: the stand-in laid after the sync tells it the set is installed.
+var squat_target: ?*Stub = null;
+
+fn layAndSquat(a: Allocator, env: []const u8) anyerror!void {
+    try layToolchain(a, env);
+    if (squat_target) |s| s.squatting.store(true, .release);
+}
+
 /// One run of the check against a registry with `mode`. The result and the registry, stopped, for what it saw.
 const Ran = struct { result: g.Result, stub: *Stub };
 
@@ -716,6 +767,8 @@ const Extras = struct {
     pixi_manifest: ?[]const u8 = null,
     /// Precompile the packages in the run (the farm's compiler), instead of using the ones built once.
     precompile: bool = false,
+    /// The line the README's program prints (the stand-in compiler's programs only; the real compiler builds what the README says).
+    program_says: ?[]const u8 = null,
 };
 
 fn runCheck(a: Allocator, mode: Mode, token: []const u8, stage: []const u8) !Ran {
@@ -732,6 +785,18 @@ fn runCheckWith(a: Allocator, mode: Mode, token: []const u8, stage: []const u8, 
     defer tmp.cleanup();
     const work = try h.tmpPath(a, &tmp);
     var rep = h.Report{};
+    // This run's own environment, with the line its programs print when the test names one; the shared one is not touched.
+    var parent_env: *const std.process.EnvMap = t.env;
+    if (extras.program_says) |line| {
+        const own = try a.create(std.process.EnvMap);
+        own.* = std.process.EnvMap.init(a);
+        var it = t.env.iterator();
+        while (it.next()) |e| try own.put(e.key_ptr.*, e.value_ptr.*);
+        try own.put(program_output_env, line);
+        parent_env = own;
+    }
+    squat_target = if (mode.shows_during_overlay) stub else null;
+    const after_sync: *const fn (Allocator, []const u8) anyerror!void = if (mode.shows_during_overlay) layAndSquat else layToolchain;
     const result = try g.run(a, &rep, .{
         .base = stub.base,
         .stage = stage,
@@ -744,13 +809,14 @@ fn runCheckWith(a: Allocator, mode: Mode, token: []const u8, stage: []const u8, 
         .wait_ms = 8000,
         .poll_ms = 10,
         .retry_ms = 10,
-        .parent_env = t.env,
+        .parent_env = parent_env,
         .pixi = if (extras.no_pixi) null else t.pixi,
         .pixi_manifest = extras.pixi_manifest,
         .mojo_env = if (extras.no_toolchain) null else t.prefix,
         .prebuilt = if (extras.precompile or extras.no_toolchain) null else t.prebuilt,
-        .after_sync = layToolchain,
+        .after_sync = after_sync,
     });
+    squat_target = null;
     if (!extras.registry_down) stub.stop();
     return .{ .result = result, .stub = stub };
 }
@@ -1022,6 +1088,59 @@ test "an index that lists another sha256 than the one uploaded is a failure" {
 
 test "a group yank that leaves a member published is a failure" {
     try expectRedOn(.{ .yank_partial = true }, "yank: the sparse index lists zz_e2e_mid");
+}
+
+const lock_same = "lock: the lock the staged set made is, byte for byte, the lock the registry gives once the set is published";
+
+test "a lock that the registry gives after the publish, and that differs from the one the staged set made, is a failure" {
+    // The registry tells its readers another size for the first member than the file that was uploaded. The overlay's lock, made
+    // from the staged files, has the true size; the lock `mopm add` makes from the index has the other. The same walk with a
+    // registry that does it right passes this line (the first test).
+    try expectRedOn(.{ .size_differs = 0 }, lock_same);
+    // The same for a member that is not the first.
+    try expectRedOn(.{ .size_differs = 2 }, lock_same);
+}
+
+test "a newer release of a set package that another run published meanwhile is the one difference the lock comparison allows" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const a = arena.allocator();
+    try guard();
+    const ran = try runCheck(a, .{ .newer_release = true }, test_token, "beta");
+    for (ran.result.notes) |n| std.debug.print("{s}", .{n});
+    try std.testing.expect(!ran.result.skipped);
+    try std.testing.expectEqual(@as(usize, 0), ran.result.failures);
+    // The registry's lock names the other run's file for the first member, so the two locks are not equal byte for byte; the
+    // comparison says which entry differs and still holds the rest to the overlay's lock.
+    try std.testing.expect(passed(ran.result, lock_same));
+    try std.testing.expect(passed(ran.result, "lock: the locks differ only in a newer release of zz_e2e_core, which another run published meanwhile"));
+    try std.testing.expect(passed(ran.result, "lock: zz_e2e_core is locked at the uploaded file"));
+    // The tolerance covers that entry and nothing else: with the newer release there and another size told for the middle package's
+    // own file, the lock still names a size no set file has, and the comparison is red.
+    const both = try runCheck(a, .{ .newer_release = true, .size_differs = 1 }, test_token, "beta");
+    try std.testing.expect(!both.result.skipped);
+    try std.testing.expect(failed(both.result, lock_same));
+    try std.testing.expect(!passed(both.result, "lock: the locks differ only in a newer release"));
+}
+
+test "a README program that exits 0 and prints another line is a failure" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const a = arena.allocator();
+    try guard();
+    // Only the stand-in compiler's programs can be told what to print; the real compiler builds what the README says, and the
+    // walk of the first test holds that to the README in the beta tier.
+    if ((try tools()).real != null) return;
+    const ran = try runCheckWith(a, .{}, test_token, "beta", .{ .program_says = "zz_e2e total 4\n" });
+    try std.testing.expect(!ran.result.skipped);
+    try std.testing.expect(passed(ran.result, "chain: the README's program builds against the installed set"));
+    try std.testing.expect(failed(ran.result, "chain: the README's program runs and prints what the README says"));
+    try std.testing.expect(std.mem.startsWith(u8, ran.result.line, "group-e2e: FAIL beta: "));
+    // A program that prints the README's line and more is not what the README says either.
+    const more = try runCheckWith(a, .{}, test_token, "beta", .{ .program_says = "zz_e2e total 3\nzz_e2e total 3\n" });
+    try std.testing.expect(failed(more.result, "chain: the README's program runs and prints what the README says"));
+}
+
+test "a member that the registry shows while the staged set is installed is a failure" {
+    try expectRedOn(.{ .shows_during_overlay = true }, "chain: after all that the registry still shows none of the set");
 }
 
 test "a refused create, upload, commit or yank is a failure that names the step, and an open group is not left behind" {

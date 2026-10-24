@@ -33,7 +33,8 @@
 //!                      report.json says the set was published, with every planned file. Once the group is `visible`,
 //!                      every member's version, the sparse index, the channel's repodata and `mopm add` of the top
 //!                      package agree with the bytes that were staged, the lock equals the one the overlay made, and
-//!                      each locked file is downloaded and hashed.
+//!                      each locked file is downloaded and hashed. The lock is equal byte for byte, but for the entry of
+//!                      a set package that a later run published a newer release of in the same major meanwhile.
 //!   3  a rejected member   a staged set of two where one file is not a package: `publish --staged` ends 1, the group ends
 //!                      `rejected`, names that member, and neither member is ever readable, in the API, the index or
 //!                      the channel.
@@ -1082,8 +1083,60 @@ fn lockStep(cx: *Cx, chain: Chain) !void {
         return;
     };
     try lockCheck(cx, "lock", chain.pkgs, text, true);
-    if (chain.overlay_lock.len > 0) {
-        cx.check("lock: the lock the staged set made is, byte for byte, the lock the registry gives once the set is published", std.mem.eql(u8, chain.overlay_lock, text), "the two locks differ");
+    if (chain.overlay_lock.len > 0) try sameLockCheck(cx, chain.overlay_lock, text);
+}
+
+const lock_same_name = "lock: the lock the staged set made is, byte for byte, the lock the registry gives once the set is published";
+
+fn isMember(name: []const u8) bool {
+    for (members) |m| {
+        if (std.mem.eql(u8, m, name)) return true;
+    }
+    return false;
+}
+
+/// The lock the overlay made equals, byte for byte, the lock the registry gives once the set is published. The one difference
+/// tolerated: a package of the e2e set that another run published in a newer release of the same major between the overlay and
+/// the publish (the range of a dependency allows it), which the registry's lock then names instead; that entry is the other run's
+/// file, and lockCheck has already held it to a newer same-major version. Everything else, every field of every other entry, the
+/// entry of a set package at its own version included, must match exactly.
+fn sameLockCheck(cx: *Cx, overlay_text: []const u8, registry_text: []const u8) !void {
+    if (std.mem.eql(u8, overlay_text, registry_text)) {
+        cx.check(lock_same_name, true, "");
+        return;
+    }
+    var why: []const u8 = "";
+    const made = lock.parse(cx.a, overlay_text, &why) catch {
+        cx.check(lock_same_name, false, try std.fmt.allocPrint(cx.a, "the overlay's lock is not a lock: {s}", .{why}));
+        return;
+    };
+    const given = lock.parse(cx.a, registry_text, &why) catch {
+        cx.check(lock_same_name, false, try std.fmt.allocPrint(cx.a, "the registry's lock is not a lock: {s}", .{why}));
+        return;
+    };
+    const packages = try cx.a.dupe(lock.Package, given.packages);
+    var superseded = std.ArrayList([]const u8).init(cx.a);
+    for (packages) |*p| {
+        if (p.source != .registry or !isMember(p.name)) continue;
+        for (made.packages) |q| {
+            if (q.source != .registry or !std.mem.eql(u8, q.name, p.name)) continue;
+            if (isNewerSameMajor(p.version, q.version)) {
+                try superseded.append(p.name);
+                p.* = q;
+            }
+            break;
+        }
+    }
+    // With nothing superseded the texts differ, and that is the failure, whatever the parsed locks say.
+    var same = superseded.items.len > 0;
+    if (same) {
+        var patched = given;
+        patched.packages = packages;
+        same = std.mem.eql(u8, try lock.render(cx.a, made), try lock.render(cx.a, patched));
+    }
+    cx.check(lock_same_name, same, "the two locks differ");
+    if (same) {
+        cx.check(try std.fmt.allocPrint(cx.a, "lock: the locks differ only in a newer release of {s}, which another run published meanwhile", .{try std.mem.join(cx.a, ", ", superseded.items)}), true, "");
     }
 }
 
