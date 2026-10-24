@@ -490,6 +490,9 @@ pub fn advisoriesProblems(a: Allocator, f: []const u8, text: []const u8, out: *O
     var summary = false;
     var opens = false;
     var closes = false;
+    var labels_create = false;
+    var labels_edit = false;
+    var label_made = false;
     const jobs = c.get(doc, "jobs");
     if (jobs == null or jobs.? != .object) return c.problem(a, out, prefix ++ "{s}: no jobs", .{f});
     if (c.get(c.get(doc, "env"), "GH_TOKEN") != null) try c.problem(a, out, prefix ++ "{s}: GH_TOKEN must not be set at workflow level", .{f});
@@ -546,6 +549,9 @@ pub fn advisoriesProblems(a: Allocator, f: []const u8, text: []const u8, out: *O
             }
             if (std.mem.indexOf(u8, run, "GITHUB_STEP_SUMMARY") != null) summary = true;
             if (std.mem.indexOf(u8, run, "gh issue create --title Advisories") != null) opens = true;
+            if (std.mem.indexOf(u8, run, "gh issue create --title Advisories --label advisory ") != null) labels_create = true;
+            if (std.mem.indexOf(u8, run, "gh issue edit \"$number\" --add-label advisory ") != null) labels_edit = true;
+            if (std.mem.indexOf(u8, run, "gh label create advisory --force ") != null) label_made = true;
             if (std.mem.indexOf(u8, run, "gh issue close") != null) closes = true;
         }
     }
@@ -555,6 +561,9 @@ pub fn advisoriesProblems(a: Allocator, f: []const u8, text: []const u8, out: *O
     if (!summary) try c.problem(a, out, prefix ++ "{s}: findings must go to the job summary ($GITHUB_STEP_SUMMARY)", .{f});
     if (!opens) try c.problem(a, out, prefix ++ "{s}: findings must go to one issue titled Advisories (`gh issue create --title Advisories`)", .{f});
     if (!closes) try c.problem(a, out, prefix ++ "{s}: the Advisories issue must be closed when there are no findings (`gh issue close`)", .{f});
+    if (!label_made) try c.problem(a, out, prefix ++ "{s}: the `advisory` label must be ensured before it is used (`gh label create advisory --force`)", .{f});
+    if (!labels_create) try c.problem(a, out, prefix ++ "{s}: the Advisories issue must be created with `--label advisory`", .{f});
+    if (!labels_edit) try c.problem(a, out, prefix ++ "{s}: the Advisories issue must keep the label on update (`--add-label advisory`)", .{f});
 }
 
 // ---- whole-repository rules ---------------------------------------------------------
