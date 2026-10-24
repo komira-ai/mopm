@@ -58,6 +58,10 @@ export const PUBLISH_ROUTES: Array<{ method: apigw.HttpMethod; path: string }> =
   { method: apigw.HttpMethod.POST, path: '/api/v1/packages/{name}/{version}/publish' },
   { method: apigw.HttpMethod.GET, path: '/api/v1/publishes/{publish_id}' },
   { method: apigw.HttpMethod.PUT, path: '/api/v1/packages/{name}/{version}/yank' },
+  // Groups: create, read and abort. The handler answers `route_not_found` to a create until the stage's `groups_enabled` item admits the caller.
+  { method: apigw.HttpMethod.POST, path: '/api/v1/groups' },
+  { method: apigw.HttpMethod.GET, path: '/api/v1/groups/{group_id}' },
+  { method: apigw.HttpMethod.DELETE, path: '/api/v1/groups/{group_id}' },
 ];
 /**
  * What the handler may write, table by table (the reviewed list; api.test.ts pins it). No DeleteItem, no Scan, no

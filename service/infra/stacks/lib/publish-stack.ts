@@ -223,5 +223,56 @@ export class PublishStack extends Stack {
         treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
       });
     }
+
+    // --- alarms on the group metrics (embedded-metric-format lines the handlers write; src/metrics.ts) ----------
+    // A metric that is never written does not breach: `NOT_BREACHING` on all of them, so an alarm sits quiet until its
+    // metric exists.
+    for (const a of GROUP_ALARMS) {
+      new cloudwatch.Alarm(this, a.id, {
+        alarmName: `mopm-${c.stage}-${a.name}`,
+        alarmDescription: a.description,
+        metric: new cloudwatch.Metric({ namespace: METRICS_NAMESPACE, metricName: a.metric, statistic: a.statistic, period: Duration.minutes(5) }),
+        threshold: a.threshold,
+        evaluationPeriods: 1,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      });
+    }
   }
 }
+
+/** The namespace of the embedded-metric-format lines (service/api/src/metrics.ts, METRICS_NAMESPACE; publish.test.ts holds the two equal). */
+export const METRICS_NAMESPACE = 'Mopm/Registry';
+
+/**
+ * Alarms on the group metrics. `group_invariant` is written by a reader that found a committed group with a member it
+ * cannot account for; `group_pending_rows_per_package_max` by group creation (the most pending rows any member's package
+ * holds: dead groups leave theirs behind); `group_oldest_nonterminal_age_seconds` is the age of the oldest group that is
+ * validating or committed, for the sweeper to write when it lands (nothing writes it yet).
+ */
+export const GROUP_ALARMS: Array<{ id: string; name: string; metric: string; statistic: string; threshold: number; description: string }> = [
+  {
+    id: 'GroupInvariantAlarm',
+    name: 'group-invariant',
+    metric: 'group_invariant',
+    statistic: 'Sum',
+    threshold: 1,
+    description: 'A reader found a committed group with a member it cannot account for; the group is hidden (API) or the build fails. Look at the logs for the group id.',
+  },
+  {
+    id: 'GroupPendingRowsAlarm',
+    name: 'group-pending-rows',
+    metric: 'group_pending_rows_per_package_max',
+    statistic: 'Maximum',
+    threshold: 100,
+    description: 'A package holds 100 or more pending version rows; groups that ended leave theirs behind. Look at the groups that created them.',
+  },
+  {
+    id: 'GroupOldestActiveAlarm',
+    name: 'group-oldest-active',
+    metric: 'group_oldest_nonterminal_age_seconds',
+    statistic: 'Maximum',
+    threshold: 1800,
+    description: 'A group that is validating or committed has not finished in 30 minutes. Look at the logs, then the sweeper.',
+  },
+];

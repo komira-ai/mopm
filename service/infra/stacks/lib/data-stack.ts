@@ -46,7 +46,11 @@ export const TABLES: TableDef[] = [
   { id: 'reserved_names', pk: 'name' },
   // Publish pipeline. `publishes` holds publish records, the per-version commit lock and the rate counters (told apart by
   // key prefix; the TTL attribute cleans up the counters). `config` holds runtime switches, e.g. {key: 'read_only', value: true}.
-  { id: 'publishes', pk: 'publish_id', ttl: 'expires_at' },
+  //
+  // The index `by_sweep` is sparse and holds the headers of groups that are not over (`sweep_pk` is 'active' while a group is
+  // open, validating or committed and not visible, and the header has none once it is over), ordered by `sweep_at`: the
+  // sweeper that resumes a stalled group reads only this. Nothing reads it yet; the headers carry the keys from the first group on.
+  { id: 'publishes', pk: 'publish_id', ttl: 'expires_at', gsi: { name: 'by_sweep', pk: 'sweep_pk', sk: 'sweep_at', include: ['status', 'attempt', 'actor', 'rev', 'progress_at', 'deadline_at', 'resend'] } },
   { id: 'config', pk: 'key' },
 ];
 

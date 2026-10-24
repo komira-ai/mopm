@@ -91,6 +91,9 @@ describe('wire goldens', () => {
       'store.adoptVersion',
       'store.applyGroupEvent',
       'publish.hit',
+      'store.adoptSingle',
+      'publish.getActorGroups',
+      'publish.putActorGroups',
     ]);
     expect([...new Set(group.map((c) => c.action))].sort()).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem']);
     expect([...new Set(group.map((c) => c.table))].sort()).toEqual(['audit', 'publishes', 'versions']);

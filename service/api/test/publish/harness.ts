@@ -4,6 +4,8 @@ import { Authenticator, MemoryAuthStore, mintToken } from '../../src/auth';
 import type { PublishApi } from '../../src/http/publish-routes';
 import { route, type HttpResponse, type RouterDeps } from '../../src/http/router';
 import { MemoryStore } from '../../src/memory-store';
+import { Metrics } from '../../src/metrics';
+import { GroupService } from '../../src/publish/group-service';
 import { DEFAULT_PUBLISH_CONFIG, type PublishConfig } from '../../src/publish/config';
 import { parseIndexMessage, processIndexMessage, type IndexerDeps } from '../../src/publish/indexer';
 import { FakeS3Upload, MemoryInvalidator, MemoryObjectStore, MemoryPresigner, MemoryPublishStore, MemoryQueue } from '../../src/publish/memory';
@@ -17,9 +19,17 @@ import { TestClock } from '../auth-helpers';
 export class MutableFlags implements Flags {
   ro = false;
   broken = false;
+  /** The groups switch: the actors admitted (`u:<github id>`), everybody, or the switch unreadable. Off by default, as in production. */
+  groupActors = new Set<string>();
+  groupsAll = false;
+  groupsBroken = false;
   async readOnly() {
     if (this.broken) throw new Error('config table unreadable');
     return this.ro;
+  }
+  async groupsFor(actor: string) {
+    if (this.groupsBroken) throw new Error('config table unreadable');
+    return this.groupsAll || this.groupActors.has(actor);
   }
 }
 
@@ -65,9 +75,14 @@ export class Harness {
   flags = new MutableFlags();
   config: PublishConfig = { ...DEFAULT_PUBLISH_CONFIG };
   logs: Array<Record<string, unknown>> = [];
+  /** The metric lines the group service wrote. */
+  metricLines: Array<Record<string, unknown>> = [];
+  /** The monotonic clock of the group service's creation budget, in milliseconds: tests move it. */
+  mono = 0;
   private n = 0;
 
   service!: PublishService;
+  groupService!: GroupService;
   deps!: RouterDeps;
   validatorDeps!: ValidatorDeps;
   indexerDeps!: IndexerDeps;
@@ -81,8 +96,19 @@ export class Harness {
   /** Rebuild the wiring after `config` changed. */
   build() {
     const now = this.clock.now;
+    this.groupService = new GroupService({
+      registry: this.registry,
+      publishes: this.publishes,
+      objects: this.objects,
+      presigner: new MemoryPresigner(),
+      config: this.config,
+      now,
+      clock: () => this.mono,
+      metrics: new Metrics((l) => this.metricLines.push(l)),
+    });
     this.service = new PublishService({
       registry: this.registry,
+      groups: this.registry,
       publishes: this.publishes,
       objects: this.objects,
       presigner: new MemoryPresigner(),
@@ -92,7 +118,7 @@ export class Harness {
       now,
       newId: () => (++this.n).toString(16).padStart(32, '0'),
     });
-    const api: PublishApi = { auth: new Authenticator({ store: this.authStore, now }), service: this.service, flags: this.flags };
+    const api: PublishApi = { auth: new Authenticator({ store: this.authStore, now }), service: this.service, flags: this.flags, groups: this.groupService };
     this.deps = { store: this.registry, stage: 'beta', version: 't', commit: 't', readOnly: false, publish: api };
     this.validatorDeps = {
       registry: this.registry,
