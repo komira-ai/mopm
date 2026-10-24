@@ -4,7 +4,8 @@
 //!   sts assume-role-with-web-identity --role-arn <arn> --role-session-name <n> --web-identity-token <jwt> ...
 //!       Needs the token the fake `curl` hands out and, when $FAKE_AWS_ROLE is set, that role. Prints credentials.
 //!   s3api get-object --bucket <b> --key <k> <outfile>
-//!       Only below `apt/dists/` (a Get on the pool is AccessDenied). A missing key is NoSuchKey, or AccessDenied when the file
+//!       Only below `apt/dists/` and the product's own pool `apt/pool/mopm/` (a Get below another product's pool is AccessDenied;
+//!       so is every Get below the pool when the file `deny_pool_get` exists). A missing key is NoSuchKey, or AccessDenied when the file
 //!       `deny_missing` exists (the role may not list the bucket). Prints {"ETag": ...}. When the file `bump_after_get` holds the key
 //!       on a line, another writer "changes" that object right after this read (a new ETag), once.
 //!   s3api put-object --bucket <b> --key <k> --body <file> (--if-match <etag> | --if-none-match '*')
@@ -94,7 +95,8 @@ pub fn main() !void {
     if (std.mem.eql(u8, args[0], "s3api") and std.mem.eql(u8, args[1], "get-object")) {
         const key = flag(args, "--key") orelse fail(252, "aws: no key");
         const outfile = args[args.len - 1];
-        if (!std.mem.startsWith(u8, key, "apt/dists/")) denied("GetObject");
+        const own_pool = std.mem.startsWith(u8, key, "apt/pool/mopm/") and if (dir.access("deny_pool_get", .{})) |_| false else |_| true;
+        if (!std.mem.startsWith(u8, key, "apt/dists/") and !own_pool) denied("GetObject");
         const sp = try std.fmt.allocPrint(a, "store/{s}", .{key});
         const body = dir.readFileAlloc(a, sp, 1 << 28) catch {
             if (dir.access("deny_missing", .{})) |_| denied("GetObject") else |_| {}

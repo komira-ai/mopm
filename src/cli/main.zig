@@ -102,9 +102,12 @@ const usage =
     \\                          written if it does not resolve
     \\  remove <package> [--dev] [--registry ...]
     \\                          take a dependency out of mopm.toml and lock
-    \\  plan --unit-graph --locked [--mojo <version>] [-o <file>]
+    \\  plan --unit-graph --locked [--mojo <version>] [--workspace-root <dir>] [-o <file>]
     \\                          print the unit graph (spec/unit-graph.md) of
-    \\                          mopm.lock for one Mojo version; never resolves
+    \\                          mopm.lock for one Mojo version; never resolves;
+    \\                          --workspace-root: graph paths are relative to
+    \\                          <dir>, which holds this directory and every
+    \\                          path dependency
     \\  unit build|test --unit <id> --graph <file> --out <dir> --toolchain <dir>
     \\                          build (or build and run) one unit of a graph,
     \\                          offline, from declared inputs only
