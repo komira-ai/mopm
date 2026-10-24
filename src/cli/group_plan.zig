@@ -209,6 +209,7 @@ pub fn filePath(arena: Allocator, f: File) Allocator.Error![]const u8 {
 /// says (a file that is missing, of another size or another sha256, or a readme that cannot be sent), or null. Nothing has
 /// been sent when this runs; the bytes that are checked here are checked again as each one is read for its PUT.
 pub fn verify(arena: Allocator, dir: std.fs.Dir, plan: Plan) Allocator.Error!?[]const u8 {
+    var entries = std.ArrayList(CommitEntry).init(arena);
     for (plan.members) |m| {
         if (m.action != .upload) continue;
         for (m.files) |f| {
@@ -221,9 +222,64 @@ pub fn verify(arena: Allocator, dir: std.fs.Dir, plan: Plan) Allocator.Error!?[]
             const text = dir.readFileAlloc(arena, r, max_readme_bytes + 1) catch |e| return try std.fmt.allocPrint(arena, "the readme {s} of {s}: {s}", .{ r, m.name, @errorName(e) });
             if (text.len > max_readme_bytes) return try std.fmt.allocPrint(arena, "the readme {s} of {s} is over {d} bytes", .{ r, m.name, max_readme_bytes });
             if (!std.unicode.utf8ValidateSlice(text)) return try std.fmt.allocPrint(arena, "the readme {s} of {s} is not UTF-8 text", .{ r, m.name });
+            try entries.append(.{ .name = m.name, .manifest_sha256 = m.manifest_sha256, .readme = text });
+        } else {
+            try entries.append(.{ .name = m.name, .manifest_sha256 = m.manifest_sha256, .readme = null });
         }
     }
-    return null;
+    return commitBodyProblem(arena, entries.items);
+}
+
+/// The most the commit request's JSON body may be. The registry's API function takes a request of at most 6 MiB, its
+/// envelope included, and every readme travels in that body; the client keeps to 5 MiB so the envelope has room.
+pub const max_commit_body_bytes: usize = 5 * 1024 * 1024;
+
+/// What one upload member puts in the commit body.
+pub const CommitEntry = struct { name: []const u8, manifest_sha256: []const u8, readme: ?[]const u8 };
+
+fn jsonBytes(s: []const u8) usize {
+    var cw = std.io.countingWriter(std.io.null_writer);
+    std.json.encodeJsonString(s, .{}, cw.writer()) catch unreachable;
+    return @intCast(cw.bytes_written);
+}
+
+fn entryBytes(e: CommitEntry) usize {
+    // {"name":<name>,"manifest_sha256":"<sha>"[,"readme":<text>]}
+    var n: usize = 8 + jsonBytes(e.name) + 20 + e.manifest_sha256.len + 1 + 1;
+    if (e.readme) |r| n += 10 + jsonBytes(r);
+    return n;
+}
+
+/// The exact length of the commit body `group_publish` sends for these members.
+pub fn commitBodyBytes(entries: []const CommitEntry) usize {
+    var n: usize = 12 + 2; // {"members":[ ... ]}
+    for (entries, 0..) |e, i| n += entryBytes(e) + @intFromBool(i != 0);
+    return n;
+}
+
+fn readmeBigger(entries: []const CommitEntry, a: usize, b: usize) bool {
+    return jsonBytes(entries[a].readme orelse "") > jsonBytes(entries[b].readme orelse "");
+}
+
+/// Why the commit body would be too large for the registry, naming the largest readmes, or null when it fits. Checked before
+/// anything is sent: the commit is the last request of a run, and a refusal there would come after every upload.
+pub fn commitBodyProblem(arena: Allocator, entries: []const CommitEntry) Allocator.Error!?[]const u8 {
+    const total = commitBodyBytes(entries);
+    if (total <= max_commit_body_bytes) return null;
+    const order = try arena.alloc(usize, entries.len);
+    for (order, 0..) |*o, i| o.* = i;
+    std.mem.sort(usize, order, entries, readmeBigger);
+    var list = std.ArrayList(u8).init(arena);
+    const w = list.writer();
+    for (order[0..@min(order.len, 3)], 0..) |i, k| {
+        const r = entries[i].readme orelse break;
+        try w.print("{s}{s} ({d} bytes)", .{ if (k == 0) "" else ", ", entries[i].name, r.len });
+    }
+    return try std.fmt.allocPrint(
+        arena,
+        "the readmes of the {d} members make a commit request of {d} bytes; the registry takes at most {d}. The largest readmes: {s}. Shorten them or publish fewer packages in one group",
+        .{ entries.len, total, max_commit_body_bytes, list.items },
+    );
 }
 
 /// The bytes of a file, checked against the plan once more; the reason when they are not the planned ones.

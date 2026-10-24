@@ -612,7 +612,7 @@ pub fn main(arena: Allocator, args: []const []const u8, cli_version: []const u8)
     };
 }
 
-fn command(arena: Allocator, flags: Flags, cli_version: []const u8, net: Net) anyerror!u8 {
+pub fn command(arena: Allocator, flags: Flags, cli_version: []const u8, net: Net) anyerror!u8 {
     var dir = std.fs.cwd().openDir(flags.staged, .{ .iterate = false }) catch |e| {
         err("{s}: {s}\n", .{ flags.staged, @errorName(e) });
         return 1;

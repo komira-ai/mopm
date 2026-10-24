@@ -50,7 +50,10 @@ conda channel (`channel.md`). Other files in the directory are ignored.
     the archive) and one to 20 `files`, each 1 to 100,000,000 bytes, with its
     `sha256` and `size`. A file name is a plain name: no `/`, no `\`, none that
     starts with a dot. `readme` is optional: a path below the directory, up to
-    64 KiB of UTF-8.
+    64 KiB of UTF-8. Every readme travels in the body of the commit request,
+    which is at most 5 MiB for the whole group; `stage` and `publish --staged`
+    refuse a set over that, naming the largest readmes, before anything is
+    written or sent.
   - `skip`: the member is not in the group, because the registry already has it
     with these bytes. `reason` says why. The report names it.
   - `refuse`: the staging found the member cannot be published (a yanked version,
