@@ -347,6 +347,8 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     expect(flatten(env.MOPM_GROUP_QUEUE_URL)).toContain(`mopm-${stage}-group.fifo`);
     expect(PUBLISH_ROUTES.map((r) => `${r.method} ${r.path}`)).toContain('POST /api/v1/groups/{group_id}/commit');
     t.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: 'POST /api/v1/groups/{group_id}/commit' });
+    expect(PUBLISH_ROUTES.map((r) => `${r.method} ${r.path}`)).toContain('PUT /api/v1/groups/{group_id}/yank');
+    t.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: 'PUT /api/v1/groups/{group_id}/yank' });
   });
 
   test('custom domain with a DNS-validated certificate', () => {

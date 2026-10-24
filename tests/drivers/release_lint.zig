@@ -41,7 +41,8 @@
 //!   needs `beta-user` (so a red platform leg stops the release before anything is signed), `verify` needs
 //!   `build` and `attest`, `tag` needs `beta-user` and `verify` (no tag without verified files), `publish`
 //!   needs `verify` and `tag`: a red stage stops everything after it.
-//!   No job may set `continue-on-error`, and only `attest` (`github.ref == 'refs/heads/main'`: an unmerged
+//!   No job may set `continue-on-error`, and only `build` and `beta-user` (`needs.plan.outputs.complete != 'true'`: the plan found the commit's release complete, so nothing is
+//!   built again; every stage after them is skipped with them), `attest` (`github.ref == 'refs/heads/main'`: an unmerged
 //!   commit is never signed or attested; the stages after it are skipped with it), `tag`, `publish` and `bump` have an `if:`.
 //! - **The data flow.** `build` and `beta-user` take the planned version (`needs.plan.outputs.version`),
 //!   `tag` is told it (`--expect-version`) and the commit (`--sha "$GITHUB_SHA"`), `verify` checks the
@@ -105,6 +106,10 @@ pub const push_to_main = "${{ github.event_name == 'push' && github.ref == 'refs
 
 /// The `if:` of `attest`: only a commit on main is signed and attested (a dispatch from another branch stops there).
 pub const main_only = "github.ref == 'refs/heads/main'";
+
+/// build and beta-user run unless the plan found the commit's release complete (cut_release plan --held-dir): a second run for a commit that is released builds nothing.
+/// Every job after them waits for them (the order below), so it is skipped with them; none of those has a status function that would run it anyway.
+pub const not_complete = "${{ needs.plan.outputs.complete != 'true' }}";
 
 /// The `(job, scope)` pairs that may be `write`.
 pub const writers = [_][2][]const u8{
@@ -330,6 +335,10 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
             if (!try ifIs(a, job, push_to_main)) {
                 try c.problem(a, out, prefix ++ "release.yml: {s} must run only under if: {s} (a push to main, never a manual run), got {s}", .{ name, push_to_main, try c.inspect(a, c.get(job, "if")) });
             }
+        } else if (std.mem.eql(u8, name, "build") or std.mem.eql(u8, name, "beta-user")) {
+            if (!try ifIs(a, job, not_complete)) {
+                try c.problem(a, out, prefix ++ "release.yml: {s} must run only under if: {s} (a release the plan found complete is not built or tested again, and everything after waits for it), got {s}", .{ name, not_complete, try c.inspect(a, c.get(job, "if")) });
+            }
         } else if (std.mem.eql(u8, name, "attest")) {
             if (!try ifIs(a, job, main_only)) {
                 try c.problem(a, out, prefix ++ "release.yml: attest must run only under if: {s} (an unmerged commit is never signed or attested), got {s}", .{ main_only, try c.inspect(a, c.get(job, "if")) });
@@ -346,7 +355,7 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
                 try c.problem(a, out, prefix ++ "release.yml: {s} must run only under if: {s} (only when the write before it lost to another writer), got {s}", .{ name, want_if, try c.inspect(a, c.get(job, "if")) });
             }
         } else if (!try ifIs(a, job, null)) {
-            try c.problem(a, out, prefix ++ "release.yml: {s} must not have an if: (only attest, tag, publish, tap, bump and the first read of each apt attempt do)", .{name});
+            try c.problem(a, out, prefix ++ "release.yml: {s} must not have an if: (only build, beta-user, attest, tag, publish, tap, bump and the first read of each apt attempt do)", .{name});
         }
         if (job == .object and job.object.contains("continue-on-error")) {
             try c.problem(a, out, prefix ++ "release.yml: {s} must not set continue-on-error: a red stage stops the release", .{name});
@@ -407,6 +416,11 @@ pub fn problems(a: Allocator, text: []const u8, out: *Out) !void {
         if (!c.isStr(c.get(c.get(plan, "outputs"), "version"), "${{ steps.plan.outputs.version }}")) {
             try c.problem(a, out, prefix ++ "release.yml: plan must output version: ${{{{ steps.plan.outputs.version }}}}", .{});
         }
+        if (!c.isStr(c.get(c.get(plan, "outputs"), "complete"), "${{ steps.plan.outputs.complete }}")) {
+            try c.problem(a, out, prefix ++ "release.yml: plan must output complete: ${{{{ steps.plan.outputs.complete }}}} (build and beta-user are skipped on it)", .{});
+        }
+        const run = stepRunContaining(plan, " plan --sha") orelse "";
+        if (std.mem.indexOf(u8, run, " --held-dir \"$RUNNER_TEMP/held\"") == null) try c.problem(a, out, prefix ++ "release.yml: plan must pass --held-dir \"$RUNNER_TEMP/held\" (without it the plan does not ask whether the release is complete)", .{});
     }
     if (c.get(jv, "tag")) |tag| {
         const run = stepRunContaining(tag, "--expect-version") orelse stepRunContaining(tag, " tag --sha") orelse "";

@@ -233,6 +233,7 @@ describe('lambda entry points on recorded events', () => {
       'group_validator_drops_unrecognised.json',
       'group_validator_flip_unknown_group.json',
       'group_validator_unknown_group.json',
+      'group_validator_yank_unknown_group.json',
       'indexer_cloudfront_failure_is_rethrown.json',
       'indexer_group_hop_for_unknown_group.json',
       'indexer_package_without_version_writes_nothing.json',

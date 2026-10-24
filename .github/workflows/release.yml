@@ -11,7 +11,9 @@ name: release
 #              Gamma and bake time are a slot for later stages between these and plan.
 #   plan       the version the release will have (cut_release plan --sha): the VERSION file's MAJOR.MINOR
 #              and the next PATCH. It refuses a commit that a newer release supersedes, and a base below
-#              an existing tag. Nothing is written.
+#              an existing tag. Nothing is written. For a commit whose tag exists (a re-run, or a second push run) it also says whether that release is complete
+#              (`complete`, cut_release plan --held-dir): published, exactly the twelve files, each tarball and .deb with the hash its SHA256SUMS lists. Then
+#              build and beta-user are skipped, and every job after them with them (each waits for them), instead of rebuilding for a release that is made.
 #   build      the three binaries (release-build.yml) at that version, each reporting exactly it, and a .deb (amd64, arm64) made from each linux binary. These
 #              ARE the release files: they are built once, from the commit that is tagged later, and
 #              neither rebuilt nor changed after the tests below.
@@ -98,6 +100,7 @@ jobs:
       contents: read
     outputs:
       version: ${{ steps.plan.outputs.version }}
+      complete: ${{ steps.plan.outputs.complete }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -110,10 +113,11 @@ jobs:
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-        run: '"$RUNNER_TEMP/cut_release" --repo "$GITHUB_REPOSITORY" plan --sha "$GITHUB_SHA" --out "$GITHUB_OUTPUT"'
+        run: '"$RUNNER_TEMP/cut_release" --repo "$GITHUB_REPOSITORY" plan --sha "$GITHUB_SHA" --held-dir "$RUNNER_TEMP/held" --out "$GITHUB_OUTPUT"'
 
   build:
     needs: plan
+    if: ${{ needs.plan.outputs.complete != 'true' }}
     permissions:
       contents: read
     uses: ./.github/workflows/release-build.yml
@@ -122,6 +126,7 @@ jobs:
 
   beta-user:
     needs: [plan, build]
+    if: ${{ needs.plan.outputs.complete != 'true' }}
     permissions:
       contents: read
     uses: ./.github/workflows/release-beta-user.yml

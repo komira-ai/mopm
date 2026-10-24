@@ -75,9 +75,9 @@ describe('the sources', () => {
   // The group routes create, read, abort and commit a group (the commit only moves it to validation and stores the request);
   // the single publish takes over a dead group's number; the group's validator stages, copies and commits; the chain that follows
   // a commit releases its gates, flips its members and makes it visible; the sweeper counts a resend in the header; the operator's
-  // tool ends a group that is stuck. Those are the callers of the writers below, and each is listed on purpose: a new caller changes
-  // this list in the change that adds it.
-  test('the callers of the writers of a group are the group service and its commit, lifecycle helper, chain, validator and sweeper, the single publish and the operator tool', () => {
+  // tool ends a group that is stuck; the group yank writes its intent and its steps on the header and yanks or restores the rows. Those
+  // are the callers of the writers below, and each is listed on purpose: a new caller changes this list in the change that adds it.
+  test('the callers of the writers of a group are the group service and its commit, lifecycle helper, chain, yank, validator and sweeper, the single publish and the operator tool', () => {
     expect(filesMatching(files, GROUP_WRITER_CALL)).toEqual([
       'ops/group-ops.ts',
       'publish/group-chain.ts',
@@ -86,6 +86,8 @@ describe('the sources', () => {
       'publish/group-service.ts',
       'publish/group-sweeper.ts',
       'publish/group-validator.ts',
+      'publish/group-yank-request.ts',
+      'publish/group-yank.ts',
       'publish/service.ts',
     ]);
     expect(filesMatching({ 'x.ts': 'await store.commitGroup(gid, args);', 'y.ts': 'registry.applyGroupEvent(n, v, ev, a)', 'z.ts': 'groups.adoptSingle(r, a, f)' }, GROUP_WRITER_CALL)).toEqual(['x.ts', 'y.ts', 'z.ts']);
@@ -93,9 +95,11 @@ describe('the sources', () => {
   });
 
   // Only the group's validator commits a group or fills a member (stage), only the chain's flip publishes one (group_publish), and
-  // only the validator and the operator's tool burn one (all through applyGroupEvent).
-  test('only the group validator commits a group or fills a member, only the chain flips one, and only the validator and the operator tool burn one', () => {
-    expect(filesMatching(files, COMMIT_OR_STAGE_CALL)).toEqual(['ops/group-ops.ts', 'publish/group-chain.ts', 'publish/group-validator.ts']);
+  // only the validator and the operator's tool burn one, and only the group yank yanks or restores one (all through applyGroupEvent).
+  test('only the group validator commits a group or fills a member, only the chain flips one, only the validator and the operator tool burn one, and only the group yank yanks or restores one', () => {
+    expect(filesMatching(files, COMMIT_OR_STAGE_CALL)).toEqual(['ops/group-ops.ts', 'publish/group-chain.ts', 'publish/group-validator.ts', 'publish/group-yank.ts']);
+    expect(filesMatching(files, /type:\s*'group_yank'/, ['state.ts'])).toEqual(['publish/group-yank.ts']);
+    expect(filesMatching(files, /type:\s*'group_unyank'/, ['state.ts'])).toEqual(['publish/group-yank.ts']);
     expect(filesMatching(files, /\.commitGroup\(/)).toEqual(['publish/group-validator.ts']);
     expect(filesMatching(files, /type:\s*'stage'/, ['state.ts'])).toEqual(['publish/group-validator.ts']);
     expect(filesMatching(files, /type:\s*'group_publish'/, ['state.ts'])).toEqual(['publish/group-chain.ts']);

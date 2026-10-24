@@ -15,9 +15,9 @@
 //!
 //! The `mojo` and `mojo-compiler` dependencies are not installed: the driver
 //! lays the Mojo toolchain into the environment itself. The zstd it reads is
-//! the stored-block form that install_e2e_test.zig writes (RFC 8878, raw
-//! blocks), nothing else. Exit status 0 on success, 1 with a message if a pin
-//! is not met.
+//! raw blocks (RFC 8878), in the frame header form install_e2e_test.zig writes or
+//! the one `mopm pack` writes, nothing else. Exit status 0 on success, 1 with a
+//! message if a pin is not met.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -146,8 +146,13 @@ fn unpack(a: Allocator, zip: []const u8, env: []const u8, stem: []const u8) !voi
 fn unzstd(a: Allocator, f: []const u8) ![]u8 {
     if (f.len < 6 or le(u32, f) != 0xFD2FB528) die("not a zstd frame", .{});
     const fhd = f[4];
-    if (fhd != 0x00) die("zstd frame header {x}: only the plain form (no size, checksum or dictionary) is read", .{fhd});
-    var i: usize = 6; // magic, descriptor, window descriptor
+    // Two header forms, both of raw blocks: the plain one (no size, checksum or dictionary; a window descriptor),
+    // which install_e2e_test.zig writes, and the single-segment one with an 8-byte content size, which `mopm pack` writes.
+    var i: usize = switch (fhd) {
+        0x00 => 6, // magic, descriptor, window descriptor
+        0xE0 => 13, // magic, descriptor, the content size
+        else => die("zstd frame header {x}: only the plain and the single-segment, 8-byte-size forms are read", .{fhd}),
+    };
     var out = std.ArrayList(u8).init(a);
     while (true) {
         const hdr = @as(u32, f[i]) | @as(u32, f[i + 1]) << 8 | @as(u32, f[i + 2]) << 16;

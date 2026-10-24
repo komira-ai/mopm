@@ -30,6 +30,7 @@ pub const resolve = @import("resolve.zig");
 pub const lock = @import("lock.zig");
 pub const install_plan = @import("install_plan.zig");
 pub const install = @import("install.zig");
+pub const overlay = @import("overlay.zig");
 pub const tar_read = @import("tar_read.zig");
 pub const conda_prefix = @import("conda_prefix.zig");
 pub const conda_unpack = @import("conda_unpack.zig");
@@ -65,6 +66,7 @@ test {
     _ = @import("lock.zig");
     _ = @import("install_plan.zig");
     _ = @import("install.zig");
+    _ = @import("overlay.zig");
     _ = @import("tar_read.zig");
     _ = @import("conda_prefix.zig");
     _ = @import("conda_unpack.zig");

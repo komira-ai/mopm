@@ -75,6 +75,12 @@ export interface VersionRecord {
    * free that way, and a committed group's header never expires.
    */
   free_after?: number;
+  /**
+   * Set on a row that a group yank changed (`group_yank`, src/state.ts), to the sequence number of that yank (`GroupYank.seq`, src/group-store.ts),
+   * and removed by anything that moves the row on (an unyank by hand or by the group, a tombstone). The group unyank restores a row only while
+   * it still carries the marker of the yank it undoes, so a member somebody yanked by hand is never restored by it.
+   */
+  group_yank_seq?: number;
   /** Optimistic-concurrency counter: starts at 0, +1 on every state change. */
   rev: number;
 }
