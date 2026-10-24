@@ -37,6 +37,7 @@ const READ_DEFINITIONS = ['store.ts', 'group.ts', ...ADAPTERS];
 const NAMES_VERSIONS_TABLE = /\btables\.versions\b|['"`]mopm-[^'"`]*versions|TableName:[^\n]*\bversions\b/;
 const USES_RAW_PORT = /from\s+['"][^'"]*raw-port['"]|\braw(Get|Query)\b|\.raw\b/;
 const IMPORTS_DYNAMO = /@aws-sdk\/(lib|client)-dynamodb/;
+const GROUP_WRITER_CALL = /\.(createGroup|updateGroup|commitGroup|adoptVersion|applyGroupEvent)\(/;
 const READS_VERSIONS = /\.(listVersions|getVersion|versionsOf)\(|\ballRecords\(/;
 
 const filesMatching = (files: Record<string, string>, re: RegExp, except: readonly string[] = []) =>
@@ -68,6 +69,14 @@ describe('the sources', () => {
 
   test('the files that read version rows are the ones the inventory lists, each with its leak cases', () => {
     expect(filesMatching(files, READS_VERSIONS, READ_DEFINITIONS)).toEqual(Object.keys(INVENTORY.readers).sort());
+  });
+
+  // This change ships the writers of a group dark: nothing calls them, so no route, queue handler or job can create,
+  // commit or fill a group. The change that adds the first caller changes this list on purpose.
+  test('no source file calls a writer of a group: the adapters define them, and nothing uses them', () => {
+    expect(filesMatching(files, GROUP_WRITER_CALL)).toEqual([]);
+    expect(filesMatching({ 'x.ts': 'await store.commitGroup(gid, args);', 'y.ts': 'registry.applyGroupEvent(n, v, ev, a)' }, GROUP_WRITER_CALL)).toEqual(['x.ts', 'y.ts']);
+    expect(filesMatching(files, /\bclass\s+\w+\s+implements\s+[^{]*\bGroupStore\b/)).toEqual([...ADAPTERS].sort());
   });
 
   test('the rules refuse what they are for', () => {

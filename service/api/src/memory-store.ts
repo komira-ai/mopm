@@ -1,7 +1,18 @@
 import { RegistryError, versionExists } from './errors';
-import { API_VIEW, headerKey, membersKey, parseHeader, parseMembers, VersionFunnel, type FunnelOptions, type GroupReader, type View } from './group';
+import { API_VIEW, headerKey, membersKey, parseHeader, parseMembers, VersionFunnel, type FunnelOptions, type GroupMembers, type GroupReader, type View } from './group';
+import {
+  checkHeaderWrite,
+  committedRecord,
+  groupItem,
+  membersItem,
+  parseGroupRecord,
+  type AdoptOutcome,
+  type CommitOutcome,
+  type GroupRecord,
+  type GroupStore,
+} from './group-store';
 import type { RawVersionPort } from './raw-port';
-import { applyEvent, IllegalTransition, type VersionEvent } from './state';
+import { applyEvent, IllegalTransition, type GroupEvent, type UserEvent } from './state';
 import { auditSortKey, type Store } from './store';
 import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, VersionRecord } from './types';
 import { canonicalVersion } from './version';
@@ -20,6 +31,17 @@ export class MemoryGroupItems implements GroupReader {
 
   put(key: string, item: Record<string, unknown>): void {
     this.items.set(key, copy(item));
+  }
+  /** Create-once: false (and nothing written) when the key is taken. For the writers; it is not a read. */
+  create(key: string, item: Record<string, unknown>): boolean {
+    if (this.items.has(key)) return false;
+    this.items.set(key, copy(item));
+    return true;
+  }
+  /** The item as stored, for the writers (a reader goes through `header` and `members`, which are logged). */
+  peek(key: string): Record<string, unknown> | undefined {
+    const i = this.items.get(key);
+    return i && copy(i);
   }
   private read(key: string) {
     this.reads.push(key);
@@ -42,7 +64,7 @@ export class MemoryGroupItems implements GroupReader {
  * revision after its reads), so each is atomic on the event loop, which is the property DynamoDB gives the other
  * adapter with conditions.
  */
-export class MemoryStore implements Store {
+export class MemoryStore implements Store, GroupStore {
   private packages = new Map<string, PackageRecord>();
   private versions = new Map<string, VersionRecord>(); // `${name}\0${canonical}`
   private owners = new Map<string, OwnerRecord>(); // `${name}\0${github_id}`
@@ -96,7 +118,7 @@ export class MemoryStore implements Store {
   async getVersion(name: string, version: string) {
     return this.funnel.getOne(name, version);
   }
-  async updateVersion(name: string, version: string, event: VersionEvent, audit: AuditEntry): Promise<VersionRecord> {
+  async updateVersion(name: string, version: string, event: UserEvent, audit: AuditEntry): Promise<VersionRecord> {
     const key = `${name}\0${canonicalVersion(version)}`;
     for (let attempt = 0; attempt < MAX_UPDATE_ATTEMPTS; attempt++) {
       // The row as a reader sees it: a member of a committed group is `published` here, and one of a group that has
@@ -113,6 +135,90 @@ export class MemoryStore implements Store {
     }
     throw new RegistryError('internal_error', `'${name}' ${version} changed too often while updating.`, { name, version });
   }
+  // --- the writers of a group (src/group-store.ts) ----------------------------------------------------------------
+  // Each method reads and writes without awaiting in between, so it is atomic on the event loop, as the
+  // transactions and conditions of the DynamoDB adapter are.
+
+  private headerOf(gid: string): GroupRecord | undefined {
+    const i = this.groups.peek(headerKey(gid));
+    return i && parseGroupRecord(i);
+  }
+  private membersOf(gid: string): GroupMembers | undefined {
+    const i = this.groups.peek(membersKey(gid));
+    return i && parseMembers(i);
+  }
+  async getGroup(gid: string): Promise<GroupRecord | undefined> {
+    return this.headerOf(gid);
+  }
+  async getGroupMembers(gid: string): Promise<GroupMembers | undefined> {
+    return this.membersOf(gid);
+  }
+
+  async createGroup(header: GroupRecord, members: GroupMembers, audit: AuditEntry): Promise<{ created: boolean; header: GroupRecord }> {
+    checkHeaderWrite(undefined, header);
+    const gid = header.group_id;
+    const list = membersItem(gid, members);
+    if (!this.groups.create(membersKey(gid), list) && JSON.stringify(this.membersOf(gid)) !== JSON.stringify(parseMembers(list))) {
+      throw new Error(`group ${gid} already has another member list`);
+    }
+    if (!this.groups.create(headerKey(gid), groupItem(header))) return { created: false, header: this.headerOf(gid)! };
+    this.audit.push(copy(audit));
+    return { created: true, header };
+  }
+
+  async updateGroup(gid: string, fn: (cur: GroupRecord) => GroupRecord | undefined, audit?: AuditEntry): Promise<GroupRecord | undefined> {
+    const cur = this.headerOf(gid);
+    if (!cur) return undefined;
+    const changed = fn(structuredClone(cur));
+    if (changed === undefined) return cur;
+    const next = { ...changed, rev: cur.rev + 1 };
+    checkHeaderWrite(cur, next);
+    this.groups.put(headerKey(gid), groupItem(next));
+    if (audit) this.audit.push(copy(audit));
+    return next;
+  }
+
+  async commitGroup(gid: string, c: { rev: number; writeOrder: number[]; now: string; audit: AuditEntry }): Promise<CommitOutcome> {
+    const cur = this.headerOf(gid);
+    if (!cur) return { outcome: 'missing' };
+    if (cur.committed_at !== undefined) return { outcome: 'already', header: cur };
+    if (cur.status !== 'validating' || cur.rev !== c.rev) return { outcome: 'conflict', header: cur };
+    if (Date.parse(c.now) > Date.parse(cur.deadline_at)) return { outcome: 'deadline', header: cur };
+    const next = committedRecord(cur, c.writeOrder, c.now);
+    this.groups.put(headerKey(gid), groupItem(next));
+    this.audit.push(copy(c.audit));
+    return { outcome: 'committed', header: next };
+  }
+
+  async adoptVersion(rec: VersionRecord, audit: AuditEntry, free: (cur: VersionRecord) => boolean): Promise<AdoptOutcome> {
+    if (rec.state !== 'pending' || rec.group_id === undefined) throw new Error('adoptVersion takes a pending row that names a group');
+    const canonical = canonicalVersion(rec.version);
+    const key = `${rec.name}\0${canonical}`;
+    const fresh = { ...rec, canonical };
+    const cur = this.versions.get(key);
+    if (cur === undefined) {
+      this.versions.set(key, copy(fresh));
+      this.audit.push(copy(audit));
+      return { outcome: 'created', record: copy(fresh) };
+    }
+    if (cur.state !== 'pending' || !free(copy(cur))) return { outcome: 'taken', existing: copy(cur) };
+    const next = { ...fresh, rev: cur.rev + 1 };
+    this.versions.set(key, copy(next));
+    this.audit.push(copy(audit));
+    return { outcome: 'adopted', record: copy(next) };
+  }
+
+  async applyGroupEvent(name: string, version: string, event: GroupEvent, audit: AuditEntry): Promise<VersionRecord> {
+    const key = `${name}\0${canonicalVersion(version)}`;
+    const cur = this.versions.get(key);
+    if (!cur) throw new RegistryError('version_not_found', `'${name}' has no version '${version}'.`, { name, version });
+    const next = applyEvent(cur, event);
+    if (next === cur) return copy(cur);
+    this.versions.set(key, copy(next));
+    this.audit.push(copy(audit));
+    return copy(next);
+  }
+
   async listVersions(name: string) {
     return (await this.versionsOf([name], API_VIEW)).get(name)!;
   }

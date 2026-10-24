@@ -5,7 +5,10 @@
 //! (tools/ghtool.zig).
 //!
 //!     cut_release --repo komira-ai/mopm tap --version 1.2.3 --formula-file <rendered mopm.rb> \
-//!         --tap-repo komira-ai/homebrew-tap --formula mopm --workdir <empty dir>
+//!         --tap-repo komira-ai/homebrew-tap --formula mopm [--asset <stem>] --workdir <empty dir>
+//!
+//! `--asset` is the file-name stem the formula's urls carry (`<stem>-<V>-<target>.tar.gz`); it defaults to the formula's name, which is
+//! what mopm's own tarballs use. The tool is shared with the sibling build-rules repository, whose tarballs are not named after its formula.
 //!
 //! The tap admits such a pull request only through its path guard (`.github/guard/guard.js` of the tap), which
 //! accepts the pull request of the release bot when ALL of these hold: the branch is `bump/<formula>-v<semver>`;
@@ -16,7 +19,7 @@
 //!
 //! Steps, every one a `gh` or `git` call with no shell:
 //!   1. the file is the formula of THIS version (the renderer writes no version line; the version is the one the release urls
-//!      carry, as in the tap's guard: every url `/releases/download/v<V>/<name>-<V>-<target>.tar.gz`, all the same <V>), and
+//!      carry, as in the tap's guard: every url `/releases/download/v<V>/<stem>-<V>-<target>.tar.gz`, all the same <V>), and
 //!      the tag v<version> of --repo exists;
 //!   2. monotonic: the formula on the tap's main branch is read, and its version is the one its release urls carry. A version above --version is refused (red: the
 //!      tap must never move down). The same version means the tap already has this release: nothing to open;
@@ -52,6 +55,8 @@ pub const Options = struct {
     tap_repo: []const u8,
     /// The formula's name: `mopm`, the file Formula/mopm.rb and the branch bump/mopm-v<version>.
     formula: []const u8,
+    /// The stem of the tarballs' file names in the formula's urls, `<asset>-<V>-<target>.tar.gz`; empty: the formula's name.
+    asset: []const u8 = "",
     version: []const u8,
     /// The rendered formula (the output of `channels formula`).
     formula_file: []const u8,
@@ -80,6 +85,7 @@ pub fn run(a: Allocator, o: Options) void {
     if (!gt.ownerName(o.repo)) die("--repo '{s}' is not owner/name", .{o.repo});
     if (!gt.ownerName(o.tap_repo)) die("--tap-repo '{s}' is not owner/name", .{o.tap_repo});
     if (!gt.namePart(o.formula)) die("--formula '{s}' is not a formula name", .{o.formula});
+    if (o.asset.len != 0 and !gt.namePart(o.asset)) die("--asset '{s}' is not a file name stem", .{o.asset});
     const text = std.fs.cwd().readFileAlloc(a, o.formula_file, 1 << 20) catch |err| die("cannot read --formula-file {s}: {s}", .{ o.formula_file, @errorName(err) });
     const tag = pf(a, "v{s}", .{o.version});
     requireFormulaOf(a, text, o);
@@ -128,7 +134,12 @@ pub fn run(a: Allocator, o: Options) void {
 }
 
 /// The version a formula's release urls carry, as the tap's guard reads it: every `url "` line is
-/// `https://github.com/<repo>/releases/download/v<V>/<name>-<V>-<target>.tar.gz` with a plain <major>.<minor>.<patch>
+/// The file-name stem of the formula's tarballs: `--asset`, or the formula's name.
+fn stemOf(o: Options) []const u8 {
+    return if (o.asset.len != 0) o.asset else o.formula;
+}
+
+/// `https://github.com/<repo>/releases/download/v<V>/<stem>-<V>-<target>.tar.gz` with a plain <major>.<minor>.<patch>
 /// <V> that is the same in the directory and the file name, and all urls carry the same <V>. Dies on the first url that
 /// does not, or when there is no url. `where` names the formula in the message.
 fn urlVersion(a: Allocator, text: []const u8, repo: []const u8, name: []const u8, where: []const u8) []const u8 {
@@ -159,7 +170,7 @@ fn urlVersion(a: Allocator, text: []const u8, repo: []const u8, name: []const u8
 /// The file is the formula of this release: its urls (all of them) carry --version and point into --repo's releases,
 /// and it has no version line (the renderer writes none; brew audit refuses one that repeats the urls').
 fn requireFormulaOf(a: Allocator, text: []const u8, o: Options) void {
-    const v = urlVersion(a, text, o.repo, o.formula, o.formula_file);
+    const v = urlVersion(a, text, o.repo, stemOf(o), o.formula_file);
     if (!std.mem.eql(u8, v, o.version)) die("{s}: its urls carry v{s}, so it is not the formula of v{s}", .{ o.formula_file, v, o.version });
     const have = declaredVersions(a, text);
     if (have.len != 0) die("{s} declares {d} version line(s): the rendered formula has none, the version is in its urls", .{ o.formula_file, have.len });
@@ -169,7 +180,7 @@ fn requireFormulaOf(a: Allocator, text: []const u8, o: Options) void {
 /// `version "<v>"` line, is accepted when that line equals the urls' version; two version lines, or one that differs, die.
 fn liveVersion(a: Allocator, live: []const u8, o: Options, path: []const u8) []const u8 {
     const where = pf(a, "{s} on {s} of {s}", .{ path, o.base, o.tap_repo });
-    const v = urlVersion(a, live, o.repo, o.formula, where);
+    const v = urlVersion(a, live, o.repo, stemOf(o), where);
     const have = declaredVersions(a, live);
     if (have.len > 1) die("{s} declares {d} version lines, expected at most 1", .{ where, have.len });
     if (have.len == 1 and !std.mem.eql(u8, have[0], v)) die("{s} declares version '{s}' but its urls carry v{s}", .{ where, have[0], v });
