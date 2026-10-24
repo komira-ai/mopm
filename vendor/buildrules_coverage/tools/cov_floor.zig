@@ -1,6 +1,7 @@
-// Vendored, unmodified, from komira-ai/buildrules pull request #19 (branch coverage/floors), commit 3277431a50603ec0792531d2683dd64fbdcae40b, file rules/coverage/tools/cov_floor.zig.
+// Vendored from komira-ai/buildrules pull request #19 (branch coverage/floors), commit 3277431a50603ec0792531d2683dd64fbdcae40b, file rules/coverage/tools/cov_floor.zig,
+// and changed here: a floor is a minimum (a figure above it passes), and the `slack` word is gone because nothing above the floor fails any more.
 // A stopgap: delete this copy when the buildrules pin in .buckconfig includes that change (vendor/buildrules_coverage/README.md).
-//! cov_floor: holds a package's measured coverage to its floor file, both ways.
+//! cov_floor: holds a package's measured coverage to its floor file: a minimum.
 //!
 //!   cov_floor (--coverage <coverage.txt> | --jest-summary <coverage-summary.json>) --floor <coverage_floor.txt> --label <package> --out <file>
 //!
@@ -12,16 +13,15 @@
 //!
 //!   lines 87.31
 //!   branches 61.20
-//!   lines 95.51 slack 1.00     (a figure that depends on timing: anywhere from the floor to the floor plus the slack is the floor)
 //!
-//! (`#` starts a comment.) The check is a ratchet. A measured percentage below its floor fails: coverage fell. A measured percentage above it
-//! fails too, naming the number to write: a floor that lags behind the tests would let the coverage fall back to it unseen later. The
-//! percentage is hit/total rounded down to a hundredth, so the number is the same on every run of the same tests. A figure the tests do not
-//! reproduce (the gate's tests race a clock and a signal, and the lines they reach differ by a few between machines) says so with `slack`: it
-//! holds anywhere from the floor to the floor plus the slack, and falling below the floor still fails. A figure the file has and
+//! (`#` starts a comment.) A floor is a minimum. A measured percentage below its floor fails, naming the floor and the measure: coverage fell.
+//! A measured percentage at or above its floor passes; above it, a hint says the floor may be raised, and the hint does not fail the check, so
+//! two changes that each raise coverage can both land without the second one turning main red. Raising a floor is a separate, optional step.
+//! The percentage is hit/total rounded down to a hundredth, so the number is the same on every run of the same tests. A figure the file has and
 //! the coverage lacks (or the other way round) fails: a package does not lose its branch figure by dropping the instrumentation.
 //!
-//! On success `--out` holds one line per figure: the percentage, the counts and how many more hits the 99% target needs.
+//! On success `--out` holds one line per figure: the percentage, the counts and how many more hits the 99% target needs, then a hint line for
+//! each figure above its floor (the hints are printed too).
 //!
 //! Exit status: 0 held; 1 not held, or an unreadable file; 2 for a usage error.
 
@@ -34,8 +34,11 @@ pub const Measure = struct { hit: u64, total: u64 };
 
 pub const Coverage = struct { lines: Measure, branches: ?Measure };
 
-/// The floors, in hundredths of a percent, each with the slack above it that is not a rise (0 unless the file gives one).
-pub const Floor = struct { lines: u64, branches: ?u64, lines_slack: u64 = 0, branches_slack: u64 = 0 };
+/// The floors, in hundredths of a percent.
+pub const Floor = struct { lines: u64, branches: ?u64 };
+
+/// What `check` found: `bad` fails the check; `hints` are informational (a figure above its floor) and never fail it.
+pub const Verdict = struct { bad: []const []const u8, hints: []const []const u8 };
 
 pub const ParseError = error{ BadCoverage, BadFloor, Nothing };
 
@@ -121,58 +124,51 @@ pub fn parseHundredths(s: []const u8) ?u64 {
 pub fn parseFloor(text: []const u8) ParseError!Floor {
     var lines: ?u64 = null;
     var branches: ?u64 = null;
-    var lines_slack: u64 = 0;
-    var branches_slack: u64 = 0;
     var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |raw| {
         const row = std.mem.trim(u8, if (std.mem.indexOfScalar(u8, raw, '#')) |h| raw[0..h] else raw, " \t\r");
         if (row.len == 0) continue;
-        // `<key> <NN.NN>` or `<key> <NN.NN> slack <NN.NN>`
+        // `<key> <NN.NN>`
         var words = std.mem.tokenizeAny(u8, row, " \t");
         const key = words.next() orelse return error.BadFloor;
         const v = parseHundredths(words.next() orelse return error.BadFloor) orelse return error.BadFloor;
-        var slack: u64 = 0;
-        if (words.next()) |w| {
-            if (!std.mem.eql(u8, w, "slack")) return error.BadFloor;
-            slack = parseHundredths(words.next() orelse return error.BadFloor) orelse return error.BadFloor;
-            if (slack == 0 or words.next() != null) return error.BadFloor;
-        }
+        if (words.next() != null) return error.BadFloor;
         const is_lines = std.mem.eql(u8, key, "lines");
         if (!is_lines and !std.mem.eql(u8, key, "branches")) return error.BadFloor;
         const slot: *?u64 = if (is_lines) &lines else &branches;
         if (slot.* != null) return error.BadFloor;
         slot.* = v;
-        if (is_lines) lines_slack = slack else branches_slack = slack;
     }
-    return .{ .lines = lines orelse return error.BadFloor, .branches = branches, .lines_slack = lines_slack, .branches_slack = branches_slack };
+    return .{ .lines = lines orelse return error.BadFloor, .branches = branches };
 }
 
 fn fmtHundredths(a: std.mem.Allocator, v: u64) ![]u8 {
     return std.fmt.allocPrint(a, "{d}.{d:0>2}", .{ v / 100, v % 100 });
 }
 
-/// What is wrong with one figure, or null when it is its floor.
-fn judge(a: std.mem.Allocator, label: []const u8, what: []const u8, m: Measure, floor: u64, slack: u64) !?[]u8 {
+/// Judges one figure against its floor: a failure when below, a hint when above, nothing when equal.
+fn judge(a: std.mem.Allocator, label: []const u8, what: []const u8, m: Measure, floor: u64, bad: *std.ArrayList([]const u8), hints: *std.ArrayList([]const u8)) !void {
     const now = try bp(m);
-    if (now >= floor and now <= floor + slack) return null;
     if (now < floor) {
-        return try std.fmt.allocPrint(a, "{s}: {s} coverage is {s}% ({d}/{d}), below its floor {s}%: coverage fell", .{ label, what, try fmtHundredths(a, now), m.hit, m.total, try fmtHundredths(a, floor) });
+        try bad.append(a, try std.fmt.allocPrint(a, "{s}: {s} coverage is {s}% ({d}/{d}), below its floor {s}%: coverage fell", .{ label, what, try fmtHundredths(a, now), m.hit, m.total, try fmtHundredths(a, floor) }));
+    } else if (now > floor) {
+        try hints.append(a, try std.fmt.allocPrint(a, "{s}: {s} coverage {s}% ({d}/{d}) is above its floor {s}% (you may raise the floor)", .{ label, what, try fmtHundredths(a, now), m.hit, m.total, try fmtHundredths(a, floor) }));
     }
-    return try std.fmt.allocPrint(a, "{s}: {s} coverage is {s}% ({d}/{d}), above its floor {s}%{s}: raise the floor to {s} (floors only rise, and a floor behind the tests lets the coverage fall back to it unseen)", .{ label, what, try fmtHundredths(a, now), m.hit, m.total, try fmtHundredths(a, floor), if (slack == 0) "" else " and its slack", try fmtHundredths(a, now) });
 }
 
-/// Every way `cov` is not `floor`; empty when it is held.
-pub fn check(a: std.mem.Allocator, label: []const u8, cov: Coverage, floor: Floor) ![]const []const u8 {
+/// Every way `cov` is below `floor` (`bad`, which fails the check) and every figure above its floor (`hints`, which does not).
+pub fn check(a: std.mem.Allocator, label: []const u8, cov: Coverage, floor: Floor) !Verdict {
     var bad = std.ArrayList([]const u8).empty;
-    if (try judge(a, label, "line", cov.lines, floor.lines, floor.lines_slack)) |m| try bad.append(a, m);
+    var hints = std.ArrayList([]const u8).empty;
+    try judge(a, label, "line", cov.lines, floor.lines, &bad, &hints);
     if (cov.branches) |b| {
         if (floor.branches) |f| {
-            if (try judge(a, label, "branch", b, f, floor.branches_slack)) |m| try bad.append(a, m);
+            try judge(a, label, "branch", b, f, &bad, &hints);
         } else try bad.append(a, try std.fmt.allocPrint(a, "{s}: the tests record branches ({d}/{d}) and the floor file has no `branches` figure: add `branches {s}`", .{ label, b.hit, b.total, try fmtHundredths(a, try bp(b)) }));
     } else if (floor.branches != null) {
         try bad.append(a, try std.fmt.allocPrint(a, "{s}: the floor file has a `branches` figure and the tests record no branches: the instrumentation was dropped", .{label}));
     }
-    return bad.toOwnedSlice(a);
+    return .{ .bad = try bad.toOwnedSlice(a), .hints = try hints.toOwnedSlice(a) };
 }
 
 fn needed(m: Measure) u64 {
@@ -185,6 +181,14 @@ pub fn report(a: std.mem.Allocator, label: []const u8, cov: Coverage) ![]u8 {
     var o = std.ArrayList(u8).empty;
     try o.print(a, "{s} lines {s}% ({d}/{d}); {d} more to 99%\n", .{ label, try fmtHundredths(a, try bp(cov.lines)), cov.lines.hit, cov.lines.total, needed(cov.lines) });
     if (cov.branches) |b| try o.print(a, "{s} branches {s}% ({d}/{d}); {d} more to 99%\n", .{ label, try fmtHundredths(a, try bp(b)), b.hit, b.total, needed(b) });
+    return o.toOwnedSlice(a);
+}
+
+/// `report` followed by one line per hint.
+pub fn withHints(a: std.mem.Allocator, rep: []const u8, hints: []const []const u8) ![]u8 {
+    var o = std.ArrayList(u8).empty;
+    try o.appendSlice(a, rep);
+    for (hints) |h| try o.print(a, "{s}\n", .{h});
     return o.toOwnedSlice(a);
 }
 
@@ -220,14 +224,15 @@ pub fn main() !void {
     else
         parseCoverage(ctext) catch die(1, "{s}: no `total` line of the form `total <hit>/<total> <n>%`", .{source});
     const fl = parseFloor(ftext) catch die(1, "{s}: expected `lines NN.NN` and optionally `branches NN.NN` (two decimals, 0.00 to 100.00), one per line", .{floor.?});
-    const bad = check(a, label.?, cov, fl) catch |e| switch (e) {
+    const verdict = check(a, label.?, cov, fl) catch |e| switch (e) {
         error.Nothing => die(1, "{s}: the coverage counts nothing (0 of 0): no test measured the package", .{label.?}),
         else => return e,
     };
-    if (bad.len != 0) {
-        for (bad) |m| std.debug.print("cov_floor: {s}\n", .{m});
+    if (verdict.bad.len != 0) {
+        for (verdict.bad) |m| std.debug.print("cov_floor: {s}\n", .{m});
         std.process.exit(1);
     }
-    const text = try report(a, label.?, cov);
+    for (verdict.hints) |m| std.debug.print("cov_floor: {s}\n", .{m});
+    const text = try withHints(a, try report(a, label.?, cov), verdict.hints);
     std.fs.cwd().writeFile(.{ .sub_path = out.?, .data = text }) catch |e| die(1, "cannot write {s}: {s}", .{ out.?, @errorName(e) });
 }
