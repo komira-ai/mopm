@@ -26,6 +26,15 @@
 //! `--locked` it never locks: a missing or out-of-date lock is an error, and
 //! the sparse index is not read.
 //!
+//! `--overlay <dir>` (`add`, `lock`, `sync`) reads a staged set (core/overlay.zig) as a read-only local channel
+//! ahead of the registry: a package the set holds is resolved and locked from the set, one it lacks from the
+//! registry, and a closure the set holds entirely needs no request for its index files, repodata or packages (the
+//! production registry's channel is known; any other registry is asked for its index/config.json, once, for the
+//! channel the lock names). The set is never written, and nothing about it reaches mopm.lock or mopm.toml: the lock
+//! names the registry's channel and file URLs with the files' sha256, so it is the lock the registry gives once the
+//! versions are published. When the registry is asked anyway, a staged version it already holds with other bytes is
+//! refused. `sync` installs a locked file from the set when the set holds exactly the bytes the lock pins.
+//!
 //! A path dependency (`name = { path = "..." }`, in [dependencies] or
 //! [dev-dependencies], and in a path dependency's own [dependencies]) is
 //! read from `<path>/mopm.toml`: it is locked with `source = path` and that
@@ -53,6 +62,7 @@ const resolve = core.resolve;
 const lock = core.lock;
 const plan = core.install_plan;
 const inst = core.install;
+const overlay = core.overlay;
 const semver = core.semver;
 const toml_edit = core.toml_edit;
 const unit_graph = core.unit_graph;
@@ -61,11 +71,11 @@ const publish_cmd = @import("publish_cmd.zig");
 pub const Command = enum { lock, update, tree, sync, add, remove, plan };
 
 const usage =
-    \\usage: mopm lock   [--registry <prod|gamma|beta|url>]
+    \\usage: mopm lock   [--registry <prod|gamma|beta|url>] [--overlay <staged set>]
     \\       mopm update [<package>...] [--registry <prod|gamma|beta|url>]
     \\       mopm tree
-    \\       mopm sync   [--locked] [--registry <prod|gamma|beta|url>] [--pixi <path>]
-    \\       mopm add    <package>[@<requirement>] [--dev] [--path <dir>] [--registry <prod|gamma|beta|url>]
+    \\       mopm sync   [--locked] [--registry <prod|gamma|beta|url>] [--overlay <staged set>] [--pixi <path>]
+    \\       mopm add    <package>[@<requirement>] [--dev] [--path <dir>] [--registry <prod|gamma|beta|url>] [--overlay <staged set>]
     \\       mopm remove <package> [--dev] [--registry <prod|gamma|beta|url>]
     \\
 ;
@@ -86,6 +96,8 @@ pub const Args = struct {
     dev: bool = false,
     /// `add --path <dir>`: a path dependency.
     path: ?[]const u8 = null,
+    /// `--overlay <dir>` (`add`, `lock`, `sync`): a staged set, read as a local channel ahead of the registry.
+    overlay: ?[]const u8 = null,
 };
 
 /// The arguments of `cmd`; null on a usage error.
@@ -99,6 +111,10 @@ pub fn parseArgs(arena: Allocator, cmd: Command, args: []const []const u8) Alloc
             if (i + 1 >= args.len) return null;
             i += 1;
             out.registry = args[i];
+        } else if ((cmd == .add or cmd == .lock or cmd == .sync) and std.mem.eql(u8, a, "--overlay")) {
+            if (i + 1 >= args.len or args[i + 1].len == 0 or out.overlay != null) return null;
+            i += 1;
+            out.overlay = args[i];
         } else if (cmd == .sync and std.mem.eql(u8, a, "--locked")) {
             out.locked = true;
         } else if (cmd == .sync and std.mem.eql(u8, a, "--pixi")) {
@@ -314,6 +330,110 @@ const ChannelSource = struct {
     }
 };
 
+/// The registry a command talks to: its base URL and its configuration (`index/config.json`), which is read up front,
+/// or, with a staged set, the first time something needs it: a closure the set holds needs no registry request.
+const Registry = struct {
+    base: []const u8,
+    cli_version: []const u8,
+    config: ?registry.Config = null,
+
+    fn get(self: *Registry, arena: Allocator, diag: *resolve.Diagnostic) resolve.Error!registry.Config {
+        if (self.config) |c| return c;
+        const parsed = registry.load(arena, self.base, self.cli_version) catch |e| {
+            if (e == error.OutOfMemory) return error.OutOfMemory;
+            return resolve.fail(arena, diag, .unreachable_index, "cannot read the configuration of {s}: {s}", .{ self.base, @errorName(e) });
+        };
+        switch (parsed) {
+            .ok => |c| {
+                self.config = c;
+                return c;
+            },
+            .bad => |why| return resolve.fail(arena, diag, .unreachable_index, "{s}: {s}", .{ self.base, why }),
+        }
+    }
+};
+
+/// `IndexSource` of a `Registry`.
+const RegistryIndex = struct {
+    reg: *Registry,
+
+    pub fn fetch(self: RegistryIndex, arena: Allocator, name: []const u8, diag: *resolve.Diagnostic) resolve.Error!?[]const u8 {
+        const c = try self.reg.get(arena, diag);
+        return (IndexSource{ .config = c }).fetch(arena, name, diag);
+    }
+};
+
+/// `ChannelSource` of a `Registry`.
+const RegistryChannel = struct {
+    reg: *Registry,
+
+    pub fn fetch(self: RegistryChannel, arena: Allocator, subdir: []const u8, diag: *resolve.Diagnostic) resolve.Error![]const u8 {
+        const c = try self.reg.get(arena, diag);
+        return (ChannelSource{ .channel_url = c.channel_url }).fetch(arena, subdir, diag);
+    }
+
+    pub fn fetchConda(self: RegistryChannel, arena: Allocator, subdir: []const u8, filename: []const u8, diag: *resolve.Diagnostic) resolve.Error![]const u8 {
+        const c = try self.reg.get(arena, diag);
+        return (ChannelSource{ .channel_url = c.channel_url }).fetchConda(arena, subdir, filename, diag);
+    }
+};
+
+/// The channel of the registry `base` names when nothing about it has been read: the production registry's, which
+/// is known; no other registry's is.
+fn knownChannel(base: []const u8) ?[]const u8 {
+    return switch (registry.resolve("prod")) {
+        .ok => |prod| if (std.mem.eql(u8, base, prod)) registry.default_channel_url else null,
+        .bad => null,
+    };
+}
+
+/// Where a resolution reads from: the registry, with the staged set (`--overlay`) ahead of it when there is one.
+const Layer = struct {
+    reg: *Registry,
+    staged: ?*const overlay.Overlay,
+    /// A package the set does not hold was asked of the registry.
+    asked: bool = false,
+
+    /// The versions `input` picks.
+    fn pick(self: *Layer, arena: Allocator, input: resolve.Input, diag: *resolve.Diagnostic) resolve.Error!resolve.Resolution {
+        const set = self.staged orelse return resolve.resolve(arena, IndexSource{ .config = self.reg.config.? }, input, diag);
+        self.asked = false;
+        const res = try resolve.resolve(arena, overlay.Index(RegistryIndex){ .overlay = set, .inner = .{ .reg = self.reg }, .asked = &self.asked }, input, diag);
+        // The registry is in the conversation anyway: a staged version it already holds with other bytes would
+        // lock differently once published, so it is refused rather than shadowed.
+        if (self.asked) {
+            for (res.packages) |p| {
+                const m = set.member(p.record.name) orelse continue;
+                const c = try self.reg.get(arena, diag);
+                const text = (try (IndexSource{ .config = c }).fetch(arena, m.name, diag)) orelse continue;
+                const held = try resolve.parseIndex(arena, m.name, text, diag);
+                if (try overlay.registryDiffers(arena, set.dir, m, held)) |why| return resolve.fail(arena, diag, .bad_channel, "{s}", .{why});
+            }
+        }
+        return res;
+    }
+
+    /// The lock of `res`, from the channel of the registry.
+    fn build(self: *Layer, arena: Allocator, res: resolve.Resolution, old: ?lock.Lock, diag: *resolve.Diagnostic) resolve.Error!lock.Lock {
+        const url: []const u8 = if (self.reg.config) |c| c.channel_url else if (knownChannel(self.reg.base)) |k| k else (try self.reg.get(arena, diag)).channel_url;
+        const set = self.staged orelse return plan.buildLock(arena, res, url, ChannelSource{ .channel_url = url }, old, diag);
+        const channel = overlay.Channel(RegistryChannel){ .overlay = set, .inner = .{ .reg = self.reg }, .registry_subdirs = try overlay.registrySubdirs(arena, set.*, res) };
+        return plan.buildLock(arena, res, url, channel, old, diag);
+    }
+};
+
+/// Reads the staged set `--overlay` names. Null when it is refused (reported).
+fn loadOverlay(arena: Allocator, cmd: Command, dir: []const u8) !?overlay.Overlay {
+    var why: []const u8 = "";
+    return overlay.load(arena, dir, &why) catch |e| switch (e) {
+        error.Refused => {
+            err(cmd, "--overlay: {s}\n", .{why});
+            return null;
+        },
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+}
+
 fn run(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8) !u8 {
     if (cmd == .add or cmd == .remove) return edit(arena, cmd, args, cli_version);
     const project = (try readProject(arena, cmd)) orelse return 1;
@@ -371,18 +491,28 @@ fn resolveProject(arena: Allocator, cmd: Command, project: Project, old: ?lock.L
     };
     // A project with no registry dependency (no version requirement, its path dependencies' included) has
     // nothing to ask a registry: it is locked offline, so `mopm lock` works with no network.
-    const config = if (project.roots.len == 0) registry.offlineConfig(base) else switch (try registry.load(arena, base, cli_version)) {
-        .ok => |c| c,
-        .bad => |why| {
-            err(cmd, "{s}: {s}\n", .{ base, why });
-            return null;
-        },
-    };
+    // With a staged set (--overlay) the registry's configuration is read only when a package the set lacks, or the
+    // channel of the lock, needs it: a closure the set holds needs no network.
+    var staged: ?overlay.Overlay = null;
+    if (args.overlay) |dir| staged = (try loadOverlay(arena, cmd, dir)) orelse return null;
+    var reg = Registry{ .base = base, .cli_version = cli_version };
+    if (project.roots.len == 0) {
+        reg.config = registry.offlineConfig(base);
+    } else if (staged == null) {
+        switch (try registry.load(arena, base, cli_version)) {
+            .ok => |c| reg.config = c,
+            .bad => |why| {
+                err(cmd, "{s}: {s}\n", .{ base, why });
+                return null;
+            },
+        }
+    }
+    var layer = Layer{ .reg = &reg, .staged = if (staged) |*s| s else null };
 
     var failures = std.ArrayList(u8).init(arena);
     var warnings = std.ArrayList([]const u8).init(arena);
     defer printWarnings(cmd, warnings.items);
-    if (project.m.mojo_all) return resolveAll(arena, cmd, project, old, args, config, &warnings);
+    if (project.m.mojo_all) return resolveAll(arena, cmd, project, old, args, &layer, &warnings);
     for (toolchains) |mojo| {
         var pins = std.ArrayList(resolve.Pin).init(arena);
         if (old) |o| {
@@ -397,12 +527,12 @@ fn resolveProject(arena: Allocator, cmd: Command, project: Project, old: ?lock.L
             }
         }
         var diag: resolve.Diagnostic = .{};
-        const res = resolve.resolve(arena, IndexSource{ .config = config }, .{ .mojo = mojo, .roots = project.roots, .pins = pins.items, .warnings = &warnings }, &diag) catch |e| {
+        const res = layer.pick(arena, .{ .mojo = mojo, .roots = project.roots, .pins = pins.items, .warnings = &warnings }, &diag) catch |e| {
             if (e != error.ResolveFailed) return e;
             try failures.writer().print("  with mojo {s}: {s}\n", .{ mojo, diag.message });
             continue;
         };
-        const from_registry = plan.buildLock(arena, res, config.channel_url, ChannelSource{ .channel_url = config.channel_url }, old, &diag) catch |e| {
+        const from_registry = layer.build(arena, res, old, &diag) catch |e| {
             if (e != error.ResolveFailed) return e;
             err(cmd, "{s}\n", .{diag.message});
             return null;
@@ -426,7 +556,7 @@ fn lessStr(_: void, a: []const u8, b: []const u8) bool {
 /// (each takes the newest version that has a build for it) and makes one
 /// version 2 lock of the results. Null when a version cannot be resolved or
 /// has no toolchain pinned by this mopm (reported).
-fn resolveAll(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock, args: Args, config: registry.Config, warnings: *std.ArrayList([]const u8)) !?Resolved {
+fn resolveAll(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock, args: Args, layer: *Layer, warnings: *std.ArrayList([]const u8)) !?Resolved {
     var versions = std.ArrayList([]const u8).init(arena);
     try versions.appendSlice(project.m.mojo);
     std.mem.sort([]const u8, versions.items, {}, lessStr);
@@ -455,7 +585,7 @@ fn resolveAll(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock,
             }
         }
         var diag: resolve.Diagnostic = .{};
-        const res = resolve.resolve(arena, IndexSource{ .config = config }, .{ .mojo = mojo, .roots = project.roots, .pins = pins.items, .warnings = warnings, .mojoc_message = true }, &diag) catch |e| {
+        const res = layer.pick(arena, .{ .mojo = mojo, .roots = project.roots, .pins = pins.items, .warnings = warnings, .mojoc_message = true }, &diag) catch |e| {
             if (e != error.ResolveFailed) return e;
             if (diag.kind == .compiler_mismatch) {
                 std.io.getStdErr().writer().print("error: {s}\n", .{diag.message}) catch {};
@@ -464,7 +594,7 @@ fn resolveAll(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock,
             }
             return null;
         };
-        const one = plan.buildLock(arena, res, config.channel_url, ChannelSource{ .channel_url = config.channel_url }, old, &diag) catch |e| {
+        const one = layer.build(arena, res, old, &diag) catch |e| {
             if (e != error.ResolveFailed) return e;
             err(cmd, "{s}\n", .{diag.message});
             return null;
@@ -503,7 +633,8 @@ fn sync(arena: Allocator, project: Project, old: ?lock.Lock, args: Args, cli_ver
         }
         break :blk (try lockProject(arena, .sync, project, old, args, cli_version)) orelse return 1;
     } else old.?;
-    return install(arena, l, args.pixi);
+    const staged: ?overlay.Overlay = if (args.overlay) |dir| ((try loadOverlay(arena, .sync, dir)) orelse return 1) else null;
+    return install(arena, l, args.pixi, staged);
 }
 
 /// The largest package file mopm downloads (the HTTP client's limit).
@@ -519,7 +650,7 @@ fn httpGet(arena: Allocator, url: []const u8) ?http.Answer {
 
 /// Installs `l` into `.mopm/` (see core/install.zig); 0 when the environment
 /// is exactly the lock.
-fn install(arena: Allocator, whole: lock.Lock, pixi: []const u8) !u8 {
+fn install(arena: Allocator, whole: lock.Lock, pixi: []const u8, staged: ?overlay.Overlay) !u8 {
     // A version 2 lock installs the builds for its first Mojo version.
     const l = try lock.forMojo(arena, whole, whole.mojo);
     const cwd = std.fs.cwd();
@@ -537,26 +668,42 @@ fn install(arena: Allocator, whole: lock.Lock, pixi: []const u8) !u8 {
 
     var repodata = std.StringHashMap([]const u8).init(arena);
     var files = std.ArrayList(inst.LocalFile).init(arena);
+    var from_set: usize = 0;
     for (pkgs) |p| {
-        const where = try std.fmt.allocPrint(arena, "{s}{s}/repodata.json", .{ p.channel, p.subdir });
-        const text = repodata.get(where) orelse blk: {
-            const answer = httpGet(arena, where) orelse return 1;
-            if (!answer.ok()) {
-                err(.sync, "{s} answered HTTP {d}\n", .{ where, answer.status });
-                return 1;
-            }
-            try repodata.put(where, answer.body);
-            break :blk answer.body;
-        };
-        const depends = switch (try inst.lookUp(arena, text, p)) {
-            .ok => |d| d orelse blk: {
-                err(.sync, "warning: {s} {s} is yanked (the channel lists it as removed); it installs because {s} pins it\n", .{ p.name, p.version, lock_path });
-                break :blk try inst.dependsFromLock(arena, p);
-            },
-            .bad => |why| {
-                err(.sync, "{s}\n", .{why});
-                return 1;
-            },
+        // The staged set (--overlay) supplies exactly the file the lock pins, when it holds it: that package is
+        // neither looked up in the channel's repodata nor downloaded.
+        var staged_bytes: ?[]const u8 = null;
+        if (staged) |set| {
+            var why: []const u8 = "";
+            staged_bytes = set.bytesFor(arena, p, &why) catch |e| switch (e) {
+                error.Refused => {
+                    err(.sync, "--overlay: {s}\n", .{why});
+                    return 1;
+                },
+                error.OutOfMemory => return error.OutOfMemory,
+            };
+        }
+        const depends = if (staged_bytes != null) try inst.dependsFromLock(arena, p) else found: {
+            const where = try std.fmt.allocPrint(arena, "{s}{s}/repodata.json", .{ p.channel, p.subdir });
+            const text = repodata.get(where) orelse got: {
+                const answer = httpGet(arena, where) orelse return 1;
+                if (!answer.ok()) {
+                    err(.sync, "{s} answered HTTP {d}\n", .{ where, answer.status });
+                    return 1;
+                }
+                try repodata.put(where, answer.body);
+                break :got answer.body;
+            };
+            break :found switch (try inst.lookUp(arena, text, p)) {
+                .ok => |d| d orelse yanked: {
+                    err(.sync, "warning: {s} {s} is yanked (the channel lists it as removed); it installs because {s} pins it\n", .{ p.name, p.version, lock_path });
+                    break :yanked try inst.dependsFromLock(arena, p);
+                },
+                .bad => |why| {
+                    err(.sync, "{s}\n", .{why});
+                    return 1;
+                },
+            };
         };
 
         // A file kept from an earlier sync is used only if it is still the
@@ -564,7 +711,15 @@ fn install(arena: Allocator, whole: lock.Lock, pixi: []const u8) !u8 {
         const local = try std.fmt.allocPrint(arena, "{s}/{s}/{s}", .{ inst.channel_dir, p.subdir, try inst.fileName(arena, p) });
         const kept: ?[]const u8 = cwd.readFileAlloc(arena, local, max_file) catch null;
         const reuse = if (kept) |b| (try inst.checkBytes(arena, p, b)) == null else false;
-        if (!reuse) {
+        if (staged_bytes != null) from_set += 1;
+        if (!reuse and staged_bytes != null) {
+            if (try inst.checkBytes(arena, p, staged_bytes.?)) |why| {
+                err(.sync, "{s} (read from the staged set)\n", .{why});
+                return 1;
+            }
+            try cwd.makePath(std.fs.path.dirname(local).?);
+            try cwd.writeFile(local, staged_bytes.?);
+        } else if (!reuse) {
             const answer = httpGet(arena, p.url) orelse return 1;
             switch (answer.status) {
                 403, 404, 410 => {
@@ -624,6 +779,7 @@ fn install(arena: Allocator, whole: lock.Lock, pixi: []const u8) !u8 {
     for (l.packages) |p| {
         if (p.source == .path) try out.print("using {s} {s} from {s} (a path dependency: built from source, not downloaded)\n", .{ p.name, p.version, p.path });
     }
+    if (from_set > 0) try out.print("read {d} packages from the staged set {s}\n", .{ from_set, staged.?.dir });
     try out.print("installed {d} packages for {s} (mojo {s}) into {s}\n", .{ pkgs.len, subdir, l.mojo, inst.prefix });
     return 0;
 }
@@ -802,6 +958,36 @@ test "lock, update and tree arguments" {
     try std.testing.expect((try parseArgs(a, .sync, &.{"--pixi"})) == null);
     try std.testing.expect((try parseArgs(a, .sync, &.{"tls"})) == null);
     try std.testing.expect((try parseArgs(a, .lock, &.{"--locked"})) == null);
+}
+
+test "--overlay names a staged set for add, lock and sync, once, and for no other command" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try std.testing.expect((try parseArgs(a, .lock, &.{})).?.overlay == null);
+    try std.testing.expectEqualStrings("/work/staged", (try parseArgs(a, .lock, &.{ "--overlay", "/work/staged" })).?.overlay.?);
+    const s = (try parseArgs(a, .sync, &.{ "--locked", "--overlay", "set", "--registry", "beta" })).?;
+    try std.testing.expectEqualStrings("set", s.overlay.?);
+    try std.testing.expect(s.locked);
+    const x = (try parseArgs(a, .add, &.{ "--overlay", "set", "http_client@=0.4.0" })).?;
+    try std.testing.expectEqualStrings("set", x.overlay.?);
+    try std.testing.expectEqualStrings("http_client@=0.4.0", x.spec);
+    // The set is named, and once.
+    try std.testing.expect((try parseArgs(a, .lock, &.{"--overlay"})) == null);
+    try std.testing.expect((try parseArgs(a, .lock, &.{ "--overlay", "" })) == null);
+    try std.testing.expect((try parseArgs(a, .lock, &.{ "--overlay", "a", "--overlay", "b" })) == null);
+    try std.testing.expect((try parseArgs(a, .add, &.{ "pkg", "--overlay" })) == null);
+    // update, remove and tree read no staged set.
+    try std.testing.expect((try parseArgs(a, .update, &.{ "--overlay", "set" })) == null);
+    try std.testing.expect((try parseArgs(a, .remove, &.{ "tls", "--overlay", "set" })) == null);
+    try std.testing.expect((try parseArgs(a, .tree, &.{ "--overlay", "set" })) == null);
+}
+
+test "the channel of a registry nothing was read from is known for production only" {
+    try std.testing.expectEqualStrings("https://conda.mopm.dev/", knownChannel("https://api.mopm.dev").?);
+    try std.testing.expect(knownChannel("https://api.gamma.mopm.dev") == null);
+    try std.testing.expect(knownChannel("https://api.beta.mopm.dev") == null);
+    try std.testing.expect(knownChannel("http://127.0.0.1:8080") == null);
 }
 
 test "path dependency directories are joined relative to the project" {
