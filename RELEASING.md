@@ -129,7 +129,7 @@ packages and keeps the rest of the index as it finds it.
 |---|---|---|---|
 | `apt-deploy-read` | `apt-publish` | the role (OIDC, `id-token: write`), no key | reads the current index and the ETag of every object of it from S3 (never through the CDN, which caches the index and would hand back a stale ETag) and passes it on as an artifact |
 | `apt-index` | `apt-signing` | the signing key, no role, no `id-token`, no cloud credential | merges the `.deb`s into the index that was read (`channels apt-index`) and signs `Release` with the signing subkey (with each of two during a key rotation): `InRelease` and `Release.gpg` |
-| `apt-deploy-write` | `apt-publish` | the role (OIDC), no key | uploads the `.deb`s with `If-None-Match` (a `.deb` is never replaced), writes the index with `If-Match` on the ETag it was read with (`If-None-Match` for an object that did not exist yet), then invalidates `/apt/dists/*` |
+| `apt-deploy-write` | `apt-publish` | the role (OIDC), no key | uploads the `.deb`s with `If-None-Match` (a `.deb` is never replaced; one already in the pool must have the same bytes, so the role also reads `apt/pool/mopm/`), writes the index with `If-Match` on the ETag it was read with (`If-None-Match` for an object that did not exist yet), then invalidates `/apt/dists/*` |
 
 The job that can sign cannot write, and the job that can write cannot sign; the index travels between them as an artifact that only the workflow can create. The release lint holds
 that (`tests/drivers/release_lint.zig`): the key (`APT_GPG_*`) is named by the `apt-index` jobs alone, which hold `contents: read` and no `id-token`; the role (`APT_PUBLISH_*` and the
@@ -152,7 +152,7 @@ The OIDC exchange is the one `deploy.yml` makes (the runner's token request, the
 
 **A lost write.** Another product may publish between the read and the write. Every put of the index is conditional on the version that was read, so the loser gets a `412`: it writes
 nothing more, says so, and its output `conflict=true` starts the next attempt, which reads again, merges again and signs again. Three attempts at most (`apt-deploy-read-2`,
-`-3`, and so on); the write of the last one fails the job instead. A `.deb` that is already in the pool (a `412` on its put) is kept as it is: the release it belongs to was
+`-3`, and so on); the write of the last one fails the job instead. A `.deb` that is already in the pool (a `412` on its put) is kept as it is only if the object in the pool has the same bytes as the file to publish (the job reads it back and compares sha256); other bytes, or an object the role cannot read, fail the write before any object of the index changes. The release it belongs to was
 already published.
 
 **The settings, and what happens until they are made.** The repository owner makes them once:
