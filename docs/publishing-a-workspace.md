@@ -4,7 +4,7 @@
 
 ## Group publish is off on the hosted registries
 
-Group publish is deployed, and it is switched off. On `prod`, `gamma` and `beta` the registry answers a request to create a group with HTTP 404 until its operators enable groups for the account that publishes. Until then `mopm publish --staged` stops before it uploads anything and says that the registry has no group publish (see [404](#404-the-registry-has-no-group-publish)). Nothing on this page changes how `mopm publish` of a single package works; that command is the way to publish today.
+Group publish is deployed, and it is switched off. On `prod`, `gamma` and `beta` the registry answers a request to create a group with HTTP 404 until its operators enable groups for the account that publishes. Until then `mopm publish --staged` stops before it uploads anything and says that the registry has no group publish (see 404 below). Nothing on this page changes how `mopm publish` of a single package works; that command is the way to publish today.
 
 ## The steps
 

@@ -742,11 +742,23 @@ export_file(
     visibility = ["//site:"],
 )
 
-[export_file(
-    name = "site.src.cli." + f,
-    src = "src/cli/" + f,
+export_file(
+    name = "site.src.cli.stage_cmd.zig",
+    src = "src/cli/stage_cmd.zig",
     visibility = ["//site:"],
-) for f in ["stage_cmd.zig", "group_publish.zig", "yank_cmd.zig"]]
+)
+
+export_file(
+    name = "site.src.cli.group_publish.zig",
+    src = "src/cli/group_publish.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.cli.yank_cmd.zig",
+    src = "src/cli/yank_cmd.zig",
+    visibility = ["//site:"],
+)
 
 export_file(
     name = "site.docs.why-and-design.md",

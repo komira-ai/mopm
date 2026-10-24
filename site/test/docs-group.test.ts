@@ -30,12 +30,19 @@ const spec = read('spec/staged-set.md');
 /** The text of the section with this heading (any level), up to the next heading of the same or a higher level. */
 function section(md: string, heading: string): string {
   const lines = md.split('\n');
-  const at = lines.findIndex((l) => /^#{1,6} /.test(l) && l.replace(/^#+ /, '') === heading);
+  // A line of a fenced block is never a heading (a shell comment starts with '# ').
+  const fenced: boolean[] = [];
+  let open = false;
+  for (const l of lines) {
+    if (l.startsWith('```')) open = !open;
+    fenced.push(open || l.startsWith('```'));
+  }
+  const at = lines.findIndex((l, i) => !fenced[i] && /^#{1,6} /.test(l) && l.replace(/^#+ /, '') === heading);
   if (at < 0) throw new Error(`no section ${heading}`);
   const level = /^#+/.exec(lines[at])![0].length;
   let end = lines.length;
   for (let i = at + 1; i < lines.length; i++) {
-    const m = /^(#+) /.exec(lines[i]);
+    const m = fenced[i] ? null : /^(#+) /.exec(lines[i]);
     if (m && m[1].length <= level) {
       end = i;
       break;
