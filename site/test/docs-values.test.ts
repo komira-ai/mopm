@@ -278,7 +278,7 @@ describe('messages the page quotes', () => {
   test.each([
     ["unknown key 'homepage' in [package]", manifest, "unknown key '{s}' in {s}"],
     ['mopm.toml has no [toolchain] mojo', install, '{s} has no [toolchain] mojo;'],
-    ['native dependencies are not packed yet', conda, 'native dependencies are not packed yet'],
+    ['only mode = "load" is packed', conda, 'only mode = \\"load\\" is packed'],
     ['a pre-release in a requirement has no conda spelling', conda, 'a pre-release in a requirement has no conda spelling'],
     ['digits, no leading zeros, no pre-release or build part', publish, 'digits, no leading zeros, no pre-release or build part'],
     ['Update mopm.', read('src/core/lock.zig'), 'Update mopm.'],
