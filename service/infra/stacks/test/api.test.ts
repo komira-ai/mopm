@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
-import { ApiStack, AUTH_GRANTS, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
+import { ApiStack, AUTH_GRANTS, BETA_CI_GRANTS, BETA_CI_PUBLISHERS, CI_PUBLISHERS_ENV, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
 import { STAGES, stageConfig, tableName } from '../lib/config';
 import { DUMMY_ACCOUNT, HANDLER_STUB_DIR, tpl } from './util';
 
@@ -35,7 +35,7 @@ function policyViolations(stage: string, statements: any[]): string[] {
         const table = m[1]!;
         const index = m[3];
         const grant = AUTH_GRANTS[table];
-        const written = WRITE_GRANTS.some((g) => g.tables.includes(table) && g.actions.includes(a));
+        const written = (stage === 'beta' ? [...WRITE_GRANTS, ...BETA_CI_GRANTS] : WRITE_GRANTS).some((g) => g.tables.includes(table) && g.actions.includes(a));
         const readable = (READ_TABLES as readonly string[]).includes(table);
         if (!readable && !grant && !written) out.push(`${a} on unlisted table ${table}`);
         if (readable && !READ_ACTIONS.includes(a) && !written && !(grant && grant.actions.includes(a))) out.push(`${a} on registry table ${table}`);
@@ -264,6 +264,42 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     expect(policyViolations(stage, statements())).toEqual([]);
   });
 
+  // Config-as-code trust is beta's alone: the variable that names the trusted CI identity, and the one extra write it needs
+  // (creating the packages it publishes), exist on the beta template and on no other.
+  test(stage === 'beta' ? 'beta: CI_PUBLISHERS names exactly the komira release workflow on main in the beta environment, and the role may create packages' : `${stage}: no function has CI_PUBLISHERS, and nothing may write the packages or owners tables`, () => {
+    const fns = Object.values(t.findResources('AWS::Lambda::Function')) as any[];
+    const values = fns.map((f) => f.Properties.Environment?.Variables?.[CI_PUBLISHERS_ENV]).filter((v) => v !== undefined);
+    const creators = statements().filter(
+      (s) => s.Effect === 'Allow' && acts(s).includes('dynamodb:PutItem') && flatten(s.Resource).includes(`table/${tableName(stage, 'packages')}"`),
+    );
+    const ownerWriters = statements().filter((s) => acts(s).includes('dynamodb:PutItem') && flatten(s.Resource).includes(`table/${tableName(stage, 'owners')}`));
+    expect(ownerWriters).toEqual([]);
+    if (stage === 'beta') {
+      expect(values).toHaveLength(1); // the API function; the index reader has none
+      expect(JSON.parse(values[0])).toEqual([
+        {
+          repository_id: '1376408823',
+          repository_owner_id: '305577347',
+          workflow: '.github/workflows/release.yml',
+          ref: 'refs/heads/main',
+          events: ['push', 'workflow_dispatch'],
+          environment: 'beta',
+        },
+      ]);
+      expect(JSON.parse(values[0])).toEqual(BETA_CI_PUBLISHERS);
+      expect(creators).toHaveLength(1);
+      expect(creators[0].Sid).toBe('CiCreatePackages');
+      expect(acts(creators[0])).toEqual(['dynamodb:PutItem']);
+      expect(([] as any[]).concat(creators[0].Resource)).toHaveLength(1);
+    } else {
+      expect(values).toEqual([]);
+      expect(creators).toEqual([]);
+      // not even as a literal in the template
+      expect(JSON.stringify(t.toJSON())).not.toContain(CI_PUBLISHERS_ENV);
+      expect(JSON.stringify(t.toJSON())).not.toContain('1376408823');
+    }
+  });
+
   // Can-fail proof: the checker above flags each planted defect, so a clean result means something.
   test('the policy checker goes red on planted defects', () => {
     const base = statements();
@@ -272,7 +308,10 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     const mutants: Record<string, any[]> = {
       'DeleteItem on tokens': withExtra({ Action: 'dynamodb:DeleteItem', Resource: tbl('tokens') }),
       'Scan on users': withExtra({ Action: 'dynamodb:Scan', Resource: tbl('users') }),
-      'PutItem on packages (registry write)': withExtra({ Action: 'dynamodb:PutItem', Resource: tbl('packages') }),
+      // Beta alone may create packages (BETA_CI_GRANTS); everywhere else this is a registry write.
+      ...(stage === 'beta' ? {} : { 'PutItem on packages (registry write)': withExtra({ Action: 'dynamodb:PutItem', Resource: tbl('packages') }) }),
+      'PutItem on owners (registry write)': withExtra({ Action: 'dynamodb:PutItem', Resource: tbl('owners') }),
+      'UpdateItem on packages': withExtra({ Action: 'dynamodb:UpdateItem', Resource: tbl('packages') }),
       'UpdateItem on audit': withExtra({ Action: 'dynamodb:UpdateItem', Resource: tbl('audit') }),
       'wildcard dynamodb action': withExtra({ Action: 'dynamodb:*', Resource: tbl('tokens') }),
       'a table that is in no list': withExtra({ Action: 'dynamodb:GetItem', Resource: tbl('reserved_names') }),

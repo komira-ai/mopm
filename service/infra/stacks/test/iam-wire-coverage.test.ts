@@ -26,7 +26,7 @@ const NOT_ROUTED: Record<string, string> = {
   'dynamodb:DeleteItem trusted_publishers': 'a real delete; the table policy denies it to this role',
   'dynamodb:PutItem owners': 'addOwner: package claim is not routed',
   'dynamodb:DeleteItem owners': 'removeOwner: no route; a real delete',
-  'dynamodb:PutItem packages': 'createPackage: package claim is not routed',
+  'dynamodb:PutItem packages': 'createPackage: package claim is not routed (the beta stage alone grants it, to the configured CI publisher)',
   'dynamodb:Scan packages': 'listPackageNames: used by the index writer, never by a route; the API role gets no Scan',
   'dynamodb:Query publishes': 'listActiveGroups: the group sweeper reads the sparse index by_sweep; no route does, and the API role has no Query on the table or the index',
 };
@@ -141,6 +141,8 @@ describe('wire goldens', () => {
     test('NOT_ROUTED lists only calls the goldens make and the policy refuses', () => {
       const st = allowed();
       for (const k of Object.keys(NOT_ROUTED)) {
+        // Beta alone grants the CI publisher the creation of packages (BETA_CI_GRANTS); on gamma and prod it stays refused.
+        if (stage === 'beta' && k === 'dynamodb:PutItem packages') continue;
         const mine = calls.filter((c) => `${c.action} ${c.table}` === k);
         expect(mine.length).toBeGreaterThan(0);
         for (const c of mine) expect(covered(c, st)).toBe(false);

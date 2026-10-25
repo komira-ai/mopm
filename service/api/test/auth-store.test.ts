@@ -66,6 +66,12 @@ const CHECKS: Record<string, Check> = {
     eq(await s.getTokenByHash(h(3)), t);
     eq(await s.listTokens(1), []);
   },
+  'a configured CI publisher token keeps its identity and the version of each package, exactly': async (s) => {
+    const t = tok({ id: 'tok_cfg', hash: h(4), kind: 'oidc', packages: ['alpha', 'beta_pkg'], versions: { alpha: '1.0.0', beta_pkg: '2.0.0' }, ci_owner: 'gh-repo:1376408823', issued_to: 'komira-ai/komira' });
+    delete t.github_id;
+    await s.putToken(t);
+    eq(await s.getTokenByHash(h(4)), t);
+  },
   'listTokens returns every token of the account (all kinds, any state) across pages, and nobody elses': async (s) => {
     for (let i = 1; i <= 5; i++) await s.putToken(tok({ id: `tok_${i}`, hash: h(i), github_id: 1, kind: i === 5 ? 'session' : 'api' }));
     await s.putToken(tok({ id: 'tok_other', hash: h(10), github_id: 2 }));

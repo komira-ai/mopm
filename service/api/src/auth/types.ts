@@ -31,6 +31,13 @@ export interface TokenRecord {
   all_current: boolean;
   /** An `oidc` token is good for exactly this version of its single package. */
   version?: string;
+  /**
+   * An `oidc` token minted for a configured CI publisher: the exact version of each package it may publish
+   * (`packages` holds the same names). Absent on a token for a package's registered trusted publisher.
+   */
+  versions?: Record<string, string>;
+  /** An `oidc` token minted for a configured CI publisher: the identity it acts as (`gh-repo:<repository_id>`), the owner it must match. */
+  ci_owner?: string;
   /** Session tokens only: full-strength actions need a login newer than this. */
   fresh_until?: string;
   created_at: string;

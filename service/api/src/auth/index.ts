@@ -7,3 +7,4 @@ export * from './github';
 export * from './tokens';
 export * from './device-login';
 export * from './oidc';
+export * from './ci-publishers';

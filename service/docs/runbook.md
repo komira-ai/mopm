@@ -191,6 +191,26 @@ publish `published`. See "The sparse index writer" below.
   `MOPM_RATE_PER_TOKEN_DAY`, set from the `limits` prop of the API stack): 100 MB per package, 10 GB per project (counts published and
   yanked files; a full project refuses new publishes and nothing is ever deleted), 2000 begins per account and 1000 per token per UTC day.
 
+## Beta trusts a CI identity: config as code
+
+Unlike the feature flags below, which a person flips in the config table, the CI identity that beta trusts to publish is **code**:
+`BETA_CI_PUBLISHERS` in `service/infra/stacks/lib/api-stack.ts`, delivered as the `CI_PUBLISHERS` environment variable of the beta API
+function and nowhere else. Design and reasons: `service/docs/adr-ci-publisher-identity.md`.
+
+- **Changing who beta trusts** is a pull request to that constant; promote deploys it to beta. There is no console step. To stop
+  trusting the identity, remove the entry in a pull request: a deployed value cannot be switched off at runtime (there is no
+  config-table item for it), so the fastest stop is the deploy.
+- **Gamma and prod get none of it.** Their function has no `CI_PUBLISHERS`, no grant to create packages, and answers the `packages`
+  form of the exchange with `oidc_not_trusted`. The handler also refuses to start on any stage but beta if the variable is present, so
+  a function that fails to start with "may be set on the beta stage only" means the variable reached the wrong stage: remove it in
+  the stack and redeploy. Trusting a CI identity at gamma or prod stays a deliberate human decision.
+- **What a CI-created package looks like.** `claimed`, `ci_owner` = `gh-repo:<repository_id>`, no owner rows (so `owners` is empty in
+  the read API), and an audit entry `ci_claim`. Only a token minted for that identity may publish to it. Fixing a wrong name means a
+  takedown by an operator; the service has no route that renames or transfers it.
+- **Reading a refusal.** `oidc_not_trusted`: the job's repository id, owner id, workflow file, ref, environment or event is not the
+  configured one (`pull_request` never is). `not_owner` at the exchange: a name in the request belongs to an account or to another
+  identity. `oidc_token_invalid` "token already used": a CI token is exchanged once.
+
 ## Groups: enabling, rolling out and recovering
 
 The mechanics of a group are under "Publishing" above; this section is the order of work for an operator. Users' side is

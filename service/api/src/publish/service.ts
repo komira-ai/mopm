@@ -407,7 +407,10 @@ export function parseFileFacts(config: PublishConfig, name: string, version: str
   return { subdir, filename, sha256, size };
 }
 
-/** The package must exist (claimed); an account token must belong to a current owner (a token outlives an ownership change). */
+/**
+ * The package must exist (claimed). An account token must belong to a current owner (a token outlives an ownership change).
+ * A CI token must name the package's `ci_owner` (a CI-owned package has no account owners).
+ */
 export async function requireOwner(registry: Store, p: Principal, name: string): Promise<string> {
   const pkg = await registry.getPackage(name);
   if (!pkg) throw new PublishError('package_not_found', `There is no package '${name}'.`, { name });
@@ -416,7 +419,15 @@ export async function requireOwner(registry: Store, p: Principal, name: string):
     if (!owner) throw new PublishError('not_owner', `You are not an owner of '${name}'.`, { name });
     return owner.handle;
   }
-  // A CI identity token was issued for exactly this package and version by a matching trusted publisher.
+  const notOwner = () => new PublishError('not_owner', `You are not an owner of '${name}'.`, { name });
+  if (p.kind !== 'oidc') throw notOwner();
+  if (p.ci_owner !== undefined) {
+    // A configured CI publisher's token acts as one identity and owns only the packages that name it.
+    if (pkg.ci_owner !== p.ci_owner) throw notOwner();
+    return p.ci_owner;
+  }
+  // A token minted for a package's registered trusted publisher: it belongs to accounts, never to a CI identity's package.
+  if (pkg.ci_owner !== undefined) throw notOwner();
   return 'ci';
 }
 

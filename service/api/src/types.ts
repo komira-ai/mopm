@@ -94,6 +94,11 @@ export interface PackageRecord {
   description?: string;
   homepage?: string;
   keywords?: string[];
+  /**
+   * Set when a CI identity owns the package instead of accounts (`gh-repo:<repository_id>`): such a package has no
+   * OwnerRecord, and only a token of that identity may publish to it. Never changed after creation.
+   */
+  ci_owner?: string;
 }
 
 /** The most readme text, in UTF-8 bytes, the API serves. */
