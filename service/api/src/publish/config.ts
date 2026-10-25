@@ -48,8 +48,9 @@ export const DEFAULT_PUBLISH_CONFIG: PublishConfig = {
   groupMaxMembers: 500,
   groupMaxBytes: 20_000_000_000,
   groupOpenPerActor: 5,
-  groupRatePerAccountPerDay: 2000,
-  groupRatePerTokenPerDay: 1000,
+  // Charged per file, and a retry of a dead group is charged again: sized for a few attempts of a full group (500 members).
+  groupRatePerAccountPerDay: 40_000,
+  groupRatePerTokenPerDay: 20_000,
   groupDeadlineHours: 12,
   groupCreateBudgetMs: 7000,
   groupValidateHours: 6,

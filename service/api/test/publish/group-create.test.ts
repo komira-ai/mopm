@@ -443,6 +443,32 @@ describe.each(RIGS)('groups over the registry: %s', (_label, make) => {
       expect(errorCode(r)).toBe('invalid_request');
       await nothingWritten(idOf('u:1', 'alpha', 'beta'), ['alpha', 'beta']);
     });
+
+    // With the default limits. A set is many members of several files each; a validation reject ends the group, so a retry is routine.
+    const wide = (e: GroupEnv, count: number, perMember: number) => {
+      const names = Array.from({ length: count }, (_, i) => `pkg${i}`);
+      const subdirs = ['linux-64', 'noarch', 'osx-arm64', 'linux-aarch64'];
+      const members = names.map((n) => e.member(n, '1.0.0', { files: subdirs.slice(0, perMember).map((subdir) => ({ ...e.member(n).files[0]!, subdir })) }));
+      return { names, members };
+    };
+
+    test('with the default limits, a group of 170 members of three files is created again after it was aborted, on the same day', async () => {
+      const { names, members } = wide(env, 170, 3);
+      const me = await env.account(1, 'octocat', names);
+      const first = await env.create(me, members);
+      expect(first.statusCode).toBe(201);
+      await env.abort(me, json(first).group_id);
+      const second = await env.create(me, members);
+      expect(second.statusCode).toBe(201);
+      expect(json(second)).toMatchObject({ attempt: 2 });
+    });
+
+    test('with the default limits, a group of 300 members of four files is not refused as invalid_request', async () => {
+      const { names, members } = wide(env, 300, 4);
+      const me = await env.account(1, 'octocat', names);
+      const r = await env.create(me, members);
+      expect(r.statusCode).toBe(201);
+    });
   });
 
   describe('the open-group cap and superseding', () => {

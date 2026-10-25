@@ -5,6 +5,13 @@ checksums, and this file says what changed. The details of a command are on its 
 
 ## Unreleased
 
+### Packing native dependencies to load
+
+`mopm pack`, `mopm publish` and `mopm stage` no longer refuse a `[native-dependencies]` entry with `mode = "load"`: a package that opens a
+system library at run time (such as `lz4 = { version = ">=1.9.3", mode = "load" }`) now lists the conda package that provides it in
+`depends`, so installing the package installs the library. An entry with `mode = "link"` or `kind = "static"` is still refused, with a
+message that says which. See [configuration](docs/configuration.md).
+
 ### Group publish (dark)
 
 Publishing a workspace as one group: the registry validates every member before anything is visible, and the members appear in its API

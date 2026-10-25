@@ -41,6 +41,9 @@ pub const Input = struct {
     compiler: []const u8,
     subdir: []const u8,
     deps: []const Dep = &.{},
+    /// The system libraries the package opens at run time (`[native-dependencies]` with `mode = "load"`), by conda
+    /// package name (`nativeDepsOf`): they follow the Mojo dependencies in `depends` of `info/index.json`.
+    native_deps: []const Dep = &.{},
     /// The bytes of the `.mojoc`.
     mojoc: []const u8,
     /// The static native libraries of this subdir: each one's archive goes to `lib/<soname>`.
@@ -330,6 +333,14 @@ pub fn indexJson(arena: Allocator, in: Input) Allocator.Error![]u8 {
             try std.fmt.allocPrint(arena, "mojo-{s} {s}", .{ d.name, d.range });
         try jsonStr(w, dep);
     }
+    for (in.native_deps) |d| {
+        try w.writeByte(',');
+        const dep = if (d.range.len == 0)
+            try arena.dupe(u8, d.name)
+        else
+            try std.fmt.allocPrint(arena, "{s} {s}", .{ d.name, d.range });
+        try jsonStr(w, dep);
+    }
     try w.writeAll("],\"name\":");
     try jsonStr(w, try std.fmt.allocPrint(arena, "mojo-{s}", .{in.name}));
     try w.writeAll(",\"subdir\":");
@@ -578,6 +589,75 @@ fn lessDep(_: void, a: Dep, b: Dep) bool {
     return std.mem.lessThan(u8, a.name, b.name);
 }
 
+/// The conda package that provides a system library, from the name a manifest gives it (`lz4`, `liblz4`,
+/// `liblz4.so.1`): the packages of conda-forge whose names are not the library's. Any other name is the conda
+/// package name as written (`openssl`).
+pub fn condaPackageFor(name: []const u8) []const u8 {
+    const known = [_][2][]const u8{
+        .{ "lz4", "lz4-c" },
+        .{ "z", "libzlib" },
+        .{ "zlib", "libzlib" },
+        .{ "bz2", "bzip2" },
+        .{ "lzma", "xz" },
+        .{ "xz", "xz" },
+        .{ "zstd", "zstd" },
+    };
+    var stem = if (std.mem.startsWith(u8, name, "lib")) name[3..] else name;
+    if (std.mem.indexOfScalar(u8, stem, '.')) |dot| stem = stem[0..dot];
+    for (known) |k| {
+        if (std.mem.eql(u8, k[0], stem)) return k[1];
+    }
+    return name;
+}
+
+/// The system libraries `m` opens at run time as `Dep`s (conda package and conda constraint) sorted by package, or
+/// `Unpackable` with `why`: only `mode = "load"` shared libraries are packed, each as an entry of `depends`, so
+/// that installing the package installs the library; a library to link is not packed yet.
+pub fn nativeDepsOf(arena: Allocator, m: manifest.Manifest, why: *[]const u8) error{ Unpackable, OutOfMemory }![]const Dep {
+    var out = std.ArrayList(Dep).init(arena);
+    for (m.native_dependencies) |d| {
+        if (d.mode != .load) {
+            why.* = try std.fmt.allocPrint(arena, "native dependency '{s}' is mode = \"link\"; only mode = \"load\" is packed", .{d.name});
+            return error.Unpackable;
+        }
+        if ((d.kind orelse manifest.NativeDepKind.shared) != .shared) {
+            why.* = try std.fmt.allocPrint(arena, "native dependency '{s}' is kind = \"static\"; a library to load is kind = \"shared\"", .{d.name});
+            return error.Unpackable;
+        }
+        const pkg = condaPackageFor(d.name);
+        for (pkg) |c| {
+            if (std.ascii.isUpper(c)) {
+                why.* = try std.fmt.allocPrint(arena, "native dependency '{s}' names the conda package '{s}', which has an upper case letter", .{ d.name, pkg });
+                return error.Unpackable;
+            }
+        }
+        if (std.mem.startsWith(u8, pkg, "mojo-")) {
+            why.* = try std.fmt.allocPrint(arena, "native dependency '{s}' names the conda package '{s}'; a Mojo package belongs in [dependencies]", .{ d.name, pkg });
+            return error.Unpackable;
+        }
+        for (out.items) |o| {
+            if (std.mem.eql(u8, o.name, pkg)) {
+                why.* = try std.fmt.allocPrint(arena, "native dependency '{s}' names the conda package '{s}' a second time", .{ d.name, pkg });
+                return error.Unpackable;
+            }
+        }
+        var range: []const u8 = "";
+        if (d.version) |v| {
+            var reason: []const u8 = "";
+            range = condaRange(arena, v, &reason) catch |e| switch (e) {
+                error.Unpackable => {
+                    why.* = try std.fmt.allocPrint(arena, "native dependency '{s}' = \"{s}\": {s}", .{ d.name, v, reason });
+                    return error.Unpackable;
+                },
+                error.OutOfMemory => return error.OutOfMemory,
+            };
+        }
+        try out.append(.{ .name = pkg, .range = range });
+    }
+    std.mem.sort(Dep, out.items, {}, lessDep);
+    return out.items;
+}
+
 /// The version of the package a path dependency names, read by the caller from the dependency's own mopm.toml.
 pub const PathVersion = struct { name: []const u8, version: []const u8 };
 
@@ -589,7 +669,7 @@ pub const path_unsatisfied_fmt = "dependency '{s}' requires version \"{s}\", but
 /// The Mojo dependencies of `m` as `Dep`s sorted by name, or `Unpackable`
 /// with `why` when `m` cannot be packed: a path dependency with no version,
 /// one whose package (in `path_versions`) does not satisfy its version,
-/// a native library that is not a linked static archive, or native dependencies (a later change packs those).
+/// a native library that is not a linked static archive, or a native dependency `nativeDepsOf` refuses.
 /// A path dependency with a version is published as that version alone: the path is never written.
 pub fn depsOf(arena: Allocator, m: manifest.Manifest, path_versions: []const PathVersion, why: *[]const u8) error{ Unpackable, OutOfMemory }![]const Dep {
     for (m.native) |n| {
@@ -602,10 +682,7 @@ pub fn depsOf(arena: Allocator, m: manifest.Manifest, path_versions: []const Pat
             return error.Unpackable;
         }
     }
-    if (m.native_dependencies.len > 0) {
-        why.* = "native dependencies are not packed yet";
-        return error.Unpackable;
-    }
+    _ = try nativeDepsOf(arena, m, why);
     var out = std.ArrayList(Dep).init(arena);
     for (m.dependencies) |d| {
         const text: []const u8 = switch (d.source) {
@@ -1265,8 +1342,108 @@ test "a manifest's native libraries: static, link mode packs; shared, both or lo
         try std.testing.expectError(error.Unpackable, depsOf(a, m, &.{}, &why));
         try std.testing.expectEqualStrings(c[1], why);
     }
-    // Native dependencies (libraries from outside the Mojo ecosystem) are still not packed.
+    // A native dependency to link (the default mode) is not packed yet.
     const dep = try manifest.parse(a, head ++ "[native-dependencies]\nzlib = \">=1.2\"\n", &diag);
     try std.testing.expectError(error.Unpackable, depsOf(a, dep, &.{}, &why));
-    try std.testing.expectEqualStrings("native dependencies are not packed yet", why);
+    try std.testing.expectEqualStrings("native dependency 'zlib' is mode = \"link\"; only mode = \"load\" is packed", why);
+}
+
+test "native dependencies to load are conda dependencies, in the order of their packages" {
+    var st = testArena();
+    defer st.deinit();
+    const a = st.allocator();
+    var diag: manifest.Diagnostic = .{};
+    const head =
+        \\[package]
+        \\name = "demo"
+        \\version = "0.1.0"
+        \\
+        \\[toolchain]
+        \\mojo = "1.0.0"
+        \\
+        \\[dependencies]
+        \\alpha = "^1.0"
+        \\
+        \\[native-dependencies]
+        \\
+    ;
+    var why: []const u8 = "";
+    const m = try manifest.parse(a, head ++
+        \\lz4 = { version = ">=1.9.3", kind = "shared", mode = "load" }
+        \\zlib = { mode = "load" }
+        \\libzstd = { version = "1.5.2", mode = "load" }
+        \\openssl = { version = ">=3", kind = "shared", mode = "load" }
+        \\
+    , &diag);
+    // The Mojo dependencies are unchanged by them.
+    const deps = try depsOf(a, m, &.{}, &why);
+    try std.testing.expectEqual(@as(usize, 1), deps.len);
+    const native = try nativeDepsOf(a, m, &why);
+    try std.testing.expectEqual(@as(usize, 4), native.len);
+    for ([_][2][]const u8{ .{ "libzlib", "" }, .{ "lz4-c", ">=1.9.3" }, .{ "openssl", ">=3" }, .{ "zstd", ">=1.5.2,<2" } }, native) |want, got| {
+        try std.testing.expectEqualStrings(want[0], got.name);
+        try std.testing.expectEqualStrings(want[1], got.range);
+    }
+
+    // They reach info/index.json, after the compiler and the Mojo dependencies, and nothing else of the package changes.
+    const idx = try indexJson(a, .{ .name = "demo", .version = "0.1.0", .compiler = "1.0.0", .subdir = "linux-64", .deps = deps, .native_deps = native, .mojoc = "x" });
+    try std.testing.expectEqualStrings(
+        "{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\",\"mojo-alpha >=1.0,<2\"," ++
+            "\"libzlib\",\"lz4-c >=1.9.3\",\"openssl >=3\",\"zstd >=1.5.2,<2\"],\"name\":\"mojo-demo\",\"subdir\":\"linux-64\",\"version\":\"0.1.0\"}",
+        idx,
+    );
+    // ... and into the file mopm pack writes.
+    const p = try pack(a, .{ .name = "demo", .version = "0.1.0", .compiler = "1.0.0", .subdir = "linux-64", .native_deps = native, .mojoc = "x" });
+    const entries = try readZip(a, p.bytes);
+    const info = try readTar(a, try unzstd(a, entries[1].data));
+    try std.testing.expectEqualStrings("info/index.json", info[0].path);
+    try std.testing.expect(std.mem.indexOf(u8, info[0].data, "\"lz4-c >=1.9.3\"") != null);
+}
+
+test "native dependencies that cannot be packed are refused with their reason" {
+    var st = testArena();
+    defer st.deinit();
+    const a = st.allocator();
+    var diag: manifest.Diagnostic = .{};
+    const head =
+        \\[package]
+        \\name = "demo"
+        \\version = "0.1.0"
+        \\
+        \\[toolchain]
+        \\mojo = "1.0.0"
+        \\
+        \\[native-dependencies]
+        \\
+    ;
+    for ([_][2][]const u8{
+        .{ "lz4 = { mode = \"link\", kind = \"shared\" }\n", "native dependency 'lz4' is mode = \"link\"; only mode = \"load\" is packed" },
+        .{ "lz4 = { mode = \"load\", kind = \"static\" }\n", "native dependency 'lz4' is kind = \"static\"; a library to load is kind = \"shared\"" },
+        .{ "OpenSSL = { mode = \"load\" }\n", "native dependency 'OpenSSL' names the conda package 'OpenSSL', which has an upper case letter" },
+        .{ "mojo-json = { mode = \"load\" }\n", "native dependency 'mojo-json' names the conda package 'mojo-json'; a Mojo package belongs in [dependencies]" },
+        .{ "lz4 = { mode = \"load\" }\nliblz4 = { mode = \"load\" }\n", "native dependency 'liblz4' names the conda package 'lz4-c' a second time" },
+        .{ "lz4 = { version = \"^1.0.0-rc.1\", mode = \"load\" }\n", "native dependency 'lz4' = \"^1.0.0-rc.1\": a pre-release in a requirement has no conda spelling" },
+    }) |c| {
+        const m = try manifest.parse(a, try std.mem.concat(a, u8, &.{ head, c[0] }), &diag);
+        var why: []const u8 = "";
+        try std.testing.expectError(error.Unpackable, nativeDepsOf(a, m, &why));
+        try std.testing.expectEqualStrings(c[1], why);
+        try std.testing.expectError(error.Unpackable, depsOf(a, m, &.{}, &why));
+    }
+}
+
+test "the conda package of a system library: by name, library name or file name" {
+    for ([_][2][]const u8{
+        .{ "lz4", "lz4-c" },
+        .{ "liblz4", "lz4-c" },
+        .{ "liblz4.so.1", "lz4-c" },
+        .{ "libz.so.1", "libzlib" },
+        .{ "zlib", "libzlib" },
+        .{ "libbz2.so.1.0", "bzip2" },
+        .{ "liblzma.so.5", "xz" },
+        .{ "libzstd.so.1", "zstd" },
+        .{ "openssl", "openssl" },
+        .{ "libffi", "libffi" },
+        .{ "lz4-c", "lz4-c" },
+    }) |c| try std.testing.expectEqualStrings(c[1], condaPackageFor(c[0]));
 }
