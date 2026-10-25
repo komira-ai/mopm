@@ -102,6 +102,14 @@ export class MemoryStore implements Store, GroupStore {
     if (this.packages.has(pkg.name)) throw new RegistryError('name_taken', `'${pkg.name}' is already taken.`, { name: pkg.name });
     this.packages.set(pkg.name, copy(pkg));
   }
+  async claimPackage(pkg: PackageRecord, owner: OwnerRecord, audit: AuditEntry): Promise<void> {
+    if (this.packages.has(pkg.name) || this.owners.has(`${owner.name}\0${owner.github_id}`)) {
+      throw new RegistryError('name_taken', `'${pkg.name}' is already taken.`, { name: pkg.name });
+    }
+    this.packages.set(pkg.name, copy(pkg));
+    this.owners.set(`${owner.name}\0${owner.github_id}`, copy(owner));
+    this.audit.push(copy(audit));
+  }
   async getPackage(name: string) {
     const p = this.packages.get(name);
     return p && copy(p);

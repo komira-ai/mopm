@@ -18,6 +18,11 @@ import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, Vers
 export interface Store {
   /** Create-once. Throws name_taken when the package exists. */
   createPackage(pkg: PackageRecord): Promise<void>;
+  /**
+   * A claim: the package, its first owner and the audit entry, all or nothing (a name is never left without an owner,
+   * and an owner row never lands on a package somebody else created). Throws name_taken when the package exists.
+   */
+  claimPackage(pkg: PackageRecord, owner: OwnerRecord, audit: AuditEntry): Promise<void>;
   getPackage(name: string): Promise<PackageRecord | undefined>;
   listPackageNames(): Promise<string[]>;
   /**
