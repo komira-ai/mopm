@@ -215,7 +215,7 @@ describe.each<Backing>(['memory', 'dynamodb'])('auth routes over %s', (backing) 
     expect(bad.json.error.message).toBe("The request is not valid: unknown scope 'owners'.");
   });
 
-  test('CI exchange: a trusted publisher gets a 15 minute publish token for one version; others are refused', async () => {
+  test('CI exchange: a trusted publisher gets a 10 minute publish token for one version; others are refused', async () => {
     const w = world(backing);
     if (w.doc) {
       w.doc.seed('trusted_publishers', {
@@ -232,11 +232,16 @@ describe.each<Backing>(['memory', 'dynamodb'])('auth routes over %s', (backing) 
     const ok = await w.send('POST', '/auth/oidc/exchange', { body: { jwt, name: 'alpha', version: '1.0.0' } });
     expect(ok.res.statusCode).toBe(200);
     expect(ok.json).toMatchObject({ token_kind: 'publish', name: 'alpha', version: '1.0.0' });
-    expect(ok.json.expires_at).toBe(new Date(w.clock.t + 15 * 60_000).toISOString());
+    expect(ok.json.expires_at).toBe(new Date(w.clock.t + 10 * 60_000).toISOString());
     // The CI token is nobody's: it cannot manage tokens.
     expect(errorOf(await w.send('GET', '/me/tokens', { token: ok.json.token }))).toEqual({ status: 403, code: 'scope_missing' });
 
-    expect(errorOf(await w.send('POST', '/auth/oidc/exchange', { body: { jwt, name: 'beta_pkg', version: '1.0.0' } }))).toEqual({ status: 403, code: 'oidc_not_trusted' });
+    // The same CI token a second time is a replay.
+    const replay = await w.send('POST', '/auth/oidc/exchange', { body: { jwt, name: 'alpha', version: '1.0.0' } });
+    expect(errorOf(replay)).toEqual({ status: 401, code: 'oidc_token_invalid' });
+    expect(replay.json.error.message).toBe('The CI identity token was rejected: token already used.');
+    const fresh = signJwt(key, goodClaims(w.clock));
+    expect(errorOf(await w.send('POST', '/auth/oidc/exchange', { body: { jwt: fresh, name: 'beta_pkg', version: '1.0.0' } }))).toEqual({ status: 403, code: 'oidc_not_trusted' });
     expect(errorOf(await w.send('POST', '/auth/oidc/exchange', { body: { jwt: 'a.b.c', name: 'alpha', version: '1.0.0' } }))).toEqual({ status: 401, code: 'oidc_token_invalid' });
     expect(errorOf(await w.send('POST', '/auth/oidc/exchange', { body: { jwt, name: 'alpha', version: 'x.y' } }))).toEqual({ status: 400, code: 'invalid_version' });
     expect(errorOf(await w.send('POST', '/auth/oidc/exchange', { body: { jwt, name: 'Alpha', version: '1.0.0' } }))).toEqual({ status: 400, code: 'invalid_name' });

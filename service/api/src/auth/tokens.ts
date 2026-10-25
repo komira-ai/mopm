@@ -9,7 +9,8 @@ export const TOKEN_PATTERN = /^mopm_[a-z2-7]{32,64}$/;
 export const NAME_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
 
 export const SESSION_FRESH_MS = 15 * 60_000;
-export const OIDC_TOKEN_TTL_MS = 15 * 60_000;
+/** A token minted by the CI exchange lives this long (the spec says so; keep the fake and the contract fixtures in step). */
+export const OIDC_TOKEN_TTL_MS = 10 * 60_000;
 /** last_used_at is written at most this often per token, to keep reads from becoming writes. */
 const TOUCH_EVERY_MS = 60_000;
 const MAX_TOKENS_PER_USER = 50;

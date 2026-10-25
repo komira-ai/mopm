@@ -68,6 +68,10 @@ export interface TrustedPublisher {
   workflow: string;
   /** When set, the job must run in this deployment environment. */
   environment?: string;
+  /** The git ref the job must run on. Absent means `refs/heads/main` (DEFAULT_TRUSTED_REF): a branch or tag is never trusted by default. */
+  ref?: string;
+  /** The event that started the workflow. Absent means `push` or `workflow_dispatch` (ALLOWED_EVENTS); set, it must equal the claim. */
+  event_name?: string;
   added_by: number;
   added_at: string;
 }
@@ -96,4 +100,11 @@ export interface AuthStore {
   addTrustedPublisher(tp: TrustedPublisher): Promise<void>;
   listTrustedPublishers(name: string): Promise<TrustedPublisher[]>;
   removeTrustedPublisher(name: string, id: string): Promise<void>;
+
+  /**
+   * Claim a one-time key (a CI token's jti, hashed): true for the first caller, false for every later one, atomically.
+   * `expires_at` is when the row may be forgotten (DynamoDB TTL removes it lazily; until then the key stays claimed).
+   * Used rows are never deleted by this port.
+   */
+  claimOnce(key: string, expires_at: string): Promise<boolean>;
 }
