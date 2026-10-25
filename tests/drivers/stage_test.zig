@@ -214,6 +214,31 @@ fn aCycleAndDeterminism(w: World) !void {
     w.rep.check("a dependency keeps its version requirement in the package", h.contains(m, "\"name\":\"stg_z\",\"range\":\">=0.2,<0.3\""), "the requirement is gone");
 }
 
+/// A member with a `[native.<id>]` static library: staged from the archive beside its `.mojoc`, and published as staged.
+fn aNativeMember(w: World) !void {
+    const archive = "!<arch>\nthe archive of stg_n\n";
+    try h.writeFile(try w.path(&.{ w.work, "wsn", "src", "stg_n", "mopm.toml" }), "[package]\nname = \"stg_n\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[native.stg_n]\nkind = \"static\"\n");
+    try h.writeFile(try w.path(&.{ w.work, "wsn", "src", "stg_n", "README.md" }), "# stg_n\n");
+    try h.writeFile(try w.path(&.{ w.work, "artn", "linux-64", "stg_n.mojoc" }), "the mojoc of n");
+    var r = try w.stage("wsn", "artn", "set_n_missing", &.{});
+    w.rep.check("a native member with no archive is refused, naming the member and the file it expected", r.code == 1 and h.contains(r.stderr, "stg_n: native library 'stg_n' has no archive for linux-64") and
+        h.contains(r.stderr, "stg_n.native/libstg_n.a") and !w.exists(&.{ w.work, "set_n_missing" }), try w.text(r));
+    try h.writeFile(try w.path(&.{ w.work, "artn", "linux-64", "stg_n.native", "libstg_n.a" }), archive);
+    r = try w.stage("wsn", "artn", "set_n", &.{});
+    w.rep.check("a native member is staged from its archive", r.code == 0 and h.contains(r.stdout, "1 to upload"), try w.text(r));
+    const conda_file = try h.readFile(w.a, try w.path(&.{ w.work, "set_n", "linux-64", "mojo-stg_n-1.0.0-mojo1.0.0_0.conda" }));
+    w.rep.check("and the package holds the archive and declares the static native", h.contains(conda_file, "lib/libstg_n.a") and h.contains(conda_file, "stg_n"), "the archive is not in the package");
+    const mojoc_arg = try std.fmt.allocPrint(w.a, "linux-64={s}", .{try w.path(&.{ w.work, "artn", "linux-64", "stg_n.mojoc" })});
+    const native_arg = try std.fmt.allocPrint(w.a, "stg_n=linux-64:{s}", .{try w.path(&.{ w.work, "artn", "linux-64", "stg_n.native", "libstg_n.a" })});
+    const manifest_arg = try w.path(&.{ w.work, "wsn", "src", "stg_n", "mopm.toml" });
+    const out_arg = try w.path(&.{ w.work, "packed_n" });
+    const by_pack = try w.m.run(&.{ "pack", "--compiler", "1.0.0", "--mojoc", mojoc_arg, "--native", native_arg, "--manifest", manifest_arg, "-o", out_arg }, null);
+    const packed_bytes = if (by_pack.code == 0) try h.readFile(w.a, try w.path(&.{ w.work, "packed_n", "linux-64", "mojo-stg_n-1.0.0-mojo1.0.0_0.conda" })) else "";
+    w.rep.check("the staged package is byte for byte the one mopm pack makes from the same files", by_pack.code == 0 and std.mem.eql(u8, packed_bytes, conda_file), try w.text(by_pack));
+    const pub_ = try w.m.run(&.{ "publish", "--staged", try w.path(&.{ w.work, "set_n" }), "--registry", w.fake.base, "--config-dir", w.conf, "--wait", "60" }, w.token);
+    w.rep.check("publish --staged publishes the native member", pub_.code == 0 and std.mem.eql(u8, try w.stateOf("stg_n", "1.0.0"), "published"), try w.text(pub_));
+}
+
 fn usageErrors(w: World) !void {
     var r = try w.m.run(&.{ "stage", "--workspace-root", "x", "--artifacts", "y", "--compiler", "1.0.0", "--out", "z" }, null);
     w.rep.check("stage without --registry is a usage error: there is no default", r.code == 2 and h.contains(r.stderr, "--registry is required"), r.stderr);
@@ -251,7 +276,9 @@ test "mopm stage against the fake registry" {
         const r = try h.request(a, "POST", fake.base, try std.fmt.allocPrint(a, "/api/v1/packages/{s}/claim", .{n}), "{}", session);
         report.check(try std.fmt.allocPrint(a, "{s} is claimed", .{n}), r.status == 201, r.body);
     }
-    const made = try h.request(a, "POST", fake.base, "/api/v1/me/tokens", "{\"name\":\"e2e\",\"scopes\":[\"publish\",\"yank\"],\"packages\":[\"stg_z\",\"stg_m\",\"stg_a\"],\"expires_in_days\":1}", session);
+    const claim_n = try h.request(a, "POST", fake.base, "/api/v1/packages/stg_n/claim", "{}", session);
+    report.check("stg_n is claimed", claim_n.status == 201, claim_n.body);
+    const made = try h.request(a, "POST", fake.base, "/api/v1/me/tokens", "{\"name\":\"e2e\",\"scopes\":[\"publish\",\"yank\"],\"packages\":[\"stg_z\",\"stg_m\",\"stg_a\",\"stg_n\"],\"expires_in_days\":1}", session);
     const token = if (made.status == 201) (h.jsonString(try h.parseJson(a, made.body), "token") orelse "") else "";
     report.check("an API token that may publish and yank the three is made", token.len > 0, made.body);
 
@@ -259,6 +286,7 @@ test "mopm stage against the fake registry" {
     try stageAndPublishAChain(w);
     try theRegistryDecides(w);
     try aCycleAndDeterminism(w);
+    try aNativeMember(w);
     try usageErrors(w);
 
     var leaked = false;

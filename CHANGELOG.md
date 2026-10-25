@@ -5,6 +5,13 @@ checksums, and this file says what changed. The details of a command are on its 
 
 ## Unreleased
 
+### `mopm stage` packs native libraries
+
+`mopm stage` no longer refuses a member that declares `[native.<id>]` libraries. It reads each static archive from
+`<artifacts>/<subdir>/<name>.native/lib<id>.a` (beside the member's `.mojoc`) and packs it exactly as `mopm pack --native` does, so the
+staged `.conda` is the one `pack` makes from the same files. A missing archive, or one that is not an `ar` archive, is refused with the
+member named. See [Publishing a workspace as one group](docs/publishing-a-workspace.md).
+
 ### Claiming a package name
 
 The registry service now answers `POST /packages/{name}/claim`, the operation the API contract has always described: a signed-in
