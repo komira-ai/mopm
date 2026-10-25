@@ -18,7 +18,8 @@ const PUBLISHER: CiPublisher = {
   repository_owner_id: '305577347',
   workflow: '.github/workflows/release.yml',
   ref: 'refs/heads/main',
-  events: ['push', 'workflow_dispatch'],
+  job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
+  events: ['push'],
   environment: 'beta',
 };
 
@@ -37,6 +38,7 @@ function setup(publishers: readonly CiPublisher[] | null = [PUBLISHER]) {
         repository_id: '1376408823',
         repository_owner_id: '305577347',
         workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
+        job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
         environment: 'beta',
         ...over,
       }),
@@ -185,6 +187,15 @@ describe('only the configured identity is trusted, field by field', () => {
     ['another repository_owner_id', { repository_owner_id: '305577348' }],
     ['another workflow file', { workflow_ref: 'komira-ai/komira/.github/workflows/other.yml@refs/heads/main' }],
     ['a workflow of another repository with the right file name', { workflow_ref: 'evil/fork/.github/workflows/release.yml@refs/heads/main' }],
+    // workflow_ref, ref, environment and event all look right; only job_workflow_ref differs
+    ['a job of another file (a reusable workflow called from release.yml)', { job_workflow_ref: 'komira-ai/komira/.github/workflows/other.yml@refs/heads/main' }],
+    ['a job of release.yml at another ref', { job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/feature' }],
+    ['a job of release.yml at a tag', { job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/tags/v1' }],
+    ['a job of release.yml in another repository', { job_workflow_ref: 'evil/fork/.github/workflows/release.yml@refs/heads/main' }],
+    ['no job_workflow_ref claim', { job_workflow_ref: undefined }],
+    // the reverse reusable case: another workflow of the repository calls release.yml, so job_workflow_ref is right and workflow_ref is the caller
+    ['release.yml called by another workflow', { workflow_ref: 'komira-ai/komira/.github/workflows/caller.yml@refs/heads/main' }],
+    ['a manual run (workflow_dispatch)', { event_name: 'workflow_dispatch' }],
     ['a feature branch', { ref: 'refs/heads/feature' }],
     ['a tag', { ref: 'refs/tags/v1' }],
     ['a pull request merge ref', { ref: 'refs/pull/7/merge' }],
@@ -200,14 +211,12 @@ describe('only the configured identity is trusted, field by field', () => {
     expect(ciTokens(s)).toEqual([]);
   });
 
-  test('the good identity passes, on both allowed events', async () => {
-    for (const event_name of ['push', 'workflow_dispatch']) {
-      const s = setup();
-      await expect(s.oidc.exchange({ jwt: s.jwt({ event_name }), packages: widgets })).resolves.toBeDefined();
-    }
+  test('the good push identity passes', async () => {
+    const s = setup();
+    await expect(s.oidc.exchange({ jwt: s.jwt(), packages: widgets })).resolves.toBeDefined();
   });
 
-  test('a publisher that names one event refuses the other', async () => {
+  test('a publisher that names one event refuses the other (the rule is per row, not hard-wired to push)', async () => {
     const s = setup([{ ...PUBLISHER, events: ['workflow_dispatch'] }]);
     await refused(s.oidc.exchange({ jwt: s.jwt({ event_name: 'push' }), packages: widgets }), 'oidc_not_trusted', 403);
     await expect(s.oidc.exchange({ jwt: s.jwt({ event_name: 'workflow_dispatch' }), packages: widgets })).resolves.toBeDefined();

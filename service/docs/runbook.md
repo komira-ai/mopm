@@ -197,6 +197,11 @@ Unlike the feature flags below, which a person flips in the config table, the CI
 `BETA_CI_PUBLISHERS` in `service/infra/stacks/lib/api-stack.ts`, delivered as the `CI_PUBLISHERS` environment variable of the beta API
 function and nowhere else. Design and reasons: `service/docs/adr-ci-publisher-identity.md`.
 
+- **What beta trusts today:** the komira release workflow (`.github/workflows/release.yml` on `refs/heads/main`, environment `beta`)
+  on the **`push` event only**; a `workflow_dispatch` run is refused. `job_workflow_ref` must equal
+  `komira-ai/komira/.github/workflows/release.yml@refs/heads/main` as well as `workflow_ref`, so a reusable workflow call is refused.
+  A manual release needs a pull request that adds `workflow_dispatch` to `events`.
+
 - **Changing who beta trusts** is a pull request to that constant; promote deploys it to beta. There is no console step. To stop
   trusting the identity, remove the entry in a pull request: a deployed value cannot be switched off at runtime (there is no
   config-table item for it), so the fastest stop is the deploy.

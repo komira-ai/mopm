@@ -29,7 +29,8 @@ const PUBLISHER: CiPublisher = {
   repository_owner_id: '305577347',
   workflow: '.github/workflows/release.yml',
   ref: 'refs/heads/main',
-  events: ['push', 'workflow_dispatch'],
+  job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
+  events: ['push'],
   environment: 'beta',
 };
 const REASON = 'the release is broken';
@@ -74,6 +75,7 @@ describe.each(RIGS)('a CI identity and groups on the beta configuration: %s', (_
         repository_id: '1376408823',
         repository_owner_id: '305577347',
         workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
+        job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
         environment: 'beta',
       }),
     );

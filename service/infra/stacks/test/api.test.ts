@@ -285,7 +285,8 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
           repository_owner_id: '305577347',
           workflow: '.github/workflows/release.yml',
           ref: 'refs/heads/main',
-          events: ['push', 'workflow_dispatch'],
+          job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
+          events: ['push'],
           environment: 'beta',
         },
       ]);

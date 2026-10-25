@@ -17,8 +17,12 @@ account owner behind it cannot publish its first package at all.
 
 1. **The deployment can name a CI publisher.** The API function reads `CI_PUBLISHERS`, a JSON array of at most eight entries:
    `repository_id`, `repository_owner_id` (GitHub's numeric ids, as strings), `workflow` (a file under `.github/workflows/`), `ref` (one
-   exact ref), `events` (a subset of `push` and `workflow_dispatch`) and `environment`. Every field is required and every field is
-   matched exactly; names never match, ids do. The code validates the value whole or refuses it.
+   exact ref), `job_workflow_ref` (the token's claim of that name, written out in full and ending in the entry's own
+   `/<workflow>@<ref>`), `events` (a subset of `push` and `workflow_dispatch`; the code allows both, a deployment lists what it
+   trusts) and `environment`. Every field is required and every field is matched exactly; names never match, ids do. The code
+   validates the value whole or refuses it. Beta trusts the komira release workflow on `push` only, never a manual run, and pins
+   `job_workflow_ref` as well as `workflow_ref`: `workflow_ref` names the workflow that was triggered and `job_workflow_ref` the file
+   the running job is defined in, so a reusable workflow called from the right file (or `release.yml` called by another) does not match.
 2. **Beta only, twice.** The CDK stack sets `CI_PUBLISHERS` when the stage is `beta` and never otherwise; and the service refuses to
    start when the variable is present on any other stage (`parseCiPublishers`), so a mistake in the infrastructure cannot turn the
    trust on at gamma or prod. Tests pin both: the gamma and prod templates carry neither the variable nor the grant, and the loader

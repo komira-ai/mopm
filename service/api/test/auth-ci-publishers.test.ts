@@ -9,7 +9,8 @@ const ENTRY = {
   repository_owner_id: '305577347',
   workflow: '.github/workflows/release.yml',
   ref: 'refs/heads/main',
-  events: ['push', 'workflow_dispatch'],
+  job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
+  events: ['push'],
   environment: 'beta',
 };
 const json = (v: unknown) => JSON.stringify(v);
@@ -43,6 +44,11 @@ describe('parseCiPublishers: a malformed value is refused whole', () => {
     ['an unknown key', json([{ ...ENTRY, branches: ['*'] }])],
     ['a missing environment', json([{ ...ENTRY, environment: undefined }])],
     ['a missing ref', json([{ ...ENTRY, ref: undefined }])],
+    ['a missing job_workflow_ref', json([{ ...ENTRY, job_workflow_ref: undefined }])],
+    ['a job_workflow_ref with a wildcard', json([{ ...ENTRY, job_workflow_ref: 'komira-ai/komira/.github/workflows/*.yml@refs/heads/main' }])],
+    ['a job_workflow_ref of another file than workflow', json([{ ...ENTRY, job_workflow_ref: 'komira-ai/komira/.github/workflows/other.yml@refs/heads/main' }])],
+    ['a job_workflow_ref at another ref than ref', json([{ ...ENTRY, job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/dev' }])],
+    ['a job_workflow_ref without a repository', json([{ ...ENTRY, job_workflow_ref: '.github/workflows/release.yml@refs/heads/main' }])],
     ['a numeric repository_id', json([{ ...ENTRY, repository_id: 1376408823 }])],
     ['a repository_id with a leading zero', json([{ ...ENTRY, repository_id: '0123' }])],
     ['a repository name instead of an id', json([{ ...ENTRY, repository_id: 'komira-ai/komira' }])],
@@ -76,6 +82,7 @@ describe('matchesCiPublisher', () => {
     repository_id: '1376408823',
     repository_owner_id: '305577347',
     workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
+    job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
     ref: 'refs/heads/main',
     event_name: 'push',
     jti: 'j',
@@ -91,11 +98,21 @@ describe('matchesCiPublisher', () => {
       { environment: 'prod' },
       { environment: undefined },
       { event_name: 'pull_request' },
+      { event_name: 'workflow_dispatch' },
+      { job_workflow_ref: 'komira-ai/komira/.github/workflows/other.yml@refs/heads/main' },
+      { job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/dev' },
+      { job_workflow_ref: undefined },
     ];
     for (const d of diffs) expect(matchesCiPublisher(ENTRY, { ...claims, ...d })).toBe(false);
   });
   test('an event the publisher does not list, though the exchange allows it, does not match', () => {
     expect(matchesCiPublisher({ ...ENTRY, events: ['workflow_dispatch'] }, claims)).toBe(false);
+  });
+  test('a reusable-workflow call is not accepted by accident: the triggering workflow looks right, the running job is another file', () => {
+    // GitHub sets workflow_ref to the caller and job_workflow_ref to the called file.
+    const called = { ...claims, job_workflow_ref: 'komira-ai/komira/.github/workflows/build.yml@refs/heads/main' };
+    expect(called.workflow_ref).toBe(claims.workflow_ref);
+    expect(matchesCiPublisher(ENTRY, called)).toBe(false);
   });
 });
 
