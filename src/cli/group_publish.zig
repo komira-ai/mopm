@@ -1,7 +1,8 @@
 //! `mopm publish --staged <dir> --registry <name>`: a staged set published through one group
 //! (spec/staged-set.md; the registry's side is `createGroup`, `commitGroup` and `getGroup` in spec/api/openapi.yaml).
 //!
-//!   mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>] [--dry-run]
+//!   mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>]
+//!                [--timeout <seconds>] [--retries <n>] [--dry-run]
 //!
 //! The run, in order:
 //!   1. read `<dir>/plan.json`, refuse a plan that has a refused member, and check every file against the plan;
@@ -17,7 +18,11 @@
 //! the same group and sends only what the registry does not hold. `<dir>/report.json` says what each member came to.
 //!
 //! A 404 from `POST /groups` means the registry has no group publish: nothing is uploaded. A 429 stops the run at
-//! once and says when to try again; it is never retried into the limit. The token (`$MOPM_TOKEN`, else the login's) is read after
+//! once and says when to try again, unless the registry's Retry-After is short (http.max_retry_after_secs), when the
+//! request waits that long and goes again; it is never retried into the limit. A request that can be repeated without
+//! changing anything (every PUT of a file, every poll) is repeated, at most `--retries` times with jittered waits, when
+//! the connection fails or times out (`--timeout`) or the server answers 500, 502, 503 or 504; a 4xx other than 429 is
+//! final at once. The POSTs (create, commit) are sent once: a rerun of the command is their retry. The token (`$MOPM_TOKEN`, else the login's) is read after
 //! the plan has been checked, goes only to the registry's API, is never printed, and is taken out of the environment of every
 //! program mopm starts (src/core/child_env.zig).
 
@@ -31,7 +36,7 @@ const registry_cmd = @import("registry_cmd.zig");
 const publish_cmd = @import("publish_cmd.zig");
 
 const usage =
-    \\usage: mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>] [--dry-run]
+    \\usage: mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>] [--timeout <seconds>] [--retries <n>] [--dry-run]
     \\
     \\  Publishes the staged set in <dir> (plan.json and the files it names) through one group: every member is visible
     \\  together, or none is. --registry is required. A rerun after a failure resumes the same group (<dir>/state.json).
@@ -40,6 +45,8 @@ const usage =
 
 /// The least the run waits for the group to be visible, unless `--wait` says: the base of the default.
 pub const default_wait_secs: i64 = 600;
+/// The longest `--timeout` may be: an hour, so a typo does not read as no limit.
+pub const max_timeout_secs: u32 = 3600;
 /// What each member adds to the default wait: validation and the chain take longer the more members a group has
 /// (about 8 to 12 minutes at 170 members, 15 to 25 at 300).
 pub const wait_per_member_secs: i64 = 5;
@@ -57,6 +64,10 @@ pub const Flags = struct {
     config_dir: ?[]const u8 = null,
     /// `--wait`; null means the default of the group's size (`defaultWaitFor`).
     wait_secs: ?i64 = null,
+    /// The connect limit and the longest a read or write waits for the server, per request.
+    timeout_secs: u32 = http.default_timeout_secs,
+    /// Repeats of a request that can be repeated, after its first try.
+    retries: u8 = http.default_retries,
     dry_run: bool = false,
 };
 
@@ -111,7 +122,7 @@ pub fn parseFlags(arena: Allocator, args: []const []const u8) Allocator.Error!Pa
             f.dry_run = true;
             continue;
         }
-        const takes = std.mem.eql(u8, a, "--staged") or std.mem.eql(u8, a, "--registry") or std.mem.eql(u8, a, "--config-dir") or std.mem.eql(u8, a, "--wait");
+        const takes = std.mem.eql(u8, a, "--staged") or std.mem.eql(u8, a, "--registry") or std.mem.eql(u8, a, "--config-dir") or std.mem.eql(u8, a, "--wait") or std.mem.eql(u8, a, "--timeout") or std.mem.eql(u8, a, "--retries");
         if (!takes) {
             const why = if (std.mem.eql(u8, a, "--compiler") or std.mem.eql(u8, a, "--mojoc") or std.mem.eql(u8, a, "--manifest") or std.mem.eql(u8, a, "--native") or std.mem.eql(u8, a, "--readme"))
                 try std.fmt.allocPrint(arena, "{s} packs one package; --staged publishes a staged set, which was packed already", .{a})
@@ -128,6 +139,12 @@ pub fn parseFlags(arena: Allocator, args: []const []const u8) Allocator.Error!Pa
             reg = v;
         } else if (std.mem.eql(u8, a, "--config-dir")) {
             f.config_dir = v;
+        } else if (std.mem.eql(u8, a, "--timeout")) {
+            f.timeout_secs = std.fmt.parseInt(u32, v, 10) catch return .{ .bad = try std.fmt.allocPrint(arena, "--timeout {s}: a number of seconds", .{v}) };
+            if (f.timeout_secs == 0 or f.timeout_secs > max_timeout_secs) return .{ .bad = try std.fmt.allocPrint(arena, "--timeout is 1 to {d} seconds", .{max_timeout_secs}) };
+        } else if (std.mem.eql(u8, a, "--retries")) {
+            f.retries = std.fmt.parseInt(u8, v, 10) catch return .{ .bad = try std.fmt.allocPrint(arena, "--retries {s}: a number from 0 to {d}", .{ v, http.max_retries }) };
+            if (f.retries > http.max_retries) return .{ .bad = try std.fmt.allocPrint(arena, "--retries is 0 to {d}", .{http.max_retries}) };
         } else {
             const n = std.fmt.parseInt(i64, v, 10) catch return .{ .bad = try std.fmt.allocPrint(arena, "--wait {s}: a number of seconds", .{v}) };
             if (n < 0) return .{ .bad = "--wait is not negative" };
@@ -145,6 +162,8 @@ pub fn parseFlags(arena: Allocator, args: []const []const u8) Allocator.Error!Pa
 pub const Net = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
+    /// The time limit of every request and how often an idempotent one is repeated (`--timeout`, `--retries`).
+    policy: http.Policy = .{},
 
     pub const VTable = struct {
         request: *const fn (ptr: *anyopaque, arena: Allocator, method: std.http.Method, url: []const u8, options: http.Options) anyerror!http.Answer,
@@ -152,8 +171,17 @@ pub const Net = struct {
         now: *const fn (ptr: *anyopaque) i64,
     };
 
+    /// One request, repeated by the policy when it is idempotent and fails in a way a second try can cure.
     fn request(n: Net, arena: Allocator, method: std.http.Method, url: []const u8, options: http.Options) anyerror!http.Answer {
+        return http.retrying(arena, n, method, url, options, n.policy);
+    }
+    /// One try, as `http.retrying` asks for it.
+    pub fn once(n: Net, arena: Allocator, method: std.http.Method, url: []const u8, options: http.Options) anyerror!http.Answer {
         return n.vtable.request(n.ptr, arena, method, url, options);
+    }
+    /// The wait between tries, as `http.retrying` asks for it.
+    pub fn pause(n: Net, secs: u64) void {
+        n.sleep(secs);
     }
     fn sleep(n: Net, secs: u64) void {
         n.vtable.sleep(n.ptr, secs);
@@ -661,7 +689,14 @@ pub fn main(arena: Allocator, args: []const []const u8, cli_version: []const u8)
     };
 }
 
-fn command(arena: Allocator, flags: Flags, cli_version: []const u8, net: Net) anyerror!u8 {
+/// The time limit and the retries `flags` ask for.
+pub fn policyOf(flags: Flags) http.Policy {
+    return .{ .timeout_secs = flags.timeout_secs, .retries = flags.retries };
+}
+
+fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Net) anyerror!u8 {
+    var net = base_net;
+    net.policy = policyOf(flags);
     var dir = std.fs.cwd().openDir(flags.staged, .{ .iterate = false }) catch |e| {
         err("{s}: {s}\n", .{ flags.staged, @errorName(e) });
         return 1;

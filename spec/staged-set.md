@@ -92,7 +92,15 @@ sent again; a group that expired is opened again with the next attempt.
   means the registry has no group publish: the run is refused and nothing is
   uploaded.
 - A **429** stops the run where it is, prints how long to wait, and is never
-  retried. The state is kept; run the same command later.
+  retried into the limit. The state is kept; run the same command later. The one
+  exception: a PUT or a poll answered 429 with a `Retry-After` of 20 seconds or
+  less waits that long and is sent again.
+- Every request has a time limit, `--timeout` (default 30 seconds): to connect,
+  and then for the server on any read or write. A request that is idempotent (the
+  PUTs of files, the polls) is repeated at most `--retries` times (default 3)
+  with jittered waits when the connection fails or times out or the answer is
+  500, 502, 503 or 504; any other 4xx is final. The create and the commit are
+  sent once.
 - The token goes only to the registry's API, as a bearer token. It is never
   printed, never in a file, and not in the environment of any program mopm
   starts.

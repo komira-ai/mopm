@@ -40,7 +40,7 @@ The run exits 0 when the set is staged, 1 when it refused or failed, and 2 for a
 ### mopm publish --staged
 
 ```text
-mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>] [--dry-run]
+mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>] [--timeout <seconds>] [--retries <n>] [--dry-run]
 ```
 
 | flag | meaning |
@@ -49,6 +49,8 @@ mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>
 | `--registry <name>` | Required, with no default: a staged set is never published to a registry by accident. |
 | `--config-dir <dir>` | The directory that holds the login (`mopm login --config-dir` writes it). |
 | `--wait <seconds>` | How long to wait for the group to be visible. The default grows with the group: 600 seconds plus 5 seconds for each member (1450 seconds at 170 members, 2100 at 300), because validation and the chain take longer the more members there are. `--wait` replaces the default. |
+| `--timeout <seconds>` | How long one request may wait: to connect, and then for the server on any read or write. 1 to 3600; the default is 30 seconds. A transfer that keeps moving is not cut short. |
+| `--retries <n>` | How many times a request that can be repeated is repeated after it fails. 0 to 10; the default is 3. |
 | `--dry-run` | Check the set and say what would be sent. It reads no token and writes no file. |
 
 The token is `$MOPM_TOKEN`, else the login's. It is read after the plan has been checked, goes only to the registry's API, is never printed, and is not in the environment of any program mopm starts. The uploads themselves carry no token.
@@ -56,6 +58,10 @@ The token is `$MOPM_TOKEN`, else the login's. It is read after the plan has been
 Before it sends anything, mopm checks every file against `plan.json`. Then it asks for the group (one request, repeated while the registry is still reserving the members), uploads each file the registry does not hold, member by member in dependency order, commits the group, and waits. The command exits 0 only when the group is visible.
 
 A member the registry rejects ends the whole group, and none of its members is published. A rejected group frees its version numbers. A group that fails after the registry has begun to copy files burns them, and the next run needs new version numbers.
+
+#### Timeouts and retries
+
+A request that gets no connection, or no answer, within `--timeout` seconds fails with `ConnectTimedOut` or `RequestTimedOut` named in the message, instead of waiting for ever. The uploads of a large set are many requests in a row, so a request that can be repeated without changing anything (the PUT of a file, the poll of the group) is repeated, up to `--retries` times, when the connection fails or times out or the server answers 500, 502, 503 (which is also how storage says `SlowDown`) or 504. The waits between tries grow from about a second to about eight, each with a random part so that clients that failed together do not return together. Any other 4xx (a 403 from an expired upload URL, for instance) is final at once, and so is a request that is not repeatable: the request that creates the group and the commit are sent once, and a rerun of the command is their retry. When the last try fails, the run stops as it always did and prints what that try got.
 
 #### Resuming a run
 
@@ -79,7 +85,7 @@ A 404 from the request that creates the group means the registry has no group pu
 
 #### 429: slow down
 
-A 429 stops the run where it is. mopm prints that the registry is rate limiting this client and, when the registry says how long, the number of seconds to wait; it never retries into the limit. The state is kept. The outcome is `rate_limited`. Run the same command later.
+A 429 on a PUT or a poll that names a short wait (up to 20 seconds) is waited for and the request is sent again. Any other 429 stops the run where it is. mopm prints that the registry is rate limiting this client and, when the registry says how long, the number of seconds to wait; it never retries into the limit. The state is kept. The outcome is `rate_limited`. Run the same command later.
 
 ## What a reader sees
 
