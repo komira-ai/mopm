@@ -121,7 +121,7 @@ A manifest is checked strictly, so a typo is an error that names the line. Each 
 | `[target]` for `[targets]` | `unknown key 'target' in mopm.toml` |
 | `homepage = "..."` in `[package]` | `unknown key 'homepage' in [package]` (`keywords` is refused the same way) |
 | `name = "Greeter"` | `package name 'Greeter' must start with a lowercase letter` |
-| `version = "0.1"` | `is not a semantic version`, with the form it wants: `MAJOR.MINOR.PATCH, such as 0.1.0` |
+| `version = "0.1"` | `must be exactly MAJOR.MINOR.PATCH`, with the form it wants (no pre-release or build part, such as `0.1.0`) |
 
 ## 2. A program with a dependency
 

@@ -245,8 +245,8 @@ const Checker = struct {
         try c.packageName(name, name_e.pos, "package name");
         const version_e = t.get("version") orelse return c.fail(t.pos, "[package] is missing 'version'", .{});
         const version = try c.str(version_e, where);
-        if (semver.parseVersion(version) == null) {
-            return c.fail(version_e.pos, "version '{s}' is not a semantic version (MAJOR.MINOR.PATCH, such as 0.1.0)", .{version});
+        if (!semver.isPackageVersion(version)) {
+            return c.fail(version_e.pos, "version '{s}' must be exactly MAJOR.MINOR.PATCH (digits, no leading zeros, no pre-release or build part, such as 0.1.0)", .{version});
         }
         return .{
             .name = name,
@@ -784,4 +784,46 @@ test "a dependency with a path and a version keeps both; the path is its source"
     try std.testing.expectError(error.Invalid, parse(arena, head ++ "b = { version = \"=>1\", path = \"../b\" }\n", &diag));
     try std.testing.expectError(error.Invalid, parse(arena, head ++ "b = { version = \"1\", path = \"\" }\n", &diag));
     try std.testing.expectError(error.Invalid, parse(arena, head ++ "b = { version = \"1\", path = \"../b\", git = \"x\" }\n", &diag));
+}
+
+test "a package's own version is exactly MAJOR.MINOR.PATCH; the registry takes nothing else" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var diag: Diagnostic = .{};
+
+    for ([_][]const u8{ "0.1.123", "10.20.30", "0.0.0" }) |v| {
+        const src = try std.fmt.allocPrint(arena, "[package]\nname = \"a\"\nversion = \"{s}\"\n", .{v});
+        const m = parse(arena, src, &diag) catch |e| {
+            std.debug.print("refused {s}: {s}\n", .{ v, diag.message });
+            return e;
+        };
+        try std.testing.expectEqualStrings(v, m.package.version);
+    }
+
+    for ([_][]const u8{ "1.0.0+b1", "1.0.0-rc.1", "1.0.0.1", "01.0.0", "1.0", "1.0.0+", "1.0.00", "1.0.0 ", "v1.0.0", "1.0.1234567890123456789" }) |v| {
+        const src = try std.fmt.allocPrint(arena, "[package]\nname = \"a\"\nversion = \"{s}\"\n", .{v});
+        if (parse(arena, src, &diag)) |_| {
+            std.debug.print("accepted package version '{s}'\n", .{v});
+            return error.TestUnexpectedResult;
+        } else |e| {
+            try std.testing.expectEqual(error.Invalid, e);
+        }
+        try std.testing.expectEqual(@as(usize, 3), diag.pos.line);
+        const want = try std.fmt.allocPrint(arena, "version '{s}' must be exactly MAJOR.MINOR.PATCH", .{v});
+        try std.testing.expect(std.mem.startsWith(u8, diag.message, want));
+    }
+}
+
+test "dependency requirements keep the full requirement grammar" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var diag: Diagnostic = .{};
+    const head = "[package]\nname = \"a\"\nversion = \"0.1.0\"\n\n[dependencies]\n";
+    const m = parse(arena, head ++ "b = \">=0.1,<0.2\"\nc = \"^1.2.3-rc.1\"\nd = \"~1.2\"\n", &diag) catch |e| {
+        std.debug.print("refused: {s}\n", .{diag.message});
+        return e;
+    };
+    try std.testing.expectEqual(@as(usize, 3), m.dependencies.len);
 }
