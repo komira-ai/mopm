@@ -349,3 +349,62 @@ describe('the ownership check for a CI token cannot be bypassed', () => {
     expect([res.statusCode, errCode(res)]).toEqual([403, 'not_owner']);
   });
 });
+
+// The CI exchange and the claim route both create packages, in the registry, by the same conditional write. What these prove: a
+// name goes to whoever gets there first, in either order, and the loser changes nothing; both leave the package `claimed`;
+// the per-actor claim limit counts user claims only. What they do not: the two racing at once (the conditional write is
+// what decides, and claim.test.ts races two claims).
+describe('the CI exchange and the claim route share one namespace', () => {
+  const userClaim = async (s: Setup, name: string, id = 7) => {
+    await s.h.authStore.upsertUser(id, `user${id}`, s.h.clock.now().toISOString());
+    return s.h.call('POST', `/api/v1/packages/${name}/claim`, await s.h.token(id, [], ['publish']), undefined);
+  };
+
+  test('both write state claimed: a CI-created and a user-claimed package look alike except for who owns them', async () => {
+    const s = setup();
+    await s.oidc.exchange({ jwt: s.jwt(), packages: widgets });
+    expect((await userClaim(s, 'gadgets')).statusCode).toBe(201);
+    const ci = await s.h.registry.getPackage('widgets');
+    const user = await s.h.registry.getPackage('gadgets');
+    expect([ci?.state, user?.state]).toEqual(['claimed', 'claimed']);
+    expect([ci?.ci_owner, user?.ci_owner]).toEqual([OWNER, undefined]);
+    expect([await s.h.registry.listOwners('widgets'), (await s.h.registry.listOwners('gadgets')).length]).toEqual([[], 1]);
+  });
+
+  test('a name a user claimed is refused for CI (not_owner): nothing is changed, the CI token is not spent', async () => {
+    const s = setup();
+    expect((await userClaim(s, 'widgets')).statusCode).toBe(201);
+    const jwt = s.jwt();
+    await refused(s.oidc.exchange({ jwt, packages: widgets }), 'not_owner', 403);
+    const rec = await s.h.registry.getPackage('widgets');
+    expect(rec?.ci_owner).toBeUndefined();
+    expect((await s.h.registry.listOwners('widgets')).map((o) => o.github_id)).toEqual([7]);
+    expect((await s.h.registry.listAudit('widgets')).map((a) => a.action)).toEqual(['claim']);
+    expect(ciTokens(s)).toEqual([]);
+    await expect(s.oidc.exchange({ jwt, packages: [{ name: 'free_name', version: '1.0.0' }] })).resolves.toBeDefined(); // not spent
+  });
+
+  test('a name CI created is refused for a user claim (409 name_taken): the CI identity still owns it and no owner row appears', async () => {
+    const s = setup();
+    await s.oidc.exchange({ jwt: s.jwt(), packages: widgets });
+    const res = await userClaim(s, 'widgets');
+    expect([res.statusCode, errCode(res)]).toEqual([409, 'name_taken']);
+    expect((await s.h.registry.getPackage('widgets'))?.ci_owner).toBe(OWNER);
+    expect(await s.h.registry.listOwners('widgets')).toEqual([]);
+    expect((await s.h.registry.listAudit('widgets')).map((a) => a.action)).toEqual(['ci_claim']);
+  });
+
+  test('the claim limit counts user claims only: CI exchanges neither spend it nor are refused by it', async () => {
+    const s = setup();
+    s.h.config.claimRatePerAccountPerDay = 1;
+    s.h.config.claimRatePerTokenPerDay = 1;
+    s.h.build();
+    for (const name of ['alpha', 'bravo', 'charlie']) {
+      await s.oidc.exchange({ jwt: s.jwt(), packages: [{ name, version: '1.0.0' }] }); // three creations against a limit of one
+    }
+    expect(s.h.publishes.counters.size).toBe(0);
+    expect((await userClaim(s, 'delta')).statusCode).toBe(201); // the whole quota is still there
+    expect((await userClaim(s, 'echo')).statusCode).toBe(429); // and it does bind users
+    expect((await s.h.registry.getPackage('echo'))).toBeUndefined();
+  });
+});

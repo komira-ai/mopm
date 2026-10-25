@@ -2721,5 +2721,261 @@
         }
       ]
     }
+  },
+  {
+    "adapter": "store",
+    "method": "claimPackage",
+    "args": [
+      {
+        "name": "komira_hash",
+        "state": "claimed",
+        "created_at": "2026-10-01T09:00:00Z",
+        "claim_expires_at": "2026-10-31T09:00:00Z"
+      },
+      {
+        "name": "komira_hash",
+        "github_id": 583231,
+        "handle": "octocat",
+        "added_at": "2026-10-01T09:00:00Z"
+      },
+      {
+        "name": "komira_hash",
+        "ts": "2026-10-01T09:00:00Z",
+        "id": "id000001",
+        "actor": "u:583231",
+        "action": "claim"
+      }
+    ],
+    "replies": [
+      {
+        "body": {}
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "TransactWriteItems",
+          "body": {
+            "ClientRequestToken": "<uuid>",
+            "TransactItems": [
+              {
+                "Put": {
+                  "ConditionExpression": "attribute_not_exists(#n)",
+                  "ExpressionAttributeNames": {
+                    "#n": "name"
+                  },
+                  "Item": {
+                    "name": {
+                      "S": "komira_hash"
+                    },
+                    "state": {
+                      "S": "claimed"
+                    },
+                    "created_at": {
+                      "S": "2026-10-01T09:00:00Z"
+                    },
+                    "claim_expires_at": {
+                      "S": "2026-10-31T09:00:00Z"
+                    },
+                    "search_bucket": {
+                      "S": "all"
+                    }
+                  },
+                  "TableName": "mopm-beta-packages"
+                }
+              },
+              {
+                "Put": {
+                  "ConditionExpression": "attribute_not_exists(#n)",
+                  "ExpressionAttributeNames": {
+                    "#n": "name"
+                  },
+                  "Item": {
+                    "name": {
+                      "S": "komira_hash"
+                    },
+                    "github_id": {
+                      "S": "583231"
+                    },
+                    "handle": {
+                      "S": "octocat"
+                    },
+                    "added_at": {
+                      "S": "2026-10-01T09:00:00Z"
+                    },
+                    "github_id_num": {
+                      "N": "583231"
+                    }
+                  },
+                  "TableName": "mopm-beta-owners"
+                }
+              },
+              {
+                "Put": {
+                  "ConditionExpression": "attribute_not_exists(#n)",
+                  "ExpressionAttributeNames": {
+                    "#n": "name"
+                  },
+                  "Item": {
+                    "name": {
+                      "S": "komira_hash"
+                    },
+                    "ts": {
+                      "S": "2026-10-01T09:00:00Z"
+                    },
+                    "id": {
+                      "S": "id000001"
+                    },
+                    "actor": {
+                      "S": "u:583231"
+                    },
+                    "action": {
+                      "S": "claim"
+                    },
+                    "ts_seq": {
+                      "S": "2026-10-01T09:00:00Z#id000001"
+                    }
+                  },
+                  "TableName": "mopm-beta-audit"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "returns": null
+    }
+  },
+  {
+    "adapter": "store",
+    "method": "claimPackage",
+    "args": [
+      {
+        "name": "komira_hash",
+        "state": "claimed",
+        "created_at": "2026-10-01T09:00:00Z",
+        "claim_expires_at": "2026-10-31T09:00:00Z"
+      },
+      {
+        "name": "komira_hash",
+        "github_id": 583231,
+        "handle": "octocat",
+        "added_at": "2026-10-01T09:00:00Z"
+      },
+      {
+        "name": "komira_hash",
+        "ts": "2026-10-01T09:00:00Z",
+        "id": "id000001",
+        "actor": "u:583231",
+        "action": "claim"
+      }
+    ],
+    "replies": [
+      {
+        "error": "TransactionCanceledException",
+        "reasons": [
+          "ConditionalCheckFailed",
+          "None",
+          "None"
+        ]
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "TransactWriteItems",
+          "body": {
+            "ClientRequestToken": "<uuid>",
+            "TransactItems": [
+              {
+                "Put": {
+                  "ConditionExpression": "attribute_not_exists(#n)",
+                  "ExpressionAttributeNames": {
+                    "#n": "name"
+                  },
+                  "Item": {
+                    "name": {
+                      "S": "komira_hash"
+                    },
+                    "state": {
+                      "S": "claimed"
+                    },
+                    "created_at": {
+                      "S": "2026-10-01T09:00:00Z"
+                    },
+                    "claim_expires_at": {
+                      "S": "2026-10-31T09:00:00Z"
+                    },
+                    "search_bucket": {
+                      "S": "all"
+                    }
+                  },
+                  "TableName": "mopm-beta-packages"
+                }
+              },
+              {
+                "Put": {
+                  "ConditionExpression": "attribute_not_exists(#n)",
+                  "ExpressionAttributeNames": {
+                    "#n": "name"
+                  },
+                  "Item": {
+                    "name": {
+                      "S": "komira_hash"
+                    },
+                    "github_id": {
+                      "S": "583231"
+                    },
+                    "handle": {
+                      "S": "octocat"
+                    },
+                    "added_at": {
+                      "S": "2026-10-01T09:00:00Z"
+                    },
+                    "github_id_num": {
+                      "N": "583231"
+                    }
+                  },
+                  "TableName": "mopm-beta-owners"
+                }
+              },
+              {
+                "Put": {
+                  "ConditionExpression": "attribute_not_exists(#n)",
+                  "ExpressionAttributeNames": {
+                    "#n": "name"
+                  },
+                  "Item": {
+                    "name": {
+                      "S": "komira_hash"
+                    },
+                    "ts": {
+                      "S": "2026-10-01T09:00:00Z"
+                    },
+                    "id": {
+                      "S": "id000001"
+                    },
+                    "actor": {
+                      "S": "u:583231"
+                    },
+                    "action": {
+                      "S": "claim"
+                    },
+                    "ts_seq": {
+                      "S": "2026-10-01T09:00:00Z#id000001"
+                    }
+                  },
+                  "TableName": "mopm-beta-audit"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "throws": {
+        "name": "RegistryError",
+        "code": "name_taken"
+      }
+    }
   }
 ]

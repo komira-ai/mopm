@@ -34,8 +34,9 @@ account owner behind it cannot publish its first package at all.
    the identity's, then creates the missing ones and mints a ten minute token that is good for exactly those packages at exactly
    those versions, acting as the identity. Names owned by someone else make the whole request fail before anything is created or the
    token is spent.
-5. **One grant.** Creating a package is a conditional PutItem on the packages table. Beta's function gets it (`CiCreatePackages`);
-   gamma and prod do not.
+5. **One grant.** Creating a package is a conditional PutItem on the packages table. It is the grant the claim route already has on
+   every stage (`ClaimPackages`), so the CI exchange adds no grant of its own; what only beta has is the `CI_PUBLISHERS` variable.
+   Gamma and prod have no variable, so they refuse the `packages` form of the exchange.
 
 ## Consequences
 

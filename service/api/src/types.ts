@@ -89,6 +89,8 @@ export interface PackageRecord {
   name: string;
   state: 'claimed' | 'active';
   created_at: string;
+  /** RFC 3339. Set by a claim: 30 days after it, a claim with no published version lapses (the spec's term; nothing frees the name yet). Absent on a package that was not claimed through the API. */
+  claim_expires_at?: string;
   repository?: string;
   license?: string;
   description?: string;

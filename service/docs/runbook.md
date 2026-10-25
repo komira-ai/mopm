@@ -191,6 +191,7 @@ publish `published`. See "The sparse index writer" below.
   `MOPM_RATE_PER_TOKEN_DAY`, set from the `limits` prop of the API stack): 100 MB per package, 10 GB per project (counts published and
   yanked files; a full project refuses new publishes and nothing is ever deleted), 2000 begins per account and 1000 per token per UTC day.
 
+<<<<<<< HEAD
 ## Beta trusts a CI identity: config as code
 
 Unlike the feature flags below, which a person flips in the config table, the CI identity that beta trusts to publish is **code**:
@@ -200,7 +201,7 @@ function and nowhere else. Design and reasons: `service/docs/adr-ci-publisher-id
 - **Changing who beta trusts** is a pull request to that constant; promote deploys it to beta. There is no console step. To stop
   trusting the identity, remove the entry in a pull request: a deployed value cannot be switched off at runtime (there is no
   config-table item for it), so the fastest stop is the deploy.
-- **Gamma and prod get none of it.** Their function has no `CI_PUBLISHERS`, no grant to create packages, and answers the `packages`
+- **Gamma and prod get none of it.** Their function has no `CI_PUBLISHERS` (the `PutItem` on `packages` is the claim route's, on every stage, and there is no CI-only grant), and answers the `packages`
   form of the exchange with `oidc_not_trusted`. The handler also refuses to start on any stage but beta if the variable is present, so
   a function that fails to start with "may be set on the beta stage only" means the variable reached the wrong stage: remove it in
   the stack and redeploy. Trusting a CI identity at gamma or prod stays a deliberate human decision.
@@ -210,6 +211,28 @@ function and nowhere else. Design and reasons: `service/docs/adr-ci-publisher-id
 - **Reading a refusal.** `oidc_not_trusted`: the job's repository id, owner id, workflow file, ref, environment or event is not the
   configured one (`pull_request` never is). `not_owner` at the exchange: a name in the request belongs to an account or to another
   identity. `oidc_token_invalid` "token already used": a CI token is exchanged once.
+=======
+## Claiming a package name
+
+`POST /packages/{name}/claim` (a user token: a login or an API token; a CI identity token is refused) is the only way a package comes to exist. It writes the package
+(`state: claimed`, with `claim_expires_at` 30 days out), its first owner (the account) and an `audit` entry in one DynamoDB transaction, each
+row created only if its key is absent, so of two claims of one name exactly one wins and the loser leaves nothing behind. The API role has
+`PutItem` on `packages` and `owners` for this and nothing more there: it cannot change or delete an owner or a package.
+
+- Read-only mode refuses a claim (`read_only_mode`), as it refuses an upload. The route is on every stage; there is no switch for it.
+- A claim is rate limited per actor: 50 written claims per account and 50 per token per UTC day (`MOPM_CLAIM_RATE_PER_ACCOUNT_DAY`,
+  `MOPM_CLAIM_RATE_PER_TOKEN_DAY`, set from the `claimRatePerAccountPerDay` and `claimRatePerTokenPerDay` of the API stack's `limits`).
+  Over either, the claim is `429 rate_limited` with `Retry-After` to midnight UTC and writes nothing. Only a claim about to be written is
+  charged, and one whose write fails gives its charge back. The counters are `rl#ct#<token>#<day>` and `rl#cu#<github id>#<day>` in the
+  `publishes` table (the one the publish limits use), so the role needs no new grant. Any live user token may claim (the spec's `userToken`;
+  token scopes are only `publish` and `yank`), so the per-token counter is what bounds a leaked token.
+- `name_reserved` is a fixed list in the code (`RESERVED_NAMES`), `name_too_similar` compares the name, with underscores dropped and
+  allowing one trailing `s`, with the names that start with the same letter (read from the search index, which is eventually
+  consistent: two similar names claimed within a moment of each other can both succeed). `confirm_similar` skips only that check.
+- `claim_expires_at` is stored and reported. Nothing yet frees a name whose claim lapsed with no published version; an operator
+  who must free one deletes its rows by hand (the API role cannot).
+- To see a claim: `audit` rows with `action: claim`, actor `u:<github id>`.
+>>>>>>> origin/main
 
 ## Groups: enabling, rolling out and recovering
 

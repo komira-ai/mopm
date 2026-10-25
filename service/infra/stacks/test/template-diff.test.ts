@@ -98,10 +98,10 @@ const EXPECTED_PROD_DIFF = [
   'site:AWS::S3::Bucket:UpdateReplacePolicy',
 ].sort();
 
-// What only the beta stage has: the CI_PUBLISHERS variable of the API function (its Environment) and the extra statement that
-// lets the function create the packages that identity publishes (the role's policy). Config-as-code trust is beta's alone;
-// gamma and prod have neither, so these are the whole of beta's difference from gamma. Adding to this list is a reviewed decision.
-const EXPECTED_BETA_ONLY_DIFF = ['api:AWS::IAM::Policy:Properties.PolicyDocument', 'api:AWS::Lambda::Function:Properties.Environment'].sort();
+// What only the beta stage has: the CI_PUBLISHERS variable of the API function (its Environment), and nothing else. The role's
+// policy is identical on every stage (package creation is the claim route's grant). Config-as-code trust is beta's alone, so
+// this is the whole of beta's difference from gamma. Adding to this list is a reviewed decision.
+const EXPECTED_BETA_ONLY_DIFF = ['api:AWS::Lambda::Function:Properties.Environment'];
 
 describe('whole-template stage diff', () => {
   const [beta, gamma, prod] = STAGES.map(fingerprint);

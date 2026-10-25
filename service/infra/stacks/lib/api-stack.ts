@@ -26,7 +26,7 @@ export interface ApiStackProps extends StackProps {
   /** Interactive publishing needs a GitHub account with two-factor authentication on (the CEO's rule). On unless set false. */
   require2fa?: boolean;
   /** Rate limits of begin-upload per UTC day; the code's defaults (generous) apply when absent. */
-  limits?: { ratePerAccountPerDay?: number; ratePerTokenPerDay?: number; groupRatePerAccountPerDay?: number; groupRatePerTokenPerDay?: number };
+  limits?: { ratePerAccountPerDay?: number; ratePerTokenPerDay?: number; groupRatePerAccountPerDay?: number; groupRatePerTokenPerDay?: number; claimRatePerAccountPerDay?: number; claimRatePerTokenPerDay?: number };
 }
 
 /**
@@ -67,12 +67,17 @@ export const PUBLISH_ROUTES: Array<{ method: apigw.HttpMethod; path: string }> =
   // Yank and unyank of a visible group: queues the rows of the yank on the group queue. Not gated by the groups switch either.
   { method: apigw.HttpMethod.PUT, path: '/api/v1/groups/{group_id}/yank' },
 ];
+/** The claim operation of spec/api/openapi.yaml: reserve a free package name for the caller. The literal `claim` wins over `{version}`. */
+export const CLAIM_ROUTES: Array<{ method: apigw.HttpMethod; path: string }> = [{ method: apigw.HttpMethod.POST, path: '/api/v1/packages/{name}/claim' }];
 /**
  * What the handler may write, table by table (the reviewed list; api.test.ts pins it). No DeleteItem, no Scan, no
  * UpdateItem. (The tokens table, including the last-used mark, is granted by AUTH_GRANTS.) A new version is a transaction of two PutItems (version + audit).
+ * A claim is a transaction of three PutItems (package + owner + audit), each created only if its key is absent: hence PutItem on packages and
+ * owners, and nothing else there (an owner is never changed or removed by the API).
  */
 export const WRITE_GRANTS: Array<{ sid: string; actions: string[]; tables: string[] }> = [
   { sid: 'ReserveVersions', actions: ['dynamodb:PutItem'], tables: ['versions', 'audit'] },
+  { sid: 'ClaimPackages', actions: ['dynamodb:PutItem'], tables: ['packages', 'owners'] },
   { sid: 'RecordUploadsAndPublishes', actions: ['dynamodb:GetItem', 'dynamodb:PutItem'], tables: ['uploads', 'publishes'] },
   { sid: 'ReadSwitches', actions: ['dynamodb:GetItem'], tables: ['config'] },
 ];
@@ -94,13 +99,8 @@ export const BETA_CI_PUBLISHERS = [
     environment: 'beta',
   },
 ];
-/**
- * What only the beta stage's handler may additionally write: the CI publisher creates the packages it publishes (a
- * conditional PutItem: never an overwrite). Gamma and prod do not get it.
- */
-export const BETA_CI_GRANTS: Array<{ sid: string; actions: string[]; tables: string[] }> = [
-  { sid: 'CiCreatePackages', actions: ['dynamodb:PutItem'], tables: ['packages'] },
-];
+// The CI publisher creates the packages it publishes with the same conditional PutItem on `packages` that the claim route uses
+// (WRITE_GRANTS, sid ClaimPackages, every stage). There is no CI-only grant: what is beta-only is the CI_PUBLISHERS variable.
 
 /** The operations of spec/api/openapi.yaml for login, tokens and CI exchange. */
 export const AUTH_ROUTES: { method: apigw.HttpMethod; path: string }[] = [
@@ -205,6 +205,8 @@ export class ApiStack extends Stack {
         ...(props.limits?.ratePerTokenPerDay !== undefined ? { MOPM_RATE_PER_TOKEN_DAY: String(props.limits.ratePerTokenPerDay) } : {}),
         ...(props.limits?.groupRatePerAccountPerDay !== undefined ? { MOPM_GROUP_RATE_PER_ACCOUNT_DAY: String(props.limits.groupRatePerAccountPerDay) } : {}),
         ...(props.limits?.groupRatePerTokenPerDay !== undefined ? { MOPM_GROUP_RATE_PER_TOKEN_DAY: String(props.limits.groupRatePerTokenPerDay) } : {}),
+        ...(props.limits?.claimRatePerAccountPerDay !== undefined ? { MOPM_CLAIM_RATE_PER_ACCOUNT_DAY: String(props.limits.claimRatePerAccountPerDay) } : {}),
+        ...(props.limits?.claimRatePerTokenPerDay !== undefined ? { MOPM_CLAIM_RATE_PER_TOKEN_DAY: String(props.limits.claimRatePerTokenPerDay) } : {}),
       },
     });
 
@@ -252,7 +254,7 @@ export class ApiStack extends Stack {
     );
 
     const arnOf = (t: string) => this.formatArn({ service: 'dynamodb', resource: 'table', resourceName: tableName(c.stage, t) });
-    for (const g of c.stage === 'beta' ? [...WRITE_GRANTS, ...BETA_CI_GRANTS] : WRITE_GRANTS) {
+    for (const g of WRITE_GRANTS) {
       this.handler.addToRolePolicy(new iam.PolicyStatement({ sid: g.sid, actions: g.actions, resources: g.tables.map(arnOf) }));
     }
     // Uploads: the URL is signed with this role, so the role must be allowed the PUT it signs, and commit looks at the
@@ -338,6 +340,7 @@ export class ApiStack extends Stack {
     }
     for (const r of AUTH_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
     for (const r of PUBLISH_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
+    for (const r of CLAIM_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
     // The CLI sends no token: neither index route has an authorizer. The literal route wins over the greedy one.
     const configRoutes = this.api.addRoutes({ path: '/index/config.json', methods: [apigw.HttpMethod.GET], integration });
     const readerRoutes = this.api.addRoutes({

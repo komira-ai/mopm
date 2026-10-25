@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
-import { ApiStack, AUTH_GRANTS, BETA_CI_GRANTS, BETA_CI_PUBLISHERS, CI_PUBLISHERS_ENV, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
+import { ApiStack, AUTH_GRANTS, BETA_CI_PUBLISHERS, CI_PUBLISHERS_ENV, CLAIM_ROUTES, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
 import { STAGES, stageConfig, tableName } from '../lib/config';
 import { DUMMY_ACCOUNT, HANDLER_STUB_DIR, tpl } from './util';
 
@@ -35,7 +35,7 @@ function policyViolations(stage: string, statements: any[]): string[] {
         const table = m[1]!;
         const index = m[3];
         const grant = AUTH_GRANTS[table];
-        const written = (stage === 'beta' ? [...WRITE_GRANTS, ...BETA_CI_GRANTS] : WRITE_GRANTS).some((g) => g.tables.includes(table) && g.actions.includes(a));
+        const written = WRITE_GRANTS.some((g) => g.tables.includes(table) && g.actions.includes(a));
         const readable = (READ_TABLES as readonly string[]).includes(table);
         if (!readable && !grant && !written) out.push(`${a} on unlisted table ${table}`);
         if (readable && !READ_ACTIONS.includes(a) && !written && !(grant && grant.actions.includes(a))) out.push(`${a} on registry table ${table}`);
@@ -76,6 +76,7 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
       [
         ...READ_ROUTES.map((r) => `GET ${r}`),
         ...PUBLISH_ROUTES.map((r) => `${r.method} ${r.path}`),
+        'POST /api/v1/packages/{name}/claim',
         'POST /api/v1/auth/device',
         'POST /api/v1/auth/device/poll',
         'POST /api/v1/auth/oidc/exchange',
@@ -87,9 +88,10 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
       ].sort(),
     );
     expect(AUTH_ROUTES).toHaveLength(6);
-    expect(keys).toHaveLength(READ_ROUTES.length + PUBLISH_ROUTES.length + AUTH_ROUTES.length + 2);
-    // Claim is not routed yet; yank (PUT) is.
-    expect(keys.some((k) => /\/claim/.test(k))).toBe(false);
+    expect(CLAIM_ROUTES.map((r) => `${r.method} ${r.path}`)).toEqual(['POST /api/v1/packages/{name}/claim']);
+    expect(keys).toHaveLength(READ_ROUTES.length + PUBLISH_ROUTES.length + AUTH_ROUTES.length + CLAIM_ROUTES.length + 2);
+    // Claim is POST only (a GET of `.../claim` is the version route's, which the handler refuses); yank (PUT) is routed too.
+    expect(keys.filter((k) => /\/claim/.test(k))).toEqual(['POST /api/v1/packages/{name}/claim']);
     expect(keys).toContain('PUT /api/v1/packages/{name}/{version}/yank');
   });
 
@@ -197,6 +199,7 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
   test('writes: exactly the reviewed grants, table by table', () => {
     expect(WRITE_GRANTS.map((g) => [g.sid, g.actions, g.tables])).toEqual([
       ['ReserveVersions', ['dynamodb:PutItem'], ['versions', 'audit']],
+      ['ClaimPackages', ['dynamodb:PutItem'], ['packages', 'owners']],
       ['RecordUploadsAndPublishes', ['dynamodb:GetItem', 'dynamodb:PutItem'], ['uploads', 'publishes']],
       ['ReadSwitches', ['dynamodb:GetItem'], ['config']],
     ]);
@@ -264,16 +267,16 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     expect(policyViolations(stage, statements())).toEqual([]);
   });
 
-  // Config-as-code trust is beta's alone: the variable that names the trusted CI identity, and the one extra write it needs
-  // (creating the packages it publishes), exist on the beta template and on no other.
-  test(stage === 'beta' ? 'beta: CI_PUBLISHERS names exactly the komira release workflow on main in the beta environment, and the role may create packages' : `${stage}: no function has CI_PUBLISHERS, and nothing may write the packages or owners tables`, () => {
+  // Config-as-code trust is beta's alone: the variable that names the trusted CI identity exists on the beta template and on
+  // no other. Creating a package is the one PutItem on packages every stage has (ClaimPackages), for the claim route and the CI
+  // exchange alike: there is no CI-only grant.
+  test(stage === 'beta' ? 'beta: CI_PUBLISHERS names exactly the komira release workflow on main in the beta environment, and package creation has the one shared grant' : `${stage}: no function has CI_PUBLISHERS`, () => {
     const fns = Object.values(t.findResources('AWS::Lambda::Function')) as any[];
     const values = fns.map((f) => f.Properties.Environment?.Variables?.[CI_PUBLISHERS_ENV]).filter((v) => v !== undefined);
     const creators = statements().filter(
       (s) => s.Effect === 'Allow' && acts(s).includes('dynamodb:PutItem') && flatten(s.Resource).includes(`table/${tableName(stage, 'packages')}"`),
     );
-    const ownerWriters = statements().filter((s) => acts(s).includes('dynamodb:PutItem') && flatten(s.Resource).includes(`table/${tableName(stage, 'owners')}`));
-    expect(ownerWriters).toEqual([]);
+    expect(creators.map((s) => s.Sid)).toEqual(['ClaimPackages']); // one grant on every stage, none named for CI
     if (stage === 'beta') {
       expect(values).toHaveLength(1); // the API function; the index reader has none
       expect(JSON.parse(values[0])).toEqual([
@@ -287,13 +290,9 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
         },
       ]);
       expect(JSON.parse(values[0])).toEqual(BETA_CI_PUBLISHERS);
-      expect(creators).toHaveLength(1);
-      expect(creators[0].Sid).toBe('CiCreatePackages');
       expect(acts(creators[0])).toEqual(['dynamodb:PutItem']);
-      expect(([] as any[]).concat(creators[0].Resource)).toHaveLength(1);
     } else {
       expect(values).toEqual([]);
-      expect(creators).toEqual([]);
       // not even as a literal in the template
       expect(JSON.stringify(t.toJSON())).not.toContain(CI_PUBLISHERS_ENV);
       expect(JSON.stringify(t.toJSON())).not.toContain('1376408823');
@@ -308,10 +307,10 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     const mutants: Record<string, any[]> = {
       'DeleteItem on tokens': withExtra({ Action: 'dynamodb:DeleteItem', Resource: tbl('tokens') }),
       'Scan on users': withExtra({ Action: 'dynamodb:Scan', Resource: tbl('users') }),
-      // Beta alone may create packages (BETA_CI_GRANTS); everywhere else this is a registry write.
-      ...(stage === 'beta' ? {} : { 'PutItem on packages (registry write)': withExtra({ Action: 'dynamodb:PutItem', Resource: tbl('packages') }) }),
-      'PutItem on owners (registry write)': withExtra({ Action: 'dynamodb:PutItem', Resource: tbl('owners') }),
-      'UpdateItem on packages': withExtra({ Action: 'dynamodb:UpdateItem', Resource: tbl('packages') }),
+      // The claim grants PutItem on packages and owners (WRITE_GRANTS); any other write there is still a violation.
+      'UpdateItem on packages (registry write)': withExtra({ Action: 'dynamodb:UpdateItem', Resource: tbl('packages') }),
+      'DeleteItem on owners': withExtra({ Action: 'dynamodb:DeleteItem', Resource: tbl('owners') }),
+      'PutItem on trusted_publishers (no route registers one)': withExtra({ Action: 'dynamodb:PutItem', Resource: tbl('trusted_publishers') }),
       'UpdateItem on audit': withExtra({ Action: 'dynamodb:UpdateItem', Resource: tbl('audit') }),
       'wildcard dynamodb action': withExtra({ Action: 'dynamodb:*', Resource: tbl('tokens') }),
       'a table that is in no list': withExtra({ Action: 'dynamodb:GetItem', Resource: tbl('reserved_names') }),
@@ -446,6 +445,15 @@ describe('the daily limits a stage may tune', () => {
     const fns = Object.values(Template.fromStack(stack).findResources('AWS::Lambda::Function')) as any[];
     return fns.find((f) => f.Properties.Handler === 'http/lambda.handler').Properties.Environment.Variables;
   };
+
+  test('the claim counters reach the handler as the environment variables the service reads, and are absent when not set', () => {
+    const env = handlerEnv({ claimRatePerAccountPerDay: 12, claimRatePerTokenPerDay: 3 });
+    expect(env.MOPM_CLAIM_RATE_PER_ACCOUNT_DAY).toBe('12');
+    expect(env.MOPM_CLAIM_RATE_PER_TOKEN_DAY).toBe('3');
+    const none = handlerEnv();
+    expect(none.MOPM_CLAIM_RATE_PER_ACCOUNT_DAY).toBeUndefined();
+    expect(none.MOPM_CLAIM_RATE_PER_TOKEN_DAY).toBeUndefined();
+  });
 
   test('the group counters reach the handler as the environment variables the service reads, and are absent when not set', () => {
     const env = handlerEnv({ groupRatePerAccountPerDay: 123, groupRatePerTokenPerDay: 45 });
