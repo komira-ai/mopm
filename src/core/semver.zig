@@ -103,6 +103,21 @@ pub fn parseVersion(text: []const u8) ?Version {
     return v;
 }
 
+/// A package's own version, as the registry accepts it: exactly three numbers
+/// separated by dots (at most 18 digits each, no leading zero except "0") and
+/// nothing else: no pre-release, no build metadata, no missing or extra part.
+/// `parseVersion` is wider on purpose (requirements and `mopm --version` use it).
+pub fn isPackageVersion(text: []const u8) bool {
+    var parts: usize = 0;
+    var it = std.mem.splitScalar(u8, text, '.');
+    while (it.next()) |p| : (parts += 1) {
+        if (p.len == 0 or p.len > 18) return false;
+        if (p.len > 1 and p[0] == '0') return false;
+        if (!allDigits(p)) return false;
+    }
+    return parts == 3;
+}
+
 pub const ParseError = error{ Invalid, OutOfMemory };
 
 /// Parses a requirement. On `error.Invalid`, `why` says what is wrong.
@@ -324,6 +339,16 @@ test "versions: accepted and refused" {
             return error.TestUnexpectedResult;
         }
     }
+}
+
+test "a package version is three plain numbers; the general parser stays wider" {
+    for ([_][]const u8{ "0.1.123", "10.20.30", "0.0.0" }) |v| try std.testing.expect(isPackageVersion(v));
+    for ([_][]const u8{ "1.0.0+b1", "1.0.0-rc.1", "1.0.0.1", "01.0.0", "1.0", "", "1..0", "1.0.0+", "a.b.c", "1.0.1234567890123456789" }) |v| {
+        try std.testing.expect(!isPackageVersion(v));
+    }
+    // `mopm --version` is "0.0.1+dev": parseVersion must keep taking it.
+    try std.testing.expect(parseVersion("0.0.1+dev") != null);
+    try std.testing.expect(parseVersion("1.0.0-rc.1") != null);
 }
 
 test "precedence follows semver.org" {

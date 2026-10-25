@@ -160,7 +160,7 @@ fn greeter(cx: *Cx) !void {
     try cx.variant("greeter_name", "greeter/mopm.toml", "name = \"greeter\"", "name = \"Greeter\"");
     try cx.refuses("greeter: a package name is a lowercase identifier", "greeter_name", &.{"metadata"}, 1, "package name 'Greeter' must start with a lowercase letter");
     try cx.variant("greeter_version", "greeter/mopm.toml", "version = \"0.1.0\"", "version = \"0.1\"");
-    try cx.refuses("greeter: a version is MAJOR.MINOR.PATCH", "greeter_version", &.{"metadata"}, 1, "is not a semantic version");
+    try cx.refuses("greeter: a version is MAJOR.MINOR.PATCH", "greeter_version", &.{"metadata"}, 1, "must be exactly MAJOR.MINOR.PATCH");
     try cx.variant("greeter_typo", "greeter/mopm.toml", "[targets]", "[target]");
     try cx.refuses("greeter: an unknown table is refused", "greeter_typo", &.{"metadata"}, 1, "unknown key 'target' in mopm.toml");
 }

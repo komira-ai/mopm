@@ -123,16 +123,7 @@ pub const PackError = error{ BadCompiler, BadSubdir, BadVersion, BadNative, Path
 /// MAJOR.MINOR.PATCH: three numbers of digits, no leading zero except "0",
 /// and nothing else (no pre-release, no build metadata, no missing part).
 pub fn exactVersion(v: []const u8) bool {
-    var parts: usize = 0;
-    var it = std.mem.splitScalar(u8, v, '.');
-    while (it.next()) |p| : (parts += 1) {
-        if (p.len == 0 or p.len > 18) return false;
-        if (p.len > 1 and p[0] == '0') return false;
-        for (p) |c| {
-            if (!std.ascii.isDigit(c)) return false;
-        }
-    }
-    return parts == 3;
+    return semver.isPackageVersion(v);
 }
 
 /// A compiler version as the build string spells it: digits in dot-separated
