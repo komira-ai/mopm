@@ -5,6 +5,14 @@ checksums, and this file says what changed. The details of a command are on its 
 
 ## Unreleased
 
+### Claiming a package name
+
+The registry service now answers `POST /packages/{name}/claim`, the operation the API contract has always described: a signed-in
+account reserves a free name and becomes its owner. The answer carries `claim_expires_at`, 30 days out, the time after which a
+claim with no published version lapses (the service does not free such a name yet). Reserved names (`name_reserved`), taken names (`name_taken`) and names that differ from an existing one only by
+underscores or a trailing `s` (`name_too_similar`, overridden by `{"confirm_similar": true}`) are refused. A CI identity token cannot
+claim. No CLI command changes.
+
 ### Packing native dependencies to load
 
 `mopm pack`, `mopm publish` and `mopm stage` no longer refuse a `[native-dependencies]` entry with `mode = "load"`: a package that opens a

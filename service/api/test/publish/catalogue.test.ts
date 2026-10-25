@@ -36,6 +36,16 @@ describe('the publish error catalogue is the contract\'s', () => {
     for (const [code, status] of Object.entries(AUTH_HTTP_STATUS)) if (PUBLISH_CATALOGUE[code]) expect(PUBLISH_CATALOGUE[code]!.status).toBe(status);
   });
 
+  test('the claim errors are catalogued with the statuses the contract gives them', () => {
+    expect(['name_reserved', 'name_taken', 'name_too_similar'].map((c) => [c, PUBLISH_CATALOGUE[c]?.status])).toEqual([
+      ['name_reserved', 403],
+      ['name_taken', 409],
+      ['name_too_similar', 409],
+    ]);
+    expect(HTTP_STATUS.name_reserved).toBe(403);
+    expect(HTTP_STATUS.name_too_similar).toBe(409);
+  });
+
   test('the auth errors the publish routes can raise are all catalogued', () => {
     for (const code of ['token_missing', 'token_unknown', 'token_expired', 'token_revoked', 'scope_missing']) expect(PUBLISH_CATALOGUE[code]).toBeDefined();
   });

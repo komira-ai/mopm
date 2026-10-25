@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
-import { ApiStack, AUTH_GRANTS, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
+import { ApiStack, AUTH_GRANTS, CLAIM_ROUTES, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
 import { STAGES, stageConfig, tableName } from '../lib/config';
 import { DUMMY_ACCOUNT, HANDLER_STUB_DIR, tpl } from './util';
 
@@ -76,6 +76,7 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
       [
         ...READ_ROUTES.map((r) => `GET ${r}`),
         ...PUBLISH_ROUTES.map((r) => `${r.method} ${r.path}`),
+        'POST /api/v1/packages/{name}/claim',
         'POST /api/v1/auth/device',
         'POST /api/v1/auth/device/poll',
         'POST /api/v1/auth/oidc/exchange',
@@ -87,9 +88,10 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
       ].sort(),
     );
     expect(AUTH_ROUTES).toHaveLength(6);
-    expect(keys).toHaveLength(READ_ROUTES.length + PUBLISH_ROUTES.length + AUTH_ROUTES.length + 2);
-    // Claim is not routed yet; yank (PUT) is.
-    expect(keys.some((k) => /\/claim/.test(k))).toBe(false);
+    expect(CLAIM_ROUTES.map((r) => `${r.method} ${r.path}`)).toEqual(['POST /api/v1/packages/{name}/claim']);
+    expect(keys).toHaveLength(READ_ROUTES.length + PUBLISH_ROUTES.length + AUTH_ROUTES.length + CLAIM_ROUTES.length + 2);
+    // Claim is POST only (a GET of `.../claim` is the version route's, which the handler refuses); yank (PUT) is routed too.
+    expect(keys.filter((k) => /\/claim/.test(k))).toEqual(['POST /api/v1/packages/{name}/claim']);
     expect(keys).toContain('PUT /api/v1/packages/{name}/{version}/yank');
   });
 
@@ -197,6 +199,7 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
   test('writes: exactly the reviewed grants, table by table', () => {
     expect(WRITE_GRANTS.map((g) => [g.sid, g.actions, g.tables])).toEqual([
       ['ReserveVersions', ['dynamodb:PutItem'], ['versions', 'audit']],
+      ['ClaimPackages', ['dynamodb:PutItem'], ['packages', 'owners']],
       ['RecordUploadsAndPublishes', ['dynamodb:GetItem', 'dynamodb:PutItem'], ['uploads', 'publishes']],
       ['ReadSwitches', ['dynamodb:GetItem'], ['config']],
     ]);
@@ -272,7 +275,10 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     const mutants: Record<string, any[]> = {
       'DeleteItem on tokens': withExtra({ Action: 'dynamodb:DeleteItem', Resource: tbl('tokens') }),
       'Scan on users': withExtra({ Action: 'dynamodb:Scan', Resource: tbl('users') }),
-      'PutItem on packages (registry write)': withExtra({ Action: 'dynamodb:PutItem', Resource: tbl('packages') }),
+      // The claim grants PutItem on packages and owners (WRITE_GRANTS); any other write there is still a violation.
+      'UpdateItem on packages (registry write)': withExtra({ Action: 'dynamodb:UpdateItem', Resource: tbl('packages') }),
+      'DeleteItem on owners': withExtra({ Action: 'dynamodb:DeleteItem', Resource: tbl('owners') }),
+      'PutItem on trusted_publishers (no route registers one)': withExtra({ Action: 'dynamodb:PutItem', Resource: tbl('trusted_publishers') }),
       'UpdateItem on audit': withExtra({ Action: 'dynamodb:UpdateItem', Resource: tbl('audit') }),
       'wildcard dynamodb action': withExtra({ Action: 'dynamodb:*', Resource: tbl('tokens') }),
       'a table that is in no list': withExtra({ Action: 'dynamodb:GetItem', Resource: tbl('reserved_names') }),

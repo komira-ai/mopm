@@ -1,6 +1,7 @@
 import { AuthError } from '../auth/errors';
 import type { Authenticator, Principal } from '../auth';
 import { errorView } from '../publish/catalogue';
+import type { ClaimService } from '../publish/claim';
 import { PublishError, invalidRequest } from '../publish/errors';
 import type { Flags } from '../publish/ports';
 import type { GroupRequest, GroupService } from '../publish/group-service';
@@ -15,6 +16,8 @@ export interface PublishApi {
   flags: Flags;
   /** The group routes. Absent: they are not routes of this deployment, and the router answers route_not_found. */
   groups?: GroupService;
+  /** The claim route. Absent: it is not a route of this deployment, and the router answers route_not_found. */
+  claims?: ClaimService;
 }
 
 const PREFIX = '/api/v1';
@@ -53,10 +56,21 @@ function jsonBody(req: HttpRequest): unknown {
   }
 }
 
+/** The body of a claim is optional: none is `undefined`, anything else must be JSON (the service says what shape it needs). */
+function optionalJsonBody(req: HttpRequest): unknown {
+  if (req.body === undefined || req.body === '') return undefined;
+  try {
+    return JSON.parse(req.body);
+  } catch {
+    throw invalidRequest('the body is not valid JSON');
+  }
+}
+
 /**
  * The four publish operations: PUT /packages/{name}/{version}/yank, POST /packages/{name}/{version}/files, POST /packages/{name}/{version}/publish
  * and GET /publishes/{publish_id}; and, when the deployment has a GroupService, POST /groups, GET /groups/{group_id} and
- * DELETE /groups/{group_id}, POST /groups/{group_id}/commit and PUT /groups/{group_id}/yank. Returns undefined for any other request, which the read router then handles.
+ * DELETE /groups/{group_id}, POST /groups/{group_id}/commit and PUT /groups/{group_id}/yank; and, when it has a ClaimService,
+ * POST /packages/{name}/claim (a user token, not a publish token: the package does not exist yet). Returns undefined for any other request, which the read router then handles.
  *
  * Order of checks: read-only mode first (a read-only registry says so to everyone, signed in or not), then the
  * token, then the scope for this package and version, then the request itself.
@@ -73,7 +87,8 @@ export async function routePublish(req: HttpRequest, api: PublishApi, requestId:
   const isGroupAbort = api.groups !== undefined && req.method === 'DELETE' && seg.length === 2 && seg[0] === 'groups';
   const isGroupCommit = api.groups !== undefined && req.method === 'POST' && seg.length === 3 && seg[0] === 'groups' && seg[2] === 'commit';
   const isGroupYank = api.groups !== undefined && req.method === 'PUT' && seg.length === 3 && seg[0] === 'groups' && seg[2] === 'yank';
-  if (!isBegin && !isCommit && !isStatus && !isYank && !isGroupCreate && !isGroupGet && !isGroupAbort && !isGroupCommit && !isGroupYank) return undefined;
+  const isClaim = api.claims !== undefined && req.method === 'POST' && seg.length === 3 && seg[0] === 'packages' && seg[2] === 'claim';
+  if (!isBegin && !isCommit && !isStatus && !isYank && !isClaim && !isGroupCreate && !isGroupGet && !isGroupAbort && !isGroupCommit && !isGroupYank) return undefined;
 
   const refuseIfReadOnly = async () => {
     let readOnly: boolean;
@@ -89,6 +104,14 @@ export async function routePublish(req: HttpRequest, api: PublishApi, requestId:
 
   try {
     const authorization = req.headers?.authorization;
+
+    // A claim creates a package: read-only mode refuses it, then the token (any live token of a user: a CI token is nobody's),
+    // then the request. Not gated by the groups switch.
+    if (isClaim) {
+      await refuseIfReadOnly();
+      const githubId = api.auth.userToken(await api.auth.authenticate(authorization));
+      return respond(201, requestId, await api.claims!.claim(githubId, seg[1]!, optionalJsonBody(req)));
+    }
 
     // Reading and aborting a group stay available when read-only mode is on and when groups are not enabled: they only
     // look at, or end, a group that exists.

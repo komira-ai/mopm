@@ -191,6 +191,21 @@ publish `published`. See "The sparse index writer" below.
   `MOPM_RATE_PER_TOKEN_DAY`, set from the `limits` prop of the API stack): 100 MB per package, 10 GB per project (counts published and
   yanked files; a full project refuses new publishes and nothing is ever deleted), 2000 begins per account and 1000 per token per UTC day.
 
+## Claiming a package name
+
+`POST /packages/{name}/claim` (a user token: a login or an API token; a CI identity token is refused) is the only way a package comes to exist. It writes the package
+(`state: claimed`, with `claim_expires_at` 30 days out), its first owner (the account) and an `audit` entry in one DynamoDB transaction, each
+row created only if its key is absent, so of two claims of one name exactly one wins and the loser leaves nothing behind. The API role has
+`PutItem` on `packages` and `owners` for this and nothing more there: it cannot change or delete an owner or a package.
+
+- Read-only mode refuses a claim (`read_only_mode`), as it refuses an upload. The route is on every stage; there is no switch for it.
+- `name_reserved` is a fixed list in the code (`RESERVED_NAMES`), `name_too_similar` compares the name, with underscores dropped and
+  allowing one trailing `s`, with the names that start with the same letter (read from the search index, which is eventually
+  consistent: two similar names claimed within a moment of each other can both succeed). `confirm_similar` skips only that check.
+- `claim_expires_at` is stored and reported. Nothing yet frees a name whose claim lapsed with no published version; an operator
+  who must free one deletes its rows by hand (the API role cannot).
+- To see a claim: `audit` rows with `action: claim`, actor `u:<github id>`.
+
 ## Groups: enabling, rolling out and recovering
 
 The mechanics of a group are under "Publishing" above; this section is the order of work for an operator. Users' side is

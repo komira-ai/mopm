@@ -8,6 +8,8 @@ export type ErrorCode =
   | 'invalid_transition'
   | 'package_not_found'
   | 'name_taken'
+  | 'name_reserved'
+  | 'name_too_similar'
   | 'owner_not_found'
   | 'already_owner'
   | 'internal_error'
@@ -23,6 +25,8 @@ export const HTTP_STATUS: Record<ErrorCode, number> = {
   invalid_transition: 409,
   package_not_found: 404,
   name_taken: 409,
+  name_reserved: 403,
+  name_too_similar: 409,
   owner_not_found: 404,
   already_owner: 409,
   internal_error: 500,

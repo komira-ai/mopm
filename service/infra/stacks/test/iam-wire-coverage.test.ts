@@ -24,9 +24,7 @@ const WIRE_STAGE = 'beta'; // the stage name inside the goldens' table names
 const NOT_ROUTED: Record<string, string> = {
   'dynamodb:PutItem trusted_publishers': 'no route registers a trusted publisher',
   'dynamodb:DeleteItem trusted_publishers': 'a real delete; the table policy denies it to this role',
-  'dynamodb:PutItem owners': 'addOwner: package claim is not routed',
   'dynamodb:DeleteItem owners': 'removeOwner: no route; a real delete',
-  'dynamodb:PutItem packages': 'createPackage: package claim is not routed',
   'dynamodb:Scan packages': 'listPackageNames: used by the index writer, never by a route; the API role gets no Scan',
   'dynamodb:Query publishes': 'listActiveGroups: the group sweeper reads the sparse index by_sweep; no route does, and the API role has no Query on the table or the index',
 };
@@ -145,6 +143,15 @@ describe('wire goldens', () => {
         expect(mine.length).toBeGreaterThan(0);
         for (const c of mine) expect(covered(c, st)).toBe(false);
       }
+    });
+
+    // The claim writes the package, its first owner and the audit row in one transaction; each Put needs PutItem on its own table.
+    test('can fail: the claim transaction is covered, and with the claim statement removed its package and owner writes are not', () => {
+      const claim = calls.filter((c) => c.via.endsWith(' store.claimPackage'));
+      expect([...new Set(claim.map(keyOf))].sort()).toEqual(['dynamodb:PutItem audit', 'dynamodb:PutItem owners', 'dynamodb:PutItem packages']);
+      expect(claim.every((c) => covered(c, allowed()))).toBe(true);
+      const stripped = allowed().filter((s) => s.Sid !== 'ClaimPackages');
+      expect([...new Set(claim.filter((c) => !covered(c, stripped)).map(keyOf))].sort()).toEqual(['dynamodb:PutItem owners', 'dynamodb:PutItem packages']);
     });
 
     test('can fail: with the owners index resource removed from the policy, the account-token query is not covered', () => {

@@ -3,6 +3,7 @@ import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { Authenticator, authTablesFor, DynamoAuthStore } from '../auth';
 import { DynamoStore, tablesFor } from '../dynamo-store';
 import { S3Channel, S3Presigner, SqsFifoQueue } from './aws';
+import { ClaimService } from './claim';
 import { publishConfigFromEnv } from './config';
 import { DynamoPublishStore, publishTablesFor } from './dynamo-publish-store';
 import { AnyFlag, DynamoFlags, StaticFlags } from './flags';
@@ -63,5 +64,8 @@ export function publishApiFor(env: Env, doc: ReturnType<typeof documentClient>, 
   // The group routes exist, and answer route_not_found until the `groups_enabled` item of the config table admits the caller.
   // A commit queues the group's validation on the group queue; without the queue it answers `unavailable`.
   const groups = new GroupService({ registry, publishes, objects, presigner, config, ...(groupQueueUrl ? { groupQueue: new SqsFifoQueue(groupQueueUrl, { region }) } : {}) });
-  return { auth: new Authenticator({ store: new DynamoAuthStore(doc, authTablesFor(stage)) }), service, flags, groups };
+  const authStore = new DynamoAuthStore(doc, authTablesFor(stage));
+  // The claim route: a user token names the owner of a free package name.
+  const claims = new ClaimService({ registry, users: authStore });
+  return { auth: new Authenticator({ store: authStore }), service, flags, groups, claims };
 }

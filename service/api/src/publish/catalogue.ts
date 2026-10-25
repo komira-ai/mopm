@@ -18,11 +18,18 @@ export const PUBLISH_CATALOGUE: Record<string, { status: number; message: string
   token_revoked: { status: 401, message: 'The token was revoked.', hint: 'Create a new token.' },
   scope_missing: { status: 403, message: "The token does not have the '{scope}' scope for '{name}'.", hint: 'Create a token with that scope and that package.' },
   not_owner: { status: 403, message: "You are not an owner of '{name}'.", hint: 'Ask an owner to invite you.' },
+  name_reserved: { status: 403, message: "'{name}' is reserved.", hint: 'Choose another name.' },
   limit_exceeded: { status: 403, message: "Adding this file would put '{name}' over its storage limit of {limit} bytes; {remaining} bytes are left.", hint: 'Yanked versions still count toward the limit; only a takedown frees space. Reduce the package size.' },
   package_not_found: { status: 404, message: "There is no package '{name}'.", hint: 'Check the spelling, or claim the name.' },
   version_not_found: { status: 404, message: "'{name}' has no version '{version}'.", hint: "List the versions with 'mopm info {name}'." },
   publish_not_found: { status: 404, message: 'There is no such publish.', hint: 'Publish ids are only valid for the caller who made them.' },
   group_not_found: { status: 404, message: 'There is no such group.', hint: 'Group ids are only valid for the caller who made them, or for an owner of every package in the group.' },
+  name_taken: { status: 409, message: "'{name}' is already taken.", hint: 'Choose another name.' },
+  name_too_similar: {
+    status: 409,
+    message: "'{name}' is too similar to '{other}'.",
+    hint: 'Choose another name, or claim again with confirm_similar if you are sure.',
+  },
   version_exists: { status: 409, message: "'{name}' {version} already exists (sha256 {sha256}); versions are immutable.", hint: 'Publish a new version.' },
   invalid_transition: {
     status: 409,
