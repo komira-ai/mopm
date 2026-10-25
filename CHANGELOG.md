@@ -22,9 +22,11 @@ with `mopm publish` is unchanged. See [Publishing a workspace as one group](docs
 - `mopm stage --workspace-root <dir> [<package>...] --artifacts <dir> --compiler <mojo version> --out <dir> --registry <prod|gamma|beta|url>`
   packs the members of a workspace in dependency order and checks each version against the registry. It reads no token and writes
   nothing to the registry.
-- `mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>] [--dry-run]` publishes a staged set
+- `mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>] [--timeout <seconds>] [--retries <n>] [--dry-run]` publishes a staged set
   through one group. A rerun after a failure resumes the same group (`state.json`); `report.json` says what each member came to; a 429
-  stops the run and is never retried.
+  that names a long wait stops the run and is never retried into the limit. Every request has a time limit (`--timeout`, 30 seconds
+  by default, for the connection and then for the server on any read or write), and a PUT or a poll that fails on the connection, times
+  out or is answered 500, 502, 503 or 504 is repeated up to `--retries` times (3 by default) with jittered waits; any other 4xx is final.
 - `mopm yank --group <id> --registry <prod|gamma|beta|url> --reason <text> [--config-dir <dir>] [--wait <seconds>]` yanks every version a group published, and `--unyank` restores
   the ones that yank changed.
 
