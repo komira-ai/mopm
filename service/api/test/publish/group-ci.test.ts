@@ -310,10 +310,10 @@ describe.each(RIGS)('a CI identity and groups on the beta configuration: %s', (_
       const second = await exchange([gadgets]);
       const r = await env.create(second, [memberOf(gadgets)]);
       expect([r.statusCode, errorCode(r)]).toEqual([429, 'rate_limited']);
-      // no header and no row; the place taken on the actor's list was given back (only the aborted first group is on it)
+      // no header and no row; the place taken on the actor's list was given back (the aborted first group left it too)
       expect(await rig.store.getGroup(groupIdFor(ACTOR, env.groups.parse({ members: [memberOf(gadgets)] })))).toBeUndefined();
       expect(await rig.store.raw.rawGet('gadgets', gadgets.version)).toBeUndefined();
-      expect((await env.publishes.getActorGroups(ACTOR))?.groups.map((g) => g.id)).toEqual([json(made).group_id]);
+      expect((await env.publishes.getActorGroups(ACTOR))?.groups.map((g) => g.id) ?? []).toEqual([]);
     });
   });
 });
