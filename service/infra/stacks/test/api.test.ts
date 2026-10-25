@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
-import { ApiStack, AUTH_GRANTS, CLAIM_ROUTES, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
+import { ApiStack, AUTH_GRANTS, BETA_CI_PUBLISHERS, CI_PUBLISHERS_ENV, CLAIM_ROUTES, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
 import { STAGES, stageConfig, tableName } from '../lib/config';
 import { DUMMY_ACCOUNT, HANDLER_STUB_DIR, tpl } from './util';
 
@@ -265,6 +265,38 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
 
   test('no statement grants delete, scan, batch or transact writes, or a wildcard action, on any table', () => {
     expect(policyViolations(stage, statements())).toEqual([]);
+  });
+
+  // Config-as-code trust is beta's alone: the variable that names the trusted CI identity exists on the beta template and on
+  // no other. Creating a package is the one PutItem on packages every stage has (ClaimPackages), for the claim route and the CI
+  // exchange alike: there is no CI-only grant.
+  test(stage === 'beta' ? 'beta: CI_PUBLISHERS names exactly the komira release workflow on main in the beta environment, and package creation has the one shared grant' : `${stage}: no function has CI_PUBLISHERS`, () => {
+    const fns = Object.values(t.findResources('AWS::Lambda::Function')) as any[];
+    const values = fns.map((f) => f.Properties.Environment?.Variables?.[CI_PUBLISHERS_ENV]).filter((v) => v !== undefined);
+    const creators = statements().filter(
+      (s) => s.Effect === 'Allow' && acts(s).includes('dynamodb:PutItem') && flatten(s.Resource).includes(`table/${tableName(stage, 'packages')}"`),
+    );
+    expect(creators.map((s) => s.Sid)).toEqual(['ClaimPackages']); // one grant on every stage, none named for CI
+    if (stage === 'beta') {
+      expect(values).toHaveLength(1); // the API function; the index reader has none
+      expect(JSON.parse(values[0])).toEqual([
+        {
+          repository_id: '1376408823',
+          repository_owner_id: '305577347',
+          workflow: '.github/workflows/release.yml',
+          ref: 'refs/heads/main',
+          events: ['push', 'workflow_dispatch'],
+          environment: 'beta',
+        },
+      ]);
+      expect(JSON.parse(values[0])).toEqual(BETA_CI_PUBLISHERS);
+      expect(acts(creators[0])).toEqual(['dynamodb:PutItem']);
+    } else {
+      expect(values).toEqual([]);
+      // not even as a literal in the template
+      expect(JSON.stringify(t.toJSON())).not.toContain(CI_PUBLISHERS_ENV);
+      expect(JSON.stringify(t.toJSON())).not.toContain('1376408823');
+    }
   });
 
   // Can-fail proof: the checker above flags each planted defect, so a clean result means something.

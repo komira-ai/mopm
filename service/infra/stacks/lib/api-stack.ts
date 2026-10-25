@@ -82,6 +82,26 @@ export const WRITE_GRANTS: Array<{ sid: string; actions: string[]; tables: strin
   { sid: 'ReadSwitches', actions: ['dynamodb:GetItem'], tables: ['config'] },
 ];
 
+/** The environment variable the handler reads its configured CI publishers from. The code refuses to load it on any stage but beta. */
+export const CI_PUBLISHERS_ENV = 'CI_PUBLISHERS';
+/**
+ * The CI identity the BETA stage trusts by configuration (config as code): the komira repository's release workflow, on
+ * main, from a push or a manual run, in its `beta` environment. GitHub's numeric ids of the repository and its owner (public).
+ * Set on the beta stage only (see the ApiStack); gamma and prod get no such variable and keep the human step.
+ */
+export const BETA_CI_PUBLISHERS = [
+  {
+    repository_id: '1376408823',
+    repository_owner_id: '305577347',
+    workflow: '.github/workflows/release.yml',
+    ref: 'refs/heads/main',
+    events: ['push', 'workflow_dispatch'],
+    environment: 'beta',
+  },
+];
+// The CI publisher creates the packages it publishes with the same conditional PutItem on `packages` that the claim route uses
+// (WRITE_GRANTS, sid ClaimPackages, every stage). There is no CI-only grant: what is beta-only is the CI_PUBLISHERS variable.
+
 /** The operations of spec/api/openapi.yaml for login, tokens and CI exchange. */
 export const AUTH_ROUTES: { method: apigw.HttpMethod; path: string }[] = [
   { method: apigw.HttpMethod.POST, path: '/api/v1/auth/device' },
@@ -168,6 +188,8 @@ export class ApiStack extends Stack {
         // service/infra/access/lib/oauth-secret.ts; until it exists the device login routes answer 503.
         MOPM_OAUTH_SECRET_NAME: oauthSecretName(c.stage),
         MOPM_REQUIRE_2FA: String(props.require2fa ?? true),
+        // Beta only: the CI identity this stage trusts (BETA_CI_PUBLISHERS). Absent elsewhere, and the handler refuses it elsewhere.
+        ...(c.stage === 'beta' ? { [CI_PUBLISHERS_ENV]: JSON.stringify(BETA_CI_PUBLISHERS) } : {}),
         // The hosts GET /index/config.json names, from the stage's configuration.
         MOPM_API_DOMAIN: c.apiDomain,
         MOPM_CHANNEL_DOMAIN: c.condaDomain,

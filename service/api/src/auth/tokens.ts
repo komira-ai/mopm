@@ -51,6 +51,10 @@ export interface Principal {
   scopes: TokenScope[];
   packages: string[];
   version?: string;
+  /** A configured CI publisher's token: package name to the exact version it may publish. */
+  versions?: Record<string, string>;
+  /** A configured CI publisher's token: the identity it acts as, `gh-repo:<repository_id>`. */
+  ci_owner?: string;
   fresh_until?: string;
 }
 
@@ -217,6 +221,8 @@ export class Authenticator {
       scopes: rec.scopes,
       packages: rec.packages,
       version: rec.version,
+      versions: rec.versions,
+      ci_owner: rec.ci_owner,
       fresh_until: rec.fresh_until,
     };
   }
@@ -241,7 +247,14 @@ export class Authenticator {
   /** `publishToken`: an API token with `publish` for the package, or a CI token for exactly this package and version. */
   publishToken(p: Principal, name: string, version: string): void {
     if (p.kind === 'oidc') {
-      if (p.scopes.includes('publish') && p.packages.length === 1 && p.packages[0] === name && p.version !== undefined && sameVersion(p.version, version)) return;
+      if (!p.scopes.includes('publish') || !p.packages.includes(name)) throw missingScope('publish', name);
+      if (p.versions !== undefined) {
+        // A configured CI publisher's token: the versions it was minted for, package by package.
+        const v = Object.prototype.hasOwnProperty.call(p.versions, name) ? p.versions[name] : undefined;
+        if (v !== undefined && sameVersion(v, version)) return;
+      } else if (p.packages.length === 1 && p.version !== undefined && sameVersion(p.version, version)) {
+        return;
+      }
     } else if (p.kind === 'api' && p.scopes.includes('publish') && p.packages.includes(name)) {
       return;
     }

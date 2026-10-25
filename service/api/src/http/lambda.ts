@@ -1,6 +1,8 @@
 import {
   Authenticator,
   authTablesFor,
+  CI_PUBLISHERS_ENV,
+  parseCiPublishers,
   DeviceLogin,
   DynamoAuthStore,
   GithubJwtVerifier,
@@ -51,6 +53,9 @@ export const oidcAudiences = (stage: Stage): string[] => [...OIDC_AUDIENCES[stag
  * the secret itself is read when a device login first needs it, so a stage without it still serves everything else.
  */
 export function configureAuth(stage: Stage, doc: DocClient, env: NodeJS.ProcessEnv, read: SecretReader = readSecretFromAws): AuthServices | undefined {
+  // Parsed before anything else: a CI_PUBLISHERS value on a stage that may not have one stops the function from starting,
+  // whether or not auth is otherwise wired (the check is the code's, not only the infrastructure's).
+  const ciPublishers = parseCiPublishers(stage, env[CI_PUBLISHERS_ENV]);
   const secretId = env.MOPM_OAUTH_SECRET_NAME;
   if (!secretId) return undefined;
   const store = new DynamoAuthStore(doc, authTablesFor(stage));
@@ -60,7 +65,11 @@ export function configureAuth(stage: Stage, doc: DocClient, env: NodeJS.ProcessE
   return {
     authn: new Authenticator({ store }),
     tokens: new TokenService({ store, ownedPackages: ownedPackagesFrom(doc, tablesFor(stage).owners) }),
-    oidc: new OidcExchange({ store, verifier: new GithubJwtVerifier({ audiences: oidcAudiences(stage) }) }),
+    oidc: new OidcExchange({
+      store,
+      verifier: new GithubJwtVerifier({ audiences: oidcAudiences(stage) }),
+      ...(ciPublishers.length > 0 ? { ciPublishers, registry: new DynamoStore(doc, tablesFor(stage)) } : {}),
+    }),
     async devices() {
       const clientId = await secret.clientId();
       if (device?.clientId !== clientId) device = { clientId, svc: new DeviceLogin({ store, github: new HttpGitHubApi(clientId), require2fa }) };

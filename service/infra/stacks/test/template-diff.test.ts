@@ -98,15 +98,24 @@ const EXPECTED_PROD_DIFF = [
   'site:AWS::S3::Bucket:UpdateReplacePolicy',
 ].sort();
 
+// What only the beta stage has: the CI_PUBLISHERS variable of the API function (its Environment), and nothing else. The role's
+// policy is identical on every stage (package creation is the claim route's grant). Config-as-code trust is beta's alone, so
+// this is the whole of beta's difference from gamma. Adding to this list is a reviewed decision.
+const EXPECTED_BETA_ONLY_DIFF = ['api:AWS::Lambda::Function:Properties.Environment'];
+
 describe('whole-template stage diff', () => {
   const [beta, gamma, prod] = STAGES.map(fingerprint);
 
-  test('beta and gamma synthesize identical templates (modulo names and hosts)', () => {
-    expect(differing(beta, gamma)).toEqual([]);
+  test('beta and gamma synthesize identical templates (modulo names and hosts), except for the beta-only CI trust', () => {
+    expect(differing(beta, gamma)).toEqual(EXPECTED_BETA_ONLY_DIFF);
   });
 
-  test.each([['beta', beta], ['gamma', gamma]] as const)('%s differs from prod only in the expected properties', (_n, s) => {
-    expect(differing(s, prod)).toEqual(EXPECTED_PROD_DIFF);
+  test('gamma differs from prod only in the expected properties', () => {
+    expect(differing(gamma, prod)).toEqual(EXPECTED_PROD_DIFF);
+  });
+
+  test('beta differs from prod in the expected properties and the beta-only CI trust', () => {
+    expect(differing(beta, prod)).toEqual([...EXPECTED_PROD_DIFF, ...EXPECTED_BETA_ONLY_DIFF].sort());
   });
 });
 
