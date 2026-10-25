@@ -14,6 +14,9 @@
 //!    comes before its dependents; a cycle is refused. Dev-dependencies are not packed and are not edges.
 //! 3. Pack. The `.mojoc` of a member for a subdir is `<artifacts>/<subdir>/<name>.mojoc`; each subdir that has one is
 //!    packed, with the path of every path dependency dropped and its version requirement kept (src/core/conda.zig).
+//!    A member with `[native.<id>]` libraries also needs, per subdir, each one's static archive at
+//!    `<artifacts>/<subdir>/<name>.native/<archive name>` (`lib<id>.a`, or the native's `soname`), packed as
+//!    `mopm pack --native` packs it; one missing is refused, and `noarch` cannot hold natives.
 //!    Every file is packed twice and the two must be the same bytes; the metadata inside must hold no URL, no lock
 //!    entry and no path.
 //! 4. Registry. `GET /packages/<name>/<version>` (no token) decides each member: not there, `upload`; published with
@@ -314,13 +317,15 @@ pub fn metadataProblem(arena: Allocator, in: conda.Input, paths: []const []const
     return null;
 }
 
+/// The directory of a member's native archives beside its `.mojoc`: `<artifacts>/<subdir>/<name>.native/<archive name>`,
+/// where the archive name is `lib<id>.a` (or the `soname` of the `[native.<id>]`).
+pub const native_dir_suffix = ".native";
+
 /// Packs `m` from the artifacts, or the reason it cannot be.
 pub fn packMember(arena: Allocator, members: []const Member, m: Member, artifacts: []const u8, compiler: []const u8) !Result(Staged) {
     const T = Staged;
     if (try publish_cmd.versionProblem(arena, m.version)) |p| return bad(T, arena, "{s}: {s}", .{ m.name, p });
     if (!conda.validCompiler(compiler)) return bad(T, arena, "--compiler {s}: an exact Mojo version is digits and dots, such as 1.0.0", .{compiler});
-    if (m.m.native.len > 0) return bad(T, arena, "{s} declares native libraries, which stage does not pack; publish it with 'mopm publish'", .{m.name});
-
     var path_versions = std.ArrayList(conda.PathVersion).init(arena);
     var paths = std.ArrayList([]const u8).init(arena);
     for (m.m.dependencies) |d| {
@@ -352,7 +357,25 @@ pub fn packMember(arena: Allocator, members: []const Member, m: Member, artifact
             else => return bad(T, arena, "{s}: {s}", .{ file, @errorName(e) }),
         };
         if (bytes.len == 0) return bad(T, arena, "{s} is empty", .{file});
-        const in = conda.Input{ .name = m.name, .version = m.version, .compiler = compiler, .subdir = subdir, .deps = deps, .native_deps = native_deps, .mojoc = bytes };
+        // The static archives of the member's `[native.<id>]`, as `mopm pack --native` would be given them.
+        var natives = std.ArrayList(conda.Native).init(arena);
+        if (m.m.native.len > 0) {
+            if (std.mem.eql(u8, subdir, "noarch")) {
+                return bad(T, arena, "{s} declares native libraries, which are built for one platform; its artifact must be under linux-64 (or another subdir), not noarch ({s})", .{ m.name, file });
+            }
+            for (m.m.native) |n| {
+                const archive_name = try n.archiveName(arena);
+                const nfile = try std.fmt.allocPrint(arena, "{s}/{s}/{s}{s}/{s}", .{ artifacts, subdir, m.name, native_dir_suffix, archive_name });
+                const nbytes = std.fs.cwd().readFileAlloc(arena, nfile, 1 << 30) catch |e| switch (e) {
+                    error.FileNotFound => return bad(T, arena, "{s}: native library '{s}' has no archive for {s}: expected {s}", .{ m.name, n.id, subdir, nfile }),
+                    else => return bad(T, arena, "{s}: {s}: {s}", .{ m.name, nfile, @errorName(e) }),
+                };
+                const native = conda.Native{ .id = n.id, .soname = archive_name, .needs = n.needs, .exclusive = n.exclusive, .archive = nbytes };
+                if (try conda.nativeProblem(arena, native)) |why_not| return bad(T, arena, "{s}: {s}: {s}", .{ m.name, nfile, why_not });
+                try natives.append(native);
+            }
+        }
+        const in = conda.Input{ .name = m.name, .version = m.version, .compiler = compiler, .subdir = subdir, .deps = deps, .native_deps = native_deps, .mojoc = bytes, .natives = natives.items };
         const p = conda.pack(arena, in) catch |e| return bad(T, arena, "{s}: cannot pack {s}: {s}", .{ m.name, file, @errorName(e) });
         const again = conda.pack(arena, in) catch |e| return bad(T, arena, "{s}: cannot pack {s}: {s}", .{ m.name, file, @errorName(e) });
         if (!std.mem.eql(u8, p.bytes, again.bytes)) return bad(T, arena, "{s}: packing {s} twice gave different bytes", .{ m.name, file });

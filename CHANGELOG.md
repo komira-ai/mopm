@@ -5,6 +5,13 @@ checksums, and this file says what changed. The details of a command are on its 
 
 ## Unreleased
 
+### `mopm stage` packs native libraries
+
+`mopm stage` no longer refuses a member that declares `[native.<id>]` libraries. It reads each static archive from
+`<artifacts>/<subdir>/<name>.native/lib<id>.a` (beside the member's `.mojoc`) and packs it exactly as `mopm pack --native` does, so the
+staged `.conda` is the one `pack` makes from the same files. A missing archive, or one that is not an `ar` archive, is refused with the
+member named. See [Publishing a workspace as one group](docs/publishing-a-workspace.md).
+
 ### Publishing from GitHub Actions without a token
 
 `mopm publish --oidc` (and `mopm publish --staged ... --oidc`) takes the registry token from the identity of the GitHub Actions job that runs

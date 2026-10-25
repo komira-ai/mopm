@@ -22,7 +22,7 @@ mopm stage --workspace-root <dir> [<package>...] --artifacts <dir> --compiler <m
 |---|---|
 | `--workspace-root <dir>` | The directory searched for members: every directory below it that holds a `mopm.toml`. |
 | `<package>...` | Optional package names. With names, the set is those packages and the members they depend on; without, every member. |
-| `--artifacts <dir>` | Where the built `.mojoc` files are: `<dir>/<subdir>/<name>.mojoc` for each member. |
+| `--artifacts <dir>` | Where the built `.mojoc` files are: `<dir>/<subdir>/<name>.mojoc` for each member. A member with `[native.<id>]` libraries also has each one's static archive beside it, at `<dir>/<subdir>/<name>.native/lib<id>.a` (the native's `soname`, if it sets one, is the file name); stage packs it as `mopm pack --native <id>=<subdir>:<file>` would, and refuses a member whose archive is missing or is not an `ar` archive. A native is built for one platform, so its `.mojoc` is never under `noarch`. |
 | `--compiler <mojo version>` | The exact Mojo version the artifacts were built with. |
 | `--out <dir>` | Where the staged set is written. |
 | `--registry <name>` | Which registry the versions are checked against: `prod`, `gamma`, `beta` or a URL. There is no default. |
