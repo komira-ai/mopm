@@ -612,6 +612,45 @@ test "a readme is staged beside the package and named in the plan" {
     try std.testing.expectEqualStrings("# pkg_a\n", try fx.read("readme/pkg_a/README.md"));
 }
 
+/// `count` packages, each with a README of `len` bytes; pkg_0's is `len + extra`.
+fn manyReadmes(fx: Fx, count: usize, len: usize, extra: usize) !void {
+    for (0..count) |i| {
+        const name = try std.fmt.allocPrint(fx.a, "pkg_{d}", .{i});
+        try fx.member(name, "1.0.0", "");
+        const text = try fx.a.alloc(u8, len + if (i == 0) extra else 0);
+        @memset(text, 'r');
+        try fx.put(try std.fmt.allocPrint(fx.a, "ws/src/{s}/README.md", .{name}), text);
+    }
+}
+
+test "readmes that would make a commit request over the limit are refused at stage, naming the largest, with nothing written" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    try manyReadmes(fx, 95, 60000, 5000);
+    var stub = newStub(a);
+    const r = try runStage(fx, &stub, "over", &.{});
+    try std.testing.expectEqual(@as(u8, 1), r.code);
+    try std.testing.expect(contains(r.err, "make a commit request of") and contains(r.err, "The largest readmes: pkg_0 (65000 bytes)"));
+    try std.testing.expect(contains(r.err, "nothing was written"));
+    try std.testing.expect(!fx.exists("over"));
+}
+
+test "readmes whose commit request is under the limit are staged" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    try manyReadmes(fx, 85, 60000, 0);
+    var stub = newStub(a);
+    const r = try runStage(fx, &stub, "under", &.{});
+    try std.testing.expectEqual(@as(u8, 0), r.code);
+    try std.testing.expect(fx.exists("under/plan.json"));
+}
+
 test "the staged plan is the one publish --staged reads: members, files and hashes check out" {
     var st = arenaTest();
     defer st.deinit();

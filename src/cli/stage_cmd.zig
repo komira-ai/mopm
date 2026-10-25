@@ -514,6 +514,17 @@ pub fn run(r: Run) !u8 {
         }
     }
 
+    // The commit request carries every readme; one the registry would refuse is refused here, before anything is written.
+    var entries = std.ArrayList(plan_mod.CommitEntry).init(arena);
+    for (staged.items, verdicts.items) |s, v| {
+        if (v != .upload) continue;
+        try entries.append(.{ .name = s.member.name, .manifest_sha256 = &s.packs[0].manifest_sha256, .readme = s.readme });
+    }
+    if (try plan_mod.commitBodyProblem(arena, entries.items)) |why| {
+        c.fail("{s}; nothing was written\n", .{why});
+        return 1;
+    }
+
     // Everything is known: write. The old plan goes first, so a run that dies half way leaves no plan to publish.
     var out = std.fs.cwd().makeOpenPath(r.flags.out, .{}) catch |e| {
         c.fail("--out {s}: {s}\n", .{ r.flags.out, @errorName(e) });

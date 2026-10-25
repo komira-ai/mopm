@@ -879,6 +879,146 @@ test "a readme goes with the commit; one that vanished after the check stops the
     try std.testing.expectEqual(@as(usize, 1), again.seen.items.len);
 }
 
+/// `count` upload members m0.., each with a readme of `len` bytes; the readme of m0 is `extra` bytes longer.
+fn stageReadmes(a: Allocator, tmp: *std.testing.TmpDir, count: usize, len: usize, extra: usize) !plan_mod.Plan {
+    var members = std.ArrayList(u8).init(a);
+    try tmp.dir.makePath("noarch");
+    const sha = try core.install.sha256Hex(a, "m-bytes");
+    for (0..count) |i| {
+        if (i != 0) try members.append(',');
+        const filename = try std.fmt.allocPrint(a, "mojo-m{d}-1.0.0-x.conda", .{i});
+        try tmp.dir.writeFile(try std.fmt.allocPrint(a, "noarch/{s}", .{filename}), "m-bytes");
+        const readme = try a.alloc(u8, len + if (i == 0) extra else 0);
+        @memset(readme, 'a');
+        try tmp.dir.writeFile(try std.fmt.allocPrint(a, "R{d}.md", .{i}), readme);
+        try members.writer().print(
+            "{{\"name\":\"m{d}\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",\"readme\":\"R{d}.md\",\"files\":[{{\"subdir\":\"noarch\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":7}}]}}",
+            .{ i, sha_x, i, filename, sha },
+        );
+    }
+    const text = try std.fmt.allocPrint(a, "{{\"version\":1,\"members\":[{s}]}}", .{members.items});
+    try tmp.dir.writeFile(plan_mod.plan_name, text);
+    const parsed = try plan_mod.parsePlan(a, text);
+    try std.testing.expectEqualStrings("a plan", if (parsed == .ok) "a plan" else parsed.bad);
+    return parsed.ok;
+}
+
+/// The readme length of members 1.. and the extra for member 0 that make the commit body of `count` members exactly
+/// `plan_mod.max_commit_body_bytes` long.
+fn exactReadmes(a: Allocator, count: usize) !struct { len: usize, extra: usize } {
+    const entries = try a.alloc(plan_mod.CommitEntry, count);
+    for (entries, 0..) |*e, i| e.* = .{ .name = try std.fmt.allocPrint(a, "m{d}", .{i}), .manifest_sha256 = sha_x, .readme = "" };
+    const room = plan_mod.max_commit_body_bytes - plan_mod.commitBodyBytes(entries);
+    return .{ .len = room / count, .extra = room % count };
+}
+
+fn allHeld(a: Allocator, count: usize) ![]const u8 {
+    var out = std.ArrayList(u8).init(a);
+    try out.writer().print("{{\"group_id\":\"{s}\",\"status\":\"open\",\"attempt\":1,\"members\":[", .{gid});
+    for (0..count) |i| {
+        if (i != 0) try out.append(',');
+        try out.writer().print("{{\"name\":\"m{d}\",\"version\":\"1.0.0\",\"action\":\"new\",\"files\":[{{\"subdir\":\"noarch\",\"filename\":\"mojo-m{d}-1.0.0-x.conda\",\"upload_id\":\"u{d}\",\"uploaded\":true}}]}}", .{ i, i, i });
+    }
+    try out.appendSlice("]}");
+    return out.items;
+}
+
+test "a commit request exactly at the limit is sent whole; one byte over is refused before any request, and a resume says the same" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    const count = 90;
+    const sizes = try exactReadmes(a, count);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stageReadmes(a, &tmp, count, sizes.len, sizes.extra);
+    try std.testing.expect((try plan_mod.verify(a, tmp.dir, plan)) == null);
+    var script = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = try allHeld(a, count) },
+        .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
+    });
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    try std.testing.expectEqual(Result.published, p.run());
+    try std.testing.expectEqual(plan_mod.max_commit_body_bytes, script.seen.items[1].body.?.len);
+
+    var over_tmp = std.testing.tmpDir(.{});
+    defer over_tmp.cleanup();
+    const over = try stageReadmes(a, &over_tmp, count, sizes.len, sizes.extra + 1);
+    const why = (try plan_mod.verify(a, over_tmp.dir, over)).?;
+    try expectContains(why, "make a commit request of 5242881 bytes; the registry takes at most 5242880. The largest readmes: m0 (");
+    // The run stops on the staged directory before it resolves a registry or reads a token, and it keeps no state; a rerun
+    // over the same directory is refused the same way.
+    for (0..2) |_| {
+        const planned = try gp.checkedPlan(a, over_tmp.dir, "staged");
+        try expectContains(planned.bad, "make a commit request of 5242881 bytes");
+        try expectContains(planned.bad, "; nothing was sent");
+        try std.testing.expectError(error.FileNotFound, over_tmp.dir.access(plan_mod.state_name, .{}));
+    }
+}
+
+test "a staged directory whose plan cannot be used stops the run before any request, with the reason" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+
+    var empty = std.testing.tmpDir(.{});
+    defer empty.cleanup();
+    try expectContains((try gp.checkedPlan(a, empty.dir, "out/staged")).bad, "out/staged/");
+    try expectContains((try gp.checkedPlan(a, empty.dir, "out/staged")).bad, "FileNotFound");
+
+    var garbled = std.testing.tmpDir(.{});
+    defer garbled.cleanup();
+    try garbled.dir.writeFile(plan_mod.plan_name, "not json");
+    try expectContains((try gp.checkedPlan(a, garbled.dir, "staged")).bad, "is not JSON");
+
+    var refusing = std.testing.tmpDir(.{});
+    defer refusing.cleanup();
+    _ = try stageWith(a, &refusing, ",{\"name\":\"d\",\"version\":\"2.0.0\",\"action\":\"refuse\",\"reason\":\"yanked\"}", false);
+    try std.testing.expectEqualStrings("the plan refuses d 2.0.0: yanked; nothing was sent", (try gp.checkedPlan(a, refusing.dir, "staged")).bad);
+
+    var refusing_bare = std.testing.tmpDir(.{});
+    defer refusing_bare.cleanup();
+    _ = try stageWith(a, &refusing_bare, ",{\"name\":\"d\",\"version\":\"2.0.0\",\"action\":\"refuse\"}", false);
+    try std.testing.expectEqualStrings("the plan refuses d 2.0.0; nothing was sent", (try gp.checkedPlan(a, refusing_bare.dir, "staged")).bad);
+
+    var changed = std.testing.tmpDir(.{});
+    defer changed.cleanup();
+    _ = try stageWith(a, &changed, "", false);
+    try changed.dir.writeFile("noarch/mojo-a-1.0.0-x.conda", "changed");
+    try expectContains((try gp.checkedPlan(a, changed.dir, "staged")).bad, "has the sha256");
+
+    var fine = std.testing.tmpDir(.{});
+    defer fine.cleanup();
+    _ = try stageWith(a, &fine, "", true);
+    try std.testing.expectEqual(@as(usize, 3), (try gp.checkedPlan(a, fine.dir, "staged")).ok.members.len);
+}
+
+test "the length the client computes for a commit request is the length of the request it sends" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stageWith(a, &tmp, "", true);
+    var script = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = createAnswer("open", .{ true, true, true }) },
+        .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
+    });
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    try std.testing.expectEqual(Result.published, p.run());
+    const entries = [_]plan_mod.CommitEntry{
+        .{ .name = "a", .manifest_sha256 = sha_x, .readme = "# a readme\n" },
+        .{ .name = "b", .manifest_sha256 = sha_x, .readme = null },
+        .{ .name = "c", .manifest_sha256 = sha_x, .readme = null },
+    };
+    try std.testing.expectEqual(script.seen.items[1].body.?.len, plan_mod.commitBodyBytes(&entries));
+}
+
 test "a PUT that cannot be made, and a poll that cannot be read" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
