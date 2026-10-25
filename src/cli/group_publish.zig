@@ -38,8 +38,16 @@ const usage =
     \\
 ;
 
-/// How long the run waits for the group to be visible, unless `--wait` says.
+/// The least the run waits for the group to be visible, unless `--wait` says: the base of the default.
 pub const default_wait_secs: i64 = 600;
+/// What each member adds to the default wait: validation and the chain take longer the more members a group has
+/// (about 8 to 12 minutes at 170 members, 15 to 25 at 300).
+pub const wait_per_member_secs: i64 = 5;
+
+/// The default wait of a group of `members`: `default_wait_secs` plus `wait_per_member_secs` for each member.
+pub fn defaultWaitFor(members: usize) i64 {
+    return default_wait_secs + wait_per_member_secs * @as(i64, @intCast(members));
+}
 /// The most times one create is repeated while the registry answers `reserving`.
 pub const max_reserving_rounds: usize = 50;
 
@@ -47,9 +55,40 @@ pub const Flags = struct {
     staged: []const u8,
     registry: []const u8,
     config_dir: ?[]const u8 = null,
-    wait_secs: i64 = default_wait_secs,
+    /// `--wait`; null means the default of the group's size (`defaultWaitFor`).
+    wait_secs: ?i64 = null,
     dry_run: bool = false,
 };
+
+/// The command that waits for the group again: the flags of this run, without `--dry-run`.
+pub fn rerunCommand(arena: Allocator, flags: Flags) Allocator.Error![]const u8 {
+    var b = std.ArrayList(u8).init(arena);
+    const w = b.writer();
+    try w.writeAll("mopm publish --staged ");
+    try shellWord(w, flags.staged);
+    try w.writeAll(" --registry ");
+    try shellWord(w, flags.registry);
+    if (flags.config_dir) |c| {
+        try w.writeAll(" --config-dir ");
+        try shellWord(w, c);
+    }
+    if (flags.wait_secs) |s| try w.print(" --wait {d}", .{s});
+    return b.items;
+}
+
+/// `s` as one shell word: bare when it has only safe characters, else in single quotes.
+fn shellWord(w: anytype, s: []const u8) !void {
+    var safe = s.len > 0;
+    for (s) |c| {
+        if (!(std.ascii.isAlphanumeric(c) or std.mem.indexOfScalar(u8, "/._-:=@+,", c) != null)) safe = false;
+    }
+    if (safe) return w.writeAll(s);
+    try w.writeByte('\'');
+    for (s) |c| {
+        if (c == '\'') try w.writeAll("'\\''") else try w.writeByte(c);
+    }
+    try w.writeByte('\'');
+}
 
 pub const Parsed = union(enum) { ok: Flags, bad: []const u8 };
 
@@ -90,8 +129,9 @@ pub fn parseFlags(arena: Allocator, args: []const []const u8) Allocator.Error!Pa
         } else if (std.mem.eql(u8, a, "--config-dir")) {
             f.config_dir = v;
         } else {
-            f.wait_secs = std.fmt.parseInt(i64, v, 10) catch return .{ .bad = try std.fmt.allocPrint(arena, "--wait {s}: a number of seconds", .{v}) };
-            if (f.wait_secs < 0) return .{ .bad = "--wait is not negative" };
+            const n = std.fmt.parseInt(i64, v, 10) catch return .{ .bad = try std.fmt.allocPrint(arena, "--wait {s}: a number of seconds", .{v}) };
+            if (n < 0) return .{ .bad = "--wait is not negative" };
+            f.wait_secs = n;
         }
     }
     f.staged = staged orelse return .{ .bad = "--staged <dir> is required" };
@@ -231,11 +271,15 @@ pub const Publisher = struct {
     api_url: []const u8,
     token: []const u8,
     wait_secs: i64,
+    /// The command that waits for this group again, named when the wait runs out.
+    rerun: []const u8 = "the same command",
     state: plan_mod.State,
     group_status: ?[]const u8 = null,
     failure: ?Failure = null,
     /// Seconds the registry asked the client to wait, when it answered 429.
     retry_after: ?u32 = null,
+    /// Where the bytes of one file are held while it is uploaded; freed after each file.
+    scratch: Allocator = std.heap.page_allocator,
 
     fn call(p: *Publisher, method: std.http.Method, path: []const u8, body: ?[]const u8) Stop!http.Answer {
         const url = try std.fmt.allocPrint(p.arena, "{s}{s}", .{ p.api_url, path });
@@ -420,7 +464,11 @@ pub const Publisher = struct {
             return error.Failed;
         }
         const headers = (publish_cmd.putHeaders(p.arena, af.put_headers) catch return error.OutOfMemory) orelse return error.Failed;
-        const bytes = switch (try plan_mod.readChecked(p.arena, p.dir, f)) {
+        // The file's bytes, the request and its answer live only for this PUT: one file at a time is held, not the whole set.
+        var each = std.heap.ArenaAllocator.init(p.scratch);
+        defer each.deinit();
+        const scratch = each.allocator();
+        const bytes = switch (try plan_mod.readChecked(scratch, p.dir, f)) {
             .bytes => |b| b,
             .bad => |why| {
                 p.console.fail("{s}; nothing more was uploaded\n", .{why});
@@ -428,7 +476,7 @@ pub const Publisher = struct {
             },
         };
         // No bearer token: the URL is presigned.
-        const r = p.net.request(p.arena, .PUT, url, .{ .body = bytes, .content_type = null, .extra_headers = headers }) catch |e| {
+        const r = p.net.request(scratch, .PUT, url, .{ .body = bytes, .content_type = null, .extra_headers = headers }) catch |e| {
             p.console.fail("uploading {s} failed: {s}; run the same command again to resume group {s}\n", .{ f.filename, @errorName(e), p.state.group_id });
             return error.Failed;
         };
@@ -479,7 +527,8 @@ pub const Publisher = struct {
                 return error.Failed;
             }
             if (p.net.now() >= deadline) {
-                p.console.fail("gave up waiting after {d} seconds: group {s} is {s}; run the same command again to wait for it\n", .{ p.wait_secs, p.state.group_id, g.status });
+                p.console.fail("gave up waiting after {d} seconds: group {s} is {s} and still in progress, not failed; it may yet become visible\n", .{ p.wait_secs, p.state.group_id, g.status });
+                p.console.note("to keep waiting (nothing is sent again), run: {s}\n", .{p.rerun});
                 return error.TimedOut;
             }
             p.net.sleep(1);
@@ -692,7 +741,8 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, net: Net) an
         .plan = plan,
         .api_url = s.config.api_url,
         .token = token,
-        .wait_secs = flags.wait_secs,
+        .wait_secs = flags.wait_secs orelse defaultWaitFor(uploads.len),
+        .rerun = try rerunCommand(arena, flags),
         .state = state,
     };
     const result = p.run();

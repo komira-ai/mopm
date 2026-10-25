@@ -70,8 +70,13 @@ pub const Mojo = struct {
     base: std.process.EnvMap,
 
     pub fn init(a: Allocator) !Mojo {
+        return initAt(a, try h.toolPathAbs(a, "MOJO_TOOLCHAIN"));
+    }
+
+    /// As `init`, with the toolchain directory `tc` named by the caller: the unit tier of a driver lays a stand-in
+    /// compiler there (tests/drivers/fake_toolchain.zig) and keeps everything else (the `cc`, the environment).
+    pub fn initAt(a: Allocator, tc: []const u8) !Mojo {
         const work = try h.toolPathAbs(a, "BUILDRULES_TEST_WORK");
-        const tc = try h.toolPathAbs(a, "MOJO_TOOLCHAIN");
         const shim: ?[]const u8 = std.process.getEnvVarOwned(a, "CC_SHIM") catch null;
         const native = shim == null;
         const cc_dir = try h.join(a, &.{ work, "cc" });

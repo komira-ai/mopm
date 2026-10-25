@@ -39,19 +39,27 @@ pub const Script = struct {
     slept: u64 = 0,
     /// A step beyond the end of the script repeats the last.
     mismatch: ?[]const u8 = null,
+    /// When set, the bytes it reports as held are noted at each PUT, in `held_at_put`.
+    held_probe: ?*const usize = null,
+    held_at_put: std.ArrayList(usize) = undefined,
 
     pub fn net(s: *Script) Net {
         return .{ .ptr = s, .vtable = &.{ .request = request, .sleep = sleep, .now = now } };
     }
 
-    fn request(ptr: *anyopaque, arena: Allocator, method: std.http.Method, url: []const u8, options: http.Options) anyerror!http.Answer {
+    fn request(ptr: *anyopaque, _: Allocator, method: std.http.Method, url: []const u8, options: http.Options) anyerror!http.Answer {
         const s: *Script = @ptrCast(@alignCast(ptr));
-        try s.seen.append(.{ .method = method, .url = url, .token = options.token, .body = options.body, .content_type_set = options.content_type != null });
+        // The run frees what it passed once the request is over; the script keeps its own copy of the body.
+        const kept = if (options.body) |b| try s.seen.allocator.dupe(u8, b) else null;
+        try s.seen.append(.{ .method = method, .url = url, .token = options.token, .body = kept, .content_type_set = options.content_type != null });
+        if (method == .PUT) {
+            if (s.held_probe) |h| try s.held_at_put.append(h.*);
+        }
         const idx = @min(s.next, s.steps.len - 1);
         s.next += 1;
         const step = s.steps[idx];
         if (step.method != method or !std.mem.endsWith(u8, url, step.suffix)) {
-            s.mismatch = try std.fmt.allocPrint(arena, "request {d} was {s} {s}; the script has {s} ...{s}", .{ s.next, @tagName(method), url, @tagName(step.method), step.suffix });
+            s.mismatch = try std.fmt.allocPrint(s.seen.allocator,"request {d} was {s} {s}; the script has {s} ...{s}", .{ s.next, @tagName(method), url, @tagName(step.method), step.suffix });
             return error.ConnectionRefused;
         }
         return .{ .status = step.status, .body = step.body, .request_id = "req-test", .retry_after = step.retry_after };
@@ -146,7 +154,7 @@ fn publisher(a: Allocator, tmp: *std.testing.TmpDir, plan: plan_mod.Plan, script
 }
 
 fn newScript(a: Allocator, steps: []const Script.Step) Script {
-    return .{ .steps = steps, .seen = std.ArrayList(Script.Seen).init(a) };
+    return .{ .steps = steps, .seen = std.ArrayList(Script.Seen).init(a), .held_at_put = std.ArrayList(usize).init(a) };
 }
 
 fn contains(hay: []const u8, needle: []const u8) bool {
@@ -446,10 +454,13 @@ test "the run gives up waiting, and says how to go on" {
     var console = Console.init(a, null);
     var p = publisher(a, &tmp, plan, &script, &console);
     p.wait_secs = 5;
+    p.rerun = try gp.rerunCommand(a, .{ .staged = "out/staged", .registry = "beta", .config_dir = "my cfg", .wait_secs = 5, .dry_run = true });
     const result = p.run();
     try std.testing.expectEqual(Result.timed_out, result);
     try std.testing.expectEqual(@as(u64, 5), script.slept);
-    try expectContains(console.err.items, "gave up waiting after 5 seconds: group " ++ gid ++ " is committed");
+    try expectContains(console.err.items, "gave up waiting after 5 seconds: group " ++ gid ++ " is committed and still in progress");
+    try expectContains(console.err.items, "to keep waiting (nothing is sent again), run: mopm publish --staged out/staged --registry beta --config-dir 'my cfg' --wait 5\n");
+    try std.testing.expect(!contains(console.err.items, "--dry-run"));
     try std.testing.expectEqual(@as(u8, 1), p.finish(result));
     const report = try std.json.parseFromSliceLeaky(std.json.Value, a, try tmp.dir.readFileAlloc(a, plan_mod.report_name, 1 << 16), .{});
     try std.testing.expectEqualStrings("timed_out", report.object.get("outcome").?.string);
@@ -561,6 +572,32 @@ test "transport errors and a state that cannot be written stop the run" {
     try std.testing.expectEqual(@as(usize, 0), untouched.seen.items.len);
 }
 
+test "the default wait is the base plus an allowance for each member, and a short group waits no less than the base" {
+    try std.testing.expectEqual(@as(i64, 600), default_wait_secs);
+    try std.testing.expectEqual(@as(i64, 5), gp.wait_per_member_secs);
+    try std.testing.expectEqual(@as(i64, 600), gp.defaultWaitFor(0));
+    try std.testing.expectEqual(@as(i64, 615), gp.defaultWaitFor(3));
+    try std.testing.expectEqual(@as(i64, 1450), gp.defaultWaitFor(170));
+    try std.testing.expectEqual(@as(i64, 2100), gp.defaultWaitFor(300));
+    // The slowest estimate (25 minutes at 300 members, 12 at 170) is inside the default.
+    try std.testing.expect(gp.defaultWaitFor(300) > 25 * 60);
+    try std.testing.expect(gp.defaultWaitFor(170) > 12 * 60);
+}
+
+test "the command to keep waiting names the flags of the run and quotes what a shell would split" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    try std.testing.expectEqualStrings(
+        "mopm publish --staged ./s --registry prod",
+        try gp.rerunCommand(a, .{ .staged = "./s", .registry = "prod" }),
+    );
+    try std.testing.expectEqualStrings(
+        "mopm publish --staged 'a b' --registry 'it'\\''s'",
+        try gp.rerunCommand(a, .{ .staged = "a b", .registry = "it's" }),
+    );
+}
+
 test "flags" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
@@ -569,10 +606,10 @@ test "flags" {
     try std.testing.expectEqualStrings("s", f.staged);
     try std.testing.expectEqualStrings("beta", f.registry);
     try std.testing.expectEqualStrings("c", f.config_dir.?);
-    try std.testing.expectEqual(@as(i64, 9), f.wait_secs);
+    try std.testing.expectEqual(@as(?i64, 9), f.wait_secs);
     try std.testing.expect(f.dry_run);
     const g = (try parseFlags(a, &.{ "--registry", "prod", "--staged", "s" })).ok;
-    try std.testing.expectEqual(default_wait_secs, g.wait_secs);
+    try std.testing.expectEqual(@as(?i64, null), g.wait_secs);
     try std.testing.expect(!g.dry_run and g.config_dir == null);
     try std.testing.expect(wants(&.{ "--registry", "x", "--staged", "s" }));
     try std.testing.expect(!wants(&.{ "--compiler", "1.0.0" }));
@@ -838,4 +875,63 @@ test "the console hands what was said to its sink and starts again" {
     try std.testing.expectEqualStrings("hello 1\n|\n|mopm: bad thing\n\n|  and more\n\n", sunk[0..sunk_len]);
     try std.testing.expectEqual(@as(usize, 0), console.out.items.len);
     try std.testing.expectEqual(@as(usize, 0), console.err.items.len);
+}
+
+test "the bytes of a file are held while it is uploaded and not after: a set of four 1 MiB files never holds two at once" {
+    const mib = 1 << 20;
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makePath("noarch");
+    var files = std.ArrayList(u8).init(a);
+    var answers = std.ArrayList(u8).init(a);
+    for (0..4) |i| {
+        const bytes = try a.alloc(u8, mib);
+        @memset(bytes, @intCast('1' + i));
+        try tmp.dir.writeFile(try std.fmt.allocPrint(a, "noarch/f{d}.conda", .{i}), bytes);
+        if (i != 0) {
+            try files.append(',');
+            try answers.append(',');
+        }
+        try files.writer().print("{{\"subdir\":\"noarch\",\"filename\":\"f{d}.conda\",\"sha256\":\"{s}\",\"size\":{d}}}", .{ i, try core.install.sha256Hex(a, bytes), bytes.len });
+        try answers.writer().print("{{\"subdir\":\"noarch\",\"filename\":\"f{d}.conda\",\"upload_id\":\"upl_{d}\",\"uploaded\":false,\"put_url\":\"http://127.0.0.1:1/put/{d}\",\"put_headers\":{{}}}}", .{ i, i, i });
+    }
+    const text = try std.fmt.allocPrint(a, "{{\"version\":1,\"members\":[{{\"name\":\"m\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",\"files\":[{s}]}}]}}", .{ sha_x, files.items });
+    try tmp.dir.writeFile(plan_mod.plan_name, text);
+    const parsed = try plan_mod.parsePlan(a, text);
+    try std.testing.expectEqualStrings("a plan", if (parsed == .ok) "a plan" else parsed.bad);
+    const created = try std.fmt.allocPrint(a, "{{\"group_id\":\"{s}\",\"status\":\"open\",\"attempt\":1,\"deadline_at\":\"2026-10-23T00:00:00Z\",\"members\":[{{\"name\":\"m\",\"version\":\"1.0.0\",\"action\":\"new\",\"files\":[{s}]}}]}}", .{ gid, answers.items });
+
+    var counted = std.heap.GeneralPurposeAllocator(.{ .enable_memory_limit = true }){};
+    var script = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = created },
+        .{ .method = .PUT, .suffix = "/put/0", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/1", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/2", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/3", .status = 200 },
+        .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
+    });
+    script.held_probe = &counted.total_requested_bytes;
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, parsed.ok, &script, &console);
+    p.scratch = counted.allocator();
+    try std.testing.expectEqual(Result.published, p.run());
+    try std.testing.expect(script.mismatch == null);
+    try std.testing.expectEqual(@as(usize, 4), script.count(.PUT));
+
+    // Each PUT is sent with the file's bytes in hand (so they were counted), and with no other file's bytes still held.
+    try std.testing.expectEqual(@as(usize, 4), script.held_at_put.items.len);
+    for (script.held_at_put.items) |held| {
+        try std.testing.expect(held >= mib);
+        try std.testing.expect(held < 2 * mib);
+    }
+    // Nothing is left held when the run is over.
+    try std.testing.expectEqual(@as(usize, 0), counted.total_requested_bytes);
+    try std.testing.expectEqual(std.heap.Check.ok, counted.deinit());
+    // The bytes that were sent are the files', in order.
+    try std.testing.expectEqual(@as(u8, '1'), script.seen.items[1].body.?[mib - 1]);
+    try std.testing.expectEqual(@as(u8, '4'), script.seen.items[4].body.?[0]);
 }

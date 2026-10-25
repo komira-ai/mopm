@@ -335,6 +335,7 @@ pub fn packMember(arena: Allocator, members: []const Member, m: Member, artifact
     }
     var why: []const u8 = "";
     const deps = conda.depsOf(arena, m.m, path_versions.items, &why) catch |e| return if (e == error.Unpackable) try bad(T, arena, "{s}: {s}", .{ m.name, why }) else error.OutOfMemory;
+    const native_deps = conda.nativeDepsOf(arena, m.m, &why) catch |e| return if (e == error.Unpackable) try bad(T, arena, "{s}: {s}", .{ m.name, why }) else error.OutOfMemory;
     // The packed dependencies on members are the edges, no more and no fewer.
     for (deps) |d| {
         const is_member = indexOfName(members, d.name) != null;
@@ -351,7 +352,7 @@ pub fn packMember(arena: Allocator, members: []const Member, m: Member, artifact
             else => return bad(T, arena, "{s}: {s}", .{ file, @errorName(e) }),
         };
         if (bytes.len == 0) return bad(T, arena, "{s} is empty", .{file});
-        const in = conda.Input{ .name = m.name, .version = m.version, .compiler = compiler, .subdir = subdir, .deps = deps, .mojoc = bytes };
+        const in = conda.Input{ .name = m.name, .version = m.version, .compiler = compiler, .subdir = subdir, .deps = deps, .native_deps = native_deps, .mojoc = bytes };
         const p = conda.pack(arena, in) catch |e| return bad(T, arena, "{s}: cannot pack {s}: {s}", .{ m.name, file, @errorName(e) });
         const again = conda.pack(arena, in) catch |e| return bad(T, arena, "{s}: cannot pack {s}: {s}", .{ m.name, file, @errorName(e) });
         if (!std.mem.eql(u8, p.bytes, again.bytes)) return bad(T, arena, "{s}: packing {s} twice gave different bytes", .{ m.name, file });

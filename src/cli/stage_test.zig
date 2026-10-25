@@ -310,10 +310,10 @@ test "a dependency that cannot be staged is refused with the reason" {
     r = try runStage(fx, &stub, "o5", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "pkg_b declares native libraries, which stage does not pack"));
 
-    // Native dependencies are not packed by anything yet: the packer says so.
+    // Native dependencies to link are not packed by anything yet: the packer says so.
     try fx.put("ws/src/pkg_b/mopm.toml", "[package]\nname = \"pkg_b\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[native-dependencies]\nzlib = { version = \">=1.2\", kind = \"shared\", mode = \"link\" }\n");
     r = try runStage(fx, &stub, "o6", &.{});
-    try std.testing.expect(r.code == 1 and contains(r.err, "pkg_b: native dependencies are not packed yet"));
+    try std.testing.expect(r.code == 1 and contains(r.err, "pkg_b: native dependency 'zlib' is mode = \"link\"; only mode = \"load\" is packed"));
     for ([_][]const u8{ "o1", "o2", "o3", "o4", "o5", "o6" }) |o| try std.testing.expect(!fx.exists(o));
 }
 
@@ -558,6 +558,25 @@ test "packing is deterministic, and what is packed holds no URL, no lock entry a
     // The version requirement stays, in the conda spelling, and the path is gone.
     const b = try fx.read("one/noarch/mojo-pkg_b-2.1.0-mojo1.0.0_0.conda");
     try std.testing.expect(contains(b, "\"name\":\"pkg_a\",\"range\":\">=1.0,<2\""));
+}
+
+test "a package that loads a system library records it as a conda dependency of every file" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    try fx.member("pkg_a", "1.0.0", "");
+    try fx.member("pkg_b", "2.1.0", "");
+    try fx.put("ws/src/pkg_b/mopm.toml", "[package]\nname = \"pkg_b\"\nversion = \"2.1.0\"\nmojo = [\"1.0.0\"]\n\n[native-dependencies]\nlz4 = { version = \">=1.9.3\", kind = \"shared\", mode = \"load\" }\n");
+    var stub = newStub(a);
+    const r = try runStage(fx, &stub, "load", &.{});
+    try std.testing.expectEqual(@as(u8, 0), r.code);
+    const b = try fx.read("load/noarch/mojo-pkg_b-2.1.0-mojo1.0.0_0.conda");
+    try std.testing.expect(contains(b, "\"depends\":[\"mojo-compiler ==1.0.0\",\"lz4-c >=1.9.3\"]"));
+    // The sibling that loads nothing records nothing.
+    const x = try fx.read("load/noarch/mojo-pkg_a-1.0.0-mojo1.0.0_0.conda");
+    try std.testing.expect(contains(x, "\"depends\":[\"mojo-compiler ==1.0.0\"]"));
 }
 
 test "the metadata check refuses a URL, a lock entry and a path, and passes a plain dependency" {
