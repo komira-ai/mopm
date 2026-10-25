@@ -5,6 +5,7 @@ import { MemoryStore } from '../../src/memory-store';
 import { CLAIM_TTL_MS, ClaimService, claimLapsed, RESERVED_NAMES, tooSimilar } from '../../src/publish/claim';
 import { DEFAULT_PUBLISH_CONFIG } from '../../src/publish/config';
 import { MemoryPublishStore } from '../../src/publish/memory';
+import { validatePublish } from '../../src/publish/validator';
 import { CONTRACT_DIR, loadCases, type Case } from '../http/replay';
 import { publishApiFor } from '../../src/publish/wiring';
 import { FakeDocClient } from '../helpers';
@@ -181,6 +182,32 @@ describe('the first published version ends the claim', () => {
     await h.runValidator();
     const later = new Date(h.clock.t + CLAIM_TTL_MS + 1000);
     expect(claimLapsed((await h.registry.getPackage('demo'))!, later)).toBe(false);
+  });
+
+  // A crash between the version write and the activation leaves a published row under a claimed package; the validator's
+  // retry of the same message is the only thing that finishes it.
+  describe.each(['published', 'yanked'] as const)('a retry that finds the version already %s', (after) => {
+    test('activates the still-claimed package and drops its claim expiry', async () => {
+      const h = new Harness();
+      await claim(h, await account(h, 7, 'octocat'), 'demo');
+      const token = await h.token(7, ['demo'], ['publish']);
+      const id = await h.publish(token, pkg({ name: 'demo', version: '1.0.0' }));
+      // The crash: the version is written (published), the activation after it fails, the message is not acknowledged.
+      const crash = jest.spyOn(h.registry, 'activatePackage').mockRejectedValueOnce(new Error('the process died'));
+      await expect(validatePublish(h.validatorDeps, id)).rejects.toThrow('the process died');
+      crash.mockRestore();
+      expect((await h.registry.getVersion('demo', '1.0.0'))?.state).toBe('published');
+      if (after === 'yanked') {
+        const audit = { name: 'demo', ts: h.clock.now().toISOString(), id: 'a_yank', actor: 'u:7', action: 'yank', version: '1.0.0' };
+        await h.registry.updateVersion('demo', '1.0.0', { type: 'yank', reason: 'broken build' }, audit);
+        expect((await h.registry.getVersion('demo', '1.0.0'))?.state).toBe('yanked');
+      }
+      expect(await h.registry.getPackage('demo')).toMatchObject({ state: 'claimed', claim_expires_at: expect.any(String) });
+
+      expect(await validatePublish(h.validatorDeps, id)).toBe('processed');
+
+      expect(await h.registry.getPackage('demo')).toEqual({ name: 'demo', state: 'active', created_at: '2026-10-14T12:00:00Z' });
+    });
   });
 });
 
