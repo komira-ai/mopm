@@ -296,9 +296,76 @@ fn oidcRepository(ctx: *Ctx, jwt: []const u8) ?[]const u8 {
     };
 }
 
+/// The `packages` form: `{jwt, packages: [{name, version}]}` (1 to 100 entries, no name twice). For a CI publisher the
+/// deployment trusts by configuration; every name must be unclaimed (it is created, owned by the publisher) or already the
+/// publisher's, else `not_owner` and nothing is created. The one token may publish exactly those versions.
+fn exchangePackages(ctx: *Ctx, obj: std.json.ObjectMap, jwt: []const u8) anyerror!Response {
+    if (obj.get("name") != null or obj.get("version") != null) return resp.invalid(ctx.arena, "send 'packages' or 'name' and 'version', not both");
+    const list = switch (obj.get("packages").?) {
+        .array => |arr| arr.items,
+        else => return resp.invalid(ctx.arena, "'packages' must be an array"),
+    };
+    if (list.len < 1 or list.len > 100) return resp.invalid(ctx.arena, "'packages' holds 1 to 100 entries");
+    var wanted = std.ArrayList(st.NameVersion).init(ctx.arena);
+    for (list) |e| {
+        const o = switch (e) {
+            .object => |o| o,
+            else => return resp.invalid(ctx.arena, "'packages' holds objects"),
+        };
+        const name = util.getStr(o, "name") orelse return resp.invalid(ctx.arena, "'name' must be a string");
+        const version = util.getStr(o, "version") orelse return resp.invalid(ctx.arena, "'version' must be a string");
+        if (!util.isName(name)) return resp.fail(ctx.arena, .invalid_name, &.{.{ "name", name }});
+        if (!util.isVersion(version)) return resp.fail(ctx.arena, .invalid_version, &.{.{ "version", version }});
+        for (wanted.items) |w| {
+            if (std.mem.eql(u8, w.name, name)) return resp.invalid(ctx.arena, "'packages' names a package twice");
+        }
+        try wanted.append(.{ .name = name, .version = version });
+    }
+    const repository = oidcRepository(ctx, jwt) orelse
+        return resp.fail(ctx.arena, .oidc_token_invalid, &.{.{ "detail", "not a token with a repository claim" }});
+    const s = ctx.state;
+    var trusted = false;
+    for (s.ci_repos.items) |r| {
+        if (std.mem.eql(u8, r, repository)) trusted = true;
+    }
+    if (!trusted) return resp.fail(ctx.arena, .oidc_not_trusted, &.{.{ "name", wanted.items[0].name }});
+    const owner = try s.ensureUser(try std.fmt.allocPrint(ctx.arena, "ci/{s}", .{repository}));
+    for (wanted.items) |w| {
+        if (s.packageByName(w.name)) |p| {
+            if (!p.isOwner(owner)) return resp.fail(ctx.arena, .not_owner, &.{.{ "name", w.name }});
+        }
+    }
+    const now = s.now();
+    var kept = try s.alloc.alloc(st.NameVersion, wanted.items.len);
+    for (wanted.items, 0..) |w, i| {
+        kept[i] = .{ .name = try s.alloc.dupe(u8, w.name), .version = try s.alloc.dupe(u8, w.version) };
+        if (s.packageByName(w.name) == null) {
+            const p = try s.addPackage(.{ .name = kept[i].name, .created_at = now, .updated_at = now, .claim_expires_at = now + st.claim_secs });
+            try p.owners.append(s.alloc, owner);
+        }
+    }
+    const t = try s.addToken(.{
+        .id = try util.newId(s.alloc, "oidc"),
+        .secret = try util.newToken(s.alloc),
+        .kind = .oidc,
+        .user = owner,
+        .oidc_repository = try s.alloc.dupe(u8, repository),
+        .oidc_set = kept,
+        .created_at = now,
+        .expires_at = now + st.oidc_secs,
+    });
+    return resp.json(ctx.arena, .ok, .{
+        .token = t.secret,
+        .token_kind = "publish",
+        .expires_at = try util.rfc3339(ctx.arena, t.expires_at),
+        .packages = kept,
+    });
+}
+
 pub fn exchangeOidcToken(ctx: *Ctx, _: []const []const u8) anyerror!Response {
     const obj = ctx.object() orelse return resp.invalid(ctx.arena, "the body is not a JSON object");
     const jwt = util.getStr(obj, "jwt") orelse return resp.invalid(ctx.arena, "'jwt' must be a string");
+    if (obj.get("packages") != null) return exchangePackages(ctx, obj, jwt);
     const name = util.getStr(obj, "name") orelse return resp.invalid(ctx.arena, "'name' must be a string");
     const version = util.getStr(obj, "version") orelse return resp.invalid(ctx.arena, "'version' must be a string");
     if (!util.isName(name)) return resp.fail(ctx.arena, .invalid_name, &.{.{ "name", name }});

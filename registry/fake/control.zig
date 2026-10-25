@@ -109,6 +109,13 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
         try p.trusted.append(s.alloc, try s.alloc.dupe(u8, repository));
         return resp.json(ctx.arena, .ok, .{});
     }
+    // {"repository"}: a CI publisher the deployment trusts by configuration: its identity may use the `packages` form of
+    // the exchange, for packages that are unclaimed or already its own.
+    if (std.mem.eql(u8, path, "/ci_publisher")) {
+        const repository = util.getStr(obj, "repository") orelse return resp.invalid(ctx.arena, "'repository' must be a string");
+        try s.ci_repos.append(s.alloc, try s.alloc.dupe(u8, repository));
+        return resp.json(ctx.arena, .ok, .{});
+    }
     // {"name", "version", "reason_code"}: an administrator's takedown. The
     // bytes are gone (no url); the number and the sha256 stay.
     if (std.mem.eql(u8, path, "/tombstone")) {

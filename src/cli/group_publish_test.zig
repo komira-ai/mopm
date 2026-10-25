@@ -1207,3 +1207,157 @@ test "the bytes of a file are held while it is uploaded and not after: a set of 
     try std.testing.expectEqual(@as(u8, '1'), script.seen.items[1].body.?[mib - 1]);
     try std.testing.expectEqual(@as(u8, '4'), script.seen.items[4].body.?[0]);
 }
+
+const oidc_actions = core.ci_oidc.Actions{ .url = "https://pipelines.example/idtoken?api-version=2.0", .token = "oidc-request-token-secret" };
+const oidc_jwt = "head.payload.sig-secret";
+const oidc_identity = "{\"value\":\"" ++ oidc_jwt ++ "\"}";
+const oidc_minted = "mopm_group_token_secret";
+const oidc_exchange_ok = "{\"token\":\"" ++ oidc_minted ++ "\",\"token_kind\":\"publish\",\"expires_at\":\"2026-10-25T00:15:00Z\",\"packages\":[]}";
+const oidc_api = "http://127.0.0.1:1/api/v1";
+
+/// None of the three secrets of an --oidc run is in `text`.
+fn expectNoOidcSecret(text: []const u8) !void {
+    for ([_][]const u8{ oidc_actions.token, oidc_jwt, oidc_minted }) |s| try std.testing.expect(!contains(text, s));
+}
+
+test "--oidc covers a staged set of three with one identity request and one exchange, and that one token runs the whole group" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, ",{\"name\":\"d\",\"version\":\"2.0.0\",\"action\":\"skip\",\"reason\":\"already published\"}");
+    var script = newScript(a, &.{
+        .{ .method = .GET, .suffix = "audience=beta.mopm.dev", .status = 200, .body = oidc_identity },
+        .{ .method = .POST, .suffix = "/auth/oidc/exchange", .status = 200, .body = oidc_exchange_ok },
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+        .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/c", .status = 200 },
+        .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
+    });
+    const uploads = try plan.uploads(a);
+    const got = try gp.oidcToken(a, script.net(), oidc_actions, oidc_api, "beta", uploads);
+    try std.testing.expectEqualStrings(oidc_minted, got.ok);
+
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    p.token = got.ok;
+    const result = p.run();
+    try std.testing.expectEqual(Result.published, result);
+    try std.testing.expectEqual(@as(u8, 0), p.finish(result));
+    try std.testing.expect(script.mismatch == null);
+    try std.testing.expectEqual(@as(usize, 8), script.seen.items.len);
+
+    // One request for the identity token, one exchange; the group's requests never ask for either again.
+    var identity: usize = 0;
+    var exchanges: usize = 0;
+    for (script.seen.items) |x| {
+        if (contains(x.url, "pipelines.example")) identity += 1;
+        if (contains(x.url, "/auth/oidc/exchange")) exchanges += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), identity);
+    try std.testing.expectEqual(@as(usize, 1), exchanges);
+    try std.testing.expectEqualStrings(oidc_actions.token, script.seen.items[0].token.?);
+
+    // The exchange names every member to upload at its version, in the plan's order, and not the skipped one; it holds the
+    // identity token as the only credential.
+    const ex = script.seen.items[1];
+    try std.testing.expect(ex.token == null);
+    try std.testing.expectEqualStrings(
+        "{\"jwt\":\"" ++ oidc_jwt ++ "\",\"packages\":[{\"name\":\"a\",\"version\":\"1.0.0\"},{\"name\":\"b\",\"version\":\"1.0.0\"},{\"name\":\"c\",\"version\":\"1.0.0\"}]}",
+        ex.body.?,
+    );
+
+    // The exchanged token is what the group's API calls carry (create, commit, poll); the PUTs carry none.
+    for (script.seen.items[2..]) |x| {
+        if (x.method == .PUT) {
+            try std.testing.expect(x.token == null);
+        } else {
+            try std.testing.expectEqualStrings(oidc_minted, x.token.?);
+        }
+    }
+
+    // None of the three secrets is in anything said, nor in a file the run wrote (the token stays in memory).
+    try expectNoOidcSecret(console.out.items);
+    try expectNoOidcSecret(console.err.items);
+    var walker = try tmp.dir.walk(a);
+    defer walker.deinit();
+    var files: usize = 0;
+    while (try walker.next()) |entry| {
+        if (entry.kind != .file) continue;
+        files += 1;
+        try expectNoOidcSecret(try tmp.dir.readFileAlloc(a, entry.path, 1 << 20));
+    }
+    try std.testing.expect(files >= 5); // plan, three packages' files and the records: the walk did look at the run's files
+}
+
+test "--oidc: a refused exchange stops before the group is created, with the registry's message" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    const uploads = try plan.uploads(a);
+    const refusals = [_]struct { status: u16, body: []const u8, text: []const u8 }{
+        .{ .status = 403, .body = "{\"error\":{\"code\":\"not_owner\",\"message\":\"You are not an owner of 'b'.\",\"hint\":\"Ask an owner.\"}}", .text = "You are not an owner of 'b'." },
+        .{ .status = 403, .body = "{\"error\":{\"code\":\"oidc_not_trusted\",\"message\":\"No trusted publisher of 'a' matches this CI identity.\",\"hint\":\"Register it.\"}}", .text = "No trusted publisher of 'a' matches this CI identity." },
+    };
+    for (refusals) |r| {
+        var script = newScript(a, &.{
+            .{ .method = .GET, .suffix = "audience=beta.mopm.dev", .status = 200, .body = oidc_identity },
+            .{ .method = .POST, .suffix = "/auth/oidc/exchange", .status = r.status, .body = r.body },
+            .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+        });
+        const got = try gp.oidcToken(a, script.net(), oidc_actions, oidc_api, "beta", uploads);
+        try expectContains(got.bad, r.text);
+        try expectContains(got.bad, "refused the identity token for the 3 packages of the set");
+        try expectNoOidcSecret(got.bad);
+        // Only the two token requests were made: no group, no upload.
+        try std.testing.expectEqual(@as(usize, 2), script.seen.items.len);
+        try std.testing.expect(script.mismatch == null);
+    }
+}
+
+test "--oidc: each member is listed at its own version, in the plan's order" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    const members = [_]plan_mod.Member{
+        .{ .name = "zeta", .version = "0.0.3", .action = .upload },
+        .{ .name = "alpha", .version = "2.1.0-rc.1", .action = .upload },
+        .{ .name = "mid", .version = "10.0.0", .action = .upload },
+    };
+    var script = newScript(a, &.{
+        .{ .method = .GET, .suffix = "audience=gamma.mopm.dev", .status = 200, .body = oidc_identity },
+        .{ .method = .POST, .suffix = "/auth/oidc/exchange", .status = 200, .body = oidc_exchange_ok },
+    });
+    const got = try gp.oidcToken(a, script.net(), oidc_actions, oidc_api, "gamma", &members);
+    try std.testing.expectEqualStrings(oidc_minted, got.ok);
+    try std.testing.expectEqualStrings(
+        "{\"jwt\":\"" ++ oidc_jwt ++ "\",\"packages\":[{\"name\":\"zeta\",\"version\":\"0.0.3\"},{\"name\":\"alpha\",\"version\":\"2.1.0-rc.1\"},{\"name\":\"mid\",\"version\":\"10.0.0\"}]}",
+        script.seen.items[1].body.?,
+    );
+}
+
+test "--oidc: more than 100 members is refused whole, before GitHub or the registry is asked" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var members = std.ArrayList(plan_mod.Member).init(a);
+    for (0..101) |i| try members.append(.{ .name = try std.fmt.allocPrint(a, "pkg{d}", .{i}), .version = "1.0.0", .action = .upload });
+    var script = newScript(a, &.{.{ .method = .GET, .suffix = "audience=beta.mopm.dev", .status = 200, .body = oidc_identity }});
+    const got = try gp.oidcToken(a, script.net(), oidc_actions, oidc_api, "beta", members.items);
+    try expectContains(got.bad, "at most 100 packages and this set uploads 101");
+    try std.testing.expectEqual(@as(usize, 0), script.seen.items.len);
+    // 100 is within the limit: it asks once for each.
+    var ok_script = newScript(a, &.{
+        .{ .method = .GET, .suffix = "audience=beta.mopm.dev", .status = 200, .body = oidc_identity },
+        .{ .method = .POST, .suffix = "/auth/oidc/exchange", .status = 200, .body = oidc_exchange_ok },
+    });
+    const full = try gp.oidcToken(a, ok_script.net(), oidc_actions, oidc_api, "beta", members.items[0..100]);
+    try std.testing.expectEqualStrings(oidc_minted, full.ok);
+    try std.testing.expectEqual(@as(usize, 2), ok_script.seen.items.len);
+}

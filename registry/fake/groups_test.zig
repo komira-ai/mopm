@@ -620,3 +620,91 @@ test "the controls: a PUT that fails once, and time that passes between the crea
     try std.testing.expectEqual(@as(u16, 201), again.status);
     try std.testing.expectEqual(@as(u16, 202), (try fx.call(.POST, commit, try fx.commitBody(abc), fx.alice_token)).status);
 }
+
+/// A JWT-shaped CI identity token whose payload names `repository` (the fake reads no signature).
+fn jwtOf(fx: *Fx, repository: []const u8) ![]const u8 {
+    const a = fx.life.allocator();
+    const enc = std.base64.url_safe_no_pad.Encoder;
+    const payload = try std.fmt.allocPrint(a, "{{\"repository\":\"{s}\"}}", .{repository});
+    const part = try a.alloc(u8, enc.calcSize(payload.len));
+    _ = enc.encode(part, payload);
+    return std.fmt.allocPrint(a, "e30.{s}.c2ln", .{part});
+}
+
+fn exchange(fx: *Fx, jwt: []const u8, packages: []const u8) !Reply {
+    const body = try std.fmt.allocPrint(fx.life.allocator(), "{{\"jwt\":\"{s}\",\"packages\":{s}}}", .{ jwt, packages });
+    return fx.call(.POST, "/api/v1/auth/oidc/exchange", body, null);
+}
+
+test "the packages exchange: who it is for, what it refuses, and that nothing is made by a refusal" {
+    var fx: Fx = undefined;
+    try fx.setup();
+    defer fx.deinit();
+    const jwt = try jwtOf(&fx, "org/repo");
+    const one = "[{\"name\":\"new_one\",\"version\":\"1.0.0\"}]";
+
+    // A repository nobody configured is not a CI publisher, however well-formed the token and the list.
+    try expectCode(try exchange(&fx, jwt, one), 403, "oidc_not_trusted");
+    try fx.state.ci_repos.append(fx.life.allocator(), "org/repo");
+
+    // The list is checked before the token: each of these is the caller's mistake.
+    try expectCode(try exchange(&fx, jwt, "{}"), 400, "invalid_request");
+    try expectCode(try exchange(&fx, jwt, "[]"), 400, "invalid_request");
+    try expectCode(try exchange(&fx, jwt, "[1]"), 400, "invalid_request");
+    try expectCode(try exchange(&fx, jwt, "[{\"version\":\"1.0.0\"}]"), 400, "invalid_request");
+    try expectCode(try exchange(&fx, jwt, "[{\"name\":\"new_one\"}]"), 400, "invalid_request");
+    try expectCode(try exchange(&fx, jwt, "[{\"name\":\"Not A Name\",\"version\":\"1.0.0\"}]"), 400, "invalid_name");
+    try expectCode(try exchange(&fx, jwt, "[{\"name\":\"new_one\",\"version\":\"one\"}]"), 400, "invalid_version");
+    try expectCode(try exchange(&fx, jwt, "[{\"name\":\"new_one\",\"version\":\"1.0.0\"},{\"name\":\"new_one\",\"version\":\"1.0.1\"}]"), 400, "invalid_request");
+    var many = std.ArrayList(u8).init(fx.life.allocator());
+    try many.append('[');
+    for (0..101) |i| try many.writer().print("{s}{{\"name\":\"many_{d}\",\"version\":\"1.0.0\"}}", .{ if (i == 0) "" else ",", i });
+    try many.append(']');
+    try expectCode(try exchange(&fx, jwt, many.items), 400, "invalid_request");
+    const both = try std.fmt.allocPrint(fx.life.allocator(), "{{\"jwt\":\"{s}\",\"name\":\"new_one\",\"version\":\"1.0.0\",\"packages\":{s}}}", .{ jwt, one });
+    try expectCode(try fx.call(.POST, "/api/v1/auth/oidc/exchange", both, null), 400, "invalid_request");
+    try expectCode(try fx.call(.POST, "/api/v1/auth/oidc/exchange", "{\"jwt\":\"x\",\"packages\":3}", null), 400, "invalid_request");
+    try expectCode(try exchange(&fx, "not-a-jwt", one), 401, "oidc_token_invalid");
+
+    // A name someone else owns refuses the whole list, and the name before it is not created.
+    try expectCode(try exchange(&fx, jwt, "[{\"name\":\"new_one\",\"version\":\"1.0.0\"},{\"name\":\"pkg_a\",\"version\":\"1.0.0\"}]"), 403, "not_owner");
+    try std.testing.expect(fx.state.packageByName("new_one") == null);
+    // No token was minted by any refusal: the fixture's two API tokens and its session are all there are.
+    try std.testing.expectEqual(@as(usize, 3), fx.state.tokens.items.len);
+}
+
+test "a packages token creates and runs a group of exactly its versions, and no other" {
+    var fx: Fx = undefined;
+    try fx.setup();
+    defer fx.deinit();
+    const a = fx.life.allocator();
+    try fx.state.ci_repos.append(a, "org/repo");
+    const jwt = try jwtOf(&fx, "org/repo");
+    const names: []const []const u8 = &.{ "new_one", "new_two" };
+
+    const minted = try exchange(&fx, jwt, "[{\"name\":\"new_one\",\"version\":\"1.0.0\"},{\"name\":\"new_two\",\"version\":\"1.0.0\"}]");
+    try std.testing.expectEqual(@as(u16, 200), minted.status);
+    try std.testing.expectEqualStrings("publish", minted.value.object.get("token_kind").?.string);
+    try std.testing.expectEqual(@as(usize, 2), minted.value.object.get("packages").?.array.items.len);
+    try std.testing.expect(minted.value.object.get("name") == null);
+    const token = minted.value.object.get("token").?.string;
+    const publisher = fx.state.userByHandle("ci/org/repo").?;
+    try std.testing.expect(fx.state.packageByName("new_one").?.isOwner(publisher));
+
+    // The token is not for a version or a package it does not name.
+    try expectCode(try fx.call(.POST, "/api/v1/groups", try fx.request(names, "2.0.0", "x"), token), 403, "scope_missing");
+    try expectCode(try fx.call(.POST, "/api/v1/groups", try fx.request(&.{ "new_one", "pkg_a" }, "1.0.0", "x"), token), 403, "scope_missing");
+
+    // It creates the group, and the group runs to visible under it.
+    const created = try fx.call(.POST, "/api/v1/groups", try fx.request(names, "1.0.0", "x"), token);
+    try std.testing.expectEqual(@as(u16, 201), created.status);
+    try fx.upload(created, "x");
+    const commit = try std.fmt.allocPrint(a, "/api/v1/groups/{s}/commit", .{idOf(created)});
+    try std.testing.expectEqual(@as(u16, 202), (try fx.call(.POST, commit, try fx.commitBody(names), token)).status);
+    const poll = try std.fmt.allocPrint(a, "/api/v1/groups/{s}", .{idOf(created)});
+    var last: []const u8 = "";
+    for (0..4) |_| last = (try fx.call(.GET, poll, "", token)).value.object.get("status").?.string;
+    try std.testing.expectEqualStrings("visible", last);
+    try std.testing.expectEqual(@as(usize, 1), try versionsOf(&fx, "new_one"));
+    try std.testing.expectEqual(@as(usize, 1), try versionsOf(&fx, "new_two"));
+}

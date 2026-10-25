@@ -56,6 +56,7 @@ Not part of the contract. Each is a POST with a JSON object body.
 | `/_fake/limits` | `{"project_bytes"}` | the per-package byte limit (default 10 GB), to reach `limit_exceeded` with small files |
 | `/_fake/fault` | `{"operation", "code"}` | the next request to that operationId answers that error code |
 | `/_fake/trusted` | `{"name", "repository"}` | a trusted publisher of a package, for `exchangeOidcToken` |
+| `/_fake/ci_publisher` | `{"repository"}` | a CI publisher trusted by configuration, for the `packages` form of `exchangeOidcToken` (a name nobody has claimed is created, owned by the publisher; the one token it returns may create and run a group of exactly those versions) |
 | `/_fake/tombstone` | `{"name", "version", "reason_code"}` | an administrator's takedown: no `url`, the sha256 stays |
 | `/_fake/groups` | `{"enabled"}` | group publishing on (the default) or off: off, `createGroup` answers `route_not_found`, as a registry that has not enabled groups does |
 | `/_fake/put_fault` | `{"after"}` | after that many more PUTs of upload bytes, the next one answers `unavailable` (once), as storage can fail in the middle of a group |
