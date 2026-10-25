@@ -65,12 +65,14 @@ const usage =
     \\                          mopm.toml; --native <id>=<subdir>:<file> gives the
     \\                          static archive of a [native.<id>] for one subdir
     \\  publish [pack options] [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
-    \\          [--readme <file>] [--dry-run]
+    \\          [--readme <file>] [--dry-run] [--oidc]
     \\                          pack and publish to a registry; the token is
-    \\                          $MOPM_TOKEN, else the one 'mopm login' stored;
+    \\                          $MOPM_TOKEN, else the one 'mopm login' stored,
+    \\                          or with --oidc (inside GitHub Actions, with
+    \\                          'id-token: write') one from the job's identity;
     \\                          --dry-run packs and prints what would be sent
     \\  publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>]
-    \\          [--wait <seconds>] [--dry-run]
+    \\          [--wait <seconds>] [--dry-run] [--oidc]
     \\                          publish a staged set (plan.json and the files it
     \\                          names, spec/staged-set.md) through one group:
     \\                          every member is visible together, or none is.

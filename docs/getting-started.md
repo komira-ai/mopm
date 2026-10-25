@@ -215,7 +215,9 @@ mopm publish ... --registry beta                                       # prod (d
 ```
 
 `--mojoc` takes `[<subdir>=]<file>`, repeatable; the subdir is `noarch` (the default), `linux-64`,
-`linux-aarch64` or `osx-arm64`. In CI set `MOPM_TOKEN` instead of logging in. A published version is
+`linux-aarch64` or `osx-arm64`. In CI set `MOPM_TOKEN` instead of logging in, or, inside a GitHub Actions job
+with `id-token: write`, pass `--oidc` to publish with the job's identity and no stored token (see
+[publishing a workspace](publishing-a-workspace.md)). A published version is
 immutable and its number can never be reused; fix a bad release by publishing a new version. The registry
 refuses a package that breaks the layout rules, limits (100 MB per package file, 128 MiB per unpacked file), or the manifest rules, and says
 which in `rejection_code`.

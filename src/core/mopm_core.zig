@@ -25,6 +25,7 @@ pub const child_env = @import("child_env.zig");
 pub const http = @import("http.zig");
 pub const registry = @import("registry.zig");
 pub const credentials = @import("credentials.zig");
+pub const ci_oidc = @import("ci_oidc.zig");
 pub const conda = @import("conda.zig");
 pub const resolve = @import("resolve.zig");
 pub const lock = @import("lock.zig");
@@ -61,6 +62,7 @@ test {
     _ = @import("http.zig");
     _ = @import("registry.zig");
     _ = @import("credentials.zig");
+    _ = @import("ci_oidc.zig");
     _ = @import("conda.zig");
     _ = @import("resolve.zig");
     _ = @import("lock.zig");

@@ -351,11 +351,15 @@ fn theTokenIsInNoChildEnvironment(w: World, probe: []const u8) !void {
     try h.writeFile(try h.join(a, &.{ w.work, "prog.mojo" }), "def main(): pass\n");
     var env = try h.cloneEnv(a, &w.m.env);
     try env.put("MOPM_TOKEN", w.token);
+    try env.put("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "actions_request_secret");
+    try env.put("ACTIONS_ID_TOKEN_REQUEST_URL", "https://pipelines.example/idtoken?api-version=2.0");
     try env.put("MOPM_PROBE_MARK", "kept");
     const argv = [_][]const u8{ w.m.exe, "run", "--prefix", prefix, try h.join(a, &.{ w.work, "prog.mojo" }) };
     const r = try h.run(a, &argv, &env, .{});
     w.rep.check("a program mopm starts has no MOPM_TOKEN in its environment, and the rest of the environment as it was", h.contains(r.text, "MOPM_TOKEN=<unset>") and
         h.contains(r.text, "MOPM_PROBE_MARK=kept") and !h.contains(r.text, w.token), r.text);
+    w.rep.check("nor the identity-token request token and URL that 'publish --oidc' asks GitHub with", h.contains(r.text, "ACTIONS_ID_TOKEN_REQUEST_TOKEN=<unset>") and
+        h.contains(r.text, "ACTIONS_ID_TOKEN_REQUEST_URL=<unset>") and !h.contains(r.text, "actions_request_secret") and !h.contains(r.text, "pipelines.example"), r.text);
 }
 
 /// The lines the stand-in program appended to `path`, or "" when there are none.

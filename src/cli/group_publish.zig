@@ -2,7 +2,7 @@
 //! (spec/staged-set.md; the registry's side is `createGroup`, `commitGroup` and `getGroup` in spec/api/openapi.yaml).
 //!
 //!   mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>]
-//!                [--timeout <seconds>] [--retries <n>] [--dry-run]
+//!                [--timeout <seconds>] [--retries <n>] [--dry-run] [--oidc]
 //!
 //! The run, in order:
 //!   1. read `<dir>/plan.json`, refuse a plan that has a refused member, and check every file against the plan;
@@ -25,21 +25,28 @@
 //! final at once. The POSTs (create, commit) are sent once: a rerun of the command is their retry. The token (`$MOPM_TOKEN`, else the login's) is read after
 //! the plan has been checked, goes only to the registry's API, is never printed, and is taken out of the environment of every
 //! program mopm starts (src/core/child_env.zig).
+//!
+//! `--oidc` replaces that token with one from the CI job's identity (src/core/ci_oidc.zig): inside a GitHub Actions job
+//! that may request an identity token, mopm exchanges it at the registry, in memory only, for a token that may publish one
+//! package version. The exchange route mints a token for exactly one package and version, so a set with more than one member
+//! to upload is refused before any request; a rerun asks for a fresh token.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const core = @import("mopm_core");
 const http = core.http;
 const registry = core.registry;
+const ci_oidc = core.ci_oidc;
 const plan_mod = @import("group_plan.zig");
 const registry_cmd = @import("registry_cmd.zig");
 const publish_cmd = @import("publish_cmd.zig");
 
 const usage =
-    \\usage: mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>] [--timeout <seconds>] [--retries <n>] [--dry-run]
+    \\usage: mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>] [--timeout <seconds>] [--retries <n>] [--dry-run] [--oidc]
     \\
     \\  Publishes the staged set in <dir> (plan.json and the files it names) through one group: every member is visible
     \\  together, or none is. --registry is required. A rerun after a failure resumes the same group (<dir>/state.json).
+    \\  --oidc, inside a GitHub Actions job with 'id-token: write', gets the token from the job's identity, not $MOPM_TOKEN.
     \\
 ;
 
@@ -71,6 +78,8 @@ pub const Flags = struct {
     /// Repeats of a request that can be repeated, after its first try.
     retries: u8 = http.default_retries,
     dry_run: bool = false,
+    /// `--oidc`: the registry token comes from the CI job's identity, not `$MOPM_TOKEN` or a login.
+    oidc: bool = false,
 };
 
 /// The command that waits for the group again: the flags of this run, without `--dry-run`.
@@ -86,6 +95,7 @@ pub fn rerunCommand(arena: Allocator, flags: Flags) Allocator.Error![]const u8 {
         try shellWord(w, c);
     }
     if (flags.wait_secs) |s| try w.print(" --wait {d}", .{s});
+    if (flags.oidc) try w.writeAll(" --oidc");
     return b.items;
 }
 
@@ -122,6 +132,10 @@ pub fn parseFlags(arena: Allocator, args: []const []const u8) Allocator.Error!Pa
         const a = args[i];
         if (std.mem.eql(u8, a, "--dry-run")) {
             f.dry_run = true;
+            continue;
+        }
+        if (std.mem.eql(u8, a, "--oidc")) {
+            f.oidc = true;
             continue;
         }
         const takes = std.mem.eql(u8, a, "--staged") or std.mem.eql(u8, a, "--registry") or std.mem.eql(u8, a, "--config-dir") or std.mem.eql(u8, a, "--wait") or std.mem.eql(u8, a, "--timeout") or std.mem.eql(u8, a, "--retries");
@@ -770,8 +784,23 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
         return code;
     }
 
+    // --oidc outside a job that can ask for an identity, or for a set the exchange cannot cover: stop before any request.
+    const actions = if (flags.oidc) (ci_oidc.actionsFromEnv(arena) orelse {
+        err("{s}\n", .{ci_oidc.outside_actions});
+        return 1;
+    }) else null;
+    if (actions != null and uploads.len != 1) {
+        err("--oidc: the registry's exchange mints a token for one package version, and this set uploads {d} members; nothing was sent\n", .{uploads.len});
+        return 1;
+    }
     const s = registry_cmd.open(arena, .{ .registry = flags.registry, .config_dir = flags.config_dir }, cli_version) orelse return 1;
-    const token = (try publish_cmd.findToken(s)) orelse {
+    const token = if (actions) |act| switch (try ci_oidc.obtain(arena, net, net.policy, act, s.config.api_url, s.config.stage, uploads[0].name, uploads[0].version)) {
+        .ok => |t| t,
+        .bad => |why| {
+            err("{s}\n", .{why});
+            return 1;
+        },
+    } else (try publish_cmd.findToken(s)) orelse {
         err("not logged in to {s}; run 'mopm login' or set MOPM_TOKEN\n", .{s.config.stage});
         return 1;
     };
