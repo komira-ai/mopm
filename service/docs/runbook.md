@@ -191,7 +191,6 @@ publish `published`. See "The sparse index writer" below.
   `MOPM_RATE_PER_TOKEN_DAY`, set from the `limits` prop of the API stack): 100 MB per package, 10 GB per project (counts published and
   yanked files; a full project refuses new publishes and nothing is ever deleted), 2000 begins per account and 1000 per token per UTC day.
 
-<<<<<<< HEAD
 ## Beta trusts a CI identity: config as code
 
 Unlike the feature flags below, which a person flips in the config table, the CI identity that beta trusts to publish is **code**:
@@ -211,7 +210,10 @@ function and nowhere else. Design and reasons: `service/docs/adr-ci-publisher-id
 - **Reading a refusal.** `oidc_not_trusted`: the job's repository id, owner id, workflow file, ref, environment or event is not the
   configured one (`pull_request` never is). `not_owner` at the exchange: a name in the request belongs to an account or to another
   identity. `oidc_token_invalid` "token already used": a CI token is exchanged once.
-=======
+- **One namespace with claims.** A CI exchange and `POST /packages/{name}/claim` create packages by the same conditional write, so a name
+  goes to whoever creates it first: a user claim of a CI-created name is `name_taken`, and the exchange for a user-claimed name is
+  `not_owner`. The claim rate limit counts user claims only; the exchange is not charged to it.
+
 ## Claiming a package name
 
 `POST /packages/{name}/claim` (a user token: a login or an API token; a CI identity token is refused) is the only way a package comes to exist. It writes the package
@@ -232,7 +234,6 @@ row created only if its key is absent, so of two claims of one name exactly one 
 - `claim_expires_at` is stored and reported. Nothing yet frees a name whose claim lapsed with no published version; an operator
   who must free one deletes its rows by hand (the API role cannot).
 - To see a claim: `audit` rows with `action: claim`, actor `u:<github id>`.
->>>>>>> origin/main
 
 ## Groups: enabling, rolling out and recovering
 
