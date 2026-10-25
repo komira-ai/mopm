@@ -72,12 +72,12 @@ function usageCommands(zig: string): string[] {
     .split(/\s(?=mopm )/);
 }
 
-/** The flags a Zig parser takes: those of its `const takes = ...;`, and the flag that takes no value. */
-function flagsOf(zig: string, noValue?: string): string[] {
+/** The flags a Zig parser takes: those of its `const takes = ...;`, and the flags that take no value. */
+function flagsOf(zig: string, noValue: readonly string[] = []): string[] {
   const m = /const takes = ([^;]+);/.exec(zig);
   if (!m) throw new Error('no takes list');
-  if (noValue) expect(zig).toContain(`eql(u8, a, "${noValue}")`);
-  return sorted([...[...m[1].matchAll(/"(--[a-z-]+)"/g)].map((x) => x[1]), ...(noValue ? [noValue] : [])]);
+  for (const flag of noValue) expect(zig).toContain(`eql(u8, a, "${flag}")`);
+  return sorted([...[...m[1].matchAll(/"(--[a-z-]+)"/g)].map((x) => x[1]), ...noValue]);
 }
 
 const flagTokens = (text: string): string[] => sorted(text.match(/--[a-z]+(?:-[a-z]+)*/g) ?? []);
@@ -86,7 +86,7 @@ const flagTokens = (text: string): string[] => sorted(text.match(/--[a-z]+(?:-[a
 
 describe.each([
   ['mopm stage', stageZig, undefined],
-  ['mopm publish --staged', publishZig, '--dry-run'],
+  ['mopm publish --staged', publishZig, ['--dry-run', '--oidc']],
 ] as const)('docs: %s', (heading, zig, noValue) => {
   const sec = section(doc, heading);
   const source = flagsOf(zig, noValue);
@@ -112,7 +112,7 @@ describe.each([
 describe('docs: mopm yank --group', () => {
   const sec = section(doc, 'Yanking a group');
   const block = fences(sec)[0];
-  const source = flagsOf(yankZig, '--unyank');
+  const source = flagsOf(yankZig, ['--unyank']);
 
   test('the synopsis is the two usage lines of the command', () => {
     expect(block.trim().split('\n').map(squash)).toEqual(usageCommands(yankZig));

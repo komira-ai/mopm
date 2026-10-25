@@ -40,7 +40,7 @@ The run exits 0 when the set is staged, 1 when it refused or failed, and 2 for a
 ### mopm publish --staged
 
 ```text
-mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>] [--timeout <seconds>] [--retries <n>] [--dry-run]
+mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>] [--timeout <seconds>] [--retries <n>] [--dry-run] [--oidc]
 ```
 
 | flag | meaning |
@@ -52,6 +52,7 @@ mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>
 | `--timeout <seconds>` | How long one request may wait: to connect, and then for the server on any read or write. 1 to 3600; the default is 30 seconds. A transfer that keeps moving is not cut short. |
 | `--retries <n>` | How many times a request that can be repeated is repeated after it fails. 0 to 10; the default is 3. |
 | `--dry-run` | Check the set and say what would be sent. It reads no token and writes no file. |
+| `--oidc` | Inside a GitHub Actions job, take the registry token from the job's identity instead of `$MOPM_TOKEN` or the login. See "Publishing from GitHub Actions without a token" below. |
 
 The token is `$MOPM_TOKEN`, else the login's. It is read after the plan has been checked, goes only to the registry's API, is never printed, and is not in the environment of any program mopm starts. The uploads themselves carry no token.
 
@@ -86,6 +87,24 @@ A 404 from the request that creates the group means the registry has no group pu
 #### 429: slow down
 
 A 429 on a PUT or a poll that names a short wait (up to 20 seconds) is waited for and the request is sent again. Any other 429 stops the run where it is. mopm prints that the registry is rate limiting this client and, when the registry says how long, the number of seconds to wait; it never retries into the limit. The state is kept. The outcome is `rate_limited`. Run the same command later.
+
+## Publishing from GitHub Actions without a token
+
+`mopm publish --oidc` and `mopm publish --staged ... --oidc` get their registry token from the identity of the GitHub Actions job that runs them, so no token is stored as a secret. The job needs `permissions: id-token: write`; GitHub then gives the job two variables, `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, and mopm reads them. Outside such a job (either variable missing or empty) the command stops before it sends any request, says what the job needs, and exits 1. A `--dry-run` reads neither variable.
+
+```text
+mopm publish --compiler 1.0.0 --mojoc linux-64=my_pkg.mojoc --registry beta --oidc
+```
+
+The run, for each package version it publishes:
+
+1. mopm asks GitHub for an identity token whose audience names the registry: `mopm.dev` for `prod`, and `<stage>.mopm.dev` for the others (`beta.mopm.dev` for `beta`, `gamma.mopm.dev` for `gamma`). The stage is the one the registry reports about itself. mopm sends the request token only to an `https` URL (or a loopback `http` one, for a test).
+2. mopm posts that identity token, the package name and the version to the registry's `/auth/oidc/exchange` route. The registry answers a token that can publish that one package version and expires after 15 minutes, if the job's repository, workflow and environment match a trusted publisher registered for the package. If it does not, mopm prints the registry's message and exits 1; nothing is uploaded.
+3. mopm publishes with that token.
+
+The registry token is kept in memory. It is not written to a file (`--oidc` does not read or write `credentials.json`), it is not put in the environment, and it is never printed; neither is the identity token. `$MOPM_TOKEN` and a stored login are not used when `--oidc` is given. The two `ACTIONS_ID_TOKEN_REQUEST_` variables are, like `MOPM_TOKEN`, taken out of the environment of every program mopm starts. A rerun asks GitHub for a new identity token, so a run that is repeated never presents one twice.
+
+The exchange route mints a token for one package version. So `mopm publish --staged --oidc` takes a staged set with exactly one member to upload, and refuses any other set before it asks GitHub or the registry for anything. The registry creates a group only for an API token that can publish every member, and answers a CI identity token with `scope_missing`; `mopm publish --staged --oidc` ends 1 with that answer until the registry accepts it.
 
 ## What a reader sees
 
