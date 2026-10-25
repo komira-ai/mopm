@@ -359,6 +359,10 @@ pub const Opts = struct {
     summary: ?[]const u8 = null,
     /// How long a group may take to reach each state.
     wait_ms: u64 = 10 * 60 * 1000,
+    /// How long `mopm publish --staged` waits for its group to be visible or to end. That is the registry's own promise (the group
+    /// reaches a state, and then every member is readable), so it is a backstop for a registry that never gets there and does
+    /// not follow how long a read of the index may lag. 0: the same as `wait_ms`.
+    publish_wait_ms: u64 = 0,
     poll_ms: u64 = 3000,
     /// Where a transport error or a 429 waits before the call is made again.
     retry_ms: u64 = 2000,
@@ -822,7 +826,8 @@ fn stateGroupId(cx: *Cx, staged: []const u8) []const u8 {
 /// `mopm publish --staged <staged>` with the token. With `watch`, the API is read every poll while it runs.
 fn publishRun(cx: *Cx, staged: []const u8, pkgs: []const Pkg, watch: bool) !Published {
     const mopm = cx.o.mopm orelse return error.NoMopm;
-    const wait = try std.fmt.allocPrint(cx.a, "{d}", .{@max(cx.o.wait_ms / 1000, 1)});
+    const publish_wait_ms = if (cx.o.publish_wait_ms == 0) cx.o.wait_ms else cx.o.publish_wait_ms;
+    const wait = try std.fmt.allocPrint(cx.a, "{d}", .{@max(publish_wait_ms / 1000, 1)});
     const argv = [_][]const u8{ mopm, "publish", "--staged", staged, "--registry", cx.o.base, "--wait", wait };
     var env = try childEnv(cx.a, cx.parent(), try cx.home());
     try env.put("MOPM_TOKEN", cx.token);
@@ -840,7 +845,12 @@ fn publishRun(cx: *Cx, staged: []const u8, pkgs: []const Pkg, watch: bool) !Publ
             const g1: ?Group = if (id.len > 0) (cx.getGroup(id) catch null) else null;
             const n = cx.shown(pkgs) catch pkgs.len + 1;
             const g2: ?Group = if (id.len > 0) (cx.getGroup(id) catch null) else null;
-            if (n != 0 and n != pkgs.len and n <= pkgs.len) out.partial = true;
+            // The members are read one after the other, so a commit that lands between two reads shows some of them in the sweep
+            // and all of them in the next one. A sweep counts as partial only when the group was on the same side of its commit
+            // before and after it (a group moves forward only): then nothing was committed meanwhile, and some members and
+            // not all were readable at once.
+            if (g1 != null and g2 != null and n > 0 and n < pkgs.len and
+                isOneOf(g1.?.status, &pre_commit) == isOneOf(g2.?.status, &pre_commit)) out.partial = true;
             if (n > 0 and n <= pkgs.len and g1 != null and g2 != null and isOneOf(g1.?.status, &pre_commit) and isOneOf(g2.?.status, &pre_commit)) out.early = true;
             std.time.sleep(cx.o.poll_ms * std.time.ns_per_ms);
         }
