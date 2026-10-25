@@ -99,6 +99,15 @@ export const BETA_CI_PUBLISHERS = [
     environment: 'beta',
   },
 ];
+
+/** The environment variable the handler reads its static groups policy from. The code refuses to load it on any stage but beta. */
+export const GROUPS_POLICY_ENV = 'MOPM_GROUPS_POLICY';
+/**
+ * Who may create a group on the BETA stage by configuration (config as code): exactly the CI actors of BETA_CI_PUBLISHERS
+ * (`ci:gh-repo:<repository id>`), never mode `all`, never an account. A static policy is ORed with the `groups_enabled` item of the
+ * config table and an item's `deny` does not override it: stopping it takes a deploy. Gamma and prod keep the human flip.
+ */
+export const BETA_GROUPS_POLICY = { mode: 'allow', actors: BETA_CI_PUBLISHERS.map((p) => `ci:gh-repo:${p.repository_id}`) };
 // The CI publisher creates the packages it publishes with the same conditional PutItem on `packages` that the claim route uses
 // (WRITE_GRANTS, sid ClaimPackages, every stage). There is no CI-only grant: what is beta-only is the CI_PUBLISHERS variable.
 
@@ -190,6 +199,8 @@ export class ApiStack extends Stack {
         MOPM_REQUIRE_2FA: String(props.require2fa ?? true),
         // Beta only: the CI identity this stage trusts (BETA_CI_PUBLISHERS). Absent elsewhere, and the handler refuses it elsewhere.
         ...(c.stage === 'beta' ? { [CI_PUBLISHERS_ENV]: JSON.stringify(BETA_CI_PUBLISHERS) } : {}),
+        // Beta only: who may create a group (BETA_GROUPS_POLICY: that CI identity). Absent elsewhere, and the handler refuses it elsewhere.
+        ...(c.stage === 'beta' ? { [GROUPS_POLICY_ENV]: JSON.stringify(BETA_GROUPS_POLICY) } : {}),
         // The hosts GET /index/config.json names, from the stage's configuration.
         MOPM_API_DOMAIN: c.apiDomain,
         MOPM_CHANNEL_DOMAIN: c.condaDomain,

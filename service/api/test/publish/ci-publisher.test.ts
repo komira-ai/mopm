@@ -257,14 +257,28 @@ describe('the token cannot touch what is outside its scope', () => {
     expect((await s.h.upload(r.token, pkg({ name: 'widgets', version: '1.0.0' }))).res.statusCode).toBe(200);
   });
 
-  test('it reads no other token\'s publish, and yanks only the exact package and version it was minted for', async () => {
+  test('its publish is read by its own identity\'s tokens and by no other identity, and it yanks only the exact package and version it was minted for', async () => {
     const s = setup();
     const r = await s.oidc.exchange({ jwt: s.jwt(), packages: widgets });
-    const other = await s.oidc.exchange({ jwt: s.jwt(), packages: [{ name: 'gadgets', version: '1.0.0' }] });
+    const sameIdentity = await s.oidc.exchange({ jwt: s.jwt(), packages: [{ name: 'gadgets', version: '1.0.0' }] });
+    const t = s.h.clock.now();
+    const otherIdentity = await mintToken(s.h.authStore, {
+      kind: 'oidc',
+      name: 'ci',
+      scopes: ['publish'],
+      packages: ['gadgets'],
+      all_current: false,
+      versions: { gadgets: '1.0.0' },
+      ci_owner: 'gh-repo:999',
+      created_at: t.toISOString(),
+      expires_at: new Date(t.getTime() + 600_000).toISOString(),
+    });
     const id = await s.h.publish(r.token, pkg({ name: 'widgets', version: '1.0.0' }));
     await s.h.runValidator();
     await s.h.runIndexer();
-    expect((await s.h.call('GET', `/api/v1/publishes/${id}`, other.token)).statusCode).toBe(404);
+    // one actor per identity: a later job's token reads the publish an earlier job's token started; another identity does not
+    expect((await s.h.call('GET', `/api/v1/publishes/${id}`, sameIdentity.token)).statusCode).toBe(200);
+    expect((await s.h.call('GET', `/api/v1/publishes/${id}`, otherIdentity.secret)).statusCode).toBe(404);
     const yank = await s.h.call('PUT', '/api/v1/packages/widgets/1.0.0/yank', r.token, { yanked: true, reason: 'x' });
     expect(yank.statusCode).toBe(200); // the spec lets a CI token yank the exact version it publishes
     const yankOther = await s.h.call('PUT', '/api/v1/packages/gadgets/1.0.0/yank', r.token, { yanked: true, reason: 'x' });

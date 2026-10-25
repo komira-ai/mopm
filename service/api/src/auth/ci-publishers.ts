@@ -31,6 +31,12 @@ export interface CiPublisher {
 /** The owner identity a repository's publisher holds on the packages it creates: `PackageRecord.ci_owner`. */
 export const ciOwnerOf = (repository_id: string): string => `gh-repo:${repository_id}`;
 
+/**
+ * The actor a CI identity is in audit rows, upload and group records, the per-actor group list and the groups policy:
+ * `ci:gh-repo:<repository_id>`. It names the identity, not a token, so every token the identity gets in later jobs is the same actor.
+ */
+export const ciActorOf = (ci_owner: string): string => `ci:${ci_owner}`;
+
 const KEYS = ['repository_id', 'repository_owner_id', 'workflow', 'ref', 'events', 'environment'] as const;
 const DIGITS = /^[1-9][0-9]{0,19}$/;
 const REF = /^refs\/(heads|tags)\/[A-Za-z0-9._\/-]+$/;

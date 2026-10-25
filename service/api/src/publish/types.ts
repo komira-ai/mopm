@@ -1,7 +1,7 @@
 import type { RejectionCode } from '../validate';
 import type { DisplayMeta } from './display';
 
-/** `u:<github id>` for an account's token, `ci:<token id>` for a CI identity's token. */
+/** `u:<github id>` for an account's token, `ci:gh-repo:<repository id>` for a configured CI publisher's token, `ci:<token id>` for any other CI token. */
 export type Actor = string;
 
 /** One file of a version, announced by begin-upload. The presigned URL points at `key` in quarantine. */
