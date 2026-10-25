@@ -702,15 +702,51 @@ test "a commit request exactly at the limit is sent whole; one byte over is refu
     const over = try stageReadmes(a, &over_tmp, count, sizes.len, sizes.extra + 1);
     const why = (try plan_mod.verify(a, over_tmp.dir, over)).?;
     try expectContains(why, "make a commit request of 5242881 bytes; the registry takes at most 5242880. The largest readmes: m0 (");
-    var none = newScript(a, &.{.{ .method = .POST, .suffix = "/groups", .status = 201, .body = "" }});
-    const root = try over_tmp.dir.realpathAlloc(a, ".");
-    const flags = gp.Flags{ .staged = root, .registry = "http://127.0.0.1:1/api/v1" };
-    try std.testing.expectEqual(@as(u8, 1), try gp.command(a, flags, "0.0.0", none.net()));
-    try std.testing.expectEqual(@as(usize, 0), none.seen.items.len);
-    // A rerun over the same directory is refused the same way: nothing was sent and no state was kept.
-    try std.testing.expectEqual(@as(u8, 1), try gp.command(a, flags, "0.0.0", none.net()));
-    try std.testing.expectEqual(@as(usize, 0), none.seen.items.len);
-    try std.testing.expectError(error.FileNotFound, over_tmp.dir.access(plan_mod.state_name, .{}));
+    // The run stops on the staged directory before it resolves a registry or reads a token, and it keeps no state; a rerun
+    // over the same directory is refused the same way.
+    for (0..2) |_| {
+        const planned = try gp.checkedPlan(a, over_tmp.dir, "staged");
+        try expectContains(planned.bad, "make a commit request of 5242881 bytes");
+        try expectContains(planned.bad, "; nothing was sent");
+        try std.testing.expectError(error.FileNotFound, over_tmp.dir.access(plan_mod.state_name, .{}));
+    }
+}
+
+test "a staged directory whose plan cannot be used stops the run before any request, with the reason" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+
+    var empty = std.testing.tmpDir(.{});
+    defer empty.cleanup();
+    try expectContains((try gp.checkedPlan(a, empty.dir, "out/staged")).bad, "out/staged/");
+    try expectContains((try gp.checkedPlan(a, empty.dir, "out/staged")).bad, "FileNotFound");
+
+    var garbled = std.testing.tmpDir(.{});
+    defer garbled.cleanup();
+    try garbled.dir.writeFile(plan_mod.plan_name, "not json");
+    try expectContains((try gp.checkedPlan(a, garbled.dir, "staged")).bad, "is not JSON");
+
+    var refusing = std.testing.tmpDir(.{});
+    defer refusing.cleanup();
+    _ = try stageWith(a, &refusing, ",{\"name\":\"d\",\"version\":\"2.0.0\",\"action\":\"refuse\",\"reason\":\"yanked\"}", false);
+    try std.testing.expectEqualStrings("the plan refuses d 2.0.0: yanked; nothing was sent", (try gp.checkedPlan(a, refusing.dir, "staged")).bad);
+
+    var refusing_bare = std.testing.tmpDir(.{});
+    defer refusing_bare.cleanup();
+    _ = try stageWith(a, &refusing_bare, ",{\"name\":\"d\",\"version\":\"2.0.0\",\"action\":\"refuse\"}", false);
+    try std.testing.expectEqualStrings("the plan refuses d 2.0.0; nothing was sent", (try gp.checkedPlan(a, refusing_bare.dir, "staged")).bad);
+
+    var changed = std.testing.tmpDir(.{});
+    defer changed.cleanup();
+    _ = try stageWith(a, &changed, "", false);
+    try changed.dir.writeFile("noarch/mojo-a-1.0.0-x.conda", "changed");
+    try expectContains((try gp.checkedPlan(a, changed.dir, "staged")).bad, "has the sha256");
+
+    var fine = std.testing.tmpDir(.{});
+    defer fine.cleanup();
+    _ = try stageWith(a, &fine, "", true);
+    try std.testing.expectEqual(@as(usize, 3), (try gp.checkedPlan(a, fine.dir, "staged")).ok.members.len);
 }
 
 test "the length the client computes for a commit request is the length of the request it sends" {

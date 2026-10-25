@@ -612,31 +612,40 @@ pub fn main(arena: Allocator, args: []const []const u8, cli_version: []const u8)
     };
 }
 
-pub fn command(arena: Allocator, flags: Flags, cli_version: []const u8, net: Net) anyerror!u8 {
+/// The plan of a staged directory, or why the run stops before any request: the plan cannot be read or parsed, refuses a
+/// member, or its files are not as it says (this includes a commit request the registry would refuse).
+pub const Planned = union(enum) { ok: plan_mod.Plan, bad: []const u8 };
+
+pub fn checkedPlan(arena: Allocator, dir: std.fs.Dir, staged: []const u8) anyerror!Planned {
+    const text = dir.readFileAlloc(arena, plan_mod.plan_name, 1 << 26) catch |e| {
+        return .{ .bad = try std.fmt.allocPrint(arena, "{s}/{s}: {s}", .{ staged, plan_mod.plan_name, @errorName(e) }) };
+    };
+    const plan = switch (try plan_mod.parsePlan(arena, text)) {
+        .ok => |p| p,
+        .bad => |why| return .{ .bad = why },
+    };
+    if (plan_mod.refusedMember(plan)) |m| {
+        return .{ .bad = try std.fmt.allocPrint(arena, "the plan refuses {s} {s}{s}{s}; nothing was sent", .{ m.name, m.version, if (m.reason.len > 0) ": " else "", m.reason }) };
+    }
+    if (try plan_mod.verify(arena, dir, plan)) |why| {
+        return .{ .bad = try std.fmt.allocPrint(arena, "{s}; nothing was sent", .{why}) };
+    }
+    return .{ .ok = plan };
+}
+
+fn command(arena: Allocator, flags: Flags, cli_version: []const u8, net: Net) anyerror!u8 {
     var dir = std.fs.cwd().openDir(flags.staged, .{ .iterate = false }) catch |e| {
         err("{s}: {s}\n", .{ flags.staged, @errorName(e) });
         return 1;
     };
     defer dir.close();
-    const text = dir.readFileAlloc(arena, plan_mod.plan_name, 1 << 26) catch |e| {
-        err("{s}/{s}: {s}\n", .{ flags.staged, plan_mod.plan_name, @errorName(e) });
-        return 1;
-    };
-    const plan = switch (try plan_mod.parsePlan(arena, text)) {
+    const plan = switch (try checkedPlan(arena, dir, flags.staged)) {
         .ok => |p| p,
         .bad => |why| {
             err("{s}\n", .{why});
             return 1;
         },
     };
-    if (plan_mod.refusedMember(plan)) |m| {
-        err("the plan refuses {s} {s}{s}{s}; nothing was sent\n", .{ m.name, m.version, if (m.reason.len > 0) ": " else "", m.reason });
-        return 1;
-    }
-    if (try plan_mod.verify(arena, dir, plan)) |why| {
-        err("{s}; nothing was sent\n", .{why});
-        return 1;
-    }
     var console = Console.init(arena, Console.stdStreams);
     const uploads = try plan.uploads(arena);
     if (flags.dry_run) return dryRun(flags, plan, uploads, &console);
