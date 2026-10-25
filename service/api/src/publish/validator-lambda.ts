@@ -1,4 +1,5 @@
 import { DynamoStore, tablesFor } from '../dynamo-store';
+import { DEPLOYED_VALIDATOR_OPTIONS } from '../validate/native-deps';
 import { S3Channel, SqsFifoQueue } from './aws';
 import { publishConfigFromEnv } from './config';
 import { DynamoPublishStore, publishTablesFor } from './dynamo-publish-store';
@@ -24,6 +25,7 @@ function configure(): ValidatorDeps {
     indexQueue: new SqsFifoQueue(required(env, 'MOPM_INDEX_QUEUE_URL'), { region }),
     config: publishConfigFromEnv(env),
     channelUrl: required(env, 'MOPM_CHANNEL_URL'),
+    validatorOptions: DEPLOYED_VALIDATOR_OPTIONS,
   };
 }
 
