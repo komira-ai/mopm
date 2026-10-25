@@ -333,6 +333,59 @@ test "a storage 403 that fresh URLs do not cure fails the run after one more try
     try expectContains(console.err.items, "the storage answered HTTP 403");
 }
 
+test "a 403 whose fresh answer says the file is already held does not send it again" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    var script = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+        .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/c", .status = 403 },
+        .{ .method = .POST, .suffix = "/groups", .status = 200, .body = createAnswer("open", .{ true, true, true }) },
+        .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
+    });
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    try std.testing.expectEqual(Result.published, p.run());
+    try std.testing.expect(script.mismatch == null);
+    try std.testing.expectEqual(@as(usize, 3), script.count(.PUT));
+    try expectContains(console.out.items, "1 file(s) were already in the registry's storage");
+}
+
+test "fresh URLs are refused when the registry answers another group or a group that is no longer open" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    const other = "grp_ffffffffffffffffffffffffffffffff";
+    const answers = [_]struct { body: []const u8, want: []const u8 }{
+        .{ .body = "{\"group_id\":\"" ++ other ++ "\",\"status\":\"open\",\"members\":[]}", .want = "the registry answered group " ++ other ++ " in the state 'open'" },
+        .{ .body = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"validating\",\"members\":[]}", .want = "the registry answered group " ++ gid ++ " in the state 'validating'" },
+    };
+    for (answers) |c| {
+        var script = newScript(a, &.{
+            .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+            .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
+            .{ .method = .PUT, .suffix = "/put/b", .status = 403 },
+            .{ .method = .POST, .suffix = "/groups", .status = 200, .body = c.body },
+        });
+        var console = Console.init(a, null);
+        var p = publisher(a, &tmp, plan, &script, &console);
+        try std.testing.expectEqual(Result.failed, p.run());
+        try std.testing.expect(script.mismatch == null);
+        try expectContains(console.err.items, c.want);
+        try expectContains(console.err.items, "run the same command again to resume");
+        try std.testing.expectEqual(@as(usize, 2), script.count(.PUT));
+    }
+}
+
 test "a rerun asks for the same group and sends only the files the registry does not hold" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
