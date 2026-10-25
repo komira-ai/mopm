@@ -59,10 +59,16 @@ Two builds describe the same program, and both stay.
   with the real Mojo 1.0.0 (beta tier, not built for a pull request).
   `//:native_static` (farm only, with `tests/drivers/mojo_compile_shim.zig` as the toolchain's `mojo_compile`) takes a
   static archive in an empty-module package from `mopm pack` and `mopm lock` to a test linked by `mopm unit test`.
+  `//:native_workspace` is the walk of a user whose workspace member ships its own C library (`[native.<id>]` with `srcs`, fixture
+  `tests/e2e/natws`) and whose other package links it: `mopm lock` and `mopm plan --unit-graph`, the native built from its C sources,
+  `mopm unit build` of the libraries and the program, `mopm pack`, and an `--overlay` install of the packed set in a fresh project where
+  the program is built and run again. With a stand-in compiler and pixi it is a unit test (the graph, the C build, the link line, the
+  archive in the install, the lock); `//:native_workspace_mojo` is the same file with the real Mojo 1.0.0 and checks the values the
+  program prints (beta tier, not built for a pull request).
   The same drivers run natively on the GitHub runners (Linux x86_64, Linux
   aarch64, macOS arm64) from `ci.yml`: `zig build test-autolink`,
-  `test-discovery`, `test-supervisor` and `test-flaky` (`test-e2e` runs all
-  four) with `-Dmojo-env=<pixi environment>` (`tests/e2e/pixi.toml`, mojo
+  `test-discovery`, `test-supervisor`, `test-flaky` and `test-native-workspace` (`test-e2e` runs all
+  five) with `-Dmojo-env=<pixi environment>` (`tests/e2e/pixi.toml`, mojo
   1.0.0) and the system C compiler.
   The pinned compiler closure has no lldb, so `mojo repl` cannot run there and
   the REPL checks print `SKIP` (they run if the toolchain gains
