@@ -86,7 +86,8 @@ export const WRITE_GRANTS: Array<{ sid: string; actions: string[]; tables: strin
 export const CI_PUBLISHERS_ENV = 'CI_PUBLISHERS';
 /**
  * The CI identity the BETA stage trusts by configuration (config as code): the komira repository's release workflow, on
- * main, from a push or a manual run, in its `beta` environment. GitHub's numeric ids of the repository and its owner (public).
+ * main, from a push only (never a manual run), as the workflow itself and not as a reusable workflow called by another
+ * (`job_workflow_ref` is pinned as well as `workflow_ref`), in its `beta` environment. GitHub's numeric ids of the repository and its owner (public).
  * Set on the beta stage only (see the ApiStack); gamma and prod get no such variable and keep the human step.
  */
 export const BETA_CI_PUBLISHERS = [
@@ -95,7 +96,8 @@ export const BETA_CI_PUBLISHERS = [
     repository_owner_id: '305577347',
     workflow: '.github/workflows/release.yml',
     ref: 'refs/heads/main',
-    events: ['push', 'workflow_dispatch'],
+    job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
+    events: ['push'],
     environment: 'beta',
   },
 ];

@@ -22,6 +22,13 @@ export interface CiPublisher {
   workflow: string;
   /** The exact git ref the job runs on, e.g. `refs/heads/main`. No pattern. */
   ref: string;
+  /**
+   * The exact `job_workflow_ref` claim: `<owner>/<repo>/<workflow>@<ref>`, written out in full (the row holds ids, not names, so
+   * the name cannot be derived). It must end in `/<workflow>@<ref>` of this same row. Unlike `workflow_ref`, which names the
+   * workflow that was triggered, `job_workflow_ref` names the file the running job is defined in: a job of a reusable workflow
+   * (`workflow_call`) carries the called file here, so a different file, ref or repository called from the right workflow does not match.
+   */
+  job_workflow_ref: string;
   /** The events that may exchange: a non-empty subset of `push` and `workflow_dispatch`. */
   events: string[];
   /** The deployment environment the job runs in. Required. */
@@ -37,7 +44,8 @@ export const ciOwnerOf = (repository_id: string): string => `gh-repo:${repositor
  */
 export const ciActorOf = (ci_owner: string): string => `ci:${ci_owner}`;
 
-const KEYS = ['repository_id', 'repository_owner_id', 'workflow', 'ref', 'events', 'environment'] as const;
+const KEYS = ['repository_id', 'repository_owner_id', 'workflow', 'ref', 'job_workflow_ref', 'events', 'environment'] as const;
+const JOB_WORKFLOW_REF = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/\.github\/workflows\/[A-Za-z0-9._-]+\.ya?ml@refs\/(heads|tags)\/[A-Za-z0-9._\/-]+$/;
 const DIGITS = /^[1-9][0-9]{0,19}$/;
 const REF = /^refs\/(heads|tags)\/[A-Za-z0-9._\/-]+$/;
 const WORKFLOW = /^\.github\/workflows\/[A-Za-z0-9._-]+\.ya?ml$/;
@@ -76,11 +84,16 @@ export function parseCiPublishers(stage: string, raw: string | undefined): CiPub
     if (!Array.isArray(events) || events.length < 1 || new Set(events).size !== events.length || !events.every((x) => typeof x === 'string' && CI_EVENTS.includes(x))) {
       throw bad(`entry ${i}: 'events' is a non-empty list of ${CI_EVENTS.join(' and ')}`);
     }
+    const workflow = str('workflow', WORKFLOW);
+    const ref = str('ref', REF);
+    const job_workflow_ref = str('job_workflow_ref', JOB_WORKFLOW_REF);
+    if (!job_workflow_ref.endsWith(`/${workflow}@${ref}`)) throw bad(`entry ${i}: 'job_workflow_ref' must end in '/<workflow>@<ref>' of the same entry`);
     out.push({
       repository_id: str('repository_id', DIGITS),
       repository_owner_id: str('repository_owner_id', DIGITS),
-      workflow: str('workflow', WORKFLOW),
-      ref: str('ref', REF),
+      workflow,
+      ref,
+      job_workflow_ref,
       events: [...(events as string[])],
       environment: str('environment', ENVIRONMENT),
     });

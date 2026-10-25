@@ -37,6 +37,8 @@ export interface GithubActionsClaims {
   repository_id: string;
   repository_owner_id: string;
   workflow_ref: string;
+  /** The workflow file the running job is defined in (a reusable workflow's own file when called). Absent on some tokens; a CI publisher requires it to match exactly. */
+  job_workflow_ref?: string;
   /** The git ref the job runs on, e.g. `refs/heads/main`. */
   ref: string;
   /** What started the workflow: `push`, `workflow_dispatch`, `pull_request`, ... */
@@ -197,6 +199,7 @@ export function matchesCiPublisher(cp: CiPublisher, c: GithubActionsClaims): boo
     cp.repository_id === c.repository_id &&
     cp.repository_owner_id === c.repository_owner_id &&
     workflowPath(c.workflow_ref, c.repository) === cp.workflow &&
+    c.job_workflow_ref === cp.job_workflow_ref &&
     cp.environment === c.environment &&
     cp.ref === c.ref &&
     ALLOWED_EVENTS.includes(c.event_name) &&
