@@ -226,6 +226,17 @@ zig_test(  # buck-only: mopm publish --staged and mopm yank --group against the 
     **_TOOLS
 )
 
+zig_test(  # buck-only: mopm publish --oidc against the fake registry and a stand-in for GitHub's identity-token endpoint
+    name = "oidc_publish",
+    src = "tests/drivers/oidc_publish_test.zig",
+    imports = ["tests/drivers/harness.zig"],
+    env_tools = {
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+    },
+    **_TOOLS
+)
+
 zig_test(  # buck-only: mopm stage against the fake registry, and publish --staged on what it writes
     name = "stage",
     src = "tests/drivers/stage_test.zig",

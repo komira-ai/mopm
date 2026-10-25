@@ -4,7 +4,7 @@
 //!                [--manifest <file>] [-o <dir>]
 //!   mopm publish --compiler <version> --mojoc [<subdir>=]<file>... [--native <id>=<subdir>:<file>...]
 //!                [--manifest <file>] [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
-//!                [--readme <file>] [--dry-run]
+//!                [--readme <file>] [--dry-run] [--oidc]
 //!
 //! `pack` writes `<dir>/<subdir>/mojo-<name>-<version>-mojo<compiler>_0.conda`
 //! (src/core/conda.zig) and prints each file's sha256. A package that declares
@@ -20,6 +20,13 @@
 //! `mopm login` stored for the registry. It is sent only to the registry's
 //! API, as a bearer token, and is never printed. The PUT to the storage URL
 //! carries no token, only the headers the registry named.
+//!
+//! `--oidc` takes no token from `$MOPM_TOKEN` or a login: inside a GitHub
+//! Actions job that may request an identity token, mopm asks GitHub for one
+//! with the registry's audience and exchanges it at the registry for a token
+//! that may publish this one package version (src/core/ci_oidc.zig). That token
+//! is held in memory only. Outside such a job the command stops before any
+//! request.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -29,6 +36,7 @@ const manifest = core.manifest;
 const conda = core.conda;
 const registry = core.registry;
 const credentials = core.credentials;
+const ci_oidc = core.ci_oidc;
 const registry_cmd = @import("registry_cmd.zig");
 const group_publish = @import("group_publish.zig");
 
@@ -37,11 +45,12 @@ const usage =
     \\                    [--manifest <mopm.toml>] [-o <dir>]
     \\       mopm publish --compiler <mojo version> --mojoc [<subdir>=]<file>... [--native <id>=<subdir>:<file>...]
     \\                    [--manifest <mopm.toml>] [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
-    \\                    [--readme <file>] [--dry-run]
+    \\                    [--readme <file>] [--dry-run] [--oidc]
     \\
     \\  <subdir> is noarch (the default), linux-64, linux-aarch64 or osx-arm64.
     \\  --native gives the static archive (lib<name>.a) of a [native.<id>] for one subdir; never noarch.
     \\  The token is $MOPM_TOKEN, else the one 'mopm login' stored.
+    \\  --oidc, inside a GitHub Actions job with 'id-token: write', gets the token from the job's identity instead.
     \\
 ;
 
@@ -72,6 +81,8 @@ pub const Flags = struct {
     config_dir: ?[]const u8 = null,
     readme: ?[]const u8 = null,
     dry_run: bool = false,
+    /// `--oidc`: the registry token comes from the CI job's identity, not `$MOPM_TOKEN` or a login.
+    oidc: bool = false,
 };
 
 pub const Parsed = union(enum) { ok: Flags, bad: []const u8 };
@@ -102,6 +113,10 @@ pub fn parseFlags(arena: Allocator, cmd: Cmd, args: []const []const u8) Allocato
         const a = args[i];
         if (cmd == .publish and std.mem.eql(u8, a, "--dry-run")) {
             f.dry_run = true;
+            continue;
+        }
+        if (cmd == .publish and std.mem.eql(u8, a, "--oidc")) {
+            f.oidc = true;
             continue;
         }
         if (!takesValue(cmd, a)) return bad(arena, "unexpected argument '{s}'", .{a});
@@ -487,8 +502,19 @@ fn publishCmd(arena: Allocator, f: Flags, cli_version: []const u8) anyerror!u8 {
         return 0;
     }
 
+    // --oidc outside a job that can ask for an identity: stop before any request.
+    const actions = if (f.oidc) (ci_oidc.actionsFromEnv(arena) orelse {
+        err("{s}\n", .{ci_oidc.outside_actions});
+        return 1;
+    }) else null;
     const s = registry_cmd.open(arena, .{ .registry = f.registry, .config_dir = f.config_dir }, cli_version) orelse return 1;
-    const token = (try findToken(s)) orelse {
+    const token = if (actions) |act| switch (try ci_oidc.obtain(arena, http.Real{}, .{}, act, s.config.api_url, s.config.stage, name, version)) {
+        .ok => |t| t,
+        .bad => |why| {
+            err("{s}\n", .{why});
+            return 1;
+        },
+    } else (try findToken(s)) orelse {
         err("not logged in to {s}; run 'mopm login' or set MOPM_TOKEN\n", .{s.config.stage});
         return 1;
     };
@@ -650,6 +676,20 @@ fn parseBad(a: Allocator, cmd: Cmd, args: []const []const u8, needle: []const u8
             return error.TestUnexpectedResult;
         },
     }
+}
+
+test "--oidc is a flag of publish and takes no value; pack does not know it" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    const base = [_][]const u8{ "--compiler", "1.0.0", "--mojoc", "a.mojoc" };
+    try std.testing.expect(!(try parseOk(a, .publish, &base)).oidc);
+    const f = try parseOk(a, .publish, &(base ++ [_][]const u8{ "--oidc", "--registry", "beta" }));
+    try std.testing.expect(f.oidc);
+    try std.testing.expectEqualStrings("beta", f.registry);
+    // It takes no value: a word after it is not one.
+    try parseBad(a, .publish, &(base ++ [_][]const u8{ "--oidc", "yes" }), "unexpected argument 'yes'");
+    try parseBad(a, .pack, &(base ++ [_][]const u8{"--oidc"}), "unexpected argument '--oidc'");
 }
 
 test "pack and publish flags" {

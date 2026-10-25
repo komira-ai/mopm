@@ -124,6 +124,21 @@ const CHECKS: Record<string, Check> = {
     eq(await ids('alpha'), ['tp2']);
     eq(await ids('nothing'), []);
   },
+  'a one-time key is claimed by the first caller only, at once and for good; other keys are independent': async (s) => {
+    const until = '2026-10-14T12:10:00.000Z';
+    eq(await s.claimOnce('jti#a', until), true);
+    eq(await s.claimOnce('jti#a', until), false);
+    eq(await s.claimOnce('jti#a', '2026-10-14T13:00:00.000Z'), false);
+    eq(await s.claimOnce('jti#b', until), true);
+    const racers = await Promise.all([1, 2, 3, 4, 5].map(() => s.claimOnce('jti#race', until)));
+    eq(racers.filter(Boolean).length, 1);
+  },
+  'a claimed key is on no account, and does not disturb the tokens next to it': async (s) => {
+    await s.putToken(tok({ id: 'tok_a', hash: h(1) }));
+    await s.claimOnce('jti#a', '2026-10-14T12:10:00.000Z');
+    eq((await s.listTokens(1)).map((t) => t.id), ['tok_a']);
+    eq((await s.getTokenByHash(h(1)))?.id, 'tok_a');
+  },
 };
 
 /** The DynamoDB adapter on the strict fake: full access (this suite also writes publishers, which the Lambda cannot). */
@@ -179,6 +194,21 @@ describe('the DynamoDB adapter under the Lambda grants', () => {
     eq(typeof row.expires_at, 'number');
     eq(row.expires_at, Math.floor(Date.parse('2026-11-13T12:00:00.123Z') / 1000));
     eq(typeof row.github_id, 'string'); // index keys are strings
+  });
+
+  test('a claim is one conditional PutItem into the tokens table with a numeric TTL, and needs no permission the role lacks', async () => {
+    const { doc, store } = lambdaStore();
+    eq(await store.claimOnce('jti#a', '2026-10-14T12:10:00.000Z'), true);
+    eq(await store.claimOnce('jti#a', '2026-10-14T12:10:00.000Z'), false);
+    eq(doc.commands, ['PutCommand', 'PutCommand']);
+    eq(doc.dump('tokens'), [{ token_hash: 'jti#a', expires_at: Math.floor(Date.parse('2026-10-14T12:10:00.000Z') / 1000) }]);
+  });
+
+  test('a claim the store cannot make is an error, not a replay verdict (no permission: AccessDenied surfaces, nothing is claimed)', async () => {
+    const doc = new FakeAuthDoc({ pageSize: 2, grants: { ...LAMBDA_GRANTS, tokens: { actions: ['dynamodb:GetItem'] } } });
+    const store = new DynamoAuthStore(doc, authTablesFor('t'));
+    await expect(store.claimOnce('jti#a', '2026-10-14T12:10:00.000Z')).rejects.toMatchObject({ name: 'AccessDeniedException' });
+    eq(doc.dump('tokens'), []);
   });
 
   test('ownedPackagesFrom reads the owners index across pages, only that account', async () => {

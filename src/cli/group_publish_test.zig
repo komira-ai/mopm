@@ -1030,6 +1030,19 @@ test "flags" {
     }
 }
 
+test "--oidc is a flag without a value, and the command that waits again keeps it" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    try std.testing.expect(!(try parseFlags(a, &.{ "--staged", "s", "--registry", "beta" })).ok.oidc);
+    const f = (try parseFlags(a, &.{ "--staged", "s", "--oidc", "--registry", "beta" })).ok;
+    try std.testing.expect(f.oidc);
+    try std.testing.expectEqualStrings("s", f.staged);
+    try std.testing.expectEqualStrings("mopm publish --staged s --registry beta --oidc", try gp.rerunCommand(a, f));
+    try std.testing.expectEqualStrings("mopm publish --staged s --registry beta", try gp.rerunCommand(a, .{ .staged = "s", .registry = "beta" }));
+    try expectContains((try parseFlags(a, &.{ "--staged", "s", "--registry", "beta", "--oidc", "yes" })).bad, "unexpected argument 'yes'");
+}
+
 test "group ids" {
     try std.testing.expect(isGroupId(gid));
     try std.testing.expect(!isGroupId("grp_xyz"));

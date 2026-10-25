@@ -77,18 +77,24 @@ export const rawJwt = (header: unknown, claims: unknown, sig = randomBytes(32).t
 
 export const ISSUER = 'https://token.actions.githubusercontent.com';
 
+let jtiCounter = 0;
+
+/** A token GitHub would issue for the trusted workflow on main. Every call gets a fresh jti; pass `jti` to repeat one. */
 export function goodClaims(clock: TestClock, over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     iss: ISSUER,
     aud: 'mopm.dev',
-    sub: 'repo:acme/widgets:ref:refs/tags/v1.0.0',
+    sub: 'repo:acme/widgets:ref:refs/heads/main',
+    ref: 'refs/heads/main',
+    event_name: 'push',
+    jti: `jti-${++jtiCounter}`,
     iat: clock.seconds - 5,
     nbf: clock.seconds - 5,
     exp: clock.seconds + 300,
     repository: 'acme/widgets',
     repository_id: '111',
     repository_owner_id: '222',
-    workflow_ref: 'acme/widgets/.github/workflows/release.yml@refs/tags/v1.0.0',
+    workflow_ref: 'acme/widgets/.github/workflows/release.yml@refs/heads/main',
     ...over,
   };
 }

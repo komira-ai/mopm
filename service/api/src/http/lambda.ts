@@ -34,8 +34,17 @@ interface Configured {
 
 let configured: Configured | undefined;
 
-/** Accepted `aud` of a CI identity token: the bare domain and the stage's own host. */
-export const oidcAudiences = (stage: Stage) => (stage === 'prod' ? ['mopm.dev'] : ['mopm.dev', `${stage}.mopm.dev`]);
+/**
+ * Accepted `aud` of a CI identity token, per stage. Beta accepts only its own host, so a token minted for another stage
+ * is refused there. Gamma and prod keep what they accepted before (the bare domain, and gamma also its own host) until
+ * no live client of the exchange is known to depend on it; making them strict is a one-line change to this table.
+ */
+export const OIDC_AUDIENCES: Record<Stage, readonly string[]> = {
+  beta: ['beta.mopm.dev'],
+  gamma: ['mopm.dev', 'gamma.mopm.dev'],
+  prod: ['mopm.dev'],
+};
+export const oidcAudiences = (stage: Stage): string[] => [...OIDC_AUDIENCES[stage]];
 
 /**
  * Wires login, tokens and CI exchange. Needs only the table names (from the stage) and the name of the OAuth secret;
