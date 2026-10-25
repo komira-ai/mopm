@@ -154,6 +154,17 @@ describe('wire goldens', () => {
       expect([...new Set(claim.filter((c) => !covered(c, stripped)).map(keyOf))].sort()).toEqual(['dynamodb:PutItem owners', 'dynamodb:PutItem packages']);
     });
 
+    // The claim route's rate counters (rl#ct#, rl#cu#, and the give-back of a charge) are the same `publish.hit` the publish limits use:
+    // a Get and a conditional Put on the publishes table, which RecordUploadsAndPublishes grants. The claim adds no grant.
+    test('can fail: the rate counter of a claim is a Get and a Put on publishes only, covered today and not without RecordUploadsAndPublishes', () => {
+      const hit = calls.filter((c) => c.via.startsWith('publish.json ') && c.via.endsWith(' publish.hit'));
+      expect([...new Set(hit.map(keyOf))].sort()).toEqual(['dynamodb:GetItem publishes', 'dynamodb:PutItem publishes']);
+      expect(hit.every((c) => covered(c, allowed()))).toBe(true);
+      const stripped = allowed().filter((s) => s.Sid !== 'RecordUploadsAndPublishes');
+      expect([...new Set(hit.filter((c) => !covered(c, stripped)).map(keyOf))].sort()).toEqual(['dynamodb:GetItem publishes', 'dynamodb:PutItem publishes']);
+      expect(allowed().filter((s) => acts(s).includes('dynamodb:UpdateItem') && JSON.stringify(s.Resource).includes('-publishes'))).toEqual([]);
+    });
+
     test('can fail: with the owners index resource removed from the policy, the account-token query is not covered', () => {
       const q = calls.find((c) => c.table === 'owners' && c.index === 'by_github_id')!;
       expect(covered(q, allowed())).toBe(true);

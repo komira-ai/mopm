@@ -2,7 +2,9 @@ import { randomBytes } from 'node:crypto';
 import { AuthError, NAME_PATTERN, type AuthStore } from '../auth';
 import { RegistryError } from '../errors';
 import type { Store } from '../store';
-import { invalidRequest } from './errors';
+import type { PublishConfig } from './config';
+import { invalidRequest, PublishError } from './errors';
+import type { PublishStore } from './ports';
 
 /** Names nobody may claim (the contract's `name_reserved`). */
 export const RESERVED_NAMES: ReadonlySet<string> = new Set(['mopm', 'mojo', 'max', 'modular', 'std', 'stdlib']);
@@ -17,8 +19,17 @@ export interface ClaimDeps {
   registry: Store;
   /** Only the owner's handle is read, from the account the token belongs to. */
   users: Pick<AuthStore, 'getUser'>;
+  /** The rate counters (the table the publish limits use). */
+  publishes: Pick<PublishStore, 'hit'>;
+  config: Pick<PublishConfig, 'claimRatePerAccountPerDay' | 'claimRatePerTokenPerDay'>;
   now?: () => Date;
   newId?: () => string;
+}
+
+/** Who claims: the account the token belongs to, and the token itself (each has its own daily counter). */
+export interface Claimant {
+  githubId: number;
+  tokenId: string;
 }
 
 export interface ClaimResult {
@@ -60,7 +71,8 @@ export class ClaimService {
     this.newId = d.newId ?? (() => randomBytes(16).toString('hex'));
   }
 
-  async claim(githubId: number, name: string, body: unknown): Promise<ClaimResult> {
+  async claim(who: Claimant, name: string, body: unknown): Promise<ClaimResult> {
+    const { githubId } = who;
     if (!NAME_PATTERN.test(name)) throw new RegistryError('invalid_name', `'${name}' is not a valid package name.`, { name });
     const { confirmSimilar } = parseClaim(body);
     if (RESERVED_NAMES.has(name)) throw new RegistryError('name_reserved', `'${name}' is reserved.`, { name });
@@ -76,13 +88,49 @@ export class ClaimService {
     const at = this.now();
     const created = rfc3339(at);
     const expires = rfc3339(new Date(at.getTime() + CLAIM_TTL_MS));
-    // All or nothing: a concurrent claim of the same name loses here with name_taken, and leaves nothing behind.
-    await this.d.registry.claimPackage(
-      { name, state: 'claimed', created_at: created, claim_expires_at: expires },
-      { name, github_id: githubId, handle: user.handle, added_at: created },
-      { name, ts: created, id: `a_${this.newId()}`, actor: `u:${githubId}`, action: 'claim' },
-    );
+    // Only a claim that is about to be written is charged (a refused name costs reads only and no quota), and a write that
+    // then fails gives its charge back, so the counters count the names reserved.
+    const refund = await this.charge(who, at);
+    try {
+      // All or nothing: a concurrent claim of the same name loses here with name_taken, and leaves nothing behind.
+      await this.d.registry.claimPackage(
+        { name, state: 'claimed', created_at: created, claim_expires_at: expires },
+        { name, github_id: githubId, handle: user.handle, added_at: created },
+        { name, ts: created, id: `a_${this.newId()}`, actor: `u:${githubId}`, action: 'claim' },
+      );
+    } catch (err) {
+      await refund();
+      throw err;
+    }
     return { name, state: 'claimed', claim_expires_at: expires };
+  }
+
+  /**
+   * One hit on the counter of the token and then on that of the account, for the UTC day of `now`; over either limit nothing
+   * stays charged and the claim is `rate_limited` with Retry-After to midnight. Returns the way to give the charge back.
+   */
+  private async charge(who: Claimant, now: Date): Promise<() => Promise<void>> {
+    const cfg = this.d.config;
+    const day = now.toISOString().slice(0, 10);
+    const midnight = Date.parse(`${day}T00:00:00Z`) + 86_400_000;
+    const retryAfter = Math.max(1, Math.ceil((midnight - now.getTime()) / 1000));
+    const expiresAt = Math.floor(midnight / 1000) + 86_400;
+    const hits: Array<[string, number]> = [
+      [`rl#ct#${who.tokenId}#${day}`, cfg.claimRatePerTokenPerDay],
+      [`rl#cu#${who.githubId}#${day}`, cfg.claimRatePerAccountPerDay],
+    ];
+    const charged: Array<[string, number]> = [];
+    const giveBack = async () => {
+      for (const [key, limit] of charged) await this.d.publishes.hit(key, limit, expiresAt, -1).catch(() => undefined);
+    };
+    for (const [key, limit] of hits) {
+      if (!(await this.d.publishes.hit(key, limit, expiresAt)).ok) {
+        await giveBack();
+        throw new PublishError('rate_limited', 'Too many requests.', { retry_after: String(retryAfter) }, retryAfter);
+      }
+      charged.push([key, limit]);
+    }
+    return giveBack;
   }
 
   /**

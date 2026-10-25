@@ -3,6 +3,8 @@ import { mintToken } from '../../src/auth';
 import { route } from '../../src/http/router';
 import { MemoryStore } from '../../src/memory-store';
 import { CLAIM_TTL_MS, ClaimService, RESERVED_NAMES, tooSimilar } from '../../src/publish/claim';
+import { DEFAULT_PUBLISH_CONFIG } from '../../src/publish/config';
+import { MemoryPublishStore } from '../../src/publish/memory';
 import { CONTRACT_DIR, loadCases, type Case } from '../http/replay';
 import { publishApiFor } from '../../src/publish/wiring';
 import { FakeDocClient } from '../helpers';
@@ -373,10 +375,10 @@ describe('ClaimService on its own clock and ids', () => {
   test('with the defaults it stamps the real time, 30 days apart, and a fresh random audit id each time', async () => {
     const registry = new MemoryStore();
     const users = { getUser: async (id: number) => ({ github_id: id, handle: 'u', created_at: '2026-10-01T00:00:00Z', last_login_at: '2026-10-01T00:00:00Z' }) };
-    const svc = new ClaimService({ registry, users });
+    const svc = new ClaimService({ registry, users, publishes: new MemoryPublishStore(), config: DEFAULT_PUBLISH_CONFIG });
     const before = Date.now();
-    const a = await svc.claim(1, 'first_name', undefined);
-    await svc.claim(1, 'second_name', undefined);
+    const a = await svc.claim({ githubId: 1, tokenId: 'tok_a' }, 'first_name', undefined);
+    await svc.claim({ githubId: 1, tokenId: 'tok_a' }, 'second_name', undefined);
     const after = Date.now();
     const created = Date.parse((await registry.getPackage('first_name'))!.created_at);
     expect(created).toBeGreaterThan(before - 1000);

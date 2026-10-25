@@ -414,6 +414,15 @@ describe('the daily limits a stage may tune', () => {
     return fns.find((f) => f.Properties.Handler === 'http/lambda.handler').Properties.Environment.Variables;
   };
 
+  test('the claim counters reach the handler as the environment variables the service reads, and are absent when not set', () => {
+    const env = handlerEnv({ claimRatePerAccountPerDay: 12, claimRatePerTokenPerDay: 3 });
+    expect(env.MOPM_CLAIM_RATE_PER_ACCOUNT_DAY).toBe('12');
+    expect(env.MOPM_CLAIM_RATE_PER_TOKEN_DAY).toBe('3');
+    const none = handlerEnv();
+    expect(none.MOPM_CLAIM_RATE_PER_ACCOUNT_DAY).toBeUndefined();
+    expect(none.MOPM_CLAIM_RATE_PER_TOKEN_DAY).toBeUndefined();
+  });
+
   test('the group counters reach the handler as the environment variables the service reads, and are absent when not set', () => {
     const env = handlerEnv({ groupRatePerAccountPerDay: 123, groupRatePerTokenPerDay: 45 });
     expect(env.MOPM_GROUP_RATE_PER_ACCOUNT_DAY).toBe('123');

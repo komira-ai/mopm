@@ -26,7 +26,7 @@ export interface ApiStackProps extends StackProps {
   /** Interactive publishing needs a GitHub account with two-factor authentication on (the CEO's rule). On unless set false. */
   require2fa?: boolean;
   /** Rate limits of begin-upload per UTC day; the code's defaults (generous) apply when absent. */
-  limits?: { ratePerAccountPerDay?: number; ratePerTokenPerDay?: number; groupRatePerAccountPerDay?: number; groupRatePerTokenPerDay?: number };
+  limits?: { ratePerAccountPerDay?: number; ratePerTokenPerDay?: number; groupRatePerAccountPerDay?: number; groupRatePerTokenPerDay?: number; claimRatePerAccountPerDay?: number; claimRatePerTokenPerDay?: number };
 }
 
 /**
@@ -181,6 +181,8 @@ export class ApiStack extends Stack {
         ...(props.limits?.ratePerTokenPerDay !== undefined ? { MOPM_RATE_PER_TOKEN_DAY: String(props.limits.ratePerTokenPerDay) } : {}),
         ...(props.limits?.groupRatePerAccountPerDay !== undefined ? { MOPM_GROUP_RATE_PER_ACCOUNT_DAY: String(props.limits.groupRatePerAccountPerDay) } : {}),
         ...(props.limits?.groupRatePerTokenPerDay !== undefined ? { MOPM_GROUP_RATE_PER_TOKEN_DAY: String(props.limits.groupRatePerTokenPerDay) } : {}),
+        ...(props.limits?.claimRatePerAccountPerDay !== undefined ? { MOPM_CLAIM_RATE_PER_ACCOUNT_DAY: String(props.limits.claimRatePerAccountPerDay) } : {}),
+        ...(props.limits?.claimRatePerTokenPerDay !== undefined ? { MOPM_CLAIM_RATE_PER_TOKEN_DAY: String(props.limits.claimRatePerTokenPerDay) } : {}),
       },
     });
 

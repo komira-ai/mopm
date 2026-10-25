@@ -109,8 +109,10 @@ export async function routePublish(req: HttpRequest, api: PublishApi, requestId:
     // then the request. Not gated by the groups switch.
     if (isClaim) {
       await refuseIfReadOnly();
-      const githubId = api.auth.userToken(await api.auth.authenticate(authorization));
-      return respond(201, requestId, await api.claims!.claim(githubId, seg[1]!, optionalJsonBody(req)));
+      // The spec's `userToken` is any live token of a user and the token scopes are only publish and yank, so no scope is asked for.
+      const principal = await api.auth.authenticate(authorization);
+      const githubId = api.auth.userToken(principal);
+      return respond(201, requestId, await api.claims!.claim({ githubId, tokenId: principal.token_id }, seg[1]!, optionalJsonBody(req)));
     }
 
     // Reading and aborting a group stay available when read-only mode is on and when groups are not enabled: they only

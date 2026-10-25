@@ -120,7 +120,7 @@ export class Harness {
       now,
       newId: () => (++this.n).toString(16).padStart(32, '0'),
     });
-    const claims = new ClaimService({ registry: this.registry, users: this.authStore, now, newId: () => `claim${String(++this.claimN).padStart(4, '0')}` });
+    const claims = new ClaimService({ registry: this.registry, users: this.authStore, publishes: this.publishes, config: this.config, now, newId: () => `claim${String(++this.claimN).padStart(4, '0')}` });
     const api: PublishApi = { auth: new Authenticator({ store: this.authStore, now }), service: this.service, flags: this.flags, groups: this.groupService, claims };
     this.deps = { store: this.registry, stage: 'beta', version: 't', commit: 't', readOnly: false, publish: api };
     this.validatorDeps = {

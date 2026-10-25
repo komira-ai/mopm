@@ -66,6 +66,6 @@ export function publishApiFor(env: Env, doc: ReturnType<typeof documentClient>, 
   const groups = new GroupService({ registry, publishes, objects, presigner, config, ...(groupQueueUrl ? { groupQueue: new SqsFifoQueue(groupQueueUrl, { region }) } : {}) });
   const authStore = new DynamoAuthStore(doc, authTablesFor(stage));
   // The claim route: a user token names the owner of a free package name.
-  const claims = new ClaimService({ registry, users: authStore });
+  const claims = new ClaimService({ registry, users: authStore, publishes, config });
   return { auth: new Authenticator({ store: authStore }), service, flags, groups, claims };
 }
