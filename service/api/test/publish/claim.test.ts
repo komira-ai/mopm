@@ -362,7 +362,7 @@ describe('a deployment', () => {
 
 describe('the Lambda wiring', () => {
   test('publishApiFor offers the claim service next to the publish and group services', () => {
-    const env = { MOPM_CHANNEL_BUCKET: 'bucket', MOPM_VALIDATE_QUEUE_URL: 'https://sqs.us-east-1.amazonaws.com/123456789012/validate.fifo' };
+    const env = { MOPM_CHANNEL_BUCKET: 'bucket', MOPM_VALIDATE_QUEUE_URL: 'https://sqs.us-east-1.amazonaws.com/acct/validate.fifo' };
     const api = publishApiFor(env, new FakeDocClient() as never, 't', new MutableFlags());
     expect(api?.claims).toBeInstanceOf(ClaimService);
     expect(api?.groups).toBeDefined();
