@@ -105,11 +105,28 @@ pub fn build(b: *std.Build) void {
     // (.zig-cache/e2e/<driver>) are emptied first.
     const mojo_env = b.option([]const u8, "mojo-env", "The Mojo environment (a pixi prefix) the e2e drivers run against");
     const e2e_step = b.step("test-e2e", "Run the Mojo end-to-end drivers natively (-Dmojo-env=<pixi prefix>)");
+    // The native-workspace driver (tests/drivers/native_workspace_test.zig; the farm runs it as //:native_workspace_mojo) starts the
+    // fake registry, a stand-in pixi and the `mojo_compile` shim of `mopm unit`: built here and installed for this step only.
+    const fake_pixi = b.addExecutable(.{ // native-only
+        .name = "fake-pixi",
+        .root_source_file = b.path("tests/drivers/fake_pixi.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const install_fake_pixi = b.addInstallArtifact(fake_pixi, .{});
+    const compile_shim = b.addExecutable(.{ // native-only
+        .name = "mojo-compile-shim",
+        .root_source_file = b.path("tests/drivers/mojo_compile_shim.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const install_compile_shim = b.addInstallArtifact(compile_shim, .{});
     const drivers = [_]struct { name: []const u8, root: []const u8 }{
         .{ .name = "autolink", .root = "tests/drivers/test_autolink_test.zig" },
         .{ .name = "discovery", .root = "tests/drivers/test_discovery_test.zig" },
         .{ .name = "supervisor", .root = "tests/drivers/test_supervisor_test.zig" },
         .{ .name = "flaky", .root = "tests/drivers/test_flaky_test.zig" },
+        .{ .name = "native-workspace", .root = "tests/drivers/native_workspace_test.zig" },
     };
     inline for (drivers) |d| {
         const drv = b.addTest(.{ // native-only
@@ -122,7 +139,12 @@ pub fn build(b: *std.Build) void {
         run.step.dependOn(&b.addRemoveDirTree(work).step);
         run.step.dependOn(b.getInstallStep());
         run.has_side_effects = true;
+        run.step.dependOn(&install_fake_pixi.step);
+        run.step.dependOn(&install_compile_shim.step);
         run.setEnvironmentVariable("MOPM", b.getInstallPath(.bin, "mopm"));
+        run.setEnvironmentVariable("MOPM_FAKE_REGISTRY", b.getInstallPath(.bin, "mopm-fake-registry"));
+        run.setEnvironmentVariable("FAKE_PIXI", b.getInstallPath(.bin, "fake-pixi"));
+        run.setEnvironmentVariable("MOJO_COMPILE_SHIM", b.getInstallPath(.bin, "mojo-compile-shim"));
         run.setEnvironmentVariable("MOPM_E2E_SRC", b.pathFromRoot("tests/e2e"));
         run.setEnvironmentVariable("BUILDRULES_TEST_WORK", work);
         if (mojo_env) |m| run.setEnvironmentVariable("MOJO_TOOLCHAIN", b.pathFromRoot(m));

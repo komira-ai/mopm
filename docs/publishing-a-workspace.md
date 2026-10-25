@@ -48,7 +48,7 @@ mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>
 | `--staged <dir>` | The staged set that `mopm stage` wrote. |
 | `--registry <name>` | Required, with no default: a staged set is never published to a registry by accident. |
 | `--config-dir <dir>` | The directory that holds the login (`mopm login --config-dir` writes it). |
-| `--wait <seconds>` | How long to wait for the group to be visible. The default is 600 seconds. |
+| `--wait <seconds>` | How long to wait for the group to be visible. The default grows with the group: 600 seconds plus 5 seconds for each member (1450 seconds at 170 members, 2100 at 300), because validation and the chain take longer the more members there are. `--wait` replaces the default. |
 | `--dry-run` | Check the set and say what would be sent. It reads no token and writes no file. |
 
 The token is `$MOPM_TOKEN`, else the login's. It is read after the plan has been checked, goes only to the registry's API, is never printed, and is not in the environment of any program mopm starts. The uploads themselves carry no token.
@@ -59,7 +59,7 @@ A member the registry rejects ends the whole group, and none of its members is p
 
 #### Resuming a run
 
-`mopm publish --staged` writes `state.json` into the staged directory before its first request and updates it after every upload. After any failure (a file that did not upload, a registry that was busy, a wait that ran out) run the same command again: it asks for the same group, does not send the files the registry already holds, and carries on. A `state.json` written for another registry or for another `plan.json` is refused; remove the file to start a new group.
+`mopm publish --staged` writes `state.json` into the staged directory before its first request and updates it after every upload. After any failure (a file that did not upload, a registry that was busy, a wait that ran out) run the same command again (when the wait ran out, the group is still in progress, not failed, and the last lines of the output give the command that keeps waiting): it asks for the same group, does not send the files the registry already holds, and carries on. A `state.json` written for another registry or for another `plan.json` is refused; remove the file to start a new group.
 
 #### report.json
 

@@ -102,7 +102,7 @@ jobs:
         run: |
           set -o pipefail
           if [ "$EVENT" = pull_request ]; then
-            ./buck2 uquery '//... - set(//:autolink //:discovery //:flaky //:group_e2e_mojo //:install_e2e //:mojo_probe //:native_static //:supervisor //:user_beta)' > "$RUNNER_TEMP/targets"
+            ./buck2 uquery '//... - set(//:autolink //:discovery //:flaky //:group_e2e_mojo //:install_e2e //:mojo_probe //:native_static //:native_workspace_mojo //:supervisor //:user_beta)' > "$RUNNER_TEMP/targets"
             ./buck2 build --skip-incompatible-targets "@$RUNNER_TEMP/targets" 2>&1 | tee "$RUNNER_TEMP/build.log"
           else
             ./buck2 build //... 2>&1 | tee "$RUNNER_TEMP/build.log"
