@@ -371,8 +371,9 @@ export class GroupService {
 
   /** Every member's package exists and the caller owns it. The first member (in name order) that fails refuses the whole group. Returns the caller's handle. */
   private async requireOwners(p: Principal, req: GroupRequest): Promise<string> {
-    // A group is created by an account's token: a CI identity token is valid for one version of one package.
-    if (p.github_id === undefined) {
+    // A group is created by an account's token or by a configured CI publisher's (it owns packages through `ci_owner`). Any other
+    // CI token is valid for one version of one package and creates no group.
+    if (p.github_id === undefined && !(p.kind === 'oidc' && p.ci_owner !== undefined)) {
       const name = req.members[0]!.name;
       throw new AuthError('scope_missing', `The token does not have the 'publish' scope for '${name}'.`, { scope: 'publish', name });
     }
@@ -504,7 +505,7 @@ export class GroupService {
   private rateFits(p: Principal, req: GroupRequest): void {
     const cfg = this.d.config;
     const files = req.members.reduce((n, m) => n + m.files.length, 0);
-    const limit = Math.min(cfg.groupRatePerTokenPerDay, ...(p.github_id !== undefined ? [cfg.groupRatePerAccountPerDay] : []));
+    const limit = Math.min(cfg.groupRatePerTokenPerDay, ...(p.github_id !== undefined || p.ci_owner !== undefined ? [cfg.groupRatePerAccountPerDay] : []));
     if (files > limit) throw invalidRequest(`a group of ${files} files is more than the ${limit} files a day that groups may create`);
   }
 
@@ -523,6 +524,8 @@ export class GroupService {
     const expiresAt = Math.floor(midnight / 1000) + 86_400;
     const hits: Array<[string, number]> = [[`rl#gt#${p.token_id}#${day}`, cfg.groupRatePerTokenPerDay]];
     if (p.github_id !== undefined) hits.push([`rl#gu#${p.github_id}#${day}`, cfg.groupRatePerAccountPerDay]);
+    // A CI identity gets a new token for every job, so its counter is the identity's, as an account's is.
+    else if (p.ci_owner !== undefined) hits.push([`rl#gc#${p.ci_owner}#${day}`, cfg.groupRatePerAccountPerDay]);
     for (const [key, limit] of hits) {
       if (!(await this.d.publishes.hit(key, limit, expiresAt, files)).ok) {
         throw new PublishError('rate_limited', 'Too many requests.', { retry_after: String(retryAfter) }, retryAfter);

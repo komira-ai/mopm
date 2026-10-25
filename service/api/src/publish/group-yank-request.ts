@@ -71,7 +71,8 @@ export class GroupYanker {
    * member order) that fails refuses the request.
    */
   private async requireOwners(p: Principal, members: GroupMembers): Promise<void> {
-    // A CI identity token cannot reach here: it is not the creator of a group and owns nothing, so `load` has refused it.
+    // A configured CI publisher's token reaches here only for a group its identity created (`load` refuses any other actor, and a
+    // CI identity owns no package by account), and must still own every member (`ci_owner`).
     for (let i = 0; i < members.members.length; i += BATCH) {
       const results = await Promise.allSettled(members.members.slice(i, i + BATCH).map((m) => requireOwner(this.d.registry, p, m.name)));
       for (const r of results) if (r.status === 'rejected') throw r.reason;

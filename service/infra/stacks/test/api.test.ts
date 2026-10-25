@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
-import { ApiStack, AUTH_GRANTS, BETA_CI_PUBLISHERS, CI_PUBLISHERS_ENV, CLAIM_ROUTES, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
+import { ApiStack, AUTH_GRANTS, BETA_CI_PUBLISHERS, BETA_GROUPS_POLICY, CI_PUBLISHERS_ENV, GROUPS_POLICY_ENV, CLAIM_ROUTES, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
 import { STAGES, stageConfig, tableName } from '../lib/config';
 import { DUMMY_ACCOUNT, HANDLER_STUB_DIR, tpl } from './util';
 
@@ -296,6 +296,23 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
       // not even as a literal in the template
       expect(JSON.stringify(t.toJSON())).not.toContain(CI_PUBLISHERS_ENV);
       expect(JSON.stringify(t.toJSON())).not.toContain('1376408823');
+    }
+  });
+
+  // The groups policy is beta's alone too: the variable exists on the beta template, names exactly the CI actor of the trusted
+  // publisher (never mode all, never an account), and no other stage's template carries it, as a name or as a value.
+  test(stage === 'beta' ? 'beta: MOPM_GROUPS_POLICY allows exactly the trusted CI identity as an actor' : `${stage}: no function has MOPM_GROUPS_POLICY`, () => {
+    const fns = Object.values(t.findResources('AWS::Lambda::Function')) as any[];
+    const values = fns.map((f) => f.Properties.Environment?.Variables?.[GROUPS_POLICY_ENV]).filter((v) => v !== undefined);
+    if (stage === 'beta') {
+      expect(values).toHaveLength(1); // the API function; the index reader has none
+      expect(JSON.parse(values[0])).toEqual({ mode: 'allow', actors: ['ci:gh-repo:1376408823'] });
+      expect(JSON.parse(values[0])).toEqual(BETA_GROUPS_POLICY);
+      expect(BETA_GROUPS_POLICY.actors).toEqual(BETA_CI_PUBLISHERS.map((p) => `ci:gh-repo:${p.repository_id}`));
+    } else {
+      expect(values).toEqual([]);
+      expect(JSON.stringify(t.toJSON())).not.toContain(GROUPS_POLICY_ENV);
+      expect(JSON.stringify(t.toJSON())).not.toContain('ci:gh-repo:');
     }
   });
 

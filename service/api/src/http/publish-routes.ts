@@ -201,10 +201,15 @@ function authorizeYank(auth: Authenticator, p: Principal, name: string, version:
   }
 }
 
-/** A group is created with an API token that has `publish` for every member's package (a CI identity token is valid for one version of one package). The first member it does not cover is named. */
+/**
+ * A group is created with an API token that has `publish` for every member's package, or with the token of a configured CI
+ * publisher (`ci_owner`) minted for exactly every member's package and version. Any other CI token is valid for one version of one
+ * package and creates no group. The first member the token does not cover is named.
+ */
 function authorizeGroup(auth: Authenticator, p: Principal, req: GroupRequest): void {
+  const ci = p.kind === 'oidc' && p.ci_owner !== undefined;
   for (const m of req.members) {
-    if (p.kind !== 'api') throw new AuthError('scope_missing', `The token does not have the 'publish' scope for '${m.name}'.`, { scope: 'publish', name: m.name });
+    if (p.kind !== 'api' && !ci) throw new AuthError('scope_missing', `The token does not have the 'publish' scope for '${m.name}'.`, { scope: 'publish', name: m.name });
     auth.publishToken(p, m.name, m.version);
   }
 }

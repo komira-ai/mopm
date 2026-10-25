@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Principal } from '../auth';
 import { NAME_PATTERN } from '../auth';
+import { ciActorOf } from '../auth/ci-publishers';
 import { RegistryError, versionExists } from '../errors';
 import type { GroupStore } from '../group-store';
 import type { Store } from '../store';
@@ -64,7 +65,12 @@ const SAFE_FILENAME = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,254}$/;
 const dayOf = (d: Date) => d.toISOString().slice(0, 10);
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-export const actorOf = (p: Principal): Actor => (p.github_id !== undefined ? `u:${p.github_id}` : `ci:${p.token_id}`);
+/**
+ * `u:<github id>` for an account's token; `ci:gh-repo:<repository id>` for the token of a configured CI publisher (one stable actor
+ * for the identity, whichever token it holds); `ci:<token id>` for any other CI token (a package's registered trusted publisher).
+ */
+export const actorOf = (p: Principal): Actor =>
+  p.github_id !== undefined ? `u:${p.github_id}` : p.kind === 'oidc' && p.ci_owner !== undefined ? ciActorOf(p.ci_owner) : `ci:${p.token_id}`;
 
 /** Deterministic: committing the same upload ids again is the same publish, which is what makes a retry safe. */
 export const publishIdFor = (name: string, canonical: string, uploadIds: readonly string[]) =>

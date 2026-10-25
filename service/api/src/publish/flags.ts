@@ -26,6 +26,44 @@ export function parseGroupsPolicy(item: Record<string, unknown> | undefined): Gr
   return GROUPS_OFF;
 }
 
+/** The environment variable that carries the static groups policy of a deployment. The loader refuses it on any stage but beta. */
+export const GROUPS_POLICY_ENV = 'MOPM_GROUPS_POLICY';
+/** The one stage that may carry a static groups policy. */
+export const GROUPS_POLICY_STAGE = 'beta';
+/** The most actors a static policy may name. */
+export const MAX_STATIC_GROUP_ACTORS = 8;
+const CI_ACTOR = /^ci:gh-repo:[1-9][0-9]{0,19}$/;
+
+/**
+ * The static groups policy named by `MOPM_GROUPS_POLICY`: config as code, for the beta stage only. Absent or empty: `off`. Present on
+ * any stage but beta: an error, so the function does not start (a mistake in infrastructure cannot turn groups on at gamma or prod).
+ * The only form is `{"mode":"allow","actors":["ci:gh-repo:<repository id>", ...]}`: one to eight CI identities, never `all`, never
+ * an account, no other key. Anything else is an error naming what is wrong, never a partial policy.
+ *
+ * It is ORed with the `groups_enabled` item of the config table (AnyFlag), and an item's `deny` does not override it: stopping a
+ * static policy takes a deploy.
+ */
+export function parseStaticGroupsPolicy(stage: string, raw: string | undefined): GroupsPolicy {
+  if (raw === undefined || raw === '') return GROUPS_OFF;
+  if (stage !== GROUPS_POLICY_STAGE) throw new Error(`${GROUPS_POLICY_ENV} may be set on the ${GROUPS_POLICY_STAGE} stage only; this is ${stage}`);
+  const bad = (detail: string) => new Error(`${GROUPS_POLICY_ENV} is not valid: ${detail}`);
+  let v: unknown;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    throw bad('not JSON');
+  }
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw bad('not an object');
+  const o = v as Record<string, unknown>;
+  for (const k of Object.keys(o)) if (k !== 'mode' && k !== 'actors') throw bad(`unknown key '${k}'`);
+  if (o.mode !== 'allow') throw bad("'mode' must be 'allow'");
+  const actors = o.actors;
+  if (!Array.isArray(actors) || actors.length < 1 || actors.length > MAX_STATIC_GROUP_ACTORS) throw bad(`'actors' is a list of 1 to ${MAX_STATIC_GROUP_ACTORS} CI actors`);
+  if (!actors.every((a) => typeof a === 'string' && CI_ACTOR.test(a))) throw bad("every actor is 'ci:gh-repo:<repository id>'");
+  if (new Set(actors).size !== actors.length) throw bad('an actor is named twice');
+  return { mode: 'allow', actors: [...(actors as string[])], deny: [] };
+}
+
 export function policyAllows(policy: GroupsPolicy, actor: string): boolean {
   if (policy.mode === 'off') return false;
   if (policy.deny.includes(actor)) return false;

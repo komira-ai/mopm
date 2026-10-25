@@ -6,7 +6,7 @@ import { S3Channel, S3Presigner, SqsFifoQueue } from './aws';
 import { ClaimService } from './claim';
 import { publishConfigFromEnv } from './config';
 import { DynamoPublishStore, publishTablesFor } from './dynamo-publish-store';
-import { AnyFlag, DynamoFlags, StaticFlags } from './flags';
+import { AnyFlag, DynamoFlags, GROUPS_POLICY_ENV, parseStaticGroupsPolicy, StaticFlags } from './flags';
 import type { Flags } from './ports';
 import { GroupService } from './group-service';
 import { PublishService } from './service';
@@ -30,9 +30,13 @@ export function stageOf(env: Env): string {
 
 export const regionOf = (env: Env) => env.AWS_REGION ?? 'us-east-1';
 
-/** The read-only switch: the environment value of the deployment, or the runtime item in the config table. */
+/**
+ * The switches: the read-only value and (beta only) the groups policy of the deployment's environment, or the runtime items in the
+ * config table. A static groups policy on any other stage makes this throw, so the function does not start.
+ */
 export function flagsFor(env: Env, doc: ReturnType<typeof documentClient>, stage: string): Flags {
-  return new AnyFlag([new StaticFlags(env.MOPM_READ_ONLY === 'true'), new DynamoFlags(doc, publishTablesFor(stage).config)]);
+  const groups = parseStaticGroupsPolicy(stage, env[GROUPS_POLICY_ENV]);
+  return new AnyFlag([new StaticFlags(env.MOPM_READ_ONLY === 'true', groups), new DynamoFlags(doc, publishTablesFor(stage).config)]);
 }
 
 /** The API Lambda's publish side, or undefined when the deployment has no upload bucket and queue (a stub). */

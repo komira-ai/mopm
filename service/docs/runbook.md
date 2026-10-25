@@ -235,6 +235,26 @@ row created only if its key is absent, so of two claims of one name exactly one 
   who must free one deletes its rows by hand (the API role cannot).
 - To see a claim: `audit` rows with `action: claim`, actor `u:<github id>`.
 
+### Beta lets that identity create groups: a static policy
+
+On beta the same identity may also create groups without anyone flipping `groups_enabled`. This is **code** as well:
+`BETA_GROUPS_POLICY` in `service/infra/stacks/lib/api-stack.ts`, delivered as the `MOPM_GROUPS_POLICY` environment variable of the beta
+API function and nowhere else: `{"mode":"allow","actors":["ci:gh-repo:<repository_id>"]}`, the actors derived from `BETA_CI_PUBLISHERS`. Design and
+reasons: the addendum in `service/docs/adr-ci-publisher-identity.md`.
+
+- **A static policy is ORed with the `groups_enabled` item, and a `deny` in the item does not override it.** The two are read
+  separately and either one admitting the actor is enough. So on beta, setting `groups_enabled` to `off`, or putting the identity in
+  `deny`, does **not** stop the identity from creating groups. Stopping it takes a deploy: remove the policy (or the publisher) in a
+  pull request. Groups that exist are unaffected either way (the policy gates creation only).
+- **Beta only, twice.** The stack sets the variable when the stage is `beta` and never otherwise, and the handler refuses to start on any
+  other stage if it is present ("may be set on the beta stage only"); only the form above loads (never `all`, never an account, one to eight
+  `ci:gh-repo:<id>` actors). Gamma and prod keep the human flip of `groups_enabled`.
+- **What the identity can do with it.** Create a group whose every member is a package that the identity owns and that its token was
+  minted for, at that version. A member outside the token, a package an account or another identity owns, or a caller that is not on
+  the list is refused and nothing is created. Everything afterwards (commit, the validator and the chain, abort, `yank --group`) works for
+  that identity's own groups and for no other caller. The actor in audit rows, group headers and uploads is `ci:gh-repo:<repository_id>`
+  (the identity, not a token), and the group budget per day is counted per identity.
+
 ## Groups: enabling, rolling out and recovering
 
 The mechanics of a group are under "Publishing" above; this section is the order of work for an operator. Users' side is
@@ -334,7 +354,8 @@ What that means:
 A revert under `service/**` deploys to prod at once, and an older receiver acknowledges the messages of a newer one and loses them. Before
 any revert is merged:
 
-1. Set `groups_enabled` to `off` on the stage and wait a few seconds.
+1. Set `groups_enabled` to `off` on the stage and wait a few seconds. (On beta this does not stop the CI identity of the static
+   policy above; stop it by deploying without `MOPM_GROUPS_POLICY`, or check that its job is not running.)
 2. Run `--mode=status` until the verdict says `safe_to_revert: true`: no group is `open`, `validating`, or committed and not yet
    `visible` (a visible group whose yank or unyank is running is listed too), and every queue and dead-letter queue is empty.
 3. Only then merge the revert.

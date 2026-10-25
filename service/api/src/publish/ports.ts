@@ -42,7 +42,7 @@ export interface Queue {
 export interface Flags {
   readOnly(): Promise<boolean>;
   /**
-   * Whether `actor` (`u:<github id>` or `ci:<token id>`) may create a group. It gates creation only: a group that exists
+   * Whether `actor` (`u:<github id>`, `ci:gh-repo:<repository id>` or `ci:<token id>`) may create a group. It gates creation only: a group that exists
    * is read, aborted and finished whatever this says. A flag that cannot be read throws (writers fail closed).
    */
   groupsFor(actor: string): Promise<boolean>;
