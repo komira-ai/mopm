@@ -161,9 +161,14 @@ paths:
       tags: [auth]
       summary: Exchange a CI identity token for a short-lived publish token.
       description: |
-        The token is valid for 15 minutes, may only publish, and only for the
+        The token is valid for 10 minutes, may only publish, and only for the
         one package and version named in the request. The CI identity must
-        match a trusted publisher registered for the package.
+        match a trusted publisher registered for the package: its repository
+        and owner ids, workflow file and (when the publisher names one)
+        environment, the ref it runs on (`refs/heads/main` unless the
+        publisher names another) and the event that started it (a push or a
+        manual dispatch). A CI identity token can be exchanged once; a second
+        exchange of the same token is refused as `oidc_token_invalid`.
       security: []
       requestBody:
         required: true

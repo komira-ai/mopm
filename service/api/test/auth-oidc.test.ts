@@ -44,7 +44,7 @@ async function expectRejected(p: Promise<unknown>, code: string, status: number,
 }
 
 describe('OIDC exchange: the happy path', () => {
-  test('a matching GitHub Actions token mints a 15 minute publish token for exactly that package and version', async () => {
+  test('a matching GitHub Actions token mints a 10 minute publish token for exactly that package and version', async () => {
     const { oidc, store, tp, clock, auth } = setup();
     await store.addTrustedPublisher(tp);
     const jwt = signJwt(key, goodClaims(clock));
@@ -52,7 +52,7 @@ describe('OIDC exchange: the happy path', () => {
     expect(r.token_kind).toBe('publish');
     expect(r.name).toBe('widgets');
     expect(r.version).toBe('1.0.0');
-    expect(r.expires_at).toBe(new Date(clock.t + 15 * 60_000).toISOString());
+    expect(r.expires_at).toBe(new Date(clock.t + 10 * 60_000).toISOString());
     expect(r.token).toMatch(/^mopm_[a-z2-7]{32,64}$/);
 
     const p = await auth.authenticate(`Bearer ${r.token}`);
@@ -79,11 +79,11 @@ describe('OIDC exchange: the happy path', () => {
     expect(() => auth.userToken(p)).toThrow(expect.objectContaining({ code: 'scope_missing' }));
   });
 
-  test('the minted token expires after 15 minutes: valid at 14:59, token_expired at 15:00', async () => {
+  test('the minted token expires after 10 minutes: valid at 9:59, token_expired at 10:00', async () => {
     const { oidc, store, tp, clock, auth } = setup();
     await store.addTrustedPublisher(tp);
     const r = await oidc.exchange({ jwt: signJwt(key, goodClaims(clock)), name: 'widgets', version: '2.0.0' });
-    clock.advance(15 * 60_000 - 1000);
+    clock.advance(10 * 60_000 - 1000);
     await auth.authenticate(`Bearer ${r.token}`);
     clock.advance(1000);
     await expectRejected(auth.authenticate(`Bearer ${r.token}`), 'token_expired', 401);
@@ -129,6 +129,15 @@ describe('OIDC exchange: every refusal, exactly', () => {
     await expectRejected(p, 'oidc_token_invalid', 401, 'wrong audience');
   });
 
+  test('a stage that accepts only its own host refuses the bare domain and another stage host, and accepts its own', async () => {
+    const strict = setup({ audiences: ['beta.mopm.dev'] });
+    await strict.store.addTrustedPublisher(strict.tp);
+    const go = (aud: string) => strict.oidc.exchange({ jwt: signJwt(key, goodClaims(strict.clock, { aud })), name: 'widgets', version: '1.0.0' });
+    await expectRejected(go('mopm.dev'), 'oidc_token_invalid', 401, 'wrong audience');
+    await expectRejected(go('gamma.mopm.dev'), 'oidc_token_invalid', 401, 'wrong audience');
+    await expect(go('beta.mopm.dev')).resolves.toBeDefined();
+  });
+
   test('a missing audience is also wrong audience', async () => {
     const { p } = await run((c) => { const g = goodClaims(c); delete g.aud; return g; });
     await expectRejected(p, 'oidc_token_invalid', 401, 'wrong audience');
@@ -159,9 +168,76 @@ describe('OIDC exchange: every refusal, exactly', () => {
     await expectRejected(p, 'oidc_not_trusted', 403);
   });
 
-  test('any ref of the trusted workflow matches (tags, branches)', async () => {
-    const { p } = await run((c) => goodClaims(c, { workflow_ref: 'acme/widgets/.github/workflows/release.yml@refs/heads/main' }));
-    await expect(p).resolves.toBeDefined();
+  test('the good token passes: trusted repository, owner, workflow, main, a push', async () => {
+    const { p } = await run((c) => goodClaims(c));
+    await expect(p).resolves.toMatchObject({ token_kind: 'publish', name: 'widgets', version: '1.0.0' });
+  });
+
+  test('wrong ref: a feature branch or a tag of the trusted workflow is refused (oidc_not_trusted), though workflow_ref names the right file', async () => {
+    for (const ref of ['refs/heads/feature', 'refs/tags/v1.0.0', 'refs/pull/7/merge', 'refs/heads/main2', 'refs/heads/']) {
+      const { p } = await run((c) => goodClaims(c, { ref, workflow_ref: 'acme/widgets/.github/workflows/release.yml@refs/heads/main' }));
+      await expectRejected(p, 'oidc_not_trusted', 403);
+    }
+  });
+
+  test('a row may pin another ref, and then only that ref passes', async () => {
+    const pinned = { ref: 'refs/heads/release' };
+    await expect((await run((c) => goodClaims(c, { ref: 'refs/heads/release' }), pinned)).p).resolves.toBeDefined();
+    await expectRejected((await run((c) => goodClaims(c), pinned)).p, 'oidc_not_trusted', 403);
+  });
+
+  test('wrong event: pull_request, schedule, release and workflow_run are refused (oidc_not_trusted) even on main', async () => {
+    for (const event_name of ['pull_request', 'issue_comment', 'schedule', 'release', 'workflow_run']) {
+      const { p } = await run((c) => goodClaims(c, { event_name }));
+      await expectRejected(p, 'oidc_not_trusted', 403);
+    }
+  });
+
+  test('both push and workflow_dispatch pass by default; a row that names one refuses the other', async () => {
+    for (const event_name of ['push', 'workflow_dispatch']) await expect((await run((c) => goodClaims(c, { event_name }))).p).resolves.toBeDefined();
+    await expectRejected((await run((c) => goodClaims(c, { event_name: 'push' }), { event_name: 'workflow_dispatch' })).p, 'oidc_not_trusted', 403);
+    await expect((await run((c) => goodClaims(c, { event_name: 'workflow_dispatch' }), { event_name: 'workflow_dispatch' })).p).resolves.toBeDefined();
+    // a row cannot widen the set to an event outside it
+    await expectRejected((await run((c) => goodClaims(c, { event_name: 'pull_request' }), { event_name: 'pull_request' })).p, 'oidc_not_trusted', 403);
+  });
+
+  test('wrong environment: a row that names one refuses a token for another or none (oidc_not_trusted)', async () => {
+    const row = { environment: 'beta' };
+    await expect((await run((c) => goodClaims(c, { environment: 'beta' }), row)).p).resolves.toBeDefined();
+    await expectRejected((await run((c) => goodClaims(c, { environment: 'prod' }), row)).p, 'oidc_not_trusted', 403);
+    await expectRejected((await run((c) => goodClaims(c), row)).p, 'oidc_not_trusted', 403);
+  });
+
+  test('a replayed jti is refused (oidc_token_invalid "token already used"), the first use having minted exactly one token', async () => {
+    const s = setup();
+    await s.store.addTrustedPublisher(s.tp);
+    const jwt = signJwt(key, goodClaims(s.clock));
+    await s.oidc.exchange({ jwt, name: 'widgets', version: '1.0.0' });
+    await expectRejected(s.oidc.exchange({ jwt, name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'token already used');
+    // a new signature over the same jti is the same token
+    const again = signJwt(key, goodClaims(s.clock, { jti: JSON.parse(Buffer.from(jwt.split('.')[1]!, 'base64url').toString()).jti }));
+    await expectRejected(s.oidc.exchange({ jwt: again, name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'token already used');
+    expect(s.store.dumpTokens()).toHaveLength(1);
+    // another job's token (another jti) is unaffected
+    await s.oidc.exchange({ jwt: signJwt(key, goodClaims(s.clock)), name: 'widgets', version: '1.0.0' });
+    expect(s.store.dumpTokens()).toHaveLength(2);
+  });
+
+  test('a token refused for the wrong package is not spent: it still works for the right one', async () => {
+    const s = setup();
+    await s.store.addTrustedPublisher(s.tp);
+    const jwt = signJwt(key, goodClaims(s.clock));
+    await expectRejected(s.oidc.exchange({ jwt, name: 'gadgets', version: '1.0.0' }), 'oidc_not_trusted', 403);
+    await expect(s.oidc.exchange({ jwt, name: 'widgets', version: '1.0.0' })).resolves.toBeDefined();
+  });
+
+  test('a replay minutes later, while the CI token is still within its own expiry, is still refused', async () => {
+    const s = setup();
+    await s.store.addTrustedPublisher(s.tp);
+    const jwt = signJwt(key, goodClaims(s.clock, { exp: s.clock.seconds + 300 }));
+    await s.oidc.exchange({ jwt, name: 'widgets', version: '1.0.0' });
+    s.clock.advance(4 * 60_000);
+    await expectRejected(s.oidc.exchange({ jwt, name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'token already used');
   });
 
   test('a package with no trusted publisher: oidc_not_trusted, the same answer as a mismatch', async () => {
@@ -207,7 +283,7 @@ describe('OIDC exchange: every refusal, exactly', () => {
     const without = (k: string) => { const g = goodClaims(s.clock); delete g[k]; return signJwt(key, g); };
     await expectRejected(s.oidc.exchange({ jwt: without('exp'), name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'missing expiry');
     await expectRejected(s.oidc.exchange({ jwt: without('iat'), name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, 'missing issued-at');
-    for (const c of ['repository', 'repository_id', 'repository_owner_id', 'workflow_ref']) {
+    for (const c of ['repository', 'repository_id', 'repository_owner_id', 'workflow_ref', 'ref', 'event_name', 'jti']) {
       await expectRejected(s.oidc.exchange({ jwt: without(c), name: 'widgets', version: '1.0.0' }), 'oidc_token_invalid', 401, `missing claim ${c}`);
     }
   });
@@ -320,7 +396,7 @@ describe('JWKS handling', () => {
 describe('matching helpers', () => {
   const claims = (o: Partial<GithubActionsClaims> = {}): GithubActionsClaims => ({
     iss: ISSUER, aud: 'mopm.dev', exp: 0, iat: 0, repository: 'acme/widgets', repository_id: '111', repository_owner_id: '222',
-    workflow_ref: 'acme/widgets/.github/workflows/release.yml@refs/tags/v1', ...o,
+    workflow_ref: 'acme/widgets/.github/workflows/release.yml@refs/heads/main', ref: 'refs/heads/main', event_name: 'push', jti: 'j1', ...o,
   });
   const tp: TrustedPublisher = { id: 'x', name: 'widgets', repository_id: '111', repository_owner_id: '222', workflow: '.github/workflows/release.yml', added_by: 1, added_at: '' };
 
@@ -328,6 +404,14 @@ describe('matching helpers', () => {
     expect(workflowPath('acme/widgets/.github/workflows/release.yml@refs/tags/v1', 'acme/widgets')).toBe('.github/workflows/release.yml');
     expect(workflowPath('acme/widgets/.github/workflows/release.yml', 'acme/widgets')).toBe('.github/workflows/release.yml');
     expect(workflowPath('acme/widgets-evil/.github/workflows/release.yml@x', 'acme/widgets')).toBeUndefined();
+  });
+
+  test('ref and event are compared exactly, and a missing pin means main and push/workflow_dispatch', () => {
+    expect(matchesTrustedPublisher(tp, claims({ ref: 'refs/heads/main' }))).toBe(true);
+    expect(matchesTrustedPublisher(tp, claims({ ref: 'refs/heads/mai' }))).toBe(false);
+    expect(matchesTrustedPublisher({ ...tp, ref: 'refs/tags/v1' }, claims({ ref: 'refs/tags/v1' }))).toBe(true);
+    expect(matchesTrustedPublisher(tp, claims({ event_name: 'workflow_dispatch' }))).toBe(true);
+    expect(matchesTrustedPublisher(tp, claims({ event_name: 'pull_request' }))).toBe(false);
   });
 
   test('a prefix of the workflow path, or a longer path, does not match', () => {

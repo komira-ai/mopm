@@ -18,8 +18,8 @@ pub const poll_interval: i64 = 5;
 /// A claim with no version expires after 30 days; an invitation after 7.
 pub const claim_secs: i64 = 30 * day;
 pub const invitation_secs: i64 = 7 * day;
-/// An OIDC publish token lives 15 minutes.
-pub const oidc_secs: i64 = 15 * 60;
+/// An OIDC publish token lives 10 minutes.
+pub const oidc_secs: i64 = 10 * 60;
 /// An upload URL expires five minutes after beginUpload.
 pub const upload_secs: i64 = 5 * 60;
 /// The largest file v1 takes.

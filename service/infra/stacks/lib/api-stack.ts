@@ -91,6 +91,8 @@ export const AUTH_ROUTES: { method: apigw.HttpMethod; path: string }[] = [
  * What the handler may do on the auth tables, and nothing more. No table gets DeleteItem (the tables deny it to this
  * role anyway; expiry is DynamoDB TTL). `indexes` are the only indexes it may query.
  * - tokens: create (PutItem), read by hash (GetItem), mark used or revoked (UpdateItem), list by account (Query on the index).
+ *   The same PutItem, conditional on the key being absent, claims a CI token's jti (key `jti#<digest>`, TTL a few minutes past
+ *   the CI token's expiry): the replay check of the OIDC exchange needs no grant beyond these.
  * - users: read and upsert a row at login.
  * - device_logins: start (PutItem), poll (GetItem), record the poll and consume (UpdateItem).
  * - trusted_publishers: read only; nothing in the Lambda registers publishers yet.

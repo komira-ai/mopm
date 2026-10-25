@@ -1,4 +1,4 @@
-import { createPublicKey, verify as cryptoVerify, type KeyObject } from 'node:crypto';
+import { createHash, createPublicKey, verify as cryptoVerify, type KeyObject } from 'node:crypto';
 import { canonicalVersion } from '../version';
 import { AuthError, oidcInvalid } from './errors';
 import { mintToken, NAME_PATTERN, OIDC_TOKEN_TTL_MS, type Clock } from './tokens';
@@ -34,9 +34,24 @@ export interface GithubActionsClaims {
   repository_id: string;
   repository_owner_id: string;
   workflow_ref: string;
+  /** The git ref the job runs on, e.g. `refs/heads/main`. */
+  ref: string;
+  /** What started the workflow: `push`, `workflow_dispatch`, `pull_request`, ... */
+  event_name: string;
+  /** The token's unique id: one exchange per jti. */
+  jti: string;
   environment?: string;
   [k: string]: unknown;
 }
+
+/** The ref a trusted publisher row means when it does not name one. */
+export const DEFAULT_TRUSTED_REF = 'refs/heads/main';
+/** The events a CI identity may exchange from. A row may narrow this to one; nothing widens it (a pull request job never qualifies). */
+export const ALLOWED_EVENTS: readonly string[] = ['push', 'workflow_dispatch'];
+/** A used jti stays claimed at least this long (and until its token has expired). */
+export const JTI_MIN_TTL_MS = 10 * 60_000;
+/** Claim keys cannot collide with a token hash (64 hex characters). */
+const jtiKey = (jti: string) => `jti#${createHash('sha256').update(jti).digest('hex')}`;
 
 export interface JwtVerifierOptions {
   issuer?: string;
@@ -147,7 +162,7 @@ export class GithubJwtVerifier {
     if (nbf !== undefined && (typeof nbf !== 'number' || nbf - this.leeway > nowS)) throw oidcInvalid('token not yet valid');
     if (typeof iat !== 'number' || !Number.isFinite(iat)) throw oidcInvalid('missing issued-at');
     if (iat - this.leeway > nowS) throw oidcInvalid('token issued in the future');
-    for (const c of ['repository', 'repository_id', 'repository_owner_id', 'workflow_ref'] as const) {
+    for (const c of ['repository', 'repository_id', 'repository_owner_id', 'workflow_ref', 'ref', 'event_name', 'jti'] as const) {
       if (typeof claims[c] !== 'string' || !claims[c]) throw oidcInvalid(`missing claim ${c}`);
     }
     return claims as GithubActionsClaims;
@@ -167,6 +182,9 @@ export function matchesTrustedPublisher(tp: TrustedPublisher, c: GithubActionsCl
   if (tp.repository_owner_id !== c.repository_owner_id) return false;
   if (workflowPath(c.workflow_ref, c.repository) !== tp.workflow) return false;
   if (tp.environment !== undefined && tp.environment !== c.environment) return false;
+  if ((tp.ref ?? DEFAULT_TRUSTED_REF) !== c.ref) return false;
+  if (!ALLOWED_EVENTS.includes(c.event_name)) return false;
+  if (tp.event_name !== undefined && tp.event_name !== c.event_name) return false;
   return true;
 }
 
@@ -182,7 +200,7 @@ export class OidcExchange {
     this.now = o.now ?? (() => new Date());
   }
 
-  /** Verify the CI token, match a trusted publisher of the package, mint a 15 minute token for that package and version. */
+  /** Verify the CI token, match a trusted publisher of the package, mint a 10 minute token for that package and version. */
   async exchange(input: { jwt: string; name: string; version: string }) {
     if (typeof input?.name !== 'string' || !NAME_PATTERN.test(input.name)) {
       throw new AuthError('invalid_name', `'${String(input?.name)}' is not a valid package name.`, { name: String(input?.name) });
@@ -198,6 +216,9 @@ export class OidcExchange {
       throw new AuthError('oidc_not_trusted', `No trusted publisher of '${input.name}' matches this CI identity.`, { name: input.name });
     }
     const now = this.now();
+    // One exchange per CI token. Claimed only after the identity matched, so a token aimed at the wrong package is not spent.
+    const keepUntil = Math.max(claims.exp * 1000 + 60_000, now.getTime() + JTI_MIN_TTL_MS);
+    if (!(await this.o.store.claimOnce(jtiKey(claims.jti), new Date(keepUntil).toISOString()))) throw oidcInvalid('token already used');
     const m = await mintToken(this.o.store, {
       kind: 'oidc',
       name: `ci ${claims.repository}`,
