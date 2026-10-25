@@ -97,6 +97,7 @@ const fromPackageItem = (i: Item): PackageRecord => {
   const { [SEARCH_INDEX.bucketAttribute]: _b, ...rest } = i;
   return rest as PackageRecord;
 };
+const ownerItem = (o: OwnerRecord): Item => ({ ...o, github_id: String(o.github_id), github_id_num: o.github_id });
 const auditItem = (e: AuditEntry): Item => ({ ...e, ts_seq: auditSortKey(e) });
 const fromAuditItem = (i: Item): AuditEntry => {
   const { ts_seq: _k, ...rest } = i;
@@ -162,6 +163,25 @@ export class DynamoStore implements Store, GroupStore {
       );
     } catch (err) {
       if ((err as { name?: string }).name === 'ConditionalCheckFailedException') {
+        throw new RegistryError('name_taken', `'${pkg.name}' is already taken.`, { name: pkg.name });
+      }
+      throw err;
+    }
+  }
+  /** One transaction: the package row, the owner row and the audit row, each created only if its key is absent. */
+  async claimPackage(pkg: PackageRecord, owner: OwnerRecord, audit: AuditEntry): Promise<void> {
+    const create = (table: string, item: Item) => ({
+      Put: { TableName: table, Item: item, ConditionExpression: 'attribute_not_exists(#n)', ExpressionAttributeNames: { '#n': 'name' } },
+    });
+    try {
+      await this.doc.send(
+        new TransactWriteCommand({
+          TransactItems: [create(this.tables.packages, packageItem(pkg)), create(this.tables.owners, ownerItem(owner)), create(this.tables.audit, auditItem(audit))],
+        }),
+      );
+    } catch (err) {
+      // The package or the owner row is already there: the name is taken. (The audit key is a fresh id.)
+      if (cancelledByCondition(err, 0) || cancelledByCondition(err, 1)) {
         throw new RegistryError('name_taken', `'${pkg.name}' is already taken.`, { name: pkg.name });
       }
       throw err;
@@ -525,7 +545,7 @@ export class DynamoStore implements Store, GroupStore {
       await this.doc.send(
         new PutCommand({
           TableName: this.tables.owners,
-          Item: { ...o, github_id: String(o.github_id), github_id_num: o.github_id },
+          Item: ownerItem(o),
           ConditionExpression: 'attribute_not_exists(#n)',
           ExpressionAttributeNames: { '#n': 'name' },
         }),

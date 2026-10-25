@@ -5,6 +5,7 @@ import type { PublishApi } from '../../src/http/publish-routes';
 import { route, type HttpResponse, type RouterDeps } from '../../src/http/router';
 import { MemoryStore } from '../../src/memory-store';
 import { Metrics } from '../../src/metrics';
+import { ClaimService } from '../../src/publish/claim';
 import { GroupService } from '../../src/publish/group-service';
 import { DEFAULT_PUBLISH_CONFIG, type PublishConfig } from '../../src/publish/config';
 import { parseIndexMessage, processIndexMessage, type IndexerDeps } from '../../src/publish/indexer';
@@ -80,6 +81,7 @@ export class Harness {
   /** The monotonic clock of the group service's creation budget, in milliseconds: tests move it. */
   mono = 0;
   private n = 0;
+  private claimN = 0;
 
   service!: PublishService;
   groupService!: GroupService;
@@ -118,7 +120,8 @@ export class Harness {
       now,
       newId: () => (++this.n).toString(16).padStart(32, '0'),
     });
-    const api: PublishApi = { auth: new Authenticator({ store: this.authStore, now }), service: this.service, flags: this.flags, groups: this.groupService };
+    const claims = new ClaimService({ registry: this.registry, users: this.authStore, publishes: this.publishes, config: this.config, now, newId: () => `claim${String(++this.claimN).padStart(4, '0')}` });
+    const api: PublishApi = { auth: new Authenticator({ store: this.authStore, now }), service: this.service, flags: this.flags, groups: this.groupService, claims };
     this.deps = { store: this.registry, stage: 'beta', version: 't', commit: 't', readOnly: false, publish: api };
     this.validatorDeps = {
       registry: this.registry,

@@ -12,6 +12,14 @@ checksums, and this file says what changed. The details of a command are on its 
 staged `.conda` is the one `pack` makes from the same files. A missing archive, or one that is not an `ar` archive, is refused with the
 member named. See [Publishing a workspace as one group](docs/publishing-a-workspace.md).
 
+### Claiming a package name
+
+The registry service now answers `POST /packages/{name}/claim`, the operation the API contract has always described: a signed-in
+account reserves a free name and becomes its owner. The answer carries `claim_expires_at`, 30 days out, the time after which a
+claim with no published version lapses (the service does not free such a name yet). Reserved names (`name_reserved`), taken names (`name_taken`) and names that differ from an existing one only by
+underscores or a trailing `s` (`name_too_similar`, overridden by `{"confirm_similar": true}`) are refused. A CI identity token cannot
+claim. A claim is limited to 50 a day per account and 50 a day per token (`rate_limited`, with `Retry-After`). No CLI command changes.
+
 ### Publishing from GitHub Actions without a token
 
 `mopm publish --oidc` (and `mopm publish --staged ... --oidc`) takes the registry token from the identity of the GitHub Actions job that runs

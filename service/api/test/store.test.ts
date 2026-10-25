@@ -126,6 +126,50 @@ describe.each(factories)('Store contract: %s', (_label, make) => {
     await expect(s.removeOwner('p', 200)).rejects.toMatchObject({ code: 'owner_not_found' });
     expect((await s.listOwners('p')).map((x) => x.github_id)).toEqual([4, 11, 30]);
   });
+
+  describe('claimPackage', () => {
+    const at = '2026-10-13T12:00:00Z';
+    const pkg = (name: string) => ({ name, state: 'claimed' as const, created_at: at, claim_expires_at: '2026-11-12T12:00:00Z' });
+    const owner = (name: string, id: number) => ({ name, github_id: id, handle: `u${id}`, added_at: at });
+
+    test('writes the package, its owner and its audit entry together', async () => {
+      await s.claimPackage(pkg('p'), owner('p', 7), audit('p', 'claim'));
+      expect(await s.getPackage('p')).toEqual(pkg('p'));
+      expect(await s.listOwners('p')).toEqual([owner('p', 7)]);
+      expect((await s.listAudit('p')).map((e) => e.action)).toEqual(['claim']);
+      expect((await s.searchPackages('p', undefined, 5)).map((x) => [x.name, x.state])).toEqual([['p', 'claimed']]);
+    });
+
+    test('a name that is taken is name_taken, and the loser writes nothing: no owner, no audit entry, the package as it was', async () => {
+      await s.claimPackage(pkg('p'), owner('p', 7), audit('p', 'claim'));
+      await expect(s.claimPackage({ ...pkg('p'), created_at: '2026-10-14T00:00:00Z' }, owner('p', 8), audit('p', 'claim'))).rejects.toMatchObject({ code: 'name_taken', status: 409 });
+      expect(await s.getPackage('p')).toEqual(pkg('p'));
+      expect((await s.listOwners('p')).map((x) => x.github_id)).toEqual([7]);
+      expect(await s.listAudit('p')).toHaveLength(1);
+    });
+
+    test('a package made another way is taken too', async () => {
+      await s.createPackage({ name: 'p', state: 'active', created_at: at });
+      await expect(s.claimPackage(pkg('p'), owner('p', 7), audit('p', 'claim'))).rejects.toMatchObject({ code: 'name_taken' });
+      expect(await s.listOwners('p')).toEqual([]);
+      expect(await s.listAudit('p')).toEqual([]);
+    });
+
+    test('an owner row with no package makes the name taken as well, and writes no package', async () => {
+      await s.addOwner(owner('p', 7));
+      await expect(s.claimPackage(pkg('p'), owner('p', 7), audit('p', 'claim'))).rejects.toMatchObject({ code: 'name_taken' });
+      expect(await s.getPackage('p')).toBeUndefined();
+      expect(await s.listAudit('p')).toEqual([]);
+    });
+
+    test('of claims racing for one name exactly one wins', async () => {
+      const results = await Promise.allSettled([1, 2, 3, 4].map((id) => s.claimPackage(pkg('p'), owner('p', id), audit('p', 'claim'))));
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      for (const r of results) if (r.status === 'rejected') expect(r.reason).toMatchObject({ code: 'name_taken' });
+      expect(await s.listOwners('p')).toHaveLength(1);
+      expect(await s.listAudit('p')).toHaveLength(1);
+    });
+  });
 });
 
 describe('create-once under concurrency', () => {
@@ -320,6 +364,35 @@ describe('DynamoDB adapter specifics', () => {
     const doc = new FakeDocClient();
     await new DynamoStore(doc, tablesFor('t')).createVersion(rec({ name: 'p', version: '1.0.0' }), audit('p', 'publish'));
     expect(doc.calls).toEqual(['TransactWriteCommand']);
+  });
+
+  test('a claim is one transaction of three conditional puts (package, owner, audit), in three tables, with no read first', async () => {
+    const doc = new FakeDocClient();
+    const at = '2026-10-13T12:00:00Z';
+    await new DynamoStore(doc, tablesFor('t')).claimPackage(
+      { name: 'p', state: 'claimed', created_at: at, claim_expires_at: at },
+      { name: 'p', github_id: 7, handle: 'u7', added_at: at },
+      audit('p', 'claim'),
+    );
+    expect(doc.calls).toEqual(['TransactWriteCommand']);
+    const items = doc.inputs[0].TransactItems.map((i: any) => [i.Put.TableName, i.Put.ConditionExpression]);
+    expect(items).toEqual([
+      ['mopm-t-packages', 'attribute_not_exists(#n)'],
+      ['mopm-t-owners', 'attribute_not_exists(#n)'],
+      ['mopm-t-audit', 'attribute_not_exists(#n)'],
+    ]);
+  });
+
+  test('a claim that fails for a reason other than a lost condition is not reported as name_taken', async () => {
+    const doc = Object.assign(new FakeDocClient(), {
+      send: async () => {
+        throw new Error('throttled');
+      },
+    });
+    const at = '2026-10-13T12:00:00Z';
+    await expect(
+      new DynamoStore(doc, tablesFor('t')).claimPackage({ name: 'p', state: 'claimed', created_at: at }, { name: 'p', github_id: 7, handle: 'u7', added_at: at }, audit('p', 'claim')),
+    ).rejects.toThrow('throttled');
   });
 
   test('table names follow the data stack', () => {

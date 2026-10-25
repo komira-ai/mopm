@@ -16,6 +16,10 @@ export interface PublishConfig {
   ratePerAccountPerDay: number;
   /** begin-upload calls per token per UTC day. */
   ratePerTokenPerDay: number;
+  /** Successful claims per account (GitHub id) per UTC day: a counter of its own, apart from the publish counters. */
+  claimRatePerAccountPerDay: number;
+  /** Successful claims per token per UTC day. */
+  claimRatePerTokenPerDay: number;
   /** Members in one group. */
   groupMaxMembers: number;
   /** Declared bytes of all the files of one group. */
@@ -45,6 +49,9 @@ export const DEFAULT_PUBLISH_CONFIG: PublishConfig = {
   uploadRecordTtlSeconds: 86_400,
   ratePerAccountPerDay: 2000,
   ratePerTokenPerDay: 1000,
+  // A claim reserves a name for 30 days: conservative, unlike the publish limits.
+  claimRatePerAccountPerDay: 50,
+  claimRatePerTokenPerDay: 50,
   groupMaxMembers: 500,
   groupMaxBytes: 20_000_000_000,
   groupOpenPerActor: 5,
@@ -75,6 +82,8 @@ export function publishConfigFromEnv(env: Record<string, string | undefined> = p
     uploadRecordTtlSeconds: intFrom(env, 'MOPM_UPLOAD_RECORD_TTL_SECONDS', d.uploadRecordTtlSeconds, 300),
     ratePerAccountPerDay: intFrom(env, 'MOPM_RATE_PER_ACCOUNT_DAY', d.ratePerAccountPerDay, 1),
     ratePerTokenPerDay: intFrom(env, 'MOPM_RATE_PER_TOKEN_DAY', d.ratePerTokenPerDay, 1),
+    claimRatePerAccountPerDay: intFrom(env, 'MOPM_CLAIM_RATE_PER_ACCOUNT_DAY', d.claimRatePerAccountPerDay, 1),
+    claimRatePerTokenPerDay: intFrom(env, 'MOPM_CLAIM_RATE_PER_TOKEN_DAY', d.claimRatePerTokenPerDay, 1),
     groupMaxMembers: intFrom(env, 'MOPM_GROUP_MAX_MEMBERS', d.groupMaxMembers, 1),
     groupMaxBytes: intFrom(env, 'MOPM_GROUP_MAX_BYTES', d.groupMaxBytes, 1),
     groupOpenPerActor: intFrom(env, 'MOPM_GROUP_OPEN_PER_ACTOR', d.groupOpenPerActor, 1),
