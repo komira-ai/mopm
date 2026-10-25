@@ -76,7 +76,7 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     const st = statementsOf(fn('publish/validator-lambda.handler'));
     const own = st.filter((s) => s.Sid);
     expect(own.map((s) => s.Sid).sort()).toEqual(
-      ['ReadAndDeleteQuarantine', 'ReadRegistry', 'SendIndexMessages', 'WritePackageFiles', 'WriteVersionsAndPublishes'].sort(),
+      ['ActivatePackages', 'ReadAndDeleteQuarantine', 'ReadRegistry', 'SendIndexMessages', 'WritePackageFiles', 'WriteVersionsAndPublishes'].sort(),
     );
     const by = (sid: string) => own.find((s) => s.Sid === sid);
     expect(acts(by('ReadAndDeleteQuarantine')).sort()).toEqual(['s3:DeleteObject', 's3:GetObject']);
@@ -88,6 +88,9 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     expect(res(by('WriteVersionsAndPublishes'))).toContain(`mopm-${stage}-versions`);
     expect(res(by('WriteVersionsAndPublishes'))).toContain(`mopm-${stage}-audit`);
     expect(res(by('WriteVersionsAndPublishes'))).not.toContain(`mopm-${stage}-packages`);
+    expect(acts(by('ActivatePackages')).sort()).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem']);
+    expect(res(by('ActivatePackages'))).toContain(`mopm-${stage}-packages`);
+    expect(res(by('ActivatePackages'))).not.toContain(`mopm-${stage}-versions`);
     expect(acts(by('SendIndexMessages'))).toEqual(['sqs:SendMessage']);
     expect(res(by('SendIndexMessages'))).not.toContain('validate');
     const all = st.flatMap(acts);
@@ -253,7 +256,7 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
   test('the group validator role: quarantine read+delete, channel file read+write, registry reads and puts, its own queue; nothing else', () => {
     const st = statementsOf(fn('publish/group-validator-lambda.handler'));
     const own = st.filter((s) => s.Sid);
-    expect(own.map((s) => s.Sid).sort()).toEqual(['ReadAndDeleteQuarantine', 'ReadAndWritePackageFiles', 'ReadRegistry', 'SendChainMessages', 'SendGroupMessages', 'WriteVersionsAndGroups'].sort());
+    expect(own.map((s) => s.Sid).sort()).toEqual(['ActivatePackages', 'ReadAndDeleteQuarantine', 'ReadAndWritePackageFiles', 'ReadRegistry', 'SendChainMessages', 'SendGroupMessages', 'WriteVersionsAndGroups'].sort());
     const by = (sid: string) => own.find((s) => s.Sid === sid);
     expect(acts(by('ReadAndDeleteQuarantine')).sort()).toEqual(['s3:DeleteObject', 's3:GetObject']);
     expect(res(by('ReadAndDeleteQuarantine'))).toContain(`${bucket}/quarantine/*`);
@@ -268,6 +271,9 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     expect(acts(by('WriteVersionsAndGroups'))).toEqual(['dynamodb:PutItem']);
     for (const table of ['versions', 'audit', 'publishes']) expect(res(by('WriteVersionsAndGroups'))).toContain(`mopm-${stage}-${table}`);
     expect(res(by('WriteVersionsAndGroups'))).not.toContain(`mopm-${stage}-packages`);
+    expect(acts(by('ActivatePackages')).sort()).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem']);
+    expect(res(by('ActivatePackages'))).toContain(`mopm-${stage}-packages`);
+    expect(res(by('ActivatePackages'))).not.toContain(`mopm-${stage}-versions`);
     // It sends to the group queue (its own continuation) and consumes it; to the index queue only the first hop of a committed group's
     // chain; never to the single validate queue.
     expect(acts(by('SendGroupMessages'))).toEqual(['sqs:SendMessage']);

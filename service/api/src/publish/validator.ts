@@ -78,6 +78,8 @@ export async function validatePublish(d: ValidatorDeps, publishId: string): Prom
     return 'processed';
   }
   if (version?.state === 'published' || version?.state === 'yanked') {
+    // An earlier attempt published the row; the store activates the package with that event, so this finishes what a crash between the two left.
+    await d.registry.activatePackage(rec.name);
     await moveToIndexing(d, rec);
     return 'processed';
   }

@@ -100,7 +100,8 @@ describe('wire goldens', () => {
     expect([...new Set(group.map((c) => c.action))].sort()).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query']);
     // The Query is the sweeper's, of its sparse index and nothing else.
     expect(group.filter((c) => c.action === 'dynamodb:Query').map(keyOf)).toEqual(['dynamodb:Query publishes/index/by_sweep', 'dynamodb:Query publishes/index/by_sweep']);
-    expect([...new Set(group.map((c) => c.table))].sort()).toEqual(['audit', 'publishes', 'versions']);
+    // 'packages' is the activation after a publish (a GetItem and a conditional PutItem of the package row).
+    expect([...new Set(group.map((c) => c.table))].sort()).toEqual(['audit', 'packages', 'publishes', 'versions']);
   });
 
   describe.each(STAGES)('against the ApiStack %s policy', (stage) => {

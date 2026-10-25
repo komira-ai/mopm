@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { AuthError, NAME_PATTERN, type AuthStore } from '../auth';
 import { RegistryError } from '../errors';
 import type { Store } from '../store';
+import type { PackageRecord } from '../types';
 import type { PublishConfig } from './config';
 import { invalidRequest, PublishError } from './errors';
 import type { PublishStore } from './ports';
@@ -11,6 +12,14 @@ export const RESERVED_NAMES: ReadonlySet<string> = new Set(['mopm', 'mojo', 'max
 
 /** A claim with no published version lapses after this long (spec/api/openapi.yaml, claimPackage). */
 export const CLAIM_TTL_MS = 30 * 24 * 3600_000;
+
+/**
+ * Whether a claim has lapsed at `at`: only a package still `claimed` with a recorded expiry can. An `active` package (it has a
+ * published version) never lapses, and neither does one with no expiry (a package a CI publisher created). Nothing frees a lapsed
+ * name yet; whatever does must ask this.
+ */
+export const claimLapsed = (p: Pick<PackageRecord, 'state' | 'claim_expires_at'>, at: Date): boolean =>
+  p.state === 'claimed' && p.claim_expires_at !== undefined && Date.parse(p.claim_expires_at) <= at.getTime();
 
 /** How many names one read of the search index returns while looking for a similar one. */
 const SIMILAR_PAGE = 100;

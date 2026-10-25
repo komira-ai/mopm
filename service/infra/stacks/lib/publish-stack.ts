@@ -146,6 +146,11 @@ export class PublishStack extends Stack {
         resources: [table('versions'), table('audit'), table('publishes')],
       }),
     );
+    // The package's first published version moves it claimed -> active: a GetItem of the row and a PutItem conditional on its state
+    // (src/dynamo-store.ts, activatePackage). Nothing else of that table is read or written here.
+    this.validator.addToRolePolicy(
+      new iam.PolicyStatement({ sid: 'ActivatePackages', actions: ['dynamodb:GetItem', 'dynamodb:PutItem'], resources: [table('packages')] }),
+    );
     this.validator.addToRolePolicy(
       new iam.PolicyStatement({ sid: 'SendIndexMessages', actions: ['sqs:SendMessage'], resources: [this.indexQueue.queueArn] }),
     );
@@ -276,6 +281,10 @@ export class PublishStack extends Stack {
         actions: ['dynamodb:PutItem'],
         resources: [table('versions'), table('audit'), table('publishes')],
       }),
+    );
+    // The flip publishes the members, so it also moves each member's package claimed -> active (the same read and conditional put as the validator's).
+    this.groupValidator.addToRolePolicy(
+      new iam.PolicyStatement({ sid: 'ActivatePackages', actions: ['dynamodb:GetItem', 'dynamodb:PutItem'], resources: [table('packages')] }),
     );
     this.groupValidator.addToRolePolicy(
       new iam.PolicyStatement({ sid: 'SendGroupMessages', actions: ['sqs:SendMessage'], resources: [this.groupQueue.queueArn] }),
