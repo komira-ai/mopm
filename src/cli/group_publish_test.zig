@@ -29,6 +29,8 @@ pub const Script = struct {
         status: u16,
         body: []const u8 = "",
         retry_after: ?u32 = null,
+        /// Seconds the script's clock moves when this step answers (a slow transfer).
+        advance_clock: i64 = 0,
         /// The request fails with this error, as a broken or silent connection does, and gets no answer.
         err: ?anyerror = null,
     };
@@ -64,6 +66,7 @@ pub const Script = struct {
             s.mismatch = try std.fmt.allocPrint(s.seen.allocator,"request {d} was {s} {s}; the script has {s} ...{s}", .{ s.next, @tagName(method), url, @tagName(step.method), step.suffix });
             return error.ConnectionRefused;
         }
+        s.clock += step.advance_clock;
         if (step.err) |e| return e;
         return .{ .status = step.status, .body = step.body, .request_id = "req-test", .retry_after = step.retry_after };
     }
@@ -237,6 +240,191 @@ test "a chain of three is created, uploaded in order, committed and waited for a
     try std.testing.expectEqualStrings("published", members[2].object.get("outcome").?.string);
     try std.testing.expectEqualStrings("skipped", members[3].object.get("outcome").?.string);
     try std.testing.expectEqualStrings("already published", members[3].object.get("code").?.string);
+}
+
+/// The answer of a create that signs the upload of c anew: its URL ends `/put/c2`.
+fn freshAnswer(a: Allocator, comptime uploaded: [3]bool) ![]const u8 {
+    return std.mem.replaceOwned(u8, a, createAnswer("open", uploaded), "/put/c\"", "/put/c2\"");
+}
+
+test "a long upload asks for fresh URLs before the old ones lapse, and goes on with them" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    var script = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+        .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 200, .advance_clock = 250 },
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = try freshAnswer(a, .{ true, true, false }) },
+        .{ .method = .PUT, .suffix = "/put/c2", .status = 200 },
+        .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
+    });
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    try std.testing.expectEqual(Result.published, p.run());
+    try std.testing.expect(script.mismatch == null);
+    // The create, the fresh create, the commit.
+    try std.testing.expectEqual(@as(usize, 3), script.count(.POST));
+    try std.testing.expectEqual(@as(usize, 3), script.count(.PUT));
+    // The second create comes before the third PUT, and the third PUT uses the new URL.
+    try std.testing.expectEqual(std.http.Method.POST, script.seen.items[3].method);
+    try std.testing.expectEqualStrings("http://127.0.0.1:1/put/c2", script.seen.items[4].url);
+}
+
+test "a fast upload does not ask for fresh URLs" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    var script = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+        .{ .method = .PUT, .suffix = "/put/a", .status = 200, .advance_clock = 100 },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 200, .advance_clock = 100 },
+        .{ .method = .PUT, .suffix = "/put/c", .status = 200 },
+        .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
+    });
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    try std.testing.expectEqual(Result.published, p.run());
+    try std.testing.expect(script.mismatch == null);
+    try std.testing.expectEqual(@as(usize, 2), script.count(.POST));
+}
+
+test "a storage 403 asks for fresh URLs once and sends the file again" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    var script = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+        .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/c", .status = 403 },
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = try freshAnswer(a, .{ true, true, false }) },
+        .{ .method = .PUT, .suffix = "/put/c2", .status = 200 },
+        .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
+    });
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    try std.testing.expectEqual(Result.published, p.run());
+    try std.testing.expect(script.mismatch == null);
+    try std.testing.expectEqualStrings("c-bytes", script.seen.items[5].body.?);
+}
+
+test "a PUT retried until its URL lapsed gets the 403, which is final there, and is sent again to the fresh URL" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    var script = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+        .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 200 },
+        // c fails once, and the wait for the retry outlasts the URL: the same URL then answers 403.
+        .{ .method = .PUT, .suffix = "/put/c", .status = 503, .advance_clock = 300 },
+        .{ .method = .PUT, .suffix = "/put/c", .status = 403 },
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = try freshAnswer(a, .{ true, true, false }) },
+        .{ .method = .PUT, .suffix = "/put/c2", .status = 200 },
+        .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
+    });
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    try std.testing.expectEqual(Result.published, p.run());
+    try std.testing.expect(script.mismatch == null);
+    // a, b, c (503), c (403), c2: the 403 was not retried, and the refresh followed it at once.
+    try std.testing.expectEqual(@as(usize, 5), script.count(.PUT));
+    try std.testing.expectEqual(std.http.Method.POST, script.seen.items[5].method);
+    try std.testing.expectEqualStrings("http://127.0.0.1:1/put/c2", script.seen.items[6].url);
+    try std.testing.expectEqualStrings("c-bytes", script.seen.items[6].body.?);
+}
+
+test "a storage 403 that fresh URLs do not cure fails the run after one more try" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    var script = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+        .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 403 },
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 403 },
+    });
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    try std.testing.expectEqual(Result.failed, p.run());
+    try std.testing.expect(script.mismatch == null);
+    try std.testing.expectEqual(@as(usize, 2), script.count(.POST));
+    try std.testing.expectEqual(@as(usize, 3), script.count(.PUT));
+    try expectContains(console.err.items, "the storage answered HTTP 403");
+}
+
+test "a 403 whose fresh answer says the file is already held does not send it again" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    var script = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+        .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/c", .status = 403 },
+        .{ .method = .POST, .suffix = "/groups", .status = 200, .body = createAnswer("open", .{ true, true, true }) },
+        .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
+    });
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    try std.testing.expectEqual(Result.published, p.run());
+    try std.testing.expect(script.mismatch == null);
+    try std.testing.expectEqual(@as(usize, 3), script.count(.PUT));
+    try expectContains(console.out.items, "1 file(s) were already in the registry's storage");
+}
+
+test "fresh URLs are refused when the registry answers another group or a group that is no longer open" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    const other = "grp_ffffffffffffffffffffffffffffffff";
+    const answers = [_]struct { body: []const u8, want: []const u8 }{
+        .{ .body = "{\"group_id\":\"" ++ other ++ "\",\"status\":\"open\",\"members\":[]}", .want = "the registry answered group " ++ other ++ " in the state 'open'" },
+        .{ .body = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"validating\",\"members\":[]}", .want = "the registry answered group " ++ gid ++ " in the state 'validating'" },
+    };
+    for (answers) |c| {
+        var script = newScript(a, &.{
+            .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+            .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
+            .{ .method = .PUT, .suffix = "/put/b", .status = 403 },
+            .{ .method = .POST, .suffix = "/groups", .status = 200, .body = c.body },
+        });
+        var console = Console.init(a, null);
+        var p = publisher(a, &tmp, plan, &script, &console);
+        try std.testing.expectEqual(Result.failed, p.run());
+        try std.testing.expect(script.mismatch == null);
+        try expectContains(console.err.items, c.want);
+        try expectContains(console.err.items, "run the same command again to resume");
+        try std.testing.expectEqual(@as(usize, 2), script.count(.PUT));
+    }
 }
 
 test "a rerun asks for the same group and sends only the files the registry does not hold" {
@@ -456,7 +644,8 @@ test "a 4xx other than 429 is final: the PUT is not repeated, though the next tr
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const plan = try stage(a, &tmp, "");
-    for ([_]u16{ 400, 403, 404, 409 }) |status| {
+    // 403 is final for the retry loop too, but the run answers it with fresh URLs: tests of that are by the refresh tests above.
+    for ([_]u16{ 400, 404, 409 }) |status| {
         var script = newScript(a, &.{
             .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
             .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
