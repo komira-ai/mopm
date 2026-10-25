@@ -27,9 +27,11 @@
 //! program mopm starts (src/core/child_env.zig).
 //!
 //! `--oidc` replaces that token with one from the CI job's identity (src/core/ci_oidc.zig): inside a GitHub Actions job
-//! that may request an identity token, mopm exchanges it at the registry, in memory only, for a token that may publish one
-//! package version. The exchange route mints a token for exactly one package and version, so a set with more than one member
-//! to upload is refused before any request; a rerun asks for a fresh token.
+//! that may request an identity token, mopm exchanges it at the registry, in memory only, for one token that may publish
+//! exactly the members the plan uploads, at their versions (the `packages` form of the exchange). An identity token is
+//! single-use, so there is one identity request and one exchange for the whole set, and that token serves the group's
+//! create, uploads, commit and waits. A set of more than 100 members is refused before any request (a group is one unit
+//! and is not split); a rerun asks for a fresh token.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -784,17 +786,13 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
         return code;
     }
 
-    // --oidc outside a job that can ask for an identity, or for a set the exchange cannot cover: stop before any request.
+    // --oidc outside a job that can ask for an identity: stop before any request.
     const actions = if (flags.oidc) (ci_oidc.actionsFromEnv(arena) orelse {
         err("{s}\n", .{ci_oidc.outside_actions});
         return 1;
     }) else null;
-    if (actions != null and uploads.len != 1) {
-        err("--oidc: the registry's exchange mints a token for one package version, and this set uploads {d} members; nothing was sent\n", .{uploads.len});
-        return 1;
-    }
     const s = registry_cmd.open(arena, .{ .registry = flags.registry, .config_dir = flags.config_dir }, cli_version) orelse return 1;
-    const token = if (actions) |act| switch (try ci_oidc.obtain(arena, net, net.policy, act, s.config.api_url, s.config.stage, uploads[0].name, uploads[0].version)) {
+    const token = if (actions) |act| switch (try oidcToken(arena, net, act, s.config.api_url, s.config.stage, uploads)) {
         .ok => |t| t,
         .bad => |why| {
             err("{s}\n", .{why});
@@ -840,6 +838,16 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
     };
     const result = p.run();
     return p.finish(result);
+}
+
+/// The registry token of `--oidc` for a staged set: one identity token, one exchange of the `packages` form naming every
+/// member to upload at its version (the plan's), and that one token for the group's create, uploads, commit and waits.
+/// A set of one member uses the same form, so a group has one path. The token stays in memory: it is returned to the
+/// caller and goes nowhere else.
+pub fn oidcToken(arena: Allocator, net: Net, act: ci_oidc.Actions, api_url: []const u8, stage: []const u8, uploads: []const plan_mod.Member) anyerror!ci_oidc.Result {
+    const packages = try arena.alloc(ci_oidc.Package, uploads.len);
+    for (uploads, packages) |m, *p| p.* = .{ .name = m.name, .version = m.version };
+    return ci_oidc.obtainPackages(arena, net, net.policy, act, api_url, stage, packages);
 }
 
 fn dryRun(flags: Flags, plan: plan_mod.Plan, uploads: []const plan_mod.Member, console: *Console) anyerror!u8 {

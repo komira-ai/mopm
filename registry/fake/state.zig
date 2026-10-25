@@ -54,7 +54,11 @@ pub const Token = struct {
     oidc_package: []const u8 = "",
     oidc_version: []const u8 = "",
     oidc_repository: []const u8 = "",
+    /// OIDC tokens of the `packages` form only: the package versions they may publish (they hold no `oidc_package`).
+    oidc_set: []const NameVersion = &.{},
 };
+
+pub const NameVersion = struct { name: []const u8, version: []const u8 };
 
 /// `pending` while its publish runs; `rejected` burns the number.
 pub const VersionState = enum { pending, published, yanked, tombstoned, rejected };
@@ -246,6 +250,9 @@ pub const State = struct {
     logins: std.ArrayListUnmanaged(*DeviceLogin) = .{},
     faults: std.ArrayListUnmanaged(Fault) = .{},
     packages: std.ArrayListUnmanaged(*Package) = .{},
+    /// Repositories the deployment trusts as CI publishers by configuration (`/_fake/ci_publisher`): the `packages` form
+    /// of the OIDC exchange is for these, and it creates a package it is first to name.
+    ci_repos: std.ArrayListUnmanaged([]const u8) = .{},
     invitations: std.ArrayListUnmanaged(*Invitation) = .{},
     uploads: std.ArrayListUnmanaged(*Upload) = .{},
     publishes: std.ArrayListUnmanaged(*Publish) = .{},

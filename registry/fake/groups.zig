@@ -206,6 +206,15 @@ fn tokenCovers(t: *const st.Token, name: []const u8, scopes: []const st.Scope) b
     return false;
 }
 
+/// Whether the token of a `packages` exchange names `name` at exactly `version`.
+fn oidcSetCovers(t: *const st.Token, name: []const u8, version: []const u8) bool {
+    if (t.kind != .oidc) return false;
+    for (t.oidc_set) |nv| {
+        if (std.mem.eql(u8, nv.name, name) and std.mem.eql(u8, nv.version, version)) return true;
+    }
+    return false;
+}
+
 fn findGroup(s: *st.State, id: []const u8) ?*st.Group {
     for (s.groups.items) |g| {
         if (std.mem.eql(u8, g.id, id)) return g;
@@ -401,9 +410,10 @@ pub fn createGroup(ctx: *Ctx, _: []const []const u8) anyerror!Response {
         .ok => |m| m,
         .fail => |r| return r,
     };
-    // A group is made with an API token that may publish every member; a CI identity token is for one version of one package.
+    // A group is made with an API token that may publish every member, or with the token of a `packages` exchange that names
+    // every member at its version. The token of the single-package exchange is for one version of one package: no group.
     for (members) |m| {
-        if (!tokenCovers(t, m.name, &.{.publish})) {
+        if (!(tokenCovers(t, m.name, &.{.publish}) or oidcSetCovers(t, m.name, m.version))) {
             return resp.fail(ctx.arena, .scope_missing, &.{ .{ "scope", "publish" }, .{ "name", m.name } });
         }
     }

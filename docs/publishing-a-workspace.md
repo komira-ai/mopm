@@ -96,7 +96,7 @@ A 429 on a PUT or a poll that names a short wait (up to 20 seconds) is waited fo
 mopm publish --compiler 1.0.0 --mojoc linux-64=my_pkg.mojoc --registry beta --oidc
 ```
 
-The run, for each package version it publishes:
+The run, for a single package version (a staged set is described after the steps):
 
 1. mopm asks GitHub for an identity token whose audience names the registry: `mopm.dev` for `prod`, and `<stage>.mopm.dev` for the others (`beta.mopm.dev` for `beta`, `gamma.mopm.dev` for `gamma`). The stage is the one the registry reports about itself. mopm sends the request token only to an `https` URL (or a loopback `http` one, for a test).
 2. mopm posts that identity token, the package name and the version to the registry's `/auth/oidc/exchange` route. The registry answers a token that can publish that one package version and expires after 15 minutes, if the job's repository, workflow and environment match a trusted publisher registered for the package. If it does not, mopm prints the registry's message and exits 1; nothing is uploaded.
@@ -104,7 +104,7 @@ The run, for each package version it publishes:
 
 The registry token is kept in memory. It is not written to a file (`--oidc` does not read or write `credentials.json`), it is not put in the environment, and it is never printed; neither is the identity token. `$MOPM_TOKEN` and a stored login are not used when `--oidc` is given. The two `ACTIONS_ID_TOKEN_REQUEST_` variables are, like `MOPM_TOKEN`, taken out of the environment of every program mopm starts. A rerun asks GitHub for a new identity token, so a run that is repeated never presents one twice.
 
-The exchange route mints a token for one package version. So `mopm publish --staged --oidc` takes a staged set with exactly one member to upload, and refuses any other set before it asks GitHub or the registry for anything. The registry creates a group only for an API token that can publish every member, and answers a CI identity token with `scope_missing`; `mopm publish --staged --oidc` ends 1 with that answer until the registry accepts it.
+An identity token can be exchanged once. So `mopm publish --staged --oidc` asks GitHub for one identity token and makes one exchange, in the `packages` form, that lists every member the plan uploads at its version (a plan's skipped members are not listed). The registry answers one token for exactly those package versions, and mopm uses it to create the group, upload the files, commit and wait. A set of one member takes the same path. The `packages` form is for a CI publisher the registry trusts by configuration; if the registry refuses it (`oidc_not_trusted`, or `not_owner` for a name that belongs to someone else), mopm prints the registry's message, ends 1, and creates no group. The registry takes at most 100 packages in one exchange, and a group is one unit, so a set of more than 100 members to upload is refused before GitHub or the registry is asked. `mopm publish --oidc` (one package) keeps the `name` and `version` form, the path of a package's registered trusted publisher.
 
 ## What a reader sees
 

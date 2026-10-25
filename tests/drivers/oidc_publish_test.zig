@@ -16,9 +16,10 @@
 //! - a GitHub that refuses the identity request, and a registry that refuses the exchange (the package has no trusted
 //!   publisher), must each end 1 with their own message and publish nothing;
 //! - `--dry-run --oidc` reads no environment and sends nothing; `pack` does not know `--oidc`;
-//! - a staged set is refused before any request when it is not for one member (the exchange mints a token for one package
-//!   version), and for one member it asks GitHub once and sends the exchanged token to the registry, which answers as it does
-//!   for any identity token (a group needs an API token): the run ends 1 with the registry's message.
+//! - a staged set, of one member or of three, asks GitHub once and exchanges once, in the `packages` form, and the one token
+//!   creates, uploads and commits the group: every member is served. A registry that does not trust the job's repository as
+//!   a CI publisher, and one where a name belongs to someone else, each refuse the exchange: the run ends 1 with the
+//!   registry's message, GitHub was asked once, and no group was made.
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -283,9 +284,12 @@ test "mopm publish --oidc against the fake registry and a stand-in for GitHub" {
 
     // --- --staged
     const one = try h.join(a, &.{ work, "staged_one" });
-    try stage(a, one, &.{.{ "oidcdemo", "0.2.0" }});
+    try stage(a, one, &.{.{ "solo", "0.2.0" }});
+    // Two sets of three: one that names two packages a person owns, one of unclaimed names.
     const three = try h.join(a, &.{ work, "staged_three" });
-    try stage(a, three, &.{ .{ "oidcdemo", "0.3.0" }, .{ "untrusted", "0.3.0" }, .{ "other", "0.3.0" } });
+    try stage(a, three, &.{ .{ "oidcdemo", "0.3.0" }, .{ "untrusted", "0.3.0" }, .{ "grpother", "0.3.0" } });
+    const fresh = try h.join(a, &.{ work, "staged_fresh" });
+    try stage(a, fresh, &.{ .{ "grpa", "1.0.0" }, .{ "grpb", "1.1.0" }, .{ "grpc", "1.2.0" } });
     const staged_base = [_][]const u8{ "publish", "--staged", one, "--config-dir", conf, "--oidc", "--wait", "30" };
     gh.calls = 0;
 
@@ -296,20 +300,42 @@ test "mopm publish --oidc against the fake registry and a stand-in for GitHub" {
     r = try m.run(&.{ "publish", "--staged", one, "--registry", dead, "--oidc", "--dry-run" }, .none, null);
     rep.check("--staged --oidc --dry-run reads no environment and sends nothing", r.code == 0 and h.contains(r.stdout, "dry run: nothing was sent"), describe(a, r));
 
-    r = try m.run(&.{ "publish", "--staged", three, "--config-dir", conf, "--oidc", "--registry", fake.base }, .both, null);
-    rep.check("a set of three members is refused before GitHub or the registry is asked", r.code == 1 and h.contains(r.stderr, "mints a token for one package version") and
-        h.contains(r.stderr, "uploads 3 members") and gh.calls == 0 and !exists(try h.join(a, &.{ three, "state.json" })), describe(a, r));
+    const fresh_args = [_][]const u8{ "publish", "--staged", fresh, "--config-dir", conf, "--oidc", "--wait", "30" };
 
-    r = try m.run(&(staged_base ++ to_fake), .both, null);
+    // The registry does not trust the job's repository as a CI publisher yet: the exchange is refused, nothing is uploaded.
+    r = try m.run(&(fresh_args ++ to_fake), .both, null);
+    rep.check("a set exchanged by a repository the registry does not trust as a CI publisher stops with the registry's message, before any group", r.code == 1 and
+        gh.calls == 1 and h.contains(r.stderr, "refused the identity token for the 3 packages of the set") and
+        h.contains(r.stderr, "No trusted publisher of '") and h.contains(r.stderr, "matches this CI identity") and
+        !exists(try h.join(a, &.{ fresh, "state.json" })) and (try served(a, fake, "grpa", "1.0.0")) == null, describe(a, r));
+    _ = try fake.control(a, "/ci_publisher", "{\"repository\":\"" ++ repository ++ "\"}");
+
+    // Two of the names belong to a person, not to the publisher: not_owner, before any group.
+    gh.calls = 0;
+    r = try m.run(&.{ "publish", "--staged", three, "--config-dir", conf, "--oidc", "--registry", fake.base }, .both, null);
+    rep.check("a set that names packages the CI publisher does not own stops with not_owner before any group", r.code == 1 and gh.calls == 1 and
+        h.contains(r.stderr, "refused the identity token for the 3 packages of the set") and h.contains(r.stderr, "not an owner of '") and
+        !exists(try h.join(a, &.{ three, "state.json" })) and (try served(a, fake, "grpother", "0.3.0")) == null, describe(a, r));
+
+    // A set of three unclaimed names: one identity request, one exchange, one group.
+    gh.calls = 0;
+    r = try m.run(&(fresh_args ++ to_fake), .both, null);
     gh.mutex.lock();
-    const staged_audience = gh.audience;
-    const staged_calls = gh.calls;
+    const set_audience = gh.audience;
+    const set_calls = gh.calls;
     gh.mutex.unlock();
-    rep.check("a set of one member asks GitHub once and sends the exchanged token, which the registry answers as for any identity token", r.code == 1 and
-        staged_calls == 1 and std.mem.eql(u8, staged_audience, "beta.mopm.dev") and
-        h.contains(r.stderr, "does not have the 'publish' scope for 'oidcdemo'") and !h.contains(r.stderr, "GitHub") and
-        (try served(a, fake, "oidcdemo", "0.2.0")) == null, describe(a, r));
-    rep.check("and no credentials file was written by either command", !exists(conf), "the config directory exists");
+    rep.check("a set of three is published as one group with one identity request, for the registry's audience", r.code == 0 and set_calls == 1 and
+        std.mem.eql(u8, set_audience, "beta.mopm.dev") and h.contains(r.stdout, "published group") and
+        h.contains(r.stdout, "grpa 1.0.0") and h.contains(r.stdout, "grpb 1.1.0") and h.contains(r.stdout, "grpc 1.2.0"), describe(a, r));
+    rep.check("every member is served at its version", (try served(a, fake, "grpa", "1.0.0")) != null and (try served(a, fake, "grpb", "1.1.0")) != null and
+        (try served(a, fake, "grpc", "1.2.0")) != null, "a member is not served");
+
+    // A set of one member takes the same path.
+    gh.calls = 0;
+    r = try m.run(&(staged_base ++ to_fake), .both, null);
+    rep.check("a set of one member asks GitHub once and is published as a group", r.code == 0 and gh.calls == 1 and
+        (try served(a, fake, "solo", "0.2.0")) != null, describe(a, r));
+    rep.check("and no credentials file was written by any command", !exists(conf), "the config directory exists");
 
     // --- nothing secret was printed
     gh.mutex.lock();

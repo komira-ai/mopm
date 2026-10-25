@@ -162,7 +162,7 @@ paths:
       summary: Exchange a CI identity token for a short-lived publish token.
       description: |
         The token is valid for 10 minutes, may only publish, and only for the
-        one package and version named in the request. The CI identity must
+        package versions named in the request (one, or the `packages` list). The CI identity must
         match a trusted publisher registered for the package: its repository
         and owner ids, workflow file and (when the publisher names one)
         environment, the ref it runs on (`refs/heads/main` unless the
@@ -1133,20 +1133,48 @@ components:
         required: [token, token_kind, expires_at, fresh_until, handle]
     OidcExchangeRequest:
       type: object
-      required: [jwt, name, version]
+      description: |
+        Two forms. `name` and `version`: a token for that one package version, for a package with a trusted
+        publisher. `packages`: one token for every listed package version, for a CI publisher the deployment
+        trusts by configuration (a package nobody has claimed is created, owned by the publisher). Send one form,
+        not both; a name is listed once.
+      required: [jwt]
+      anyOf:
+        - required: [name, version]
+        - required: [packages]
       properties:
         jwt: { type: string, minLength: 1 }
         name: { $ref: "#/components/schemas/Name" }
         version: { $ref: "#/components/schemas/Version" }
+        packages:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: object
+            required: [name, version]
+            properties:
+              name: { $ref: "#/components/schemas/Name" }
+              version: { $ref: "#/components/schemas/Version" }
     OidcExchangeResponse:
+      description: |
+        `name` and `version` answer the single-package form, `packages` the list form.
       type: object
-      required: [token, token_kind, expires_at, name, version]
+      required: [token, token_kind, expires_at]
       properties:
         token: { $ref: "#/components/schemas/Token" }
         token_kind: { type: string, enum: [publish] }
         expires_at: { $ref: "#/components/schemas/Timestamp" }
         name: { $ref: "#/components/schemas/Name" }
         version: { $ref: "#/components/schemas/Version" }
+        packages:
+          type: array
+          items:
+            type: object
+            required: [name, version]
+            properties:
+              name: { $ref: "#/components/schemas/Name" }
+              version: { $ref: "#/components/schemas/Version" }
 
     # ---- me and tokens ----------------------------------------------------
     Me:
