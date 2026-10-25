@@ -148,9 +148,12 @@ describe('docs: mopm yank --group', () => {
 });
 
 describe('docs: values and outcomes', () => {
-  test('--wait defaults to the CLI default', () => {
-    const n = /default_wait_secs: i64 = (\d+)/.exec(publishZig)![1];
-    expect(section(doc, 'mopm publish --staged')).toContain(`The default is ${n} seconds`);
+  test('--wait defaults to the CLI default: a base plus an allowance for each member', () => {
+    const base = Number(/default_wait_secs: i64 = (\d+)/.exec(publishZig)![1]);
+    const each = Number(/wait_per_member_secs: i64 = (\d+)/.exec(publishZig)![1]);
+    const sec = section(doc, 'mopm publish --staged');
+    expect(sec).toContain(`The default grows with the group: ${base} seconds plus ${each} seconds for each member`);
+    expect(sec).toContain(`(${base + each * 170} seconds at 170 members, ${base + each * 300} at 300)`);
   });
 
   test('the outcomes of a run are the Result of the publisher, and are all named', () => {
