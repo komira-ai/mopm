@@ -49,11 +49,46 @@ account owner behind it cannot publish its first package at all.
   other than the repository's own job uses it, or when it reaches a stage beyond beta.
 - A package a CI identity created is findable and publishable like any other, but it has no owners to list: `GET /packages/{name}`
   returns an empty `owners`.
-- Unchanged and out of scope: groups (a group needs an account token today), yanking beyond the exact version a token was minted for,
-  and removing or transferring a CI-owned package.
+- Groups are the addendum below (they needed an account token before it). Unchanged and out of scope: yanking a single version beyond
+  the exact version a token was minted for, and removing or transferring a CI-owned package.
 
 ## Alternatives considered
 
 - Seed owner rows for the repository (a synthetic account): pollutes the by-account index and needs a write outside the service.
 - A repository variable or secret that switches trust on: a GitHub setting write; a checked-in value needs none.
 - Trust on every stage from the same value: rejected; the human step at gamma and prod stays.
+
+## Addendum: the identity creates groups, and beta says so in code
+
+Touches: auth and ownership (`actorOf`, the group create check), groups (create, read, abort, commit, yank), infrastructure (a second
+beta-only environment variable).
+
+### Decision
+
+1. **The identity's token creates a group.** `POST /groups` accepts, next to an account's API token, the token of a configured CI
+   publisher (an `oidc` token that carries `ci_owner`). Every member must be covered by the token (the package and the exact version it
+   was minted for) and owned by the identity (`PackageRecord.ci_owner`, the check single publishes already make); the first member that is
+   not refuses the whole request (`scope_missing` or `not_owner`) before anything is written. A CI token without an identity (one minted
+   for a package's registered trusted publisher) still creates no group.
+2. **One actor per identity.** The actor of a configured CI publisher's token is `ci:gh-repo:<repository_id>`, whichever token it holds;
+   an account is `u:<github id>` as before; any other CI token keeps `ci:<token id>`. The actor is what the group's header, the audit rows
+   of its members, the upload records, the per-actor list of open groups and the policy name, so a later job's token reads, commits,
+   aborts and yanks the group an earlier job's token created, and another identity or an account cannot (`group_not_found`). `yank
+   --group` also needs the token to cover every member and the identity to own every member now. The daily group budget is counted per
+   identity (a new token every job would otherwise start a new count).
+3. **A static policy, beta only.** `MOPM_GROUPS_POLICY` is `{"mode":"allow","actors":["ci:gh-repo:<repository_id>", ...]}`: one to eight CI
+   actors, no `all`, no account, no `deny`, no other key. The stack sets it when the stage is `beta` (`BETA_GROUPS_POLICY`, derived from
+   the same constant as the trusted publisher) and never otherwise, and the runtime refuses to start on any other stage when the
+   variable is present (`parseStaticGroupsPolicy`, called by `flagsFor`). The existing flags read the static policy and the `groups_enabled`
+   item and either admitting the actor is enough.
+
+### Consequences
+
+- **A static policy cannot be switched off at runtime.** It is ORed with the config table's item and a `deny` in the item does not
+  override it, so on beta `groups_enabled` `off` does not stop the identity. Stopping it takes a deploy (remove the policy). This is
+  accepted for beta, which is disposable; gamma and prod have no such policy and keep the human flip.
+- The template diff between beta and gamma is exactly two environment variables of the API function: `CI_PUBLISHERS` and
+  `MOPM_GROUPS_POLICY`. The test that pins it fails on a third.
+- The upload and publish records of a configured identity now carry the identity's actor instead of a per-token one: the status of
+  a publish is readable by any token of the same identity, which is the intent (one job starts a publish, another may poll it).
+- Unchanged: the exchange, the single-version publish path, ownership of accounts, and what gamma and prod do.

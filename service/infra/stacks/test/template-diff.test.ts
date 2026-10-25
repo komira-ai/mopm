@@ -98,10 +98,20 @@ const EXPECTED_PROD_DIFF = [
   'site:AWS::S3::Bucket:UpdateReplacePolicy',
 ].sort();
 
-// What only the beta stage has: the CI_PUBLISHERS variable of the API function (its Environment), and nothing else. The role's
-// policy is identical on every stage (package creation is the claim route's grant). Config-as-code trust is beta's alone, so
-// this is the whole of beta's difference from gamma. Adding to this list is a reviewed decision.
+// What only the beta stage has: two variables of the API function (its Environment), CI_PUBLISHERS and MOPM_GROUPS_POLICY, and
+// nothing else (the next describe pins that the Environment differs in exactly those two). The role's policy is identical on every
+// stage (package creation is the claim route's grant). Config-as-code trust is beta's alone, so this is the whole of beta's
+// difference from gamma. Adding to this list is a reviewed decision.
 const EXPECTED_BETA_ONLY_DIFF = ['api:AWS::Lambda::Function:Properties.Environment'];
+const EXPECTED_BETA_ONLY_ENV = ['CI_PUBLISHERS', 'MOPM_GROUPS_POLICY'];
+
+/** The names of the environment variables of the API function (the one with the stage's OAuth secret name) on a stage. */
+function apiEnvNames(stage: Stage): string[] {
+  const fns = Object.values(Template.fromStack(build(stage).api).findResources('AWS::Lambda::Function')) as any[];
+  const api = fns.filter((f) => f.Properties.Environment?.Variables?.MOPM_OAUTH_SECRET_NAME !== undefined);
+  expect(api).toHaveLength(1);
+  return Object.keys(api[0].Properties.Environment.Variables).sort();
+}
 
 describe('whole-template stage diff', () => {
   const [beta, gamma, prod] = STAGES.map(fingerprint);
@@ -116,6 +126,23 @@ describe('whole-template stage diff', () => {
 
   test('beta differs from prod in the expected properties and the beta-only CI trust', () => {
     expect(differing(beta, prod)).toEqual([...EXPECTED_PROD_DIFF, ...EXPECTED_BETA_ONLY_DIFF].sort());
+  });
+});
+
+describe('the environment of the API function per stage', () => {
+  const [beta, gamma, prod] = STAGES.map(apiEnvNames);
+
+  test('beta has exactly two variables that gamma does not, the two beta-only ones, and gamma has none that beta lacks', () => {
+    expect(beta!.filter((n) => !gamma!.includes(n))).toEqual(EXPECTED_BETA_ONLY_ENV);
+    expect(gamma!.filter((n) => !beta!.includes(n))).toEqual([]);
+  });
+
+  test('gamma and prod have the same variables, and neither has a beta-only one', () => {
+    expect(prod).toEqual(gamma);
+    for (const n of EXPECTED_BETA_ONLY_ENV) {
+      expect(gamma).not.toContain(n);
+      expect(prod).not.toContain(n);
+    }
   });
 });
 

@@ -1,0 +1,50 @@
+{
+  "description": "A static groups policy (MOPM_GROUPS_POLICY) is refused at the cold start on every stage but beta, even a valid one; a malformed one stops beta too; beta with a valid one starts.",
+  "lambda": "api",
+  "env": {
+    "MOPM_STAGE": "gamma",
+    "MOPM_GROUPS_POLICY": "{\"mode\":\"allow\",\"actors\":[\"ci:gh-repo:1376408823\"]}"
+  },
+  "invocations": [
+    {
+      "event": "events/apigw_get_health.json",
+      "expect": {
+        "rejects": {
+          "name": "Error",
+          "message": "MOPM_GROUPS_POLICY may be set on the beta stage only; this is gamma"
+        }
+      }
+    },
+    {
+      "env": {
+        "MOPM_STAGE": "prod",
+        "MOPM_GROUPS_POLICY": "{\"mode\":\"allow\",\"actors\":[\"ci:gh-repo:1376408823\"]}"
+      },
+      "event": "events/apigw_get_health.json",
+      "expect": {
+        "rejects": {
+          "name": "Error",
+          "message": "MOPM_GROUPS_POLICY may be set on the beta stage only; this is prod"
+        }
+      }
+    },
+    {
+      "env": {
+        "MOPM_STAGE": "beta",
+        "MOPM_GROUPS_POLICY": "{\"mode\":\"all\"}"
+      },
+      "event": "events/apigw_get_health.json",
+      "expect": {
+        "rejects": {
+          "name": "Error",
+          "message": "MOPM_GROUPS_POLICY is not valid: 'mode' must be 'allow'"
+        }
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [],
+    "aws_http": [],
+    "logs": []
+  }
+}
