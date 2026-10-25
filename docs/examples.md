@@ -601,7 +601,7 @@ Without `--dry-run`, `mopm publish` logs in with `$MOPM_TOKEN` or the login that
 |---|---|
 | `version = "1.2.0-rc.1"` | `must be exactly MAJOR.MINOR.PATCH` |
 | `text_tools = { path = "../text_tools" }` | `dependency 'text_tools' is a path dependency` |
-| a `[native-dependencies]` table | `native dependencies are not packed yet` |
+| `[native-dependencies]` with `zlib = "1.2"` (mode `link`) | `native dependency 'zlib' is mode = "link"; only mode = "load" is packed` |
 | `--compiler v1` | `an exact Mojo version is digits and dots, such as 1.0.0` |
 
 ## 6. Pinning the compiler
