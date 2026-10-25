@@ -1335,8 +1335,12 @@ components:
       properties:
         name: { $ref: "#/components/schemas/Name" }
         display_name: { type: string }
-        state: { type: string, enum: [claimed, active] }
+        state:
+          type: string
+          enum: [claimed, active]
+          description: "`claimed` until the first version is published, `active` from then on. A claim that never publishes lapses; an active package does not."
         owners:
+          description: The accounts that own the package. Empty for a package a CI publisher created and owns (it has no account owner).
           type: array
           items: { $ref: "#/components/schemas/Owner" }
         latest:

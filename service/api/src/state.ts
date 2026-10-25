@@ -41,6 +41,13 @@ export type GroupEvent =
 export type VersionEvent = UserEvent | GroupEvent;
 
 /**
+ * The two events that make a version `published`: a single publish (`publish`) and a group's flip (`group_publish`). The stores
+ * activate the package after either, so a package leaves `claimed` at its first published version whoever owns it and however
+ * it was published (src/store.ts, `activatePackage`).
+ */
+export const publishesVersion = (ev: VersionEvent): boolean => ev.type === 'publish' || ev.type === 'group_publish';
+
+/**
  * What the validator learned from the archives, written when the version goes `pending -> published`: a pending
  * record is only a reserved number, and these fields come from the validated files.
  */

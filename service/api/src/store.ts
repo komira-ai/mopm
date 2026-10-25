@@ -24,6 +24,14 @@ export interface Store {
    */
   claimPackage(pkg: PackageRecord, owner: OwnerRecord, audit: AuditEntry): Promise<void>;
   getPackage(name: string): Promise<PackageRecord | undefined>;
+  /**
+   * The package's first published version has happened: a `claimed` package becomes `active` and loses its `claim_expires_at`
+   * (a claim lapses only while it has no published version). Idempotent: an `active` or missing package is left alone, and the
+   * answer says whether this call changed it. The adapters call it themselves after `updateVersion` with `publish` and
+   * `applyGroupEvent` with `group_publish` (src/state.ts, `publishesVersion`), whoever owns the package (an account or `ci_owner`),
+   * so a caller need not; the validator calls it for a version that an earlier attempt published and died before activating.
+   */
+  activatePackage(name: string): Promise<boolean>;
   listPackageNames(): Promise<string[]>;
   /**
    * Packages whose name starts with `prefix` (empty matches all), ordered by name, strictly after `after`,

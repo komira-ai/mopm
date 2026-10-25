@@ -4,6 +4,7 @@ import { flagsFor } from '../../src/publish/wiring';
 import { groupIdFor } from '../../src/publish/group-service';
 import { quarantineKeyFor } from '../../src/publish/group-keys';
 import { actorOf } from '../../src/publish/service';
+import { claimLapsed } from '../../src/publish/claim';
 import { RIGS, type Rig } from '../group-rig';
 import { goodClaims, newKey, signJwt } from '../auth-helpers';
 import { Chain } from './group-chain-env';
@@ -138,7 +139,7 @@ describe.each(RIGS)('a CI identity and groups on the beta configuration: %s', (_
       const h = (await rig.store.getGroup(gid))!;
       expect(h.actor).toBe(ACTOR);
       for (const p of [widgets, gadgets]) {
-        expect(await rig.store.getPackage(p.name)).toMatchObject({ state: 'claimed', ci_owner: OWNER });
+        expect(await rig.store.getPackage(p.name)).toMatchObject({ state: 'active', ci_owner: OWNER });
         expect(await rig.store.listOwners(p.name)).toEqual([]);
         expect(await rig.store.getVersion(p.name, p.version)).toMatchObject({ state: 'published', published_by: OWNER });
         const trail = (await rig.store.listAudit(p.name)).map((a) => [a.action, a.actor]);
@@ -147,6 +148,20 @@ describe.each(RIGS)('a CI identity and groups on the beta configuration: %s', (_
         expect(trail).toContainEqual(['group_flip', 'system']);
       }
       expect((await env.publishes.getActorGroups(ACTOR))?.groups.map((g) => g.id)).toContain(gid);
+    });
+
+    test('the packages stay claimed until the group is flipped, and every member package is active after it, with no claim expiry left', async () => {
+      const token = await exchange([widgets, gadgets]);
+      await start(token, [widgets, gadgets]);
+      expect(await env.runGroupJobs()).toEqual(['committed']);
+      for (const p of [widgets, gadgets]) expect((await rig.store.getPackage(p.name))?.state).toBe('claimed');
+      await chain.drain();
+      for (const p of [widgets, gadgets]) {
+        const rec = await rig.store.getPackage(p.name);
+        expect(rec?.state).toBe('active');
+        expect(rec).not.toHaveProperty('claim_expires_at');
+        expect(claimLapsed(rec!, new Date(env.clock.t + 365 * 24 * 3600_000))).toBe(false);
+      }
     });
 
     test('the identity is one actor whichever token it holds: a later token reads the group and the same request is the same group', async () => {

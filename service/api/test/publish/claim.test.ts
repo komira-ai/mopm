@@ -2,7 +2,7 @@ import * as path from 'path';
 import { mintToken } from '../../src/auth';
 import { route } from '../../src/http/router';
 import { MemoryStore } from '../../src/memory-store';
-import { CLAIM_TTL_MS, ClaimService, RESERVED_NAMES, tooSimilar } from '../../src/publish/claim';
+import { CLAIM_TTL_MS, ClaimService, claimLapsed, RESERVED_NAMES, tooSimilar } from '../../src/publish/claim';
 import { DEFAULT_PUBLISH_CONFIG } from '../../src/publish/config';
 import { MemoryPublishStore } from '../../src/publish/memory';
 import { CONTRACT_DIR, loadCases, type Case } from '../http/replay';
@@ -122,6 +122,65 @@ describe('a claim', () => {
     });
     expect((await claim(h, session.secret, 'by_session')).statusCode).toBe(201);
     expect((await h.registry.listOwners('by_session')).map((o) => o.handle)).toEqual(['login_user']);
+  });
+});
+
+describe('the first published version ends the claim', () => {
+  const READ = async (h: Harness, name: string) => JSON.parse((await h.call('GET', `/api/v1/packages/${name}`)).body);
+
+  test('a package an account claimed stays claimed while its publish is validated, and is active once the version is published; the owner and the version are kept', async () => {
+    const h = new Harness();
+    await claim(h, await account(h, 7, 'octocat'), 'demo');
+    const token = await h.token(7, ['demo'], ['publish']);
+    const id = await h.publish(token, pkg({ name: 'demo', version: '1.0.0' }));
+    expect(await READ(h, 'demo')).toMatchObject({ state: 'claimed', latest: null });
+    await h.runValidator();
+    await h.runIndexer();
+    expect((await h.status(token, id)).body.status).toBe('published');
+    expect(await READ(h, 'demo')).toMatchObject({ state: 'active', owners: [{ github_id: 7, handle: 'octocat' }], latest: '1.0.0' });
+    expect(await h.registry.getPackage('demo')).toEqual({ name: 'demo', state: 'active', created_at: '2026-10-14T12:00:00Z' });
+  });
+
+  test('a second version changes nothing about the package', async () => {
+    const h = new Harness();
+    await claim(h, await account(h, 7, 'octocat'), 'demo');
+    const token = await h.token(7, ['demo'], ['publish']);
+    await h.publish(token, pkg({ name: 'demo', version: '1.0.0' }));
+    await h.runValidator();
+    const once = await h.registry.getPackage('demo');
+    await h.publish(token, pkg({ name: 'demo', version: '1.0.1' }));
+    await h.runValidator();
+    expect(await h.registry.getPackage('demo')).toEqual(once);
+    expect(once?.state).toBe('active');
+  });
+
+  test('activatePackage: claimed becomes active and loses its expiry once; active, missing and expiry-less names are left alone', async () => {
+    const r = new MemoryStore();
+    await r.createPackage({ name: 'a_pkg', state: 'claimed', created_at: '2026-10-01T00:00:00Z', claim_expires_at: '2026-10-31T00:00:00Z' });
+    expect(await r.activatePackage('a_pkg')).toBe(true);
+    expect(await r.getPackage('a_pkg')).toEqual({ name: 'a_pkg', state: 'active', created_at: '2026-10-01T00:00:00Z' });
+    expect(await r.activatePackage('a_pkg')).toBe(false);
+    expect(await r.activatePackage('nobody')).toBe(false);
+  });
+
+  test('a claim lapses only while it is claimed and past its expiry: an active package never does, however old', () => {
+    const at = new Date('2027-06-01T00:00:00Z');
+    const expires = '2026-11-13T12:00:00Z';
+    expect(claimLapsed({ state: 'claimed', claim_expires_at: expires }, at)).toBe(true);
+    expect(claimLapsed({ state: 'claimed', claim_expires_at: expires }, new Date('2026-11-13T11:59:59Z'))).toBe(false);
+    expect(claimLapsed({ state: 'active', claim_expires_at: expires }, at)).toBe(false);
+    expect(claimLapsed({ state: 'active' }, at)).toBe(false);
+    expect(claimLapsed({ state: 'claimed' }, at)).toBe(false); // a CI-created package records no expiry
+  });
+
+  test('a package published after its claim was made does not lapse 30 days later', async () => {
+    const h = new Harness();
+    await claim(h, await account(h, 7, 'octocat'), 'demo');
+    const token = await h.token(7, ['demo'], ['publish']);
+    await h.publish(token, pkg({ name: 'demo', version: '1.0.0' }));
+    await h.runValidator();
+    const later = new Date(h.clock.t + CLAIM_TTL_MS + 1000);
+    expect(claimLapsed((await h.registry.getPackage('demo'))!, later)).toBe(false);
   });
 });
 

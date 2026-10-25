@@ -83,6 +83,20 @@ describe('the trusted repository publishes a new package on beta and owns it', (
     expect((await s.h.registry.getVersion('widgets', '1.0.0'))?.published_by).toBe(OWNER);
   });
 
+  test('the package is active after its first published version, and the read API names no owner and leaks no ci_owner', async () => {
+    const s = setup();
+    const r = await s.oidc.exchange({ jwt: s.jwt(), packages: widgets });
+    const p = pkg({ name: 'widgets', version: '1.0.0' });
+    await s.h.publish(r.token, p);
+    expect((await s.h.registry.getPackage('widgets'))?.state).toBe('claimed'); // nothing is published yet
+    await s.h.runValidator();
+    expect(await s.h.registry.getPackage('widgets')).toMatchObject({ state: 'active', ci_owner: OWNER });
+    const info = JSON.parse((await s.h.call('GET', '/api/v1/packages/widgets')).body);
+    expect(info).toMatchObject({ name: 'widgets', state: 'active', owners: [], latest: '1.0.0' });
+    expect(JSON.stringify(info)).not.toContain('ci_owner');
+    expect(JSON.stringify(info)).not.toContain(OWNER);
+  });
+
   test('a later run of the same repository publishes the next version to the package it owns; the package is not created twice', async () => {
     const s = setup();
     await s.oidc.exchange({ jwt: s.jwt(), packages: widgets });

@@ -127,6 +127,40 @@ describe.each(factories)('Store contract: %s', (_label, make) => {
     expect((await s.listOwners('p')).map((x) => x.github_id)).toEqual([4, 11, 30]);
   });
 
+  describe('activatePackage', () => {
+    const at = '2026-10-13T12:00:00Z';
+    const claimed = { name: 'p', state: 'claimed' as const, created_at: at, claim_expires_at: '2026-11-12T12:00:00Z' };
+
+    test('a claimed package becomes active and loses its expiry, once; the search index shows the new state; other fields stay', async () => {
+      await s.createPackage({ ...claimed, description: 'd' });
+      expect(await s.activatePackage('p')).toBe(true);
+      expect(await s.getPackage('p')).toEqual({ name: 'p', state: 'active', created_at: at, description: 'd' });
+      expect((await s.searchPackages('p', undefined, 5)).map((x) => [x.name, x.state])).toEqual([['p', 'active']]);
+      expect(await s.activatePackage('p')).toBe(false);
+    });
+
+    test('a missing package is not created by it', async () => {
+      expect(await s.activatePackage('ghost')).toBe(false);
+      expect(await s.getPackage('ghost')).toBeUndefined();
+    });
+
+    test('publishing a version activates its package; a version that is not published yet does not', async () => {
+      await s.createPackage(claimed);
+      await s.createVersion(rec({ name: 'p', version: '1.0.0' }), audit('p', 'publish'));
+      expect((await s.getPackage('p'))?.state).toBe('claimed');
+      await s.updateVersion('p', '1.0.0', { type: 'publish' }, audit('p', 'publish'));
+      expect(await s.getPackage('p')).toEqual({ name: 'p', state: 'active', created_at: at });
+    });
+
+    test('a repeated publish event (it changes the row no further) still leaves the package active', async () => {
+      await s.createPackage({ ...claimed, name: 'q' });
+      await s.createVersion(rec({ name: 'q', version: '1.0.0' }), audit('q', 'publish'));
+      await s.updateVersion('q', '1.0.0', { type: 'publish' }, audit('q', 'publish'));
+      await s.updateVersion('q', '1.0.0', { type: 'publish' }, audit('q', 'publish'));
+      expect((await s.getPackage('q'))?.state).toBe('active');
+    });
+  });
+
   describe('claimPackage', () => {
     const at = '2026-10-13T12:00:00Z';
     const pkg = (name: string) => ({ name, state: 'claimed' as const, created_at: at, claim_expires_at: '2026-11-12T12:00:00Z' });

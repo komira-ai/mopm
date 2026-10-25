@@ -19,7 +19,7 @@ import {
   type GroupStore,
 } from './group-store';
 import type { RawVersionPort } from './raw-port';
-import { applyEvent, IllegalTransition, type GroupEvent, type UserEvent } from './state';
+import { applyEvent, IllegalTransition, publishesVersion, type GroupEvent, type UserEvent, type VersionEvent } from './state';
 import { auditSortKey, type Store } from './store';
 import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, VersionRecord } from './types';
 import { canonicalVersion } from './version';
@@ -114,6 +114,18 @@ export class MemoryStore implements Store, GroupStore {
     const p = this.packages.get(name);
     return p && copy(p);
   }
+  async activatePackage(name: string): Promise<boolean> {
+    const p = this.packages.get(name);
+    if (!p || p.state !== 'claimed') return false;
+    const { claim_expires_at: _c, ...rest } = p;
+    this.packages.set(name, { ...rest, state: 'active' });
+    return true;
+  }
+  /** After a version event: the package of a version that is published now is active. */
+  private async settle(event: VersionEvent, rec: VersionRecord): Promise<VersionRecord> {
+    if (publishesVersion(event) && rec.state === 'published') await this.activatePackage(rec.name);
+    return rec;
+  }
   async listPackageNames() {
     return [...this.packages.keys()].sort();
   }
@@ -146,11 +158,11 @@ export class MemoryStore implements Store, GroupStore {
       if (!cur) throw new RegistryError('version_not_found', `'${name}' has no version '${version}'.`, { name, version });
       if (cur.group_id !== undefined && cur.state === 'pending') throw new IllegalTransition(cur, event);
       const next = applyEvent(cur, event);
-      if (next === cur) return copy(cur);
+      if (next === cur) return this.settle(event, copy(cur));
       if (this.versions.get(key)?.rev !== cur.rev) continue; // changed while the group was being read
       this.versions.set(key, copy(next));
       this.audit.push(copy(audit));
-      return copy(next);
+      return this.settle(event, copy(next));
     }
     throw new RegistryError('internal_error', `'${name}' ${version} changed too often while updating.`, { name, version });
   }
@@ -244,10 +256,10 @@ export class MemoryStore implements Store, GroupStore {
     const cur = this.versions.get(key);
     if (!cur) throw new RegistryError('version_not_found', `'${name}' has no version '${version}'.`, { name, version });
     const next = applyEvent(cur, event);
-    if (next === cur) return copy(cur);
+    if (next === cur) return this.settle(event, copy(cur));
     this.versions.set(key, copy(next));
     this.audit.push(copy(audit));
-    return copy(next);
+    return this.settle(event, copy(next));
   }
 
   async putCommitInputs(gid: string, hash: string, inputs: readonly CommitInput[], expiresAt: number): Promise<void> {
