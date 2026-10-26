@@ -1189,8 +1189,13 @@ test "fetchConda reads a package file up to its limit and refuses a longer one b
     defer arena_state.deinit();
     const a = arena_state.allocator();
     const address = try std.net.Address.parseIp("127.0.0.1", 0);
-    var srv = BodyServer{ .server = try address.listen(.{ .reuse_address = true }), .body = "x" ** 2000 };
-    const t = try std.Thread.spawn(.{}, BodyServer.serve, .{&srv});
+    // The serving thread is detached and outlives this test, so the server it reads must not live on this stack:
+    // once the test returned, the next test reused those bytes and the thread's accept() got a garbage handle
+    // (EBADF, which std turns into `unreachable`, aborting the whole test binary). Same convention as the stubs
+    // in http.zig and pkg_fetch.zig: a page-allocated server that is never freed.
+    const srv = try std.heap.page_allocator.create(BodyServer);
+    srv.* = .{ .server = try address.listen(.{ .reuse_address = true }), .body = "x" ** 2000 };
+    const t = try std.Thread.spawn(.{}, BodyServer.serve, .{srv});
     t.detach();
     const url = try std.fmt.allocPrint(a, "http://127.0.0.1:{d}/", .{srv.server.listen_address.getPort()});
     var diag: resolve.Diagnostic = .{};
