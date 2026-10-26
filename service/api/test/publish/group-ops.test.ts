@@ -287,15 +287,23 @@ describe('the entry point', () => {
   });
 
   test('the bundle\'s entry runs main on the process arguments and exits with its status', async () => {
-    const exit = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    // The entry's own progress event is the call to process.exit: the test waits on it, never on a clock.
+    let exited!: (code: unknown) => void;
+    const exitCalled = new Promise<unknown>((resolve) => {
+      exited = resolve;
+    });
+    const exit = jest.spyOn(process, 'exit').mockImplementation(((code?: unknown) => {
+      exited(code);
+    }) as never);
     const err = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     const argv = process.argv;
     try {
       process.argv = ['node', 'group-ops-bin.js', '--mode=other'];
       await jest.isolateModulesAsync(async () => {
         await import('../../src/ops/group-ops-bin');
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        await exitCalled;
       });
+      expect(exit).toHaveBeenCalledTimes(1);
       expect(exit).toHaveBeenCalledWith(1);
     } finally {
       process.argv = argv;
