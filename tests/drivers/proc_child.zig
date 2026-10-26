@@ -13,6 +13,7 @@
 //!                   if one is named, wait for the child
 //!   bg_sleep_exit0  start a `sleep 60` child, exit 0 without waiting
 //!   exit0           exit 0
+//!   wait_pipe       close fd 9, read fd 8 until end of file, exit 0 (the shell's `exec 9>&-; read x <&8`)
 //!   env_to_stdout   print the environment, NAME=value per line
 //!   --source-root=<dir> ...   a stand-in for the `mojo_compile` wrapper (fakeMojoCompile)
 //!   (no arguments)  as a test binary built by that stand-in: writes its environment to <argv0>.env
@@ -141,6 +142,12 @@ pub fn main() !void {
         var it = env.iterator();
         const out = std.io.getStdOut().writer();
         while (it.next()) |e| try out.print("{s}={s}\n", .{ e.key_ptr.*, e.value_ptr.* });
+    } else if (std.mem.eql(u8, mode, "wait_pipe")) {
+        // Inherited descriptors: 9 is the write end of a pipe (closed here, so that the parent's copy is the last), 8 the read end;
+        // returns, exit 0, when the parent closes its write end.
+        posix.close(9);
+        var buf: [16]u8 = undefined;
+        while ((try posix.read(8, &buf)) != 0) {}
     } else if (std.mem.eql(u8, mode, "exit0")) {
         // nothing
     } else {

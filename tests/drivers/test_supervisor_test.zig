@@ -7,8 +7,8 @@
 //! verdict (the comment above each test names it): pass, an assertion and a
 //! raise (FAIL), libc abort (CRASH SIGABRT), a null read (CRASH SIGSEGV), a
 //! test after the crashes (PASS), a sleep (TIMEOUT hung) that also leaves a
-//! `sleep 7919` behind in its process group, 4 s of computing under a 6 s
-//! deadline (PASS), endless computing (TIMEOUT slow), an early _exit(0)
+//! `sleep 7919` behind in its process group, a fixed amount of computing
+//! (PASS), endless computing (TIMEOUT slow), an early _exit(0)
 //! (FAIL), 1 GiB touched under a 512 MiB cap (OOM), a test calling a native
 //! library (PASS), and a self-hosted file (PASS).
 //!
@@ -22,13 +22,22 @@
 //!      on copies of the results with one verdict changed, and must fail;
 //!   4. checks that no `sleep 7919` survived (the group kill), and that the
 //!      native test's binary names libgreet;
-//!   5. human output: the memory file with --memory 0 --timeout 12 (no cap:
-//!      the same test is now TIMEOUT hung, so the OOM above was the cap's),
-//!      and the self-hosted file alone (exit 0);
+//!   5. human output: the memory file with --memory 0 --timeout 3 and
+//!      --test-only-deadline-after (no cap: the same test is now TIMEOUT hung,
+//!      so the OOM above was the cap's), and the self-hosted file alone (exit 0);
 //!   6. supervisor self-test: test_verdicts.mojo with the test-only
 //!      --test-only-no-group-kill. The `sleep 7919` must now survive, and
 //!      mopm must notice and exit 5, so the check in 4 is shown to fail when
 //!      the group kill is broken.
+//!
+//! Time. Nothing here measures or asserts how long anything took, and nothing
+//! sleeps: a deadline is the only wait, and it is the supervisor's own (the
+//! hung and slow fixtures can only end by it). That the deadline fires at the
+//! poll that reaches it, not before, and that a test computing for most of
+//! its deadline still passes, are checked on a manual clock in
+//! src/core/test_proc.zig. Where a verdict depends on what the test has done
+//! by its deadline (the uncapped memory test must have touched its memory and
+//! be asleep), the test says so with a file and the deadline counts from it.
 //!
 //! Leftover processes. The shell script looked for `sleep 7919` by name over
 //! the whole machine (pgrep, pkill), which on a shared worker would also see
@@ -54,12 +63,13 @@ const M = "tests/test_memory.mojo";
 
 /// The deadline of the uncapped run of test_memory.mojo, in seconds. The verdict `hung` means "under 5% of one
 /// CPU over the last second before the deadline" (src/core/test_proc.zig), so it is true only if the fixture
-/// has finished touching its 1 GiB, and then sleeps, by deadline - 1 s. Nothing tells the driver when that is.
-/// The capped run passes 512 MiB in about 330 ms on the ubuntu leg, but on the macos-14 runner the touch was still going at 3 s twice
-/// (main runs on 16 and 20 October: `slow at the 3 s deadline ... still computing`, 3201 and 3413 ms). A
-/// deadline this far above the touch time leaves it a margin of an order of magnitude: the check no longer
-/// races the memset, and it still fails (as `slow`) if the touch really never ends.
-const nocap_deadline_s = "12";
+/// has finished touching its 1 GiB, and then sleeps, by deadline - 1 s. The fixture says when that is: it writes
+/// `ready_name` (in the package directory) between the touch and the sleep, and the run is started with
+/// --test-only-deadline-after, so the deadline counts from that file. However long the touch takes (on the
+/// macos-14 runner it was still going at 3 s, twice), the last second before the deadline is spent asleep; and
+/// if the touch never ends the run does not time out at all, and the watchdog fails the driver.
+const nocap_deadline_s = "3";
+const ready_name = "test_oom.ready";
 const N = "tests/test_native.mojo";
 const S = "tests/test_self_hosted.mojo";
 
@@ -75,7 +85,6 @@ const Expect = struct {
     message_empty: bool = false,
     message_has: ?[]const u8 = null,
     output_has: ?[]const u8 = null,
-    ms: ?[2]i64 = null,
 };
 
 /// The order the run must report, and the exact verdict of each.
@@ -89,9 +98,9 @@ const expected = [_]Expect{
     .{ .id = V ++ "::test_abort", .status = "crash", .signal_name = "SIGABRT", .exit_null = true },
     .{ .id = V ++ "::test_segfault", .status = "crash", .signal_name = "SIGSEGV", .exit_null = true },
     .{ .id = V ++ "::test_after_crashes", .status = "pass", .exit_zero = true },
-    .{ .id = V ++ "::test_hang", .status = "timeout", .timeout = "hung", .signal_name = "SIGKILL", .ms = .{ 6000, 9000 } },
-    .{ .id = V ++ "::test_slow_ok", .status = "pass", .exit_zero = true, .ms = .{ 4000, 6000 } },
-    .{ .id = V ++ "::test_spin_forever", .status = "timeout", .timeout = "slow", .signal_name = "SIGKILL", .ms = .{ 6000, 9000 } },
+    .{ .id = V ++ "::test_hang", .status = "timeout", .timeout = "hung", .signal_name = "SIGKILL" },
+    .{ .id = V ++ "::test_slow_ok", .status = "pass", .exit_zero = true },
+    .{ .id = V ++ "::test_spin_forever", .status = "timeout", .timeout = "slow", .signal_name = "SIGKILL" },
     .{ .id = V ++ "::test_exits_early", .status = "fail", .exit_zero = true, .message_has = "no PASS line" },
 };
 
@@ -169,10 +178,6 @@ fn checkRun(c: *r.Chk, run_json: []const u8, junit_xml: []const u8, pkg: []const
         if (e.timeout_null) c.that(r.isNull(r.field(t, "timeout")), "{s}: timeout is null", .{e.id});
         if (e.message_empty) c.that(msg.len == 0, "{s}: message is empty", .{e.id});
         if (e.message_has) |s| c.that(h.contains(msg, s), "{s}: message mentions {s}", .{ e.id, s });
-        if (e.ms) |b| {
-            const ms = r.int(r.field(t, "ms")) orelse -1;
-            c.that(b[0] <= ms and ms < b[1], "{s}: {d} <= ms < {d} (got {d})", .{ e.id, b[0], b[1], ms });
-        }
         if (e.output_has) |s| c.that(h.contains(try r.outputOf(a, pkg, t), s), "{s}: its captured output holds {s}", .{ e.id, s });
         for ([_][]const u8{ "stdout", "stderr" }) |k| {
             c.that(r.fileExists(a, pkg, r.str(r.field(t, k))), "{s}: output file {s} exists", .{ e.id, k });
@@ -316,7 +321,7 @@ test "supervisor: mopm test verdicts against the real mojo (tests/e2e/test_super
 
 fn run(a: Allocator, rep: *h.Report) !void {
     const m = try mojo_env.Mojo.init(a);
-    run_mark = try h.fmt(a, "{d}.{d}", .{ std.crypto.random.int(u32), std.time.milliTimestamp() });
+    run_mark = try h.fmt(a, "{d}", .{std.crypto.random.int(u64)});
     const prefix = try h.join(a, &.{ m.work, "env" });
     try m.prefix(prefix, true);
     var c = Ctx{
@@ -360,9 +365,8 @@ fn run(a: Allocator, rep: *h.Report) !void {
 
     // ---------------------------------------------------------------- 2
     const junit_path = try h.join(a, &.{ c.work, "junit.xml" });
-    var timer = try std.time.Timer.start();
     const res = try c.mopm2(&.{ "test", "--prefix", prefix, "--timeout", "6", "--memory", "512", "--format", "json", "--junit", junit_path }, "run");
-    std.debug.print("     mopm test took {d} s (builds included); stderr:\n{s}\n", .{ timer.read() / std.time.ns_per_s, c.plain(res.err) });
+    std.debug.print("     mopm test stderr:\n{s}\n", .{c.plain(res.err)});
     rep.check("mopm test on the fixtures: exit 1 (tests did not pass, everything built)", !res.signaled and res.code == 1, try h.fmt(a, "exit {d}, want 1; stdout:\n{s}", .{ res.code, res.out }));
     const junit = try h.readFile(a, junit_path);
     var chk = r.Chk{ .a = a };
@@ -384,7 +388,9 @@ fn run(a: Allocator, rep: *h.Report) !void {
 
     // ---------------------------------------------------------------- 4
     {
-        std.time.sleep(1 * std.time.ns_per_s);
+        // No wait: before it returned, mopm killed the group again and checked that it was empty (the
+        // `leftover_processes: false` of every test above), and a process of the group that is not
+        // reaped yet still counts as in it. What `survivors` finds now is what the run left.
         const left = try survivors(a);
         rep.check("no 'sleep 7919' left behind: the deadline kill took the hung test's whole process group", left.len == 0, try h.fmt(a, "{d} 'sleep 7919' process(es) survived the run", .{left.len}));
         killAll(left);
@@ -399,7 +405,10 @@ fn run(a: Allocator, rep: *h.Report) !void {
 
     // ---------------------------------------------------------------- 5
     {
-        const nocap = try c.mopm2(&.{ "test", "--prefix", prefix, "--memory", "0", "--timeout", nocap_deadline_s, "tests/test_memory.mojo" }, "nocap");
+        const ready = try h.join(a, &.{ c.pkg, ready_name });
+        std.fs.cwd().deleteFile(ready) catch |e| if (e != error.FileNotFound) return e;
+        const nocap = try c.mopm2(&.{ "test", "--prefix", prefix, "--memory", "0", "--timeout", nocap_deadline_s, "--test-only-deadline-after", ready, "tests/test_memory.mojo" }, "nocap");
+        rep.check("the fixture said it was ready (touched its memory, about to sleep) before the deadline counted", r.fileExists(a, c.pkg, ready_name), "no ready file: the test never got past touching its memory");
         const ok = !nocap.signaled and nocap.code == 1 and
             h.hasLineMatching(nocap.out, "TIMEOUT", "tests/test_memory.mojo::test_oom (", "ms): hung at the " ++ nocap_deadline_s ++ " s deadline") and
             h.hasLinePrefix(nocap.out, "---- tests/test_memory.mojo::test_oom: TIMEOUT") and
@@ -416,7 +425,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     // ---------------------------------------------------------------- 6
     {
         const nk = try c.mopm2(&.{ "test", "--prefix", prefix, "--timeout", "6", "--memory", "512", "--test-only-no-group-kill", "tests/test_verdicts.mojo" }, "nokill");
-        std.time.sleep(500 * std.time.ns_per_ms);
+        // No wait: mopm exited 5 because it found the group alive, and `sleep 7919` ends only when killed.
         const left = try survivors(a);
         const ok = !nk.signaled and nk.code == 5 and left.len > 0 and
             h.hasLineBetween(nk.err, "mopm test: tests/test_verdicts.mojo::test_hang: process group ", " still has processes after the test ended");

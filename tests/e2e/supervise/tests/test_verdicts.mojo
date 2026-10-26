@@ -5,12 +5,13 @@ test_after_crashes runs after two crashes.
 """
 from std.ffi import external_call
 from std.os.path import exists
-from std.testing import assert_equal
+from std.testing import assert_equal, assert_true
 from std.time import perf_counter_ns
 
 
 def spin_for(seconds: Int):
-    """Burn one CPU for `seconds` of wall time."""
+    """Burn one CPU for `seconds` of wall time (used only with a number of
+    seconds no deadline reaches: it never ends before the supervisor kills it)."""
     var start = Int(perf_counter_ns())
     var n = 0
     while Int(perf_counter_ns()) - start < seconds * 1_000_000_000:
@@ -79,10 +80,15 @@ def test_hang() raises:
     raise Error("woke up")
 
 
-# PASS: computes for 4 s, past half of the 6 s deadline, and ends in time
+# PASS: computes a fixed amount of work (milliseconds, far inside any
+# deadline) and ends. A test that computes for most of its deadline and still
+# passes is checked on a manual clock in src/core/test_proc.zig, not by
+# spending wall time here.
 def test_slow_ok() raises:
-    spin_for(4)
-    assert_equal(1, 1)
+    var x: UInt64 = 1
+    for _ in range(10_000_000):
+        x = x * 6364136223846793005 + 1442695040888963407
+    assert_true(x != 0)
 
 
 # TIMEOUT, slow: still computing at the deadline
