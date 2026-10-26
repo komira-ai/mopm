@@ -15,6 +15,7 @@ _NODE = "//tools/node:node"
 # `bzip2` (test/validate/builder.ts): the pinned busybox's applet is the only command on PATH.
 _TEST_DATA = {
     "spec": "//:spec",
+    "src/core": "//:pack_conda_zig",
     "tests/contract/api": "//:contract_api",
     "tests/validator_corpus": "//:validator_corpus_files",
 }
