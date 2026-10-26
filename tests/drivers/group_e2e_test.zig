@@ -49,6 +49,13 @@ const Mode = struct {
     leak_early: bool = false,
     /// After the commit only the first member is readable.
     half_commit: bool = false,
+    /// Before the commit only the first member is readable.
+    leak_first_early: bool = false,
+    /// Validation takes this many milliseconds after the commit request, however often the group is read: a loaded registry.
+    slow_validation_ms: u64 = 0,
+    /// A good group is committed by the first read of the set's first member once its validation is done, and not by a read of the
+    /// group: the commit lands between two reads of the members, as it does when a reader sweeps them one after the other.
+    commit_in_sweep: bool = false,
     /// A file that is not a package is accepted.
     accept_bad: bool = false,
     /// A rejected group still shows its first member.
@@ -106,6 +113,8 @@ const Grp = struct {
     created: i64,
     deadline: i64,
     polls: u32 = 0,
+    /// When the commit request came (milliseconds of the clock of the process).
+    committed_ms: i64 = 0,
     yank: ?[]const u8 = null,
     yank_polls: u32 = 0,
     failure_member: ?[]const u8 = null,
@@ -392,6 +401,7 @@ const Stub = struct {
         }
         gr.status = .validating;
         gr.polls = 0;
+        gr.committed_ms = std.time.milliTimestamp();
         return json(a, .accepted, .{ .group_id = gr.id, .status = "validating", .attempt = gr.attempt, .status_url = try std.fmt.allocPrint(a, "/api/v1/groups/{s}", .{gr.id}) });
     }
 
@@ -414,18 +424,37 @@ const Stub = struct {
     fn shows(s: *Stub, gr: Grp, i: usize) bool {
         return switch (gr.status) {
             .committed, .visible => !(s.mode.half_commit and i > 0),
-            .validating => s.mode.leak_early,
+            .validating => s.mode.leak_early or (s.mode.leak_first_early and i == 0),
             .rejected => s.mode.reject_leaks_sibling and i == 0,
             else => false,
         };
     }
 
-    fn progress(s: *Stub, gr: *Grp) void {
+    /// Whether the slow validation of the mode has taken its time.
+    fn validationDone(s: *Stub, gr: *const Grp) bool {
+        return std.time.milliTimestamp() - gr.committed_ms >= @as(i64, @intCast(s.mode.slow_validation_ms));
+    }
+
+    /// The group is committed: its members read as published, with the dependencies their archives declare.
+    fn activate(s: *Stub, gr: *Grp) void {
         const sa = s.arena.allocator();
+        for (gr.members) |*m| {
+            m.deps = depsOf(sa, m.*);
+            if (s.mode.rival_major) {
+                const open: []Dep = sa.dupe(Dep, m.deps) catch continue;
+                for (open) |*d| d.range = ">=0.0.0";
+                m.deps = open;
+            }
+        }
+        gr.status = .committed;
+        gr.polls = 0;
+    }
+
+    fn progress(s: *Stub, gr: *Grp) void {
         if (gr.status == .validating) {
             // Validation takes several reads of the group: a reader sees it before its commit on both sides of a read of its members.
             gr.polls += 1;
-            if (gr.polls >= 5) {
+            if (gr.polls >= 5 and validationDone(s, gr)) {
                 var bad: ?[]const u8 = null;
                 for (gr.members) |m| {
                     if (!isPackage(m) and bad == null) bad = m.name;
@@ -433,17 +462,8 @@ const Stub = struct {
                 if (bad != null and !s.mode.accept_bad) {
                     gr.status = .rejected;
                     gr.failure_member = bad;
-                } else {
-                    for (gr.members) |*m| {
-                        m.deps = depsOf(sa, m.*);
-                        if (s.mode.rival_major) {
-                            const open: []Dep = sa.dupe(Dep, m.deps) catch continue;
-                            for (open) |*d| d.range = ">=0.0.0";
-                            m.deps = open;
-                        }
-                    }
-                    gr.status = .committed;
-                    gr.polls = 0;
+                } else if (!s.mode.commit_in_sweep) {
+                    activate(s, gr);
                 }
             }
         } else if (gr.status == .committed) {
@@ -520,6 +540,14 @@ const Stub = struct {
         var parts = std.mem.splitScalar(u8, rest, '/');
         const name = parts.next() orelse "";
         const ver = parts.next() orelse "";
+        // `commit_in_sweep`: this read finds the group still validating, and the commit lands right after it.
+        var committing: ?*Grp = null;
+        defer if (committing) |gr| s.activate(gr);
+        if (s.mode.commit_in_sweep and std.mem.eql(u8, name, g.pkg_core)) {
+            for (s.groups.items) |*gr| {
+                if (gr.status == .validating and gr.polls >= 5 and validationDone(s, gr) and std.mem.eql(u8, gr.members[0].version, ver)) committing = gr;
+            }
+        }
         if (s.squatting.load(.acquire) and std.mem.eql(u8, name, g.pkg_mid)) {
             return json(a, .ok, .{ .name = name, .version = ver, .state = "published" });
         }
@@ -782,6 +810,8 @@ const Extras = struct {
     precompile: bool = false,
     /// The line the README's program prints (the stand-in compiler's programs only; the real compiler builds what the README says).
     program_says: ?[]const u8 = null,
+    /// How long a read of the registry's state is repeated before it is red (`Opts.wait_ms`).
+    wait_ms: u64 = 8000,
 };
 
 fn runCheck(a: Allocator, mode: Mode, token: []const u8, stage: []const u8) !Ran {
@@ -819,7 +849,11 @@ fn runCheckWith(a: Allocator, mode: Mode, token: []const u8, stage: []const u8, 
         .run_id = 4242000 + work_counter,
         .attempt = 1,
         .summary = extras.summary,
-        .wait_ms = 8000,
+        // The reads of the index and the channel give up after a short time: the stand-in answers at once, and a check that is red on
+        // purpose (a member that never appears) waits that long for it. The wait of `mopm publish` for its group is a backstop that a
+        // loaded machine does not reach, and is short only for the registry that never settles.
+        .wait_ms = extras.wait_ms,
+        .publish_wait_ms = if (mode.stall) 3000 else 120_000,
         .poll_ms = 10,
         .retry_ms = 10,
         .parent_env = parent_env,
@@ -1079,6 +1113,46 @@ test "a member that is readable before its group commits is a failure" {
 
 test "a commit that shows only some members is a failure" {
     try expectRedOn(.{ .half_commit = true }, "chain: once committed, all three members are readable at once");
+}
+
+test "a commit that lands between two reads of the members is one commit, not some of the members readable at once" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const a = arena.allocator();
+    try guard();
+    // The first member is read while the group validates (and is not there), and the commit lands right after that read: the rest
+    // of the same sweep finds the other two. A registry that commits at once does exactly this to a reader whose requests
+    // come one after the other. The run must not call that a partial exposure; it is green.
+    const ran = try runCheck(a, .{ .commit_in_sweep = true }, test_token, "beta");
+    for (ran.result.notes) |n| {
+        if (std.mem.startsWith(u8, n, "- FAIL")) std.debug.print("{s}", .{n});
+    }
+    try std.testing.expect(!ran.result.skipped);
+    try std.testing.expectEqual(@as(usize, 0), ran.result.failures);
+    try std.testing.expect(passed(ran.result, "chain: the members appear all at once, never some of them"));
+    try std.testing.expect(passed(ran.result, "chain: no member is readable before the commit"));
+    try std.testing.expect(passed(ran.result, "chain: once committed, all three members are readable at once"));
+}
+
+test "some of the members readable at once before the commit is still a failure" {
+    // Only the first member is readable while the group validates, in every sweep: nothing is committed meanwhile.
+    try expectRedOn(.{ .leak_first_early = true }, "chain: the members appear all at once, never some of them");
+}
+
+test "a registry that validates slowly is waited for, however briefly the reads of its state are repeated" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const a = arena.allocator();
+    try guard();
+    // Validation takes 2.5 seconds after the commit, of the chain and of the rejected group, and the reads of the index and the
+    // channel are repeated for one second only. `mopm publish` waits for its group by its own wait, not by that one.
+    const ran = try runCheckWith(a, .{ .slow_validation_ms = 2500 }, test_token, "beta", .{ .wait_ms = 1000 });
+    for (ran.result.notes) |n| {
+        if (std.mem.startsWith(u8, n, "- FAIL")) std.debug.print("{s}", .{n});
+    }
+    try std.testing.expect(!ran.result.skipped);
+    try std.testing.expectEqual(@as(usize, 0), ran.result.failures);
+    try std.testing.expect(passed(ran.result, "chain: mopm publish --staged publishes the set"));
+    try std.testing.expect(passed(ran.result, "chain: the group becomes visible"));
+    try std.testing.expect(passed(ran.result, "rejected: the group ends rejected"));
 }
 
 test "a group that never becomes visible is a failure that names the status" {
