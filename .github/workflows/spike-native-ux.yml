@@ -88,14 +88,14 @@ jobs:
           cd .github/spike-native-ux
           echo "env DYLD/LD:"; env | grep -E '^(DYLD|LD_LIBRARY)' || echo "(none)"
           echo "--- pixi run mojo run dl.mojo"
-          pixi run mojo run dl.mojo 2>&1 | tail -15; echo "RESULT dlopen-mojo-run exit=${PIPESTATUS[0]}"
+          pixi run mojo run dl.mojo "${{ matrix.lib }}" 2>&1 | tail -15; echo "RESULT dlopen-mojo-run exit=${PIPESTATUS[0]}"
           echo "--- pixi run mojo build dl.mojo"
           pixi run mojo build dl.mojo -o "$RUNNER_TEMP/dl_bin" 2>&1 | tail -15; echo "RESULT mojo-build exit=${PIPESTATUS[0]}"
           echo "--- built binary, scrubbed env (no rpath given), cwd elsewhere"
-          (cd "$RUNNER_TEMP" && env -i HOME="$HOME" PATH=/usr/bin:/bin ./dl_bin 2>&1 | tail -10; echo "RESULT dlopen-built-scrubbed exit=${PIPESTATUS[0]}")
+          (cd "$RUNNER_TEMP" && env -i HOME="$HOME" PATH=/usr/bin:/bin ./dl_bin "${{ matrix.lib }}" 2>&1 | tail -10; echo "RESULT dlopen-built-scrubbed exit=${PIPESTATUS[0]}")
           echo "--- built binary with -Xlinker -rpath <env>/lib"
           pixi run mojo build dl.mojo -Xlinker -rpath -Xlinker "$PWD/.pixi/envs/default/lib" -o "$RUNNER_TEMP/dl_bin_rpath" 2>&1 | tail -10
-          (cd "$RUNNER_TEMP" && env -i HOME="$HOME" PATH=/usr/bin:/bin ./dl_bin_rpath 2>&1 | tail -10; echo "RESULT dlopen-built-rpath-scrubbed exit=${PIPESTATUS[0]}")
+          (cd "$RUNNER_TEMP" && env -i HOME="$HOME" PATH=/usr/bin:/bin ./dl_bin_rpath "${{ matrix.lib }}" 2>&1 | tail -10; echo "RESULT dlopen-built-rpath-scrubbed exit=${PIPESTATUS[0]}")
 
       - name: RESULT mojo repl via stdin
         run: |
