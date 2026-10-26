@@ -163,6 +163,20 @@ export function checkDepends(idx: CondaIndex, mopm: Mopm, opt: DepOptions): stri
   return [...mojoDeps].sort();
 }
 
+/**
+ * The requirements of `depends` that are neither the compiler nor a `mojo-*` package (after `checkDepends` accepted the
+ * index, these are allow-listed system libraries), with runs of white space as one space, sorted.
+ */
+export function nativeDependsOf(idx: CondaIndex): string[] {
+  return idx.depends
+    .filter((d) => {
+      const dn = d.split(/\s+/, 1)[0];
+      return dn !== 'mojo-compiler' && !dn.startsWith('mojo-');
+    })
+    .map((d) => d.replace(/\s+/g, ' ').replace(/ $/, ''))
+    .sort();
+}
+
 /** Compare a version string from the archive to the one requested, under conda ordering. */
 export function sameVersion(a: string, b: string): boolean {
   try {

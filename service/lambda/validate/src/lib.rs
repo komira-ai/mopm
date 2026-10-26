@@ -69,6 +69,9 @@ pub struct PackageFacts {
     /// Names of the `mojo-*` packages depended on, sorted, with the `mojo-` prefix.
     #[serde(rename = "mojoDeps")]
     pub mojo_deps: Vec<String>,
+    /// The allow-listed system libraries `depends` requires (`lz4-c >=1.9.3`), sorted; never a library the package ships.
+    #[serde(rename = "nativeDepends")]
+    pub native_depends: Vec<String>,
     pub metadata: Mopm,
     #[serde(rename = "manifestSha256")]
     pub manifest_sha256: String,
@@ -239,6 +242,7 @@ fn run(buf: &[u8], expected: &PublishExpectation, options: &ValidatorOptions, li
         return fail(RuleCode::SubdirMismatch, format!("info/index.json subdir '{}' is not '{}'", idx.subdir, expected.subdir));
     }
     let mojo_deps = metadata::check_depends(&idx, &mopm, &options.allowed_native_deps)?;
+    let native_depends = metadata::native_depends_of(&idx);
     let want_file = format!("mojo-{}-{}-{}.{format}", expected.name, expected.version, idx.build);
     if expected.filename != want_file {
         return fail(RuleCode::FilenameMismatch, format!("the file is named '{}' but its metadata says '{want_file}'", expected.filename));
@@ -275,6 +279,7 @@ fn run(buf: &[u8], expected: &PublishExpectation, options: &ValidatorOptions, li
         compiler: idx.compiler,
         subdir: idx.subdir,
         mojo_deps,
+        native_depends,
         metadata: mopm,
         manifest_sha256,
         files: entries.iter().filter(|e| e.kind == tar::Kind::File).map(|e| FactsFile { path: e.path.clone(), size: e.data.len() as u64 }).collect(),

@@ -54,6 +54,7 @@ export const publishesVersion = (ev: VersionEvent): boolean => ev.type === 'publ
 export interface PublishFill
   extends Pick<VersionRecord, 'version' | 'build' | 'requires_mojo' | 'deps' | 'native' | 'files' | 'manifest_sha256' | 'published_at'> {
   published_by?: string;
+  native_depends?: string[];
   /** The display metadata the commit request carried; stored on the version so the read API serves it. */
   description?: string;
   license?: string;

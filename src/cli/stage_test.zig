@@ -575,6 +575,8 @@ test "a member with a native library is staged with its archive, byte for byte a
     // The archive is in the package as lib/libshim.a, and the metadata declares the static native.
     try std.testing.expect(contains(staged, "lib/libshim.a") and contains(staged, shim_archive));
     try std.testing.expect(contains(staged, "\"mopm_native\":[{\"id\":\"shim\",\"sha256\":\"") and contains(staged, "\"soname\":\"libshim.a\""));
+    // The static archive and what it needs are not conda packages: depends names the compiler and nothing else.
+    try std.testing.expect(contains(staged, "\"depends\":[\"mojo-compiler ==1.0.0\"]"));
     // The plan carries the hash pack prints for that file.
     try std.testing.expect(contains(try fx.read("out/plan.json"), &by_pack.sha256));
 

@@ -312,6 +312,26 @@ pub fn check_depends(idx: &CondaIndex, mopm: &Mopm, allowed_native: &BTreeSet<St
     Ok(out)
 }
 
+/// The requirements of `depends` that are neither the compiler nor a `mojo-*` package (after `check_depends` accepted the
+/// index, these are allow-listed system libraries), runs of white space as one space and no trailing space, in the
+/// TypeScript's sort order.
+pub fn native_depends_of(idx: &CondaIndex) -> Vec<String> {
+    let mut out: Vec<String> = idx
+        .depends
+        .iter()
+        .filter(|d| {
+            let dn = first_word(d);
+            dn != "mojo-compiler" && !dn.starts_with("mojo-")
+        })
+        .map(|d| {
+            let c = collapse_space(d);
+            c.strip_suffix(' ').map(str::to_string).unwrap_or(c)
+        })
+        .collect();
+    out.sort_by(|a, b| cmp_utf16(a, b));
+    out
+}
+
 /// Compare a version string from the archive to the one requested.
 pub fn same_version(a: &str, b: &str) -> bool {
     matches!((canonical_version(a), canonical_version(b)), (Ok(x), Ok(y)) if x == y)

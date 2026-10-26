@@ -136,7 +136,7 @@ export async function validateArchives(
   // One version, one build and one set of dependencies, whatever the platform.
   const first = out[0]!;
   for (const [i, facts] of out.entries()) {
-    const same = facts.build === first.build && JSON.stringify(depsOf(facts)) === JSON.stringify(depsOf(first)) && JSON.stringify(nativeOf(facts)) === JSON.stringify(nativeOf(first));
+    const same = facts.build === first.build && JSON.stringify(depsOf(facts)) === JSON.stringify(depsOf(first)) && JSON.stringify(nativeOf(facts)) === JSON.stringify(nativeOf(first)) && JSON.stringify(facts.nativeDepends) === JSON.stringify(first.nativeDepends);
     if (!same) throw new Rejected('manifest_invalid', `${files[i]!.filename} disagrees with ${files[0]!.filename} on build, dependencies or native libraries`);
   }
   return out;
@@ -197,6 +197,7 @@ export function fillFrom(
     requires_mojo: `==${first.compiler}`,
     deps: depsOf(first),
     native: nativeOf(first),
+    native_depends: first.nativeDepends,
     files,
     manifest_sha256: first.manifestSha256,
     ...(version.display ?? {}),
