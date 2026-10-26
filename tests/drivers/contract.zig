@@ -112,7 +112,7 @@ fn lessThan3(x: [3][]const u8, y: [3][]const u8) std.math.Order {
     return .eq;
 }
 
-/// A deep copy, so a mutant can be changed without touching the original.
+/// A deep copy, so a variant can be changed without touching the original.
 pub fn clone(a: Allocator, v: Value) anyerror!Value {
     switch (v) {
         .array => |arr| {

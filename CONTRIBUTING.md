@@ -150,7 +150,7 @@ dependency: read the lockfile diff. A Dependabot branch gets no farm build (`far
 `.github/` is never pinned by the bot and is checked by its own copy of `pin-verify.yml`, so read the workflow change. A new package with a
 `package-lock.json` needs a `--set` line in `autopin-compute.yml` (and the same in the other three invocations) and a `dependabot.yml` entry, or a place in `autopin_manual` of
 `tests/drivers/hygiene.zig` with the reason; `//:hygiene` fails the pull request that adds one without. Changes to the autopin workflows are held by `tests/drivers/autopin_lint.zig`
-(`zig test tests/drivers/autopin_lint_test.zig`, also `//:autopin_workflows`): add a planted mutant with any rule you add.
+(`zig test tests/drivers/autopin_lint_test.zig`, also `//:autopin_workflows`): add a faulty variant with any rule you add.
 
 `.github/workflows/advisories.yml` scans every tracked `package-lock.json` and `Cargo.lock` for known
 vulnerabilities once a day (and on demand), with a pinned, sha256-verified OSV-Scanner

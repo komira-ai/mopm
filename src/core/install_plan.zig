@@ -928,7 +928,7 @@ fn nativeOf(l: lock.Lock, name: []const u8, subdir: []const u8) ?lock.Native {
 
 // Defects it catches: a lock that records no hash of a native library (a unit graph then refuses the project); the
 // hash of the whole `.conda`, or of the metadata, in place of the library's; the hash of one platform's library for
-// another's; `kind`, `needs` or `exclusive` dropped or taken from the wrong library. Mutants planted: the hash taken
+// another's; `kind`, `needs` or `exclusive` dropped or taken from the wrong library. Defect caught: the hash taken
 // over `bytes`; over the osx entry's archive for linux; `.kind = .shared`; `.needs = &.{}`.
 test "mopm lock pins each native library: the sha256 of the library file, per subdir, with its kind, needs and group" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -968,7 +968,7 @@ test "mopm lock pins each native library: the sha256 of the library file, per su
 }
 
 // Defects it catches: a downloaded file believed without checking that it is the file the repodata and index agreed
-// on (a mirror or a man in the middle then chooses the hash that is pinned); a wrong size accepted. Mutants planted:
+// on (a mirror or a man in the middle then chooses the hash that is pinned); a wrong size accepted. Defect caught:
 // pinNatives drops the size check; drops the sha256 check.
 test "a package file that is not the one the index and repodata name pins nothing: the lock is refused" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -1035,7 +1035,7 @@ fn cryptoLock(w: World, a: Allocator, diag: *Diagnostic) Error!lock.Lock {
 
 // Defects it catches: a package whose own metadata disagrees with the index (a library the index lists that the file
 // does not declare, one it does not hold, or one it keeps somewhere the registry would not allow, or under another
-// name than its soname) pinned with a hash of something else, or of nothing. Mutants planted: the declared() check
+// name than its soname) pinned with a hash of something else, or of nothing. Defect caught: the declared() check
 // dropped; the file-name check in libraryPath dropped; the missing-file check dropped.
 test "a package whose metadata and files do not match what the index says is refused, saying what" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -1090,7 +1090,7 @@ test "a package whose metadata and files do not match what the index says is ref
 
 // Defects it catches: `mopm lock` and `mopm update` fetching every native `.conda` again each time (slow, and a
 // channel that is briefly down breaks a lock that needs nothing from it); the other way, a pin kept for a file that
-// is no longer the one pinned. Mutants planted: reusable() ignores the file sha256; ignores a missing native sha256.
+// is no longer the one pinned. Defect caught: reusable() ignores the file sha256; ignores a missing native sha256.
 test "a .conda the old lock already pins is not fetched again; a different file, or a pin without a hash, is" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -1149,7 +1149,7 @@ test "a package without natives is never fetched" {
 }
 
 // Defect it catches: a version 2 lock that keeps the natives of the first Mojo version's build and says nothing when
-// the build for another Mojo version ships a different archive. Mutant planted: checkNativesAgree returns at once.
+// the build for another Mojo version ships a different archive. Defect caught: checkNativesAgree returns at once.
 test "builds for two Mojo versions that ship different natives are refused before they are merged" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -1186,7 +1186,7 @@ test "builds for two Mojo versions that ship different natives are refused befor
 }
 
 // Defect it catches: a repodata size that differs from the index's accepted when the sha256 agrees (the size is what
-// `mopm sync` and the lock hold the download to). Mutant planted: the size half of the comparison dropped.
+// `mopm sync` and the lock hold the download to). Defect caught: the size half of the comparison dropped.
 test "a repodata size that differs from the index's, with the same sha256, is refused, naming both" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -1202,7 +1202,7 @@ test "a repodata size that differs from the index's, with the same sha256, is re
 }
 
 // Defect it catches: a pin kept for a library the index now names differently, with the very same file bytes: the lock
-// would keep the stale soname. Mutant planted: reusable() stops comparing sonames.
+// would keep the stale soname. Defect caught: reusable() stops comparing sonames.
 test "an old pin is not reused when the index names the library differently, even for the same file" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();

@@ -346,12 +346,12 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     }
   });
 
-  // Can-fail proof: the checker above flags each planted defect, so a clean result means something.
-  test('the policy checker goes red on planted defects', () => {
+  // Can-fail proof: the checker above flags each known defect, so a clean result means something.
+  test('the policy checker goes red on known defects', () => {
     const base = statements();
     const withExtra = (extra: any) => [...base, { Effect: 'Allow', ...extra }];
     const tbl = (name: string) => `arn:aws:dynamodb:us-east-1:${DUMMY_ACCOUNT}:table/${tableName(stage, name)}`;
-    const mutants: Record<string, any[]> = {
+    const variants: Record<string, any[]> = {
       'DeleteItem on tokens': withExtra({ Action: 'dynamodb:DeleteItem', Resource: tbl('tokens') }),
       'Scan on users': withExtra({ Action: 'dynamodb:Scan', Resource: tbl('users') }),
       // The claim grants PutItem on packages and owners (WRITE_GRANTS); any other write there is still a violation.
@@ -367,7 +367,7 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
       'secret write': withExtra({ Action: 'secretsmanager:PutSecretValue', Resource: `arn:aws:secretsmanager:us-east-1:${DUMMY_ACCOUNT}:secret:mopm/${stage}/github-oauth-??????` }),
     };
     expect(policyViolations(stage, base)).toEqual([]);
-    for (const [name, st] of Object.entries(mutants)) {
+    for (const [name, st] of Object.entries(variants)) {
       expect({ name, caught: policyViolations(stage, st).length > 0 }).toEqual({ name, caught: true });
     }
   });

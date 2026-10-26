@@ -118,10 +118,10 @@ fn checkRetries(c: *r.Chk, run_json: []const u8, junit_xml: []const u8, pkg: []c
         const msg = r.str(r.field(t, "message")) orelse "";
         if (std.mem.eql(u8, e.status, "skip")) {
             const ig = r.field(t, "ignore") orelse .null;
-            c.that(ig == .object and ig.object.count() == 2 and std.mem.eql(u8, r.str(r.field(ig, "reason")) orelse "", "planted: fails when run") and
+            c.that(ig == .object and ig.object.count() == 2 and std.mem.eql(u8, r.str(r.field(ig, "reason")) orelse "", "faulty: fails when run") and
                 std.mem.eql(u8, r.str(r.field(ig, "issue")) orelse "", ISSUE), "{s}: ignore reason and issue", .{e.id});
             c.that(r.isNull(r.field(t, "stdout")) and r.isNull(r.field(t, "binary_sha256")), "{s}: never ran", .{e.id});
-            c.that(h.contains(msg, "ignored: planted: fails when run"), "{s}: message says ignored and why", .{e.id});
+            c.that(h.contains(msg, "ignored: faulty: fails when run"), "{s}: message says ignored and why", .{e.id});
             continue;
         }
         c.that(r.isNull(r.field(t, "ignore")), "{s}: not ignored", .{e.id});
@@ -140,7 +140,7 @@ fn checkRetries(c: *r.Chk, run_json: []const u8, junit_xml: []const u8, pkg: []c
             }
             const text = try r.outputOf(a, pkg, x);
             const xs = r.str(r.field(x, "status")) orelse "";
-            if (std.mem.eql(u8, xs, "fail")) c.that(h.contains(text, "planted failure"), "{s} attempt {d}: its output holds the planted failure", .{ e.id, k });
+            if (std.mem.eql(u8, xs, "fail")) c.that(h.contains(text, "faulty failure"), "{s} attempt {d}: its output holds the faulty failure", .{ e.id, k });
             if (std.mem.eql(u8, xs, "crash")) c.that(std.mem.eql(u8, r.str(r.field(x, "signal_name")) orelse "", "SIGABRT") and r.isNull(r.field(x, "exit_code")), "{s} attempt {d}: SIGABRT", .{ e.id, k });
             if (std.mem.eql(u8, xs, "pass")) c.that(r.int(r.field(x, "exit_code")) == 0 and (r.str(r.field(x, "message")) orelse "x").len == 0, "{s} attempt {d}: exit 0, no message", .{ e.id, k });
         }
@@ -274,7 +274,7 @@ const Ctx = struct {
         c.rep.check(label, ok, try h.fmt(c.a, "(want exit {d}) {s}{s}", .{ want, missing.items, try c.shown(t) }));
     }
 
-    fn mutantJson(c: *Ctx, label: []const u8, junit: []const u8, doctored: ?[]const u8) !void {
+    fn defectJson(c: *Ctx, label: []const u8, junit: []const u8, doctored: ?[]const u8) !void {
         if (doctored == null) {
             c.rep.check(try h.fmt(c.a, "checker self-test ({s})", .{label}), false, "the edit changed nothing");
             return;
@@ -284,7 +284,7 @@ const Ctx = struct {
         c.rep.check(try h.fmt(c.a, "checker self-test ({s}): rejected ({d} failed checks)", .{ label, q.failures }), q.failures > 0, "the checker accepted it");
     }
 
-    fn mutantXml(c: *Ctx, label: []const u8, run_json: []const u8, doctored: ?[]const u8) !void {
+    fn defectXml(c: *Ctx, label: []const u8, run_json: []const u8, doctored: ?[]const u8) !void {
         if (doctored == null) {
             c.rep.check(try h.fmt(c.a, "checker self-test ({s})", .{label}), false, "the edit changed nothing");
             return;
@@ -332,17 +332,17 @@ fn run(a: Allocator, rep: *h.Report) !void {
     rep.check(try h.fmt(a, "--retries 2: every verdict, attempt and JUnit element is the expected one ({d} checks)", .{chk.checks}), chk.failures == 0, try h.fmt(a, "{d} check(s) failed (above); the JSON:\n{s}", .{ chk.failures, r1.out }));
     rep.check("--retries 2: the FLAKY warning on stderr", h.hasLinePrefix(r1.err, "mopm test: warning: 3 FLAKY test(s)"), r1.err);
 
-    try c.mutantJson("a flaky test reported as PASS", junit, try r.editLines(a, r1.out, "\"name\": \"test_fails_once\"", "\"status\": \"flaky\"", "\"status\": \"pass\""));
-    try c.mutantJson("a test failing every attempt reported as FLAKY", junit, try r.editLines(a, r1.out, "\"name\": \"test_always_fails\"", "\"status\": \"fail\"", "\"status\": \"flaky\""));
-    try c.mutantJson("a failed attempt recorded as passed", junit, try r.editLines(a, r1.out, "\"name\": \"test_fails_twice\"", "\"attempt\": 2, \"status\": \"fail\"", "\"attempt\": 2, \"status\": \"pass\""));
-    try c.mutantJson("the first attempt's crash recorded as a failure", junit, try r.editLines(a, r1.out, "\"name\": \"test_crashes_once\"", "\"attempt\": 1, \"status\": \"crash\"", "\"attempt\": 1, \"status\": \"fail\""));
-    try c.mutantJson("the ignored test reported as run", junit, try r.editLines(a, r1.out, "\"name\": \"test_ignored_fails\"", "\"status\": \"skip\"", "\"status\": \"pass\""));
-    try c.mutantJson("a retry dropped from the attempts", junit, try r.editSpan(a, r1.out, "\"name\": \"test_always_fails\"", ", {\"attempt\": 3, ", "}]", "]"));
+    try c.defectJson("a flaky test reported as PASS", junit, try r.editLines(a, r1.out, "\"name\": \"test_fails_once\"", "\"status\": \"flaky\"", "\"status\": \"pass\""));
+    try c.defectJson("a test failing every attempt reported as FLAKY", junit, try r.editLines(a, r1.out, "\"name\": \"test_always_fails\"", "\"status\": \"fail\"", "\"status\": \"flaky\""));
+    try c.defectJson("a failed attempt recorded as passed", junit, try r.editLines(a, r1.out, "\"name\": \"test_fails_twice\"", "\"attempt\": 2, \"status\": \"fail\"", "\"attempt\": 2, \"status\": \"pass\""));
+    try c.defectJson("the first attempt's crash recorded as a failure", junit, try r.editLines(a, r1.out, "\"name\": \"test_crashes_once\"", "\"attempt\": 1, \"status\": \"crash\"", "\"attempt\": 1, \"status\": \"fail\""));
+    try c.defectJson("the ignored test reported as run", junit, try r.editLines(a, r1.out, "\"name\": \"test_ignored_fails\"", "\"status\": \"skip\"", "\"status\": \"pass\""));
+    try c.defectJson("a retry dropped from the attempts", junit, try r.editSpan(a, r1.out, "\"name\": \"test_always_fails\"", ", {\"attempt\": 3, ", "}]", "]"));
     {
         const step1 = try r.editEvery(a, junit, "<flakyError type=\"CRASH\"", "<flakyFailure type=\"CRASH\"");
         const both = if (step1) |s| try r.editEvery(a, s, "</flakyError>", "</flakyFailure>") else null;
-        try c.mutantXml("JUnit: a flaky crash recorded as a flaky failure", r1.out, both);
-        try c.mutantXml("JUnit: the skipped count", r1.out, try r.editAll(a, junit, "skipped=\"1\"", "skipped=\"0\""));
+        try c.defectXml("JUnit: a flaky crash recorded as a flaky failure", r1.out, both);
+        try c.defectXml("JUnit: the skipped count", r1.out, try r.editAll(a, junit, "skipped=\"1\"", "skipped=\"0\""));
     }
 
     // ---------------------------------------------------------------- 2

@@ -341,12 +341,12 @@ describe('without auth wiring (no OAuth secret configured, tables not wired)', (
   });
 });
 
-// Can-fail proof: routers with one planted defect each must break a named test above's expectation.
-describe('planted defects are caught', () => {
+// Can-fail proof: routers with one known defect each must break a named test above's expectation.
+describe('known defects are caught', () => {
   test('a router that answers a protected route without checking the token', async () => {
     const w = world('memory', { services: { authn: { authenticate: async () => ({ token_id: 't', kind: 'session', github_id: 4242, scopes: [], packages: [] }), freshSession: () => 4242 } as never } });
     const r = await w.send('GET', '/me/tokens'); // no token at all
-    expect(r.res.statusCode).toBe(200); // the mutant lets it through ...
+    expect(r.res.statusCode).toBe(200); // the variant lets it through ...
     const real = world('memory');
     expect((await real.send('GET', '/me/tokens')).res.statusCode).toBe(401); // ... and the real one does not
   });

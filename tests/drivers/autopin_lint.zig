@@ -10,7 +10,7 @@
 //! pull_request workflow may touch, the farm's Dependabot skip), M2/M2b (what the lints can read), no workflow that merges or
 //! approves a Dependabot pull request, unique workflow names, and one tool pin and one SETS list across the three files.
 //!
-//! autopin_lint_test.zig runs every rule on the real files and on a planted mutant that must turn it red.
+//! autopin_lint_test.zig runs every rule on the real files and on a faulty variant that must turn it red.
 
 const std = @import("std");
 const c = @import("lint_common.zig");

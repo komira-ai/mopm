@@ -743,10 +743,10 @@ fn addRemove(cx: *Cx) !void {
     r = try cx.runReg(fresh, &.{ "add", "http_core@3" });
     var changed = try changedFiles(cx, fresh, before, null);
     cx.ok("an add that does not resolve leaves mopm.toml byte-identical and writes no lock", r.code == 1 and has(r.stderr, "no version of http_core matches 3") and changed.len == 0, try cx.fmt("exit {d}, {s}, stderr {s}", .{ r.code, changed, r.stderr }));
-    // The defect that check guards against, planted: the edit written before resolving.
-    const planted = try h.join(a, &.{ cx.work, "edit_planted" });
-    try h.writeFile(try h.join(a, &.{ planted, "mopm.toml" }), try std.mem.replaceOwned(u8, a, before, "legacy = \"1\"\n", "legacy = \"1\"\nhttp_core = \"3\"\n"));
-    changed = try changedFiles(cx, planted, before, null);
+    // The defect that check guards against: the edit written before resolving.
+    const faulty = try h.join(a, &.{ cx.work, "edit_faulty" });
+    try h.writeFile(try h.join(a, &.{ faulty, "mopm.toml" }), try std.mem.replaceOwned(u8, a, before, "legacy = \"1\"\n", "legacy = \"1\"\nhttp_core = \"3\"\n"));
+    changed = try changedFiles(cx, faulty, before, null);
     cx.ok("can fail: the unchanged check refuses mopm.toml written before resolving", std.mem.eql(u8, changed, "mopm.toml changed"), if (changed.len == 0) "accepted" else changed);
 
     // A path dependency: { path = "<dir>" }, locked with source path.

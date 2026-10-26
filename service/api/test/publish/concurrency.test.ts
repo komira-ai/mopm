@@ -34,7 +34,7 @@ class GatedStore extends MemoryStore {
 
 /**
  * How SQS FIFO delivers: with `serialize`, messages of one group run one after another, in order; groups run side by
- * side. Without it every message runs at once (the mutant: a queue with no group lock, or a standard queue).
+ * side. Without it every message runs at once (the defect: a queue with no group lock, or a standard queue).
  */
 class Consumer {
   private tails = new Map<string, Promise<unknown>>();
@@ -90,7 +90,7 @@ describe('two packages published into one subdir at the same time', () => {
 
   // The can-fail proof for the test above: take the group lock away and the very same scenario loses a package.
   // Job B (which sees both) finishes first, then the stale job A overwrites it with a file that lacks pb.
-  test('MUTANT: with no group lock the same interleaving loses a package, so the test above can fail', async () => {
+  test('VARIANT: with no group lock the same interleaving loses a package, so the test above can fail', async () => {
     const { files, p1, p2 } = await twoPackagesOneSubdir(false);
     expect(files).toEqual([p1.filename]);
     expect(files).not.toContain(p2.filename);

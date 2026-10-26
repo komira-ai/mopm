@@ -127,14 +127,14 @@ describe('the area stylesheets', () => {
   const areas = ['home.css', 'package.css', 'search.css', 'docs.css'].map((f) => [f, readFileSync(join(__dirname, '..', 'static', f), 'utf8')] as const);
   const defined = new Set([...css.matchAll(/(--[a-z0-9-]+):/g)].map((m) => m[1]));
 
-  // Mutant: a misspelt token in an area sheet (var(--fg-mutd)) silently falls back to the inherited colour.
+  // Defect caught: a misspelt token in an area sheet (var(--fg-mutd)) silently falls back to the inherited colour.
   test.each(areas)('%s uses only custom properties site.css defines', (_f, text) => {
     const used = [...text.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]);
     expect(used.length).toBeGreaterThan(0);
     expect(used.filter((v) => !defined.has(v))).toEqual([]);
   });
 
-  // Mutant: an area sheet with its own :root or dark block, which the dark-token test above would never see.
+  // Defect caught: an area sheet with its own :root or dark block, which the dark-token test above would never see.
   test.each(areas)('%s defines no tokens and no colour scheme of its own', (_f, text) => {
     expect(text).not.toMatch(/:root|prefers-color-scheme|--[a-z0-9-]+\s*:/);
   });
@@ -147,7 +147,7 @@ describe('the area stylesheets', () => {
 
 // The app shell paints the header (with its search) before it knows the view; a sheet it links that hides the header
 // search or nav once a view mounts moves the whole page up after the network answer, and drops a reader's focus or typing
-// in the header box. Mutant: `body:has(.search-band) .site-search { display: none; }` back in search.css.
+// in the header box. Defect caught: `body:has(.search-band) .site-search { display: none; }` back in search.css.
 test('the app shell links the package and search sheets', () => {
   expect([...AREA_STYLESHEETS.app].sort()).toEqual(['package.css', 'search.css']);
 });
@@ -157,7 +157,7 @@ test.each([...AREA_STYLESHEETS.app])('%s (linked by the app shell) never hides t
 });
 
 // Every docs page has an on-this-page list, at every width: below 76rem it is a block above the article, not hidden.
-// Mutant: `.toc { display: none; }` back, shown only in the wide media query.
+// Defect caught: `.toc { display: none; }` back, shown only in the wide media query.
 test('the docs on-this-page list is shown at every width', () => {
   const docsCss = readFileSync(join(__dirname, '..', 'static', 'docs.css'), 'utf8');
   expect(rule('.toc', docsCss)).not.toMatch(/display:\s*none/);
@@ -165,7 +165,7 @@ test('the docs on-this-page list is shown at every width', () => {
 });
 
 // The shared crumb rule serves the docs pages too, whose current item is a page title in prose type; monospace belongs
-// to package and version names only. Mutant: font-family: var(--mono) back on the shared .crumb [aria-current].
+// to package and version names only. Defect caught: font-family: var(--mono) back on the shared .crumb [aria-current].
 test('only the package head sets its crumb\'s current item in monospace', () => {
   const pkgCss = readFileSync(join(__dirname, '..', 'static', 'package.css'), 'utf8');
   expect(rule('.crumb [aria-current]')).not.toContain('font-family');
@@ -177,7 +177,7 @@ test('only the package head sets its crumb\'s current item in monospace', () => 
 // scrolls its target to the viewport top, under the header, unless the target has a scroll margin at least the header's
 // height. Every one of those targets is an element with an id, so one shared [id] rule covers them all, on every page
 // (the 404 page loads site.css alone). The header measured in headless Chrome: 104px tall from 320px to below 48rem (two
-// rows: brand and nav, then the search; 106px from 25rem), 65px from 48rem. Mutants: the [id] rule removed (a heading
+// rows: brand and nav, then the search; 106px from 25rem), 65px from 48rem. Defect caught: the [id] rule removed (a heading
 // lands at top 0, hidden); the token below the narrow header (a docs heading's top 18px hidden at 88px); an area sheet
 // with its own fixed scroll-margin-top that beats [id] on specificity (docs.css's old `.doc h2 { scroll-margin-top: 88px }`).
 describe('anchor targets clear the sticky header', () => {
@@ -199,7 +199,7 @@ describe('anchor targets clear the sticky header', () => {
 
   // The 106px holds only while brand and nav share the first row. Untightened they need 353px of content, so they wrap
   // (a third row, 151px, measured at 360 and 375) below a 385px viewport; the max-width rule tightens them to 286px,
-  // which fits the 288px content box of a 320px viewport. Mutants: the tightening rule removed, or its breakpoint set
+  // which fits the 288px content box of a 320px viewport. Defect caught: the tightening rule removed, or its breakpoint set
   // under 385px (24rem = 384px wraps at 384), or above the wide breakpoint; the nav padding or gap put back.
   test('below the width where brand and nav would wrap, a rule tightens them onto one row', () => {
     const m = /@media \(max-width: ([\d.]+)rem\) \{\n  \.bar \{ column-gap: 8px; \}([\s\S]*?)\n\}/.exec(css);

@@ -98,14 +98,14 @@ describe.each(ALL_PAGES)('%s', (page) => {
       expect(b).not.toContain('<button');
     }
     if (page === 'index.html') expect(boxes.length).toBeGreaterThanOrEqual(3);
-    // Every docs code block is a copy box (every published doc has code). Mutant: the renderer's docs option off.
+    // Every docs code block is a copy box (every published doc has code). Defect caught: the renderer's docs option off.
     if (DOC_HTML.includes(page)) {
       expect(boxes.length).toBeGreaterThanOrEqual(1);
       expect(boxes.length).toBe(html.split('<pre ').length - 1);
     }
   });
 
-  // Each page links the shared sheet first, then only its own area's (layout.ts AREA_STYLESHEETS). Mutants: the docs
+  // Each page links the shared sheet first, then only its own area's (layout.ts AREA_STYLESHEETS). Defect caught: the docs
   // pages loading home.css; the app shell dropping search.css (the search view unstyled); site.css not first.
   test('the shared stylesheet first, then only the area stylesheets this page uses', () => {
     const want: Record<string, string[]> = {
@@ -189,7 +189,7 @@ describe('the docs pages', () => {
     expect(read('index.html')).not.toContain('aria-current');
   });
 
-  // The docs nav lists the index and every published doc, each by its title, and marks the page shown. Mutants: a doc
+  // The docs nav lists the index and every published doc, each by its title, and marks the page shown. Defect caught: a doc
   // left out of the nav; aria-current on the wrong entry, or on none; a link reading as its slug ('mopm-toml') instead
   // of the doc's title, or the index entry not reading 'Overview'.
   test.each([
@@ -219,7 +219,7 @@ describe('the docs pages', () => {
   });
 
   // The on-this-page list holds the page's h2 and h3 headings, in order, each linked to its own id and reading as the
-  // heading reads. Mutants: a link to an id the page does not have (a prefix lost); h4 headings listed; the list out of
+  // heading reads. Defect caught: a link to an id the page does not have (a prefix lost); h4 headings listed; the list out of
   // order; a link reading as the id ('doc-retries-and-flaky') instead of the heading's text.
   test.each(DOC_HTML)('%s: the on-this-page list is the h2 and h3 headings, in order, by their text', (page) => {
     const html = read(page);
@@ -232,7 +232,7 @@ describe('the docs pages', () => {
   });
 
   // Below the widest layout the on-this-page list is not a side column but a block between the breadcrumb and the
-  // article, so a phone reader gets it too (docs.css shows it at every width). Mutant: the toc after the article (it
+  // article, so a phone reader gets it too (docs.css shows it at every width). Defect caught: the toc after the article (it
   // would sit under a long page on a phone).
   test.each(DOC_HTML)('%s: the on-this-page list comes after the breadcrumb and before the article', (page) => {
     const html = read(page);
@@ -244,7 +244,7 @@ describe('the docs pages', () => {
     expect(article).toBeGreaterThan(toc);
   });
 
-  // Each heading of a doc is a link to its own anchor, so a reader can copy a section's address. Mutant: the anchor
+  // Each heading of a doc is a link to its own anchor, so a reader can copy a section's address. Defect caught: the anchor
   // pointing at another id; a heading holding a link getting an anchor around it (a link in a link).
   test.each(DOC_HTML)('%s: every heading links to its own anchor', (page) => {
     const html = read(page);
@@ -262,7 +262,7 @@ describe('the docs pages', () => {
     expect(index).toContain('mopm test finds the tests of a Mojo package, builds each test file once, and runs every test in a process of its own under a supervisor.');
     expect(index).not.toContain('test_cmd.zig');
     expect(index).toContain('mopm.toml sits at the root of a package.');
-    // The two new docs, by their first sentences. Mutant: a doc whose summary is not its first paragraph.
+    // The two new docs, by their first sentences. Defect caught: a doc whose summary is not its first paragraph.
     expect(index).toContain('This is part one of the mopm documentation: the reasons and the design.');
     expect(index).toContain('This is part two of the mopm documentation: how to install it and use it.');
     // The HOW part continues with the reference and the examples, by their first sentences.
@@ -270,7 +270,7 @@ describe('the docs pages', () => {
     expect(index).toContain('This page walks through six complete examples, from a library with a test to a package that pins its compiler, and every file in them is quoted from the examples/ directory of the repository.');
   });
 
-  // The two parts of the plan: WHY and design first, then HOW. Mutant: the docs in another order, or the second part
+  // The two parts of the plan: WHY and design first, then HOW. Defect caught: the docs in another order, or the second part
   // not linking back to the first (and the first forward).
   test('the why page links forward to getting started and the getting-started page back to why, on the site', () => {
     expect(read('docs/why/index.html')).toContain('<a href="/docs/getting-started/">getting-started.md</a>');
@@ -279,7 +279,7 @@ describe('the docs pages', () => {
   });
 
   // Every thing a doc says is not built is marked planned, as the home page marks its planned commands: the two new docs
-  // name each planned command of src/cli/main.zig as planned and none as working. Mutant: a planned command shown in a
+  // name each planned command of src/cli/main.zig as planned and none as working. Defect caught: a planned command shown in a
   // working example.
   test.each(['docs/why-and-design.md', 'docs/getting-started.md'])('%s never shows a planned command as one that works', (source) => {
     const md = readFileSync(join(REPO_ROOT, source), 'utf8');
@@ -291,7 +291,7 @@ describe('the docs pages', () => {
 
 test('404.html and app.html: the 404 is not indexed; the app shell tells a reader without scripts what to do', () => {
   expect(read('404.html')).toContain('<meta name="robots" content="noindex">');
-  // On-brand and a way on: a search box with its own id and name, Home, the package list and the docs. Mutant: the
+  // On-brand and a way on: a search box with its own id and name, Home, the package list and the docs. Defect caught: the
   // search box or the way-on row dropped.
   expect(read('404.html')).toContain('<form class="lost-search" role="search" action="/search" method="get" aria-label="Search the registry"><label for="lost-q" class="visually-hidden">');
   expect(read('404.html')).toContain('<ul class="way-on"><li><a href="/">Home</a></li><li><a href="/search">Browse packages</a></li><li><a href="/docs/">Docs</a></li></ul>');
@@ -394,7 +394,7 @@ describe('the home page says what the repository says', () => {
     }
   });
 
-  // The commands that work today are the ones main.zig dispatches, both ways. Mutants: a command added to main.zig's
+  // The commands that work today are the ones main.zig dispatches, both ways. Defect caught: a command added to main.zig's
   // dispatch (or removed from its usage) without the README and this page following.
   test("the working commands are the ones main.zig's usage lists and its dispatch handles", () => {
     const zig = readFileSync(join(REPO_ROOT, 'src', 'cli', 'main.zig'), 'utf8');
@@ -411,14 +411,14 @@ describe('the home page says what the repository says', () => {
 
   // The install story. Each fact is held to the file that makes it true, not to a second copy of the words:
   // site/static/install.sh (the command, the targets, the asset names, the verification commands), README.md (the
-  // command again) and VERSION (the series). Mutants are named at each test.
+  // command again) and VERSION (the series). Variants are named at each test.
   describe('the install story', () => {
     const installSh = readFileSync(join(REPO_ROOT, 'site', 'static', 'install.sh'), 'utf8');
     const installHeader = installSh.split('\n').filter((l) => l.startsWith('#'));
     const readmeInstall = readme.slice(readme.indexOf('\n## Install'), readme.indexOf('\n## Goals'));
     const oneLine = (s: string) => s.replace(/\\\n/g, ' ').replace(/\s+/g, ' ').trim();
 
-    // Mutant: the page's command with another host, another flag, or no `| sh`; README.md and install.sh's header
+    // Defect caught: the page's command with another host, another flag, or no `| sh`; README.md and install.sh's header
     // changed without the page.
     test("the install command is README.md's and install.sh's, shown first in a copy box", () => {
       const home = read('index.html');
@@ -433,7 +433,7 @@ describe('the home page says what the repository says', () => {
     });
 
     // The command fetches https://mopm.dev/install.sh: the build must serve that file, byte for byte.
-    // Mutant: the installer not copied to dist/, or copied changed.
+    // Defect caught: the installer not copied to dist/, or copied changed.
     test('the build serves /install.sh as the script in site/static', () => {
       expect(existsSync(join(f.outDir, 'install.sh'))).toBe(true);
       expect(read('install.sh')).toBe(installSh);
@@ -441,7 +441,7 @@ describe('the home page says what the repository says', () => {
       expect(INSTALL_COMMAND).toContain('https://mopm.dev/install.sh');
     });
 
-    // Mutant: a target dropped from or added to the page; the order changed; install.sh gaining a target the page lacks.
+    // Defect caught: a target dropped from or added to the page; the order changed; install.sh gaining a target the page lacks.
     test("the release targets are install.sh's, in its order, and the page and README.md name exactly them", () => {
       const fromScript = [...installSh.matchAll(/\btarget=([a-z0-9]+-[a-z0-9_]+) ;;/g)].map((m) => m[1]);
       expect([...new Set(fromScript)]).toEqual(TARGETS);
@@ -451,7 +451,7 @@ describe('the home page says what the repository says', () => {
       expect(flatReadme).toContain(`for ${list}, and a \`SHA256SUMS\` file`);
     });
 
-    // Mutant: the page naming the asset another way (mopm_<version>..., a .zip, no version); install.sh renaming the file.
+    // Defect caught: the page naming the asset another way (mopm_<version>..., a .zip, no version); install.sh renaming the file.
     test('the asset names are install.sh\'s: mopm-<version>-<target>.tar.gz, SHA256SUMS and a .sigstore.json bundle per file', () => {
       const name = /\bname=(mopm-\$version-\$target)\n/.exec(installSh)?.[1];
       expect(name).toBeDefined();
@@ -466,7 +466,7 @@ describe('the home page says what the repository says', () => {
     });
 
     // The page shows the series, never a patch number: a release is cut on every merge, so a patch number written
-    // here would be wrong at the next one. Mutant: 'Versions are 0.0.2'; VERSION bumped (0.1) with the page not.
+    // here would be wrong at the next one. Defect caught: 'Versions are 0.0.2'; VERSION bumped (0.1) with the page not.
     test("the version shown is VERSION's series, with no patch number anywhere on the page", () => {
       const series = readFileSync(join(REPO_ROOT, 'VERSION'), 'utf8').trim();
       expect(series).toMatch(/^\d+\.\d+$/);
@@ -477,7 +477,7 @@ describe('the home page says what the repository says', () => {
       expect(textOf(home).replace(/Zig 0\.12\.0/g, '')).not.toMatch(/\bv?\d+\.\d+\.\d+\b/);
     });
 
-    // Mutant: a changed identity, issuer or workflow (a command that verifies nothing, or fails every time); the
+    // Defect caught: a changed identity, issuer or workflow (a command that verifies nothing, or fails every time); the
     // commands written differently from install.sh's header, which the release notes repeat.
     test("the verification commands are install.sh's header: the attestation and the cosign signature", () => {
       const start = installHeader.findIndex((l) => /^#\s+gh attestation verify F\b/.test(l));
@@ -496,7 +496,7 @@ describe('the home page says what the repository says', () => {
     });
 
     // No Homebrew tap or apt repository exists: the page says planned, in a plain line, and shows no command for either.
-    // Mutant: `brew install mopm` or `apt install mopm` on the page; the planned tags dropped.
+    // Defect caught: `brew install mopm` or `apt install mopm` on the page; the planned tags dropped.
     test('Homebrew and apt are marked planned and never shown as a command', () => {
       const home = read('index.html');
       expect(textOf(byId(home, 'packaging-planned'))).toBe('Homebrew: planned · apt: planned');
@@ -506,7 +506,7 @@ describe('the home page says what the repository says', () => {
       expect(home).not.toContain('class="seg');
     });
 
-    // The audit's defect: the page said there were no release binaries and no installer. Mutant: that copy back.
+    // The audit's defect: the page said there were no release binaries and no installer. Defect caught: that copy back.
     test('the old no-installer copy is gone, and build from source is still shown after the install', () => {
       const home = read('index.html');
       expect(textOf(home)).not.toMatch(/no release binaries|no one-line installer|One-line installer: planned/);

@@ -231,7 +231,7 @@ export class FakeDocClient {
 }
 
 /**
- * The mutant for the race proof: create-once done as read-then-write, with no condition. It looks
+ * The variant for the race proof: create-once done as read-then-write, with no condition. It looks
  * right in a single-threaded test and loses the race.
  */
 export class NaiveCreate {

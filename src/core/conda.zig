@@ -1172,7 +1172,7 @@ fn nativeInput(a: Allocator, subdir: []const u8, archive: []const u8) !Input {
 // (`lib/lib<stem>.a`, named by `static_file` from `lib/mojo/`); metadata that declares a library with the wrong key,
 // kind or path; `about.json` in the package tar (the registry refuses an info/ file there); a native id written
 // into `depends` (the registry refuses one that is not allow-listed); paths.json that omits the archive (pixi
-// cannot link a package whose file it does not list). Mutants planted: the archive left out of pkg_files; written
+// cannot link a package whose file it does not list). Defect caught: the archive left out of pkg_files; written
 // to lib/mojo/; about.json appended to pkg_files; the id appended to `depends`.
 test "a package with a static archive: where each file is, and what the metadata says" {
     var st = testArena();
@@ -1221,7 +1221,7 @@ test "a package with a static archive: where each file is, and what the metadata
 
 // Defect it catches: per-platform facts in `.mopm.json`, so that the files of one version carry different metadata and
 // the registry (which compares each file's metadata hash with the version's one `manifest_sha256`) rejects the
-// second platform. Mutant planted: the archive's size written into `static_file`.
+// second platform. Defect caught: the archive's size written into `static_file`.
 test "the metadata is the same bytes in every subdir; the archive, about.json and the file are not" {
     var st = testArena();
     defer st.deinit();
@@ -1272,7 +1272,7 @@ test "a package with static archives is the same bytes however the natives and t
 
 // Defects it catches: an archive the registry would refuse (or worse, would accept and a linker choke on) leaving
 // the packer: a file that is not an `ar` archive, a name that is not `lib<name>.a`, a need that is not a library name.
-// Mutants planted: the magic check dropped; staticSoname accepts any name ending `.a`; validNeed accepts any text.
+// Defect caught: the magic check dropped; staticSoname accepts any name ending `.a`; validNeed accepts any text.
 test "pack refuses a native library that is not a static archive named lib<name>.a, or a need that is not a library name" {
     var st = testArena();
     defer st.deinit();

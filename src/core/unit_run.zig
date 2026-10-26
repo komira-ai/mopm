@@ -616,7 +616,7 @@ fn buildLibAt(a: Allocator, child: []const u8, stage_rel: []const u8) ![]const u
 
 // Defect it catches: `--source-root` naming the parent of the package, not the package. The wrapper then
 // replaces no argument, the compiler is given the absolute staged path and the `.mojoc` records it, so
-// one package staged at two paths is two different files. Mutant planted: argv's `root` is `stage_src`.
+// one package staged at two paths is two different files. Defect caught: argv's `root` is `stage_src`.
 test "a library's .mojoc is the same bytes when it is staged at two different paths" {
     const child_z = std.posix.getenv("MOPM_TEST_CHILD") orelse return error.SkipZigTest;
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -655,7 +655,7 @@ fn testEnvOf(a: Allocator, child: []const u8, with_lib: bool) ![]const u8 {
 }
 
 // Defect it catches: the test binary run with an empty environment cannot load
-// libKGENCompilerRTShared.so. Mutant planted: run passes null for the library path.
+// libKGENCompilerRTShared.so. Defect caught: run passes null for the library path.
 test "a unit test runs with LD_LIBRARY_PATH=<toolchain>/lib and nothing else; no lib dir, no variable" {
     const child_z = std.posix.getenv("MOPM_TEST_CHILD") orelse return error.SkipZigTest;
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -667,7 +667,7 @@ test "a unit test runs with LD_LIBRARY_PATH=<toolchain>/lib and nothing else; no
 
 // Defects it catches: the archives sorted by name on the way to the compiler (a library before the one it needs, so
 // the linker drops the symbols the first leaves undefined); an archive copied beside the binary as if it were loaded
-// at run time. Mutants planted: argv sorts `u.natives` by soname; stage drops the `.static` skip.
+// at run time. Defect caught: argv sorts `u.natives` by soname; stage drops the `.static` skip.
 test "a static archive is a linker input in the order the unit gives, and is not copied beside the binary" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();

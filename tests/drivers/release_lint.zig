@@ -1,6 +1,6 @@
 //! What .github/workflows/release.yml must keep: the release pipeline's scopes and gates as lint rules.
 //! `problems` reads the workflow and reports each way it differs; the real file must report none
-//! (workflow_lint.zig runs it over release.yml, //:workflows), and release_lint_test.zig plants each
+//! (workflow_lint.zig runs it over release.yml, //:workflows), and release_lint_test.zig injects each
 //! defect on it and requires the matching message. `userBetaProblems` does the same for
 //! release-beta-user.yml, the matrix of the user-level beta.
 //!

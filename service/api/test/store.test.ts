@@ -255,7 +255,7 @@ describe('create-once under concurrency', () => {
 
   // Can-fail proof: the same race against a read-then-write create produces two winners, so the
   // "exactly one wins" assertions above can go red.
-  test('mutant: a read-then-write create lets both racers win', async () => {
+  test('defect: a read-then-write create lets both racers win', async () => {
     const naive = new NaiveCreate(new FakeDocClient());
     const results = await Promise.all([naive.createVersion(rec({ name: 'p', version: '1.0.0' })), naive.createVersion(rec({ name: 'p', version: '1.0.0' }))]);
     expect(results).toEqual(['created', 'created']);
@@ -353,15 +353,15 @@ describe('DynamoDB search index', () => {
     expect(await s.searchPackages('', undefined, 10)).toEqual([]);
   });
 
-  // Can-fail proofs for the assertions above: each mutant is a hand-built Query and must not match the adapter's.
-  test('mutant: a Query without begins_with returns names outside the prefix', async () => {
+  // Can-fail proofs for the assertions above: each variant is a hand-built Query and must not match the adapter's.
+  test('defect: a Query without begins_with returns names outside the prefix', async () => {
     const { doc } = await seeded(10);
     const r = await doc.send(
       new QueryCommand({ TableName: 'mopm-t-packages', IndexName: INDEX, KeyConditionExpression: '#b = :b', ExpressionAttributeNames: { '#b': 'search_bucket' }, ExpressionAttributeValues: { ':b': 'all' }, Limit: 10 }),
     );
     expect(r.Items.map((i: any) => i.name)).toContain('zlib');
   });
-  test('mutant: begins_with with an empty prefix, a key on the wrong attribute, a starting key outside the range, all refused by the fake', async () => {
+  test('defect: begins_with with an empty prefix, a key on the wrong attribute, a starting key outside the range, all refused by the fake', async () => {
     const { doc } = await seeded(10);
     const q = (over: object) =>
       doc.send(
@@ -375,7 +375,7 @@ describe('DynamoDB search index', () => {
     await expect(q({ ExpressionAttributeNames: { '#b': 'name', '#n': 'name' } })).rejects.toThrow(/partition key/);
     await expect(q({ ExclusiveStartKey: { search_bucket: 'all', name: 'a' } })).rejects.toThrow(/outside the query/);
   });
-  test('mutant: the projection is honoured (repository and license are not in an index item)', async () => {
+  test('defect: the projection is honoured (repository and license are not in an index item)', async () => {
     const { doc } = await seeded(10);
     const r = await doc.send(
       new QueryCommand({ TableName: 'mopm-t-packages', IndexName: INDEX, KeyConditionExpression: '#b = :b', ExpressionAttributeNames: { '#b': 'search_bucket' }, ExpressionAttributeValues: { ':b': 'all' }, Limit: 1 }),

@@ -1,6 +1,6 @@
 //! //:hygiene: the repository hygiene scan (tests/drivers/hygiene.zig),
 //! run by Buck2 over every file of the repository (the target's `data`), and
-//! shown able to fail: one planted sample per rule must be flagged, and a near
+//! shown able to fail: one faulty sample per rule must be flagged, and a near
 //! miss of each must not be.
 //!
 //! Samples hold key-shaped values built from pieces at run time: hygiene scans
@@ -222,7 +222,7 @@ test "id-token and environments are for the deploy workflows only" {
 }
 
 test "the pull-request tier: unit on a pull request, beta only after the merge" {
-    // Mutant: the release dry run is back (release-check.yml on pull_request).
+    // Defect caught: the release dry run is back (release-check.yml on pull_request).
     try expectStructure("release-check.yml", header ++
         \\on:
         \\  pull_request:
@@ -233,13 +233,13 @@ test "the pull-request tier: unit on a pull request, beta only after the merge" 
         \\    runs-on: x
         \\
     , &.{"a pull request runs build and unit tests only"});
-    // Mutant: an e2e workflow gains a pull_request trigger.
+    // Defect caught: an e2e workflow gains a pull_request trigger.
     try expectStructure("e2e-extra.yml", header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: x\n", &.{"a pull request runs build and unit tests only"});
     // The same trigger is fine in a unit workflow (lint.yml, farm.yml and ci.yml have rules of their own).
     for ([_][]const u8{"service-ci.yml"}) |ok| {
         try expectStructure(ok, header ++ "on: [pull_request]\njobs:\n  j:\n    runs-on: x\n", &.{});
     }
-    // Mutant: a guard with a clause that lets the beta job run on a pull request (the whole `if:` is compared, not a substring).
+    // Defect caught: a guard with a clause that lets the beta job run on a pull request (the whole `if:` is compared, not a substring).
     const guard_head = header ++ "on: [pull_request, push]\njobs:\n  test:\n    runs-on: x\n  registry-build:\n    runs-on: x\n  pack-conformance:\n    runs-on: x\n    if: ";
     try expectStructure("ci.yml", guard_head ++ "github.event_name != 'pull_request' || true\n", &.{"job pack-conformance is not a unit job"});
     try expectStructure("ci.yml", guard_head ++ "github.event_name != 'pull_request' || github.ref == 'refs/heads/main'\n", &.{"job pack-conformance is not a unit job"});
@@ -251,14 +251,14 @@ test "the pull-request tier: unit on a pull request, beta only after the merge" 
     const lint_step = "      - run: zig test tests/drivers/release_lint_test.zig\n";
     try expectStructure("lint.yml", lint_head ++ lint_step, &.{});
     try expectStructure("lint.yml", lint_head ++ "      - if: ${{ !cancelled() }}\n        run: zig test tests/drivers/release_lint_test.zig\n", &.{});
-    // Mutants: the step is gone, conditional on something else, may fail, is in a job that may fail, or the trigger is gone.
+    // Defect caught: the step is gone, conditional on something else, may fail, is in a job that may fail, or the trigger is gone.
     const no_release_lint = "release_lint_test.zig` unconditionally";
     try expectStructure("lint.yml", lint_head ++ "      - run: zig test tests/drivers/hygiene_test.zig\n", &.{no_release_lint});
     try expectStructure("lint.yml", lint_head ++ "      - if: github.event_name == 'push'\n        run: zig test tests/drivers/release_lint_test.zig\n", &.{no_release_lint});
     try expectStructure("lint.yml", lint_head ++ "      - continue-on-error: true\n        run: zig test tests/drivers/release_lint_test.zig\n", &.{no_release_lint});
     try expectStructure("lint.yml", header ++ "on: [pull_request]\njobs:\n  lint:\n    runs-on: x\n    continue-on-error: true\n    steps:\n" ++ lint_step, &.{no_release_lint});
     try expectStructure("lint.yml", header ++ "on: [push]\njobs:\n  lint:\n    runs-on: x\n    steps:\n" ++ lint_step, &.{"the lints must run on pull_request"});
-    // Mutant: a beta job of ci.yml loses its guard, or is new and unguarded.
+    // Defect caught: a beta job of ci.yml loses its guard, or is new and unguarded.
     try expectStructure("ci.yml", header ++
         \\on: [pull_request, push]
         \\jobs:
@@ -316,15 +316,15 @@ test "autopin-compute.yml: --set has a line for every package-lock.json, and onl
     var out = c.Out.init(a);
     try hyg.autopinSetsProblems(a, wf, &tree, &out);
     try c.expectLines("matching", out.items, &.{});
-    // Mutant: a package with a lock and no --set (its Dependabot pull requests would be left to a person).
+    // Defect caught: a package with a lock and no --set (its Dependabot pull requests would be left to a person).
     out = c.Out.init(a);
     try hyg.autopinSetsProblems(a, wf, &(tree ++ [_][]const u8{"service/new/package-lock.json"}), &out);
     try c.expectLines("unlisted", out.items, &.{"no --set for service/new"});
-    // Mutant: a --set for a directory the tree does not have (every compute run would fail).
+    // Defect caught: a --set for a directory the tree does not have (every compute run would fail).
     out = c.Out.init(a);
     try hyg.autopinSetsProblems(a, wf, tree[1..], &out);
     try c.expectLines("gone", out.items, &.{"--set names site, which has no package-lock.json"});
-    // Mutant: an argument that is not DIR=KIND, and no --set at all.
+    // Defect caught: an argument that is not DIR=KIND, and no --set at all.
     out = c.Out.init(a);
     try hyg.autopinSetsProblems(a, "run: x --set site\n", &([_][]const u8{"site/package-lock.json"} ++ manual), &out);
     try c.expectLines("malformed", out.items, &.{ "--set site is not DIR=KIND", "no `--set DIR=KIND` argument", "no --set for site" });
@@ -336,15 +336,15 @@ test "autopin-compute.yml: --set has a line for every package-lock.json, and onl
     try hyg.autopinSetsProblems(a, "run: x --set .=pins-lock\n", &([_][]const u8{"package-lock.json"} ++ manual), &out);
     try c.expectLines("root", out.items, &.{});
     // The infra packages are left to a person (their locks bundle packages the tool refuses): not in SETS, and the lock must exist.
-    // Mutant: one of them is in SETS (pin-verify would be red on every pull request).
+    // Defect caught: one of them is in SETS (pin-verify would be red on every pull request).
     out = c.Out.init(a);
     try hyg.autopinSetsProblems(a, wf ++ "            x --set service/infra/dns=pins-lock\n", &tree, &out);
     try c.expectLines("manual in SETS", out.items, &.{"--set names service/infra/dns, which is left to a person on purpose"});
-    // Mutant: one of them is gone from the tree (the list would rot).
+    // Defect caught: one of them is gone from the tree (the list would rot).
     out = c.Out.init(a);
     try hyg.autopinSetsProblems(a, wf, tree[0..tree.len - 1], &out);
     try c.expectLines("manual gone", out.items, &.{"autopin_manual names service/infra/stacks, which has no package-lock.json"});
-    // Mutant: a new infra package is neither in SETS nor in the list.
+    // Defect caught: a new infra package is neither in SETS nor in the list.
     out = c.Out.init(a);
     try hyg.autopinSetsProblems(a, wf, &(tree ++ [_][]const u8{"service/infra/new/package-lock.json"}), &out);
     try c.expectLines("new infra", out.items, &.{"no --set for service/infra/new"});
@@ -601,9 +601,9 @@ test "release.yml may name the release bot's key exactly three times (tag, tap, 
         \\
     ;
     try expectStructure("release.yml", release, &.{});
-    // Mutant: a fourth reference to the key.
+    // Defect caught: a fourth reference to the key.
     try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "        env:\n          K: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}\n" }), &.{"must not use secrets or an environment"});
-    // Mutants: the key under another name (the jobs then read nothing, so their environment is a finding too); another
+    // Defect caught: the key under another name (the jobs then read nothing, so their environment is a finding too); another
     // secret beside the allowed one.
     try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, "RELEASE_BOT_PRIVATE_KEY", "OTHER_KEY"), &.{ "must not use secrets or an environment", "job tag: must not use secrets or an environment", "job tap: must not use secrets or an environment", "job bump: must not use secrets or an environment" });
     try expectStructure("release.yml", try std.mem.concat(a, u8, &.{ release, "        env:\n          X: ${{ secrets.ANOTHER }}\n" }), &.{"must not use secrets or an environment"});
@@ -658,7 +658,7 @@ test "release.yml: the signing key is read only in the apt-signing environment a
         \\
     ;
     try expectStructure("release.yml", release, &.{});
-    // Mutants: more references than the three apt-index attempts make (the key three times, the passphrase three times, the fingerprint six).
+    // Defect caught: more references than the three apt-index attempts make (the key three times, the passphrase three times, the fingerprint six).
     const extra = "      - env:\n          K: ${{ secrets.APT_GPG_PRIVATE_KEY }}\n          L: ${{ secrets.APT_GPG_PRIVATE_KEY }}\n          M: ${{ secrets.APT_GPG_PRIVATE_KEY }}\n        run: 'true'\n";
     const publish_job = "  apt-deploy-write:\n";
     try expectStructure("release.yml", try std.mem.replaceOwned(u8, a, release, publish_job, extra ++ publish_job), &.{"must not use secrets or an environment"});
@@ -699,11 +699,11 @@ test "kpin-update.yml: KPIN_SETS has a line for every pins.lock.bzl, and only fo
     var out = c.Out.init(a);
     try hyg.kpinSetsProblems(a, wf, &tree, &out);
     try c.expectLines("matching", out.items, &.{});
-    // Mutant: a lock in the tree with no line (what turned the 19 October run red).
+    // Defect caught: a lock in the tree with no line (what turned the 19 October run red).
     out = c.Out.init(a);
     try hyg.kpinSetsProblems(a, wf, &(tree ++ [_][]const u8{"service/new/pins.lock.bzl"}), &out);
     try c.expectLines("unlisted", out.items, &.{"KPIN_SETS has no line for service/new/pins.lock.bzl"});
-    // Mutant: a line for a lock the tree does not have.
+    // Defect caught: a line for a lock the tree does not have.
     out = c.Out.init(a);
     try hyg.kpinSetsProblems(a, wf, tree[1..], &out);
     try c.expectLines("gone", out.items, &.{"KPIN_SETS names site/pins.lock.bzl, which is not in the repository"});
@@ -752,7 +752,7 @@ test "farm.yml's exclusion list is exactly the targets BUCK builds with _MOJO_TO
     try c.expectLines("parsed", got, &.{ "one", "two" });
     const farm_ok = "          ./buck2 uquery '//... - set(//:one //:two)' > \"$RUNNER_TEMP/targets\"\n";
     try c.expectLines("equal", try farmProblems(a, buck, farm_ok), &.{});
-    // Mutants: a target dropped from the list, one added to it, and a list that is gone.
+    // Defect caught: a target dropped from the list, one added to it, and a list that is gone.
     try c.expectLines("dropped", try farmProblems(a, buck, "x '//... - set(//:one)' y\n"), &.{"//:two is built with _MOJO_TOOLS in BUCK (a beta target) but is not excluded"});
     try c.expectLines("added", try farmProblems(a, buck, "x '//... - set(//:one //:two //:five)' y\n"), &.{"//:five is excluded from the pull request build but BUCK does not build it with _MOJO_TOOLS"});
     try c.expectLines("no list", try farmProblems(a, buck, "x ./buck2 build //...\n"), &.{"no `//... - set(` exclusion list"});
@@ -762,13 +762,13 @@ test "farm.yml's exclusion list is exactly the targets BUCK builds with _MOJO_TO
 /// `text` with `from` replaced by `to` (it must occur once).
 fn replaced(a: Allocator, haystack: []const u8, from: []const u8, to: []const u8) ![]u8 {
     const at = std.mem.indexOf(u8, haystack, from) orelse {
-        std.debug.print("the mutant does not apply: {s} is not in the file\n", .{from});
+        std.debug.print("the variant does not apply: {s} is not in the file\n", .{from});
         return error.TestUnexpectedResult;
     };
     return std.mem.concat(a, u8, &.{ haystack[0..at], to, haystack[at + from.len ..] });
 }
 
-test "the real farm.yml and BUCK: a planted beta target or a dropped exclusion goes red" {
+test "the real farm.yml and BUCK: a faulty beta target or a dropped exclusion goes red" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -778,12 +778,12 @@ test "the real farm.yml and BUCK: a planted beta target or a dropped exclusion g
     try c.expectLines("real", try farmProblems(a, buck, farm), &.{});
     // The eleven beta targets are the ones the farm excludes today.
     try std.testing.expectEqual(@as(usize, 11),(try hyg.mojoToolTargets(a, buck)).len);
-    // Mutant: a new Mojo test target in BUCK that farm.yml does not exclude.
-    const planted_buck = try replaced(a, buck, "zig_test(  # buck-only: komira's Mojo toolchain works from this cell\n    name = \"mojo_probe\",", "zig_test(\n    name = \"planted\",\n    exec_tools = _MOJO_TOOLS,\n)\nzig_test(  # buck-only: komira's Mojo toolchain works from this cell\n    name = \"mojo_probe\",");
-    try c.expectLines("planted target", try farmProblems(a, planted_buck, farm), &.{"//:planted is built with _MOJO_TOOLS in BUCK"});
-    // Mutant: farm.yml stops excluding one.
+    // Defect caught: a new Mojo test target in BUCK that farm.yml does not exclude.
+    const faulty_buck = try replaced(a, buck, "zig_test(  # buck-only: komira's Mojo toolchain works from this cell\n    name = \"mojo_probe\",", "zig_test(\n    name = \"faulty\",\n    exec_tools = _MOJO_TOOLS,\n)\nzig_test(  # buck-only: komira's Mojo toolchain works from this cell\n    name = \"mojo_probe\",");
+    try c.expectLines("faulty target", try farmProblems(a, faulty_buck, farm), &.{"//:faulty is built with _MOJO_TOOLS in BUCK"});
+    // Defect caught: farm.yml stops excluding one.
     try c.expectLines("dropped", try farmProblems(a, buck, try replaced(a, farm, " //:flaky", "")), &.{"//:flaky is built with _MOJO_TOOLS in BUCK"});
-    // Mutant: farm.yml excludes a unit target.
+    // Defect caught: farm.yml excludes a unit target.
     try c.expectLines("unit target excluded", try farmProblems(a, buck, try replaced(a, farm, " //:user_beta)", " //:user_beta //:mopm)")), &.{"//:mopm is excluded"});
 }
 
@@ -794,7 +794,7 @@ test "lint.yml and ci.yml: no pull_request filter, and no job-level if on a lint
     // The unfiltered triggers pass, and so do the default types with more added (ci.yml's `labeled`).
     try expectStructure("lint.yml", header ++ "on:\n  pull_request:\n  push:\n    branches: [main]\n" ++ lint_job ++ "    steps:\n      - run: zig test tests/drivers/release_lint_test.zig\n", &.{});
     try expectStructure("ci.yml", header ++ "on:\n  pull_request:\n    types: [opened, synchronize, reopened, labeled]\njobs:\n  test:\n    runs-on: x\n", &.{});
-    // Mutants: each filter key, on each file.
+    // Defect caught: each filter key, on each file.
     const run_step = "    steps:\n      - run: zig test tests/drivers/release_lint_test.zig\n";
     inline for ([_][]const u8{ "lint.yml", "ci.yml" }) |f| {
         const jobs = comptime if (std.mem.eql(u8, f, "lint.yml")) lint_job ++ run_step else "jobs:\n  test:\n    runs-on: x\n";
@@ -816,10 +816,10 @@ test "lint.yml and ci.yml: no pull_request filter, and no job-level if on a lint
 
 // ---- dependabot.yml: the cooldown and the coverage of every npm package ----------------------------
 
-/// `real` with the first `from` replaced by `to`; the anchor must exist in the real file, so a mutant cannot go stale.
+/// `real` with the first `from` replaced by `to`; the anchor must exist in the real file, so a variant cannot go stale.
 fn mutate(a: Allocator, real: []const u8, from: []const u8, to: []const u8) ![]u8 {
     if (std.mem.indexOf(u8, real, from) == null) {
-        std.debug.print("the mutant anchor `{s}` is not in .github/dependabot.yml\n", .{from});
+        std.debug.print("the variant anchor `{s}` is not in .github/dependabot.yml\n", .{from});
         return error.TestUnexpectedResult;
     }
     const at = std.mem.indexOf(u8, real, from).?;
@@ -837,27 +837,27 @@ test "dependabot.yml: every npm entry waits 7 days, and every package-lock.json 
     try hyg.dependabotProblems(a, real, tree, &out);
     try c.expectLines("the real file", out.items, &.{});
 
-    // Mutant: one entry's cooldown is 6 days.
+    // Defect caught: one entry's cooldown is 6 days.
     out = c.Out.init(a);
     try hyg.dependabotProblems(a, try mutate(a, real, "default-days: 7", "default-days: 6"), tree, &out);
     try c.expectLines("6 days", out.items, &.{"npm entry /service/api: needs `cooldown: default-days:` of at least 7, got 6"});
-    // Mutant: a quoted number is a string, not a day count.
+    // Defect caught: a quoted number is a string, not a day count.
     out = c.Out.init(a);
     try hyg.dependabotProblems(a, try mutate(a, real, "default-days: 7", "default-days: \"7\""), tree, &out);
     try c.expectLines("a string", out.items, &.{"npm entry /service/api: needs"});
-    // Mutant: the cooldown key of one entry is misspelled (Dependabot would ignore it).
+    // Defect caught: the cooldown key of one entry is misspelled (Dependabot would ignore it).
     out = c.Out.init(a);
     try hyg.dependabotProblems(a, try mutate(a, real, "default-days: 7", "default_days: 7"), tree, &out);
     try c.expectLines("a misspelled key", out.items, &.{"npm entry /service/api: needs"});
-    // Mutant: an entry without a cooldown block at all (the one for /site, the last).
+    // Defect caught: an entry without a cooldown block at all (the one for /site, the last).
     out = c.Out.init(a);
     try hyg.dependabotProblems(a, try mutate(a, real, "    directory: /site\n    schedule:\n      interval: weekly\n    cooldown:\n      default-days: 7\n", "    directory: /site\n    schedule:\n      interval: weekly\n"), tree, &out);
     try c.expectLines("no cooldown", out.items, &.{"npm entry /site: needs"});
-    // Mutant: a package with a lockfile and no entry (/service/api renamed to a directory without one).
+    // Defect caught: a package with a lockfile and no entry (/service/api renamed to a directory without one).
     out = c.Out.init(a);
     try hyg.dependabotProblems(a, try mutate(a, real, "directory: /service/api\n", "directory: /service/other\n"), tree, &out);
     try c.expectLines("no entry", out.items, &.{"no npm entry for /service/api (it has a package-lock.json)"});
-    // Mutant: an unreadable document, and one without updates, are findings and not passes.
+    // Defect caught: an unreadable document, and one without updates, are findings and not passes.
     out = c.Out.init(a);
     try hyg.dependabotProblems(a, "version: 2\n", tree, &out);
     try c.expectLines("no updates", out.items, &.{"no `updates` list"});
@@ -867,18 +867,18 @@ test "dependabot.yml: every npm entry waits 7 days, and every package-lock.json 
     out = c.Out.init(a);
     try hyg.dependabotProblems(a, "version: 2\nupdates:\n\t- x\n", tree, &out);
     try c.expectLines("not YAML", out.items, &.{"not readable as YAML"});
-    // Mutant: an npm entry with no directory is named as such, and still needs its cooldown.
+    // Defect caught: an npm entry with no directory is named as such, and still needs its cooldown.
     out = c.Out.init(a);
     try hyg.dependabotProblems(a, "version: 2\nupdates:\n  - package-ecosystem: npm\n", .{ .root = ".", .files = &.{} }, &out);
     try c.expectLines("no directory", out.items, &.{"npm entry (no directory): needs"});
 
     // service/api's package.json depends on @aws-sdk/* packages, so its entry must group them.
     const aws_group = "      aws-sdk:\n        patterns: [\"@aws-sdk/*\", \"@smithy/*\"]\n";
-    // Mutant: the aws-sdk group removed from the first entry, /service/api (the only package.json with @aws-sdk/*).
+    // Defect caught: the aws-sdk group removed from the first entry, /service/api (the only package.json with @aws-sdk/*).
     out = c.Out.init(a);
     try hyg.dependabotProblems(a, try mutate(a, real, aws_group, ""), tree, &out);
     try c.expectLines("group removed", out.items, &.{"npm entry /service/api: its package.json depends on @aws-sdk/*, so it needs a `groups` entry"});
-    // Mutant: the pattern changed (a lone @smithy/* group leaves @aws-sdk/* ungrouped).
+    // Defect caught: the pattern changed (a lone @smithy/* group leaves @aws-sdk/* ungrouped).
     out = c.Out.init(a);
     try hyg.dependabotProblems(a, try mutate(a, real, "[\"@aws-sdk/*\", \"@smithy/*\"]", "[\"@smithy/*\"]"), tree, &out);
     try c.expectLines("pattern dropped", out.items, &.{"npm entry /service/api: its package.json depends on @aws-sdk/*"});

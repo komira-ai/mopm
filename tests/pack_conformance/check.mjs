@@ -6,7 +6,7 @@
 // registry runs on uploads (service/api/src/validate, bundled by `npm run build:validate-lib` to <dist>) on
 // each file. A packer that disagrees with the registry about the zip, the
 // tars, the zstd frames, index.json, <name>.mopm.json or the file name turns
-// the first checks red. The planted defects after them show the validator is
+// the first checks red. The known defects after them show the validator is
 // not vacuous: each must be refused with the one rule named here.
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
@@ -73,12 +73,12 @@ for (const p of packed) {
   }
 }
 
-// Planted defects: the package is right and the claim about it is wrong (or a byte is).
+// Known defects: the package is right and the claim about it is wrong (or a byte is).
 const noarch = packed.find((p) => p.path.includes('/noarch/'));
 const bytes = readFileSync(noarch.path);
 const refused = (name, archive, expected, rule, rejection) => {
   const v = validatePackage(archive, expected);
-  check(`planted: ${name} is refused as ${rule}`, v.ok === false && v.rule === rule && v.rejection_code === rejection, JSON.stringify(v));
+  check(`faulty: ${name} is refused as ${rule}`, v.ok === false && v.rule === rule && v.rejection_code === rejection, JSON.stringify(v));
 };
 refused('a version that is not the metadata\'s', bytes, expectation('noarch', { version: '1.2.4' }), 'version_mismatch', 'manifest_invalid');
 refused('a subdir that is not the index\'s', bytes, expectation('linux-64'), 'subdir_mismatch', 'manifest_invalid');
@@ -130,7 +130,7 @@ for (const p of natPacked) {
   }
 }
 if (natPacked.length === 2) {
-  // Planted: a version that is not the metadata's is refused for a package with an archive as for any other.
+  // Faulty: a version that is not the metadata's is refused for a package with an archive as for any other.
   const nbytes = readFileSync(natPacked[0].path);
   refused('native: a version that is not the metadata\'s', nbytes, { name: 'natdemo', version: '2.4.1', subdir: natPacked[0].path.split('/').slice(-2)[0], filename: 'mojo-natdemo-2.4.1-mojo1.0.0_0.conda' }, 'version_mismatch', 'manifest_invalid');
 }

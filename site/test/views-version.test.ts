@@ -21,7 +21,7 @@ describe('a published version (fixture: version detail)', () => {
   });
 
   // The package page's head band: crumb Packages / name / version, the glyph, the state tag, then the facts.
-  // Mutants: the crumb losing the package link; the facts losing the platforms (taken from the files).
+  // Defect caught: the crumb losing the package link; the facts losing the platforms (taken from the files).
   test('the head is the package page\'s: crumb to the package, glyph, state, published, license, Mojo, platforms', () => {
     expect(out).toContain('<header class="page-band pkg-head"><nav class="crumb" aria-label="Breadcrumb"><a href="/search">Packages</a><span class="sep" aria-hidden="true">/</span><a href="/packages/http_client" class="crumb-pkg">http_client</a><span class="sep" aria-hidden="true">/</span><span aria-current="page">0.4.0</span></nav>');
     expect(out).toMatch(/<span class="glyph g[012] glyph-lg" aria-hidden="true">hc<\/span><h1>/);
@@ -32,7 +32,7 @@ describe('a published version (fixture: version detail)', () => {
   });
 
   // One install command first, as on the package page, before the files; the mopm.toml pin and the channel under
-  // "Other ways". Mutants: the card moved below the files; a second command shown outside the details.
+  // "Other ways". Defect caught: the card moved below the files; a second command shown outside the details.
   test('one install command leads the page, before the files, with the pin under Other ways', () => {
     expect(out.indexOf('class="install-card"')).toBeLessThan(out.indexOf('id="files-heading"'));
     expect(out.match(/<div class="cmd cmd-lg copy-box">/g)).toHaveLength(1);
@@ -42,7 +42,7 @@ describe('a published version (fixture: version detail)', () => {
   });
 
   // Each digest is a copy box the page script gives a Copy button, named for its file through a hidden label. The
-  // digest wraps, so its <pre> is no tab stop and no region. Mutants: the digest back to plain text (no box); a box with
+  // digest wraps, so its <pre> is no tab stop and no region. Defect caught: the digest back to plain text (no box); a box with
   // an unnamed <pre> (its button would read "Copy command"); tabindex or role=region back on the <pre>.
   test('each file\'s SHA-256 sits in its own named copy box, with no extra tab stop', () => {
     const v = versionFixture('version detail');
@@ -233,7 +233,7 @@ describe('names, spellings and unknown values', () => {
 });
 
 // Every fixture version has one file, so a table showing only the first, or a head that repeats or miscounts the
-// platforms, would pass the tests above. Three files on two platforms, one platform twice. Mutants: v.files.slice(0, 1)
+// platforms, would pass the tests above. Three files on two platforms, one platform twice. Defect caught: v.files.slice(0, 1)
 // in the table; the platforms not deduped (linux-64 listed twice); 'Platform' for more than one; the Files tab counting
 // platforms or rows of one platform.
 describe('a version with several files', () => {
@@ -269,7 +269,7 @@ describe('a version with several files', () => {
 });
 
 // The spec says files has minItems 1, but the decoder accepts files: [] (the registry is not trusted to keep its own
-// schema), so the empty branch is reachable. Mutant: the guard `v.files.length === 0` changed so it never fires -> an
+// schema), so the empty branch is reachable. Defect caught: the guard `v.files.length === 0` changed so it never fires -> an
 // empty Files table (a region with a header row and no rows) where the 'No files.' line should be.
 describe('a version with no files', () => {
   const v = versionFixture('version detail', (r) => {

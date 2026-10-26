@@ -31,7 +31,7 @@ No job of this repository measures coverage today, so none is reported. `tests/d
 | stage | needs | what it does |
 |---|---|---|
 | `beta` | | the whole of `ci.yml` on the pushed commit: the unit tier a pull request runs (unit and golden tests, the CLI and fake registry build), then the beta tier that never runs on a pull request (the CLI against the real Mojo, the packer against the registry validator, `install.sh` against a fake release), on Linux and macOS. |
-| `lint` | | the whole of `lint.yml` (hygiene, workflow lint, the release lint with its planted mutants). |
+| `lint` | | the whole of `lint.yml` (hygiene, workflow lint, the release lint with its faulty variants). |
 | `plan` | `beta`, `lint` | the version this commit's release will have (`cut_release plan --sha`). Writes nothing. Refuses a commit that a newer release supersedes (below) and a `VERSION` base below an existing tag. Gamma and bake time are a slot for later stages between `lint` and `plan`. |
 | `build` | `plan` | the three binaries (`linux-x86_64`, `linux-aarch64`, `macos-arm64`) at that version, each reporting exactly it, and a `.deb` (`amd64`, `arm64`) for each linux binary, packaged by `tools/channels deb-package` from the binary inside the tarball just made (metadata in `packaging/deb/`). **These are the release files.** They are built once, before the tag, from the commit that is tagged later, and are not rebuilt. |
 | `beta-user` | `plan`, `build` | the candidate tested as a user (below), on linux x86_64, linux arm64 and macOS 14 (arm64). A red leg on any platform stops the release. |
@@ -57,7 +57,7 @@ only `publish` holds `contents: write` through the job token here; `tag`, `tap`,
 only `attest` holds `id-token` and `attestations` write. `tests/drivers/release_lint.zig` holds the workflow to
 that, to the order of the stages, to the data flow between them (the built and tested version is the planned
 version, the tagged version and the released version; `publish` releases the verified files) and to the path filter;
-`release_lint_test.zig` plants a defect for each rule and requires it to go red. The same file holds
+`release_lint_test.zig` injects a defect for each rule and requires it to go red. The same file holds
 `release-beta-user.yml`: exactly the three platform legs, none skippable, optional or allowed to fail.
 
 Pushes share the concurrency group `release-push` (one run at a time, none cancelled). GitHub keeps one pending run
@@ -234,7 +234,7 @@ walks the verbs against a fake registry (`registry/fake`) that it starts, assert
 status:
 
 1. create: `new --lib`, `new --bin`, `init`, `metadata`;
-2. test: `test --list`, `test`, and a planted failing test that must turn `test` red;
+2. test: `test --list`, `test`, and a faulty failing test that must turn `test` red;
 3. account: `login` (device flow approved on the fake), `whoami`;
 4. publish to the test registry: `pack`, `publish --dry-run`, `publish`; the registry serves the version, the
    sparse index and the channel with the packed sha256; publishing the same version again is refused;
@@ -367,7 +367,7 @@ files (`BUILDRULES_VERSION` and `BUILDRULES_SHA256`), never built from a pull re
 main; `tests/drivers/autopin_lint.zig` fails when they differ. The directories the tool may write are the `--set` arguments, the same
 in all four invocations; `//:hygiene` fails a package with a `package-lock.json` that has no `--set` and is not in its list of packages left to a person.
 `tests/drivers/autopin_lint.zig` (`//:autopin_workflows`, run by `lint.yml`) holds the gates, the scope of every token, the order of
-the steps in `autopin-commit.yml` and the artifact's name, with a planted mutant per rule, and for every workflow: `workflow_run`
+the steps in `autopin-commit.yml` and the artifact's name, with a faulty variant per rule, and for every workflow: `workflow_run`
 in `autopin-commit.yml` alone, `push` only for `main` or tags, what a pull request can reach (no environment, no secret, one
 farm id-token that skips a Dependabot branch), the files the lints can read, and that no workflow merges or approves a Dependabot pull request.
 
