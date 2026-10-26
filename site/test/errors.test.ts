@@ -1,7 +1,7 @@
 // T6: error answers map to what a page shows: every errors.json envelope keeps its code and maps to the kind its
 // code means; an unknown code, or an answer that is not an envelope, falls back to its status class; a rejected
 // fetch is a network error and an aborted one a timeout.
-import { client, type FetchFn } from '../src/api';
+import { client, type FetchFn, type Timers } from '../src/api';
 import { type ErrorKind, fromResponse, kindOfStatus } from '../src/errors';
 import { READ_OPS, responseOf, validErrorCases } from './fixtures';
 
@@ -161,27 +161,83 @@ test('a rejected fetch is a network error', async () => {
   expect(r).toMatchObject({ kind: 'network', requestId: null });
 });
 
+// A manual clock for the request deadline: nothing fires until the test says the deadline has passed.
+function manualTimers() {
+  const pending = new Map<number, { fn: () => void; ms: number }>();
+  let next = 0;
+  const timers: Timers = {
+    set(fn, ms) {
+      pending.set(++next, { fn, ms });
+      return next;
+    },
+    clear(handle) {
+      pending.delete(handle as number);
+    },
+  };
+  return {
+    timers,
+    armed: () => [...pending.values()].map((t) => t.ms),
+    // The deadline passes: every timer still armed fires.
+    expire() {
+      for (const [id, t] of [...pending]) {
+        pending.delete(id);
+        t.fn();
+      }
+    },
+  };
+}
+
 test('an answer that takes longer than the timeout is aborted and reported as a timeout', async () => {
+  const clock = manualTimers();
   let signal: AbortSignal | undefined;
   const hang: FetchFn = (_url, init) =>
     new Promise((_resolve, reject) => {
       signal = init.signal ?? undefined;
       init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
     });
-  const r = await client(hang, BASE, 5).getHealth();
+  const pending = client(hang, BASE, 5, clock.timers).getHealth();
+  expect(clock.armed()).toEqual([5]);
+  expect(signal?.aborted).toBe(false);
+  clock.expire();
+  const r = await pending;
   expect(r.kind).toBe('timeout');
   expect(signal?.aborted).toBe(true);
 });
 
 test('a body that stalls past the timeout is a timeout too', async () => {
+  const clock = manualTimers();
+  let reading!: () => void;
+  const bodyRequested = new Promise<void>((resolve) => (reading = resolve));
   const stall: FetchFn = async (_url, init) => {
-    const body = new ReadableStream({
-      start(ctl) {
-        init.signal?.addEventListener('abort', () => ctl.error(new DOMException('aborted', 'AbortError')));
+    const body = new ReadableStream(
+      {
+        start(ctl) {
+          init.signal?.addEventListener('abort', () => ctl.error(new DOMException('aborted', 'AbortError')));
+        },
+        // With a zero high-water mark pull runs only once the client asks for the body.
+        pull: () => reading(),
       },
-    });
+      { highWaterMark: 0 },
+    );
     return new Response(body, { status: 200 });
   };
-  const r = await client(stall, BASE, 5).getHealth();
+  const pending = client(stall, BASE, 5, clock.timers).getHealth();
+  await bodyRequested;
+  clock.expire();
+  const r = await pending;
   expect(r.kind).toBe('timeout');
+});
+
+test('an answer that arrives in time is not aborted, and its deadline is disarmed', async () => {
+  const clock = manualTimers();
+  let signal: AbortSignal | undefined;
+  const ok: FetchFn = async (_url, init) => {
+    signal = init.signal ?? undefined;
+    return new Response('not json');
+  };
+  const r = await client(ok, BASE, 5, clock.timers).getHealth();
+  expect(r.kind).toBe('server');
+  expect(clock.armed()).toEqual([]);
+  clock.expire();
+  expect(signal?.aborted).toBe(false);
 });
