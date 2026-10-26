@@ -55,6 +55,8 @@ export interface Principal {
   versions?: Record<string, string>;
   /** A configured CI publisher's token: the identity it acts as, `gh-repo:<repository_id>`. */
   ci_owner?: string;
+  /** A CI publisher's token that acts for an account: the CI identity it came through, `gh-repo:<repository_id>`. `github_id` is then the account. */
+  acts_via?: string;
   fresh_until?: string;
 }
 
@@ -223,6 +225,7 @@ export class Authenticator {
       version: rec.version,
       versions: rec.versions,
       ci_owner: rec.ci_owner,
+      acts_via: rec.acts_via,
       fresh_until: rec.fresh_until,
     };
   }

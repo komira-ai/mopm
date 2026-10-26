@@ -83,6 +83,9 @@ function differing(a: Map<string, string>, b: Map<string, string>): string[] {
 // keys, projection and name are the same in every stage (no stage-dependent setting), so it is in the shared template
 // and the "identical modulo names" checks below cover it. The 'search index is the same in every stage' test pins that.
 const EXPECTED_PROD_DIFF = [
+  // The API function's Environment: prod has CI_PUBLISHERS (the CI identity that acts for an account), gamma has no such variable;
+  // the next describe pins that this is the one variable by which their Environments differ.
+  'api:AWS::Lambda::Function:Properties.Environment',
   'api:AWS::Logs::LogGroup:DeletionPolicy',
   'api:AWS::Logs::LogGroup:UpdateReplacePolicy',
   'channel:AWS::S3::Bucket:DeletionPolicy',
@@ -104,6 +107,8 @@ const EXPECTED_PROD_DIFF = [
 // difference from gamma. Adding to this list is a reviewed decision.
 const EXPECTED_BETA_ONLY_DIFF = ['api:AWS::Lambda::Function:Properties.Environment'];
 const EXPECTED_BETA_ONLY_ENV = ['CI_PUBLISHERS', 'MOPM_GROUPS_POLICY'];
+// What prod has that gamma does not: CI_PUBLISHERS, whose one row acts for an account (the stack test pins the row). No groups policy.
+const EXPECTED_PROD_ONLY_ENV = ['CI_PUBLISHERS'];
 
 /** The names of the environment variables of the API function (the one with the stage's OAuth secret name) on a stage. */
 function apiEnvNames(stage: Stage): string[] {
@@ -125,7 +130,7 @@ describe('whole-template stage diff', () => {
   });
 
   test('beta differs from prod in the expected properties and the beta-only CI trust', () => {
-    expect(differing(beta, prod)).toEqual([...EXPECTED_PROD_DIFF, ...EXPECTED_BETA_ONLY_DIFF].sort());
+    expect(differing(beta, prod)).toEqual([...new Set([...EXPECTED_PROD_DIFF, ...EXPECTED_BETA_ONLY_DIFF])].sort());
   });
 });
 
@@ -137,12 +142,15 @@ describe('the environment of the API function per stage', () => {
     expect(gamma!.filter((n) => !beta!.includes(n))).toEqual([]);
   });
 
-  test('gamma and prod have the same variables, and neither has a beta-only one', () => {
-    expect(prod).toEqual(gamma);
-    for (const n of EXPECTED_BETA_ONLY_ENV) {
-      expect(gamma).not.toContain(n);
-      expect(prod).not.toContain(n);
-    }
+  test('prod has exactly one variable that gamma does not, CI_PUBLISHERS, and gamma has none that prod lacks', () => {
+    expect(prod!.filter((n) => !gamma!.includes(n))).toEqual(EXPECTED_PROD_ONLY_ENV);
+    expect(gamma!.filter((n) => !prod!.includes(n))).toEqual([]);
+  });
+
+  test('neither gamma nor prod has the beta-only groups policy', () => {
+    expect(gamma).not.toContain('MOPM_GROUPS_POLICY');
+    expect(prod).not.toContain('MOPM_GROUPS_POLICY');
+    expect(gamma).not.toContain('CI_PUBLISHERS');
   });
 });
 

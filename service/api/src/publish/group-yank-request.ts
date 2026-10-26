@@ -7,7 +7,7 @@ import type { GroupAccess } from './group-commit';
 import { groupAudit } from './group-lifecycle';
 import { MAX_REASON, sendYankRows } from './group-yank';
 import type { Queue } from './ports';
-import { actorOf, parseYank, requireOwner } from './service';
+import { actorOf, parseYank, requireOwner, viaOf } from './service';
 
 /**
  * PUT /groups/{group_id}/yank (spec/api/openapi.yaml: yankGroup), with the body of a single version's yank: `{yanked: true, reason}` or
@@ -57,9 +57,10 @@ export class GroupYanker {
     authorize?.(members);
     await this.requireOwners(p, members);
     const by = actorOf(p);
+    const via = viaOf(p);
     for (let tries = 0; tries < 3; tries++) {
       const header = tries === 0 ? first : ((await this.d.registry.getGroup(id)) ?? first);
-      const done = req.yanked ? await this.yank(queue, header, members, by, req.reason) : await this.unyank(queue, header, members, by);
+      const done = req.yanked ? await this.yank(queue, header, members, by, req.reason, via) : await this.unyank(queue, header, members, by);
       if (done) return done;
     }
     throw groupNotSettled(id, 'it changed while the request was being handled; repeat the request');
@@ -79,7 +80,7 @@ export class GroupYanker {
     }
   }
 
-  private async yank(queue: Queue, header: GroupRecord, members: GroupMembers, by: string, reason: string): Promise<GroupYankAnswer | undefined> {
+  private async yank(queue: Queue, header: GroupRecord, members: GroupMembers, by: string, reason: string, via: string | undefined): Promise<GroupYankAnswer | undefined> {
     const id = header.group_id;
     const answer = (h: GroupRecord, started: boolean): GroupYankAnswer => ({ started, header: h, members });
     if (header.status !== 'visible') throw groupNotSettled(id, `it is ${header.status}; a group can be yanked once it is visible`);
@@ -100,7 +101,7 @@ export class GroupYanker {
         cur.status === 'visible' && cur.attempt === header.attempt && (cur.yank?.seq ?? 0) === before && (cur.yank === undefined || cur.yank.state === 'restored')
           ? { ...cur, yank: { reason, by, requested_at: at, yanked_set: '', seq, state: 'yanking' }, progress_at: at, sweep_pk: 'active', sweep_at: at, resend: 0 }
           : undefined,
-      groupAudit(id, `a_${id}_yank_${seq}`, 'group_yank_request', at, by, { reason }),
+      groupAudit(id, `a_${id}_yank_${seq}`, 'group_yank_request', at, by, { reason, ...(via === undefined ? {} : { via }) }),
     );
     // Another request for the same yank may have won the write: the group is then in this yank and the answer is the same.
     if (after?.yank?.seq !== seq) return undefined;

@@ -72,6 +72,23 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 export const actorOf = (p: Principal): Actor =>
   p.github_id !== undefined ? `u:${p.github_id}` : p.kind === 'oidc' && p.ci_owner !== undefined ? ciActorOf(p.ci_owner) : `ci:${p.token_id}`;
 
+/**
+ * The CI identity a request came through, `ci:gh-repo:<repository id>`, for a token of a CI publisher that acts for an account
+ * (the actor is then the account's `u:<id>`); undefined for a human's own token and for every other token. Recorded on the
+ * records and audit entries of what the token does, so a publish by CI is distinguishable from the account's own.
+ */
+export const viaOf = (p: Principal): string | undefined => (p.acts_via !== undefined ? ciActorOf(p.acts_via) : undefined);
+/** `{via}` for a record of a request that came through a CI identity, else nothing. */
+export const viaField = (p: Principal): { via?: string } => {
+  const via = viaOf(p);
+  return via === undefined ? {} : { via };
+};
+/** An audit entry's detail with `via` added when the request came through a CI identity; undefined when there is neither. */
+export const detailVia = (p: Principal, detail?: Record<string, string>): Record<string, string> | undefined => {
+  const via = viaOf(p);
+  return via === undefined ? detail : { ...detail, via };
+};
+
 /** Deterministic: committing the same upload ids again is the same publish, which is what makes a retry safe. */
 export const publishIdFor = (name: string, canonical: string, uploadIds: readonly string[]) =>
   `pub_${createHash('sha256')
@@ -117,6 +134,7 @@ export class PublishService {
       size: req.size,
       key,
       actor: actorOf(p),
+      ...viaField(p),
       created_at: now.toISOString(),
       url_expires_at: urlExpires.toISOString(),
       expires_at: Math.floor(now.getTime() / 1000) + this.d.config.uploadRecordTtlSeconds,
@@ -197,7 +215,7 @@ export class PublishService {
       manifest_sha256: sha256,
       rev: 0,
     };
-    const audit = { name, ts: now, id: `a_${this.newId()}`, actor: actorOf(p), action: 'publish_begin', version };
+    const audit = { name, ts: now, id: `a_${this.newId()}`, actor: actorOf(p), action: 'publish_begin', version, ...(detailVia(p) ? { detail: detailVia(p) } : {}) };
     try {
       await this.d.registry.createVersion(rec, audit);
       return;
@@ -299,6 +317,7 @@ export class PublishService {
       version,
       canonical,
       actor,
+      ...viaField(p),
       published_by: handle,
       status: 'pending',
       manifest_sha256: req.manifest_sha256,
@@ -346,7 +365,7 @@ export class PublishService {
       actor: actorOf(p),
       action: req.yanked ? 'yank' : 'unyank',
       version,
-      detail: { by: handle, ...(req.yanked ? { reason: req.reason } : {}) },
+      detail: detailVia(p, { by: handle, ...(req.yanked ? { reason: req.reason } : {}) }),
     };
     const after = await this.d.registry.updateVersion(name, version, req.yanked ? { type: 'yank', reason: req.reason } : { type: 'unyank' }, audit);
     const subdirs = [...new Set(after.files.map((f) => f.subdir))].sort();
