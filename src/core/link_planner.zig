@@ -684,7 +684,7 @@ fn groupPkg(a: Allocator, name: []const u8, soname: []const u8, group: []const u
 }
 
 // Defect it catches: two copies of one C library (say two prefixed builds of a crypto library) in one closure, which
-// link without error and run with two copies of its state. Mutants planted: the groups are compared with `!`; the
+// link without error and run with two copies of its state. Defect caught: the groups are compared with `!`; the
 // pass is removed; a library with no group is made to conflict with another with none.
 test "two native libraries of one exclusive group are refused, naming both; other groups and no group are not" {
     var t = std.heap.ArenaAllocator.init(std.testing.allocator);

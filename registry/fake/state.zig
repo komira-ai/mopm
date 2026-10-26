@@ -226,7 +226,7 @@ pub const DeviceLogin = struct {
     token: ?*Token = null,
 };
 
-/// A planted failure: the next request to `operation` answers `code`.
+/// A faulty failure: the next request to `operation` answers `code`.
 pub const Fault = struct { operation: []const u8, code: errors.Code };
 
 pub const State = struct {
@@ -393,7 +393,7 @@ pub const State = struct {
         return p;
     }
 
-    /// Removes and returns the planted failure for `operation`, if any.
+    /// Removes and returns the faulty failure for `operation`, if any.
     pub fn takeFault(s: *State, operation: []const u8) ?errors.Code {
         for (s.faults.items, 0..) |f, i| {
             if (std.mem.eql(u8, f.operation, operation)) {

@@ -122,7 +122,7 @@ jobs:
       # (//:registry_login, //:registry_publish, //:install_e2e) that farm.yml builds; the Python scripts are gone.
 
   # The packer against the registry's own validator (service/api/src/validate): what mopm pack writes must be accepted,
-  # and each planted defect must be refused with its rule.
+  # and each known defect must be refused with its rule.
   pack-conformance:
     name: pack conformance (validator)
     # Beta tier: never on a pull request.
@@ -148,7 +148,7 @@ jobs:
       - name: mopm pack, then the validator on the result
         run: node tests/pack_conformance/check.mjs ./zig-out/bin/mopm service/api/dist-validate
 
-  # install.sh against a fake release served over loopback, then with planted defects that it must catch.
+  # install.sh against a fake release served over loopback, then with known defects that it must catch.
   # It needs a shell, curl and a network stack, so only a GitHub-hosted runner runs it (no Buck2 target does).
   installer:
     name: install.sh (${{ matrix.os }})
@@ -166,5 +166,5 @@ jobs:
           persist-credentials: false
       - name: Install Zig 0.12.0 (sha256-pinned)
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
-      - name: install.sh against a fake release, then with planted defects (each must turn a check red)
+      - name: install.sh against a fake release, then with known defects (each must turn a check red)
         run: zig test tests/drivers/install_script_test.zig

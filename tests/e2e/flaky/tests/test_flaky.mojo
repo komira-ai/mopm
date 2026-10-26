@@ -39,7 +39,7 @@ def test_steady() raises:
 # FLAKY: attempt 1 FAIL, attempt 2 PASS
 def test_fails_once() raises:
     if attempt(String("test_fails_once")) == 1:
-        raise Error("planted failure on the first attempt")
+        raise Error("faulty failure on the first attempt")
 
 
 # FLAKY: attempt 1 CRASH (SIGABRT), attempt 2 PASS
@@ -51,16 +51,16 @@ def test_crashes_once() raises:
 # FLAKY: attempts 1 and 2 FAIL, attempt 3 PASS (FAIL under --retries 1)
 def test_fails_twice() raises:
     if attempt(String("test_fails_twice")) <= 2:
-        raise Error("planted failure on the first two attempts")
+        raise Error("faulty failure on the first two attempts")
 
 
 # FAIL: every attempt fails
 def test_always_fails() raises:
     _ = attempt(String("test_always_fails"))
-    raise Error("planted failure on every attempt")
+    raise Error("faulty failure on every attempt")
 
 
 # SKIP; with --ignored or --include-ignored, FAIL
-# mopm: ignore "planted: fails when run" https://github.com/komira-ai/mopm/blob/main/docs/mopm-test.md
+# mopm: ignore "faulty: fails when run" https://github.com/komira-ai/mopm/blob/main/docs/mopm-test.md
 def test_ignored_fails() raises:
-    raise Error("planted failure of an ignored test")
+    raise Error("faulty failure of an ignored test")

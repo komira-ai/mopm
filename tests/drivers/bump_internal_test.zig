@@ -6,7 +6,7 @@
 //! The internal repository admits such a pull request only through its bump guard: author the release bot,
 //! exactly one changed path (the submodule's gitlink), branch bump/<submodule>-v<semver>, the new commit
 //! descends from the old, the tag v<semver> names the new commit. The good scenario checks every one of those
-//! on the calls the tool made, then each test plants one defect (a mutant) and requires a refusal for that
+//! on the calls the tool made, then each test injects one defect (a variant) and requires a refusal for that
 //! reason with no push and no pull request, so a refusal is the defect's doing. The fakes log their arguments:
 //! the token must be in no argument, only in the environment.
 
@@ -130,7 +130,7 @@ fn b64(a: Allocator, s: []const u8) ![]const u8 {
     return enc.encode(buf, s);
 }
 
-test "bump-internal: the pull request the bump guard admits, and every planted defect refused" {
+test "bump-internal: the pull request the bump guard admits, and every known defect refused" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -230,16 +230,16 @@ test "bump-internal: the pull request the bump guard admits, and every planted d
         rep.check("retry: a branch of that name that holds another commit is refused, not reused", bad.code == 1 and h.contains(bad.text, "not " ++ sha) and untouched(w), bad.text);
     }
 
-    // ---- planted defects: each is refused, for its reason, before anything is pushed or opened -----
+    // ---- known defects: each is refused, for its reason, before anything is pushed or opened -----
     {
         var w = try fresh(a, tools, &tmp, "tag_elsewhere");
         try w.put("tags", "v1.2.3 " ++ other ++ "\n");
         const r = try w.go();
-        rep.check("mutant: the tag names another commit (the guard's tag_elsewhere) is refused before the clone", r.code == 1 and h.contains(r.text, "the tag v1.2.3 of komira-ai/mopm names " ++ other) and untouched(w) and w.count("git_log", "clone ") == 0, r.text);
+        rep.check("defect: the tag names another commit (the guard's tag_elsewhere) is refused before the clone", r.code == 1 and h.contains(r.text, "the tag v1.2.3 of komira-ai/mopm names " ++ other) and untouched(w) and w.count("git_log", "clone ") == 0, r.text);
         w = try fresh(a, tools, &tmp, "no_tag");
         try w.put("tags", "v1.2.2 " ++ sha ++ "\n");
         const n = try w.go();
-        rep.check("mutant: there is no tag (the guard's not_tagged) is refused before the clone", n.code == 1 and h.contains(n.text, "gh api failed") and untouched(w) and w.count("git_log", "clone ") == 0, n.text);
+        rep.check("defect: there is no tag (the guard's not_tagged) is refused before the clone", n.code == 1 and h.contains(n.text, "gh api failed") and untouched(w) and w.count("git_log", "clone ") == 0, n.text);
     }
     {
         const bad = [_]struct { name: []const u8, diff: []const u8, why: []const u8 }{
@@ -256,23 +256,23 @@ test "bump-internal: the pull request the bump guard admits, and every planted d
             const w = try fresh(a, tools, &tmp, c.name);
             try w.put("git_diff", c.diff);
             const r = try w.go();
-            rep.check(try h.fmt(a, "mutant: the staged change is {s} is refused before the commit", .{c.why}), r.code == 1 and h.contains(r.text, "not exactly one modified gitlink at mopm") and !w.has("commit") and untouched(w), r.text);
+            rep.check(try h.fmt(a, "defect: the staged change is {s} is refused before the commit", .{c.why}), r.code == 1 and h.contains(r.text, "not exactly one modified gitlink at mopm") and !w.has("commit") and untouched(w), r.text);
         }
     }
     {
         var w = try fresh(a, tools, &tmp, "not_a_gitlink");
         try w.put("git_ls_tree", "100644 blob " ++ old ++ "\tmopm\n");
         const r = try w.go();
-        rep.check("mutant: mopm is a file in the internal repository (not_a_gitlink) is refused before it is staged", r.code == 1 and h.contains(r.text, "is not a gitlink") and !w.has("index_entry") and untouched(w), r.text);
+        rep.check("defect: mopm is a file in the internal repository (not_a_gitlink) is refused before it is staged", r.code == 1 and h.contains(r.text, "is not a gitlink") and !w.has("index_entry") and untouched(w), r.text);
         w = try fresh(a, tools, &tmp, "not_in_tree");
         try w.put("git_ls_tree", "");
         const e = try w.go();
-        rep.check("mutant: mopm is not in the internal repository at all is refused", e.code == 1 and h.contains(e.text, "the path is not in the repository") and untouched(w), e.text);
+        rep.check("defect: mopm is not in the internal repository at all is refused", e.code == 1 and h.contains(e.text, "the path is not in the repository") and untouched(w), e.text);
         for ([_][]const u8{ "behind", "diverged" }) |status| {
             w = try fresh(a, tools, &tmp, status);
             try w.put("compare_tag_" ++ old, status);
             const b = try w.go();
-            rep.check(try h.fmt(a, "mutant: --sha is {s} the old gitlink (not_descendant) is refused, nothing staged", .{status}), b.code == 1 and h.contains(b.text, try h.fmt(a, "compare says '{s}'", .{status})) and !w.has("index_entry") and untouched(w), b.text);
+            rep.check(try h.fmt(a, "defect: --sha is {s} the old gitlink (not_descendant) is refused, nothing staged", .{status}), b.code == 1 and h.contains(b.text, try h.fmt(a, "compare says '{s}'", .{status})) and !w.has("index_entry") and untouched(w), b.text);
         }
         w = try fresh(a, tools, &tmp, "already_there");
         try w.put("git_ls_tree", "160000 commit " ++ sha ++ "\tmopm\n");
@@ -281,7 +281,7 @@ test "bump-internal: the pull request the bump guard admits, and every planted d
         w = try fresh(a, tools, &tmp, "commit_wrong");
         try w.put("commit_wrong", "");
         const cw = try w.go();
-        rep.check("mutant: the commit holds another gitlink than the one staged is refused before the push", cw.code == 1 and h.contains(cw.text, "after the commit the gitlink of mopm is not") and untouched(w), cw.text);
+        rep.check("defect: the commit holds another gitlink than the one staged is refused before the push", cw.code == 1 and h.contains(cw.text, "after the commit the gitlink of mopm is not") and untouched(w), cw.text);
     }
     {
         var w = try fresh(a, tools, &tmp, "clone_fail");
@@ -306,7 +306,7 @@ test "bump-internal: the pull request the bump guard admits, and every planted d
         w = try fresh(a, tools, &tmp, "auto_noop");
         try w.put("auto_noop", "");
         const an = try w.go();
-        rep.check("mutant: a merge call that leaves auto-merge off is caught by the check", an.code == 1 and h.contains(an.text, "auto-merge is not on"), an.text);
+        rep.check("defect: a merge call that leaves auto-merge off is caught by the check", an.code == 1 and h.contains(an.text, "auto-merge is not on"), an.text);
         w = try fresh(a, tools, &tmp, "close_fail");
         try w.put("prs", "80 OPEN bump/mopm-v1.2.2 1\n");
         try w.put("close_fail", "");
@@ -343,13 +343,13 @@ test "bump-internal: the pull request the bump guard admits, and every planted d
         var w = try fresh(a, tools, &tmp, "token_in_argv");
         w.token = "komira-internal";
         const r = try w.go();
-        rep.check("mutant: a token that appears in an argument is refused before the command runs", r.code == 1 and h.contains(r.text, "with the token in its arguments") and !w.has("git_log") and untouched(w), r.text);
+        rep.check("defect: a token that appears in an argument is refused before the command runs", r.code == 1 and h.contains(r.text, "with the token in its arguments") and !w.has("git_log") and untouched(w), r.text);
     }
     {
         const w = try fresh(a, tools, &tmp, "workdir_busy");
         try w.put("wd/leftover", "x");
         const r = try w.go();
-        rep.check("mutant: the work directory is not empty is refused before the clone", r.code == 1 and h.contains(r.text, "is not empty") and w.count("git_log", "clone ") == 0 and untouched(w), r.text);
+        rep.check("defect: the work directory is not empty is refused before the clone", r.code == 1 and h.contains(r.text, "is not empty") and w.count("git_log", "clone ") == 0 and untouched(w), r.text);
     }
     try rep.finish();
 }

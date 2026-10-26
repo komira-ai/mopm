@@ -225,39 +225,39 @@ describe('the DynamoDB adapter under the Lambda grants', () => {
   });
 });
 
-// Can-fail proofs: each planted defect must turn a named check red. Without these, a green contract could mean
+// Can-fail proofs: each known defect must turn a named check red. Without these, a green contract could mean
 // the checks cannot see the defect.
-describe('the contract goes red on planted defects', () => {
+describe('the contract goes red on known defects', () => {
   const failing = async (name: string, s: AuthStore) => {
     await expect(CHECKS[name]!(s)).rejects.toThrow();
   };
 
   test('getUserToken that ignores the account', async () => {
-    class Mutant extends MemoryAuthStore {
+    class Variant extends MemoryAuthStore {
       override async getUserToken(_github_id: number, id: string) {
         return this.dumpTokens().find((t) => t.id === id);
       }
     }
-    await failing('getUserToken finds the account own token and never another accounts', new Mutant());
+    await failing('getUserToken finds the account own token and never another accounts', new Variant());
   });
 
   test('revocation that overwrites the first time', async () => {
-    class Mutant extends MemoryAuthStore {
+    class Variant extends MemoryAuthStore {
       override async revokeToken(hash: string, at: string) {
         const t = this.dumpTokens().find((x) => x.hash === hash);
         if (t) await this.putToken({ ...t, revoked_at: at });
       }
     }
-    await failing('revoking is idempotent, keeps the first time, and a missing token is nothing', new Mutant());
+    await failing('revoking is idempotent, keeps the first time, and a missing token is nothing', new Variant());
   });
 
   test('a consumed device login that can still be read', async () => {
-    class Mutant extends MemoryAuthStore {
+    class Variant extends MemoryAuthStore {
       override async deleteDeviceLogin() {
         /* forgets to consume */
       }
     }
-    await failing('a device login round-trips, records polls, and once consumed is gone for good', new Mutant());
+    await failing('a device login round-trips, records polls, and once consumed is gone for good', new Variant());
   });
 
   test('the DynamoDB adapter with a token TTL stored as the ISO string (DynamoDB would never expire the row)', async () => {

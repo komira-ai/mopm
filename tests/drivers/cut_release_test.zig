@@ -2,7 +2,7 @@
 //! and the read-only check of a published release (verify), run against a fake `gh` (fake_gh.zig)
 //! whose state is a directory. Nothing here reaches GitHub, and nothing creates a real tag or release.
 //!
-//! Each refusal case plants one defect in an otherwise good scenario and requires a non-zero exit
+//! Each refusal case injects one defect in an otherwise good scenario and requires a non-zero exit
 //! with the reason in the output, and the good scenario must pass first, so a refusal is the defect's
 //! doing and not the setup's. A refusal must also leave the fake GitHub as it was: no tag, no release,
 //! no asset.
@@ -316,7 +316,7 @@ test "cut_release: plan says whether the release of a tagged commit is already c
     try rep.finish();
 }
 
-test "cut_release: plan, tag, verify-dir, publish, verify, and every planted defect is refused" {
+test "cut_release: plan, tag, verify-dir, publish, verify, and every known defect is refused" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -693,7 +693,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         rep.check("verify-dir: a missing bundle is refused (eleven files, twelve expected)", m.code == 1 and h.contains(m.text, "holds 11 files, expected exactly 12"), m.text);
     }
     // ---- the .debs: each is the one its tarball's binary makes ---------------------------------
-    // Everything below is a planted defect in an otherwise good scenario (vd_ok above is the control for the same files).
+    // Everything below is a known defect in an otherwise good scenario (vd_ok above is the control for the same files).
     {
         // The linux-x86_64 .deb holds other bytes than the tarball's binary. SHA256SUMS lists it, the bundle signs it and the
         // attestation accepts it (the fake accepts any file), so only the rebuild from the tarball can tell.
@@ -843,19 +843,19 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         const line = try h.readFile(a, try h.join(a, &.{ rec, "mopm-1.2.3-linux-x86_64.tar.gz.sha256" }));
         rep.check("release record: writes `<sha256>  <name>` of the tarball", std.mem.eql(u8, line, try h.fmt(a, "{s}  mopm-1.2.3-linux-x86_64.tar.gz\n", .{want})), line);
 
-        // Mutant: the tarball changed after it was tested.
+        // Defect caught: the tarball changed after it was tested.
         try h.writeFile(try h.join(a, &.{ dist, "mopm-1.2.3-macos-arm64.tar.gz" }), "a different tarball\n");
         const bad = try h.run(a, &.{ tools.release, "tested", dist, rec }, &env, .{});
         rep.check("release tested: a tarball that is not the one the user beta passed is refused, by name", bad.code != 0 and h.contains(bad.text, "mopm-1.2.3-macos-arm64.tar.gz: the user beta tested sha256"), bad.text);
 
-        // Mutant: a platform leg left no record (the changed tarball is recorded again, so only this defect remains).
+        // Defect caught: a platform leg left no record (the changed tarball is recorded again, so only this defect remains).
         const rr2 = try h.run(a, &.{ tools.release, "record", try h.join(a, &.{ dist, "mopm-1.2.3-macos-arm64.tar.gz" }), rec }, &env, .{});
         if (rr2.code != 0) return error.ToolFailed;
         try std.fs.cwd().deleteFile(try h.join(a, &.{ rec, "mopm-1.2.3-linux-aarch64.tar.gz.sha256" }));
         const missing = try h.run(a, &.{ tools.release, "tested", dist, rec }, &env, .{});
         rep.check("release tested: a target with no record is refused", missing.code != 0 and h.contains(missing.text, "recorded nothing for linux-aarch64"), missing.text);
 
-        // Mutant: a record of a target that is not tested.
+        // Defect caught: a record of a target that is not tested.
         // (Control first: with the changed tarball and the missing leg recorded again, it passes.)
         for ([_][]const u8{ "linux-aarch64", "macos-arm64" }) |t| {
             const rr = try h.run(a, &.{ tools.release, "record", try h.join(a, &.{ dist, try h.fmt(a, "mopm-1.2.3-{s}.tar.gz", .{t}) }), rec }, &env, .{});
@@ -1066,7 +1066,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         rep.check("verify: a published .deb with other bytes than its tarball's binary is refused", r.code == 1 and h.contains(r.text, "mopm_1.2.3_amd64.deb is not the .deb that the binary in"), r.text);
     }
     {
-        // Every .deb is rebuilt from its own tarball, so a planted .deb is refused whichever architecture it is and however small
+        // Every .deb is rebuilt from its own tarball, so a faulty .deb is refused whichever architecture it is and however small
         // the change: the arm64 .deb made from another binary, and a .deb of either architecture with one byte flipped (the same
         // length, the same name, listed in SHA256SUMS and signed, so only the rebuild can tell). The same three cases for verify-dir,
         // release tested and verify; the amd64 .deb made from another binary is above.

@@ -40,13 +40,13 @@ jobs:
       - name: workflow lint (the rules every workflow must keep)
         if: ${{ !cancelled() }}
         run: zig test tests/drivers/workflow_lint_test.zig
-      - name: lint self-test (each rule goes red on its planted fixture)
+      - name: lint self-test (each rule goes red on its faulty fixture)
         if: ${{ !cancelled() }}
         run: zig test tests/drivers/lint_selftest_test.zig
-      - name: release pipeline lint (scopes, stage order, path filter; each rule goes red on a planted mutant)
+      - name: release pipeline lint (scopes, stage order, path filter; each rule goes red on a faulty variant)
         if: ${{ !cancelled() }}
         run: zig test tests/drivers/release_lint_test.zig
-      - name: autopin lint (the Dependabot pin-update workflows, R1-R4, M2/M2b; each rule goes red on a planted mutant)
+      - name: autopin lint (the Dependabot pin-update workflows, R1-R4, M2/M2b; each rule goes red on a faulty variant)
         if: ${{ !cancelled() }}
         run: zig test tests/drivers/autopin_lint_test.zig
       - name: actionlint (strict YAML parse and workflow check of every workflow; the pinned release, sha256-verified)

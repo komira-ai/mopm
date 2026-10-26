@@ -1332,7 +1332,7 @@ test "a missing source is refused when the graph is made" {
     try std.testing.expect(std.mem.indexOf(u8, why, "util/src/util holds no .mojo file") != null);
 }
 
-test "planted defects: a reordered dependency, a changed source or another artifact changes the keys, and only the right ones" {
+test "known defects: a reordered dependency, a changed source or another artifact changes the keys, and only the right ones" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
@@ -1443,7 +1443,7 @@ fn nativeSonames(a: Allocator, u: Unit) ![]const u8 {
 
 // Defect it catches: static archives handed to the linker in soname order, so that an archive comes after the
 // archive it needs and the symbols it leaves undefined are not found (the link fails, or worse, links less).
-// Mutant planted: `orderNatives` returns `natives` as sorted by soname.
+// Defect caught: `orderNatives` returns `natives` as sorted by soname.
 test "the natives of a unit are in link order: an archive before the archives it needs, with its kind, needs and group" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -1484,7 +1484,7 @@ test "the natives of a unit are in link order: an archive before the archives it
 }
 
 // Defect it catches: a graph whose native libraries are all "shared, no needs" in the text, so a lock that says
-// otherwise (and a unit key that should change with it) prints the same. Mutant planted: `writeUnit` drops `kind`.
+// otherwise (and a unit key that should change with it) prints the same. Defect caught: `writeUnit` drops `kind`.
 test "a native's kind, needs and group are in the unit's key: changing one changes the key" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -1679,7 +1679,7 @@ fn graphWithThree(a: Allocator, dir: []const u8, z_group: []const u8, why: *[]co
 
 // Defects it catches: a clash found only between natives that are next to each other in link order, so that a library
 // with no group between two of one group hides the second; and group names compared without regard to case, so that
-// `libcrypto` and `LibCrypto` are one group. Mutants planted: the inner loop looks only at `found[i + 1]`; the
+// `libcrypto` and `LibCrypto` are one group. Defect caught: the inner loop looks only at `found[i + 1]`; the
 // comparison is `std.ascii.eqlIgnoreCase`.
 test "an exclusive clash is found between natives that are not next to each other; group names are exact, case included" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -1705,7 +1705,7 @@ test "an exclusive clash is found between natives that are not next to each othe
 }
 
 // Defect it catches: a closure that links two libraries of one exclusive group (two copies of a crypto library, each
-// with its own error queue and CPU-capability word) and builds. Mutants planted: the comparison of the two groups is
+// with its own error queue and CPU-capability word) and builds. Defect caught: the comparison of the two groups is
 // negated; the check returns at once; the group is compared only when the two natives are of one package.
 test "two natives of one exclusive group in a unit's closure are refused, naming both; different groups, and no group, are not" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);

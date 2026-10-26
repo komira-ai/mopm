@@ -26,7 +26,7 @@
 //!   - the gate: any missing name closes it, with a notice and enabled=false, exit 0, and its notice never holds a value;
 //!   - the OIDC exchange: the token request asks for the audience, the credentials are masked and written as AWS_* lines, and every later call of the
 //!     tool carries them; a failing token request or role fails.
-//! Each refusal plants one defect in an otherwise good scenario, and the good scenario must pass first.
+//! Each refusal injects one defect in an otherwise good scenario, and the good scenario must pass first.
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -227,7 +227,7 @@ const foreign_packages =
     "Package: other\nVersion: 2.0.0\nArchitecture: amd64\nMaintainer: someone <someone@example.test>\n" ++
     "Filename: pool/other/other_2.0.0_amd64.deb\nSize: 100\nSHA256: 0000000000000000000000000000000000000000000000000000000000000001\nDescription: another product\n";
 
-test "apt_publish: gate, OIDC exchange, read, index, sign, write, with every planted defect refused" {
+test "apt_publish: gate, OIDC exchange, read, index, sign, write, with every known defect refused" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -557,7 +557,7 @@ test "apt_publish: gate, OIDC exchange, read, index, sign, write, with every pla
         rep.check("sign: the private directory is gone after every failure, too", gone and w.read("gpg/homes").len > 0, w.read("gpg/homes"));
         rep.check("sign: no failure printed the passphrase or the key", !h.contains(r.text, passphrase) and !h.contains(r.text, "fake key material"), r.text);
 
-        // The fakes enforce the role: the calls a mutant of the tool would make are refused.
+        // The fakes enforce the role: the calls a variant of the tool would make are refused.
         var e2 = try w.credEnv();
         r = try h.run(a, &.{ t.aws, "s3api", "put-object", "--bucket", bucket, "--key", "apt/dists/stable/Release", "--body", w.path("u_next/dists/stable/Release") }, &e2, .{});
         rep.check("fake aws: an unconditional put to the index is AccessDenied", r.code != 0 and h.contains(r.text, "AccessDenied"), r.text);

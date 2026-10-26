@@ -21,7 +21,7 @@
 //!   - a binary that does not report the version it was released as is refused;
 //!   - an unsupported architecture or OS is refused before any request; no release at all is
 //!     refused.
-//! Then, as a standing step, it plants defects in copies of the script (a skipped sha check, any
+//! Then, as a standing step, it injects defects in copies of the script (a skipped sha check, any
 //! platform accepted, a skipped version check, wrong platform mappings, "latest" not resolved)
 //! and requires the same checks to go red for every one of them.
 
@@ -445,11 +445,11 @@ const Pass = struct {
     }
 };
 
-// ---- the planted defects ---------------------------------------------------------------------
+// ---- the known defects ---------------------------------------------------------------------
 
-const Mutant = struct { name: []const u8, from: []const u8, to: []const u8 };
+const Variant = struct { name: []const u8, from: []const u8, to: []const u8 };
 
-const mutants = [_]Mutant{
+const variants = [_]Variant{
     .{
         .name = "skip-sha-compare",
         .from = "[ \"$got\" = \"$want\" ] || die \"sha256 mismatch for $asset: got $got, SHA256SUMS says $want; nothing was installed\"",
@@ -492,7 +492,7 @@ const mutants = [_]Mutant{
     },
 };
 
-test "install.sh against a fake release, and the planted defects are caught" {
+test "install.sh against a fake release, and the known defects are caught" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -509,27 +509,27 @@ test "install.sh against a fake release, and the planted defects are caught" {
     try pass.run();
     try std.testing.expectEqual(@as(usize, 0), rep.failures);
 
-    // Each planted defect must turn at least one check red.
+    // Each known defect must turn at least one check red.
     const text = try h.readFile(a, script);
     var survived: usize = 0;
-    for (mutants) |m| {
+    for (variants) |m| {
         if (std.mem.indexOf(u8, text, m.from) == null) {
-            std.debug.print("MUTANT {s}: the line it replaces is not in install.sh\n", .{m.name});
+            std.debug.print("VARIANT {s}: the line it replaces is not in install.sh\n", .{m.name});
             survived += 1;
             continue;
         }
         const mutated = try std.mem.replaceOwned(u8, a, text, m.from, m.to);
-        const work = try std.fmt.allocPrint(a, "{s}/mutant-{s}", .{ root, m.name });
+        const work = try std.fmt.allocPrint(a, "{s}/defect-{s}", .{ root, m.name });
         const mscript = try std.fs.path.join(a, &.{ root, try std.fmt.allocPrint(a, "install-{s}.sh", .{m.name}) });
         try h.writeFile(mscript, mutated);
         var mrep = Rep{ .verbose = false };
         var mpass = Pass{ .a = a, .tools = tools, .script = mscript, .work = work, .rep = &mrep };
         try mpass.run();
         if (mrep.failures == 0) {
-            std.debug.print("MUTANT {s} SURVIVED: every check still passed\n", .{m.name});
+            std.debug.print("VARIANT {s} SURVIVED: every check still passed\n", .{m.name});
             survived += 1;
         } else {
-            std.debug.print("mutant {s} killed ({d} failing checks)\n", .{ m.name, mrep.failures });
+            std.debug.print("variant {s} killed ({d} failing checks)\n", .{ m.name, mrep.failures });
         }
     }
     try std.testing.expectEqual(@as(usize, 0), survived);

@@ -283,7 +283,7 @@ zig_exe(  # buck-only: a `git` whose answers are files, for :bump_internal and :
     **_TOOLS
 )
 
-zig_test(  # buck-only: cut_release against the fake gh, with planted defects it must refuse
+zig_test(  # buck-only: cut_release against the fake gh, with known defects it must refuse
     name = "cut_release",
     src = "tests/drivers/cut_release_test.zig",
     imports = ["tests/drivers/harness.zig"] + glob(["packaging/deb/*"]),
@@ -297,7 +297,7 @@ zig_test(  # buck-only: cut_release against the fake gh, with planted defects it
     **_TOOLS
 )
 
-zig_test(  # buck-only: cut_release bump-internal against the fake gh and the fake git, with planted defects it must refuse
+zig_test(  # buck-only: cut_release bump-internal against the fake gh and the fake git, with known defects it must refuse
     name = "bump_internal",
     src = "tests/drivers/bump_internal_test.zig",
     imports = ["tests/drivers/harness.zig"],
@@ -309,7 +309,7 @@ zig_test(  # buck-only: cut_release bump-internal against the fake gh and the fa
     **_TOOLS
 )
 
-zig_test(  # buck-only: cut_release tap against the fake gh and the fake git, with planted defects it must refuse
+zig_test(  # buck-only: cut_release tap against the fake gh and the fake git, with known defects it must refuse
     name = "tap",
     src = "tests/drivers/tap_test.zig",
     imports = ["tests/drivers/harness.zig", "tests/channels/golden/mopm.rb", "tests/channels/tap_guard/mopm.rb"],
@@ -1074,7 +1074,7 @@ zig_test(  # buck-only: the workflow lint, over the workflows, with a stand-in f
     **_TOOLS
 )
 
-zig_test(  # buck-only: release.yml's scopes, stage order and path filter (tests/drivers/release_lint.zig), with a planted mutant per rule
+zig_test(  # buck-only: release.yml's scopes, stage order and path filter (tests/drivers/release_lint.zig), with a faulty variant per rule
     name = "release_workflow",
     src = "tests/drivers/release_lint_test.zig",
     imports = _LINT_LIBS + ["tests/drivers/release_lint.zig"],
@@ -1082,7 +1082,7 @@ zig_test(  # buck-only: release.yml's scopes, stage order and path filter (tests
     **_TOOLS
 )
 
-zig_test(  # buck-only: the Dependabot autopin workflows (tests/drivers/autopin_lint.zig): their gates, tokens and step order, R1-R4, M2/M2b, with a planted mutant per rule
+zig_test(  # buck-only: the Dependabot autopin workflows (tests/drivers/autopin_lint.zig): their gates, tokens and step order, R1-R4, M2/M2b, with a faulty variant per rule
     name = "autopin_workflows",
     src = "tests/drivers/autopin_lint_test.zig",
     imports = _LINT_LIBS + ["tests/drivers/autopin_lint.zig"],

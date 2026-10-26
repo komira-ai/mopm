@@ -5,7 +5,7 @@
 //! The tap admits such a pull request only through its path guard: author the release bot, branch
 //! bump/<formula>-v<semver>, exactly one changed path (Formula/<formula>.rb), the whole file the renderer's output,
 //! the version higher than the formula on main, the tag v<semver> existing. The good scenario checks each of those
-//! on the calls the tool made; then each test plants one defect (a mutant) and requires a refusal for that reason
+//! on the calls the tool made; then each test injects one defect (a variant) and requires a refusal for that reason
 //! with no push and no pull request, so a refusal is the defect's doing. The formula used is the tap guard's fixture
 //! (tests/channels/tap_guard/mopm.rb): no version line, the version is in the urls, on the file side and on the live
 //! side; one live case keeps the old shape (the golden file, with a version line equal to the urls).
@@ -168,7 +168,7 @@ fn b64(a: Allocator, s: []const u8) ![]const u8 {
     return enc.encode(buf, s);
 }
 
-test "tap: the pull request the tap's guard admits, and every planted defect refused" {
+test "tap: the pull request the tap's guard admits, and every known defect refused" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -247,23 +247,23 @@ test "tap: the pull request the tap's guard admits, and every planted defect ref
         w = try fresh(a, tools, &tmp, "tap_line_disagrees");
         try w.put("tap_main_formula", try std.mem.replaceOwned(u8, a, try oldShapeAt(a, "1.2.2"), "version \"1.2.2\"", "version \"0.0.1\""));
         const disagree = try w.go();
-        rep.check("mutant: a formula on the tap whose version line differs from its urls is refused (the urls are the version)", disagree.code == 1 and h.contains(disagree.text, "declares version '0.0.1' but its urls carry v1.2.2") and untouched(w), disagree.text);
+        rep.check("defect: a formula on the tap whose version line differs from its urls is refused (the urls are the version)", disagree.code == 1 and h.contains(disagree.text, "declares version '0.0.1' but its urls carry v1.2.2") and untouched(w), disagree.text);
         w = try fresh(a, tools, &tmp, "tap_urls_differ");
         try w.put("tap_main_formula", try std.mem.replaceOwned(u8, a, try formulaAt(a, "1.2.2"), "v1.2.2/mopm-1.2.2-linux-x86_64", "v9.9.9/mopm-9.9.9-linux-x86_64"));
         const mixed_live = try w.go();
-        rep.check("mutant: a formula on the tap with a url of another version is refused (fail closed), as the guard does", mixed_live.code == 1 and h.contains(mixed_live.text, "its urls carry different versions") and untouched(w), mixed_live.text);
+        rep.check("defect: a formula on the tap with a url of another version is refused (fail closed), as the guard does", mixed_live.code == 1 and h.contains(mixed_live.text, "its urls carry different versions") and untouched(w), mixed_live.text);
         w = try fresh(a, tools, &tmp, "tap_no_urls");
         try w.put("tap_main_formula", "class Mopm < Formula\nend\n");
         const bare = try w.go();
-        rep.check("mutant: a formula on the tap with no url is refused, not read as version 0.0.0", bare.code == 1 and h.contains(bare.text, "has no url line") and untouched(w), bare.text);
+        rep.check("defect: a formula on the tap with no url is refused, not read as version 0.0.0", bare.code == 1 and h.contains(bare.text, "has no url line") and untouched(w), bare.text);
         w = try fresh(a, tools, &tmp, "tap_two_versions");
         try w.put("tap_main_formula", try std.mem.concat(a, u8, &.{ try oldShapeAt(a, "1.2.2"), "  version \"9.9.9\"\n" }));
         const two = try w.go();
-        rep.check("mutant: a formula on the tap with two version lines is refused (fail closed), as the guard does", two.code == 1 and h.contains(two.text, "declares 2 version lines") and untouched(w), two.text);
+        rep.check("defect: a formula on the tap with two version lines is refused (fail closed), as the guard does", two.code == 1 and h.contains(two.text, "declares 2 version lines") and untouched(w), two.text);
         w = try fresh(a, tools, &tmp, "tap_prerelease");
         try w.put("tap_main_formula", try formulaAt(a, "1.2.2-rc.1"));
         const pre = try w.go();
-        rep.check("mutant: a formula on the tap whose version is not <major>.<minor>.<patch> is refused", pre.code == 1 and h.contains(pre.text, "which is not <major>.<minor>.<patch>") and untouched(w), pre.text);
+        rep.check("defect: a formula on the tap whose version is not <major>.<minor>.<patch> is refused", pre.code == 1 and h.contains(pre.text, "which is not <major>.<minor>.<patch>") and untouched(w), pre.text);
         w = try fresh(a, tools, &tmp, "tap_unreadable");
         try w.put("tap_read_error", "");
         const unread = try w.go();
@@ -385,12 +385,12 @@ test "tap: the pull request the tap's guard admits, and every planted defect ref
         rep.check("no required checks: a merge call that succeeds but leaves auto-merge off is a notice, not a failure", an.code == 0 and h.contains(an.text, "auto-merge is not on; squash-merge it by hand") and std.mem.eql(u8, w.read("prs"), "100 OPEN " ++ branch ++ " 0\n"), an.text);
     }
 
-    // ---- planted defects: each is refused, for its reason, before anything is pushed or opened -----
+    // ---- known defects: each is refused, for its reason, before anything is pushed or opened -----
     {
         var w = try fresh(a, tools, &tmp, "no_tag");
         try w.put("tags", "v1.2.2 " ++ sha ++ "\n");
         const n = try w.go();
-        rep.check("mutant: there is no tag v1.2.3 in the released repository (the guard's tag rule) is refused before the clone", n.code == 1 and h.contains(n.text, "gh api failed") and untouched(w) and w.cloned() == 0, n.text);
+        rep.check("defect: there is no tag v1.2.3 in the released repository (the guard's tag rule) is refused before the clone", n.code == 1 and h.contains(n.text, "gh api failed") and untouched(w) and w.cloned() == 0, n.text);
 
         const bad = [_]struct { name: []const u8, diff: []const u8, why: []const u8 }{
             .{ .name = "other_path", .diff = ":000000 100644 x y A\x00Formula/buildrules.rb\x00", .why = "another formula" },
@@ -406,16 +406,16 @@ test "tap: the pull request the tap's guard admits, and every planted defect ref
             w = try fresh(a, tools, &tmp, c.name);
             try w.put("git_diff", c.diff);
             const r = try w.go();
-            rep.check(try h.fmt(a, "mutant: the staged change is {s} is refused before the commit", .{c.why}), r.code == 1 and h.contains(r.text, "not exactly one added or modified file at Formula/mopm.rb") and !w.has("commit") and untouched(w), r.text);
+            rep.check(try h.fmt(a, "defect: the staged change is {s} is refused before the commit", .{c.why}), r.code == 1 and h.contains(r.text, "not exactly one added or modified file at Formula/mopm.rb") and !w.has("commit") and untouched(w), r.text);
         }
         w = try fresh(a, tools, &tmp, "add_extra");
         try w.put("add_extra", "");
         const ex = try w.go();
-        rep.check("mutant: git stages a second path beside the formula is refused before the commit", ex.code == 1 and h.contains(ex.text, "not exactly one added or modified file") and !w.has("commit") and untouched(w), ex.text);
+        rep.check("defect: git stages a second path beside the formula is refused before the commit", ex.code == 1 and h.contains(ex.text, "not exactly one added or modified file") and !w.has("commit") and untouched(w), ex.text);
         w = try fresh(a, tools, &tmp, "add_noop");
         try w.put("add_noop", "");
         const nop = try w.go();
-        rep.check("mutant: nothing is staged (the clone already holds these bytes) is refused, no empty commit", nop.code == 1 and h.contains(nop.text, "not exactly one added or modified file") and !w.has("commit") and untouched(w), nop.text);
+        rep.check("defect: nothing is staged (the clone already holds these bytes) is refused, no empty commit", nop.code == 1 and h.contains(nop.text, "not exactly one added or modified file") and !w.has("commit") and untouched(w), nop.text);
     }
     {
         var w = try fresh(a, tools, &tmp, "clone_fail");
@@ -472,15 +472,15 @@ test "tap: the pull request the tap's guard admits, and every planted defect ref
         w = try fresh(a, tools, &tmp, "inputs_url_other_version");
         try w.put("mopm.rb", try std.mem.replaceOwned(u8, a, golden, "v1.2.3/mopm-1.2.3-linux-x86_64", "v1.2.4/mopm-1.2.4-linux-x86_64"));
         const mixed = try w.go();
-        rep.check("mutant: one url of another version than the others is refused before any gh or git call", mixed.code == 1 and h.contains(mixed.text, "its urls carry different versions") and !w.has("log"), mixed.text);
+        rep.check("defect: one url of another version than the others is refused before any gh or git call", mixed.code == 1 and h.contains(mixed.text, "its urls carry different versions") and !w.has("log"), mixed.text);
         w = try fresh(a, tools, &tmp, "inputs_all_urls_other_version");
         try w.put("mopm.rb", try formulaAt(a, "1.2.4"));
         const allother = try w.go();
-        rep.check("mutant: urls that all carry another version than --version are refused before any gh or git call", allother.code == 1 and h.contains(allother.text, "its urls carry v1.2.4, so it is not the formula of v1.2.3") and !w.has("log"), allother.text);
+        rep.check("defect: urls that all carry another version than --version are refused before any gh or git call", allother.code == 1 and h.contains(allother.text, "its urls carry v1.2.4, so it is not the formula of v1.2.3") and !w.has("log"), allother.text);
         w = try fresh(a, tools, &tmp, "inputs_dir_file_version");
         try w.put("mopm.rb", try std.mem.replaceOwned(u8, a, golden, "mopm-1.2.3-macos-arm64", "mopm-1.2.4-macos-arm64"));
         const skew = try w.go();
-        rep.check("mutant: a url whose file name carries another version than its directory is refused before any gh or git call", skew.code == 1 and h.contains(skew.text, "does not have the file name mopm-1.2.3-<target>.tar.gz") and !w.has("log"), skew.text);
+        rep.check("defect: a url whose file name carries another version than its directory is refused before any gh or git call", skew.code == 1 and h.contains(skew.text, "does not have the file name mopm-1.2.3-<target>.tar.gz") and !w.has("log"), skew.text);
         w = try fresh(a, tools, &tmp, "inputs_no_url");
         try w.put("mopm.rb", "class Mopm < Formula\nend\n");
         const nourl = try w.go();
@@ -495,13 +495,13 @@ test "tap: the pull request the tap's guard admits, and every planted defect ref
         var w = try fresh(a, tools, &tmp, "token_in_argv");
         w.token = "homebrew-tap";
         const r = try w.go();
-        rep.check("mutant: a token that appears in an argument is refused before the command runs", r.code == 1 and h.contains(r.text, "with the token in its arguments") and !w.has("git_log") and untouched(w), r.text);
+        rep.check("defect: a token that appears in an argument is refused before the command runs", r.code == 1 and h.contains(r.text, "with the token in its arguments") and !w.has("git_log") and untouched(w), r.text);
     }
     {
         const w = try fresh(a, tools, &tmp, "workdir_busy");
         try w.put("wd/leftover", "x");
         const r = try w.go();
-        rep.check("mutant: the work directory is not empty is refused before the clone", r.code == 1 and h.contains(r.text, "is not empty") and w.cloned() == 0 and untouched(w), r.text);
+        rep.check("defect: the work directory is not empty is refused before the clone", r.code == 1 and h.contains(r.text, "is not empty") and w.cloned() == 0 and untouched(w), r.text);
     }
     try rep.finish();
 }

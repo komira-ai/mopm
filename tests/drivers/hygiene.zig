@@ -7,7 +7,7 @@
 //!     deployment environment, and how they may be triggered.
 //!
 //! Each Ruby regular expression is a hand-written matcher below, named by the
-//! rule it implements; tests/drivers/hygiene_test.zig plants one sample per
+//! rule it implements; tests/drivers/hygiene_test.zig injects one sample per
 //! rule and one near miss, so a matcher that stops matching fails the build.
 //! There is no allow-list: a sample that needs a key-shaped value builds it at
 //! run time, and so must any new test.

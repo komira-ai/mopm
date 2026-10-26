@@ -16,7 +16,7 @@
 //!   - the formula is the golden one, and a missing platform, a stray tarball of another version or a bad version is
 //!     refused with no file written;
 //!   - `monotonic` says advance, same, or refuses with exit 1.
-//! Each refusal is a planted defect (a mutant input) and the check requires the refusal for that reason.
+//! Each refusal is a known defect (a variant input) and the check requires the refusal for that reason.
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -156,7 +156,7 @@ fn withoutHeader(text: []const u8) []const u8 {
     return rest;
 }
 
-test "channels: determinism, goldens, the apt tree, the formula, and every planted defect refused" {
+test "channels: determinism, goldens, the apt tree, the formula, and every known defect refused" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -181,16 +181,16 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
         _ = try w.deb("1.2.3", "amd64", bin, "1700000001", "later.deb");
         _ = try w.deb("1.2.3", "amd64", w.path("other.bin"), mtime, "otherbin.deb");
         _ = try w.deb("1.2.4", "amd64", bin, mtime, "newer.deb");
-        rep.check("mutant: a later mtime gives other bytes", !std.mem.eql(u8, w.read("one.deb"), w.read("later.deb")) and w.read("later.deb").len > 0, "same bytes");
-        rep.check("mutant: another binary gives other bytes", !std.mem.eql(u8, w.read("one.deb"), w.read("otherbin.deb")) and w.read("otherbin.deb").len > 0, "same bytes");
-        rep.check("mutant: another version gives other bytes", !std.mem.eql(u8, w.read("one.deb"), w.read("newer.deb")) and w.read("newer.deb").len > 0, "same bytes");
+        rep.check("defect: a later mtime gives other bytes", !std.mem.eql(u8, w.read("one.deb"), w.read("later.deb")) and w.read("later.deb").len > 0, "same bytes");
+        rep.check("defect: another binary gives other bytes", !std.mem.eql(u8, w.read("one.deb"), w.read("otherbin.deb")) and w.read("otherbin.deb").len > 0, "same bytes");
+        rep.check("defect: another version gives other bytes", !std.mem.eql(u8, w.read("one.deb"), w.read("newer.deb")) and w.read("newer.deb").len > 0, "same bytes");
 
         const bad_version = try w.deb("1.2", "amd64", bin, mtime, "badv.deb");
-        rep.check("mutant: a version that is not X.Y.Z is refused and writes nothing", bad_version.code == 1 and h.contains(bad_version.text, "BadVersion") and !w.has("badv.deb"), bad_version.text);
+        rep.check("defect: a version that is not X.Y.Z is refused and writes nothing", bad_version.code == 1 and h.contains(bad_version.text, "BadVersion") and !w.has("badv.deb"), bad_version.text);
         const bad_mode = try w.run(&.{ "deb", "--package", "mopm", "--version", "1.2.3", "--arch", "amd64", "--maintainer", "m <m@m>", "--homepage", "https://mopm.dev", "--synopsis", "s", "--file", "999:usr/bin/mopm:" ++ bin, "--mtime", mtime, "--out", w.path("badmode.deb") });
-        rep.check("mutant: a mode that is not octal is refused", bad_mode.code == 1 and h.contains(bad_mode.text, "not octal") and !w.has("badmode.deb"), bad_mode.text);
+        rep.check("defect: a mode that is not octal is refused", bad_mode.code == 1 and h.contains(bad_mode.text, "not octal") and !w.has("badmode.deb"), bad_mode.text);
         const escape = try w.run(&.{ "deb", "--package", "mopm", "--version", "1.2.3", "--arch", "amd64", "--maintainer", "m <m@m>", "--homepage", "https://mopm.dev", "--synopsis", "s", "--file", "755:../etc/mopm:" ++ bin, "--mtime", mtime, "--out", w.path("escape.deb") });
-        rep.check("mutant: a path that climbs out of the package is refused", escape.code == 1 and h.contains(escape.text, "BadPath") and !w.has("escape.deb"), escape.text);
+        rep.check("defect: a path that climbs out of the package is refused", escape.code == 1 and h.contains(escape.text, "BadPath") and !w.has("escape.deb"), escape.text);
     }
 
     // ---- deb-package: the release's .deb, from a binary and the metadata in packaging/deb ---------------------------
@@ -204,9 +204,9 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
 
         try h.writeFile(w.path("pother.bin"), "other bytes for the binary\n");
         _ = try w.run(&.{ "deb-package", "--binary", w.path("pother.bin"), "--name", "mopm", "--version", "1.2.3", "--arch", "amd64", "--packaging", pk, "--out", w.path("p3.deb") });
-        rep.check("mutant: another binary gives other bytes (the compare is live)", w.read("p3.deb").len > 0 and !std.mem.eql(u8, w.read("p1.deb"), w.read("p3.deb")), "same bytes");
+        rep.check("defect: another binary gives other bytes (the compare is live)", w.read("p3.deb").len > 0 and !std.mem.eql(u8, w.read("p1.deb"), w.read("p3.deb")), "same bytes");
         _ = try w.run(&.{ "deb-package", "--binary", bin, "--name", "mopm", "--version", "1.2.3", "--arch", "arm64", "--packaging", pk, "--out", w.path("p4.deb") });
-        rep.check("mutant: another architecture gives other bytes", w.read("p4.deb").len > 0 and !std.mem.eql(u8, w.read("p1.deb"), w.read("p4.deb")), "same bytes");
+        rep.check("defect: another architecture gives other bytes", w.read("p4.deb").len > 0 and !std.mem.eql(u8, w.read("p1.deb"), w.read("p4.deb")), "same bytes");
 
         // The package is what apt-index reads: its control file parses and lists mopm 1.2.3.
         const idx = try w.index("nowhere", "pidx", &.{"p1.deb"}, &.{});
@@ -218,14 +218,14 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
         }
         try h.writeFile(w.path("pk_bad/control"), try h.fmt(a, "{s}Depends: libc6\n", .{h.readFile(a, pk ++ "/control") catch ""}));
         const unknown = try w.run(&.{ "deb-package", "--binary", bin, "--name", "mopm", "--version", "1.2.3", "--arch", "amd64", "--packaging", w.path("pk_bad"), "--out", w.path("bad1.deb") });
-        rep.check("mutant: a control field the package does not allow is refused, nothing written", unknown.code == 1 and h.contains(unknown.text, "UnknownField") and !w.has("bad1.deb"), unknown.text);
+        rep.check("defect: a control field the package does not allow is refused, nothing written", unknown.code == 1 and h.contains(unknown.text, "UnknownField") and !w.has("bad1.deb"), unknown.text);
         const nodir = try w.run(&.{ "deb-package", "--binary", bin, "--name", "mopm", "--version", "1.2.3", "--arch", "amd64", "--packaging", w.path("no_such_dir"), "--out", w.path("bad2.deb") });
-        rep.check("mutant: a metadata directory that is not there is refused, nothing written", nodir.code == 1 and h.contains(nodir.text, "cannot open") and !w.has("bad2.deb"), nodir.text);
+        rep.check("defect: a metadata directory that is not there is refused, nothing written", nodir.code == 1 and h.contains(nodir.text, "cannot open") and !w.has("bad2.deb"), nodir.text);
         try h.writeFile(w.path("empty.bin"), "");
         const empty = try w.run(&.{ "deb-package", "--binary", w.path("empty.bin"), "--name", "mopm", "--version", "1.2.3", "--arch", "amd64", "--packaging", pk, "--out", w.path("bad3.deb") });
-        rep.check("mutant: an empty binary is refused, nothing written", empty.code == 1 and h.contains(empty.text, "EmptyFile") and !w.has("bad3.deb"), empty.text);
+        rep.check("defect: an empty binary is refused, nothing written", empty.code == 1 and h.contains(empty.text, "EmptyFile") and !w.has("bad3.deb"), empty.text);
         const badv = try w.run(&.{ "deb-package", "--binary", bin, "--name", "mopm", "--version", "1.2", "--arch", "amd64", "--packaging", pk, "--out", w.path("bad4.deb") });
-        rep.check("mutant: a version that is not X.Y.Z is refused, nothing written", badv.code == 1 and h.contains(badv.text, "BadVersion") and !w.has("bad4.deb"), badv.text);
+        rep.check("defect: a version that is not X.Y.Z is refused, nothing written", badv.code == 1 and h.contains(badv.text, "BadVersion") and !w.has("bad4.deb"), badv.text);
     }
 
     // ---- deb-data and architecture all: a data-only package, and the index it joins ----------------------------------------
@@ -254,17 +254,17 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
 
         // Refusals: nothing is written.
         const conf = try w.run(&.{ "deb-data", "--name", "sample-keyring", "--version", "2026.10.21", "--packaging", pk, "--file", "644:etc/sample.conf:" ++ fx ++ "copyright", "--out", w.path("bad_conf.deb") });
-        rep.check("mutant: deb-data with a file below etc/ is refused, nothing written", conf.code == 1 and h.contains(conf.text, "ConffilePath") and !w.has("bad_conf.deb"), conf.text);
+        rep.check("defect: deb-data with a file below etc/ is refused, nothing written", conf.code == 1 and h.contains(conf.text, "ConffilePath") and !w.has("bad_conf.deb"), conf.text);
         const suid = try w.run(&.{ "deb-data", "--name", "sample-keyring", "--version", "2026.10.21", "--packaging", pk, "--file", "4755:usr/bin/x:" ++ fx ++ "copyright", "--out", w.path("bad_mode.deb") });
-        rep.check("mutant: deb-data with a setuid mode is refused, nothing written", suid.code == 1 and h.contains(suid.text, "BadMode") and !w.has("bad_mode.deb"), suid.text);
+        rep.check("defect: deb-data with a setuid mode is refused, nothing written", suid.code == 1 and h.contains(suid.text, "BadMode") and !w.has("bad_mode.deb"), suid.text);
         const nofiles = try w.run(&.{ "deb-data", "--name", "sample-keyring", "--version", "2026.10.21", "--packaging", pk, "--out", w.path("bad_nofiles.deb") });
-        rep.check("mutant: deb-data with no file is refused, nothing written", nofiles.code == 1 and h.contains(nofiles.text, "EmptyFile") and !w.has("bad_nofiles.deb"), nofiles.text);
+        rep.check("defect: deb-data with no file is refused, nothing written", nofiles.code == 1 and h.contains(nofiles.text, "EmptyFile") and !w.has("bad_nofiles.deb"), nofiles.text);
         const nodir = try w.run(&.{ "deb-data", "--name", "sample-keyring", "--version", "2026.10.21", "--packaging", w.path("no_such_dir"), "--file", "644:usr/share/x:" ++ fx ++ "copyright", "--out", w.path("bad_dir.deb") });
-        rep.check("mutant: deb-data with no metadata directory is refused, nothing written", nodir.code == 1 and h.contains(nodir.text, "cannot open") and !w.has("bad_dir.deb"), nodir.text);
+        rep.check("defect: deb-data with no metadata directory is refused, nothing written", nodir.code == 1 and h.contains(nodir.text, "cannot open") and !w.has("bad_dir.deb"), nodir.text);
         const badspec = try w.run(&.{ "deb-data", "--name", "sample-keyring", "--version", "2026.10.21", "--packaging", pk, "--file", "644:nocolon", "--out", w.path("bad_spec.deb") });
-        rep.check("mutant: deb-data with a malformed --file is refused", badspec.code == 1 and h.contains(badspec.text, "is not <mode>:<dest>:<src>") and !w.has("bad_spec.deb"), badspec.text);
+        rep.check("defect: deb-data with a malformed --file is refused", badspec.code == 1 and h.contains(badspec.text, "is not <mode>:<dest>:<src>") and !w.has("bad_spec.deb"), badspec.text);
         const badoct = try w.run(&.{ "deb-data", "--name", "sample-keyring", "--version", "2026.10.21", "--packaging", pk, "--file", "9:usr/x:" ++ fx ++ "copyright", "--out", w.path("bad_oct.deb") });
-        rep.check("mutant: deb-data with a mode that is not octal is refused", badoct.code == 1 and h.contains(badoct.text, "not octal") and !w.has("bad_oct.deb"), badoct.text);
+        rep.check("defect: deb-data with a mode that is not octal is refused", badoct.code == 1 and h.contains(badoct.text, "not octal") and !w.has("bad_oct.deb"), badoct.text);
     }
 
     // ---- the apt tree: two additions, the goldens, the files' own checksums ------------------------------------------
@@ -304,7 +304,7 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
         rep.check("apt-index --pool-dir: nothing is written to pool/main", !w.has("r_shared/pool/main"), shared.text);
         for ([_][]const u8{ "pool/../etc", "elsewhere", "pool/", "pool/Mopm" }) |bad| {
             const refused = try w.index("r1", "r_badpool", &.{"one.deb"}, &.{ "--pool-dir", bad });
-            rep.check(try h.fmt(a, "mutant: apt-index --pool-dir {s} is refused, nothing written", .{bad}), refused.code == 1 and h.contains(refused.text, "BadPoolDir") and !w.has("r_badpool"), refused.text);
+            rep.check(try h.fmt(a, "defect: apt-index --pool-dir {s} is refused, nothing written", .{bad}), refused.code == 1 and h.contains(refused.text, "BadPoolDir") and !w.has("r_badpool"), refused.text);
         }
 
         // A shared repository: the Release another product wrote keeps its Origin, Label and Description; the flags apply to the first Release only.
@@ -315,29 +315,29 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
         rep.check("apt-index: the first Release (none read) takes the three flags", h.contains(w.read("r2/dists/stable/Release"), "Origin: mopm\nLabel: mopm\n") and h.contains(w.read("r2/dists/stable/Release"), "Description: mopm packages\n"), w.read("r2/dists/stable/Release"));
         try h.writeFile(w.path("r_junkrel/dists/stable/Release"), "this is not a control file\n");
         const junkrel = try w.index("r_junkrel", "r_junkrel_out", &.{"one.deb"}, &.{});
-        rep.check("mutant: a Release that cannot be read as a control file is refused, nothing written", junkrel.code == 1 and h.contains(junkrel.text, "BadStanza") and !w.has("r_junkrel_out"), junkrel.text);
+        rep.check("defect: a Release that cannot be read as a control file is refused, nothing written", junkrel.code == 1 and h.contains(junkrel.text, "BadStanza") and !w.has("r_junkrel_out"), junkrel.text);
         try std.fs.cwd().makePath(w.path("r_dirrel/dists/stable/Release"));
         const dirrel = try w.index("r_dirrel", "r_dirrel_out", &.{"one.deb"}, &.{});
-        rep.check("mutant: a Release that cannot be opened is refused, nothing written", dirrel.code == 1 and h.contains(dirrel.text, "cannot read") and !w.has("r_dirrel_out"), dirrel.text);
+        rep.check("defect: a Release that cannot be opened is refused, nothing written", dirrel.code == 1 and h.contains(dirrel.text, "cannot read") and !w.has("r_dirrel_out"), dirrel.text);
 
-        // ---- planted defects: each is refused for its reason, and nothing at all is written ---------------------------
+        // ---- known defects: each is refused for its reason, and nothing at all is written ---------------------------
         const down =try w.index("r2", "r_down", &.{"d122a.deb"}, &.{});
-        rep.check("mutant: an older version would move the channel down: refused, nothing written", down.code == 1 and h.contains(down.text, "refused") and h.contains(down.text, "down") and !w.has("r_down"), down.text);
+        rep.check("defect: an older version would move the channel down: refused, nothing written", down.code == 1 and h.contains(down.text, "refused") and h.contains(down.text, "down") and !w.has("r_down"), down.text);
         const conflict = try w.index("r2", "r_conflict", &.{"otherbin.deb"}, &.{});
-        rep.check("mutant: a listed version with other bytes is refused, nothing written", conflict.code == 1 and h.contains(conflict.text, "other bytes") and !w.has("r_conflict"), conflict.text);
+        rep.check("defect: a listed version with other bytes is refused, nothing written", conflict.code == 1 and h.contains(conflict.text, "other bytes") and !w.has("r_conflict"), conflict.text);
         const junk = try w.index("r2", "r_junk", &.{}, &.{ "--deb", fx ++ "copyright" });
-        rep.check("mutant: a file that is not a .deb is refused, nothing written", junk.code == 1 and h.contains(junk.text, "not a usable .deb") and !w.has("r_junk"), junk.text);
+        rep.check("defect: a file that is not a .deb is refused, nothing written", junk.code == 1 and h.contains(junk.text, "not a usable .deb") and !w.has("r_junk"), junk.text);
         const nodeb = try w.run(&.{ "apt-index", "--repo", w.path("r2"), "--out", w.path("r_nodeb"), "--date", mtime, "--origin", "mopm", "--label", "mopm", "--description", "d" });
-        rep.check("mutant: no .deb is refused, nothing written", nodeb.code == 1 and h.contains(nodeb.text, "--deb is required") and !w.has("r_nodeb"), nodeb.text);
+        rep.check("defect: no .deb is refused, nothing written", nodeb.code == 1 and h.contains(nodeb.text, "--deb is required") and !w.has("r_nodeb"), nodeb.text);
         const nodate = try w.run(&.{ "apt-index", "--repo", w.path("r2"), "--out", w.path("r_nodate"), "--deb", w.path("one.deb"), "--origin", "mopm", "--label", "mopm", "--description", "d" });
-        rep.check("mutant: no --date is refused (the tool never reads the clock), nothing written", nodate.code == 1 and h.contains(nodate.text, "--date is required") and !w.has("r_nodate"), nodate.text);
+        rep.check("defect: no --date is refused (the tool never reads the clock), nothing written", nodate.code == 1 and h.contains(nodate.text, "--date is required") and !w.has("r_nodate"), nodate.text);
         _ = try w.deb("1.2.3", "armhf", bin, mtime, "armhf.deb");
         const stray = try w.index("r2", "r_stray", &.{"armhf.deb"}, &.{});
-        rep.check("mutant: a .deb of an architecture the index does not list is refused, nothing written", stray.code == 1 and h.contains(stray.text, "ArchitectureNotIndexed") and !w.has("r_stray"), stray.text);
+        rep.check("defect: a .deb of an architecture the index does not list is refused, nothing written", stray.code == 1 and h.contains(stray.text, "ArchitectureNotIndexed") and !w.has("r_stray"), stray.text);
         const dup_arch = try w.index("r2", "r_duparch", &.{"one.deb"}, &.{ "--arch", "amd64", "--arch", "amd64" });
-        rep.check("mutant: an architecture given twice is refused, nothing written", dup_arch.code == 1 and h.contains(dup_arch.text, "BadArchitecture") and !w.has("r_duparch"), dup_arch.text);
+        rep.check("defect: an architecture given twice is refused, nothing written", dup_arch.code == 1 and h.contains(dup_arch.text, "BadArchitecture") and !w.has("r_duparch"), dup_arch.text);
         const odd_arch = try w.index("r2", "r_oddarch", &.{"one.deb"}, &.{ "--arch", "../AMD64" });
-        rep.check("mutant: an architecture that is not a name is refused, nothing written", odd_arch.code == 1 and h.contains(odd_arch.text, "BadArchitecture") and !w.has("r_oddarch"), odd_arch.text);
+        rep.check("defect: an architecture that is not a name is refused, nothing written", odd_arch.code == 1 and h.contains(odd_arch.text, "BadArchitecture") and !w.has("r_oddarch"), odd_arch.text);
 
         // ---- re-indexing with one --arch must not drop the published packages of the other architectures ---------------
         const one_arch = try w.index("r2", "r_onearch", &.{"newer.deb"}, &.{ "--arch", "amd64" });
@@ -345,14 +345,14 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
         rep.same("apt-index: and the arm64 Packages is the golden one still (its stanza was kept)", h.readFile(a, gold ++ "Packages_arm64") catch "", w.read("r_onearch/dists/stable/main/binary-arm64/Packages"));
         rep.check("apt-index: and the arm64 Packages.gz and the Release still list arm64", w.has("r_onearch/dists/stable/main/binary-arm64/Packages.gz") and h.contains(w.read("r_onearch/dists/stable/Release"), "Architectures: amd64 arm64\n") and h.contains(w.read("r_onearch/dists/stable/Release"), "main/binary-arm64/Packages.gz\n"), w.read("r_onearch/dists/stable/Release"));
         const unknown = try w.index("r2", "r_unknown", &.{"one.deb"}, &.{"--force"});
-        rep.check("mutant: an unknown flag is refused", unknown.code == 1 and h.contains(unknown.text, "unknown argument") and !w.has("r_unknown"), unknown.text);
+        rep.check("defect: an unknown flag is refused", unknown.code == 1 and h.contains(unknown.text, "unknown argument") and !w.has("r_unknown"), unknown.text);
 
         // ---- retention: --keep 2 drops the third newest version ----------------------------------------------------
         const keep = try w.index("r2", "r_keep", &.{"newer.deb"}, &.{ "--keep", "2" });
         const listed = w.read("r_keep/dists/stable/main/binary-amd64/Packages");
         rep.check("apt-index: --keep 2 drops the oldest of three and says so", keep.code == 0 and h.contains(keep.text, "dropped 1") and h.contains(listed, "Version: 1.2.4\n") and h.contains(listed, "Version: 1.2.3\n") and !h.contains(listed, "Version: 1.2.2\n"), keep.text);
         const keep0 = try w.index("r2", "r_keep0", &.{"newer.deb"}, &.{ "--keep", "0" });
-        rep.check("mutant: --keep 0 would empty the index: refused, nothing written", keep0.code == 1 and !w.has("r_keep0"), keep0.text);
+        rep.check("defect: --keep 0 would empty the index: refused, nothing written", keep0.code == 1 and !w.has("r_keep0"), keep0.text);
 
         // Without --keep the newest 25 stay: 27 versions in one call list 25 and drop 2 (24 or 26 would say otherwise).
         var many_debs = std.ArrayList([]const u8).init(a);
@@ -377,7 +377,7 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
         const local = try w.run(try cat(a, &.{ &base, &.{ "--url-base", "file:///tmp/dist", "--sums", fx ++ "SHA256SUMS", "--no-explicit-version", "--out", w.path("local.rb") } }));
         rep.check("formula: a file:// base and no version line", local.code == 0 and h.contains(w.read("local.rb"), "url \"file:///tmp/dist/mopm-1.2.3-macos-arm64.tar.gz\"") and !h.contains(w.read("local.rb"), "  version "), local.text);
 
-        // Planted defects in the SHA256SUMS: take a line out, add a stray one, damage one.
+        // Known defects in the SHA256SUMS: take a line out, add a stray one, damage one.
         const sums = try h.readFile(a, fx ++ "SHA256SUMS");
         var lines = std.mem.splitScalar(u8, sums, '\n');
         var kept = std.ArrayList(u8).init(a);
@@ -388,18 +388,18 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
         }
         try h.writeFile(w.path("sums_missing"), kept.items);
         const missing = try w.run(try cat(a, &.{ &base, &.{ "--repo", "komira-ai/mopm", "--sums", w.path("sums_missing"), "--out", w.path("missing.rb") } }));
-        rep.check("mutant: a SHA256SUMS without macos-arm64 is refused, no formula written", missing.code == 1 and h.contains(missing.text, "MissingTarball") and !w.has("missing.rb"), missing.text);
+        rep.check("defect: a SHA256SUMS without macos-arm64 is refused, no formula written", missing.code == 1 and h.contains(missing.text, "MissingTarball") and !w.has("missing.rb"), missing.text);
 
         try h.writeFile(w.path("sums_stray"), try h.fmt(a, "{s}{s}  mopm-1.2.2-macos-arm64.tar.gz\n", .{ sums, "0" ** 64 }));
         const stray = try w.run(try cat(a, &.{ &base, &.{ "--repo", "komira-ai/mopm", "--sums", w.path("sums_stray"), "--out", w.path("stray.rb") } }));
-        rep.check("mutant: a tarball of another version in SHA256SUMS is refused", stray.code == 1 and h.contains(stray.text, "UnexpectedTarball") and !w.has("stray.rb"), stray.text);
+        rep.check("defect: a tarball of another version in SHA256SUMS is refused", stray.code == 1 and h.contains(stray.text, "UnexpectedTarball") and !w.has("stray.rb"), stray.text);
 
         try h.writeFile(w.path("sums_bad"), try h.fmt(a, "ZZ{s}", .{sums[2..]}));
         const bad = try w.run(try cat(a, &.{ &base, &.{ "--repo", "komira-ai/mopm", "--sums", w.path("sums_bad"), "--out", w.path("bad.rb") } }));
-        rep.check("mutant: a damaged checksum (upper-case letters, not what sha256sum writes) is refused", bad.code == 1 and h.contains(bad.text, "BadHash") and !w.has("bad.rb"), bad.text);
+        rep.check("defect: a damaged checksum (upper-case letters, not what sha256sum writes) is refused", bad.code == 1 and h.contains(bad.text, "BadHash") and !w.has("bad.rb"), bad.text);
 
         const wrong_version = try w.run(&.{ "formula", "--name", "mopm", "--version", "1.2.4", "--desc", "d", "--homepage", "https://mopm.dev", "--license", "Apache-2.0", "--repo", "komira-ai/mopm", "--sums", fx ++ "SHA256SUMS", "--out", w.path("v124.rb") });
-        rep.check("mutant: SHA256SUMS of 1.2.3 for a 1.2.4 formula is refused", wrong_version.code == 1 and h.contains(wrong_version.text, "UnexpectedTarball") and !w.has("v124.rb"), wrong_version.text);
+        rep.check("defect: SHA256SUMS of 1.2.3 for a 1.2.4 formula is refused", wrong_version.code == 1 and h.contains(wrong_version.text, "UnexpectedTarball") and !w.has("v124.rb"), wrong_version.text);
     }
 
     // ---- the release's `tap` job: its own render command, against the tap guard's fixture ------------------------------------
@@ -440,13 +440,13 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
             rep.check("tap job: the exact command line renders", good.code == 0 and w.has("tap/mopm.rb"), good.text);
             rep.same("tap job: ... and the file is the tap guard's fixture, byte for byte", want, w.read("tap/mopm.rb"));
 
-            // Mutants of the command line: each must produce a formula that is NOT the fixture (or no formula), so the compare is live.
+            // Variants of the command line: each must produce a formula that is NOT the fixture (or no formula), so the compare is live.
             const plants = [_]struct { name: []const u8, extra: []const []const u8 }{
                 .{ .name = "the version line (flag dropped)", .extra = &.{} },
                 .{ .name = "another url base", .extra = &.{ "--url-base", "https://example.com/dl" } },
             };
             for (plants, 0..) |p, pi| {
-                const out_name = try h.fmt(a, "tap_mutant_{d}.rb", .{pi});
+                const out_name = try h.fmt(a, "tap_defect_{d}.rb", .{pi});
                 var margs = std.ArrayList([]const u8).init(a);
                 for (args.items, 0..) |x, k| {
                     if (pi == 0 and std.mem.eql(u8, x, "--no-explicit-version")) continue;
@@ -456,7 +456,7 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
                 }
                 try margs.appendSlice(p.extra);
                 const r = try w.run(margs.items);
-                rep.check(try h.fmt(a, "tap job mutant: {s} does not render the tap guard's fixture", .{p.name}), r.code != 0 or !std.mem.eql(u8, w.read(out_name), want), r.text);
+                rep.check(try h.fmt(a, "tap job defect: {s} does not render the tap guard's fixture", .{p.name}), r.code != 0 or !std.mem.eql(u8, w.read(out_name), want), r.text);
             }
             var no_repo = std.ArrayList([]const u8).init(a);
             var skip: usize = 0;
@@ -472,7 +472,7 @@ test "channels: determinism, goldens, the apt tree, the formula, and every plant
                 try no_repo.append(if (std.mem.eql(u8, x, w.path("tap/mopm.rb"))) w.path("tap_no_repo.rb") else x);
             }
             const nr = try w.run(no_repo.items);
-            rep.check("tap job mutant: no --repo (no release url) renders nothing", nr.code != 0 and !w.has("tap_no_repo.rb"), nr.text);
+            rep.check("tap job defect: no --repo (no release url) renders nothing", nr.code != 0 and !w.has("tap_no_repo.rb"), nr.text);
         }
     }
 

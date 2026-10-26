@@ -157,7 +157,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
         const raises_t = try h.stripAnsi(a, raises.text);
         const r_pass = try h.resultNames(a, raises_t, "PASS");
         const r_fail = try h.resultNames(a, raises_t, "FAIL");
-        rep.check("harness --only test_raises runs that one test and fails", raises.code != 0 and r_pass.len == 0 and r_fail.len == 1 and std.mem.eql(u8, r_fail[0], "test_raises") and h.contains(raises_t, "planted"), raises_t);
+        rep.check("harness --only test_raises runs that one test and fails", raises.code != 0 and r_pass.len == 0 and r_fail.len == 1 and std.mem.eql(u8, r_fail[0], "test_raises") and h.contains(raises_t, "faulty"), raises_t);
 
         const all = try c.runBin(bare, &.{}, pkg);
         const all_t = try h.stripAnsi(a, all.text);

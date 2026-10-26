@@ -1001,7 +1001,7 @@ test "unpack: a .conda whose zip entries carry zip64 extra fields (as large pack
 }
 
 // Defects it catches: a read that follows what the package says (a symbolic link, a path through `..`), a file that
-// is returned for a path it is not at, the wrong file of two of one name. Mutants planted: readFiles accepts a
+// is returned for a path it is not at, the wrong file of two of one name. Defect caught: readFiles accepts a
 // symlink entry as the file; compares the name before stripping `./`; keeps the first of two duplicates silently.
 test "readFiles: the bytes of the wanted files in the wanted order, null for one the package does not hold" {
     var st = testArena();
@@ -1077,7 +1077,7 @@ fn lyingConda(a: Allocator, files: []const fx.Item, claimed: u64) ![]u8 {
 }
 
 // Defects it catches: memory spent from a size the header claims (a header of 1 GiB over a few bytes, which would
-// allocate before a byte is read), and a stream that decompresses without bound. Mutants planted: the member check
+// allocate before a byte is read), and a stream that decompresses without bound. Defect caught: the member check
 // removed; the total cap removed.
 test "readFiles: a header that claims more than the cap is refused before anything is read, and a short stream is an error" {
     var st = testArena();

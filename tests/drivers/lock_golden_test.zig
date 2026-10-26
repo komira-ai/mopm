@@ -30,7 +30,7 @@ fn problems(a: Allocator, schema: Value, doc: Value) !c.Problems {
     return out;
 }
 
-const Mutant = struct { what: []const u8, doc: Value };
+const Variant = struct { what: []const u8, doc: Value };
 
 fn setStr(a: Allocator, obj: *Value, key: []const u8, value: []const u8) !void {
     try obj.object.put(key, .{ .string = try a.dupe(u8, value) });
@@ -49,8 +49,8 @@ fn firstWithDeps(doc: *Value) ?*Value {
 }
 
 /// The ways a faulty writer breaks `doc`: (what it does, the broken lock).
-fn mutants(a: Allocator, doc: Value) ![]Mutant {
-    var out = std.ArrayList(Mutant).init(a);
+fn variants(a: Allocator, doc: Value) ![]Variant {
+    var out = std.ArrayList(Variant).init(a);
 
     var d = try c.clone(a, doc);
     std.mem.reverse(Value, packagesOf(&d).items);
@@ -123,7 +123,7 @@ test "the locks mopm's unit tests write pass the lock contract, and a faulty wri
         const found = try problems(a, schema, doc);
         for (found.items) |p| t.fail("{s}: {s}", .{ path, p });
         std.debug.print("ok   {s} passes the schema and the lock rules\n", .{path});
-        for (try mutants(a, doc)) |m| {
+        for (try variants(a, doc)) |m| {
             const refused = try problems(a, schema, m.doc);
             if (refused.items.len == 0) {
                 t.fail("{s}: a writer that {s} would pass this check", .{ path, m.what });

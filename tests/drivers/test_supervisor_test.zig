@@ -93,8 +93,8 @@ const expected = [_]Expect{
     .{ .id = N ++ "::test_native", .status = "pass", .exit_zero = true },
     .{ .id = S ++ "::test_registered_pass", .status = "pass", .exit_zero = true },
     .{ .id = V ++ "::test_pass", .status = "pass", .exit_zero = true, .message_empty = true },
-    .{ .id = V ++ "::test_assert_fails", .status = "fail", .signal_null = true, .output_has = "planted assertion" },
-    .{ .id = V ++ "::test_raises", .status = "fail", .signal_null = true, .output_has = "planted raise" },
+    .{ .id = V ++ "::test_assert_fails", .status = "fail", .signal_null = true, .output_has = "faulty assertion" },
+    .{ .id = V ++ "::test_raises", .status = "fail", .signal_null = true, .output_has = "faulty raise" },
     .{ .id = V ++ "::test_abort", .status = "crash", .signal_name = "SIGABRT", .exit_null = true },
     .{ .id = V ++ "::test_segfault", .status = "crash", .signal_name = "SIGSEGV", .exit_null = true },
     .{ .id = V ++ "::test_after_crashes", .status = "pass", .exit_zero = true },
@@ -300,7 +300,7 @@ const Ctx = struct {
     }
 
     /// The checker on doctored results must fail.
-    fn mutant(c: *Ctx, label: []const u8, run_json: []const u8, junit: []const u8, doctored_json: ?[]const u8, doctored_xml: ?[]const u8) !void {
+    fn variant(c: *Ctx, label: []const u8, run_json: []const u8, junit: []const u8, doctored_json: ?[]const u8, doctored_xml: ?[]const u8) !void {
         if (doctored_json == null and doctored_xml == null) {
             c.rep.check(try h.fmt(c.a, "checker self-test ({s})", .{label}), false, "the edit changed nothing");
             return;
@@ -382,9 +382,9 @@ fn run(a: Allocator, rep: *h.Report) !void {
         .{ .label = "the wrong signal", .marker = "\"name\": \"test_abort\"", .from = "\"signal_name\": \"SIGABRT\"", .to = "\"signal_name\": \"SIGILL\"" },
         .{ .label = "an early exit reported as a pass", .marker = "\"name\": \"test_exits_early\"", .from = "\"status\": \"fail\"", .to = "\"status\": \"pass\"" },
     }) |mu| {
-        try c.mutant(mu.label, res.out, junit, try r.editLines(a, res.out, mu.marker, mu.from, mu.to), null);
+        try c.variant(mu.label, res.out, junit, try r.editLines(a, res.out, mu.marker, mu.from, mu.to), null);
     }
-    try c.mutant("a wrong JUnit count", res.out, junit, null, try r.editAll(a, junit, "failures=\"3\"", "failures=\"2\""));
+    try c.variant("a wrong JUnit count", res.out, junit, null, try r.editAll(a, junit, "failures=\"3\"", "failures=\"2\""));
 
     // ---------------------------------------------------------------- 4
     {

@@ -1185,8 +1185,8 @@ const BodyServer = struct {
     }
 };
 
-// Defect it catches: a package file read past the size a package may be, or cut short without saying so. Mutant
-// planted: fetchConda passes the HTTP client's own limit (64 MiB) instead of `max_conda`.
+// Defect it catches: a package file read past the size a package may be, or cut short without saying so. Variant
+// Defect caught: fetchConda passes the HTTP client's own limit (64 MiB) instead of `max_conda`.
 test "fetchConda reads a package file up to its limit and refuses a longer one by name" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();

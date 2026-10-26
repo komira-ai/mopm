@@ -22,7 +22,7 @@
 //! The walk, by what a customer does (each line is checked, and a red line names the step):
 //!
 //!   1  create     `new --lib`, `new --bin`, `init`, `metadata`; a second `new` is refused
-//!   2  test       `test --list`, `test` (the scaffold's own test passes), a planted failing test turns it red
+//!   2  test       `test --list`, `test` (the scaffold's own test passes), a faulty failing test turns it red
 //!   3  account    `login` (device flow, approved on the fake), `whoami`, an API token for publishing
 //!   4  publish    `pack`, `publish --dry-run`, `publish` to the test registry; the registry serves the version,
 //!                 the index and the channel with the packed sha256; publishing the same version again is refused
@@ -238,13 +238,13 @@ fn testing(c: *Ctx) !void {
     c.check("test runs the scaffold's test and it passes", r.code == 0 and h.contains(r.stdout, "PASS") and h.contains(r.stdout, "1 tests: 1 passed, 0 failed"), r);
 
     // A test that fails must turn the verb red (a test verb that cannot fail proves nothing).
-    const planted = c.path(&.{ lib, "tests/test_planted.mojo" });
-    try h.writeFile(planted, "from std.testing import assert_equal\n\n\ndef test_planted() raises:\n    assert_equal(1, 2)\n");
+    const faulty = c.path(&.{ lib, "tests/test_faulty.mojo" });
+    try h.writeFile(faulty, "from std.testing import assert_equal\n\n\ndef test_faulty() raises:\n    assert_equal(1, 2)\n");
     r = try c.mopm(lib, &.{ "test", "--prefix", c.o.mojo_env });
-    c.check("a planted failing test makes test exit 1 and name the failure", r.code == 1 and h.contains(r.stdout, "FAIL") and h.contains(r.stdout, "test_planted") and h.contains(r.stdout, "1 failed"), r);
-    try std.fs.cwd().deleteFile(planted);
+    c.check("a faulty failing test makes test exit 1 and name the failure", r.code == 1 and h.contains(r.stdout, "FAIL") and h.contains(r.stdout, "test_faulty") and h.contains(r.stdout, "1 failed"), r);
+    try std.fs.cwd().deleteFile(faulty);
     r = try c.mopm(lib, &.{ "test", "--prefix", c.o.mojo_env });
-    c.check("control: with the planted test removed it is green again", r.code == 0 and h.contains(r.stdout, "1 tests: 1 passed, 0 failed"), r);
+    c.check("control: with the faulty test removed it is green again", r.code == 0 and h.contains(r.stdout, "1 tests: 1 passed, 0 failed"), r);
     _ = a;
 }
 

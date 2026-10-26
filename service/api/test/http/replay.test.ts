@@ -118,71 +118,71 @@ describe.each([
   });
 });
 
-// Can-fail proof: the same harness, against routers with one planted defect each, must report a mismatch.
-describe('the replay goes red on a planted defect', () => {
+// Can-fail proof: the same harness, against routers with one known defect each, must report a mismatch.
+describe('the replay goes red on a known defect', () => {
   const find = (cs: Case[], name: string) => cs.find((c) => c.name === name)!;
   const versionsOrder = find(localCases, 'versions are newest first by conda ordering');
   const notFound = find(contractCases, 'error package_not_found');
 
   test('versions listed oldest first (the exact order fixture)', async () => {
-    const mutant: Router = async (req, deps, id) => {
+    const variant: Router = async (req, deps, id) => {
       const res = await route(req, deps, id);
       const body = JSON.parse(res.body);
       if (body.versions) body.versions.reverse();
       return { ...res, body: JSON.stringify(body) };
     };
     expect(await replay(versionsOrder, LOCAL_RECIPES[versionsOrder.name]!, route as Router)).toEqual([]);
-    expect((await replay(versionsOrder, LOCAL_RECIPES[versionsOrder.name]!, mutant)).length).toBeGreaterThan(0);
+    expect((await replay(versionsOrder, LOCAL_RECIPES[versionsOrder.name]!, variant)).length).toBeGreaterThan(0);
   });
 
   test('a missing package answered 200 with an empty list (the 404 package_not_found fixture)', async () => {
-    const mutant: Router = async (_req, _deps, id) => ({
+    const variant: Router = async (_req, _deps, id) => ({
       statusCode: 200,
       headers: { 'x-mopm-request-id': id },
       body: JSON.stringify({ versions: [], next_cursor: null }),
     });
     expect(await replay(notFound, RECIPES[notFound.name]!, route as Router)).toEqual([]);
-    expect((await replay(notFound, RECIPES[notFound.name]!, mutant)).length).toBeGreaterThan(0);
+    expect((await replay(notFound, RECIPES[notFound.name]!, variant)).length).toBeGreaterThan(0);
   });
 
   test('a tombstoned version that still shows its url (the tombstone fixture)', async () => {
     const c = find(contractCases, 'tombstoned version has no url');
-    const mutant: Router = async (req, deps, id) => {
+    const variant: Router = async (req, deps, id) => {
       const res = await route(req, deps, id);
       const body = JSON.parse(res.body);
       body.files = body.files.map((f: any) => ({ ...f, url: 'https://conda.mopm.dev/leak' }));
       return { ...res, body: JSON.stringify(body) };
     };
     expect(await replay(c, RECIPES[c.name]!, route as Router)).toEqual([]);
-    expect((await replay(c, RECIPES[c.name]!, mutant)).length).toBeGreaterThan(0);
+    expect((await replay(c, RECIPES[c.name]!, variant)).length).toBeGreaterThan(0);
   });
 
   test('an unknown route answered with the old generic 400 (the route_not_found fixture)', async () => {
     const c = find(contractCases, 'error route_not_found');
-    const mutant: Router = async (req, deps, id) => {
+    const variant: Router = async (req, deps, id) => {
       const res = await route(req, deps, id);
       return res.statusCode === 404 ? { ...res, statusCode: 400, body: res.body.replace('route_not_found', 'invalid_request') } : res;
     };
     expect(await replay(c, RECIPES[c.name]!, route as Router)).toEqual([]);
-    expect((await replay(c, RECIPES[c.name]!, mutant)).length).toBeGreaterThan(0);
+    expect((await replay(c, RECIPES[c.name]!, variant)).length).toBeGreaterThan(0);
   });
 
   test('owners listed with their added_at (the list owners fixture has id and handle only)', async () => {
     const c = find(contractCases, 'list owners');
-    const mutant: Router = async (req, deps, id) => {
+    const variant: Router = async (req, deps, id) => {
       const res = await route(req, deps, id);
       const body = JSON.parse(res.body);
       body.owners = body.owners.map((o: any) => ({ ...o, added_at: 'x' }));
       return { ...res, body: JSON.stringify(body) };
     };
-    expect((await replay(c, RECIPES[c.name]!, mutant)).length).toBeGreaterThan(0);
+    expect((await replay(c, RECIPES[c.name]!, variant)).length).toBeGreaterThan(0);
   });
 
   test('a changed error message (catalogue drift)', async () => {
-    const mutant: Router = async (req, deps, id) => {
+    const variant: Router = async (req, deps, id) => {
       const res = await route(req, deps, id);
       return { ...res, body: res.body.replace('There is no package', 'No such package') };
     };
-    expect((await replay(notFound, RECIPES[notFound.name]!, mutant)).length).toBeGreaterThan(0);
+    expect((await replay(notFound, RECIPES[notFound.name]!, variant)).length).toBeGreaterThan(0);
   });
 });

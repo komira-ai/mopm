@@ -70,7 +70,7 @@ describe('a build', () => {
     const f = fresh();
     writeFileSync(join(f.staticDir, 'site.css'), readFileSync(join(f.staticDir, 'site.css'), 'utf8') + '\n/* x */\n');
     expect(f.build().id).not.toBe(base);
-    // An area stylesheet is an asset too. Mutant: build.ts hashing only site.css.
+    // An area stylesheet is an asset too. Defect caught: build.ts hashing only site.css.
     const g = fresh();
     writeFileSync(join(g.staticDir, 'docs.css'), readFileSync(join(g.staticDir, 'docs.css'), 'utf8') + '\n/* x */\n');
     expect(g.build().id).not.toBe(base);
@@ -296,7 +296,7 @@ describe('checkDist refuses', () => {
 
   // Each sheet's boundary: exactly its budget passes its own check, one byte more is refused by it. A sheet at its full
   // budget takes every page that links it over the page total, so only the per-sheet message is checked (the page-total
-  // refusal would otherwise mask it). Mutants: `>=` for `>`, or slack such as `n > max + 1023`.
+  // refusal would otherwise mask it). Defect caught: `>=` for `>`, or slack such as `n > max + 1023`.
   test.each([
     ['site.css', SHARED_CSS_MAX_BYTES, /site\.css is \d+ bytes/, /site\.css is 24577 bytes; the limit for the shared stylesheet is 24576/],
     ['search.css', AREA_CSS_MAX_BYTES, /search\.css is \d+ bytes/, /search\.css is 16385 bytes; the limit for an area stylesheet is 16384/],
@@ -311,7 +311,7 @@ describe('checkDist refuses', () => {
   });
 
   // Every sheet within its own budget, but the three the app shell links over the page total. Only the pages that link
-  // the grown sheet are refused. Mutants: the page total counting every stylesheet in the tree (the docs pages refused
+  // the grown sheet are refused. Defect caught: the page total counting every stylesheet in the tree (the docs pages refused
   // too), or not counted at all.
   test('a page whose stylesheets together are over the page budget, each within its own', () => {
     const { f, id } = built();
@@ -325,7 +325,7 @@ describe('checkDist refuses', () => {
   });
 
   // The page total holds on every page, not only the app shell: the home page links site.css and home.css, and a home.css
-  // grown to just under its own budget takes that pair over 30 KiB. Mutant: the total checked only for app.html.
+  // grown to just under its own budget takes that pair over 30 KiB. Defect caught: the total checked only for app.html.
   test('the home page is refused when its two stylesheets together are over the page budget', () => {
     const { f, id } = built();
     const p = join(f.outDir, 'assets', id, 'home.css');
@@ -336,7 +336,7 @@ describe('checkDist refuses', () => {
     expect(() => checkDist(f.outDir)).not.toThrow(/app\.html links|docs\/[^ ]*index\.html links|home\.css is \d+ bytes/);
   });
 
-  // The boundary: a page at exactly the budget passes, one byte over is refused. Mutant: `>=` for `>`.
+  // The boundary: a page at exactly the budget passes, one byte over is refused. Defect caught: `>=` for `>`.
   test('a page at exactly the page budget passes; one byte more is refused', () => {
     const { f, id } = built();
     const p = join(f.outDir, 'assets', id, 'home.css');

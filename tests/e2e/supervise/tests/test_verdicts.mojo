@@ -25,12 +25,12 @@ def test_pass() raises:
 
 # FAIL: an assertion
 def test_assert_fails() raises:
-    assert_equal(2 + 2, 5, "planted assertion")
+    assert_equal(2 + 2, 5, "faulty assertion")
 
 
 # FAIL: an error raised by the test
 def test_raises() raises:
-    raise Error("planted raise")
+    raise Error("faulty raise")
 
 
 # CRASH, SIGABRT: libc abort()

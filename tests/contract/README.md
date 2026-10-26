@@ -38,7 +38,7 @@ Each file is `{"cases": [...]}`. A case:
 - `expect` is `valid` (default) or `invalid`. An `invalid` case is a
   counter-example and the check FAILS if the contract accepts it. Every
   counter-example has exactly one defect, named by its `name`. These are the
-  mutants that show the check can go red: a dropped required field, a wrong
+  variants that show the check can go red: a dropped required field, a wrong
   status, a missing header, a value outside a pattern or range, an auth scheme
   the operation does not accept, an error code or message off the catalogue.
 - `malformed_request: true` is for error answers to input that cannot satisfy

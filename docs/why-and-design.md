@@ -253,7 +253,7 @@ only), and native libraries that a workspace member builds itself.
   build-provenance attestation. The workflow verifies all of it before any tag exists, then tags (through
   a dedicated GitHub App, since a repository ruleset allows only that App to create `v*` tags) and
   publishes exactly the verified files. A defect in this chain is meant to make the release red; the
-  workflow's own lint plants a defect for each rule to show that. macOS binaries are **not** code-signed
+  workflow's own lint injects a defect for each rule to show that. macOS binaries are **not** code-signed
   or notarized by Apple yet.
 - **CI deployment.** The registry is deployed from a public repository by short-lived OIDC credentials
   that only workflows on `main` can assume, with per-workflow trust. `docs/security/public-deploy.md` lists
