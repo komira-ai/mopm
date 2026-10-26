@@ -195,6 +195,28 @@ describe.each(RIGS)('a CI identity and groups on the beta configuration: %s', (_
       expect((await rig.store.getVersion('widgets', widgets.version))?.state).toBe('published');
     });
 
+    test('a second exchange of the same packages (a new identity token) resumes the open group: same group, files held, and the new token commits it', async () => {
+      const first = await exchange([widgets, gadgets]);
+      const made = await env.create(first, [widgets, gadgets].map(memberOf));
+      expect(made.statusCode).toBe(201);
+      const created = json(made);
+      for (const p of [widgets, gadgets]) {
+        const m = created.members.find((x: { name: string }) => x.name === p.name);
+        await env.objects.put(quarantineKeyFor(m.files[0].upload_id, m.files[0].filename), p.bytes, { contentType: 'application/octet-stream' });
+      }
+      // the packages exist (claimed by the first exchange) and the group is open and unread: the second exchange still passes
+      const later = await exchange([widgets, gadgets]);
+      expect(later).not.toBe(first);
+      const again = await env.create(later, [widgets, gadgets].map(memberOf));
+      expect([again.statusCode, json(again).group_id, json(again).status]).toEqual([200, created.group_id, 'open']);
+      for (const m of json(again).members) expect(m.files.map((f: { uploaded: boolean }) => f.uploaded)).toEqual([true]);
+      const c = await env.call('POST', `/api/v1/groups/${created.group_id}/commit`, later, { members: [widgets, gadgets].map((p) => ({ name: p.name, manifest_sha256: p.manifest })) });
+      expect(c.statusCode).toBe(202);
+      expect(await env.runGroupJobs()).toEqual(['committed']);
+      await chain.drain();
+      expect((await rig.store.getGroup(created.group_id))?.status).toBe('visible');
+    });
+
     test('the identity aborts its own open group', async () => {
       const token = await exchange([widgets]);
       const made = await env.create(token, [memberOf(widgets)]);

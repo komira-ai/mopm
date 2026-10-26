@@ -72,13 +72,18 @@ const usage =
     \\                          'id-token: write') one from the job's identity;
     \\                          --dry-run packs and prints what would be sent
     \\  publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>]
-    \\          [--wait <seconds>] [--dry-run] [--oidc]
+    \\          [--wait <seconds>] [--dry-run] [--oidc] [--no-commit | --abort]
     \\                          publish a staged set (plan.json and the files it
     \\                          names, spec/staged-set.md) through one group:
     \\                          every member is visible together, or none is.
     \\                          --registry is required; a rerun after a failure
     \\                          resumes the same group (state.json); report.json
-    \\                          says what each member came to
+    \\                          says what each member came to. --no-commit
+    \\                          uploads every file and stops with the group open
+    \\                          (exit 0, outcome 'staged', nothing readable); the
+    \\                          same command without it resumes that group and
+    \\                          commits. --abort ends the open group state.json
+    \\                          names, which frees the actor's place
     \\  stage --workspace-root <dir> [<package>...] --artifacts <dir> --compiler <mojo version>
     \\        --out <dir> --registry <prod|gamma|beta|url>
     \\                          pack the workspace's members (the named ones and
