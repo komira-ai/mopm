@@ -359,7 +359,12 @@ fn run(a: Allocator, rep: *h.Report) !void {
         try c.must("mopm plan --unit-graph of the workspace", r);
     } else {
         r = try c.mopmRun(&env, ws, &.{ "plan", "--unit-graph", "--locked", "--mojo", "1.0.0", "--subdir", subdir, "-o", graph_path });
-        rep.check("control: mopm plan --unit-graph has a pinned toolchain for this platform (the graph steps are skipped here all the same)", !h.contains(r.text, "has no pinned toolchain"), try h.fmt(a, "exit {d}: {s}", .{ r.code, r.text }));
+        // The same outcome as on linux-64: the plan succeeds, and the graph it wrote names the toolchain of this platform.
+        try c.must("control: mopm plan --unit-graph of the workspace on this platform (the graph steps after it are skipped here all the same)", r);
+        const other_graph = try h.parseJson(a, try h.readFile(a, graph_path));
+        const other_tc = other_graph.object.get("toolchain") orelse return error.BadGraph;
+        rep.check("control: the graph's toolchain is the one mopm pins for this platform", if (h.jsonString(other_tc, "subdir")) |got| std.mem.eql(u8, got, subdir) else false, graph_path);
+        rep.check("control: the graph's toolchain carries a closure hash", if (h.jsonString(other_tc, "closure_sha256")) |got| got.len == 64 else false, graph_path);
         std.debug.print("SKIP the unit graph, mopm unit build: this walk runs them on linux-64 only; {s} builds the native from the manifest's sources and the libraries and the program with the compiler directly\n", .{subdir});
     }
     var spec = manifest_spec;
