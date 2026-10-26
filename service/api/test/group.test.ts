@@ -526,10 +526,25 @@ describe('embedded metric lines', () => {
     });
   });
 
-  test('with no dimension the dimension set is empty, and the time defaults to now', () => {
-    const line = emf([{ name: 'm', value: 1 }]) as { _aws: { Timestamp: number; CloudWatchMetrics: Array<{ Dimensions: string[][] }> } };
+  type Line = { _aws: { Timestamp: number; CloudWatchMetrics: Array<{ Dimensions: string[][] }> } };
+
+  test('with no dimension the dimension set is empty, and the time is the one passed in', () => {
+    const line = emf([{ name: 'm', value: 1 }], { now: at }) as Line;
     expect(line._aws.CloudWatchMetrics[0]!.Dimensions).toEqual([[]]);
-    expect(Math.abs(line._aws.Timestamp - Date.now())).toBeLessThan(5000);
+    expect(line._aws.Timestamp).toBe(at.getTime());
+  });
+
+  test('with no time passed in the line carries the clock now, read from a manual clock', () => {
+    jest.useFakeTimers({ now: new Date('2026-10-20T08:30:00Z') });
+    try {
+      const first = emf([{ name: 'm', value: 1 }]) as Line;
+      expect(first._aws.Timestamp).toBe(Date.parse('2026-10-20T08:30:00Z'));
+      jest.setSystemTime(new Date('2026-10-20T08:31:00Z'));
+      const second = emf([{ name: 'm', value: 1 }]) as Line;
+      expect(second._aws.Timestamp).toBe(Date.parse('2026-10-20T08:31:00Z'));
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   test.each([
