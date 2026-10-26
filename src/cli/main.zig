@@ -377,6 +377,12 @@ fn isUnset(value: ?[]const u8) bool {
     return value == null or value.?.len == 0;
 }
 
+/// Whether `mopm repl` looks for Xcode's debugserver: only for repl, when no `--debugserver` was given, `--os` did not
+/// spell another machine, and `LLDB_DEBUGSERVER_PATH` is unset or empty (an empty one names nothing).
+fn searchesDebugserver(tool: mojo_cmd.Tool, given: ?[]const u8, os_given: bool, env_value: ?[]const u8) bool {
+    return tool == .repl and given == null and !os_given and isUnset(env_value);
+}
+
 /// Replace this process with mojo: `argv`, and the caller's environment with
 /// `cmd.env` applied on top. Exec rather than spawn-and-wait: the terminal,
 /// stdin (the REPL reads it), signals such as Ctrl-C, and the exit status all
@@ -467,7 +473,7 @@ fn autolink(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const
     // named one (--debugserver, or LLDB_DEBUGSERVER_PATH already in the environment). `--os` spells another
     // machine's command line, which says nothing about this one: no search then.
     var debugserver = o.debugserver;
-    if (tool == .repl and debugserver == null and !o.os_given and isUnset(getEnv(arena, mojo_cmd.debugserver_var))) {
+    if (searchesDebugserver(tool, debugserver, o.os_given, getEnv(arena, mojo_cmd.debugserver_var))) {
         switch (core.debugserver.discover(arena) catch return 1) {
             .not_needed => {},
             .path => |p| debugserver = p,
@@ -645,6 +651,16 @@ test "options: build with no program takes --out-dir in both spellings; repl tak
     try std.testing.expectEqualStrings("/x/debugserver", repl.debugserver.?);
     const repl2 = try parseOk(a, .repl, &.{"--debugserver=/y"});
     try std.testing.expectEqualStrings("/y", repl2.debugserver.?);
+}
+
+test "repl searches for a debugserver unless one is named; an empty LLDB_DEBUGSERVER_PATH names none" {
+    try std.testing.expect(searchesDebugserver(.repl, null, false, null));
+    try std.testing.expect(searchesDebugserver(.repl, null, false, ""));
+    try std.testing.expect(!searchesDebugserver(.repl, null, false, "/x/debugserver"));
+    try std.testing.expect(!searchesDebugserver(.repl, "/y/debugserver", false, null));
+    try std.testing.expect(!searchesDebugserver(.repl, null, true, null));
+    try std.testing.expect(!searchesDebugserver(.build, null, false, null));
+    try std.testing.expect(!searchesDebugserver(.run, null, false, ""));
 }
 
 test "options: usage errors" {
