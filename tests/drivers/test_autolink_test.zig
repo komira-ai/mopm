@@ -244,6 +244,8 @@ fn run(a: Allocator, rep: *h.Report) !void {
     } else {
         var e = try m.freshEnv();
         try e.put("MODULAR_HOME", try h.fmt(a, "{s}/share/max", .{split}));
+        // The stock mojo repl, not mopm's: on macOS 14 it needs Xcode's debugserver set by hand (mopm repl sets it itself).
+        if (mojo_env.is_macos) try mojo_env.macDebugserver(a, &e);
         const pre = try h.fmt(a, "settings set target.env-vars {s}={s}/libgreet.{s}:{s}/libouter.{s}", .{ mojo_env.preload_var, lib, mojo_env.ext, lib, mojo_env.ext });
         const ctl2 = try h.run(a, &.{ try h.fmt(a, "{s}/bin/mojo", .{split}), "repl", "-O", pre }, &e, .{ .stdin_path = try h.join(a, &.{ c.here, "repl.stdin" }) });
         c.refuse("control, split: mojo repl without libinner preloaded prints nothing", ctl2, false);

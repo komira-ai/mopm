@@ -68,7 +68,8 @@ const toml_edit = core.toml_edit;
 const unit_graph = core.unit_graph;
 const publish_cmd = @import("publish_cmd.zig");
 
-pub const Command = enum { lock, update, tree, sync, add, remove, plan };
+/// The command whose name prefixes a message. `plan` and `build` only read the project (`readProject`).
+pub const Command = enum { lock, update, tree, sync, add, remove, plan, build };
 
 const usage =
     \\usage: mopm lock   [--registry <prod|gamma|beta|url>] [--overlay <staged set>]

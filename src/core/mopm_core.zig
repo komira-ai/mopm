@@ -42,6 +42,7 @@ pub const native_files = @import("native_files.zig");
 pub const unit_graph = @import("unit_graph.zig");
 pub const unit_run = @import("unit_run.zig");
 pub const target_cpu = @import("target_cpu.zig");
+pub const debugserver = @import("debugserver.zig");
 
 test {
     _ = @import("metadata.zig");
@@ -79,5 +80,6 @@ test {
     _ = @import("unit_graph.zig");
     _ = @import("unit_run.zig");
     _ = @import("target_cpu.zig");
+    _ = @import("debugserver.zig");
     _ = @import("testroot.zig");
 }
