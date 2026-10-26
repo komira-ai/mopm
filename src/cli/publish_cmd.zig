@@ -555,7 +555,7 @@ fn publishCmd(arena: Allocator, f: Flags, cli_version: []const u8) anyerror!u8 {
         err("the registry sent a status URL that is not a path under /api/v1/publishes/\n", .{});
         return 1;
     };
-    return waitForPublish(s, token, status_url, name, version);
+    return waitForPublish(s, group_publish.realNet(), wait_secs, token, status_url, name, version);
 }
 
 /// Every header the registry named for a PUT, as given (the client sets Content-Length itself from the body, to the same
@@ -621,14 +621,16 @@ fn uploadFile(s: registry_cmd.Session, token: []const u8, name: []const u8, vers
     return up.upload_id;
 }
 
-fn waitForPublish(s: registry_cmd.Session, token: []const u8, url: []const u8, name: []const u8, version: []const u8) anyerror!u8 {
+/// Polls the publish at `url` until it is published or rejected, or `wait` seconds of `net`'s clock have passed. The
+/// clock and the pauses are `net`'s, so a test drives them without waiting.
+fn waitForPublish(s: registry_cmd.Session, net: group_publish.Net, wait: i64, token: []const u8, url: []const u8, name: []const u8, version: []const u8) anyerror!u8 {
     const arena = s.arena;
     const out = std.io.getStdOut().writer();
-    const deadline = std.time.timestamp() + wait_secs;
-    while (std.time.timestamp() < deadline) {
-        const polled = try http.request(arena, .GET, url, .{ .token = token });
+    const deadline = net.now() + wait;
+    while (net.now() < deadline) {
+        const polled = try net.once(arena, .GET, url, .{ .token = token });
         if (polled.status == 429) {
-            std.time.sleep(@as(u64, @min(polled.retry_after orelse 1, 60)) * std.time.ns_per_s);
+            net.pause(@min(polled.retry_after orelse 1, 60));
             continue;
         }
         if (!polled.ok()) {
@@ -648,9 +650,9 @@ fn waitForPublish(s: registry_cmd.Session, token: []const u8, url: []const u8, n
             err("rejected: {s}: {s}\n", .{ state.rejection_code orelse "unknown", state.message orelse "" });
             return 1;
         }
-        std.time.sleep(std.time.ns_per_s);
+        net.pause(1);
     }
-    err("gave up waiting for the publish after {d} minutes; it may still finish: check 'GET {s}'\n", .{ @divTrunc(wait_secs, 60), url });
+    err("gave up waiting for the publish after {d} minutes; it may still finish: check 'GET {s}'\n", .{ @divTrunc(wait, 60), url });
     return 1;
 }
 
@@ -945,4 +947,92 @@ test "the status URL resolves against the API host" {
     try std.testing.expect((try resolveStatusUrl(a, "https://mopm.dev/api/v1", "//evil.example/api/v1/publishes/x")) == null);
     try std.testing.expect((try resolveStatusUrl(a, "https://mopm.dev/api/v1", "/api/v1/publishes/")) == null);
     try std.testing.expect((try resolveStatusUrl(a, "https://mopm.dev/api/v1", "/other")) == null);
+}
+
+const gt = @import("group_publish_test.zig");
+const poll_url = "http://127.0.0.1:1/api/v1/publishes/pub_1";
+const pending = "{\"status\":\"validating\"}";
+const done = "{\"status\":\"published\"}";
+
+fn waitSession(a: Allocator) registry_cmd.Session {
+    return .{ .arena = a, .config = .{ .stage = "beta", .api_url = "http://127.0.0.1:1/api/v1", .channel_url = "", .min_cli_version = "", .read_only = false }, .config_dir = "unused" };
+}
+
+test "the wait for a publish polls once a second on the net's clock until the registry says published" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var script = gt.Script{ .steps = &.{
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = pending },
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = pending },
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = done },
+    }, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), script.net(), 600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expect(script.mismatch == null);
+    try std.testing.expectEqual(@as(usize, 3), script.seen.items.len);
+    // One second between polls: two pauses between three polls.
+    try std.testing.expectEqual(@as(u64, 2), script.slept);
+    for (script.seen.items) |x| try std.testing.expectEqualStrings("tok", x.token.?);
+}
+
+test "a publish that never finishes is given up on when the net's clock passes the wait, not before" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var script = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 200, .body = pending }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), script.net(), 5, "tok", poll_url, "x", "1.0.0"));
+    // A wait of 5 seconds is five polls, one at each second of the clock, and five pauses: the clock is exactly at the limit.
+    try std.testing.expectEqual(@as(usize, 5), script.seen.items.len);
+    try std.testing.expectEqual(@as(u64, 5), script.slept);
+
+    // A wait of zero polls nothing.
+    var none = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 200, .body = pending }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), none.net(), 0, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(usize, 0), none.seen.items.len);
+}
+
+test "a 429 waits the registry's Retry-After, one second when it names none, and never more than 60" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var named = gt.Script{ .steps = &.{
+        .{ .method = .GET, .suffix = "pub_1", .status = 429, .retry_after = 7 },
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = done },
+    }, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), named.net(), 600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(u64, 7), named.slept);
+    try std.testing.expectEqual(@as(usize, 2), named.seen.items.len);
+
+    var unnamed = gt.Script{ .steps = &.{
+        .{ .method = .GET, .suffix = "pub_1", .status = 429 },
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = done },
+    }, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), unnamed.net(), 600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(u64, 1), unnamed.slept);
+
+    var huge = gt.Script{ .steps = &.{
+        .{ .method = .GET, .suffix = "pub_1", .status = 429, .retry_after = 3600 },
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = done },
+    }, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), huge.net(), 600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(u64, 60), huge.slept);
+
+    // A pause that carries the clock past the wait ends the wait: no poll follows it.
+    var late = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 429, .retry_after = 60 }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), late.net(), 30, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(usize, 1), late.seen.items.len);
+    try std.testing.expectEqual(@as(u64, 60), late.slept);
+}
+
+test "a rejected publish and a failing poll end the wait at once, with no pause" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var rejected = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 200, .body = "{\"status\":\"rejected\",\"rejection_code\":\"bad\",\"message\":\"no\"}" }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), rejected.net(), 600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(u64, 0), rejected.slept);
+    var broken = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 500 }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), broken.net(), 600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(u64, 0), broken.slept);
+    try std.testing.expectEqual(@as(usize, 1), broken.seen.items.len);
 }
