@@ -1361,3 +1361,404 @@ test "--oidc: more than 100 members is refused whole, before GitHub or the regis
     try std.testing.expectEqualStrings(oidc_minted, full.ok);
     try std.testing.expectEqual(@as(usize, 2), ok_script.seen.items.len);
 }
+
+// ------------------------------------------------------- --no-commit, the resume, and --abort
+
+fn readReport(a: Allocator, tmp: *std.testing.TmpDir) !std.json.Value {
+    return std.json.parseFromSliceLeaky(std.json.Value, a, try tmp.dir.readFileAlloc(a, plan_mod.report_name, 1 << 16), .{});
+}
+
+/// A run with `--no-commit` against a registry that opens the group: leaves `tmp` as the staging job leaves it, and returns
+/// the state it kept.
+fn stageOpen(a: Allocator, tmp: *std.testing.TmpDir, plan: plan_mod.Plan) !plan_mod.State {
+    var script = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+        .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/c", .status = 200 },
+    });
+    var console = Console.init(a, null);
+    var p = publisher(a, tmp, plan, &script, &console);
+    p.no_commit = true;
+    const result = p.run();
+    try std.testing.expectEqual(Result.staged, result);
+    try std.testing.expectEqual(@as(u8, 0), p.finish(result));
+    return (try plan_mod.loadState(a, tmp.dir)).ok;
+}
+
+test "--no-commit uploads every file and stops with the group open: no commit, no poll, exit 0, outcome staged" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, ",{\"name\":\"d\",\"version\":\"2.0.0\",\"action\":\"skip\",\"reason\":\"already published\"}");
+    var script = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+        .{ .method = .PUT, .suffix = "/put/a", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/b", .status = 200 },
+        .{ .method = .PUT, .suffix = "/put/c", .status = 200 },
+    });
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    p.no_commit = true;
+    p.rerun = "mopm publish --staged d --registry beta";
+    const result = p.run();
+    try std.testing.expectEqual(Result.staged, result);
+    try std.testing.expectEqual(@as(u8, 0), p.finish(result));
+    try std.testing.expect(script.mismatch == null);
+    // Four requests: the create and the three PUTs. Nothing commits the group and nothing polls it.
+    try std.testing.expectEqual(@as(usize, 4), script.seen.items.len);
+    try std.testing.expectEqual(@as(usize, 1), script.count(.POST));
+    try std.testing.expectEqual(@as(usize, 0), script.count(.GET));
+    for (script.seen.items) |s| try std.testing.expect(!contains(s.url, "commit"));
+    // It says the group and the plan digest, and how to go on.
+    try expectContains(console.out.items, "staged group " ++ gid ++ ": open, 3 file(s) held, not committed");
+    try expectContains(console.out.items, plan.sha256);
+    try expectContains(console.out.items, "to commit it (same directory, a token of the same actor): mopm publish --staged d --registry beta\n");
+    try expectContains(console.out.items, "to end it: mopm publish --staged d --registry beta --abort\n");
+    try std.testing.expect(!contains(console.out.items, "published group"));
+    // state.json is kept for the resume.
+    const kept = (try plan_mod.loadState(a, tmp.dir)).ok;
+    try std.testing.expectEqualStrings(gid, kept.group_id);
+    try std.testing.expect(kept.staged);
+    try std.testing.expect(!kept.committed);
+    try std.testing.expectEqual(@as(usize, 3), kept.uploaded.len);
+    // report.json: the run is `staged`, the group is `open`, the members that were uploaded are `staged`, the skipped one is skipped.
+    const report = try readReport(a, &tmp);
+    try std.testing.expectEqualStrings("staged", report.object.get("outcome").?.string);
+    try std.testing.expectEqualStrings("open", report.object.get("group_status").?.string);
+    try std.testing.expectEqualStrings(gid, report.object.get("group_id").?.string);
+    try std.testing.expectEqualStrings(plan.sha256, report.object.get("plan_sha256").?.string);
+    const members = report.object.get("members").?.array.items;
+    try std.testing.expectEqualStrings("staged", members[0].object.get("outcome").?.string);
+    try std.testing.expectEqualStrings("staged", members[2].object.get("outcome").?.string);
+    try std.testing.expectEqualStrings("skipped", members[3].object.get("outcome").?.string);
+}
+
+test "a run without --no-commit resumes the staged group: the same group, no file sent again, then the commit and the wait" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    const kept = try stageOpen(a, &tmp, plan);
+
+    var script = newScript(a, &.{
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("open") },
+        .{ .method = .POST, .suffix = "/groups", .status = 200, .body = createAnswer("open", .{ true, true, true }) },
+        .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
+    });
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    p.token = "a_fresh_token";
+    p.state = kept;
+    const result = p.run();
+    try std.testing.expectEqual(Result.published, result);
+    try std.testing.expectEqual(@as(u8, 0), p.finish(result));
+    try std.testing.expect(script.mismatch == null);
+    try std.testing.expectEqual(@as(usize, 0), script.count(.PUT));
+    try std.testing.expectEqual(@as(usize, 4), script.seen.items.len);
+    // The fresh token is the one that was sent, and the group is the staged one.
+    for (script.seen.items) |s| try std.testing.expectEqualStrings("a_fresh_token", s.token.?);
+    try std.testing.expectEqualStrings(gid, p.state.group_id);
+    try expectContains(console.out.items, "3 file(s) were already in the registry's storage");
+    try std.testing.expect(p.state.committed);
+    try std.testing.expect(!p.state.staged);
+    const after = (try plan_mod.loadState(a, tmp.dir)).ok;
+    try std.testing.expect(after.committed and !after.staged);
+    try std.testing.expectEqualStrings("published", (try readReport(a, &tmp)).object.get("outcome").?.string);
+}
+
+test "a resume after the staged group ended says so and sends nothing else: expired, aborted, or gone" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    const kept = try stageOpen(a, &tmp, plan);
+
+    inline for (.{ "expired", "aborted", "rejected" }) |status| {
+        var script = newScript(a, &.{
+            .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of(status) },
+            // If the run went on it would reach these; the script says so.
+            .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
+        });
+        var console = Console.init(a, null);
+        var p = publisher(a, &tmp, plan, &script, &console);
+        p.state = kept;
+        const result = p.run();
+        try std.testing.expectEqual(Result.failed, result);
+        try std.testing.expectEqual(@as(u8, 1), p.finish(result));
+        // One request, the read of the group: the ended group is not opened again as a next attempt, nothing is uploaded or committed.
+        try std.testing.expectEqual(@as(usize, 1), script.seen.items.len);
+        try std.testing.expectEqual(http_get, script.seen.items[0].method);
+        try expectContains(console.err.items, "group " ++ gid ++ ", staged by an earlier run, is " ++ status ++ ": it can no longer be committed; nothing was sent");
+        try expectContains(console.err.items, "remove state.json and stage the set again");
+        // state.json still names the group, so the failure job can still look at it.
+        try std.testing.expectEqualStrings(gid, (try plan_mod.loadState(a, tmp.dir)).ok.group_id);
+    }
+
+    var gone = newScript(a, &.{.{ .method = .GET, .suffix = gid, .status = 404, .body = "{\"error\":{\"code\":\"group_not_found\",\"message\":\"There is no such group.\",\"hint\":\"x\"}}" }});
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &gone, &console);
+    p.state = kept;
+    try std.testing.expectEqual(Result.failed, p.run());
+    try std.testing.expectEqual(@as(usize, 1), gone.seen.items.len);
+    try expectContains(console.err.items, "is not known to the registry; nothing was sent");
+}
+
+const http_get = std.http.Method.GET;
+
+test "a run that is not a resume of a staged group still opens an ended group again, as before" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    // A state from a run that failed in the middle (never staged): the first request is the create, no read of the group.
+    var script = newScript(a, &.{
+        .{ .method = .POST, .suffix = "/groups", .status = 200, .body = createAnswer("open", .{ true, true, true }) },
+        .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
+    });
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    p.state.group_id = gid;
+    p.state.attempt = 1;
+    try std.testing.expectEqual(Result.published, p.run());
+    try std.testing.expect(script.mismatch == null);
+    try std.testing.expectEqual(http_post, script.seen.items[0].method);
+}
+
+const http_post = std.http.Method.POST;
+
+test "--no-commit against a group that is already committed is refused: it stages a group before its commit" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    inline for (.{ "validating", "committed", "visible" }) |status| {
+        var script = newScript(a, &.{.{ .method = .POST, .suffix = "/groups", .status = 200, .body = createAnswer(status, .{ true, true, true }) }});
+        var console = Console.init(a, null);
+        var p = publisher(a, &tmp, plan, &script, &console);
+        p.no_commit = true;
+        const result = p.run();
+        try std.testing.expectEqual(Result.failed, result);
+        try std.testing.expectEqual(@as(usize, 1), script.seen.items.len);
+        try expectContains(console.err.items, "is " ++ status ++ ", not open: --no-commit stages a group before its commit");
+    }
+}
+
+test "--no-commit staged twice is the same open group, with the files already held" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    const kept = try stageOpen(a, &tmp, plan);
+    var script = newScript(a, &.{
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("open") },
+        .{ .method = .POST, .suffix = "/groups", .status = 200, .body = createAnswer("open", .{ true, true, true }) },
+    });
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    p.no_commit = true;
+    p.state = kept;
+    try std.testing.expectEqual(Result.staged, p.run());
+    try std.testing.expectEqual(@as(usize, 0), script.count(.PUT));
+    try std.testing.expect(script.mismatch == null);
+    try std.testing.expectEqualStrings(gid, p.state.group_id);
+}
+
+test "--abort ends the open group state.json names, once, with the run's token, and leaves state.json with no group" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    const kept = try stageOpen(a, &tmp, plan);
+
+    var script = newScript(a, &.{.{ .method = .DELETE, .suffix = gid, .status = 200, .body = group_status.of("aborted") }});
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    p.state = kept;
+    const result = p.abort();
+    try std.testing.expectEqual(Result.aborted, result);
+    try std.testing.expectEqual(@as(u8, 0), p.finish(result));
+    try std.testing.expectEqual(@as(usize, 1), script.seen.items.len);
+    try std.testing.expectEqualStrings("mopm_test_token", script.seen.items[0].token.?);
+    try expectContains(console.out.items, "aborted group " ++ gid ++ ": its place is free and none of its members was published");
+    const after = (try plan_mod.loadState(a, tmp.dir)).ok;
+    try std.testing.expectEqualStrings("", after.group_id);
+    try std.testing.expect(!after.staged and !after.committed);
+    try std.testing.expectEqual(@as(usize, 0), after.uploaded.len);
+    const report = try readReport(a, &tmp);
+    try std.testing.expectEqualStrings("aborted", report.object.get("outcome").?.string);
+    try std.testing.expectEqualStrings(gid, report.object.get("group_id").?.string);
+    try std.testing.expectEqualStrings("aborted", report.object.get("group_status").?.string);
+    try std.testing.expectEqualStrings("not_published", report.object.get("members").?.array.items[0].object.get("outcome").?.string);
+}
+
+test "--abort of a group that already ended is not an error, and one that was committed is" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    const kept = try stageOpen(a, &tmp, plan);
+    const not_open = "{\"error\":{\"code\":\"group_not_open\",\"message\":\"Group is not open.\",\"hint\":\"x\"}}";
+
+    // The failure job runs after the group expired on its own: the place is already free.
+    var ended = newScript(a, &.{
+        .{ .method = .DELETE, .suffix = gid, .status = 409, .body = not_open },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("expired") },
+    });
+    var c1 = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &ended, &c1);
+    p.state = kept;
+    const r1 = p.abort();
+    try std.testing.expectEqual(Result.aborted, r1);
+    try std.testing.expectEqual(@as(u8, 0), p.finish(r1));
+    try expectContains(c1.out.items, "group " ++ gid ++ " is already expired: nothing is held");
+
+    // The commit went through before the job failed: this command does not stop it, and says what does.
+    var committed = newScript(a, &.{
+        .{ .method = .DELETE, .suffix = gid, .status = 409, .body = not_open },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("validating") },
+    });
+    var c2 = Console.init(a, null);
+    // The abort above left state.json with no group; this run starts from the staged state again.
+    try plan_mod.saveState(a, tmp.dir, kept);
+    var q = publisher(a, &tmp, plan, &committed, &c2);
+    q.state = kept;
+    const r2 = q.abort();
+    try std.testing.expectEqual(Result.failed, r2);
+    try std.testing.expectEqual(@as(u8, 1), q.finish(r2));
+    try expectContains(c2.err.items, "is validating: it was committed, so it cannot be aborted");
+    try expectContains(c2.err.items, "mopm yank --group " ++ gid);
+    // And it did not forget the group.
+    try std.testing.expectEqualStrings(gid, (try plan_mod.loadState(a, tmp.dir)).ok.group_id);
+}
+
+test "--abort of a group the registry no longer knows (404) ends 0 and clears state.json; a second --abort ends 0 too" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    const kept = try stageOpen(a, &tmp, plan);
+
+    var unknown = newScript(a, &.{.{ .method = .DELETE, .suffix = gid, .status = 404, .body = "{\"error\":{\"code\":\"group_not_found\",\"message\":\"There is no such group.\",\"hint\":\"h\"}}" }});
+    var c1 = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &unknown, &c1);
+    p.state = kept;
+    const r1 = p.abort();
+    try std.testing.expectEqual(@as(u8, 0), p.finish(r1));
+    try expectContains(c1.out.items, "the registry no longer has group " ++ gid);
+    try std.testing.expectEqualStrings("", c1.err.items);
+    const after = (try plan_mod.loadState(a, tmp.dir)).ok;
+    try std.testing.expectEqualStrings("", after.group_id);
+    try std.testing.expect(!after.staged and !after.committed);
+
+    // The failure job may run again: state.json names no group now, so nothing is sent and it ends 0.
+    var again = newScript(a, &.{});
+    var c2 = Console.init(a, null);
+    var q = publisher(a, &tmp, plan, &again, &c2);
+    q.state = after;
+    const r2 = q.abort();
+    try std.testing.expectEqual(@as(u8, 0), q.finish(r2));
+    try std.testing.expectEqual(@as(usize, 0), again.seen.items.len);
+}
+
+test "an answer about the group that this mopm cannot read stops the resume and the abort, and the group is kept" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    const kept = try stageOpen(a, &tmp, plan);
+
+    var resume_script = newScript(a, &.{.{ .method = .GET, .suffix = gid, .status = 200, .body = "<html>" }});
+    var c1 = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &resume_script, &c1);
+    p.state = kept;
+    try std.testing.expectEqual(Result.failed, p.run());
+    try std.testing.expectEqual(@as(usize, 1), resume_script.seen.items.len);
+    try expectContains(c1.err.items, "the registry's answer to GET /groups/" ++ gid ++ " is not one this mopm reads");
+
+    var abort_script = newScript(a, &.{
+        .{ .method = .DELETE, .suffix = gid, .status = 409, .body = "{}" },
+        .{ .method = .GET, .suffix = gid, .status = 200, .body = "<html>" },
+    });
+    var c2 = Console.init(a, null);
+    var q = publisher(a, &tmp, plan, &abort_script, &c2);
+    q.state = kept;
+    try std.testing.expectEqual(Result.failed, q.abort());
+    try expectContains(c2.err.items, "the registry's answer to GET /groups/" ++ gid ++ " is not one this mopm reads");
+    try std.testing.expectEqualStrings(gid, (try plan_mod.loadState(a, tmp.dir)).ok.group_id);
+}
+
+test "--abort with no group recorded sends nothing and ends 0" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    var script = newScript(a, &.{.{ .method = .DELETE, .suffix = gid, .status = 200 }});
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    const result = p.abort();
+    try std.testing.expectEqual(Result.nothing_to_abort, result);
+    try std.testing.expectEqual(@as(u8, 0), p.finish(result));
+    try std.testing.expectEqual(@as(usize, 0), script.seen.items.len);
+    try expectContains(console.out.items, "names no group: nothing to abort");
+    try std.testing.expectEqualStrings("nothing_to_abort", (try readReport(a, &tmp)).object.get("outcome").?.string);
+}
+
+test "--abort stops on a 429 and keeps the group in state.json" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    const kept = try stageOpen(a, &tmp, plan);
+    var script = newScript(a, &.{.{ .method = .DELETE, .suffix = gid, .status = 429, .retry_after = 90, .body = "{}" }});
+    var console = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &script, &console);
+    p.state = kept;
+    const result = p.abort();
+    try std.testing.expectEqual(Result.rate_limited, result);
+    try std.testing.expectEqual(@as(u8, 1), p.finish(result));
+    try std.testing.expectEqualStrings(gid, (try plan_mod.loadState(a, tmp.dir)).ok.group_id);
+}
+
+test "--no-commit and --abort are flags without a value, and they refuse each other and --dry-run" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    const plain = (try parseFlags(a, &.{ "--staged", "s", "--registry", "beta" })).ok;
+    try std.testing.expect(!plain.no_commit and !plain.abort);
+    const nc = (try parseFlags(a, &.{ "--staged", "s", "--no-commit", "--registry", "beta", "--oidc" })).ok;
+    try std.testing.expect(nc.no_commit and !nc.abort and nc.oidc);
+    const ab = (try parseFlags(a, &.{ "--staged", "s", "--registry", "beta", "--abort" })).ok;
+    try std.testing.expect(ab.abort and !ab.no_commit);
+    try expectContains((try parseFlags(a, &.{ "--staged", "s", "--registry", "beta", "--abort", "--no-commit" })).bad, "--abort ends a group and --no-commit stages one");
+    try expectContains((try parseFlags(a, &.{ "--staged", "s", "--registry", "beta", "--abort", "--dry-run" })).bad, "--abort cannot be a --dry-run");
+    // The command that commits later never carries either flag.
+    try std.testing.expectEqualStrings("mopm publish --staged s --registry beta --oidc", try gp.rerunCommand(a, nc));
+    try std.testing.expectEqualStrings("mopm publish --staged s --registry beta", try gp.rerunCommand(a, ab));
+}

@@ -83,6 +83,42 @@ conda channel (`channel.md`). Other files in the directory are ignored.
    published. The wait is 600 seconds unless `--wait <seconds>` says.
 7. Writes `report.json`, and exits 0 only if the group is visible.
 
+### `--no-commit`, the resume, and `--abort`
+
+`publish --staged <dir> --no-commit` runs steps 1 to 4 and stops: the group is
+`open`, every file is held by the registry, nothing is committed, and nothing is
+readable (a member of a group that is not visible is in no API answer, index or
+channel). It prints the group id and the plan digest (the sha256 of
+`plan.json`), writes `state.json` with `"staged": true`, writes `report.json`
+with the run `outcome` `staged`, `group_status` `open`, `plan_sha256`, and each
+member that is to be uploaded as `staged`, and **exits 0**: staging is a
+success, and the only thing that distinguishes it from a publish is the outcome
+word, which is why the outcome is not `published`. A group that is not `open`
+when `--no-commit` reaches it (validating, committed, visible) is refused, exit
+1.
+
+The same command without `--no-commit`, in the same directory, resumes the same
+group: `state.json`'s `plan_sha256` must still match `plan.json`, the registry
+reports every file as held, nothing is sent again, and the run goes on with step
+5. The token need not be the first run's, only the same actor's (a fresh `--oidc`
+exchange of the same packages and versions is). Because the registry opens a group
+that ended again as a next attempt when asked for it, a run that finds `staged:
+true` in `state.json` first reads the group (`GET /groups/{id}`): `expired`,
+`aborted`, `rejected`, `failed`, `superseded` or unknown ends the run with exit 1
+and `nothing was sent`, and `state.json` is kept; the caller removes it to stage
+again. `committed` becomes true and `staged` false in `state.json` when the commit
+is sent.
+
+`publish --staged <dir> --abort` ends the group `state.json` names
+(`DELETE /groups/{id}`), which also gives back the actor's place among its open
+groups. It reads `plan.json` (for the packages of an `--oidc` exchange and the
+digest) and `state.json`; it reads none of the set's files. `state.json` is left
+with no group, and `report.json` has the `outcome` `aborted` (`nothing_to_abort`
+when `state.json` named no group). A group that already ended without being
+published is not an error (exit 0); a directory with no `state.json`, a state of
+another registry or plan, and a group that was committed are (exit 1). `--abort`
+cannot be combined with `--no-commit` or `--dry-run`.
+
 `--registry` is required, with no default. A rerun after any failure sends the
 same request and so asks for the same group: the registry's group id is a
 function of the caller and the declared set. Files the registry holds are not
