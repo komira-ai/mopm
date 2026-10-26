@@ -51,8 +51,12 @@ const Mode = struct {
     half_commit: bool = false,
     /// Before the commit only the first member is readable.
     leak_first_early: bool = false,
-    /// Validation takes this many milliseconds after the commit request, however often the group is read: a loaded registry.
+    /// Validation takes this many milliseconds of the registry's clock (`Manual`) after the commit request, however often the group
+    /// is read: a loaded registry. The clock moves when the check waits, and by `read_gap_ms` at each read of a validating group.
     slow_validation_ms: u64 = 0,
+    /// The registry's clock moves this far at each read of a group that is validating: the time between two polls of a reader that
+    /// does not read faster (`mopm publish`, which asks once a second).
+    read_gap_ms: u64 = 0,
     /// A good group is committed by the first read of the set's first member once its validation is done, and not by a read of the
     /// group: the commit lands between two reads of the members, as it does when a reader sweeps them one after the other.
     commit_in_sweep: bool = false,
@@ -113,7 +117,7 @@ const Grp = struct {
     created: i64,
     deadline: i64,
     polls: u32 = 0,
-    /// When the commit request came (milliseconds of the clock of the process).
+    /// When the commit request came (milliseconds of the registry's clock).
     committed_ms: i64 = 0,
     yank: ?[]const u8 = null,
     yank_polls: u32 = 0,
@@ -124,6 +128,53 @@ const Grp = struct {
 fn statusName(s: Status) []const u8 {
     return @tagName(s);
 }
+
+/// A clock that moves only when something moves it: the check's waits (`sleepMs` adds what it was asked for and returns at once)
+/// and the registry's own events. The registry and the check read the same one, so a deadline, a validation that takes time and a
+/// wait of the check are all in one time that no test measures.
+const Manual = struct {
+    ms: std.atomic.Value(i64) = std.atomic.Value(i64).init(start_ms),
+    /// Every wait asked of the clock, in order (the first `waits.len`).
+    waits: [256]u64 = [_]u64{0} ** 256,
+    count: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
+
+    /// Some day in 2026; the registry prints its deadlines as dates.
+    const start_ms: i64 = 1_790_000_000_000;
+
+    fn clock(m: *Manual) g.Clock {
+        return .{ .ctx = m, .now_ms_fn = nowMs, .sleep_ms_fn = sleepMs };
+    }
+
+    fn of(ctx: ?*anyopaque) *Manual {
+        return @ptrCast(@alignCast(ctx.?));
+    }
+
+    fn nowMs(ctx: ?*anyopaque) i64 {
+        return of(ctx).ms.load(.acquire);
+    }
+
+    fn sleepMs(ctx: ?*anyopaque, ms: u64) void {
+        const m = of(ctx);
+        const i = m.count.fetchAdd(1, .acq_rel);
+        if (i < m.waits.len) m.waits[i] = ms;
+        m.advance(ms);
+        // Only to let the thread that is waiting for this one run.
+        std.Thread.yield() catch {};
+    }
+
+    fn advance(m: *Manual, ms: u64) void {
+        _ = m.ms.fetchAdd(@intCast(ms), .acq_rel);
+    }
+
+    fn secs(m: *Manual) i64 {
+        return @divFloor(m.ms.load(.acquire), 1000);
+    }
+
+    /// The waits asked of the clock so far.
+    fn waited(m: *Manual) []const u64 {
+        return m.waits[0..@min(m.count.load(.acquire), m.waits.len)];
+    }
+};
 
 const Stub = struct {
     mode: Mode,
@@ -142,6 +193,8 @@ const Stub = struct {
     /// `shows_during_overlay`: set by the run once the staged set is installed.
     squatting: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     rival_seeded: bool = false,
+    /// The registry's clock, and the check's: see `Manual`.
+    clock: Manual = .{},
 
     fn start(mode: Mode) !*Stub {
         const s = try std.heap.page_allocator.create(Stub);
@@ -292,7 +345,7 @@ const Stub = struct {
         if (existing) |i| {
             if (s.groups.items[i].status == .open) status = .ok;
         } else {
-            const now = std.time.timestamp();
+            const now = s.clock.secs();
             const members = try sa.alloc(Member, input.members.len);
             for (input.members, members) |m, *out| {
                 out.* = .{ .name = try sa.dupe(u8, m.name), .version = try sa.dupe(u8, m.version), .filename = try sa.dupe(u8, m.files[0].filename), .sha256 = try sa.dupe(u8, m.files[0].sha256), .size = m.files[0].size };
@@ -354,7 +407,7 @@ const Stub = struct {
             .bytes = bytes,
             .manifest_sha256 = "1" ** 64,
         };
-        const now = std.time.timestamp();
+        const now = s.clock.secs();
         try s.groups.append(.{ .id = "grp_" ++ "0" ** 32, .status = .visible, .members = found, .created = now, .deadline = now + 3600 });
     }
 
@@ -401,7 +454,7 @@ const Stub = struct {
         }
         gr.status = .validating;
         gr.polls = 0;
-        gr.committed_ms = std.time.milliTimestamp();
+        gr.committed_ms = s.clock.ms.load(.acquire);
         return json(a, .accepted, .{ .group_id = gr.id, .status = "validating", .attempt = gr.attempt, .status_url = try std.fmt.allocPrint(a, "/api/v1/groups/{s}", .{gr.id}) });
     }
 
@@ -432,7 +485,7 @@ const Stub = struct {
 
     /// Whether the slow validation of the mode has taken its time.
     fn validationDone(s: *Stub, gr: *const Grp) bool {
-        return std.time.milliTimestamp() - gr.committed_ms >= @as(i64, @intCast(s.mode.slow_validation_ms));
+        return s.clock.ms.load(.acquire) - gr.committed_ms >= @as(i64, @intCast(s.mode.slow_validation_ms));
     }
 
     /// The group is committed: its members read as published, with the dependencies their archives declare.
@@ -453,6 +506,7 @@ const Stub = struct {
     fn progress(s: *Stub, gr: *Grp) void {
         if (gr.status == .validating) {
             // Validation takes several reads of the group: a reader sees it before its commit on both sides of a read of its members.
+            s.clock.advance(s.mode.read_gap_ms);
             gr.polls += 1;
             if (gr.polls >= 5 and validationDone(s, gr)) {
                 var bad: ?[]const u8 = null;
@@ -840,13 +894,16 @@ fn runCheckWith(a: Allocator, mode: Mode, token: []const u8, stage: []const u8, 
         .run_id = 4242000 + work_counter,
         .attempt = 1,
         .summary = extras.summary,
-        // The reads of the index and the channel give up after a short time: the stand-in answers at once, and a check that is red on
-        // purpose (a member that never appears) waits that long for it. The wait of `mopm publish` for its group is a backstop that a
-        // loaded machine does not reach, and is short only for the registry that never settles.
+        // The reads of the index and the channel give up when the registry's clock (`Manual`) is `wait_ms` past the first try: the
+        // check's waits move that clock and take no time, so a check that is red on purpose (a member that never appears) is red at
+        // once. The wait of `mopm publish` for its group is the child's own, in real seconds: a backstop that a loaded machine does
+        // not reach; for the registry that never settles it is the least there is (the child asks, pauses once, asks again and gives
+        // up), and the registry that settles does so within that pause, because the check's waits take no time.
         .wait_ms = extras.wait_ms,
-        .publish_wait_ms = if (mode.stall) 3000 else 120_000,
+        .publish_wait_ms = if (mode.stall) 1000 else 120_000,
         .poll_ms = 10,
         .retry_ms = 10,
+        .clock = stub.clock.clock(),
         .parent_env = parent_env,
         .pixi = if (extras.no_pixi) null else t.pixi,
         .pixi_manifest = extras.pixi_manifest,
@@ -1085,6 +1142,16 @@ test "a deadline that is days away, or already past, is a failure" {
     try expectRedOn(.{ .deadline_secs = -60 }, "the probe group's deadline is between 30 minutes and 19 hours away");
 }
 
+test "the deadline of the probe group is read against the clock, to the second: 30 minutes and 19 hours are in, a second less or more is out" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const a = arena.allocator();
+    const name = "the probe group's deadline is between 30 minutes and 19 hours away";
+    try std.testing.expect(passed((try runCheck(a, .{ .deadline_secs = 30 * 60 }, test_token, "beta")).result, name));
+    try std.testing.expect(passed((try runCheck(a, .{ .deadline_secs = 19 * 3600 }, test_token, "beta")).result, name));
+    try expectRedOn(.{ .deadline_secs = 30 * 60 - 1 }, name);
+    try expectRedOn(.{ .deadline_secs = 19 * 3600 + 1 }, name);
+}
+
 test "a member that is readable before its group commits is a failure" {
     try expectRedOn(.{ .leak_early = true }, "chain: no member is readable before the commit");
 }
@@ -1118,9 +1185,11 @@ test "some of the members readable at once before the commit is still a failure"
 test "a registry that validates slowly is waited for, however briefly the reads of its state are repeated" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    // Validation takes 2.5 seconds after the commit, of the chain and of the rejected group, and the reads of the index and the
-    // channel are repeated for one second only. `mopm publish` waits for its group by its own wait, not by that one.
-    const ran = try runCheckWith(a, .{ .slow_validation_ms = 2500 }, test_token, "beta", .{ .wait_ms = 1000 });
+    // Validation takes 2.5 seconds of the registry's clock after the commit, of the chain and of the rejected group, and the reads
+    // of the index and the channel are repeated for one second of that clock only. `mopm publish` waits for its group by its own
+    // wait (the rejected group has no other reader than `mopm publish`, which needs five reads of it, so a wait of one second
+    // would give up before the group ends), not by that one.
+    const ran = try runCheckWith(a, .{ .slow_validation_ms = 2500, .read_gap_ms = 1000 }, test_token, "beta", .{ .wait_ms = 1000 });
     for (ran.result.notes) |n| {
         if (std.mem.startsWith(u8, n, "- FAIL")) std.debug.print("{s}", .{n});
     }
@@ -1132,7 +1201,103 @@ test "a registry that validates slowly is waited for, however briefly the reads 
 }
 
 test "a group that never becomes visible is a failure that names the status" {
-    try expectRedOn(.{ .stall = true }, "chain: the group becomes visible");
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const a = arena.allocator();
+    // `mopm publish` is given one second: it asks, pauses once, asks again and gives up. The group of a registry that settles is
+    // visible by the second ask (the same run with `stall` off passes); this one is not, and the report names the status it was in.
+    const ran = try runCheck(a, .{ .stall = true }, test_token, "beta");
+    try std.testing.expect(!ran.result.skipped);
+    try std.testing.expect(failed(ran.result, "chain: mopm publish --staged publishes the set"));
+    try std.testing.expect(hasNote(ran.result, "- FAIL", "chain: the group becomes visible: status validating") or
+        hasNote(ran.result, "- FAIL", "chain: the group becomes visible: status committed"));
+}
+
+test "a check that is not true when the clock has passed its wait is red, after exactly the polls that fit in it" {
+    var clock = Manual{};
+    const Tries = struct {
+        n: usize = 0,
+        true_at: usize = 0,
+        fn once(self: *@This()) anyerror!bool {
+            self.n += 1;
+            return self.true_at != 0 and self.n == self.true_at;
+        }
+    };
+    // 100 ms of waiting, a try every 30 ms: tries at 0, 30, 60, 90 and 120 ms; the one at 120 is past the wait, and ends it.
+    var never = Tries{};
+    try std.testing.expect(!try g.pollUntil(clock.clock(), 100, 30, *Tries, &never, Tries.once));
+    try std.testing.expectEqual(@as(usize, 5), never.n);
+    try std.testing.expectEqualSlices(u64, &.{ 30, 30, 30, 30 }, clock.waited());
+    try std.testing.expectEqual(Manual.start_ms + 120, clock.ms.load(.acquire));
+    // The wait is passed only when it is more than over: a try exactly at the end is the last but one.
+    var edge_clock = Manual{};
+    var edge = Tries{};
+    try std.testing.expect(!try g.pollUntil(edge_clock.clock(), 90, 30, *Tries, &edge, Tries.once));
+    try std.testing.expectEqual(@as(usize, 5), edge.n);
+    // True at the third try: no wait after it.
+    var soon_clock = Manual{};
+    var soon = Tries{ .true_at = 3 };
+    try std.testing.expect(try g.pollUntil(soon_clock.clock(), 100, 30, *Tries, &soon, Tries.once));
+    try std.testing.expectEqual(@as(usize, 3), soon.n);
+    try std.testing.expectEqualSlices(u64, &.{ 30, 30 }, soon_clock.waited());
+    // A wait of nothing is the first try, one pause, and the try after it (the first at which the wait is passed).
+    var once_clock = Manual{};
+    var one = Tries{};
+    try std.testing.expect(!try g.pollUntil(once_clock.clock(), 0, 30, *Tries, &one, Tries.once));
+    try std.testing.expectEqual(@as(usize, 2), one.n);
+    try std.testing.expectEqualSlices(u64, &.{30}, once_clock.waited());
+}
+
+/// What a scripted registry answers to `retrying`, one entry for each call.
+const Script = struct {
+    steps: []const Step,
+    calls: usize = 0,
+
+    const Step = union(enum) { down, answer: std.http.Status, throttled: ?u32 };
+
+    fn call(self: *Script) anyerror!core.http.Answer {
+        defer self.calls += 1;
+        return switch (self.steps[@min(self.calls, self.steps.len - 1)]) {
+            .down => error.ConnectionRefused,
+            .answer => |s| .{ .status = @intFromEnum(s), .body = "" },
+            .throttled => |after| .{ .status = 429, .body = "", .retry_after = after },
+        };
+    }
+};
+
+test "a call that fails in transport is made again after the pause, three times, and then the error is the answer" {
+    var clock = Manual{};
+    var down = Script{ .steps = &.{.down} };
+    try std.testing.expectError(error.ConnectionRefused, g.retrying(clock.clock(), 250, *Script, &down, Script.call));
+    try std.testing.expectEqual(@as(usize, 4), down.calls);
+    try std.testing.expectEqualSlices(u64, &.{ 250, 250, 250 }, clock.waited());
+    // Back up after two failures: the third call is the answer, and nothing waits after it.
+    var back_clock = Manual{};
+    var back = Script{ .steps = &.{ .down, .down, .{ .answer = .ok } } };
+    const ans = try g.retrying(back_clock.clock(), 250, *Script, &back, Script.call);
+    try std.testing.expectEqual(@as(u16, 200), ans.status);
+    try std.testing.expectEqual(@as(usize, 3), back.calls);
+    try std.testing.expectEqualSlices(u64, &.{ 250, 250 }, back_clock.waited());
+}
+
+test "a 429 waits as long as the registry says, never less than the pause and never more than a minute, and is given up after three waits" {
+    var clock = Manual{};
+    var script = Script{ .steps = &.{ .{ .throttled = 7 }, .{ .throttled = null }, .{ .throttled = 1 }, .{ .throttled = 3600 } } };
+    const ans = try g.retrying(clock.clock(), 2000, *Script, &script, Script.call);
+    // Three waits (7 s as told; the pause when no time is told; the pause when the registry asks for less), and the fourth 429 is the
+    // answer, with no wait after it.
+    try std.testing.expectEqual(@as(u16, 429), ans.status);
+    try std.testing.expectEqual(@as(usize, 4), script.calls);
+    try std.testing.expectEqualSlices(u64, &.{ 7000, 2000, 2000 }, clock.waited());
+    var long_clock = Manual{};
+    var long = Script{ .steps = &.{ .{ .throttled = 3600 }, .{ .answer = .created } } };
+    const done = try g.retrying(long_clock.clock(), 2000, *Script, &long, Script.call);
+    try std.testing.expectEqual(@as(u16, 201), done.status);
+    try std.testing.expectEqualSlices(u64, &.{60_000}, long_clock.waited());
+    // A transport error and a 429 share the three tries.
+    var mixed_clock = Manual{};
+    var mixed = Script{ .steps = &.{ .down, .{ .throttled = 4 }, .down, .{ .answer = .ok } } };
+    _ = try g.retrying(mixed_clock.clock(), 2000, *Script, &mixed, Script.call);
+    try std.testing.expectEqualSlices(u64, &.{ 2000, 4000, 2000 }, mixed_clock.waited());
 }
 
 test "a file that is not a package, accepted, is a failure" {
