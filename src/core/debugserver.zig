@@ -57,8 +57,9 @@ pub fn discover(arena: Allocator) Allocator.Error!Found {
 }
 
 fn discoverMacos(arena: Allocator) Allocator.Error!Found {
-    const u = std.posix.uname();
-    if (!needed(std.mem.sliceTo(&u.release, 0))) return .not_needed;
+    // `uname -r`: std.posix.uname needs libc, which mopm is not linked against.
+    const rel = std.ChildProcess.run(.{ .allocator = arena, .argv = &.{ "/usr/bin/uname", "-r" } }) catch return .not_needed;
+    if (!needed(std.mem.trim(u8, rel.stdout, " \t\r\n"))) return .not_needed;
     const dir = developerDir(arena) orelse
         return .{ .missing = "this is macOS 14 and 'xcode-select -p' names no developer directory: install Xcode or run 'xcode-select --install', or pass --debugserver <path>; mojo's own debugserver crashes here" };
     if (try find(arena, dir)) |path| return .{ .path = path };
