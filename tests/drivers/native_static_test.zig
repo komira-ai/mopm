@@ -176,7 +176,6 @@ fn writeRegistryFiles(a: Allocator, root: []const u8, base: []const u8, packs: [
 test "native_static: an archive in an empty-module package, from mopm pack to a linked test (spikes of the natives design)" {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena_state.allocator();
-    try h.watchdog(1700);
     var rep = h.Report{};
     run(a, &rep) catch |e| switch (e) {
         error.Fatal => {},

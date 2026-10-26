@@ -86,7 +86,7 @@ const flagTokens = (text: string): string[] => sorted(text.match(/--[a-z]+(?:-[a
 
 describe.each([
   ['mopm stage', stageZig, undefined],
-  ['mopm publish --staged', publishZig, ['--dry-run', '--oidc']],
+  ['mopm publish --staged', publishZig, ['--dry-run', '--oidc', '--no-commit', '--abort']],
 ] as const)('docs: %s', (heading, zig, noValue) => {
   const sec = section(doc, heading);
   const source = flagsOf(zig, noValue);
@@ -158,14 +158,14 @@ describe('docs: values and outcomes', () => {
 
   test('the outcomes of a run are the Result of the publisher, and are all named', () => {
     const names = /pub const Result = enum \{([^}]*)\}/.exec(publishZig)![1].split(',').map((s) => s.trim()).filter(Boolean);
-    expect(names).toEqual(['published', 'failed', 'rate_limited', 'no_group_publish', 'timed_out']);
+    expect(names).toEqual(['published', 'staged', 'aborted', 'nothing_to_abort', 'failed', 'rate_limited', 'no_group_publish', 'timed_out']);
     const sec = section(doc, 'report.json');
     expect(sec).toContain(`The outcome of a run is ${names.slice(0, -1).map((n) => `\`${n}\``).join(', ')} or \`${names[names.length - 1]}\``);
   });
 
   test('the outcomes of a member are the strings the report writes, one row each', () => {
     const outcomes = sorted([...publishZig.matchAll(/outcome = "([a-z_]+)"/g)].map((m) => m[1]));
-    expect(outcomes).toEqual(['not_published', 'pending', 'published', 'rejected', 'skipped']);
+    expect(outcomes).toEqual(['not_published', 'pending', 'published', 'rejected', 'skipped', 'staged']);
     const rows = section(doc, 'report.json').split('\n').filter((l) => l.startsWith('| `'));
     expect(sorted(rows.map((l) => /^\| `([a-z_]+)`/.exec(l)![1]))).toEqual(outcomes);
   });

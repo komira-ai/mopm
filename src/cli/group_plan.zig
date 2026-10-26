@@ -248,6 +248,9 @@ pub const State = struct {
     group_id: []const u8 = "",
     attempt: u32 = 0,
     committed: bool = false,
+    /// A `--no-commit` run uploaded every file and stopped with the group open: a later run resumes that group, and says so
+    /// clearly if the registry has ended it meanwhile (it does not open the group again behind the caller's back).
+    staged: bool = false,
     /// `<package>/<subdir>/<file name>` of each file the registry has taken.
     uploaded: []const []const u8 = &.{},
 };
@@ -287,7 +290,7 @@ pub const FileReport = struct { subdir: []const u8, filename: []const u8, sha256
 pub const MemberReport = struct {
     name: []const u8,
     version: []const u8,
-    /// `published`, `skipped`, `rejected`, `not_published` or `pending`.
+    /// `published`, `staged`, `skipped`, `rejected`, `not_published` or `pending`.
     outcome: []const u8,
     /// The registry's code for a rejected member, or why the plan skipped one.
     code: ?[]const u8 = null,
@@ -300,8 +303,10 @@ pub const Report = struct {
     group_id: ?[]const u8 = null,
     /// The group's status as last read, or null if it was not read.
     group_status: ?[]const u8 = null,
-    /// `published`, `dry_run`, `nothing_to_publish`, `failed`, `rate_limited`, `no_group_publish`, `timed_out`.
+    /// `published`, `staged`, `aborted`, `nothing_to_abort`, `failed`, `rate_limited`, `no_group_publish`, `timed_out`.
     outcome: []const u8,
+    /// The sha256 of plan.json this run published, staged or aborted; the stage and commit jobs compare it.
+    plan_sha256: ?[]const u8 = null,
     members: []const MemberReport,
 };
 

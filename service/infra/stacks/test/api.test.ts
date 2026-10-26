@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
-import { ApiStack, AUTH_GRANTS, BETA_CI_PUBLISHERS, BETA_GROUPS_POLICY, CI_PUBLISHERS_ENV, GROUPS_POLICY_ENV, CLAIM_ROUTES, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
+import { ApiStack, AUTH_GRANTS, BETA_CI_PUBLISHERS, BETA_GROUPS_POLICY, PROD_CI_PUBLISHERS, CI_PUBLISHERS_ENV, GROUPS_POLICY_ENV, CLAIM_ROUTES, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
 import { STAGES, stageConfig, tableName } from '../lib/config';
 import { DUMMY_ACCOUNT, HANDLER_STUB_DIR, tpl } from './util';
 
@@ -292,12 +292,41 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
       ]);
       expect(JSON.parse(values[0])).toEqual(BETA_CI_PUBLISHERS);
       expect(acts(creators[0])).toEqual(['dynamodb:PutItem']);
+    } else if (stage === 'prod') {
+      // Prod trusts the same workflow only as an identity that ACTS FOR the owner account: its environment is prod, the row carries
+      // acts_for, and nothing else about the claim pins is looser than beta's.
+      expect(values).toHaveLength(1);
+      expect(JSON.parse(values[0])).toEqual([
+        {
+          repository_id: '1376408823',
+          repository_owner_id: '305577347',
+          workflow: '.github/workflows/release.yml',
+          ref: 'refs/heads/main',
+          job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
+          events: ['push'],
+          environment: 'prod',
+          acts_for: '15257031',
+        },
+      ]);
+      expect(JSON.parse(values[0])).toEqual(PROD_CI_PUBLISHERS);
+      expect(acts(creators[0])).toEqual(['dynamodb:PutItem']);
     } else {
       expect(values).toEqual([]);
       // not even as a literal in the template
       expect(JSON.stringify(t.toJSON())).not.toContain(CI_PUBLISHERS_ENV);
       expect(JSON.stringify(t.toJSON())).not.toContain('1376408823');
     }
+  });
+
+  // The handler's loader refuses a prod row that does not act for an account (and any row off beta and prod), which stops the function
+  // from starting: every row a template carries on prod names an account, and beta's rows name none.
+  test(stage === 'gamma' ? 'gamma: no CI row at all' : `${stage}: every CI row ${stage === 'prod' ? 'acts for the account' : 'acts for no account'}`, () => {
+    const fns = Object.values(t.findResources('AWS::Lambda::Function')) as any[];
+    const values = fns.map((f) => f.Properties.Environment?.Variables?.[CI_PUBLISHERS_ENV]).filter((v) => v !== undefined);
+    const rows = values.flatMap((v) => JSON.parse(v) as Array<{ acts_for?: string }>);
+    if (stage === 'gamma') expect(rows).toEqual([]);
+    else if (stage === 'prod') expect(rows.map((r) => r.acts_for)).toEqual(['15257031']);
+    else expect(rows.map((r) => r.acts_for)).toEqual([undefined]);
   });
 
   // The groups policy is beta's alone too: the variable exists on the beta template, names exactly the CI actor of the trusted

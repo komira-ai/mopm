@@ -40,7 +40,7 @@ The run exits 0 when the set is staged, 1 when it refused or failed, and 2 for a
 ### mopm publish --staged
 
 ```text
-mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>] [--timeout <seconds>] [--retries <n>] [--dry-run] [--oidc]
+mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>] [--timeout <seconds>] [--retries <n>] [--dry-run] [--oidc] [--no-commit | --abort]
 ```
 
 | flag | meaning |
@@ -53,6 +53,8 @@ mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>
 | `--retries <n>` | How many times a request that can be repeated is repeated after it fails. 0 to 10; the default is 3. |
 | `--dry-run` | Check the set and say what would be sent. It reads no token and writes no file. |
 | `--oidc` | Inside a GitHub Actions job, take the registry token from the job's identity instead of `$MOPM_TOKEN` or the login. See "Publishing from GitHub Actions without a token" below. |
+| `--no-commit` | Upload every file and stop with the group open. See "Staging a group and committing it later" below. |
+| `--abort` | End the open group that `state.json` names. Reads `plan.json` and `state.json` only. Cannot be combined with `--no-commit` or `--dry-run`. |
 
 The token is `$MOPM_TOKEN`, else the login's. It is read after the plan has been checked, goes only to the registry's API, is never printed, and is not in the environment of any program mopm starts. The uploads themselves carry no token.
 
@@ -68,13 +70,35 @@ A request that gets no connection, or no answer, within `--timeout` seconds fail
 
 `mopm publish --staged` writes `state.json` into the staged directory before its first request and updates it after every upload. After any failure (a file that did not upload, a registry that was busy, a wait that ran out) run the same command again (when the wait ran out, the group is still in progress, not failed, and the last lines of the output give the command that keeps waiting): it asks for the same group, does not send the files the registry already holds, and carries on. A `state.json` written for another registry or for another `plan.json` is refused; remove the file to start a new group.
 
+#### Staging a group and committing it later
+
+`--no-commit` splits the run in two so that something can happen between the upload and the commit, for instance the tests of a release that must pass on the exact files the registry will publish:
+
+```text
+mopm publish --staged <dir> --registry prod --no-commit    # creates (or resumes) the group, uploads every member, stops
+...                                                        # test the files in <dir>; they are the files the group holds
+mopm publish --staged <dir> --registry prod                # the same group: commit, wait until visible
+mopm publish --staged <dir> --registry prod --abort        # instead, for a job that runs when the release failed
+```
+
+The staging run ends 0 with the run outcome `staged`. It prints `staged group <id>: open, <n> file(s) held, not committed, nothing readable` and the sha256 of `plan.json` (the plan digest, also `plan_sha256` in `report.json`), and then the command that commits. Its members have the outcome `staged`. The group is open: the registry has the bytes in quarantine, where nothing reads them, and no member is visible, in the API, the index or the channel. The registry gives the group up to 12 hours to be committed. Until then it holds one of the actor's places among its open groups.
+
+The second run is the ordinary one, in the same directory. `state.json` (kept, with `"staged": true`) names the group, `plan_sha256` in it refuses a directory whose `plan.json` changed, and the run asks for the same group, which the registry reports with every file already held, so nothing is sent again. It then commits and waits as usual. The token may be a different one: with `--oidc` each run makes its own exchange (an identity token is single-use), and the registry gives a token for the same packages and versions again, as the same actor, so the second run reaches the group the first made. A token of another actor does not see the group (`group_not_found`).
+
+Before it asks for the group, a run that resumes a staged group reads it. If the registry has ended it meanwhile (`expired` after its 12 hours, `aborted`, `rejected`) or does not know it, the run ends 1 with `group <id>, staged by an earlier run, is expired: it can no longer be committed; nothing was sent`, and `state.json` is kept. It does not open the group again as a new attempt: remove `state.json` and stage again, which is a decision of the person or job running it. A plain rerun after a failure that was not a staging run is unchanged and does open an ended group again.
+
+`--no-commit` on a group that is already past open (validating, committed, visible) is refused: it stages a group before its commit.
+
+`--abort` ends the group `state.json` names (`DELETE /groups/{id}`), which frees the actor's place at once; its version numbers stay free, since nothing was published. It reads `plan.json` and `state.json` but none of the set's files, so the job that runs after a failure does not need the bytes; with `--oidc` it makes its own exchange for the packages of the plan. The outcome is `aborted` in `report.json`, the members are `not_published`, and `state.json` is left with no group. It ends 0 when the group is aborted, when it had already ended without being published (the registry expired it), and when `state.json` names no group; it ends 1 for a directory with no `state.json`, a `state.json` of another registry or plan, and a group that was committed (the message says to use `mopm yank --group` if it becomes visible).
+
 #### report.json
 
-Every run that gets as far as the registry writes `report.json` into the staged directory: a new run id, the registry, the group id and status, the outcome of the run and one entry for each member. The outcome of a run is `published`, `failed`, `rate_limited`, `no_group_publish` or `timed_out`. The outcome of a member is one of:
+Every run that gets as far as the registry writes `report.json` into the staged directory: a new run id, the registry, the group id and status, the plan digest (`plan_sha256`), the outcome of the run and one entry for each member. The outcome of a run is `published`, `staged`, `aborted`, `nothing_to_abort`, `failed`, `rate_limited`, `no_group_publish` or `timed_out`. The outcome of a member is one of:
 
 | outcome | meaning |
 |---|---|
 | `published` | the group is visible and the member is in it |
+| `staged` | `--no-commit`: the member's files are uploaded and the group is open; nothing is visible |
 | `skipped` | the plan skipped it |
 | `rejected` | the registry named it as the reason the group ended |
 | `not_published` | the group ended, or the run was refused, with this member not published |
@@ -130,5 +154,5 @@ Only a group that is `visible` can be yanked. Before that the registry answers 4
 | command | 0 | 1 | 2 |
 |---|---|---|---|
 | `mopm stage` | staged | refused or failed | usage error |
-| `mopm publish --staged` | the group is visible, or `--dry-run` checked the set, or every member was skipped | the plan or a file is wrong, the registry refused, or the run stopped | usage error |
+| `mopm publish --staged` | the group is visible, or `--dry-run` checked the set, or every member was skipped, or `--no-commit` staged the group, or `--abort` ended it (or found nothing to end) | the plan or a file is wrong, the registry refused, or the run stopped | usage error |
 | `mopm yank --group` | the yank is `yanked` (or `restored`) | refused, failed or gave up waiting | usage error |

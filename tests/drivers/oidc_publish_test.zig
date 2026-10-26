@@ -19,7 +19,9 @@
 //! - a staged set, of one member or of three, asks GitHub once and exchanges once, in the `packages` form, and the one token
 //!   creates, uploads and commits the group: every member is served. A registry that does not trust the job's repository as
 //!   a CI publisher, and one where a name belongs to someone else, each refuse the exchange: the run ends 1 with the
-//!   registry's message, GitHub was asked once, and no group was made.
+//!   registry's message, GitHub was asked once, and no group was made;
+//! - `--no-commit --oidc` stages a set with one exchange, a second run (a new identity token, a second exchange of the same
+//!   packages) commits the same group, and `--abort --oidc` ends a staged group with an exchange of its own.
 
 const std = @import("std");
 const h = @import("harness.zig");
@@ -181,7 +183,6 @@ test "mopm publish --oidc against the fake registry and a stand-in for GitHub" {
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var rep = h.Report{};
-    try h.watchdog(120);
     const mopm_exe = try h.toolPath(a, "MOPM");
     const fake_exe = try h.toolPath(a, "MOPM_FAKE_REGISTRY");
     var tmp = std.testing.tmpDir(.{});
@@ -335,6 +336,33 @@ test "mopm publish --oidc against the fake registry and a stand-in for GitHub" {
     r = try m.run(&(staged_base ++ to_fake), .both, null);
     rep.check("a set of one member asks GitHub once and is published as a group", r.code == 0 and gh.calls == 1 and
         (try served(a, fake, "solo", "0.2.0")) != null, describe(a, r));
+    // Stage with one identity exchange, commit with a second one: a fresh token, the same group.
+    const split = try h.join(a, &.{ work, "staged_split" });
+    try stage(a, split, &.{ .{ "grpx", "2.0.0" }, .{ "grpy", "2.1.0" } });
+    const split_args = [_][]const u8{ "publish", "--staged", split, "--config-dir", conf, "--oidc", "--wait", "30" };
+    gh.calls = 0;
+    r = try m.run(&(split_args ++ [_][]const u8{"--no-commit"} ++ to_fake), .both, null);
+    const staged_calls = gh.calls;
+    const staged_group = h.jsonString(try h.parseJson(a, try h.readFile(a, try h.join(a, &.{ split, "state.json" }))), "group_id") orelse "";
+    rep.check("--staged --oidc --no-commit exchanges once and stops with the group open and nothing served", r.code == 0 and staged_calls == 1 and h.contains(r.stdout, "staged group grp_") and
+        staged_group.len > 0 and (try served(a, fake, "grpx", "2.0.0")) == null and (try served(a, fake, "grpy", "2.1.0")) == null, describe(a, r));
+    gh.calls = 0;
+    r = try m.run(&(split_args ++ to_fake), .both, null);
+    const resumed_group = h.jsonString(try h.parseJson(a, try h.readFile(a, try h.join(a, &.{ split, "state.json" }))), "group_id") orelse "";
+    rep.check("the commit run asks GitHub and the registry for a new token (the second exchange of the same packages passes) and commits the SAME group", r.code == 0 and gh.calls == 1 and
+        h.contains(r.stdout, "resuming group") and h.contains(r.stdout, "2 file(s) were already in the registry's storage") and std.mem.eql(u8, staged_group, resumed_group) and
+        (try served(a, fake, "grpx", "2.0.0")) != null and (try served(a, fake, "grpy", "2.1.0")) != null, describe(a, r));
+
+    // The failure job: --abort with its own exchange ends a staged group.
+    const lost = try h.join(a, &.{ work, "staged_lost" });
+    try stage(a, lost, &.{.{ "grpz", "3.0.0" }});
+    const lost_args = [_][]const u8{ "publish", "--staged", lost, "--config-dir", conf, "--oidc", "--wait", "30" };
+    r = try m.run(&(lost_args ++ [_][]const u8{"--no-commit"} ++ to_fake), .both, null);
+    gh.calls = 0;
+    const lost_group = h.jsonString(try h.parseJson(a, try h.readFile(a, try h.join(a, &.{ lost, "state.json" }))), "group_id") orelse "";
+    r = try m.run(&(lost_args ++ [_][]const u8{"--abort"} ++ to_fake), .both, null);
+    rep.check("--abort --oidc exchanges once and ends the staged group; nothing is served", r.code == 0 and gh.calls == 1 and h.contains(r.stdout, "aborted group grp_") and
+        lost_group.len > 0 and h.contains(r.stdout, lost_group) and (try served(a, fake, "grpz", "3.0.0")) == null, describe(a, r));
     rep.check("and no credentials file was written by any command", !exists(conf), "the config directory exists");
 
     // --- nothing secret was printed

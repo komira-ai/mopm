@@ -38,6 +38,11 @@ export interface TokenRecord {
   versions?: Record<string, string>;
   /** An `oidc` token minted for a configured CI publisher: the identity it acts as (`gh-repo:<repository_id>`), the owner it must match. */
   ci_owner?: string;
+  /**
+   * An `oidc` token minted for a CI publisher that acts for an account (`acts_for`): the CI identity it came through
+   * (`gh-repo:<repository_id>`). The token's `github_id` is then the account, and `ci_owner` is absent.
+   */
+  acts_via?: string;
   /** Session tokens only: full-strength actions need a login newer than this. */
   fresh_until?: string;
   created_at: string;
