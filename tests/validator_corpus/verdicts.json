@@ -14,6 +14,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -55,6 +56,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -96,6 +98,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -137,6 +140,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -198,6 +202,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -254,6 +259,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -312,6 +318,7 @@
           "mojoDeps": [
             "mojo-http_core"
           ],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -358,6 +365,9 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [
+            "libssl >=3"
+          ],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -399,6 +409,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -444,6 +455,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -485,6 +497,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -526,6 +539,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -567,6 +581,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -608,6 +623,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -649,6 +665,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -690,6 +707,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -731,6 +749,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -772,6 +791,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "deps": [],
@@ -893,6 +913,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -979,6 +1000,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -1327,6 +1349,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -1460,6 +1483,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -1501,6 +1525,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -1542,6 +1567,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -1592,6 +1618,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -1714,6 +1741,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -1764,6 +1792,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -1833,6 +1862,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -2576,6 +2606,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -2867,6 +2898,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -2908,6 +2940,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -2958,6 +2991,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -2999,6 +3033,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -3050,6 +3085,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -3091,6 +3127,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -3141,6 +3178,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -3182,6 +3220,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -3233,6 +3272,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",
@@ -3274,6 +3314,7 @@
           "compiler": "1.0.0",
           "subdir": "noarch",
           "mojoDeps": [],
+          "nativeDepends": [],
           "metadata": {
             "name": "demo",
             "version": "1.0.0",

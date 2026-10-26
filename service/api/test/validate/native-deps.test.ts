@@ -30,6 +30,30 @@ describe('the native library allow-list of the deployed validators', () => {
     expect(verdictFor(`${name} >=1,<99`).ok).toBe(true);
   });
 
+  test('the id of a native library the package ships is not a dependency: naming it in depends is refused', () => {
+    const b = buildConda({
+      mopm: { native: [{ id: 'komira_libc_posix', soname: 'libkomira_libc_posix.a', kind: 'static', mode: 'link', static_file: '../libkomira_libc_posix.a' }] },
+      pkgExtra: [{ path: 'lib/libkomira_libc_posix.a', data: '!<arch>\n' }],
+      index: { depends: ['mojo-compiler ==1.0.0', 'komira_libc_posix'] },
+    });
+    const v = validatePackage(b.bytes, b.req, DEPLOYED_VALIDATOR_OPTIONS);
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.rule).toBe('dependency_not_allowed');
+  });
+
+  test('the facts name the loaded libraries of depends and not the libraries the package ships', () => {
+    const shipped = {
+      mopm: { native: [{ id: 'komira_libc_posix', soname: 'libkomira_libc_posix.a', kind: 'static', mode: 'link', static_file: '../libkomira_libc_posix.a' }] },
+      pkgExtra: [{ path: 'lib/libkomira_libc_posix.a', data: '!<arch>\n' }],
+    };
+    const none = buildConda(shipped);
+    const a = validatePackage(none.bytes, none.req, DEPLOYED_VALIDATOR_OPTIONS);
+    expect(a.ok && a.facts.nativeDepends).toEqual([]);
+    const both = buildConda({ ...shipped, index: { depends: ['zstd  >=1', 'mojo-compiler ==1.0.0', 'lz4-c'] } });
+    const c = validatePackage(both.bytes, both.req, DEPLOYED_VALIDATOR_OPTIONS);
+    expect(c.ok && c.facts.nativeDepends).toEqual(['lz4-c', 'zstd >=1']);
+  });
+
   test.each(['openssl', 'python >=3', 'lz4 >=1', 'liblz4', 'zlib', 'lz4-c-extra', 'LZ4-C'])('%s is refused with dependency_not_allowed', (dep) => {
     const v = verdictFor(dep);
     expect(v.ok).toBe(false);

@@ -45,6 +45,13 @@ export interface VersionRecord {
   requires_mojo: string;
   deps: Dep[];
   native: NativeRef[];
+  /**
+   * The system libraries the package loads at run time, as the conda requirements its info/index.json `depends` names
+   * besides the compiler and the `mojo-*` packages (`lz4-c >=1.9.3`), sorted. Only these reach repodata; `native` (the
+   * libraries the package ships, most of them static archives that are not conda packages) never does. Absent on a row
+   * written before this field: none.
+   */
+  native_depends?: string[];
   files: FileRef[];
   manifest_sha256: string;
   /** Where the files were built, when a CI identity vouched for it. Absent means no provenance (`kind: none`). */

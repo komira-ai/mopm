@@ -23,6 +23,7 @@ pub fn rec(name: &str, version: &str) -> VersionRecord {
         requires_mojo: "==1.0.0".to_string(),
         deps: vec![],
         native: vec![],
+        native_depends: vec![],
         files: vec![FileRef {
             subdir: "linux-64".to_string(),
             filename: format!("mojo-{name}-{version}-{build}.conda"),
@@ -60,6 +61,7 @@ pub fn golden_records() -> Vec<VersionRecord> {
     let mut http_client = rec("http_client", "0.4.0");
     http_client.deps = vec![Dep { name: "http_core".to_string(), range: Some(">=1.2,<2".to_string()) }];
     http_client.native = vec![NativeRef { id: "openssl".to_string(), soname: "libssl.so.3".to_string() }];
+    http_client.native_depends = vec!["lz4-c >=1.9,<2".to_string()];
     http_client.files = vec![file("linux-64", "http_client", "0.4.0", 'b', 2048)];
 
     let mut yanked = rec("http_client", "0.3.0");

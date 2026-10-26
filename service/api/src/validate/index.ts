@@ -7,7 +7,7 @@ import { checkCollisions, classify } from './layout';
 import type { Role } from './layout';
 import { DEFAULT_LIMITS } from './limits';
 import type { Limits } from './limits';
-import { checkDepends, checkIndex, checkMopm, checkNativeNames, parseJsonObject, sameVersion } from './metadata';
+import { checkDepends, checkIndex, checkMopm, checkNativeNames, nativeDependsOf, parseJsonObject, sameVersion } from './metadata';
 import type { Mopm } from './metadata';
 import { readTar } from './tar';
 import type { Budget, TarEntry } from './tar';
@@ -50,6 +50,8 @@ export interface PackageFacts {
   subdir: string;
   /** Names of the `mojo-*` packages depended on, sorted, with the `mojo-` prefix. */
   mojoDeps: string[];
+  /** The allow-listed system libraries `depends` requires (`lz4-c >=1.9.3`), sorted; never a library the package ships. */
+  nativeDepends: string[];
   metadata: Mopm;
   manifestSha256: string;
   files: Array<{ path: string; size: number }>;
@@ -212,6 +214,7 @@ function run(buf: Buffer, expected: PublishExpectation, options: ValidatorOption
     compiler: idx.compiler,
     subdir: idx.subdir,
     mojoDeps,
+    nativeDepends: nativeDependsOf(idx),
     metadata: mopm,
     manifestSha256,
     files: entries.filter((e) => e.kind === 'file').map((e) => ({ path: e.path, size: e.data.length })),

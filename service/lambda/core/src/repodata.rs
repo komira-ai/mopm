@@ -33,8 +33,8 @@ pub struct RepodataFiles {
 }
 
 /// The conda dependencies of a record: the compiler pin, the package dependencies as `mojo-<name> <range>`
-/// (or `mojo-<name>`), and the native libraries by their allow-list id (the conda package that
-/// provides them); no duplicates, sorted as JavaScript sorts strings.
+/// (or `mojo-<name>`), and the system libraries the package loads (`native_depends`, as its index.json
+/// requires them); the libraries it ships are no dependency; no duplicates, sorted as JavaScript sorts strings.
 fn depends_of(r: &VersionRecord) -> Vec<String> {
     let mut specs: BTreeSet<String> = BTreeSet::new();
     specs.insert(format!("{COMPILER_PACKAGE} {}", r.requires_mojo));
@@ -44,10 +44,11 @@ fn depends_of(r: &VersionRecord) -> Vec<String> {
             None => specs.insert(format!("mojo-{}", d.name)),
         };
     }
-    for n in &r.native {
-        specs.insert(n.id.clone());
-    }
-    let mut out: Vec<String> = specs.into_iter().collect();
+    // The libraries the package loads, exactly as its index.json requires them; the ones it ships (`native`) are not
+    // conda packages and are never named here.
+    for n in &r.native_depends {
+        specs.insert(n.clone());
+    }    let mut out: Vec<String> = specs.into_iter().collect();
     out.sort_by(|a, b| cmp_utf16(a, b));
     out
 }
@@ -253,16 +254,21 @@ mod tests {
             Dep { name: "beta".to_string(), range: Some(String::new()) }, // an empty range is no range
             Dep { name: "alpha".to_string(), range: Some(">=1".to_string()) },
         ];
-        r.native = vec![
-            crate::types::NativeRef { id: "zlib".to_string(), soname: "libz.so.1".to_string() },
-            crate::types::NativeRef { id: "\u{1f600}lib".to_string(), soname: "x".to_string() },
-            crate::types::NativeRef { id: "\u{ff5e}lib".to_string(), soname: "y".to_string() },
-        ];
+        r.native_depends = vec!["libzlib".to_string(), "\u{1f600}lib".to_string(), "\u{ff5e}lib".to_string(), "libzlib".to_string()];
         assert_eq!(
             depends_of(&r),
-            ["mojo-alpha >=1", "mojo-beta", "mojo-compiler ==1.0.0", "mojo-zeta", "zlib", "\u{1f600}lib", "\u{ff5e}lib"],
+            ["libzlib", "mojo-alpha >=1", "mojo-beta", "mojo-compiler ==1.0.0", "mojo-zeta", "\u{1f600}lib", "\u{ff5e}lib"],
             "the emoji (a surrogate pair) sorts before U+FF5E in UTF-16 order"
         );
+    }
+
+    #[test]
+    fn a_shipped_native_library_is_no_dependency() {
+        let mut r = rec("p", "1.0.0");
+        r.native = vec![crate::types::NativeRef { id: "komira_libc_posix".to_string(), soname: "libkomira_libc_posix.a".to_string() }];
+        assert_eq!(depends_of(&r), ["mojo-compiler ==1.0.0"]);
+        r.native_depends = vec!["lz4-c >=1.9.3".to_string()];
+        assert_eq!(depends_of(&r), ["lz4-c >=1.9.3", "mojo-compiler ==1.0.0"]);
     }
 
     /// A small deterministic generator (xorshift64*), so the properties below need no dependency.

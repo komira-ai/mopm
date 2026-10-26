@@ -100,6 +100,12 @@ pub struct VersionRecord {
     pub requires_mojo: String,
     pub deps: Vec<Dep>,
     pub native: Vec<NativeRef>,
+    /// The system libraries the package loads at run time, as the conda requirements its `info/index.json` `depends`
+    /// names besides the compiler and the `mojo-*` packages (`lz4-c >=1.9.3`), sorted. Only these reach repodata;
+    /// `native` (the libraries the package ships, most of them static archives that are not conda packages) never does.
+    /// Absent on a row written before this field: none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub native_depends: Vec<String>,
     pub files: Vec<FileRef>,
     pub manifest_sha256: String,
     /// Absent means no provenance (`kind: none`).

@@ -17,6 +17,7 @@ export const GOLDEN_RECORDS: VersionRecord[] = [
     version: '0.4.0',
     deps: [{ name: 'http_core', range: '>=1.2,<2' }],
     native: [{ id: 'openssl', soname: 'libssl.so.3' }],
+    native_depends: ['lz4-c >=1.9,<2'],
     files: [f('linux-64', 'http_client', '0.4.0', 'b', 2048)],
   }),
   rec({ name: 'http_client', version: '0.3.0', state: 'yanked', yank_reason: 'broken', files: [f('linux-64', 'http_client', '0.3.0', 'c', 1500)] }),

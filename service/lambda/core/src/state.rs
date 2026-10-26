@@ -22,6 +22,7 @@ pub struct PublishFill {
     pub requires_mojo: String,
     pub deps: Vec<Dep>,
     pub native: Vec<NativeRef>,
+    pub native_depends: Vec<String>,
     pub files: Vec<FileRef>,
     pub manifest_sha256: String,
     pub published_at: String,
@@ -114,6 +115,7 @@ fn fill(r: &mut VersionRecord, f: &PublishFill) {
     r.requires_mojo.clone_from(&f.requires_mojo);
     r.deps.clone_from(&f.deps);
     r.native.clone_from(&f.native);
+    r.native_depends.clone_from(&f.native_depends);
     r.files.clone_from(&f.files);
     r.manifest_sha256.clone_from(&f.manifest_sha256);
     r.published_at.clone_from(&f.published_at);
@@ -315,6 +317,7 @@ mod tests {
             requires_mojo: "==1.1.0".to_string(),
             deps: vec![Dep { name: "q".to_string(), range: None }],
             native: vec![],
+            native_depends: vec!["zstd".to_string()],
             files: vec![],
             manifest_sha256: hex('9'),
             published_at: "2026-10-14T00:00:00Z".to_string(),
@@ -334,6 +337,7 @@ mod tests {
         assert_eq!(p.description.as_deref(), Some("d"));
         assert_eq!(p.keywords, Some(vec!["k".to_string()]));
         assert!(p.files.is_empty());
+        assert_eq!(p.native_depends, vec!["zstd".to_string()]);
         // A field the fill does not carry stays as the record had it.
         let mut with_license = at(S::Pending);
         with_license.license = Some("MIT".to_string());
@@ -382,6 +386,7 @@ mod tests {
             requires_mojo: "==1.0.0".to_string(),
             deps: vec![],
             native: vec![],
+            native_depends: vec![],
             files: vec![],
             manifest_sha256: hex('9'),
             published_at: "2026-10-14T00:00:00Z".to_string(),
