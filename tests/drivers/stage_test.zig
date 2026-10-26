@@ -217,7 +217,7 @@ fn aCycleAndDeterminism(w: World) !void {
 /// A member with a `[native.<id>]` static library: staged from the archive beside its `.mojoc`, and published as staged.
 fn aNativeMember(w: World) !void {
     const archive = "!<arch>\nthe archive of stg_n\n";
-    try h.writeFile(try w.path(&.{ w.work, "wsn", "src", "stg_n", "mopm.toml" }), "[package]\nname = \"stg_n\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[native.stg_n]\nkind = \"static\"\n");
+    try h.writeFile(try w.path(&.{ w.work, "wsn", "src", "stg_n", "mopm.toml" }), "[package]\nname = \"stg_n\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[native.stg_n]\nkind = \"static\"\nneeds = [\"libz.so.1\", \"libcore_sys.a\"]\nexclusive = \"libstg\"\n");
     try h.writeFile(try w.path(&.{ w.work, "wsn", "src", "stg_n", "README.md" }), "# stg_n\n");
     try h.writeFile(try w.path(&.{ w.work, "artn", "linux-64", "stg_n.mojoc" }), "the mojoc of n");
     var r = try w.stage("wsn", "artn", "set_n_missing", &.{});
