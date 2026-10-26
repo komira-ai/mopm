@@ -195,6 +195,10 @@ test "golden files: link-plan, metadata, new and init, build, run, repl, test --
         }
     }
 
+    // `repl --debugserver <path>` is LLDB_DEBUGSERVER_PATH in mojo's environment, ahead of the command (the cases above,
+    // which name none, print none: the golden files of macos/chain.repl.txt carry only MODULAR_HOME).
+    try c.cmd("macos/chain repl --debugserver", "tests/golden/cmd/macos/chain.repl_debugserver.txt", 0, &.{ "repl", "--prefix=tests/fixtures/env/macos/chain", "--os=macos", "--debugserver", "/x/debugserver", "--print-cmd" }, .{});
+
     // A library the metadata names but the environment lacks.
     try c.cmd("linux/nofile build", "tests/golden/cmd/linux/nofile.build.txt", 1, &.{ "build", "hello.mojo", "-o", "hello", "--prefix", "tests/fixtures/env/linux/nofile", "--os", "linux", "--print-cmd" }, .{});
 

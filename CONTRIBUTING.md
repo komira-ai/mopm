@@ -65,10 +65,14 @@ Two builds describe the same program, and both stay.
   the program is built and run again. With a stand-in compiler and pixi it is a unit test (the graph, the C build, the link line, the
   archive in the install, the lock); `//:native_workspace_mojo` is the same file with the real Mojo 1.0.0 and checks the values the
   program prints (beta tier, not built for a pull request).
+  `//:build_targets` is `mopm build` of a package (fixture `tests/e2e/pathdep`): with no program it makes the library as a `.mojoc`
+  and each program of `[targets]`, and a program (by file or by target) can import the package's path dependencies, including a path
+  dependency of a path dependency. With a stand-in compiler that logs its command lines it checks what mopm asked the compiler for
+  (a pull request); `//:build_targets_mojo` is the same file with the real Mojo 1.0.0 and checks the program's output (beta tier).
   The same drivers run natively on the GitHub runners (Linux x86_64, Linux
   aarch64, macOS arm64) from `ci.yml`: `zig build test-autolink`,
-  `test-discovery`, `test-supervisor`, `test-flaky` and `test-native-workspace` (`test-e2e` runs all
-  five) with `-Dmojo-env=<pixi environment>` (`tests/e2e/pixi.toml`, mojo
+  `test-discovery`, `test-supervisor`, `test-flaky`, `test-native-workspace` and `test-build-targets` (`test-e2e` runs all
+  six) with `-Dmojo-env=<pixi environment>` (`tests/e2e/pixi.toml`, mojo
   1.0.0) and the system C compiler.
   The pinned compiler closure has no lldb, so `mojo repl` cannot run there and
   the REPL checks print `SKIP` (they run if the toolchain gains

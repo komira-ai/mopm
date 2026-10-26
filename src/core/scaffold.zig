@@ -99,6 +99,7 @@ const readme_md =
 
 const gitignore =
     \\/.mopm/
+    \\/target/
     \\*.mojoc
     \\
 ;
