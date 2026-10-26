@@ -277,7 +277,6 @@ const Ctx = struct {
 test "native_workspace: a package with a C library and a package that links it, from the workspace to an installed set" {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena_state.allocator();
-    try h.watchdog(1700);
     var rep = h.Report{};
     run(a, &rep) catch |e| switch (e) {
         error.Fatal => {},

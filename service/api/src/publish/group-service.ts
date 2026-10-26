@@ -17,7 +17,7 @@ import { GroupCommitter, type GroupCommitBody } from './group-commit';
 import { GroupYanker } from './group-yank-request';
 import { GROUP_ID, quarantineKeyFor, uploadIdFor } from './group-keys';
 import type { ActorGroup, ObjectStore, Presigner, PublishStore, Queue } from './ports';
-import { actorOf, liveBytes, parseFileFacts, requireOwner } from './service';
+import { actorOf, detailVia, liveBytes, viaField, parseFileFacts, requireOwner } from './service';
 import type { UploadRecord } from './types';
 
 /**
@@ -227,8 +227,9 @@ export class GroupService {
     this.now = d.now ?? (() => new Date());
     this.clock = d.clock ?? (() => performance.now());
     this.metrics = d.metrics ?? new Metrics();
-    this.committer = new GroupCommitter({ registry: d.registry, objects: d.objects, config: d.config, ...(d.groupQueue ? { groupQueue: d.groupQueue } : {}), ...(d.now ? { now: d.now } : {}) }, this);
-    this.yanker = new GroupYanker({ registry: d.registry, ...(d.groupQueue ? { groupQueue: d.groupQueue } : {}), ...(d.now ? { now: d.now } : {}) }, this);
+    const scoped = { load: (p: Principal, id: string) => this.loadCovered(p, id) };
+    this.committer = new GroupCommitter({ registry: d.registry, objects: d.objects, config: d.config, ...(d.groupQueue ? { groupQueue: d.groupQueue } : {}), ...(d.now ? { now: d.now } : {}) }, scoped);
+    this.yanker = new GroupYanker({ registry: d.registry, ...(d.groupQueue ? { groupQueue: d.groupQueue } : {}), ...(d.now ? { now: d.now } : {}) }, scoped);
   }
 
   /** POST /groups/{id}/commit: see src/publish/group-commit.ts. */
@@ -280,7 +281,7 @@ export class GroupService {
         pre = await this.preflight(gid, req, new Set(slot.supersede), now);
         const refund = await this.charge(p, req, now);
         await this.supersede(actor, slot.supersede, now);
-        const opened = await this.open(actor, gid, req, header, deadline, now);
+        const opened = await this.open(actor, viaField(p), gid, req, header, deadline, now);
         header = opened.header;
         created = opened.created;
         // Another create of the same request wrote the header (or reopened the group) first: that one is the attempt that is charged.
@@ -312,7 +313,7 @@ export class GroupService {
   }
 
   /** The header of a new group, or of a dead one opened again with the next attempt (the member list and the old attempt's other checkpoints are reset). */
-  private async open(actor: string, gid: string, req: GroupRequest, dead: GroupRecord | undefined, deadline: string, now: Date): Promise<{ header: GroupRecord; created: boolean }> {
+  private async open(actor: string, via: { via?: string }, gid: string, req: GroupRequest, dead: GroupRecord | undefined, deadline: string, now: Date): Promise<{ header: GroupRecord; created: boolean }> {
     const reg = this.d.registry;
     const at = now.toISOString();
     if (dead === undefined) {
@@ -323,6 +324,7 @@ export class GroupService {
           attempt: 1,
           rev: 0,
           actor,
+          ...via,
           member_count: req.members.length,
           created_at: at,
           deadline_at: deadline,
@@ -337,7 +339,7 @@ export class GroupService {
           sweep_at: at,
         },
         membersOf(req),
-        groupAudit(gid, `a_${gid}_create_1`, 'group_create', at, actor),
+        groupAudit(gid, `a_${gid}_create_1`, 'group_create', at, actor, via.via === undefined ? undefined : { via: via.via }),
       );
       return { header: made.header, created: made.created };
     }
@@ -349,10 +351,10 @@ export class GroupService {
       (cur) => {
         wrote = isDead(cur.status);
         if (!wrote) return undefined;
-        const { cursor: _c, yank: _y, repodata_released: _r, index_released: _i, write_order: _w, expires_at: _e, phase: _p, commit_hash: _h, failure: _f, ...rest } = cur;
-        return { ...rest, status: 'open', attempt: cur.attempt + 1, deadline_at: deadline, progress_at: at, reserved: '', validated: '', staged: '', copied: '', flipped: '', resend: 0, sweep_pk: 'active', sweep_at: at };
+        const { cursor: _c, yank: _y, repodata_released: _r, index_released: _i, write_order: _w, expires_at: _e, phase: _p, commit_hash: _h, failure: _f, via: _v, ...rest } = cur;
+        return { ...rest, ...via, status: 'open', attempt: cur.attempt + 1, deadline_at: deadline, progress_at: at, reserved: '', validated: '', staged: '', copied: '', flipped: '', resend: 0, sweep_pk: 'active', sweep_at: at };
       },
-      groupAudit(gid, `a_${gid}_reopen_${attempt}`, 'group_reopen', at, actor, { attempt: String(attempt) }),
+      groupAudit(gid, `a_${gid}_reopen_${attempt}`, 'group_reopen', at, actor, { attempt: String(attempt), ...(via.via === undefined ? {} : { via: via.via }) }),
     );
     const header = after ?? dead;
     return { header, created: wrote };
@@ -373,6 +375,7 @@ export class GroupService {
   private async requireOwners(p: Principal, req: GroupRequest): Promise<string> {
     // A group is created by an account's token or by a configured CI publisher's (it owns packages through `ci_owner`). Any other
     // CI token is valid for one version of one package and creates no group.
+    // A token that acts for an account has the account's `github_id`, so it passes by the first test.
     if (p.github_id === undefined && !(p.kind === 'oidc' && p.ci_owner !== undefined)) {
       const name = req.members[0]!.name;
       throw new AuthError('scope_missing', `The token does not have the 'publish' scope for '${name}'.`, { scope: 'publish', name });
@@ -611,7 +614,7 @@ export class GroupService {
         actor: actorOf(p),
         action: 'group_reserve',
         version: m.version,
-        detail: { group_id: gid },
+        detail: detailVia(p, { group_id: gid }),
       };
       // Free for the group: the row of a single's reservation that nobody committed, or of a group that is over.
       const out = await this.d.registry.adoptVersion(
@@ -646,6 +649,7 @@ export class GroupService {
             size: f.size,
             key,
             actor: actorOf(p),
+            ...viaField(p),
             created_at: now.toISOString(),
             url_expires_at: new Date(now.getTime() + cfg.uploadUrlTtlSeconds * 1000).toISOString(),
             expires_at: Math.floor(now.getTime() / 1000) + cfg.uploadRecordTtlSeconds,
@@ -669,13 +673,13 @@ export class GroupService {
   // --- read and abort -------------------------------------------------------------------------------------
 
   async get(p: Principal, id: string): Promise<GroupStatusBody> {
-    const { header, members } = await this.load(p, id);
+    const { header, members } = await this.loadCovered(p, id);
     return statusBody(header, members);
   }
 
   /** Abort an open group (idempotent for one that is aborted). Its rows stay pending and free for any group or single to take. */
   async abort(p: Principal, id: string): Promise<GroupStatusBody> {
-    const loaded = await this.load(p, id);
+    const loaded = await this.loadCovered(p, id);
     const reg = this.d.registry;
     if (loaded.header.status === 'aborted') return statusBody(loaded.header, loaded.members);
     if (loaded.header.status !== 'open') throw groupNotOpen(id, loaded.header.status);
@@ -683,7 +687,7 @@ export class GroupService {
     const after = await reg.updateGroup(
       id,
       (cur) => (cur.status === 'open' ? ended(cur, 'aborted', at) : undefined),
-      groupAudit(id, `a_${id}_abort_${loaded.header.attempt}`, 'group_abort', at, actorOf(p)),
+      groupAudit(id, `a_${id}_abort_${loaded.header.attempt}`, 'group_abort', at, actorOf(p), detailVia(p)),
     );
     if (!after || after.status !== 'aborted') throw groupNotOpen(id, after?.status ?? 'missing');
     return statusBody(after, loaded.members);
@@ -699,6 +703,17 @@ export class GroupService {
     const members = (await reg.getGroupMembers(id)) ?? { members: [] };
     if (header.actor !== actorOf(p) && !(await this.ownsAll(p, members))) throw groupNotFound();
     return { header, members };
+  }
+
+  /**
+   * `load` for the read, abort, commit and yank routes. A token that acts for an account (`acts_via`) is the account's actor, so `load`
+   * lets it see every group of the account; it is good for exactly the packages it was minted for, so a group with a member outside
+   * them is not found. Any other token is as `load` has it.
+   */
+  async loadCovered(p: Principal, id: string): Promise<{ header: GroupRecord; members: GroupMembers }> {
+    const loaded = await this.load(p, id);
+    if (p.acts_via !== undefined && loaded.members.members.some((m) => !p.packages.includes(m.name))) throw groupNotFound();
+    return loaded;
   }
 
   private async ownsAll(p: Principal, members: GroupMembers): Promise<boolean> {

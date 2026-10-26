@@ -48,7 +48,57 @@ pub const Limits = struct {
     /// skips the final group kill. See the file comment.
     kill_group: bool = true,
     poll_ns: u64 = 20 * std.time.ns_per_ms,
+    /// Test-only: the deadline counts from the first poll that finds this
+    /// file, not from the start of the process. A test that signals "I am
+    /// ready" this way (the memory fixture, once it has touched its memory
+    /// and before it sleeps) gets a deadline that does not race its setup.
+    /// Until the file exists nothing times out. Null: from the start.
+    ready_file: ?[]const u8 = null,
+    /// Test seams; null is the real thing (a monotonic timer started at the
+    /// fork, a real sleep, /proc or proc_pid_rusage).
+    clock: ?Clock = null,
+    sampler: ?Sampler = null,
 };
+
+/// What a sleep inside `run` is for.
+pub const Wait = union(enum) {
+    /// Between two looks at the test process.
+    poll,
+    /// Between two looks at whether process group `drain` is empty.
+    drain: posix.pid_t,
+};
+
+/// The time `run` reads and spends. `now_fn` is nanoseconds since `run`
+/// started; `sleep_fn` waits about that long. A test passes a manual clock
+/// whose sleep advances its time, so a deadline is crossed by counting polls.
+pub const Clock = struct {
+    ctx: ?*anyopaque = null,
+    now_fn: *const fn (ctx: ?*anyopaque) u64,
+    sleep_fn: *const fn (ctx: ?*anyopaque, ns: u64, wait: Wait) void,
+
+    fn now(c: Clock) u64 {
+        return c.now_fn(c.ctx);
+    }
+
+    fn sleep(c: Clock, ns: u64, wait: Wait) void {
+        c.sleep_fn(c.ctx, ns, wait);
+    }
+};
+
+/// Where CPU time and resident size of the test process come from.
+pub const Sampler = struct {
+    ctx: ?*anyopaque = null,
+    sample_fn: *const fn (ctx: ?*anyopaque, pid: posix.pid_t) Sample,
+};
+
+fn timerNow(ctx: ?*anyopaque) u64 {
+    const t: *std.time.Timer = @ptrCast(@alignCast(ctx.?));
+    return t.read();
+}
+
+fn realSleep(_: ?*anyopaque, ns: u64, _: Wait) void {
+    std.time.sleep(ns);
+}
 
 pub const Liveness = enum { hung, slow, unknown };
 
@@ -85,6 +135,7 @@ pub const Spawn = struct {
 // ---------------------------------------------------------------- platform
 
 extern "c" fn setpgid(pid: c_int, pgid: c_int) c_int;
+extern "c" fn getpid() c_int; // macOS only (Linux: std.os.linux.getpid), for the sample test
 extern "c" fn proc_pid_rusage(pid: c_int, flavor: c_int, buffer: *anyopaque) c_int;
 
 /// <libproc.h> struct rusage_info_v0.
@@ -307,6 +358,7 @@ pub fn run(arena: Allocator, s: Spawn, limits: Limits) !Result {
 
     const window = @min(std.time.ns_per_s, limits.deadline_ns / 2);
     var timer = try std.time.Timer.start();
+    const clock: Clock = limits.clock orelse .{ .ctx = &timer, .now_fn = timerNow, .sleep_fn = realSleep };
     const pid = try posix.fork();
     if (pid == 0) {
         ownGroup();
@@ -328,15 +380,20 @@ pub fn run(arena: Allocator, s: Spawn, limits: Limits) !Result {
     var killed = false;
     var ru: posix.rusage = undefined;
     var status: u32 = 0;
+    // The time the deadline counts from: the start, or the first poll that finds the ready file.
+    var origin: ?u64 = if (limits.ready_file == null) 0 else null;
     while (true) {
         const w = posix.wait4(pid, posix.W.NOHANG, &ru);
         if (w.pid == pid) {
             status = w.status;
             break;
         }
-        const now = timer.read();
+        const now = clock.now();
         if (!killed) {
-            const smp = sample(pid);
+            if (origin == null) {
+                if (std.fs.cwd().access(limits.ready_file.?, .{})) |_| origin = now else |_| {}
+            }
+            const smp = if (limits.sampler) |sm| sm.sample_fn(sm.ctx, pid) else sample(pid);
             if (smp.rss) |r| result.peak_rss = @max(result.peak_rss orelse 0, r);
             if (smp.cpu_ns) |c| ring.push(now, c);
             if (limits.memory_bytes) |cap| {
@@ -347,7 +404,7 @@ pub fn run(arena: Allocator, s: Spawn, limits: Limits) !Result {
                     }
                 }
             }
-            if (!killed and now >= limits.deadline_ns) {
+            if (!killed and origin != null and now - origin.? >= limits.deadline_ns) {
                 const since = if (now > window) now - window else 0;
                 const then = ring.from(since);
                 result.timeout = if (then) |th| liveness(th.cpu, smp.cpu_ns, now - th.t) else .unknown;
@@ -355,9 +412,9 @@ pub fn run(arena: Allocator, s: Spawn, limits: Limits) !Result {
             }
             if (killed) signal(if (limits.kill_group) -pid else pid, posix.SIG.KILL);
         }
-        std.time.sleep(limits.poll_ns);
+        clock.sleep(limits.poll_ns, .poll);
     }
-    result.wall_ns = timer.read();
+    result.wall_ns = clock.now();
     result.cpu_ns = timevalNs(ru.utime) + timevalNs(ru.stime);
     if (posix.W.IFSIGNALED(status)) {
         result.term = .{ .signaled = posix.W.TERMSIG(status) };
@@ -369,7 +426,7 @@ pub fn run(arena: Allocator, s: Spawn, limits: Limits) !Result {
     // A killed member is gone once its new parent reaps it; give that time.
     var waited: u64 = 0;
     while (groupAlive(pid) and waited < 2 * std.time.ns_per_s) : (waited += 20 * std.time.ns_per_ms) {
-        std.time.sleep(20 * std.time.ns_per_ms);
+        clock.sleep(20 * std.time.ns_per_ms, .{ .drain = pid });
     }
     result.leftover = groupAlive(pid);
     return result;
@@ -404,33 +461,164 @@ const child_modes = [_]struct { script: []const u8, args: []const []const u8 }{
     .{ .script = "echo to-out; echo to-err >&2; exit 3", .args = &.{"out_err_exit3"} },
     .{ .script = "kill -SEGV $$", .args = &.{"segv"} },
     .{ .script = "kill -ABRT $$", .args = &.{"abrt"} },
-    .{ .script = "exec sleep 60", .args = &.{ "sleep", "60" } },
+    // A script that names "$1" is handed the path of a marker file, which it
+    // creates once it is set up (see `Manual`).
+    .{ .script = "touch \"$1\"; exec sleep 60", .args = &.{ "sleep", "60" } },
     .{ .script = "exec sleep 30", .args = &.{ "sleep", "30" } },
-    .{ .script = "while :; do :; done", .args = &.{"spin"} },
-    .{ .script = "sleep 60 & wait", .args = &.{"bg_sleep_wait"} },
+    .{ .script = "i=0; while [ $i -lt 200000 ]; do i=$((i+1)); done", .args = &.{"compute"} },
+    .{ .script = "sleep 60 & touch \"$1\"; wait", .args = &.{"bg_sleep_wait"} },
     .{ .script = "sleep 60 & exit 0", .args = &.{"bg_sleep_exit0"} },
     .{ .script = "exit 0", .args = &.{"exit0"} },
+    .{ .script = "exec 9>&-; read x <&8; exit 0", .args = &.{"wait_pipe"} },
 };
 
-fn sh(a: Allocator, tmp: *std.testing.TmpDir, script: []const u8, limits: Limits) !Result {
+/// The clock of these tests: time is a number that moves only when `run`
+/// sleeps, by exactly the time it asked to sleep. So a deadline is crossed
+/// after a counted number of polls, whatever the machine is doing, and what
+/// `run` slept for is read back from here, never measured.
+///
+/// The one thing real time still decides is when a child is ready, and that is
+/// not waited for with a timer: a script that names "$1" creates the marker
+/// file at that path when it is set up, and the first sleep does not return
+/// before the marker exists. A child that is killed before it is set up would
+/// make the tests below pass for the wrong reason (nothing to kill).
+const Manual = struct {
+    now: u64 = 0,
+    marker: ?[]const u8 = null,
+    /// A process group is expected to outlive the group kill: the drain sleeps
+    /// do not wait for it to go.
+    survivors: bool = false,
+    polls: u64 = 0,
+    drains: u64 = 0,
+    drain_ns: u64 = 0,
+    gave_up: bool = false,
+    /// At this time the poll sleep creates `gate_path` (the ready file of a test).
+    gate_at: ?u64 = null,
+    gate_path: []const u8 = "",
+    /// At this time the poll sleep closes `release_fd`, the write end a waiting
+    /// child's read ends on; from then on the time stands still until the
+    /// child is reaped.
+    release_at: ?u64 = null,
+    release_fd: posix.fd_t = -1,
+    frozen: bool = false,
+    frozen_spins: u64 = 0,
+
+    /// Spins to wait for an event; a lost event ends the wait instead of
+    /// hanging the test, and then the test's own asserts fail.
+    const patience = 1 << 24;
+
+    fn clock(m: *Manual) Clock {
+        return .{ .ctx = m, .now_fn = nowFn, .sleep_fn = sleepFn };
+    }
+
+    fn nowFn(ctx: ?*anyopaque) u64 {
+        const m: *Manual = @ptrCast(@alignCast(ctx.?));
+        return m.now;
+    }
+
+    fn markerExists(m: *const Manual) bool {
+        const path = m.marker orelse return true;
+        std.fs.accessAbsolute(path, .{}) catch return false;
+        return true;
+    }
+
+    fn sleepFn(ctx: ?*anyopaque, ns: u64, wait: Wait) void {
+        const m: *Manual = @ptrCast(@alignCast(ctx.?));
+        switch (wait) {
+            .poll => {
+                if (m.release_at) |t| {
+                    if (m.now >= t and m.release_fd >= 0) {
+                        posix.close(m.release_fd);
+                        m.release_fd = -1;
+                        m.frozen = true;
+                    }
+                }
+                if (m.gate_at) |t| {
+                    if (m.now >= t) {
+                        m.gate_at = null;
+                        const f = std.fs.cwd().createFile(m.gate_path, .{}) catch @panic("cannot create the ready file");
+                        f.close();
+                    }
+                }
+                if (m.frozen) {
+                    // The child is ending; the time does not move until it is reaped.
+                    m.frozen_spins += 1;
+                    if (m.frozen_spins > patience) std.debug.panic("the released child never ended", .{});
+                    std.Thread.yield() catch {};
+                    return;
+                }
+                std.Thread.yield() catch {};
+                var spins: usize = 0;
+                while (!m.markerExists() and spins < patience) : (spins += 1) std.Thread.yield() catch {};
+                if (!m.markerExists()) std.debug.panic("the child never created its marker file", .{});
+                m.now += ns;
+                m.polls += 1;
+            },
+            .drain => |pgid| {
+                m.drains += 1;
+                m.drain_ns += ns;
+                if (m.survivors or m.gave_up) return;
+                // A killed member is gone once its new parent has reaped it.
+                var spins: usize = 0;
+                while (groupAlive(pgid) and spins < patience) : (spins += 1) std.Thread.yield() catch {};
+                if (groupAlive(pgid)) m.gave_up = true;
+            },
+        }
+    }
+};
+
+/// CPU time of the test process as a function of the clock, so a verdict
+/// depends on a chosen CPU history, not on what a real process happened to use.
+const Scripted = struct {
+    m: *const Manual,
+    cpu_of: *const fn (now: u64) ?u64,
+    rss: ?u64 = null,
+    samples: u64 = 0,
+    last_at: u64 = 0,
+
+    fn sampler(s: *Scripted) Sampler {
+        return .{ .ctx = s, .sample_fn = sampleFn };
+    }
+
+    fn sampleFn(ctx: ?*anyopaque, _: posix.pid_t) Sample {
+        const s: *Scripted = @ptrCast(@alignCast(ctx.?));
+        s.samples += 1;
+        s.last_at = s.m.now;
+        return .{ .cpu_ns = s.cpu_of(s.m.now), .rss = s.rss };
+    }
+};
+
+fn sh(a: Allocator, tmp: *std.testing.TmpDir, script: []const u8, limits: Limits, m: *Manual) !Result {
     const p = try tmpPaths(a, tmp);
+    var lim = limits;
+    lim.clock = m.clock();
+    const wants_marker = std.mem.indexOf(u8, script, "$1") != null;
+    m.marker = null;
+    if (wants_marker) {
+        tmp.dir.deleteFile("ready") catch {};
+        m.marker = try std.fs.path.join(a, &.{ std.fs.path.dirname(p[0]).?, "ready" });
+    }
     // MOPM_TEST_CHILD names tests/drivers/proc_child.zig, built by Buck2 for a
     // host with no /bin/sh (the farm's image): each script below is one of its
     // modes. Without it (zig build test) the script runs under /bin/sh.
     if (std.posix.getenv("MOPM_TEST_CHILD")) |child_z| {
         const child: []const u8 = child_z;
-        for (child_modes) |m| {
-            if (std.mem.eql(u8, m.script, script)) {
-                const argv = try std.mem.concat(a, []const u8, &.{ &[_][]const u8{child}, m.args });
-                return run(a, .{ .argv = argv, .stdout_path = p[0], .stderr_path = p[1] }, limits);
+        for (child_modes) |cm| {
+            if (std.mem.eql(u8, cm.script, script)) {
+                const tail: []const []const u8 = if (m.marker) |mk| &.{mk} else &.{};
+                const argv = try std.mem.concat(a, []const u8, &.{ &[_][]const u8{child}, cm.args, tail });
+                return run(a, .{ .argv = argv, .stdout_path = p[0], .stderr_path = p[1] }, lim);
             }
         }
         std.debug.panic("no proc_child mode for the script: {s}", .{script});
     }
-    return run(a, .{ .argv = &.{ "/bin/sh", "-c", script }, .stdout_path = p[0], .stderr_path = p[1] }, limits);
+    const argv: []const []const u8 = if (m.marker) |mk| &.{ "/bin/sh", "-c", script, "sh", mk } else &.{ "/bin/sh", "-c", script };
+    return run(a, .{ .argv = argv, .stdout_path = p[0], .stderr_path = p[1] }, lim);
 }
 
 const second = std.time.ns_per_s;
+/// A deadline no manual clock reaches: for a test whose child ends by itself.
+const never = std.math.maxInt(u64) / 2;
 
 test "exit status, output to the files" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -438,7 +626,8 @@ test "exit status, output to the files" {
     const a = arena.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const r = try sh(a, &tmp, "echo to-out; echo to-err >&2; exit 3", .{ .deadline_ns = 20 * second });
+    var m = Manual{};
+    const r = try sh(a, &tmp, "echo to-out; echo to-err >&2; exit 3", .{ .deadline_ns = never }, &m);
     try std.testing.expectEqual(Term{ .exited = 3 }, r.term);
     try std.testing.expectEqual(@as(?Liveness, null), r.timeout);
     try std.testing.expect(!r.oom and !r.leftover);
@@ -463,7 +652,8 @@ test "the registry token is not in the environment a test process gets" {
         try std.mem.concat(a, []const u8, &.{ &[_][]const u8{child_z}, &[_][]const u8{"env_to_stdout"} })
     else
         &.{ "/bin/sh", "-c", "env" };
-    const r = try run(a, .{ .argv = argv, .stdout_path = p[0], .stderr_path = p[1], .env = &env }, .{ .deadline_ns = 20 * second });
+    var m = Manual{};
+    const r = try run(a, .{ .argv = argv, .stdout_path = p[0], .stderr_path = p[1], .env = &env }, .{ .deadline_ns = never, .clock = m.clock() });
     try std.testing.expectEqual(Term{ .exited = 0 }, r.term);
     const printed = try std.fs.cwd().readFileAlloc(a, p[0], 1 << 16);
     try std.testing.expect(std.mem.indexOf(u8, printed, "mopm_secret_token") == null);
@@ -478,10 +668,11 @@ test "death by a signal is reported with that signal" {
     const a = arena.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const r = try sh(a, &tmp, "kill -SEGV $$", .{ .deadline_ns = 20 * second });
+    var m = Manual{};
+    const r = try sh(a, &tmp, "kill -SEGV $$", .{ .deadline_ns = never }, &m);
     try std.testing.expectEqual(Term{ .signaled = posix.SIG.SEGV }, r.term);
     try std.testing.expectEqualStrings("SIGSEGV", signalName(r.term.signaled).?);
-    const b = try sh(a, &tmp, "kill -ABRT $$", .{ .deadline_ns = 20 * second });
+    const b = try sh(a, &tmp, "kill -ABRT $$", .{ .deadline_ns = never }, &m);
     try std.testing.expectEqual(Term{ .signaled = posix.SIG.ABRT }, b.term);
     try std.testing.expectEqual(@as(?Liveness, null), b.timeout);
 }
@@ -492,10 +683,61 @@ test "a sleeping process is killed at the deadline and reported hung, well befor
     const a = arena.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const r = try sh(a, &tmp, "exec sleep 60", .{ .deadline_ns = 2 * second });
+    // The real sampler, on a process that is set up and asleep; the clock is
+    // manual, so "the deadline passes" is 100 polls of 20 ms, not two seconds.
+    var m = Manual{};
+    const r = try sh(a, &tmp, "touch \"$1\"; exec sleep 60", .{ .deadline_ns = 2 * second }, &m);
+    // Killed by the supervisor (the process would sleep for a minute), and
+    // not before the deadline: the clock had reached it.
     try std.testing.expectEqual(Term{ .signaled = posix.SIG.KILL }, r.term);
     try std.testing.expectEqual(@as(?Liveness, .hung), r.timeout);
-    try std.testing.expect(r.wall_ns >= 2 * second and r.wall_ns < 10 * second);
+    try std.testing.expect(r.wall_ns >= 2 * second);
+    try std.testing.expect(m.polls >= 2 * second / (20 * std.time.ns_per_ms));
+}
+
+fn idle(_: u64) ?u64 {
+    return 0;
+}
+
+test "the process is killed at the first poll at or past the deadline, and not before" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var m = Manual{};
+    var sc = Scripted{ .m = &m, .cpu_of = idle };
+    const r = try sh(a, &tmp, "touch \"$1\"; exec sleep 60", .{ .deadline_ns = 2 * second, .sampler = sc.sampler() }, &m);
+    try std.testing.expectEqual(Term{ .signaled = posix.SIG.KILL }, r.term);
+    // A sample is taken at every poll until the kill: at 0, 20 ms, ... and 2 s
+    // and none after it. One more or fewer means a late or an early kill.
+    try std.testing.expectEqual(@as(u64, 2 * second), sc.last_at);
+    try std.testing.expectEqual(@as(u64, 2 * second / (20 * std.time.ns_per_ms) + 1), sc.samples);
+    try std.testing.expectEqual(@as(?Liveness, .hung), r.timeout);
+}
+
+fn busy(now: u64) ?u64 {
+    return now;
+}
+
+fn busy_then_idle(now: u64) ?u64 {
+    return @min(now, second);
+}
+
+fn idle_then_busy(now: u64) ?u64 {
+    return if (now > second) now - second else 0;
+}
+
+fn unreadable(_: u64) ?u64 {
+    return null;
+}
+
+fn verdictOf(a: Allocator, tmp: *std.testing.TmpDir, cpu_of: *const fn (u64) ?u64) !?Liveness {
+    var m = Manual{};
+    var sc = Scripted{ .m = &m, .cpu_of = cpu_of };
+    const r = try sh(a, tmp, "touch \"$1\"; exec sleep 60", .{ .deadline_ns = 2 * second, .sampler = sc.sampler() }, &m);
+    try std.testing.expectEqual(Term{ .signaled = posix.SIG.KILL }, r.term);
+    return r.timeout;
 }
 
 test "a computing process past the deadline is reported slow" {
@@ -504,9 +746,70 @@ test "a computing process past the deadline is reported slow" {
     const a = arena.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const r = try sh(a, &tmp, "while :; do :; done", .{ .deadline_ns = 2 * second });
-    try std.testing.expectEqual(@as(?Liveness, .slow), r.timeout);
-    try std.testing.expect(r.cpu_ns > second / 2);
+    // The CPU history is scripted (a process that used all of one CPU), so
+    // the verdict does not depend on what a real spinning process got from a
+    // loaded machine. The process itself only has to be alive to be killed.
+    try std.testing.expectEqual(@as(?Liveness, .slow), try verdictOf(a, &tmp, busy));
+    // The window is the last second before the deadline (2 s / 2 is longer,
+    // so 1 s): CPU used before it does not make a sleeper slow ...
+    try std.testing.expectEqual(@as(?Liveness, .hung), try verdictOf(a, &tmp, busy_then_idle));
+    // ... and CPU used only inside it does make the process slow.
+    try std.testing.expectEqual(@as(?Liveness, .slow), try verdictOf(a, &tmp, idle_then_busy));
+    // No readable CPU time: unknown, never a guess.
+    try std.testing.expectEqual(@as(?Liveness, .unknown), try verdictOf(a, &tmp, unreadable));
+}
+
+test "the window is half the deadline when that is under a second" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var m = Manual{};
+    // Busy until 0.4 s, idle for the last 0.6 s of a 1 s deadline. The window
+    // is 0.5 s: idle in it, so hung. Were it a full second it would take in
+    // the busy start (40% of one CPU) and say slow.
+    var sc = Scripted{ .m = &m, .cpu_of = busy_until_400ms };
+    const r = try sh(a, &tmp, "touch \"$1\"; exec sleep 60", .{ .deadline_ns = 1 * second, .sampler = sc.sampler() }, &m);
+    try std.testing.expectEqual(@as(?Liveness, .hung), r.timeout);
+}
+
+fn busy_until_400ms(now: u64) ?u64 {
+    return @min(now, 400 * std.time.ns_per_ms);
+}
+
+test "the CPU time of a computing process is reported from its exit" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var m = Manual{};
+    // A fixed amount of work, so it ends by itself; the deadline is never reached.
+    const r = try sh(a, &tmp, "i=0; while [ $i -lt 200000 ]; do i=$((i+1)); done", .{ .deadline_ns = never }, &m);
+    try std.testing.expectEqual(Term{ .exited = 0 }, r.term);
+    try std.testing.expectEqual(@as(?Liveness, null), r.timeout);
+    try std.testing.expect(r.cpu_ns > 0);
+}
+
+test "sample: the CPU time and resident size of a live process are read, and CPU time advances with work" {
+    const me: posix.pid_t = if (is_darwin) getpid() else std.os.linux.getpid();
+    const first = sample(me);
+    try std.testing.expect(first.rss.? > 0);
+    const start = first.cpu_ns.?;
+    // Work until the reading moves (the kernel counts in 10 ms ticks): an
+    // event, not a duration. A reading that never moves ends the loop at the
+    // count, and the assert fails.
+    var rounds: usize = 0;
+    var x: u64 = 0;
+    while (sample(me).cpu_ns.? <= start and rounds < 1 << 14) : (rounds += 1) {
+        var i: u64 = 0;
+        while (i < 1 << 20) : (i += 1) {
+            x +%= i;
+            std.mem.doNotOptimizeAway(x);
+        }
+    }
+    try std.testing.expect(sample(me).cpu_ns.? > start);
 }
 
 test "the deadline kills the whole group: a background child does not survive" {
@@ -517,7 +820,11 @@ test "the deadline kills the whole group: a background child does not survive" {
     defer tmp.cleanup();
     // The shell starts a sleep in its own group (no job control in sh -c)
     // and then waits; at the deadline both must die.
-    const r = try sh(a, &tmp, "sleep 60 & wait", .{ .deadline_ns = 1 * second });
+    // The script creates the marker after starting the sleep, and the clock
+    // does not move before it exists: the group has two members when the
+    // deadline passes.
+    var m = Manual{};
+    const r = try sh(a, &tmp, "sleep 60 & touch \"$1\"; wait", .{ .deadline_ns = 1 * second }, &m);
     try std.testing.expectEqual(@as(?Liveness, .hung), r.timeout);
     try std.testing.expect(!r.leftover);
     try std.testing.expect(!groupAlive(r.pgid));
@@ -529,7 +836,8 @@ test "a process left behind by a test that passed is killed with the group" {
     const a = arena.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const r = try sh(a, &tmp, "sleep 60 & exit 0", .{ .deadline_ns = 20 * second });
+    var m = Manual{};
+    const r = try sh(a, &tmp, "sleep 60 & exit 0", .{ .deadline_ns = never }, &m);
     try std.testing.expectEqual(Term{ .exited = 0 }, r.term);
     try std.testing.expect(!r.leftover);
     try std.testing.expect(!groupAlive(r.pgid));
@@ -541,11 +849,17 @@ test "self-test: without the group kill the leftover is detected (the check abov
     const a = arena.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const r = try sh(a, &tmp, "sleep 60 & wait", .{ .deadline_ns = 1 * second, .kill_group = false });
+    // The sleeper survives by construction, so the drain sleeps do not wait
+    // for it to go; what `run` slept for in them is read off the clock.
+    var m = Manual{ .survivors = true };
+    const r = try sh(a, &tmp, "sleep 60 & touch \"$1\"; wait", .{ .deadline_ns = 1 * second, .kill_group = false }, &m);
     defer killGroup(r.pgid);
     try std.testing.expectEqual(@as(?Liveness, .hung), r.timeout);
     try std.testing.expect(r.leftover);
     try std.testing.expect(groupAlive(r.pgid));
+    // The wait for the group to empty is 100 sleeps of 20 ms: 2 s.
+    try std.testing.expectEqual(@as(u64, 100), m.drains);
+    try std.testing.expectEqual(@as(u64, 2 * second), m.drain_ns);
 }
 
 test "the memory cap kills a process whose resident size passes it" {
@@ -556,13 +870,18 @@ test "the memory cap kills a process whose resident size passes it" {
     defer tmp.cleanup();
     // Any process is resident in more than 64 KiB: that cap is passed at
     // the first sample; a 1 GiB one is never passed by a shell.
-    const r = try sh(a, &tmp, "exec sleep 30", .{ .deadline_ns = 20 * second, .memory_bytes = 64 << 10 });
+    var m = Manual{};
+    // The deadline is 20 s of manual time, so only the cap can have killed it
+    // (timeout stays null); it is passed at the first sample, before any poll.
+    const r = try sh(a, &tmp, "exec sleep 30", .{ .deadline_ns = 20 * second, .memory_bytes = 64 << 10 }, &m);
     try std.testing.expect(r.oom);
+    try std.testing.expectEqual(Term{ .signaled = posix.SIG.KILL }, r.term);
     try std.testing.expectEqual(@as(?Liveness, null), r.timeout);
     try std.testing.expect(r.peak_rss.? > 64 << 10);
-    try std.testing.expect(r.wall_ns < 10 * second);
-    const ok = try sh(a, &tmp, "exit 0", .{ .deadline_ns = 20 * second, .memory_bytes = 1 << 30 });
+    var m2 = Manual{};
+    const ok = try sh(a, &tmp, "exit 0", .{ .deadline_ns = never, .memory_bytes = 1 << 30 }, &m2);
     try std.testing.expect(!ok.oom);
+    try std.testing.expectEqual(Term{ .exited = 0 }, ok.term);
 }
 
 test "liveness: under 5% of one CPU over the window is hung" {
@@ -585,4 +904,81 @@ test "signal names" {
     try std.testing.expectEqualStrings("SIGILL", signalName(posix.SIG.ILL).?);
     try std.testing.expectEqualStrings("SIGBUS", signalName(posix.SIG.BUS).?);
     try std.testing.expectEqual(@as(?[]const u8, null), signalName(200));
+}
+
+// ------------------------------------------------- tests of the ready file
+//
+// `Limits.ready_file` moves the start of the deadline. The tests use `Manual`
+// (above): the file appears, and the child is let go, at a chosen manual time.
+
+/// The pipe a `wait_pipe` child (descriptors 8 and 9, see proc_child) ends on
+/// when the write end closes. Closed by `Manual` at `release_at`.
+fn releasePipe() !posix.fd_t {
+    const p = try posix.pipe();
+    try posix.dup2(p[0], 8);
+    try posix.dup2(p[1], 9);
+    posix.close(p[0]);
+    posix.close(p[1]);
+    return 9;
+}
+
+test "ready file: the deadline counts from the poll that finds it" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    const go = try std.fs.path.join(a, &.{ dir, "go" });
+    // The file appears at 10 s, five deadlines after the start; the sleep that
+    // creates it advances to 10.02 s, where the poll finds it. The deadline of
+    // 2 s then ends at 12.02 s, and the last sample is that poll's.
+    const poll = (Limits{ .deadline_ns = 0 }).poll_ns;
+    var m = Manual{ .gate_at = 10 * second, .gate_path = go };
+    var sc = Scripted{ .m = &m, .cpu_of = idle };
+    const r = try sh(a, &tmp, "touch \"$1\"; exec sleep 60", .{ .deadline_ns = 2 * second, .ready_file = go, .sampler = sc.sampler() }, &m);
+    try std.testing.expectEqual(Term{ .signaled = posix.SIG.KILL }, r.term);
+    try std.testing.expectEqual(@as(?Liveness, .hung), r.timeout);
+    try std.testing.expectEqual(12 * second + poll, sc.last_at);
+}
+
+test "ready file: without it nothing times out, however long the clock runs" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    const never_there = try std.fs.path.join(a, &.{ dir, "never" });
+    // The clock runs to 100 s, fifty deadlines; there the child is let go and
+    // ends by itself. `run` has not killed it.
+    var m = Manual{ .release_at = 100 * second, .release_fd = try releasePipe() };
+    defer posix.close(8);
+    defer if (m.release_fd >= 0) posix.close(m.release_fd);
+    var sc = Scripted{ .m = &m, .cpu_of = busy };
+    const r = try sh(a, &tmp, "exec 9>&-; read x <&8; exit 0", .{ .deadline_ns = 2 * second, .ready_file = never_there, .sampler = sc.sampler() }, &m);
+    try std.testing.expectEqual(Term{ .exited = 0 }, r.term);
+    try std.testing.expectEqual(@as(?Liveness, null), r.timeout);
+    try std.testing.expect(!r.oom);
+    try std.testing.expectEqual(100 * second, sc.last_at);
+}
+
+test "a test that computes past half the deadline and ends in time is not a timeout" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // Let go at 4 s of a 6 s deadline: polled (and sampled as computing) past
+    // half of it, never killed.
+    var m = Manual{ .release_at = 4 * second, .release_fd = try releasePipe() };
+    defer posix.close(8);
+    defer if (m.release_fd >= 0) posix.close(m.release_fd);
+    var sc = Scripted{ .m = &m, .cpu_of = busy };
+    const r = try sh(a, &tmp, "exec 9>&-; read x <&8; exit 0", .{ .deadline_ns = 6 * second, .sampler = sc.sampler() }, &m);
+    try std.testing.expectEqual(Term{ .exited = 0 }, r.term);
+    try std.testing.expectEqual(@as(?Liveness, null), r.timeout);
+    try std.testing.expect(!r.oom);
+    try std.testing.expectEqual(4 * second, sc.last_at);
+    try std.testing.expectEqual(4 * second, r.wall_ns);
 }

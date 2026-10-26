@@ -342,6 +342,67 @@ const Pkg = struct {
     dep: []const u8 = "",
 };
 
+// ---- the clock ------------------------------------------------------------------------------------------------------
+
+/// What time it is and how to wait for it to pass: the one place the check reads the clock or sleeps. The default is the real
+/// clock; a test hands in a clock that it moves itself, so that no wait of the check is a wait of the test.
+pub const Clock = struct {
+    ctx: ?*anyopaque = null,
+    now_ms_fn: *const fn (?*anyopaque) i64 = realNowMs,
+    sleep_ms_fn: *const fn (?*anyopaque, u64) void = realSleepMs,
+
+    pub fn nowMs(c: Clock) i64 {
+        return c.now_ms_fn(c.ctx);
+    }
+
+    /// Whole seconds since the epoch.
+    pub fn nowSecs(c: Clock) i64 {
+        return @divFloor(c.nowMs(), 1000);
+    }
+
+    pub fn sleepMs(c: Clock, ms: u64) void {
+        c.sleep_ms_fn(c.ctx, ms);
+    }
+};
+
+fn realNowMs(_: ?*anyopaque) i64 {
+    return std.time.milliTimestamp();
+}
+
+fn realSleepMs(_: ?*anyopaque, ms: u64) void {
+    std.time.sleep(ms * std.time.ns_per_ms);
+}
+
+/// Run `attempt` until it returns true, or until `wait_ms` has passed since the first try (then false), with `poll_ms` between
+/// two tries. An error of `attempt` ends the poll.
+pub fn pollUntil(clock: Clock, wait_ms: u64, poll_ms: u64, comptime Ctx: type, ctx: Ctx, comptime attempt: fn (Ctx) anyerror!bool) !bool {
+    const start = clock.nowMs();
+    while (true) {
+        if (try attempt(ctx)) return true;
+        if (clock.nowMs() - start > @as(i64, @intCast(wait_ms))) return false;
+        clock.sleepMs(poll_ms);
+    }
+}
+
+/// Make a call again after a transport error, and after a 429, at most three times: the pause of a transport error is `retry_ms`;
+/// a 429 waits as long as the registry says in Retry-After (at most a minute), and never less than `retry_ms`. The fourth answer
+/// is the answer, whatever it is.
+pub fn retrying(clock: Clock, retry_ms: u64, comptime Ctx: type, ctx: Ctx, comptime call: fn (Ctx) anyerror!http.Answer) !http.Answer {
+    var tries: u32 = 0;
+    while (true) : (tries += 1) {
+        const ans = call(ctx) catch |e| {
+            if (tries >= 3) return e;
+            clock.sleepMs(retry_ms);
+            continue;
+        };
+        if (ans.status == 429 and tries < 3) {
+            clock.sleepMs(@max(retry_ms, @min(@as(u64, ans.retry_after orelse 0) * 1000, 60_000)));
+            continue;
+        }
+        return ans;
+    }
+}
+
 // ---- the run --------------------------------------------------------------------------------------------------------
 
 pub const Opts = struct {
@@ -361,11 +422,14 @@ pub const Opts = struct {
     wait_ms: u64 = 10 * 60 * 1000,
     /// How long `mopm publish --staged` waits for its group to be visible or to end. That is the registry's own promise (the group
     /// reaches a state, and then every member is readable), so it is a backstop for a registry that never gets there and does
-    /// not follow how long a read of the index may lag. 0: the same as `wait_ms`.
-    publish_wait_ms: u64 = 0,
+    /// not follow how long a read of the index may lag. Null: the same as `wait_ms`, and at least a second. Given, it is what
+    /// `mopm publish --wait` gets, in whole seconds (0: it asks once and gives up).
+    publish_wait_ms: ?u64 = null,
     poll_ms: u64 = 3000,
     /// Where a transport error or a 429 waits before the call is made again.
     retry_ms: u64 = 2000,
+    /// Every read of the time and every wait of the check.
+    clock: Clock = .{},
     /// The environment of this process: what the toolchain children start from, and the PATH of the others.
     parent_env: ?*const std.process.EnvMap = null,
     /// pixi: `mopm sync` installs through it, and, with no `mojo_env`, it creates the Mojo environment from `pixi_manifest`.
@@ -392,6 +456,9 @@ pub const Result = struct {
     /// One line per check (`- ok   <name>` or `- FAIL <name>: <detail>`), in the order they ran.
     notes: []const []const u8 = &.{},
 };
+
+/// One call of `Cx.send`.
+const Request = struct { a: Allocator, method: std.http.Method, url: []const u8, token: ?[]const u8, body: ?[]const u8 };
 
 const Cx = struct {
     a: Allocator,
@@ -437,21 +504,12 @@ const Cx = struct {
 
     /// One call, with a pause and another try on a transport error, and on a 429.
     fn send(self: *Cx, method: std.http.Method, full_url: []const u8, body: ?[]const u8, auth: bool) !http.Answer {
-        var tries: u32 = 0;
-        while (true) : (tries += 1) {
-            const ans = http.request(self.a, method, full_url, .{ .token = if (auth) self.token else null, .body = body }) catch |e| {
-                if (tries >= 3) return e;
-                std.time.sleep(self.o.retry_ms * std.time.ns_per_ms);
-                continue;
-            };
-            if (ans.status == 429 and tries < 3) {
-                // The registry says how long to wait (at most a minute); never less than the pause of a transport error.
-                const wait_ms = @max(self.o.retry_ms, @min(@as(u64, ans.retry_after orelse 0) * 1000, 60_000));
-                std.time.sleep(wait_ms * std.time.ns_per_ms);
-                continue;
+        const once = struct {
+            fn call(r: Request) anyerror!http.Answer {
+                return http.request(r.a, r.method, r.url, .{ .token = r.token, .body = r.body });
             }
-            return ans;
-        }
+        }.call;
+        return retrying(self.o.clock, self.o.retry_ms, Request, .{ .a = self.a, .method = method, .url = full_url, .token = if (auth) self.token else null, .body = body }, once);
     }
 
     fn api(self: *Cx, method: std.http.Method, p: []const u8, body: ?[]const u8) !http.Answer {
@@ -557,16 +615,16 @@ const pre_commit = [_][]const u8{ "open", "validating" };
 
 /// Run `f` until it returns true or `wait_ms` is over; the last answer's text is the reason.
 fn eventually(cx: *Cx, comptime Ctx: type, ctx: Ctx, comptime f: fn (*Cx, Ctx, *[]const u8) anyerror!bool, why: *[]const u8) !bool {
-    const start = std.time.milliTimestamp();
-    while (true) {
-        if (f(cx, ctx, why)) |ok| {
-            if (ok) return true;
-        } else |e| {
-            why.* = @errorName(e);
+    const Try = struct { cx: *Cx, ctx: Ctx, why: *[]const u8 };
+    const once = struct {
+        fn call(t: Try) anyerror!bool {
+            return f(t.cx, t.ctx, t.why) catch |e| {
+                t.why.* = @errorName(e);
+                return false;
+            };
         }
-        if (std.time.milliTimestamp() - start > @as(i64, @intCast(cx.o.wait_ms))) return false;
-        std.time.sleep(cx.o.poll_ms * std.time.ns_per_ms);
-    }
+    }.call;
+    return pollUntil(cx.o.clock, cx.o.wait_ms, cx.o.poll_ms, Try, .{ .cx = cx, .ctx = ctx, .why = why }, once);
 }
 
 // ---- the steps ------------------------------------------------------------------------------------------------------
@@ -583,7 +641,7 @@ fn probeStep(cx: *Cx) !bool {
         .manifest_sha256 = "",
     };
     const body = try groupBody(cx.a, &.{probe});
-    const now = std.time.timestamp();
+    const now = cx.o.clock.nowSecs();
     const ans = try cx.api(.POST, "/groups", body);
     if (ans.status == 404 and std.mem.eql(u8, errorCode(cx.a, ans.body), "route_not_found")) return false;
     if (ans.status != 201 and ans.status != 200) {
@@ -826,8 +884,8 @@ fn stateGroupId(cx: *Cx, staged: []const u8) []const u8 {
 /// `mopm publish --staged <staged>` with the token. With `watch`, the API is read every poll while it runs.
 fn publishRun(cx: *Cx, staged: []const u8, pkgs: []const Pkg, watch: bool) !Published {
     const mopm = cx.o.mopm orelse return error.NoMopm;
-    const publish_wait_ms = if (cx.o.publish_wait_ms == 0) cx.o.wait_ms else cx.o.publish_wait_ms;
-    const wait = try std.fmt.allocPrint(cx.a, "{d}", .{@max(publish_wait_ms / 1000, 1)});
+    const wait_secs = if (cx.o.publish_wait_ms) |ms| ms / 1000 else @max(cx.o.wait_ms / 1000, 1);
+    const wait = try std.fmt.allocPrint(cx.a, "{d}", .{wait_secs});
     const argv = [_][]const u8{ mopm, "publish", "--staged", staged, "--registry", cx.o.base, "--wait", wait };
     var env = try childEnv(cx.a, cx.parent(), try cx.home());
     try env.put("MOPM_TOKEN", cx.token);
@@ -852,7 +910,7 @@ fn publishRun(cx: *Cx, staged: []const u8, pkgs: []const Pkg, watch: bool) !Publ
             if (g1 != null and g2 != null and n > 0 and n < pkgs.len and
                 isOneOf(g1.?.status, &pre_commit) == isOneOf(g2.?.status, &pre_commit)) out.partial = true;
             if (n > 0 and n <= pkgs.len and g1 != null and g2 != null and isOneOf(g1.?.status, &pre_commit) and isOneOf(g2.?.status, &pre_commit)) out.early = true;
-            std.time.sleep(cx.o.poll_ms * std.time.ns_per_ms);
+            cx.o.clock.sleepMs(cx.o.poll_ms);
         }
         thread.join();
         out.code = job.code;
@@ -1235,14 +1293,14 @@ fn rejectedStep(cx: *Cx) !void {
 }
 
 fn yankState(cx: *Cx, id: []const u8, want: []const u8) !bool {
-    const start = std.time.milliTimestamp();
-    while (true) {
-        if (try cx.getGroup(id)) |g| {
-            if (g.yank != null and std.mem.eql(u8, g.yank.?.state, want)) return true;
+    const Try = struct { cx: *Cx, id: []const u8, want: []const u8 };
+    const once = struct {
+        fn call(t: Try) anyerror!bool {
+            const g = (try t.cx.getGroup(t.id)) orelse return false;
+            return g.yank != null and std.mem.eql(u8, g.yank.?.state, t.want);
         }
-        if (std.time.milliTimestamp() - start > @as(i64, @intCast(cx.o.wait_ms))) return false;
-        std.time.sleep(cx.o.poll_ms * std.time.ns_per_ms);
-    }
+    }.call;
+    return pollUntil(cx.o.clock, cx.o.wait_ms, cx.o.poll_ms, Try, .{ .cx = cx, .id = id, .want = want }, once);
 }
 
 /// Step 4. The chain group, yanked as a whole and restored.

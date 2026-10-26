@@ -205,10 +205,38 @@ function and nowhere else. Design and reasons: `service/docs/adr-ci-publisher-id
 - **Changing who beta trusts** is a pull request to that constant; promote deploys it to beta. There is no console step. To stop
   trusting the identity, remove the entry in a pull request: a deployed value cannot be switched off at runtime (there is no
   config-table item for it), so the fastest stop is the deploy.
-- **Gamma and prod get none of it.** Their function has no `CI_PUBLISHERS` (the `PutItem` on `packages` is the claim route's, on every stage, and there is no CI-only grant), and answers the `packages`
-  form of the exchange with `oidc_not_trusted`. The handler also refuses to start on any stage but beta if the variable is present, so
-  a function that fails to start with "may be set on the beta stage only" means the variable reached the wrong stage: remove it in
-  the stack and redeploy. Trusting a CI identity at gamma or prod stays a deliberate human decision.
+- **Gamma gets none of it, and prod only the acting-for row below.** Gamma's function has no `CI_PUBLISHERS` (the `PutItem` on `packages` is the claim route's, on every stage, and there is no CI-only grant), and answers the `packages`
+  form of the exchange with `oidc_not_trusted`. The handler also refuses to start on gamma if the variable is present, and on prod if a
+  row does not carry `acts_for`, so a function that fails to start with "may be set on the beta stage only" or "trusts only rows that
+  carry 'acts_for'" means the variable reached the wrong stage or has the wrong shape: fix it in the stack and redeploy. Trusting a CI
+  identity at gamma stays a deliberate human decision.
+
+### Prod trusts a CI identity that acts for an account
+
+`PROD_CI_PUBLISHERS` in the same file is the prod stage's `CI_PUBLISHERS`: the same release workflow on main, `push` only, with
+`job_workflow_ref` pinned, in the **`prod` environment**, with `acts_for` set to the owner account's GitHub id. Design and reasons: the
+addendum "A CI identity that acts for an account, on prod" in `service/docs/adr-ci-publisher-identity.md`.
+
+- **What it does.** The `packages` form of the exchange mints a 10 minute, single-use-`jti` token whose principal is that account: the
+  actor is `u:<id>`, ownership is read from the package's owner rows (now, at the exchange and again at every use), and the token is
+  good for exactly the listed packages and versions. It creates no package and sets no `ci_owner`: every name must already be claimed
+  by the account (`package_not_found` for an unclaimed name, `not_owner` for anyone else's or a CI-owned one; the CI token is not spent by
+  a refusal). It cannot claim, mint tokens or act as a login.
+- **Groups are the account's.** Creating a group needs the account on the `groups_enabled` item of `mopm-prod-config`
+  (`allow` with `u:<id>`), exactly as for a human; without it the create answers `route_not_found`. The CI identity's own actor is not a
+  group actor on prod.
+- **Telling a CI publish from a human one.** Every record it writes carries `via` = `ci:gh-repo:<repository_id>`: the group header, the
+  upload and publish records, and the `detail.via` of the audit entries of the create, reserve, stage, commit request, abort and yank
+  request. A human's own publish has none. `via` is not in the public read API.
+- **A job that dies between stage and commit** leaves an open group holding the account's slot until its deadline (12 hours by default).
+  Abort it with a fresh exchange for the same packages and `DELETE /api/v1/groups/<id>` (the release workflow's abort job does that).
+- **Removing the trust.** Delete the entry: in `api-stack.ts` make the prod `CI_PUBLISHERS` variable absent (remove `PROD_CI_PUBLISHERS`
+  and its line) in a pull request and promote it to prod. A deployed value cannot be switched off at runtime; tokens already minted
+  stay valid until their 10 minutes end, and a deploy without the row refuses every later exchange with `oidc_not_trusted`. The
+  account's own tokens, groups and `groups_enabled` item are untouched. To stop CI groups without a deploy, remove `u:<id>` from
+  `groups_enabled` (that also stops the human account).
+- **Reading a refusal.** As for beta, plus: `package_not_found` at the exchange means the account has not claimed the name (claim it
+  with the account's own login first); an `oidc_token_invalid` "wrong audience" means the job asked for an audience other than `mopm.dev`.
 - **What a CI-created package looks like.** `claimed`, `ci_owner` = `gh-repo:<repository_id>`, no owner rows (so `owners` is empty in
   the read API), and an audit entry `ci_claim`. Only a token minted for that identity may publish to it. Fixing a wrong name means a
   takedown by an operator; the service has no route that renames or transfers it.

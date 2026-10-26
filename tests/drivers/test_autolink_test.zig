@@ -158,7 +158,6 @@ const Ctx = struct {
 test "autolink: mopm build, run and repl with native libraries (tests/e2e/run.sh)" {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena_state.allocator();
-    try h.watchdog(1500);
     var rep = h.Report{};
     run(a, &rep) catch |e| switch (e) {
         error.Fatal => {},

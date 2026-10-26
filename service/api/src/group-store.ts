@@ -55,6 +55,8 @@ export interface GroupRecord {
   /** Compare-and-set counter: starts at 0, +1 on every write of the header. */
   rev: number;
   actor: string;
+  /** Set when the group was made through a CI identity acting for the actor (`ci:gh-repo:<repository id>`); absent for the account's own group. */
+  via?: string;
   member_count: number;
   created_at: string;
   /** Not `expires_at`: the table's TTL is on that name, and a live group must never expire. */

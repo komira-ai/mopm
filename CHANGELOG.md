@@ -56,8 +56,9 @@ with `mopm publish` is unchanged. See [Publishing a workspace as one group](docs
 - `mopm stage --workspace-root <dir> [<package>...] --artifacts <dir> --compiler <mojo version> --out <dir> --registry <prod|gamma|beta|url>`
   packs the members of a workspace in dependency order and checks each version against the registry. It reads no token and writes
   nothing to the registry.
-- `mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>] [--timeout <seconds>] [--retries <n>] [--dry-run] [--oidc]` publishes a staged set
-  through one group. A rerun after a failure resumes the same group (`state.json`); `report.json` says what each member came to; a 429
+- `mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>] [--timeout <seconds>] [--retries <n>] [--dry-run] [--oidc] [--no-commit | --abort]` publishes a staged set
+  through one group. `--no-commit` uploads every file and stops with the group open (exit 0, outcome `staged`, nothing readable);
+  the same command without it, in the same directory, commits that group, and `--abort` ends it. A rerun after a failure resumes the same group (`state.json`); `report.json` says what each member came to; a 429
   that names a long wait stops the run and is never retried into the limit. Every request has a time limit (`--timeout`, 30 seconds
   by default, for the connection and then for the server on any read or write), and a PUT or a poll that fails on the connection, times
   out or is answered 500, 502, 503 or 504 is repeated up to `--retries` times (3 by default) with jittered waits; any other 4xx is final.
