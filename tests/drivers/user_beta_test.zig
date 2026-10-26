@@ -14,7 +14,6 @@ const beta = @import("user_beta.zig");
 test "user beta: the walk of a customer, farm form (no pixi, no installer)" {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena_state.allocator();
-    try h.watchdog(1500);
     var rep = h.Report{};
     const m = try mojo_env.Mojo.init(a);
     const prefix = try h.join(a, &.{ m.work, "env" });

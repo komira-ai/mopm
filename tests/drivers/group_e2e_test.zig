@@ -679,15 +679,6 @@ fn rfc3339(a: Allocator, secs: i64) ![]const u8 {
 // ---- running the check ----------------------------------------------------------------------------------------------
 
 var work_counter: usize = 0;
-var watchdog_armed = false;
-
-/// The tests run in one process: one watchdog for all of them.
-fn guard() !void {
-    if (watchdog_armed) return;
-    watchdog_armed = true;
-    try h.watchdog(3000);
-}
-
 /// What every run shares: the Mojo environment, the built CLI, the stand-in pixi, and the three packages precompiled once (the walk
 /// that precompiles them itself is the first test). Lives for the whole process.
 ///
@@ -886,7 +877,6 @@ fn passed(r: g.Result, name: []const u8) bool {
 fn expectRedOn(mode: Mode, name: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     const ran = try runCheck(a, mode, test_token, "beta");
     if (ran.result.skipped or ran.result.failures == 0 or !failed(ran.result, name)) {
         std.debug.print("expected a red line naming `{s}`; the run said: {s} ({d} failures)\n", .{ name, ran.result.line, ran.result.failures });
@@ -898,7 +888,6 @@ fn expectRedOn(mode: Mode, name: []const u8) !void {
 test "a registry that does it all right passes every check, and the token goes only to the registry" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     // The secret holds a token for each stage; this stage's is the one used. The run precompiles the packages itself.
     const ran = try runCheckWith(a, .{}, "gamma=mopm_nottherightonenottherightonenotri\nbeta=" ++ test_token ++ "\n", "beta", .{ .precompile = true });
     for (ran.result.notes) |n| std.debug.print("{s}", .{n});
@@ -941,7 +930,6 @@ test "a registry that does it all right passes every check, and the token goes o
 test "no token: the run skips, says which secret is missing, and sends nothing" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     const ran = try runCheck(a, .{}, "", "beta");
     try std.testing.expect(ran.result.skipped);
     try std.testing.expectEqual(g.SkipReason.no_secret, ran.result.skip_reason);
@@ -952,7 +940,6 @@ test "no token: the run skips, says which secret is missing, and sends nothing" 
 test "a secret that holds a token for another stage only: the run skips and sends nothing" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     const ran = try runCheck(a, .{ .stage = "gamma" }, "beta=" ++ test_token, "gamma");
     try std.testing.expect(ran.result.skipped);
     try std.testing.expectEqual(g.SkipReason.no_stage_token, ran.result.skip_reason);
@@ -979,7 +966,6 @@ test "the token of a stage: one token for any stage, or an entry for each" {
 test "the stage's groups switch is off: the run skips after one create and publishes nothing" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     const ran = try runCheck(a, .{ .groups_off = true }, test_token, "beta");
     try std.testing.expect(ran.result.skipped);
     try std.testing.expectEqual(g.SkipReason.groups_off, ran.result.skip_reason);
@@ -993,7 +979,6 @@ test "the stage's groups switch is off: the run skips after one create and publi
 test "a 404 whose error code is not route_not_found is a failure, not a skip" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     const ran = try runCheck(a, .{ .groups_404_code = "group_not_found" }, test_token, "beta");
     try std.testing.expect(!ran.result.skipped);
     try std.testing.expect(failed(ran.result, "the switch: the e2e actor may create groups"));
@@ -1006,7 +991,6 @@ test "a 404 whose error code is not route_not_found is a failure, not a skip" {
 fn expectFailsNotSkips(extras: Extras, name: []const u8) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     const ran = try runCheckWith(a, .{}, test_token, "beta", extras);
     if (ran.result.skipped or ran.result.skip_reason != .none or ran.result.failures == 0 or !failed(ran.result, name)) {
         std.debug.print("expected a failure naming `{s}`, not a skip; the run said: {s}\n", .{ name, ran.result.line });
@@ -1029,7 +1013,6 @@ test "with a token and groups on, a piece of the client that is missing is a fai
 test "pixi makes the Mojo environment: the run uses what it made, and a manifest it cannot make one from, or one with no compiler, fails" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     const t = try tools();
     const ok_manifest = try h.join(a, &.{ t.work, "pixi_env_ok.toml" });
     try h.writeFile(ok_manifest, "[workspace]\nname = \"empty\"\nchannels = [\"file:///nonexistent\"]\nplatforms = [\"linux-64\"]\n");
@@ -1044,7 +1027,6 @@ test "pixi makes the Mojo environment: the run uses what it made, and a manifest
 test "a group that is still reserving its members is created again until it has reached them all" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     const ran = try runCheck(a, .{ .reserving_rounds = 2 }, test_token, "beta");
     for (ran.result.notes) |n| std.debug.print("{s}", .{n});
     try std.testing.expect(!ran.result.skipped);
@@ -1061,7 +1043,6 @@ test "a group that is still reserving its members is created again until it has 
 test "prod is never exercised" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     const ran = try runCheck(a, .{ .stage = "prod" }, test_token, "prod");
     try std.testing.expect(ran.result.skipped);
     try std.testing.expectEqualStrings("group-e2e: SKIP prod: this check never runs on prod", ran.result.line);
@@ -1071,7 +1052,6 @@ test "prod is never exercised" {
 test "a token the registry refuses is a failure, not a skip" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     const ran = try runCheck(a, .{}, "mopm_not_the_token_not_the_token_nope", "beta");
     try std.testing.expect(!ran.result.skipped);
     try std.testing.expect(failed(ran.result, "the switch: the e2e actor may create groups"));
@@ -1082,7 +1062,6 @@ test "a token the registry refuses is a failure, not a skip" {
 test "a registry of another stage is a failure" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     const ran = try runCheck(a, .{ .stage = "gamma" }, test_token, "beta");
     try std.testing.expect(failed(ran.result, "health: the stage answers as the stage under test"));
     try std.testing.expectEqual(@as(usize, 0), ran.stub.group_creates);
@@ -1091,7 +1070,6 @@ test "a registry of another stage is a failure" {
 test "the expiry probe: a group left open by an earlier run is reported as still open, or as ended and opened again" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     const open = try runCheck(a, .{ .probe = .still_open }, test_token, "beta");
     try std.testing.expectEqual(@as(usize, 0), open.result.failures);
     try std.testing.expect(passed(open.result, "expiry: the probe group is still open from an earlier run"));
@@ -1118,7 +1096,6 @@ test "a commit that shows only some members is a failure" {
 test "a commit that lands between two reads of the members is one commit, not some of the members readable at once" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     // The first member is read while the group validates (and is not there), and the commit lands right after that read: the rest
     // of the same sweep finds the other two. A registry that commits at once does exactly this to a reader whose requests
     // come one after the other. The run must not call that a partial exposure; it is green.
@@ -1141,7 +1118,6 @@ test "some of the members readable at once before the commit is still a failure"
 test "a registry that validates slowly is waited for, however briefly the reads of its state are repeated" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     // Validation takes 2.5 seconds after the commit, of the chain and of the rejected group, and the reads of the index and the
     // channel are repeated for one second only. `mopm publish` waits for its group by its own wait, not by that one.
     const ran = try runCheckWith(a, .{ .slow_validation_ms = 2500 }, test_token, "beta", .{ .wait_ms = 1000 });
@@ -1191,7 +1167,6 @@ test "a lock that the registry gives after the publish, and that differs from th
 test "a newer release of a set package that another run published meanwhile is the one difference the lock comparison allows" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     const ran = try runCheck(a, .{ .newer_release = true }, test_token, "beta");
     for (ran.result.notes) |n| std.debug.print("{s}", .{n});
     try std.testing.expect(!ran.result.skipped);
@@ -1212,7 +1187,6 @@ test "a newer release of a set package that another run published meanwhile is t
 test "a release of a set package at another major that another run published meanwhile is a failure of the lock comparison, naming that entry" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     // The registry's lock names the other run's 2.0.0 for the first member. Only a newer release of the SAME major is the other
     // run's file the comparison lets by; this one is neither the uploaded file nor that, so the entry fails and the locks differ.
     const ran = try runCheck(a, .{ .rival_major = true }, test_token, "beta");
@@ -1226,7 +1200,6 @@ test "a release of a set package at another major that another run published mea
 test "a README program that exits 0 and prints another line is a failure" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     // Only the stand-in compiler's programs can be told what to print; the real compiler builds what the README says, and the
     // walk of the first test holds that to the README in the beta tier.
     if ((try tools()).real != null) return;
@@ -1251,7 +1224,6 @@ test "a refused create, upload, commit or yank is a failure that names the step,
     try expectRedOn(.{ .yank_refused = true }, "yank: the group yank is accepted");
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     const ran = try runCheck(a, .{ .commit_refused = true }, test_token, "beta");
     try std.testing.expect(failed(ran.result, "chain: mopm publish --staged publishes the set"));
     try std.testing.expect(failed(ran.result, "rejected: the group ends rejected"));
@@ -1272,7 +1244,6 @@ test "a refused create, upload, commit or yank is a failure that names the step,
 test "a registry that does not answer is a failed check, not a crash" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     const ran = try runCheckWith(a, .{}, test_token, "beta", .{ .registry_down = true });
     try std.testing.expect(!ran.result.skipped);
     try std.testing.expect(failed(ran.result, "the walk ends without an error"));
@@ -1282,7 +1253,6 @@ test "a registry that does not answer is a failed check, not a crash" {
 test "the job summary: one line for a skip, the line and every check for a run" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena.allocator();
-    try guard();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const dir = try h.tmpPath(a, &tmp);

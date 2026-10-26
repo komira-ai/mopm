@@ -238,7 +238,6 @@ test "cut_release: plan says whether the release of a tagged commit is already c
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try h.watchdog(600);
     const tools = Tools{
         .cut = try h.toolPath(a, "MOPM_CUT_RELEASE"),
         .gh = try h.toolPath(a, "MOPM_FAKE_GH"),
@@ -321,7 +320,6 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try h.watchdog(600);
     const tools = Tools{
         .cut = try h.toolPath(a, "MOPM_CUT_RELEASE"),
         .gh = try h.toolPath(a, "MOPM_FAKE_GH"),

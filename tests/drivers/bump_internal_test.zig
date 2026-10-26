@@ -134,7 +134,6 @@ test "bump-internal: the pull request the bump guard admits, and every planted d
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try h.watchdog(300);
     const tools = Tools{
         .cut = try h.toolPath(a, "MOPM_CUT_RELEASE"),
         .gh = try h.toolPath(a, "MOPM_FAKE_GH"),

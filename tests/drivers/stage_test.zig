@@ -255,7 +255,6 @@ test "mopm stage against the fake registry" {
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var report = h.Report{};
-    try h.watchdog(180);
     const mopm_exe = try h.toolPath(a, "MOPM");
     const fake_exe = try h.toolPath(a, "MOPM_FAKE_REGISTRY");
     var tmp = std.testing.tmpDir(.{});

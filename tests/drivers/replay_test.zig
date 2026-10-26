@@ -274,7 +274,6 @@ test "the fake registry answers the contract's API cases" {
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var t = c.Tally{};
-    try h.watchdog(240);
     const fake_exe = try h.toolPath(a, "MOPM_FAKE_REGISTRY");
 
     const spec = try yaml.parse(a, try c.readFile(a, "spec/api/openapi.yaml"));

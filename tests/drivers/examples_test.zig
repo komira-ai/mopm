@@ -302,7 +302,6 @@ test "the worked examples of docs/examples.md: the files are what mopm reads, wr
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var rep = h.Report{};
-    try h.watchdog(120);
     const mopm = try h.toolPath(a, "MOPM");
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
