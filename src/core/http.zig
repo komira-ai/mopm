@@ -61,9 +61,23 @@ pub const Options = struct {
 /// One request. A server that does not answer in time is `error.RequestTimedOut`, a host that cannot be
 /// reached in time `error.ConnectTimedOut`; any other failure is returned as it came.
 pub fn request(arena: Allocator, method: std.http.Method, url: []const u8, options: Options) !Answer {
-    const started = std.time.milliTimestamp();
-    return requestOnce(arena, method, url, options) catch |e| {
-        if (options.timeout_secs > 0 and isTimeout(e, std.time.milliTimestamp() - started, options.timeout_secs)) return error.RequestTimedOut;
+    return requestWith(arena, method, url, options, Net{});
+}
+
+/// The network and the clock `request` uses; a test passes its own `now` (milliseconds) and `once`.
+const Net = struct {
+    fn now(_: Net) i64 {
+        return std.time.milliTimestamp();
+    }
+    fn once(_: Net, arena: Allocator, method: std.http.Method, url: []const u8, options: Options) anyerror!Answer {
+        return requestOnce(arena, method, url, options);
+    }
+};
+
+fn requestWith(arena: Allocator, method: std.http.Method, url: []const u8, options: Options, net: anytype) anyerror!Answer {
+    const started = net.now();
+    return net.once(arena, method, url, options) catch |e| {
+        if (options.timeout_secs > 0 and isTimeout(e, net.now() - started, options.timeout_secs)) return error.RequestTimedOut;
         return e;
     };
 }
@@ -508,32 +522,77 @@ fn loopbackServer() !std.net.Server {
     return addr.listen(.{ .reuse_address = true });
 }
 
-test "a server that accepts and never answers is a RequestTimedOut after the limit, not a hang" {
-    // Nobody calls accept: the kernel completes the connection, the request is written into it, and no answer ever comes.
-    var server = try loopbackServer();
-    defer server.deinit();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const url = try std.fmt.allocPrint(arena_state.allocator(), "http://127.0.0.1:{d}/stall", .{server.listen_address.getPort()});
-    const started = std.time.milliTimestamp();
-    try std.testing.expectError(error.RequestTimedOut, request(arena_state.allocator(), .GET, url, .{ .timeout_secs = 1 }));
-    const elapsed = std.time.milliTimestamp() - started;
-    try std.testing.expect(elapsed >= 900);
-    try std.testing.expect(elapsed < 20_000);
+/// A network whose clock is the test's: `once` moves the clock by `took_ms`, then fails with `err` or answers 200.
+const FakeNet = struct {
+    clock_ms: *i64,
+    took_ms: i64,
+    err: ?anyerror,
+
+    fn now(n: FakeNet) i64 {
+        return n.clock_ms.*;
+    }
+    fn once(n: FakeNet, _: Allocator, _: std.http.Method, _: []const u8, _: Options) anyerror!Answer {
+        n.clock_ms.* += n.took_ms;
+        if (n.err) |e| return e;
+        return Answer{ .status = 200, .body = "ok" };
+    }
+};
+
+fn runFake(clock_ms: *i64, took_ms: i64, err: ?anyerror, timeout_secs: u32) anyerror!Answer {
+    return requestWith(std.testing.allocator, .GET, "http://x/", .{ .timeout_secs = timeout_secs }, FakeNet{ .clock_ms = clock_ms, .took_ms = took_ms, .err = err });
 }
 
-/// A server that answers a request in four pieces, 600 ms apart: slow as a whole, never idle for long.
+test "a server that stops answering is a RequestTimedOut once the limit has passed, not a hang" {
+    var clock: i64 = 1_000_000;
+    // A plain socket reports its expired limit as WouldBlock: that is a timeout whatever the clock says.
+    try std.testing.expectError(error.RequestTimedOut, runFake(&clock, 0, error.WouldBlock, 1));
+    // A TLS stream hides the cause behind a read/write failure: it is a timeout only when the whole limit (less 100 ms) passed.
+    const hidden = [_]anyerror{ error.UnexpectedReadFailure, error.UnexpectedWriteFailure, error.TlsFailure };
+    for (hidden) |e| {
+        try std.testing.expectError(error.RequestTimedOut, runFake(&clock, 1000, e, 1));
+        try std.testing.expectError(error.RequestTimedOut, runFake(&clock, 900, e, 1));
+        try std.testing.expectError(e, runFake(&clock, 899, e, 1));
+        try std.testing.expectError(error.RequestTimedOut, runFake(&clock, 29_900, e, 30));
+        try std.testing.expectError(e, runFake(&clock, 29_899, e, 30));
+    }
+    // Any other failure is returned as it came, however long it took.
+    try std.testing.expectError(error.ConnectionRefused, runFake(&clock, 60_000, error.ConnectionRefused, 1));
+    // No limit asked for: nothing is reclassified.
+    try std.testing.expectError(error.WouldBlock, runFake(&clock, 60_000, error.WouldBlock, 0));
+}
+
+test "the limit reaches the socket: reads and writes on it give up after the seconds asked" {
+    if (comptime builtin.os.tag != .linux) return error.SkipZigTest;
+    var server = try loopbackServer();
+    defer server.deinit();
+    const stream = try std.net.tcpConnectToAddress(server.listen_address);
+    defer stream.close();
+    try setSocketTimeouts(stream.handle, 7);
+    inline for (.{ std.posix.SO.RCVTIMEO, std.posix.SO.SNDTIMEO }) |opt| {
+        var tv: Timeval = undefined;
+        var len: std.posix.socklen_t = @sizeOf(Timeval);
+        const rc = std.os.linux.getsockopt(stream.handle, std.posix.SOL.SOCKET, opt, std.mem.asBytes(&tv).ptr, &len);
+        try std.testing.expectEqual(std.os.linux.E.SUCCESS, std.os.linux.E.init(rc));
+        try std.testing.expectEqual(@as(c_long, 7), tv.sec);
+        try std.testing.expectEqual(@as(@TypeOf(tv.usec), 0), tv.usec);
+    }
+}
+
+/// A server that answers a request in four pieces, each written when the test allows it: slow as a whole, never idle.
 const Trickle = struct {
     server: std.net.Server,
+    gate: std.Thread.Semaphore = .{},
+    stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
+    /// Serves connections (the request's connect probe is the first) until told to stop; `stop` is followed by a connect to wake the accept.
     fn serve(t: *Trickle) void {
-        while (true) {
+        while (!t.stop.load(.acquire)) {
             const conn = t.server.accept() catch return;
             t.handle(conn);
         }
     }
 
-    fn handle(_: *Trickle, conn: std.net.Server.Connection) void {
+    fn handle(t: *Trickle, conn: std.net.Server.Connection) void {
         defer conn.stream.close();
         var buf: [4096]u8 = undefined;
         var len: usize = 0;
@@ -544,23 +603,31 @@ const Trickle = struct {
         }
         conn.stream.writeAll("HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\n") catch return;
         for ("abcd") |c| {
-            std.time.sleep(600 * std.time.ns_per_ms);
+            t.gate.wait();
             conn.stream.writeAll(&.{c}) catch return;
         }
     }
 };
 
-test "the limit is on idleness: an answer that arrives slowly, in pieces, is read to the end" {
-    const t = try std.heap.page_allocator.create(Trickle);
-    t.* = .{ .server = try loopbackServer() };
-    const thread = try std.Thread.spawn(.{}, Trickle.serve, .{t});
-    thread.detach();
+test "the limit is on idleness: an answer that arrives in pieces is read to the end, however long it takes in all" {
+    // The clock: the answer takes 4 x 600 ms in all, longer than the 1 s limit, and still comes back whole. Only a limit
+    // on the whole request would have cut it.
+    var clock: i64 = 0;
+    const slow = try runFake(&clock, 4 * 600, null, 1);
+    try std.testing.expectEqualStrings("ok", slow.body);
+
+    // The wire: a real answer in four pieces, each written on the test's say-so, is read to the end through request().
+    var t = Trickle{ .server = try loopbackServer() };
+    defer t.server.deinit();
+    const thread = try std.Thread.spawn(.{}, Trickle.serve, .{&t});
+    var i: u8 = 0;
+    while (i < 4) : (i += 1) t.gate.post();
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const url = try std.fmt.allocPrint(arena_state.allocator(), "http://127.0.0.1:{d}/slow", .{t.server.listen_address.getPort()});
-    const started = std.time.milliTimestamp();
-    const got = try request(arena_state.allocator(), .GET, url, .{ .timeout_secs = 1 });
-    try std.testing.expectEqualStrings("abcd", got.body);
-    // Four pieces at 600 ms is longer than the one-second limit, which only a total limit would have cut.
-    try std.testing.expect(std.time.milliTimestamp() - started > 1200);
+    const got = request(arena_state.allocator(), .GET, url, .{ .timeout_secs = 30 });
+    t.stop.store(true, .release);
+    (try std.net.tcpConnectToAddress(t.server.listen_address)).close();
+    thread.join();
+    try std.testing.expectEqualStrings("abcd", (try got).body);
 }
