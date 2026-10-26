@@ -1139,7 +1139,7 @@ components:
         trusts by configuration (a package nobody has claimed is created, owned by the publisher). Send one form,
         not both; a name is listed once.
       required: [jwt]
-      anyOf:
+      oneOf:
         - required: [name, version]
         - required: [packages]
       properties:
@@ -1158,9 +1158,13 @@ components:
               version: { $ref: "#/components/schemas/Version" }
     OidcExchangeResponse:
       description: |
-        `name` and `version` answer the single-package form, `packages` the list form.
+        `name` and `version` answer the single-package form, `packages` the list form. Exactly one
+        of the two, as the request is.
       type: object
       required: [token, token_kind, expires_at]
+      oneOf:
+        - required: [name, version]
+        - required: [packages]
       properties:
         token: { $ref: "#/components/schemas/Token" }
         token_kind: { type: string, enum: [publish] }

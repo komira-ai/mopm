@@ -58,6 +58,10 @@ pub fn runCheck(f: *F, s: Step, body: Value) !bool {
             return std.mem.eql(u8, pk, "all_current");
         },
         .name_is => return std.mem.eql(u8, c.getStr(body, "name") orelse "", a0),
+        .first_package_is => {
+            const pk = c.getArr(body, "packages");
+            return pk.len == 1 and std.mem.eql(u8, c.getStr(pk[0], "name") orelse "", a0);
+        },
         .search_prefix => {
             const pk = c.getArr(body, "packages");
             if (pk.len != 2 or !isNull(c.get(body, "next_cursor"))) return false;
