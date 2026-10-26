@@ -458,20 +458,27 @@ describe('the Lambda wiring', () => {
 });
 
 describe('ClaimService on its own clock and ids', () => {
-  test('with the defaults it stamps the real time, 30 days apart, and a fresh random audit id each time', async () => {
-    const registry = new MemoryStore();
-    const users = { getUser: async (id: number) => ({ github_id: id, handle: 'u', created_at: '2026-10-01T00:00:00Z', last_login_at: '2026-10-01T00:00:00Z' }) };
-    const svc = new ClaimService({ registry, users, publishes: new MemoryPublishStore(), config: DEFAULT_PUBLISH_CONFIG });
-    const before = Date.now();
-    const a = await svc.claim({ githubId: 1, tokenId: 'tok_a' }, 'first_name', undefined);
-    await svc.claim({ githubId: 1, tokenId: 'tok_a' }, 'second_name', undefined);
-    const after = Date.now();
-    const created = Date.parse((await registry.getPackage('first_name'))!.created_at);
-    expect(created).toBeGreaterThan(before - 1000);
-    expect(created).toBeLessThanOrEqual(after);
-    expect(Date.parse(a.claim_expires_at) - created).toBe(CLAIM_TTL_MS);
-    const ids = [...(await registry.listAudit('first_name')), ...(await registry.listAudit('second_name'))].map((e) => e.id);
-    expect(ids[0]).toMatch(/^a_[0-9a-f]{32}$/);
-    expect(new Set(ids).size).toBe(2);
+  test('with the defaults it stamps the current time, 30 days apart, and a fresh random audit id each time', async () => {
+    // Only Date is pinned (the defaults path reads the system clock); timers stay real so nothing else changes.
+    jest.useFakeTimers({
+      now: new Date('2031-03-04T05:06:07.890Z'),
+      doNotFake: ['hrtime', 'nextTick', 'performance', 'queueMicrotask', 'setImmediate', 'clearImmediate', 'setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'],
+    });
+    try {
+      const registry = new MemoryStore();
+      const users = { getUser: async (id: number) => ({ github_id: id, handle: 'u', created_at: '2026-10-01T00:00:00Z', last_login_at: '2026-10-01T00:00:00Z' }) };
+      const svc = new ClaimService({ registry, users, publishes: new MemoryPublishStore(), config: DEFAULT_PUBLISH_CONFIG });
+      const a = await svc.claim({ githubId: 1, tokenId: 'tok_a' }, 'first_name', undefined);
+      await svc.claim({ githubId: 1, tokenId: 'tok_a' }, 'second_name', undefined);
+      const pkg = (await registry.getPackage('first_name'))!;
+      expect(pkg.created_at).toBe('2031-03-04T05:06:07Z');
+      expect(a.claim_expires_at).toBe('2031-04-03T05:06:07Z');
+      expect(Date.parse(a.claim_expires_at) - Date.parse(pkg.created_at)).toBe(CLAIM_TTL_MS);
+      const ids = [...(await registry.listAudit('first_name')), ...(await registry.listAudit('second_name'))].map((e) => e.id);
+      expect(ids[0]).toMatch(/^a_[0-9a-f]{32}$/);
+      expect(new Set(ids).size).toBe(2);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
