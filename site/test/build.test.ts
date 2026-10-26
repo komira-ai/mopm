@@ -21,15 +21,20 @@ function tree(f: Fixture, files: string[]): Record<string, string> {
 }
 
 describe('a build', () => {
-  test('two builds of the same inputs give the same tree, byte for byte', async () => {
-    const a = fresh();
-    const b = fresh();
-    const ra = a.build();
-    await new Promise((r) => setTimeout(r, 20)); // a clock in the output would now differ
-    const rb = b.build();
-    expect(rb.id).toBe(ra.id);
-    expect(rb.files).toEqual(ra.files);
-    expect(tree(b, rb.files)).toEqual(tree(a, ra.files));
+  test('two builds of the same inputs give the same tree, byte for byte', () => {
+    jest.useFakeTimers({ now: new Date('2026-01-01T00:00:00Z') });
+    try {
+      const a = fresh();
+      const b = fresh();
+      const ra = a.build();
+      jest.setSystemTime(new Date('2031-06-07T08:09:10Z')); // a clock in the output would now differ
+      const rb = b.build();
+      expect(rb.id).toBe(ra.id);
+      expect(rb.files).toEqual(ra.files);
+      expect(tree(b, rb.files)).toEqual(tree(a, ra.files));
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   test('the tree holds the pages and the hashed assets, and nothing unreferenced', () => {
