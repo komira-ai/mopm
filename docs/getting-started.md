@@ -168,6 +168,51 @@ missing library, two owners of one library, or a library file absent from `<env>
 message. `mopm link-plan <file.mopm.json>...` prints the plan from metadata files, and
 `mopm metadata [mopm.toml]` checks a manifest and prints it as JSON.
 
+### Build the package's targets
+
+`mopm build` with no program builds what `[targets]` of `mopm.toml` declares (`mopm new --bin` writes both):
+
+```toml
+[targets]
+lib = { path = "src/my_pkg" }
+bins = [{ name = "my_pkg", path = "src/main.mojo" }]
+```
+
+```sh
+mopm build --prefix .mopm/.pixi/envs/default
+# mopm build: library my_pkg -> target/build/my_pkg.mojoc
+# mopm build: binary my_pkg -> target/build/my_pkg
+mopm build --out-dir dist ...         # somewhere else than target/build
+mopm build --print-cmd ...            # print the two mojo commands, write nothing
+```
+
+The library is made with `mojo precompile` of the package directory into `target/build/<package name>.mojoc`, the
+file `mopm pack --mojoc` and `mopm publish --mojoc` take (see "Publish"). Each program is made with `mojo build`,
+linked the way `mopm build hello.mojo` links it, into `target/build/<name>`. It is the `mojo` of the environment
+that does the work, the same one `mopm run` uses, on Linux x86_64, Linux arm64 and macOS arm64 alike. (The unit
+graph of `mopm plan` is for a build farm and is not used here.) The programs import the package's own library by
+name. If one step fails, the build stops with that program's exit status; the steps before it stay. A `.mojoc`
+is built by the Mojo that compiles it, one per platform; `mopm build` makes the one for the machine it runs on.
+
+### Path dependencies
+
+A dependency written `name = { path = "../name" }` (in `[dependencies]` or `[dev-dependencies]`, and the path
+dependencies of that one in turn) is built from its source, and `mopm build` makes it importable: it passes
+`-I <dir>` to `mojo` for the directory that holds the dependency's library package, the parent of its
+`[targets] lib` path (`../name/src` for `lib = { path = "src/name" }`). This is for `mopm build` with a program
+(`mopm build hello.mojo`) and for `mopm build` with none, and they are the same paths `mopm lock` and `mopm sync`
+read. A dependency with no `[targets] lib` has nothing to import. `mopm run` and `mopm repl` do not add them.
+
+### The REPL on macOS 14
+
+`mojo repl` runs the program under lldb, and on macOS 14 the debugserver that comes with the Mojo toolchain
+crashes at start (the REPL then answers "couldn't find a REPL for mojo"). On macOS 14 and older `mopm repl` points
+lldb at Xcode's debugserver by setting `LLDB_DEBUGSERVER_PATH` for `mojo`: the one in the Xcode named by
+`DEVELOPER_DIR` or `xcode-select -p`, else the Command Line Tools'. Nothing is set on macOS 15 and newer, on Linux,
+or when you set `LLDB_DEBUGSERVER_PATH` yourself. `mopm repl --debugserver <path>` names the file to use instead. If
+macOS 14 has no Xcode or Command Line Tools to take it from, `mopm repl` says so on stderr and starts `mojo` as
+it is; install Xcode (`xcode-select -s <Xcode.app>/Contents/Developer`) or pass `--debugserver`.
+
 ## 5. Test
 
 ```sh
@@ -222,9 +267,10 @@ immutable and its number can never be reused; fix a bad release by publishing a 
 refuses a package that breaks the layout rules, limits (100 MB per package file, 128 MiB per unpacked file), or the manifest rules, and says
 which in `rejection_code`.
 
-Today `mopm publish` does not build the `.mojoc` for you; building it per Mojo version is **planned**. The
-exact `mojo precompile` flags for your layout are the compiler's, not mopm's. See `spec/unit-graph.md` for
-the command mopm itself uses to build a library.
+`mopm publish` does not build the `.mojoc` itself. `mopm build` makes the one for this machine's platform and Mojo
+into `target/build/<package name>.mojoc` (see "Build the package's targets"); build it per platform and Mojo version
+you publish for, and pass each file with `--mojoc <subdir>=<file>`. See `spec/unit-graph.md` for the command mopm
+uses to build a library for a build farm.
 
 ## 7. Configuration
 

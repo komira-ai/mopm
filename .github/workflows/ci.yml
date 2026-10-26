@@ -95,6 +95,12 @@ jobs:
       - name: native library from C sources, pack and --overlay install, against the real mojo (native-workspace)
         if: ${{ !cancelled() }}
         run: zig build test-native-workspace -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
+      # mopm build with no program (the library as a .mojoc, the programs) and a program that imports path dependencies, on
+      # all three platforms (tests/drivers/build_targets_test.zig; the farm runs it as //:build_targets_mojo, and with a
+      # stand-in compiler as //:build_targets on every pull request).
+      - name: mopm build of a package's targets and its path dependencies, against the real mojo (build-targets)
+        if: ${{ !cancelled() }}
+        run: zig build test-build-targets -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
 
   registry-build:
     name: build cli and fake registry (${{ matrix.os }})

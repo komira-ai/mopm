@@ -58,6 +58,27 @@ pub const Request = struct {
     /// Compiler options for build, placed right after `build` (`mopm test`
     /// passes `-D ASSERT=all --optimization-level 1`; `mopm build` none).
     flags: []const []const u8 = &.{},
+    /// Import directories for build, one `-I <dir>` each, after `flags`: the directories that hold the package
+    /// directories of path dependencies (and of the package itself), so `from dep import f` finds the source.
+    include_dirs: []const []const u8 = &.{},
+    /// repl: the debugserver lldb is pointed at, as `LLDB_DEBUGSERVER_PATH` in the child's environment (see
+    /// debugserver.zig). Null leaves the environment as the caller had it.
+    debugserver: ?[]const u8 = null,
+};
+
+/// The variable lldb reads to find the debugserver it starts.
+pub const debugserver_var = "LLDB_DEBUGSERVER_PATH";
+
+/// `mojo precompile`: one library package directory into a `.mojoc`.
+pub const Library = struct {
+    /// Absolute environment prefix.
+    prefix: []const u8,
+    /// The package directory (the one that holds `__init__.mojo`).
+    package_dir: []const u8,
+    /// One `-I <dir>` each: where the package's path dependencies are imported from.
+    include_dirs: []const []const u8 = &.{},
+    /// The `.mojoc` to write.
+    out: []const u8,
 };
 
 pub const Command = struct {
@@ -91,6 +112,7 @@ pub fn construct(arena: Allocator, req: Request, p: link_planner.Plan) Allocator
     switch (req.tool) {
         .build => {
             try argv.appendSlice(req.flags);
+            for (req.include_dirs) |dir| try argv.appendSlice(&.{ "-I", dir });
             // Linux: the binary itself must name every planned library
             // (DT_NEEDED). A transitive library (libinner, needed by
             // libouter) is found through the binary's run path only when
@@ -123,9 +145,28 @@ pub fn construct(arena: Allocator, req: Request, p: link_planner.Plan) Allocator
             }
         },
     }
-    const home = try std.fmt.allocPrint(arena, "MODULAR_HOME={s}{s}", .{ req.prefix, env.modular_home_tail });
+    var envs = std.ArrayList([]const u8).init(arena);
+    try envs.append(try modularHome(arena, req.prefix));
+    if (req.tool == .repl) {
+        if (req.debugserver) |path| try envs.append(try std.fmt.allocPrint(arena, "{s}={s}", .{ debugserver_var, path }));
+    }
+    return .{ .env = try envs.toOwnedSlice(), .argv = try argv.toOwnedSlice() };
+}
+
+fn modularHome(arena: Allocator, prefix: []const u8) Allocator.Error![]const u8 {
+    return std.fmt.allocPrint(arena, "MODULAR_HOME={s}{s}", .{ prefix, env.modular_home_tail });
+}
+
+/// `<prefix>/bin/mojo precompile [-I <dir>]... <package dir> -o <out>`: the library as `mopm pack` and `mopm
+/// publish` take it (`--mojoc`). Like the unit graph's library unit it compiles the package directory whole.
+pub fn constructLibrary(arena: Allocator, req: Library) Allocator.Error!Command {
+    var argv = std.ArrayList([]const u8).init(arena);
+    try argv.append(try std.fs.path.join(arena, &.{ req.prefix, "bin", "mojo" }));
+    try argv.append("precompile");
+    for (req.include_dirs) |dir| try argv.appendSlice(&.{ "-I", dir });
+    try argv.appendSlice(&.{ req.package_dir, "-o", req.out });
     const envs = try arena.alloc([]const u8, 1);
-    envs[0] = home;
+    envs[0] = try modularHome(arena, req.prefix);
     return .{ .env = envs, .argv = try argv.toOwnedSlice() };
 }
 
@@ -308,6 +349,85 @@ test "repl: nothing to preload, no -O" {
     const a = t.allocator();
     const c = try construct(a, .{ .tool = .repl, .prefix = "/e", .os = .linux }, try link_planner.plan(a, &.{}));
     try expectArgv(&.{ "/e/bin/mojo", "repl" }, c.argv);
+}
+
+test "build: one -I per import directory, in order, after the compiler flags and before the link arguments" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const p = try chainPlan(a, .linux);
+    const c = try construct(a, .{
+        .tool = .build,
+        .prefix = "/e",
+        .os = .linux,
+        .file = "m.mojo",
+        .out = "m",
+        .flags = &.{ "-D", "X=1" },
+        .include_dirs = &.{ "/w/dep_a/src", "/w/dep_b/src" },
+    }, p);
+    try expectArgv(&.{
+        "/e/bin/mojo", "build",
+        "-D",          "X=1",
+        "-I",          "/w/dep_a/src",
+        "-I",          "/w/dep_b/src",
+        "-Xlinker",    "--push-state",
+        "-Xlinker",    "--no-as-needed",
+        "-Xlinker",    "-L/e/lib",
+        "-Xlinker",    "-lb",
+        "-Xlinker",    "-la",
+        "-Xlinker",    "--pop-state",
+        "-Xlinker",    "-rpath",
+        "-Xlinker",    "/e/lib",
+        "-o",          "m",
+        "m.mojo",
+    }, c.argv);
+}
+
+test "build: without import directories the command line has no -I" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const c = try construct(a, .{ .tool = .build, .prefix = "/e", .os = .linux, .file = "m.mojo" }, try link_planner.plan(a, &.{}));
+    for (c.argv) |arg| try std.testing.expect(!std.mem.eql(u8, arg, "-I"));
+}
+
+test "library: mojo precompile with one -I per import directory, the package directory, then -o" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const c = try constructLibrary(a, .{ .prefix = "/e", .package_dir = "src/app", .include_dirs = &.{ "/w/dep/src", "/w/other/src" }, .out = "target/build/app.mojoc" });
+    try expectArgv(&.{ "/e/bin/mojo", "precompile", "-I", "/w/dep/src", "-I", "/w/other/src", "src/app", "-o", "target/build/app.mojoc" }, c.argv);
+    try expectArgv(&.{"MODULAR_HOME=/e/share/max"}, c.env);
+    const bare = try constructLibrary(a, .{ .prefix = "/e", .package_dir = "src/app", .out = "app.mojoc" });
+    try expectArgv(&.{ "/e/bin/mojo", "precompile", "src/app", "-o", "app.mojoc" }, bare.argv);
+}
+
+test "repl: a debugserver is LLDB_DEBUGSERVER_PATH in the child's environment, and only for repl" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const p = try link_planner.plan(a, &.{});
+    const c = try construct(a, .{ .tool = .repl, .prefix = "/e", .os = .macos, .debugserver = "/x/debugserver" }, p);
+    try expectArgv(&.{ "MODULAR_HOME=/e/share/max", "LLDB_DEBUGSERVER_PATH=/x/debugserver" }, c.env);
+    try expectArgv(&.{ "/e/bin/mojo", "repl" }, c.argv);
+    // Without one the environment is as before.
+    const none = try construct(a, .{ .tool = .repl, .prefix = "/e", .os = .macos }, p);
+    try expectArgv(&.{"MODULAR_HOME=/e/share/max"}, none.env);
+    // build and run never carry it.
+    for ([_]Tool{ .build, .run }) |tool| {
+        const other = try construct(a, .{ .tool = tool, .prefix = "/e", .os = .macos, .file = "m.mojo", .debugserver = "/x/debugserver" }, p);
+        try expectArgv(&.{"MODULAR_HOME=/e/share/max"}, other.env);
+    }
+}
+
+test "render: the debugserver variable shows in the printed command, quoted when it needs it" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const c = try construct(a, .{ .tool = .repl, .prefix = "/e", .os = .macos, .debugserver = "/Applications/Xcode 15.app/debugserver" }, try link_planner.plan(a, &.{}));
+    var buf = std.ArrayList(u8).init(a);
+    try render(c, buf.writer());
+    try std.testing.expectEqualStrings("MODULAR_HOME=/e/share/max LLDB_DEBUGSERVER_PATH='/Applications/Xcode 15.app/debugserver' /e/bin/mojo repl\n", buf.items);
 }
 
 test "a diagnostic for all stops every command; run and repl ones stop only theirs" {

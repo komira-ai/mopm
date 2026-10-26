@@ -776,8 +776,8 @@ test "the real farm.yml and BUCK: a planted beta target or a dropped exclusion g
     const buck = try tree.read(a, "BUCK");
     const farm = try tree.read(a, ".github/workflows/farm.yml");
     try c.expectLines("real", try farmProblems(a, buck, farm), &.{});
-    // The nine beta targets are the ones the farm excludes today.
-    try std.testing.expectEqual(@as(usize, 10), (try hyg.mojoToolTargets(a, buck)).len);
+    // The eleven beta targets are the ones the farm excludes today.
+    try std.testing.expectEqual(@as(usize, 11),(try hyg.mojoToolTargets(a, buck)).len);
     // Mutant: a new Mojo test target in BUCK that farm.yml does not exclude.
     const planted_buck = try replaced(a, buck, "zig_test(  # buck-only: komira's Mojo toolchain works from this cell\n    name = \"mojo_probe\",", "zig_test(\n    name = \"planted\",\n    exec_tools = _MOJO_TOOLS,\n)\nzig_test(  # buck-only: komira's Mojo toolchain works from this cell\n    name = \"mojo_probe\",");
     try c.expectLines("planted target", try farmProblems(a, planted_buck, farm), &.{"//:planted is built with _MOJO_TOOLS in BUCK"});

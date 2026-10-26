@@ -110,7 +110,8 @@ pub const Mojo = struct {
                 if (std.process.getEnvVarOwned(a, k)) |v| try env.put(k, v) else |_| {}
             }
             try env.put("MODULAR_CRASH_REPORTING_ENABLED", "false");
-            if (is_macos) try macDebugserver(a, &env);
+            // No LLDB_DEBUGSERVER_PATH here: `mopm repl` finds Xcode's debugserver on macOS 14 itself, and a driver that
+            // set it for mopm would hide a user's crash. A control that runs the stock `mojo repl` calls `macDebugserver`.
             return .{ .a = a, .tc = tc, .work = work, .cc_dir = cc_dir, .base = env };
         }
         const zig_dir = try h.toolPathAbs(a, "ZIG_DIR");
@@ -223,9 +224,11 @@ fn findOnPath(a: Allocator, name: []const u8) ![]u8 {
 /// macOS 14 (Darwin 23): the debugserver in the mojo 1.0.0 package crashes
 /// (SIGSEGV in dyld4::FileRecord::getPath) when the REPL starts, and the REPL
 /// then prints "couldn't find a REPL for mojo". Point lldb at Xcode's
-/// debugserver there; macOS 15 runs the packaged one. This is the toolchain
-/// on this OS, not mopm: mopm passes the variable through like any other.
-fn macDebugserver(a: Allocator, env: *std.process.EnvMap) !void {
+/// debugserver there; macOS 15 runs the packaged one. `mopm repl` does this
+/// itself (src/core/debugserver.zig), so the drivers do not set it for mopm;
+/// a control that runs the stock `mojo repl` itself calls this for its own
+/// environment.
+pub fn macDebugserver(a: Allocator, env: *std.process.EnvMap) !void {
     const rel = try h.run(a, &.{ "/usr/bin/uname", "-r" }, env, .{ .capture = .stdout });
     const dot = std.mem.indexOfScalar(u8, rel.text, '.') orelse return;
     const major = std.fmt.parseInt(u32, rel.text[0..dot], 10) catch return;

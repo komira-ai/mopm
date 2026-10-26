@@ -12,7 +12,7 @@ This page lists every setting mopm reads, in `mopm.toml`, in `mopm.lock` and in 
 | which registry | `--registry prod, gamma, beta or a URL` | the command line | the commands that talk to a registry |
 | which Mojo environment | `--prefix`, `CONDA_PREFIX`, `MODULAR_HOME` | the command line, your shell | `build`, `run`, `repl`, `test` |
 
-There is no other file. `mopm build`, `run`, `repl` and `test` do not read `mopm.toml`: a test is found by its path, `tests/**/test_*.mojo` and `src/**/tests/test_*.mojo`. mopm does not read a global or a per-user settings file besides `credentials.json`, and the Mojo toolchain that a build system gets from `mopm plan` is pinned in mopm's own source (`src/core/toolchain/`), not in a file you edit. Two directories are made for you and are not settings: `.mopm/` (the environment `mopm sync` makes) and `target/mopm/` (what `mopm test` builds).
+There is no other file. `mopm run`, `repl` and `test` do not read `mopm.toml`: a test is found by its path, `tests/**/test_*.mojo` and `src/**/tests/test_*.mojo`. `mopm build` reads it for two things only: the `[targets]` it builds when you name no program, and the path dependencies whose source directories it makes importable (see [getting started](getting-started.md)). mopm does not read a global or a per-user settings file besides `credentials.json`, and the Mojo toolchain that a build system gets from `mopm plan` is pinned in mopm's own source (`src/core/toolchain/`), not in a file you edit. Two directories are made for you and are not settings: `.mopm/` (the environment `mopm sync` makes) and `target/` (`target/mopm/` is what `mopm test` builds; `target/build/` is where `mopm build` with no program writes the library and the programs).
 
 ## mopm.toml
 

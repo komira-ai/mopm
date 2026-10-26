@@ -5,6 +5,16 @@ checksums, and this file says what changed. The details of a command are on its 
 
 ## Unreleased
 
+### `mopm build` builds the package; path dependencies are importable; the macOS 14 REPL works
+
+`mopm build` with no program builds what `[targets]` of `mopm.toml` declares, with the `mojo` of the environment: the library as
+`target/build/<package name>.mojoc` (`mojo precompile`, the file `mopm pack --mojoc` takes) and each program as `target/build/<name>`,
+linked as `mopm build <file>` links. `--out-dir <dir>` changes the directory and `--print-cmd` prints the commands. `mopm build`, with or
+without a program, now passes `-I` for the path dependencies of the package (and their path dependencies), so `from dep import f`
+finds a dependency written `{ path = "../dep" }`. On macOS 14 and older `mopm repl` sets `LLDB_DEBUGSERVER_PATH` to Xcode's debugserver,
+because the one packaged with Mojo crashes there; `mopm repl --debugserver <path>` names one. `mopm new` now ignores `/target/`. See
+[getting started](docs/getting-started.md).
+
 ### `mopm stage` packs native libraries
 
 `mopm stage` no longer refuses a member that declares `[native.<id>]` libraries. It reads each static archive from

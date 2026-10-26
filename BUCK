@@ -626,6 +626,29 @@ zig_test(  # buck-only: the same walk with a stand-in compiler and pixi (tests/d
     **_TOOLS
 )
 
+zig_test(  # buck-only: mopm build of a package's [targets] (the library as a .mojoc, the programs) and of a program that imports path dependencies, against the real Mojo (the beta tier of build_targets)
+    name = "build_targets_mojo",
+    src = "tests/drivers/build_targets_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig"],
+    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm"),
+    data = ["tests/e2e/pathdep"],
+    **_TOOLS
+)
+
+zig_test(  # buck-only: the same walk with a stand-in compiler (tests/drivers/fake_toolchain.zig) that logs its command lines, so it checks what mopm asked the compiler for; it runs on every pull request
+    name = "build_targets",
+    src = "tests/drivers/build_targets_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig"],
+    exec_tools = {
+        "CC_SHIM": ":zigcc",
+        "ZIG_DIR": "buildrules//rules/pins:zig",
+        "MOPM": ":mopm",
+        "FAKE_TOOLCHAIN": ":fake-toolchain",
+    },
+    data = ["tests/e2e/pathdep"],
+    **_TOOLS
+)
+
 zig_test(  # buck-only: mopm test --list against the real mojo; the Zig port of tests/e2e/test_discovery.sh
     name = "discovery",
     src = "tests/drivers/test_discovery_test.zig",
