@@ -36,6 +36,9 @@ pub const Script = struct {
     };
     pub const Seen = struct { method: std.http.Method, url: []const u8, token: ?[]const u8, body: ?[]const u8, content_type_set: bool, timeout_secs: u32 };
 
+    /// More requests than any test legitimately makes (the longest poll is under a hundred).
+    pub const max_requests: usize = 1000;
+
     steps: []const Step,
     next: usize = 0,
     seen: std.ArrayList(Seen),
@@ -61,6 +64,11 @@ pub const Script = struct {
         }
         const idx = @min(s.next, s.steps.len - 1);
         s.next += 1;
+        // The clock moves only on a pause, so a loop that never pauses would spin forever: a runaway fails the test instead.
+        if (s.next > Script.max_requests) {
+            s.mismatch = "the script was asked for more than max_requests requests";
+            return error.ScriptRanAway;
+        }
         const step = s.steps[idx];
         if (step.method != method or !std.mem.endsWith(u8, url, step.suffix)) {
             s.mismatch = try std.fmt.allocPrint(s.seen.allocator,"request {d} was {s} {s}; the script has {s} ...{s}", .{ s.next, @tagName(method), url, @tagName(step.method), step.suffix });

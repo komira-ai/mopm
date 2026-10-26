@@ -228,7 +228,7 @@ pub const Net = struct {
     fn sleep(n: Net, secs: u64) void {
         n.vtable.sleep(n.ptr, secs);
     }
-    fn now(n: Net) i64 {
+    pub fn now(n: Net) i64 {
         return n.vtable.now(n.ptr);
     }
 };
