@@ -566,13 +566,16 @@ fn resolveAll(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock,
     for (versions.items) |mojo| {
         // A version mopm pins no toolchain for cannot be locked: say so first.
         var why: []const u8 = "";
-        const tc = unit_graph.toolchainFor(arena, mojo, unit_graph.lock_subdir, &why) catch |e| {
-            if (e == error.Refused) {
-                err(cmd, "{s}\n", .{why});
-                return null;
-            }
-            return e;
-        };
+        for (unit_graph.lock_subdirs) |subdir| {
+            const tc = unit_graph.toolchainFor(arena, mojo, subdir, &why) catch |e| {
+                if (e == error.Refused) {
+                    err(cmd, "{s}\n", .{why});
+                    return null;
+                }
+                return e;
+            };
+            try closures.append(.{ .mojo = mojo, .subdir = subdir, .sha256 = tc.closure_sha256 });
+        }
         var pins = std.ArrayList(resolve.Pin).init(arena);
         if (old) |o| {
             const update_all = cmd == .update and args.packages.len == 0;
@@ -601,7 +604,6 @@ fn resolveAll(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock,
             return null;
         };
         try per.append(one);
-        try closures.append(.{ .mojo = mojo, .subdir = unit_graph.lock_subdir, .sha256 = tc.closure_sha256 });
     }
     var diag: resolve.Diagnostic = .{};
     plan.checkNativesAgree(arena, per.items, &diag) catch |e| {

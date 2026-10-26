@@ -11,6 +11,26 @@
         "sha256": "c7ae866b8a76a568e2d5cfd31fe89cdb629bdd161fdd5018b29a4a0a17045cad",
         "size": 45480516
       }
+    },
+    {
+      "subdir": "linux-aarch64",
+      "cc_target": "aarch64-linux-gnu.2.34",
+      "zig": {
+        "version": "0.12.0",
+        "url": "https://ziglang.org/download/0.12.0/zig-linux-aarch64-0.12.0.tar.xz",
+        "sha256": "754f1029484079b7e0ca3b913a0a2f2a6afd5a28990cb224fe8845e72f09de63",
+        "size": 41849060
+      }
+    },
+    {
+      "subdir": "osx-arm64",
+      "cc_target": "aarch64-macos.11.0",
+      "zig": {
+        "version": "0.12.0",
+        "url": "https://ziglang.org/download/0.12.0/zig-macos-aarch64-0.12.0.tar.xz",
+        "sha256": "294e224c14fd0822cfb15a35cf39aa14bd9967867999bf8bdfe3db7ddec2a27f",
+        "size": 43447724
+      }
     }
   ]
 }

@@ -78,6 +78,7 @@ test {
     _ = @import("closure.zig");
     _ = @import("native_files.zig");
     _ = @import("unit_graph.zig");
+    _ = @import("unit_graph_platform_test.zig");
     _ = @import("unit_run.zig");
     _ = @import("target_cpu.zig");
     _ = @import("debugserver.zig");

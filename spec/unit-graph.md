@@ -34,7 +34,7 @@ So the Mojo version is part of what a unit is.
   so in its top-level `mojo`.
 - A lock made from `[package] mojo` is `lock_version` 2 (`lock.md`). It holds,
   per package version, one artifact for each Mojo version it was published
-  for, and mopm's toolchain closure hash for each Mojo version it locks.
+  for, and mopm's toolchain closure hash for each Mojo version it locks and each platform mopm pins (`linux-64`, `linux-aarch64`, `osx-arm64`); a lock that records `linux-64` only still reads.
 - `mopm lock` resolves once for each listed Mojo version and takes, for each
   dependency, the newest version in range that has a build for that Mojo. A
   version mopm pins no toolchain for cannot be listed: `mopm lock` stops with
@@ -73,10 +73,10 @@ mopm's own pin for `M`, never read from the environment:
 
 | field | meaning |
 |---|---|
-| `mojo`, `subdir` | the compiler version and platform (`linux-64`) |
+| `mojo`, `subdir` | the compiler version and platform (`linux-64`, `linux-aarch64` or `osx-arm64`) |
 | `cc_target` | the target triple the pinned Zig links for |
 | `zig` | `version`, `url`, `sha256`, `size` of the Zig that serves as the C compiler and linker |
-| `components` | `name`, `version`, `url`, `sha256`, `size` of the compiler package and the C++ runtime packages it needs |
+| `components` | `name`, `version`, `url`, `sha256`, `size` of the compiler package and, on Linux, the C++ runtime packages it needs (the macOS closure has no such packages) |
 | `closure_sha256` | a hash of the whole closure: the Mojo packages (name, version, build, sha256 of each, in order), then the Zig and `cc_target` |
 
 The pins are files in mopm's source, `src/core/toolchain/mojo-<M>-<subdir>.json`

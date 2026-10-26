@@ -137,7 +137,21 @@ fn visitDeps(g: Graph, at: usize, seen: []bool, out: *std.ArrayList(usize)) erro
 
 // ------------------------------------------------------------------ toolchain
 
-const closure_linux_64 = @embedFile("toolchain/mojo-1.0.0-linux-64.json");
+/// A platform mopm pins a toolchain for: its closure, and the packages of it that
+/// a unit graph lists as components (the linker's C runtime libraries exist in
+/// the Linux closures only; macOS has none).
+const Target = struct {
+    subdir: []const u8,
+    closure: []const u8,
+    components: []const []const u8,
+};
+
+const targets = [_]Target{
+    .{ .subdir = "linux-64", .closure = @embedFile("toolchain/mojo-1.0.0-linux-64.json"), .components = &.{ "mojo-compiler", "libgcc", "libstdcxx" } },
+    .{ .subdir = "linux-aarch64", .closure = @embedFile("toolchain/mojo-1.0.0-linux-aarch64.json"), .components = &.{ "mojo-compiler", "libgcc", "libstdcxx" } },
+    .{ .subdir = "osx-arm64", .closure = @embedFile("toolchain/mojo-1.0.0-osx-arm64.json"), .components = &.{"mojo-compiler"} },
+};
+
 const zig_pins_1_0_0 = @embedFile("toolchain/zig-for-mojo-1.0.0.json");
 
 const ZigFile = struct {
@@ -153,18 +167,23 @@ fn refuse(arena: Allocator, why: *[]const u8, comptime fmt: []const u8, args: an
     return error.Refused;
 }
 
-/// The subdir whose toolchain closure a version 2 lock records.
-pub const lock_subdir = "linux-64";
+/// The subdirs whose toolchain closure a version 2 lock records, for each Mojo version.
+pub const lock_subdirs = [_][]const u8{ "linux-64", "linux-aarch64", "osx-arm64" };
 
 /// The Mojo versions and subdirs a unit graph can be made for.
-pub const supported = "mojo 1.0.0 on linux-64";
+pub const supported = "mojo 1.0.0 on linux-64, linux-aarch64 and osx-arm64";
 
 /// mopm's pinned toolchain for `mojo` on `subdir`, or a refusal.
 pub fn toolchainFor(arena: Allocator, mojo: []const u8, subdir: []const u8, why: *[]const u8) anyerror!Toolchain {
-    if (!std.mem.eql(u8, mojo, "1.0.0") or !std.mem.eql(u8, subdir, "linux-64")) {
+    var target: ?Target = null;
+    for (targets) |t| {
+        if (std.mem.eql(u8, t.subdir, subdir)) target = t;
+    }
+    if (!std.mem.eql(u8, mojo, "1.0.0") or target == null) {
         return refuse(arena, why, "mopm has no pinned toolchain for mojo {s} on {s} (it pins {s})", .{ mojo, subdir, supported });
     }
-    const c = closure.parse(arena, closure_linux_64) catch return error.BadPins;
+    const c = closure.parse(arena, target.?.closure) catch return error.BadPins;
+    if (!std.mem.eql(u8, c.subdir, subdir)) return error.BadPins;
     const zf = std.json.parseFromSliceLeaky(ZigFile, arena, zig_pins_1_0_0, .{}) catch return error.BadPins;
     var zig_pin: ?ZigPin = null;
     var cc_target: []const u8 = "";
@@ -185,7 +204,8 @@ pub fn toolchainFor(arena: Allocator, mojo: []const u8, subdir: []const u8, why:
         line.clearRetainingCapacity();
         try line.writer().print("{s} {s} {s} {s}\n", .{ p.name, p.version, p.build, p.sha256 });
         h.update(line.items);
-        const wanted = std.mem.eql(u8, p.name, "mojo-compiler") or std.mem.eql(u8, p.name, "libgcc") or std.mem.eql(u8, p.name, "libstdcxx");
+        var wanted = false;
+        for (target.?.components) |n| wanted = wanted or std.mem.eql(u8, p.name, n);
         if (wanted) {
             try comps.append(.{ .name = p.name, .version = p.version, .url = try closure.urlOf(arena, c, p), .sha256 = p.sha256, .size = p.size });
         }
@@ -196,7 +216,7 @@ pub fn toolchainFor(arena: Allocator, mojo: []const u8, subdir: []const u8, why:
     var d: [32]u8 = undefined;
     h.final(&d);
     const hex = std.fmt.bytesToHex(d, .lower);
-    if (comps.items.len != 3) return error.BadPins;
+    if (comps.items.len != target.?.components.len) return error.BadPins;
     return .{
         .mojo = c.mojo,
         .subdir = c.subdir,
@@ -1387,7 +1407,7 @@ test "mopm pins the toolchain of the Mojo it names, and refuses another" {
     // The same pins, the same hash.
     try std.testing.expectEqualStrings(tc.closure_sha256, (try toolchainFor(a, "1.0.0", "linux-64", &why)).closure_sha256);
     try std.testing.expectError(error.Refused, toolchainFor(a, "1.1.0", "linux-64", &why));
-    try std.testing.expectEqualStrings("mopm has no pinned toolchain for mojo 1.1.0 on linux-64 (it pins mojo 1.0.0 on linux-64)", why);
+    try std.testing.expectEqualStrings("mopm has no pinned toolchain for mojo 1.1.0 on linux-64 (it pins mojo 1.0.0 on linux-64, linux-aarch64 and osx-arm64)", why);
 }
 
 /// tls_sys (a static library) over crypto_sys (another, in the exclusivity group libcrypto): the lock of a project
