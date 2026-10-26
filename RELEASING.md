@@ -240,6 +240,11 @@ status:
    sparse index and the channel with the packed sha256; publishing the same version again is refused;
 5. dependencies: `add`, `tree`, `lock`, `update`, `sync` (download, sha256 check, pixi installs the published package);
 6. `build` and `run` a program and the one that imports the package just published; `test` again;
+   native package (`tests/drivers/user_native.zig`): the member `tests/e2e/natws/shimlib`, which has its own C static library, is compiled with
+   the pinned zig, staged and published into the fake registry (`stage`, `publish --staged`); a new package adds it, syncs it and
+   runs `mopm build` (no file), and the program prints the value the C code computes (42 on Linux, 43 on macOS). The Linux
+   arm64 leg skips this step behind the one constant `linux_arm64_native_enabled` in that file, prints
+   `skipped: waiting on linux-arm64 hardware` and counts it as a skip, not a pass, until Linux arm64 build hardware exists;
 7. `remove`, `logout`;
 8. the documented install path: `site/static/install.sh` with `MOPM_RELEASES_URL` at a directory laid out like a
    GitHub release holding the candidate, then the installed `mopm --version` must equal the candidate version and
@@ -251,6 +256,8 @@ with golden tests).
 
 On the build farm `//:user_beta` runs the same driver without pixi and without the installer (the farm has neither);
 those steps print `SKIP`, they are never counted as passed.
+`//:user_native` runs the native step on every pull request with a stand-in compiler and pixi: the switch, the skip line, the output
+check, and the stage, publish, add, sync, build and run wiring.
 
 ## A superseded commit (the re-run hazard)
 

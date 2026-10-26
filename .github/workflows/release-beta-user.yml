@@ -7,7 +7,9 @@ name: release-beta-user
 # a fake registry started in the job: create a package (new, init), add and pull dependencies (add,
 # lock, update, tree, sync, remove), build, run, test, pack and publish to the test registry, then
 # install through site/static/install.sh pointed at the candidate files and check `mopm --version`
-# equals the candidate version. The Mojo toolchain is the pinned pixi environment of tests/e2e/pixi.toml.
+# equals the candidate version. A package with its own C static library (tests/e2e/natws/shimlib, compiled with the zig above) is staged,
+# published, added, synced and built by a new package, and the program must print the value the C code computes; the linux arm64 leg
+# skips that one step behind `linux_arm64_native_enabled` in tests/drivers/user_native.zig (waiting on hardware). The Mojo toolchain is the pinned pixi environment of tests/e2e/pixi.toml.
 #
 # Called by release.yml (stage beta-user: a red leg on any platform stops the release); never on a pull request. No leg may be skipped, optional or
 # allowed to fail: tests/drivers/release_lint.zig (userBetaProblems) holds the matrix, the absence of
@@ -64,7 +66,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           TARGET: ${{ matrix.target }}
-        run: '"$RUNNER_TEMP/user_beta" "$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET/mopm" "$RUNNER_TEMP/walk" --version "$VERSION" --tarball "$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET.tar.gz" --install-sh site/static/install.sh --fake-registry "$RUNNER_TEMP/mopm-fake-registry" --mojo-env tests/e2e/.pixi/envs/default --pixi pixi --ci'
+        run: '"$RUNNER_TEMP/user_beta" "$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET/mopm" "$RUNNER_TEMP/walk" --version "$VERSION" --tarball "$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET.tar.gz" --install-sh site/static/install.sh --fake-registry "$RUNNER_TEMP/mopm-fake-registry" --mojo-env tests/e2e/.pixi/envs/default --pixi pixi --zig zig --native-fixture tests/e2e/natws/shimlib --ci'
 
       # What passed is recorded: attest refuses to attest any other bytes (tools/release.zig, tested).
       - name: Build the release tool

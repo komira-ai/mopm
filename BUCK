@@ -571,8 +571,23 @@ zig_test(  # buck-only: the same walk with the farm's real Mojo 1.0.0, which bui
 zig_test(  # buck-only: the user-level beta walk (tests/drivers/user_beta.zig) in its farm form: no pixi, no installer
     name = "user_beta",
     src = "tests/drivers/user_beta_test.zig",
-    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig", "tests/drivers/user_beta.zig"],
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig", "tests/drivers/user_beta.zig", "tests/drivers/user_native.zig"],
     exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm", MOPM_FAKE_REGISTRY = ":mopm-fake-registry"),
+    **_TOOLS
+)
+
+zig_test(  # buck-only: the native step of the user-level beta walk (tests/drivers/user_native.zig) with a stand-in compiler and pixi: the switch, the skip line, the output check, and C sources to a published, added, synced, built and run package; it runs on every pull request
+    name = "user_native",
+    src = "tests/drivers/user_native_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/user_native.zig"],
+    exec_tools = {
+        "ZIG_DIR": "buildrules//rules/pins:zig",
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+        "FAKE_PIXI": ":fake-pixi",
+        "FAKE_TOOLCHAIN": ":fake-toolchain",
+    },
+    data = ["tests/e2e/natws"],
     **_TOOLS
 )
 
