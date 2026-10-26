@@ -5,8 +5,12 @@ name: spike-native-ux
 # from a pixi env, mojo repl). Every step records its outcome and never fails the leg, so
 # one run reports all three platforms. Read-only: GETs of the beta registry, no secret.
 
+# workflow_dispatch needs the file on the default branch, which this spike must never touch,
+# so the spike branch's own push starts the single run.
 on:
   workflow_dispatch:
+  push:
+    branches: [spike/native-ux]
 
 permissions:
   contents: read
