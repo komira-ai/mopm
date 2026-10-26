@@ -4,12 +4,15 @@ export const CI_EVENTS: readonly string[] = ['push', 'workflow_dispatch'];
 /**
  * Repository-level CI publishers: a CI identity the deployment itself trusts, as configuration in the code that
  * deploys it (the `CI_PUBLISHERS` environment variable of the API function), not as rows a package owner registers.
- * Only the beta stage may carry one: gamma and prod keep the human step, and `parseCiPublishers` refuses to load a
- * policy on any other stage, whatever the infrastructure says.
+ * Only the beta stage may carry one, plus prod for rows that carry `acts_for` (a CI identity that publishes AS a named account,
+ * owning nothing itself): gamma keeps the human step, a row without `acts_for` on prod is refused, and `parseCiPublishers` refuses to
+ * load a policy on any other stage, whatever the infrastructure says.
  */
 export const CI_PUBLISHERS_ENV = 'CI_PUBLISHERS';
-/** The one stage that may trust a CI identity by configuration. */
+/** The stage that may trust any CI identity by configuration. */
 export const CI_PUBLISHER_STAGE = 'beta';
+/** The stage that may trust a CI identity only as one that acts for an account (rows with `acts_for`). */
+export const CI_ACTS_FOR_STAGE = 'prod';
 /** The most publishers a deployment may name. */
 export const MAX_CI_PUBLISHERS = 8;
 
@@ -33,6 +36,13 @@ export interface CiPublisher {
   events: string[];
   /** The deployment environment the job runs in. Required. */
   environment: string;
+  /**
+   * Optional: GitHub's numeric id of an account this identity ACTS FOR, as a decimal string. The exchange then mints a token whose
+   * principal is that account (actor `u:<id>`, ownership checked against the package's owner rows), good for exactly the listed
+   * packages and versions. Such a row creates no package and sets no `ci_owner`: every name must already be claimed by the account.
+   * The token records the CI identity it came through (`acts_via`), so its publishes are distinguishable from the account's own.
+   */
+  acts_for?: string;
 }
 
 /** The owner identity a repository's publisher holds on the packages it creates: `PackageRecord.ci_owner`. */
@@ -44,7 +54,7 @@ export const ciOwnerOf = (repository_id: string): string => `gh-repo:${repositor
  */
 export const ciActorOf = (ci_owner: string): string => `ci:${ci_owner}`;
 
-const KEYS = ['repository_id', 'repository_owner_id', 'workflow', 'ref', 'job_workflow_ref', 'events', 'environment'] as const;
+const KEYS = ['repository_id', 'repository_owner_id', 'workflow', 'ref', 'job_workflow_ref', 'events', 'environment', 'acts_for'] as const;
 const JOB_WORKFLOW_REF = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/\.github\/workflows\/[A-Za-z0-9._-]+\.ya?ml@refs\/(heads|tags)\/[A-Za-z0-9._\/-]+$/;
 const DIGITS = /^[1-9][0-9]{0,19}$/;
 const REF = /^refs\/(heads|tags)\/[A-Za-z0-9._\/-]+$/;
@@ -54,14 +64,14 @@ const ENVIRONMENT = /^[A-Za-z0-9._-]{1,64}$/;
 const bad = (detail: string) => new Error(`${CI_PUBLISHERS_ENV} is not valid: ${detail}`);
 
 /**
- * The CI publishers named by the environment value. Absent or empty: none. Present on any stage but beta: an error,
- * so the function does not start (a mistake in infrastructure cannot turn the trust on elsewhere). Malformed: an
- * error naming what is wrong, never a partial list.
+ * The CI publishers named by the environment value. Absent or empty: none. Present on any stage but beta and prod: an error,
+ * so the function does not start (a mistake in infrastructure cannot turn the trust on elsewhere). On prod every row must carry
+ * `acts_for`; a row without it is an error there. Malformed: an error naming what is wrong, never a partial list.
  */
 export function parseCiPublishers(stage: string, raw: string | undefined): CiPublisher[] {
   if (raw === undefined || raw === '') return [];
-  if (stage !== CI_PUBLISHER_STAGE) {
-    throw new Error(`${CI_PUBLISHERS_ENV} may be set on the ${CI_PUBLISHER_STAGE} stage only; this is ${stage}`);
+  if (stage !== CI_PUBLISHER_STAGE && stage !== CI_ACTS_FOR_STAGE) {
+    throw new Error(`${CI_PUBLISHERS_ENV} may be set on the ${CI_PUBLISHER_STAGE} stage only (or ${CI_ACTS_FOR_STAGE}, for rows that act for an account); this is ${stage}`);
   }
   let v: unknown;
   try {
@@ -88,7 +98,11 @@ export function parseCiPublishers(stage: string, raw: string | undefined): CiPub
     const ref = str('ref', REF);
     const job_workflow_ref = str('job_workflow_ref', JOB_WORKFLOW_REF);
     if (!job_workflow_ref.endsWith(`/${workflow}@${ref}`)) throw bad(`entry ${i}: 'job_workflow_ref' must end in '/<workflow>@<ref>' of the same entry`);
+    if (stage !== CI_PUBLISHER_STAGE && o.acts_for === undefined) {
+      throw bad(`entry ${i}: the ${stage} stage trusts only rows that carry 'acts_for'; this row does not`);
+    }
     out.push({
+      ...(o.acts_for === undefined ? {} : { acts_for: str('acts_for', DIGITS) }),
       repository_id: str('repository_id', DIGITS),
       repository_owner_id: str('repository_owner_id', DIGITS),
       workflow,

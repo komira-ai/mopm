@@ -13,6 +13,8 @@ const ENTRY = {
   events: ['push'],
   environment: 'beta',
 };
+/** The prod row: the same identity in the prod environment, acting for an account. */
+const PROD_ENTRY = { ...ENTRY, environment: 'prod', acts_for: '15257031' };
 const json = (v: unknown) => JSON.stringify(v);
 
 describe('parseCiPublishers: the stage gate', () => {
@@ -28,9 +30,34 @@ describe('parseCiPublishers: the stage gate', () => {
     expect(ciOwnerOf('1376408823')).toBe('gh-repo:1376408823');
   });
 
-  test.each(['gamma', 'prod', 'dev', 'Beta', ''])('stage %j refuses to load a value, even a valid one and even an empty list', (stage) => {
+  test.each(['gamma', 'dev', 'Beta', 'Prod', ''])('stage %j refuses to load a value, even a valid one (with or without acts_for) and even an empty list', (stage) => {
     expect(() => parseCiPublishers(stage, json([ENTRY]))).toThrow(/beta stage only/);
+    expect(() => parseCiPublishers(stage, json([PROD_ENTRY]))).toThrow(/beta stage only/);
     expect(() => parseCiPublishers(stage, '[]')).toThrow(/beta stage only/);
+  });
+});
+
+describe('parseCiPublishers: prod trusts only a row that acts for an account', () => {
+  test('prod loads a row with acts_for, and the row keeps its account', () => {
+    expect(parseCiPublishers('prod', json([PROD_ENTRY]))).toEqual([PROD_ENTRY]);
+    expect(parseCiPublishers('prod', json([PROD_ENTRY]))[0]!.acts_for).toBe('15257031');
+  });
+
+  test('prod refuses a row without acts_for (the beta-style row that would own packages itself), alone or beside a good one', () => {
+    expect(() => parseCiPublishers('prod', json([{ ...ENTRY, environment: 'prod' }]))).toThrow(/prod stage trusts only rows that carry 'acts_for'/);
+    expect(() => parseCiPublishers('prod', json([PROD_ENTRY, { ...ENTRY, repository_id: '5', environment: 'prod' }]))).toThrow(/trusts only rows that carry 'acts_for'/);
+  });
+
+  test('prod refuses an empty list and a malformed acts_for, whole', () => {
+    expect(() => parseCiPublishers('prod', '[]')).toThrow(/is not valid/);
+    for (const bad of ['15257031x', '', '0123', 15257031, null, '-1']) {
+      expect(() => parseCiPublishers('prod', json([{ ...PROD_ENTRY, acts_for: bad }]))).toThrow(/is not valid/);
+    }
+  });
+
+  test('beta still loads a row without acts_for (unchanged) and a row with one', () => {
+    expect(parseCiPublishers('beta', json([ENTRY]))[0]).not.toHaveProperty('acts_for');
+    expect(parseCiPublishers('beta', json([{ ...ENTRY, acts_for: '7' }]))[0]!.acts_for).toBe('7');
   });
 });
 
@@ -120,12 +147,18 @@ describe('configureAuth: the stage gate in the handler wiring', () => {
   const doc = new FakeAuthDoc({});
   const env = (extra: Record<string, string> = {}) => ({ MOPM_OAUTH_SECRET_NAME: 'mopm/x/github-oauth', ...extra });
 
-  test('gamma and prod refuse to start with CI_PUBLISHERS set (a mistake in the infrastructure cannot turn the trust on there)', () => {
-    for (const stage of ['gamma', 'prod'] as const) {
-      expect(() => configureAuth(stage, doc, env({ [CI_PUBLISHERS_ENV]: json([ENTRY]) }))).toThrow(/beta stage only/);
-      // even when auth is not otherwise wired
-      expect(() => configureAuth(stage, doc, { [CI_PUBLISHERS_ENV]: json([ENTRY]) })).toThrow(/beta stage only/);
-    }
+  test('gamma refuses to start with CI_PUBLISHERS set (a mistake in the infrastructure cannot turn the trust on there)', () => {
+    expect(() => configureAuth('gamma', doc, env({ [CI_PUBLISHERS_ENV]: json([ENTRY]) }))).toThrow(/beta stage only/);
+    expect(() => configureAuth('gamma', doc, env({ [CI_PUBLISHERS_ENV]: json([PROD_ENTRY]) }))).toThrow(/beta stage only/);
+    // even when auth is not otherwise wired
+    expect(() => configureAuth('gamma', doc, { [CI_PUBLISHERS_ENV]: json([ENTRY]) })).toThrow(/beta stage only/);
+  });
+
+  test('prod refuses to start with a row that does not act for an account, and wires the exchange with one that does', () => {
+    expect(() => configureAuth('prod', doc, env({ [CI_PUBLISHERS_ENV]: json([{ ...ENTRY, environment: 'prod' }]) }))).toThrow(/trusts only rows that carry 'acts_for'/);
+    // even when auth is not otherwise wired
+    expect(() => configureAuth('prod', doc, { [CI_PUBLISHERS_ENV]: json([ENTRY]) })).toThrow(/trusts only rows that carry 'acts_for'/);
+    expect(configureAuth('prod', doc, env({ [CI_PUBLISHERS_ENV]: json([PROD_ENTRY]) }))!.oidc).toBeDefined();
   });
 
   test('beta wires the exchange with the configured publisher; a malformed value stops the function', () => {

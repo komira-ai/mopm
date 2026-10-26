@@ -10,7 +10,7 @@ import { groupCommitRefused, invalidRequest, PublishError, uploadInvalid } from 
 import { quarantineKeyFor, uploadIdFor } from './group-keys';
 import { ENDED_TAIL_SECONDS, groupAudit, pastDeadline } from './group-lifecycle';
 import type { ObjectStore, Queue } from './ports';
-import { actorOf } from './service';
+import { actorOf, detailVia } from './service';
 import type { ValidateGroupMessage } from './types';
 
 /**
@@ -120,7 +120,7 @@ export class GroupCommitter {
     await reg.putCommitInputs(id, hash, inputs, Math.floor(Date.parse(header.deadline_at) / 1000) + ENDED_TAIL_SECONDS);
 
     const at = now.toISOString();
-    const audit: AuditEntry = groupAudit(id, `a_${id}_commitreq_${header.attempt}`, 'group_commit_request', at, actorOf(p));
+    const audit: AuditEntry = groupAudit(id, `a_${id}_commitreq_${header.attempt}`, 'group_commit_request', at, actorOf(p), detailVia(p));
     // Compare-and-set on the header: only a group that is still open, and not past its deadline, begins validating.
     const after = await reg.updateGroup(
       id,

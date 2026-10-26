@@ -455,7 +455,7 @@ class GroupJob {
       actor: this.h.actor,
       action,
       version: m.version,
-      detail: { group_id: this.gid },
+      detail: { group_id: this.gid, ...(this.h.via === undefined ? {} : { via: this.h.via }) },
     };
   }
 }
