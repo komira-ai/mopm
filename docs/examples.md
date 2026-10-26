@@ -651,7 +651,9 @@ The lock is `lock_version` 2. It records, for each Mojo version and platform, th
   ],
   "toolchain": {
     "1.0.0": {
-      "linux-64": "<sha256>"
+      "linux-64": "<sha256>",
+      "linux-aarch64": "<sha256>",
+      "osx-arm64": "<sha256>"
     }
   },
   "channels": [

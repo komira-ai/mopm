@@ -344,8 +344,8 @@ fn run(a: Allocator, rep: *h.Report) !void {
     try c.must("mopm lock of the workspace (the member is a path dependency, offline)", r);
     const lock_text = try h.readFile(a, try h.join(a, &.{ ws, "mopm.lock" }));
     rep.check("the lock names the member", h.contains(lock_text, "shimlib"), lock_text);
-    // mopm makes a unit graph (and `mopm unit` runs one) for mojo 1.0.0 on linux-64 only today (unit_graph.zig, `supported`): the
-    // graph is what a build farm reads, and the farm is linux-64. On the other platforms the walk keeps every step that
+    // This walk builds the unit graph (and runs `mopm unit`) on linux-64 only, the platform of the farm. `mopm plan` also makes a graph
+    // for linux-aarch64 and osx-arm64 (unit_graph.zig, `supported`), but nothing here has run a build from one. On the other platforms the walk keeps every step that
     // does not need it: this driver builds the native from the sources of the manifest (a check on linux-64 holds
     // `manifest_spec` to the graph's), and the compiler builds the libraries and the program directly.
     const have_graph = std.mem.eql(u8, subdir, "linux-64");
@@ -359,8 +359,8 @@ fn run(a: Allocator, rep: *h.Report) !void {
         try c.must("mopm plan --unit-graph of the workspace", r);
     } else {
         r = try c.mopmRun(&env, ws, &.{ "plan", "--unit-graph", "--locked", "--mojo", "1.0.0", "--subdir", subdir, "-o", graph_path });
-        rep.check("control: mopm plan --unit-graph refuses this platform, naming the toolchain it pins (the reason the graph steps are skipped here)", r.code == 4 and h.contains(r.text, "has no pinned toolchain for mojo 1.0.0 on"), try h.fmt(a, "exit {d}: {s}", .{ r.code, r.text }));
-        std.debug.print("SKIP the unit graph, mopm unit build: mopm pins its unit-graph toolchain for mojo 1.0.0 on linux-64 only; {s} builds the native from the manifest's sources and the libraries and the program with the compiler directly\n", .{subdir});
+        rep.check("control: mopm plan --unit-graph has a pinned toolchain for this platform (the graph steps are skipped here all the same)", !h.contains(r.text, "has no pinned toolchain"), try h.fmt(a, "exit {d}: {s}", .{ r.code, r.text }));
+        std.debug.print("SKIP the unit graph, mopm unit build: this walk runs them on linux-64 only; {s} builds the native from the manifest's sources and the libraries and the program with the compiler directly\n", .{subdir});
     }
     var spec = manifest_spec;
     if (have_graph) {
