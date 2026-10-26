@@ -648,6 +648,7 @@ pub const Publisher = struct {
         }
         const path = try std.fmt.allocPrint(p.arena, "/groups/{s}", .{p.state.group_id});
         const a = try p.call(.DELETE, path, null);
+        var gone = false;
         if (a.ok()) {
             p.group_status = "aborted";
         } else if (a.status == 409) {
@@ -668,6 +669,10 @@ pub const Publisher = struct {
                 return error.Failed;
             }
             p.console.say("group {s} is already {s}: nothing is held\n", .{ p.state.group_id, now.status });
+        } else if (a.status == 404) {
+            // The registry does not know the group (swept, or never created): nothing is left to abort.
+            p.group_status = "unknown";
+            gone = true;
         } else return p.refuse(a);
         p.reported_group = p.state.group_id;
         p.state.group_id = "";
@@ -676,7 +681,9 @@ pub const Publisher = struct {
         p.state.staged = false;
         p.state.uploaded = &.{};
         try p.save();
-        p.console.say("aborted group {s}: its place is free and none of its members was published\n", .{p.reported_group});
+        if (gone) {
+            p.console.say("the registry no longer has group {s}: nothing to abort; {s} no longer names it\n", .{ p.reported_group, plan_mod.state_name });
+        } else p.console.say("aborted group {s}: its place is free and none of its members was published\n", .{p.reported_group});
         return .aborted;
     }
 
@@ -923,7 +930,7 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
     }
 
     const creds = (try credentials(arena, net, flags, cli_version, uploads)) orelse return 1;
-    const loaded = (try loadStateFor(arena, dir, creds.api_url, plan.sha256, &console)) orelse return 1;
+    const loaded = (try loadStateFor(arena, dir, creds.api_url, plan.sha256, &console, "resuming")) orelse return 1;
 
     var p = Publisher{
         .arena = arena,
@@ -969,7 +976,7 @@ const LoadedFor = struct { state: plan_mod.State, found: bool };
 
 /// state.json of this directory for this registry and plan: a fresh state when there is none, the old one when it
 /// belongs to both, and null (after saying why) when it is another registry's, another plan's or not a state file.
-fn loadStateFor(arena: Allocator, dir: std.fs.Dir, api_url: []const u8, plan_sha256: []const u8, console: *Console) anyerror!?LoadedFor {
+fn loadStateFor(arena: Allocator, dir: std.fs.Dir, api_url: []const u8, plan_sha256: []const u8, console: *Console, verb: []const u8) anyerror!?LoadedFor {
     var state = plan_mod.State{ .registry = api_url, .plan_sha256 = plan_sha256 };
     switch (try plan_mod.loadState(arena, dir)) {
         .none => return .{ .state = state, .found = false },
@@ -987,7 +994,7 @@ fn loadStateFor(arena: Allocator, dir: std.fs.Dir, api_url: []const u8, plan_sha
                 return null;
             }
             state = old;
-            console.say("resuming group {s} from {s}\n", .{ if (old.group_id.len > 0) old.group_id else "(none yet)", plan_mod.state_name });
+            console.say("{s} group {s} from {s}\n", .{ verb, if (old.group_id.len > 0) old.group_id else "(none yet)", plan_mod.state_name });
             return .{ .state = state, .found = true };
         },
     }
@@ -998,7 +1005,7 @@ fn loadStateFor(arena: Allocator, dir: std.fs.Dir, api_url: []const u8, plan_sha
 fn abortCommand(arena: Allocator, flags: Flags, cli_version: []const u8, net: Net, dir: std.fs.Dir, plan: plan_mod.Plan, console: *Console) anyerror!u8 {
     const uploads = try plan.uploads(arena);
     const creds = (try credentials(arena, net, flags, cli_version, uploads)) orelse return 1;
-    const loaded = (try loadStateFor(arena, dir, creds.api_url, plan.sha256, console)) orelse return 1;
+    const loaded = (try loadStateFor(arena, dir, creds.api_url, plan.sha256, console, "aborting")) orelse return 1;
     if (!loaded.found) {
         err("{s} has no {s}: this is not a directory that was staged (or it is another job's); nothing was sent\n", .{ flags.staged, plan_mod.state_name });
         return 1;

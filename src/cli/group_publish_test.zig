@@ -1648,14 +1648,37 @@ test "--abort of a group that already ended is not an error, and one that was co
     try expectContains(c2.err.items, "mopm yank --group " ++ gid);
     // And it did not forget the group.
     try std.testing.expectEqualStrings(gid, (try plan_mod.loadState(a, tmp.dir)).ok.group_id);
+}
 
-    // A group the registry does not know (or that this actor does not own) is the registry's refusal, shown.
+test "--abort of a group the registry no longer knows (404) ends 0 and clears state.json; a second --abort ends 0 too" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const plan = try stage(a, &tmp, "");
+    const kept = try stageOpen(a, &tmp, plan);
+
     var unknown = newScript(a, &.{.{ .method = .DELETE, .suffix = gid, .status = 404, .body = "{\"error\":{\"code\":\"group_not_found\",\"message\":\"There is no such group.\",\"hint\":\"h\"}}" }});
-    var c3 = Console.init(a, null);
-    var u = publisher(a, &tmp, plan, &unknown, &c3);
-    u.state = kept;
-    try std.testing.expectEqual(Result.failed, u.abort());
-    try expectContains(c3.err.items, "There is no such group.");
+    var c1 = Console.init(a, null);
+    var p = publisher(a, &tmp, plan, &unknown, &c1);
+    p.state = kept;
+    const r1 = p.abort();
+    try std.testing.expectEqual(@as(u8, 0), p.finish(r1));
+    try expectContains(c1.out.items, "the registry no longer has group " ++ gid);
+    try std.testing.expectEqualStrings("", c1.err.items);
+    const after = (try plan_mod.loadState(a, tmp.dir)).ok;
+    try std.testing.expectEqualStrings("", after.group_id);
+    try std.testing.expect(!after.staged and !after.committed);
+
+    // The failure job may run again: state.json names no group now, so nothing is sent and it ends 0.
+    var again = newScript(a, &.{});
+    var c2 = Console.init(a, null);
+    var q = publisher(a, &tmp, plan, &again, &c2);
+    q.state = after;
+    const r2 = q.abort();
+    try std.testing.expectEqual(@as(u8, 0), q.finish(r2));
+    try std.testing.expectEqual(@as(usize, 0), again.seen.items.len);
 }
 
 test "an answer about the group that this mopm cannot read stops the resume and the abort, and the group is kept" {
