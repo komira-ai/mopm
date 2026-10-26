@@ -536,7 +536,7 @@ test "a registry that cannot be asked, or answers what is not a version, stops t
 /// `art/linux-64/pkg_n.mojoc` and `art/linux-64/pkg_n.native/libshim.a`.
 fn nativeWorkspace(fx: Fx) !void {
     try fx.member("pkg_a", "1.0.0", "");
-    try fx.put("ws/src/pkg_n/mopm.toml", "[package]\nname = \"pkg_n\"\nversion = \"1.2.0\"\nmojo = [\"1.0.0\"]\n\n[native.shim]\nkind = \"static\"\nexclusive = \"libshim\"\n");
+    try fx.put("ws/src/pkg_n/mopm.toml", "[package]\nname = \"pkg_n\"\nversion = \"1.2.0\"\nmojo = [\"1.0.0\"]\n\n[native.shim]\nkind = \"static\"\nneeds = [\"libz.so.1\", \"libcore_sys.a\"]\nexclusive = \"libshim\"\n");
     try fx.put("art/linux-64/pkg_n.mojoc", "the mojoc of pkg_n");
 }
 
@@ -562,10 +562,16 @@ test "a member with a native library is staged with its archive, byte for byte a
         .compiler = "1.0.0",
         .subdir = "linux-64",
         .mojoc = "the mojoc of pkg_n",
-        .natives = &.{.{ .id = "shim", .soname = "libshim.a", .exclusive = "libshim", .archive = shim_archive }},
+        .natives = &.{.{ .id = "shim", .soname = "libshim.a", .needs = &.{ "libz.so.1", "libcore_sys.a" }, .exclusive = "libshim", .archive = shim_archive }},
     });
     const staged = try fx.read(try std.fmt.allocPrint(a, "out/linux-64/{s}", .{by_pack.file_name}));
     try std.testing.expectEqualSlices(u8, by_pack.bytes, staged);
+    // `needs` and `exclusive` reach the package's metadata: the same member packed without either is other bytes, so a
+    // stage that dropped one would not equal the line above, and these two lines say why that line has teeth.
+    const no_needs = try conda.pack(a, .{ .name = "pkg_n", .version = "1.2.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "the mojoc of pkg_n", .natives = &.{.{ .id = "shim", .soname = "libshim.a", .exclusive = "libshim", .archive = shim_archive }} });
+    const no_exclusive = try conda.pack(a, .{ .name = "pkg_n", .version = "1.2.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "the mojoc of pkg_n", .natives = &.{.{ .id = "shim", .soname = "libshim.a", .needs = &.{ "libz.so.1", "libcore_sys.a" }, .archive = shim_archive }} });
+    try std.testing.expect(!std.mem.eql(u8, no_needs.bytes, staged));
+    try std.testing.expect(!std.mem.eql(u8, no_exclusive.bytes, staged));
     // The archive is in the package as lib/libshim.a, and the metadata declares the static native.
     try std.testing.expect(contains(staged, "lib/libshim.a") and contains(staged, shim_archive));
     try std.testing.expect(contains(staged, "\"mopm_native\":[{\"id\":\"shim\",\"sha256\":\"") and contains(staged, "\"soname\":\"libshim.a\""));
