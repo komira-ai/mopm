@@ -255,6 +255,23 @@ describe.each(RIGS)('a CI identity that acts for an account: %s', (_label, make)
       await nothingCreated([widgets, gadgets]);
       await nothingCreated([newer]);
     });
+
+    test('the account\'s other groups are not found by the token: read, abort, commit and yank answer group_not_found for a group with a member outside the token, and the group is untouched', async () => {
+      const human = await env.token(ACCOUNT, ['gadgets']);
+      const made = await env.create(human, [memberOf(gadgets)]);
+      expect(made.statusCode).toBe(201);
+      const gid = json(made).group_id as string;
+      const token = await exchange([widgets]);
+      const answers = [
+        await env.get(token, gid),
+        await env.abort(token, gid),
+        await env.call('POST', `/api/v1/groups/${gid}/commit`, token, { members: [] }),
+        await env.call('PUT', `/api/v1/groups/${gid}/yank`, token, { yanked: true, reason: REASON }),
+      ];
+      expect(answers.map((r) => [r.statusCode, errorCode(r)])).toEqual([[404, 'group_not_found'], [404, 'group_not_found'], [404, 'group_not_found'], [404, 'group_not_found']]);
+      const still = await env.get(human, gid);
+      expect([still.statusCode, json(still).status]).toEqual([200, 'open']);
+    });
   });
 
   describe('the account\'s groups switch applies unchanged', () => {

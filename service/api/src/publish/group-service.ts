@@ -227,8 +227,9 @@ export class GroupService {
     this.now = d.now ?? (() => new Date());
     this.clock = d.clock ?? (() => performance.now());
     this.metrics = d.metrics ?? new Metrics();
-    this.committer = new GroupCommitter({ registry: d.registry, objects: d.objects, config: d.config, ...(d.groupQueue ? { groupQueue: d.groupQueue } : {}), ...(d.now ? { now: d.now } : {}) }, this);
-    this.yanker = new GroupYanker({ registry: d.registry, ...(d.groupQueue ? { groupQueue: d.groupQueue } : {}), ...(d.now ? { now: d.now } : {}) }, this);
+    const scoped = { load: (p: Principal, id: string) => this.loadCovered(p, id) };
+    this.committer = new GroupCommitter({ registry: d.registry, objects: d.objects, config: d.config, ...(d.groupQueue ? { groupQueue: d.groupQueue } : {}), ...(d.now ? { now: d.now } : {}) }, scoped);
+    this.yanker = new GroupYanker({ registry: d.registry, ...(d.groupQueue ? { groupQueue: d.groupQueue } : {}), ...(d.now ? { now: d.now } : {}) }, scoped);
   }
 
   /** POST /groups/{id}/commit: see src/publish/group-commit.ts. */
@@ -672,13 +673,13 @@ export class GroupService {
   // --- read and abort -------------------------------------------------------------------------------------
 
   async get(p: Principal, id: string): Promise<GroupStatusBody> {
-    const { header, members } = await this.load(p, id);
+    const { header, members } = await this.loadCovered(p, id);
     return statusBody(header, members);
   }
 
   /** Abort an open group (idempotent for one that is aborted). Its rows stay pending and free for any group or single to take. */
   async abort(p: Principal, id: string): Promise<GroupStatusBody> {
-    const loaded = await this.load(p, id);
+    const loaded = await this.loadCovered(p, id);
     const reg = this.d.registry;
     if (loaded.header.status === 'aborted') return statusBody(loaded.header, loaded.members);
     if (loaded.header.status !== 'open') throw groupNotOpen(id, loaded.header.status);
@@ -702,6 +703,17 @@ export class GroupService {
     const members = (await reg.getGroupMembers(id)) ?? { members: [] };
     if (header.actor !== actorOf(p) && !(await this.ownsAll(p, members))) throw groupNotFound();
     return { header, members };
+  }
+
+  /**
+   * `load` for the read, abort, commit and yank routes. A token that acts for an account (`acts_via`) is the account's actor, so `load`
+   * lets it see every group of the account; it is good for exactly the packages it was minted for, so a group with a member outside
+   * them is not found. Any other token is as `load` has it.
+   */
+  async loadCovered(p: Principal, id: string): Promise<{ header: GroupRecord; members: GroupMembers }> {
+    const loaded = await this.load(p, id);
+    if (p.acts_via !== undefined && loaded.members.members.some((m) => !p.packages.includes(m.name))) throw groupNotFound();
+    return loaded;
   }
 
   private async ownsAll(p: Principal, members: GroupMembers): Promise<boolean> {
