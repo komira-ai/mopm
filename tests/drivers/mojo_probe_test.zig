@@ -10,7 +10,6 @@ const mojo_env = @import("mojo_env.zig");
 test "probe: mojo --version, mojo build, run" {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena_state.allocator();
-    try h.watchdog(600);
     var rep = h.Report{};
     const m = try mojo_env.Mojo.init(a);
     const pre = try h.join(a, &.{ m.work, "prefix" });

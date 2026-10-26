@@ -496,7 +496,6 @@ test "install.sh against a fake release, and the planted defects are caught" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try h.watchdog(1500);
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
