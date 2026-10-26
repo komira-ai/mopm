@@ -696,6 +696,16 @@ pub fn build(f: *F, e: Entry) !Step {
             }
             return s;
         },
+        .oidc_packages => {
+            const pkg: []const u8 = "ci_listed";
+            const repo = try f.fmt("octo/{s}", .{pkg});
+            _ = try f.control("/ci_publisher", try f.fmt("{{\"repository\":\"{s}\"}}", .{repo}));
+            var s = step("exchangeOidcToken");
+            s.body = try f.fmt("{{\"jwt\":\"{s}\",\"packages\":[{{\"name\":\"{s}\",\"version\":\"0.4.0\"}}]}}", .{ try jwt(f, repo), pkg });
+            s.check = .first_package_is;
+            s.args[0] = pkg;
+            return s;
+        },
         .oidc_invalid => {
             var s = step("exchangeOidcToken");
             s.body = "{\"jwt\":\"not-a-jwt\",\"name\":\"http_client\",\"version\":\"0.4.0\"}";
