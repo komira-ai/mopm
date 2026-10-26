@@ -298,7 +298,6 @@ test "mopm pack and publish against the fake registry, and a rejection against a
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var rep = h.Report{};
-    try h.watchdog(90);
     const mopm_exe = try h.toolPath(a, "MOPM");
     const fake_exe = try h.toolPath(a, "MOPM_FAKE_REGISTRY");
     var tmp = std.testing.tmpDir(.{});

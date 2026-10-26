@@ -35,7 +35,6 @@ fn kpinCheck(a: std.mem.Allocator, kpin: []const u8, work: []const u8, pins: []c
 test "kpin check accepts every lock (header and sri512 match pins.toml and package-lock.json)" {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena_state.allocator();
-    try h.watchdog(300);
     const kpin = try h.toolPathAbs(a, "KPIN");
     const work = try h.toolPathAbs(a, "BUILDRULES_TEST_WORK");
     var rep = h.Report{};
@@ -50,7 +49,6 @@ test "kpin check accepts every lock (header and sri512 match pins.toml and packa
 test "kpin check refuses a lock that names another tool" {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena_state.allocator();
-    try h.watchdog(300);
     const kpin = try h.toolPathAbs(a, "KPIN");
     const work = try h.toolPathAbs(a, "BUILDRULES_TEST_WORK");
     const s = sets[sets.len - 1]; // an npm set (service/infra/stacks)

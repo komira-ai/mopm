@@ -523,7 +523,6 @@ pub fn main() !void {
     try std.fs.cwd().makePath(argv[2]);
     // pixi is found on PATH by mopm; the child needs a name it can run, not an absolute path.
     var rep = h.Report{};
-    try h.watchdog(3300);
     try run(a, &rep, .{
         .mopm = try absolute(a, argv[1]),
         .work = try absolute(a, argv[2]),

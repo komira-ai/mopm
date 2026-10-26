@@ -275,6 +275,7 @@ export class OidcExchange {
     const registry = this.o.registry;
     const owner = ciOwnerOf(publisher.repository_id);
     const refuse = (name: string) => new AuthError('not_owner', `You are not an owner of '${name}'.`, { name });
+    if (publisher.acts_for !== undefined) return this.exchangeActsFor(claims, publisher.acts_for, owner, wanted, registry);
 
     // Read first, so a name that belongs to someone else spends nothing and creates nothing.
     const existing = await Promise.all(wanted.map((w) => registry.getPackage(w.name)));
@@ -306,6 +307,40 @@ export class OidcExchange {
       all_current: false,
       versions: Object.fromEntries(wanted.map((w) => [w.name, w.version])),
       ci_owner: owner,
+      issued_to: claims.repository,
+      created_at: now.toISOString(),
+      expires_at: new Date(now.getTime() + OIDC_TOKEN_TTL_MS).toISOString(),
+    });
+    return { token: m.secret, token_kind: 'publish' as const, expires_at: m.record.expires_at, packages: wanted };
+  }
+
+  /**
+   * A CI publisher that acts for an account: the token's principal IS the account (`github_id`), so ownership is the account's owner
+   * rows, the actor is `u:<id>` and the account's groups policy applies. Nothing is created: every name must already be claimed, and
+   * must have the account among its owners (a package owned by anyone else, or by a CI identity, is refused). The token records the
+   * CI identity it came through (`acts_via`) and carries no `ci_owner`.
+   */
+  private async exchangeActsFor(claims: GithubActionsClaims, actsFor: string, via: string, wanted: PackageVersion[], registry: Store) {
+    const account = Number(actsFor);
+    // Read first, and mint nothing, spend no jti, until every name is the account's.
+    for (const w of wanted) {
+      const pkg = await registry.getPackage(w.name);
+      if (!pkg) throw new RegistryError('package_not_found', `There is no package '${w.name}'.`, { name: w.name });
+      const mine = pkg.ci_owner === undefined && (await registry.listOwners(w.name)).some((o) => o.github_id === account);
+      if (!mine) throw new AuthError('not_owner', `You are not an owner of '${w.name}'.`, { name: w.name });
+    }
+    const now = this.now();
+    const keepUntil = Math.max(claims.exp * 1000 + 60_000, now.getTime() + JTI_MIN_TTL_MS);
+    if (!(await this.o.store.claimOnce(jtiKey(claims.jti), new Date(keepUntil).toISOString()))) throw oidcInvalid('token already used');
+    const m = await mintToken(this.o.store, {
+      kind: 'oidc',
+      github_id: account,
+      acts_via: via,
+      name: `ci ${claims.repository}`,
+      scopes: ['publish'],
+      packages: wanted.map((w) => w.name),
+      all_current: false,
+      versions: Object.fromEntries(wanted.map((w) => [w.name, w.version])),
       issued_to: claims.repository,
       created_at: now.toISOString(),
       expires_at: new Date(now.getTime() + OIDC_TOKEN_TTL_MS).toISOString(),

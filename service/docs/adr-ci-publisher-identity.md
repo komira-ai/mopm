@@ -96,3 +96,49 @@ beta-only environment variable).
 - The upload and publish records of a configured identity now carry the identity's actor instead of a per-token one: the status of
   a publish is readable by any token of the same identity, which is the intent (one job starts a publish, another may poll it).
 - Unchanged: the exchange, the single-version publish path, ownership of accounts, and what gamma and prod do.
+
+## Addendum: a CI identity that acts for an account, on prod
+
+Status: accepted for prod (the CEO approved acting as the owner account, an open-group slot hold with an abort job, and a hash-pinned
+local test of the staged files plus a smoke test after the commit, with no download route). Touches: the CI publisher row
+(`acts_for`), the OIDC exchange, the principal and its audit marks, the loader's stage gate, the prod API function's environment.
+
+### Context
+
+The beta identity owns the packages it creates (`ci_owner`). On prod the packages already belong to a person: they are claimed by an
+account with that account's login, and the registry's one groups switch (`groups_enabled`) names that account. A beta-style row on prod
+would have given new names to a repository identity instead, and would have refused every name the account had already claimed.
+
+### Decision
+
+1. **A row may carry `acts_for`: a GitHub account id.** For such a row the `packages` form of the exchange verifies the same pins as
+   beta (repository id, owner id, workflow file, `job_workflow_ref`, ref, event, environment, audience) and mints a token whose principal
+   is that account (`github_id`), scoped to exactly the listed packages and versions, ten minutes, one exchange per CI `jti`. The token
+   has no `ci_owner`, so everything downstream treats it as the account: the actor is `u:<id>`, `requireOwner` reads the owner rows, the
+   groups switch and the per-account budgets apply, and a group made by the token is the group the account would make for the same set.
+2. **It creates nothing.** Every name must already be claimed by the account: an unclaimed name is `package_not_found`, anyone else's
+   (or a CI-owned) package is `not_owner`, and both are decided before the CI token is spent or a token is minted. No `ci_claim`
+   audit entry, no `ci_owner`.
+3. **Less than a login.** The token is kind `oidc`: it cannot claim a name, mint or revoke tokens, or pass as a fresh session, and it is
+   not listed among the account's tokens or counted against their limit.
+4. **Marked.** The token records the CI identity it came through (`acts_via`). The group header, the upload and publish records and the
+   audit entries of create, reserve, stage, commit request, abort and yank request carry `via` = `ci:gh-repo:<repository_id>`; an
+   account's own request carries none. The actor stays `u:<id>` on purpose: the group id, the per-actor list of open groups and the
+   groups policy are the account's, which is what lets one group be created by CI and continued by CI tokens of later jobs.
+5. **Prod loads only such rows.** `parseCiPublishers` accepts a value on beta (any row) and on prod only when every row carries
+   `acts_for`; every other stage, and a prod row without it, stops the function from starting. The stack sets the variable on prod
+   (`PROD_CI_PUBLISHERS`, environment `prod`, `push` only) and not on gamma; beta's row is unchanged. No groups policy is set on prod: the
+   `groups_enabled` item stays the human switch.
+
+### Consequences
+
+- **The account's authority is lent to one workflow.** Anyone who can push to `komira-ai/komira` main and approve the `prod`
+  environment can publish new versions of every package the account owns, in the `packages` and versions they ask for. The pins and
+  the environment are the whole gate; the audit mark is how a later reader tells it from the account.
+- **The audience on prod is the bare domain `mopm.dev`** (the existing prod table); the environment, not the audience, separates the
+  prod identity from a beta one, so a token from the `beta` environment is refused.
+- **A job that dies between stage and commit holds the account's open-group slot** until the group's deadline; the release workflow
+  aborts it with a fresh exchange. Accepted.
+- **Removing the trust is a deploy without the row** (runbook: "Prod trusts a CI identity that acts for an account"). Tokens already
+  minted live out their ten minutes. `groups_enabled` is the way to stop groups at once, for the human account too.
+- The template diff between gamma and prod gains exactly one difference: the API function's `CI_PUBLISHERS` variable.

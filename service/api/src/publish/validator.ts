@@ -256,6 +256,6 @@ function audit(d: ValidatorDeps, rec: PublishRecord, action: string, detail: Rec
     actor: rec.actor,
     action,
     version: rec.version,
-    detail: { publish_id: rec.publish_id, ...detail },
+    detail: { publish_id: rec.publish_id, ...detail, ...(rec.via === undefined ? {} : { via: rec.via }) },
   };
 }

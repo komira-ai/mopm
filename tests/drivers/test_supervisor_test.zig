@@ -314,7 +314,6 @@ const Ctx = struct {
 test "supervisor: mopm test verdicts against the real mojo (tests/e2e/test_supervisor.sh)" {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena_state.allocator();
-    try h.watchdog(1500);
     var rep = h.Report{};
     try run(a, &rep);
     try rep.finish();

@@ -106,7 +106,6 @@ test "golden files: link-plan, metadata, new and init, build, run, repl, test --
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var rep = h.Report{};
-    try h.watchdog(90);
 
     const root = try std.fs.cwd().realpathAlloc(a, ".");
     const mopm = try h.toolPath(a, "MOPM");

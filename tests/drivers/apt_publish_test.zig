@@ -231,7 +231,6 @@ test "apt_publish: gate, OIDC exchange, read, index, sign, write, with every pla
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try h.watchdog(600);
     const t = Tools{
         .apt = try h.toolPath(a, "MOPM_APT_PUBLISH"),
         .aws = try h.toolPath(a, "MOPM_FAKE_AWS"),

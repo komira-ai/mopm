@@ -18,6 +18,8 @@ export interface UploadRecord {
   /** quarantine/<upload id>/<filename> */
   key: string;
   actor: Actor;
+  /** Set when the request came through a CI identity acting for the actor (`ci:gh-repo:<repository id>`); absent for the account's own request. */
+  via?: string;
   created_at: string;
   url_expires_at: string;
   /** Epoch seconds: the table's TTL attribute (lazy cleanup) and the end of the commit window. */
@@ -43,6 +45,8 @@ export interface PublishRecord {
   version: string;
   canonical: string;
   actor: Actor;
+  /** Set when the publish came through a CI identity acting for the actor (`ci:gh-repo:<repository id>`); absent for the account's own. */
+  via?: string;
   published_by: string;
   status: PublishStatus;
   rejection_code?: RejectionCode;

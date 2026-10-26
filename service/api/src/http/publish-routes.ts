@@ -207,7 +207,7 @@ function authorizeYank(auth: Authenticator, p: Principal, name: string, version:
  * package and creates no group. The first member the token does not cover is named.
  */
 function authorizeGroup(auth: Authenticator, p: Principal, req: GroupRequest): void {
-  const ci = p.kind === 'oidc' && p.ci_owner !== undefined;
+  const ci = p.kind === 'oidc' && (p.ci_owner !== undefined || p.acts_via !== undefined);
   for (const m of req.members) {
     if (p.kind !== 'api' && !ci) throw new AuthError('scope_missing', `The token does not have the 'publish' scope for '${m.name}'.`, { scope: 'publish', name: m.name });
     auth.publishToken(p, m.name, m.version);

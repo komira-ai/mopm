@@ -4,9 +4,13 @@
 //!
 //!   out_err_exit3   to-out on stdout, to-err on stderr, exit 3
 //!   segv, abrt      kill itself with that signal
-//!   sleep <secs>    sleep (the shell's `exec sleep N`)
-//!   spin            compute forever (`while :; do :; done`)
-//!   bg_sleep_wait   start a `sleep 60` child in this process group, wait for it
+//!   sleep <secs> [marker]
+//!                   create the marker file if one is named, then sleep (the shell's
+//!                   `touch "$1"; exec sleep N`)
+//!   compute         a fixed amount of work, then exit 0 (a counting loop in the shell)
+//!   bg_sleep_wait [marker]
+//!                   start a `sleep 60` child in this process group, create the marker file
+//!                   if one is named, wait for the child
 //!   bg_sleep_exit0  start a `sleep 60` child, exit 0 without waiting
 //!   exit0           exit 0
 //!   wait_pipe       close fd 9, read fd 8 until end of file, exit 0 (the shell's `exec 9>&-; read x <&8`)
@@ -22,6 +26,12 @@ pub const std_options: std.Options = .{ .enable_segfault_handler = false };
 
 fn sleepSeconds(s: u64) void {
     std.time.sleep(s * std.time.ns_per_s);
+}
+
+/// Create an empty file: the signal to a test that this process is set up.
+fn touch(path: []const u8) !void {
+    const f = try std.fs.cwd().createFile(path, .{});
+    f.close();
 }
 
 /// Another copy of this program in `sleep 60` mode, same process group.
@@ -116,15 +126,14 @@ pub fn main() !void {
         try posix.raise(posix.SIG.ABRT);
         sleepSeconds(60);
     } else if (std.mem.eql(u8, mode, "sleep")) {
+        if (args.len > 3) try touch(args[3]);
         sleepSeconds(try std.fmt.parseInt(u64, args[2], 10));
-    } else if (std.mem.eql(u8, mode, "spin")) {
+    } else if (std.mem.eql(u8, mode, "compute")) {
         var n: u64 = 0;
-        while (true) {
-            n +%= 1;
-            std.mem.doNotOptimizeAway(n);
-        }
+        while (n < 200_000_000) : (n += 1) std.mem.doNotOptimizeAway(n);
     } else if (std.mem.eql(u8, mode, "bg_sleep_wait")) {
         var child = try startSleeper(a);
+        if (args.len > 2) try touch(args[2]);
         _ = try child.wait();
     } else if (std.mem.eql(u8, mode, "bg_sleep_exit0")) {
         _ = try startSleeper(a);
