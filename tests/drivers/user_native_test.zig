@@ -14,6 +14,8 @@
 //!     then a new package that adds, syncs and `mopm build`s (no file) and runs the program, with the installed archive
 //!     byte for byte the one that was built (a mopm that dropped the archive from the pack, the lock or the install, or that
 //!     stopped building the manifest's targets, goes red);
+//!   - the archive check: the installed file must be non-empty and equal to the built one (a corrupted, truncated, different
+//!     or empty installed archive goes red);
 //!   - the same run where the stand-in program prints another value: the step fails on exactly the value check (a step
 //!     that does not look at what the program prints goes green).
 //! The stand-in compiler prints what FAKE_TOOLCHAIN_PROGRAM_OUTPUT says, so the real values are checked by the walk on the
@@ -99,6 +101,14 @@ fn stepWith(a: Allocator, rep: *h.Report, tag: []const u8, program_output: []con
         .cc_target = if (builtin.os.tag == .linux and builtin.cpu.arch == .x86_64) "x86_64-linux-gnu.2.34" else null,
         .stand_in_mojo = stand_in,
     });
+}
+
+test "user native: the installed archive must be the built one, byte for byte" {
+    try std.testing.expect(un.archiveOk("!<arch>\nabc", "!<arch>\nabc"));
+    try std.testing.expect(!un.archiveOk("!<arch>\nabd", "!<arch>\nabc"));
+    try std.testing.expect(!un.archiveOk("!<arch>\nab", "!<arch>\nabc"));
+    try std.testing.expect(!un.archiveOk("", "!<arch>\nabc"));
+    try std.testing.expect(!un.archiveOk("", ""));
 }
 
 test "user native: C sources to a published package to a built and run program, with a stand-in compiler" {

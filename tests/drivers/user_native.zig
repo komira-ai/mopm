@@ -61,6 +61,11 @@ pub fn outputOk(stdout: []const u8, os: std.Target.Os.Tag) bool {
     return std.mem.eql(u8, stdout, expectedLine(os));
 }
 
+/// Whether the installed archive is present and is, byte for byte, the archive that was built.
+pub fn archiveOk(installed: []const u8, built: []const u8) bool {
+    return installed.len != 0 and std.mem.eql(u8, installed, built);
+}
+
 const program_source =
     \\from shimlib import shim_answer
     \\
@@ -250,7 +255,7 @@ fn walk(w: *Walk) !void {
     _ = try w.mopm("native: mopm sync installs it", app, &.{ "sync", "--pixi", o.pixi, "--registry", o.registry }, o.env);
     const env_dir = try h.join(a, &.{ app, ".mopm", ".pixi", "envs", "default" });
     const installed = h.readFile(a, try h.join(a, &.{ env_dir, "lib", "libshim.a" })) catch "";
-    rep.check("native: the installed environment holds lib/libshim.a, byte for byte the archive that was built", installed.len != 0 and std.mem.eql(u8, installed, archive_bytes), "lib/libshim.a is missing or differs");
+    rep.check("native: the installed environment holds lib/libshim.a, byte for byte the archive that was built", archiveOk(installed, archive_bytes), "lib/libshim.a is missing or differs");
     if (o.stand_in_mojo) |stand_in| try installCompiler(stand_in, try h.join(a, &.{ env_dir, "bin", "mojo" }));
 
     try h.writeFile(try h.join(a, &.{ app, "src", "main.mojo" }), program_source);
