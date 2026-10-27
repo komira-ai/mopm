@@ -14,6 +14,7 @@ const unit_cmd = @import("unit_cmd.zig");
 const yank_cmd = @import("yank_cmd.zig");
 const stage_cmd = @import("stage_cmd.zig");
 const build_cmd = @import("build_cmd.zig");
+const bin_run = @import("bin_run.zig");
 
 /// The release version, from the build (`zig build -Dversion=`; the dev default in build_options.zig).
 pub const version = @import("build_options").version;
@@ -46,6 +47,7 @@ const usage =
     \\                          library as <dir>/<name>.mojoc and each program as
     \\                          <dir>/<name> (default dir: target/build)
     \\  run <file.mojo>
+    \\  run --bin <package>:<program>   a program an installed package ships
     \\  repl [--debugserver <path>]
     \\                          run the stock mojo of the environment, with its
     \\                          native libraries linked or preloaded; the exit
@@ -295,6 +297,8 @@ pub const Opts = struct {
     print_cmd: bool = false,
     out: ?[]const u8 = null,
     file: ?[]const u8 = null,
+    /// `run --bin <package>:<program>`: a program an installed package ships, in place of a file.
+    bin: ?[]const u8 = null,
     /// `build` with no program: where the library and the programs go.
     out_dir: ?[]const u8 = null,
     /// `repl --debugserver <path>`: the debugserver to hand lldb instead of finding one.
@@ -351,6 +355,10 @@ pub fn parseOpts(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []
             const v = optValue(args, &i, "--debugserver").?;
             if (v.len == 0) return .{ .usage = "--debugserver needs the path of a debugserver" };
             o.debugserver = v;
+        } else if (tool == .run and isOpt(arg, "--bin")) {
+            const v = optValue(args, &i, "--bin").?;
+            if (v.len == 0) return .{ .usage = "--bin needs <package>:<program>" };
+            o.bin = v;
         } else if (arg.len > 1 and arg[0] == '-') {
             return .{ .usage = try std.fmt.allocPrint(arena, "unknown option '{s}'", .{arg}) };
         } else if (tool == .repl) {
@@ -361,7 +369,8 @@ pub fn parseOpts(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []
             o.file = arg;
         }
     }
-    if (tool != .repl and tool != .build and o.file == null) return .{ .usage = "a program is required: <file.mojo>" };
+    if (o.bin != null and o.file != null) return .{ .usage = try std.fmt.allocPrint(arena, "--bin names the program: do not also give the file '{s}'", .{o.file.?}) };
+    if (tool != .repl and tool != .build and o.file == null and o.bin == null) return .{ .usage = "a program is required: <file.mojo>" };
     if (tool == .build and o.file == null and o.out != null) return .{ .usage = "-o names the file of one program: name the program, or use --out-dir to say where the targets of mopm.toml go" };
     if (tool == .build and o.file != null and o.out_dir != null) return .{ .usage = "--out-dir applies to a build with no program: with a program, -o names its file" };
     if (o.os_given and !o.print_cmd) return .{ .usage = "--os applies only with --print-cmd: a command that runs uses this host's spelling" };
@@ -415,6 +424,14 @@ fn autolink(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const
         },
     };
 
+    const bin_ref: ?bin_run.Ref = if (o.bin) |text| switch (bin_run.parseRef(arena, text) catch return 1) {
+        .ok => |r| r,
+        .bad => |msg| {
+            err.print("mopm run: {s}\n\n{s}", .{ msg, usage }) catch {};
+            return 2;
+        },
+    } else null;
+
     if (tool == .build and o.file == null) {
         return build_cmd.run(arena, .{
             .prefix = o.prefix,
@@ -457,6 +474,20 @@ fn autolink(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const
         },
     };
 
+    // `run --bin`: the program is the source file the installed package ships, built and run by this environment's mojo.
+    var file = o.file;
+    if (bin_ref) |ref| {
+        var names = std.ArrayList([]const u8).init(arena);
+        for (inputs) |inp| names.append(inp.meta.name) catch return 1;
+        switch (bin_run.resolve(arena, prefix, names.items, ref) catch return 1) {
+            .ok => |path| file = path,
+            .bad => |msg| {
+                err.print("mopm run: {s}\n", .{msg}) catch {};
+                return 1;
+            },
+        }
+    }
+
     const plan = core.link_planner.plan(arena, inputs) catch return 1;
     const refused = mojo_cmd.refusals(arena, tool, plan) catch return 1;
     if (refused.len > 0) {
@@ -485,7 +516,7 @@ fn autolink(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const
         .tool = tool,
         .prefix = prefix,
         .os = o.os,
-        .file = o.file orelse "",
+        .file = file orelse "",
         .out = o.out,
         .include_dirs = dep_dirs,
         .debugserver = debugserver,
@@ -559,6 +590,7 @@ test {
     _ = @import("group_publish_test.zig");
     _ = stage_cmd;
     _ = @import("stage_test.zig");
+    _ = @import("bin_run.zig");
     _ = build_cmd;
 }
 
@@ -685,4 +717,25 @@ test "options: usage errors" {
     try parseUsage(a, .build, &.{ "a.mojo", "--frobnicate" });
     try parseUsage(a, .run, &.{ "a.mojo", "--os", "linux" }); // --os without --print-cmd
     try parseUsage(a, .repl, &.{"--os=macos"});
+}
+
+// Defect caught: `--bin` accepted by a command that has no use for it, taken together with a file, or with no value.
+test "run --bin: a program of an installed package in place of a file, for run only" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const spaced = try parseOk(a, .run, &.{ "--bin", "benchy:agg_state_bench" });
+    try std.testing.expectEqualStrings("benchy:agg_state_bench", spaced.bin.?);
+    try std.testing.expect(spaced.file == null);
+    const joined = try parseOk(a, .run, &.{ "--prefix", "/env", "--bin=benchy:spsc_ring_bench" });
+    try std.testing.expectEqualStrings("benchy:spsc_ring_bench", joined.bin.?);
+    try parseUsage(a, .run, &.{"--bin"});
+    try parseUsage(a, .run, &.{"--bin="});
+    try parseUsage(a, .run, &.{ "--bin", "benchy:x", "m.mojo" });
+    try parseUsage(a, .run, &.{ "m.mojo", "--bin", "benchy:x" });
+    try parseUsage(a, .build, &.{ "--bin", "benchy:x" });
+    try parseUsage(a, .repl, &.{ "--bin", "benchy:x" });
+    // A run with a file is what it was.
+    try std.testing.expectEqualStrings("m.mojo", (try parseOk(a, .run, &.{"m.mojo"})).file.?);
+    try parseUsage(a, .run, &.{});
 }
