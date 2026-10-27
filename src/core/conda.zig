@@ -592,6 +592,10 @@ pub fn condaPackageFor(name: []const u8) []const u8 {
         .{ "lzma", "xz" },
         .{ "xz", "xz" },
         .{ "zstd", "zstd" },
+        .{ "snappy", "snappy" },
+        .{ "brotlidec", "libbrotlidec" },
+        .{ "sqlite3", "libsqlite" },
+        .{ "sqlite", "libsqlite" },
     };
     var stem = if (std.mem.startsWith(u8, name, "lib")) name[3..] else name;
     if (std.mem.indexOfScalar(u8, stem, '.')) |dot| stem = stem[0..dot];
@@ -1413,6 +1417,7 @@ test "native dependencies that cannot be packed are refused with their reason" {
         .{ "OpenSSL = { mode = \"load\" }\n", "native dependency 'OpenSSL' names the conda package 'OpenSSL', which has an upper case letter" },
         .{ "mojo-json = { mode = \"load\" }\n", "native dependency 'mojo-json' names the conda package 'mojo-json'; a Mojo package belongs in [dependencies]" },
         .{ "lz4 = { mode = \"load\" }\nliblz4 = { mode = \"load\" }\n", "native dependency 'liblz4' names the conda package 'lz4-c' a second time" },
+        .{ "sqlite = { mode = \"load\" }\nsqlite3 = { mode = \"load\" }\n", "native dependency 'sqlite3' names the conda package 'libsqlite' a second time" },
         .{ "lz4 = { version = \"^1.0.0-rc.1\", mode = \"load\" }\n", "native dependency 'lz4' = \"^1.0.0-rc.1\": a pre-release in a requirement has no conda spelling" },
     }) |c| {
         const m = try manifest.parse(a, try std.mem.concat(a, u8, &.{ head, c[0] }), &diag);
@@ -1433,6 +1438,18 @@ test "the conda package of a system library: by name, library name or file name"
         .{ "libbz2.so.1.0", "bzip2" },
         .{ "liblzma.so.5", "xz" },
         .{ "libzstd.so.1", "zstd" },
+        .{ "snappy", "snappy" },
+        .{ "libsnappy.so.1", "snappy" },
+        .{ "libsnappy.1.dylib", "snappy" },
+        .{ "brotlidec", "libbrotlidec" },
+        .{ "libbrotlidec", "libbrotlidec" },
+        .{ "libbrotlidec.so.1", "libbrotlidec" },
+        .{ "libbrotlidec.1.dylib", "libbrotlidec" },
+        .{ "sqlite3", "libsqlite" },
+        .{ "sqlite", "libsqlite" },
+        .{ "libsqlite", "libsqlite" },
+        .{ "libsqlite3.so.0", "libsqlite" },
+        .{ "libsqlite3.0.dylib", "libsqlite" },
         .{ "openssl", "openssl" },
         .{ "libffi", "libffi" },
         .{ "lz4-c", "lz4-c" },
