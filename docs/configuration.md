@@ -112,7 +112,7 @@ One entry per library, `name = "1.6"` or `name = { version = ..., kind = ..., mo
 | `kind` | string | none | `"shared"` or `"static"` | `kind = "shared"` |
 | `mode` | string | `"link"` | `"link"`: mopm computes the linker flags; `"load"`: the package opens the library itself | `mode = "load"` |
 
-`mopm pack`, `mopm publish` and `mopm stage` record each library with `mode = "load"` (and `kind` shared or not set) in `depends` of `info/index.json`, after the compiler and the Mojo dependencies, so that installing the package installs the library: `lz4 = { version = ">=1.9.3", mode = "load" }` becomes `lz4-c >=1.9.3`. The name is the conda package name, except for these libraries, which are mapped from their name, their library name (`lib` before it) or their file name (`liblz4.so.1`): `lz4` to `lz4-c`, `z` and `zlib` to `libzlib`, `bz2` to `bzip2`, `lzma` and `xz` to `xz`, `zstd` to `zstd`. Two entries for one conda package, a name with an upper case letter and a name starting with `mojo-` are refused. The registry accepts such a package only when it has the conda package on its list of native libraries (spec/channel.md). A library with `mode = "link"` is not packed yet: `pack` says `only mode = "load" is packed`.
+`mopm pack`, `mopm publish` and `mopm stage` record each library with `mode = "load"` (and `kind` shared or not set) in `depends` of `info/index.json`, after the compiler and the Mojo dependencies, so that installing the package installs the library: `lz4 = { version = ">=1.9.3", mode = "load" }` becomes `lz4-c >=1.9.3`. The name is the conda package name, except for these libraries, which are mapped from their name, their library name (`lib` before it) or their file name (`liblz4.so.1`): `lz4` to `lz4-c`, `z` and `zlib` to `libzlib`, `bz2` to `bzip2`, `lzma` and `xz` to `xz`, `zstd` to `zstd`, `snappy` to `snappy`, `brotlidec` to `libbrotlidec` (the decoder only; the encoder and the `brotli` command are not allowed), and `sqlite3` and `sqlite` to `libsqlite` (the library; the `sqlite` package is the command line tool and is not allowed). Two entries for one conda package, a name with an upper case letter and a name starting with `mojo-` are refused. The registry accepts such a package only when it has the conda package on its list of native libraries (spec/channel.md). A library with `mode = "link"` is not packed yet: `pack` says `only mode = "load" is packed`.
 
 ### Native libraries: `[native.<id>]`
 
@@ -152,6 +152,12 @@ The keys of `lib` and of each entry of `bins`:
 | `path` | string | none, required | the package directory (`lib`) or the Mojo file with the `main` (`bins`), relative to the manifest; for `mopm plan`, below the root project | `path = "src/main.mojo"` |
 | `name` | string | none, required (`bins` only) | the file name of the program that unit makes | `name = "fetch"` |
 
+### Programs in a published package
+
+A package can publish programs, for example benchmarks users run on their own machine. List each one in `[targets] bins`, with a `name` of lower case letters, digits and underscores and the `path` of the `.mojo` file with the `main`. `mopm pack`, `mopm publish` and `mopm stage` put that file in the package of every subdir, at `lib/mojo/<package>.bins/<name>.mojo`, and refuse a name the registry would refuse, a name listed twice, a path outside the package directory or not ending in `.mojo`, and a file that is missing or empty. What is published is source, never an executable (the registry refuses one): the program is built by the Mojo of the machine that runs it, so it is the same program everywhere and its numbers are that machine's.
+
+`mopm sync` installs the file with the rest of the package. `mopm run --bin <package>:<program>` runs it with the environment's packages importable, as `mopm run <file.mojo>` would run a file; it refuses a package that is not installed and a program the package does not ship (and says which it ships). A program is one file: it imports the package's library and its dependencies, not other files of its source tree. `mopm run` takes no arguments for the program.
+
 ### What reads each key
 
 Accepted does not mean used. This table says, for every table and key, which commands act on it today; "metadata only" means that the key is checked and printed by `mopm metadata` and no other command reads it.
@@ -168,7 +174,8 @@ Accepted does not mean used. This table says, for every table and key, which com
 | `dev-dependencies` | `lock`, `tree`, `plan`; not packed |
 | `native-dependencies` | `pack`, `publish` and `stage` write each one with `mode = "load"` as a conda dependency (see Native dependencies) and refuse one with `mode = "link"` or `kind = "static"` |
 | `native` | `pack` and `publish` pack a library with `kind = "static"` and `mode = "link"` (`needs` and `exclusive` go into the package's metadata) and refuse any other kind or mode; `metadata` shows it |
-| `targets.lib`, `targets.bins` | `plan`, which makes a unit of each |
+| `targets.lib` | `plan`, which makes a unit of it |
+| `targets.bins` | `build` and `plan` (a unit of each program); `pack`, `publish` and `stage` ship each program's source in the package, and `mopm run --bin <package>:<program>` runs it from an installed package (see Programs in a published package) |
 | `targets.tests` | metadata only: `mopm test` and `mopm plan` find the tests by their path |
 
 ### What pack and publish refuse

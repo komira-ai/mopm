@@ -14,6 +14,8 @@ pub enum Role {
     Mojoc,
     Mopm,
     Native,
+    /// A program shipped as source: `lib/mojo/<name>.bins/<bin>.mojo`, built on the installer's machine.
+    Source,
     Info,
     License,
     Dir,
@@ -39,6 +41,11 @@ fn suffix_ok(s: &str) -> bool {
     }
     let Some(more) = s.strip_prefix("so") else { return false };
     more.split('.').skip(1).all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())) && (more.is_empty() || more.starts_with('.'))
+}
+
+/// `^[a-z0-9_]+\.mojo$`: the file name of a program's source below `lib/mojo/<name>.bins/`.
+fn is_bin_source(file: &str) -> bool {
+    file.strip_suffix(".mojo").is_some_and(|stem| !stem.is_empty() && stem.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'))
 }
 
 /// `(?:^|[-_.])(?:pre-link|post-link|pre-unlink)\.(?:sh|bat)$`, case-insensitive, on the base name.
@@ -98,6 +105,9 @@ pub fn classify(e: &TarEntry, name: &str) -> Checked<Role> {
         return fail_at(RuleCode::BinDir, format!("'{p}' is under {top}/; packages may not ship executables"), p);
     }
     if e.kind == Kind::Dir {
+        if p == format!("lib/mojo/{name}.bins") {
+            return Ok(Role::Dir);
+        }
         if ALLOWED_DIRS.contains(&p) || p.starts_with("info/licenses/") {
             return Ok(Role::Dir);
         }
@@ -108,6 +118,9 @@ pub fn classify(e: &TarEntry, name: &str) -> Checked<Role> {
     }
     if p == format!("lib/mojo/{name}.mopm.json") {
         return Ok(Role::Mopm);
+    }
+    if p.strip_prefix(&format!("lib/mojo/{name}.bins/")).is_some_and(is_bin_source) {
+        return Ok(Role::Source);
     }
     if is_native_file(p) {
         return Ok(Role::Native);
@@ -178,6 +191,8 @@ mod tests {
         let cases = [
             (file("lib/mojo/demo.mojoc"), Role::Mojoc),
             (file("lib/mojo/demo.mopm.json"), Role::Mopm),
+            (file("lib/mojo/demo.bins/agg_bench.mojo"), Role::Source),
+            (dir("lib/mojo/demo.bins"), Role::Dir),
             (file("lib/libz.so.1"), Role::Native),
             (file("info/index.json"), Role::Info),
             (file("info/licenses/LICENSE"), Role::License),
@@ -207,6 +222,11 @@ mod tests {
         assert_eq!(rule(dir("share")), RuleCode::LayoutNotAllowed);
         assert_eq!(rule(file("lib/mojo/other.mojoc")), RuleCode::LayoutNotAllowed);
         assert_eq!(rule(file("lib/sub/libfoo.so")), RuleCode::LayoutNotAllowed);
+        for no in ["lib/mojo/demo.bins/Bench.mojo", "lib/mojo/demo.bins/a-b.mojo", "lib/mojo/demo.bins/.mojo", "lib/mojo/demo.bins/a.py", "lib/mojo/demo.bins/sub/a.mojo", "lib/mojo/other.bins/a.mojo", "lib/mojo/demo.bins"] {
+            assert_eq!(rule(file(no)), RuleCode::LayoutNotAllowed, "{no}");
+        }
+        assert_eq!(rule(dir("lib/mojo/other.bins")), RuleCode::LayoutNotAllowed);
+        assert_eq!(rule(dir("lib/mojo/demo.bins/sub")), RuleCode::LayoutNotAllowed);
         let e = classify(&file("share/x"), n).unwrap_err();
         assert_eq!(e.message, "'share/x' is not an allowed path (allowed: lib/mojo/demo.mojoc, lib/mojo/demo.mopm.json, declared native libraries, info/ metadata, licence files)");
         assert_eq!(e.path.as_deref(), Some("share/x"));

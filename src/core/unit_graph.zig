@@ -140,13 +140,13 @@ fn visitDeps(g: Graph, at: usize, seen: []bool, out: *std.ArrayList(usize)) erro
 /// A platform mopm pins a toolchain for: its closure, and the packages of it that
 /// a unit graph lists as components (the linker's C runtime libraries exist in
 /// the Linux closures only; macOS has none).
-const Target = struct {
+pub const Target = struct {
     subdir: []const u8,
     closure: []const u8,
     components: []const []const u8,
 };
 
-const targets = [_]Target{
+pub const targets = [_]Target{
     .{ .subdir = "linux-64", .closure = @embedFile("toolchain/mojo-1.0.0-linux-64.json"), .components = &.{ "mojo-compiler", "libgcc", "libstdcxx" } },
     .{ .subdir = "linux-aarch64", .closure = @embedFile("toolchain/mojo-1.0.0-linux-aarch64.json"), .components = &.{ "mojo-compiler", "libgcc", "libstdcxx" } },
     .{ .subdir = "osx-arm64", .closure = @embedFile("toolchain/mojo-1.0.0-osx-arm64.json"), .components = &.{"mojo-compiler"} },

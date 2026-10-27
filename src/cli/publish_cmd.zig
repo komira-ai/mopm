@@ -34,6 +34,7 @@ const core = @import("mopm_core");
 const http = core.http;
 const manifest = core.manifest;
 const conda = core.conda;
+const bins_mod = core.bins;
 const registry = core.registry;
 const credentials = core.credentials;
 const ci_oidc = core.ci_oidc;
@@ -269,6 +270,15 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
         },
     };
 
+    // The programs of `[targets] bins`, as source, in every subdir's package.
+    const bins = bins_mod.read(arena, m, std.fs.path.dirname(f.manifest) orelse ".", &why) catch |e| switch (e) {
+        error.Unpackable => {
+            err("{s}: {s}\n", .{ f.manifest, why });
+            return null;
+        },
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+
     var packs = std.ArrayList(conda.Packed).init(arena);
     for (f.mojoc) |entry| {
         const bytes = std.fs.cwd().readFileAlloc(arena, entry.path, 1 << 30) catch |e| {
@@ -288,6 +298,7 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
             .native_deps = native_deps,
             .mojoc = bytes,
             .natives = native_files.get(entry.subdir) orelse &.{},
+            .bins = bins,
         });
         if (cmd == .publish and p.bytes.len > max_file_bytes) {
             err("{s} is {d} bytes; a package file is at most {d} bytes\n", .{ p.file_name, p.bytes.len, max_file_bytes });

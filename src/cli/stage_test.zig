@@ -861,3 +861,66 @@ test "the flags: all of them are needed, and --registry has no default" {
     try std.testing.expect(contains((try stage.parseFlags(a, &.{"--out"})).bad, "--out needs a value"));
     try std.testing.expect(contains((try stage.parseFlags(a, &.{ "--out", "" })).bad, "--out needs a value"));
 }
+
+/// A member `benchy` whose `[targets] bins` is `bins`, its artifact for `noarch` and two source files for programs.
+fn binsWorkspace(fx: Fx, bins: []const u8) !void {
+    try fx.put("ws/benchy/mopm.toml", try std.fmt.allocPrint(fx.a, "[package]\nname = \"benchy\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[targets]\nbins = [{s}]\n", .{bins}));
+    try fx.put("art/noarch/benchy.mojoc", "the mojoc of benchy");
+    try fx.put("ws/benchy/src/agg.mojo", "def main(): print(\"agg\")\n");
+    try fx.put("ws/benchy/bench/ring.mojo", "def main(): print(\"ring\")\n");
+}
+
+const two_bins = "{ name = \"agg_state_bench\", path = \"src/agg.mojo\" }, { name = \"spsc_ring_bench\", path = \"bench/ring.mojo\" }";
+
+// Defect caught: a stage that drops the programs, ships one of two, packs the wrong file, or ships them in one subdir only.
+test "a member with programs is staged with their sources in every subdir's package, byte for byte as mopm pack packs them" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    try binsWorkspace(fx, two_bins);
+    try fx.put("art/linux-64/benchy.mojoc", "the linux mojoc of benchy");
+    var stub = newStub(a);
+    const r = try runStage(fx, &stub, "out", &.{});
+    try std.testing.expect(r.code == 0);
+
+    const bins = [_]conda.Bin{
+        .{ .name = "agg_state_bench", .source = "def main(): print(\"agg\")\n" },
+        .{ .name = "spsc_ring_bench", .source = "def main(): print(\"ring\")\n" },
+    };
+    for ([_][]const u8{ "noarch", "linux-64" }) |subdir| {
+        const mojoc: []const u8 = if (std.mem.eql(u8, subdir, "noarch")) "the mojoc of benchy" else "the linux mojoc of benchy";
+        const want = try conda.pack(a, .{ .name = "benchy", .version = "1.0.0", .compiler = "1.0.0", .subdir = subdir, .mojoc = mojoc, .bins = &bins });
+        const staged = try fx.read(try std.fmt.allocPrint(a, "out/{s}/{s}", .{ subdir, want.file_name }));
+        try std.testing.expectEqualSlices(u8, want.bytes, staged);
+        const without = try conda.pack(a, .{ .name = "benchy", .version = "1.0.0", .compiler = "1.0.0", .subdir = subdir, .mojoc = mojoc });
+        try std.testing.expect(!std.mem.eql(u8, without.bytes, staged));
+        try std.testing.expect(contains(staged, "lib/mojo/benchy.bins/agg_state_bench.mojo") and contains(staged, "lib/mojo/benchy.bins/spsc_ring_bench.mojo"));
+    }
+}
+
+// Defect caught: a declared program whose file is missing, empty, outside the package or badly named is staged anyway,
+// or the run leaves a half-written set behind.
+test "a member whose program cannot be shipped is refused with the member named, and nothing is written" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    var stub = newStub(a);
+    const cases = [_]struct { bins: []const u8, why: []const u8 }{
+        .{ .bins = "{ name = \"gone\", path = \"src/gone.mojo\" }", .why = "benchy: [targets] bin 'gone': cannot read " },
+        .{ .bins = "{ name = \"Agg\", path = \"src/agg.mojo\" }", .why = "benchy: [targets] bin 'Agg': a program's name is lower case letters" },
+        .{ .bins = "{ name = \"agg\", path = \"../agg.mojo\" }", .why = "benchy: [targets] bin 'agg' has a path that leaves the package directory" },
+        .{ .bins = "{ name = \"agg\", path = \"src/agg.mojo\" }, { name = \"agg\", path = \"bench/ring.mojo\" }", .why = "benchy: [targets] bin 'agg' is declared twice" },
+    };
+    for (cases, 0..) |c, i| {
+        try binsWorkspace(fx, c.bins);
+        const out = try std.fmt.allocPrint(a, "o{d}", .{i});
+        const r = try runStage(fx, &stub, out, &.{});
+        try std.testing.expect(r.code == 1);
+        try std.testing.expect(contains(r.err, c.why));
+        try std.testing.expect(!fx.exists(out));
+    }
+}

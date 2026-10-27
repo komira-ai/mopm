@@ -2,12 +2,14 @@ import { fail } from './codes';
 import type { TarEntry } from './tar';
 
 /** What an entry of the package is, once it passed the allow-list. */
-export type Role = 'mojoc' | 'mopm' | 'native' | 'info' | 'license' | 'dir';
+export type Role = 'mojoc' | 'mopm' | 'native' | 'source' | 'info' | 'license' | 'dir';
 
 const INFO_FILES = new Set(['info/index.json', 'info/paths.json', 'info/about.json', 'info/files', 'info/hash_input.json']);
 const ALLOWED_DIRS = new Set(['lib', 'lib/mojo', 'info', 'info/licenses']);
 /** Native library file names under lib/: lib<stem>.so[.N...], lib<stem>.dylib, lib<stem>.a (a static archive). */
 export const NATIVE_FILE = /^lib\/lib[^/]+\.(?:so(?:\.\d+)*|dylib|a)$/;
+/** A program a package ships as source, built on the installer's machine: lib/mojo/<name>.bins/<bin>.mojo, with <bin> lower case letters, digits and underscores. */
+const BIN_SOURCE = /^[a-z0-9_]+\.mojo$/;
 const LINK_SCRIPT = /(?:^|[-_.])(?:pre-link|post-link|pre-unlink)\.(?:sh|bat)$/i;
 
 /**
@@ -38,11 +40,13 @@ export function classify(e: TarEntry, name: string): Role {
     return fail('bin_dir', `'${p}' is under ${top}/; packages may not ship executables`, p);
   }
   if (e.kind === 'dir') {
+    if (p === `lib/mojo/${name}.bins`) return 'dir';
     if (ALLOWED_DIRS.has(p) || p.startsWith('info/licenses/')) return 'dir';
     return fail('layout_not_allowed', `directory '${p}' is outside the allowed layout`, p);
   }
   if (p === `lib/mojo/${name}.mojoc`) return 'mojoc';
   if (p === `lib/mojo/${name}.mopm.json`) return 'mopm';
+  if (p.startsWith(`lib/mojo/${name}.bins/`) && BIN_SOURCE.test(p.slice(`lib/mojo/${name}.bins/`.length))) return 'source';
   if (NATIVE_FILE.test(p)) return 'native';
   if (INFO_FILES.has(p)) return 'info';
   if (p.startsWith('info/licenses/')) return 'license';

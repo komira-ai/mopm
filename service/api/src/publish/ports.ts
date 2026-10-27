@@ -46,6 +46,11 @@ export interface Flags {
    * is read, aborted and finished whatever this says. A flag that cannot be read throws (writers fail closed).
    */
   groupsFor(actor: string): Promise<boolean>;
+  /**
+   * The daily claim limit the `claim_limits` item of the config table sets for `actor` (`u:<github id>`), at most MAX_CLAIM_LIMIT, or
+   * undefined for the default. Absent or malformed config says undefined. A flag that cannot be read throws.
+   */
+  claimLimitFor(actor: string): Promise<number | undefined>;
 }
 
 /** A group on an actor's list, and when it was put there. */
