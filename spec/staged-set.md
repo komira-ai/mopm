@@ -291,8 +291,9 @@ group keeps its own ownership and scope rules.
 `manifest_sha256` is optional in the commit of a single publish and in each
 member of a group commit. When given it is checked as before (`invalid_request`
 for a bad format, `sha256_mismatch` for a difference). When absent the version
-holds the hash the registry computes from the archive; a version whose files
-carry different manifest bytes is rejected `manifest_invalid` either way. A
+holds the hash the registry computes from the archive, and a version whose files
+carry different manifest bytes is rejected `manifest_invalid`; when the hash is
+given, a file whose manifest differs from it is `sha256_mismatch` instead. A
 repeat of a group commit must repeat which members gave the hash and what they
 gave; otherwise it is another request and is refused (`group_commit_refused`). A
 repeat of a single commit with the same upload ids resumes the same publish

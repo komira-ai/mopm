@@ -1512,8 +1512,9 @@ components:
             Optional. The SHA-256 of the bytes of `lib/mojo/<name>.mopm.json` in the archives (what `mopm pack` prints). When given
             it is checked: a value that is not 64 lowercase hex digits is `invalid_request`, and an archive whose manifest hashes
             to something else is rejected `sha256_mismatch`. When absent, nothing is checked and the version holds the hash the
-            registry computes from the archives. Either way, every file of the version must carry the same manifest bytes, or the
-            publish is rejected `manifest_invalid`.
+            registry computes from the archives; then every file of the version must carry the same manifest bytes, or the publish is
+            rejected `manifest_invalid`. When given, a file whose manifest hashes to something else is `sha256_mismatch`, so at
+            most the files that carry the given manifest bytes pass.
           $ref: "#/components/schemas/Sha256"
         description: { type: string, minLength: 1, maxLength: 512, description: "`[package] description` of this version's mopm.toml: one line, no line breaks. Stored on the version and served back by `getVersion`." }
         license: { type: string, minLength: 1, maxLength: 128, description: "`[package] license`, an SPDX expression." }
