@@ -68,6 +68,19 @@ describe('source_commit on the commit of a single publish', () => {
     expect(h.validateQueue.take()).toBeUndefined();
   });
 
+  test('yank and unyank leave the stored value as it was, in the row and in getVersion', async () => {
+    const { h } = await single({ source_commit: SHA1 });
+    await h.runValidator();
+    await h.runIndexer();
+    const yank = await h.token(1, ['demo'], ['publish', 'yank']);
+    expect((await h.call('PUT', '/api/v1/packages/demo/1.0.0/yank', yank, { yanked: true, reason: 'broken build' })).statusCode).toBe(200);
+    expect(await h.registry.getVersion('demo', '1.0.0')).toMatchObject({ state: 'yanked', source_commit: SHA1 });
+    expect((await served(h)).source_commit).toBe(SHA1);
+    expect((await h.call('PUT', '/api/v1/packages/demo/1.0.0/yank', yank, { yanked: false })).statusCode).toBe(200);
+    expect(await h.registry.getVersion('demo', '1.0.0')).toMatchObject({ state: 'published', source_commit: SHA1 });
+    expect((await served(h)).source_commit).toBe(SHA1);
+  });
+
   test('the registry does not check the value against anything: a commit that is in no repository is stored as it is', async () => {
     const { h } = await single({ source_commit: '0'.repeat(40) });
     await h.runValidator();
