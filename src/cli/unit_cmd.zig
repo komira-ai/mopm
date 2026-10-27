@@ -289,3 +289,29 @@ test "--target-cpu: a known level resolves, none resolves to none, anything else
     try std.testing.expectError(error.Usage, cpuOf(a, parseArgs(&arm).?, &why));
     try std.testing.expect(std.mem.indexOf(u8, why, "no verified Mojo spelling") != null);
 }
+
+// Defect it catches: `mopm unit test` running a test that loads system libraries against the machine's own libraries (the graph's
+// libraries are not on the loader path), or `mopm unit build` refusing the same unit.
+test "unit test refuses a unit that loads system libraries, before it looks at the toolchain; unit build does not" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    const loading_unit =
+        \\{"id": "p@1.0.0#mojo1.0.0/test:tests/test_p.mojo", "package": "p", "version": "1.0.0", "kind": "test", "root": "src/p", "deps": [], "natives": [], "outputs": [], "loads": ["libbrotlicommon"]}
+    ;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile("loads.json", try std.mem.replaceOwned(u8, a, try std.mem.replaceOwned(u8, a, empty_graph, "@U@", loading_unit), "@F@", "3"));
+    try tmp.dir.makePath("tc");
+    try tmp.dir.writeFile("tc/CLOSURE_SHA256", "c\n");
+    try tmp.dir.writeFile("tc/mojo_compile", "not executable\n");
+    const root = try tmp.dir.realpathAlloc(a, ".");
+    var args = Args{ .verb = .@"test", .unit = "p@1.0.0#mojo1.0.0/test:tests/test_p.mojo", .graph = try std.fs.path.join(a, &.{ root, "loads.json" }), .out = try std.fs.path.join(a, &.{ root, "out" }), .toolchain = try std.fs.path.join(a, &.{ root, "tc" }) };
+    // The toolchain is complete, so only the loads refuse the test.
+    try std.testing.expectEqual(exit_refused, try run(a, args, null));
+    // The same unit as a build is not refused for its loads: the run goes on to the wrapper, which here cannot be executed.
+    args.verb = .build;
+    if (run(a, args, null)) |_| {
+        return error.TestUnexpectedResult;
+    } else |e| try std.testing.expect(e != error.Refused);
+}
