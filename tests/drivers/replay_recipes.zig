@@ -7,6 +7,7 @@ const std = @import("std");
 const h = @import("harness.zig");
 const c = @import("contract.zig");
 const tbl = @import("replay_table.zig");
+const gc = @import("replay_group_conflicts.zig");
 const Value = std.json.Value;
 const Allocator = std.mem.Allocator;
 const Step = tbl.Step;
@@ -357,7 +358,8 @@ pub const Grp = struct {
         }
         const out = rsp.body orelse return error.CreateFailed;
         if (uploaded) {
-            for (c.getArr(out, "members"), 0..) |m, i| {
+            for (c.getArr(out, "members")) |m| {
+                const i = try gc.memberIndex(g.names, m);
                 for (c.getArr(m, "files")) |file| try g.put(file, try g.data(i));
             }
         }
@@ -512,16 +514,8 @@ fn groupRecipe(f: *F, e: Entry) !Step {
                 const g = try Grp.init(f, 1);
                 return groupStep(g, "getGroup", "grp_00000000000000000000000000000000");
             }
-            if (std.mem.eql(u8, e.arg, "conflict")) {
-                // The caller may have five groups open: a sixth, sharing nothing with them, has no place.
-                const g = try Grp.init(f, 1);
-                for ([_][]const u8{ "0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0" }) |v| _ = try g.create(v, false);
-                var s = step("createGroup");
-                s.body = try g.body("0.6.0");
-                s.token = g.token;
-                s.auth = "publishToken";
-                return s;
-            }
+            if (std.mem.eql(u8, e.arg, "conflict")) return gc.openCap(f);
+            if (std.mem.eql(u8, e.arg, "overlap_refused")) return gc.overlapRefused(f);
             const g = try Grp.init(f, 2);
             const id = try g.create("0.4.0", true);
             if (std.mem.eql(u8, e.arg, "not_open")) {
@@ -546,7 +540,7 @@ fn groupRecipe(f: *F, e: Entry) !Step {
 
 // ----------------------------------------------------------------- recipes
 
-fn step(op: []const u8) Step {
+pub fn step(op: []const u8) Step {
     return .{ .op = op };
 }
 

@@ -127,9 +127,9 @@ pub fn generate(a: Allocator, spec_text: []const u8, why: ?*[]const u8) anyerror
         \\
     );
     for (code_enum.array.items) |c| try w.print("    {s},\n", .{c.string});
+    try w.writeAll("};\n\n");
+    try writeReasons(a, w, spec, code_enum.array.items, why);
     try w.writeAll(
-        \\};
-        \\
         \\pub const Entry = struct { status: std.http.Status, message: []const u8, hint: []const u8 };
         \\
         \\pub fn entry(code: Code) Entry {
@@ -155,6 +155,37 @@ pub fn generate(a: Allocator, spec_text: []const u8, why: ?*[]const u8) anyerror
     try w.writeAll(tail);
     try w.writeByte('\n');
     return out.items;
+}
+
+/// One enum for each code of `x-mopm-error-reasons` (the values of `error.reason`), named after the code: `group_conflict` gives
+/// `GroupConflictReason`. A spec without the table gets none.
+fn writeReasons(a: Allocator, w: anytype, spec: std.json.Value, codes: []const std.json.Value, why: ?*[]const u8) !void {
+    const reasons = field(spec, "x-mopm-error-reasons") orelse return;
+    if (reasons != .object) return fail(a, why, "x-mopm-error-reasons is not a mapping", error.BadCatalogue);
+    var it = reasons.object.iterator();
+    while (it.next()) |e| {
+        var known = false;
+        for (codes) |c| known = known or (c == .string and std.mem.eql(u8, c.string, e.key_ptr.*));
+        if (!known or e.value_ptr.* != .array or e.value_ptr.array.items.len == 0) {
+            return fail(a, why, try std.fmt.allocPrint(a, "x-mopm-error-reasons: {s} is not a code with a list of reasons", .{e.key_ptr.*}), error.BadCatalogue);
+        }
+        try w.print("/// The `error.reason` values of `{s}` (`x-mopm-error-reasons`).\npub const ", .{e.key_ptr.*});
+        var upper = true;
+        for (e.key_ptr.*) |ch| {
+            if (ch == '_') {
+                upper = true;
+                continue;
+            }
+            try w.writeByte(if (upper) std.ascii.toUpper(ch) else ch);
+            upper = false;
+        }
+        try w.writeAll("Reason = enum {\n");
+        for (e.value_ptr.array.items) |r| {
+            if (r != .string) return fail(a, why, "x-mopm-error-reasons: a reason is not a string", error.BadCatalogue);
+            try w.print("    {s},\n", .{r.string});
+        }
+        try w.writeAll("};\n\n");
+    }
 }
 
 fn field(v: std.json.Value, key: []const u8) ?std.json.Value {

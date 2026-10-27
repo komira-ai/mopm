@@ -357,6 +357,10 @@ test "the fake registry answers the contract's API cases" {
             const want_code = c.getStr(c.get(want_body, "error") orelse .null, "code") orelse "";
             const got_code = c.getStr(c.get(rsp.body orelse .null, "error") orelse .null, "code") orelse "(none)";
             if (!std.mem.eql(u8, got_code, want_code)) try c.problem(a, &problems, "error {s}, the case has {s}", .{ got_code, want_code });
+            // The reason too: a fake that answered another cause for the same code is not what the case documents.
+            const want_reason = c.getStr(c.get(want_body, "error") orelse .null, "reason") orelse "(none)";
+            const got_reason = c.getStr(c.get(rsp.body orelse .null, "error") orelse .null, "reason") orelse "(none)";
+            if (!std.mem.eql(u8, got_reason, want_reason)) try c.problem(a, &problems, "error reason {s}, the case has {s}", .{ got_reason, want_reason });
         }
         if (problems.items.len == 0 and s.check != .none) {
             const ok = chk.runCheck(&f, s, rsp.body orelse .null) catch false;

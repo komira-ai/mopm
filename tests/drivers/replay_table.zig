@@ -189,6 +189,7 @@ pub const table = [_]Entry{
     .{ .op = "getGroup", .name = "error group_not_found", .kind = .group_error, .arg = "not_found" },
     .{ .op = "abortGroup", .name = "error group_not_open", .kind = .group_error, .arg = "not_open" },
     .{ .op = "createGroup", .name = "error group_conflict", .kind = .group_error, .arg = "conflict" },
+    .{ .op = "createGroup", .name = "error group_conflict, overlap refused", .kind = .group_error, .arg = "overlap_refused" },
     .{ .op = "commitGroup", .name = "error group_commit_refused", .kind = .group_error, .arg = "commit_refused" },
     .{ .op = "yankGroup", .name = "error group_not_settled", .kind = .group_error, .arg = "not_settled" },
 };

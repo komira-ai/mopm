@@ -5,6 +5,14 @@ checksums, and this file says what changed. The details of a command are on its 
 
 ## Unreleased
 
+### The registry says why a group could not be created
+
+A `group_conflict` answer now carries an optional `error.reason` (`number_held`, `group_failed`, `open_cap`, `supersede_cap`, `takeover_blocked`,
+`number_taken` or `overlap_refused`), so a client can tell the causes apart without reading the message; a client treats a reason it does not
+know as none. `POST /groups` takes an optional `on_overlap` (`supersede`, the default and today's behaviour, or `refuse`), and its answer lists
+the groups it superseded in `superseded`. `mopm` reads the reason and prints what it printed before. See `spec/api/openapi.yaml` and
+[staged sets](spec/staged-set.md).
+
 ### `mopm build` builds the package; path dependencies are importable; the macOS 14 REPL works
 
 `mopm build` with no program builds what `[targets]` of `mopm.toml` declares, with the `mojo` of the environment: the library as

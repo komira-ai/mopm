@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { AUTH_HTTP_STATUS, AuthError } from '../../src/auth/errors';
 import { HTTP_STATUS, RegistryError } from '../../src/errors';
-import { PUBLISH_CATALOGUE, errorView } from '../../src/publish/catalogue';
+import { PUBLISH_CATALOGUE, PUBLISH_REASONS, errorView } from '../../src/publish/catalogue';
 import { PublishError } from '../../src/publish/errors';
 
 const SPEC = resolve(__dirname, '../../../../spec/api/openapi.yaml');
@@ -51,6 +51,30 @@ describe('the publish error catalogue is the contract\'s', () => {
   });
 });
 
+/** The `x-mopm-error-reasons` table of the contract: code -> the reasons it may carry. */
+function specReasons(): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  let inTable = false;
+  for (const l of readFileSync(SPEC, 'utf8').split('\n')) {
+    if (/^\S/.test(l)) inTable = l.startsWith('x-mopm-error-reasons:');
+    const m = inTable ? /^ {2}(\w+):\s+\[([\w, ]+)\]\s*$/.exec(l) : null;
+    if (m) out[m[1]!] = m[2]!.split(',').map((s) => s.trim());
+  }
+  return out;
+}
+
+describe('error reasons are the contract\'s', () => {
+  test('the reasons a code may carry equal the spec table (the parser found it)', () => {
+    const spec = specReasons();
+    expect(Object.keys(spec)).toEqual(['group_conflict']);
+    expect(PUBLISH_REASONS).toEqual(spec);
+  });
+
+  test('every code that lists reasons is in the catalogue', () => {
+    for (const code of Object.keys(PUBLISH_REASONS)) expect(PUBLISH_CATALOGUE[code]).toBeDefined();
+  });
+});
+
 describe('errorView', () => {
   test('renders templates from the error\'s detail, whichever class raised it', () => {
     expect(errorView(new RegistryError('version_exists', 'x', { name: 'p', version: '1.0.0', sha256: 'ab' })).body.error.message).toBe(
@@ -60,6 +84,18 @@ describe('errorView', () => {
     const rl = errorView(new PublishError('rate_limited', 'x', { retry_after: '9' }, 9));
     expect(rl).toMatchObject({ status: 429, retryAfter: 9 });
     expect(rl.body.error.hint).toBe('Wait 9 seconds; the Retry-After header says how long.');
+  });
+
+  test('a group_conflict carries its reason beside the code, and the message and hint do not change', () => {
+    const plain = errorView(new PublishError('group_conflict', 'x', { detail: 'd' }));
+    const withReason = errorView(new PublishError('group_conflict', 'x', { detail: 'd' }, undefined, 'open_cap'));
+    expect(withReason.body.error).toEqual({ ...plain.body.error, reason: 'open_cap' });
+    expect('reason' in plain.body.error).toBe(false);
+  });
+
+  test('a reason is dropped for a code whose entry lists none, and a value the entry does not list is dropped', () => {
+    expect('reason' in errorView(new PublishError('group_not_open', 'x', {}, undefined, 'open_cap')).body.error).toBe(false);
+    expect('reason' in errorView(new PublishError('group_conflict', 'x', {}, undefined, 'not_a_reason' as never)).body.error).toBe(false);
   });
 
   test('an error that is not ours, or a code the table lacks, is internal_error', () => {

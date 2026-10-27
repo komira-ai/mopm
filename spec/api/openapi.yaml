@@ -592,7 +592,8 @@ paths:
         The token must be an API token with the `publish` scope for every member's package, and the caller must own
         each package. A CI identity token is for one version of one package and cannot create a group. The first member
         that fails any of these refuses the whole group and is named in the error. A number that a published version
-        already holds is `version_exists`; one that another group is still using is `group_conflict`.
+        already holds is `version_exists`; one that another group is still using is `group_conflict`. A
+        `group_conflict` carries a `reason` (see `Error`) that tells the causes apart without reading the message.
 
         The id of a group is a function of the caller and the declared set: the same request again is the same group.
         Repeating it while the group is `open` returns `200` and continues it (a reply with `reserving` has not
@@ -602,7 +603,9 @@ paths:
         `visible` is returned as it is. A `failed` group has burned its numbers: `group_conflict`.
 
         A caller has a limited number of open groups. A different set that shares a version with one of the caller's
-        own open groups supersedes it; a group that is validating is never superseded. A group that is past its
+        own open groups supersedes it; a group that is validating is never superseded. With `on_overlap: refuse` it is
+        refused instead (`group_conflict`, reason `overlap_refused`) and nothing is ended. The groups a create ended are
+        listed in `superseded` of its answer. A group that is past its
         `deadline_at` is expired by the next request that meets it. A group costs its number of files from a daily
         allowance of its own, once per attempt, which is not the allowance of single publishes.
 
@@ -1011,6 +1014,21 @@ components:
             code: { $ref: "#/components/schemas/ErrorCode" }
             message: { type: string, minLength: 1 }
             hint: { type: string }
+            reason:
+              description: |
+                Why the request was refused, for a code that lists reasons (`x-mopm-error-reasons`; today only
+                `group_conflict`). Absent for every other code and may be absent for a listed one. A client MUST treat a
+                reason it does not know like an absent one, and must not parse `message` to learn it. It never holds an id
+                or anything of another account, and it is not part of the message.
+              type: string
+              enum:
+                - number_held
+                - group_failed
+                - open_cap
+                - supersede_cap
+                - takeover_blocked
+                - number_taken
+                - overlap_refused
     ErrorCode:
       description: |
         Stable machine-readable error codes. A client MUST treat a code it does
@@ -1542,6 +1560,16 @@ components:
           minItems: 1
           maxItems: 500
           items: { $ref: "#/components/schemas/GroupMemberRequest" }
+        on_overlap:
+          description: |
+            What to do when the caller's own open groups share a version with this set. `supersede` (the default) ends
+            them, as described under `createGroup`. `refuse` ends nothing: the call is answered `group_conflict` with the
+            reason `overlap_refused`, and the message names the caller's own overlapping group ids. It is not part of
+            the group id, so the same set with either value is the same group. A registry that predates this option
+            ignores it and supersedes, and does not name what it ended in `superseded` either, so a client that must
+            never supersede cannot rely on `refuse` against a registry it has not seen name them.
+          type: string
+          enum: [supersede, refuse]
     GroupStatusName:
       description: Where a group is. A client treats a value it does not know as "unknown".
       type: string
@@ -1590,6 +1618,13 @@ components:
           description: Starts at 1; a group that ended and was created again has the next one.
           type: integer
           minimum: 1
+        superseded:
+          description: |
+            The ids of the caller's own groups this call ended as `superseded`, as the `group_supersede` audit rows record.
+            Absent when it ended none, and on a later call that only continues the group.
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/GroupId" }
         deadline_at: { $ref: "#/components/schemas/Timestamp" }
         reserving:
           description: Present when the call ran out of time before it reached every member; `members` holds the first `done`. Send the same request again.
@@ -1744,3 +1779,8 @@ x-mopm-errors:
   read_only_mode:        { status: 503, message: "The registry is read-only right now; new uploads are refused.", hint: "Installs still work. Try again later." }
   unavailable:           { status: 503, message: "The registry is temporarily unavailable.", hint: "Try again shortly." }
   route_not_found:       { status: 404, message: "There is no such operation.", hint: "Check the request against the API documentation; update mopm if it is old." }
+
+# The values of `error.reason`, for the codes that list them. Additive: a new value may be added; a client treats one it
+# does not know like an absent reason. service/api/test/publish/catalogue.test.ts compares this table with the service.
+x-mopm-error-reasons:
+  group_conflict: [number_held, group_failed, open_cap, supersede_cap, takeover_blocked, number_taken, overlap_refused]

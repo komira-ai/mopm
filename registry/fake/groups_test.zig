@@ -708,3 +708,129 @@ test "a packages token creates and runs a group of exactly its versions, and no 
     try std.testing.expectEqual(@as(usize, 1), try versionsOf(&fx, "new_one"));
     try std.testing.expectEqual(@as(usize, 1), try versionsOf(&fx, "new_two"));
 }
+
+// ---------------------------------------------------------------------------
+// error.reason of a group_conflict, and the on_overlap option
+// ---------------------------------------------------------------------------
+
+fn reasonOf(r: Reply) ?[]const u8 {
+    const e = r.value.object.get("error") orelse return null;
+    const v = e.object.get("reason") orelse return null;
+    return v.string;
+}
+
+/// A group_conflict (409) with `want` as its reason, and the reason in no other place of the answer.
+fn expectConflict(r: Reply, want: []const u8) !void {
+    try expectCode(r, 409, "group_conflict");
+    if (reasonOf(r) == null or !std.mem.eql(u8, reasonOf(r).?, want)) {
+        std.debug.print("want reason {s}, got: {s}\n", .{ want, r.body });
+        return error.TestUnexpectedResult;
+    }
+    const e = r.value.object.get("error").?.object;
+    try std.testing.expectEqual(@as(usize, 4), e.count());
+    try std.testing.expect(std.mem.indexOf(u8, e.get("message").?.string, want) == null);
+    try std.testing.expect(std.mem.indexOf(u8, e.get("hint").?.string, want) == null);
+}
+
+/// `body` (a create request) with `"on_overlap":<json>` added.
+fn withOverlap(fx: *Fx, body: []const u8, json: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(fx.life.allocator(), "{s},\"on_overlap\":{s}}}", .{ body[0 .. body.len - 1], json });
+}
+
+test "a group_conflict carries the reason of its cause at every site the fake has" {
+    var fx: Fx = undefined;
+    try fx.setup();
+    defer fx.deinit();
+    const only_a: []const []const u8 = &.{"pkg_a"};
+    // number_held: bob meets alice's open group.
+    _ = try fx.call(.POST, "/api/v1/groups", try fx.request(only_a, "1.0.0", "x"), fx.alice_token);
+    try expectConflict(try fx.call(.POST, "/api/v1/groups", try fx.request(only_a, "1.0.0", "y"), fx.bob_token), "number_held");
+    // number_held again, for the caller's own group once it is validating (never superseded).
+    fx.state.groups.items[0].status = .validating;
+    try expectConflict(try fx.call(.POST, "/api/v1/groups", try fx.request(&.{ "pkg_a", "pkg_b" }, "1.0.0", "y"), fx.alice_token), "number_held");
+    // group_failed: the same request again for a group that failed.
+    fx.state.groups.items[0].status = .failed;
+    try expectConflict(try fx.call(.POST, "/api/v1/groups", try fx.request(only_a, "1.0.0", "x"), fx.alice_token), "group_failed");
+}
+
+test "open_cap and supersede_cap" {
+    var fx: Fx = undefined;
+    try fx.setup();
+    defer fx.deinit();
+    var i: usize = 0;
+    while (i < 5) : (i += 1) {
+        const version = try std.fmt.allocPrint(fx.life.allocator(), "{d}.0.0", .{i + 1});
+        try std.testing.expectEqual(@as(u16, 201), (try fx.call(.POST, "/api/v1/groups", try fx.request(&.{"pkg_a"}, version, "x"), fx.alice_token)).status);
+    }
+    try expectConflict(try fx.call(.POST, "/api/v1/groups", try fx.request(&.{"pkg_b"}, "1.0.0", "x"), fx.alice_token), "open_cap");
+
+    // Four packages whose versions four open groups hold: one create over all four supersedes more than three.
+    var other: Fx = undefined;
+    try other.setup();
+    defer other.deinit();
+    const s = &other.state;
+    const p = try s.addPackage(.{ .name = "pkg_d", .created_at = s.now(), .updated_at = s.now(), .claim_expires_at = s.now() + st.claim_secs });
+    try p.owners.append(other.life.allocator(), other.alice);
+    const four: []const []const u8 = &.{ "pkg_a", "pkg_b", "pkg_c", "pkg_d" };
+    const token = (try s.addToken(.{ .id = "t9", .secret = "four-secret", .kind = .api, .user = other.alice, .scopes = &.{.publish}, .packages = four, .created_at = s.now(), .expires_at = s.now() + st.day })).secret;
+    for (four) |n| try std.testing.expectEqual(@as(u16, 201), (try other.call(.POST, "/api/v1/groups", try other.request(&.{n}, "1.0.0", "x"), token)).status);
+    try expectConflict(try other.call(.POST, "/api/v1/groups", try other.request(four, "1.0.0", "y"), token), "supersede_cap");
+    // Refusing overlap is decided first: the same create with refuse is overlap_refused.
+    try expectConflict(try other.call(.POST, "/api/v1/groups", try withOverlap(&other, try other.request(four, "1.0.0", "y"), "\"refuse\""), token), "overlap_refused");
+}
+
+test "on_overlap refuse: nothing is superseded, the old group stays open with its rows held, and the answer names it" {
+    var fx: Fx = undefined;
+    try fx.setup();
+    defer fx.deinit();
+    const old = try fx.call(.POST, "/api/v1/groups", try fx.request(&.{"pkg_a"}, "1.0.0", "x"), fx.alice_token);
+    const refused = try fx.call(.POST, "/api/v1/groups", try withOverlap(&fx, try fx.request(abc, "1.0.0", "y"), "\"refuse\""), fx.alice_token);
+    try expectConflict(refused, "overlap_refused");
+    try std.testing.expect(std.mem.indexOf(u8, refused.body, idOf(old)) != null);
+    try std.testing.expectEqualStrings("open", try fx.status(idOf(old)));
+    // No group was made, and the row of pkg_a is still the old group's.
+    try std.testing.expectEqual(@as(usize, 1), fx.state.groups.items.len);
+    try std.testing.expect(fx.state.packageByName("pkg_a").?.versions.items[0].group.? == fx.state.groups.items[0]);
+    try std.testing.expectEqual(@as(usize, 0), fx.state.packageByName("pkg_b").?.versions.items.len);
+    // The same set without the option (or with supersede) replaces it.
+    const replaced = try fx.call(.POST, "/api/v1/groups", try fx.request(abc, "1.0.0", "y"), fx.alice_token);
+    try std.testing.expectEqual(@as(u16, 201), replaced.status);
+    try std.testing.expectEqualStrings("superseded", try fx.status(idOf(old)));
+}
+
+test "the default is supersede, and the answer lists the groups it ended; no key when it ended none" {
+    var fx: Fx = undefined;
+    try fx.setup();
+    defer fx.deinit();
+    const old = try fx.call(.POST, "/api/v1/groups", try fx.request(&.{"pkg_a"}, "1.0.0", "x"), fx.alice_token);
+    try std.testing.expect(old.value.object.get("superseded") == null);
+    const next = try fx.call(.POST, "/api/v1/groups", try withOverlap(&fx, try fx.request(&.{ "pkg_a", "pkg_b" }, "1.0.0", "y"), "\"supersede\""), fx.alice_token);
+    try std.testing.expectEqual(@as(u16, 201), next.status);
+    const list = next.value.object.get("superseded").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), list.len);
+    try std.testing.expectEqualStrings(idOf(old), list[0].string);
+    try std.testing.expectEqualStrings("superseded", try fx.status(idOf(old)));
+    // Asked for again, the group is only continued: it ended nothing this time.
+    const again = try fx.call(.POST, "/api/v1/groups", try fx.request(&.{ "pkg_a", "pkg_b" }, "1.0.0", "y"), fx.alice_token);
+    try std.testing.expectEqual(@as(u16, 200), again.status);
+    try std.testing.expect(again.value.object.get("superseded") == null);
+}
+
+test "on_overlap refuse with nothing overlapping creates the group; an unknown value is invalid_request; the option is not in the group id" {
+    var fx: Fx = undefined;
+    try fx.setup();
+    defer fx.deinit();
+    const body = try fx.request(&.{"pkg_a"}, "1.0.0", "x");
+    for ([_][]const u8{ "\"replace\"", "5", "null", "true", "[\"refuse\"]" }) |bad| {
+        const r = try fx.call(.POST, "/api/v1/groups", try withOverlap(&fx, body, bad), fx.alice_token);
+        try expectCode(r, 400, "invalid_request");
+        try std.testing.expect(reasonOf(r) == null);
+    }
+    try std.testing.expectEqual(@as(usize, 0), fx.state.groups.items.len);
+    const refuse = try fx.call(.POST, "/api/v1/groups", try withOverlap(&fx, body, "\"refuse\""), fx.alice_token);
+    try std.testing.expectEqual(@as(u16, 201), refuse.status);
+    try std.testing.expect(refuse.value.object.get("superseded") == null);
+    const plain = try fx.call(.POST, "/api/v1/groups", body, fx.alice_token);
+    try std.testing.expectEqual(@as(u16, 200), plain.status);
+    try std.testing.expectEqualStrings(idOf(refuse), idOf(plain));
+}
