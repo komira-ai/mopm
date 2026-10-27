@@ -154,7 +154,7 @@ export class Harness {
     return { github_id, handle, token: await this.token(github_id, packages, ['publish']) };
   }
 
-  async token(github_id: number, packages: string[], scopes: Array<'publish' | 'yank'>): Promise<string> {
+  async token(github_id: number, packages: string[], scopes: Array<'publish' | 'yank' | 'stage'>): Promise<string> {
     const t = this.clock.now();
     const m = await mintToken(this.authStore, {
       kind: 'api',

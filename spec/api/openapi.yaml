@@ -161,7 +161,7 @@ paths:
       tags: [auth]
       summary: Exchange a CI identity token for a short-lived publish token.
       description: |
-        The token is valid for 10 minutes, may only publish, and only for the
+        The token is valid for 10 minutes, may only publish (or, with `purpose: stage`, only stage), and only for the
         package versions named in the request (one, or the `packages` list). The CI identity must
         match a trusted publisher registered for the package: its repository
         and owner ids, workflow file and (when the publisher names one)
@@ -169,6 +169,12 @@ paths:
         publisher names another) and the event that started it (a push or a
         manual dispatch). A CI identity token can be exchanged once; a second
         exchange of the same token is refused as `oidc_token_invalid`.
+
+        `purpose` is optional: `publish` (the default, the token this call has always minted) or `stage`. A `stage` token
+        has the one scope `stage`: the same packages, versions, owner and life as the `publish` token of the same request,
+        but it can only prepare a group (`createGroup`, `getGroup`, `abortGroup`); `commitGroup`, `commitPublish`, `setYanked`
+        and `yankGroup` refuse it as `scope_missing`. Who may be minted either token is unchanged. Any other `purpose` is
+        `invalid_request`, before the CI identity token is spent.
       security: []
       requestBody:
         required: true
@@ -177,7 +183,7 @@ paths:
             schema: { $ref: "#/components/schemas/OidcExchangeRequest" }
       responses:
         "200":
-          description: A publish token for one package version.
+          description: A publish (or, for `purpose: stage`, a stage) token for one package version.
           headers:
             x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
           content:
@@ -349,6 +355,8 @@ paths:
         The only way to create a package. A claim with no published version
         expires after 30 days. A name that is too similar to an existing one
         needs `confirm_similar`.
+        An API token that has only the `stage` scope is refused (`scope_missing`): a claim makes the caller the owner, and `stage`
+        reaches nothing that changes ownership.
       security:
         - userToken: []
       parameters:
@@ -589,7 +597,7 @@ paths:
         reserves the version numbers; the caller then PUTs each file to the URL it is given. Creating a group
         publishes nothing and makes nothing visible.
 
-        The token must be an API token with the `publish` scope for every member's package, and the caller must own
+        The token must be an API token with the `publish` or `stage` scope for every member's package, and the caller must own
         each package. A CI identity token is for one version of one package and cannot create a group. The first member
         that fails any of these refuses the whole group and is named in the error. A number that a published version
         already holds is `version_exists`; one that another group is still using is `group_conflict`. A
@@ -627,6 +635,7 @@ paths:
         Group publishing is off unless the registry has enabled it for the caller. Until then this call is answered
         `route_not_found`; reading and aborting a group that exists keep working.
       security:
+        - stageToken: []
         - publishToken: []
       requestBody:
         required: true
@@ -660,10 +669,11 @@ paths:
         yet), `reserved`, `staged`, `published` or `yanked`. Each member also lists its `files`: the facts the caller declared at
         `createGroup`, and, while the group is `open`, whether each file is in storage. The read reserves and charges nothing (it only
         expires a group past its deadline), so it is the way to see a group, whatever its status, without `createGroup` (which reopens a group that ended).
-        Readable by the caller who created the group and by an owner of every
+        Needs a token with `stage` or `publish`. Readable by the caller who created the group and by an owner of every
         package in it; anyone else gets `group_not_found`. A group past its deadline that was still open is expired
         by this read.
       security:
+        - stageToken: []
         - publishToken: []
       parameters:
         - { $ref: "#/components/parameters/GroupId" }
@@ -683,8 +693,9 @@ paths:
       description: |
         Ends a group that is `open`. Its reserved version numbers are free again: another group, or a single publish,
         may take them. Repeating the call on an aborted group is a no-op and returns 200. A group in any other state
-        (`validating`, `committed`, `expired`, ...) is `group_not_open`. Allowed for the same callers as `getGroup`.
+        (`validating`, `committed`, `expired`, ...) is `group_not_open`. Allowed for the same callers as `getGroup`: a token with `stage` or `publish`.
       security:
+        - stageToken: []
         - publishToken: []
       parameters:
         - { $ref: "#/components/parameters/GroupId" }
@@ -721,6 +732,9 @@ paths:
         A group that is not open (`aborted`, `expired`, `rejected`, ...) is refused with `group_commit_refused`; create it
         again with the same request to open it again. A commit is a write: read-only mode refuses it. It is not gated by the
         switch that enables group creation, since a group that exists is finished whatever the switch says.
+
+        The token must have the `publish` scope (or, for a CI identity token, be the `publish` token of the exchange). A token with
+        only `stage` is refused as `scope_missing`, and the group stays as it was.
 
         The request is one body: it holds the display fields of every member (a readme is up to 64 KiB), so a group of many
         members with readmes can exceed what the gateway accepts.
@@ -844,7 +858,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: mopm token
-      description: "Any live token of a user: a session token or an API token."
+      description: "Any live token of a user: a session token or an API token (but a claim refuses an API token that has only the `stage` scope)."
     freshSession:
       type: http
       scheme: bearer
@@ -865,6 +879,15 @@ components:
       scheme: bearer
       bearerFormat: mopm token
       description: An API token with the `yank` scope for the package.
+    stageToken:
+      type: http
+      scheme: bearer
+      bearerFormat: mopm token
+      description: |
+        An API token with the `stage` scope for the package, or a token from the OIDC exchange with `purpose: stage`
+        for exactly this package and version. Accepted only where an operation lists it (`createGroup`, `getGroup`,
+        `abortGroup`); `publishToken` is accepted there too. No other operation takes it: a commit needs `publishToken`
+        and a yank needs `yankToken` or `publishToken`.
 
   headers:
     RequestId:
@@ -1173,13 +1196,17 @@ components:
         Two forms. `name` and `version`: a token for that one package version, for a package with a trusted
         publisher. `packages`: one token for every listed package version, for a CI publisher the deployment
         trusts by configuration (a package nobody has claimed is created, owned by the publisher). Send one form,
-        not both; a name is listed once.
+        not both; a name is listed once. Either form takes the optional `purpose`.
       required: [jwt]
       oneOf:
         - required: [name, version]
         - required: [packages]
       properties:
         jwt: { type: string, minLength: 1 }
+        purpose:
+          description: What the token is for. `publish` is the default; `stage` mints a token that cannot commit or yank.
+          type: string
+          enum: [publish, stage]
         name: { $ref: "#/components/schemas/Name" }
         version: { $ref: "#/components/schemas/Version" }
         packages:
@@ -1203,7 +1230,7 @@ components:
         - required: [packages]
       properties:
         token: { $ref: "#/components/schemas/Token" }
-        token_kind: { type: string, enum: [publish] }
+        token_kind: { type: string, enum: [publish, stage] }
         expires_at: { $ref: "#/components/schemas/Timestamp" }
         name: { $ref: "#/components/schemas/Name" }
         version: { $ref: "#/components/schemas/Version" }
@@ -1228,8 +1255,12 @@ components:
           items: { $ref: "#/components/schemas/Name" }
         pending_invitations: { type: integer, minimum: 0 }
     TokenScope:
+      description: |
+        `publish` creates, uploads, reads, aborts and commits groups and publishes single versions; it may also yank.
+        `yank` yanks. `stage` prepares a group (create, read, abort) and nothing else: it cannot commit a group, publish a
+        single version, yank or claim a package, and it is not enough alone where `publish` or `yank` is asked for.
       type: string
-      enum: [publish, yank]
+      enum: [publish, yank, stage]
     TokenPackages:
       description: An explicit package list, or the string `all_current`.
       oneOf:

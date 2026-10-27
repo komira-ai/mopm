@@ -26,6 +26,7 @@ const resp = @import("resp.zig");
 const Response = resp.Response;
 const util = @import("util.zig");
 const auth = @import("auth.zig");
+const token_scopes = @import("token_scopes.zig");
 const publish = @import("publish.zig");
 const channel = @import("files.zig");
 
@@ -458,7 +459,7 @@ pub fn createGroup(ctx: *Ctx, _: []const []const u8) anyerror!Response {
     // A group is made with an API token that may publish every member, or with the token of a `packages` exchange that names
     // every member at its version. The token of the single-package exchange is for one version of one package: no group.
     for (members) |m| {
-        if (!(tokenCovers(t, m.name, &.{.publish}) or oidcSetCovers(t, m.name, m.version))) {
+        if (!(tokenCovers(t, m.name, &.{ .publish, .stage }) or oidcSetCovers(t, m.name, m.version))) {
             return resp.fail(ctx.arena, .scope_missing, &.{ .{ "scope", "publish" }, .{ "name", m.name } });
         }
     }
@@ -661,6 +662,7 @@ pub fn getGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .ok => |t| t,
         .fail => |r| return r,
     };
+    if (!token_scopes.mayStage(t)) return resp.fail(ctx.arena, .scope_missing, &.{ .{ "scope", "publish" }, .{ "name", "this group" } });
     const g = switch (try load(ctx, t, params[0])) {
         .ok => |g| g,
         .fail => |r| return r,
@@ -676,6 +678,7 @@ pub fn abortGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .ok => |t| t,
         .fail => |r| return r,
     };
+    if (!token_scopes.mayStage(t)) return resp.fail(ctx.arena, .scope_missing, &.{ .{ "scope", "publish" }, .{ "name", "this group" } });
     const g = switch (try load(ctx, t, params[0])) {
         .ok => |g| g,
         .fail => |r| return r,
@@ -875,6 +878,7 @@ pub fn commitGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .ok => |t| t,
         .fail => |r| return r,
     };
+    if (!token_scopes.mayCommit(t)) return resp.fail(ctx.arena, .scope_missing, &.{ .{ "scope", "publish" }, .{ "name", "this group" } });
     const g = switch (try load(ctx, t, params[0])) {
         .ok => |g| g,
         .fail => |r| return r,

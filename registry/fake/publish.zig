@@ -52,7 +52,7 @@ fn scoped(ctx: *Ctx, name: []const u8, version: ?[]const u8, scopes: []const st.
             }
             break :blk has_scope and covers;
         },
-        .oidc => std.mem.indexOfScalar(st.Scope, scopes, .publish) != null and
+        .oidc => std.mem.indexOfScalar(st.Scope, scopes, .publish) != null and !t.oidc_stage and
             std.mem.eql(u8, t.oidc_package, name) and
             (version == null or versions.same(t.oidc_version, version.?)),
     };

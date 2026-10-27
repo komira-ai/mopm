@@ -173,7 +173,7 @@ pub fn createToken(ctx: *Ctx, _: []const []const u8) anyerror!Response {
             .string => |w| w,
             else => return resp.invalid(ctx.arena, "each scope must be a string"),
         };
-        const scope = std.meta.stringToEnum(st.Scope, word) orelse return resp.invalid(ctx.arena, "a scope is publish or yank");
+        const scope = std.meta.stringToEnum(st.Scope, word) orelse return resp.invalid(ctx.arena, "a scope is publish, yank or stage");
         if (std.mem.indexOfScalar(st.Scope, scopes.items, scope) != null) return resp.invalid(ctx.arena, "'scopes' repeats a scope");
         try scopes.append(scope);
     }
@@ -299,7 +299,7 @@ fn oidcRepository(ctx: *Ctx, jwt: []const u8) ?[]const u8 {
 /// The `packages` form: `{jwt, packages: [{name, version}]}` (1 to 100 entries, no name twice). For a CI publisher the
 /// deployment trusts by configuration; every name must be unclaimed (it is created, owned by the publisher) or already the
 /// publisher's, else `not_owner` and nothing is created. The one token may publish exactly those versions.
-fn exchangePackages(ctx: *Ctx, obj: std.json.ObjectMap, jwt: []const u8) anyerror!Response {
+fn exchangePackages(ctx: *Ctx, obj: std.json.ObjectMap, jwt: []const u8, stage: bool) anyerror!Response {
     if (obj.get("name") != null or obj.get("version") != null) return resp.invalid(ctx.arena, "send 'packages' or 'name' and 'version', not both");
     const list = switch (obj.get("packages").?) {
         .array => |arr| arr.items,
@@ -351,21 +351,31 @@ fn exchangePackages(ctx: *Ctx, obj: std.json.ObjectMap, jwt: []const u8) anyerro
         .user = owner,
         .oidc_repository = try s.alloc.dupe(u8, repository),
         .oidc_set = kept,
+        .oidc_stage = stage,
         .created_at = now,
         .expires_at = now + st.oidc_secs,
     });
     return resp.json(ctx.arena, .ok, .{
         .token = t.secret,
-        .token_kind = "publish",
+        .token_kind = kindOf(stage),
         .expires_at = try util.rfc3339(ctx.arena, t.expires_at),
         .packages = kept,
     });
 }
 
+fn kindOf(stage: bool) []const u8 {
+    return if (stage) "stage" else "publish";
+}
+
 pub fn exchangeOidcToken(ctx: *Ctx, _: []const []const u8) anyerror!Response {
     const obj = ctx.object() orelse return resp.invalid(ctx.arena, "the body is not a JSON object");
     const jwt = util.getStr(obj, "jwt") orelse return resp.invalid(ctx.arena, "'jwt' must be a string");
-    if (obj.get("packages") != null) return exchangePackages(ctx, obj, jwt);
+    // `purpose` is `publish` (the default) or `stage`: anything else is the caller's mistake, found before the token is looked at.
+    const stage = if (obj.get("purpose")) |v| switch (v) {
+        .string => |w| if (std.mem.eql(u8, w, "stage")) true else if (std.mem.eql(u8, w, "publish")) false else return resp.invalid(ctx.arena, "'purpose' is publish or stage"),
+        else => return resp.invalid(ctx.arena, "'purpose' is publish or stage"),
+    } else false;
+    if (obj.get("packages") != null) return exchangePackages(ctx, obj, jwt, stage);
     const name = util.getStr(obj, "name") orelse return resp.invalid(ctx.arena, "'name' must be a string");
     const version = util.getStr(obj, "version") orelse return resp.invalid(ctx.arena, "'version' must be a string");
     if (!util.isName(name)) return resp.fail(ctx.arena, .invalid_name, &.{.{ "name", name }});
@@ -385,12 +395,13 @@ pub fn exchangeOidcToken(ctx: *Ctx, _: []const []const u8) anyerror!Response {
             .oidc_package = p.name,
             .oidc_version = try s.alloc.dupe(u8, version),
             .oidc_repository = r,
+            .oidc_stage = stage,
             .created_at = now,
             .expires_at = now + st.oidc_secs,
         });
         return resp.json(ctx.arena, .ok, .{
             .token = t.secret,
-            .token_kind = "publish",
+            .token_kind = kindOf(stage),
             .expires_at = try util.rfc3339(ctx.arena, t.expires_at),
             .name = p.name,
             .version = t.oidc_version,
