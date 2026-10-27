@@ -80,6 +80,7 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
         'POST /api/v1/auth/device',
         'POST /api/v1/auth/device/poll',
         'POST /api/v1/auth/oidc/exchange',
+        'GET /api/v1/me',
         'POST /api/v1/me/tokens',
         'GET /api/v1/me/tokens',
         'DELETE /api/v1/me/tokens/{token_id}',
@@ -87,7 +88,7 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
         'GET /index/{proxy+}',
       ].sort(),
     );
-    expect(AUTH_ROUTES).toHaveLength(6);
+    expect(AUTH_ROUTES).toHaveLength(7);
     expect(CLAIM_ROUTES.map((r) => `${r.method} ${r.path}`)).toEqual(['POST /api/v1/packages/{name}/claim']);
     expect(keys).toHaveLength(READ_ROUTES.length + PUBLISH_ROUTES.length + AUTH_ROUTES.length + CLAIM_ROUTES.length + 2);
     // Claim is POST only (a GET of `.../claim` is the version route's, which the handler refuses); yank (PUT) is routed too.
@@ -128,6 +129,20 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     expect(settings[INDEX_READER_ROUTE]).toEqual(limits);
     for (const fn of Object.values(t.findResources('AWS::Lambda::Function')) as any[]) {
       expect(fn.Properties.ReservedConcurrentExecutions).toBeUndefined();
+    }
+  });
+
+  // The route added for `mopm whoami` (GET /api/v1/me): a stage that named it in RouteSettings before CloudFormation created it would
+  // fail the update, so no stage setting names it (the index routes are the only ones), and the route exists exactly once.
+  test('GET /api/v1/me is one gateway route to the API function and no stage RouteSettings entry names it', () => {
+    const key = 'GET /api/v1/me';
+    expect(AUTH_ROUTES.filter((r) => r.method === 'GET' && r.path === '/api/v1/me')).toHaveLength(1);
+    const routes = Object.values(t.findResources('AWS::ApiGatewayV2::Route')) as any[];
+    expect(routes.filter((r) => r.Properties.RouteKey === key)).toHaveLength(1);
+    expect(functionOf(key)).toBe('http/lambda.handler');
+    for (const stageRes of Object.values(t.findResources('AWS::ApiGatewayV2::Stage')) as any[]) {
+      expect(Object.keys(stageRes.Properties.RouteSettings ?? {})).not.toContain(key);
+      expect(JSON.stringify(stageRes.Properties)).not.toContain('/api/v1/me');
     }
   });
 

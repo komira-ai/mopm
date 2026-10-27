@@ -720,7 +720,7 @@ filegroup(
         "index-config.schema.json": "spec/index-config.schema.json",
         "takedowns.schema.json": "spec/takedowns.schema.json",
     },
-    visibility = ["//service/api:"],
+    visibility = ["//service/api:", "//service/infra/stacks:"],
 )
 
 # pack's map from a native dependency to its conda package: the registry's native allow-list test reads it.

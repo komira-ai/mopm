@@ -5,6 +5,10 @@ checksums, and this file says what changed. The details of a command are on its 
 
 ## Unreleased
 
+### `mopm whoami` works against the hosted registry
+
+`GET /api/v1/me` (the operation `mopm whoami` calls) is now served: it answers the account behind a session or an API token with its GitHub id, handle and the packages it owns, and `pending_invitations` is always 0 because invitations are not served yet. A CI token is refused as `scope_missing`. Before this, the hosted registry answered `route_not_found` and only the registry that `mopm` runs against in tests served it.
+
 ### `[package] publish = false` keeps a workspace member out of publishing
 
 Additive: a manifest without the key behaves as before. A package with `publish = false` (a test-support helper that other members use by `path`) is left out by `mopm stage` when no package is named, with one line saying so, and refused by `mopm stage <name>`, `mopm pack` and `mopm publish`. A package that is published may not have one in its `[dependencies]`; its `[dev-dependencies]` may. Every other command reads it like any package. A value that is not `true` or `false` is refused, naming the key. See [configuration](docs/configuration.md) and [publishing a workspace](docs/publishing-a-workspace.md).
