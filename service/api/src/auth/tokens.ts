@@ -128,7 +128,7 @@ export class TokenService {
     const bad = (detail: string) => new AuthError('invalid_request', `The request is not valid: ${detail}.`, { detail });
     if (typeof input.name !== 'string' || input.name.length < 1 || input.name.length > 80) throw bad('name must be 1 to 80 characters');
     if (!Array.isArray(input.scopes) || input.scopes.length < 1) throw bad('scopes must not be empty');
-    for (const s of input.scopes) if (s !== 'publish' && s !== 'yank') throw bad(`unknown scope '${String(s)}'`);
+    for (const s of input.scopes) if (s !== 'publish' && s !== 'yank' && s !== 'stage') throw bad(`unknown scope '${String(s)}'`);
     if (!Number.isInteger(input.expires_in_days) || input.expires_in_days < 1 || input.expires_in_days > 90) {
       throw bad('expires_in_days must be an integer from 1 to 90');
     }
@@ -247,10 +247,23 @@ export class Authenticator {
     return id;
   }
 
-  /** `publishToken`: an API token with `publish` for the package, or a CI token for exactly this package and version. */
+  /** `publishToken`: an API token with `publish` for the package, or a CI token for exactly this package and version. `stage` is not enough. */
   publishToken(p: Principal, name: string, version: string): void {
+    this.covered(p, name, version, ['publish'], 'publish');
+  }
+
+  /**
+   * `stageToken`: what `publishToken` accepts, or the same token with `stage` instead of `publish`. For the steps that only prepare a
+   * group (create, read, abort); a commit and a yank never use it. The refusal names `publish`, the scope that always works.
+   */
+  stageToken(p: Principal, name: string, version: string): void {
+    this.covered(p, name, version, ['publish', 'stage'], 'publish');
+  }
+
+  private covered(p: Principal, name: string, version: string, scopes: TokenScope[], named: string): void {
+    const has = scopes.some((s) => p.scopes.includes(s));
     if (p.kind === 'oidc') {
-      if (!p.scopes.includes('publish') || !p.packages.includes(name)) throw missingScope('publish', name);
+      if (!has || !p.packages.includes(name)) throw missingScope(named, name);
       if (p.versions !== undefined) {
         // A configured CI publisher's token: the versions it was minted for, package by package.
         const v = Object.prototype.hasOwnProperty.call(p.versions, name) ? p.versions[name] : undefined;
@@ -258,10 +271,10 @@ export class Authenticator {
       } else if (p.packages.length === 1 && p.version !== undefined && sameVersion(p.version, version)) {
         return;
       }
-    } else if (p.kind === 'api' && p.scopes.includes('publish') && p.packages.includes(name)) {
+    } else if (p.kind === 'api' && has && p.packages.includes(name)) {
       return;
     }
-    throw missingScope('publish', name);
+    throw missingScope(named, name);
   }
 
   /** `yankToken`: an API token with `yank` (or `publish`, which the spec lets yank) for the package. */

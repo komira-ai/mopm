@@ -31,7 +31,8 @@ pub const User = struct { github_id: u64, handle: []const u8 };
 
 pub const TokenKind = enum { session, api, oidc };
 
-pub const Scope = enum { publish, yank };
+/// `stage` prepares a group (create, read, abort) and nothing else.
+pub const Scope = enum { publish, yank, stage };
 
 pub const Token = struct {
     id: []const u8,
@@ -56,6 +57,8 @@ pub const Token = struct {
     oidc_repository: []const u8 = "",
     /// OIDC tokens of the `packages` form only: the package versions they may publish (they hold no `oidc_package`).
     oidc_set: []const NameVersion = &.{},
+    /// OIDC tokens minted with `purpose: stage`: they prepare a group and never commit or yank.
+    oidc_stage: bool = false,
 };
 
 pub const NameVersion = struct { name: []const u8, version: []const u8 };

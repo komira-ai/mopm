@@ -119,7 +119,7 @@ export async function routePublish(req: HttpRequest, api: PublishApi, requestId:
     // look at, or end, a group that exists.
     if (isGroupGet || isGroupAbort) {
       const principal = await api.auth.authenticate(authorization);
-      requirePublishScope(principal);
+      requireStageScope(principal);
       const groups = api.groups!;
       return respond(200, requestId, isGroupGet ? await groups.get(principal, seg[1]!) : await groups.abort(principal, seg[1]!));
     }
@@ -202,7 +202,7 @@ function authorizeYank(auth: Authenticator, p: Principal, name: string, version:
 }
 
 /**
- * A group is created with an API token that has `publish` for every member's package, or with the token of a configured CI
+ * A group is created with an API token that has `publish` (or `stage`) for every member's package, or with the token of a configured CI
  * publisher (`ci_owner`) minted for exactly every member's package and version. Any other CI token is valid for one version of one
  * package and creates no group. The first member the token does not cover is named.
  */
@@ -210,8 +210,14 @@ function authorizeGroup(auth: Authenticator, p: Principal, req: GroupRequest): v
   const ci = p.kind === 'oidc' && (p.ci_owner !== undefined || p.acts_via !== undefined);
   for (const m of req.members) {
     if (p.kind !== 'api' && !ci) throw new AuthError('scope_missing', `The token does not have the 'publish' scope for '${m.name}'.`, { scope: 'publish', name: m.name });
-    auth.publishToken(p, m.name, m.version);
+    auth.stageToken(p, m.name, m.version);
   }
+}
+
+/** Reading or aborting a group: a token that may stage or publish (an API or CI token). Committing and yanking never come here. */
+function requireStageScope(p: Principal): void {
+  if ((p.kind === 'api' || p.kind === 'oidc') && (p.scopes.includes('publish') || p.scopes.includes('stage'))) return;
+  throw new AuthError('scope_missing', "The token does not have the 'publish' scope for 'this publish'.", { scope: 'publish', name: 'this publish' });
 }
 
 /** Status is readable by the caller who made the publish: a token that can publish (an API or CI token). */

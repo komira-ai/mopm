@@ -5,6 +5,14 @@ checksums, and this file says what changed. The details of a command are on its 
 
 ## Unreleased
 
+### The registry has a `stage` token scope and a `stage` purpose for the CI exchange
+
+Additive: every token and request that worked keeps working as it did. A token with the new scope `stage` may create, read and abort a group, and
+nothing else: committing a group, publishing a single version and yanking (a version or a group) are refused as `scope_missing`, whatever else the
+token holds. `POST /auth/oidc/exchange` takes an optional `purpose` (`publish`, the default, or `stage`); `stage` mints the same token for the same
+packages and versions with the one scope `stage`, and answers `token_kind` `stage`. Any other `purpose` is `invalid_request`. Who may mint a
+publish token is unchanged. `mopm` does not ask for a stage token yet. See `spec/api/openapi.yaml` and [staged sets](spec/staged-set.md).
+
 ### The registry shows a group's files, names a version's group, and takes a commit without `manifest_sha256`
 
 All three are additive. `GET /groups/{id}` lists each member's declared `files` (`subdir`, `filename`, `sha256`, `size`), and, while the group is

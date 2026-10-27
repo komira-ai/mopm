@@ -420,3 +420,45 @@ describe('matching helpers', () => {
     expect(matchesTrustedPublisher({ ...tp, workflow: '.github/workflows/release.yml.bak' }, claims())).toBe(false);
   });
 });
+
+describe('OIDC exchange: the purpose of the token', () => {
+  const ask = (s: ReturnType<typeof setup>, purpose?: unknown) =>
+    ({ jwt: signJwt(key, goodClaims(s.clock)), name: 'widgets', version: '1.0.0', ...(purpose !== undefined ? { purpose } : {}) }) as never;
+
+  test('stage mints a stage-only token with the same package, version and ten minute life', async () => {
+    const s = setup();
+    await s.store.addTrustedPublisher(s.tp);
+    const r = await s.oidc.exchange(ask(s, 'stage'));
+    expect(r.token_kind).toBe('stage');
+    expect(r.expires_at).toBe(new Date(s.clock.t + 10 * 60_000).toISOString());
+    expect(s.store.dumpTokens().map((t) => t.scopes)).toEqual([['stage']]);
+    const p = await s.auth.authenticate(`Bearer ${r.token}`);
+    expect(p.scopes).toEqual(['stage']);
+    expect(() => s.auth.stageToken(p, 'widgets', '1.0.0')).not.toThrow();
+    expect(() => s.auth.stageToken(p, 'widgets', '1.0.1')).toThrow(expect.objectContaining({ code: 'scope_missing' }));
+    expect(() => s.auth.stageToken(p, 'other', '1.0.0')).toThrow(expect.objectContaining({ code: 'scope_missing' }));
+    expect(() => s.auth.publishToken(p, 'widgets', '1.0.0')).toThrow(expect.objectContaining({ code: 'scope_missing' }));
+    expect(() => s.auth.yankToken(p, 'widgets')).toThrow(expect.objectContaining({ code: 'scope_missing' }));
+  });
+
+  test('no purpose and purpose publish mint the publish token', async () => {
+    const s = setup();
+    await s.store.addTrustedPublisher(s.tp);
+    const a = await s.oidc.exchange(ask(s));
+    const b = await s.oidc.exchange(ask(s, 'publish'));
+    expect([a.token_kind, b.token_kind]).toEqual(['publish', 'publish']);
+    expect(s.store.dumpTokens().map((t) => t.scopes)).toEqual([['publish'], ['publish']]);
+    const p = await s.auth.authenticate(`Bearer ${a.token}`);
+    expect(() => s.auth.publishToken(p, 'widgets', '1.0.0')).not.toThrow();
+  });
+
+  test.each(['admin', 'Stage', '', 5, null, ['stage']])('an unknown purpose %p is invalid_request, mints nothing and spends nothing', async (purpose) => {
+    const s = setup();
+    await s.store.addTrustedPublisher(s.tp);
+    const jwt = signJwt(key, goodClaims(s.clock));
+    await expectRejected(s.oidc.exchange({ jwt, name: 'widgets', version: '1.0.0', purpose } as never), 'invalid_request', 400);
+    expect(s.store.dumpTokens()).toHaveLength(0);
+    // the same CI token still exchanges: the refusal came before it was spent
+    await expect(s.oidc.exchange({ jwt, name: 'widgets', version: '1.0.0' })).resolves.toMatchObject({ token_kind: 'publish' });
+  });
+});
