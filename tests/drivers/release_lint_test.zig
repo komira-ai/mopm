@@ -287,13 +287,16 @@ test "defect: the user-level beta tests something other than the candidate, or l
     try userDefect("the walk not built", "        run: zig build-exe tests/drivers/user_beta.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/user_beta\"", "        run: zig build-exe tools/release.zig -O ReleaseSafe -femit-bin=\"$RUNNER_TEMP/user_beta\"", "user must build tests/drivers/user_beta.zig");
     try userDefect("write permission", "permissions:\n  contents: read\n\njobs:\n  user:\n", "permissions:\n  contents: read\n\njobs:\n  user:\n    permissions:\n      contents: write\n", "user holds a permission other than read");
     // The walk must really run, in full, on the candidate, and fail the leg when it fails.
-    try userDefect("no pixi (the walk would skip sync and the build against the dependency)", " --pixi pixi --ci'", " --ci'", "the walk must be given --pixi pixi");
-    try userDefect("no --ci (a skipped step stays green)", " --pixi pixi --ci'", " --pixi pixi'", "the walk must be given --ci");
+    try userDefect("no pixi (the walk would skip sync and the build against the dependency)", " --pixi pixi --zig zig --native-fixture tests/e2e/natws/shimlib --ci'", " --zig zig --native-fixture tests/e2e/natws/shimlib --ci'", "the walk must be given --pixi pixi");
+    // The native step: without the zig that compiles the C library, or the fixture, the walk would only report it skipped.
+    try userDefect("no zig for the native fixture", " --zig zig", "", "the walk must be given --zig zig");
+    try userDefect("no native fixture", " --native-fixture tests/e2e/natws/shimlib", "", "the walk must be given --native-fixture tests/e2e/natws/shimlib");
+    try userDefect("no --ci (a skipped step stays green)", " --pixi pixi --zig zig --native-fixture tests/e2e/natws/shimlib --ci'", " --pixi pixi'", "the walk must be given --ci");
     try userDefect("a mopm from PATH instead of the candidate", " \"$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET/mopm\" \"$RUNNER_TEMP/walk\"", " mopm \"$RUNNER_TEMP/walk\"", "first argument must be the candidate binary");
     try userDefect("a binary beside the candidate", "\"$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET/mopm\" \"$RUNNER_TEMP/walk\"", "\"$RUNNER_TEMP/candidate/mopm\" \"$RUNNER_TEMP/walk\"", "first argument must be the candidate binary");
-    try userDefect("|| true on the walk", " --pixi pixi --ci'", " --pixi pixi --ci || true'", "must not contain |");
-    try userDefect("|| : on the walk", " --pixi pixi --ci'", " --pixi pixi --ci || :'", "must not contain |");
-    try userDefect("; true on the walk", " --pixi pixi --ci'", " --pixi pixi --ci; true'", "must not contain ;");
+    try userDefect("|| true on the walk", " --pixi pixi --zig zig --native-fixture tests/e2e/natws/shimlib --ci'", " --pixi pixi --zig zig --native-fixture tests/e2e/natws/shimlib --ci || true'", "must not contain |");
+    try userDefect("|| : on the walk", " --pixi pixi --zig zig --native-fixture tests/e2e/natws/shimlib --ci'", " --pixi pixi --zig zig --native-fixture tests/e2e/natws/shimlib --ci || :'", "must not contain |");
+    try userDefect("; true on the walk", " --pixi pixi --zig zig --native-fixture tests/e2e/natws/shimlib --ci'", " --pixi pixi --zig zig --native-fixture tests/e2e/natws/shimlib --ci; true'", "must not contain ;");
     try userDefect("a tarball that is not the candidate", "--tarball \"$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET.tar.gz\"", "--tarball \"$RUNNER_TEMP/other.tar.gz\"", "the walk must be given --tarball");
     // What passed is what is attested.
     try userDefect("the record names another tarball", "record \"$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET.tar.gz\" \"$RUNNER_TEMP/tested\"", "record \"$RUNNER_TEMP/candidate/mopm-$VERSION-linux-x86_64.tar.gz\" \"$RUNNER_TEMP/tested\"", "user must run exactly");

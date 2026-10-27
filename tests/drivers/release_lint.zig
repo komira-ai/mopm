@@ -998,7 +998,7 @@ pub fn userBetaProblems(a: Allocator, text: []const u8, out: *Out) !void {
     if (!c.eqlList(got, &.{"release-${{ matrix.target }}"})) try c.problem(a, out, prefix ++ f ++ "user must download exactly the build's artifact release-${{{{ matrix.target }}}}, got {s}", .{try c.inspectList(a, got)});
     const walk = stepRunContaining(job, "user_beta\" ") orelse "";
     if (walk.len == 0) try c.problem(a, out, prefix ++ f ++ "user must run the walk (tests/drivers/user_beta.zig)", .{});
-    for ([_][]const u8{ "--version \"$VERSION\"", "--tarball \"" ++ candidate_tarball ++ "\"", "--install-sh site/static/install.sh", "--fake-registry", "--mojo-env", "--pixi pixi", "--ci" }) |need| {
+    for ([_][]const u8{ "--version \"$VERSION\"", "--tarball \"" ++ candidate_tarball ++ "\"", "--install-sh site/static/install.sh", "--fake-registry", "--mojo-env", "--pixi pixi", "--zig zig", "--native-fixture tests/e2e/natws/shimlib", "--ci" }) |need| {
         if (walk.len != 0 and !hasWords(walk, need)) try c.problem(a, out, prefix ++ f ++ "the walk must be given {s}", .{need});
     }
     // The walk is the candidate binary (not a `mopm` found on PATH), and nothing on its line can swallow its exit status.

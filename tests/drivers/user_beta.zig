@@ -5,12 +5,14 @@
 //! installer: see below). No shell: every step is a program started here, its exit status and output asserted.
 //!
 //!     user_beta <mopm> <work dir> --version <v> --fake-registry <exe> --mojo-env <prefix>
-//!               [--tarball <mopm-v-target.tar.gz> --install-sh <install.sh>] [--pixi <exe>] [--ci]
+//!               [--tarball <mopm-v-target.tar.gz> --install-sh <install.sh>] [--pixi <exe>] [--zig <exe> --native-fixture <dir>] [--ci]
 //!
 //!   <mopm>            the candidate binary
 //!   --version         the version it must report (1.2.3: `mopm --version` prints `mopm 1.2.3`)
 //!   --fake-registry   registry/fake, built from the same commit (the test registry; started here)
 //!   --mojo-env        a Mojo environment prefix (bin/mojo, lib/mojo): tests/e2e/pixi.toml's, as ci.yml makes it
+//!   --zig, --native-fixture
+//!                     the zig that compiles the native fixture and the fixture's directory (both, or the step is SKIP, and in CI a failure)
 //!   --pixi            enables `mopm sync` (it installs a published package through pixi); without it the
 //!                     dependency is locked but not installed, and the steps that need it are reported SKIP
 //!   --ci              the walk runs in CI (release-beta-user.yml): a step that would be skipped FAILS instead, so
@@ -28,6 +30,10 @@
 //!                 the index and the channel with the packed sha256; publishing the same version again is refused
 //!   5  depend     `add`, `tree`, `lock`, `update` against that registry, `sync` (download, sha256 check, pixi)
 //!   6  build      `build` and `run` a program (and the one that imports the published dependency), `test` again
+//!   6b native     a workspace member with its own C static library (tests/e2e/natws/shimlib, compiled with `--zig`) is staged,
+//!                 published to the test registry (`stage`, `publish --staged`), added, synced and built (`mopm build`, no
+//!                 file) by a new package, and the program prints the value the C code computes (tests/drivers/user_native.zig);
+//!                 on linux aarch64 it prints "skipped: waiting on linux-arm64 hardware" and counts as a skip, not a pass
 //!   7  remove     `remove`, `logout`
 //!   8  install    install.sh with MOPM_RELEASES_URL at the candidate files: it installs, the installed file is
 //!                 the candidate byte for byte, `mopm --version` equals the candidate version; a SHA256SUMS that
@@ -39,6 +45,7 @@
 
 const std = @import("std");
 const h = @import("harness.zig");
+const un = @import("user_native.zig");
 const Allocator = std.mem.Allocator;
 
 pub const Opts = struct {
@@ -50,6 +57,10 @@ pub const Opts = struct {
     tarball: ?[]const u8 = null,
     install_sh: ?[]const u8 = null,
     pixi: ?[]const u8 = null,
+    /// The zig that compiles the native fixture (`zig cc`, `zig ar`), and the fixture member (tests/e2e/natws/shimlib); both
+    /// or neither. Neither: the native step is reported SKIP (a failure in CI).
+    zig: ?[]const u8 = null,
+    native_fixture: ?[]const u8 = null,
     /// CI form: a skipped step is a failure.
     ci: bool = false,
     /// The environment every child gets (default: this process's).
@@ -68,6 +79,8 @@ const Ctx = struct {
     api: []const u8,
     conf: []const u8,
     skipped: usize = 0,
+    /// The session token of the account `account` logged in.
+    session: []const u8 = "",
 
     fn run(c: *Ctx, exe: []const u8, dir: []const u8, args: []const []const u8, extra: []const [2][]const u8) !Out {
         const argv = try c.a.alloc([]const u8, args.len + 1);
@@ -192,6 +205,7 @@ pub fn run(a: Allocator, rep: *h.Report, o: Opts) !void {
     try publish(&c, token);
     try depend(&c);
     try build(&c);
+    try native(&c);
     try finish(&c);
     try install(&c);
     if (c.skipped != 0) std.debug.print("{d} step(s) skipped: see the SKIP lines\n", .{c.skipped});
@@ -284,6 +298,7 @@ fn account(c: *Ctx) ![]const u8 {
         if (creds.object.get(c.api)) |entry| session = h.jsonString(entry, "token") orelse "";
     }
     c.rep.check("login stored a session token", session.len != 0, "no token in credentials.json");
+    c.session = session;
     var resp = try h.request(a, "POST", c.fake.base, "/api/v1/packages/beta_lib/claim", "{}", session);
     c.rep.check("the account claims the package name", resp.status == 201, resp.body);
     resp = try h.request(a, "POST", c.fake.base, "/api/v1/me/tokens", "{\"name\":\"user-beta\",\"scopes\":[\"publish\"],\"packages\":[\"beta_lib\"],\"expires_in_days\":1}", session);
@@ -418,6 +433,30 @@ fn build(c: *Ctx) !void {
     }
 }
 
+/// 6b: a package with its own static library, published into the registry and used as a customer uses it (tests/drivers/user_native.zig).
+/// On linux aarch64 the step waits for hardware: it prints one line, counts as a skip and never as a pass.
+fn native(c: *Ctx) !void {
+    switch (un.decision()) {
+        .skip_waiting_on_arm64 => try un.reportSkip(&c.skipped, std.io.getStdErr().writer()),
+        .run => {
+            const pixi = c.o.pixi orelse return c.skip("native package", "no --pixi: the package cannot be installed");
+            const zig = c.o.zig orelse return c.skip("native package", "no --zig: the C library cannot be compiled");
+            const fixture = c.o.native_fixture orelse return c.skip("native package", "no --native-fixture");
+            try un.run(c.a, c.rep, .{
+                .mopm = c.o.mopm,
+                .work = c.o.work,
+                .fixture = fixture,
+                .registry = c.fake.base,
+                .session = c.session,
+                .zig = zig,
+                .mojo_env = c.o.mojo_env,
+                .pixi = pixi,
+                .env = &c.env,
+            });
+        },
+    }
+}
+
 /// 7: remove the dependency, log out.
 fn finish(c: *Ctx) !void {
     const app = c.path(&.{ c.ws, "beta_app" });
@@ -475,7 +514,7 @@ fn install(c: *Ctx) !void {
 // ---------------------------------------------------------------------------- main
 
 fn usageDie() noreturn {
-    std.debug.print("usage: user_beta <mopm> <work dir> --version <v> --fake-registry <exe> --mojo-env <prefix> [--tarball <file> --install-sh <file>] [--pixi <exe>] [--ci]\n", .{});
+    std.debug.print("usage: user_beta <mopm> <work dir> --version <v> --fake-registry <exe> --mojo-env <prefix> [--tarball <file> --install-sh <file>] [--pixi <exe>] [--zig <exe> --native-fixture <dir>] [--ci]\n", .{});
     std.process.exit(2);
 }
 
@@ -494,6 +533,8 @@ pub fn main() !void {
     var tarball: ?[]const u8 = null;
     var installer: ?[]const u8 = null;
     var pixi: ?[]const u8 = null;
+    var zig: ?[]const u8 = null;
+    var fixture: ?[]const u8 = null;
     var ci = false;
     var i: usize = 3;
     while (i < argv.len) : (i += 2) {
@@ -516,6 +557,10 @@ pub fn main() !void {
             installer = v;
         } else if (std.mem.eql(u8, argv[i], "--pixi")) {
             pixi = v;
+        } else if (std.mem.eql(u8, argv[i], "--zig")) {
+            zig = v;
+        } else if (std.mem.eql(u8, argv[i], "--native-fixture")) {
+            fixture = v;
         } else usageDie();
     }
     if (version == null or fake == null or mojo == null) usageDie();
@@ -532,6 +577,8 @@ pub fn main() !void {
         .tarball = if (tarball) |t| try absolute(a, t) else null,
         .install_sh = if (installer) |s| try absolute(a, s) else null,
         .pixi = pixi,
+        .zig = zig,
+        .native_fixture = if (fixture) |f| try absolute(a, f) else null,
         .ci = ci,
     });
     try rep.finish();
