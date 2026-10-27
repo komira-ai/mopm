@@ -355,6 +355,8 @@ paths:
         The only way to create a package. A claim with no published version
         expires after 30 days. A name that is too similar to an existing one
         needs `confirm_similar`.
+        An API token that has only the `stage` scope is refused (`scope_missing`): a claim makes the caller the owner, and `stage`
+        reaches nothing that changes ownership.
       security:
         - userToken: []
       parameters:
@@ -856,7 +858,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: mopm token
-      description: "Any live token of a user: a session token or an API token."
+      description: "Any live token of a user: a session token or an API token (but a claim refuses an API token that has only the `stage` scope)."
     freshSession:
       type: http
       scheme: bearer
@@ -1256,7 +1258,7 @@ components:
       description: |
         `publish` creates, uploads, reads, aborts and commits groups and publishes single versions; it may also yank.
         `yank` yanks. `stage` prepares a group (create, read, abort) and nothing else: it cannot commit a group, publish a
-        single version or yank, and it is not enough alone where `publish` or `yank` is asked for.
+        single version, yank or claim a package, and it is not enough alone where `publish` or `yank` is asked for.
       type: string
       enum: [publish, yank, stage]
     TokenPackages:

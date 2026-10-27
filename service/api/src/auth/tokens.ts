@@ -238,6 +238,16 @@ export class Authenticator {
     return p.github_id;
   }
 
+  /**
+   * `claimToken`: `userToken`, except that an API token whose only scope is `stage` is refused: a claim reserves a name and makes its
+   * account the owner, and a stage token reaches nothing that changes ownership. A token with `publish` or `yank` is as before.
+   */
+  claimToken(p: Principal): number {
+    const id = this.userToken(p);
+    if (p.kind === 'api' && p.scopes.includes('stage') && !p.scopes.includes('publish') && !p.scopes.includes('yank')) throw missingScope('publish', 'this account');
+    return id;
+  }
+
   /** `freshSession`: a session token younger than 15 minutes. An older session or an API token is stale_session. */
   freshSession(p: Principal): number {
     const id = this.userToken(p);

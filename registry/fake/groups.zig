@@ -26,6 +26,7 @@ const resp = @import("resp.zig");
 const Response = resp.Response;
 const util = @import("util.zig");
 const auth = @import("auth.zig");
+const token_scopes = @import("token_scopes.zig");
 const publish = @import("publish.zig");
 const channel = @import("files.zig");
 
@@ -205,21 +206,6 @@ fn caller(ctx: *Ctx) anyerror!Caller {
         return .{ .fail = try resp.fail(ctx.arena, .scope_missing, &.{ .{ "scope", "publish" }, .{ "name", "this group" } }) };
     }
     return .{ .ok = t };
-}
-
-/// Reading or aborting a group: an API token that may stage or publish (any package), or a CI token. A yank-only token may not.
-fn mayStage(t: *const st.Token) bool {
-    if (t.kind != .api) return true;
-    for (t.scopes) |sc| {
-        if (sc == .publish or sc == .stage) return true;
-    }
-    return false;
-}
-
-/// Committing a group: an API token with `publish`, or a CI token that is not a stage token. `stage` is never enough.
-fn mayCommit(t: *const st.Token) bool {
-    if (t.kind != .api) return !t.oidc_stage;
-    return std.mem.indexOfScalar(st.Scope, t.scopes, .publish) != null;
 }
 
 /// Whether an API token has one of `scopes` for package `name`.
@@ -676,7 +662,7 @@ pub fn getGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .ok => |t| t,
         .fail => |r| return r,
     };
-    if (!mayStage(t)) return resp.fail(ctx.arena, .scope_missing, &.{ .{ "scope", "publish" }, .{ "name", "this group" } });
+    if (!token_scopes.mayStage(t)) return resp.fail(ctx.arena, .scope_missing, &.{ .{ "scope", "publish" }, .{ "name", "this group" } });
     const g = switch (try load(ctx, t, params[0])) {
         .ok => |g| g,
         .fail => |r| return r,
@@ -692,7 +678,7 @@ pub fn abortGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .ok => |t| t,
         .fail => |r| return r,
     };
-    if (!mayStage(t)) return resp.fail(ctx.arena, .scope_missing, &.{ .{ "scope", "publish" }, .{ "name", "this group" } });
+    if (!token_scopes.mayStage(t)) return resp.fail(ctx.arena, .scope_missing, &.{ .{ "scope", "publish" }, .{ "name", "this group" } });
     const g = switch (try load(ctx, t, params[0])) {
         .ok => |g| g,
         .fail => |r| return r,
@@ -892,7 +878,7 @@ pub fn commitGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .ok => |t| t,
         .fail => |r| return r,
     };
-    if (!mayCommit(t)) return resp.fail(ctx.arena, .scope_missing, &.{ .{ "scope", "publish" }, .{ "name", "this group" } });
+    if (!token_scopes.mayCommit(t)) return resp.fail(ctx.arena, .scope_missing, &.{ .{ "scope", "publish" }, .{ "name", "this group" } });
     const g = switch (try load(ctx, t, params[0])) {
         .ok => |g| g,
         .fail => |r| return r,

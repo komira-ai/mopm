@@ -99,6 +99,20 @@ test "a stage token reserves only what its list names and its owner owns" {
     try std.testing.expectEqual(@as(u16, 201), (try fx.call(.POST, "/api/v1/groups", try fx.request(&.{"pkg_a"}, "1.0.0", "x"), bob)).status);
 }
 
+test "a stage-only token cannot claim a package and nothing is reserved; with yank or publish it can" {
+    var fx: Fx = undefined;
+    try fx.setup();
+    defer fx.deinit();
+    const stage = try tokenWith(&fx, "stage1", &.{.stage});
+    const before = fx.state.packages.items.len;
+    try expectCode(try fx.call(.POST, "/api/v1/packages/fresh_one/claim", "", stage), 403, "scope_missing");
+    try std.testing.expectEqual(before, fx.state.packages.items.len);
+    const both = try tokenWith(&fx, "stage2", &.{ .stage, .yank });
+    try std.testing.expectEqual(@as(u16, 201), (try fx.call(.POST, "/api/v1/packages/fresh_one/claim", "", both)).status);
+    const pub_token = try tokenWith(&fx, "pub1", &.{.publish});
+    try std.testing.expectEqual(@as(u16, 201), (try fx.call(.POST, "/api/v1/packages/fresh_two/claim", "", pub_token)).status);
+}
+
 test "a token with yank alone may not create, read or abort a group" {
     var fx: Fx = undefined;
     try fx.setup();

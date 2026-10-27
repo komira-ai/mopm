@@ -52,6 +52,21 @@ describe('the contract cases of claimPackage (tests/contract/api), replayed agai
   });
 });
 
+describe('a claim and the stage scope', () => {
+  test('a token with only stage is refused as scope_missing and nothing is created; stage with yank or publish, and a yank-only token, still claim', async () => {
+    const h = new Harness();
+    await h.authStore.upsertUser(7, 'octocat', h.clock.now().toISOString());
+    const stageOnly = await h.token(7, [], ['stage']);
+    const refused = await claim(h, stageOnly, 'komira_hash');
+    expect([refused.statusCode, err(refused).code]).toEqual([403, 'scope_missing']);
+    await nothingCreated(h, 'komira_hash');
+
+    expect((await claim(h, await h.token(7, [], ['stage', 'yank']), 'komira_hash')).statusCode).toBe(201);
+    expect((await claim(h, await h.token(7, [], ['stage', 'publish']), 'komira_two')).statusCode).toBe(201);
+    expect((await claim(h, await h.token(7, [], ['yank']), 'komira_three')).statusCode).toBe(201);
+  });
+});
+
 describe('a claim', () => {
   test('creates the package as claimed, its first owner (id and handle of the account) and an audit entry, and is answered 201 with the expiry 30 days out', async () => {
     const h = new Harness();

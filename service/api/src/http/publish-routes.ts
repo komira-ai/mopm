@@ -109,9 +109,9 @@ export async function routePublish(req: HttpRequest, api: PublishApi, requestId:
     // then the request. Not gated by the groups switch.
     if (isClaim) {
       await refuseIfReadOnly();
-      // The spec's `userToken` is any live token of a user and the token scopes are only publish and yank, so no scope is asked for.
+      // The spec's `userToken` is any live token of a user, except an API token that has only the `stage` scope.
       const principal = await api.auth.authenticate(authorization);
-      const githubId = api.auth.userToken(principal);
+      const githubId = api.auth.claimToken(principal);
       return respond(201, requestId, await api.claims!.claim({ githubId, tokenId: principal.token_id }, seg[1]!, optionalJsonBody(req)));
     }
 
