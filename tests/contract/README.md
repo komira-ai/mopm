@@ -50,8 +50,7 @@ declared and match their schemas; the request body matches; the response
 status is declared by the operation (or is an error); required response
 headers are present; the response body matches; an error uses a code from the
 catalogue with that code's status, and its message and hint follow the
-catalogue template; `rate_limited` carries `Retry-After`; an embedded
-`manifest` is valid package metadata. It also requires a passing success case
+catalogue template; `rate_limited` carries `Retry-After`. It also requires a passing success case
 for every operation, a case for every error code and for every rejection code.
 
 ## Examples: `examples/<kind>/{valid,invalid}/`

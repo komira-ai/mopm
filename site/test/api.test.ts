@@ -75,8 +75,8 @@ test.each(cases.map((c) => [`${c.operationId}: ${c.name}`, c] as const))('%s', a
   expect(r.value).toEqual(withoutUnread(c.operationId, c.response.body));
 });
 
-/** Fields the server sends that the site deliberately does not decode (spec-only; readme_html is never read, and the site shows no group). */
-const UNREAD: Record<string, readonly string[]> = { getVersion: ['manifest', 'readme_html', 'group_id'], getHealth: ['impl'] };
+/** Fields the server sends that the site deliberately does not decode (spec-only; readme_html is never read, and the site shows no group or source commit). */
+const UNREAD: Record<string, readonly string[]> = { getVersion: ['readme_html', 'group_id', 'source_commit'], getHealth: ['impl'] };
 
 function withoutUnread(op: string, body: unknown): unknown {
   const b = { ...(body as Record<string, unknown>) };

@@ -62,6 +62,8 @@ export interface PublishFill
   homepage?: string;
   keywords?: string[];
   readme?: string;
+  /** The commit request's `source_commit`, stored on the version. */
+  source_commit?: string;
 }
 
 /** Raised for an event the state does not allow. Reported as invalid_transition (409). */

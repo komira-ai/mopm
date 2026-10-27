@@ -240,7 +240,7 @@ class GroupJob {
       if (err instanceof Rejected) throw verdict(err.code, err.message, false, m.name);
       throw err;
     }
-    const fill = fillFrom(d.channelUrl, this.now(), { version: row.version, ...(input.display ? { display: input.display } : {}), published_by: row.published_by ?? this.h.actor }, row.files, facts);
+    const fill = fillFrom(d.channelUrl, this.now(), { version: row.version, ...(input.display ? { display: input.display } : {}), ...(input.source_commit !== undefined ? { source_commit: input.source_commit } : {}), published_by: row.published_by ?? this.h.actor }, row.files, facts);
     await d.registry.applyGroupEvent(m.name, row.version, { type: 'stage', group_id: this.gid, attempt: this.h.attempt, fill }, this.audit(i, m, 'group_stage'));
   }
 
