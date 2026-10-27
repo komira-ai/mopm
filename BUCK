@@ -433,6 +433,7 @@ zig_test(  # buck-only: tests/contract/replay.py: the fake registry answers the 
     imports = _CONTRACT_LIBS + [
         "tests/drivers/harness.zig",
         "tests/drivers/replay_recipes.zig",
+        "tests/drivers/replay_group_conflicts.zig",
         "tests/drivers/replay_table.zig",
         "tests/drivers/replay_checks.zig",
         "tests/drivers/yaml.zig",

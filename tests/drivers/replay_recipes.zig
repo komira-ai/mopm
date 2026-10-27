@@ -7,6 +7,7 @@ const std = @import("std");
 const h = @import("harness.zig");
 const c = @import("contract.zig");
 const tbl = @import("replay_table.zig");
+const gc = @import("replay_group_conflicts.zig");
 const Value = std.json.Value;
 const Allocator = std.mem.Allocator;
 const Step = tbl.Step;
@@ -357,12 +358,8 @@ pub const Grp = struct {
         }
         const out = rsp.body orelse return error.CreateFailed;
         if (uploaded) {
-            // The answer lists the members sorted by name, which is not the order they were named in once a counter reaches two digits.
             for (c.getArr(out, "members")) |m| {
-                const member = c.getStr(m, "name") orelse return error.NoMemberName;
-                const i = for (g.names, 0..) |n, k| {
-                    if (std.mem.eql(u8, n, member)) break k;
-                } else return error.UnknownMember;
+                const i = try gc.memberIndex(g.names, m);
                 for (c.getArr(m, "files")) |file| try g.put(file, try g.data(i));
             }
         }
@@ -517,28 +514,8 @@ fn groupRecipe(f: *F, e: Entry) !Step {
                 const g = try Grp.init(f, 1);
                 return groupStep(g, "getGroup", "grp_00000000000000000000000000000000");
             }
-            if (std.mem.eql(u8, e.arg, "conflict")) {
-                // The caller may have five groups open: a sixth, sharing nothing with them, has no place.
-                const g = try Grp.init(f, 1);
-                for ([_][]const u8{ "0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0" }) |v| _ = try g.create(v, false);
-                var s = step("createGroup");
-                s.body = try g.body("0.6.0");
-                s.token = g.token;
-                s.auth = "publishToken";
-                return s;
-            }
-            if (std.mem.eql(u8, e.arg, "overlap_refused")) {
-                // The caller has a group open; other bytes of the same version are another set that shares it, and the caller refuses overlap.
-                var g = try Grp.init(f, 1);
-                _ = try g.create("0.1.0", false);
-                g.reject = "other bytes of the same version";
-                const again = try g.body("0.1.0");
-                var s = step("createGroup");
-                s.body = try f.fmt("{s},\"on_overlap\":\"refuse\"}}", .{again[0 .. again.len - 1]});
-                s.token = g.token;
-                s.auth = "publishToken";
-                return s;
-            }
+            if (std.mem.eql(u8, e.arg, "conflict")) return gc.openCap(f);
+            if (std.mem.eql(u8, e.arg, "overlap_refused")) return gc.overlapRefused(f);
             const g = try Grp.init(f, 2);
             const id = try g.create("0.4.0", true);
             if (std.mem.eql(u8, e.arg, "not_open")) {
@@ -563,7 +540,7 @@ fn groupRecipe(f: *F, e: Entry) !Step {
 
 // ----------------------------------------------------------------- recipes
 
-fn step(op: []const u8) Step {
+pub fn step(op: []const u8) Step {
     return .{ .op = op };
 }
 
