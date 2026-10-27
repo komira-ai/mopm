@@ -40,7 +40,8 @@
 //! single-use, so there is one identity request and one exchange for the whole set, and that token serves the group's
 //! create, uploads, commit and waits. With `--no-commit` the exchange asks for `"purpose": "stage"` and the token is a
 //! stage-only one, which the registry refuses to commit with; a registry that predates stage tokens answers a publish
-//! token, and the run says so and goes on (src/cli/group_stage_token.zig). Every other run sends no `purpose`. A set of more than 100 members is refused before any
+//! token, and the run says so and goes on (src/cli/group_stage_token.zig). Every other run sends no `purpose`.
+//! A set of more than 500 members is refused before any
 //! request (a group is one unit and is not split); a rerun asks for a fresh token.
 
 const std = @import("std");

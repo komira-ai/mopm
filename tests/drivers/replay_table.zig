@@ -51,6 +51,7 @@ pub const Check = enum {
     group_files_open,
     group_files_past_open,
     detail_group_id,
+    detail_source_commit,
 };
 
 pub const After = enum { none, read_only_off, project_limit_restore };
@@ -190,6 +191,9 @@ pub const table = [_]Entry{
     .{ .op = "getVersion", .name = "version detail of a version a group published", .kind = .group_facts, .arg = "group_version" },
     .{ .op = "commitPublish", .name = "commit without manifest_sha256", .kind = .group_facts, .arg = "commit_single" },
     .{ .op = "commitGroup", .name = "commit a group, leaving manifest_sha256 out of some members", .kind = .group_facts, .arg = "commit_group" },
+    .{ .op = "getVersion", .name = "version detail with a source_commit", .kind = .group_facts, .arg = "source_version" },
+    .{ .op = "commitPublish", .name = "commit with a source_commit", .kind = .group_facts, .arg = "commit_single_source" },
+    .{ .op = "commitGroup", .name = "commit a group, with a source_commit on some members", .kind = .group_facts, .arg = "commit_group_source" },
     .{ .op = "commitGroup", .name = "commit a group", .kind = .group_commit, .arg = "fresh" },
     .{ .op = "commitGroup", .name = "commit a group that had already committed", .kind = .group_commit, .arg = "again" },
     .{ .op = "yankGroup", .name = "yank a group", .kind = .group_yank, .arg = "yank" },

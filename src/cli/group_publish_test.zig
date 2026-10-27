@@ -1364,22 +1364,22 @@ test "--oidc: each member is listed at its own version, in the plan's order" {
     );
 }
 
-test "--oidc: more than 100 members is refused whole, before GitHub or the registry is asked" {
+test "--oidc: more than 500 members is refused whole, before GitHub or the registry is asked" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
     const a = st.allocator();
     var members = std.ArrayList(plan_mod.Member).init(a);
-    for (0..101) |i| try members.append(.{ .name = try std.fmt.allocPrint(a, "pkg{d}", .{i}), .version = "1.0.0", .action = .upload });
+    for (0..501) |i| try members.append(.{ .name = try std.fmt.allocPrint(a, "pkg{d}", .{i}), .version = "1.0.0", .action = .upload });
     var script = newScript(a, &.{.{ .method = .GET, .suffix = "audience=beta.mopm.dev", .status = 200, .body = oidc_identity }});
     const got = try oidcToken(a, script.net(), oidc_actions, oidc_api, "beta", members.items);
-    try expectContains(got.bad, "at most 100 packages and this set uploads 101");
+    try expectContains(got.bad, "at most 500 packages and this set uploads 501");
     try std.testing.expectEqual(@as(usize, 0), script.seen.items.len);
-    // 100 is within the limit: it asks once for each.
+    // 500 is within the limit: it asks once for each.
     var ok_script = newScript(a, &.{
         .{ .method = .GET, .suffix = "audience=beta.mopm.dev", .status = 200, .body = oidc_identity },
         .{ .method = .POST, .suffix = "/auth/oidc/exchange", .status = 200, .body = oidc_exchange_ok },
     });
-    const full = try oidcToken(a, ok_script.net(), oidc_actions, oidc_api, "beta", members.items[0..100]);
+    const full = try oidcToken(a, ok_script.net(), oidc_actions, oidc_api, "beta", members.items[0..500]);
     try std.testing.expectEqualStrings(oidc_minted, full.ok);
     try std.testing.expectEqual(@as(usize, 2), ok_script.seen.items.len);
 }
@@ -1783,4 +1783,8 @@ test "--no-commit and --abort are flags without a value, and they refuse each ot
     // The command that commits later never carries either flag.
     try std.testing.expectEqualStrings("mopm publish --staged s --registry beta --oidc", try gp.rerunCommand(a, nc));
     try std.testing.expectEqualStrings("mopm publish --staged s --registry beta", try gp.rerunCommand(a, ab));
+}
+
+test "--oidc: the identity-token cap is the group member cap, so no set a group can hold is refused by the exchange" {
+    try std.testing.expectEqual(plan_mod.max_members, core.ci_oidc.max_packages);
 }

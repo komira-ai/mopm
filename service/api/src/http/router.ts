@@ -301,6 +301,8 @@ async function getVersion(deps: RouterDeps, name: string, version: string) {
     // Present when a group published the version; absent for a single publish.
     ...(v.group_id !== undefined ? { group_id: v.group_id } : {}),
     ...displayMetadata(v),
+    // Informational: what the publisher said at commit, never checked by the registry. Absent on a version published without one.
+    ...(v.source_commit === undefined ? {} : { source_commit: v.source_commit }),
     provenance: v.provenance ?? { kind: 'none' },
   };
 }

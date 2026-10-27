@@ -5,7 +5,7 @@ import type { Store } from '../store';
 import type { PackageRecord } from '../types';
 import type { PublishConfig } from './config';
 import { invalidRequest, PublishError } from './errors';
-import type { PublishStore } from './ports';
+import type { Flags, PublishStore } from './ports';
 
 /** Names nobody may claim (the contract's `name_reserved`). */
 export const RESERVED_NAMES: ReadonlySet<string> = new Set(['mopm', 'mojo', 'max', 'modular', 'std', 'stdlib']);
@@ -31,6 +31,8 @@ export interface ClaimDeps {
   /** The rate counters (the table the publish limits use). */
   publishes: Pick<PublishStore, 'hit'>;
   config: Pick<PublishConfig, 'claimRatePerAccountPerDay' | 'claimRatePerTokenPerDay'>;
+  /** The per-account override of the daily limit (the `claim_limits` item of the config table). Absent: every account has the config's limits. */
+  flags?: Pick<Flags, 'claimLimitFor'>;
   now?: () => Date;
   newId?: () => string;
 }
@@ -119,7 +121,7 @@ export class ClaimService {
    * stays charged and the claim is `rate_limited` with Retry-After to midnight. Returns the way to give the charge back.
    */
   private async charge(who: Claimant, now: Date): Promise<() => Promise<void>> {
-    const cfg = this.d.config;
+    const cfg = await this.limitsFor(who);
     const day = now.toISOString().slice(0, 10);
     const midnight = Date.parse(`${day}T00:00:00Z`) + 86_400_000;
     const retryAfter = Math.max(1, Math.ceil((midnight - now.getTime()) / 1000));
@@ -140,6 +142,16 @@ export class ClaimService {
       charged.push([key, limit]);
     }
     return giveBack;
+  }
+
+  /**
+   * The daily limits of this account: the config's, or the one the account's `claim_limits` entry sets (for the account and each of
+   * its tokens). A config that cannot be read keeps the config's limits: the default is the stricter side.
+   */
+  private async limitsFor(who: Claimant): Promise<{ claimRatePerAccountPerDay: number; claimRatePerTokenPerDay: number }> {
+    const cfg = this.d.config;
+    const n = await this.d.flags?.claimLimitFor(`u:${who.githubId}`).catch(() => undefined);
+    return n === undefined ? cfg : { claimRatePerAccountPerDay: n, claimRatePerTokenPerDay: n };
   }
 
   /**

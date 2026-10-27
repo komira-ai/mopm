@@ -5,6 +5,14 @@ checksums, and this file says what changed. The details of a command are on its 
 
 ## Unreleased
 
+### One exchange covers up to 500 packages, and an account's daily claim limit can be raised
+
+`POST /auth/oidc/exchange` takes up to 500 entries in `packages` (it was 100), the most members a group may have, and `mopm publish --staged --oidc` sends a set of up to 500 members (it refused more than 100 before any request). The registry looks the names up and creates the missing ones sixteen at a time, and the answers and refusals are those of one at a time (the first failing name in the request is the one named). A request of 501 names is still `invalid_request`. The body of the exchange may be up to 128 KiB (the other auth routes keep 64 KiB), so a set of 500 names and versions of the longest length is not refused for its size. The registry that `mopm` runs against in tests takes 500 as well. A claim (`POST /packages/{name}/claim`) is still limited to 50 a UTC day for an account and for a token; the operator of a registry can set a higher daily limit (at most 1000) for named accounts without a deploy. Nothing changes for an account without that setting.
+
+### A package can publish programs, and `mopm run --bin` runs one
+
+Additive. A package lists programs in `[targets] bins`; `mopm pack`, `mopm publish` and `mopm stage` now put the source of each (the `.mojo` file the entry names) in the package at `lib/mojo/<package>.bins/<name>.mojo`, and refuse a name that is not lower case letters, digits and underscores, a name listed twice, a path outside the package directory or not ending in `.mojo`, and an unreadable or empty file. No executable is packed: the registry still refuses `bin/`, and the program is built by the Mojo of the machine that runs it. The registry's validators (TypeScript and Rust) accept exactly those paths and no other file below `lib/mojo/<package>.bins/`. `mopm run --bin <package>:<program>` runs the program of an installed package with the environment's packages importable; it refuses a package that is not installed and a program the package does not ship. A package with no `bins` packs to the same bytes as before. See [configuration](docs/configuration.md), "Programs in a published package".
+
 ### The registry has a `stage` token scope and a `stage` purpose for the CI exchange
 
 Additive: every token and request that worked keeps working as it did, but for an unknown `purpose`, below. A token with the new scope `stage` may create, read and abort a group, and
@@ -48,6 +56,19 @@ because the one packaged with Mojo crashes there; `mopm repl --debugserver <path
 `<artifacts>/<subdir>/<name>.native/lib<id>.a` (beside the member's `.mojoc`) and packs it exactly as `mopm pack --native` does, so the
 staged `.conda` is the one `pack` makes from the same files. A missing archive, or one that is not an `ar` archive, is refused with the
 member named. See [Publishing a workspace as one group](docs/publishing-a-workspace.md).
+
+### The registry records the source commit of a version
+
+A commit may now carry `source_commit`, the git commit id the version was built from: 40 or 64 lowercase hex digits, in the commit of a single
+publish and in each member of a group commit. The registry stores it once with the version and `GET /packages/{name}/{version}` returns it as
+`source_commit`; a version committed without one, including every version published before this, has none. It is informational: the registry
+checks the form and nothing else, does not verify it against the archive, the repository or the caller, and never compares or orders versions by
+it. Any other value is `invalid_request`. A repeated group commit must repeat each member's value (otherwise it is another request,
+`group_commit_refused`), and a repeated single commit that states another value is refused `version_exists`. The change is additive; `mopm` does
+not send the field yet.
+
+The specification no longer lists an embedded `manifest` on `VersionDetail`: the registry never served one. `GET /packages/{name}/{version}`
+is unchanged. See `spec/api/openapi.yaml` and [staged sets](spec/staged-set.md).
 
 ### Claiming a package name
 

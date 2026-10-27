@@ -114,6 +114,8 @@ export interface CommitInput {
   /** Absent when the request left it out: the validator then uses the hash it computes. */
   manifest_sha256?: string;
   display?: DisplayMeta;
+  /** The member's `source_commit`, when the request carried one. */
+  source_commit?: string;
 }
 
 /** A group in the sweeper's index: what the `by_sweep` index projects (the stacks' data stack), not the whole header. */
@@ -291,9 +293,10 @@ export function membersWithExpiry(item: Record<string, unknown>, headerExpiresAt
 }
 
 /** A commit input as the item stored under its key. `expires_at` is the item's TTL. */
-export const commitInputItem = (key: string, i: CommitInput, expiresAt: number): Record<string, unknown> => ({ publish_id: key, name: i.name, ...(i.manifest_sha256 !== undefined ? { manifest_sha256: i.manifest_sha256 } : {}), ...(i.display ? { display: JSON.parse(JSON.stringify(i.display)) } : {}), expires_at: expiresAt });
+export const commitInputItem = (key: string, i: CommitInput, expiresAt: number): Record<string, unknown> => ({ publish_id: key, name: i.name, ...(i.manifest_sha256 !== undefined ? { manifest_sha256: i.manifest_sha256 } : {}), ...(i.display ? { display: JSON.parse(JSON.stringify(i.display)) } : {}), ...(i.source_commit !== undefined ? { source_commit: i.source_commit } : {}), expires_at: expiresAt });
 export const parseCommitInput = (item: Record<string, unknown>): CommitInput => ({
   name: String(item.name),
   ...(item.manifest_sha256 !== undefined ? { manifest_sha256: String(item.manifest_sha256) } : {}),
   ...(item.display && typeof item.display === 'object' ? { display: item.display as DisplayMeta } : {}),
+  ...(typeof item.source_commit === 'string' ? { source_commit: item.source_commit } : {}),
 });

@@ -90,7 +90,13 @@ A client reads these paths under the conda prefix:
 lib/mojo/<name>.mojoc          the compiled Mojo package
 lib/mojo/<name>.mopm.json      the embedded metadata (package-metadata.schema.json)
 lib/<soname>                   native libraries the package declares, if any
+lib/mojo/<name>.bins/<bin>.mojo  the source of a program the package ships (`[targets] bins`), if any
 ```
+
+A program is a file of Mojo source, `<bin>` being lower case letters, digits and
+underscores. It is data: nothing runs it at install time, and mopm builds it on
+the machine that runs it (`mopm run --bin <name>:<bin>`). The registry accepts no
+other file below `lib/mojo/<name>.bins/`.
 
 `<name>.mopm.json` is the source of truth for dependencies and native
 libraries; its `schema` field is 1 and a higher value is refused. Paths inside

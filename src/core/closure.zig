@@ -156,9 +156,14 @@ pub fn render(arena: Allocator, c: Closure) ![]u8 {
 /// (same channel path) whose sha256 or size changed was republished, which a
 /// weekly update must never accept silently. One line per such file.
 pub fn alarms(arena: Allocator, old: Closure, new: Closure) Allocator.Error![]const []const u8 {
+    return alarmsOfPackages(arena, old.packages, new.packages);
+}
+
+/// `alarms` for two lists of packages (a closure's, or a native catalog's).
+pub fn alarmsOfPackages(arena: Allocator, old: []const Package, new: []const Package) Allocator.Error![]const []const u8 {
     var out = std.ArrayList([]const u8).init(arena);
-    for (new.packages) |n| {
-        for (old.packages) |o| {
+    for (new) |n| {
+        for (old) |o| {
             if (!std.mem.eql(u8, o.path, n.path)) continue;
             if (!std.mem.eql(u8, o.sha256, n.sha256) or o.size != n.size) {
                 try out.append(try std.fmt.allocPrint(arena, "{s}: was sha256 {s} ({d} bytes), is now {s} ({d} bytes)", .{ n.path, o.sha256, o.size, n.sha256, n.size }));
@@ -205,11 +210,29 @@ pub const LockError = error{BadLock} || Allocator.Error;
 /// The closure for `subdir` in the pixi lock `text` (the `default` environment).
 /// `diag` says what is wrong when it returns `error.BadLock`.
 pub fn fromPixiLock(arena: Allocator, text: []const u8, subdir: []const u8, diag: *[]const u8) LockError!Closure {
-    // Pass 1: the platform's urls from `environments.default.packages.<subdir>`,
-    // and every entry of the top-level `packages:` list.
     var wanted = std.ArrayList([]const u8).init(arena);
     var entries = std.StringHashMap(*LockEntry).init(arena);
+    try scanPixiLock(arena, text, subdir, &wanted, &entries, diag);
+    const found = try packagesOf(arena, subdir, wanted.items, &entries, diag);
+    var mojo: []const u8 = "";
+    for (found.packages) |p| {
+        if (std.mem.eql(u8, p.name, "mojo")) mojo = p.version;
+    }
+    if (mojo.len == 0) {
+        diag.* = "the lock has no mojo package";
+        return error.BadLock;
+    }
+    const c = Closure{ .mojo = mojo, .subdir = subdir, .channels = found.channels, .packages = found.packages };
+    if (try problem(arena, c)) |why| {
+        diag.* = why;
+        return error.BadLock;
+    }
+    return c;
+}
 
+/// Pass 1: the platform's urls from `environments.default.packages.<subdir>`, and every entry of
+/// the top-level `packages:` list.
+fn scanPixiLock(arena: Allocator, text: []const u8, subdir: []const u8, wanted: *std.ArrayList([]const u8), entries: *std.StringHashMap(*LockEntry), diag: *[]const u8) LockError!void {
     const Section = enum { none, environments, packages };
     var section: Section = .none;
     var in_default = false;
@@ -308,12 +331,29 @@ pub fn fromPixiLock(arena: Allocator, text: []const u8, subdir: []const u8, diag
         diag.* = try std.fmt.allocPrint(arena, "the lock's default environment has no packages for {s}", .{subdir});
         return error.BadLock;
     }
+}
 
+/// The packages a pixi lock lists for one platform, and the channels they come from: what
+/// `fromPixiLock` makes a toolchain closure of and `native_catalog.zig` a catalog of.
+pub const Locked = struct {
+    channels: []const Channel,
+    packages: []const Package,
+};
+
+/// `fromPixiLock` without the Mojo checks: every package the lock's default environment lists
+/// for `subdir`, sorted by name, each with the fields of its lock entry.
+pub fn lockedPackages(arena: Allocator, text: []const u8, subdir: []const u8, diag: *[]const u8) LockError!Locked {
+    var wanted = std.ArrayList([]const u8).init(arena);
+    var entries = std.StringHashMap(*LockEntry).init(arena);
+    try scanPixiLock(arena, text, subdir, &wanted, &entries, diag);
+    return packagesOf(arena, subdir, wanted.items, &entries, diag);
+}
+
+fn packagesOf(arena: Allocator, subdir: []const u8, wanted: []const []const u8, entries: *std.StringHashMap(*LockEntry), diag: *[]const u8) LockError!Locked {
     // Pass 2: one Package per wanted url.
     var channels = std.ArrayList(Channel).init(arena);
     var pkgs = std.ArrayList(Package).init(arena);
-    var mojo: []const u8 = "";
-    for (wanted.items) |url| {
+    for (wanted) |url| {
         const e = entries.get(url) orelse {
             diag.* = try std.fmt.allocPrint(arena, "{s} is listed for {s} but has no entry in the lock's package list", .{ url, subdir });
             return error.BadLock;
@@ -352,7 +392,6 @@ pub fn fromPixiLock(arena: Allocator, text: []const u8, subdir: []const u8, diag
             }
         }
         if (!found) try channels.append(.{ .name = cname, .url = base });
-        if (std.mem.eql(u8, name, "mojo")) mojo = version;
         try pkgs.append(.{
             .name = name,
             .version = version,
@@ -372,16 +411,7 @@ pub fn fromPixiLock(arena: Allocator, text: []const u8, subdir: []const u8, diag
     }
     std.mem.sort(Package, pkgs.items, {}, lessPackage);
     std.mem.sort(Channel, channels.items, {}, lessChannel);
-    if (mojo.len == 0) {
-        diag.* = "the lock has no mojo package";
-        return error.BadLock;
-    }
-    const c = Closure{ .mojo = mojo, .subdir = subdir, .channels = channels.items, .packages = pkgs.items };
-    if (try problem(arena, c)) |why| {
-        diag.* = why;
-        return error.BadLock;
-    }
-    return c;
+    return .{ .channels = channels.items, .packages = pkgs.items };
 }
 
 fn badUrl(arena: Allocator, diag: *[]const u8, url: []const u8) LockError {

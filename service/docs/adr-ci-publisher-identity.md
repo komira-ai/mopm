@@ -32,7 +32,7 @@ account owner behind it cannot publish its first package at all.
    package's `ci_owner`; it no longer returns success for every CI token. A package an account owns, or another identity owns, is
    refused (`not_owner`); a package with a `ci_owner` is refused to account tokens (no owner rows) and to tokens minted for a
    registered trusted publisher.
-4. **The exchange takes the packages.** `POST /auth/oidc/exchange` accepts `{jwt, packages: [{name, version}, ...]}` (one to 100)
+4. **The exchange takes the packages.** `POST /auth/oidc/exchange` accepts `{jwt, packages: [{name, version}, ...]}` (one to 500, the most members a group may have; the names are looked up and created sixteen at a time)
    next to the existing `{jwt, name, version}`. For the new form the exchange verifies the token (audience of the stage, exactly one
    exchange per token, `ref` and event checked), matches it to the configured publisher, checks every named package is unclaimed or already
    the identity's, then creates the missing ones and mints a ten minute token that is good for exactly those packages at exactly

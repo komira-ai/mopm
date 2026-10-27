@@ -325,3 +325,21 @@ repeat of a group commit must repeat which members gave the hash and what they
 gave; otherwise it is another request and is refused (`group_commit_refused`). A
 repeat of a single commit with the same upload ids resumes the same publish
 whatever it says about the hash.
+
+### The source commit of a version
+
+`source_commit` is an optional field of the commit of a single publish and of each member of a group commit: the git commit
+id the version was built from, exactly 40 or 64 lowercase hexadecimal digits. Anything else (uppercase, another length, a
+character that is not a hex digit, a value that is not a string) is `invalid_request`, and for a group commit the message
+names the member. The registry stores it once with the version, on that member's version only, and
+`GET /packages/{name}/{version}` returns it as `source_commit`; a version committed without one, and every version published
+before the field existed, has no `source_commit` key.
+
+It is informational. The registry checks its form and nothing else: it does not look the commit up, does not compare it with
+the archive, the repository or the caller's identity, and never compares or orders versions by it. A reader must treat it as
+what the publisher said, not as proof of where the files came from.
+
+It cannot change after the version is committed. A repeat of a group commit must repeat which members gave it and what they
+gave; otherwise it is another request and is refused (`group_commit_refused`). A repeat of a single commit with the same
+upload ids resumes the same publish when it states the same value (or none, when the first stated none); a repeat that states
+another value is refused `version_exists`, and the stored value does not change.

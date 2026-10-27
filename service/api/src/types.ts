@@ -68,6 +68,11 @@ export interface VersionRecord {
   /** Markdown, at most README_MAX_BYTES of UTF-8. */
   readme?: string;
   /**
+   * The git commit the publisher said the version was built from (`source_commit` of the commit request): 40 or 64 lowercase hex digits.
+   * Informational and unverified; written once with the version, absent on a version published without one.
+   */
+  source_commit?: string;
+  /**
    * The group this version is a member of, when it was published as part of one. Absent on every row written by a
    * single publish. A `pending` row with a group is shown as `published` only through the store's projection
    * (src/group.ts): when the group's header is committed and `staged_attempt` is the header's `attempt`.

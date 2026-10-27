@@ -24,6 +24,9 @@ export class MutableFlags implements Flags {
   groupActors = new Set<string>();
   groupsAll = false;
   groupsBroken = false;
+  /** The per-actor claim limits (`u:<github id>` to a daily limit), as the `claim_limits` item says them. */
+  claimLimits = new Map<string, number>();
+  claimLimitsBroken = false;
   async readOnly() {
     if (this.broken) throw new Error('config table unreadable');
     return this.ro;
@@ -31,6 +34,10 @@ export class MutableFlags implements Flags {
   async groupsFor(actor: string) {
     if (this.groupsBroken) throw new Error('config table unreadable');
     return this.groupsAll || this.groupActors.has(actor);
+  }
+  async claimLimitFor(actor: string) {
+    if (this.claimLimitsBroken) throw new Error('config table unreadable');
+    return this.claimLimits.get(actor);
   }
 }
 
@@ -120,7 +127,7 @@ export class Harness {
       now,
       newId: () => (++this.n).toString(16).padStart(32, '0'),
     });
-    const claims = new ClaimService({ registry: this.registry, users: this.authStore, publishes: this.publishes, config: this.config, now, newId: () => `claim${String(++this.claimN).padStart(4, '0')}` });
+    const claims = new ClaimService({ registry: this.registry, users: this.authStore, publishes: this.publishes, config: this.config, flags: this.flags, now, newId: () => `claim${String(++this.claimN).padStart(4, '0')}` });
     const api: PublishApi = { auth: new Authenticator({ store: this.authStore, now }), service: this.service, flags: this.flags, groups: this.groupService, claims };
     this.deps = { store: this.registry, stage: 'beta', version: 't', commit: 't', readOnly: false, publish: api };
     this.validatorDeps = {
