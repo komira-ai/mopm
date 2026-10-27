@@ -228,7 +228,20 @@ test "golden files: link-plan, metadata, new and init, build, run, repl, test --
         else => "linux",
     };
     try c.cmd("exec: run", "tests/golden/exec/run.txt", 7, &.{ "run", "hello.mojo", "--prefix", stand_in_real }, .{ .set = &.{ .{ "MODULAR_HOME", dup_home }, .{ "MOPM_GOLDEN_MARK", "kept" } } });
-    try c.cmd("exec: build", try std.fmt.allocPrint(a, "tests/golden/exec/build.{s}.txt", .{host}), 7, &.{ "build", "hello.mojo", "-o", "hello", "--prefix", stand_in_real }, .{});
+    // `run --bin <package>:<program>` runs the source file an installed package ships (lib/mojo/<package>.bins/), with the
+    // environment's libraries linked as for any run; a program the package does not ship, and a package that is not
+    // installed (even one whose programs are on disk), are refused before mojo is started.
+    try h.writeFile(try h.join(a, &.{ stand_in_real, "lib/mojo/echo.bins/greet.mojo" }), "def main(): print(\"hi\")\n");
+    try h.writeFile(try h.join(a, &.{ stand_in_real, "lib/mojo/ghost.bins/greet.mojo" }), "def main(): print(\"boo\")\n");
+    try c.cmd("exec: run --bin", "tests/golden/exec/run_bin.txt", 7, &.{ "run", "--bin", "echo:greet", "--prefix", stand_in_real }, .{ .set = &.{ .{ "MODULAR_HOME", dup_home }, .{ "MOPM_GOLDEN_MARK", "kept" } } });
+    try c.cmd("exec: run --bin of a program the package does not ship", "tests/golden/exec/run_bin_unknown.txt", 1, &.{ "run", "--bin=echo:nope", "--prefix", stand_in_real }, .{});
+    try c.cmd("exec: run --bin of a package that is not installed", "tests/golden/exec/run_bin_missing.txt", 1, &.{ "run", "--bin", "ghost:greet", "--prefix", stand_in_real }, .{});
+    {
+        const r = try h.run(a, try c.mopmArgv(&.{ "run", "--bin", "../echo:greet", "--prefix", stand_in_real }), &base, .{});
+        const first = std.mem.sliceTo(r.text, '\n');
+        rep.check("exec: run --bin names a package and a program, never a path", !r.signaled and r.code == 2 and h.contains(first, "mopm run: --bin ../echo:greet: '../echo' is not a package name"), r.text);
+    }
+    try c.cmd("exec: build",try std.fmt.allocPrint(a, "tests/golden/exec/build.{s}.txt", .{host}), 7, &.{ "build", "hello.mojo", "-o", "hello", "--prefix", stand_in_real }, .{});
     try c.cmd("exec: repl reads stdin", try std.fmt.allocPrint(a, "tests/golden/exec/repl.{s}.txt", .{host}), 7, &.{ "repl", "--prefix", stand_in_real }, .{ .stdin = "tests/golden/exec/repl.stdin" });
     try c.cmd("exec: no bin/mojo in the environment", "tests/golden/exec/no_mojo.txt", 127, &.{ "run", "hello.mojo", "--prefix", chain }, .{});
     {
