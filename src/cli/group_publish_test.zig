@@ -8,6 +8,7 @@ const core = @import("mopm_core");
 const http = core.http;
 const gp = @import("group_publish.zig");
 const plan_mod = @import("group_plan.zig");
+const stage_token = @import("group_stage_token.zig");
 const Net = gp.Net;
 const Console = gp.Console;
 const Publisher = gp.Publisher;
@@ -1223,6 +1224,19 @@ const oidc_minted = "mopm_group_token_secret";
 const oidc_exchange_ok = "{\"token\":\"" ++ oidc_minted ++ "\",\"token_kind\":\"publish\",\"expires_at\":\"2026-10-25T00:15:00Z\",\"packages\":[]}";
 const oidc_api = "http://127.0.0.1:1/api/v1";
 
+/// The registry token of a commit or one-shot `--oidc` run, through the code the command runs (`group_stage_token.token`, asking
+/// for no purpose); a notice would be a failure here, so the notes sink refuses one.
+const NoNotes = struct {
+    pub fn writeAll(_: *NoNotes, _: []const u8) !void {
+        return error.UnexpectedNotice;
+    }
+};
+
+fn oidcToken(arena: Allocator, net: gp.Net, act: core.ci_oidc.Actions, api_url: []const u8, audience_stage: []const u8, uploads: []const plan_mod.Member) anyerror!core.ci_oidc.Result {
+    var notes = NoNotes{};
+    return stage_token.token(arena, net, act, api_url, audience_stage, uploads, .publish, &notes);
+}
+
 /// None of the three secrets of an --oidc run is in `text`.
 fn expectNoOidcSecret(text: []const u8) !void {
     for ([_][]const u8{ oidc_actions.token, oidc_jwt, oidc_minted }) |s| try std.testing.expect(!contains(text, s));
@@ -1246,7 +1260,7 @@ test "--oidc covers a staged set of three with one identity request and one exch
         .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
     });
     const uploads = try plan.uploads(a);
-    const got = try gp.oidcToken(a, script.net(), oidc_actions, oidc_api, "beta", uploads);
+    const got = try oidcToken(a, script.net(), oidc_actions, oidc_api, "beta", uploads);
     try std.testing.expectEqualStrings(oidc_minted, got.ok);
 
     var console = Console.init(a, null);
@@ -1319,7 +1333,7 @@ test "--oidc: a refused exchange stops before the group is created, with the reg
             .{ .method = .POST, .suffix = "/auth/oidc/exchange", .status = r.status, .body = r.body },
             .{ .method = .POST, .suffix = "/groups", .status = 201, .body = create_new },
         });
-        const got = try gp.oidcToken(a, script.net(), oidc_actions, oidc_api, "beta", uploads);
+        const got = try oidcToken(a, script.net(), oidc_actions, oidc_api, "beta", uploads);
         try expectContains(got.bad, r.text);
         try expectContains(got.bad, "refused the identity token for the 3 packages of the set");
         try expectNoOidcSecret(got.bad);
@@ -1342,7 +1356,7 @@ test "--oidc: each member is listed at its own version, in the plan's order" {
         .{ .method = .GET, .suffix = "audience=gamma.mopm.dev", .status = 200, .body = oidc_identity },
         .{ .method = .POST, .suffix = "/auth/oidc/exchange", .status = 200, .body = oidc_exchange_ok },
     });
-    const got = try gp.oidcToken(a, script.net(), oidc_actions, oidc_api, "gamma", &members);
+    const got = try oidcToken(a, script.net(), oidc_actions, oidc_api, "gamma", &members);
     try std.testing.expectEqualStrings(oidc_minted, got.ok);
     try std.testing.expectEqualStrings(
         "{\"jwt\":\"" ++ oidc_jwt ++ "\",\"packages\":[{\"name\":\"zeta\",\"version\":\"0.0.3\"},{\"name\":\"alpha\",\"version\":\"2.1.0-rc.1\"},{\"name\":\"mid\",\"version\":\"10.0.0\"}]}",
@@ -1357,7 +1371,7 @@ test "--oidc: more than 100 members is refused whole, before GitHub or the regis
     var members = std.ArrayList(plan_mod.Member).init(a);
     for (0..101) |i| try members.append(.{ .name = try std.fmt.allocPrint(a, "pkg{d}", .{i}), .version = "1.0.0", .action = .upload });
     var script = newScript(a, &.{.{ .method = .GET, .suffix = "audience=beta.mopm.dev", .status = 200, .body = oidc_identity }});
-    const got = try gp.oidcToken(a, script.net(), oidc_actions, oidc_api, "beta", members.items);
+    const got = try oidcToken(a, script.net(), oidc_actions, oidc_api, "beta", members.items);
     try expectContains(got.bad, "at most 100 packages and this set uploads 101");
     try std.testing.expectEqual(@as(usize, 0), script.seen.items.len);
     // 100 is within the limit: it asks once for each.
@@ -1365,7 +1379,7 @@ test "--oidc: more than 100 members is refused whole, before GitHub or the regis
         .{ .method = .GET, .suffix = "audience=beta.mopm.dev", .status = 200, .body = oidc_identity },
         .{ .method = .POST, .suffix = "/auth/oidc/exchange", .status = 200, .body = oidc_exchange_ok },
     });
-    const full = try gp.oidcToken(a, ok_script.net(), oidc_actions, oidc_api, "beta", members.items[0..100]);
+    const full = try oidcToken(a, ok_script.net(), oidc_actions, oidc_api, "beta", members.items[0..100]);
     try std.testing.expectEqualStrings(oidc_minted, full.ok);
     try std.testing.expectEqual(@as(usize, 2), ok_script.seen.items.len);
 }

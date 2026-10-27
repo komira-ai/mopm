@@ -40,8 +40,8 @@
 //! single-use, so there is one identity request and one exchange for the whole set, and that token serves the group's
 //! create, uploads, commit and waits. With `--no-commit` the exchange asks for `"purpose": "stage"` and the token is a
 //! stage-only one, which the registry refuses to commit with; a registry that predates stage tokens answers a publish
-//! token, and the run says so and goes on (src/cli/group_stage_token.zig). Every other run sends no `purpose`. A set of more than 100 members is refused before any request (a group is one unit
-//! and is not split); a rerun asks for a fresh token.
+//! token, and the run says so and goes on (src/cli/group_stage_token.zig). Every other run sends no `purpose`. A set of more than 100 members is refused before any
+//! request (a group is one unit and is not split); a rerun asks for a fresh token.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -1037,16 +1037,6 @@ fn abortCommand(arena: Allocator, flags: Flags, cli_version: []const u8, net: Ne
     };
     const result = p.abort();
     return p.finish(result);
-}
-
-/// The registry token of `--oidc` for a staged set: one identity token, one exchange of the `packages` form naming every
-/// member to upload at its version (the plan's), and that one token for the group's create, uploads, commit and waits.
-/// A set of one member uses the same form, so a group has one path. The token stays in memory: it is returned to the
-/// caller and goes nowhere else.
-pub fn oidcToken(arena: Allocator, net: Net, act: ci_oidc.Actions, api_url: []const u8, stage: []const u8, uploads: []const plan_mod.Member) anyerror!ci_oidc.Result {
-    const packages = try arena.alloc(ci_oidc.Package, uploads.len);
-    for (uploads, packages) |m, *p| p.* = .{ .name = m.name, .version = m.version };
-    return ci_oidc.obtainPackages(arena, net, net.policy, act, api_url, stage, packages);
 }
 
 fn dryRun(flags: Flags, plan: plan_mod.Plan, uploads: []const plan_mod.Member, console: *Console) anyerror!u8 {

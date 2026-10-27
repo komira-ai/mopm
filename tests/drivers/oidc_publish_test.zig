@@ -20,9 +20,9 @@
 //!   creates, uploads and commits the group: every member is served. A registry that does not trust the job's repository as
 //!   a CI publisher, and one where a name belongs to someone else, each refuse the exchange: the run ends 1 with the
 //!   registry's message, GitHub was asked once, and no group was made;
-//! - `--no-commit --oidc` asks for a stage token, which the fake registry grants and enforces (a stage token cannot commit),
-//!   and stages with it (so a CLI that asked for no stage token, or one that committed with it, goes red here); the commit run
-//!   asks for none and its publish token commits;
+//! - `--no-commit --oidc` asks for a stage token: the fake registry counts the tokens its exchange mints by kind, and the staging
+//!   run's one exchange minted a stage token and no publish token (the fake enforces the scope, so the run staged with it and
+//!   printed no notice); the commit run's exchange minted a publish token and no stage token;
 //! - `--no-commit --oidc` stages a set with one exchange, a second run (a new identity token, a second exchange of the same
 //!   packages) commits the same group, and `--abort --oidc` ends a staged group with an exchange of its own.
 
@@ -164,6 +164,14 @@ fn stage(a: Allocator, dir: []const u8, members: []const [2][]const u8) !void {
     }
     try plan.appendSlice("]}");
     try h.writeFile(try h.join(a, &.{ dir, "plan.json" }), plan.items);
+}
+
+/// How many CI-identity tokens the fake registry has minted so far, by kind (the fake's own count; the run's token is in its memory only).
+const Minted = struct { stage: i64, publish: i64 };
+
+fn minted(a: Allocator, fake: h.Fake) !Minted {
+    const v = try fake.control(a, "/oidc_tokens", "{}");
+    return .{ .stage = v.object.get("stage").?.integer, .publish = v.object.get("publish").?.integer };
 }
 
 fn served(a: Allocator, fake: h.Fake, name: []const u8, version: []const u8) !?h.Response {
@@ -323,7 +331,9 @@ test "mopm publish --oidc against the fake registry and a stand-in for GitHub" {
 
     // A set of three unclaimed names: one identity request, one exchange, one group.
     gh.calls = 0;
+    const before_one_shot = try minted(a, fake);
     r = try m.run(&(fresh_args ++ to_fake), .both, null);
+    const after_one_shot = try minted(a, fake);
     gh.mutex.lock();
     const set_audience = gh.audience;
     const set_calls = gh.calls;
@@ -331,6 +341,8 @@ test "mopm publish --oidc against the fake registry and a stand-in for GitHub" {
     rep.check("a set of three is published as one group with one identity request, for the registry's audience", r.code == 0 and set_calls == 1 and
         std.mem.eql(u8, set_audience, "beta.mopm.dev") and h.contains(r.stdout, "published group") and
         h.contains(r.stdout, "grpa 1.0.0") and h.contains(r.stdout, "grpb 1.1.0") and h.contains(r.stdout, "grpc 1.2.0"), describe(a, r));
+    rep.check("the one-shot run (stage and commit in one) asked for a publish token and no stage token", after_one_shot.publish == before_one_shot.publish + 1 and
+        after_one_shot.stage == before_one_shot.stage, "the one-shot run's exchange did not mint exactly one publish token");
     rep.check("every member is served at its version", (try served(a, fake, "grpa", "1.0.0")) != null and (try served(a, fake, "grpb", "1.1.0")) != null and
         (try served(a, fake, "grpc", "1.2.0")) != null, "a member is not served");
 
@@ -344,21 +356,28 @@ test "mopm publish --oidc against the fake registry and a stand-in for GitHub" {
     try stage(a, split, &.{ .{ "grpx", "2.0.0" }, .{ "grpy", "2.1.0" } });
     const split_args = [_][]const u8{ "publish", "--staged", split, "--config-dir", conf, "--oidc", "--wait", "30" };
     gh.calls = 0;
+    const before_stage = try minted(a, fake);
     r = try m.run(&(split_args ++ [_][]const u8{"--no-commit"} ++ to_fake), .both, null);
+    const after_stage = try minted(a, fake);
     const staged_calls = gh.calls;
     const staged_group = h.jsonString(try h.parseJson(a, try h.readFile(a, try h.join(a, &.{ split, "state.json" }))), "group_id") orelse "";
     rep.check("--staged --oidc --no-commit exchanges once and stops with the group open and nothing served", r.code == 0 and staged_calls == 1 and h.contains(r.stdout, "staged group grp_") and
         staged_group.len > 0 and (try served(a, fake, "grpx", "2.0.0")) == null and (try served(a, fake, "grpy", "2.1.0")) == null, describe(a, r));
-    // The registry answered a stage token (the fake models the scope): the run used it to create the group and upload, and
-    // printed no notice, which it prints only for an answer that is not a stage token.
-    rep.check("the staging run got and used a stage token: it staged, and printed no notice about a publish token", r.code == 0 and
+    // The fake counts what the exchange minted: the staging run's one exchange made a stage token and no publish token, and the
+    // group was created and filled with it (the fake refuses a stage token only for a commit, which this run never tries).
+    rep.check("the staging run asked for, got and used a stage token: it staged, and printed no notice about a publish token", r.code == 0 and
+        after_stage.stage == before_stage.stage + 1 and after_stage.publish == before_stage.publish and staged_group.len > 0 and
         !h.contains(r.stderr, "stage-only") and !h.contains(r.stdout, "stage-only"), describe(a, r));
     gh.calls = 0;
     r = try m.run(&(split_args ++ to_fake), .both, null);
+    const after_commit = try minted(a, fake);
     const resumed_group = h.jsonString(try h.parseJson(a, try h.readFile(a, try h.join(a, &.{ split, "state.json" }))), "group_id") orelse "";
     rep.check("the commit run asks GitHub and the registry for a new token (the second exchange of the same packages passes) and commits the SAME group", r.code == 0 and gh.calls == 1 and
         h.contains(r.stdout, "resuming group") and h.contains(r.stdout, "2 file(s) were already in the registry's storage") and std.mem.eql(u8, staged_group, resumed_group) and
         (try served(a, fake, "grpx", "2.0.0")) != null and (try served(a, fake, "grpy", "2.1.0")) != null, describe(a, r));
+
+    rep.check("the commit run asked for a publish token and no stage token", after_commit.publish == after_stage.publish + 1 and after_commit.stage == after_stage.stage,
+        "the commit run's exchange did not mint exactly one publish token");
 
     // The failure job: --abort with its own exchange ends a staged group.
     const lost = try h.join(a, &.{ work, "staged_lost" });
