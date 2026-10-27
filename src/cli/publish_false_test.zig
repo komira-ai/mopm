@@ -122,6 +122,7 @@ test "stage refuses a named package with publish = false, writes nothing, and a 
     const ok = try runStage(fx, "named", &.{"pkg_lib"});
     try std.testing.expectEqual(@as(u8, 0), ok.code);
     try std.testing.expectEqualStrings("pkg_lib", try planNames(fx, "named"));
+    try std.testing.expect(fx.exists("named"));
     try std.testing.expect(!has(ok.out, "not staged"));
 }
 
