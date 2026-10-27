@@ -89,8 +89,12 @@ const usage =
     \\                          uploads every file and stops with the group open
     \\                          (exit 0, outcome 'staged', nothing readable); the
     \\                          same command without it resumes that group and
-    \\                          commits. --abort ends the open group state.json
-    \\                          names, which frees the actor's place
+    \\                          commits. With --oidc, --no-commit asks the
+    \\                          registry for a stage-only token (it cannot
+    \\                          commit); a registry without stage tokens gives a
+    \\                          publish token and the run says so. --abort ends
+    \\                          the open group state.json names, which frees
+    \\                          the actor's place
     \\  stage --workspace-root <dir> [<package>...] --artifacts <dir> --compiler <mojo version>
     \\        --out <dir> --registry <prod|gamma|beta|url>
     \\                          pack the workspace's members (the named ones and
@@ -557,6 +561,7 @@ test {
     _ = @import("group_plan.zig");
     _ = @import("group_publish.zig");
     _ = @import("group_publish_test.zig");
+    _ = @import("group_stage_token.zig");
     _ = stage_cmd;
     _ = @import("stage_test.zig");
     _ = build_cmd;

@@ -14,6 +14,14 @@
 //!      for ten minutes, for exactly those package versions, which the registry lets create and run a group. An identity
 //!      token is single-use, so the whole staged set is covered by one exchange of one identity token.
 //!
+//!   What a token is for. An exchange may carry `"purpose": "stage"` (the registry's `OidcExchangeRequest.purpose`): the answer
+//!   is then a token of the `stage` scope, which may create a group, read it and abort it but not commit or yank, and its
+//!   `token_kind` is `stage`. Only the run that stages without committing (`mopm publish --staged --no-commit --oidc`) asks
+//!   for it, so the registry, not only the client, keeps that run from committing. Every other exchange sends no `purpose`
+//!   at all, which is what the CLI has always sent and is the default (`publish`) on a registry that knows `purpose` and
+//!   one that predates it, so those runs behave identically on both. A registry that predates `purpose` ignores it and
+//!   answers a `publish` token (`token_kind` `publish` or absent): the run goes on with that token and says so.
+//!
 //! The registry token lives in the memory of the process and nowhere else: it is not put in the environment, and no
 //! file is written. The identity token and the request token are never printed, and the request token and URL are taken
 //! out of the environment of every program mopm starts (src/core/child_env.zig). Each exchange asks GitHub for a fresh
@@ -115,6 +123,19 @@ pub const Package = struct { name: []const u8, version: []const u8 };
 /// above this is refused whole, before any request, and never split: a split would be several groups.
 pub const max_packages: usize = 100;
 
+/// What the registry token of an exchange is for. `publish` is the default and is sent as no `purpose` at all; `stage` is
+/// sent as `"purpose":"stage"`.
+pub const Purpose = enum { publish, stage };
+
+/// The scope the registry says it minted (`token_kind`); an answer with no `token_kind` is a `publish` token.
+pub const Kind = enum { publish, stage };
+
+/// A registry token and the scope the registry says it has.
+pub const Minted = struct { token: []const u8, kind: Kind };
+
+/// The result of an exchange that cares which scope it got: the token and its kind, or the sentence that says why not.
+pub const Outcome = union(enum) { ok: Minted, bad: []const u8 };
+
 /// Trades the identity token `jwt` for a registry token that may publish `name` `version` (the single-package form).
 pub fn exchange(arena: Allocator, io: anytype, policy: http.Policy, api_url: []const u8, jwt: []const u8, name: []const u8, version: []const u8) anyerror!Result {
     var body = std.ArrayList(u8).init(arena);
@@ -126,12 +147,26 @@ pub fn exchange(arena: Allocator, io: anytype, policy: http.Policy, api_url: []c
     try w.writeAll(",\"version\":");
     try std.json.encodeJsonString(version, .{}, w);
     try w.writeByte('}');
-    return post(arena, io, policy, api_url, body.items, try std.fmt.allocPrint(arena, "{s} {s}", .{ name, version }));
+    return asResult(try post(arena, io, policy, api_url, body.items, try std.fmt.allocPrint(arena, "{s} {s}", .{ name, version }), .publish));
+}
+
+/// The token of `o` as a plain `Result`, for the callers whose purpose is `publish` (`post` has refused a `stage` answer to them).
+fn asResult(o: Outcome) Result {
+    return switch (o) {
+        .ok => |m| .{ .ok = m.token },
+        .bad => |why| .{ .bad = why },
+    };
 }
 
 /// Trades the identity token `jwt` for one registry token that may publish exactly `packages` at those versions (the
 /// `packages` form: `{"jwt", "packages": [{"name", "version"}, ...]}`).
 pub fn exchangePackages(arena: Allocator, io: anytype, policy: http.Policy, api_url: []const u8, jwt: []const u8, packages: []const Package) anyerror!Result {
+    return asResult(try exchangePackagesFor(arena, io, policy, api_url, jwt, packages, .publish));
+}
+
+/// `exchangePackages` for a `purpose`: `publish` sends the body it always has, `stage` adds `"purpose":"stage"`. The answer
+/// carries the kind the registry says it minted.
+pub fn exchangePackagesFor(arena: Allocator, io: anytype, policy: http.Policy, api_url: []const u8, jwt: []const u8, packages: []const Package, purpose: Purpose) anyerror!Outcome {
     var body = std.ArrayList(u8).init(arena);
     const w = body.writer();
     try w.writeAll("{\"jwt\":");
@@ -145,12 +180,17 @@ pub fn exchangePackages(arena: Allocator, io: anytype, policy: http.Policy, api_
         try std.json.encodeJsonString(p.version, .{}, w);
         try w.writeByte('}');
     }
-    try w.writeAll("]}");
-    return post(arena, io, policy, api_url, body.items, try std.fmt.allocPrint(arena, "the {d} packages of the set", .{packages.len}));
+    try w.writeAll("]");
+    if (purpose == .stage) try w.writeAll(",\"purpose\":\"stage\"");
+    try w.writeAll("}");
+    return post(arena, io, policy, api_url, body.items, try std.fmt.allocPrint(arena, "the {d} packages of the set", .{packages.len}), purpose);
 }
 
 /// Sends an exchange `body` and reads the token out of the answer. `subject` names what the token is for, in a refusal.
-fn post(arena: Allocator, io: anytype, policy: http.Policy, api_url: []const u8, body: []const u8, subject: []const u8) anyerror!Result {
+/// `purpose` is what the body asked for: an answer of the other kind than a `publish` request's is refused, because a token the
+/// run cannot use is not one to go on with; a `stage` request that is answered `publish` (or with no kind) is a registry from
+/// before `purpose`, and the caller decides what to say about it.
+fn post(arena: Allocator, io: anytype, policy: http.Policy, api_url: []const u8, body: []const u8, subject: []const u8, purpose: Purpose) anyerror!Outcome {
     const url = try std.fmt.allocPrint(arena, "{s}/auth/oidc/exchange", .{api_url});
     // A POST is sent once: a rerun of the command is its retry.
     const answer = http.retrying(arena, io, .POST, url, .{ .body = body }, policy) catch |e| {
@@ -170,10 +210,17 @@ fn post(arena: Allocator, io: anytype, policy: http.Policy, api_url: []const u8,
         else => "",
     };
     if (token.len == 0) return .{ .bad = "the registry's answer to the exchange has no token" };
-    if (obj.get("token_kind")) |kind| {
-        if (kind != .string or !std.mem.eql(u8, kind.string, "publish")) return .{ .bad = "the registry's exchange answered a token that is not a publish token" };
+    var kind: Kind = .publish;
+    if (obj.get("token_kind")) |k| {
+        if (k == .string and std.mem.eql(u8, k.string, "publish")) {
+            kind = .publish;
+        } else if (k == .string and std.mem.eql(u8, k.string, "stage") and purpose == .stage) {
+            kind = .stage;
+        } else {
+            return .{ .bad = if (purpose == .stage) "the registry's exchange answered a token that is neither a stage token nor a publish token" else "the registry's exchange answered a token that is not a publish token" };
+        }
     }
-    return .{ .ok = token };
+    return .{ .ok = .{ .token = token, .kind = kind } };
 }
 
 /// The registry token for `name` `version`: an identity token for the registry's audience, exchanged. `stage` is the
@@ -194,6 +241,11 @@ pub fn obtain(arena: Allocator, io: anytype, policy: http.Policy, job: Actions, 
 /// of the `packages` form. The set is checked first, so that a set the service would refuse asks GitHub for nothing
 /// (an identity token is single-use and a request for one is a request the job should not waste).
 pub fn obtainPackages(arena: Allocator, io: anytype, policy: http.Policy, job: Actions, api_url: []const u8, stage: []const u8, packages: []const Package) anyerror!Result {
+    return asResult(try obtainPackagesFor(arena, io, policy, job, api_url, stage, packages, .publish));
+}
+
+/// `obtainPackages` for a `purpose`, answering the token with its kind.
+pub fn obtainPackagesFor(arena: Allocator, io: anytype, policy: http.Policy, job: Actions, api_url: []const u8, stage: []const u8, packages: []const Package, purpose: Purpose) anyerror!Outcome {
     if (packages.len == 0) return .{ .bad = "--oidc: the set names no package; nothing was sent" };
     if (packages.len > max_packages) {
         return .{ .bad = try std.fmt.allocPrint(arena, "--oidc: one identity token covers at most {d} packages and this set uploads {d}; a group is published as one unit, so it cannot be split; nothing was sent", .{ max_packages, packages.len }) };
@@ -211,7 +263,7 @@ pub fn obtainPackages(arena: Allocator, io: anytype, policy: http.Policy, job: A
         .ok => |t| t,
         .bad => |why| return .{ .bad = why },
     };
-    return exchangePackages(arena, io, policy, api_url, jwt, packages);
+    return exchangePackagesFor(arena, io, policy, api_url, jwt, packages, purpose);
 }
 
 // ---------------------------------------------------------------------- tests
@@ -496,4 +548,61 @@ test "a set the service would refuse asks GitHub and the registry for nothing" {
     try std.testing.expect(none == .bad);
     try std.testing.expectEqual(@as(usize, 0), io.identity_calls);
     try std.testing.expectEqual(@as(usize, 0), io.exchange_calls);
+}
+
+const api_beta = "https://api.beta.mopm.dev/api/v1";
+
+test "a staging exchange asks for purpose stage and keeps the stage token the registry answers" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var io = Scripted{ .identity = reply(200, good_identity), .exchange = reply(200, "{\"token\":\"mopm_registry_secret\",\"token_kind\":\"stage\",\"expires_at\":\"2026-10-25T00:15:00Z\",\"packages\":[]}") };
+    const got = try obtainPackagesFor(a, &io, .{}, actions, api_beta, "beta", &three, .stage);
+    try std.testing.expectEqualStrings("mopm_registry_secret", got.ok.token);
+    try std.testing.expectEqual(Kind.stage, got.ok.kind);
+    try std.testing.expectEqualStrings(
+        "{\"jwt\":\"" ++ secret_jwt ++ "\",\"packages\":[{\"name\":\"a\",\"version\":\"1.0.0\"},{\"name\":\"b\",\"version\":\"2.1.0\"},{\"name\":\"c\",\"version\":\"0.0.3\"}],\"purpose\":\"stage\"}",
+        io.exchange_body,
+    );
+    try std.testing.expectEqual(@as(usize, 1), io.identity_calls);
+    try std.testing.expectEqual(@as(usize, 1), io.exchange_calls);
+}
+
+test "a staging exchange answered with a publish token, or with no kind (a registry from before purpose), goes on with a publish kind" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    for ([_][]const u8{ good_packages_exchange, "{\"token\":\"mopm_registry_secret\",\"expires_at\":\"2026-10-25T00:15:00Z\",\"packages\":[]}" }) |body| {
+        var io = Scripted{ .identity = reply(200, good_identity), .exchange = reply(200, body) };
+        const got = try obtainPackagesFor(a, &io, .{}, actions, api_beta, "beta", &three, .stage);
+        try std.testing.expectEqualStrings("mopm_registry_secret", got.ok.token);
+        try std.testing.expectEqual(Kind.publish, got.ok.kind);
+    }
+}
+
+test "a publish exchange sends no purpose, and refuses an answer that is a stage token" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var io = Scripted{ .identity = reply(200, good_identity), .exchange = reply(200, good_packages_exchange) };
+    const got = try obtainPackagesFor(a, &io, .{}, actions, api_beta, "beta", &three, .publish);
+    try std.testing.expectEqual(Kind.publish, got.ok.kind);
+    try std.testing.expect(std.mem.indexOf(u8, io.exchange_body, "purpose") == null);
+
+    io = Scripted{ .identity = reply(200, good_identity), .exchange = reply(200, "{\"token\":\"mopm_registry_secret\",\"token_kind\":\"stage\",\"expires_at\":\"2026-10-25T00:15:00Z\",\"packages\":[]}") };
+    const refused = try obtainPackagesFor(a, &io, .{}, actions, api_beta, "beta", &three, .publish);
+    try std.testing.expect(std.mem.indexOf(u8, refused.bad, "not a publish token") != null);
+    try expectNoSecret(refused.bad);
+}
+
+test "a staging exchange refuses a token kind that is neither stage nor publish" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    for ([_][]const u8{ "\"session\"", "3", "null" }) |kind| {
+        const body = try std.fmt.allocPrint(a, "{{\"token\":\"mopm_registry_secret\",\"token_kind\":{s},\"packages\":[]}}", .{kind});
+        var io = Scripted{ .identity = reply(200, good_identity), .exchange = reply(200, body) };
+        const got = try obtainPackagesFor(a, &io, .{}, actions, api_beta, "beta", &three, .stage);
+        try std.testing.expect(std.mem.indexOf(u8, got.bad, "neither a stage token nor a publish token") != null);
+    }
 }

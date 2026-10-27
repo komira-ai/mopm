@@ -38,7 +38,9 @@
 //! that may request an identity token, mopm exchanges it at the registry, in memory only, for one token that may publish
 //! exactly the members the plan uploads, at their versions (the `packages` form of the exchange). An identity token is
 //! single-use, so there is one identity request and one exchange for the whole set, and that token serves the group's
-//! create, uploads, commit and waits. A set of more than 100 members is refused before any request (a group is one unit
+//! create, uploads, commit and waits. With `--no-commit` the exchange asks for `"purpose": "stage"` and the token is a
+//! stage-only one, which the registry refuses to commit with; a registry that predates stage tokens answers a publish
+//! token, and the run says so and goes on (src/cli/group_stage_token.zig). Every other run sends no `purpose`. A set of more than 100 members is refused before any request (a group is one unit
 //! and is not split); a rerun asks for a fresh token.
 
 const std = @import("std");
@@ -47,6 +49,7 @@ const core = @import("mopm_core");
 const http = core.http;
 const registry = core.registry;
 const ci_oidc = core.ci_oidc;
+const stage_token = @import("group_stage_token.zig");
 const plan_mod = @import("group_plan.zig");
 const registry_cmd = @import("registry_cmd.zig");
 const publish_cmd = @import("publish_cmd.zig");
@@ -58,7 +61,9 @@ const usage =
     \\  together, or none is. --registry is required. A rerun after a failure resumes the same group (<dir>/state.json).
     \\  --oidc, inside a GitHub Actions job with 'id-token: write', gets the token from the job's identity, not $MOPM_TOKEN.
     \\  --no-commit uploads every file and stops with the group open (nothing committed, nothing readable); a later run
-    \\  without it resumes the same group and commits. --abort ends the open group <dir>/state.json names.
+    \\  without it resumes the same group and commits. With --oidc, --no-commit asks the registry for a stage-only token (it
+    \\  can create, read and abort a group, not commit it); a registry without stage tokens answers a publish token, and the
+    \\  run goes on with it and says so. --abort ends the open group <dir>/state.json names.
     \\
 ;
 
@@ -949,6 +954,13 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
     return p.finish(result);
 }
 
+/// A notice of the run, on stderr, in the voice of the other messages.
+const StderrNotes = struct {
+    pub fn writeAll(_: *StderrNotes, text: []const u8) !void {
+        err("{s}", .{text});
+    }
+};
+
 const Credentials = struct { api_url: []const u8, token: []const u8 };
 
 /// The registry's API root and the token of this run (`--oidc`, `$MOPM_TOKEN` or the login's), or null after saying why not.
@@ -959,7 +971,9 @@ fn credentials(arena: Allocator, net: Net, flags: Flags, cli_version: []const u8
         return null;
     }) else null;
     const s = registry_cmd.open(arena, .{ .registry = flags.registry, .config_dir = flags.config_dir }, cli_version) orelse return null;
-    const token = if (actions) |act| switch (try oidcToken(arena, net, act, s.config.api_url, s.config.stage, uploads)) {
+    var notes = StderrNotes{};
+    const purpose = stage_token.purposeOf(flags.no_commit, flags.abort);
+    const token = if (actions) |act| switch (try stage_token.token(arena, net, act, s.config.api_url, s.config.stage, uploads, purpose, &notes)) {
         .ok => |t| t,
         .bad => |why| {
             err("{s}\n", .{why});

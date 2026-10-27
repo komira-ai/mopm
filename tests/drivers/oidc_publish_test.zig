@@ -20,6 +20,9 @@
 //!   creates, uploads and commits the group: every member is served. A registry that does not trust the job's repository as
 //!   a CI publisher, and one where a name belongs to someone else, each refuse the exchange: the run ends 1 with the
 //!   registry's message, GitHub was asked once, and no group was made;
+//! - `--no-commit --oidc` asks for a stage token, which the fake registry grants and enforces (a stage token cannot commit),
+//!   and stages with it (so a CLI that asked for no stage token, or one that committed with it, goes red here); the commit run
+//!   asks for none and its publish token commits;
 //! - `--no-commit --oidc` stages a set with one exchange, a second run (a new identity token, a second exchange of the same
 //!   packages) commits the same group, and `--abort --oidc` ends a staged group with an exchange of its own.
 
@@ -346,6 +349,10 @@ test "mopm publish --oidc against the fake registry and a stand-in for GitHub" {
     const staged_group = h.jsonString(try h.parseJson(a, try h.readFile(a, try h.join(a, &.{ split, "state.json" }))), "group_id") orelse "";
     rep.check("--staged --oidc --no-commit exchanges once and stops with the group open and nothing served", r.code == 0 and staged_calls == 1 and h.contains(r.stdout, "staged group grp_") and
         staged_group.len > 0 and (try served(a, fake, "grpx", "2.0.0")) == null and (try served(a, fake, "grpy", "2.1.0")) == null, describe(a, r));
+    // The registry answered a stage token (the fake models the scope): the run used it to create the group and upload, and
+    // printed no notice, which it prints only for an answer that is not a stage token.
+    rep.check("the staging run got and used a stage token: it staged, and printed no notice about a publish token", r.code == 0 and
+        !h.contains(r.stderr, "stage-only") and !h.contains(r.stdout, "stage-only"), describe(a, r));
     gh.calls = 0;
     r = try m.run(&(split_args ++ to_fake), .both, null);
     const resumed_group = h.jsonString(try h.parseJson(a, try h.readFile(a, try h.join(a, &.{ split, "state.json" }))), "group_id") orelse "";
