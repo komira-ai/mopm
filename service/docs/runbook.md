@@ -255,8 +255,8 @@ row created only if its key is absent, so of two claims of one name exactly one 
 `PutItem` on `packages` and `owners` for this and nothing more there: it cannot change or delete an owner or a package.
 
 - Read-only mode refuses a claim (`read_only_mode`), as it refuses an upload. The route is on every stage; there is no switch for it.
-- A claim is rate limited per actor: 50 written claims per account and 50 per token per UTC day, or the account's `claim_limits` entry (below) (`MOPM_CLAIM_RATE_PER_ACCOUNT_DAY`,
-  `MOPM_CLAIM_RATE_PER_TOKEN_DAY`, set from the `claimRatePerAccountPerDay` and `claimRatePerTokenPerDay` of the API stack's `limits`).
+- A claim is rate limited per actor: 50 written claims per account and 50 per token per UTC day (`MOPM_CLAIM_RATE_PER_ACCOUNT_DAY`,
+  `MOPM_CLAIM_RATE_PER_TOKEN_DAY`, set from the `claimRatePerAccountPerDay` and `claimRatePerTokenPerDay` of the API stack's `limits`), unless the account has a `claim_limits` entry (below).
   Over either, the claim is `429 rate_limited` with `Retry-After` to midnight UTC and writes nothing. Only a claim about to be written is
   charged, and one whose write fails gives its charge back. The counters are `rl#ct#<token>#<day>` and `rl#cu#<github id>#<day>` in the
   `publishes` table (the one the publish limits use), so the role needs no new grant. Any live user token may claim (the spec's `userToken`;

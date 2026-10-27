@@ -1,4 +1,5 @@
 import { DynamoFlags, MAX_CLAIM_LIMIT, parseClaimLimits, StaticFlags, AnyFlag } from '../../src/publish/flags';
+import { flagsFor } from '../../src/publish/wiring';
 import { FakeDoc } from './fake-doc';
 import { Harness } from './harness';
 
@@ -96,9 +97,11 @@ describe('the daily claim limit with an override', () => {
 
   test('an override of the real item path: the value above the hard cap is clamped, and the 1001st claim is refused', async () => {
     const h = new Harness({ claimRatePerAccountPerDay: 3, claimRatePerTokenPerDay: 3 });
-    const doc = docFor();
-    doc.table('t-config').set('claim_limits', { key: 'claim_limits', limits: { 'u:7': 1_000_000 } });
-    h.flags.claimLimitFor = (actor: string) => new DynamoFlags(doc as never, 't-config', 0).claimLimitFor(actor);
+    const doc = new FakeDoc({ 'mopm-t-config': 'key' });
+    doc.table('mopm-t-config').set('claim_limits', { key: 'claim_limits', limits: { 'u:7': 1_000_000 } });
+    // The production switches (static + the config table), as the Lambda builds them.
+    const real = flagsFor({}, doc as never, 't');
+    h.flags.claimLimitFor = (actor: string) => real.claimLimitFor(actor);
     const t = await account(h, 7);
     const limit = await h.flags.claimLimitFor('u:7');
     expect(limit).toBe(1000);

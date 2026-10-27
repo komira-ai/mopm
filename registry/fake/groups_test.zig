@@ -658,7 +658,7 @@ test "the packages exchange: who it is for, what it refuses, and that nothing is
     try expectCode(try exchange(&fx, jwt, "[{\"name\":\"new_one\",\"version\":\"1.0.0\"},{\"name\":\"new_one\",\"version\":\"1.0.1\"}]"), 400, "invalid_request");
     var many = std.ArrayList(u8).init(fx.life.allocator());
     try many.append('[');
-    for (0..101) |i| try many.writer().print("{s}{{\"name\":\"many_{d}\",\"version\":\"1.0.0\"}}", .{ if (i == 0) "" else ",", i });
+    for (0..501) |i| try many.writer().print("{s}{{\"name\":\"many_{d}\",\"version\":\"1.0.0\"}}", .{ if (i == 0) "" else ",", i });
     try many.append(']');
     try expectCode(try exchange(&fx, jwt, many.items), 400, "invalid_request");
     const both = try std.fmt.allocPrint(fx.life.allocator(), "{{\"jwt\":\"{s}\",\"name\":\"new_one\",\"version\":\"1.0.0\",\"packages\":{s}}}", .{ jwt, one });
@@ -671,6 +671,24 @@ test "the packages exchange: who it is for, what it refuses, and that nothing is
     try std.testing.expect(fx.state.packageByName("new_one") == null);
     // No token was minted by any refusal: the fixture's two API tokens and its session are all there are.
     try std.testing.expectEqual(@as(usize, 3), fx.state.tokens.items.len);
+}
+
+test "the packages exchange takes 500 names, the most a group holds, and creates every one" {
+    var fx: Fx = undefined;
+    try fx.setup();
+    defer fx.deinit();
+    const a = fx.life.allocator();
+    try fx.state.ci_repos.append(a, "org/repo");
+    const jwt = try jwtOf(&fx, "org/repo");
+    var many = std.ArrayList(u8).init(a);
+    try many.append('[');
+    for (0..500) |i| try many.writer().print("{s}{{\"name\":\"many_{d}\",\"version\":\"1.0.0\"}}", .{ if (i == 0) "" else ",", i });
+    try many.append(']');
+    const minted = try exchange(&fx, jwt, many.items);
+    try std.testing.expectEqual(@as(u16, 200), minted.status);
+    try std.testing.expectEqual(@as(usize, 500), minted.value.object.get("packages").?.array.items.len);
+    try std.testing.expect(fx.state.packageByName("many_0") != null);
+    try std.testing.expect(fx.state.packageByName("many_499") != null);
 }
 
 test "a packages token creates and runs a group of exactly its versions, and no other" {

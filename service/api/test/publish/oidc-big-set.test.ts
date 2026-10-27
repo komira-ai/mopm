@@ -215,4 +215,23 @@ describe('a CI publisher that acts for an account: the names are read sixteen at
     expect(ociTokens(s.h)).toHaveLength(0);
     expect((await s.oidc.exchange({ jwt, packages: set(100) })).packages).toHaveLength(100);
   });
+
+  test('the refusal is the lowest request index even when a later name is refused first', async () => {
+    const s = setup(ACCOUNT);
+    await owned(s, 60);
+    await s.h.registry.createPackage({ name: 'zz_unclaimed', state: 'claimed', created_at: 't', ci_owner: 'gh-repo:1' });
+    // The read of the earlier failing name is held until the later failing name has been read and refused.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const real = s.h.registry.getPackage.bind(s.h.registry);
+    s.h.registry.getPackage = async (n: string) => {
+      if (n === 'zz_unclaimed') await gate;
+      const p = await real(n);
+      if (n === 'unknown_pkg') release();
+      return p;
+    };
+    const mixed = [...set(60).slice(0, 20), { name: 'zz_unclaimed', version: '1.0.0' }, ...set(60).slice(20, 50), { name: 'unknown_pkg', version: '1.0.0' }];
+    expect(await codeOf(s.oidc.exchange({ jwt: s.jwt(), packages: mixed }))).toEqual({ code: 'not_owner', name: 'zz_unclaimed' });
+    expect(ociTokens(s.h)).toHaveLength(0);
+  });
 });
