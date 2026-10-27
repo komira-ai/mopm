@@ -245,6 +245,12 @@ describe.each<Backing>(['memory', 'dynamodb'])('auth routes over %s', (backing) 
     expect(errorOf(await w.send('POST', '/auth/oidc/exchange', { body: { jwt: 'a.b.c', name: 'alpha', version: '1.0.0' } }))).toEqual({ status: 401, code: 'oidc_token_invalid' });
     expect(errorOf(await w.send('POST', '/auth/oidc/exchange', { body: { jwt, name: 'alpha', version: 'x.y' } }))).toEqual({ status: 400, code: 'invalid_version' });
     expect(errorOf(await w.send('POST', '/auth/oidc/exchange', { body: { jwt, name: 'Alpha', version: '1.0.0' } }))).toEqual({ status: 400, code: 'invalid_name' });
+    // A purpose is carried through the route: an unknown one is refused before the fresh token is spent, stage mints a stage token.
+    const staged = signJwt(key, goodClaims(w.clock, { workflow_ref: 'acme/widgets/.github/workflows/release.yml@refs/tags/v1' }));
+    expect(errorOf(await w.send('POST', '/auth/oidc/exchange', { body: { jwt: staged, name: 'alpha', version: '1.0.0', purpose: 'root' } }))).toEqual({ status: 400, code: 'invalid_request' });
+    const st = await w.send('POST', '/auth/oidc/exchange', { body: { jwt: staged, name: 'alpha', version: '1.0.0', purpose: 'stage' } });
+    expect(st.res.statusCode).toBe(200);
+    expect(st.json).toMatchObject({ token_kind: 'stage', name: 'alpha', version: '1.0.0' });
   });
 
   test('error bodies are the catalogue text of the contract, with the request id', async () => {

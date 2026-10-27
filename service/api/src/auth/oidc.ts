@@ -226,7 +226,18 @@ export interface PackageVersion {
   name: string;
   version: string;
 }
-export type OidcExchangeInput = { jwt: string; name: string; version: string } | { jwt: string; packages: PackageVersion[] };
+/** What a minted token is for: `publish` is the token of every exchange before `purpose` existed; `stage` may only prepare a group. */
+export type OidcPurpose = 'publish' | 'stage';
+export type OidcExchangeInput =
+  | { jwt: string; name: string; version: string; purpose?: OidcPurpose }
+  | { jwt: string; packages: PackageVersion[]; purpose?: OidcPurpose };
+
+function purposeOf(input: unknown): OidcPurpose {
+  const purpose = input !== null && typeof input === 'object' ? (input as { purpose?: unknown }).purpose : undefined;
+  if (purpose === undefined || purpose === 'publish') return 'publish';
+  if (purpose === 'stage') return 'stage';
+  throw new AuthError('invalid_request', "The request is not valid: 'purpose' is publish or stage.", { detail: "'purpose' is publish or stage" });
+}
 
 export class OidcExchange {
   private readonly now: Clock;
@@ -239,16 +250,20 @@ export class OidcExchange {
    * 10 minute token for that package and version. `{jwt, packages}`: for a CI publisher the deployment trusts by
    * configuration; every package must be unclaimed (it is created, owned by the publisher) or already the publisher's;
    * the 10 minute token is good for exactly those packages and versions and acts as the publisher.
+   * Either form takes an optional `purpose`: `publish` (the default) or `stage`, which mints the same token with the one scope
+   * `stage` (it creates, reads and aborts a group but cannot commit or yank). Any other value is `invalid_request`.
    */
-  exchange(input: { jwt: string; name: string; version: string }): Promise<{ token: string; token_kind: 'publish'; expires_at: string; name: string; version: string }>;
-  exchange(input: { jwt: string; packages: PackageVersion[] }): Promise<{ token: string; token_kind: 'publish'; expires_at: string; packages: PackageVersion[] }>;
+  exchange(input: { jwt: string; name: string; version: string; purpose?: OidcPurpose }): Promise<{ token: string; token_kind: OidcPurpose; expires_at: string; name: string; version: string }>;
+  exchange(input: { jwt: string; packages: PackageVersion[]; purpose?: OidcPurpose }): Promise<{ token: string; token_kind: OidcPurpose; expires_at: string; packages: PackageVersion[] }>;
   exchange(input: OidcExchangeInput): Promise<unknown>;
   async exchange(input: OidcExchangeInput): Promise<unknown> {
-    if (input !== null && typeof input === 'object' && 'packages' in input) return this.exchangeConfigured(input);
-    return this.exchangeRegistered(input as { jwt: string; name: string; version: string });
+    // Before anything is verified or spent: a purpose the registry does not know is the caller's mistake.
+    const purpose = purposeOf(input);
+    if (input !== null && typeof input === 'object' && 'packages' in input) return this.exchangeConfigured(input, purpose);
+    return this.exchangeRegistered(input as { jwt: string; name: string; version: string }, purpose);
   }
 
-  private async exchangeConfigured(input: { jwt: string; packages: unknown }) {
+  private async exchangeConfigured(input: { jwt: string; packages: unknown }, purpose: OidcPurpose) {
     const bad = (detail: string) => new AuthError('invalid_request', `The request is not valid: ${detail}.`, { detail });
     if ('name' in input || 'version' in input) throw bad("send 'packages' or 'name' and 'version', not both");
     const list = input.packages;
@@ -275,7 +290,7 @@ export class OidcExchange {
     const registry = this.o.registry;
     const owner = ciOwnerOf(publisher.repository_id);
     const refuse = (name: string) => new AuthError('not_owner', `You are not an owner of '${name}'.`, { name });
-    if (publisher.acts_for !== undefined) return this.exchangeActsFor(claims, publisher.acts_for, owner, wanted, registry);
+    if (publisher.acts_for !== undefined) return this.exchangeActsFor(claims, publisher.acts_for, owner, wanted, registry, purpose);
 
     // Read first, so a name that belongs to someone else spends nothing and creates nothing.
     const existing = await Promise.all(wanted.map((w) => registry.getPackage(w.name)));
@@ -302,7 +317,7 @@ export class OidcExchange {
     const m = await mintToken(this.o.store, {
       kind: 'oidc',
       name: `ci ${claims.repository}`,
-      scopes: ['publish'],
+      scopes: [purpose],
       packages: wanted.map((w) => w.name),
       all_current: false,
       versions: Object.fromEntries(wanted.map((w) => [w.name, w.version])),
@@ -311,7 +326,7 @@ export class OidcExchange {
       created_at: now.toISOString(),
       expires_at: new Date(now.getTime() + OIDC_TOKEN_TTL_MS).toISOString(),
     });
-    return { token: m.secret, token_kind: 'publish' as const, expires_at: m.record.expires_at, packages: wanted };
+    return { token: m.secret, token_kind: purpose, expires_at: m.record.expires_at, packages: wanted };
   }
 
   /**
@@ -320,7 +335,7 @@ export class OidcExchange {
    * must have the account among its owners (a package owned by anyone else, or by a CI identity, is refused). The token records the
    * CI identity it came through (`acts_via`) and carries no `ci_owner`.
    */
-  private async exchangeActsFor(claims: GithubActionsClaims, actsFor: string, via: string, wanted: PackageVersion[], registry: Store) {
+  private async exchangeActsFor(claims: GithubActionsClaims, actsFor: string, via: string, wanted: PackageVersion[], registry: Store, purpose: OidcPurpose) {
     const account = Number(actsFor);
     // Read first, and mint nothing, spend no jti, until every name is the account's.
     for (const w of wanted) {
@@ -337,7 +352,7 @@ export class OidcExchange {
       github_id: account,
       acts_via: via,
       name: `ci ${claims.repository}`,
-      scopes: ['publish'],
+      scopes: [purpose],
       packages: wanted.map((w) => w.name),
       all_current: false,
       versions: Object.fromEntries(wanted.map((w) => [w.name, w.version])),
@@ -345,10 +360,10 @@ export class OidcExchange {
       created_at: now.toISOString(),
       expires_at: new Date(now.getTime() + OIDC_TOKEN_TTL_MS).toISOString(),
     });
-    return { token: m.secret, token_kind: 'publish' as const, expires_at: m.record.expires_at, packages: wanted };
+    return { token: m.secret, token_kind: purpose, expires_at: m.record.expires_at, packages: wanted };
   }
 
-  private async exchangeRegistered(input: { jwt: string; name: string; version: string }) {
+  private async exchangeRegistered(input: { jwt: string; name: string; version: string }, purpose: OidcPurpose) {
     if (typeof input?.name !== 'string' || !NAME_PATTERN.test(input.name)) {
       throw new AuthError('invalid_name', `'${String(input?.name)}' is not a valid package name.`, { name: String(input?.name) });
     }
@@ -369,7 +384,7 @@ export class OidcExchange {
     const m = await mintToken(this.o.store, {
       kind: 'oidc',
       name: `ci ${claims.repository}`,
-      scopes: ['publish'],
+      scopes: [purpose],
       packages: [input.name],
       all_current: false,
       version: input.version,
@@ -377,6 +392,6 @@ export class OidcExchange {
       created_at: now.toISOString(),
       expires_at: new Date(now.getTime() + OIDC_TOKEN_TTL_MS).toISOString(),
     });
-    return { token: m.secret, token_kind: 'publish' as const, expires_at: m.record.expires_at, name: input.name, version: input.version };
+    return { token: m.secret, token_kind: purpose, expires_at: m.record.expires_at, name: input.name, version: input.version };
   }
 }

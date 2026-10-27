@@ -260,7 +260,7 @@ row created only if its key is absent, so of two claims of one name exactly one 
   Over either, the claim is `429 rate_limited` with `Retry-After` to midnight UTC and writes nothing. Only a claim about to be written is
   charged, and one whose write fails gives its charge back. The counters are `rl#ct#<token>#<day>` and `rl#cu#<github id>#<day>` in the
   `publishes` table (the one the publish limits use), so the role needs no new grant. Any live user token may claim (the spec's `userToken`;
-  token scopes are only `publish` and `yank`), so the per-token counter is what bounds a leaked token.
+  token scopes are `publish`, `yank` and `stage`, and an API token with only `stage` is refused as `scope_missing`), so the per-token counter is what bounds a leaked token.
 - `name_reserved` is a fixed list in the code (`RESERVED_NAMES`), `name_too_similar` compares the name, with underscores dropped and
   allowing one trailing `s`, with the names that start with the same letter (read from the search index, which is eventually
   consistent: two similar names claimed within a moment of each other can both succeed). `confirm_similar` skips only that check.

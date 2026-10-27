@@ -99,6 +99,21 @@ word, which is why the outcome is not `published`. A group that is not `open`
 when `--no-commit` reaches it (validating, committed, visible) is refused, exit
 1.
 
+The split between staging and committing is enforceable by the registry, not only by
+the client's discipline. The registry has a token scope `stage` that may create a group,
+read it and abort it (and a CI exchange with `"purpose": "stage"` mints such a token, pinned to the
+same packages and versions as the publish token of the same request, with the same owner and life),
+but cannot commit a group, publish a single version, or yank: those are refused as
+`scope_missing`, and the group stays `open`. A run that uploads with a `stage` token and a
+later run that commits with a `publish` token are one actor's two runs, so the resume
+below works across them. The ownership checks at create (every package exists and the caller
+owns it) apply to a `stage` token as to a `publish` one, so a stage token reserves no package
+its owner does not own; it can hold the version numbers of its group until the group
+expires or is aborted. A registry from before `stage` ignores an exchange's `purpose` and
+mints a `publish` token, and refuses `stage` as a token scope, so a client that needs the split
+reads `token_kind` in the exchange answer and does not treat a `publish` answer as a stage token.
+Which routes take which scope is in `api/openapi.yaml` (`stageToken`).
+
 The same command without `--no-commit`, in the same directory, resumes the same
 group: `state.json`'s `plan_sha256` must still match `plan.json`, the registry
 reports every file as held, nothing is sent again, and the run goes on with step

@@ -1,5 +1,6 @@
 export type TokenKind = 'session' | 'api' | 'oidc';
-export type TokenScope = 'publish' | 'yank';
+/** `stage` may create, read and abort a group but never commit or yank one: see `Authenticator.stageToken`. */
+export type TokenScope = 'publish' | 'yank' | 'stage';
 
 export interface UserRecord {
   /** Numeric GitHub account id: the identity. The handle can change; the id cannot. */
