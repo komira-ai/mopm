@@ -2576,3 +2576,27 @@ test "with a workspace root, the root package's and a sibling's own natives are 
     try std.testing.expectEqualStrings("native:b/b_shim", bl.natives[0].built);
     try noDotDot(g);
 }
+
+// Defect it catches: a member with `publish = false` treated differently from any other when the graph is made (left out,
+// refused, or keyed differently), so a test-support helper stops being usable as a path dependency.
+test "a member with publish = false is in the graph exactly as the same member without the key" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var texts: [2][]const u8 = undefined;
+    for ([_][]const u8{ toml_util, toml_util ++ "publish = false\n" }, 0..) |util_toml, i| {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try writeWorkspace(tmp.dir, app_init);
+        try put(tmp.dir, "util/mopm.toml", util_toml);
+        const dir = try tmp.dir.realpathAlloc(a, ".");
+        var why: []const u8 = "";
+        const g = graphOf(a, dir, toml_util_dep, lock_two, "1.0.0", &why) catch |e| {
+            std.debug.print("refused: {s}\n", .{why});
+            return e;
+        };
+        try std.testing.expect(g.find("util@0.3.0#mojo1.0.0/lib") != null);
+        texts[i] = try std.mem.replaceOwned(u8, a, try render(a, g), dir, "<dir>");
+    }
+    try std.testing.expectEqualStrings(texts[0], texts[1]);
+}

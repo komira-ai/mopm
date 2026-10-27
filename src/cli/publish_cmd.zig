@@ -233,6 +233,10 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
         }
         return null;
     };
+    if (!m.package.publish) {
+        err("{s}: {s} has publish = false, so it is not packed for a registry or published; remove the key to publish it\n", .{ f.manifest, m.package.name });
+        return null;
+    }
     if (try versionProblem(arena, m.package.version)) |problem| {
         err("{s}: {s}\n", .{ f.manifest, problem });
         return null;
@@ -404,6 +408,10 @@ fn pathVersions(arena: Allocator, m: manifest.Manifest, manifest_dir: []const u8
         };
         if (!std.mem.eql(u8, dm.package.name, d.name)) {
             err("{s} names the package {s}, but dependency '{s}' calls it {s}\n", .{ file, dm.package.name, d.name, d.name });
+            return null;
+        }
+        if (!dm.package.publish) {
+            err("{s} depends on {s} (at {s}), which has publish = false; a published package cannot need one that is never published (a dev-dependency may)\n", .{ m.package.name, d.name, file });
             return null;
         }
         try out.append(.{ .name = d.name, .version = dm.package.version });

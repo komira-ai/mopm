@@ -5,6 +5,10 @@ checksums, and this file says what changed. The details of a command are on its 
 
 ## Unreleased
 
+### `[package] publish = false` keeps a workspace member out of publishing
+
+Additive: a manifest without the key behaves as before. A package with `publish = false` (a test-support helper that other members use by `path`) is left out by `mopm stage` when no package is named, with one line saying so, and refused by `mopm stage <name>`, `mopm pack` and `mopm publish`. A package that is published may not have one in its `[dependencies]`; its `[dev-dependencies]` may. Every other command reads it like any package. A value that is not `true` or `false` is refused, naming the key. See [configuration](docs/configuration.md) and [publishing a workspace](docs/publishing-a-workspace.md).
+
 ### One exchange covers up to 500 packages, and an account's daily claim limit can be raised
 
 `POST /auth/oidc/exchange` takes up to 500 entries in `packages` (it was 100), the most members a group may have, and `mopm publish --staged --oidc` sends a set of up to 500 members (it refused more than 100 before any request). The registry looks the names up and creates the missing ones sixteen at a time, and the answers and refusals are those of one at a time (the first failing name in the request is the one named). A request of 501 names is still `invalid_request`. The body of the exchange may be up to 128 KiB (the other auth routes keep 64 KiB), so a set of 500 names and versions of the longest length is not refused for its size. The registry that `mopm` runs against in tests takes 500 as well. A claim (`POST /packages/{name}/claim`) is still limited to 50 a UTC day for an account and for a token; the operator of a registry can set a higher daily limit (at most 1000) for named accounts without a deploy. Nothing changes for an account without that setting.
