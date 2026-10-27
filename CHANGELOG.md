@@ -5,6 +5,10 @@ checksums, and this file says what changed. The details of a command are on its 
 
 ## Unreleased
 
+### A package can publish programs, and `mopm run --bin` runs one
+
+Additive. A package lists programs in `[targets] bins`; `mopm pack`, `mopm publish` and `mopm stage` now put the source of each (the `.mojo` file the entry names) in the package at `lib/mojo/<package>.bins/<name>.mojo`, and refuse a name that is not lower case letters, digits and underscores, a name listed twice, a path outside the package directory or not ending in `.mojo`, and an unreadable or empty file. No executable is packed: the registry still refuses `bin/`, and the program is built by the Mojo of the machine that runs it. The registry's validators (TypeScript and Rust) accept exactly those paths and no other file below `lib/mojo/<package>.bins/`. `mopm run --bin <package>:<program>` runs the program of an installed package with the environment's packages importable; it refuses a package that is not installed and a program the package does not ship. A package with no `bins` packs to the same bytes as before. See [configuration](docs/configuration.md), "Programs in a published package".
+
 ### The registry has a `stage` token scope and a `stage` purpose for the CI exchange
 
 Additive: every token and request that worked keeps working as it did, but for an unknown `purpose`, below. A token with the new scope `stage` may create, read and abort a group, and

@@ -17,6 +17,9 @@
 //!    A member with `[native.<id>]` libraries also needs, per subdir, each one's static archive at
 //!    `<artifacts>/<subdir>/<name>.native/<archive name>` (`lib<id>.a`, or the native's `soname`), packed as
 //!    `mopm pack --native` packs it; one missing is refused, and `noarch` cannot hold natives.
+//!    A member with `[targets] bins` ships each program's source (the `.mojo` file the entry names, below the member
+//!    directory) in every subdir's package, at `lib/mojo/<name>.bins/<bin>.mojo` (src/core/bins.zig); an unreadable,
+//!    empty or badly named one is refused. Nothing built is packed: the program is built where it is run.
 //!    Every file is packed twice and the two must be the same bytes; the metadata inside must hold no URL, no lock
 //!    entry and no path.
 //! 4. Registry. `GET /packages/<name>/<version>` (no token) decides each member: not there, `upload`; published with
@@ -34,6 +37,7 @@ const core = @import("mopm_core");
 const http = core.http;
 const manifest = core.manifest;
 const conda = core.conda;
+const bins_mod = core.bins;
 const registry = core.registry;
 const semver = core.semver;
 const publish_cmd = @import("publish_cmd.zig");
@@ -341,6 +345,8 @@ pub fn packMember(arena: Allocator, members: []const Member, m: Member, artifact
     var why: []const u8 = "";
     const deps = conda.depsOf(arena, m.m, path_versions.items, &why) catch |e| return if (e == error.Unpackable) try bad(T, arena, "{s}: {s}", .{ m.name, why }) else error.OutOfMemory;
     const native_deps = conda.nativeDepsOf(arena, m.m, &why) catch |e| return if (e == error.Unpackable) try bad(T, arena, "{s}: {s}", .{ m.name, why }) else error.OutOfMemory;
+    // The programs of `[targets] bins`, as source: the same files in every subdir's package.
+    const bins = bins_mod.read(arena, m.m, m.dir, &why) catch |e| return if (e == error.Unpackable) try bad(T, arena, "{s}: {s}", .{ m.name, why }) else error.OutOfMemory;
     // The packed dependencies on members are the edges, no more and no fewer.
     for (deps) |d| {
         const is_member = indexOfName(members, d.name) != null;
@@ -375,7 +381,7 @@ pub fn packMember(arena: Allocator, members: []const Member, m: Member, artifact
                 try natives.append(native);
             }
         }
-        const in = conda.Input{ .name = m.name, .version = m.version, .compiler = compiler, .subdir = subdir, .deps = deps, .native_deps = native_deps, .mojoc = bytes, .natives = natives.items };
+        const in = conda.Input{ .name = m.name, .version = m.version, .compiler = compiler, .subdir = subdir, .deps = deps, .native_deps = native_deps, .mojoc = bytes, .natives = natives.items, .bins = bins };
         const p = conda.pack(arena, in) catch |e| return bad(T, arena, "{s}: cannot pack {s}: {s}", .{ m.name, file, @errorName(e) });
         const again = conda.pack(arena, in) catch |e| return bad(T, arena, "{s}: cannot pack {s}: {s}", .{ m.name, file, @errorName(e) });
         if (!std.mem.eql(u8, p.bytes, again.bytes)) return bad(T, arena, "{s}: packing {s} twice gave different bytes", .{ m.name, file });

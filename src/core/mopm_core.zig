@@ -27,6 +27,7 @@ pub const registry = @import("registry.zig");
 pub const credentials = @import("credentials.zig");
 pub const ci_oidc = @import("ci_oidc.zig");
 pub const conda = @import("conda.zig");
+pub const bins = @import("bins.zig");
 pub const resolve = @import("resolve.zig");
 pub const lock = @import("lock.zig");
 pub const install_plan = @import("install_plan.zig");
@@ -65,6 +66,7 @@ test {
     _ = @import("credentials.zig");
     _ = @import("ci_oidc.zig");
     _ = @import("conda.zig");
+    _ = @import("bins.zig");
     _ = @import("resolve.zig");
     _ = @import("lock.zig");
     _ = @import("install_plan.zig");
