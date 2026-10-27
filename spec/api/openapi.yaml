@@ -595,8 +595,23 @@ paths:
         already holds is `version_exists`; one that another group is still using is `group_conflict`. A
         `group_conflict` carries a `reason` (see `Error`) that tells the causes apart without reading the message.
 
-        The id of a group is a function of the caller and the declared set: the same request again is the same group.
-        Repeating it while the group is `open` returns `200` and continues it (a reply with `reserving` has not
+        The id of a group is a function of the caller and the declared set: the same request again is the same group. The
+        derivation is a stable interface, so a client can compute the id itself and read the group with `getGroup` (a 404
+        `group_not_found` means there is no such group of the caller's). The id is `grp_` followed by the first 32 lowercase hex
+        digits of the SHA-256 of the UTF-8 bytes of the compact JSON text (no white space) of the array
+        `[actor, set]`. `actor` is `u:<GitHub account id>` for an account's token, including a CI token that acts for an
+        account, and `ci:gh-repo:<repository id>` for a configured CI publisher's own token. `set` is the array of members
+        sorted by package name, each member `[name, version, files]`, with `files` the array of the member's files sorted by
+        the text `<subdir>/<filename>`, each file `[subdir, filename, sha256, size]` (`size` a JSON integer). The order of
+        members and files in the request, `on_overlap` and every other option are not part of it. For the actor `u:1234` and
+        the one file `linux-64/mojo-alpha-1.0.0-mojo1.0.0_0.conda` (sha256 `a` repeated 64 times, size 1000) of
+        `alpha` 1.0.0, the text hashed is
+        `["u:1234",[["alpha","1.0.0",[["linux-64","mojo-alpha-1.0.0-mojo1.0.0_0.conda","aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",1000]]]]]`
+        and the id is `grp_750db8c095f4c2517cedf12a308149e5`. More vectors are in the registry's test fixtures. A change to the
+        derivation would be a new id prefix, never a different hash under `grp_`. The hosted registry derives ids this way; the
+        fake registry's ids are opaque and a client must not compute them.
+
+        Repeating the request while the group is `open` returns `200` and continues it (a reply with `reserving` has not
         reached every member yet; send the same request again), with fresh upload URLs for the files not yet in
         storage. Repeating it for a group that ended without committing (`expired`, `aborted`, `rejected`,
         `superseded`) opens it again with the next `attempt` (`201`). A group that is `validating`, `committed` or
@@ -642,7 +657,10 @@ paths:
       summary: Status of a group.
       description: |
         The group's status, attempt and deadline, and the state of each member: `pending` (its number is not reserved
-        yet), `reserved`, `staged` or `published`. Readable by the caller who created the group and by an owner of every
+        yet), `reserved`, `staged`, `published` or `yanked`. Each member also lists its `files`: the facts the caller declared at
+        `createGroup`, and, while the group is `open`, whether each file is in storage. The read reserves and charges nothing (it only
+        expires a group past its deadline), so it is the way to see a group, whatever its status, without `createGroup` (which reopens a group that ended).
+        Readable by the caller who created the group and by an owner of every
         package in it; anyone else gets `group_not_found`. A group past its deadline that was still open is expired
         by this read.
       security:
@@ -687,8 +705,8 @@ paths:
       summary: Say that a group's files are uploaded and ask for the group to be validated and committed.
       description: |
         Asynchronous. The caller has created the group and PUT every file to the URL it was given; this call hands over what
-        the archives cannot say for themselves, one entry per member: the `manifest_sha256` of its embedded manifest and the
-        optional display fields (the same rules as `commitPublish`). Every member of the group is listed exactly once.
+        the archives cannot say for themselves, one entry per member: the optional `manifest_sha256` of its embedded manifest (checked when given, as in
+        `commitPublish`) and the optional display fields (the same rules as `commitPublish`). Every member of the group is listed exactly once.
 
         The registry checks that the group is `open`, not past its `deadline_at`, that every member is reserved and that every
         file is in storage at its declared size, stores the request, moves the group to `validating` and answers 202. It then
@@ -1427,6 +1445,12 @@ components:
           minItems: 1
           items: { $ref: "#/components/schemas/FileRef" }
         manifest_sha256: { $ref: "#/components/schemas/Sha256" }
+        group_id:
+          description: |
+            The group (`createGroup`) that published this version. Absent for a version a single publish made, and for a version
+            published before the registry recorded it. It can be used with `getGroup` and `yankGroup`, which keep their own
+            ownership and scope rules: knowing it grants nothing. A version that is still `pending` is not found, whatever its group.
+          $ref: "#/components/schemas/GroupId"
         manifest:
           description: The embedded `<name>.mopm.json` (see spec/package-metadata.schema.json).
           type: object
@@ -1475,7 +1499,7 @@ components:
         expires_at: { $ref: "#/components/schemas/Timestamp" }
     CommitPublishRequest:
       type: object
-      required: [upload_ids, manifest_sha256]
+      required: [upload_ids]
       properties:
         upload_ids:
           type: array
@@ -1483,7 +1507,14 @@ components:
           maxItems: 20
           uniqueItems: true
           items: { type: string, minLength: 1 }
-        manifest_sha256: { $ref: "#/components/schemas/Sha256" }
+        manifest_sha256:
+          description: |
+            Optional. The SHA-256 of the bytes of `lib/mojo/<name>.mopm.json` in the archives (what `mopm pack` prints). When given
+            it is checked: a value that is not 64 lowercase hex digits is `invalid_request`, and an archive whose manifest hashes
+            to something else is rejected `sha256_mismatch`. When absent, nothing is checked and the version holds the hash the
+            registry computes from the archives. Either way, every file of the version must carry the same manifest bytes, or the
+            publish is rejected `manifest_invalid`.
+          $ref: "#/components/schemas/Sha256"
         description: { type: string, minLength: 1, maxLength: 512, description: "`[package] description` of this version's mopm.toml: one line, no line breaks. Stored on the version and served back by `getVersion`." }
         license: { type: string, minLength: 1, maxLength: 128, description: "`[package] license`, an SPDX expression." }
         repository: { type: string, format: uri, maxLength: 2048, description: An https URL. }
@@ -1638,10 +1669,12 @@ components:
           items: { $ref: "#/components/schemas/GroupMemberAnswer" }
     CommitGroupMember:
       type: object
-      required: [name, manifest_sha256]
+      required: [name]
       properties:
         name: { $ref: "#/components/schemas/Name" }
-        manifest_sha256: { $ref: "#/components/schemas/Sha256" }
+        manifest_sha256:
+          description: Optional, member by member, with the meaning it has in `CommitPublishRequest`. A repeated commit must repeat which members gave it and what they gave, or it is another request (`group_commit_refused`).
+          $ref: "#/components/schemas/Sha256"
         description: { type: string, minLength: 1, maxLength: 512, description: "As in `CommitPublishRequest`." }
         license: { type: string, minLength: 1, maxLength: 128, description: "As in `CommitPublishRequest`." }
         repository: { type: string, format: uri, maxLength: 2048, description: An https URL. }
@@ -1721,6 +1754,29 @@ components:
               state:
                 type: string
                 enum: [pending, reserved, staged, published, yanked]
+              files:
+                description: |
+                  Present on the answer of `getGroup` only (not on the answers of `abortGroup` and `yankGroup`, which omit it). The
+                  files the caller declared for this member, sorted by `subdir` and `filename`, as the member's reserved version
+                  holds them. Empty for a member that is not reserved yet, and for a member whose version number the registry no
+                  longer holds for this group (the group ended and another group or publish took the number). A group is
+                  declared with at most 500 members of at most 20 files each; the answer lists no more than the registry's current
+                  member cap.
+                type: array
+                items:
+                  type: object
+                  required: [subdir, filename, sha256, size]
+                  properties:
+                    subdir: { type: string }
+                    filename: { type: string }
+                    sha256: { $ref: "#/components/schemas/Sha256" }
+                    size: { type: integer, minimum: 1 }
+                    uploaded:
+                      description: |
+                        Present only while the group is `open`: true when the file is in storage at its declared size (the same test
+                        `createGroup` makes when it answers a repeated request). Absent for every other status, for which the
+                        registry makes no storage check.
+                      type: boolean
     YankRequest:
       type: object
       required: [yanked]

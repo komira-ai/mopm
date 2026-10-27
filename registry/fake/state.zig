@@ -89,6 +89,8 @@ pub const Version = struct {
     /// The group that reserved this number (a `pending` row of a group), or null. The group may have ended: its
     /// rows are then free for another group or a single publish to take.
     group: ?*Group = null,
+    /// The id of the group that published this version, kept after the group is visible (`group` is then null). getVersion shows it.
+    group_id: ?[]const u8 = null,
 
     /// Shown by getVersion and listed: every state but pending and rejected.
     pub fn visible(v: *const Version) bool {

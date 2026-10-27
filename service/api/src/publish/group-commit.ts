@@ -47,9 +47,9 @@ export function parseGroupCommit(members: GroupMembers, body: unknown): { inputs
     const { name, manifest_sha256 } = m;
     if (typeof name !== 'string') throw invalidRequest("a member needs a 'name'");
     if (byName.has(name)) throw invalidRequest(`'${name}' appears twice`);
-    if (typeof manifest_sha256 !== 'string' || !SHA256.test(manifest_sha256)) throw invalidRequest(`'manifest_sha256' of '${name}' is 64 lowercase hex digits`);
+    if (manifest_sha256 !== undefined && (typeof manifest_sha256 !== 'string' || !SHA256.test(manifest_sha256))) throw invalidRequest(`'manifest_sha256' of '${name}' is 64 lowercase hex digits`);
     const display = parseDisplay(m);
-    byName.set(name, { name, manifest_sha256, ...(Object.keys(display).length > 0 ? { display } : {}) });
+    byName.set(name, { name, ...(manifest_sha256 !== undefined ? { manifest_sha256 } : {}), ...(Object.keys(display).length > 0 ? { display } : {}) });
   }
   const inputs: CommitInput[] = [];
   for (const m of members.members) {

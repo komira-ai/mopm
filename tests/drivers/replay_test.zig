@@ -25,6 +25,7 @@ const yaml = @import("yaml.zig");
 const r = @import("replay_recipes.zig");
 const tbl = @import("replay_table.zig");
 const chk = @import("replay_checks.zig");
+const gf = @import("replay_group_facts.zig");
 const Value = std.json.Value;
 const Allocator = std.mem.Allocator;
 
@@ -321,7 +322,7 @@ test "the fake registry answers the contract's API cases" {
             continue;
         };
         h.stage = case_name;
-        const s = try r.build(&f, ent);
+        const s = try gf.build(&f, ent);
         const op = ops.get(s.op) orelse {
             t.fail("{s} / '{s}': the recipe names the unknown operation {s}", .{ op_name, case_name, s.op });
             continue;

@@ -8,9 +8,9 @@ const Value = std.json.Value;
 const api = @import("api.zig");
 const st = @import("state.zig");
 
-const Reply = struct { status: u16, body: []const u8, value: Value };
+pub const Reply = struct { status: u16, body: []const u8, value: Value };
 
-const Fx = struct {
+pub const Fx = struct {
     tmp: std.testing.TmpDir,
     life: std.heap.ArenaAllocator,
     state: st.State,
@@ -20,7 +20,7 @@ const Fx = struct {
     bob_token: []const u8,
     session: []const u8,
 
-    fn setup(fx: *Fx) !void {
+    pub fn setup(fx: *Fx) !void {
         fx.tmp = std.testing.tmpDir(.{});
         fx.life = std.heap.ArenaAllocator.init(std.testing.allocator);
         const a = fx.life.allocator();
@@ -41,14 +41,14 @@ const Fx = struct {
         try @import("files.zig").rewrite(a, s);
     }
 
-    fn deinit(fx: *Fx) void {
+    pub fn deinit(fx: *Fx) void {
         fx.life.deinit();
         fx.tmp.cleanup();
     }
 
     /// One request, as the server serves it: everything the handler is given lives in an arena that is freed after the
     /// answer, so a record that kept a pointer into the request would read freed memory in the next call.
-    fn call(fx: *Fx, method: std.http.Method, path: []const u8, body: []const u8, token: ?[]const u8) !Reply {
+    pub fn call(fx: *Fx, method: std.http.Method, path: []const u8, body: []const u8, token: ?[]const u8) !Reply {
         const life = fx.life.allocator();
         var request_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
         defer request_arena.deinit();
@@ -68,14 +68,14 @@ const Fx = struct {
         return .{ .status = @intFromEnum(r.status), .body = kept, .value = value };
     }
 
-    fn sha(fx: *Fx, bytes: []const u8) ![]const u8 {
+    pub fn sha(fx: *Fx, bytes: []const u8) ![]const u8 {
         var d: [32]u8 = undefined;
         std.crypto.hash.sha2.Sha256.hash(bytes, &d, .{});
         return std.fmt.allocPrint(fx.life.allocator(), "{s}", .{std.fmt.fmtSliceHexLower(&d)});
     }
 
     /// A create request for pkg_a, pkg_b and pkg_c at `version`, with `bytes` as the content of each file.
-    fn request(fx: *Fx, names: []const []const u8, version: []const u8, bytes: []const u8) ![]const u8 {
+    pub fn request(fx: *Fx, names: []const []const u8, version: []const u8, bytes: []const u8) ![]const u8 {
         const a = fx.life.allocator();
         var out = std.ArrayList(u8).init(a);
         try out.appendSlice("{\"members\":[");
@@ -90,7 +90,7 @@ const Fx = struct {
         return out.items;
     }
 
-    fn commitBody(fx: *Fx, names: []const []const u8) ![]const u8 {
+    pub fn commitBody(fx: *Fx, names: []const []const u8) ![]const u8 {
         const a = fx.life.allocator();
         var out = std.ArrayList(u8).init(a);
         try out.appendSlice("{\"members\":[");
@@ -103,7 +103,7 @@ const Fx = struct {
     }
 
     /// PUTs the bytes of every file the create answer asks for.
-    fn upload(fx: *Fx, created: Reply, bytes: []const u8) !void {
+    pub fn upload(fx: *Fx, created: Reply, bytes: []const u8) !void {
         for (created.value.object.get("members").?.array.items) |m| {
             const name = m.object.get("name").?.string;
             for (m.object.get("files").?.array.items) |f| {
@@ -116,25 +116,25 @@ const Fx = struct {
         }
     }
 
-    fn status(fx: *Fx, id: []const u8) ![]const u8 {
+    pub fn status(fx: *Fx, id: []const u8) ![]const u8 {
         const path = try std.fmt.allocPrint(fx.life.allocator(), "/api/v1/groups/{s}", .{id});
         const r = try fx.call(.GET, path, "", fx.alice_token);
         try std.testing.expectEqual(@as(u16, 200), r.status);
         return r.value.object.get("status").?.string;
     }
 
-    fn code(r: Reply) []const u8 {
+    pub fn code(r: Reply) []const u8 {
         return r.value.object.get("error").?.object.get("code").?.string;
     }
 };
 
-const abc: []const []const u8 = &.{ "pkg_a", "pkg_b", "pkg_c" };
+pub const abc: []const []const u8 = &.{ "pkg_a", "pkg_b", "pkg_c" };
 
-fn idOf(r: Reply) []const u8 {
+pub fn idOf(r: Reply) []const u8 {
     return r.value.object.get("group_id").?.string;
 }
 
-fn expectCode(r: Reply, status: u16, want: []const u8) !void {
+pub fn expectCode(r: Reply, status: u16, want: []const u8) !void {
     if (r.status != status or !std.mem.eql(u8, Fx.code(r), want)) {
         std.debug.print("want {d} {s}, got {d}: {s}\n", .{ status, want, r.status, r.body });
         return error.TestUnexpectedResult;
@@ -236,7 +236,7 @@ fn declareOne(fx: *Fx, name: []const u8, version: []const u8, filename_name: []c
     , .{ name, version, filename_name, version, try fx.sha(content), content.len });
 }
 
-fn uploadPath(fx: *Fx, created: Reply, member: usize) ![]const u8 {
+pub fn uploadPath(fx: *Fx, created: Reply, member: usize) ![]const u8 {
     const m = created.value.object.get("members").?.array.items[member];
     return std.fmt.allocPrint(fx.life.allocator(), "/_fake/upload/{s}", .{m.object.get("files").?.array.items[0].object.get("upload_id").?.string});
 }

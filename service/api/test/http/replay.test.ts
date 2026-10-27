@@ -79,6 +79,7 @@ const RECIPES: Record<string, Recipe> = {
     omitExpected: ['display_name'],
   },
   'version detail': { seed: seeded('version_detail_published'), omitExpected: detailOmits },
+  'version detail of a version a group published': { seed: seeded('version_detail_group_published'), omitExpected: detailOmits },
   'yanked version keeps its files and says why': { seed: seeded('version_detail_yanked'), omitExpected: detailOmits },
   'tombstoned version has no url': { seed: seeded('version_detail_tombstoned'), omitExpected: detailOmits },
   // tests/contract/api/owners.json

@@ -111,7 +111,8 @@ export const UNCOMMITTED_END: readonly GroupStatus[] = ['rejected', 'failed', 'e
 /** The manifest and display fields the commit request carried for one member. They are too large for the header, so each member's are an item of their own. */
 export interface CommitInput {
   name: string;
-  manifest_sha256: string;
+  /** Absent when the request left it out: the validator then uses the hash it computes. */
+  manifest_sha256?: string;
   display?: DisplayMeta;
 }
 
@@ -290,9 +291,9 @@ export function membersWithExpiry(item: Record<string, unknown>, headerExpiresAt
 }
 
 /** A commit input as the item stored under its key. `expires_at` is the item's TTL. */
-export const commitInputItem = (key: string, i: CommitInput, expiresAt: number): Record<string, unknown> => ({ publish_id: key, name: i.name, manifest_sha256: i.manifest_sha256, ...(i.display ? { display: JSON.parse(JSON.stringify(i.display)) } : {}), expires_at: expiresAt });
+export const commitInputItem = (key: string, i: CommitInput, expiresAt: number): Record<string, unknown> => ({ publish_id: key, name: i.name, ...(i.manifest_sha256 !== undefined ? { manifest_sha256: i.manifest_sha256 } : {}), ...(i.display ? { display: JSON.parse(JSON.stringify(i.display)) } : {}), expires_at: expiresAt });
 export const parseCommitInput = (item: Record<string, unknown>): CommitInput => ({
   name: String(item.name),
-  manifest_sha256: String(item.manifest_sha256),
+  ...(item.manifest_sha256 !== undefined ? { manifest_sha256: String(item.manifest_sha256) } : {}),
   ...(item.display && typeof item.display === 'object' ? { display: item.display as DisplayMeta } : {}),
 });

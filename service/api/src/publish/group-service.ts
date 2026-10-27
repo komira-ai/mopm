@@ -15,6 +15,7 @@ import { groupConflict, groupNotFound, groupNotOpen, invalidRequest, PublishErro
 import { ended, expireIfDue, freeAfterFor, groupAudit, isDead, orphanFree } from './group-lifecycle';
 import { GroupCommitter, type GroupCommitBody } from './group-commit';
 import { GroupYanker } from './group-yank-request';
+import { readMemberFiles, type GroupFileFact } from './group-read';
 import { GROUP_ID, quarantineKeyFor, uploadIdFor } from './group-keys';
 import type { ActorGroup, ObjectStore, Presigner, PublishStore, Queue } from './ports';
 import { actorOf, detailVia, liveBytes, viaField, parseFileFacts, requireOwner } from './service';
@@ -173,7 +174,8 @@ export interface GroupStatusBody {
   member_count: number;
   /** Present once the group has been yanked: where the yank is. */
   yank?: { state: 'yanking' | 'yanked' | 'unyanking' | 'restored'; reason: string; requested_at: string; yanked_members: number };
-  members: Array<{ name: string; version: string; state: 'pending' | 'reserved' | 'staged' | 'published' | 'yanked' }>;
+  /** `files` is present on the answer to GET /groups/{id} only (not on an abort's or a yank's). */
+  members: Array<{ name: string; version: string; state: 'pending' | 'reserved' | 'staged' | 'published' | 'yanked'; files?: GroupFileFact[] }>;
 }
 
 /** The row a member reserves: pending, the declared files (no urls), named by the group. */
@@ -695,7 +697,8 @@ export class GroupService {
 
   async get(p: Principal, id: string): Promise<GroupStatusBody> {
     const { header, members } = await this.loadCovered(p, id);
-    return statusBody(header, members);
+    const files = await readMemberFiles(this.d, header, members, { members: this.d.config.groupMaxMembers, files: MAX_FILES_PER_MEMBER });
+    return statusBody(header, members, files);
   }
 
   /** Abort an open group (idempotent for one that is aborted). Its rows stay pending and free for any group or single to take. */
@@ -752,7 +755,7 @@ function membersOf(req: GroupRequest): GroupMembers {
   return { members: req.members.map((m) => ({ name: m.name, version: m.version, canonical: m.canonical, subdirs: [...new Set(m.files.map((f) => f.subdir))].sort() })) };
 }
 
-function statusBody(h: GroupRecord, members: GroupMembers): GroupStatusBody {
+function statusBody(h: GroupRecord, members: GroupMembers, files?: readonly GroupFileFact[][]): GroupStatusBody {
   // A member the group's yank changed is `yanked` from the yank until the unyank has ended (the unyank restores them one batch at a time).
   const yankedNow = (i: number) => h.yank !== undefined && h.yank.state !== 'restored' && bitmapHas(h.yank.yanked_set, i);
   const state = (i: number) =>
@@ -767,6 +770,6 @@ function statusBody(h: GroupRecord, members: GroupMembers): GroupStatusBody {
     ...(h.failure ? { failure: h.failure } : {}),
     member_count: h.member_count,
     ...(h.yank ? { yank: { state: h.yank.state, reason: h.yank.reason, requested_at: h.yank.requested_at, yanked_members: bitmapIndexes(h.yank.yanked_set).length } } : {}),
-    members: members.members.map((m, i) => ({ name: m.name, version: m.version, state: state(i) })),
+    members: members.members.map((m, i) => ({ name: m.name, version: m.version, state: state(i), ...(files ? { files: files[i] ?? [] } : {}) })),
   };
 }

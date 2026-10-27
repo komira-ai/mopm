@@ -111,9 +111,27 @@ pub fn runCheck(f: *F, s: Step, body: Value) !bool {
                 (c.getStr(failure, "member") orelse "").len > 0;
         },
         .group_yank_state => return std.mem.eql(u8, c.getStr(c.get(body, "yank") orelse .null, "state") orelse "", a0),
+        .group_files_open, .group_files_past_open => {
+            // Every member lists its one declared file; `uploaded` is a boolean (not yet true here) while the group is open, and absent after.
+            const members = c.getArr(body, "members");
+            if (members.len != 2) return false;
+            for (members) |m| {
+                const files = c.getArr(m, "files");
+                if (files.len != 1) return false;
+                const file = files[0];
+                if (c.getStr(file, "subdir") == null or c.getStr(file, "filename") == null or c.getStr(file, "sha256") == null or c.getInt(file, "size") == null) return false;
+                const uploaded = c.get(file, "uploaded");
+                if (s.check == .group_files_open) {
+                    if (uploaded == null or uploaded.? != .bool or uploaded.?.bool) return false;
+                } else if (uploaded != null) return false;
+            }
+            return true;
+        },
+        .detail_group_id => return std.mem.eql(u8, c.getStr(body, "group_id") orelse "", a0),
         .detail_published => {
             const prov = c.get(body, "provenance") orelse .null;
-            return stateIs(body, "published") and std.mem.eql(u8, c.getStr(body, "requires_mojo") orelse "", "==1.0.0") and
+            // A version a single publish made names no group.
+            return stateIs(body, "published") and c.get(body, "group_id") == null and std.mem.eql(u8, c.getStr(body, "requires_mojo") orelse "", "==1.0.0") and
                 std.mem.eql(u8, c.getStr(prov, "kind") orelse "", "none") and prov.object.count() == 1;
         },
     }

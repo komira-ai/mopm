@@ -11,7 +11,7 @@
     { "route": "GET /api/v1/publishes/{publish_id}", "case": "the status route answers only for a publish record" },
     { "route": "PUT /api/v1/packages/{name}/{version}/yank", "case": "setYanked: only a shown version can be yanked" },
     { "route": "POST /api/v1/groups", "case": "group create: a number the registry shows is version_exists" },
-    { "route": "GET /api/v1/groups/{group_id}", "no_version_rows": "shows a group's header and member list from the group's own items; reads no version row" },
+    { "route": "GET /api/v1/groups/{group_id}", "case": "store.versionsOf(api)" },
     { "route": "DELETE /api/v1/groups/{group_id}", "no_version_rows": "ends an open group by a compare-and-set on its header; reads no version row" },
     { "route": "POST /api/v1/groups/{group_id}/commit", "case": "store.versionsOf(api)" },
     { "route": "PUT /api/v1/groups/{group_id}/yank", "no_version_rows": "writes the yank intent on a visible group's header by a compare-and-set; the job it queues changes the rows as stored (applyGroupEvent), and a yanked row is read like any other by every reader" }
@@ -33,6 +33,7 @@
   "readers": {
     "http/router.ts": ["GET /packages", "GET /packages/{name}", "GET /packages/{name}/versions", "GET /packages/{name}/{version}"],
     "publish/group-commit.ts": ["store.versionsOf(api)"],
+    "publish/group-read.ts": ["store.versionsOf(api)"],
     "publish/group-service.ts": ["group create: a number the registry shows is version_exists"],
     "publish/group-validator.ts": ["store.versionsOf(api)", "store.listVersions"],
     "publish/indexer.ts": ["indexSubdir(linux-64)", "indexPackage", "takedowns"],
