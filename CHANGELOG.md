@@ -5,6 +5,10 @@ checksums, and this file says what changed. The details of a command are on its 
 
 ## Unreleased
 
+### One exchange covers up to 500 packages, and an account's daily claim limit can be raised
+
+`POST /auth/oidc/exchange` takes up to 500 entries in `packages` (it was 100), the most members a group may have, and `mopm publish --staged --oidc` sends a set of up to 500 members (it refused more than 100 before any request). The registry looks the names up and creates the missing ones sixteen at a time, and the answers and refusals are those of one at a time (the first failing name in the request is the one named). A request of 501 names is still `invalid_request`. A claim (`POST /packages/{name}/claim`) is still limited to 50 a UTC day for an account and for a token; the operator of a registry can set a higher daily limit (at most 1000) for named accounts without a deploy. Nothing changes for an account without that setting.
+
 ### The registry has a `stage` token scope and a `stage` purpose for the CI exchange
 
 Additive: every token and request that worked keeps working as it did, but for an unknown `purpose`, below. A token with the new scope `stage` may create, read and abort a group, and

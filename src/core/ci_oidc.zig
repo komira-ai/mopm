@@ -9,7 +9,7 @@
 //!      answers `{"token", "token_kind": "publish", "expires_at", "name", "version"}`: a token that may publish that
 //!      one package version, if the job's repository, workflow and environment match a trusted publisher of the package.
 //!      `mopm publish --oidc` (one package) stays on this form: it is the path of a package's registered trusted publisher.
-//!   2'. `mopm publish --staged --oidc` posts `{"jwt", "packages": [{"name", "version"}, ...]}` instead (at most 100
+//!   2'. `mopm publish --staged --oidc` posts `{"jwt", "packages": [{"name", "version"}, ...]}` instead (at most 500
 //!      entries, no name twice) and gets `{"token", "token_kind": "publish", "expires_at", "packages"}`: ONE token, good
 //!      for ten minutes, for exactly those package versions, which the registry lets create and run a group. An identity
 //!      token is single-use, so the whole staged set is covered by one exchange of one identity token.
@@ -113,7 +113,7 @@ pub const Package = struct { name: []const u8, version: []const u8 };
 
 /// The most packages one exchange may name (the service refuses more). A group is one unit under one token, so a set
 /// above this is refused whole, before any request, and never split: a split would be several groups.
-pub const max_packages: usize = 100;
+pub const max_packages: usize = 500;
 
 /// Trades the identity token `jwt` for a registry token that may publish `name` `version` (the single-package form).
 pub fn exchange(arena: Allocator, io: anytype, policy: http.Policy, api_url: []const u8, jwt: []const u8, name: []const u8, version: []const u8) anyerror!Result {
@@ -485,8 +485,8 @@ test "a set the service would refuse asks GitHub and the registry for nothing" {
     io = Scripted{ .identity = reply(200, good_identity), .exchange = reply(200, good_packages_exchange) };
     try many.append(.{ .name = "one-too-many", .version = "1.0.0" });
     const over = try obtainPackages(a, &io, .{}, actions, "https://api.beta.mopm.dev/api/v1", "beta", many.items);
-    try std.testing.expect(std.mem.indexOf(u8, over.bad, "at most 100 packages") != null);
-    try std.testing.expect(std.mem.indexOf(u8, over.bad, "uploads 101") != null);
+    try std.testing.expect(std.mem.indexOf(u8, over.bad, "at most 500 packages") != null);
+    try std.testing.expect(std.mem.indexOf(u8, over.bad, "uploads 501") != null);
     try std.testing.expect(std.mem.indexOf(u8, over.bad, "cannot be split") != null);
 
     const twice = [_]Package{ .{ .name = "a", .version = "1.0.0" }, .{ .name = "a", .version = "1.0.1" } };

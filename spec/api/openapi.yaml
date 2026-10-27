@@ -354,7 +354,8 @@ paths:
       description: |
         The only way to create a package. A claim with no published version
         expires after 30 days. A name that is too similar to an existing one
-        needs `confirm_similar`.
+        needs `confirm_similar`. A claim is rate limited per account and per token: 50 claims a UTC day each, unless the operator of the
+        registry has set a higher daily limit for the account; over it the claim is `rate_limited` and `Retry-After` says when the day ends.
         An API token that has only the `stage` scope is refused (`scope_missing`): a claim makes the caller the owner, and `stage`
         reaches nothing that changes ownership.
       security:
@@ -1212,7 +1213,7 @@ components:
         packages:
           type: array
           minItems: 1
-          maxItems: 100
+          maxItems: 500
           items:
             type: object
             required: [name, version]

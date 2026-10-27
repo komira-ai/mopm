@@ -3,6 +3,7 @@ import { RegistryError } from '../errors';
 import type { Store } from '../store';
 import { canonicalVersion } from '../version';
 import { ciOwnerOf, type CiPublisher } from './ci-publishers';
+import { EXCHANGE_CONCURRENCY, mapBounded } from './bounded';
 import { AuthError, oidcInvalid } from './errors';
 import { mintToken, newId, NAME_PATTERN, OIDC_TOKEN_TTL_MS, type Clock } from './tokens';
 import type { AuthStore, TrustedPublisher } from './types';
@@ -207,8 +208,8 @@ export function matchesCiPublisher(cp: CiPublisher, c: GithubActionsClaims): boo
   );
 }
 
-/** The most packages one exchange of a configured CI publisher may name. */
-export const MAX_CI_PACKAGES = 100;
+/** The most packages one exchange of a configured CI publisher may name: the most members a group may have. */
+export const MAX_CI_PACKAGES = 500;
 
 export interface OidcExchangeOptions {
   store: AuthStore;
@@ -293,7 +294,7 @@ export class OidcExchange {
     if (publisher.acts_for !== undefined) return this.exchangeActsFor(claims, publisher.acts_for, owner, wanted, registry, purpose);
 
     // Read first, so a name that belongs to someone else spends nothing and creates nothing.
-    const existing = await Promise.all(wanted.map((w) => registry.getPackage(w.name)));
+    const existing = await mapBounded(wanted, EXCHANGE_CONCURRENCY, (w) => registry.getPackage(w.name));
     existing.forEach((p, i) => {
       if (p && p.ci_owner !== owner) throw refuse(wanted[i]!.name);
     });
@@ -301,18 +302,24 @@ export class OidcExchange {
     const keepUntil = Math.max(claims.exp * 1000 + 60_000, now.getTime() + JTI_MIN_TTL_MS);
     if (!(await this.o.store.claimOnce(jtiKey(claims.jti), new Date(keepUntil).toISOString()))) throw oidcInvalid('token already used');
 
-    for (const [i, w] of wanted.entries()) {
-      if (existing[i]) continue;
-      try {
-        await registry.createPackage({ name: w.name, state: 'claimed', created_at: now.toISOString(), ci_owner: owner });
-      } catch (err) {
-        if (!(err instanceof RegistryError) || err.code !== 'name_taken') throw err;
-        // Someone created it between the read and the write: it is ours only if we are its owner.
-        if ((await registry.getPackage(w.name))?.ci_owner !== owner) throw refuse(w.name);
-        continue;
-      }
-      await registry.appendAudit({ name: w.name, ts: now.toISOString(), id: newId('a'), actor: owner, action: 'ci_claim', detail: { repository: claims.repository } });
-    }
+    // Sixteen names at a time. A name that is already this publisher's (made by an earlier attempt, or by another request between
+    // the read and the write) is not an error and is not written twice; one that is anyone else's is refused, the first in the
+    // order of the request, as it was when the names were taken one by one.
+    await mapBounded(
+      wanted.filter((_, i) => !existing[i]),
+      EXCHANGE_CONCURRENCY,
+      async (w) => {
+        try {
+          await registry.createPackage({ name: w.name, state: 'claimed', created_at: now.toISOString(), ci_owner: owner });
+        } catch (err) {
+          if (!(err instanceof RegistryError) || err.code !== 'name_taken') throw err;
+          // Someone created it between the read and the write: it is ours only if we are its owner.
+          if ((await registry.getPackage(w.name))?.ci_owner !== owner) throw refuse(w.name);
+          return;
+        }
+        await registry.appendAudit({ name: w.name, ts: now.toISOString(), id: newId('a'), actor: owner, action: 'ci_claim', detail: { repository: claims.repository } });
+      },
+    );
 
     const m = await mintToken(this.o.store, {
       kind: 'oidc',
@@ -338,12 +345,13 @@ export class OidcExchange {
   private async exchangeActsFor(claims: GithubActionsClaims, actsFor: string, via: string, wanted: PackageVersion[], registry: Store, purpose: OidcPurpose) {
     const account = Number(actsFor);
     // Read first, and mint nothing, spend no jti, until every name is the account's.
-    for (const w of wanted) {
+    // Sixteen names at a time; the refusal is that of the first name in the request that fails, as when they were read one by one.
+    await mapBounded(wanted, EXCHANGE_CONCURRENCY, async (w) => {
       const pkg = await registry.getPackage(w.name);
       if (!pkg) throw new RegistryError('package_not_found', `There is no package '${w.name}'.`, { name: w.name });
       const mine = pkg.ci_owner === undefined && (await registry.listOwners(w.name)).some((o) => o.github_id === account);
       if (!mine) throw new AuthError('not_owner', `You are not an owner of '${w.name}'.`, { name: w.name });
-    }
+    });
     const now = this.now();
     const keepUntil = Math.max(claims.exp * 1000 + 60_000, now.getTime() + JTI_MIN_TTL_MS);
     if (!(await this.o.store.claimOnce(jtiKey(claims.jti), new Date(keepUntil).toISOString()))) throw oidcInvalid('token already used');

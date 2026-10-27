@@ -255,12 +255,26 @@ row created only if its key is absent, so of two claims of one name exactly one 
 `PutItem` on `packages` and `owners` for this and nothing more there: it cannot change or delete an owner or a package.
 
 - Read-only mode refuses a claim (`read_only_mode`), as it refuses an upload. The route is on every stage; there is no switch for it.
-- A claim is rate limited per actor: 50 written claims per account and 50 per token per UTC day (`MOPM_CLAIM_RATE_PER_ACCOUNT_DAY`,
+- A claim is rate limited per actor: 50 written claims per account and 50 per token per UTC day, or the account's `claim_limits` entry (below) (`MOPM_CLAIM_RATE_PER_ACCOUNT_DAY`,
   `MOPM_CLAIM_RATE_PER_TOKEN_DAY`, set from the `claimRatePerAccountPerDay` and `claimRatePerTokenPerDay` of the API stack's `limits`).
   Over either, the claim is `429 rate_limited` with `Retry-After` to midnight UTC and writes nothing. Only a claim about to be written is
   charged, and one whose write fails gives its charge back. The counters are `rl#ct#<token>#<day>` and `rl#cu#<github id>#<day>` in the
   `publishes` table (the one the publish limits use), so the role needs no new grant. Any live user token may claim (the spec's `userToken`;
   token scopes are `publish`, `yank` and `stage`, and an API token with only `stage` is refused as `scope_missing`), so the per-token counter is what bounds a leaked token.
+- **Raising the claim limit of one account.** The 50 a day is the default of every account. A stage owner raises it for named accounts with
+  the item `claim_limits` of the stage's config table (`mopm-<stage>-config`, the table that holds `read_only` and `groups_enabled`), read the
+  same way (consistent read, cached for about five seconds, so it takes effect within that and needs no deploy):
+  `{"key": "claim_limits", "limits": {"u:<github id>": <claims per UTC day>}}`. The number is the limit of that account's counter and of
+  each of its tokens' counters (a set claimed with one token needs both). It is a whole number of 1 or more, and a value above 1000 is
+  clamped to 1000 in code, so the limit cannot be removed by the item. No item, an actor that is not listed, an entry that is not a whole
+  number of 1 or more, or an item whose `limits` is not an object: the default 50. An unreadable table also leaves the default (a claim
+  is not refused for it). Read, then write the whole item (a put replaces it), then read again to check:
+  ```sh
+  aws dynamodb get-item --table-name mopm-<stage>-config --key '{"key":{"S":"claim_limits"}}' --consistent-read
+  aws dynamodb put-item --table-name mopm-<stage>-config --item '{"key":{"S":"claim_limits"},"limits":{"M":{"u:<github id>":{"N":"<n>"}}}}'
+  aws dynamodb delete-item --table-name mopm-<stage>-config --key '{"key":{"S":"claim_limits"}}'   # back to 50 for everybody
+  ```
+  Only an operator with write access to the config table does this; the API role cannot write it.
 - `name_reserved` is a fixed list in the code (`RESERVED_NAMES`), `name_too_similar` compares the name, with underscores dropped and
   allowing one trailing `s`, with the names that start with the same letter (read from the search index, which is eventually
   consistent: two similar names claimed within a moment of each other can both succeed). `confirm_similar` skips only that check.
