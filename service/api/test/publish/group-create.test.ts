@@ -5,6 +5,7 @@ import { rec } from '../helpers';
 import { RIGS, reserved, type Rig } from '../group-rig';
 import type { PublishFill } from '../../src/state';
 import { errorCode, GroupEnv, json } from './group-env';
+import { sha256 } from './harness';
 
 /**
  * POST /groups, GET /groups/{id} and DELETE /groups/{id}, on both registry adapters. Every test names what it proves. The
@@ -911,8 +912,8 @@ describe.each(RIGS)('groups over the registry: %s', (_label, make) => {
         deadline_at: '2026-10-15T00:00:00.000Z',
         member_count: 2,
         members: [
-          { name: 'alpha', version: '1.0.0', state: 'reserved' },
-          { name: 'beta', version: '1.0.0', state: 'reserved' },
+          { name: 'alpha', version: '1.0.0', state: 'reserved', files: [{ subdir: 'linux-64', filename: 'mojo-alpha-1.0.0-mojo1.0.0_0.conda', sha256: sha256('alpha-1.0.0'), size: 1000, uploaded: false }] },
+          { name: 'beta', version: '1.0.0', state: 'reserved', files: [{ subdir: 'linux-64', filename: 'mojo-beta-1.0.0-mojo1.0.0_0.conda', sha256: sha256('beta-1.0.0'), size: 1000, uploaded: false }] },
         ],
       });
       await rig.store.updateGroup(gid, (cur) => ({ ...cur, staged: '1', flipped: '2' }));

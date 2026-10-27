@@ -320,7 +320,7 @@ export class PublishService {
       ...viaField(p),
       published_by: handle,
       status: 'pending',
-      manifest_sha256: req.manifest_sha256,
+      ...(req.manifest_sha256 !== undefined ? { manifest_sha256: req.manifest_sha256 } : {}),
       ...(Object.keys(req.display).length > 0 ? { display: req.display } : {}),
       files: uploads.map((u) => ({ upload_id: u.upload_id, subdir: u.subdir, filename: u.filename, sha256: u.sha256, size: u.size, key: u.key })),
       remaining_subdirs: [],
@@ -473,12 +473,13 @@ export function parseYank(body: unknown): { yanked: true; reason: string } | { y
   return { yanked: true, reason };
 }
 
-function parseCommit(body: unknown): { upload_ids: string[]; manifest_sha256: string; display: DisplayMeta } {
+function parseCommit(body: unknown): { upload_ids: string[]; manifest_sha256?: string; display: DisplayMeta } {
   if (!isObject(body)) throw invalidRequest('the body is not a JSON object');
   const { upload_ids, manifest_sha256 } = body;
   if (!Array.isArray(upload_ids) || upload_ids.length < 1 || upload_ids.length > 20) throw invalidRequest("'upload_ids' holds 1 to 20 ids");
   if (!upload_ids.every((x) => typeof x === 'string' && x.length >= 1 && x.length <= 128)) throw invalidRequest('each upload id must be a string');
   if (new Set(upload_ids).size !== upload_ids.length) throw invalidRequest("'upload_ids' repeats an id");
-  if (typeof manifest_sha256 !== 'string' || !SHA256.test(manifest_sha256)) throw invalidRequest("'manifest_sha256' is 64 lowercase hex digits");
-  return { upload_ids: upload_ids as string[], manifest_sha256, display: parseDisplay(body) };
+  // Optional: given, it is checked against the archive's manifest; absent, the registry uses the hash it computes itself.
+  if (manifest_sha256 !== undefined && (typeof manifest_sha256 !== 'string' || !SHA256.test(manifest_sha256))) throw invalidRequest("'manifest_sha256' is 64 lowercase hex digits");
+  return { upload_ids: upload_ids as string[], ...(manifest_sha256 !== undefined ? { manifest_sha256 } : {}), display: parseDisplay(body) };
 }

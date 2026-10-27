@@ -325,6 +325,35 @@
       }
     },
     {
+      "name": "commit without manifest_sha256",
+      "operationId": "commitPublish",
+      "request": {
+        "path": { "name": "http_client", "version": "0.4.0" },
+        "body": { "upload_ids": ["upl-42ab"] },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": { "publish_id": "pub-5d1e", "status_url": "/api/v1/publishes/pub-5d1e" }
+      }
+    },
+    {
+      "name": "commit with a manifest_sha256 that is not a hash",
+      "operationId": "commitPublish",
+      "request": {
+        "path": { "name": "http_client", "version": "0.4.0" },
+        "body": { "upload_ids": ["upl-42ab"], "manifest_sha256": "not a hash" },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": { "publish_id": "pub-5d1e", "status_url": "/api/v1/publishes/pub-5d1e" }
+      },
+      "expect": "invalid"
+    },
+    {
       "name": "commit with the display fields",
       "operationId": "commitPublish",
       "request": {
@@ -1233,6 +1262,91 @@
       }
     },
     {
+      "name": "group status open, with the files of each member",
+      "operationId": "getGroup",
+      "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "auth": "publishToken" },
+      "response": {
+        "status": 200,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "created_at": "2026-10-13T12:00:00Z",
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "member_count": 2,
+          "members": [
+            { "name": "http_client", "version": "0.4.0", "state": "reserved", "files": [{ "subdir": "linux-64", "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "size": 123456, "uploaded": true }] },
+            { "name": "json", "version": "1.2.0", "state": "reserved", "files": [{ "subdir": "noarch", "filename": "mojo-json-1.2.0-mojo1.0.0_0.conda", "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae", "size": 4096, "uploaded": false }] }
+          ]
+        }
+      }
+    },
+    {
+      "name": "group status visible, with the files of each member and no uploaded",
+      "operationId": "getGroup",
+      "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "auth": "publishToken" },
+      "response": {
+        "status": 200,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "visible",
+          "attempt": 1,
+          "created_at": "2026-10-13T12:00:00Z",
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "committed_at": "2026-10-13T12:30:00Z",
+          "member_count": 2,
+          "members": [
+            { "name": "http_client", "version": "0.4.0", "state": "published", "files": [{ "subdir": "linux-64", "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "size": 123456 }] },
+            { "name": "json", "version": "1.2.0", "state": "published", "files": [{ "subdir": "noarch", "filename": "mojo-json-1.2.0-mojo1.0.0_0.conda", "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae", "size": 4096 }] }
+          ]
+        }
+      }
+    },
+    {
+      "name": "group status with a file that has no sha256",
+      "operationId": "getGroup",
+      "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "auth": "publishToken" },
+      "response": {
+        "status": 200,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "created_at": "2026-10-13T12:00:00Z",
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "member_count": 1,
+          "members": [
+            { "name": "http_client", "version": "0.4.0", "state": "reserved", "files": [{ "subdir": "linux-64", "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda", "size": 123456 }] }
+          ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "group status with an uploaded that is not a boolean",
+      "operationId": "getGroup",
+      "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "auth": "publishToken" },
+      "response": {
+        "status": 200,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "created_at": "2026-10-13T12:00:00Z",
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "member_count": 1,
+          "members": [
+            { "name": "http_client", "version": "0.4.0", "state": "reserved", "files": [{ "subdir": "linux-64", "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "size": 123456, "uploaded": "yes" }] }
+          ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
       "name": "group status committed",
       "operationId": "getGroup",
       "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "auth": "publishToken" },
@@ -1398,6 +1512,25 @@
       }
     },
     {
+      "name": "commit a group, leaving manifest_sha256 out of some members",
+      "operationId": "commitGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "body": {
+          "members": [
+            { "name": "http_client", "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae" },
+            { "name": "json" }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": { "group_id": "grp_0123456789abcdef0123456789abcdef", "status": "validating", "attempt": 1, "status_url": "/api/v1/groups/grp_0123456789abcdef0123456789abcdef" }
+      }
+    },
+    {
       "name": "commit a group that had already committed",
       "operationId": "commitGroup",
       "request": {
@@ -1423,9 +1556,9 @@
       "expect": "invalid"
     },
     {
-      "name": "commit a group with a member that has no manifest",
+      "name": "commit a group with a member whose manifest is not a hash",
       "operationId": "commitGroup",
-      "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "body": { "members": [ { "name": "http_client" } ] }, "auth": "publishToken" },
+      "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "body": { "members": [ { "name": "http_client", "manifest_sha256": "abc" } ] }, "auth": "publishToken" },
       "response": {
         "status": 202,
         "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },

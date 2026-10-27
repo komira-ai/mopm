@@ -298,6 +298,8 @@ async function getVersion(deps: RouterDeps, name: string, version: string) {
       return v.state === 'tombstoned' || url === undefined ? rest : { ...rest, url };
     }),
     manifest_sha256: v.manifest_sha256,
+    // Present when a group published the version; absent for a single publish.
+    ...(v.group_id !== undefined ? { group_id: v.group_id } : {}),
     ...displayMetadata(v),
     provenance: v.provenance ?? { kind: 'none' },
   };

@@ -1,0 +1,111 @@
+{
+  "comment": "Test vectors of the group id (spec/staged-set.md, 'The group id'). canonical_json is the exact string that is hashed: sha256, the first 32 hex digits, 'grp_' in front. Pinned by service/api/test/publish/group-id.test.ts; a change to any group_id here is a breaking change of a documented interface.",
+  "vectors": [
+    {
+      "name": "an account, one member, one file",
+      "actor": "u:1234",
+      "request": {
+        "members": [
+          {
+            "name": "alpha",
+            "version": "1.0.0",
+            "files": [
+              {
+                "subdir": "linux-64",
+                "filename": "mojo-alpha-1.0.0-mojo1.0.0_0.conda",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 1000
+              }
+            ]
+          }
+        ]
+      },
+      "canonical_json": "[\"u:1234\",[[\"alpha\",\"1.0.0\",[[\"linux-64\",\"mojo-alpha-1.0.0-mojo1.0.0_0.conda\",\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",1000]]]]]",
+      "group_id": "grp_750db8c095f4c2517cedf12a308149e5"
+    },
+    {
+      "name": "another account declaring the same set is another group",
+      "actor": "u:4321",
+      "request": {
+        "members": [
+          {
+            "name": "alpha",
+            "version": "1.0.0",
+            "files": [
+              {
+                "subdir": "linux-64",
+                "filename": "mojo-alpha-1.0.0-mojo1.0.0_0.conda",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 1000
+              }
+            ]
+          }
+        ]
+      },
+      "canonical_json": "[\"u:4321\",[[\"alpha\",\"1.0.0\",[[\"linux-64\",\"mojo-alpha-1.0.0-mojo1.0.0_0.conda\",\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",1000]]]]]",
+      "group_id": "grp_57794d9daef2aedabe009f48791f7f3a"
+    },
+    {
+      "name": "a CI publisher, members and files sent out of order",
+      "actor": "ci:gh-repo:987654",
+      "request": {
+        "members": [
+          {
+            "name": "beta",
+            "version": "0.3.0",
+            "files": [
+              {
+                "subdir": "noarch",
+                "filename": "mojo-beta-0.3.0-mojo1.0.0_0.conda",
+                "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "size": 512
+              }
+            ]
+          },
+          {
+            "name": "alpha",
+            "version": "2.1.0",
+            "files": [
+              {
+                "subdir": "osx-arm64",
+                "filename": "mojo-alpha-2.1.0-mojo1.0.0_0.conda",
+                "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "size": 4096
+              },
+              {
+                "subdir": "linux-64",
+                "filename": "mojo-alpha-2.1.0-mojo1.0.0_0.conda",
+                "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "size": 2048
+              }
+            ]
+          }
+        ]
+      },
+      "canonical_json": "[\"ci:gh-repo:987654\",[[\"alpha\",\"2.1.0\",[[\"linux-64\",\"mojo-alpha-2.1.0-mojo1.0.0_0.conda\",\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",2048],[\"osx-arm64\",\"mojo-alpha-2.1.0-mojo1.0.0_0.conda\",\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",4096]]],[\"beta\",\"0.3.0\",[[\"noarch\",\"mojo-beta-0.3.0-mojo1.0.0_0.conda\",\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",512]]]]]",
+      "group_id": "grp_890c960efd66fe95fc3289b62641f192"
+    },
+    {
+      "name": "one different digest is another group",
+      "actor": "u:1234",
+      "request": {
+        "members": [
+          {
+            "name": "alpha",
+            "version": "1.0.0",
+            "files": [
+              {
+                "subdir": "linux-64",
+                "filename": "mojo-alpha-1.0.0-mojo1.0.0_0.conda",
+                "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "size": 1000
+              }
+            ]
+          }
+        ]
+      },
+      "canonical_json": "[\"u:1234\",[[\"alpha\",\"1.0.0\",[[\"linux-64\",\"mojo-alpha-1.0.0-mojo1.0.0_0.conda\",\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",1000]]]]]",
+      "group_id": "grp_d0c9541cb93d9763a8f4f9d73fc4fb93"
+    }
+  ]
+}

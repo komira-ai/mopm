@@ -47,7 +47,9 @@ conda channel (`channel.md`). Other files in the directory are ignored.
 - `action` is `upload`, `skip` or `refuse`.
   - `upload`: the member goes into the group. It needs `manifest_sha256` (the
     hash `mopm pack` prints, which the registry compares with the manifest in
-    the archive) and one to 20 `files`, each 1 to 100,000,000 bytes, with its
+    the archive; the registry's commit accepts a request without it, and then
+    uses the hash it computes, but `mopm` always sends it so that the check
+    between pack and publish stays) and one to 20 `files`, each 1 to 100,000,000 bytes, with its
     `sha256` and `size`. A file name is a plain name: no `/`, no `\`, none that
     starts with a dot. `readme` is optional: a path below the directory, up to
     64 KiB of UTF-8.
@@ -214,3 +216,85 @@ groups open), `supersede_cap` (the set overlaps more open groups than one create
 supersedes), `takeover_blocked` (a reserved version whose group has no header is
 not free yet), `number_taken` (another publish took a version during the create)
 and `overlap_refused`. A reason a client does not know is treated as none.
+
+## The group id
+
+The id of a group is a function of the caller and the declared set, and the
+derivation is a stable interface of the hosted registry: a client can compute
+the id without any record of it, then `GET /groups/{id}` answers `404
+group_not_found` when the caller has no such group, and otherwise the group's
+status and, for each member, its declared files (the read creates, reopens and
+charges nothing; `POST /groups` of an ended group would reopen it as a next
+attempt and charge the group allowance).
+
+```text
+group_id = "grp_" + first 32 lowercase hex digits of
+           SHA-256( UTF-8 bytes of the compact JSON text of [ actor, set ] )
+```
+
+- `actor` is `u:<GitHub account id>` for an account's token (a CI token that
+  acts for an account has the account's id), and `ci:gh-repo:<repository id>`
+  for the token of a configured CI publisher, whichever token of that identity
+  it is. A CI token of any other kind is `ci:<token id>`; it creates no group.
+  A client that wants a stable id across runs uses an account token or a
+  configured CI publisher, never a per-run token.
+- `set` is the array of the members sorted by package `name`. A member is the
+  array `[name, version, files]`; `version` is exactly `MAJOR.MINOR.PATCH`.
+  `files` is the array of the member's files sorted by the text
+  `<subdir>/<filename>`, and a file is the array `[subdir, filename, sha256,
+  size]` with `sha256` in lowercase hex and `size` a JSON integer.
+- "Compact" is JSON with no white space between tokens and strings written as
+  JavaScript's `JSON.stringify` writes them. The order of members and files in
+  the request, `on_overlap` and any other option are not part of the id.
+
+For the actor `u:1234` declaring `alpha` 1.0.0 with the one file
+`linux-64/mojo-alpha-1.0.0-mojo1.0.0_0.conda` (sha256: 64 times `a`, size 1000)
+the text hashed is
+
+```text
+["u:1234",[["alpha","1.0.0",[["linux-64","mojo-alpha-1.0.0-mojo1.0.0_0.conda","aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",1000]]]]]
+```
+
+and the id is `grp_750db8c095f4c2517cedf12a308149e5`. Further vectors, for a
+configured CI publisher, several members and files sent out of order, and
+one-field differences, are in the registry's test fixtures
+(`service/api/test/fixtures/group-id-vectors.json`), and a test fails if any id
+changes. A different derivation would be introduced under a new prefix, not as
+a different hash under `grp_`.
+
+The fake registry's group ids are opaque: they are not derived this way, and a
+client must not compute them.
+
+### What `GET /groups/{id}` adds for each member
+
+`files` lists the facts the caller declared, `subdir`, `filename`, `sha256` and
+`size`, sorted by `subdir` and `filename`, from the member's reserved version.
+While the group is `open` each file also has `uploaded`: true when the file is in
+storage at its declared size. For any other status `uploaded` is absent and the
+registry makes no storage check. A member that is not reserved yet, or whose
+version number another group or publish took after this group ended, has an
+empty `files`. The answers of `DELETE /groups/{id}` and `PUT /groups/{id}/yank`
+do not carry `files`. The access rule is the one every read of a group has: the
+caller who created it, or an owner of every package in it (a token that acts for
+an account must also cover every package); anyone else gets `404
+group_not_found`, never 403.
+
+### The group of a version
+
+`GET /packages/{name}/{version}` carries `group_id` for a version a group
+published, and no `group_id` for a version a single publish made. A version that
+is still pending is not found. The id grants nothing: reading or yanking the
+group keeps its own ownership and scope rules.
+
+### A commit without `manifest_sha256`
+
+`manifest_sha256` is optional in the commit of a single publish and in each
+member of a group commit. When given it is checked as before (`invalid_request`
+for a bad format, `sha256_mismatch` for a difference). When absent the version
+holds the hash the registry computes from the archive, and a version whose files
+carry different manifest bytes is rejected `manifest_invalid`; when the hash is
+given, a file whose manifest differs from it is `sha256_mismatch` instead. A
+repeat of a group commit must repeat which members gave the hash and what they
+gave; otherwise it is another request and is refused (`group_commit_refused`). A
+repeat of a single commit with the same upload ids resumes the same publish
+whatever it says about the hash.

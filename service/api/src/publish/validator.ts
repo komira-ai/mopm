@@ -118,7 +118,7 @@ async function validateAll(d: ValidatorDeps, rec: PublishRecord): Promise<Packag
 export async function validateArchives(
   objects: Pick<ObjectStore, 'get'>,
   options: ValidatorOptions | undefined,
-  version: { name: string; version: string; manifest_sha256: string },
+  version: { name: string; version: string; manifest_sha256?: string },
   files: ReadonlyArray<Pick<PublishFile, 'key' | 'subdir' | 'filename' | 'sha256'>>,
 ): Promise<PackageFacts[]> {
   const out: PackageFacts[] = [];
@@ -127,7 +127,7 @@ export async function validateArchives(
     if (!bytes) throw new Rejected('archive_invalid', `the upload of ${f.filename} is missing from quarantine`);
     const verdict = validatePackage(
       bytes,
-      { name: version.name, version: version.version, subdir: f.subdir, filename: f.filename, sha256: f.sha256, manifestSha256: version.manifest_sha256 },
+      { name: version.name, version: version.version, subdir: f.subdir, filename: f.filename, sha256: f.sha256, ...(version.manifest_sha256 !== undefined ? { manifestSha256: version.manifest_sha256 } : {}) },
       options,
     );
     if (!verdict.ok) throw new Rejected(verdict.rejection_code, `${f.filename}: ${verdict.message}`);
@@ -136,8 +136,8 @@ export async function validateArchives(
   // One version, one build and one set of dependencies, whatever the platform.
   const first = out[0]!;
   for (const [i, facts] of out.entries()) {
-    const same = facts.build === first.build && JSON.stringify(depsOf(facts)) === JSON.stringify(depsOf(first)) && JSON.stringify(nativeOf(facts)) === JSON.stringify(nativeOf(first)) && JSON.stringify(facts.nativeDepends) === JSON.stringify(first.nativeDepends);
-    if (!same) throw new Rejected('manifest_invalid', `${files[i]!.filename} disagrees with ${files[0]!.filename} on build, dependencies or native libraries`);
+    const same = facts.build === first.build && JSON.stringify(depsOf(facts)) === JSON.stringify(depsOf(first)) && JSON.stringify(nativeOf(facts)) === JSON.stringify(nativeOf(first)) && JSON.stringify(facts.nativeDepends) === JSON.stringify(first.nativeDepends) && facts.manifestSha256 === first.manifestSha256;
+    if (!same) throw new Rejected('manifest_invalid', `${files[i]!.filename} disagrees with ${files[0]!.filename} on build, dependencies, native libraries or manifest`);
   }
   return out;
 }

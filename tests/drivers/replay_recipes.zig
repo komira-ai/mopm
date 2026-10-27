@@ -1005,7 +1005,7 @@ pub fn build(f: *F, e: Entry) !Step {
             s.path = try f.json("{{\"name\":\"{s}\",\"version\":\"9.9.9\"}}", .{(try f.claimed()).name});
             return s;
         },
-        .group_create, .group_get, .group_abort, .group_commit, .group_yank, .group_error => return groupRecipe(f, e),
+        .group_create, .group_get, .group_abort, .group_commit, .group_yank, .group_error, .group_facts => return groupRecipe(f, e),
         .detail => {
             const r = try Release.init(f);
             try r.publish("0.4.0", "conda bytes");

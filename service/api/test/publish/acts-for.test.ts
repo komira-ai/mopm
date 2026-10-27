@@ -256,6 +256,24 @@ describe.each(RIGS)('a CI identity that acts for an account: %s', (_label, make)
       await nothingCreated([newer]);
     });
 
+    test('the files of a group are read by a token that covers every member and by no token that does not: the 404 carries no fact', async () => {
+      const human = await env.token(ACCOUNT, ['widgets', 'gadgets']);
+      const gid = json(await env.create(human, [memberOf(widgets), memberOf(gadgets)])).group_id as string;
+      const wide = await exchange([widgets, gadgets]);
+      const narrow = await exchange([widgets]);
+      const factsOf = (p: Pkg) => [{ subdir: p.subdir, filename: p.filename, sha256: p.sha256, size: p.bytes.length, uploaded: false }];
+      const seen = await env.get(wide, gid);
+      expect(seen.statusCode).toBe(200);
+      expect(json(seen).members.map((m: { name: string; files: unknown }) => [m.name, m.files])).toEqual([
+        ['gadgets', factsOf(gadgets)],
+        ['widgets', factsOf(widgets)],
+      ]);
+      const hidden = await env.get(narrow, gid);
+      expect([hidden.statusCode, errorCode(hidden)]).toEqual([404, 'group_not_found']);
+      expect(hidden.body).not.toContain(widgets.sha256);
+      expect(hidden.body).not.toContain(gadgets.sha256);
+    });
+
     test('the account\'s other groups are not found by the token: read, abort, commit and yank answer group_not_found for a group with a member outside the token, and the group is untouched', async () => {
       const human = await env.token(ACCOUNT, ['gadgets']);
       const made = await env.create(human, [memberOf(gadgets)]);

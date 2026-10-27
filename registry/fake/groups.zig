@@ -5,7 +5,8 @@
 //! The wire shapes, status codes and error codes are the contract's. What the
 //! fake chooses, as it does for single publishes:
 //! - a group's id is a function of the caller and the declared set, so the same
-//!   request is the same group;
+//!   request is the same group (the fake's own derivation: a client does not
+//!   compute these ids, unlike the hosted registry's documented ones);
 //! - a group runs one stage per status poll, after the commit: `validating`,
 //!   `committed`, `visible` (a rejected member ends it `rejected`, and nothing
 //!   is visible); a yank or unyank moves one stage per poll too;
@@ -268,7 +269,10 @@ fn jsonOmitting(arena: Allocator, status: std.http.Status, value: anytype) Alloc
     return .{ .status = status, .body = buf.items };
 }
 
-const MemberView = struct { name: []const u8, version: []const u8, state: []const u8 };
+/// One declared file of a member, as `getGroup` shows it. `uploaded` is set only while the group is open.
+const FileView = struct { subdir: []const u8, filename: []const u8, sha256: []const u8, size: u64, uploaded: ?bool = null };
+/// `files` is set on the answer of `getGroup` only.
+const MemberView = struct { name: []const u8, version: []const u8, state: []const u8, files: ?[]const FileView = null };
 const FailureView = struct { code: []const u8, message: []const u8, member: ?[]const u8 = null };
 const YankView = struct { state: []const u8, reason: []const u8, requested_at: []const u8, yanked_members: usize };
 const GroupView = struct {
@@ -292,12 +296,33 @@ fn memberState(g: *const st.Group, m: st.GroupMember) []const u8 {
     };
 }
 
-/// The group as `getGroup` shows it.
-fn view(arena: Allocator, g: *const st.Group) Allocator.Error!GroupView {
+/// Whether the member's row is still this group's: the group holds the number, or published the version. A row another group or a
+/// single publish took after this group ended is not.
+fn holdsRow(g: *const st.Group, m: st.GroupMember) bool {
+    if (m.row.group) |held| if (held == g) return true;
+    const id = m.row.group_id orelse return false;
+    return std.mem.eql(u8, id, g.id);
+}
+
+/// The declared files of one member, with `uploaded` while the group is open; empty when the row is no longer the group's.
+fn filesView(arena: Allocator, g: *const st.Group, m: st.GroupMember) Allocator.Error![]const FileView {
+    if (!holdsRow(g, m)) return &.{};
+    const n = @min(m.files.len, max_files);
+    const out = try arena.alloc(FileView, n);
+    for (m.files[0..n], out) |f, *o| {
+        o.* = .{ .subdir = f.subdir, .filename = f.filename, .sha256 = f.sha256, .size = f.size };
+        if (g.status == .open) o.uploaded = f.upload.path != null;
+    }
+    return out;
+}
+
+/// The group as the answers show it; `with_files` is `getGroup`'s, for which each member lists its files.
+fn view(arena: Allocator, g: *const st.Group, with_files: bool) Allocator.Error!GroupView {
     var members = std.ArrayList(MemberView).init(arena);
     var yanked: usize = 0;
-    for (g.members) |m| {
-        try members.append(.{ .name = m.package.name, .version = m.version, .state = memberState(g, m) });
+    for (g.members, 0..) |m, i| {
+        const files: ?[]const FileView = if (with_files and i < max_members) try filesView(arena, g, m) else if (with_files) &.{} else null;
+        try members.append(.{ .name = m.package.name, .version = m.version, .state = memberState(g, m), .files = files });
         if (m.yanked_by_group) yanked += 1;
     }
     return .{
@@ -641,7 +666,7 @@ pub fn getGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .fail => |r| return r,
     };
     // As a single publish does, the group shows the stage it is in and moves one stage for the next poll.
-    const shown = try view(ctx.arena, g);
+    const shown = try view(ctx.arena, g, true);
     try advance(ctx, g);
     return jsonOmitting(ctx.arena, .ok, shown);
 }
@@ -659,7 +684,7 @@ pub fn abortGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
     if (g.status != .aborted) {
         return resp.fail(ctx.arena, .group_not_open, &.{ .{ "group_id", g.id }, .{ "status", @tagName(g.status) } });
     }
-    return jsonOmitting(ctx.arena, .ok, try view(ctx.arena, g));
+    return jsonOmitting(ctx.arena, .ok, try view(ctx.arena, g, false));
 }
 
 // ---------------------------------------------------------------------------
@@ -716,6 +741,7 @@ fn advance(ctx: *Ctx, g: *st.Group) anyerror!void {
                 m.row.state = .published;
                 m.row.published_at = g.committed_at;
                 m.row.group = null;
+                m.row.group_id = g.id;
                 m.package.state = .active;
                 m.package.updated_at = g.committed_at;
                 try channel.addFiles(s, m.row);
@@ -786,8 +812,14 @@ fn parseCommit(ctx: *Ctx, g: *const st.Group, manifests: []?[]const u8) Allocato
             if (std.mem.eql(u8, seen, name)) return .{ .fail = try resp.invalid(a, try std.fmt.allocPrint(a, "'{s}' appears twice", .{name})) };
         }
         try listed.append(name);
-        const sha = util.getStr(m, "manifest_sha256") orelse "";
-        if (!isSha(sha)) return .{ .fail = try resp.invalid(a, try std.fmt.allocPrint(a, "'manifest_sha256' of '{s}' is 64 lowercase hex digits", .{name})) };
+        // Optional: absent is "", which the fake keeps as it is (it opens no archive, so it has no hash of its own to put in its place:
+        // a published member's `manifest_sha256` is its first file's sha256 whatever the request said, as it always was).
+        const given: ?[]const u8 = if (m.get("manifest_sha256")) |v| switch (v) {
+            .string => |x| x,
+            else => "",
+        } else null;
+        if (given) |x| if (!isSha(x)) return .{ .fail = try resp.invalid(a, try std.fmt.allocPrint(a, "'manifest_sha256' of '{s}' is 64 lowercase hex digits", .{name})) };
+        const sha = given orelse "";
         var found = false;
         for (g.members, 0..) |gm, i| {
             if (std.mem.eql(u8, gm.package.name, name)) {
@@ -932,18 +964,18 @@ pub fn yankGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
     const current: ?st.YankState = if (g.yank) |y| y.state else null;
     if (yanked) {
         if (current == .unyanking) return notSettled(ctx, g, "it is being unyanked");
-        if (current == .yanked) return jsonOmitting(ctx.arena, .ok, try view(ctx.arena, g));
-        if (current == .yanking) return jsonOmitting(ctx.arena, .accepted, try view(ctx.arena, g));
+        if (current == .yanked) return jsonOmitting(ctx.arena, .ok, try view(ctx.arena, g, false));
+        if (current == .yanking) return jsonOmitting(ctx.arena, .accepted, try view(ctx.arena, g, false));
         // A new yank starts from none yanked: what an earlier one changed is no longer the group's to restore.
         for (g.members) |*m| m.yanked_by_group = false;
         g.yank = .{ .state = .yanking, .reason = try s.alloc.dupe(u8, reason.?), .requested_at = s.now() };
-        return jsonOmitting(ctx.arena, .accepted, try view(ctx.arena, g));
+        return jsonOmitting(ctx.arena, .accepted, try view(ctx.arena, g, false));
     }
-    if (current == null or current == .restored) return jsonOmitting(ctx.arena, .ok, try view(ctx.arena, g));
+    if (current == null or current == .restored) return jsonOmitting(ctx.arena, .ok, try view(ctx.arena, g, false));
     if (current == .yanking) return notSettled(ctx, g, "it is being yanked");
-    if (current == .unyanking) return jsonOmitting(ctx.arena, .accepted, try view(ctx.arena, g));
+    if (current == .unyanking) return jsonOmitting(ctx.arena, .accepted, try view(ctx.arena, g, false));
     g.yank.?.state = .unyanking;
-    return jsonOmitting(ctx.arena, .accepted, try view(ctx.arena, g));
+    return jsonOmitting(ctx.arena, .accepted, try view(ctx.arena, g, false));
 }
 
 fn notSettled(ctx: *Ctx, g: *const st.Group, detail: []const u8) Allocator.Error!Response {

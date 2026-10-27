@@ -5,6 +5,15 @@ checksums, and this file says what changed. The details of a command are on its 
 
 ## Unreleased
 
+### The registry shows a group's files, names a version's group, and takes a commit without `manifest_sha256`
+
+All three are additive. `GET /groups/{id}` lists each member's declared `files` (`subdir`, `filename`, `sha256`, `size`), and, while the group is
+`open`, whether each file is in storage (`uploaded`); the read creates, reopens and charges nothing, and access is unchanged (a group that is not
+yours is still `group_not_found`). The derivation of a group id is now documented and pinned by test vectors, so a client can compute the id and
+read the group without a local record. `GET /packages/{name}/{version}` carries `group_id` for a version a group published. `manifest_sha256` is
+optional in the commit of a single publish and of each member of a group: given, it is checked as before; absent, the version holds the hash the
+registry computes from the archive. `mopm` still sends it. See `spec/api/openapi.yaml` and [staged sets](spec/staged-set.md).
+
 ### The registry says why a group could not be created
 
 A `group_conflict` answer now carries an optional `error.reason` (`number_held`, `group_failed`, `open_cap`, `supersede_cap`, `takeover_blocked`,

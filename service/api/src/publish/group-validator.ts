@@ -235,7 +235,7 @@ class GroupJob {
     const files = row.files.map((f) => ({ subdir: f.subdir, filename: f.filename, sha256: f.sha256, key: quarantineKeyFor(uploadIdFor(this.gid, m, f), f.filename) }));
     let facts;
     try {
-      facts = await validateArchives(d.objects, d.validatorOptions, { name: row.name, version: row.version, manifest_sha256: input.manifest_sha256 }, files);
+      facts = await validateArchives(d.objects, d.validatorOptions, { name: row.name, version: row.version, ...(input.manifest_sha256 !== undefined ? { manifest_sha256: input.manifest_sha256 } : {}) }, files);
     } catch (err) {
       if (err instanceof Rejected) throw verdict(err.code, err.message, false, m.name);
       throw err;

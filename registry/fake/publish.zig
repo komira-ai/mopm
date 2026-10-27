@@ -192,8 +192,12 @@ pub fn commitPublish(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .fail => |r| return r,
     };
     const obj = ctx.object() orelse return resp.invalid(ctx.arena, "the body is not a JSON object");
-    const manifest_sha256 = util.getStr(obj, "manifest_sha256") orelse return resp.invalid(ctx.arena, "'manifest_sha256' must be a string");
-    if (manifest_sha256.len != 64) return resp.invalid(ctx.arena, "'manifest_sha256' is 64 lowercase hex digits");
+    // Optional. Given, it is checked for its format as before; the fake opens no archive, so it does not compare it with a manifest.
+    const given: ?[]const u8 = if (obj.get("manifest_sha256")) |v| switch (v) {
+        .string => |x| x,
+        else => return resp.invalid(ctx.arena, "'manifest_sha256' must be a string"),
+    } else null;
+    if (given) |x| if (x.len != 64) return resp.invalid(ctx.arena, "'manifest_sha256' is 64 lowercase hex digits");
     const ids_value = switch (obj.get("upload_ids") orelse return resp.invalid(ctx.arena, "'upload_ids' is required")) {
         .array => |a| a.items,
         else => return resp.invalid(ctx.arena, "'upload_ids' must be an array"),
@@ -266,7 +270,9 @@ pub fn commitPublish(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .published_by = t.user.handle,
     });
     v.files = try files.toOwnedSlice();
-    v.manifest_sha256 = try s.alloc.dupe(u8, manifest_sha256);
+    // Absent, the version holds a hash the registry computed. The fake computes none (it has no archive to open): it uses the
+    // sha256 of the first file, which is what its group publishes hold too.
+    v.manifest_sha256 = try s.alloc.dupe(u8, given orelse uploads.items[0].sha256);
     v.provenance = if (t.kind == .oidc) t.oidc_repository else null;
     const pub_ = try s.add(st.Publish, &s.publishes, .{
         .id = try util.newId(s.alloc, "pub"),
@@ -489,6 +495,20 @@ pub fn requiresMojo(arena: Allocator, filename: []const u8) Allocator.Error![]co
     return std.fmt.allocPrint(arena, "=={s}", .{build[4..under]});
 }
 
+/// The 200 answer of getVersion: `body` as JSON, and `group_id` added when a group published the version. The key is absent, not null,
+/// for a version a single publish made.
+fn withGroupId(arena: Allocator, v: *const st.Version, body: anytype) Allocator.Error!Response {
+    var r = try resp.json(arena, .ok, body);
+    const gid = v.group_id orelse return r;
+    var buf = std.ArrayList(u8).init(arena);
+    try buf.appendSlice(r.body[0 .. r.body.len - 1]); // without the closing brace
+    try buf.appendSlice(",\"group_id\":");
+    std.json.stringify(gid, .{}, buf.writer()) catch return error.OutOfMemory;
+    try buf.append('}');
+    r.body = buf.items;
+    return r;
+}
+
 pub fn getVersion(ctx: *Ctx, params: []const []const u8) anyerror!Response {
     const p = switch (try target(ctx, params[0], params[1])) {
         .ok => |p| p,
@@ -522,7 +542,7 @@ pub fn getVersion(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         const BareFile = struct { subdir: []const u8, filename: []const u8, sha256: []const u8, size: u64 };
         var bare = std.ArrayList(BareFile).init(ctx.arena);
         for (v.files) |f| try bare.append(.{ .subdir = f.subdir, .filename = f.filename, .sha256 = f.sha256, .size = f.size });
-        return resp.json(ctx.arena, .ok, .{
+        return withGroupId(ctx.arena, v, .{
             .name = p.name,
             .version = v.version,
             .state = "tombstoned",
@@ -550,7 +570,7 @@ pub fn getVersion(ctx: *Ctx, params: []const []const u8) anyerror!Response {
             .url = try std.fmt.allocPrint(ctx.arena, "{s}/channel/{s}/{s}", .{ s.base_url, f.subdir, f.filename }),
         });
     }
-    return resp.json(ctx.arena, .ok, .{
+    return withGroupId(ctx.arena, v, .{
         .name = p.name,
         .version = v.version,
         .state = @tagName(v.state),
