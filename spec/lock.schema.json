@@ -49,6 +49,12 @@
             "uniqueItems": true,
             "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,63}$" }
           },
+          "loads": {
+            "description": "Conda names of the system libraries the package loads at run time, sorted; each is pinned in system_libs for the entry's subdir.",
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" }
+          },
           "native": {
             "type": "array",
             "items": {
@@ -62,6 +68,32 @@
                 "needs": { "type": "array", "items": { "type": "string" } },
                 "exclusive": { "type": "string", "minLength": 1 }
               }
+            }
+          }
+        }
+      }
+    },
+    "system_libs": {
+      "description": "The conda packages of the system libraries that manifests and registry packages load, per subdir (the keys), each list sorted by name. Left out when nothing is loaded.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "required": ["name", "version", "build", "url", "sha256", "size"],
+          "properties": {
+            "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+            "version": { "type": "string", "minLength": 1 },
+            "build": { "type": "string", "pattern": "^[A-Za-z0-9_.]+$" },
+            "url": { "type": "string", "pattern": "^https://[^/]+/.+\\.conda$" },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "size": { "type": "integer", "minimum": 1 },
+            "deps": {
+              "description": "Names of the entries of the same list this one needs to run.",
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" }
             }
           }
         }

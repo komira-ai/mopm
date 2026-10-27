@@ -84,6 +84,11 @@ check them on every read. A violation is an error, not a warning.
    configured channel is a hard error: it is the shape of a dependency
    confusion attack.
 7. No two packages declare the same `soname` in `native`.
+8. Each subdir's list in `system_libs` is not empty, sorted by `name` with no
+   repeats, and every `deps` name is another entry of that list. Each entry has
+   a 64 digit lowercase `sha256`, a positive `size` and an https `.conda` `url`.
+9. Each name in a package's `loads` is sorted, appears once, and is an entry of
+   `system_libs` for that package's subdir. A path dependency has no `loads`.
 
 ## Install and update behaviour (what the lock promises)
 
@@ -143,10 +148,69 @@ meaning. `lock.schema.json` describes version 1.
   rule 4 becomes: every artifact's Mojo version is in `mojo`.
 - `mopm sync` installs the builds for the first locked Mojo version.
 
+## System libraries
+
+A package can open a system library at run time (`[native-dependencies]
+libsqlite = { version = ">=3.40", mode = "load" }`). For its tests to run
+against the library the project locked, and not against whatever the machine
+has, the lock pins the library's conda package. There are two optional keys;
+a lock without them is read and written as before, and `lock_version` does not
+change.
+
+```json
+{
+  "packages": [
+    { "name": "http_client", "...": "...", "loads": ["libsqlite"] }
+  ],
+  "system_libs": {
+    "linux-64": [
+      {
+        "name": "libsqlite",
+        "version": "3.50.4",
+        "build": "h0aef613_0",
+        "url": "https://conda.anaconda.org/conda-forge/linux-64/libsqlite-3.50.4-h0aef613_0.conda",
+        "sha256": "<64 hex digits>",
+        "size": 938000,
+        "deps": ["libzlib"]
+      }
+    ]
+  }
+}
+```
+
+- `system_libs`: for each subdir, the conda packages of every library that the
+  root manifest, a path dependency's manifest or a registry package loads, and of
+  everything those need to run, sorted by `name`. An entry has `name`
+  (a conda name), `version`, `build`, `url`, `sha256`, `size` (the bytes, as for
+  a package) and `deps`, the names of the entries of the same list it needs
+  (left out when none). The key is left out when nothing is loaded. mopm does not
+  solve: the pins are the catalog of the mopm that wrote the lock (one file per
+  subdir, pre-solved and checked when mopm is released), and a library outside
+  it is refused. The packages the toolchain already supplies (the compiler's C++
+  runtime on Linux, the OS's on macOS) are not listed.
+- `loads` of a registry package: the conda names of the libraries it loads,
+  sorted, taken from the `depends` of the repodata entry of the file the lock
+  pins (every name that is not a `mojo-*` package). A manifest of the root
+  project or of a path dependency is read when the unit graph is made, so it has
+  no entry here.
+- `mopm lock` writes both keys, for every subdir, only when some manifest or
+  registry package loads a library; a lock of a project that loads none is
+  unchanged, and an old lock is not rewritten until `mopm lock` runs. A version
+  requirement in a manifest (`">=3.40"`) is checked against the pin, and a
+  pin that does not meet it is refused: `mopm pins libsqlite 3.51.0 for
+  linux-64; requirement ">=4" cannot be met; update mopm`. A name the catalog has
+  no entry for is refused for a manifest, naming the names it has.
+- `mopm plan` reads the pins (`unit-graph.md`, "System libraries"). A mopm that
+  does not know the keys ignores them and prints a graph without `loads`, which
+  a build system that compares the committed graph with mopm's output reports.
+- The pin is what a test runs against. `mopm sync` may install a newer
+  compatible version of a library for development.
+
 ## Versioning
 
 `lock_version` changes only for incompatible changes. New optional keys can
-be added within version 1; readers ignore keys they do not know.
+be added within version 1; readers ignore keys they do not know (`system_libs`
+and `loads` are such keys, and apply to both versions).
 
 ## A project with no registry dependency
 

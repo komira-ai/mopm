@@ -118,8 +118,16 @@ pub fn main(arena: Allocator, args: []const []const u8) u8 {
 
 /// Why a graph of format `format` cannot be read, or null when this mopm reads it.
 pub fn formatProblem(arena: Allocator, path: []const u8, format: u32) Allocator.Error!?[]const u8 {
-    if (format == core.unit_graph.format_version) return null;
-    return try std.fmt.allocPrint(arena, "{s} is unit graph format {d}; this mopm reads {d}", .{ path, format, core.unit_graph.format_version });
+    if (format == core.unit_graph.format_version or format == core.unit_graph.format_loads) return null;
+    return try std.fmt.allocPrint(arena, "{s} is unit graph format {d}; this mopm reads {d} and {d}", .{ path, format, core.unit_graph.format_version, core.unit_graph.format_loads });
+}
+
+/// Why `mopm unit test` cannot run `u`, or null: a unit with `loads` needs the system libraries of the graph on the
+/// loader path, which this command does not provide, so it would run against the machine's libraries.
+pub fn testLoadsProblem(arena: Allocator, u: core.unit_graph.Unit) Allocator.Error!?[]const u8 {
+    if (u.loads.len == 0) return null;
+    const list = try std.mem.join(arena, ", ", u.loads);
+    return try std.fmt.allocPrint(arena, "{s} loads system libraries ({s}); mopm unit test does not put them on the loader path, so the test would run against the machine's libraries", .{ u.id, list });
 }
 
 fn run(arena: Allocator, a: Args, cpu: ?[]const u8) !u8 {
@@ -139,6 +147,12 @@ fn run(arena: Allocator, a: Args, cpu: ?[]const u8) !u8 {
         std.io.getStdErr().writer().print("error: {s} has no unit {s}\n", .{ a.graph, a.unit }) catch {};
         return exit_refused;
     };
+    if (a.verb == .@"test") {
+        if (try testLoadsProblem(arena, g.units[idx])) |why| {
+            std.io.getStdErr().writer().print("error: {s}\n", .{why}) catch {};
+            return exit_refused;
+        }
+    }
     const dirs = core.unit_run.Dirs{
         .src = a.src,
         .deps = a.deps,
@@ -208,8 +222,15 @@ test "a unit graph of another format is refused with its message; this format is
     defer st.deinit();
     const a = st.allocator();
     try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_version)) == null);
-    try std.testing.expectEqualStrings("g.json is unit graph format 1; this mopm reads 2", (try formatProblem(a, "g.json", 1)).?);
-    try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_version + 1)) != null);
+    try std.testing.expectEqualStrings("g.json is unit graph format 1; this mopm reads 2 and 3", (try formatProblem(a, "g.json", 1)).?);
+    try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_loads)) == null);
+    try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_loads + 1)) != null);
+
+    var with_loads = core.unit_graph.Unit{ .id = "p@1.0.0#mojo1.0.0/test:tests/test_p.mojo", .package = "p", .version = "1.0.0", .kind = "test" };
+    try std.testing.expect((try testLoadsProblem(a, with_loads)) == null);
+    with_loads.loads = &.{ "libbrotlicommon", "libbrotlidec" };
+    const refused = (try testLoadsProblem(a, with_loads)).?;
+    try std.testing.expect(std.mem.indexOf(u8, refused, "loads system libraries (libbrotlicommon, libbrotlidec)") != null);
 
     // `run` stops at a format 1 graph (exit 1) before it looks for the unit, and goes on with a format 2 one (the unit is unknown: exit 4).
     var tmp = std.testing.tmpDir(.{});
