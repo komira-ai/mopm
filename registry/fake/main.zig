@@ -144,6 +144,8 @@ test {
     _ = @import("groups.zig");
     _ = @import("groups_test.zig");
     _ = @import("groups_files_test.zig");
+    _ = @import("source_commit.zig");
+    _ = @import("source_commit_test.zig");
     _ = @import("groups_stage_test.zig");
     _ = @import("files.zig");
 }

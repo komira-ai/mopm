@@ -128,6 +128,7 @@ pub fn runCheck(f: *F, s: Step, body: Value) !bool {
             return true;
         },
         .detail_group_id => return std.mem.eql(u8, c.getStr(body, "group_id") orelse "", a0),
+        .detail_source_commit => return stateIs(body, "published") and std.mem.eql(u8, c.getStr(body, "source_commit") orelse "", a0),
         .detail_published => {
             const prov = c.get(body, "provenance") orelse .null;
             // A version a single publish made names no group.

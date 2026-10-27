@@ -26,8 +26,8 @@ import {
 /** The state a case describes is a seed file (fixtures/seeds/<name>.json): data, so other implementations load the same one. */
 const seeded = (name: string) => (s: MemoryStore) => applySeed(readSeed(name), { registry: s });
 
-// Optional in the contract and not emitted: the embedded manifest and the rendered readme (the store holds neither).
-const detailOmits = ['manifest', 'readme_html'];
+// Optional in the contract and not emitted: the rendered readme (the store holds none).
+const detailOmits = ['readme_html'];
 
 const failingStore = (): Store =>
   new Proxy({} as Store, { get: () => async () => { throw new Error('dynamodb exploded'); } });
@@ -79,6 +79,7 @@ const RECIPES: Record<string, Recipe> = {
     omitExpected: ['display_name'],
   },
   'version detail': { seed: seeded('version_detail_published'), omitExpected: detailOmits },
+  'version detail with a source_commit': { seed: seeded('version_detail_source_commit'), omitExpected: detailOmits },
   'version detail of a version a group published': { seed: seeded('version_detail_group_published'), omitExpected: detailOmits },
   'yanked version keeps its files and says why': { seed: seeded('version_detail_yanked'), omitExpected: detailOmits },
   'tombstoned version has no url': { seed: seeded('version_detail_tombstoned'), omitExpected: detailOmits },

@@ -278,7 +278,6 @@ test "the fake registry answers the contract's API cases" {
     const fake_exe = try h.toolPath(a, "MOPM_FAKE_REGISTRY");
 
     const spec = try yaml.parse(a, try c.readFile(a, "spec/api/openapi.yaml"));
-    const meta = try c.loadJson(a, "spec/package-metadata.schema.json");
     var dups = c.Problems.init(a);
     const ops = try c.operations(a, spec, &dups);
     for (dups.items) |d| t.fail("{s}", .{d});
@@ -349,7 +348,7 @@ test "the fake registry answers the contract's API cases" {
         try live.put("response", .{ .object = resp_obj });
         try live.put("malformed_request", .{ .bool = s.malformed });
 
-        var problems = try c.caseProblems(a, spec, ops, catalogue, meta, .{ .object = live });
+        var problems = try c.caseProblems(a, spec, ops, catalogue, .{ .object = live });
         const want_status = c.getInt(c.get(case, "response") orelse .null, "status") orelse 0;
         if (rsp.status != want_status) {
             try c.problem(a, &problems, "status {d}, the case has {d}", .{ rsp.status, want_status });

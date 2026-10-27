@@ -22,6 +22,7 @@ const Allocator = std.mem.Allocator;
 const api = @import("api.zig");
 const Ctx = api.Ctx;
 const st = @import("state.zig");
+const srcc = @import("source_commit.zig");
 const resp = @import("resp.zig");
 const Response = resp.Response;
 const util = @import("util.zig");
@@ -745,6 +746,7 @@ fn advance(ctx: *Ctx, g: *st.Group) anyerror!void {
                 m.row.published_at = g.committed_at;
                 m.row.group = null;
                 m.row.group_id = g.id;
+                m.row.source_commit = m.source_commit;
                 m.package.state = .active;
                 m.package.updated_at = g.committed_at;
                 try channel.addFiles(s, m.row);
@@ -795,7 +797,7 @@ fn advanceYank(ctx: *Ctx, g: *st.Group) anyerror!void {
 const Commit = union(enum) { ok: []const u8, fail: Response };
 
 /// Checks the commit request against the group's members and returns what names it: a string that is the same for the same request.
-fn parseCommit(ctx: *Ctx, g: *const st.Group, manifests: []?[]const u8) Allocator.Error!Commit {
+fn parseCommit(ctx: *Ctx, g: *const st.Group, manifests: []?[]const u8, sources: []?[]const u8) Allocator.Error!Commit {
     const a = ctx.arena;
     const obj = ctx.object() orelse return .{ .fail = try resp.invalid(a, "the body is not a JSON object") };
     const list = switch (obj.get("members") orelse return .{ .fail = try resp.invalid(a, "'members' lists the manifest of each member of the group") }) {
@@ -804,6 +806,7 @@ fn parseCommit(ctx: *Ctx, g: *const st.Group, manifests: []?[]const u8) Allocato
     };
     var hash = std.ArrayList(u8).init(a);
     for (manifests) |*slot| slot.* = null;
+    @memset(sources, null);
     var listed = std.ArrayList([]const u8).init(a);
     for (list) |item| {
         const m = switch (item) {
@@ -823,10 +826,16 @@ fn parseCommit(ctx: *Ctx, g: *const st.Group, manifests: []?[]const u8) Allocato
         } else null;
         if (given) |x| if (!isSha(x)) return .{ .fail = try resp.invalid(a, try std.fmt.allocPrint(a, "'manifest_sha256' of '{s}' is 64 lowercase hex digits", .{name})) };
         const sha = given orelse "";
+        const source: ?[]const u8 = switch (srcc.parse(m)) {
+            .absent => null,
+            .ok => |x| x,
+            .invalid => return .{ .fail = try resp.invalid(a, try srcc.refusal(a, try std.fmt.allocPrint(a, " of '{s}'", .{name}))) },
+        };
         var found = false;
         for (g.members, 0..) |gm, i| {
             if (std.mem.eql(u8, gm.package.name, name)) {
                 manifests[i] = sha;
+                sources[i] = source;
                 found = true;
             }
         }
@@ -847,7 +856,7 @@ fn parseCommit(ctx: *Ctx, g: *const st.Group, manifests: []?[]const u8) Allocato
             }
             try shown_text.append(0);
         }
-        try hash.writer().print("{s}:{s}:{s}\n", .{ name, sha, shown_text.items });
+        try hash.writer().print("{s}:{s}:{s}:{s}\n", .{ name, sha, shown_text.items, source orelse "" });
     }
     for (g.members, manifests) |gm, got| {
         if (got == null) return .{ .fail = try resp.invalid(a, try std.fmt.allocPrint(a, "'members' has no entry for '{s}', a member of the group", .{gm.package.name})) };
@@ -884,7 +893,8 @@ pub fn commitGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .fail => |r| return r,
     };
     const manifests = try ctx.arena.alloc(?[]const u8, g.members.len);
-    const hash = switch (try parseCommit(ctx, g, manifests)) {
+    const sources = try ctx.arena.alloc(?[]const u8, g.members.len);
+    const hash = switch (try parseCommit(ctx, g, manifests, sources)) {
         .ok => |h| h,
         .fail => |r| return r,
     };
@@ -919,7 +929,10 @@ pub fn commitGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
             }
         }
     }
-    for (g.members, manifests) |*m, sha| m.manifest_sha256 = try s.alloc.dupe(u8, sha.?);
+    for (g.members, manifests, sources) |*m, sha, src| {
+        m.manifest_sha256 = try s.alloc.dupe(u8, sha.?);
+        m.source_commit = if (src) |x| try s.alloc.dupe(u8, x) else null;
+    }
     g.commit_hash = try s.alloc.dupe(u8, hash);
     g.status = .validating;
     return resp.json(ctx.arena, .accepted, CommitAnswer{

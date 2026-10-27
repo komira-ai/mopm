@@ -53,6 +53,19 @@ because the one packaged with Mojo crashes there; `mopm repl --debugserver <path
 staged `.conda` is the one `pack` makes from the same files. A missing archive, or one that is not an `ar` archive, is refused with the
 member named. See [Publishing a workspace as one group](docs/publishing-a-workspace.md).
 
+### The registry records the source commit of a version
+
+A commit may now carry `source_commit`, the git commit id the version was built from: 40 or 64 lowercase hex digits, in the commit of a single
+publish and in each member of a group commit. The registry stores it once with the version and `GET /packages/{name}/{version}` returns it as
+`source_commit`; a version committed without one, including every version published before this, has none. It is informational: the registry
+checks the form and nothing else, does not verify it against the archive, the repository or the caller, and never compares or orders versions by
+it. Any other value is `invalid_request`. A repeated group commit must repeat each member's value (otherwise it is another request,
+`group_commit_refused`), and a repeated single commit that states another value is refused `version_exists`. The change is additive; `mopm` does
+not send the field yet.
+
+The specification no longer lists an embedded `manifest` on `VersionDetail`: the registry never served one. `GET /packages/{name}/{version}`
+is unchanged. See `spec/api/openapi.yaml` and [staged sets](spec/staged-set.md).
+
 ### Claiming a package name
 
 The registry service now answers `POST /packages/{name}/claim`, the operation the API contract has always described: a signed-in

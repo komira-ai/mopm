@@ -334,8 +334,8 @@ fn matchParts(parts: []const []const u8, s: []const u8) bool {
 const Param = struct { name: []const u8, p: Value };
 
 /// What an API case violates. `spec` is the parsed openapi.yaml, `catalogue`
-/// its x-mopm-errors, `package_metadata` spec/package-metadata.schema.json.
-pub fn caseProblems(a: Allocator, spec: Value, ops: Ops, catalogue: Value, package_metadata: Value, case: Value) !Problems {
+/// its x-mopm-errors.
+pub fn caseProblems(a: Allocator, spec: Value, ops: Ops, catalogue: Value, case: Value) !Problems {
     var out = Problems.init(a);
     const opid = getStr(case, "operationId") orelse "";
     const entry = ops.get(opid) orelse {
@@ -516,12 +516,6 @@ pub fn caseProblems(a: Allocator, spec: Value, ops: Ops, catalogue: Value, packa
         }
     }
 
-    // the embedded manifest is package metadata
-    if (body != null and body.? == .object) {
-        if (get(body.?, "manifest")) |m| {
-            try addSchemaProblems(a, &out, package_metadata, package_metadata, m, "manifest: ", .{});
-        }
-    }
     return out;
 }
 

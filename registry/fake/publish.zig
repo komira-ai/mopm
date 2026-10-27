@@ -13,6 +13,7 @@ const Allocator = std.mem.Allocator;
 const api = @import("api.zig");
 const Ctx = api.Ctx;
 const st = @import("state.zig");
+const srcc = @import("source_commit.zig");
 const resp = @import("resp.zig");
 const Response = resp.Response;
 const util = @import("util.zig");
@@ -198,6 +199,12 @@ pub fn commitPublish(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         else => return resp.invalid(ctx.arena, "'manifest_sha256' must be a string"),
     } else null;
     if (given) |x| if (x.len != 64) return resp.invalid(ctx.arena, "'manifest_sha256' is 64 lowercase hex digits");
+    // Optional and informational: only its form is checked.
+    const source: ?[]const u8 = switch (srcc.parse(obj)) {
+        .absent => null,
+        .ok => |x| x,
+        .invalid => return resp.invalid(ctx.arena, try srcc.refusal(ctx.arena, "")),
+    };
     const ids_value = switch (obj.get("upload_ids") orelse return resp.invalid(ctx.arena, "'upload_ids' is required")) {
         .array => |a| a.items,
         else => return resp.invalid(ctx.arena, "'upload_ids' must be an array"),
@@ -243,7 +250,17 @@ pub fn commitPublish(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         if (existing.state == .pending) {
             // The same upload ids again resume the publish already running.
             for (s.publishes.items) |pub_| {
-                if (pub_.version == existing and sameIds(pub_.upload_ids, ids.items)) return accepted(ctx, pub_);
+                if (pub_.version == existing and sameIds(pub_.upload_ids, ids.items)) {
+                    // The value is written once with the version: a repeat that states another one is not the same request.
+                    if (!srcc.same(existing.source_commit, source)) {
+                        return resp.fail(ctx.arena, .version_exists, &.{
+                            .{ "name", p.name },
+                            .{ "version", existing.version },
+                            .{ "sha256", existing.files[0].sha256 },
+                        });
+                    }
+                    return accepted(ctx, pub_);
+                }
             }
         } else {
             return resp.fail(ctx.arena, .version_exists, &.{
@@ -273,6 +290,7 @@ pub fn commitPublish(ctx: *Ctx, params: []const []const u8) anyerror!Response {
     // Absent, the version holds a hash the registry computed. The fake computes none (it has no archive to open): it uses the
     // sha256 of the first file, which is what its group publishes hold too.
     v.manifest_sha256 = try s.alloc.dupe(u8, given orelse uploads.items[0].sha256);
+    v.source_commit = if (source) |x| try s.alloc.dupe(u8, x) else null;
     v.provenance = if (t.kind == .oidc) t.oidc_repository else null;
     const pub_ = try s.add(st.Publish, &s.publishes, .{
         .id = try util.newId(s.alloc, "pub"),
@@ -495,15 +513,22 @@ pub fn requiresMojo(arena: Allocator, filename: []const u8) Allocator.Error![]co
     return std.fmt.allocPrint(arena, "=={s}", .{build[4..under]});
 }
 
-/// The 200 answer of getVersion: `body` as JSON, and `group_id` added when a group published the version. The key is absent, not null,
-/// for a version a single publish made.
+/// The 200 answer of getVersion: `body` as JSON, with `group_id` added when a group published the version and `source_commit` when the
+/// commit request had one. A key is absent, not null, when there is nothing to say.
 fn withGroupId(arena: Allocator, v: *const st.Version, body: anytype) Allocator.Error!Response {
     var r = try resp.json(arena, .ok, body);
-    const gid = v.group_id orelse return r;
+    if (v.group_id == null and v.source_commit == null) return r;
     var buf = std.ArrayList(u8).init(arena);
     try buf.appendSlice(r.body[0 .. r.body.len - 1]); // without the closing brace
-    try buf.appendSlice(",\"group_id\":");
-    std.json.stringify(gid, .{}, buf.writer()) catch return error.OutOfMemory;
+    const extra = [_]struct { key: []const u8, value: ?[]const u8 }{
+        .{ .key = "group_id", .value = v.group_id },
+        .{ .key = "source_commit", .value = v.source_commit },
+    };
+    for (extra) |e| {
+        const value = e.value orelse continue;
+        try buf.writer().print(",\"{s}\":", .{e.key});
+        std.json.stringify(value, .{}, buf.writer()) catch return error.OutOfMemory;
+    }
     try buf.append('}');
     r.body = buf.items;
     return r;

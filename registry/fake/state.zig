@@ -94,6 +94,8 @@ pub const Version = struct {
     group: ?*Group = null,
     /// The id of the group that published this version, kept after the group is visible (`group` is then null). getVersion shows it.
     group_id: ?[]const u8 = null,
+    /// `source_commit` of the commit request that published this version: informational, never checked. Null when it had none.
+    source_commit: ?[]const u8 = null,
 
     /// Shown by getVersion and listed: every state but pending and rejected.
     pub fn visible(v: *const Version) bool {
@@ -156,6 +158,8 @@ pub const GroupMember = struct {
     /// The row that holds the number (`pending` until the group is visible).
     row: *Version,
     manifest_sha256: []const u8 = "",
+    /// `source_commit` of this member in the commit request, copied to its row when the group is visible.
+    source_commit: ?[]const u8 = null,
     /// Set when the group's yank changed this member: an unyank restores these and no others.
     yanked_by_group: bool = false,
 };
