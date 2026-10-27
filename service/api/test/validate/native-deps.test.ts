@@ -54,7 +54,7 @@ describe('the native library allow-list of the deployed validators', () => {
     expect(c.ok && c.facts.nativeDepends).toEqual(['lz4-c', 'zstd >=1']);
   });
 
-  test.each(['openssl', 'python >=3', 'lz4 >=1', 'liblz4', 'zlib', 'lz4-c-extra', 'LZ4-C'])('%s is refused with dependency_not_allowed', (dep) => {
+  test.each(['openssl', 'python >=3', 'lz4 >=1', 'liblz4', 'zlib', 'lz4-c-extra', 'LZ4-C', 'aws-lc', 'sqlite', 'brotli', 'libbrotlienc', 'libbrotlicommon', 'libsnappy', 's2n'])('%s is refused with dependency_not_allowed', (dep) => {
     const v = verdictFor(dep);
     expect(v.ok).toBe(false);
     if (v.ok) return;
