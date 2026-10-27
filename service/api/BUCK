@@ -16,6 +16,7 @@ _NODE = "//tools/node:node"
 _TEST_DATA = {
     "spec": "//:spec",
     "src/core": "//:pack_conda_zig",
+    "toolchain": "//:native_roots",
     "tests/contract/api": "//:contract_api",
     "tests/validator_corpus": "//:validator_corpus_files",
 }

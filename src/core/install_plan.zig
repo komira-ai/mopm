@@ -17,9 +17,10 @@
 //! hashes each. A `.conda` the old lock already pinned (same name, version,
 //! subdir and file sha256, every native hashed) is not fetched again: its natives
 //! are copied from the old lock. `mopm sync --locked` never gets here.
-//! Only `sha256`, `size` and `removed` are read from repodata.json: a lock
+//! Only `sha256`, `size`, `removed` and `depends` are read from repodata.json: a lock
 //! entry's `deps` come from the index record's `deps[]`, never from the
-//! repodata's `depends`. The channel URL must be one a lock may hold
+//! repodata's `depends`; the entry's `loads` (the system libraries the package loads,
+//! lock_libs.zig) are the non-Mojo names of that `depends`. The channel URL must be one a lock may hold
 //! (lock.allowedChannel), or no lock is built.
 
 const std = @import("std");
@@ -29,6 +30,8 @@ const resolve = @import("resolve.zig");
 const lock = @import("lock.zig");
 const metadata = @import("metadata.zig");
 const conda_unpack = @import("conda_unpack.zig");
+const lock_libs = @import("lock_libs.zig");
+const manifest = @import("manifest.zig");
 
 const Error = resolve.Error;
 const Diagnostic = resolve.Diagnostic;
@@ -108,6 +111,10 @@ pub fn buildLock(arena: Allocator, res: resolve.Resolution, channel_url: []const
             if (!std.mem.eql(u8, sha, f.sha256) or size != @as(i64, @intCast(f.size))) {
                 return bad(arena, diag, "{s}: the index says sha256 {s}, size {d}; {s}/repodata.json says sha256 {s}, size {d}", .{ f.filename, f.sha256, f.size, f.subdir, sha, size });
             }
+            const loads = lock_libs.loadsOfDepends(arena, entry.get("depends")) catch |e| switch (e) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.BadDepends => return bad(arena, diag, "{s}/repodata.json: the depends of {s} is not a list of strings", .{ f.subdir, f.filename }),
+            };
             var natives: []const lock.Native = &.{};
             if (rec.native.len > 0) {
                 if (reusable(old, rec, f)) |kept| {
@@ -129,6 +136,7 @@ pub fn buildLock(arena: Allocator, res: resolve.Resolution, channel_url: []const
                 .mojo = res.mojo,
                 .deps = p.deps,
                 .native = natives,
+                .loads = loads,
             });
         }
     }
@@ -309,6 +317,8 @@ pub const PathDep = struct {
     path: []const u8,
     /// Names of its own dependencies (registry and path), sorted.
     deps: []const []const u8 = &.{},
+    /// Its `[native-dependencies]`: `mopm lock` pins the ones to load (system_libs.zig).
+    native_deps: []const manifest.NativeDep = &.{},
 };
 
 /// `l` with one `source = path` entry per path dependency (lock.zig): no
@@ -376,6 +386,15 @@ pub fn mergeMojos(arena: Allocator, per: []const lock.Lock, closures: []const lo
                 }
                 std.mem.sort([]const u8, names.items, {}, lessName);
                 packages.items[i].deps = names.items;
+                var loads = std.ArrayList([]const u8).init(arena);
+                try loads.appendSlice(packages.items[i].loads);
+                for (p.loads) |d| {
+                    var have = false;
+                    for (loads.items) |x| have = have or std.mem.eql(u8, x, d);
+                    if (!have) try loads.append(d);
+                }
+                std.mem.sort([]const u8, loads.items, {}, lessName);
+                packages.items[i].loads = loads.items;
             } else {
                 var q = p;
                 q.build = "";
@@ -485,7 +504,7 @@ pub fn writeTree(arena: Allocator, project: []const u8, version: []const u8, dep
 const MemoryIndex = resolve.MemoryIndex;
 
 /// A channel held in memory: subdir -> repodata.json text, and `<subdir>/<filename>` -> the bytes of a package file.
-const MemoryChannel = struct {
+pub const MemoryChannel = struct {
     files: []const resolve.Pair,
     conda: []const resolve.Pair = &.{},
     /// Counts the package files asked for, when set.
@@ -508,7 +527,7 @@ const MemoryChannel = struct {
     }
 };
 
-const digests = [_][]const u8{
+pub const digests = [_][]const u8{
     "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
     "fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9",
     "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
@@ -516,21 +535,21 @@ const digests = [_][]const u8{
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 };
 
-fn fileJson(comptime subdir: []const u8, comptime file: []const u8, comptime digest: []const u8) []const u8 {
+pub fn fileJson(comptime subdir: []const u8, comptime file: []const u8, comptime digest: []const u8) []const u8 {
     return "{\"filename\":\"" ++ file ++ "\",\"sha256\":\"" ++ digest ++ "\",\"size\":1000,\"subdir\":\"" ++ subdir ++ "\"}";
 }
 
-fn recJson(comptime name: []const u8, comptime version: []const u8, comptime deps: []const u8, comptime native: []const u8, comptime files: []const u8) []const u8 {
+pub fn recJson(comptime name: []const u8, comptime version: []const u8, comptime deps: []const u8, comptime native: []const u8, comptime files: []const u8) []const u8 {
     return "{\"build\":\"mojo1.0.0_0\",\"deps\":[" ++ deps ++ "],\"files\":[" ++ files ++ "],\"manifest_sha256\":\"" ++ digests[0] ++
         "\",\"name\":\"" ++ name ++ "\",\"native\":[" ++ native ++ "],\"published_at\":\"2026-10-13T12:00:00Z\",\"requires_mojo\":\"==1.0.0\",\"state\":\"published\",\"v\":1,\"version\":\"" ++ version ++ "\"}\n";
 }
 
-fn entryJson(comptime name: []const u8, comptime version: []const u8, comptime subdir: []const u8, comptime digest: []const u8) []const u8 {
+pub fn entryJson(comptime name: []const u8, comptime version: []const u8, comptime subdir: []const u8, comptime digest: []const u8) []const u8 {
     return "\"mojo-" ++ name ++ "-" ++ version ++ "-mojo1.0.0_0.conda\":{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\"],\"name\":\"mojo-" ++ name ++
         "\",\"sha256\":\"" ++ digest ++ "\",\"size\":1000,\"subdir\":\"" ++ subdir ++ "\",\"version\":\"" ++ version ++ "\"}";
 }
 
-fn repodataJson(comptime subdir: []const u8, comptime entries: []const u8, comptime removed: []const u8) []const u8 {
+pub fn repodataJson(comptime subdir: []const u8, comptime entries: []const u8, comptime removed: []const u8) []const u8 {
     return "{\"info\":{\"subdir\":\"" ++ subdir ++ "\"},\"packages\":{},\"packages.conda\":{" ++ entries ++ "},\"removed\":[" ++ removed ++ "]}\n";
 }
 

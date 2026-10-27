@@ -191,3 +191,19 @@ test "the exchange purpose: stage mints a stage-only token, the default and publ
     const publish = published.value.object.get("token").?.string;
     try std.testing.expectEqual(@as(u16, 202), (try fx.call(.POST, commit, body, publish)).status);
 }
+
+test "the /_fake/oidc_tokens control counts the CI-identity tokens minted, by kind" {
+    var fx: Fx = undefined;
+    try fx.setup();
+    defer fx.deinit();
+    try fx.state.ci_repos.append(fx.life.allocator(), "org/repo");
+    const none = try fx.call(.POST, "/_fake/oidc_tokens", "{}", null);
+    try std.testing.expectEqual(@as(i64, 0), none.value.object.get("stage").?.integer);
+    try std.testing.expectEqual(@as(i64, 0), none.value.object.get("publish").?.integer);
+    _ = try exchange(&fx, ",\"purpose\":\"stage\"");
+    _ = try exchange(&fx, "");
+    _ = try exchange(&fx, ",\"purpose\":\"publish\"");
+    const counted = try fx.call(.POST, "/_fake/oidc_tokens", "{}", null);
+    try std.testing.expectEqual(@as(i64, 1), counted.value.object.get("stage").?.integer);
+    try std.testing.expectEqual(@as(i64, 2), counted.value.object.get("publish").?.integer);
+}

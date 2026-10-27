@@ -116,6 +116,17 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
         try s.ci_repos.append(s.alloc, try s.alloc.dupe(u8, repository));
         return resp.json(ctx.arena, .ok, .{});
     }
+    // {} -> {"stage", "publish"}: how many CI-identity tokens the exchange has minted so far, by kind. A test reads it before and
+    // after a run to see which kind of token the run asked for (the token itself never leaves the program that holds it).
+    if (std.mem.eql(u8, path, "/oidc_tokens")) {
+        var staged: usize = 0;
+        var published: usize = 0;
+        for (s.tokens.items) |t| {
+            if (t.kind != .oidc) continue;
+            if (t.oidc_stage) staged += 1 else published += 1;
+        }
+        return resp.json(ctx.arena, .ok, .{ .stage = staged, .publish = published });
+    }
     // {"name", "version", "reason_code"}: an administrator's takedown. The
     // bytes are gone (no url); the number and the sha256 stay.
     if (std.mem.eql(u8, path, "/tombstone")) {

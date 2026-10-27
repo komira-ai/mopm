@@ -112,6 +112,18 @@ its owner does not own; it can hold the version numbers of its group until the g
 expires or is aborted. A registry from before `stage` ignores an exchange's `purpose` and
 mints a `publish` token, and refuses `stage` as a token scope, so a client that needs the split
 reads `token_kind` in the exchange answer and does not treat a `publish` answer as a stage token.
+
+CLI. `mopm publish --staged --no-commit --oidc` is the run that asks for the stage token: its
+exchange (one identity token, the `packages` form) carries `"purpose": "stage"`, and when the answer's
+`token_kind` is `stage` the run uses it for the create, the uploads and the read of the group, and
+never sends a commit. When the answer has `token_kind` `publish` or none (a registry from before
+`purpose`), the run continues with that token and prints one line to stderr saying that the registry
+did not grant a stage-only token, so staging used a publish token; it does not fail. Every other
+`--oidc` run (the commit run, the one-shot run without `--no-commit`, and `--abort`) sends no
+`purpose`, which is `publish` on every registry, so it gets what it always got; an answer of
+`token_kind` `stage` to such a run is refused, because that token could not commit. Runs with an API
+token or a login send no exchange and change nothing. The run makes one exchange and has no
+re-exchange when the token expires, so there is no second purpose to keep in step.
 Which routes take which scope is in `api/openapi.yaml` (`stageToken`).
 
 The same command without `--no-commit`, in the same directory, resumes the same
