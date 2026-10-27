@@ -1,0 +1,12 @@
+# The native libraries a package may load (`[native-dependencies] <name> = { mode = "load" }`), as conda package
+# names, one per line: the roots of the pinned catalog (src/core/native_catalog.zig). Each must exist on every
+# platform of src/core/closure.zig. Their run dependencies (libbrotlicommon for libbrotlidec, ...) are not listed:
+# the solver finds them.
+bzip2
+libbrotlidec
+libsqlite
+libzlib
+lz4-c
+snappy
+xz
+zstd
