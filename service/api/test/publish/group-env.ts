@@ -182,8 +182,9 @@ export class GroupEnv {
     );
   }
 
-  create(token: string | undefined, members: MemberBody[]) {
-    return this.call('POST', '/api/v1/groups', token, { members });
+  /** `extra` is further keys of the body (an option such as `on_overlap`). */
+  create(token: string | undefined, members: MemberBody[], extra: Record<string, unknown> = {}) {
+    return this.call('POST', '/api/v1/groups', token, { members, ...extra });
   }
   get(token: string, id: string) {
     return this.call('GET', `/api/v1/groups/${id}`, token);

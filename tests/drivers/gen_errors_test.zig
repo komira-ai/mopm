@@ -94,3 +94,48 @@ test "the generator escapes quotes and backslashes in templates" {
     try std.testing.expect(std.mem.indexOf(u8, made, ".message = \"say \\\"hi\\\" \\\\ there\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, made, ".b_code => .{ .status = .too_many_requests") != null);
 }
+
+test "the generator writes an enum of the reasons a code lists, named after the code, and a spec without the table gets none" {
+    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const a = arena_state.allocator();
+    const base = spec_head ++
+        \\  a_code: { status: 404, message: "m", hint: "h" }
+        \\  b_code: { status: 409, message: "m", hint: "h" }
+        \\
+    ;
+    const none = try gen.generate(a, base, null);
+    try std.testing.expect(std.mem.indexOf(u8, none, "Reason") == null);
+    const made = try gen.generate(a, base ++
+        \\x-mopm-error-reasons:
+        \\  b_code: [first_cause, second_cause]
+        \\
+    , null);
+    try std.testing.expect(std.mem.indexOf(u8, made, "pub const BCodeReason = enum {\n    first_cause,\n    second_cause,\n};\n") != null);
+}
+
+test "the generator refuses reasons for a code that is not in the catalogue, an empty list, and a list that is not strings" {
+    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const a = arena_state.allocator();
+    var why: []const u8 = "";
+    const base = spec_head ++
+        \\  a_code: { status: 404, message: "m", hint: "h" }
+        \\  b_code: { status: 409, message: "m", hint: "h" }
+        \\
+    ;
+    try std.testing.expectError(error.BadCatalogue, gen.generate(a, base ++
+        \\x-mopm-error-reasons:
+        \\  c_code: [x]
+        \\
+    , &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "c_code") != null);
+    try std.testing.expectError(error.BadCatalogue, gen.generate(a, base ++
+        \\x-mopm-error-reasons:
+        \\  b_code: []
+        \\
+    , &why));
+    try std.testing.expectError(error.BadCatalogue, gen.generate(a, base ++
+        \\x-mopm-error-reasons:
+        \\  b_code: [1, 2]
+        \\
+    , &why));
+}

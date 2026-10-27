@@ -286,7 +286,19 @@ pub fn retrying(arena: Allocator, io: anytype, method: std.http.Method, url: []c
     }
 }
 
-pub const ApiError = struct { code: []const u8, message: []const u8, hint: []const u8 };
+/// Why a `group_conflict` was refused (`error.reason`, spec/api/openapi.yaml `x-mopm-error-reasons`). A value this
+/// client does not know reads as none, as the contract requires.
+pub const Reason = enum {
+    number_held,
+    group_failed,
+    open_cap,
+    supersede_cap,
+    takeover_blocked,
+    number_taken,
+    overlap_refused,
+};
+
+pub const ApiError = struct { code: []const u8, message: []const u8, hint: []const u8, reason: ?Reason = null };
 
 /// The contract error in `a`'s body; an answer without one reads as its status.
 pub fn apiError(arena: Allocator, a: Answer) Allocator.Error!ApiError {
@@ -308,6 +320,7 @@ pub fn apiError(arena: Allocator, a: Answer) Allocator.Error!ApiError {
         .code = stringOr(err, "code", ""),
         .message = stringOr(err, "message", generic.message),
         .hint = stringOr(err, "hint", ""),
+        .reason = std.meta.stringToEnum(Reason, stringOr(err, "reason", "")),
     };
 }
 
@@ -347,6 +360,23 @@ test "a contract error reads as message, hint and request id" {
     );
     const bare = Answer{ .status = 502, .body = "<html>bad gateway</html>" };
     try std.testing.expectEqualStrings("the registry answered HTTP 502\n", try describe(a, bare));
+}
+
+test "a group_conflict reason is read, an unknown one is none, and the printed lines do not change" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const head = "{\"error\":{\"code\":\"group_conflict\",\"message\":\"The group cannot be created: x.\",\"hint\":\"h\"";
+    const known = Answer{ .status = 409, .body = head ++ ",\"reason\":\"overlap_refused\"}}" };
+    try std.testing.expectEqual(Reason.overlap_refused, (try apiError(a, known)).reason.?);
+    for ([_][]const u8{ "\"reason\":\"a_new_reason\"", "\"reason\":7", "\"reason\":null", "\"x\":1" }) |extra| {
+        const other = Answer{ .status = 409, .body = try std.fmt.allocPrint(a, "{s},{s}}}}}", .{ head, extra }) };
+        try std.testing.expectEqual(@as(?Reason, null), (try apiError(a, other)).reason);
+        try std.testing.expectEqualStrings("group_conflict", (try apiError(a, other)).code);
+    }
+    const bare = Answer{ .status = 409, .body = head ++ "}}" };
+    try std.testing.expectEqual(@as(?Reason, null), (try apiError(a, bare)).reason);
+    try std.testing.expectEqualStrings(try describe(a, bare), try describe(a, known));
 }
 
 // ---------------------------------------------------------------------- tests

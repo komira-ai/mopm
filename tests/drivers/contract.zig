@@ -503,6 +503,13 @@ pub fn caseProblems(a: Allocator, spec: Value, ops: Ops, catalogue: Value, packa
             if (!try followsTemplate(a, getStr(e, "hint") orelse "", hint)) {
                 try problem(a, &out, "hint '{s}' does not follow the template of {s}", .{ hint, code.? });
             }
+            if (getStr(err, "reason")) |reason| {
+                var listed = false;
+                for (getArr(get(spec, "x-mopm-error-reasons") orelse .null, code.?)) |r| {
+                    if (r == .string and std.mem.eql(u8, r.string, reason)) listed = true;
+                }
+                if (!listed) try problem(a, &out, "reason '{s}' is not one that {s} lists in x-mopm-error-reasons", .{ reason, code.? });
+            }
             if (std.mem.eql(u8, code.?, "rate_limited") and !given_headers.contains("retry-after")) {
                 try out.append("rate_limited must carry Retry-After");
             }

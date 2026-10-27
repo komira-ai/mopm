@@ -1173,10 +1173,82 @@
           "error": {
             "code": "group_conflict",
             "message": "The group cannot be created: you already have 5 open groups, and at most 5 may be open; abort one first.",
-            "hint": "Abort or finish your other groups, or publish a new version."
+            "hint": "Abort or finish your other groups, or publish a new version.",
+            "reason": "open_cap"
           }
         }
       }
+    },
+    {
+      "name": "error group_conflict, overlap refused",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            { "name": "http_client", "version": "0.4.0", "files": [{ "subdir": "linux-64", "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "size": 123456 }] }
+          ],
+          "on_overlap": "refuse"
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_conflict",
+            "message": "The group cannot be created: it shares versions with your open group grp_0123456789abcdef0123456789abcdef, and on_overlap is refuse; abort it first, or send on_overlap supersede.",
+            "hint": "Abort or finish your other groups, or publish a new version.",
+            "reason": "overlap_refused"
+          }
+        }
+      }
+    },
+    {
+      "name": "group_conflict with a reason the contract does not list",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            { "name": "http_client", "version": "0.4.0", "files": [{ "subdir": "linux-64", "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda", "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "size": 123456 }] }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 409,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_conflict",
+            "message": "The group cannot be created: you already have 5 open groups, and at most 5 may be open; abort one first.",
+            "hint": "Abort or finish your other groups, or publish a new version.",
+            "reason": "no_such_reason"
+          }
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "a reason on a code that lists none",
+      "operationId": "getGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 404,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": {
+          "error": {
+            "code": "group_not_found",
+            "message": "There is no such group.",
+            "hint": "Group ids are only valid for the caller who made them, or for an owner of every package in the group.",
+            "reason": "number_held"
+          }
+        }
+      },
+      "expect": "invalid"
     },
     {
       "name": "group_conflict answered 400 instead of 409",

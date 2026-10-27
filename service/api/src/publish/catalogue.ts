@@ -49,9 +49,17 @@ export const PUBLISH_CATALOGUE: Record<string, { status: number; message: string
   route_not_found: { status: 404, message: 'There is no such operation.', hint: 'Check the request against the API documentation; update mopm if it is old.' },
 };
 
+/**
+ * The `error.reason` values a code may carry (`x-mopm-error-reasons` in spec/api/openapi.yaml; test/publish/catalogue.test.ts
+ * compares the two). A code with no entry here never carries one, whatever the error holds.
+ */
+export const PUBLISH_REASONS: Record<string, readonly string[]> = {
+  group_conflict: ['number_held', 'group_failed', 'open_cap', 'supersede_cap', 'takeover_blocked', 'number_taken', 'overlap_refused'],
+};
+
 export interface ErrorView {
   status: number;
-  body: { error: { code: string; message: string; hint: string } };
+  body: { error: { code: string; message: string; hint: string; reason?: string } };
   retryAfter?: number;
 }
 
@@ -67,9 +75,10 @@ export function errorView(err: unknown): ErrorView {
   }
   const entry = PUBLISH_CATALOGUE[code] ?? PUBLISH_CATALOGUE.internal_error!;
   if (!PUBLISH_CATALOGUE[code]) code = 'internal_error';
+  const reason = err instanceof PublishError && err.reason !== undefined && PUBLISH_REASONS[code]?.includes(err.reason) ? err.reason : undefined;
   return {
     status: entry.status,
-    body: { error: { code, message: render(entry.message, detail), hint: render(entry.hint, detail) } },
+    body: { error: { code, message: render(entry.message, detail), hint: render(entry.hint, detail), ...(reason !== undefined ? { reason } : {}) } },
     ...(retryAfter !== undefined ? { retryAfter } : {}),
   };
 }

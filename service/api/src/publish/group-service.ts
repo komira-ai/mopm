@@ -72,9 +72,13 @@ export interface GroupMemberRequest {
   /** Sorted by subdir and file name. */
   files: GroupFileRequest[];
 }
-/** The declared set, members sorted by package name. */
+/** What a create does when the caller's own open groups share a version with the new set. */
+export type OnOverlap = 'supersede' | 'refuse';
+
+/** The declared set, members sorted by package name. `onOverlap` is an option of the call, not part of the set: it is not in the group id. */
 export interface GroupRequest {
   members: GroupMemberRequest[];
+  onOverlap?: OnOverlap;
 }
 
 const MAX_FILES_PER_MEMBER = 20;
@@ -84,7 +88,8 @@ const fileKey = (f: Pick<GroupFileRequest, 'subdir' | 'filename'>) => `${f.subdi
 /** The request body as a GroupRequest, or invalid_request (and the errors a single begin raises for a file). */
 export function parseGroupRequest(config: PublishConfig, body: unknown): GroupRequest {
   if (!isObject(body)) throw invalidRequest('the body is not a JSON object');
-  const { members } = body;
+  const { members, on_overlap: onOverlap } = body;
+  if (onOverlap !== undefined && onOverlap !== 'supersede' && onOverlap !== 'refuse') throw invalidRequest("'on_overlap' is 'supersede' or 'refuse'");
   if (!Array.isArray(members) || members.length < 1) throw invalidRequest("'members' lists at least one member");
   if (members.length > config.groupMaxMembers) throw invalidRequest(`a group has at most ${config.groupMaxMembers} members`);
   const names = new Set<string>();
@@ -112,7 +117,7 @@ export function parseGroupRequest(config: PublishConfig, body: unknown): GroupRe
     out.push({ name, version, canonical, files: facts.sort((a, b) => (fileKey(a) < fileKey(b) ? -1 : 1)) });
   }
   if (bytes > config.groupMaxBytes) throw invalidRequest(`the files total ${bytes} bytes; a group holds at most ${config.groupMaxBytes}`);
-  return { members: out.sort((a, b) => (a.name < b.name ? -1 : 1)) };
+  return { members: out.sort((a, b) => (a.name < b.name ? -1 : 1)), ...(onOverlap !== undefined ? { onOverlap } : {}) };
 }
 
 /**
@@ -152,6 +157,8 @@ export interface GroupCreateBody {
   deadline_at: string;
   /** Present when the call ran out of time: how many members are answered. The same request continues. */
   reserving?: { done: number; total: number };
+  /** The ids of the caller's own groups this create ended as `superseded`. Absent when it ended none. */
+  superseded?: string[];
   members: GroupMemberBody[];
 }
 export interface GroupStatusBody {
@@ -267,20 +274,22 @@ export class GroupService {
       return { created: false, body: this.unchanged(header, req) };
     }
     if (header?.status === 'failed') {
-      throw groupConflict(`group ${gid} failed after its files were copied, and its version numbers are burned; publish a new version of each package`);
+      throw groupConflict('group_failed', `group ${gid} failed after its files were copied, and its version numbers are burned; publish a new version of each package`);
     }
 
     let created = false;
+    /** The caller's own groups this call ended. A later call that continues the group does not repeat them. */
+    let superseded: string[] = [];
     let pre: Pre = { dead: new Set(), orphans: new Set(), mine: new Set() };
     if (header === undefined || isDead(header.status)) {
       // The deadline first: a header is never written with one that is not a time, and nothing is written before it is known to be.
       const deadline = deadlineFor(now, this.d.config.groupDeadlineHours);
       this.rateFits(p, req);
-      const slot = await this.takeSlot(actor, gid, req, now);
+      const slot = await this.takeSlot(actor, gid, req, now, req.onOverlap ?? 'supersede');
       try {
         pre = await this.preflight(gid, req, new Set(slot.supersede), now);
         const refund = await this.charge(p, req, now);
-        await this.supersede(actor, slot.supersede, now);
+        superseded = await this.supersede(actor, slot.supersede, now);
         const opened = await this.open(actor, viaField(p), gid, req, header, deadline, now);
         header = opened.header;
         created = opened.created;
@@ -307,6 +316,7 @@ export class GroupService {
         attempt: reserved.header.attempt,
         deadline_at: reserved.header.deadline_at,
         ...(reserved.members.length < total ? { reserving: { done: reserved.members.length, total } } : {}),
+        ...(superseded.length > 0 ? { superseded } : {}),
         members: reserved.members,
       },
     };
@@ -399,7 +409,7 @@ export class GroupService {
    * superseded, so it does not count against the cap, and at most `groupSupersedeMax` may be. The list is written back
    * with a compare-and-set, so two creates of one actor cannot both take the last place.
    */
-  private async takeSlot(actor: string, gid: string, req: GroupRequest, now: Date): Promise<{ supersede: string[] }> {
+  private async takeSlot(actor: string, gid: string, req: GroupRequest, now: Date, onOverlap: OnOverlap): Promise<{ supersede: string[] }> {
     const cfg = this.d.config;
     const reg = this.d.registry;
     const wanted = new Set(req.members.map((m) => `${m.name}\0${m.canonical}`));
@@ -425,11 +435,15 @@ export class GroupService {
         const ms = await reg.getGroupMembers(e.id);
         if (ms?.members.some((m) => wanted.has(`${m.name}\0${m.canonical}`))) overlapping.push(e.id);
       }
+      // Refused before anything else: nothing is superseded, and the caller's own groups stay open with their rows held.
+      if (onOverlap === 'refuse' && overlapping.length > 0) {
+        throw groupConflict('overlap_refused', `it shares versions with your open group${overlapping.length === 1 ? '' : 's'} ${overlapping.join(', ')}, and on_overlap is refuse; abort ${overlapping.length === 1 ? 'it' : 'them'} first, or send on_overlap supersede`);
+      }
       if (overlapping.length > cfg.groupSupersedeMax) {
-        throw groupConflict(`it shares versions with ${overlapping.length} of your open groups, and one create supersedes at most ${cfg.groupSupersedeMax}; abort some first`);
+        throw groupConflict('supersede_cap', `it shares versions with ${overlapping.length} of your open groups, and one create supersedes at most ${cfg.groupSupersedeMax}; abort some first`);
       }
       if (open - overlapping.length >= cfg.groupOpenPerActor) {
-        throw groupConflict(`you already have ${open - overlapping.length} open groups, and at most ${cfg.groupOpenPerActor} may be open; abort one first`);
+        throw groupConflict('open_cap', `you already have ${open - overlapping.length} open groups, and at most ${cfg.groupOpenPerActor} may be open; abort one first`);
       }
       // The superseded groups stay on the list until they are seen to have ended: a create that stops before superseding them can still find them.
       if (await this.d.publishes.putActorGroups(actor, [...kept, { id: gid, at: now.toISOString() }], list?.rev)) return { supersede: overlapping };
@@ -490,12 +504,12 @@ export class GroupService {
         if (!h) {
           // No header: either a create that wrote the row before the header (it cannot; the header comes first), or a dead group
           // whose header the table's TTL removed. The row says which: it is free once its own free_after has passed.
-          if (!orphanFree(row, now)) throw groupConflict(`${m.name} ${m.version} belongs to group ${row.group_id}, which has no header and so cannot be taken over`);
+          if (!orphanFree(row, now)) throw groupConflict('takeover_blocked', `${m.name} ${m.version} belongs to group ${row.group_id}, which has no header and so cannot be taken over`);
           orphans.add(row.group_id);
           continue;
         }
         if (isDead(h.status)) dead.add(row.group_id);
-        else if (!dead.has(row.group_id)) throw groupConflict(`${m.name} ${m.version} is held by group ${row.group_id}, which is ${h.status}`);
+        else if (!dead.has(row.group_id)) throw groupConflict('number_held', `${m.name} ${m.version} is held by group ${row.group_id}, which is ${h.status}`);
       } else if ((await this.d.publishes.versionHolder(m.name, m.canonical)) !== undefined) {
         throw versionExists(m.name, m.version, sha);
       }
@@ -541,16 +555,23 @@ export class GroupService {
   }
 
   /** Supersede the actor's own open groups that share a member. A group that began validating meanwhile is never superseded: that refuses the create. */
-  private async supersede(actor: string, ids: readonly string[], now: Date): Promise<void> {
+  private async supersede(actor: string, ids: readonly string[], now: Date): Promise<string[]> {
     const at = now.toISOString();
+    const out: string[] = [];
     for (const id of ids) {
+      let ending = false;
       const after = await this.d.registry.updateGroup(
         id,
-        (cur) => (cur.status === 'open' ? ended(cur, 'superseded', at) : undefined),
+        (cur) => {
+          ending = cur.status === 'open';
+          return ending ? ended(cur, 'superseded', at) : undefined;
+        },
         groupAudit(id, `a_${id}_supersede`, 'group_supersede', at, actor),
       );
-      if (after && !isDead(after.status)) throw groupConflict(`your group ${id} is ${after.status} and shares a version with this one`);
+      if (after && !isDead(after.status)) throw groupConflict('number_held', `your group ${id} is ${after.status} and shares a version with this one`);
+      if (ending) out.push(id);
     }
+    return out;
   }
 
   /**
@@ -578,7 +599,7 @@ export class GroupService {
         if (!(failed.reason instanceof Taken)) throw failed.reason;
         const at = this.now().toISOString();
         await reg.updateGroup(gid, (cur) => (cur.status === 'open' ? ended(cur, 'aborted', at) : undefined), groupAudit(gid, `a_${gid}_abort_${header.attempt}`, 'group_abort', at, actorOf(p), { reason: 'a version number was taken' }));
-        throw groupConflict(failed.reason.message);
+        throw groupConflict('number_taken', failed.reason.message);
       }
       for (const r of results) out.push(r.body);
       if (marks.length > 0) progressed = true;

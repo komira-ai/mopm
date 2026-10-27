@@ -187,3 +187,30 @@ mopm yank --group <id> --registry <name> --unyank
 (or `restored`). Only a group that is `visible` can be yanked. An unyank
 restores the versions the group's yank changed and no others: a version yanked
 by hand before stays yanked. `--registry` is required.
+
+### When the caller's own open groups share a version
+
+A different set that shares a `(name, version)` with one of the same caller's
+open groups takes that version from it: the registry ends the earlier group as
+`superseded` (the default, `"on_overlap": "supersede"` in the body of
+`POST /groups`), and the earlier run's next poll sees `superseded` and fails as
+above. Two runs of one caller that declare different bytes for one version are
+the usual cause. The answer to the create that did this lists the ended groups
+in `superseded`.
+
+A publisher that wants the second run to fail at create instead sends
+`"on_overlap": "refuse"`. The registry then ends nothing, leaves the earlier
+group open with its versions held, and answers `group_conflict` with the reason
+`overlap_refused` and the ids of the caller's own overlapping groups in the
+message. The option is not part of the group id, so a repeated request is the
+same group with either value. A registry that predates the option ignores it
+and supersedes, without a `superseded` list; `mopm publish --staged` sends
+neither today and keeps the default.
+
+Every `group_conflict` also carries `error.reason`, so a publisher need not read
+the message: `number_held` (a live group holds a version), `group_failed` (the
+group failed and its versions are burned), `open_cap` (the caller has the most
+groups open), `supersede_cap` (the set overlaps more open groups than one create
+supersedes), `takeover_blocked` (a reserved version whose group has no header is
+not free yet), `number_taken` (another publish took a version during the create)
+and `overlap_refused`. A reason a client does not know is treated as none.
