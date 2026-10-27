@@ -27,6 +27,8 @@ mopm stage --workspace-root <dir> [<package>...] --artifacts <dir> --compiler <m
 | `--out <dir>` | Where the staged set is written. |
 | `--registry <name>` | Which registry the versions are checked against: `prod`, `gamma`, `beta` or a URL. There is no default. |
 
+A member whose `mopm.toml` has `publish = false` under `[package]` (a test-support helper that other members use as a path dependency or dev-dependency, and that has no built artifact) is never staged. Without package names, `mopm stage` leaves it out and prints one line for it, `not staged <name> <version>: publish = false`. Naming it is refused. A member that is staged may not have one in its `[dependencies]`, directly or through other members (a consumer of the published package could not install it); `mopm stage` refuses that, naming both packages. A `[dev-dependencies]` entry on it is fine. `mopm pack` and `mopm publish` of one package refuse it in the same way. Every other command treats it like any member.
+
 A dependency on another member (a path dependency, or a registry dependency whose name is a member's) is an edge: the dependency comes first, and a cycle is refused. Each file is packed twice and the two results must be the same bytes. For each member the registry is asked, without a token, what it holds for that version, and the member is given an action in `plan.json`:
 
 | action | when |

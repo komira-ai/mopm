@@ -559,6 +559,7 @@ test {
     _ = @import("group_publish_test.zig");
     _ = stage_cmd;
     _ = @import("stage_test.zig");
+    _ = @import("publish_false_test.zig");
     _ = build_cmd;
 }
 

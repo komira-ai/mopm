@@ -291,6 +291,38 @@ fn staticNatives(a: Allocator, rep: *h.Report, m: Mopm, work: []const u8, mojoc:
     }
 }
 
+/// `[package] publish = false`: `mopm pack` and `mopm publish` refuse the package, and one that needs it in `[dependencies]`,
+/// before any request (a publish is pointed at nothing); a dev-dependency on it, and a package without the key, are packed.
+fn publishFalse(a: Allocator, rep: *h.Report, m: Mopm, work: []const u8, mojoc: []const u8) !void {
+    const helper_dir = try h.join(a, &.{ work, "pf", "helper" });
+    try h.writeFile(try h.join(a, &.{ helper_dir, "mopm.toml" }), "[package]\nname = \"helper\"\nversion = \"0.1.0\"\npublish = false\n\n[toolchain]\nmojo = \"1.0.0\"\n");
+    const dep = "[dependencies]\nhelper = { path = \"../helper\", version = \"0.1\" }\n";
+    const needs = try h.join(a, &.{ work, "pf", "needs", "mopm.toml" });
+    try h.writeFile(needs, try tomlText(a, "needs", "0.1.0", dep));
+    const tests_only = try h.join(a, &.{ work, "pf", "tests_only", "mopm.toml" });
+    try h.writeFile(tests_only, try tomlText(a, "tests_only", "0.1.0", "[dev-dependencies]\nhelper = { path = \"../helper\", version = \"0.1\" }\n"));
+    const plain = try h.join(a, &.{ work, "pf", "plain", "mopm.toml" });
+    try h.writeFile(plain, try tomlText(a, "plain", "0.1.0", ""));
+    const helper = try h.join(a, &.{ helper_dir, "mopm.toml" });
+    const out = try h.join(a, &.{ work, "pf_dist" });
+    const Case = struct { label: []const u8, cmd: []const u8, manifest: []const u8, code: u8, want: []const u8 };
+    const cases = [_]Case{
+        .{ .label = "pack of a publish = false package", .cmd = "pack", .manifest = helper, .code = 1, .want = "helper has publish = false" },
+        .{ .label = "publish of a publish = false package", .cmd = "publish", .manifest = helper, .code = 1, .want = "helper has publish = false" },
+        .{ .label = "pack of a package that needs a publish = false one", .cmd = "pack", .manifest = needs, .code = 1, .want = "needs depends on helper" },
+        .{ .label = "publish of a package that needs a publish = false one", .cmd = "publish", .manifest = needs, .code = 1, .want = "which has publish = false" },
+        .{ .label = "pack of a package with a publish = false dev-dependency", .cmd = "pack", .manifest = tests_only, .code = 0, .want = "packed " },
+        .{ .label = "pack of a package without the key", .cmd = "pack", .manifest = plain, .code = 0, .want = "packed " },
+    };
+    for (cases) |c| {
+        const r = if (std.mem.eql(u8, c.cmd, "pack"))
+            try m.run(&.{ "pack", "--compiler", "1.0.0", "--mojoc", mojoc, "--manifest", c.manifest, "-o", out }, null)
+        else
+            try m.run(&.{ "publish", "--compiler", "1.0.0", "--mojoc", mojoc, "--manifest", c.manifest, "--registry", dead }, null);
+        rep.check(c.label, r.code == c.code and h.contains(if (c.code == 0) r.stdout else r.stderr, c.want), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+    }
+}
+
 // ------------------------------------------------------------------- the test
 
 test "mopm pack and publish against the fake registry, and a rejection against a stand-in" {
@@ -390,6 +422,7 @@ test "mopm pack and publish against the fake registry, and a rejection against a
     rep.check("a shared native library is refused before any request", r.code == 1 and h.contains(r.stderr, "native library 'zlib' is kind = \"shared\"; only static archives are packed") and !h.contains(r.stderr, "cannot reach"), r.stderr);
 
     try staticNatives(a, &rep, m, work, mojoc, conf);
+    try publishFalse(a, &rep, m, work, mojoc);
 
     // --- a path dependency with a version: the path package is read beside the manifest named, not beside the
     // directory mopm runs in; and it must be the package the dependency names.

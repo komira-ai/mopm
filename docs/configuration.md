@@ -53,6 +53,7 @@ Any key other than these is refused, including `workspace`, `tool` and `profile`
 | `license` | string | none | any string; mopm checks only that it is a string | `license = "Apache-2.0"` |
 | `repository` | string | none | any string; mopm checks only that it is a string | `repository = "https://github.com/example/http_client"` |
 | `readme` | string | none; `publish` uses `README.md` beside the manifest when it exists | a path, relative to the directory of `mopm.toml`, of a UTF-8 file of at most 64 KiB (65,536 bytes) | `readme = "README.md"` |
+| `publish` | boolean | `true` | `false` marks a package that is never published, such as a test-support helper that other members use by `path` (in `[dependencies]` or `[dev-dependencies]`). `pack`, `publish` and `mopm stage` refuse it; `mopm stage` with no package names leaves it out and prints a line for it. A package that is published may not have one in `[dependencies]` (a `[dev-dependencies]` entry is fine). `lock`, `sync`, `build`, `test` and `plan` treat it like any other package | `publish = false` |
 | `mojo` | string or array of strings | none | exact compiler versions, such as `"1.0.0"`: at least one, none empty, none repeated; not together with `[toolchain]` | `mojo = ["1.0.0", "1.1.0"]` |
 | `metadata` | table | none | any keys and values the TOML subset reads | `[package.metadata.some_tool]` |
 
@@ -160,6 +161,7 @@ Accepted does not mean used. This table says, for every table and key, which com
 | `package.name`, `package.version` | `lock`, `tree`, `plan`, `pack`, `publish`, and the lock entry of a path dependency |
 | `package.description`, `package.license`, `package.repository` | metadata only: `pack` and `publish` do not send them |
 | `package.readme` | `publish`, which sends the file's text; `--readme <file>` overrides it |
+| `package.publish` | `pack`, `publish` and `stage`, which refuse a package with `publish = false` (`stage` with no names leaves it out); no other command reads it, so `lock`, `sync`, `build`, `test` and `plan` treat the package like any other |
 | `package.mojo`, `toolchain.mojo` | `lock`, `update`, `add`, `remove`, `sync`, `plan` |
 | `package.metadata` | metadata only |
 | `dependencies` | `lock`, `update`, `tree`, `sync`, `plan`; `pack` writes them as the package's conda dependencies |

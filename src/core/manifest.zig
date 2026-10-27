@@ -23,6 +23,9 @@ pub const Package = struct {
     license: ?[]const u8 = null,
     repository: ?[]const u8 = null,
     readme: ?[]const u8 = null,
+    /// `[package] publish = false`: the package is a member of a workspace but is never staged, packed for a
+    /// registry or published (a test-support helper). Every other command treats it like any member.
+    publish: bool = true,
     /// `[package.metadata]`: settings of other tools. mopm checks nothing in it and keeps it as written
     /// (spec/mopm-toml.md, "Other tools' settings"); null when absent.
     metadata: ?*const toml.Table = null,
@@ -197,6 +200,14 @@ const Checker = struct {
         return try c.str(e, where);
     }
 
+    fn optBool(c: *Checker, t: Table, key: []const u8, where: []const u8, default: bool) Error!bool {
+        const e = t.get(key) orelse return default;
+        return switch (e.value) {
+            .boolean => |b| b,
+            else => c.fail(e.pos, "'{s}' in {s} must be true or false, not {s}", .{ e.key, where, e.value.typeName() }),
+        };
+    }
+
     fn strings(c: *Checker, e: Entry, where: []const u8) Error![]const []const u8 {
         const items = switch (e.value) {
             .array => |a| a,
@@ -239,7 +250,7 @@ const Checker = struct {
 
     fn package(c: *Checker, t: Table) Error!Package {
         const where = "[package]";
-        try c.onlyKeys(t, where, &.{ "name", "version", "description", "license", "repository", "readme", "mojo", "metadata" });
+        try c.onlyKeys(t, where, &.{ "name", "version", "description", "license", "repository", "readme", "publish", "mojo", "metadata" });
         const name_e = t.get("name") orelse return c.fail(t.pos, "[package] is missing 'name'", .{});
         const name = try c.str(name_e, where);
         try c.packageName(name, name_e.pos, "package name");
@@ -255,6 +266,7 @@ const Checker = struct {
             .license = try c.optStr(t, "license", where),
             .repository = try c.optStr(t, "repository", where),
             .readme = try c.optStr(t, "readme", where),
+            .publish = try c.optBool(t, "publish", where, true),
             .metadata = if (t.get("metadata")) |e| try c.table(e, where) else null,
         };
     }
@@ -826,4 +838,20 @@ test "dependency requirements keep the full requirement grammar" {
         return e;
     };
     try std.testing.expectEqual(@as(usize, 3), m.dependencies.len);
+}
+
+test "[package] publish is a boolean that defaults to true; anything else names the key" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const head = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n";
+    var diag: Diagnostic = .{};
+    try std.testing.expect((try parse(a, head, &diag)).package.publish);
+    try std.testing.expect((try parse(a, head ++ "publish = true\n", &diag)).package.publish);
+    try std.testing.expect(!(try parse(a, head ++ "publish = false\n", &diag)).package.publish);
+    for ([_][]const u8{ "\"false\"", "0", "[false]" }) |bad| {
+        const text = try std.fmt.allocPrint(a, "{s}publish = {s}\n", .{ head, bad });
+        try std.testing.expectError(error.Invalid, parse(a, text, &diag));
+        try std.testing.expect(std.mem.indexOf(u8, diag.message, "'publish' in [package] must be true or false") != null);
+    }
 }

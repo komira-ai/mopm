@@ -5,6 +5,10 @@ checksums, and this file says what changed. The details of a command are on its 
 
 ## Unreleased
 
+### `[package] publish = false` keeps a workspace member out of publishing
+
+Additive: a manifest without the key behaves as before. A package with `publish = false` (a test-support helper that other members use by `path`) is left out by `mopm stage` when no package is named, with one line saying so, and refused by `mopm stage <name>`, `mopm pack` and `mopm publish`. A package that is published may not have one in its `[dependencies]`; its `[dev-dependencies]` may. Every other command reads it like any package. A value that is not `true` or `false` is refused, naming the key. See [configuration](docs/configuration.md) and [publishing a workspace](docs/publishing-a-workspace.md).
+
 ### The registry has a `stage` token scope and a `stage` purpose for the CI exchange
 
 Additive: every token and request that worked keeps working as it did, but for an unknown `purpose`, below. A token with the new scope `stage` may create, read and abort a group, and
