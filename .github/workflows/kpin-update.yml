@@ -276,8 +276,9 @@ jobs:
   # installs the Mojo toolchain from a pre-resolved list, not with a solver. This job is the
   # one place a solver runs: pixi, on this runner, solves `mojo` for each version in
   # toolchain/versions.txt on every platform, and `mopm-closure` (built here with zig)
-  # turns the lock into the closure files that are committed. A file the closure already pins
-  # that comes back with other bytes is an ALARM (exit 3, nothing is written, no pull request).
+  # turns the lock into the closure files that are committed. The same job solves the native libraries
+  # a test may load (toolchain/natives.txt) into the catalog files (src/core/native_catalog.zig). A file
+  # a closure or catalog already pins that comes back with other bytes is an ALARM (exit 3, nothing is written, no pull request).
   # The pull request comes from toolchain/weekly-<run id>, by the same rules as the one above.
   toolchain:
     runs-on: ubuntu-24.04
@@ -329,6 +330,34 @@ jobs:
               *) echo "::error title=mopm-closure failed::exit $rc for mojo $ver"; exit 1 ;;
             esac
           done < toolchain/versions.txt
+          # The native catalog (src/core/native_catalog.zig): one solve of every library in toolchain/natives.txt
+          # for every platform, independent of the Mojo version. mopm-closure --natives checks the catalog is closed
+          # and that the libgcc and libstdcxx the closures above stage meet its floors; it has the same exit codes.
+          dir="$RUNNER_TEMP/solve-natives"
+          mkdir -p "$dir"
+          {
+            echo '[workspace]'
+            echo 'name = "mopm-natives"'
+            echo 'channels = ["conda-forge"]'
+            echo 'platforms = ["linux-64", "linux-aarch64", "osx-arm64"]'
+            echo
+            echo '[dependencies]'
+            while read -r name; do
+              case "$name" in
+                ""|"#"*) continue ;;
+              esac
+              echo "$name = \"*\""
+            done < toolchain/natives.txt
+          } > "$dir/pixi.toml"
+          pixi lock --manifest-path "$dir/pixi.toml"
+          cp "$dir/pixi.lock" toolchain/natives.pixi.lock
+          rc=0
+          ./zig-out/bin/mopm-closure --natives toolchain/natives.pixi.lock toolchain/natives.txt src/core/toolchain || rc=$?
+          case "$rc" in
+            0) ;;
+            3) echo "::error title=catalog alarm::a file pinned in a natives catalog came back with other bytes (see above). No pull request is opened."; exit 3 ;;
+            *) echo "::error title=mopm-closure failed::exit $rc for the native catalog"; exit 1 ;;
+          esac
           if [ -z "$(git status --porcelain --untracked-files=all -- toolchain src/core/toolchain)" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "The solver's answer is the committed one: nothing to open." | tee -a "$GITHUB_STEP_SUMMARY"

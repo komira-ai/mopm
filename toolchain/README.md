@@ -8,6 +8,9 @@ and everything they need) is a fixed list per Mojo version and platform:
 | `versions.txt` | the Mojo versions mopm can install | a person |
 | `mojo-<version>.pixi.lock` | the solver's answer for that version, all platforms | the `toolchain` job of `.github/workflows/kpin-update.yml` (pixi, on GitHub) |
 | `../src/core/toolchain/mojo-<version>-<subdir>.json` | the closure of one platform: url, sha256, size and conda-meta fields of every package | `mopm-closure`, from the lock |
+| `natives.txt` | the conda names of the native libraries a package may load (the allow-list), one per line | a person |
+| `natives.pixi.lock` | the solver's answer for all of `natives.txt` at once, all platforms; independent of the Mojo version | the same job |
+| `../src/core/toolchain/natives-<subdir>.json` | the catalog of one platform: every allow-listed native and what it needs to run, minus what the toolchain already supplies (libgcc, libstdcxx, libcxx); url, sha256 and size of each | `mopm-closure --natives`, from the lock |
 | `../src/core/toolchain/zig-for-mojo-<version>.json` | the Zig that links for that Mojo version (url, sha256, size, target triple), per platform | a person |
 
 `mopm plan --unit-graph` hashes the closure file and the Zig pin into the toolchain's
@@ -26,3 +29,15 @@ every file is unchanged).
 
 The solver is given `python = 3.12.*` as well as `mojo`: the Mojo packages need any
 python >= 3.10, and the one the end-to-end tests use is pinned the same way.
+
+The native catalog (src/core/native_catalog.zig) is made and checked the same way. To regenerate after
+changing `natives.txt` or its lock:
+
+    zig build run-closure -- --natives toolchain/natives.pixi.lock toolchain/natives.txt src/core/toolchain
+
+It fails, and the weekly job with it, when a native needs a package the lock lacks (the catalog is
+closed), or when a native asks for a newer `libgcc` or `libstdcxx` than the Mojo closures stage. The
+unit test "the committed catalog files are the ones made from the committed lock" fails when the lock,
+`natives.txt`, the Mojo closures and the catalog files disagree. A pin moves only with a mopm release,
+so a test runs against the version the catalog pins while `mopm sync` may install a newer one inside the
+same range.

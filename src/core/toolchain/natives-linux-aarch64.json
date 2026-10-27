@@ -1,0 +1,252 @@
+{
+  "format": 1,
+  "subdir": "linux-aarch64",
+  "channels": [
+    {
+      "name": "conda-forge",
+      "url": "https://conda.anaconda.org/conda-forge/"
+    }
+  ],
+  "roots": [
+    "bzip2",
+    "libbrotlidec",
+    "libsqlite",
+    "libzlib",
+    "lz4-c",
+    "snappy",
+    "xz",
+    "zstd"
+  ],
+  "provided": [
+    "libgcc",
+    "libstdcxx",
+    "mojo-compiler"
+  ],
+  "packages": [
+    {
+      "name": "bzip2",
+      "version": "1.0.8",
+      "build": "h4777abc_10",
+      "build_number": 0,
+      "subdir": "linux-aarch64",
+      "channel": "conda-forge",
+      "path": "linux-aarch64/bzip2-1.0.8-h4777abc_10.conda",
+      "sha256": "24eacc8a20fd7c4616566178562bef7f9344eb4a8700cfc3180fa75a6ff9d39f",
+      "md5": "",
+      "size": 194694,
+      "depends": [],
+      "constrains": [],
+      "license": "bzip2-1.0.6",
+      "timestamp": 0
+    },
+    {
+      "name": "libbrotlicommon",
+      "version": "1.2.1",
+      "build": "h384ecca_0",
+      "build_number": 0,
+      "subdir": "linux-aarch64",
+      "channel": "conda-forge",
+      "path": "linux-aarch64/libbrotlicommon-1.2.1-h384ecca_0.conda",
+      "sha256": "f3c8ad64c1b59d78fbdd6e1cb027644e1f5e2506446520c30ad4d4b37b6e4da7",
+      "md5": "",
+      "size": 80475,
+      "depends": [],
+      "constrains": [],
+      "license": "MIT",
+      "timestamp": 0
+    },
+    {
+      "name": "libbrotlidec",
+      "version": "1.2.1",
+      "build": "h011f0d3_0",
+      "build_number": 0,
+      "subdir": "linux-aarch64",
+      "channel": "conda-forge",
+      "path": "linux-aarch64/libbrotlidec-1.2.1-h011f0d3_0.conda",
+      "sha256": "1ae4ea4241551c1a0708b2da648e77d62b2d2d1755ac5ca560253266a606b17a",
+      "md5": "",
+      "size": 34001,
+      "depends": [
+        "libbrotlicommon"
+      ],
+      "constrains": [],
+      "license": "MIT",
+      "timestamp": 0
+    },
+    {
+      "name": "liblzma",
+      "version": "5.8.3",
+      "build": "he30d5cf_1",
+      "build_number": 0,
+      "subdir": "linux-aarch64",
+      "channel": "conda-forge",
+      "path": "linux-aarch64/liblzma-5.8.3-he30d5cf_1.conda",
+      "sha256": "f760669fd1cea27f689f411c0d5488e26ce50e382c9b63e4ad348f959850124a",
+      "md5": "",
+      "size": 125578,
+      "depends": [],
+      "constrains": [],
+      "license": "0BSD",
+      "timestamp": 0
+    },
+    {
+      "name": "liblzma-devel",
+      "version": "5.8.3",
+      "build": "he30d5cf_1",
+      "build_number": 0,
+      "subdir": "linux-aarch64",
+      "channel": "conda-forge",
+      "path": "linux-aarch64/liblzma-devel-5.8.3-he30d5cf_1.conda",
+      "sha256": "f4e81e49d092f95e68e25c7dcca6643c7cfa23c9984b5d39a7e749c3426103e2",
+      "md5": "",
+      "size": 491291,
+      "depends": [
+        "liblzma"
+      ],
+      "constrains": [],
+      "license": "0BSD",
+      "timestamp": 0
+    },
+    {
+      "name": "libsqlite",
+      "version": "3.54.1",
+      "build": "hd26f1b6_101",
+      "build_number": 0,
+      "subdir": "linux-aarch64",
+      "channel": "conda-forge",
+      "path": "linux-aarch64/libsqlite-3.54.1-hd26f1b6_101.conda",
+      "sha256": "61a67f7085f497fa7622c6e1ae8611b8b2796a2eca70dcecc8d9124ca4f0d46b",
+      "md5": "",
+      "size": 977839,
+      "depends": [
+        "libzlib"
+      ],
+      "constrains": [],
+      "license": "blessing",
+      "timestamp": 0
+    },
+    {
+      "name": "libzlib",
+      "version": "1.3.2",
+      "build": "hdc9db2a_3",
+      "build_number": 0,
+      "subdir": "linux-aarch64",
+      "channel": "conda-forge",
+      "path": "linux-aarch64/libzlib-1.3.2-hdc9db2a_3.conda",
+      "sha256": "76efa6cc9d7e6f5ee3bbca0939f64054af2bdfb3c3632531f8e633cf6c2ea41e",
+      "md5": "",
+      "size": 70108,
+      "depends": [],
+      "constrains": [],
+      "license": "Zlib",
+      "timestamp": 0
+    },
+    {
+      "name": "lz4-c",
+      "version": "1.10.0",
+      "build": "hfb11796_2",
+      "build_number": 0,
+      "subdir": "linux-aarch64",
+      "channel": "conda-forge",
+      "path": "linux-aarch64/lz4-c-1.10.0-hfb11796_2.conda",
+      "sha256": "e8392843a18954fef038f2721fde65c4dbe7693fcd07677e5e74fca85b1a690c",
+      "md5": "",
+      "size": 218765,
+      "depends": [],
+      "constrains": [],
+      "license": "BSD-2-Clause",
+      "timestamp": 0
+    },
+    {
+      "name": "snappy",
+      "version": "1.3.1",
+      "build": "hff98f13_0",
+      "build_number": 0,
+      "subdir": "linux-aarch64",
+      "channel": "conda-forge",
+      "path": "linux-aarch64/snappy-1.3.1-hff98f13_0.conda",
+      "sha256": "3edbb28329f34e3effc8e7da37349fc55998faf8c8a8c30304c9737b479cf10c",
+      "md5": "",
+      "size": 50479,
+      "depends": [],
+      "constrains": [],
+      "license": "BSD-3-Clause",
+      "timestamp": 0
+    },
+    {
+      "name": "xz",
+      "version": "5.8.3",
+      "build": "hd704e39_1",
+      "build_number": 0,
+      "subdir": "linux-aarch64",
+      "channel": "conda-forge",
+      "path": "linux-aarch64/xz-5.8.3-hd704e39_1.conda",
+      "sha256": "4e9b4a2eabf215c052d57a54c279a1d79343ae3b961d3f81f834e0bf76e5c7d4",
+      "md5": "",
+      "size": 23459,
+      "depends": [
+        "liblzma",
+        "liblzma-devel",
+        "xz-gpl-tools",
+        "xz-tools"
+      ],
+      "constrains": [],
+      "license": "0BSD AND LGPL-2.1-or-later AND GPL-2.0-or-later",
+      "timestamp": 0
+    },
+    {
+      "name": "xz-gpl-tools",
+      "version": "5.8.3",
+      "build": "hd704e39_1",
+      "build_number": 0,
+      "subdir": "linux-aarch64",
+      "channel": "conda-forge",
+      "path": "linux-aarch64/xz-gpl-tools-5.8.3-hd704e39_1.conda",
+      "sha256": "3f0b45a1039c86265f41f3bb5f248cd4d901acff49164f86122fab7cc4efc049",
+      "md5": "",
+      "size": 40115,
+      "depends": [
+        "liblzma"
+      ],
+      "constrains": [],
+      "license": "0BSD AND LGPL-2.1-or-later AND GPL-2.0-or-later",
+      "timestamp": 0
+    },
+    {
+      "name": "xz-tools",
+      "version": "5.8.3",
+      "build": "he30d5cf_1",
+      "build_number": 0,
+      "subdir": "linux-aarch64",
+      "channel": "conda-forge",
+      "path": "linux-aarch64/xz-tools-5.8.3-he30d5cf_1.conda",
+      "sha256": "1619ea83757336aaaac4cde221e4cd0982551c82def3276c91d0d53b0b7159db",
+      "md5": "",
+      "size": 103133,
+      "depends": [
+        "liblzma"
+      ],
+      "constrains": [],
+      "license": "0BSD AND LGPL-2.1-or-later",
+      "timestamp": 0
+    },
+    {
+      "name": "zstd",
+      "version": "1.5.7",
+      "build": "h9d15635_7",
+      "build_number": 0,
+      "subdir": "linux-aarch64",
+      "channel": "conda-forge",
+      "path": "linux-aarch64/zstd-1.5.7-h9d15635_7.conda",
+      "sha256": "427fd14bcb3b8659796fecc682716617409350fb5a98e5b7b47558a10d1a2fc7",
+      "md5": "",
+      "size": 615477,
+      "depends": [
+        "libzlib"
+      ],
+      "constrains": [],
+      "license": "BSD-3-Clause",
+      "timestamp": 0
+    }
+  ]
+}
