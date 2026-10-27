@@ -279,7 +279,7 @@ describe.each<Backing>(['memory', 'dynamodb'])('auth routes over %s', (backing) 
         id: 'tp1', name: 'alpha', repository_id: '111', repository_owner_id: '222',
         workflow: '.github/workflows/release.yml', added_by: 4242, added_at: '2026-10-01T00:00:00Z',
       };
-      if (w.doc) w.doc.seed('trusted_publishers', { name: 'alpha', publisher: 'tp1', ...tp });
+      if (w.doc) w.doc.seed('trusted_publishers', { publisher: 'tp1', ...tp });
       else await w.store.addTrustedPublisher(tp);
       const jwt = signJwt(key, goodClaims(w.clock, { workflow_ref: 'acme/widgets/.github/workflows/release.yml@refs/tags/v1' }));
       const ci = await w.send('POST', '/auth/oidc/exchange', { body: { jwt, name: 'alpha', version: '1.0.0' } });
