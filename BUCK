@@ -546,6 +546,7 @@ _AUTOLINK_DATA = [
     "tests/e2e/native",
     "tests/e2e/pkgs",
     "tests/e2e/prog.mojo",
+    "tests/e2e/prog_args.mojo",
     "tests/e2e/prog_outer.mojo",
     "tests/e2e/repl.stdin",
     "tests/e2e/repl_outer.stdin",
