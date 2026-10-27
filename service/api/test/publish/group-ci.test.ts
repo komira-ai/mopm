@@ -289,7 +289,7 @@ describe.each(RIGS)('a CI identity and groups on the beta configuration: %s', (_
     test('a token minted for a package\'s registered trusted publisher (no identity) is scope_missing even when the groups switch admits it', async () => {
       await env.own(1, 'octocat', ['widgets']);
       const token = await minted(undefined, [['widgets', widgets.version]]);
-      env.deps.publish!.flags = { readOnly: async () => false, groupsFor: async () => true };
+      env.deps.publish!.flags = { readOnly: async () => false, groupsFor: async () => true, claimLimitFor: async () => undefined };
       const r = await env.create(token, [memberOf(widgets)]);
       expect([r.statusCode, errorCode(r)]).toEqual([403, 'scope_missing']);
     });
@@ -321,7 +321,7 @@ describe.each(RIGS)('a CI identity and groups on the beta configuration: %s', (_
 
     test('the identity cannot yank a group of an account, even for packages its token names', async () => {
       // the account's group is made with the switch open to everybody: this test is about who may yank it, not who may create
-      env.deps.publish!.flags = { readOnly: async () => false, groupsFor: async () => true };
+      env.deps.publish!.flags = { readOnly: async () => false, groupsFor: async () => true, claimLimitFor: async () => undefined };
       const me = await env.account(1, 'octocat', ['widgets']);
       const gid = await visible(me, [widgets]);
       const ci = await minted(OWNER, [['widgets', widgets.version]]);

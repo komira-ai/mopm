@@ -470,6 +470,14 @@ describe('the Lambda wiring', () => {
     expect(api?.claims).toBeInstanceOf(ClaimService);
     expect(api?.groups).toBeDefined();
   });
+
+  test('the claim service is given the deployment\'s switches, so the claim_limits item reaches the claim limit', () => {
+    const env = { MOPM_CHANNEL_BUCKET: 'bucket', MOPM_VALIDATE_QUEUE_URL: 'https://sqs.us-east-1.amazonaws.com/acct/validate.fifo' };
+    const flags = new MutableFlags();
+    const api = publishApiFor(env, new FakeDocClient() as never, 't', flags);
+    // ClaimService reads the override only through this member; a service built without it would charge the default for everybody.
+    expect((api?.claims as unknown as { d: { flags?: unknown } }).d.flags).toBe(flags);
+  });
 });
 
 describe('ClaimService on its own clock and ids', () => {

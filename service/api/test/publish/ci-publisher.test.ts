@@ -252,7 +252,7 @@ describe('only the configured identity is trusted, field by field', () => {
 
   test('the form of the request is checked: nothing, too many, duplicates, bad names and versions, both forms at once', async () => {
     const s = setup();
-    const many = Array.from({ length: 101 }, (_x, i) => ({ name: `pkg_${i}`, version: '1.0.0' }));
+    const many = Array.from({ length: 501 }, (_x, i) => ({ name: `pkg_${i}`, version: '1.0.0' }));
     const jwt = s.jwt();
     await refused(s.oidc.exchange({ jwt, packages: [] }), 'invalid_request', 400);
     await refused(s.oidc.exchange({ jwt, packages: many }), 'invalid_request', 400);

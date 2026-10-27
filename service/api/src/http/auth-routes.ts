@@ -35,12 +35,17 @@ export interface AuthResult {
 }
 
 const MAX_BODY_BYTES = 64 * 1024;
+/**
+ * The CI exchange's body: 500 packages of the longest name (64) and version (128) the grammar allows are about 109 KB, and the
+ * identity token comes with them, so a set of the most a group may hold is never refused for its size.
+ */
+export const MAX_EXCHANGE_BODY_BYTES = 128 * 1024;
 const unavailable = () => new AuthError('unavailable', 'The registry is temporarily unavailable.');
 
-function jsonBody(raw: string | undefined): Record<string, unknown> {
+function jsonBody(raw: string | undefined, maxBytes = MAX_BODY_BYTES): Record<string, unknown> {
   const bad = (detail: string) => new RegistryError('invalid_request', `The request is not valid: ${detail}.`, { detail });
   if (raw === undefined || raw === '') throw bad('a JSON body is required');
-  if (raw.length > MAX_BODY_BYTES) throw bad('the body is too large');
+  if (raw.length > maxBytes) throw bad('the body is too large');
   let v: unknown;
   try {
     v = JSON.parse(raw);
@@ -69,7 +74,7 @@ export async function routeAuth(req: AuthRequest, services: AuthServices | undef
   } else if (post && seg.length === 3 && seg[0] === 'auth' && seg[1] === 'device' && seg[2] === 'poll') {
     op = async (s) => ({ status: 200, body: await (await s.devices()).poll(jsonBody(req.body) as { device_code: string }) });
   } else if (post && seg.length === 3 && seg[0] === 'auth' && seg[1] === 'oidc' && seg[2] === 'exchange') {
-    op = async (s) => ({ status: 200, body: await s.oidc.exchange(jsonBody(req.body) as OidcExchangeInput) });
+    op = async (s) => ({ status: 200, body: await s.oidc.exchange(jsonBody(req.body, MAX_EXCHANGE_BODY_BYTES) as OidcExchangeInput) });
   } else if (seg.length === 2 && seg[0] === 'me' && seg[1] === 'tokens' && (post || method === 'GET')) {
     op = async (s) => {
       const github_id = s.authn.freshSession(await s.authn.authenticate(req.authorization));

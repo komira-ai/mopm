@@ -64,6 +64,24 @@ export function parseStaticGroupsPolicy(stage: string, raw: string | undefined):
   return { mode: 'allow', actors: [...(actors as string[])], deny: [] };
 }
 
+/** The most claims a day any per-actor override may allow: a bad `claim_limits` item cannot remove the limit. */
+export const MAX_CLAIM_LIMIT = 1000;
+
+/**
+ * The per-actor daily claim limits an item of the config table says (`claim_limits`: `{limits: {"u:<github id>": <n>}}`). Only a
+ * whole number of 1 or more for a key that is a string counts, and it is clamped to MAX_CLAIM_LIMIT; every other entry, and an item
+ * whose `limits` is not an object, says nothing (the actor keeps the default).
+ */
+export function parseClaimLimits(item: Record<string, unknown> | undefined): ReadonlyMap<string, number> {
+  const out = new Map<string, number>();
+  const limits = item?.limits;
+  if (typeof limits !== 'object' || limits === null || Array.isArray(limits)) return out;
+  for (const [actor, n] of Object.entries(limits)) {
+    if (typeof n === 'number' && Number.isInteger(n) && n >= 1) out.set(actor, Math.min(n, MAX_CLAIM_LIMIT));
+  }
+  return out;
+}
+
 export function policyAllows(policy: GroupsPolicy, actor: string): boolean {
   if (policy.mode === 'off') return false;
   if (policy.deny.includes(actor)) return false;
@@ -82,6 +100,9 @@ export class StaticFlags implements Flags {
   async groupsFor(actor: string) {
     return policyAllows(this.groups, actor);
   }
+  async claimLimitFor(_actor: string) {
+    return undefined;
+  }
 }
 
 /**
@@ -92,6 +113,7 @@ export class StaticFlags implements Flags {
 export class DynamoFlags implements Flags {
   private cached?: { at: number; value: boolean };
   private cachedGroups?: { at: number; value: GroupsPolicy };
+  private cachedClaims?: { at: number; value: ReadonlyMap<string, number> };
   constructor(
     private readonly doc: DocClient,
     private readonly table: string,
@@ -114,6 +136,14 @@ export class DynamoFlags implements Flags {
     this.cachedGroups = { at: t, value };
     return policyAllows(value, actor);
   }
+  async claimLimitFor(actor: string): Promise<number | undefined> {
+    const t = this.now();
+    if (this.cachedClaims && t - this.cachedClaims.at < this.cacheMs) return this.cachedClaims.value.get(actor);
+    const r = await this.doc.send(new GetCommand({ TableName: this.table, Key: { key: 'claim_limits' }, ConsistentRead: true }));
+    const value = parseClaimLimits(r.Item as Record<string, unknown> | undefined);
+    this.cachedClaims = { at: t, value };
+    return value.get(actor);
+  }
 }
 
 /** Either switch makes the registry read-only. For groups, any one of them admitting the actor is enough (a static policy that says nothing is `off`). */
@@ -126,5 +156,12 @@ export class AnyFlag implements Flags {
   async groupsFor(actor: string) {
     for (const f of this.flags) if (await f.groupsFor(actor)) return true;
     return false;
+  }
+  async claimLimitFor(actor: string) {
+    for (const f of this.flags) {
+      const n = await f.claimLimitFor(actor);
+      if (n !== undefined) return n;
+    }
+    return undefined;
   }
 }
