@@ -5,6 +5,10 @@ checksums, and this file says what changed. The details of a command are on its 
 
 ## Unreleased
 
+### `mopm lock` pins the system libraries a project loads, and `mopm plan` passes them on
+
+Additive: a project that loads no system library gets the lock and the unit graph it always got, byte for byte. When a `mopm.toml` of the project (or of a path dependency), or a registry package it uses, declares `[native-dependencies] <name> = { mode = "load" }`, `mopm lock` now adds a `system_libs` key to `mopm.lock`: for each platform, the conda packages of those libraries and of what they need to run (url, sha256, size), taken from the catalog this mopm pins, and a `loads` list on each registry package that loads one. `lock_version` does not change, and an older mopm ignores both keys. A version requirement is checked against the pin (`mopm pins libsqlite 3.51.0 for linux-64; requirement ">=4" cannot be met; update mopm`), and a name outside the catalog is refused. `mopm plan --unit-graph` gives each `test` and `bin` unit the `loads` of its closure and the graph a `system_libs` list, as unit graph format 3; a graph with no `loads` stays format 2. A lock that has `system_libs` while a manifest names a library it lacks is stale: `mopm lock` fixes it. `mopm unit test` refuses a unit that has `loads`, as it cannot put the libraries on the loader path. See [`spec/lock.md`](spec/lock.md) and [`spec/unit-graph.md`](spec/unit-graph.md).
+
 ### The registry has a `stage` token scope and a `stage` purpose for the CI exchange
 
 Additive: every token and request that worked keeps working as it did, but for an unknown `purpose`, below. A token with the new scope `stage` may create, read and abort a group, and

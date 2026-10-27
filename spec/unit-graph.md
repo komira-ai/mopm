@@ -57,14 +57,18 @@ So the Mojo version is part of what a unit is.
   "package": "app@1.0.0",
   "mojo": "1.0.0",
   "toolchain": { ... },
+  "system_libs": [ { ... }, ... ],
   "units": [ { ... }, ... ]
 }
 ```
 
-`unit_graph` is the format version (this file describes 2; a reader refuses
+`unit_graph` is the format version (this file describes 2 and 3; a reader refuses
 another). Version 2 adds the `native` unit and the `built` native entry
 ("Member natives", below); a graph of a project without member natives differs
-from a version 1 graph only in this number. `package` is the root package. `units` are sorted by `id`, and the
+from a version 1 graph only in this number. Version 3 adds `system_libs` and the
+`loads` of a unit ("System libraries", below); a graph in which no unit has
+`loads` is version 2, byte for byte what it was before they existed, and has no
+`system_libs`. `package` is the root package. `units` are sorted by `id`, and the
 text is one fixed layout, so the same inputs give the same bytes.
 
 ### toolchain
@@ -97,6 +101,7 @@ lock whose recorded hash is not the one this mopm computes.
 | `soname`, `hdrs`, `cflags`, `cflags_by_os`, `includes`, `needs` | `native`: see "Member natives" |
 | `deps` | ids of the units this one imports, in the order `mopm.toml` lists them (order is significant) |
 | `natives` | `id`, `soname`, `sha256`, `package` of every prebuilt native library in the unit's dependency closure, and `kind`, `needs`, `exclusive` when the lock gives them (left out when `shared`, empty, none); a workspace member's own native library is listed with `id`, `soname`, `package`, `kind`, `needs`, `exclusive` (the same omissions) and `built`, the id of the `native` unit that builds it, and no `sha256`. They are in link order: a library before every library it `needs`, the sonames' order between libraries that do not constrain one another. A closure holding two libraries of one `exclusive` group is refused, naming both (group names are compared exactly: `libcrypto` and `LibCrypto` are two groups; `mopm.toml` refuses a name with leading or trailing whitespace or a control character). The refusal is graph-wide: one unit with a clash refuses the whole graph, so a clash reached only through a dev-only dependency, and so only by the `test:` unit, blocks the build |
+| `loads` | `test` and `bin`: the conda names of the system libraries the unit loads at run time, sorted, run dependencies included; each is an entry of the graph's `system_libs` (format 3 only; left out when empty, see "System libraries") |
 | `artifact` | `prebuilt`: `url`, `sha256`, `size` of the `.conda` for `M` (from the lock) |
 | `mojoc` | `prebuilt`: the `.mojoc` inside that package |
 | `profile` | `opt`, `assert`, `debug`: the compiler profile of a `lib`, `test` or `bin` |
@@ -118,6 +123,35 @@ closure ships is refused, and so are libraries that need each other, because no
 link order puts one before the other; a shared library resolves its needs when
 the loader runs, so a need it names that the closure lacks is not judged here.
 
+### System libraries
+
+A package can open a system library at run time: `[native-dependencies] libsqlite = { version = ">=3.40", mode = "load" }`
+in its `mopm.toml`, or the same in a registry package, which says so in the
+`depends` of its repodata entry. A test that loads such a library must find the
+one the lock pins, not whichever the machine has, so the lock names it
+(`lock.md`, "System libraries") and the graph passes the pin on.
+
+- `system_libs` (format 3): the lock's pins for this graph's `subdir`, sorted by
+  `name`, each `name`, `version`, `build`, `url`, `sha256`, `size`: a conda
+  package of the library or of something it needs to run. Present when some unit
+  has `loads`.
+- `loads` of a `test` or `bin` unit: the names of the system libraries of the
+  unit's closure (its own package, its dependencies, and for a test the
+  dev-dependencies) and, with them, the libraries those need. The library of a
+  package that is not in a unit's closure is not in its `loads`. A library is
+  loaded by its conda name; names the build system must match against
+  `system_libs`. The libraries are loaded, never linked: they are not in
+  `natives`.
+- A build system puts the unpacked libraries of `loads` on the loader path of
+  the run of that unit and of no other action. A rules version that does not know
+  `loads` must not read a version 3 graph (it would run the test against the
+  machine's libraries), which is why the format number changes.
+- A lock written before `system_libs` (it has none at all) gives no `loads`: the
+  graph is the one mopm printed before, and the run is not hermetic. A lock that
+  has `system_libs`, with a manifest or registry package that loads a library the
+  lock does not pin for the graph's subdir, is stale: `plan` refuses with
+  `mopm.lock has no system library <name> for <subdir>; run 'mopm lock'`.
+
 ### key
 
 `key` is the lower-case hex sha256 of
@@ -126,12 +160,15 @@ the loader runs, so a need it names that the closure lacks is not judged here.
     <the unit as printed, at four spaces of indent, without key>
     { "\n" <key of dependency> }    for each of deps, in order
     { "\nnative " <key of the native unit> }    for each built native of the unit, in link order
+    { "\nsystem_lib " <name> " " <sha256> }    for each of the unit's loads, in order
 
 It changes when the unit's id (so `M`), sources, dependency list or order,
 natives, profile or outputs change, when the toolchain closure changes, and,
 through the dependency keys, when anything it imports changes. A built native
 adds the key of its `native` unit, so a unit that links an archive changes
-when that archive's sources, headers or flags do. A build system
+when that archive's sources, headers or flags do. A unit that loads a system
+library changes when the pinned bytes of that library do, not only when its name
+does. A build system
 adds the hash of the mopm binary that runs the unit to its action key. Editing
 one package re-runs it and its dependents; unchanged `.mojoc` bytes stop the
 cascade there.

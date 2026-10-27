@@ -66,6 +66,7 @@ const overlay = core.overlay;
 const semver = core.semver;
 const toml_edit = core.toml_edit;
 const unit_graph = core.unit_graph;
+const system_libs = core.system_libs;
 const publish_cmd = @import("publish_cmd.zig");
 
 /// The command whose name prefixes a message. `plan` and `build` only read the project (`readProject`).
@@ -220,7 +221,7 @@ fn addPathDep(arena: Allocator, cmd: Command, name: []const u8, path: []const u8
         return false;
     }
     const at = paths.items.len;
-    try paths.append(.{ .name = name, .version = m.package.version, .path = path });
+    try paths.append(.{ .name = name, .version = m.package.version, .path = path, .native_deps = m.native_dependencies });
     var names = std.ArrayList([]const u8).init(arena);
     for (m.dependencies) |d| {
         try names.append(d.name);
@@ -543,7 +544,8 @@ fn resolveProject(arena: Allocator, cmd: Command, project: Project, old: ?lock.L
             err(cmd, "{s}\n", .{diag.message});
             return null;
         };
-        return .{ .lock = new, .count = res.packages.len + project.paths.len, .mojo = mojo };
+        const pinned = (try withSystemLibs(arena, cmd, project, new)) orelse return null;
+        return .{ .lock = pinned, .count = res.packages.len + project.paths.len, .mojo = mojo };
     }
     err(cmd, "cannot resolve the dependencies of {s}:\n{s}", .{ project.m.package.name, failures.items });
     return null;
@@ -551,6 +553,40 @@ fn resolveProject(arena: Allocator, cmd: Command, project: Project, old: ?lock.L
 
 fn lessStr(_: void, a: []const u8, b: []const u8) bool {
     return std.mem.order(u8, a, b) == .lt;
+}
+
+/// `l` with the system libraries the project loads pinned (system_libs.zig): the libraries its manifest and its path
+/// dependencies' manifests load, and its registry packages' `loads`. `l` itself when nothing is loaded. Null when mopm
+/// cannot pin one (reported).
+fn withSystemLibs(arena: Allocator, cmd: Command, project: Project, l: lock.Lock) !?lock.Lock {
+    var needs = std.ArrayList(system_libs.Need).init(arena);
+    var why: []const u8 = "";
+    const root = system_libs.needsOf(arena, manifest_path, project.m.native_dependencies, &why) catch |e| switch (e) {
+        error.Refused => {
+            err(cmd, "{s}\n", .{why});
+            return null;
+        },
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+    try needs.appendSlice(root);
+    for (project.paths) |d| {
+        const file = try std.fmt.allocPrint(arena, "{s}/{s}", .{ d.path, manifest_path });
+        const own = system_libs.needsOf(arena, file, d.native_deps, &why) catch |e| switch (e) {
+            error.Refused => {
+                err(cmd, "{s}\n", .{why});
+                return null;
+            },
+            error.OutOfMemory => return error.OutOfMemory,
+        };
+        try needs.appendSlice(own);
+    }
+    return system_libs.attach(arena, l, needs.items, &why) catch |e| switch (e) {
+        error.Refused => {
+            err(cmd, "{s}\n", .{why});
+            return null;
+        },
+        error.OutOfMemory => return error.OutOfMemory,
+    };
 }
 
 /// `[package] mojo`: resolves the project once for each Mojo version it lists
@@ -617,7 +653,8 @@ fn resolveAll(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock,
         err(cmd, "{s}\n", .{diag.message});
         return null;
     };
-    return .{ .lock = new, .count = merged.packages.len + project.paths.len, .mojo = try std.mem.join(arena, ", ", new.mojos) };
+    const pinned = (try withSystemLibs(arena, cmd, project, new)) orelse return null;
+    return .{ .lock = pinned, .count = merged.packages.len + project.paths.len, .mojo = try std.mem.join(arena, ", ", new.mojos) };
 }
 
 /// `mopm sync`: lock when needed (never with `--locked`), then install.

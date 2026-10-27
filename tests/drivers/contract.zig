@@ -190,6 +190,16 @@ pub fn lockProblems(a: Allocator, doc: Value) !Problems {
         for (getArr(p, "deps")) |d| {
             if (d != .string or !names.contains(d.string)) try problem(a, &out, "{s}: dep {s} is not in packages", .{ name, if (d == .string) d.string else "?" });
         }
+        // Every library the package loads is pinned for its subdir (system_libs).
+        const subdir = getStr(p, "subdir") orelse "";
+        const pinned: []const Value = if (get(doc, "system_libs")) |sl| getArr(sl, subdir) else &.{};
+        for (getArr(p, "loads")) |n| {
+            var found = false;
+            if (n == .string) {
+                for (pinned) |lib| found = found or std.mem.eql(u8, getStr(lib, "name") orelse "", n.string);
+            }
+            if (!found) try problem(a, &out, "{s}: loads {s}, which system_libs does not pin for {s}", .{ name, if (n == .string) n.string else "?", subdir });
+        }
         const gop = try chans_of.getOrPut(name);
         if (!gop.found_existing) gop.value_ptr.* = std.StringHashMap(void).init(a);
         try gop.value_ptr.put(channel, {});
@@ -205,6 +215,22 @@ pub fn lockProblems(a: Allocator, doc: Value) !Problems {
     var it = chans_of.iterator();
     while (it.next()) |e| {
         if (e.value_ptr.count() > 1) try problem(a, &out, "{s} comes from more than one channel", .{e.key_ptr.*});
+    }
+    // Each subdir's system libraries are sorted by name, with no repeats.
+    if (get(doc, "system_libs")) |sl| {
+        if (sl == .object) {
+            var libs_it = sl.object.iterator();
+            while (libs_it.next()) |e| {
+                const list: []const Value = if (e.value_ptr.* == .array) e.value_ptr.array.items else &.{};
+                var j: usize = 1;
+                while (j < list.len) : (j += 1) {
+                    if (!std.mem.lessThan(u8, getStr(list[j - 1], "name") orelse "", getStr(list[j], "name") orelse "")) {
+                        try problem(a, &out, "system_libs of {s} is not sorted by name with no repeats", .{e.key_ptr.*});
+                        break;
+                    }
+                }
+            }
+        }
     }
     return out;
 }

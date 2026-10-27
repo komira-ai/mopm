@@ -25,6 +25,7 @@ const testroot = @import("testroot.zig");
 const Allocator = std.mem.Allocator;
 const registry = @import("registry.zig");
 const metadata = @import("metadata.zig");
+const lock_libs = @import("lock_libs.zig");
 
 /// The `lock_version` of a lock for one Mojo version (the `[toolchain]` form).
 pub const lock_version: i64 = 1;
@@ -88,6 +89,8 @@ pub const Package = struct {
     artifacts: []const Artifact = &.{},
     deps: []const []const u8 = &.{},
     native: []const Native = &.{},
+    /// The conda names of the system libraries the package loads, sorted (lock_libs.zig); each is pinned in `system_libs`.
+    loads: []const []const u8 = &.{},
 };
 
 pub const Lock = struct {
@@ -101,6 +104,9 @@ pub const Lock = struct {
     mojos: []const []const u8 = &.{},
     /// Version 2: mopm's toolchain closure hash per (mojo, subdir), sorted.
     closures: []const Closure = &.{},
+    /// The pinned conda packages of the system libraries that manifests and registry packages load, per subdir
+    /// (lock_libs.zig). Empty for a lock that names none.
+    system_libs: []const lock_libs.Subdir = &.{},
 
     /// The version locked for `name`, or null.
     pub fn versionOf(self: Lock, name: []const u8) ?[]const u8 {
@@ -165,7 +171,7 @@ pub fn forMojo(arena: Allocator, l: Lock, mojo: []const u8) Allocator.Error!Lock
         q.mojo = a.mojo;
         try out.append(q);
     }
-    return .{ .mojo = mojo, .channels = l.channels, .packages = out.items };
+    return .{ .mojo = mojo, .channels = l.channels, .packages = out.items, .system_libs = l.system_libs };
 }
 
 /// `<channel><subdir>/mojo-<name>-<version>-<build>.conda` (rule 3).
@@ -216,6 +222,7 @@ pub fn check(arena: Allocator, l: Lock) Allocator.Error!?[]const u8 {
     for (l.channels) |c| {
         if (!allowedChannel(c)) return try std.fmt.allocPrint(arena, "channel {s} is refused: {s}", .{ c, channel_rule });
     }
+    if (try lock_libs.checkLibs(arena, l.system_libs)) |broken| return broken;
     for (l.packages, 0..) |p, i| {
         if (i > 0 and order(l.packages[i - 1], p) != .lt) {
             return try std.fmt.allocPrint(arena, "packages are not sorted by name, version and subdir with no repeats (at {s} {s} {s})", .{ p.name, p.version, p.subdir });
@@ -254,6 +261,7 @@ pub fn check(arena: Allocator, l: Lock) Allocator.Error!?[]const u8 {
             for (l.packages) |q| found = found or std.mem.eql(u8, q.name, d);
             if (!found) return try std.fmt.allocPrint(arena, "{s}: dependency {s} is not in packages", .{ p.name, d });
         }
+        if (try lock_libs.checkLoads(arena, p.name, p.subdir, p.loads, l.system_libs)) |broken| return broken;
         for (p.native) |n| {
             for (n.needs) |need| {
                 if (std.mem.eql(u8, need, n.soname)) return try std.fmt.allocPrint(arena, "{s}: native library {s} needs itself ({s})", .{ p.name, n.id, need });
@@ -397,7 +405,7 @@ pub fn parse(arena: Allocator, text: []const u8, why: *[]const u8) ParseError!Lo
         if (o.get("source") != null) {
             const source = try r.string(o, "source", what);
             if (!std.mem.eql(u8, source, "path")) return r.bad("{s}'s source is {s}; a lock entry's source is path, or none for the registry", .{ what, source });
-            for ([_][]const u8{ "build", "subdir", "channel", "url", "sha256", "size", "mojo", "artifacts" }) |key| {
+            for ([_][]const u8{ "build", "subdir", "channel", "url", "sha256", "size", "mojo", "artifacts", "loads" }) |key| {
                 if (o.get(key) != null) return r.bad("{s} is a path dependency, which has no {s}", .{ what, key });
             }
             try packages.append(.{
@@ -460,9 +468,10 @@ pub fn parse(arena: Allocator, text: []const u8, why: *[]const u8) ParseError!Lo
             try natives.append(try readNative(r, no, what));
         }
         p.native = natives.items;
+        p.loads = try lock_libs.parseLoads(arena, r.why, o, what);
         try packages.append(p);
     }
-    const l = Lock{ .mojo = mojo, .channels = channels.items, .packages = packages.items, .mojos = mojos.items, .closures = closures.items };
+    const l = Lock{ .mojo = mojo, .channels = channels.items, .packages = packages.items, .mojos = mojos.items, .closures = closures.items, .system_libs = try lock_libs.parseSubdirs(arena, r.why, top) };
     if (try check(arena, l)) |broken| return r.bad("{s}", .{broken});
     return l;
 }
@@ -550,9 +559,12 @@ pub fn write(l: Lock, w: anytype) !void {
         try str(w, p.mojo);
         try writeDeps(w, p.deps);
         try writeNatives(w, p.native);
+        try lock_libs.writeLoads(w, p.loads);
         try w.writeAll("\n    }");
     }
-    try w.writeAll(if (l.packages.len == 0) "]\n}\n" else "\n  ]\n}\n");
+    try w.writeAll(if (l.packages.len == 0) "]" else "\n  ]");
+    try lock_libs.writeSubdirs(w, l.system_libs);
+    try w.writeAll("\n}\n");
 }
 
 fn writeNatives(w: anytype, native: []const Native) !void {
@@ -651,9 +663,12 @@ fn writeV2(l: Lock, w: anytype) !void {
         try w.writeAll(if (p.artifacts.len == 0) "}" else "\n      }");
         try writeDeps(w, p.deps);
         try writeNatives(w, p.native);
+        try lock_libs.writeLoads(w, p.loads);
         try w.writeAll("\n    }");
     }
-    try w.writeAll(if (l.packages.len == 0) "]\n}\n" else "\n  ]\n}\n");
+    try w.writeAll(if (l.packages.len == 0) "]" else "\n  ]");
+    try lock_libs.writeSubdirs(w, l.system_libs);
+    try w.writeAll("\n}\n");
 }
 
 fn writeDeps(w: anytype, deps: []const []const u8) !void {
@@ -711,11 +726,14 @@ test "each invalid example lock is refused, for the reason its name gives" {
         .{ "future_lock_version.json", "Update mopm." },
         .{ "http_non_loopback_channel.json", "channel http://conda.mopm.dev/channel/ is refused" },
         .{ "missing_build.json", "has no build" },
+        .{ "loads_not_pinned.json", "which system_libs does not pin for linux-64" },
         .{ "mojo_mismatch.json", "but the toolchain is mojo" },
         .{ "name_from_two_channels.json", "comes from two channels" },
         .{ "native_bad_kind.json", "has kind weird; a kind is shared, static or both" },
         .{ "native_need_not_string.json", "has a need that is not a string" },
         .{ "soname_clash.json", "is shipped by both" },
+        .{ "system_lib_bad_sha256.json", "sha256 is not 64 lowercase hex digits" },
+        .{ "system_libs_unsorted.json", "system_libs of linux-64 is not sorted by name with no repeats (at libsqlite)" },
         .{ "unsorted.json", "not sorted by name, version and subdir" },
         .{ "url_mismatch.json", "url is " },
     };
