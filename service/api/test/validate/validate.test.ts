@@ -319,6 +319,14 @@ describe('layout allow-list', () => {
     refusedBuild(over, rule);
   });
 
+  test('a program shipped as source is allowed below lib/mojo/<name>.bins, and only a plain <bin>.mojo file', () => {
+    expect(check(buildConda({ pkgExtra: [{ path: 'lib/mojo/demo.bins/agg_bench.mojo', data: 'def main(): pass' }] })).ok).toBe(true);
+    expect(check(buildConda({ pkgExtra: [{ path: 'lib/mojo/demo.bins', type: '5' }, { path: 'lib/mojo/demo.bins/a1.mojo', data: 'x' }] })).ok).toBe(true);
+    for (const path of ['lib/mojo/demo.bins/Bench.mojo', 'lib/mojo/demo.bins/a-b.mojo', 'lib/mojo/demo.bins/a.py', 'lib/mojo/demo.bins/sub/a.mojo', 'lib/mojo/other.bins/a.mojo']) {
+      refusedBuild({ pkgExtra: [{ path, data: 'x' }] }, 'layout_not_allowed');
+    }
+    refusedBuild({ pkgExtra: [{ path: 'lib/mojo/other.bins', type: '5' }] }, 'layout_not_allowed');
+  });
   test('a directory outside the layout', () => {
     refusedBuild({ pkgExtra: [{ path: 'share', type: '5' }] }, 'layout_not_allowed');
   });

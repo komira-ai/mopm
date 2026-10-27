@@ -731,6 +731,12 @@ filegroup(
 )
 
 filegroup(
+    name = "native_roots",
+    srcs = {"natives.txt": "toolchain/natives.txt"},
+    visibility = ["//service/api:"],
+)
+
+filegroup(
     name = "contract_api",
     srcs = {f[len("tests/contract/api/"):]: f for f in glob(["tests/contract/api/*.json"])},
     visibility = ["//service/api:", "//site:"],

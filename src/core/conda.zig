@@ -48,6 +48,17 @@ pub const Input = struct {
     mojoc: []const u8,
     /// The static native libraries of this subdir: each one's archive goes to `lib/<soname>`.
     natives: []const Native = &.{},
+    /// The programs of this package (`[targets] bins`), as source: each one goes to `lib/mojo/<name>.bins/<bin>.mojo`,
+    /// to be built on the machine that installs the package (src/core/bins.zig).
+    bins: []const Bin = &.{},
+};
+
+/// A program a package ships as source.
+pub const Bin = struct {
+    /// The `[targets] bins` name: `[a-z0-9_]+`, and the stem of the file in the package.
+    name: []const u8,
+    /// The bytes of the Mojo file that holds the `main`.
+    source: []const u8,
 };
 
 /// A static native library a package ships (`[native.<id>] kind = "static"`), as it is packed for one subdir.
@@ -102,6 +113,15 @@ fn validNeed(s: []const u8) bool {
     return std.mem.indexOfScalar(u8, s, '/') == null;
 }
 
+/// `[a-z0-9_]+`: what the registry accepts as the stem of a program's source (`lib/mojo/<name>.bins/<stem>.mojo`).
+pub fn validBinName(s: []const u8) bool {
+    if (s.len == 0) return false;
+    for (s) |c| {
+        if (!(std.ascii.isLower(c) or std.ascii.isDigit(c) or c == '_')) return false;
+    }
+    return true;
+}
+
 pub const Packed = struct {
     subdir: []const u8,
     /// `mojo-<name>-<version>-mojo<compiler>_0.conda`
@@ -118,7 +138,7 @@ pub const Packed = struct {
 
 pub const NativeDigest = struct { soname: []const u8, sha256: [64]u8, size: u64 };
 
-pub const PackError = error{ BadCompiler, BadSubdir, BadVersion, BadNative, PathTooLong, TooLarge, OutOfMemory };
+pub const PackError = error{ BadCompiler, BadSubdir, BadVersion, BadNative, BadBin, PathTooLong, TooLarge, OutOfMemory };
 
 /// MAJOR.MINOR.PATCH: three numbers of digits, no leading zero except "0",
 /// and nothing else (no pre-release, no build metadata, no missing part).
@@ -458,6 +478,12 @@ pub fn pack(arena: Allocator, in: Input) PackError!Packed {
     for (in.natives) |n| {
         if ((try nativeProblem(arena, n)) != null) return error.BadNative;
     }
+    for (in.bins, 0..) |b, i| {
+        if (!validBinName(b.name) or b.source.len == 0) return error.BadBin;
+        for (in.bins[0..i]) |other| {
+            if (std.mem.eql(u8, other.name, b.name)) return error.BadBin;
+        }
+    }
 
     const stem = try std.fmt.allocPrint(arena, "mojo-{s}-{s}-mojo{s}_0", .{ in.name, in.version, in.compiler });
     const mopm = try mopmJson(arena, in);
@@ -467,6 +493,7 @@ pub fn pack(arena: Allocator, in: Input) PackError!Packed {
     try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mojoc", .{in.name}), .data = in.mojoc });
     try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mopm.json", .{in.name}), .data = mopm });
     for (in.natives) |n| try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/{s}", .{n.soname}), .data = n.archive });
+    for (in.bins) |b| try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.bins/{s}.mojo", .{ in.name, b.name }), .data = b.source });
     std.mem.sort(File, pkg_files.items, {}, lessFile);
     var info_files = std.ArrayList(File).init(arena);
     try info_files.append(.{ .path = "info/index.json", .data = index });
@@ -592,6 +619,10 @@ pub fn condaPackageFor(name: []const u8) []const u8 {
         .{ "lzma", "xz" },
         .{ "xz", "xz" },
         .{ "zstd", "zstd" },
+        .{ "snappy", "snappy" },
+        .{ "brotlidec", "libbrotlidec" },
+        .{ "sqlite3", "libsqlite" },
+        .{ "sqlite", "libsqlite" },
     };
     var stem = if (std.mem.startsWith(u8, name, "lib")) name[3..] else name;
     if (std.mem.indexOfScalar(u8, stem, '.')) |dot| stem = stem[0..dot];
@@ -1413,6 +1444,7 @@ test "native dependencies that cannot be packed are refused with their reason" {
         .{ "OpenSSL = { mode = \"load\" }\n", "native dependency 'OpenSSL' names the conda package 'OpenSSL', which has an upper case letter" },
         .{ "mojo-json = { mode = \"load\" }\n", "native dependency 'mojo-json' names the conda package 'mojo-json'; a Mojo package belongs in [dependencies]" },
         .{ "lz4 = { mode = \"load\" }\nliblz4 = { mode = \"load\" }\n", "native dependency 'liblz4' names the conda package 'lz4-c' a second time" },
+        .{ "sqlite = { mode = \"load\" }\nsqlite3 = { mode = \"load\" }\n", "native dependency 'sqlite3' names the conda package 'libsqlite' a second time" },
         .{ "lz4 = { version = \"^1.0.0-rc.1\", mode = \"load\" }\n", "native dependency 'lz4' = \"^1.0.0-rc.1\": a pre-release in a requirement has no conda spelling" },
     }) |c| {
         const m = try manifest.parse(a, try std.mem.concat(a, u8, &.{ head, c[0] }), &diag);
@@ -1433,6 +1465,18 @@ test "the conda package of a system library: by name, library name or file name"
         .{ "libbz2.so.1.0", "bzip2" },
         .{ "liblzma.so.5", "xz" },
         .{ "libzstd.so.1", "zstd" },
+        .{ "snappy", "snappy" },
+        .{ "libsnappy.so.1", "snappy" },
+        .{ "libsnappy.1.dylib", "snappy" },
+        .{ "brotlidec", "libbrotlidec" },
+        .{ "libbrotlidec", "libbrotlidec" },
+        .{ "libbrotlidec.so.1", "libbrotlidec" },
+        .{ "libbrotlidec.1.dylib", "libbrotlidec" },
+        .{ "sqlite3", "libsqlite" },
+        .{ "sqlite", "libsqlite" },
+        .{ "libsqlite", "libsqlite" },
+        .{ "libsqlite3.so.0", "libsqlite" },
+        .{ "libsqlite3.0.dylib", "libsqlite" },
         .{ "openssl", "openssl" },
         .{ "libffi", "libffi" },
         .{ "lz4-c", "lz4-c" },

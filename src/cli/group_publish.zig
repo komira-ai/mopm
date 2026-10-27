@@ -38,7 +38,7 @@
 //! that may request an identity token, mopm exchanges it at the registry, in memory only, for one token that may publish
 //! exactly the members the plan uploads, at their versions (the `packages` form of the exchange). An identity token is
 //! single-use, so there is one identity request and one exchange for the whole set, and that token serves the group's
-//! create, uploads, commit and waits. A set of more than 100 members is refused before any request (a group is one unit
+//! create, uploads, commit and waits. A set of more than 500 members is refused before any request (a group is one unit
 //! and is not split); a rerun asks for a fresh token.
 
 const std = @import("std");

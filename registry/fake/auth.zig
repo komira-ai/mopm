@@ -296,7 +296,7 @@ fn oidcRepository(ctx: *Ctx, jwt: []const u8) ?[]const u8 {
     };
 }
 
-/// The `packages` form: `{jwt, packages: [{name, version}]}` (1 to 100 entries, no name twice). For a CI publisher the
+/// The `packages` form: `{jwt, packages: [{name, version}]}` (1 to 500 entries, the most a group holds, no name twice). For a CI publisher the
 /// deployment trusts by configuration; every name must be unclaimed (it is created, owned by the publisher) or already the
 /// publisher's, else `not_owner` and nothing is created. The one token may publish exactly those versions.
 fn exchangePackages(ctx: *Ctx, obj: std.json.ObjectMap, jwt: []const u8, stage: bool) anyerror!Response {
@@ -305,7 +305,7 @@ fn exchangePackages(ctx: *Ctx, obj: std.json.ObjectMap, jwt: []const u8, stage: 
         .array => |arr| arr.items,
         else => return resp.invalid(ctx.arena, "'packages' must be an array"),
     };
-    if (list.len < 1 or list.len > 100) return resp.invalid(ctx.arena, "'packages' holds 1 to 100 entries");
+    if (list.len < 1 or list.len > 500) return resp.invalid(ctx.arena, "'packages' holds 1 to 500 entries");
     var wanted = std.ArrayList(st.NameVersion).init(ctx.arena);
     for (list) |e| {
         const o = switch (e) {

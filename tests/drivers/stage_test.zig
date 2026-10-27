@@ -239,6 +239,32 @@ fn aNativeMember(w: World) !void {
     w.rep.check("publish --staged publishes the native member", pub_.code == 0 and std.mem.eql(u8, try w.stateOf("stg_n", "1.0.0"), "published"), try w.text(pub_));
 }
 
+/// A member with `[targets] bins`: the sources of its programs are packed, `mopm pack` makes the same bytes, and the set
+/// publishes.
+fn aBinsMember(w: World) !void {
+    const manifest_path = try w.path(&.{ w.work, "wsb", "src", "stg_b", "mopm.toml" });
+    try h.writeFile(manifest_path, "[package]\nname = \"stg_b\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[targets]\nbins = [{ name = \"ring_bench\", path = \"bench/ring.mojo\" }, { name = \"agg_bench\", path = \"bench/agg.mojo\" }]\n");
+    try h.writeFile(try w.path(&.{ w.work, "wsb", "src", "stg_b", "README.md" }), "# stg_b\n");
+    try h.writeFile(try w.path(&.{ w.work, "artb", "linux-64", "stg_b.mojoc" }), "the mojoc of b");
+    var r = try w.stage("wsb", "artb", "set_b_missing", &.{});
+    w.rep.check("a member whose program source is missing is refused, naming the member and the program", r.code == 1 and h.contains(r.stderr, "stg_b: [targets] bin 'ring_bench': cannot read") and
+        !w.exists(&.{ w.work, "set_b_missing" }), try w.text(r));
+    try h.writeFile(try w.path(&.{ w.work, "wsb", "src", "stg_b", "bench", "ring.mojo" }), "def main(): print(\"ring\")\n");
+    try h.writeFile(try w.path(&.{ w.work, "wsb", "src", "stg_b", "bench", "agg.mojo" }), "def main(): print(\"agg\")\n");
+    r = try w.stage("wsb", "artb", "set_b", &.{});
+    w.rep.check("a member with programs is staged", r.code == 0 and h.contains(r.stdout, "1 to upload"), try w.text(r));
+    const conda_file = try h.readFile(w.a, try w.path(&.{ w.work, "set_b", "linux-64", "mojo-stg_b-1.0.0-mojo1.0.0_0.conda" }));
+    w.rep.check("and the package holds the source of each program, below lib/mojo/stg_b.bins", h.contains(conda_file, "lib/mojo/stg_b.bins/ring_bench.mojo") and
+        h.contains(conda_file, "lib/mojo/stg_b.bins/agg_bench.mojo") and h.contains(conda_file, "def main(): print(\"ring\")"), "a program is not in the package");
+    const mojoc_arg = try std.fmt.allocPrint(w.a, "linux-64={s}", .{try w.path(&.{ w.work, "artb", "linux-64", "stg_b.mojoc" })});
+    const out_arg = try w.path(&.{ w.work, "packed_b" });
+    const by_pack = try w.m.run(&.{ "pack", "--compiler", "1.0.0", "--mojoc", mojoc_arg, "--manifest", manifest_path, "-o", out_arg }, null);
+    const packed_bytes = if (by_pack.code == 0) try h.readFile(w.a, try w.path(&.{ w.work, "packed_b", "linux-64", "mojo-stg_b-1.0.0-mojo1.0.0_0.conda" })) else "";
+    w.rep.check("the staged package is byte for byte the one mopm pack makes from the same files", by_pack.code == 0 and std.mem.eql(u8, packed_bytes, conda_file), try w.text(by_pack));
+    const pub_ = try w.m.run(&.{ "publish", "--staged", try w.path(&.{ w.work, "set_b" }), "--registry", w.fake.base, "--config-dir", w.conf, "--wait", "60" }, w.token);
+    w.rep.check("publish --staged publishes the member with programs", pub_.code == 0 and std.mem.eql(u8, try w.stateOf("stg_b", "1.0.0"), "published"), try w.text(pub_));
+}
+
 fn usageErrors(w: World) !void {
     var r = try w.m.run(&.{ "stage", "--workspace-root", "x", "--artifacts", "y", "--compiler", "1.0.0", "--out", "z" }, null);
     w.rep.check("stage without --registry is a usage error: there is no default", r.code == 2 and h.contains(r.stderr, "--registry is required"), r.stderr);
@@ -277,7 +303,9 @@ test "mopm stage against the fake registry" {
     }
     const claim_n = try h.request(a, "POST", fake.base, "/api/v1/packages/stg_n/claim", "{}", session);
     report.check("stg_n is claimed", claim_n.status == 201, claim_n.body);
-    const made = try h.request(a, "POST", fake.base, "/api/v1/me/tokens", "{\"name\":\"e2e\",\"scopes\":[\"publish\",\"yank\"],\"packages\":[\"stg_z\",\"stg_m\",\"stg_a\",\"stg_n\"],\"expires_in_days\":1}", session);
+    const claim_b = try h.request(a, "POST", fake.base, "/api/v1/packages/stg_b/claim", "{}", session);
+    report.check("stg_b is claimed", claim_b.status == 201, claim_b.body);
+    const made = try h.request(a, "POST", fake.base, "/api/v1/me/tokens", "{\"name\":\"e2e\",\"scopes\":[\"publish\",\"yank\"],\"packages\":[\"stg_z\",\"stg_m\",\"stg_a\",\"stg_n\",\"stg_b\"],\"expires_in_days\":1}", session);
     const token = if (made.status == 201) (h.jsonString(try h.parseJson(a, made.body), "token") orelse "") else "";
     report.check("an API token that may publish and yank the three is made", token.len > 0, made.body);
 
@@ -286,6 +314,7 @@ test "mopm stage against the fake registry" {
     try theRegistryDecides(w);
     try aCycleAndDeterminism(w);
     try aNativeMember(w);
+    try aBinsMember(w);
     try usageErrors(w);
 
     var leaked = false;

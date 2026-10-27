@@ -20,6 +20,14 @@ function packMapOutputs(): string[] {
   return [...new Set(out)].sort();
 }
 
+/** The roots of the native catalog mopm pins (toolchain/natives.txt): one conda name per line, `#` comments skipped. */
+function catalogRoots(): string[] {
+  const text = readFileSync(join(__dirname, '../../../../toolchain/natives.txt'), 'utf8');
+  const out = text.split('\n').map((l) => l.trim()).filter((l) => l !== '' && !l.startsWith('#'));
+  if (out.length === 0) throw new Error('toolchain/natives.txt lists no library');
+  return [...new Set(out)].sort();
+}
+
 describe('the native library allow-list of the deployed validators', () => {
   test('a package depending on lz4-c with a version range is accepted', () => {
     expect(verdictFor('lz4-c >=1.9.3,<2').ok).toBe(true);
@@ -54,7 +62,7 @@ describe('the native library allow-list of the deployed validators', () => {
     expect(c.ok && c.facts.nativeDepends).toEqual(['lz4-c', 'zstd >=1']);
   });
 
-  test.each(['openssl', 'python >=3', 'lz4 >=1', 'liblz4', 'zlib', 'lz4-c-extra', 'LZ4-C'])('%s is refused with dependency_not_allowed', (dep) => {
+  test.each(['openssl', 'python >=3', 'lz4 >=1', 'liblz4', 'zlib', 'lz4-c-extra', 'LZ4-C', 'aws-lc', 'sqlite', 'brotli', 'libbrotlienc', 'libbrotlicommon', 'libsnappy', 's2n'])('%s is refused with dependency_not_allowed', (dep) => {
     const v = verdictFor(dep);
     expect(v.ok).toBe(false);
     if (v.ok) return;
@@ -70,6 +78,10 @@ describe('the native library allow-list of the deployed validators', () => {
 
   test('every conda name the pack map can emit is on the allow-list, and nothing else is', () => {
     expect(packMapOutputs()).toEqual([...NATIVE_DEP_ALLOWLIST].sort());
+  });
+
+  test('the allow-list equals the roots of the pinned native catalog, so the registry and mopm lock cannot drift', () => {
+    expect([...NATIVE_DEP_ALLOWLIST].sort()).toEqual(catalogRoots());
   });
 
   test('both deployed validators are wired with the deployed options', () => {
