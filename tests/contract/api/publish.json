@@ -390,6 +390,50 @@
       }
     },
     {
+      "name": "commit with a source_commit",
+      "operationId": "commitPublish",
+      "request": {
+        "path": { "name": "http_client", "version": "0.4.0" },
+        "body": { "upload_ids": ["upl-42ab"], "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae", "source_commit": "0123456789abcdef0123456789abcdef01234567" },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": { "publish_id": "pub-5d1e", "status_url": "/api/v1/publishes/pub-5d1e" }
+      }
+    },
+    {
+      "name": "commit with a source_commit in uppercase",
+      "operationId": "commitPublish",
+      "request": {
+        "path": { "name": "http_client", "version": "0.4.0" },
+        "body": { "upload_ids": ["upl-42ab"], "source_commit": "0123456789ABCDEF0123456789ABCDEF01234567" },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": { "publish_id": "pub-5d1e", "status_url": "/api/v1/publishes/pub-5d1e" }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "commit with a source_commit of 41 digits",
+      "operationId": "commitPublish",
+      "request": {
+        "path": { "name": "http_client", "version": "0.4.0" },
+        "body": { "upload_ids": ["upl-42ab"], "source_commit": "0123456789abcdef0123456789abcdef012345678" },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": { "publish_id": "pub-5d1e", "status_url": "/api/v1/publishes/pub-5d1e" }
+      },
+      "expect": "invalid"
+    },
+    {
       "name": "commit with a readme over 64 KiB",
       "operationId": "commitPublish",
       "request": {
@@ -1529,6 +1573,36 @@
         "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
         "body": { "group_id": "grp_0123456789abcdef0123456789abcdef", "status": "validating", "attempt": 1, "status_url": "/api/v1/groups/grp_0123456789abcdef0123456789abcdef" }
       }
+    },
+    {
+      "name": "commit a group, with a source_commit on some members",
+      "operationId": "commitGroup",
+      "request": {
+        "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" },
+        "body": {
+          "members": [
+            { "name": "http_client", "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae", "source_commit": "0123456789abcdef0123456789abcdef01234567" },
+            { "name": "json" }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": { "group_id": "grp_0123456789abcdef0123456789abcdef", "status": "validating", "attempt": 1, "status_url": "/api/v1/groups/grp_0123456789abcdef0123456789abcdef" }
+      }
+    },
+    {
+      "name": "commit a group with a member whose source_commit is not a commit id",
+      "operationId": "commitGroup",
+      "request": { "path": { "group_id": "grp_0123456789abcdef0123456789abcdef" }, "body": { "members": [ { "name": "http_client", "source_commit": "abc1234" } ] }, "auth": "publishToken" },
+      "response": {
+        "status": 202,
+        "headers": { "x-mopm-request-id": "req-7f3a2c19d0e4" },
+        "body": { "group_id": "grp_0123456789abcdef0123456789abcdef", "status": "validating", "attempt": 1, "status_url": "/api/v1/groups/grp_0123456789abcdef0123456789abcdef" }
+      },
+      "expect": "invalid"
     },
     {
       "name": "commit a group that had already committed",

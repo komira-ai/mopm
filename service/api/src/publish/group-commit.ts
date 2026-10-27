@@ -6,6 +6,7 @@ import type { Store } from '../store';
 import type { AuditEntry, VersionRecord } from '../types';
 import type { PublishConfig } from './config';
 import { parseDisplay } from './display';
+import { parseSourceCommit } from './source-commit';
 import { groupCommitRefused, invalidRequest, PublishError, uploadInvalid } from './errors';
 import { quarantineKeyFor, uploadIdFor } from './group-keys';
 import { ENDED_TAIL_SECONDS, groupAudit, pastDeadline } from './group-lifecycle';
@@ -49,7 +50,8 @@ export function parseGroupCommit(members: GroupMembers, body: unknown): { inputs
     if (byName.has(name)) throw invalidRequest(`'${name}' appears twice`);
     if (manifest_sha256 !== undefined && (typeof manifest_sha256 !== 'string' || !SHA256.test(manifest_sha256))) throw invalidRequest(`'manifest_sha256' of '${name}' is 64 lowercase hex digits`);
     const display = parseDisplay(m);
-    byName.set(name, { name, ...(manifest_sha256 !== undefined ? { manifest_sha256 } : {}), ...(Object.keys(display).length > 0 ? { display } : {}) });
+    const source_commit = parseSourceCommit(m, ` of '${name}'`);
+    byName.set(name, { name, ...(manifest_sha256 !== undefined ? { manifest_sha256 } : {}), ...(Object.keys(display).length > 0 ? { display } : {}), ...(source_commit !== undefined ? { source_commit } : {}) });
   }
   const inputs: CommitInput[] = [];
   for (const m of members.members) {

@@ -179,7 +179,7 @@ function buildFill(d: ValidatorDeps, rec: PublishRecord, facts: PackageFacts[]):
 export function fillFrom(
   channelUrl: string,
   now: Date,
-  version: { version: string; display?: DisplayMeta; published_by: string },
+  version: { version: string; display?: DisplayMeta; source_commit?: string; published_by: string },
   declared: ReadonlyArray<Pick<PublishFile, 'subdir' | 'filename' | 'sha256' | 'size'>>,
   facts: PackageFacts[],
 ): PublishFill {
@@ -201,6 +201,7 @@ export function fillFrom(
     files,
     manifest_sha256: first.manifestSha256,
     ...(version.display ?? {}),
+    ...(version.source_commit !== undefined ? { source_commit: version.source_commit } : {}),
     published_at: now.toISOString(),
     published_by: version.published_by,
   };

@@ -544,6 +544,13 @@ paths:
         version when it is published and served back by `getVersion`. A value
         that breaks its rule is `invalid_request`. A client that sends none gets
         a version without them, as before.
+
+        The optional `source_commit` is the git commit id the version was built
+        from (40 or 64 lowercase hex digits). It is stored once with the version,
+        returned by `getVersion` as `source_commit`, and left out for a version
+        committed without one. The registry only checks its form: it is not verified
+        against the archives or the caller, and versions are never compared or
+        ordered by it.
       security:
         - publishToken: []
       parameters:
@@ -717,7 +724,8 @@ paths:
       description: |
         Asynchronous. The caller has created the group and PUT every file to the URL it was given; this call hands over what
         the archives cannot say for themselves, one entry per member: the optional `manifest_sha256` of its embedded manifest (checked when given, as in
-        `commitPublish`) and the optional display fields (the same rules as `commitPublish`). Every member of the group is listed exactly once.
+        `commitPublish`), the optional display fields (the same rules as `commitPublish`) and the optional `source_commit` (the
+        same rules, informational and unverified; it lands on that member's version only). Every member of the group is listed exactly once.
 
         The registry checks that the group is `open`, not past its `deadline_at`, that every member is reserved and that every
         file is in storage at its declared size, stores the request, moves the group to `validating` and answers 202. It then
@@ -992,6 +1000,15 @@ components:
     Sha256:
       type: string
       pattern: "^[0-9a-f]{64}$"
+    SourceCommit:
+      description: |
+        A git commit id: exactly 40 (SHA-1) or 64 (SHA-256) lowercase hex digits. The publisher states it when it commits a version
+        (`commitPublish`, `commitGroup`); the registry stores it once with the version and serves it back from `getVersion`. It is
+        informational: the registry does not verify it against the archives, the repository or the caller's identity, and it never
+        compares or orders versions by it. Anything else (uppercase, another length, a non-hex character, a value that is not a
+        string) is `invalid_request`.
+      type: string
+      pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"
     Subdir:
       description: A conda subdir. New values may be added.
       type: string
@@ -1482,9 +1499,12 @@ components:
             published before the registry recorded it. It can be used with `getGroup` and `yankGroup`, which keep their own
             ownership and scope rules: knowing it grants nothing. A version that is still `pending` is not found, whatever its group.
           $ref: "#/components/schemas/GroupId"
-        manifest:
-          description: The embedded `<name>.mopm.json` (see spec/package-metadata.schema.json).
-          type: object
+        source_commit:
+          description: |
+            The git commit the publisher said the version was built from, as sent when it was committed. Absent for a version
+            committed without one, including every version published before the registry recorded it. Informational and unverified:
+            the registry checks its form only, so it is not proof of where the files came from.
+          $ref: "#/components/schemas/SourceCommit"
         description: { type: string, maxLength: 512, description: "`[package] description` of this version's mopm.toml. Absent when not set." }
         license: { type: string, maxLength: 128, description: "`[package] license`, an SPDX expression. Absent when not set." }
         repository: { type: string, format: uri, maxLength: 2048, description: An https URL. Absent when not set. }
@@ -1547,6 +1567,12 @@ components:
             rejected `manifest_invalid`. When given, a file whose manifest hashes to something else is `sha256_mismatch`, so at
             most the files that carry the given manifest bytes pass.
           $ref: "#/components/schemas/Sha256"
+        source_commit:
+          description: |
+            Optional. The git commit the version was built from (see `SourceCommit`). Stored once with the version and served by
+            `getVersion`; the registry does not verify it. Committing the same upload ids again must repeat it (or its absence): a
+            repeat that states another value is refused `version_exists`, and the stored value does not change.
+          $ref: "#/components/schemas/SourceCommit"
         description: { type: string, minLength: 1, maxLength: 512, description: "`[package] description` of this version's mopm.toml: one line, no line breaks. Stored on the version and served back by `getVersion`." }
         license: { type: string, minLength: 1, maxLength: 128, description: "`[package] license`, an SPDX expression." }
         repository: { type: string, format: uri, maxLength: 2048, description: An https URL. }
@@ -1707,6 +1733,9 @@ components:
         manifest_sha256:
           description: Optional, member by member, with the meaning it has in `CommitPublishRequest`. A repeated commit must repeat which members gave it and what they gave, or it is another request (`group_commit_refused`).
           $ref: "#/components/schemas/Sha256"
+        source_commit:
+          description: Optional, member by member, with the meaning it has in `CommitPublishRequest`. It is stored on that member's version only, and is part of the request a repeated commit must repeat.
+          $ref: "#/components/schemas/SourceCommit"
         description: { type: string, minLength: 1, maxLength: 512, description: "As in `CommitPublishRequest`." }
         license: { type: string, minLength: 1, maxLength: 128, description: "As in `CommitPublishRequest`." }
         repository: { type: string, format: uri, maxLength: 2048, description: An https URL. }

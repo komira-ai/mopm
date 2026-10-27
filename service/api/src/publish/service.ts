@@ -10,6 +10,7 @@ import { SUBDIRS_V1 } from '../types';
 import { canonicalVersion } from '../version';
 import type { PublishConfig } from './config';
 import { parseDisplay } from './display';
+import { parseSourceCommit } from './source-commit';
 import type { DisplayMeta } from './display';
 import { invalidRequest, PublishError, uploadInvalid } from './errors';
 import { expireIfDue, isDead, orphanFree } from './group-lifecycle';
@@ -271,6 +272,8 @@ export class PublishService {
     // The same upload ids again resume the publish already made (and send the message again if it never left).
     const existing = await this.d.publishes.getPublish(publishId);
     if (existing && existing.actor === actor) {
+      // The value is written once with the version: a repeat that states another one is not the same request.
+      if (existing.source_commit !== req.source_commit) throw versionExists(name, version, existing.files[0]?.sha256 ?? existing.manifest_sha256 ?? '');
       if (existing.status === 'pending') await this.enqueue(existing);
       return accepted;
     }
@@ -322,6 +325,7 @@ export class PublishService {
       status: 'pending',
       ...(req.manifest_sha256 !== undefined ? { manifest_sha256: req.manifest_sha256 } : {}),
       ...(Object.keys(req.display).length > 0 ? { display: req.display } : {}),
+      ...(req.source_commit !== undefined ? { source_commit: req.source_commit } : {}),
       files: uploads.map((u) => ({ upload_id: u.upload_id, subdir: u.subdir, filename: u.filename, sha256: u.sha256, size: u.size, key: u.key })),
       remaining_subdirs: [],
       created_at: now,
@@ -473,7 +477,7 @@ export function parseYank(body: unknown): { yanked: true; reason: string } | { y
   return { yanked: true, reason };
 }
 
-function parseCommit(body: unknown): { upload_ids: string[]; manifest_sha256?: string; display: DisplayMeta } {
+function parseCommit(body: unknown): { upload_ids: string[]; manifest_sha256?: string; display: DisplayMeta; source_commit?: string } {
   if (!isObject(body)) throw invalidRequest('the body is not a JSON object');
   const { upload_ids, manifest_sha256 } = body;
   if (!Array.isArray(upload_ids) || upload_ids.length < 1 || upload_ids.length > 20) throw invalidRequest("'upload_ids' holds 1 to 20 ids");
@@ -481,5 +485,6 @@ function parseCommit(body: unknown): { upload_ids: string[]; manifest_sha256?: s
   if (new Set(upload_ids).size !== upload_ids.length) throw invalidRequest("'upload_ids' repeats an id");
   // Optional: given, it is checked against the archive's manifest; absent, the registry uses the hash it computes itself.
   if (manifest_sha256 !== undefined && (typeof manifest_sha256 !== 'string' || !SHA256.test(manifest_sha256))) throw invalidRequest("'manifest_sha256' is 64 lowercase hex digits");
-  return { upload_ids: upload_ids as string[], ...(manifest_sha256 !== undefined ? { manifest_sha256 } : {}), display: parseDisplay(body) };
+  const source = parseSourceCommit(body);
+  return { upload_ids: upload_ids as string[], ...(manifest_sha256 !== undefined ? { manifest_sha256 } : {}), display: parseDisplay(body), ...(source !== undefined ? { source_commit: source } : {}) };
 }

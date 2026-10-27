@@ -252,17 +252,6 @@
             }
           ],
           "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
-          "manifest": {
-            "schema": 1,
-            "name": "http_client",
-            "version": "0.4.0",
-            "deps": [
-              {
-                "name": "http_core",
-                "range": ">=1.2,<2"
-              }
-            ]
-          },
           "readme_html": "<p>An HTTP client.</p>",
           "provenance": {
             "kind": "oidc",
@@ -271,6 +260,115 @@
           }
         }
       }
+    },
+    {
+      "name": "version detail with a source_commit",
+      "operationId": "getVersion",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.4.0"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "name": "http_client",
+          "version": "0.4.0",
+          "state": "published",
+          "yank_reason": null,
+          "published_at": "2026-10-13T12:00:00Z",
+          "published_by": "octocat",
+          "requires_mojo": "==1.0.0",
+          "deps": [
+            {
+              "name": "http_core",
+              "range": ">=1.2,<2"
+            }
+          ],
+          "native": [
+            {
+              "id": "crypto",
+              "soname": "libcrypto_native.so.1"
+            }
+          ],
+          "files": [
+            {
+              "subdir": "linux-64",
+              "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+              "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+              "size": 123456,
+              "url": "https://conda.mopm.dev/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+            }
+          ],
+          "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "source_commit": "0123456789abcdef0123456789abcdef01234567",
+          "readme_html": "<p>An HTTP client.</p>",
+          "provenance": {
+            "kind": "oidc",
+            "repository": "https://github.com/example/http_client",
+            "workflow_ref": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+          }
+        }
+      }
+    },
+    {
+      "name": "version detail with a source_commit that is not a commit id",
+      "operationId": "getVersion",
+      "request": {
+        "path": {
+          "name": "http_client",
+          "version": "0.4.0"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "name": "http_client",
+          "version": "0.4.0",
+          "state": "published",
+          "yank_reason": null,
+          "published_at": "2026-10-13T12:00:00Z",
+          "published_by": "octocat",
+          "requires_mojo": "==1.0.0",
+          "deps": [
+            {
+              "name": "http_core",
+              "range": ">=1.2,<2"
+            }
+          ],
+          "native": [
+            {
+              "id": "crypto",
+              "soname": "libcrypto_native.so.1"
+            }
+          ],
+          "files": [
+            {
+              "subdir": "linux-64",
+              "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+              "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+              "size": 123456,
+              "url": "https://conda.mopm.dev/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
+            }
+          ],
+          "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "source_commit": "0123456789ABCDEF0123456789ABCDEF01234567",
+          "readme_html": "<p>An HTTP client.</p>",
+          "provenance": {
+            "kind": "oidc",
+            "repository": "https://github.com/example/http_client",
+            "workflow_ref": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
+          }
+        }
+      },
+      "expect": "invalid"
     },
     {
       "name": "version detail of a version a group published",
@@ -317,17 +415,6 @@
           ],
           "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
           "group_id": "grp_0123456789abcdef0123456789abcdef",
-          "manifest": {
-            "schema": 1,
-            "name": "http_client",
-            "version": "0.4.0",
-            "deps": [
-              {
-                "name": "http_core",
-                "range": ">=1.2,<2"
-              }
-            ]
-          },
           "readme_html": "<p>An HTTP client.</p>",
           "provenance": {
             "kind": "oidc",
@@ -382,17 +469,6 @@
           ],
           "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
           "group_id": "grp_xyz",
-          "manifest": {
-            "schema": 1,
-            "name": "http_client",
-            "version": "0.4.0",
-            "deps": [
-              {
-                "name": "http_core",
-                "range": ">=1.2,<2"
-              }
-            ]
-          },
           "readme_html": "<p>An HTTP client.</p>",
           "provenance": {
             "kind": "oidc",
@@ -447,17 +523,6 @@
             }
           ],
           "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
-          "manifest": {
-            "schema": 1,
-            "name": "http_client",
-            "version": "0.4.0",
-            "deps": [
-              {
-                "name": "http_core",
-                "range": ">=1.2,<2"
-              }
-            ]
-          },
           "readme_html": "<p>An HTTP client.</p>",
           "provenance": {
             "kind": "oidc",
@@ -510,17 +575,6 @@
             }
           ],
           "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
-          "manifest": {
-            "schema": 1,
-            "name": "http_client",
-            "version": "0.4.0",
-            "deps": [
-              {
-                "name": "http_core",
-                "range": ">=1.2,<2"
-              }
-            ]
-          },
           "readme_html": null,
           "provenance": {
             "kind": "oidc",
@@ -533,63 +587,6 @@
           }
         }
       }
-    },
-    {
-      "name": "the embedded manifest must be package metadata",
-      "operationId": "getVersion",
-      "request": {
-        "path": {
-          "name": "http_client",
-          "version": "0.4.0"
-        }
-      },
-      "response": {
-        "status": 200,
-        "headers": {
-          "x-mopm-request-id": "req-7f3a2c19d0e4"
-        },
-        "body": {
-          "name": "http_client",
-          "version": "0.4.0",
-          "state": "published",
-          "yank_reason": null,
-          "published_at": "2026-10-13T12:00:00Z",
-          "published_by": "octocat",
-          "requires_mojo": "==1.0.0",
-          "deps": [
-            {
-              "name": "http_core",
-              "range": ">=1.2,<2"
-            }
-          ],
-          "native": [
-            {
-              "id": "crypto",
-              "soname": "libcrypto_native.so.1"
-            }
-          ],
-          "files": [
-            {
-              "subdir": "linux-64",
-              "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
-              "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
-              "size": 123456,
-              "url": "https://conda.mopm.dev/linux-64/mojo-http_client-0.4.0-mojo1.0.0_0.conda"
-            }
-          ],
-          "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
-          "manifest": {
-            "name": "http_client"
-          },
-          "readme_html": "<p>An HTTP client.</p>",
-          "provenance": {
-            "kind": "oidc",
-            "repository": "https://github.com/example/http_client",
-            "workflow_ref": "example/http_client/.github/workflows/release.yml@refs/tags/v0.4.0"
-          }
-        }
-      },
-      "expect": "invalid"
     },
     {
       "name": "file with a made-up subdir",
@@ -635,17 +632,6 @@
             }
           ],
           "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
-          "manifest": {
-            "schema": 1,
-            "name": "http_client",
-            "version": "0.4.0",
-            "deps": [
-              {
-                "name": "http_core",
-                "range": ">=1.2,<2"
-              }
-            ]
-          },
           "readme_html": "<p>An HTTP client.</p>",
           "provenance": {
             "kind": "oidc",
@@ -700,17 +686,6 @@
             }
           ],
           "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
-          "manifest": {
-            "schema": 1,
-            "name": "http_client",
-            "version": "0.4.0",
-            "deps": [
-              {
-                "name": "http_core",
-                "range": ">=1.2,<2"
-              }
-            ]
-          },
           "readme_html": "<p>An HTTP client.</p>",
           "provenance": {
             "kind": "oidc",
@@ -765,17 +740,6 @@
             }
           ],
           "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
-          "manifest": {
-            "schema": 1,
-            "name": "http_client",
-            "version": "0.4.0",
-            "deps": [
-              {
-                "name": "http_core",
-                "range": ">=1.2,<2"
-              }
-            ]
-          },
           "readme_html": "<p>An HTTP client.</p>",
           "provenance": {
             "kind": "oidc",
@@ -888,17 +852,6 @@
             }
           ],
           "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
-          "manifest": {
-            "schema": 1,
-            "name": "http_client",
-            "version": "0.4.0",
-            "deps": [
-              {
-                "name": "http_core",
-                "range": ">=1.2,<2"
-              }
-            ]
-          },
           "readme_html": "<p>An HTTP client.</p>",
           "provenance": {
             "kind": "oidc",
@@ -971,17 +924,6 @@
             }
           ],
           "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
-          "manifest": {
-            "schema": 1,
-            "name": "http_client",
-            "version": "0.4.0",
-            "deps": [
-              {
-                "name": "http_core",
-                "range": ">=1.2,<2"
-              }
-            ]
-          },
           "readme_html": "<p>An HTTP client.</p>",
           "provenance": {
             "kind": "oidc",
@@ -1045,17 +987,6 @@
             }
           ],
           "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
-          "manifest": {
-            "schema": 1,
-            "name": "http_client",
-            "version": "0.4.0",
-            "deps": [
-              {
-                "name": "http_core",
-                "range": ">=1.2,<2"
-              }
-            ]
-          },
           "readme_html": "<p>An HTTP client.</p>",
           "provenance": {
             "kind": "oidc",

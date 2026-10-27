@@ -55,6 +55,8 @@ export interface PublishRecord {
   manifest_sha256?: string;
   /** Display metadata from the commit request (description, license, repository, homepage, keywords, readme). */
   display?: DisplayMeta;
+  /** `source_commit` of the commit request (src/publish/source-commit.ts); stored on the version when it is published. */
+  source_commit?: string;
   files: PublishFile[];
   /** Subdirs whose repodata does not yet list this publish (set when the version is published). */
   remaining_subdirs: string[];
