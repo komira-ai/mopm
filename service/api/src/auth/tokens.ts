@@ -165,6 +165,14 @@ export class TokenService {
     return { ...meta(m.record), token: m.secret };
   }
 
+  /** `GET /me`: the account behind a token. A token whose account has no user row is not recognised. */
+  async me(github_id: number): Promise<{ github_id: number; handle: string; packages: string[]; pending_invitations: number }> {
+    const user = await this.store.getUser(github_id);
+    if (!user) throw new AuthError('token_unknown', 'The token is not recognised.');
+    // Invitations are not served yet (the /me/invitations paths), so none is ever pending.
+    return { github_id: user.github_id, handle: user.handle, packages: [...(await this.ownedPackages(github_id))].sort(), pending_invitations: 0 };
+  }
+
   /** The caller's live API tokens: metadata only. */
   async list(github_id: number): Promise<TokenMeta[]> {
     const t = this.now().getTime();

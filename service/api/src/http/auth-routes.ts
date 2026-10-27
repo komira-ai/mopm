@@ -75,6 +75,9 @@ export async function routeAuth(req: AuthRequest, services: AuthServices | undef
     op = async (s) => ({ status: 200, body: await (await s.devices()).poll(jsonBody(req.body) as { device_code: string }) });
   } else if (post && seg.length === 3 && seg[0] === 'auth' && seg[1] === 'oidc' && seg[2] === 'exchange') {
     op = async (s) => ({ status: 200, body: await s.oidc.exchange(jsonBody(req.body, MAX_EXCHANGE_BODY_BYTES) as OidcExchangeInput) });
+  } else if (method === 'GET' && seg.length === 1 && seg[0] === 'me') {
+    // `userToken`: a session or an API token; a CI token is nobody's and gets scope_missing.
+    op = async (s) => ({ status: 200, body: await s.tokens.me(s.authn.userToken(await s.authn.authenticate(req.authorization))) });
   } else if (seg.length === 2 && seg[0] === 'me' && seg[1] === 'tokens' && (post || method === 'GET')) {
     op = async (s) => {
       const github_id = s.authn.freshSession(await s.authn.authenticate(req.authorization));

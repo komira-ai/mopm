@@ -5,6 +5,10 @@ checksums, and this file says what changed. The details of a command are on its 
 
 ## Unreleased
 
+### `mopm whoami` works against the hosted registry
+
+`GET /api/v1/me` (the operation `mopm whoami` calls) is now served: it answers the account behind a session or an API token with its GitHub id, handle and the packages it owns, and `pending_invitations` is always 0 because invitations are not served yet. A CI token is refused as `scope_missing`. Before this, the hosted registry answered `route_not_found` and only the registry that `mopm` runs against in tests served it.
+
 ### One exchange covers up to 500 packages, and an account's daily claim limit can be raised
 
 `POST /auth/oidc/exchange` takes up to 500 entries in `packages` (it was 100), the most members a group may have, and `mopm publish --staged --oidc` sends a set of up to 500 members (it refused more than 100 before any request). The registry looks the names up and creates the missing ones sixteen at a time, and the answers and refusals are those of one at a time (the first failing name in the request is the one named). A request of 501 names is still `invalid_request`. The body of the exchange may be up to 128 KiB (the other auth routes keep 64 KiB), so a set of 500 names and versions of the longest length is not refused for its size. The registry that `mopm` runs against in tests takes 500 as well. A claim (`POST /packages/{name}/claim`) is still limited to 50 a UTC day for an account and for a token; the operator of a registry can set a higher daily limit (at most 1000) for named accounts without a deploy. Nothing changes for an account without that setting.

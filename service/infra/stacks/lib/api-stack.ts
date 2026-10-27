@@ -139,6 +139,7 @@ export const AUTH_ROUTES: { method: apigw.HttpMethod; path: string }[] = [
   { method: apigw.HttpMethod.POST, path: '/api/v1/auth/device' },
   { method: apigw.HttpMethod.POST, path: '/api/v1/auth/device/poll' },
   { method: apigw.HttpMethod.POST, path: '/api/v1/auth/oidc/exchange' },
+  { method: apigw.HttpMethod.GET, path: '/api/v1/me' },
   { method: apigw.HttpMethod.POST, path: '/api/v1/me/tokens' },
   { method: apigw.HttpMethod.GET, path: '/api/v1/me/tokens' },
   { method: apigw.HttpMethod.DELETE, path: '/api/v1/me/tokens/{token_id}' },
