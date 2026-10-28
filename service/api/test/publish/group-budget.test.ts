@@ -54,13 +54,13 @@ class VirtualTime {
 }
 
 /** Make these methods of `target` take `ms` of virtual time each, and count the calls by method name. */
-function charged(target: object, methods: readonly string[], time: VirtualTime, calls: Map<string, number>) {
+function charged(target: object, methods: readonly string[], time: VirtualTime, calls: Map<string, number>, callMs = CALL_MS, dearer: Record<string, number> = {}) {
   const t = target as Record<string, (...a: unknown[]) => Promise<unknown>>;
   for (const m of methods) {
     const orig = t[m]!.bind(target);
     t[m] = async (...a) => {
       calls.set(m, (calls.get(m) ?? 0) + 1);
-      await time.sleep(CALL_MS);
+      await time.sleep(dearer[m] ?? callMs);
       return orig(...a);
     };
   }
@@ -158,5 +158,44 @@ describe.each(RIGS)('the time of a group create: %s', (_label, make) => {
     // Their files were not looked at: the call answers `reserving`, and the client reads only the counts.
     expect(calls.get('head') ?? 0).toBe(0);
     expect(calls.get('getUpload') ?? 0).toBe(0);
+  });
+});
+
+/**
+ * The group of the production incident: 42 members, and a registry slow enough that one create call needs most of its budget for the
+ * preflight. The preflight's read of the rows (`versionsOf`) is charged as the funnel does it: the rows of 42 packages in three
+ * batches of sixteen, and then the header of each of the 44 groups that those rows name (the past groups of the packages, whose
+ * headers a cold container has not cached), in three more.
+ */
+describe.each(RIGS)('a group of 42 members over a slow registry: %s', (_label, make) => {
+  const SLOW_CALL_MS = 400;
+  const SLOW_BUDGET_MS = 7000;
+  const members42 = names.slice(0, 42);
+
+  test('every call ends within the budget plus one batch (the last adds the files of the 42), and the group is complete in a few calls', async () => {
+    const rig = make();
+    const env = new GroupEnv(rig, { groupCreateBudgetMs: SLOW_BUDGET_MS });
+    const me = await env.account(1, 'octocat', members42);
+    const time = new VirtualTime((now) => (env.mono = now));
+    const calls = new Map<string, number>();
+    charged(rig.store, ['getPackage', 'listOwners', 'getGroup', 'getGroupMembers', 'createGroup', 'updateGroup', 'adoptVersion'], time, calls, SLOW_CALL_MS);
+    charged(rig.store, ['versionsOf'], time, calls, SLOW_CALL_MS, { versionsOf: 6 * SLOW_CALL_MS });
+    charged(env.publishes, ['getActorGroups', 'putActorGroups', 'hit', 'versionHolder', 'getUpload', 'putUpload'], time, calls, SLOW_CALL_MS);
+    charged(env.objects, ['head'], time, calls, SLOW_CALL_MS);
+    const body = members42.map((n) => env.member(n));
+
+    const memberMs = 4 * SLOW_CALL_MS;
+    const filesMs = Math.ceil(42 / 16) * 2 * SLOW_CALL_MS;
+    let answer: { reserving?: unknown; members: unknown[] } | undefined;
+    for (let i = 0; i === 0 || (i < 6 && answer!.reserving !== undefined); i++) {
+      const from = time.now;
+      const r = await env.create(me, body);
+      const took = time.now - from;
+      answer = json(r);
+      expect(took).toBeLessThanOrEqual(SLOW_BUDGET_MS + memberMs + (answer!.reserving === undefined ? filesMs : 0));
+    }
+    expect(answer!.reserving).toBeUndefined();
+    expect(answer!.members).toHaveLength(42);
+    expect(calls.get('adoptVersion')).toBe(42);
   });
 });

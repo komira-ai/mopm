@@ -212,9 +212,13 @@ export class ApiStack extends Stack {
       // The asset holds one bundled file per handler (esbuild, service/api `npm run build`); the AWS SDK v3 comes with the
       // Node.js 22 runtime and is the one thing left out. test/bundle.test.ts loads every handler from its asset.
       code: lambda.Code.fromAsset(handlerDir),
-      memorySize: 256,
-      // Login calls GitHub and Secrets Manager; the gateway allows 30 seconds.
-      timeout: Duration.seconds(10),
+      // 1024 MB for the CPU it brings: a group create does hundreds of store and S3 calls, each signed and parsed in this process.
+      memorySize: 1024,
+      // Under the HTTP API's 30 s limit on an integration (API_GATEWAY_INTEGRATION_SECONDS), so a call the Lambda ends is the Lambda's
+      // timeout and not the gateway's: the gateway answers a Lambda that times out with a bare HTTP 500, the registry's own errors never
+      // run. A group create stops reserving after groupCreateBudgetMs (service/api/src/publish/config.ts, at most 9 s) and spends a
+      // batch more finishing; test/api.test.ts holds the budget and that tail under this timeout. Login calls GitHub and Secrets Manager.
+      timeout: Duration.seconds(API_LAMBDA_TIMEOUT_SECONDS),
       logGroup,
       environment: {
         MOPM_STAGE: c.stage,
