@@ -165,8 +165,86 @@ pub const Got = struct {
 /// to judge. An error (`DownloadFailed`, `SizeMismatch`, `HashMismatch`) leaves nothing new in `dir`, and `diag` says
 /// why, naming `url`.
 pub fn get(arena: Allocator, dir: std.fs.Dir, name: []const u8, url: []const u8, opts: GetOptions, diag: *Diag) !Got {
-    _ = .{ arena, dir, name, url, opts, diag };
-    return error.DownloadFailed;
+    const tmp = try tempName(arena, name);
+    var kept = false;
+    defer {
+        if (!kept) dir.deleteFile(tmp) catch {};
+    }
+
+    var client = std.http.Client{ .allocator = arena };
+    defer client.deinit();
+    const uri = std.Uri.parse(url) catch {
+        diag.message = try std.fmt.allocPrint(arena, "{s} is not a URL", .{url});
+        return error.DownloadFailed;
+    };
+    const conditional = [_]std.http.Header{.{ .name = "If-None-Match", .value = opts.if_none_match orelse "" }};
+    var header_buf: [16 * 1024]u8 = undefined;
+    var req = client.open(.GET, uri, .{
+        .server_header_buffer = &header_buf,
+        .keep_alive = false,
+        .headers = .{
+            .user_agent = .{ .override = "mopm" },
+            .accept_encoding = .{ .override = "identity" },
+        },
+        .extra_headers = if (opts.if_none_match != null) conditional[0..1] else conditional[0..0],
+    }) catch |e| {
+        diag.message = try std.fmt.allocPrint(arena, "cannot reach {s}: {s}", .{ url, @errorName(e) });
+        return error.DownloadFailed;
+    };
+    defer req.deinit();
+    req.send() catch |e| {
+        diag.message = try std.fmt.allocPrint(arena, "cannot send the request to {s}: {s}", .{ url, @errorName(e) });
+        return error.DownloadFailed;
+    };
+    req.finish() catch |e| {
+        diag.message = try std.fmt.allocPrint(arena, "cannot send the request to {s}: {s}", .{ url, @errorName(e) });
+        return error.DownloadFailed;
+    };
+    req.wait() catch |e| {
+        diag.message = try std.fmt.allocPrint(arena, "cannot read the answer of {s}: {s}", .{ url, @errorName(e) });
+        return error.DownloadFailed;
+    };
+    var got = Got{ .status = @intFromEnum(req.response.status) };
+    var it = req.response.iterateHeaders();
+    while (it.next()) |h| {
+        if (std.ascii.eqlIgnoreCase(h.name, "etag")) got.etag = try arena.dupe(u8, h.value);
+    }
+    if (got.status < 200 or got.status >= 300) return got;
+
+    const file = try dir.createFile(tmp, .{});
+    var h = std.crypto.hash.sha2.Sha256.init(.{});
+    var total: u64 = 0;
+    {
+        defer file.close();
+        var buf: [64 * 1024]u8 = undefined;
+        while (true) {
+            const n = req.reader().read(&buf) catch |e| {
+                diag.message = try std.fmt.allocPrint(arena, "the download of {s} broke off: {s}", .{ url, @errorName(e) });
+                return error.DownloadFailed;
+            };
+            if (n == 0) break;
+            total += n;
+            if (total > opts.max_size) {
+                diag.message = try std.fmt.allocPrint(arena, "{s} is larger than {d} bytes; refused", .{ url, opts.max_size });
+                return error.SizeMismatch;
+            }
+            h.update(buf[0..n]);
+            try file.writeAll(buf[0..n]);
+        }
+    }
+    var d: [32]u8 = undefined;
+    h.final(&d);
+    got.sha256 = std.fmt.bytesToHex(d, .lower);
+    got.size = total;
+    if (opts.want_sha256) |want| {
+        if (!std.mem.eql(u8, &got.sha256, want)) {
+            diag.message = try std.fmt.allocPrint(arena, "{s} has sha256 {s}; expected {s}; refused", .{ url, got.sha256, want });
+            return error.HashMismatch;
+        }
+    }
+    try dir.rename(tmp, name);
+    kept = true;
+    return got;
 }
 
 // ---------------------------------------------------------------- tests
