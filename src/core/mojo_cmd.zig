@@ -55,9 +55,11 @@ pub const Request = struct {
     file: []const u8 = "",
     /// `-o` for build; absent means mojo's default name.
     out: ?[]const u8 = null,
-    /// Compiler options for build, placed right after `build` (`mopm test`
-    /// passes `-D ASSERT=all --optimization-level 1`; `mopm build` none).
+    /// Compiler options for build and run, placed right after the subcommand (`mopm test` passes `-D ASSERT=all
+    /// --optimization-level 1`; `mopm run --opt-level N` passes `--optimization-level N`; `mopm build` none).
     flags: []const []const u8 = &.{},
+    /// run: the program's own arguments, after the file and verbatim (`mopm run f.mojo -- a --b`).
+    args: []const []const u8 = &.{},
     /// Import directories for build, one `-I <dir>` each, after `flags`: the directories that hold the package
     /// directories of path dependencies (and of the package itself), so `from dep import f` finds the source.
     include_dirs: []const []const u8 = &.{},
@@ -130,8 +132,10 @@ pub fn construct(arena: Allocator, req: Request, p: link_planner.Plan) Allocator
             try argv.append(req.file);
         },
         .run => {
+            try argv.appendSlice(req.flags);
             for (p.run) |so| try argv.appendSlice(&.{ "-Xlinker", so });
             try argv.append(req.file);
+            try argv.appendSlice(req.args);
         },
         .repl => {
             if (p.preload.len > 0) {
@@ -465,4 +469,15 @@ test "applyEnv overrides the caller's value and keeps the rest" {
     try std.testing.expectEqualStrings("/usr/bin", map.get("PATH").?);
     try std.testing.expectEqualStrings("", map.get("EMPTY").?);
     try std.testing.expectEqual(@as(std.process.EnvMap.Size, 3), map.count());
+}
+
+test "run: compiler flags follow run, the program's arguments follow the file verbatim" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const p = try link_planner.plan(a, &.{});
+    const c = try construct(a, .{ .tool = .run, .prefix = "/e", .os = .linux, .file = "b.mojo", .flags = &.{ "--optimization-level", "3" }, .args = &.{ "--iters", "-O0", "--", "x y" } }, p);
+    try expectArgv(&.{ "/e/bin/mojo", "run", "--optimization-level", "3", "b.mojo", "--iters", "-O0", "--", "x y" }, c.argv);
+    const plain = try construct(a, .{ .tool = .run, .prefix = "/e", .os = .linux, .file = "b.mojo" }, p);
+    try expectArgv(&.{ "/e/bin/mojo", "run", "b.mojo" }, plain.argv);
 }

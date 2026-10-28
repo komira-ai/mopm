@@ -234,6 +234,10 @@ test "golden files: link-plan, metadata, new and init, build, run, repl, test --
     try h.writeFile(try h.join(a, &.{ stand_in_real, "lib/mojo/echo.bins/greet.mojo" }), "def main(): print(\"hi\")\n");
     try h.writeFile(try h.join(a, &.{ stand_in_real, "lib/mojo/ghost.bins/greet.mojo" }), "def main(): print(\"boo\")\n");
     try c.cmd("exec: run --bin", "tests/golden/exec/run_bin.txt", 7, &.{ "run", "--bin", "echo:greet", "--prefix", stand_in_real }, .{ .set = &.{ .{ "MODULAR_HOME", dup_home }, .{ "MOPM_GOLDEN_MARK", "kept" } } });
+    // The command mopm executes: the level after `run`, the program's arguments after the file, verbatim and in order
+    // (option-looking ones, a second `--` and an empty string included), mopm's own options before the `--` only.
+    try c.cmd("exec: run --bin with --opt-level and program arguments", "tests/golden/exec/run_bin_args.txt", 7, &.{ "run", "--bin", "echo:greet", "--prefix", stand_in_real, "--opt-level", "3", "--", "a", "--b", "--prefix", "/no", "--", "" }, .{ .set = &.{ .{ "MODULAR_HOME", dup_home }, .{ "MOPM_GOLDEN_MARK", "kept" } } });
+    try c.cmd("exec: run --bin with program arguments, no level", "tests/golden/exec/run_bin_args_only.txt", 7, &.{ "run", "--bin", "echo:greet", "--prefix", stand_in_real, "--", "--opt-level", "9" }, .{ .set = &.{ .{ "MODULAR_HOME", dup_home }, .{ "MOPM_GOLDEN_MARK", "kept" } } });
     try c.cmd("exec: run --bin of a program the package does not ship", "tests/golden/exec/run_bin_unknown.txt", 1, &.{ "run", "--bin=echo:nope", "--prefix", stand_in_real }, .{});
     try c.cmd("exec: run --bin of a package that is not installed", "tests/golden/exec/run_bin_missing.txt", 1, &.{ "run", "--bin", "ghost:greet", "--prefix", stand_in_real }, .{});
     {

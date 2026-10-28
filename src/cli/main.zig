@@ -46,8 +46,10 @@ const usage =
     \\  build [--out-dir <dir>] with no program: the [targets] of mopm.toml, the
     \\                          library as <dir>/<name>.mojoc and each program as
     \\                          <dir>/<name> (default dir: target/build)
-    \\  run <file.mojo>
-    \\  run --bin <package>:<program>   a program an installed package ships
+    \\  run <file.mojo> [--opt-level <0-3>] [-- <program argument>...]
+    \\  run --bin <package>:<program> [--opt-level <0-3>] [-- <program argument>...]
+    \\                          a program an installed package ships; what
+    \\                          follows -- reaches the program verbatim
     \\  repl [--debugserver <path>]
     \\                          run the stock mojo of the environment, with its
     \\                          native libraries linked or preloaded; the exit
@@ -303,6 +305,10 @@ pub const Opts = struct {
     file: ?[]const u8 = null,
     /// `run --bin <package>:<program>`: a program an installed package ships, in place of a file.
     bin: ?[]const u8 = null,
+    /// `run --opt-level <0-3>`: mojo's `--optimization-level`; absent leaves mojo's own default.
+    opt_level: ?u8 = null,
+    /// `run ... -- <args>`: everything after the first `--`, verbatim, for the program.
+    program_args: []const []const u8 = &.{},
     /// `build` with no program: where the library and the programs go.
     out_dir: ?[]const u8 = null,
     /// `repl --debugserver <path>`: the debugserver to hand lldb instead of finding one.
@@ -338,6 +344,10 @@ pub fn parseOpts(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
+        if (tool == .run and std.mem.eql(u8, arg, "--")) {
+            o.program_args = args[i + 1 ..];
+            break;
+        }
         if (std.mem.eql(u8, arg, "--print-cmd")) {
             o.print_cmd = true;
         } else if (optValue(args, &i, "--prefix")) |v| {
@@ -359,6 +369,11 @@ pub fn parseOpts(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []
             const v = optValue(args, &i, "--debugserver").?;
             if (v.len == 0) return .{ .usage = "--debugserver needs the path of a debugserver" };
             o.debugserver = v;
+        } else if (tool == .run and isOpt(arg, "--opt-level")) {
+            const v = optValue(args, &i, "--opt-level").?;
+            const n = std.fmt.parseInt(u8, v, 10) catch 255;
+            if (n > 3) return .{ .usage = try std.fmt.allocPrint(arena, "--opt-level takes 0 to 3, not '{s}'", .{v}) };
+            o.opt_level = n;
         } else if (tool == .run and isOpt(arg, "--bin")) {
             const v = optValue(args, &i, "--bin").?;
             if (v.len == 0) return .{ .usage = "--bin needs <package>:<program>" };
@@ -411,6 +426,15 @@ fn execMojo(arena: std.mem.Allocator, name: []const u8, cmd: mojo_cmd.Command) u
     const e = std.process.execve(arena, cmd.argv, &env_map);
     err.print("mopm {s}: cannot run {s}: {s}\n", .{ name, cmd.argv[0], @errorName(e) }) catch {};
     return if (e == error.FileNotFound) 127 else 126;
+}
+
+/// The compiler flags `--opt-level` asks for: none when it was not given.
+fn optFlags(arena: std.mem.Allocator, level: ?u8) std.mem.Allocator.Error![]const []const u8 {
+    const n = level orelse return &.{};
+    const out = try arena.alloc([]const u8, 2);
+    out[0] = "--optimization-level";
+    out[1] = try std.fmt.allocPrint(arena, "{d}", .{n});
+    return out;
 }
 
 /// `mopm build|run|repl`: discover the environment, plan, refuse, then run
@@ -523,6 +547,8 @@ fn autolink(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const
         .file = file orelse "",
         .out = o.out,
         .include_dirs = dep_dirs,
+        .flags = if (tool == .run) (optFlags(arena, o.opt_level) catch return 1) else &.{},
+        .args = o.program_args,
         .debugserver = debugserver,
     }, plan) catch return 1;
     if (!o.print_cmd) return execMojo(arena, name, cmd);
@@ -744,4 +770,43 @@ test "run --bin: a program of an installed package in place of a file, for run o
     // A run with a file is what it was.
     try std.testing.expectEqualStrings("m.mojo", (try parseOk(a, .run, &.{"m.mojo"})).file.?);
     try parseUsage(a, .run, &.{});
+}
+
+// Defect caught: arguments after `--` dropped, reordered, or parsed as mopm's own options (even when they look like
+// flags); arguments taken from a run with no `--`.
+test "run: what follows -- is the program's, verbatim; with no -- there are none" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const o = try parseOk(a, .run, &.{ "--bin", "benchy:x", "--", "--prefix", "/no", "--bin=z", "-o", "--", "--opt-level", "9", "" });
+    try std.testing.expectEqualStrings("benchy:x", o.bin.?);
+    try std.testing.expect(o.prefix == null);
+    try std.testing.expectEqual(@as(?u8, null), o.opt_level);
+    try std.testing.expectEqual(@as(usize, 8), o.program_args.len);
+    try std.testing.expectEqualStrings("--prefix", o.program_args[0]);
+    try std.testing.expectEqualStrings("--", o.program_args[4]);
+    try std.testing.expectEqualStrings("", o.program_args[7]);
+    try std.testing.expectEqual(@as(usize, 0), (try parseOk(a, .run, &.{"m.mojo"})).program_args.len);
+    try std.testing.expectEqual(@as(usize, 0), (try parseOk(a, .run, &.{ "m.mojo", "--" })).program_args.len);
+    // `--` is still not an option of the other commands.
+    try parseUsage(a, .build, &.{ "m.mojo", "--", "x" });
+}
+
+// Defect caught: an optimisation level that never reaches the compile command, or one outside mojo's 0 to 3.
+test "run --opt-level: 0 to 3, in both spellings, for run only" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    try std.testing.expectEqual(@as(?u8, 3), (try parseOk(a, .run, &.{ "m.mojo", "--opt-level", "3" })).opt_level);
+    try std.testing.expectEqual(@as(?u8, 0), (try parseOk(a, .run, &.{ "--opt-level=0", "m.mojo" })).opt_level);
+    try parseUsage(a, .run, &.{ "m.mojo", "--opt-level", "4" });
+    try parseUsage(a, .run, &.{ "m.mojo", "--opt-level=x" });
+    try parseUsage(a, .run, &.{ "m.mojo", "--opt-level" });
+    try parseUsage(a, .build, &.{ "m.mojo", "--opt-level", "3" });
+    // The level reaches the command, between `run` and the program; no level leaves the command as it was.
+    const flags = try optFlags(a, 2);
+    try std.testing.expectEqual(@as(usize, 2), flags.len);
+    try std.testing.expectEqualStrings("--optimization-level", flags[0]);
+    try std.testing.expectEqualStrings("2", flags[1]);
+    try std.testing.expectEqual(@as(usize, 0), (try optFlags(a, null)).len);
 }
