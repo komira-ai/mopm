@@ -1,6 +1,6 @@
 # Per-ISA native variants that load the best build at runtime
 
-Status: proposal, for the CEO's review before any implementation. No code changes in this PR.
+Status: proposal, CEO decisions folded in (see Decisions); no code changes in this PR.
 
 Direction (CEO): build each native library once per x86-64 and ARM instruction-set level with Buck2 and let the
 runtime load the best one, so that a komira package on mopm "just works" and is as fast as the host allows. Extended:
@@ -30,6 +30,21 @@ pin, listed in the BUCK file in order and applied by an action, so the patched t
 each carries a header saying why and the upstream issue, and a pin with a patch is listed in the PR that adds it.
 No patch is applied that only moves a version. Generated headers (snappy's `config.h`) are committed beside the pin.
 
+## Decisions (CEO)
+
+1. **Channel.** Approved as written: our builds are served from a second, conda-layout channel (`natives`) of the mopm
+   registry. It is not pixi and not a git repository. Komira's own packages always name `channel = "natives"`.
+2. **aarch64.** Baseline plus in-library dispatch only where measured; no over-engineering of ARM. NEON is baseline,
+   so a feature level is added only on a measured win.
+3. **Levels published.** A level is published only after its tests ran on a host of that level. Today that is Linux
+   x86-64 v1, v2 and v3. v4 waits for AVX-512 (Skylake) hosts to join the farm; none are needed now.
+4. **Parity gate against conda-forge.** An integration test per native checks ours against conda-forge's build of the
+   same version: the same outputs on a corpus, and ours not slower beyond a 5 percent margin. A regression past the
+   margin blocks the publish. Support owns the test and the margin.
+5. **Patches** are carried in-tree when needed.
+6. **Detection** is by `kpin` resolvers only; no Renovate.
+7. **Regression bound** is owned by support; an alert goes to the native's owner.
+
 ## 1. Building the variants with Buck2
 
 Levels: x86-64 `v1` (baseline), `v2`, `v3`, `v4` (AVX-512); aarch64 baseline (armv8-a) plus, if measured to matter,
@@ -41,7 +56,7 @@ armv8.2-a and armv9-a with SVE2; macOS arm64 one build (`apple-m1`, today's `tar
 | B. An `isa` constraint plus a transition on the native-library rule | one constraint setting (values `v1..v4`, `armv8`, ...); the rule builds the library under each value; `cxx.bzl` takes `-mcpu` from the value instead of the row | one row per host, N configurations of one target; the level is in the action key | a new constraint and transition in the toolchain; every dependent must not accidentally inherit it |
 | C. N copies of the target | the BUCK file lists each level by hand | no toolchain change | drift between copies, the rot the build rules avoid |
 
-Lean: B. The variant set per library is a list in its BUCK target (snappy: v1, v2, v3, v4; others as measured). Cost:
+Lean: B. The variant set per library is a list in its BUCK target (snappy: v1, v2, v3 now, v4 when a host exists; others as measured). Cost:
 one compile per level; snappy is ten small files, so seconds. Large libraries pay N times, cached per level.
 Reproducibility: the compiler, flags and sources are pinned and hermetic (zig, the pinned source archive), so each
 level is byte-identical across builds, and a test builds twice and compares, as the bundle test already does for
@@ -118,10 +133,21 @@ lock for one name. mopm picks the declared channel and errors on two different c
 Every in-scope library is built from source (Scope, above). Order: **snappy** first (1.3.1, from the existing clang
 build in `third_party/snappy`); then the **benchmark-path** libraries, those the benchmarks and codec tests exercise
 (zstd, lz4, zlib); then the rest (bzip2, brotli, liblzma, sqlite; aws-lc and s2n-tls need only the variant
-treatment, they are already built). Each library is **measured against conda-forge's build on the farm** by
-support's method (one process, same host, three runs) and the pair of numbers is published with the PR. Ours ships
-whatever the result: a library that measures slower is reported, with the numbers and the compiler and flags, and
-becomes a work item, not a reason to drop it. conda-forge remains the source for every other mopm user's natives
+treatment, they are already built). Each library passes a **parity gate against conda-forge's build of the same version**
+(Decision 4), an integration test on the farm:
+- *Corpus and harness.* Support builds both: a corpus of pinned public files plus buffers shaped like what komira
+  writes (Arrow and Parquet pages, log lines), each fetched as a pinned download (url and sha256) so the farm, which has
+  no network, runs it hermetically; and a harness that loads the two libraries by path in one process on one host.
+  conda-forge's build is a pinned download of its `.conda` (a lock-style entry), never a live fetch. It runs as a Buck2
+  test target in komira, on a host of the level under test.
+- *What it requires.* Byte-identical output where the format fixes it (decompress, checksums), a round trip and a
+  size within the library's documented tolerance where it does not (compress), and the time of ours at most 5 percent
+  above conda-forge's (support's method: three runs, same host, the median; the timing is a check of this one gate,
+  not an assertion in a unit test).
+- *If conda-forge has no build of our pinned version,* the gate runs at its newest version, and the report says both
+  versions.
+- *A failure blocks the publish* and the numbers, compiler and flags go in the PR; a native that cannot pass is
+  fixed, not published. conda-forge remains the source for every other mopm user's natives
 through `any-conda-forge-native.md`, unchanged.
 
 ## Keeping source pins current
@@ -134,8 +160,8 @@ tag-only upstreams, and offline signature checks. The older "merge from live" co
 merges when green) is **retired by this design**; `kpin-update` replaces it, and nothing merges itself. Its stub
 (`.github/ci/merge_from_live.sh` and `.github/workflows/merge_from_live.yml`) was in komira's tree; komira's `main`
 no longer has them (a "delete dead shell" change removed them), so the retirement PR only has to confirm that, mark any
-remaining reference in the docs, and delete the copies in any tree that still pins an older komira. Renovate is
-considered for detection only (question 6); `kpin` stays the one tool that fetches, hashes and verifies.
+remaining reference in the docs, and delete the copies in any tree that still pins an older komira. Detection is by
+`kpin` resolvers only (Decision 6); `kpin` stays the one tool that fetches, hashes and verifies.
 
 **What komira's copy does that buildrules' does not yet** (read from both trees' `main`, not from a diff tool):
 - Komira's `kpin` has the whole **Cargo** subsystem (`cargo.zig`, `cargo_lock.zig`, `cargo_trim.zig`,
@@ -180,8 +206,8 @@ job is then one change, in buildrules.
   labelled PR through the same job and skips the cooldown; the PR still builds and tests. Never auto-merged: the CEO
   merges. The bot's PR starts CI through the existing autopin commit step, widened only to `pins.toml` and the
   generated pin table, never workflow files.
-- **Open points** (questions 6 and 7 below): Renovate for detection; the regression bound and its owner. Other
-  prerequisites: komira must pin a buildrules release that contains the source-release support (the komira commit a checkout pins may predate `kpin` altogether); and a version bump must rename or
+- **Regression bound.** The 5 percent bound of Decision 4 applies to a bump too; support owns it and the alert goes to
+  the native's owner. Other prerequisites: komira must pin a buildrules release that contains the source-release support (the komira commit a checkout pins may predate `kpin` altogether); and a version bump must rename or
   update derived rows (versions in target names such as `third_party/zlib`) and the ISA variants, or the PR will not build.
 
 ## 5. Proof in the benchmarks
@@ -207,17 +233,19 @@ Owner: the mira lane for mopm and buildrules; the support lane for komira packag
 1. **buildrules: keep `glibc-hwcaps/` in `conda_unpack --all-libs`, and prove hwcaps loading** (M, mira): change the
    flat `lib/*.so*` copy to keep the subdirectory tree; a test loads a two-level fixture under the
    `LD_LIBRARY_PATH` directories the runner uses and reads `LD_DEBUG=libs`. A mutant that flattens must go red.
-2. **komira: the `isa` constraint and transition; snappy 1.3.1 at v1 to v4** (M, support, with mira for the rule):
+2. **komira: the `isa` constraint and transition; snappy 1.3.1 at v1 to v3 (v4 built, not published, until a v4 host exists)** (M, support, with mira for the rule):
    bump the pin, byte-identical across two builds, list the full in-scope set from a grep of dlopen and link sites.
 3. **mopm: channel `natives` and the `channel` key** (M, mira): spec (`mopm-toml.md`, `lock.md`), solver reads it,
    the registry serves it; a fixture first.
 4. **mopm: ISA package layout, `isa.json` check, `has_library` for hwcaps files** (S, mira).
-5. **komira: publish the snappy package; `komira_compression` moves to it** (S, support). Ends the hold.
-6. **Benchmark proof** (M, support): records, failure rule, planted-host test.
-7. **Benchmark-path libraries: zstd, lz4, zlib** (M each, support): pin, build per level, farm measurement against
-   conda-forge, publish; komira's `komira_zlib`, `komira_lz4`, `komira_orc` move to them.
-8. **The rest: bzip2, brotli, liblzma, sqlite; aws-lc and s2n-tls variants** (S to M each, support).
-9. **aarch64 and macOS baseline packages, in-library dispatch where measured** (M, support).
+5. **komira: publish the snappy package; `komira_compression` moves to it** (S, support). Ends the hold. Needs PR 6a.
+6. **Proof and parity** (support): (a) the conda-forge parity corpus, harness and 5 percent gate, snappy first, run on
+   a host of each published level (M); (b) the benchmark records, failure rule and planted-host test (M).
+7. **Benchmark-path libraries: zstd, lz4, zlib** (M each, support): pin, build per level (x86-64 v1 to v3), parity gate,
+   publish; komira's `komira_zlib`, `komira_lz4`, `komira_orc` move to them.
+8. **The rest: bzip2, brotli, liblzma, sqlite; aws-lc and s2n-tls variants** (S to M each, support); each adds its
+   corpus entries and passes the parity gate.
+9. **aarch64 and macOS baseline packages** (M, support); in-library dispatch or a feature level only on a measured win.
 10. **buildrules: source-release support in `rules/kpin`** (L, mira lane), in three steps that may be separate PRs:
     (a) move komira's Cargo subsystem and flags into buildrules `kpin`, with tests (M); (b) the reusable `kpin-update`
     workflow (M); (c) the GitHub tag and release resolver, the sqlite.org resolver, commit-SHA pins, offline
@@ -226,21 +254,11 @@ Owner: the mira lane for mopm and buildrules; the support lane for komira packag
     `kpin-update.yml`, add the thin caller, add the natives' `pins.toml`, confirm that the `merge_from_live` stub and its
     workflow are gone and mark any doc that still names them. Needs 10(a) and 10(b).
 
-Order: 1 starts at once; 2 and 3 in parallel; 4 after 3; 5 after 2 and 4; 6 after 5; 7 after 6; 8 and 9 after 7;
+Order: 1 starts at once; 2 and 3 in parallel; 4 after 3; 5 after 2, 4 and 6(a); 6(a) after 2; 6(b) after 5; 7 after 6; 8 and 9 after 7;
 10(a) and 10(b) start at once, 11 after them, 10(c) before the first pin bump that relies on it (not before PRs 2 to 9).
 Reversible: dropping the `channel` key from a manifest returns that dependency to conda-forge.
 
 ## Questions for the CEO
 
-1. Is our own `natives` channel in the mopm registry right, with a per-dependency `channel` key (lean), or should
-   mopm prefer our channel for every name it holds?
-2. Is aarch64 baseline plus in-library dispatch right for now, as glibc has no aarch64 hwcaps names we can rely on
-   (lean), or do you want per-level aarch64 builds anyway, loaded by a mopm-side selector?
-3. Publish a level only when its tests ran on a host of that level (lean), or publish all four x86-64 levels from
-   the v3 farm and trust the build? Do you want AVX-512 and SVE2 hosts added to the farm to test v4 and v9?
-4. A library that measures slower than conda-forge's still ships and is fixed (the direction as written). Should a
-   regression of more than a set margin block the publish instead?
-5. Patches against upstream: allowed when needed and carried in-tree (lean), or none, and a needed fix goes upstream first?
-6. Detection by Renovate (a third-party App with repo write; it opens the version PR, `kpin` fills url, sha256 and
-   verifies) or by extending `kpin` with resolvers only (lean, no new vendor)? Never both.
-7. What regression bound, measured how, blocks a bumped release, and who owns it? Who is alerted on a pin alarm?
+None open. When AVX-512 (Skylake) hosts join the farm, v4 is
+built, tested and published through the same gate (no new design).
