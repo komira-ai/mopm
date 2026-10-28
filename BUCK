@@ -1194,6 +1194,19 @@ zig_exe(  # buck-only: installs the pinned OSV-Scanner for advisories.yml (sha25
     **_TOOLS
 )
 
+zig_test(  # buck-only: the unit tests of tools/conda_measure.zig (shard hash and base URL from msgpack bytes, the name scan across chunk edges)
+    name = "conda_measure_test",
+    src = "tools/conda_measure.zig",
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: tools/conda_measure.zig, built so the farm compiles it; it needs the network and runs in conda-measure.yml, not here
+    name = "conda-measure",
+    src = "tools/conda_measure.zig",
+    unit_tests = [":conda_measure_test"],
+    **_TOOLS
+)
+
 # ---- Coverage: the lines the unit tests reach, held to a floor per package ------------------------------------------------
 # (vendor/buildrules_coverage/README.md says what each figure is, what it leaves out, and how a floor is written.)
 
