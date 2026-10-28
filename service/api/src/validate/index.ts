@@ -13,6 +13,7 @@ import { readTar } from './tar';
 import type { Budget, TarEntry } from './tar';
 import { unzstd } from './zstd-read';
 import { readZip } from './zip';
+import type { NativeMirror } from './native-mirror';
 
 export { DEFAULT_LIMITS } from './limits';
 export type { Limits } from './limits';
@@ -37,8 +38,10 @@ export interface ValidatorOptions {
   limits?: Partial<Limits>;
   /** Archive formats accepted. The channel publishes only `.conda`, so that is the default. */
   allowedFormats?: readonly PackageFormat[];
-  /** Native library ids that may appear in `depends` (the maintained allow-list). Default: none. */
-  allowedNativeDeps?: ReadonlySet<string>;
+  /** The conda-forge name mirror, when the caller could read it. Default: none (a native dependency then warns that its name was not checked). */
+  nativeMirror?: NativeMirror;
+  /** The clock the mirror's age is judged by. Default: the system clock. */
+  now?: () => Date;
 }
 
 export interface PackageFacts {
@@ -50,8 +53,10 @@ export interface PackageFacts {
   subdir: string;
   /** Names of the `mojo-*` packages depended on, sorted, with the `mojo-` prefix. */
   mojoDeps: string[];
-  /** The allow-listed system libraries `depends` requires (`lz4-c >=1.9.3`), sorted; never a library the package ships. */
+  /** The conda packages `depends` requires besides the compiler and `mojo-*` (`lz4-c >=1.9.3`), sorted; never a library the package ships. */
   nativeDepends: string[];
+  /** What the publisher is told and what did not stop the publish (a native name conda-forge does not list, an old or missing name list). Absent when empty. */
+  warnings?: string[];
   metadata: Mopm;
   manifestSha256: string;
   files: Array<{ path: string; size: number }>;
@@ -184,7 +189,7 @@ function run(buf: Buffer, expected: PublishExpectation, options: ValidatorOption
     fail('version_mismatch', `info/index.json version '${idx.version}' is not the published version '${expected.version}'`);
   }
   if (idx.subdir !== expected.subdir) fail('subdir_mismatch', `info/index.json subdir '${idx.subdir}' is not '${expected.subdir}'`);
-  const mojoDeps = checkDepends(idx, mopm, { allowedNativeDeps: options.allowedNativeDeps ?? new Set() });
+  const { mojoDeps, warnings } = checkDepends(idx, mopm, { ...(options.nativeMirror ? { nativeMirror: options.nativeMirror } : {}), now: (options.now ?? (() => new Date()))() });
   const wantFile = `mojo-${expected.name}-${expected.version}-${idx.build}.${format}`;
   if (expected.filename !== wantFile) {
     fail('filename_mismatch', `the file is named '${expected.filename}' but its metadata says '${wantFile}'`);
@@ -215,6 +220,7 @@ function run(buf: Buffer, expected: PublishExpectation, options: ValidatorOption
     subdir: idx.subdir,
     mojoDeps,
     nativeDepends: nativeDependsOf(idx),
+    ...(warnings.length > 0 ? { warnings } : {}),
     metadata: mopm,
     manifestSha256,
     files: entries.filter((e) => e.kind === 'file').map((e) => ({ path: e.path, size: e.data.length })),

@@ -88,7 +88,20 @@ describe.each(STAGES)('ChannelStack %s', (stage) => {
     expect(JSON.stringify(s.Resource)).toContain('/index/*');
     // It denies exactly index/*: the package and repodata paths stay served.
     expect(JSON.stringify(s.Resource)).not.toContain('quarantine');
-    expect(bucketStatements(t).filter((x) => x.Effect === 'Deny' && x.Principal?.Service === 'cloudfront.amazonaws.com').map((x) => x.Sid).sort()).toEqual(['DenyCloudFrontIndex', 'DenyCloudFrontQuarantine']);
+    expect(bucketStatements(t).filter((x) => x.Effect === 'Deny' && x.Principal?.Service === 'cloudfront.amazonaws.com').map((x) => x.Sid).sort()).toEqual(['DenyCloudFrontIndex', 'DenyCloudFrontNativeMirror', 'DenyCloudFrontQuarantine']);
+  });
+
+  test('native-mirror/ is unreachable through the distribution, and its old versions expire after 7 days', () => {
+    const s = bucketStatements(t).find((x) => x.Sid === 'DenyCloudFrontNativeMirror');
+    expect(s).toBeDefined();
+    expect(s.Effect).toBe('Deny');
+    expect(s.Action).toBe('s3:GetObject');
+    expect(JSON.stringify(s.Resource)).toContain('/native-mirror/*');
+    t.hasResourceProperties('AWS::S3::Bucket', {
+      LifecycleConfiguration: {
+        Rules: Match.arrayWith([Match.objectLike({ Id: 'native-mirror-noncurrent-expiry', Prefix: 'native-mirror/', NoncurrentVersionExpiration: { NoncurrentDays: 7 }, Status: 'Enabled' })]),
+      },
+    });
   });
 
   test('old versions of index/ files expire after 30 days; the current file never does', () => {

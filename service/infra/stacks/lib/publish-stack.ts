@@ -9,7 +9,7 @@ import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 import { DEFAULT_HANDLER_DIR } from './api-stack';
 import { ChannelStack } from './channel-stack';
-import { CHANNEL_SUBDIRS, StageConfig, channelBucketName, groupDlqName, groupQueueName, indexDlqName, indexQueueName, tableName, validateDlqName, validateQueueName } from './config';
+import { CHANNEL_SUBDIRS, NATIVE_MIRROR_KEY, StageConfig, channelBucketName, groupDlqName, groupQueueName, indexDlqName, indexQueueName, tableName, validateDlqName, validateQueueName } from './config';
 import { assertRegion, removalPolicyFor } from './common';
 
 export interface PublishStackProps extends StackProps {
@@ -34,6 +34,10 @@ export const VALIDATOR_MAX_CONCURRENCY = 5;
 export const GROUP_VALIDATOR_MAX_CONCURRENCY = 2;
 /** Minutes between runs of the group sweeper. */
 export const SWEEPER_PERIOD_MINUTES = 5;
+
+/** Hours between runs of the conda-forge name mirror job. The validators call a mirror stale after 24 hours, so three runs may fail in a row before a publish is told so. */
+export const NATIVE_MIRROR_PERIOD_HOURS = 6;
+export const NATIVE_MIRROR_TIMEOUT_SECONDS = 120;
 
 /** Seconds a Lambda may run. The queue's visibility timeout is six times that, as AWS advises for an SQS trigger. */
 export const VALIDATOR_TIMEOUT_SECONDS = 300;
@@ -65,6 +69,7 @@ export class PublishStack extends Stack {
   readonly indexer: lambda.Function;
   readonly groupValidator: lambda.Function;
   readonly sweeper: lambda.Function;
+  readonly nativeMirror: lambda.Function;
 
   constructor(scope: Construct, id: string, props: PublishStackProps) {
     super(scope, id, props);
@@ -122,6 +127,10 @@ export class PublishStack extends Stack {
         actions: ['s3:GetObject', 's3:DeleteObject'],
         resources: [`${bucketArn}/quarantine/*`],
       }),
+    );
+    // The conda-forge name mirror, one object, read only: a missing or unreadable one is a warning for the publisher.
+    this.validator.addToRolePolicy(
+      new iam.PolicyStatement({ sid: 'ReadNativeMirror', actions: ['s3:GetObject'], resources: [`${bucketArn}/${NATIVE_MIRROR_KEY}`] }),
     );
     this.validator.addToRolePolicy(
       new iam.PolicyStatement({
@@ -261,6 +270,9 @@ export class PublishStack extends Stack {
     );
     // A create-only write that finds the key taken reads the object to compare its bytes (a repeat of the step leaves the same ones).
     this.groupValidator.addToRolePolicy(
+      new iam.PolicyStatement({ sid: 'ReadNativeMirror', actions: ['s3:GetObject'], resources: [`${bucketArn}/${NATIVE_MIRROR_KEY}`] }),
+    );
+    this.groupValidator.addToRolePolicy(
       new iam.PolicyStatement({
         sid: 'ReadAndWritePackageFiles',
         actions: ['s3:GetObject', 's3:PutObject'],
@@ -356,6 +368,42 @@ export class PublishStack extends Stack {
     // diff (template-diff.test.ts) would then see three different resources.
     schedule.addTarget({ bind: () => ({ id: 'GroupSweeper', arn: this.sweeper.functionArn }) });
     this.sweeper.addPermission('AllowGroupSweeperSchedule', { principal: new iam.ServicePrincipal('events.amazonaws.com'), sourceArn: schedule.ruleArn });
+
+    // --- the conda-forge name mirror job ---------------------------------------------------------------------
+    // Every NATIVE_MIRROR_PERIOD_HOURS: read conda-forge's shard index of each subdir the registry publishes for and write the union of
+    // the package names as one object (src/publish/native-mirror-job.ts). The validators read it to warn about a native dependency
+    // whose name conda-forge does not list. It writes that one key and nothing else, reads nothing, and touches no table or queue.
+    // It needs the internet (conda.anaconda.org), which a Lambda outside a VPC has.
+    this.nativeMirror = new lambda.Function(this, 'NativeMirror', {
+      runtime: lambda.Runtime.NODEJS_22_X,
+      handler: 'publish/native-mirror-lambda.handler',
+      code: lambda.Code.fromAsset(handlerDir),
+      memorySize: 1024,
+      timeout: Duration.seconds(NATIVE_MIRROR_TIMEOUT_SECONDS),
+      logGroup: logGroup('NativeMirrorLogs'),
+      environment: { MOPM_CHANNEL_BUCKET: bucketName },
+    });
+    this.nativeMirror.addToRolePolicy(
+      new iam.PolicyStatement({ sid: 'WriteNativeMirror', actions: ['s3:PutObject'], resources: [`${bucketArn}/${NATIVE_MIRROR_KEY}`] }),
+    );
+    const mirrorSchedule = new events.Rule(this, 'NativeMirrorSchedule', {
+      ruleName: `mopm-${c.stage}-native-mirror`,
+      schedule: events.Schedule.rate(Duration.hours(NATIVE_MIRROR_PERIOD_HOURS)),
+    });
+    // Declared by hand for the reason the sweeper's is (a hash of the construct path in a logical id breaks the stage diff).
+    mirrorSchedule.addTarget({ bind: () => ({ id: 'NativeMirror', arn: this.nativeMirror.functionArn }) });
+    this.nativeMirror.addPermission('AllowNativeMirrorSchedule', { principal: new iam.ServicePrincipal('events.amazonaws.com'), sourceArn: mirrorSchedule.ruleArn });
+    // A run that fails leaves the old object in place; it is the validators' "more than a day old" warning that tells publishers, and this
+    // alarm that tells us before then: any failed invocation, checked every period.
+    new cloudwatch.Alarm(this, 'NativeMirrorFailedAlarm', {
+      alarmName: `mopm-${c.stage}-native-mirror-failed`,
+      alarmDescription: 'The conda-forge name mirror job failed. The old list stays in use and ages; after a day publishers are warned it is stale. Look at the job\'s Lambda logs (conda.anaconda.org unreachable, or its shard index changed shape).',
+      metric: this.nativeMirror.metricErrors({ period: Duration.hours(NATIVE_MIRROR_PERIOD_HOURS), statistic: 'Sum' }),
+      threshold: 1,
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
 
     // --- alarms: anything in a dead-letter queue is a publish that needs a person ---------------------------
     for (const [aid, q, label] of [

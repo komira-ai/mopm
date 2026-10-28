@@ -724,19 +724,6 @@ filegroup(
     visibility = ["//service/api:", "//service/infra/stacks:"],
 )
 
-# pack's map from a native dependency to its conda package: the registry's native allow-list test reads it.
-filegroup(
-    name = "pack_conda_zig",
-    srcs = {"conda.zig": "src/core/conda.zig"},
-    visibility = ["//service/api:"],
-)
-
-filegroup(
-    name = "native_roots",
-    srcs = {"natives.txt": "toolchain/natives.txt"},
-    visibility = ["//service/api:"],
-)
-
 filegroup(
     name = "contract_api",
     srcs = {f[len("tests/contract/api/"):]: f for f in glob(["tests/contract/api/*.json"])},

@@ -4,6 +4,7 @@ import type { Store } from '../store';
 import type { AuditEntry, Dep, FileRef, NativeRef } from '../types';
 import { validatePackage } from '../validate';
 import type { PackageFacts, RejectionCode, ValidatorOptions } from '../validate';
+import type { NativeMirror } from '../validate/native-mirror';
 import type { PublishConfig } from './config';
 import type { DisplayMeta } from './display';
 import type { ObjectStore, PublishStore, Queue } from './ports';
@@ -20,6 +21,7 @@ export interface ValidatorDeps {
   /** https://conda.<stage>.mopm.dev: the channel's public base, for the file URLs of published versions. */
   channelUrl: string;
   validatorOptions?: ValidatorOptions;
+  nativeMirror?: () => Promise<NativeMirror | undefined>;
   now?: () => Date;
   log?: (line: Record<string, unknown>) => void;
 }
@@ -86,6 +88,7 @@ export async function validatePublish(d: ValidatorDeps, publishId: string): Prom
 
   try {
     const facts = await validateAll(d, rec);
+    await recordWarnings(d, rec, warningsOf(facts));
     await checkTotal(d, rec);
     await copyToChannel(d, rec);
     const fill = buildFill(d, rec, facts);
@@ -107,7 +110,30 @@ export async function validatePublish(d: ValidatorDeps, publishId: string): Prom
 }
 
 async function validateAll(d: ValidatorDeps, rec: PublishRecord): Promise<PackageFacts[]> {
-  return validateArchives(d.objects, d.validatorOptions, rec, rec.files);
+  return validateArchives(d.objects, await optionsFor(d), rec, rec.files);
+}
+
+/**
+ * The validator's options with the conda-forge name mirror the deployment could read. A mirror that cannot be read is not an error:
+ * the checks that need it warn (src/validate/metadata.ts), so this never throws.
+ */
+export async function optionsFor(d: Pick<ValidatorDeps, 'validatorOptions' | 'nativeMirror' | 'now' | 'log'>): Promise<ValidatorOptions> {
+  let nativeMirror: NativeMirror | undefined;
+  try {
+    nativeMirror = await d.nativeMirror?.();
+  } catch (err) {
+    (d.log ?? ((l) => console.log(JSON.stringify(l))))({ level: 'warn', msg: 'the conda-forge name mirror could not be read', error: String(err) });
+  }
+  return { ...d.validatorOptions, ...(nativeMirror ? { nativeMirror } : {}), ...(d.now ? { now: d.now } : {}) };
+}
+
+/** What the archives said that did not stop the publish, once each, in the order the files were validated. */
+export const warningsOf = (facts: readonly PackageFacts[]): string[] => [...new Set(facts.flatMap((f) => f.warnings ?? []))];
+
+/** Keep the warnings on the publish record, where the status route reads them; nothing is written when there are none. */
+async function recordWarnings(d: ValidatorDeps, rec: PublishRecord, warnings: string[]): Promise<void> {
+  if (warnings.length === 0) return;
+  await d.publishes.updatePublish(rec.publish_id, (c) => (c.status === 'validating' ? touch(d, { ...c, warnings }) : undefined));
 }
 
 /**
