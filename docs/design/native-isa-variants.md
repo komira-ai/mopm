@@ -3,8 +3,10 @@
 Status: proposal, for the CEO's review before any implementation. No code changes in this PR.
 
 Direction (CEO): build each native library once per x86-64 and ARM instruction-set level with Buck2 and let the
-runtime load the best one, so that a komira package on mopm "just works" and is as fast as the host allows. Where the
-`.so` comes from does not matter; downstream speed does. This builds on `any-conda-forge-native.md`: one lock
+runtime load the best one, so that a komira package on mopm "just works" and is as fast as the host allows. Extended:
+rather than reaching for conda-forge for everything, **every native library komira ships or depends on is recompiled
+from pinned upstream source**, which is better for the end user. conda-forge stays available to other mopm users
+through the any-conda-forge path; komira's own packages use our builds. This builds on `any-conda-forge-native.md`: one lock
 (`mopm.lock`), mopm's own solve, nothing refused, warnings inform, only integrity is an error. Its open question 1
 (a channel other than conda-forge) is answered yes, for our own builds, below.
 
@@ -12,6 +14,21 @@ Why. Support measured conda-forge's snappy 1.3.1 (GCC 15.3) decoding at 0.47 to 
 clang builds. The call path, the CPU target (x86-64-v3 against generic differs by 0 to 8 percent), the version and the
 flags were each ruled out, so compiler codegen is the leading cause (a cause not yet shown by an experiment on GCC
 flags). `komira_compression`'s move to a load-mode system snappy is on hold for this.
+
+## Scope: the libraries, and where their source is pinned
+
+In scope (from komira's `third_party/` and its dlopen and link sites; **recheck with a grep in PR 2, the list may be
+incomplete**): snappy (bumped to 1.3.1; `third_party/snappy` pins 1.2.2 today), zstd, lz4, zlib, bzip2, brotli,
+liblzma and sqlite, plus aws-lc and s2n-tls, which are already our builds (`third_party/aws-lc`, `third_party/s2n-tls`).
+`komira_zlib`, `komira_lz4`, `komira_compression` and `komira_orc` load their codec by `dlopen`; `komira_db_sqlite`
+links `-lsqlite3`; `komira_avro` loads codec libraries per OS (not enumerated here).
+
+**Pins.** A source pin is a `pinned_file` in the library's `third_party/<lib>/BUCK`: the upstream release tarball by
+`url` and `sha256` (as `snappy-1.2.2.tar.gz` and `aws-lc-1.39.0.tar.gz` are today), unpacked by `archive_files`.
+The version appears once, in that file. **Patches**, if a library needs one, are `.patch` files committed next to the
+pin, listed in the BUCK file in order and applied by an action, so the patched tree is an input to the cache key;
+each carries a header saying why and the upstream issue, and a pin with a patch is listed in the PR that adds it.
+No patch is applied that only moves a version. Generated headers (snappy's `config.h`) are committed beside the pin.
 
 ## 1. Building the variants with Buck2
 
@@ -24,7 +41,7 @@ armv8.2-a and armv9-a with SVE2; macOS arm64 one build (`apple-m1`, today's `tar
 | B. An `isa` constraint plus a transition on the native-library rule | one constraint setting (values `v1..v4`, `armv8`, ...); the rule builds the library under each value; `cxx.bzl` takes `-mcpu` from the value instead of the row | one row per host, N configurations of one target; the level is in the action key | a new constraint and transition in the toolchain; every dependent must not accidentally inherit it |
 | C. N copies of the target | the BUCK file lists each level by hand | no toolchain change | drift between copies, the rot the build rules avoid |
 
-Lean: B. The variant set per library is a list in its BUCK target (snappy: v1, v3, v4; others as measured). Cost:
+Lean: B. The variant set per library is a list in its BUCK target (snappy: v1, v2, v3, v4; others as measured). Cost:
 one compile per level; snappy is ten small files, so seconds. Large libraries pay N times, cached per level.
 Reproducibility: the compiler, flags and sources are pinned and hermetic (zig, the pinned source archive), so each
 level is byte-identical across builds, and a test builds twice and compares, as the bundle test already does for
@@ -45,11 +62,13 @@ are slower, never broken.
 
 **LD_LIBRARY_PATH.** The change that added hwcaps search to `LD_LIBRARY_PATH` directories ("elf: Add glibc-hwcaps
 support for LD_LIBRARY_PATH", a libc-alpha patch series that went into 2.33) means each directory on the path is expanded
-the same way. ld.so(8) does not state this, so it is **unverified from the manual**; PR 3 proves it with a test that
-runs under `LD_LIBRARY_PATH=<stage>/lib` and checks `LD_DEBUG=libs` names the hwcaps path. The unverified second
-half is whether buildrules' unpack (`conda_unpack --all-libs`) keeps `lib/glibc-hwcaps/...` and does not flatten
-`lib/`; the same PR checks it. The `--lib-dir` runner puts the stage on `LD_LIBRARY_PATH` on Linux, so if both hold,
-tests need no new mechanism.
+the same way. ld.so(8) does not state this, so it is **unverified from the manual**; PR 1 proves it with a test that
+runs under `LD_LIBRARY_PATH=<stage>/lib` and checks `LD_DEBUG=libs` names the hwcaps path. **Known gap in buildrules today.** `conda_unpack --all-libs` (merged in buildrules #126, per the lane that owns it)
+copies `lib/*.so*` flat and leaves subdirectories out, so `lib/glibc-hwcaps/...` is dropped before the loader sees
+it. PR 1 must change the unpack to keep the `glibc-hwcaps/<level>/` tree under the staged `lib/`, and must prove
+hwcaps loading under the `LD_LIBRARY_PATH` directories the test runner uses. The `--lib-dir` runner puts the
+stage on `LD_LIBRARY_PATH` on Linux, so with both fixed, tests need no new mechanism (macOS has no hwcaps and
+keeps `DYLD_FALLBACK_LIBRARY_PATH`).
 
 **Linux aarch64: no loader support to rely on.** The aarch64 hwcaps patch in the original series proposed only an
 `atomics` directory; glibc master has no `sysdeps/aarch64/dl-hwcaps-subdirs.c` on its GitHub mirror (404; **the
@@ -94,14 +113,21 @@ Lean: a per-dependency `channel` key (explicit, visible in review); not a global
 Name clash: the package keeps the conda name (`libsnappy`); conda-forge and our channel never both appear in one
 lock for one name. mopm picks the declared channel and errors on two different channels for one name in a closure.
 
-## 4. Rollout and what stays from conda-forge
+## 4. Rollout, and conda-forge as evidence
 
-1. **snappy** first, from komira's existing clang build (`third_party/snappy`), v1, v3 and v4 levels (v2 as measured).
-2. **zstd, lz4 and zlib**, each only after a measurement of ours against conda-forge's on the farm, by support's
-   method: one process, same host, three runs, reporting both numbers. Ours ships only if faster in all three runs.
-3. **When ours is not faster, conda-forge's stays.** The library keeps the conda-forge entry in its lock, no
-   `channel` key, no variants. Nothing is built for the sake of it. Libraries not built by komira (openssl, sqlite,
-   and the rest of the long tail) stay conda-forge: the merged design is unchanged for them.
+Every in-scope library is built from source (Scope, above). Order: **snappy** first (1.3.1, from the existing clang
+build in `third_party/snappy`); then the **benchmark-path** libraries, those the benchmarks and codec tests exercise
+(zstd, lz4, zlib); then the rest (bzip2, brotli, liblzma, sqlite; aws-lc and s2n-tls need only the variant
+treatment, they are already built). Each library is **measured against conda-forge's build on the farm** by
+support's method (one process, same host, three runs) and the pair of numbers is published with the PR. Ours ships
+whatever the result: a library that measures slower is reported, with the numbers and the compiler and flags, and
+becomes a work item, not a reason to drop it. conda-forge remains the source for every other mopm user's natives
+through `any-conda-forge-native.md`, unchanged.
+
+## Keeping source pins current
+
+Placeholder. Another lane is researching release detection and automatic PRs for the pins above; this section
+will state the mechanism (what watches upstream, what opens the PR, what proves a bump) when that lands.
 
 ## 5. Proof in the benchmarks
 
@@ -123,20 +149,24 @@ a host with a masked level and expects the failure (the same `GLIBC_TUNABLES` ma
 
 Owner: the mira lane for mopm and buildrules; the support lane for komira packages. S under 200 lines, M under 600, L more.
 
-1. **buildrules: hwcaps staging test** (S, mira): prove the loader honours `glibc-hwcaps` under `LD_LIBRARY_PATH` and
-   that unpack keeps the subdirectories; fixture with two tiny libraries. Settles the section 2 unverified items.
-2. **komira: the `isa` constraint and transition, snappy built at v1, v3, v4** (M, support, with the mira lane for the
-   rule): byte-identical across two builds.
+1. **buildrules: keep `glibc-hwcaps/` in `conda_unpack --all-libs`, and prove hwcaps loading** (M, mira): change the
+   flat `lib/*.so*` copy to keep the subdirectory tree; a test loads a two-level fixture under the
+   `LD_LIBRARY_PATH` directories the runner uses and reads `LD_DEBUG=libs`. A mutant that flattens must go red.
+2. **komira: the `isa` constraint and transition; snappy 1.3.1 at v1 to v4** (M, support, with mira for the rule):
+   bump the pin, byte-identical across two builds, list the full in-scope set from a grep of dlopen and link sites.
 3. **mopm: channel `natives` and the `channel` key** (M, mira): spec (`mopm-toml.md`, `lock.md`), solver reads it,
-   the registry serves it. Needs PR 2 only for a real package; the fixture comes first.
+   the registry serves it; a fixture first.
 4. **mopm: ISA package layout, `isa.json` check, `has_library` for hwcaps files** (S, mira).
-5. **komira: publish the snappy package** (S, support); `komira_compression` moves to it (the hold ends here).
+5. **komira: publish the snappy package; `komira_compression` moves to it** (S, support). Ends the hold.
 6. **Benchmark proof** (M, support): records, failure rule, planted-host test.
-7. **zstd, lz4, zlib: measure on the farm, then build and publish what wins** (S each, support).
-8. **aarch64 and macOS: baseline package, in-library dispatch where measured** (M, support).
+7. **Benchmark-path libraries: zstd, lz4, zlib** (M each, support): pin, build per level, farm measurement against
+   conda-forge, publish; komira's `komira_zlib`, `komira_lz4`, `komira_orc` move to them.
+8. **The rest: bzip2, brotli, liblzma, sqlite; aws-lc and s2n-tls variants** (S to M each, support).
+9. **aarch64 and macOS baseline packages, in-library dispatch where measured** (M, support).
+10. **Pin freshness** (size set by the research lane's result).
 
-Order: 1 starts at once; 2 and 3 in parallel; 4 after 3; 5 after 2 and 4; 6 after 5; 7 and 8 last. Reversible:
-dropping the `channel` key from a manifest returns to conda-forge with no other change.
+Order: 1 starts at once; 2 and 3 in parallel; 4 after 3; 5 after 2 and 4; 6 after 5; 7 after 6; 8 and 9 after 7;
+10 when the research lands. Reversible: dropping the `channel` key from a manifest returns that dependency to conda-forge.
 
 ## Questions for the CEO
 
@@ -145,5 +175,7 @@ dropping the `channel` key from a manifest returns to conda-forge with no other 
 2. Is aarch64 baseline plus in-library dispatch right for now, as glibc has no aarch64 hwcaps names we can rely on
    (lean), or do you want per-level aarch64 builds anyway, loaded by a mopm-side selector?
 3. Publish a level only when its tests ran on a host of that level (lean), or publish all four x86-64 levels from
-   the v3 farm and trust the build?
-4. Is "ours ships only when faster, else conda-forge's stays" the right rule for zstd, lz4 and zlib?
+   the v3 farm and trust the build? Do you want AVX-512 and SVE2 hosts added to the farm to test v4 and v9?
+4. A library that measures slower than conda-forge's still ships and is fixed (the direction as written). Should a
+   regression of more than a set margin block the publish instead?
+5. Patches against upstream: allowed when needed and carried in-tree (lean), or none, and a needed fix goes upstream first?
