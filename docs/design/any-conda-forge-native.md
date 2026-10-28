@@ -156,13 +156,37 @@ time to read the gzip back and split it). It is the `conda-measure` workflow (`w
   be measured there; the jobs that fetch from the network (ci.yml's pixi and installer steps) run on hosted runners. The tool therefore runs on a
   GitHub-hosted runner, and its latencies are that runner's, not the farm's. The Lambda's latency to its own S3 mirror is
   a separate figure that exists only once PR 2 writes the mirror.
-- **Figures: pending the first dispatch.** GitHub lets a workflow be dispatched only once it is on `main`, and a pull
-  request may not run it (hygiene allows four workflows on `pull_request`). So the shard answer, the sizes and the
-  latencies below are filled by a follow-up commit from the first run after merge; PRs 2 and 3 do not start before it.
+- **Figures** are measured from a development host on 2026-10-28 with curl, zstd and gzip -9 (the shard index keys give
+  the names; `repodata.json.zst` was not decompressed). The `conda-measure` workflow re-measures from a hosted runner
+  after merge (GitHub lets a workflow be dispatched only once it is on `main`, and hygiene allows only four workflows
+  on `pull_request`). Sizes drift as conda-forge publishes.
 
-| subdir | shards served | shard index | repodata.json.zst | name index (raw / gzip / zstd) |
-|---|---|---|---|---|
-| linux-64, linux-aarch64, osx-arm64, noarch | pending | pending | pending | pending |
+| subdir | `repodata_shards.msgpack.zst` | `repodata.json.zst` | one shard (fetch, 3 runs) | names | name index raw / gzip -9 |
+|---|---|---|---|---|---|
+| linux-64 | served (HTTP 200), 576399 B | 59484438 B | numpy 64054 B, 44-56 ms | 14214 | 161574 / 61368 B |
+| linux-aarch64 | served (HTTP 200), 272214 B | 27873496 B | numpy 41672 B, 46-66 ms | 6734 | 76139 / 28914 B |
+| osx-arm64 | served (HTTP 200), 282567 B | 26360268 B | numpy 30141 B, 42-48 ms | 6980 | 77798 / 30112 B |
+| noarch | served (HTTP 200), 982890 B | 29234096 B | pip 6466 B, 40-53 ms | 24024 | 331358 / 113182 B |
+| union of the four | | | | 34549 | 450989 / 155044 B (zstd -19: 138933 B) |
+
+Shards are fetched at `<subdir>/<sha256>.msgpack.zst` because `shards_base_url` is empty in the index. noarch has no
+numpy, so a noarch package (pip) stands in. The earlier independent figures agree: the shard sizes match to 3 B, the
+numpy osx-arm64 shard is the same 30141 B, and the union gzip differs by 110 B. The differences (repodata.json.zst a
+few kB larger, 22 to 37 more names) are packages published between the two measurements.
+
+### Conclusions for PRs 2 and 3
+
+- Every subdir serves the shard index (HTTP 200, under 1 MB each), so the lock fetch reads the index and then only the
+  shards of the packages in the closure (tens of kB each), with `repodata.json.zst` (26 to 59 MB per subdir) as the
+  fallback when the index is not served.
+- The union name-only index is about 155 kB gzip (451 kB raw), small enough for the registry to read once per Lambda
+  container and split in memory.
+- Risks: (1) these latencies are from a development host, not from the farm (no network there) or from a Lambda; the
+  hosted-runner figure arrives after merge, and the Lambda-to-mirror figure only once PR 2 writes the mirror. (2) The
+  shard endpoint is a sharded-repodata feature of the channel server and not a stable contract: keep the
+  `repodata.json.zst` fallback working and tested, not just present. (3) Shard hashes change with every repodata
+  update, so a cached index goes stale; refetch the index per lock run. (4) The name list grows (about 35 thousand
+  names now), so size the Lambda read from the gzip length, not a constant.
 
 ## Questions for the CEO
 
