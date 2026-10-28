@@ -126,8 +126,36 @@ through `any-conda-forge-native.md`, unchanged.
 
 ## Keeping source pins current
 
-Placeholder. Another lane is researching release detection and automatic PRs for the pins above; this section
-will state the mechanism (what watches upstream, what opens the PR, what proves a bump) when that lands.
+**Mechanism: extend the existing weekly `kpin update` job; build no new bot.** The older "merge from live" concept (a
+weekly bot that bumps pins and merges when green) was blocked and is retired by name in the same change that adds
+these pins. Renovate is considered for detection only (see the question below); `kpin` stays the one tool that
+fetches, hashes and verifies.
+
+- **What runs where.** The weekly job (Monday cron plus manual dispatch) lists every native in a new `pins.toml`, with
+  resolvers for GitHub releases and tags and for the sqlite download page. A resolver that finds nothing or a
+  malformed value fails the job (never "no update"); a pin whose upstream was not checked successfully for some weeks
+  opens an issue. Pre-release tags are excluded; releases younger than 7 days wait unless flagged security.
+- **A release becomes a PR.** `kpin` writes version, url, sha256 and size (and the tag's commit SHA for tag-only
+  libraries: snappy, brotli, aws-lc, s2n-tls, fetched by commit, since GitHub tag archives are not byte-stable);
+  no change means no PR. The PR check builds every ISA variant of that library on the farm (`local: 0`), runs its
+  welded tests on a host of each level, then the benchmark comparison against the previous pin (and, as evidence,
+  conda-forge): a comment, red only past a regression bound that needs an owner and a number. A hash change for an
+  already-pinned version is an alarm, with no PR. One PR per library, security releases separate and labelled; a
+  major or SONAME change is labelled and not grouped (a symbol diff of the built artifact, to be specified).
+- **Verification.** Signed upstreams (zstd, zlib, xz, bzip2 if confirmed) are checked against maintainer key
+  fingerprints committed in the repo and changed only by a human PR; the signature file and fingerprint go in the PR
+  and `kpin check` re-checks them offline; a library that was signed and ships unsigned, or a changed key, is an alarm.
+  lz4 and sqlite compare the upstream-published hash to the computed one. The rest are pinned by sha256 and commit
+  SHA only; the doc says so per library rather than implying a check.
+- **Patches.** A bump re-applies the committed patches in order; a patch that no longer applies fails that
+  library's PR with the rejected hunk, and the PR stays red until a human rebases the patch or drops it.
+- **Security fast path.** A separate advisory signal (GitHub advisories and OSV for these libraries) opens a
+  labelled PR through the same job and skips the cooldown; the PR still builds and tests. Never auto-merged: the CEO
+  merges. The bot's PR starts CI through the existing autopin commit step, widened only to `pins.toml` and the
+  generated pin table, never workflow files.
+- **Open points** (questions 6 and 7 below): Renovate for detection; the regression bound and its owner. Other
+  prerequisites: the komira commit this repo builds against must contain `kpin`; and a version bump must rename or
+  update derived rows (versions in target names such as `third_party/zlib`) and the ISA variants, or the PR will not build.
 
 ## 5. Proof in the benchmarks
 
@@ -163,7 +191,7 @@ Owner: the mira lane for mopm and buildrules; the support lane for komira packag
    conda-forge, publish; komira's `komira_zlib`, `komira_lz4`, `komira_orc` move to them.
 8. **The rest: bzip2, brotli, liblzma, sqlite; aws-lc and s2n-tls variants** (S to M each, support).
 9. **aarch64 and macOS baseline packages, in-library dispatch where measured** (M, support).
-10. **Pin freshness** (size set by the research lane's result).
+10. **Pin freshness: `pins.toml` for the natives, resolvers, signature and hash checks, advisory feed, retire the old stub** (L, mira with support).
 
 Order: 1 starts at once; 2 and 3 in parallel; 4 after 3; 5 after 2 and 4; 6 after 5; 7 after 6; 8 and 9 after 7;
 10 when the research lands. Reversible: dropping the `channel` key from a manifest returns that dependency to conda-forge.
@@ -179,3 +207,6 @@ Order: 1 starts at once; 2 and 3 in parallel; 4 after 3; 5 after 2 and 4; 6 afte
 4. A library that measures slower than conda-forge's still ships and is fixed (the direction as written). Should a
    regression of more than a set margin block the publish instead?
 5. Patches against upstream: allowed when needed and carried in-tree (lean), or none, and a needed fix goes upstream first?
+6. Detection by Renovate (a third-party App with repo write; it opens the version PR, `kpin` fills url, sha256 and
+   verifies) or by extending `kpin` with resolvers only (lean, no new vendor)? Never both.
+7. What regression bound, measured how, blocks a bumped release, and who owns it? Who is alerted on a pin alarm?
