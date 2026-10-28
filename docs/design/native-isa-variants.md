@@ -126,12 +126,39 @@ through `any-conda-forge-native.md`, unchanged.
 
 ## Keeping source pins current
 
-**Mechanism: extend the existing weekly `kpin update` job; build no new bot.** The older "merge from live" concept (a
-weekly bot that bumps pins and merges when green) was blocked and is retired by name in the same change that adds
-these pins. Renovate is considered for detection only (see the question below); `kpin` stays the one tool that
-fetches, hashes and verifies.
+**Mechanism: extend `kpin`, which belongs to buildrules (`rules/kpin`); build no new bot.** There is to be one
+`kpin`. Komira still carries its own copy (`tools/build/kpin`, with `.github/workflows/kpin-update.yml`); that copy is
+**retired**, and komira consumes `kpin` from buildrules (as it already consumes buildrules' pinned tools). The source-release
+support below lands in buildrules: the GitHub tag and release resolver, the sqlite.org resolver, commit-SHA pins for
+tag-only upstreams, and offline signature checks. The older "merge from live" concept (a weekly bot that bumps pins and
+merges when green) is **retired by this design**; `kpin-update` replaces it, and nothing merges itself. Its stub
+(`.github/ci/merge_from_live.sh` and `.github/workflows/merge_from_live.yml`) was in komira's tree; komira's `main`
+no longer has them (a "delete dead shell" change removed them), so the retirement PR only has to confirm that, mark any
+remaining reference in the docs, and delete the copies in any tree that still pins an older komira. Renovate is
+considered for detection only (question 6); `kpin` stays the one tool that fetches, hashes and verifies.
 
-- **What runs where.** The weekly job (Monday cron plus manual dispatch) lists every native in a new `pins.toml`, with
+**What komira's copy does that buildrules' does not yet** (read from both trees' `main`, not from a diff tool):
+- Komira's `kpin` has the whole **Cargo** subsystem (`cargo.zig`, `cargo_lock.zig`, `cargo_trim.zig`,
+  `cargo_update.zig`, `cargo.bzl`, `cargo_fixture/`) and the flags `--cargo-lock`, `--metadata`, `--sizes`,
+  `--target`, `--crates-base`, `--overrides`, `--rustc`, `--cargo-out`, `--stamp`, `--trim`, `--previous-lock`,
+  `--check` and `--no-pins`. Buildrules' `main.zig` parses none of them (about half the size). **These move into
+  buildrules first**, with their tests, before komira's copy can go.
+- Komira's `kpin-update.yml` is a 19 kB workflow: it builds `kpin` through Buck2, runs `kpin update` and `kpin check
+  --previous`, refreshes `Cargo.lock` and `cargo metadata` on the runner, the alarm handling (exit 3, no PR), and
+  the single weekly PR. Buildrules has **no** `kpin-update.yml` today (mopm has its own copy of the weekly job). The
+  workflow must be made one reusable `workflow_call` workflow in buildrules, taking the pin sets and the cargo
+  directories as inputs.
+- Buildrules' copy is ahead on tests (`fetch_test`, `oom_test`, `valid_test`, larger `refusal_test`), so the move is
+  not a straight copy: take buildrules' files and add the Cargo files on top; do not overwrite.
+
+**Where the weekly job then lives.** Buildrules owns the reusable `kpin-update` workflow and runs it over its own pins
+(`site/pins.toml`, `infra/site/pins.toml`). Komira keeps a **thin caller** (about 20 lines: the cron, the pin sets
+and cargo directories, `uses: komira-ai/buildrules/.github/workflows/kpin-update.yml@<pinned sha>`), which runs the
+buildrules `kpin` (a pinned release binary, verified by sha256 and Sigstore as `mopm-pin.yml` does for mopm) over
+komira's `pins.toml` files, now including the natives'. mopm's weekly job becomes the same caller. A fix to the weekly
+job is then one change, in buildrules.
+
+- **What runs where.** The weekly job (Monday cron plus manual dispatch; the caller in each repo) lists every native in a new `pins.toml`, with
   resolvers for GitHub releases and tags and for the sqlite download page. A resolver that finds nothing or a
   malformed value fails the job (never "no update"); a pin whose upstream was not checked successfully for some weeks
   opens an issue. Pre-release tags are excluded; releases younger than 7 days wait unless flagged security.
@@ -154,7 +181,7 @@ fetches, hashes and verifies.
   merges. The bot's PR starts CI through the existing autopin commit step, widened only to `pins.toml` and the
   generated pin table, never workflow files.
 - **Open points** (questions 6 and 7 below): Renovate for detection; the regression bound and its owner. Other
-  prerequisites: the komira commit this repo builds against must contain `kpin`; and a version bump must rename or
+  prerequisites: komira must pin a buildrules release that contains the source-release support (the komira commit a checkout pins may predate `kpin` altogether); and a version bump must rename or
   update derived rows (versions in target names such as `third_party/zlib`) and the ISA variants, or the PR will not build.
 
 ## 5. Proof in the benchmarks
@@ -191,10 +218,17 @@ Owner: the mira lane for mopm and buildrules; the support lane for komira packag
    conda-forge, publish; komira's `komira_zlib`, `komira_lz4`, `komira_orc` move to them.
 8. **The rest: bzip2, brotli, liblzma, sqlite; aws-lc and s2n-tls variants** (S to M each, support).
 9. **aarch64 and macOS baseline packages, in-library dispatch where measured** (M, support).
-10. **Pin freshness: `pins.toml` for the natives, resolvers, signature and hash checks, advisory feed, retire the old stub** (L, mira with support).
+10. **buildrules: source-release support in `rules/kpin`** (L, mira lane), in three steps that may be separate PRs:
+    (a) move komira's Cargo subsystem and flags into buildrules `kpin`, with tests (M); (b) the reusable `kpin-update`
+    workflow (M); (c) the GitHub tag and release resolver, the sqlite.org resolver, commit-SHA pins, offline
+    signature and published-hash checks, the advisory feed (L).
+11. **komira: retire its `kpin`** (M, mira lane for the move, support lane reviews): delete `tools/build/kpin` and its
+    `kpin-update.yml`, add the thin caller, add the natives' `pins.toml`, confirm that the `merge_from_live` stub and its
+    workflow are gone and mark any doc that still names them. Needs 10(a) and 10(b).
 
 Order: 1 starts at once; 2 and 3 in parallel; 4 after 3; 5 after 2 and 4; 6 after 5; 7 after 6; 8 and 9 after 7;
-10 when the research lands. Reversible: dropping the `channel` key from a manifest returns that dependency to conda-forge.
+10(a) and 10(b) start at once, 11 after them, 10(c) before the first pin bump that relies on it (not before PRs 2 to 9).
+Reversible: dropping the `channel` key from a manifest returns that dependency to conda-forge.
 
 ## Questions for the CEO
 
