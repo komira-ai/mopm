@@ -62,7 +62,7 @@ test "golden: the toolchain of the unit graph on each platform mopm pins, byte f
         \\    "mojo": "1.0.0",
         \\    "subdir": "linux-64",
         \\    "cc_target": "x86_64-linux-gnu.2.34",
-        \\    "closure_sha256": "fd654c4192487587d8f8d9402d060e45e218b79da7b8964503a703710e49b15d",
+        \\    "closure_sha256": "3ed75e01401544e0d660ee48dc387dacce437e3833ac296d4a0601f28abd4aec",
         \\    "zig": {"version": "0.12.0", "url": "https://ziglang.org/download/0.12.0/zig-linux-x86_64-0.12.0.tar.xz", "sha256": "c7ae866b8a76a568e2d5cfd31fe89cdb629bdd161fdd5018b29a4a0a17045cad", "size": 45480516},
         \\    "components": [
         \\      {"name": "libgcc", "version": "16.2.0", "url": "https://conda.anaconda.org/conda-forge/linux-64/libgcc-16.2.0-ha9f2e26_7.conda", "sha256": "e031634c3a928f9594eba868bc46ef5230d6571a364a0c63215b06c4563bfcea", "size": 1058444},
@@ -75,7 +75,7 @@ test "golden: the toolchain of the unit graph on each platform mopm pins, byte f
         \\    "mojo": "1.0.0",
         \\    "subdir": "linux-aarch64",
         \\    "cc_target": "aarch64-linux-gnu.2.34",
-        \\    "closure_sha256": "3e7db5a0f9255c9086d9d29f385e7fd90e8536fa16ffe55414f6bba4e0ef3d3e",
+        \\    "closure_sha256": "84a22df9ff1ca84c7eb47a3b3d5eaede4c970ee85b660853f640841b5dfa03c3",
         \\    "zig": {"version": "0.12.0", "url": "https://ziglang.org/download/0.12.0/zig-linux-aarch64-0.12.0.tar.xz", "sha256": "754f1029484079b7e0ca3b913a0a2f2a6afd5a28990cb224fe8845e72f09de63", "size": 41849060},
         \\    "components": [
         \\      {"name": "libgcc", "version": "16.2.0", "url": "https://conda.anaconda.org/conda-forge/linux-aarch64/libgcc-16.2.0-h205dda4_7.conda", "sha256": "eae7a3449d5a3b5351c5427137c076cc3fc826645c7bfc42dc10772b783826f1", "size": 627793},
@@ -88,7 +88,7 @@ test "golden: the toolchain of the unit graph on each platform mopm pins, byte f
         \\    "mojo": "1.0.0",
         \\    "subdir": "osx-arm64",
         \\    "cc_target": "aarch64-macos.11.0",
-        \\    "closure_sha256": "dfb1ddbe32564e406967054fbccd4ad643bf01e72532a3eb3add28253908ac5f",
+        \\    "closure_sha256": "0d34e9a60951231f6c2161f6620957ff086542b217b187774fdf9d82b76046a1",
         \\    "zig": {"version": "0.12.0", "url": "https://ziglang.org/download/0.12.0/zig-macos-aarch64-0.12.0.tar.xz", "sha256": "294e224c14fd0822cfb15a35cf39aa14bd9967867999bf8bdfe3db7ddec2a27f", "size": 43447724},
         \\    "components": [
         \\      {"name": "mojo-compiler", "version": "1.0.0", "url": "https://conda.modular.com/max/osx-arm64/mojo-compiler-1.0.0-release.conda", "sha256": "c52054bc444d851e5c38cc33e790fb011a1080470244aaa59351ac5056d08c59", "size": 61221085}
