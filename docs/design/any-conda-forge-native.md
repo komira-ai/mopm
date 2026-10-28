@@ -144,6 +144,26 @@ Owner: the mira lane. S under 200 lines, M under 600, L more.
 Order: 1, 5 and 6 start at once; 2 needs 1; 3 needs 1; 4 needs 3 and 6; 7 and 8 last. PR 2 is the only step a
 published package can observe; restoring the list reverses it.
 
+### Measured (PR 1, 2026-10-28)
+
+`tools/conda_measure.zig` reports, per subdir (`linux-64`, `linux-aarch64`, `osx-arm64`, `noarch`): whether
+`repodata_shards.msgpack.zst` is served, the shard index size and the size and latency of five sample shards,
+the size of `repodata.json.zst`, and the size of a name-only index (one name per line; raw, gzip -9, zstd -19; the
+time to read the gzip back and split it). It is the `conda-measure` workflow (`workflow_dispatch` only).
+
+- **The farm has no network.** A Buck2 action that ran the tool on the farm failed every request with
+  `TemporaryNameServerFailure` (no DNS; `local: 0`). Farm actions are hermetic, so lookup latency "from the farm" cannot
+  be measured there; the jobs that fetch from the network (ci.yml's pixi and installer steps) run on hosted runners. The tool therefore runs on a
+  GitHub-hosted runner, and its latencies are that runner's, not the farm's. The Lambda's latency to its own S3 mirror is
+  a separate figure that exists only once PR 2 writes the mirror.
+- **Figures: pending the first dispatch.** GitHub lets a workflow be dispatched only once it is on `main`, and a pull
+  request may not run it (hygiene allows four workflows on `pull_request`). So the shard answer, the sizes and the
+  latencies below are filled by a follow-up commit from the first run after merge; PRs 2 and 3 do not start before it.
+
+| subdir | shards served | shard index | repodata.json.zst | name index (raw / gzip / zstd) |
+|---|---|---|---|---|
+| linux-64, linux-aarch64, osx-arm64, noarch | pending | pending | pending | pending |
+
 ## Questions for the CEO
 
 1. Is a conda-forge channel only (extensible by a later manifest key) right for day one?
