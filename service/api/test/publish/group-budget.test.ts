@@ -19,8 +19,8 @@ const CALL_MS = 20;
 const BUDGET_MS = 560;
 /** One batch after the budget has been looked at: a reservation and the checkpoint, with room for a call the store makes twice. */
 const MEMBER_MS = 4 * CALL_MS;
-/** What the last call of a group adds: the files of every member, read sixteen members at a time (a getUpload and a head each). */
-const FILES_MS = Math.ceil(N / 16) * 2 * CALL_MS;
+/** What the last call of a group adds: the files of every member, read sixteen members at a time (a getUpload, a putUpload and a head each, the first time). */
+const FILES_MS = Math.ceil(N / 16) * 3 * CALL_MS;
 
 const names = Array.from({ length: N }, (_, i) => `p${String(i).padStart(3, '0')}`);
 
@@ -185,7 +185,7 @@ describe.each(RIGS)('a group of 42 members over a slow registry: %s', (_label, m
     const body = members42.map((n) => env.member(n));
 
     const memberMs = 4 * SLOW_CALL_MS;
-    const filesMs = Math.ceil(42 / 16) * 2 * SLOW_CALL_MS;
+    const filesMs = Math.ceil(42 / 16) * 3 * SLOW_CALL_MS;
     let answer: { reserving?: unknown; members: unknown[] } | undefined;
     for (let i = 0; i === 0 || (i < 6 && answer!.reserving !== undefined); i++) {
       const from = time.now;
