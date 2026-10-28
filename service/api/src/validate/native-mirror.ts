@@ -12,7 +12,7 @@ import { gunzipSync, gzipSync } from 'node:zlib';
 export const MIRROR_KEY = 'native-mirror/conda-forge-names.gz';
 /** The subdirs the union covers: where a package of the registry can be installed. */
 export const MIRROR_SUBDIRS = ['linux-64', 'linux-aarch64', 'osx-arm64', 'noarch'] as const;
-/** A mirror older than this is reported as stale (the CEO accepted a list up to a day old). */
+/** A mirror older than this is reported as stale (the name list may be up to a day old; older lists only warn). */
 export const MIRROR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 /** Upper bound of the decompressed text a reader accepts; the union is about 450 kB today. */
 export const MIRROR_MAX_TEXT_BYTES = 16 * 1024 * 1024;
