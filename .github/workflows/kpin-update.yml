@@ -406,6 +406,8 @@ jobs:
             echo
             sed 's/^/    /' "$RUNNER_TEMP/stat"
             echo
+            echo "**Natives to regenerate.** This job does not read the package files, so if a \`natives-*.json\` file here pins a new build, \`toolchain/natives.libs\` is stale and the unit test \"every package of the native catalog holds a shared library\" fails (\`CatalogPackageUnusable\`): for each new package, list \`lib/*.so*\` and \`lib/*.dylib\` in the package file with \`unzip -p <file>.conda 'pkg-*' | zstd -dc | tar -tv\`, replace its lines and sha256 in \`toolchain/natives.libs\` and drop the lines of packages no longer pinned (toolchain/README.md)."
+            echo
             echo "**Known gap.** Opened with the workflow's GITHUB_TOKEN, so the pull request's checks have not run. Start them by pushing an empty commit to \`$branch\` or by closing and reopening this pull request, and merge only when they are green (the install end-to-end test installs the new closure). The next weekly run closes this pull request and deletes its branch when it opens its own."
           } > "$RUNNER_TEMP/body"
           if ! url=$(gh pr create --repo "$GITHUB_REPOSITORY" --head "$branch" --base "$BASE" \

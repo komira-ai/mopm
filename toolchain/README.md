@@ -50,3 +50,9 @@ file of the same package: conda-forge's `xz` is a metapackage and its `liblzma-d
 from; the unit test "every package of the native catalog holds a shared library ..." fails for a catalog package
 with no regular shared library, a link that leaves its package, a line for a package the catalog does not pin, and a
 pin that moved without its lines being read again. Update it with the lock.
+
+The weekly `toolchain` job re-solves the lock and rewrites `natives-*.json`, but does not read the package files, so
+it leaves `natives.libs` as it was. A weekly pull request that pins a new build of a native fails that test
+(`CatalogPackageUnusable`) until `natives.libs` is regenerated: for each new package list its `lib/*.so*` and
+`lib/*.dylib` entries with the command above, replace the lines of that package (with its new sha256) and drop the lines
+of packages the catalog no longer pins. The job's pull request body says the same.
