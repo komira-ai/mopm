@@ -25,6 +25,7 @@ _DATA = {
     "service/api/src/group.ts": "//service/api:src_group.ts",
     "service/api/src/group-store.ts": "//service/api:src_group-store.ts",
     "service/api/src/metrics.ts": "//service/api:src_metrics.ts",
+    "service/api/src/publish/config.ts": "//service/api:src_config.ts",
     "service/api/src/publish/group-service.ts": "//service/api:src_group-service.ts",
     "service/api/src/publish/group-sweeper.ts": "//service/api:src_group-sweeper.ts",
     "service/api/test/fixtures/group-inventory.json": "//service/api:group-inventory.json",

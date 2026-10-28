@@ -807,24 +807,30 @@ describe.each(RIGS)('groups over the registry: %s', (_label, make) => {
       expect([...env.publishes.counters.values()]).toEqual([40, 40]);
     });
 
-    test('a call whose first members take the whole budget still moves the checkpoint (it never stops before reserving something)', async () => {
+    test('a call whose first batch takes the whole budget still moves the checkpoint (it never stops before reserving something)', async () => {
       env = new GroupEnv(rig, { groupCreateBudgetMs: 100 });
       const names = Array.from({ length: 20 }, (_, i) => `q${String(i).padStart(2, '0')}`);
       const me = await env.account(1, 'octocat', names);
       const members = names.map((n) => env.member(n));
       const gid = idOf('u:1', ...names);
-      // Every look at quarantine takes a second: checking the sixteen members already reserved spends the whole budget.
-      const orig = env.objects.head.bind(env.objects);
-      env.objects.head = async (key) => {
+      // Every reservation takes a second: the first batch spends the whole budget.
+      const orig = rig.store.adoptVersion.bind(rig.store);
+      rig.store.adoptVersion = async (r, a, free) => {
         env.mono += 1000;
-        return orig(key);
+        return orig(r, a, free);
       };
       const one = await env.create(me, members);
       expect(json(one).reserving).toEqual({ done: 16, total: 20 });
+      expect(json(one).members).toHaveLength(16);
+      // A call that answers `reserving` carries no files: the client asks again and reads only the counts.
+      expect(json(one).members.every((m: { files: unknown[] }) => m.files.length === 0)).toBe(true);
       expect((await rig.store.getGroup(gid))!.reserved).toBe('ffff');
       const two = await env.create(me, members);
       expect(json(two).reserving).toBeUndefined();
       expect(json(two).members).toHaveLength(20);
+      // The call that answers every member answers the files of every member, the ones an earlier call reserved included.
+      expect(json(two).members.every((m: { files: Array<{ put_url?: string }> }) => m.files.length === 1 && m.files[0]!.put_url !== undefined)).toBe(true);
+      expect(json(two).members.map((m: { action: string }) => m.action)).toEqual([...Array(16).fill('join'), ...Array(4).fill('new')]);
       expect((await rig.store.getGroup(gid))!.reserved).toBe('fffff');
     });
   });

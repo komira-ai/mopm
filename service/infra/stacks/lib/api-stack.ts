@@ -178,6 +178,10 @@ export const INDEX_THROTTLE = { rateLimit: 50, burstLimit: 100 };
 /** Methods a browser may use on the read API. HEAD and OPTIONS are listed for preflight; only GET routes exist. */
 export const CORS_METHODS = [apigw.CorsHttpMethod.GET, apigw.CorsHttpMethod.HEAD, apigw.CorsHttpMethod.OPTIONS];
 /** How long a browser may cache a preflight answer. */
+/** How long the HTTP API waits for an integration (its default and its largest). */
+export const API_GATEWAY_INTEGRATION_SECONDS = 30;
+/** The API Lambda's timeout: well under the gateway's wait. */
+export const API_LAMBDA_TIMEOUT_SECONDS = 25;
 export const CORS_MAX_AGE = Duration.hours(1);
 /** The response headers a page may read: the request id to show with an error, and Retry-After so it can say when to try again after a 429 or a read-only 503. */
 export const CORS_EXPOSED_HEADERS = ['x-mopm-request-id', 'retry-after'];
