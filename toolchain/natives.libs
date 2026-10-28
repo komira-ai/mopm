@@ -1,0 +1,83 @@
+# The shared libraries of every package of the native catalog (src/core/toolchain/natives-<subdir>.json), as the
+# package holds them: one line per file below lib/ that is a shared library or a link to one.
+#
+#   <subdir> <package> <sha256 of the package file> <path>             a regular file
+#   <subdir> <package> <sha256 of the package file> <path> -> <target>   a link, target relative to its directory
+#
+# Read by the unit test "every package of the native catalog holds a shared library ..." (native_catalog.zig):
+# a catalog package without a regular shared library, or with a link to a file the package does not hold,
+# fails it. The sha256 ties each line to the package it was read from, so a pin that moves needs its lines
+# read again. Read them from the package file: unzip -p <file>.conda 'pkg-*' | zstd -dc | tar -tv
+linux-64 bzip2 1a0d382c515ebf55f8ee1f38c8b81bc95af5c2acc42ad53b66bc5df932032f96 lib/libbz2.so.1.0.8
+linux-64 bzip2 1a0d382c515ebf55f8ee1f38c8b81bc95af5c2acc42ad53b66bc5df932032f96 lib/libbz2.so -> libbz2.so.1.0.8
+linux-64 bzip2 1a0d382c515ebf55f8ee1f38c8b81bc95af5c2acc42ad53b66bc5df932032f96 lib/libbz2.so.1.0 -> libbz2.so.1.0.8
+linux-64 libbrotlicommon 8eccfbfdb8ecba32eabfb6ee92f70e818e5f3a35a01c507f7b6bd56e00e4c617 lib/libbrotlicommon.so.1 -> libbrotlicommon.so.1.2.1
+linux-64 libbrotlicommon 8eccfbfdb8ecba32eabfb6ee92f70e818e5f3a35a01c507f7b6bd56e00e4c617 lib/libbrotlicommon.so -> libbrotlicommon.so.1.2.1
+linux-64 libbrotlicommon 8eccfbfdb8ecba32eabfb6ee92f70e818e5f3a35a01c507f7b6bd56e00e4c617 lib/libbrotlicommon.so.1.2.1
+linux-64 libbrotlidec 4b4bda6f70ad511bdff95fdd958dca74b6e0534ae335ddcb1d8c6569774d2429 lib/libbrotlidec.so.1 -> libbrotlidec.so.1.2.1
+linux-64 libbrotlidec 4b4bda6f70ad511bdff95fdd958dca74b6e0534ae335ddcb1d8c6569774d2429 lib/libbrotlidec.so -> libbrotlidec.so.1.2.1
+linux-64 libbrotlidec 4b4bda6f70ad511bdff95fdd958dca74b6e0534ae335ddcb1d8c6569774d2429 lib/libbrotlidec.so.1.2.1
+linux-64 liblzma 9787df8c22a59c9a70d3e5a10db9ad663485e75e9ccc3f09bd092cb7b95e0dab lib/liblzma.so.5
+linux-64 liblzma 9787df8c22a59c9a70d3e5a10db9ad663485e75e9ccc3f09bd092cb7b95e0dab lib/liblzma.so.5.8.3
+linux-64 libsqlite c294029f893d05286f1061bbab85b820f1eea73dd859af4bcc619197bcc34810 lib/libsqlite3.so.3.54.1
+linux-64 libsqlite c294029f893d05286f1061bbab85b820f1eea73dd859af4bcc619197bcc34810 lib/libsqlite3.so -> libsqlite3.so.3.54.1
+linux-64 libsqlite c294029f893d05286f1061bbab85b820f1eea73dd859af4bcc619197bcc34810 lib/libsqlite3.so.0 -> libsqlite3.so.3.54.1
+linux-64 libzlib eb8a0db0aa570124f7d2a93d7c7f596e3390df5e047818d873baad32985fc736 lib/libz.so.1.3.2
+linux-64 libzlib eb8a0db0aa570124f7d2a93d7c7f596e3390df5e047818d873baad32985fc736 lib/libz.so.1 -> libz.so.1.3.2
+linux-64 lz4-c b8c0e930183e6b7f83cd35ace102f2b8c2f0faae41dc05255dc72f247dfc556a lib/liblz4.so -> liblz4.so.1.10.0
+linux-64 lz4-c b8c0e930183e6b7f83cd35ace102f2b8c2f0faae41dc05255dc72f247dfc556a lib/liblz4.so.1 -> liblz4.so.1.10.0
+linux-64 lz4-c b8c0e930183e6b7f83cd35ace102f2b8c2f0faae41dc05255dc72f247dfc556a lib/liblz4.so.1.10.0
+linux-64 snappy a724d5312f1c8fe84be83b176b20fa171b3106cdfec1648cc3f32888397ecb09 lib/libsnappy.so -> libsnappy.so.1
+linux-64 snappy a724d5312f1c8fe84be83b176b20fa171b3106cdfec1648cc3f32888397ecb09 lib/libsnappy.so.1 -> libsnappy.so.1.3.1
+linux-64 snappy a724d5312f1c8fe84be83b176b20fa171b3106cdfec1648cc3f32888397ecb09 lib/libsnappy.so.1.3.1
+linux-64 zstd 47d682b9f6d6ec9eb1a6e6c3e75ea6273e899e78fb7fc59f81d39745009fbc60 lib/libzstd.so -> libzstd.so.1
+linux-64 zstd 47d682b9f6d6ec9eb1a6e6c3e75ea6273e899e78fb7fc59f81d39745009fbc60 lib/libzstd.so.1 -> libzstd.so.1.5.7
+linux-64 zstd 47d682b9f6d6ec9eb1a6e6c3e75ea6273e899e78fb7fc59f81d39745009fbc60 lib/libzstd.so.1.5.7
+linux-aarch64 bzip2 24eacc8a20fd7c4616566178562bef7f9344eb4a8700cfc3180fa75a6ff9d39f lib/libbz2.so.1.0.8
+linux-aarch64 bzip2 24eacc8a20fd7c4616566178562bef7f9344eb4a8700cfc3180fa75a6ff9d39f lib/libbz2.so -> libbz2.so.1.0.8
+linux-aarch64 bzip2 24eacc8a20fd7c4616566178562bef7f9344eb4a8700cfc3180fa75a6ff9d39f lib/libbz2.so.1.0 -> libbz2.so.1.0.8
+linux-aarch64 libbrotlicommon f3c8ad64c1b59d78fbdd6e1cb027644e1f5e2506446520c30ad4d4b37b6e4da7 lib/libbrotlicommon.so.1 -> libbrotlicommon.so.1.2.1
+linux-aarch64 libbrotlicommon f3c8ad64c1b59d78fbdd6e1cb027644e1f5e2506446520c30ad4d4b37b6e4da7 lib/libbrotlicommon.so -> libbrotlicommon.so.1.2.1
+linux-aarch64 libbrotlicommon f3c8ad64c1b59d78fbdd6e1cb027644e1f5e2506446520c30ad4d4b37b6e4da7 lib/libbrotlicommon.so.1.2.1
+linux-aarch64 libbrotlidec 1ae4ea4241551c1a0708b2da648e77d62b2d2d1755ac5ca560253266a606b17a lib/libbrotlidec.so.1.2.1
+linux-aarch64 libbrotlidec 1ae4ea4241551c1a0708b2da648e77d62b2d2d1755ac5ca560253266a606b17a lib/libbrotlidec.so.1 -> libbrotlidec.so.1.2.1
+linux-aarch64 libbrotlidec 1ae4ea4241551c1a0708b2da648e77d62b2d2d1755ac5ca560253266a606b17a lib/libbrotlidec.so -> libbrotlidec.so.1.2.1
+linux-aarch64 liblzma f760669fd1cea27f689f411c0d5488e26ce50e382c9b63e4ad348f959850124a lib/liblzma.so.5.8.3
+linux-aarch64 liblzma f760669fd1cea27f689f411c0d5488e26ce50e382c9b63e4ad348f959850124a lib/liblzma.so.5
+linux-aarch64 libsqlite 61a67f7085f497fa7622c6e1ae8611b8b2796a2eca70dcecc8d9124ca4f0d46b lib/libsqlite3.so.3.54.1
+linux-aarch64 libsqlite 61a67f7085f497fa7622c6e1ae8611b8b2796a2eca70dcecc8d9124ca4f0d46b lib/libsqlite3.so.0 -> libsqlite3.so.3.54.1
+linux-aarch64 libsqlite 61a67f7085f497fa7622c6e1ae8611b8b2796a2eca70dcecc8d9124ca4f0d46b lib/libsqlite3.so -> libsqlite3.so.3.54.1
+linux-aarch64 libzlib 76efa6cc9d7e6f5ee3bbca0939f64054af2bdfb3c3632531f8e633cf6c2ea41e lib/libz.so.1.3.2
+linux-aarch64 libzlib 76efa6cc9d7e6f5ee3bbca0939f64054af2bdfb3c3632531f8e633cf6c2ea41e lib/libz.so.1 -> libz.so.1.3.2
+linux-aarch64 lz4-c e8392843a18954fef038f2721fde65c4dbe7693fcd07677e5e74fca85b1a690c lib/liblz4.so -> liblz4.so.1.10.0
+linux-aarch64 lz4-c e8392843a18954fef038f2721fde65c4dbe7693fcd07677e5e74fca85b1a690c lib/liblz4.so.1 -> liblz4.so.1.10.0
+linux-aarch64 lz4-c e8392843a18954fef038f2721fde65c4dbe7693fcd07677e5e74fca85b1a690c lib/liblz4.so.1.10.0
+linux-aarch64 snappy 3edbb28329f34e3effc8e7da37349fc55998faf8c8a8c30304c9737b479cf10c lib/libsnappy.so -> libsnappy.so.1
+linux-aarch64 snappy 3edbb28329f34e3effc8e7da37349fc55998faf8c8a8c30304c9737b479cf10c lib/libsnappy.so.1 -> libsnappy.so.1.3.1
+linux-aarch64 snappy 3edbb28329f34e3effc8e7da37349fc55998faf8c8a8c30304c9737b479cf10c lib/libsnappy.so.1.3.1
+linux-aarch64 zstd 427fd14bcb3b8659796fecc682716617409350fb5a98e5b7b47558a10d1a2fc7 lib/libzstd.so -> libzstd.so.1
+linux-aarch64 zstd 427fd14bcb3b8659796fecc682716617409350fb5a98e5b7b47558a10d1a2fc7 lib/libzstd.so.1 -> libzstd.so.1.5.7
+linux-aarch64 zstd 427fd14bcb3b8659796fecc682716617409350fb5a98e5b7b47558a10d1a2fc7 lib/libzstd.so.1.5.7
+osx-arm64 bzip2 8ec22f0ba25cbfc2e64d70cf29459eccd7ffdf6436f6a6ff15bbfef799f7d4f6 lib/libbz2.1.0.8.dylib
+osx-arm64 bzip2 8ec22f0ba25cbfc2e64d70cf29459eccd7ffdf6436f6a6ff15bbfef799f7d4f6 lib/libbz2.dylib -> libbz2.1.0.8.dylib
+osx-arm64 libbrotlicommon 4ee2413810c5ef07e29a4c2a39d11f08f27d17ecee3577541e4dad06f635b375 lib/libbrotlicommon.dylib -> libbrotlicommon.1.2.1.dylib
+osx-arm64 libbrotlicommon 4ee2413810c5ef07e29a4c2a39d11f08f27d17ecee3577541e4dad06f635b375 lib/libbrotlicommon.1.2.1.dylib
+osx-arm64 libbrotlicommon 4ee2413810c5ef07e29a4c2a39d11f08f27d17ecee3577541e4dad06f635b375 lib/libbrotlicommon.1.dylib -> libbrotlicommon.1.2.1.dylib
+osx-arm64 libbrotlidec d77356267bf34639265ec79b217efe0b32fc2e91f4ca7a04263a5169cb156458 lib/libbrotlidec.1.2.1.dylib
+osx-arm64 libbrotlidec d77356267bf34639265ec79b217efe0b32fc2e91f4ca7a04263a5169cb156458 lib/libbrotlidec.1.dylib -> libbrotlidec.1.2.1.dylib
+osx-arm64 libbrotlidec d77356267bf34639265ec79b217efe0b32fc2e91f4ca7a04263a5169cb156458 lib/libbrotlidec.dylib -> libbrotlidec.1.2.1.dylib
+osx-arm64 liblzma 23d0630046a3e8b164d8f80f2b74ed2605af2e7050ab9913018056402fae4311 lib/liblzma.5.dylib
+osx-arm64 libsqlite c49adf700ad17332b938ac627845a3fdc70a0810660d3ec3814de25b156fbf60 lib/libsqlite3.dylib -> libsqlite3.3.54.1.dylib
+osx-arm64 libsqlite c49adf700ad17332b938ac627845a3fdc70a0810660d3ec3814de25b156fbf60 lib/libsqlite3.3.54.1.dylib
+osx-arm64 libsqlite c49adf700ad17332b938ac627845a3fdc70a0810660d3ec3814de25b156fbf60 lib/libsqlite3.0.dylib -> libsqlite3.3.54.1.dylib
+osx-arm64 libzlib a18fa5d5bac452401459f966cf0d872224e8080c4ff93c77e168d43ab42ef9d7 lib/libz.1.dylib -> libz.1.3.2.dylib
+osx-arm64 libzlib a18fa5d5bac452401459f966cf0d872224e8080c4ff93c77e168d43ab42ef9d7 lib/libz.1.3.2.dylib
+osx-arm64 lz4-c 1887867b393eb3c2b336deaffcf228574821ea1e0dcb9ef7bf6c9f59cec40f03 lib/liblz4.1.10.0.dylib
+osx-arm64 lz4-c 1887867b393eb3c2b336deaffcf228574821ea1e0dcb9ef7bf6c9f59cec40f03 lib/liblz4.1.dylib -> liblz4.1.10.0.dylib
+osx-arm64 lz4-c 1887867b393eb3c2b336deaffcf228574821ea1e0dcb9ef7bf6c9f59cec40f03 lib/liblz4.dylib -> liblz4.1.10.0.dylib
+osx-arm64 snappy daba756c5a0af883023d2c3884f03220da1b6b3dd05061d941e4d98d0edd506b lib/libsnappy.1.3.1.dylib
+osx-arm64 snappy daba756c5a0af883023d2c3884f03220da1b6b3dd05061d941e4d98d0edd506b lib/libsnappy.1.dylib -> libsnappy.1.3.1.dylib
+osx-arm64 snappy daba756c5a0af883023d2c3884f03220da1b6b3dd05061d941e4d98d0edd506b lib/libsnappy.dylib -> libsnappy.1.dylib
+osx-arm64 zstd da867f5092eb0cb746d353694f0098031fd9817a4ce7d5743121209ae0f406ca lib/libzstd.1.5.7.dylib
+osx-arm64 zstd da867f5092eb0cb746d353694f0098031fd9817a4ce7d5743121209ae0f406ca lib/libzstd.1.dylib -> libzstd.1.5.7.dylib
+osx-arm64 zstd da867f5092eb0cb746d353694f0098031fd9817a4ce7d5743121209ae0f406ca lib/libzstd.dylib -> libzstd.1.dylib

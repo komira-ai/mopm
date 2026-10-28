@@ -5,6 +5,10 @@ checksums, and this file says what changed. The details of a command are on its 
 
 ## Unreleased
 
+### `lzma` and `xz` are the conda package `liblzma`
+
+A native dependency named `lzma`, `xz`, `liblzma` or `liblzma.so.5` is now recorded in `depends` as `liblzma`, the conda-forge package that holds the runtime library, and the pinned native catalog pins `liblzma` instead of `xz`. conda-forge's `xz` is a metapackage whose closure (`xz-tools`, `xz-gpl-tools`, `liblzma-devel`) holds no library a program can load, so a test that unpacked every pinned system library was refused. A package already published with `xz` in its `depends` is still accepted by the registry; a package packed with this mopm names `liblzma` instead, so its `depends` differs from before for these libraries only. Nothing else in the catalog changes: every other pinned package was checked for a runtime shared library and for links that stay inside the package, and a test now holds both. See [configuration](docs/configuration.md), "Native libraries".
+
 ### `mopm whoami` works against the hosted registry
 
 `GET /api/v1/me` (the operation `mopm whoami` calls) is now served: it answers the account behind a session or an API token with its GitHub id, handle and the packages it owns, and `pending_invitations` is always 0 because invitations are not served yet. A CI token is refused as `scope_missing`. Before this, the hosted registry answered `route_not_found` and only the registry that `mopm` runs against in tests served it.

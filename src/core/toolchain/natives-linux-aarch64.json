@@ -10,11 +10,11 @@
   "roots": [
     "bzip2",
     "libbrotlidec",
+    "liblzma",
     "libsqlite",
     "libzlib",
     "lz4-c",
     "snappy",
-    "xz",
     "zstd"
   ],
   "provided": [
@@ -90,24 +90,6 @@
       "timestamp": 0
     },
     {
-      "name": "liblzma-devel",
-      "version": "5.8.3",
-      "build": "he30d5cf_1",
-      "build_number": 0,
-      "subdir": "linux-aarch64",
-      "channel": "conda-forge",
-      "path": "linux-aarch64/liblzma-devel-5.8.3-he30d5cf_1.conda",
-      "sha256": "f4e81e49d092f95e68e25c7dcca6643c7cfa23c9984b5d39a7e749c3426103e2",
-      "md5": "",
-      "size": 491291,
-      "depends": [
-        "liblzma"
-      ],
-      "constrains": [],
-      "license": "0BSD",
-      "timestamp": 0
-    },
-    {
       "name": "libsqlite",
       "version": "3.54.1",
       "build": "hd26f1b6_101",
@@ -171,63 +153,6 @@
       "depends": [],
       "constrains": [],
       "license": "BSD-3-Clause",
-      "timestamp": 0
-    },
-    {
-      "name": "xz",
-      "version": "5.8.3",
-      "build": "hd704e39_1",
-      "build_number": 0,
-      "subdir": "linux-aarch64",
-      "channel": "conda-forge",
-      "path": "linux-aarch64/xz-5.8.3-hd704e39_1.conda",
-      "sha256": "4e9b4a2eabf215c052d57a54c279a1d79343ae3b961d3f81f834e0bf76e5c7d4",
-      "md5": "",
-      "size": 23459,
-      "depends": [
-        "liblzma",
-        "liblzma-devel",
-        "xz-gpl-tools",
-        "xz-tools"
-      ],
-      "constrains": [],
-      "license": "0BSD AND LGPL-2.1-or-later AND GPL-2.0-or-later",
-      "timestamp": 0
-    },
-    {
-      "name": "xz-gpl-tools",
-      "version": "5.8.3",
-      "build": "hd704e39_1",
-      "build_number": 0,
-      "subdir": "linux-aarch64",
-      "channel": "conda-forge",
-      "path": "linux-aarch64/xz-gpl-tools-5.8.3-hd704e39_1.conda",
-      "sha256": "3f0b45a1039c86265f41f3bb5f248cd4d901acff49164f86122fab7cc4efc049",
-      "md5": "",
-      "size": 40115,
-      "depends": [
-        "liblzma"
-      ],
-      "constrains": [],
-      "license": "0BSD AND LGPL-2.1-or-later AND GPL-2.0-or-later",
-      "timestamp": 0
-    },
-    {
-      "name": "xz-tools",
-      "version": "5.8.3",
-      "build": "he30d5cf_1",
-      "build_number": 0,
-      "subdir": "linux-aarch64",
-      "channel": "conda-forge",
-      "path": "linux-aarch64/xz-tools-5.8.3-he30d5cf_1.conda",
-      "sha256": "1619ea83757336aaaac4cde221e4cd0982551c82def3276c91d0d53b0b7159db",
-      "md5": "",
-      "size": 103133,
-      "depends": [
-        "liblzma"
-      ],
-      "constrains": [],
-      "license": "0BSD AND LGPL-2.1-or-later",
       "timestamp": 0
     },
     {
