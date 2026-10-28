@@ -42,6 +42,7 @@ pub const conda_env = @import("conda_env.zig");
 pub const pkg_fetch = @import("pkg_fetch.zig");
 pub const closure = @import("closure.zig");
 pub const native_catalog = @import("native_catalog.zig");
+pub const natives_libs = @import("natives_libs.zig");
 pub const native_files = @import("native_files.zig");
 pub const unit_graph = @import("unit_graph.zig");
 pub const unit_run = @import("unit_run.zig");
@@ -82,6 +83,7 @@ test {
     _ = @import("pkg_fetch.zig");
     _ = @import("closure.zig");
     _ = @import("native_catalog.zig");
+    _ = @import("natives_libs.zig");
     _ = @import("native_files.zig");
     _ = @import("unit_graph.zig");
     _ = @import("unit_graph_platform_test.zig");

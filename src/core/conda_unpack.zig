@@ -266,6 +266,34 @@ pub fn readFilesLimited(arena: Allocator, bytes: []const u8, window: []u8, want:
     return out;
 }
 
+/// One entry of the package tar of a `.conda`, copied out of the reader's buffers.
+pub const Listed = struct { name: []const u8, link: []const u8, kind: tar_read.Kind };
+
+/// Lists the entries (name, kind, link target) of the files of the `.conda` in `bytes`, in tar order, under the same
+/// limits and checks as `readFiles` (nothing is written and no data is kept).
+pub fn listEntries(arena: Allocator, bytes: []const u8, window: []u8, diag: *Diag) ![]const Listed {
+    const limits = Limits{};
+    const entries = try readZip(arena, BytesSource{ .bytes = bytes }, diag);
+    var pkg: ?ZipEntry = null;
+    for (entries) |e| {
+        if (std.mem.startsWith(u8, e.name, "pkg-") and std.mem.endsWith(u8, e.name, ".tar.zst")) pkg = e;
+    }
+    const entry = pkg orelse {
+        diag.message = "the zip has no pkg-*.tar.zst: not a .conda (format 2)";
+        return error.BadConda;
+    };
+    var fbs = std.io.fixedBufferStream(bytes[@intCast(entry.offset)..][0..@intCast(entry.size)]);
+    var zs = std.compress.zstd.decompressor(fbs.reader(), .{ .window_buffer = window });
+    var lim = std.io.limitedReader(zs.reader(), limits.total + 1);
+    var tr = tar_read.tarReader(lim.reader());
+    var out = std.ArrayList(Listed).init(arena);
+    while (try tr.next()) |e| {
+        try out.append(.{ .name = try arena.dupe(u8, stripDotSlash(e.name)), .link = try arena.dupe(u8, e.link), .kind = e.kind });
+    }
+    if (lim.bytes_left == 0) return overTotal(arena, limits, diag);
+    return out.items;
+}
+
 fn overTotal(arena: Allocator, limits: Limits, diag: *Diag) error{ BadConda, OutOfMemory } {
     diag.message = std.fmt.allocPrint(arena, "the package decompresses to more than {d} bytes; mopm reads at most that", .{limits.total}) catch return error.OutOfMemory;
     return error.BadConda;

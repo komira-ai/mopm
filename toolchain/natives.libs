@@ -4,10 +4,11 @@
 #   <subdir> <package> <sha256 of the package file> <path>             a regular file
 #   <subdir> <package> <sha256 of the package file> <path> -> <target>   a link, target relative to its directory
 #
-# Read by the unit test "every package of the native catalog holds a shared library ..." (native_catalog.zig):
-# a catalog package without a regular shared library, or with a link to a file the package does not hold,
-# fails it. The sha256 ties each line to the package it was read from, so a pin that moves needs its lines
-# read again. Read them from the package file: unzip -p <file>.conda 'pkg-*' | zstd -dc | tar -tv
+# Made by `mopm-closure --natives-libs src/core/toolchain toolchain/natives.libs` (the weekly toolchain job runs it):
+# the lines of a package already here for its pinned sha256 are kept, the others are read from the package file,
+# and the lines of packages the catalog no longer pins are dropped. Read by the unit test "every package of the
+# native catalog holds a shared library ..." (native_catalog.zig): a catalog package without a regular shared
+# library, or with a link to a file the package does not hold, fails it.
 linux-64 bzip2 1a0d382c515ebf55f8ee1f38c8b81bc95af5c2acc42ad53b66bc5df932032f96 lib/libbz2.so.1.0.8
 linux-64 bzip2 1a0d382c515ebf55f8ee1f38c8b81bc95af5c2acc42ad53b66bc5df932032f96 lib/libbz2.so -> libbz2.so.1.0.8
 linux-64 bzip2 1a0d382c515ebf55f8ee1f38c8b81bc95af5c2acc42ad53b66bc5df932032f96 lib/libbz2.so.1.0 -> libbz2.so.1.0.8
