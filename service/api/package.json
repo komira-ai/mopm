@@ -20,7 +20,7 @@
     "esbuild": "0.28.2",
     "fast-check": "3.23.2",
     "jest": "29.7.0",
-    "ts-jest": "29.4.14",
+    "ts-jest": "29.4.15",
     "typescript": "5.9.3"
   },
   "buildrules": {
