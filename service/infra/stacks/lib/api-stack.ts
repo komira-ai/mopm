@@ -178,6 +178,10 @@ export const INDEX_THROTTLE = { rateLimit: 50, burstLimit: 100 };
 /** Methods a browser may use on the read API. HEAD and OPTIONS are listed for preflight; only GET routes exist. */
 export const CORS_METHODS = [apigw.CorsHttpMethod.GET, apigw.CorsHttpMethod.HEAD, apigw.CorsHttpMethod.OPTIONS];
 /** How long a browser may cache a preflight answer. */
+/** How long the HTTP API waits for an integration (its default and its largest). */
+export const API_GATEWAY_INTEGRATION_SECONDS = 30;
+/** The API Lambda's timeout: well under the gateway's wait. */
+export const API_LAMBDA_TIMEOUT_SECONDS = 25;
 export const CORS_MAX_AGE = Duration.hours(1);
 /** The response headers a page may read: the request id to show with an error, and Retry-After so it can say when to try again after a 429 or a read-only 503. */
 export const CORS_EXPOSED_HEADERS = ['x-mopm-request-id', 'retry-after'];
@@ -208,9 +212,13 @@ export class ApiStack extends Stack {
       // The asset holds one bundled file per handler (esbuild, service/api `npm run build`); the AWS SDK v3 comes with the
       // Node.js 22 runtime and is the one thing left out. test/bundle.test.ts loads every handler from its asset.
       code: lambda.Code.fromAsset(handlerDir),
-      memorySize: 256,
-      // Login calls GitHub and Secrets Manager; the gateway allows 30 seconds.
-      timeout: Duration.seconds(10),
+      // 1024 MB for the CPU it brings: a group create does hundreds of store and S3 calls, each signed and parsed in this process.
+      memorySize: 1024,
+      // Under the HTTP API's 30 s limit on an integration (API_GATEWAY_INTEGRATION_SECONDS), so a call the Lambda ends is the Lambda's
+      // timeout and not the gateway's: the gateway answers a Lambda that times out with a bare HTTP 500, the registry's own errors never
+      // run. A group create stops reserving after groupCreateBudgetMs (service/api/src/publish/config.ts, at most 9 s) and spends a
+      // batch more finishing; test/api.test.ts holds the budget and that tail under this timeout. Login calls GitHub and Secrets Manager.
+      timeout: Duration.seconds(API_LAMBDA_TIMEOUT_SECONDS),
       logGroup,
       environment: {
         MOPM_STAGE: c.stage,

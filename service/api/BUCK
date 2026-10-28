@@ -126,6 +126,7 @@ export_file(
 ) for name, path in {
     "metrics.ts": "src/metrics.ts",
     "group.ts": "src/group.ts",
+    "config.ts": "src/publish/config.ts",
     "group-service.ts": "src/publish/group-service.ts",
     "group-store.ts": "src/group-store.ts",
     "group-sweeper.ts": "src/publish/group-sweeper.ts",
