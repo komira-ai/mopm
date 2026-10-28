@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { validatePackage, RULE_TO_REJECTION } from '../../src/validate';
 import type { Verdict } from '../../src/validate';
-import { DEPLOYED_VALIDATOR_OPTIONS, NATIVE_DEP_ALLOWLIST } from '../../src/validate/native-deps';
+import { DEPLOYED_VALIDATOR_OPTIONS, NATIVE_DEP_ALLOWLIST, NATIVE_DEP_CURRENT, NATIVE_DEP_LEGACY } from '../../src/validate/native-deps';
 import { buildConda } from './builder';
 
 const verdictFor = (dep: string): Verdict => {
@@ -62,7 +62,7 @@ describe('the native library allow-list of the deployed validators', () => {
     expect(c.ok && c.facts.nativeDepends).toEqual(['lz4-c', 'zstd >=1']);
   });
 
-  test.each(['openssl', 'python >=3', 'lz4 >=1', 'liblz4', 'zlib', 'lz4-c-extra', 'LZ4-C', 'aws-lc', 'sqlite', 'brotli', 'libbrotlienc', 'libbrotlicommon', 'libsnappy', 's2n'])('%s is refused with dependency_not_allowed', (dep) => {
+  test.each(['openssl', 'python >=3', 'lz4 >=1', 'liblz4', 'lzma', 'xz-tools', 'xz-gpl-tools', 'liblzma-devel', 'zlib', 'lz4-c-extra', 'LZ4-C', 'aws-lc', 'sqlite', 'brotli', 'libbrotlienc', 'libbrotlicommon', 'libsnappy', 's2n'])('%s is refused with dependency_not_allowed', (dep) => {
     const v = verdictFor(dep);
     expect(v.ok).toBe(false);
     if (v.ok) return;
@@ -76,12 +76,33 @@ describe('the native library allow-list of the deployed validators', () => {
     expect(v.ok).toBe(false);
   });
 
-  test('every conda name the pack map can emit is on the allow-list, and nothing else is', () => {
-    expect(packMapOutputs()).toEqual([...NATIVE_DEP_ALLOWLIST].sort());
+  test('every conda name the pack map can emit is a current name, and nothing else is', () => {
+    expect(packMapOutputs()).toEqual([...NATIVE_DEP_CURRENT].sort());
   });
 
-  test('the allow-list equals the roots of the pinned native catalog, so the registry and mopm lock cannot drift', () => {
-    expect([...NATIVE_DEP_ALLOWLIST].sort()).toEqual(catalogRoots());
+  test('the current names equal the roots of the pinned native catalog, so the registry and mopm lock cannot drift', () => {
+    expect([...NATIVE_DEP_CURRENT].sort()).toEqual(catalogRoots());
+  });
+
+  test('the allow-list is the current names and the accepted legacy names, and nothing else', () => {
+    expect([...NATIVE_DEP_ALLOWLIST].sort()).toEqual([...NATIVE_DEP_CURRENT, ...NATIVE_DEP_LEGACY].sort());
+  });
+
+  test('a legacy name is neither something pack emits nor a root of the catalog, and is still accepted', () => {
+    expect(NATIVE_DEP_LEGACY.length).toBeGreaterThan(0);
+    for (const name of NATIVE_DEP_LEGACY) {
+      expect(packMapOutputs()).not.toContain(name);
+      expect(catalogRoots()).not.toContain(name);
+      expect(NATIVE_DEP_CURRENT).not.toContain(name);
+      expect(verdictFor(`${name} >=5,<6`).ok).toBe(true);
+    }
+  });
+
+  test('liblzma, the runtime library package, and xz, the name earlier packs wrote for lzma, are both accepted', () => {
+    expect(verdictFor('liblzma >=5.4').ok).toBe(true);
+    expect(verdictFor('xz >=5.4').ok).toBe(true);
+    expect(verdictFor('xz-tools').ok).toBe(false);
+    expect(verdictFor('liblzma-devel').ok).toBe(false);
   });
 
   test('both deployed validators are wired with the deployed options', () => {

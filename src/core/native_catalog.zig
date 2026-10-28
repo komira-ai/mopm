@@ -821,3 +821,132 @@ test "the committed catalog files are the ones made from the committed lock" {
     }
     try std.testing.expect((try forSubdir(a, "linux-32")) == null);
 }
+
+// ------------------------------------------------------------ what the packages hold
+
+/// One line of toolchain/natives.libs: a file of a package below `lib/` that is a shared library, or a link.
+const LibLine = struct {
+    subdir: []const u8,
+    package: []const u8,
+    sha256: []const u8,
+    path: []const u8,
+    /// Set for a link: where it points, relative to its directory.
+    target: ?[]const u8,
+};
+
+fn parseLibs(a: Allocator, text: []const u8) ![]const LibLine {
+    var out = std.ArrayList(LibLine).init(a);
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+        var f = std.mem.tokenizeScalar(u8, line, ' ');
+        const subdir = f.next() orelse return error.BadLibsLine;
+        const package = f.next() orelse return error.BadLibsLine;
+        const sha256 = f.next() orelse return error.BadLibsLine;
+        const path = f.next() orelse return error.BadLibsLine;
+        var target: ?[]const u8 = null;
+        if (f.next()) |arrow| {
+            if (!std.mem.eql(u8, arrow, "->")) return error.BadLibsLine;
+            target = f.next() orelse return error.BadLibsLine;
+        }
+        if (f.next() != null) return error.BadLibsLine;
+        try out.append(.{ .subdir = subdir, .package = package, .sha256 = sha256, .path = path, .target = target });
+    }
+    return out.items;
+}
+
+fn libOf(lines: []const LibLine, subdir: []const u8, package: []const u8, path: []const u8) ?LibLine {
+    for (lines) |l| {
+        if (std.mem.eql(u8, l.subdir, subdir) and std.mem.eql(u8, l.package, package) and std.mem.eql(u8, l.path, path)) return l;
+    }
+    return null;
+}
+
+/// Why the shared libraries of `p` (read from toolchain/natives.libs) are not usable, or null: it holds no regular
+/// shared library file, or one of its links does not end, through links of the package, at a regular file of it.
+fn libsProblem(a: Allocator, lines: []const LibLine, subdir: []const u8, p: Package) Allocator.Error!?[]const u8 {
+    var regular: usize = 0;
+    for (lines) |l| {
+        if (!std.mem.eql(u8, l.subdir, subdir) or !std.mem.eql(u8, l.package, p.name)) continue;
+        if (!std.mem.eql(u8, l.sha256, p.sha256)) {
+            return try std.fmt.allocPrint(a, "{s}: toolchain/natives.libs reads {s} from a package file with sha256 {s}, the catalog pins {s}", .{ p.name, l.path, l.sha256, p.sha256 });
+        }
+        if (l.target == null) {
+            regular += 1;
+            continue;
+        }
+        var at = l;
+        var hops: usize = 0;
+        while (at.target) |t| {
+            hops += 1;
+            const want = try std.fmt.allocPrint(a, "lib/{s}", .{t});
+            const next = libOf(lines, subdir, p.name, want);
+            if (hops > 8) return try std.fmt.allocPrint(a, "{s}: {s} is in a loop of links", .{ p.name, l.path });
+            if (std.mem.indexOfScalar(u8, t, '/') != null or next == null) {
+                return try std.fmt.allocPrint(a, "{s}: {s} points to {s}, which the package does not hold", .{ p.name, l.path, t });
+            }
+            at = next.?;
+        }
+    }
+    if (regular == 0) return try std.fmt.allocPrint(a, "{s}: the package has no shared library", .{p.name});
+    return null;
+}
+
+test "libsProblem: a package without a shared library, and a dev link to a library another package holds, are caught" {
+    var st = testArena();
+    defer st.deinit();
+    const a = st.allocator();
+    const lines = try parseLibs(a,
+        \\linux-64 good aa lib/libgood.so.1.2
+        \\linux-64 good aa lib/libgood.so.1 -> libgood.so.1.2
+        \\linux-64 good aa lib/libgood.so -> libgood.so.1
+        \\linux-64 dev bb lib/libgood.so -> libgood.so.1.2
+        \\linux-64 loop cc lib/libloop.so -> libloop.so.1
+        \\linux-64 loop cc lib/libloop.so.1 -> libloop.so
+        \\linux-64 deep dd lib/libdeep.so -> ../libdeep.so.1
+        \\linux-64 stale ee lib/libstale.so.1
+        \\
+    );
+    const pkg = struct {
+        fn of(name: []const u8, sha: []const u8) Package {
+            return .{ .name = name, .version = "1", .build = "0", .subdir = "linux-64", .channel = "conda-forge", .path = "", .sha256 = sha, .size = 1 };
+        }
+    };
+    try std.testing.expectEqual(@as(?[]const u8, null), try libsProblem(a, lines, "linux-64", pkg.of("good", "aa")));
+    try std.testing.expectEqualStrings("dev: lib/libgood.so points to libgood.so.1.2, which the package does not hold", (try libsProblem(a, lines, "linux-64", pkg.of("dev", "bb"))).?);
+    try std.testing.expectEqualStrings("loop: lib/libloop.so is in a loop of links", (try libsProblem(a, lines, "linux-64", pkg.of("loop", "cc"))).?);
+    try std.testing.expect((try libsProblem(a, lines, "linux-64", pkg.of("deep", "dd"))) != null);
+    try std.testing.expect(std.mem.indexOf(u8, (try libsProblem(a, lines, "linux-64", pkg.of("stale", "other"))).?, "sha256") != null);
+    try std.testing.expectEqualStrings("none: the package has no shared library", (try libsProblem(a, lines, "linux-64", pkg.of("none", "ff"))).?);
+    try std.testing.expectEqualStrings("good: the package has no shared library", (try libsProblem(a, lines, "osx-arm64", pkg.of("good", "aa"))).?);
+}
+
+// conda-forge's `xz` is a metapackage whose closure holds packages with no library and a development package whose
+// `lib/liblzma.so` points to a file only `liblzma` holds; `conda_unpack --all-libs` refuses both. Every package
+// of the catalog must hold a shared library, and every link of it must end at a file of the same package, so a root
+// that brings such a package cannot be pinned again.
+test "every package of the native catalog holds a shared library, and no link of it points outside it" {
+    var st = testArena();
+    defer st.deinit();
+    const a = st.allocator();
+    const text = try std.fs.cwd().readFileAlloc(a, try testroot.path(a, "toolchain/natives.libs"), 1 << 20);
+    const lines = try parseLibs(a, text);
+    for (closure.subdirs) |subdir| {
+        const cat = (try forSubdir(a, subdir)).?;
+        for (cat.packages) |p| {
+            if (try libsProblem(a, lines, subdir, p)) |why| {
+                std.debug.print("{s}: {s}\n", .{ subdir, why });
+                return error.CatalogPackageUnusable;
+            }
+        }
+        // No line for a package the catalog does not pin: the file lists what the catalog has, no more.
+        for (lines) |l| {
+            if (!std.mem.eql(u8, l.subdir, subdir)) continue;
+            if (find(cat, l.package) == null) {
+                std.debug.print("toolchain/natives.libs has {s} for {s}, which the catalog does not pin\n", .{ l.package, subdir });
+                return error.LibsHasUnpinnedPackage;
+            }
+        }
+    }
+}

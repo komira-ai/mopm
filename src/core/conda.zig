@@ -609,15 +609,17 @@ fn lessDep(_: void, a: Dep, b: Dep) bool {
 
 /// The conda package that provides a system library, from the name a manifest gives it (`lz4`, `liblz4`,
 /// `liblz4.so.1`): the packages of conda-forge whose names are not the library's. Any other name is the conda
-/// package name as written (`openssl`).
+/// package name as written (`openssl`). `lzma` and `xz` are `liblzma`, the package of the runtime library
+/// (`liblzma.so.5`); conda-forge's `xz` is a metapackage of command line tools and a development package, none of
+/// which holds the library a program loads.
 pub fn condaPackageFor(name: []const u8) []const u8 {
     const known = [_][2][]const u8{
         .{ "lz4", "lz4-c" },
         .{ "z", "libzlib" },
         .{ "zlib", "libzlib" },
         .{ "bz2", "bzip2" },
-        .{ "lzma", "xz" },
-        .{ "xz", "xz" },
+        .{ "lzma", "liblzma" },
+        .{ "xz", "liblzma" },
         .{ "zstd", "zstd" },
         .{ "snappy", "snappy" },
         .{ "brotlidec", "libbrotlidec" },
@@ -1463,7 +1465,11 @@ test "the conda package of a system library: by name, library name or file name"
         .{ "libz.so.1", "libzlib" },
         .{ "zlib", "libzlib" },
         .{ "libbz2.so.1.0", "bzip2" },
-        .{ "liblzma.so.5", "xz" },
+        .{ "liblzma.so.5", "liblzma" },
+        .{ "liblzma.5.dylib", "liblzma" },
+        .{ "liblzma", "liblzma" },
+        .{ "lzma", "liblzma" },
+        .{ "xz", "liblzma" },
         .{ "libzstd.so.1", "zstd" },
         .{ "snappy", "snappy" },
         .{ "libsnappy.so.1", "snappy" },

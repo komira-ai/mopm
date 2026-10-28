@@ -4,9 +4,9 @@
 # the solver finds them.
 bzip2
 libbrotlidec
+liblzma
 libsqlite
 libzlib
 lz4-c
 snappy
-xz
 zstd
