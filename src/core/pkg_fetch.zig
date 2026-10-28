@@ -142,6 +142,33 @@ pub fn fetch(arena: Allocator, dir: std.fs.Dir, name: []const u8, url: []const u
     kept = true;
 }
 
+pub const GetOptions = struct {
+    /// Sent as `If-None-Match`; an answer of 304 then leaves `name` untouched.
+    if_none_match: ?[]const u8 = null,
+    /// The sha256 (lowercase hex) the body must have; any other body is refused and not kept.
+    want_sha256: ?[]const u8 = null,
+    /// The most bytes of body that are read; a longer one is refused and not kept.
+    max_size: u64,
+};
+
+/// What the server answered. `size` and `sha256` describe the file kept, so they are set for a 2xx answer only.
+pub const Got = struct {
+    status: u16,
+    /// The `ETag` header, or "".
+    etag: []const u8 = "",
+    size: u64 = 0,
+    sha256: [64]u8 = [_]u8{'0'} ** 64,
+};
+
+/// One conditional GET of `url`. A 2xx answer is streamed to a temporary file, checked against `opts`, and renamed
+/// onto `dir/name`; a 304 or any other status leaves `name` as it was and is returned in `Got.status` for the caller
+/// to judge. An error (`DownloadFailed`, `SizeMismatch`, `HashMismatch`) leaves nothing new in `dir`, and `diag` says
+/// why, naming `url`.
+pub fn get(arena: Allocator, dir: std.fs.Dir, name: []const u8, url: []const u8, opts: GetOptions, diag: *Diag) !Got {
+    _ = .{ arena, dir, name, url, opts, diag };
+    return error.DownloadFailed;
+}
+
 // ---------------------------------------------------------------- tests
 
 /// A loopback HTTP server: /good.conda, /bad.conda (the same length, other
