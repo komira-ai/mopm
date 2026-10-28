@@ -93,10 +93,10 @@ describe('a valid package', () => {
     expect(check(b).ok).toBe(true);
   });
 
-  test('an allow-listed native dependency in depends is accepted, and refused when the list is empty', () => {
+  test('a native dependency in depends is accepted whether or not the mirror lists it (test/validate/native-any.test.ts has the warnings)', () => {
     const b = buildConda({ index: { depends: ['mojo-compiler ==1.0.0', 'openssl >=3'] } });
-    expect(check(b, {}, { allowedNativeDeps: new Set(['openssl']) }).ok).toBe(true);
-    refused(check(b), 'dependency_not_allowed');
+    expect(check(b, {}, { nativeMirror: { names: new Set(['openssl']), generatedAt: new Date() } }).ok).toBe(true);
+    expect(check(b).ok).toBe(true);
   });
 
   test('a .tar.bz2 is accepted only when the formats allow it', () => {
@@ -431,8 +431,8 @@ describe('metadata consistency', () => {
     refusedBuild({ index: { depends: ['mojo-compiler >=1.0.0'] } }, 'compiler_mismatch');
     refusedBuild({ index: { depends: ['mojo-compiler ==1.0.0', 'mojo-compiler ==1.0.0'] } }, 'compiler_mismatch');
   });
-  test('depends are mojo packages, the compiler and allow-listed libraries, and match the metadata deps', () => {
-    refusedBuild({ index: { depends: ['mojo-compiler ==1.0.0', 'python >=3'] } }, 'dependency_not_allowed');
+  test('depends are mojo packages, the compiler and well-formed conda requirements, and match the metadata deps', () => {
+    refusedBuild({ index: { depends: ['mojo-compiler ==1.0.0', 'Python >=3'] } }, 'dependency_not_allowed');
     refusedBuild({ index: { depends: ['mojo-compiler ==1.0.0', 'mojo-'] } }, 'dependency_not_allowed');
     refusedBuild({ index: { depends: ['mojo-compiler ==1.0.0', 'mojo-json'] } }, 'deps_mismatch');
     refusedBuild({ mopm: { deps: [{ name: 'json' }] } }, 'deps_mismatch');

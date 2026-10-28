@@ -51,6 +51,8 @@ export interface PublishRecord {
   status: PublishStatus;
   rejection_code?: RejectionCode;
   message?: string;
+  /** Set by the validator when the archives passed with something to tell the publisher. */
+  warnings?: string[];
   /** The hash the commit request declared for the embedded manifest; absent when it did not (the validator then uses the one it computes). */
   manifest_sha256?: string;
   /** Display metadata from the commit request (description, license, repository, homepage, keywords, readme). */

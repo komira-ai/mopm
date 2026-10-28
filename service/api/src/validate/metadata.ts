@@ -1,6 +1,8 @@
 import { posix } from 'node:path';
 import { fail } from './codes';
 import { canonicalVersion, isValidVersion } from '../version';
+import { CONDA_NAME, MIRROR_MAX_AGE_MS } from './native-mirror';
+import type { NativeMirror } from './native-mirror';
 
 /** Constants drawn from spec/package-metadata.schema.json; a test fails if the schema file drifts from them. */
 export const METADATA_SCHEMA_VERSION = 1;
@@ -132,16 +134,45 @@ export function checkIndex(o: Record<string, unknown>): CondaIndex {
 }
 
 export interface DepOptions {
-  /** Native library ids (conda package names) that may appear in `depends`. */
-  allowedNativeDeps: ReadonlySet<string>;
+  /** The conda-forge name mirror, when it could be read; without it a native dependency's name cannot be checked, and that is a warning. */
+  nativeMirror?: NativeMirror;
+  now?: Date;
+}
+
+export interface DependsVerdict {
+  /** The `mojo-*` packages `depends` names, sorted, with the prefix. */
+  mojoDeps: string[];
+  /** What the publisher should be told and what did not stop the publish: unknown native names, an old mirror, no mirror. */
+  warnings: string[];
+}
+
+const SPEC_MAX = 256;
+/** A conda version constraint as written in `depends`: digits, letters and the operators of `>=1.9,<2`, `1.2.*`, `1|2`, `~=1.4`. No quote, slash, semicolon, `$` or white space. */
+const VERSION_TOKEN = /^[A-Za-z0-9.*+!_,|<>=~^-]{1,128}$/;
+const BUILD_TOKEN = /^[A-Za-z0-9.*+_-]{1,64}$/;
+
+/** The name of one `depends` entry when the entry is well formed (`name`, `name version` or `name version build`), else the reason it is not. */
+function parseSpec(d: string): { name: string } | { bad: string } {
+  if (d.length > SPEC_MAX) return { bad: `is longer than ${SPEC_MAX} characters` };
+  const parts = d.split(/\s+/);
+  if (parts[parts.length - 1] === '') parts.pop();
+  const [name, version, build] = parts;
+  if (name === undefined || !CONDA_NAME.test(name)) return { bad: 'does not start with a conda package name (lower-case letters, digits, ., _ and -)' };
+  if (parts.length > 3) return { bad: 'has more than a name, a version and a build string' };
+  if (version !== undefined && !VERSION_TOKEN.test(version)) return { bad: `has a version requirement '${version}' that is not one` };
+  if (build !== undefined && !BUILD_TOKEN.test(build)) return { bad: `has a build string '${build}' that is not one` };
+  return { name };
 }
 
 /**
- * Check `depends` of the index: the compiler exactly once and equal to the build string's compiler, only
- * `mojo-*` packages and allow-listed native libraries besides, and the `mojo-*` set equal to `deps` of the
- * embedded metadata. Returns the dependency names for the verdict.
+ * Check `depends` of the index: the compiler exactly once and equal to the build string's compiler; every other entry a well-formed
+ * conda requirement (the only refusal: malformed text must never reach a lock or a URL; a `mojo-` name is a Mojo package, never a
+ * native one); the `mojo-*` set equal to `deps` of the
+ * embedded metadata. Any well-formed native name is accepted. It warns (and does not refuse) about a name the conda-forge mirror does
+ * not list, a mirror more than a day old, and a mirror that could not be read. Warnings are in the order of `depends`, the one about
+ * the mirror first.
  */
-export function checkDepends(idx: CondaIndex, mopm: Mopm, opt: DepOptions): string[] {
+export function checkDepends(idx: CondaIndex, mopm: Mopm, opt: DepOptions = {}): DependsVerdict {
   const compilers = idx.depends.filter((d) => d.split(/\s+/, 1)[0] === 'mojo-compiler');
   if (compilers.length === 0) return fail('compiler_missing', "info/index.json 'depends' has no 'mojo-compiler ==<exact>'");
   if (compilers.length > 1) return fail('compiler_mismatch', "info/index.json 'depends' names mojo-compiler more than once");
@@ -149,23 +180,48 @@ export function checkDepends(idx: CondaIndex, mopm: Mopm, opt: DepOptions): stri
     return fail('compiler_mismatch', `'${compilers[0]}' does not equal 'mojo-compiler ==${idx.compiler}' (the compiler in the build string)`);
   }
   const mojoDeps = new Set<string>();
+  const natives: string[] = [];
   for (const d of idx.depends) {
     const dn = d.split(/\s+/, 1)[0];
     if (dn === 'mojo-compiler') continue;
-    if (dn.startsWith('mojo-') && dn.length > 5) mojoDeps.add(dn);
-    else if (!opt.allowedNativeDeps.has(dn)) return fail('dependency_not_allowed', `dependency '${d}' is neither a mojo-* package nor an allow-listed native library`);
+    // A name that starts with `mojo-` is a Mojo package and is never a native one: it must be declared in the metadata's `deps`
+    // (below), and the bare prefix is not a package.
+    if (dn.startsWith('mojo-')) {
+      if (dn.length === 5) return fail('dependency_not_allowed', `dependency '${d}' is not a Mojo package name`);
+      mojoDeps.add(dn);
+      continue;
+    }
+    const spec = parseSpec(d);
+    if ('bad' in spec) return fail('dependency_not_allowed', `dependency '${d.slice(0, 80)}' ${spec.bad}`);
+    natives.push(spec.name);
   }
   const declared = new Set(mopm.deps.map((x) => `mojo-${x.name}`));
   const same = declared.size === mojoDeps.size && [...declared].every((x) => mojoDeps.has(x));
   if (!same) {
     return fail('deps_mismatch', `info/index.json depends [${[...mojoDeps].sort().join(', ')}] differ from the metadata deps [${[...declared].sort().join(', ')}]`);
   }
-  return [...mojoDeps].sort();
+  return { mojoDeps: [...mojoDeps].sort(), warnings: nativeWarnings(natives, opt) };
+}
+
+/** Check (b) of the design: is each native name one conda-forge lists? Only informs. */
+function nativeWarnings(natives: string[], opt: DepOptions): string[] {
+  if (natives.length === 0) return [];
+  const mirror = opt.nativeMirror;
+  if (!mirror) return ['the conda-forge name list could not be read, so the names of the native dependencies were not checked; the publish went through'];
+  const out: string[] = [];
+  const age = (opt.now ?? new Date()).getTime() - mirror.generatedAt.getTime();
+  if (age > MIRROR_MAX_AGE_MS) {
+    out.push(`the conda-forge name list is more than a day old (made ${mirror.generatedAt.toISOString()}), so a name it lacks may only be new; the publish went through`);
+  }
+  for (const n of [...new Set(natives)]) {
+    if (!mirror.names.has(n)) out.push(`native dependency '${n}' is not a conda-forge package name as far as the registry's list knows; check the spelling (the publish went through)`);
+  }
+  return out;
 }
 
 /**
  * The requirements of `depends` that are neither the compiler nor a `mojo-*` package (after `checkDepends` accepted the
- * index, these are allow-listed system libraries), with runs of white space as one space, sorted.
+ * index, these are conda packages the package loads), with runs of white space as one space, sorted.
  */
 export function nativeDependsOf(idx: CondaIndex): string[] {
   return idx.depends

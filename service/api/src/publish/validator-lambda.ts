@@ -1,6 +1,6 @@
 import { DynamoStore, tablesFor } from '../dynamo-store';
-import { DEPLOYED_VALIDATOR_OPTIONS } from '../validate/native-deps';
 import { S3Channel, SqsFifoQueue } from './aws';
+import { MirrorReader } from './native-mirror-reader';
 import { publishConfigFromEnv } from './config';
 import { DynamoPublishStore, publishTablesFor } from './dynamo-publish-store';
 import { validatePublish, type ValidatorDeps } from './validator';
@@ -18,14 +18,17 @@ function configure(): ValidatorDeps {
   const stage = stageOf(env);
   const doc = documentClient();
   const region = regionOf(env);
+  const objects = new S3Channel(required(env, 'MOPM_CHANNEL_BUCKET'), { region });
+  // The conda-forge name mirror: read on the first publish of the container, then from memory (until it is a day old).
+  const mirror = new MirrorReader(objects);
   return {
     registry: new DynamoStore(doc, tablesFor(stage)),
     publishes: new DynamoPublishStore(doc, publishTablesFor(stage)),
-    objects: new S3Channel(required(env, 'MOPM_CHANNEL_BUCKET'), { region }),
+    objects,
     indexQueue: new SqsFifoQueue(required(env, 'MOPM_INDEX_QUEUE_URL'), { region }),
     config: publishConfigFromEnv(env),
     channelUrl: required(env, 'MOPM_CHANNEL_URL'),
-    validatorOptions: DEPLOYED_VALIDATOR_OPTIONS,
+    nativeMirror: () => mirror.read(),
   };
 }
 
