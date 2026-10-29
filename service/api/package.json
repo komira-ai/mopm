@@ -10,8 +10,8 @@
     "build:validate-lib": "esbuild src/validate/index.ts --bundle --platform=node --target=node22 --format=cjs --outbase=src --outdir=dist-validate --log-level=warning"
   },
   "dependencies": {
-    "@aws-sdk/client-dynamodb": "3.1152.0",
-    "@aws-sdk/lib-dynamodb": "3.1152.0",
+    "@aws-sdk/client-dynamodb": "3.1155.0",
+    "@aws-sdk/lib-dynamodb": "3.1155.0",
     "fzstd": "0.1.1"
   },
   "devDependencies": {
