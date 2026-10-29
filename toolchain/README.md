@@ -9,7 +9,7 @@ and everything they need) is a fixed list per Mojo version and platform:
 | `mojo-<version>.pixi.lock` | the solver's answer for that version, all platforms | the `toolchain` job of `.github/workflows/kpin-update.yml` (pixi, on GitHub) |
 | `../src/core/toolchain/mojo-<version>-<subdir>.json` | the closure of one platform: url, sha256, size and conda-meta fields of every package | `mopm-closure`, from the lock |
 | `natives.txt` | the conda names of the native libraries a package may load (the allow-list), one per line | a person |
-| `natives.libs` | the shared libraries each catalog package holds, read from the package files (below) | a person |
+| `natives.libs` | the shared libraries each catalog package holds, read from the package files (below) | `mopm-closure --natives-libs`, from the catalog (the same job) |
 | `natives.pixi.lock` | the solver's answer for all of `natives.txt` at once, all platforms; independent of the Mojo version | the same job |
 | `../src/core/toolchain/natives-<subdir>.json` | the catalog of one platform: every allow-listed native and what it needs to run, minus what the toolchain already supplies (libgcc, libstdcxx, libcxx); url, sha256 and size of each | `mopm-closure --natives`, from the lock |
 | `../src/core/toolchain/zig-for-mojo-<version>.json` | the Zig that links for that Mojo version (url, sha256, size, target triple), per platform | a person |
@@ -51,8 +51,8 @@ from; the unit test "every package of the native catalog holds a shared library 
 with no regular shared library, a link that leaves its package, a line for a package the catalog does not pin, and a
 pin that moved without its lines being read again. Update it with the lock.
 
-The weekly `toolchain` job re-solves the lock and rewrites `natives-*.json`, but does not read the package files, so
-it leaves `natives.libs` as it was. A weekly pull request that pins a new build of a native fails that test
-(`CatalogPackageUnusable`) until `natives.libs` is regenerated: for each new package list its `lib/*.so*` and
-`lib/*.dylib` entries with the command above, replace the lines of that package (with its new sha256) and drop the lines
-of packages the catalog no longer pins. The job's pull request body says the same.
+`natives.libs` is made by `mopm-closure --natives-libs src/core/toolchain toolchain/natives.libs`, which the weekly
+`toolchain` job runs after `--natives`: the lines of a package already there for its pinned sha256 are kept, a new
+package is downloaded from its catalog url, checked against its pinned sha256 (a mismatch fails the run, naming both)
+and its `lib/*.so*` and `lib/*.dylib` entries are listed, and the lines of packages the catalog no longer pins are
+dropped. Only `.conda` packages are read. By hand, after changing a lock, run the same command.
