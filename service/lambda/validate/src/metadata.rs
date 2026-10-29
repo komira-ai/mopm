@@ -271,10 +271,64 @@ fn sorted_join(set: &BTreeSet<String>) -> String {
     v.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
 }
 
-/// Check `depends` of the index: the compiler exactly once and equal to the build string's compiler, only `mojo-*`
-/// packages and allow-listed native libraries besides, and the `mojo-*` set equal to `deps` of the embedded
-/// metadata. Returns the dependency names for the verdict.
-pub fn check_depends(idx: &CondaIndex, mopm: &Mopm, allowed_native: &BTreeSet<String>) -> Checked<Vec<String>> {
+const SPEC_MAX: usize = 256;
+
+/// `CONDA_NAME` of `native-mirror.ts`: `^[a-z0-9][a-z0-9._-]{0,127}$`.
+fn is_conda_name(s: &str) -> bool {
+    let b = s.as_bytes();
+    !b.is_empty()
+        && b.len() <= 128
+        && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())
+        && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'.' | b'_' | b'-'))
+}
+
+/// `[A-Za-z0-9.*+!_,|<>=~^-]{1,128}`: a version requirement as `depends` writes it.
+fn is_version_token(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 128 && s.bytes().all(|c| c.is_ascii_alphanumeric() || b".*+!_,|<>=~^-".contains(&c))
+}
+
+/// `[A-Za-z0-9.*+_-]{1,64}`: a build string.
+fn is_build_token(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 64 && s.bytes().all(|c| c.is_ascii_alphanumeric() || b".*+_-".contains(&c))
+}
+
+/// Whether one `depends` entry is well formed (`name`, `name version` or `name version build`), else why it is not
+/// (`parseSpec` of the TypeScript, word for word).
+fn parse_spec(d: &str) -> Result<(), String> {
+    if d.encode_utf16().count() > SPEC_MAX {
+        return Err(format!("is longer than {SPEC_MAX} characters"));
+    }
+    // `d.split(/\s+/)`, then the empty word of a trailing space dropped.
+    let collapsed = collapse_space(d);
+    let mut parts: Vec<&str> = collapsed.split(' ').collect();
+    if parts.last() == Some(&"") {
+        parts.pop();
+    }
+    let name = parts.first().copied().unwrap_or("");
+    if !is_conda_name(name) {
+        return Err("does not start with a conda package name (lower-case letters, digits, ., _ and -)".to_string());
+    }
+    if parts.len() > 3 {
+        return Err("has more than a name, a version and a build string".to_string());
+    }
+    if let Some(v) = parts.get(1) {
+        if !is_version_token(v) {
+            return Err(format!("has a version requirement '{v}' that is not one"));
+        }
+    }
+    if let Some(b) = parts.get(2) {
+        if !is_build_token(b) {
+            return Err(format!("has a build string '{b}' that is not one"));
+        }
+    }
+    Ok(())
+}
+
+/// Check `depends` of the index: the compiler exactly once and equal to the build string's compiler, every other entry a
+/// well-formed conda requirement (any native name is accepted; malformed text is the only refusal), and the `mojo-*` set equal to
+/// `deps` of the embedded metadata. Returns the dependency names for the verdict. The TypeScript also warns about a name the
+/// conda-forge mirror does not list; this port has no mirror and no warnings yet (README, "Differences").
+pub fn check_depends(idx: &CondaIndex, mopm: &Mopm) -> Checked<Vec<String>> {
     let compilers: Vec<&String> = idx.depends.iter().filter(|d| first_word(d) == "mojo-compiler").collect();
     if compilers.is_empty() {
         return fail(RuleCode::CompilerMissing, "info/index.json 'depends' has no 'mojo-compiler ==<exact>'");
@@ -294,10 +348,18 @@ pub fn check_depends(idx: &CondaIndex, mopm: &Mopm, allowed_native: &BTreeSet<St
         if dn == "mojo-compiler" {
             continue;
         }
-        if dn.starts_with("mojo-") && dn.len() > 5 {
+        // A name that starts with `mojo-` is a Mojo package and is never a native one: it must be declared in the metadata's `deps`
+        // (below), and the bare prefix is not a package.
+        if dn.starts_with("mojo-") {
+            if dn.len() == 5 {
+                return fail(RuleCode::DependencyNotAllowed, format!("dependency '{d}' is not a Mojo package name"));
+            }
             mojo_deps.insert(dn.to_string());
-        } else if !allowed_native.contains(dn) {
-            return fail(RuleCode::DependencyNotAllowed, format!("dependency '{d}' is neither a mojo-* package nor an allow-listed native library"));
+            continue;
+        }
+        if let Err(why) = parse_spec(d) {
+            let head: Vec<u16> = d.encode_utf16().take(80).collect();
+            return fail(RuleCode::DependencyNotAllowed, format!("dependency '{}' {why}", String::from_utf16_lossy(&head)));
         }
     }
     let declared: BTreeSet<String> = mopm.deps.iter().map(|d| format!("mojo-{}", d.name)).collect();
@@ -313,7 +375,7 @@ pub fn check_depends(idx: &CondaIndex, mopm: &Mopm, allowed_native: &BTreeSet<St
 }
 
 /// The requirements of `depends` that are neither the compiler nor a `mojo-*` package (after `check_depends` accepted the
-/// index, these are allow-listed system libraries), runs of white space as one space and no trailing space, in the
+/// index, these are conda packages the package loads), runs of white space as one space and no trailing space, in the
 /// TypeScript's sort order.
 pub fn native_depends_of(idx: &CondaIndex) -> Vec<String> {
     let mut out: Vec<String> = idx
@@ -507,31 +569,41 @@ mod tests {
         Mopm { name: "demo".into(), version: None, deps: deps.iter().map(|d| Dep { name: d.to_string(), range: None }).collect(), native: vec![] }
     }
 
-    fn depends(d: &[&str], deps: &[&str], native: &[&str]) -> Checked<Vec<String>> {
-        check_depends(&idx(d), &mopm_with(deps), &native.iter().map(|s| s.to_string()).collect())
+    fn depends(d: &[&str], deps: &[&str]) -> Checked<Vec<String>> {
+        check_depends(&idx(d), &mopm_with(deps))
     }
 
     #[test]
     fn depends_rules_in_their_order() {
-        assert_eq!(depends(&["mojo-compiler ==1.0.0"], &[], &[]).unwrap(), Vec::<String>::new());
-        assert_eq!(depends(&["mojo-compiler  ==1.0.0", "mojo-b >=1", "mojo-a", "zlib"], &["a", "b"], &["zlib"]).unwrap(), ["mojo-a", "mojo-b"]);
+        assert_eq!(depends(&["mojo-compiler ==1.0.0"], &[]).unwrap(), Vec::<String>::new());
+        assert_eq!(depends(&["mojo-compiler  ==1.0.0", "mojo-b >=1", "mojo-a", "zlib"], &["a", "b"]).unwrap(), ["mojo-a", "mojo-b"]);
         let rule = |r: Checked<Vec<String>>| r.unwrap_err().rule;
-        assert_eq!(rule(depends(&[], &[], &[])), RuleCode::CompilerMissing);
-        assert_eq!(rule(depends(&["mojo-compiler ==1.0.0", "mojo-compiler ==1.0.0"], &[], &[])), RuleCode::CompilerMismatch);
-        assert_eq!(rule(depends(&["mojo-compiler >=1.0.0"], &[], &[])), RuleCode::CompilerMismatch);
-        assert_eq!(rule(depends(&["mojo-compiler ==1.0.1"], &[], &[])), RuleCode::CompilerMismatch);
-        assert_eq!(rule(depends(&["mojo-compiler ==1.0.0", "zlib"], &[], &[])), RuleCode::DependencyNotAllowed);
-        assert_eq!(rule(depends(&["mojo-compiler ==1.0.0", "mojo-"], &[], &[])), RuleCode::DependencyNotAllowed, "mojo- alone is not a package");
-        let e = depends(&["mojo-compiler ==1.0.0", "mojo-b"], &["a"], &[]).unwrap_err();
+        assert_eq!(rule(depends(&[], &[])), RuleCode::CompilerMissing);
+        assert_eq!(rule(depends(&["mojo-compiler ==1.0.0", "mojo-compiler ==1.0.0"], &[])), RuleCode::CompilerMismatch);
+        assert_eq!(rule(depends(&["mojo-compiler >=1.0.0"], &[])), RuleCode::CompilerMismatch);
+        assert_eq!(rule(depends(&["mojo-compiler ==1.0.1"], &[])), RuleCode::CompilerMismatch);
+        assert_eq!(rule(depends(&["mojo-compiler ==1.0.0", "Zlib"], &[])), RuleCode::DependencyNotAllowed, "a name that is not a conda name");
+        assert_eq!(rule(depends(&["mojo-compiler ==1.0.0", "zlib >=1 h1 extra"], &[])), RuleCode::DependencyNotAllowed);
+        assert_eq!(rule(depends(&["mojo-compiler ==1.0.0", "mojo-"], &[])), RuleCode::DependencyNotAllowed, "mojo- alone is not a package");
+        let e = depends(&["mojo-compiler ==1.0.0", "mojo-b"], &["a"]).unwrap_err();
         assert_eq!((e.rule, e.message.as_str()), (RuleCode::DepsMismatch, "info/index.json depends [mojo-b] differ from the metadata deps [mojo-a]"));
-        let e = depends(&["mojo-compiler ==1.0.0", "zlib"], &[], &[]).unwrap_err();
-        assert_eq!(e.message, "dependency 'zlib' is neither a mojo-* package nor an allow-listed native library");
+        let e = depends(&["mojo-compiler ==1.0.0", "Zlib"], &[]).unwrap_err();
+        assert_eq!(e.message, "dependency 'Zlib' does not start with a conda package name (lower-case letters, digits, ., _ and -)");
+        let e = depends(&["mojo-compiler ==1.0.0", "mojo-"], &[]).unwrap_err();
+        assert_eq!(e.message, "dependency 'mojo-' is not a Mojo package name");
+        // Any well-formed native name is accepted, with or without a version and a build string.
+        assert!(depends(&["mojo-compiler ==1.0.0", "zlib", "openssl >=3,<4", "libsqlite 3.* h5eee18b_0", "x  >=1"], &[]).is_ok());
+        for bad in [" zlib", "zlib>=1", "zlib >=1;x", "zlib '>=1'", "zlib >=1 h/1", "a/b", "-zlib"] {
+            assert_eq!(depends(&["mojo-compiler ==1.0.0", bad], &[]).unwrap_err().rule, RuleCode::DependencyNotAllowed, "{bad}");
+        }
+        assert_eq!(depends(&["mojo-compiler ==1.0.0", &"a".repeat(129)], &[]).unwrap_err().rule, RuleCode::DependencyNotAllowed);
+        assert_eq!(depends(&["mojo-compiler ==1.0.0", &format!("zlib >={}", "1".repeat(300))], &[]).unwrap_err().rule, RuleCode::DependencyNotAllowed);
     }
 
     #[test]
     fn mojo_deps_are_returned_in_javascript_sort_order() {
         // U+1F600 is a surrogate pair (D83D DE00) and sorts before U+FF5E in UTF-16, after it in UTF-8.
-        let r = depends(&["mojo-compiler ==1.0.0", "mojo-\u{ff5e}", "mojo-\u{1f600}", "mojo-a"], &["\u{ff5e}", "\u{1f600}", "a"], &[]).unwrap();
+        let r = depends(&["mojo-compiler ==1.0.0", "mojo-\u{ff5e}", "mojo-\u{1f600}", "mojo-a"], &["\u{ff5e}", "\u{1f600}", "a"]).unwrap();
         assert_eq!(r, ["mojo-a", "mojo-\u{1f600}", "mojo-\u{ff5e}"]);
     }
 

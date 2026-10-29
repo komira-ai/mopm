@@ -15,8 +15,6 @@ _NODE = "//tools/node:node"
 # `bzip2` (test/validate/builder.ts): the pinned busybox's applet is the only command on PATH.
 _TEST_DATA = {
     "spec": "//:spec",
-    "src/core": "//:pack_conda_zig",
-    "toolchain": "//:native_roots",
     "tests/contract/api": "//:contract_api",
     "tests/validator_corpus": "//:validator_corpus_files",
 }
@@ -116,8 +114,8 @@ export_file(
     visibility = ["//service/infra/stacks:"],
 )
 
-# The sources that name the group metrics and their namespace, and the header's sweeper keys: the stacks' tests hold the alarms
-# and the sweeper's index to the names the code writes.
+# The sources that name the group metrics and their namespace, and the header's sweeper keys, and the key of the conda-forge name
+# mirror: the stacks' tests hold the alarms, the sweeper's index and the mirror's permissions to the names the code writes.
 [export_file(
     name = "src_" + name,
     src = path,
@@ -126,6 +124,8 @@ export_file(
 ) for name, path in {
     "metrics.ts": "src/metrics.ts",
     "group.ts": "src/group.ts",
+    "config.ts": "src/publish/config.ts",
+    "native-mirror.ts": "src/validate/native-mirror.ts",
     "group-service.ts": "src/publish/group-service.ts",
     "group-store.ts": "src/group-store.ts",
     "group-sweeper.ts": "src/publish/group-sweeper.ts",

@@ -1,4 +1,3 @@
-import { DEPLOYED_VALIDATOR_OPTIONS } from '../../src/validate/native-deps';
 import { Harness, pkg } from './harness';
 
 /**
@@ -8,7 +7,7 @@ import { Harness, pkg } from './harness';
  */
 async function publish(over: Parameters<typeof pkg>[0]) {
   const h = new Harness();
-  h.validatorDeps.validatorOptions = DEPLOYED_VALIDATOR_OPTIONS;
+  h.validatorDeps.nativeMirror = async () => ({ names: new Set(['lz4-c', 'zstd']), generatedAt: new Date('2026-10-14T11:00:00Z') });
   const me = await h.account(1, 'a', [over?.name ?? 'demo']);
   const p = pkg(over);
   const u = await h.upload(me.token, p);

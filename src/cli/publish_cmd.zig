@@ -661,7 +661,14 @@ fn waitForPublish(s: registry_cmd.Session, net: group_publish.Net, con: *group_p
             status: []const u8,
             rejection_code: ?[]const u8 = null,
             message: ?[]const u8 = null,
+            /// What did not stop the publish (a native dependency whose name conda-forge does not list). Registries that
+            /// predate the field do not send it; a CLI that predates it ignores it (`ignore_unknown_fields`).
+            warnings: ?[]const []const u8 = null,
         }, arena, polled.body, .{ .ignore_unknown_fields = true });
+        const finished = std.mem.eql(u8, state.status, "published") or std.mem.eql(u8, state.status, "rejected");
+        if (finished) {
+            for (state.warnings orelse &.{}) |w| con.fail("warning: {s}\n", .{w});
+        }
         if (std.mem.eql(u8, state.status, "published")) {
             con.say("published mojo-{s} {s}\n", .{ name, version });
             return 0;
@@ -1049,6 +1056,24 @@ test "a 429 waits the registry's Retry-After, one second when it names none, and
     try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), late.net(), &con,30, "tok", poll_url, "x", "1.0.0"));
     try std.testing.expectEqual(@as(usize, 1), late.seen.items.len);
     try std.testing.expectEqual(@as(u64, 60), late.slept);
+}
+
+test "the warnings of a finished publish are printed to standard error, and a status without them or with fields the CLI does not know is as before" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var con = group_publish.Console.init(a, null);
+    var warned = gt.Script{ .steps = &.{
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = "{\"status\":\"validating\",\"warnings\":[\"not yet\"]}" },
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = "{\"status\":\"published\",\"warnings\":[\"native dependency 'libpgn' is not a conda-forge package name\",\"second\"],\"future\":{\"a\":1}}" },
+    }, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), warned.net(), &con, 600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqualStrings("mopm: warning: native dependency 'libpgn' is not a conda-forge package name\nmopm: warning: second\n", con.err.items);
+    try std.testing.expectEqualStrings("published mojo-x 1.0.0\n", con.out.items);
+    var plain = group_publish.Console.init(a, null);
+    var quiet = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 200, .body = "{\"status\":\"published\",\"future\":[1]}" }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), quiet.net(), &plain, 600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqualStrings("", plain.err.items);
 }
 
 test "a rejected publish and a failing poll end the wait at once, with no pause" {

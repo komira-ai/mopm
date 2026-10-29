@@ -25,6 +25,7 @@ import { validatePackage, type Limits, type PublishExpectation, type Verdict } f
  * `verdicts.json` is made.
  */
 
+const NOW = new Date('2026-11-01T00:00:00Z');
 const DIR = path.resolve(__dirname, '../../../../tests/validator_corpus');
 
 interface CaseSpec {
@@ -65,7 +66,8 @@ function verdictOf(c: CaseSpec): unknown {
   for (const [k, v] of Object.entries(c.limits)) limits[LIMIT_KEYS[k]!] = v;
   let v: Verdict;
   try {
-    v = validatePackage(bytes, expected, { limits, allowedNativeDeps: new Set(c.allow_native) });
+    // `allow_native` names what the conda-forge mirror lists for the case; the mirror is fresh, so the case has no warnings to record.
+    v = validatePackage(bytes, expected, { limits, nativeMirror: { names: new Set(c.allow_native), generatedAt: NOW }, now: () => NOW });
   } catch (err) {
     return { crash: (err as Error).name };
   }

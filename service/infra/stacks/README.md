@@ -22,6 +22,14 @@ Account ids come from the CDK environment at deploy time and are never committed
   missing key gets the 404 page with status 404. What it serves and why: `site/README.md`, "How it is served".
 - **Health endpoint.** `/api/v1/health` reports `stage`, `version` and `commit` (`-c commit=<git sha>`), so the e2e
   workflow can prove the deployed commit equals the one it was asked to test.
+- **conda-forge name mirror.** A scheduled function (`publish/native-mirror-lambda`, every 6 hours) reads conda-forge's shard index
+  for linux-64, linux-aarch64, osx-arm64 and noarch and writes the union of the package names, gzip, with the time of the run, to
+  `native-mirror/conda-forge-names.gz` in the channel bucket. The validators (single and group) read that one object, once per
+  container, to warn a publisher about a native dependency whose name conda-forge does not list; a missing, unreadable or
+  more-than-a-day-old object is a warning too and never a refusal. Only the job writes the key and only the two validators read
+  it; CloudFront cannot serve it. If the job fails the old object stays and the alarm `mopm-<stage>-native-mirror-failed` fires.
+  The first deploy has no object, so publishes warn "could not be read" until the first run (invoke the function once, or wait up
+  to 6 hours).
 - **Quarantine.** The channel bucket is served through CloudFront with an origin access control; an explicit deny
   keeps `quarantine/*` unreachable through the distribution.
 - **Auth routes.** The same Lambda also serves login (`/auth/device`, `/auth/device/poll`), API tokens (`/me/tokens`) and

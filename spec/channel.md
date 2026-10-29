@@ -49,12 +49,15 @@ https://conda.<site>/
   Entries carry `name`, `version`, `build`, `build_number` (always 0),
   `depends`, `sha256`, `size` and `subdir`. They never carry `features`,
   `track_features` or `constrains`. `depends` only names other `mojo-*`
-  packages, the exact compiler requirement, and native libraries from a
-  maintained allow-list.
+  packages, the exact compiler requirement, and native libraries: any
+  conda package, as a well-formed requirement (`name`, `name version` or
+  `name version build`, the name in lower-case letters, digits, `.`, `_`
+  and `-`). The registry warns, and does not refuse, when conda-forge does
+  not list a name (`warnings` of the publish status).
 - Dependency spelling in `depends`: the compiler is `mojo-compiler ==<exact>`
   (for example `mojo-compiler ==1.0.0`, the version in the build string); a
-  native library uses its allow-list id as the conda package name (the id
-  `openssl` becomes the dependency `openssl`); another Mojo package is
+  native library uses its conda package name (the library `openssl`
+  becomes the dependency `openssl`); another Mojo package is
   `mojo-<name>` with its version constraint.
 - `removed` lists the file names (`mojo-<name>-<version>-<build>.conda`) of
   both yanked and tombstoned (taken-down) versions of that subdir. A client

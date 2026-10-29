@@ -580,6 +580,7 @@ paths:
       description: |
         `pending`, `validating` and `indexing` are in progress; `published` and
         `rejected` are final. A rejected publish burns the version number.
+        A publish that passed can still carry `warnings`.
       security:
         - publishToken: []
       parameters:
@@ -1612,6 +1613,15 @@ components:
           enum: [pending, validating, indexing, published, rejected]
         rejection_code: { $ref: "#/components/schemas/RejectionCode" }
         message: { type: string }
+        warnings:
+          description: |
+            What did not stop the publish and the publisher should read: a native dependency whose name the registry's copy of
+            conda-forge's package names does not list (a typo, or a package newer than the copy), a copy more than a day old,
+            or a copy that could not be read. Present only once the validator has found something to say, and so may first
+            appear on a `validating` or later status. Absent means nothing to report. A client prints these and goes on;
+            a client built before this field ignores it.
+          type: array
+          items: { type: string }
       if:
         properties:
           status: { const: rejected }

@@ -125,7 +125,7 @@ describe('the deployed Lambda assets', () => {
     loadFrom(dir, 'ok.js', 'handler');
   });
 
-  test('the six functions are the API, the index reader, the validator, the index writer, the group validator and the group sweeper', () => {
+  test('the seven functions are the API, the index reader, the validator, the index writer, the group validator, the group sweeper and the name mirror job', () => {
     expect(
       deployedFunctions()
         .map((f) => f.handler)
@@ -135,6 +135,7 @@ describe('the deployed Lambda assets', () => {
       'http/lambda.handler',
       'publish/group-validator-lambda.handler',
       'publish/indexer-lambda.handler',
+      'publish/native-mirror-lambda.handler',
       'publish/sweeper-lambda.handler',
       'publish/validator-lambda.handler',
     ]);
@@ -146,6 +147,7 @@ describe('the deployed Lambda assets', () => {
     'publish/validator-lambda.handler',
     'publish/indexer-lambda.handler',
     'publish/group-validator-lambda.handler',
+    'publish/native-mirror-lambda.handler',
     'publish/sweeper-lambda.handler',
   ])(
     '%s loads from the asset CDK uploads, with no node_modules in reach',

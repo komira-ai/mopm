@@ -2,7 +2,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Match } from 'aws-cdk-lib/assertions';
 import { STAGES } from '../lib/config';
-import { GROUP_ALARMS, GROUP_VALIDATOR_MAX_CONCURRENCY, INDEXER_TIMEOUT_SECONDS, MAX_RECEIVES, METRICS_NAMESPACE, SWEEPER_PERIOD_MINUTES, VALIDATOR_MAX_CONCURRENCY, VALIDATOR_TIMEOUT_SECONDS } from '../lib/publish-stack';
+import { NATIVE_MIRROR_KEY } from '../lib/config';
+import { GROUP_ALARMS, NATIVE_MIRROR_PERIOD_HOURS, NATIVE_MIRROR_TIMEOUT_SECONDS, GROUP_VALIDATOR_MAX_CONCURRENCY, INDEXER_TIMEOUT_SECONDS, MAX_RECEIVES, METRICS_NAMESPACE, SWEEPER_PERIOD_MINUTES, VALIDATOR_MAX_CONCURRENCY, VALIDATOR_TIMEOUT_SECONDS } from '../lib/publish-stack';
 import { DUMMY_ACCOUNT, tpl } from './util';
 
 describe.each(STAGES)('PublishStack %s', (stage) => {
@@ -76,7 +77,7 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     const st = statementsOf(fn('publish/validator-lambda.handler'));
     const own = st.filter((s) => s.Sid);
     expect(own.map((s) => s.Sid).sort()).toEqual(
-      ['ActivatePackages', 'ReadAndDeleteQuarantine', 'ReadRegistry', 'SendIndexMessages', 'WritePackageFiles', 'WriteVersionsAndPublishes'].sort(),
+      ['ActivatePackages', 'ReadAndDeleteQuarantine', 'ReadNativeMirror', 'ReadRegistry', 'SendIndexMessages', 'WritePackageFiles', 'WriteVersionsAndPublishes'].sort(),
     );
     const by = (sid: string) => own.find((s) => s.Sid === sid);
     expect(acts(by('ReadAndDeleteQuarantine')).sort()).toEqual(['s3:DeleteObject', 's3:GetObject']);
@@ -153,7 +154,7 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
       });
     }
     // ... and the group alarms watch the group metrics (the next test).
-    t.resourceCountIs('AWS::CloudWatch::Alarm', 3 + GROUP_ALARMS.length);
+    t.resourceCountIs('AWS::CloudWatch::Alarm', 3 + GROUP_ALARMS.length + 1); // + the mirror job's (below)
   });
 
   test('four alarms watch the group metrics, in the namespace the handlers write them to; a metric nobody has written yet does not breach', () => {
@@ -256,7 +257,7 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
   test('the group validator role: quarantine read+delete, channel file read+write, registry reads and puts, its own queue; nothing else', () => {
     const st = statementsOf(fn('publish/group-validator-lambda.handler'));
     const own = st.filter((s) => s.Sid);
-    expect(own.map((s) => s.Sid).sort()).toEqual(['ActivatePackages', 'ReadAndDeleteQuarantine', 'ReadAndWritePackageFiles', 'ReadRegistry', 'SendChainMessages', 'SendGroupMessages', 'WriteVersionsAndGroups'].sort());
+    expect(own.map((s) => s.Sid).sort()).toEqual(['ActivatePackages', 'ReadAndDeleteQuarantine', 'ReadAndWritePackageFiles', 'ReadNativeMirror', 'ReadRegistry', 'SendChainMessages', 'SendGroupMessages', 'WriteVersionsAndGroups'].sort());
     const by = (sid: string) => own.find((s) => s.Sid === sid);
     expect(acts(by('ReadAndDeleteQuarantine')).sort()).toEqual(['s3:DeleteObject', 's3:GetObject']);
     expect(res(by('ReadAndDeleteQuarantine'))).toContain(`${bucket}/quarantine/*`);
@@ -293,7 +294,7 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
   test('the sweeper runs every 5 minutes, reads the sweep index and the headers, writes headers, and sends to the group queue; it cannot end or delete anything', () => {
     expect(SWEEPER_PERIOD_MINUTES).toBe(5);
     t.hasResourceProperties('AWS::Events::Rule', { ScheduleExpression: 'rate(5 minutes)', State: 'ENABLED' });
-    t.resourceCountIs('AWS::Events::Rule', 1);
+    t.resourceCountIs('AWS::Events::Rule', 2); // the sweeper's and the mirror job's
     t.hasResourceProperties('AWS::Lambda::Function', {
       Handler: 'publish/sweeper-lambda.handler',
       Timeout: 60,
@@ -323,5 +324,66 @@ describe.each(STAGES)('PublishStack %s', (stage) => {
     expect(all.some((a) => a.startsWith('s3:'))).toBe(false);
     expect(all.filter((a) => /DeleteItem|Scan|\*/.test(a))).toEqual([]);
     expect(own.filter((s) => acts(s).some((a) => a.startsWith('dynamodb:'))).every((s) => !res(s).includes(`mopm-${stage}-versions`))).toBe(true);
+  });
+  // --- the conda-forge name mirror --------------------------------------------------------------------------------------
+
+  test('the mirror key is the one the validators read (service/api/src/validate/native-mirror.ts)', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '../../../api/src/validate/native-mirror.ts'), 'utf8');
+    expect(/MIRROR_KEY = '([^']+)'/.exec(src)![1]).toBe(NATIVE_MIRROR_KEY);
+  });
+
+  test('the mirror job runs every 6 hours (a mirror is stale after 24), as its own function with its own schedule', () => {
+    expect(NATIVE_MIRROR_PERIOD_HOURS).toBe(6);
+    t.hasResourceProperties('AWS::Events::Rule', { Name: `mopm-${stage}-native-mirror`, ScheduleExpression: 'rate(6 hours)', State: 'ENABLED' });
+    t.hasResourceProperties('AWS::Lambda::Function', {
+      Handler: 'publish/native-mirror-lambda.handler',
+      Runtime: 'nodejs22.x',
+      Timeout: NATIVE_MIRROR_TIMEOUT_SECONDS,
+      Environment: { Variables: { MOPM_CHANNEL_BUCKET: bucket } },
+    });
+    const rule = Object.values(t.findResources('AWS::Events::Rule')).find((r: any) => r.Properties.Name === `mopm-${stage}-native-mirror`) as any;
+    expect(JSON.stringify(rule.Properties.Targets)).toContain('NativeMirror');
+    const perms = Object.values(t.findResources('AWS::Lambda::Permission')).filter((p: any) => p.Properties.Principal === 'events.amazonaws.com') as any[];
+    expect(perms).toHaveLength(2);
+  });
+
+  test('the job role writes the one mirror key and nothing else: no read, no delete, no table, no queue', () => {
+    const st = statementsOf(fn('publish/native-mirror-lambda.handler'));
+    const own = st.filter((s) => s.Sid);
+    expect(own.map((s) => s.Sid)).toEqual(['WriteNativeMirror']);
+    expect(acts(own[0])).toEqual(['s3:PutObject']);
+    expect(([] as any[]).concat(own[0].Resource)).toHaveLength(1);
+    const leaves = (v: any): string[] => (typeof v === 'string' ? [v] : v && typeof v === 'object' ? Object.values(v).flatMap(leaves) : []);
+    expect(leaves(own[0].Resource).join('').endsWith(`:::${bucket}/${NATIVE_MIRROR_KEY}`)).toBe(true);
+    expect(st.flatMap(acts).filter((a) => !a.startsWith('logs:') && a !== 's3:PutObject')).toEqual([]);
+  });
+
+  test('both validators may read exactly the mirror key, and only read it; the API role cannot reach it at all', () => {
+    for (const handler of ['publish/validator-lambda.handler', 'publish/group-validator-lambda.handler']) {
+      const st = statementsOf(fn(handler)).filter((s) => s.Sid === 'ReadNativeMirror');
+      expect(st).toHaveLength(1);
+      expect(acts(st[0])).toEqual(['s3:GetObject']);
+      expect(([] as any[]).concat(st[0].Resource)).toHaveLength(1);
+      const leaves = (v: any): string[] => (typeof v === 'string' ? [v] : v && typeof v === 'object' ? Object.values(v).flatMap(leaves) : []);
+      expect(leaves(st[0].Resource).join('').endsWith(`:::${bucket}/${NATIVE_MIRROR_KEY}`)).toBe(true);
+    }
+    const apiStatements = Object.values(api.findResources('AWS::IAM::Policy')).flatMap((r: any) => r.Properties.PolicyDocument.Statement as any[]);
+    expect(JSON.stringify(apiStatements)).not.toContain('native-mirror');
+    // The index writer reads and writes elsewhere in the bucket and never here.
+    expect(JSON.stringify(statementsOf(fn('publish/indexer-lambda.handler')))).not.toContain('native-mirror');
+    expect(JSON.stringify(statementsOf(fn('publish/sweeper-lambda.handler')))).not.toContain('native-mirror');
+  });
+
+  test('a failed run of the job raises an alarm within the period', () => {
+    t.hasResourceProperties('AWS::CloudWatch::Alarm', {
+      AlarmName: `mopm-${stage}-native-mirror-failed`,
+      MetricName: 'Errors',
+      Namespace: 'AWS/Lambda',
+      Statistic: 'Sum',
+      Period: NATIVE_MIRROR_PERIOD_HOURS * 3600,
+      Threshold: 1,
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+      TreatMissingData: 'notBreaching',
+    });
   });
 });
