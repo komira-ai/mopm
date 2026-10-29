@@ -9,7 +9,7 @@ and everything they need) is a fixed list per Mojo version and platform:
 | `mojo-<version>.pixi.lock` | the solver's answer for that version, all platforms | the `toolchain` job of `.github/workflows/kpin-update.yml` (pixi, on GitHub) |
 | `../src/core/toolchain/mojo-<version>-<subdir>.json` | the closure of one platform: url, sha256, size and conda-meta fields of every package | `mopm-closure`, from the lock |
 | `natives.txt` | the conda names of the native libraries a package may load (the allow-list), one per line | a person |
-| `natives.libs` | the shared libraries each catalog package holds, read from the package files (below) | a person |
+| `natives.libs` | the shared libraries each catalog package holds, read from the package files (below) | `mopm-closure --natives-libs`, from the catalog (the same job) |
 | `natives.pixi.lock` | the solver's answer for all of `natives.txt` at once, all platforms; independent of the Mojo version | the same job |
 | `../src/core/toolchain/natives-<subdir>.json` | the catalog of one platform: every allow-listed native and what it needs to run, minus what the toolchain already supplies (libgcc, libstdcxx, libcxx); url, sha256 and size of each | `mopm-closure --natives`, from the lock |
 | `../src/core/toolchain/zig-for-mojo-<version>.json` | the Zig that links for that Mojo version (url, sha256, size, target triple), per platform | a person |
