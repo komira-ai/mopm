@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
-import { ApiStack, AUTH_GRANTS, BETA_CI_PUBLISHERS, BETA_GROUPS_POLICY, PROD_CI_PUBLISHERS, CI_PUBLISHERS_ENV, GROUPS_POLICY_ENV, CLAIM_ROUTES, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
+import { API_GATEWAY_INTEGRATION_SECONDS, API_LAMBDA_TIMEOUT_SECONDS, ApiStack, AUTH_GRANTS, BETA_CI_PUBLISHERS, BETA_GROUPS_POLICY, PROD_CI_PUBLISHERS, CI_PUBLISHERS_ENV, GROUPS_POLICY_ENV, CLAIM_ROUTES, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
 import { STAGES, stageConfig, tableName } from '../lib/config';
 import { DUMMY_ACCOUNT, HANDLER_STUB_DIR, tpl } from './util';
 
@@ -67,6 +67,32 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
         Variables: { MOPM_STAGE: stage, MOPM_VERSION: '1.2.3', MOPM_COMMIT: 'c0ffee', MOPM_READ_ONLY: 'false' },
       },
     });
+  });
+
+  test('the API Lambda times out under the gateway, and a group create stops reserving well before the Lambda does', () => {
+    // The HTTP API ends a call at its integration timeout and answers a Lambda that timed out with a bare HTTP 500 (no body of the
+    // registry's, so a client cannot tell it from a crash). The Lambda must end first, and the create's budget plus its tail must fit.
+    const fns = Object.values(t.findResources('AWS::Lambda::Function')) as any[];
+    const api = fns.find((f) => f.Properties.Handler === 'http/lambda.handler');
+    const timeoutMs = api.Properties.Timeout * 1000;
+    expect(timeoutMs).toBe(API_LAMBDA_TIMEOUT_SECONDS * 1000);
+    expect(timeoutMs).toBeLessThan(API_GATEWAY_INTEGRATION_SECONDS * 1000);
+    expect(api.Properties.MemorySize).toBeGreaterThanOrEqual(1024);
+    // No integration sets a longer wait than the 30 s the constant names (an absent one is the default, 30 s).
+    for (const i of Object.values(t.findResources('AWS::ApiGatewayV2::Integration')) as any[]) {
+      expect(i.Properties.TimeoutInMillis ?? API_GATEWAY_INTEGRATION_SECONDS * 1000).toBeLessThanOrEqual(API_GATEWAY_INTEGRATION_SECONDS * 1000);
+    }
+    // The budget the handler may be given (its default, and the largest the environment may set) is read from the source.
+    const src = fs.readFileSync(path.resolve(__dirname, '../../../api/src/publish/config.ts'), 'utf8');
+    const dflt = Number(/groupCreateBudgetMs: (\d[\d_]*),/.exec(src)![1]!.replace(/_/g, ''));
+    const max = Number(/GROUP_CREATE_BUDGET_MAX_MS = (\d[\d_]*);/.exec(src)![1]!.replace(/_/g, ''));
+    expect(dflt).toBeLessThanOrEqual(max);
+    // One member's worst case after the budget is looked at: a batch of sixteen runs at once, so it takes one reservation, one
+    // checkpoint and the two reads of a member's file, each at the slowest a store or S3 call is allowed to be.
+    const SLOW_CALL_MS = 1000;
+    const memberWorstMs = 4 * SLOW_CALL_MS;
+    expect(max + memberWorstMs).toBeLessThan(timeoutMs);
+    expect(dflt + memberWorstMs).toBeLessThan(timeoutMs);
   });
 
   test('HTTP API serves the read, publish and auth operations, with the default endpoint disabled', () => {

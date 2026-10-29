@@ -1,8 +1,8 @@
 import { DynamoStore, tablesFor } from '../dynamo-store';
-import { DEPLOYED_VALIDATOR_OPTIONS } from '../validate/native-deps';
 import { S3Channel, SqsFifoQueue } from './aws';
 import { publishConfigFromEnv } from './config';
 import { DynamoPublishStore, publishTablesFor } from './dynamo-publish-store';
+import { MirrorReader } from './native-mirror-reader';
 import { flipGroup } from './group-chain';
 import { GROUP_ID } from './group-keys';
 import { yankRows } from './group-yank';
@@ -22,15 +22,17 @@ function configure(): GroupValidatorDeps {
   const stage = stageOf(env);
   const doc = documentClient();
   const region = regionOf(env);
+  const objects = new S3Channel(required(env, 'MOPM_CHANNEL_BUCKET'), { region });
+  const mirror = new MirrorReader(objects);
   return {
     registry: new DynamoStore(doc, tablesFor(stage)),
     publishes: new DynamoPublishStore(doc, publishTablesFor(stage)),
-    objects: new S3Channel(required(env, 'MOPM_CHANNEL_BUCKET'), { region }),
+    objects,
     groupQueue: new SqsFifoQueue(required(env, 'MOPM_GROUP_QUEUE_URL'), { region }),
     indexQueue: new SqsFifoQueue(required(env, 'MOPM_INDEX_QUEUE_URL'), { region }),
     config: publishConfigFromEnv(env),
     channelUrl: required(env, 'MOPM_CHANNEL_URL'),
-    validatorOptions: DEPLOYED_VALIDATOR_OPTIONS,
+    nativeMirror: () => mirror.read(),
   };
 }
 

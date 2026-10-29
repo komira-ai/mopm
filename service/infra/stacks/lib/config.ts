@@ -71,3 +71,9 @@ export const groupDlqName = (s: Stage) => `mopm-${s}-group-dlq.fifo`;
 
 /** The four subdirs every channel has (spec/channel.md, Layout). Same list as SUBDIRS_V1 in service/api (a test compares them). */
 export const CHANNEL_SUBDIRS = ['noarch', 'linux-64', 'linux-aarch64', 'osx-arm64'] as const;
+
+/**
+ * The conda-forge name mirror: one object in the channel bucket, written by the mirror job and read by the validators
+ * (service/api/src/validate/native-mirror.ts, MIRROR_KEY; publish.test.ts holds the two equal).
+ */
+export const NATIVE_MIRROR_KEY = 'native-mirror/conda-forge-names.gz';

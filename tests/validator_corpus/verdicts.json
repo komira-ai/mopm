@@ -2642,16 +2642,51 @@
         "ok": false,
         "rejection_code": "dependency_not_allowed",
         "rule": "dependency_not_allowed",
-        "message": "dependency 'libssl >=3' is neither a mojo-* package nor an allow-listed native library"
+        "message": "dependency 'LibSSL >=3' does not start with a conda package name (lower-case letters, digits, ., _ and -)"
       }
     },
     {
       "id": "meta_dependency_python",
       "verdict": {
-        "ok": false,
-        "rejection_code": "dependency_not_allowed",
-        "rule": "dependency_not_allowed",
-        "message": "dependency 'python >=3.9' is neither a mojo-* package nor an allow-listed native library"
+        "ok": true,
+        "facts": {
+          "format": "conda",
+          "name": "demo",
+          "version": "1.0.0",
+          "build": "mojo1.0.0_0",
+          "compiler": "1.0.0",
+          "subdir": "noarch",
+          "mojoDeps": [],
+          "nativeDepends": [
+            "python >=3.9"
+          ],
+          "metadata": {
+            "name": "demo",
+            "version": "1.0.0",
+            "deps": [],
+            "native": []
+          },
+          "manifestSha256": "5b29b481643b628d72c71c26e26bea248ccd69b6188b498a684ddc69319ec610",
+          "files": [
+            {
+              "path": "info/index.json",
+              "size": 146
+            },
+            {
+              "path": "info/licenses/LICENSE",
+              "size": 10
+            },
+            {
+              "path": "lib/mojo/demo.mojoc",
+              "size": 22
+            },
+            {
+              "path": "lib/mojo/demo.mopm.json",
+              "size": 66
+            }
+          ],
+          "unpackedBytes": 244
+        }
       }
     },
     {

@@ -5,6 +5,7 @@ import { bitmapHas, bitmapSet, memberAuditId, type GroupFailure, type GroupRecor
 import type { Store } from '../store';
 import type { AuditEntry, VersionRecord } from '../types';
 import type { ValidatorOptions } from '../validate';
+import type { NativeMirror } from '../validate/native-mirror';
 import type { PublishConfig } from './config';
 import { sendNext } from './group-chain';
 import { sendValidateGroup } from './group-commit';
@@ -12,7 +13,7 @@ import { quarantineKeyFor, uploadIdFor } from './group-keys';
 import { ended, groupAudit, pastDeadline } from './group-lifecycle';
 import type { ObjectStore, PublishStore, Queue } from './ports';
 import { liveBytes } from './service';
-import { fillFrom, Rejected, validateArchives } from './validator';
+import { fillFrom, optionsFor, Rejected, validateArchives, warningsOf } from './validator';
 
 /**
  * The group's validator: the job the group queue carries once a group has been committed to validation (POST
@@ -54,6 +55,8 @@ export interface GroupValidatorDeps {
   /** https://conda.<stage>.mopm.dev: the channel's public base, for the file URLs of published versions. */
   channelUrl: string;
   validatorOptions?: ValidatorOptions;
+  /** The conda-forge name mirror, read once per container (src/publish/native-mirror-reader.ts); a native dependency whose name it lacks only warns. */
+  nativeMirror?: () => Promise<NativeMirror | undefined>;
   now?: () => Date;
   /** Milliseconds on a monotonic clock, for the invocation's time budget. */
   clock?: () => number;
@@ -235,11 +238,14 @@ class GroupJob {
     const files = row.files.map((f) => ({ subdir: f.subdir, filename: f.filename, sha256: f.sha256, key: quarantineKeyFor(uploadIdFor(this.gid, m, f), f.filename) }));
     let facts;
     try {
-      facts = await validateArchives(d.objects, d.validatorOptions, { name: row.name, version: row.version, ...(input.manifest_sha256 !== undefined ? { manifest_sha256: input.manifest_sha256 } : {}) }, files);
+      facts = await validateArchives(d.objects, await optionsFor({ ...d, log: this.log }), { name: row.name, version: row.version, ...(input.manifest_sha256 !== undefined ? { manifest_sha256: input.manifest_sha256 } : {}) }, files);
     } catch (err) {
       if (err instanceof Rejected) throw verdict(err.code, err.message, false, m.name);
       throw err;
     }
+    // A group's status does not carry warnings yet: they are in the job's log, with the group and the member.
+    const warnings = warningsOf(facts);
+    if (warnings.length > 0) this.log({ level: 'info', msg: 'group member passed with warnings', group_id: this.gid, member: m.name, warnings });
     const fill = fillFrom(d.channelUrl, this.now(), { version: row.version, ...(input.display ? { display: input.display } : {}), ...(input.source_commit !== undefined ? { source_commit: input.source_commit } : {}), published_by: row.published_by ?? this.h.actor }, row.files, facts);
     await d.registry.applyGroupEvent(m.name, row.version, { type: 'stage', group_id: this.gid, attempt: this.h.attempt, fill }, this.audit(i, m, 'group_stage'));
   }

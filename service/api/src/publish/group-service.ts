@@ -577,39 +577,50 @@ export class GroupService {
   }
 
   /**
-   * Reserve the members' rows in batches of sixteen, and answer each member with its files and upload URLs. After every
-   * batch the header's `reserved` checkpoint is written; when the budget is spent the members not yet answered are left
-   * for the next call. A number taken from under the group in the meantime aborts the group and refuses the call.
+   * Reserve the members' rows in batches of sixteen. After every batch the header's `reserved` checkpoint is written, and the
+   * budget is looked at before the next batch starts: when it is spent the members not yet reached are left for the next call, which
+   * answers `reserving` with the members it has reached and no files for them (the client asks again and reads only the counts).
+   * Members an earlier call already checkpointed are not visited at all, so a resumed call spends its time on new members.
+   * The call stops only once it has reserved something, so a call whose preflight took the whole budget still moves the checkpoint.
+   * The call that reaches the last member answers every member with its files and upload URLs (`files`), the only answer that needs
+   * them. A number taken from under the group in the meantime aborts the group and refuses the call.
    */
   private async reserveAll(p: Principal, handle: string, start: GroupRecord, req: GroupRequest, pre: Pre, started: number) {
     const reg = this.d.registry;
     const gid = start.group_id;
     let header = start;
-    const out: GroupMemberBody[] = [];
     const total = req.members.length;
-    let progressed = false;
-    while (out.length < total) {
-      const from = out.length;
-      const indexes = Array.from({ length: Math.min(BATCH, total - from) }, (_, k) => from + k);
+    // The members this call has to reserve, in order: a prefix of them is reserved by the end of any call, as the checkpoint is.
+    const todo: number[] = [];
+    for (let i = 0; i < total; i++) if (!bitmapHas(start.reserved, i)) todo.push(i);
+    const actions = new Map<number, 'new' | 'join'>();
+    let next = 0;
+    while (next < todo.length) {
+      if (actions.size > 0 && this.clock() - started >= this.d.config.groupCreateBudgetMs) break;
+      const indexes = todo.slice(next, next + BATCH);
       // Wait for the whole batch, whatever happens to a member: a row that is still being written must not be written after the group has been ended.
-      const settled = await Promise.allSettled(indexes.map((i) => this.member(p, handle, header, i, req.members[i]!, pre)));
+      const settled = await Promise.allSettled(indexes.map((i) => this.reserve(p, handle, header, i, req.members[i]!, pre)));
       const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
       const results = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []));
-      const marks = results.filter((r) => r.marks).map((r) => r.idx);
-      if (marks.length > 0) header = await this.checkpoint(gid, marks, header);
+      if (results.length > 0) header = await this.checkpoint(gid, results.map((r) => r.idx), header);
       if (failed) {
         if (!(failed.reason instanceof Taken)) throw failed.reason;
         const at = this.now().toISOString();
         await reg.updateGroup(gid, (cur) => (cur.status === 'open' ? ended(cur, 'aborted', at) : undefined), groupAudit(gid, `a_${gid}_abort_${header.attempt}`, 'group_abort', at, actorOf(p), { reason: 'a version number was taken' }));
         throw groupConflict('number_taken', failed.reason.message);
       }
-      for (const r of results) out.push(r.body);
-      if (marks.length > 0) progressed = true;
-      // The call stops when its time is spent, but never before it has moved the checkpoint: a group whose first members
-      // took the whole budget to check would otherwise never get past them.
-      if (out.length < total && progressed && this.clock() - started >= this.d.config.groupCreateBudgetMs) break;
+      for (const r of results) actions.set(r.idx, r.action);
+      next += indexes.length;
     }
-    return { header, members: out };
+    const done = next < todo.length ? todo[next]! : total;
+    const answered = req.members.slice(0, done);
+    const filed: GroupFileBody[][] = [];
+    // Only the answer that ends the reserving carries the files: a client that gets `reserving` asks again.
+    if (done === total) {
+      for (let i = 0; i < total; i += BATCH) filed.push(...(await Promise.all(answered.slice(i, i + BATCH).map((m) => this.files(p, gid, m)))));
+    }
+    const members: GroupMemberBody[] = answered.map((m, i) => ({ name: m.name, version: m.version, action: actions.get(i) ?? 'join', files: filed[i] ?? [] }));
+    return { header, members };
   }
 
   /** Record in the header's `reserved` bitmap that these members' rows are the group's. Merges with what is there; an ended group is left as it is. */
@@ -624,11 +635,11 @@ export class GroupService {
     return after ?? header;
   }
 
-  private async member(p: Principal, handle: string, header: GroupRecord, idx: number, m: GroupMemberRequest, pre: Pre) {
+  /** Take the row of one member for the group, unless the checkpoint or the preflight says it is already the group's. */
+  private async reserve(p: Principal, handle: string, header: GroupRecord, idx: number, m: GroupMemberRequest, pre: Pre) {
     const gid = header.group_id;
-    const has = bitmapHas(header.reserved, idx);
     let action: 'new' | 'join' = 'join';
-    if (!has && !pre.mine.has(idx)) {
+    if (!pre.mine.has(idx)) {
       const at = this.now().toISOString();
       const audit: AuditEntry = {
         name: m.name,
@@ -649,7 +660,7 @@ export class GroupService {
       else if (out.outcome === 'taken' && out.existing.group_id === gid && out.existing.state === 'pending') action = 'join';
       else if (out.outcome !== 'adopted') throw new Taken(`${m.name} ${m.version} was taken by another publish while the group was being created`);
     }
-    return { idx, marks: !has, body: { name: m.name, version: m.version, action, files: await this.files(p, gid, m) } };
+    return { idx, action };
   }
 
   /** The upload of each file: a record that is the same on every call (so a resume finds it), and a fresh URL unless the bytes are already in quarantine. */

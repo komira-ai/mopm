@@ -724,19 +724,6 @@ filegroup(
     visibility = ["//service/api:", "//service/infra/stacks:"],
 )
 
-# pack's map from a native dependency to its conda package: the registry's native allow-list test reads it.
-filegroup(
-    name = "pack_conda_zig",
-    srcs = {"conda.zig": "src/core/conda.zig"},
-    visibility = ["//service/api:"],
-)
-
-filegroup(
-    name = "native_roots",
-    srcs = {"natives.txt": "toolchain/natives.txt"},
-    visibility = ["//service/api:"],
-)
-
 filegroup(
     name = "contract_api",
     srcs = {f[len("tests/contract/api/"):]: f for f in glob(["tests/contract/api/*.json"])},
@@ -1191,6 +1178,19 @@ zig_exe(  # buck-only: installs the pinned actionlint for lint.yml (sha256-check
 zig_exe(  # buck-only: installs the pinned OSV-Scanner for advisories.yml (sha256-checked download); built so the farm compiles it
     name = "install-osv-scanner",
     src = "tools/install_osv_scanner.zig",
+    **_TOOLS
+)
+
+zig_test(  # buck-only: the unit tests of tools/conda_measure.zig (shard hash and base URL from msgpack bytes, the name scan across chunk edges)
+    name = "conda_measure_test",
+    src = "tools/conda_measure.zig",
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: tools/conda_measure.zig, built so the farm compiles it; it needs the network and runs in conda-measure.yml, not here
+    name = "conda-measure",
+    src = "tools/conda_measure.zig",
+    unit_tests = [":conda_measure_test"],
     **_TOOLS
 )
 

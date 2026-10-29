@@ -58,6 +58,8 @@ export interface PublishStatusBody {
   status: PublishRecord['status'];
   rejection_code?: string;
   message?: string;
+  /** What did not stop the publish (a native dependency name conda-forge does not list). Present only when there is something to say. */
+  warnings?: string[];
 }
 
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -413,6 +415,7 @@ export class PublishService {
       version: rec.version,
       status: rec.status,
       ...(rec.status === 'rejected' ? { rejection_code: rec.rejection_code, message: rec.message } : {}),
+      ...(rec.warnings && rec.warnings.length > 0 ? { warnings: rec.warnings } : {}),
     };
   }
 }

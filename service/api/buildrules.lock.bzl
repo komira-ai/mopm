@@ -3,14 +3,14 @@
 
 SCHEMA = 1
 NODE = "24.21.0"
-PACKAGE_JSON_SHA256 = "eb43d11c97b302fbba38a869f8d9d2b555a32984b03beffc599db295773d4c09"
-PACKAGE_LOCK_SHA256 = "5b15428ca8c2a81295cb782c3908658c63b59e9cb917b196a400ef75ab755362"
+PACKAGE_JSON_SHA256 = "c8451f833e7f32fc552111d8ae831a7a97666dd26a138879f480e5bfedca26a5"
+PACKAGE_LOCK_SHA256 = "e186ee29fb2ecf3b9fd0c6e978f45f954f3aaf18bf1a3ee8101259dbf11189e1"
 
 PACKAGE = {
     "name": "mopm-registry-api",
     "version": "0.0.0",
     "scripts": {
-        "build": "esbuild src/http/lambda.ts src/publish/validator-lambda.ts src/publish/indexer-lambda.ts src/http/index-lambda.ts src/publish/group-validator-lambda.ts src/publish/sweeper-lambda.ts src/ops/group-ops-bin.ts --bundle --platform=node --target=node22 --format=cjs '--external:@aws-sdk/*' --outbase=src --outdir=dist --log-level=warning",
+        "build": "esbuild src/http/lambda.ts src/publish/validator-lambda.ts src/publish/indexer-lambda.ts src/http/index-lambda.ts src/publish/group-validator-lambda.ts src/publish/sweeper-lambda.ts src/publish/native-mirror-lambda.ts src/ops/group-ops-bin.ts --bundle --platform=node --target=node22 --format=cjs '--external:@aws-sdk/*' --outbase=src --outdir=dist --log-level=warning",
         "build:validate-lib": "esbuild src/validate/index.ts --bundle --platform=node --target=node22 --format=cjs --outbase=src --outdir=dist-validate --log-level=warning",
         "test": "jest --ci",
         "typecheck": "tsc --noEmit",
@@ -2613,13 +2613,13 @@ NPM = {
         "sha256": "a63a255ec20a935c3a3334a6645f9245db36e2319ddf1eb6bc0eab2bfe5b42d7",
         "size": 7479,
     },
-    "ts-jest@29.4.14": {
+    "ts-jest@29.4.15": {
         "name": "ts-jest",
-        "version": "29.4.14",
-        "url": "https://registry.npmjs.org/ts-jest/-/ts-jest-29.4.14.tgz",
-        "sri512": "sha512-+943G6wCX5E3VpzTQhBGBFntCmdT+QAkTvUlp03edTONFBvqskuXPhpyX16xdUotO4P5HQKyppldSWjocoltLQ==",
-        "sha256": "7ca70a3fa5162598d616d838ba28a9a7f6b6cccdaf196c2fdc6ab642e4ca4ac3",
-        "size": 77484,
+        "version": "29.4.15",
+        "url": "https://registry.npmjs.org/ts-jest/-/ts-jest-29.4.15.tgz",
+        "sri512": "sha512-s2qmEUYFRqbjz1wv0EmccNPVOb45HOFpFuhzQJLKShYVisuTbCFPIIAIV2EuK5rIxb4BejLDbH7dnBZfYjybUQ==",
+        "sha256": "656f5d9c108f0330c050bd0cd8de7fd88d394b6e1c889042be703c355877f8ce",
+        "size": 77779,
     },
     "tslib@2.8.1": {
         "name": "tslib",

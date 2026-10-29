@@ -44,6 +44,8 @@ export class ChannelStack extends Stack {
         // version. The current object is never expired. Lifecycle expiry is done by the service, so the delete deny
         // below (an IAM-level deny) does not stand in its way.
         { id: 'index-noncurrent-expiry', prefix: 'index/', noncurrentVersionExpiration: Duration.days(30) },
+        // The mirror job rewrites its one object every few hours, and every rewrite leaves a noncurrent version.
+        { id: 'native-mirror-noncurrent-expiry', prefix: 'native-mirror/', noncurrentVersionExpiration: Duration.days(7) },
         { id: 'abort-multipart', abortIncompleteMultipartUploadAfter: Duration.days(1) },
       ],
     });
@@ -95,6 +97,17 @@ export class ChannelStack extends Stack {
         principals: [new iam.ServicePrincipal('cloudfront.amazonaws.com')],
         actions: ['s3:GetObject'],
         resources: [this.bucket.arnForObjects('index/*')],
+      }),
+    );
+
+    // The conda-forge name mirror is read by the validators with their own role, never from the channel host.
+    this.bucket.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: 'DenyCloudFrontNativeMirror',
+        effect: iam.Effect.DENY,
+        principals: [new iam.ServicePrincipal('cloudfront.amazonaws.com')],
+        actions: ['s3:GetObject'],
+        resources: [this.bucket.arnForObjects('native-mirror/*')],
       }),
     );
 

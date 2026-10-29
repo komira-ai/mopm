@@ -63,10 +63,9 @@ fn verdicts() -> Vec<Value> {
 }
 
 fn verdict_of(c: &Value) -> Value {
-    let options = ValidatorOptions {
-        limits: limits(c),
-        allowed_native_deps: c["allow_native"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect(),
-    };
+    // `allow_native` names what the conda-forge mirror lists for the case: it matters to the TypeScript (a name the mirror lacks is a
+    // warning there), and this port neither has a mirror nor warns, so it reads nothing from it.
+    let options = ValidatorOptions { limits: limits(c) };
     validate_package(archive(c["archive"].as_str().unwrap()), &expectation(c), &options).to_json()
 }
 
@@ -138,7 +137,7 @@ fn declared_hashes_are_compared_case_insensitively_and_a_wrong_one_is_refused() 
         let mut e = expectation(&case);
         e.sha256 = sha;
         e.manifest_sha256 = manifest_sha;
-        let o = ValidatorOptions { limits: limits(&case), allowed_native_deps: Default::default() };
+        let o = ValidatorOptions { limits: limits(&case) };
         validate_package(archive("ok_minimal.conda"), &e, &o).to_json()
     };
     assert_eq!(run(Some(archive_sha.to_uppercase()), Some(manifest.to_uppercase()))["ok"], true);
