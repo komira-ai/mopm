@@ -363,7 +363,7 @@ fn nativeFiles(arena: Allocator, m: manifest.Manifest, f: Flags) anyerror!Files 
                 return nativeBad(arena, "{s}: {s}", .{ nf.path, why });
             }
             // A native the build system builds from `srcs`, or another rule provides, has the name the unit graph gave its archive; consumers' `needs` name it.
-            if (n.srcs.len > 0 or n.provided) {
+            if (n.srcs.len > 0) {
                 const want = try n.archiveName(arena);
                 if (!std.mem.eql(u8, want, native.soname)) {
                     return nativeBad(arena, "{s}: native library '{s}' is built as {s} (its soname in {s}); the archive given is named {s}", .{ nf.path, n.id, want, f.manifest, native.soname });
@@ -907,6 +907,31 @@ test "a member's native built from srcs is packed from the archive the build sys
     const other_file = NativeFile{ .id = "shim", .subdir = "linux-64", .path = try std.fs.path.join(a, &.{ root, "libother.a" }) };
     const kept = try nativeOk(a, legacy, nativeFlags(&.{linux}, &.{other_file}));
     try std.testing.expectEqualStrings("libother.a", kept.get("linux-64").?[0].soname);
+}
+
+test "a provided native is packed under lib<id>.a or its soname, and an archive named otherwise is refused" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile("libshim.a", "!<arch>\nshim\n");
+    try tmp.dir.writeFile("libother.a", "!<arch>\nother\n");
+    const root = try tmp.dir.realpathAlloc(a, ".");
+    var diag: manifest.Diagnostic = .{};
+    const head = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n";
+    const m = try manifest.parse(a, head ++ "[native.shim]\nkind = \"static\"\nprovided = true\n", &diag);
+    const linux = Mojoc{ .subdir = "linux-64", .path = "x" };
+    const right = NativeFile{ .id = "shim", .subdir = "linux-64", .path = try std.fs.path.join(a, &.{ root, "libshim.a" }) };
+    const wrong = NativeFile{ .id = "shim", .subdir = "linux-64", .path = try std.fs.path.join(a, &.{ root, "libother.a" }) };
+
+    const got = try nativeOk(a, m, nativeFlags(&.{linux}, &.{right}));
+    try std.testing.expectEqualStrings("libshim.a", got.get("linux-64").?[0].soname);
+
+    const found = try nativeFiles(a, m, nativeFlags(&.{linux}, &.{wrong}));
+    try std.testing.expect(found == .bad);
+    try std.testing.expect(std.mem.indexOf(u8, found.bad, "native library 'shim' is built as libshim.a") != null);
+    try std.testing.expect(std.mem.indexOf(u8, found.bad, "the archive given is named libother.a") != null);
 }
 
 test "version refusals" {
