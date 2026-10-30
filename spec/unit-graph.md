@@ -62,13 +62,14 @@ So the Mojo version is part of what a unit is.
 }
 ```
 
-`unit_graph` is the format version (this file describes 2 and 3; a reader refuses
+`unit_graph` is the format version (this file describes 2, 3 and 4; a reader refuses
 another). Version 2 adds the `native` unit and the `built` native entry
 ("Member natives", below); a graph of a project without member natives differs
 from a version 1 graph only in this number. Version 3 adds `system_libs` and the
 `loads` of a unit ("System libraries", below); a graph in which no unit has
 `loads` is version 2, byte for byte what it was before they existed, and has no
-`system_libs`. `package` is the root package. `units` are sorted by `id`, and the
+`system_libs`. Version 4 adds `provided` on a `native` unit ("Provided natives",
+below); a graph with no provided native keeps its version 2 or 3. `package` is the root package. `units` are sorted by `id`, and the
 text is one fixed layout, so the same inputs give the same bytes.
 
 ### toolchain
@@ -226,7 +227,8 @@ any other key is refused. There is no CPU level in a manifest: the build system
 compiles at the platform's baseline.
 
 A `shared` or `both` native, one with `mode = "load"`, and one with no `srcs`
-are refused when the graph is made, naming the manifest and the native.
+(unless it is `provided`, below) are refused when the graph is made, naming the
+manifest and the native.
 
 Each such native is one **`native` unit**, `native:<package>/<id>` (the id is
 not followed by `#mojo<M>`: C code does not depend on the Mojo version):
@@ -265,6 +267,28 @@ the member is, by the package and not by where the package sits: a member at
 `srcs` and `hdrs` are paths from the workspace (`src/app/native/shim.c`), while
 its `includes` stay relative to the member. This holds for the root package
 and for a path dependency at any depth.
+
+## Provided natives
+
+A static native can be built by something other than mopm: `[native.<id>]` with
+`kind = "static"` and `provided = true` (and no `srcs`, `hdrs`, `cflags`,
+`cflags_by_os`, `includes`, `build` or `outputs`; `mopm.toml` refuses them with
+`provided`). The archive is the product of a rule of the build system, which
+packs it as `lib<id>.a` into the conda artifact; `needs`, `exclusive` and
+`soname` are read as for any native.
+
+The graph has a `native` unit for it, as for a built native, with `"provided":
+true`, the `soname` and `outputs`, and no `srcs`, `hdrs`, `cflags` or
+`includes`. The build system does not compile it: it supplies the archive of
+that name. The `lib`, `test` and `bin` units that link it list it in `natives`
+as built, in the link order of "Member natives" (a library before every library
+it `needs`). The unit's `key` covers the declaration, not the archive's bytes,
+so a build system that caches by `key` adds the archive's digest to the provided unit's key and to the key of every unit that links it: a dependent's `key` hashes the key of the provided unit, never the archive. A consumer
+that depends on the published package gets a prebuilt entry from its lock, as
+for any static native. A graph with a provided unit is format 4, which a reader
+that does not know `provided` refuses (it would make an empty archive of a unit
+with no sources); a format 4 graph has `system_libs` and `loads` exactly when a
+format 3 graph would.
 
 ## The workspace
 

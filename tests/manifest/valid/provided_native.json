@@ -1,0 +1,25 @@
+{
+  "package": {
+    "name": "tls_natives",
+    "version": "1.0.0",
+    "description": null,
+    "license": null,
+    "repository": null,
+    "readme": null
+  },
+  "toolchain": {
+    "mojo": ["1.0.0"]
+  },
+  "dependencies": [],
+  "dev-dependencies": [],
+  "native-dependencies": [],
+  "native": [
+    {"id": "awslc", "kind": "static", "mode": "link", "build": null, "outputs": [], "provided": true},
+    {"id": "s2n", "kind": "static", "mode": "link", "build": null, "outputs": [], "provided": true, "needs": ["libawslc.a"], "exclusive": "libs2n", "soname": "libs2n.a"}
+  ],
+  "targets": {
+    "lib": null,
+    "bins": [],
+    "tests": []
+  }
+}

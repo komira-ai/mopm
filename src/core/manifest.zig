@@ -72,6 +72,9 @@ pub const NativeLib = struct {
     cflags_by_os: OsFlags = .{},
     /// Include directories, relative to the package; empty means the directories holding `hdrs` files.
     includes: []const []const u8 = &.{},
+    /// The static archive is built by something else (a build system's own rule) and packed as `lib<id>.a`: mopm
+    /// compiles nothing for it, so it has no `srcs`, `hdrs`, `cflags`, `cflags_by_os`, `includes`, `build` or `outputs`.
+    provided: bool = false,
 
     /// The archive file name: `soname`, else `lib<id>.a`.
     pub fn archiveName(self: NativeLib, arena: Allocator) Allocator.Error![]const u8 {
@@ -370,7 +373,7 @@ const Checker = struct {
                 return c.fail(e.pos, "native library id '{s}' must be a lowercase identifier (letters, digits, '_')", .{e.key});
             }
             const sub = try c.table(e, "[native]");
-            try c.onlyKeys(sub, in, &.{ "kind", "mode", "build", "outputs", "needs", "exclusive", "soname", "srcs", "hdrs", "cflags", "cflags_by_os", "includes" });
+            try c.onlyKeys(sub, in, &.{ "kind", "mode", "build", "outputs", "needs", "exclusive", "soname", "srcs", "hdrs", "cflags", "cflags_by_os", "includes", "provided" });
             var lib = NativeLib{ .id = e.key };
             if (sub.get("kind")) |k| {
                 const kind = try c.str(k, in);
@@ -418,9 +421,25 @@ const Checker = struct {
                     }
                 }
             }
+            lib.provided = try c.optBool(sub, "provided", in, false);
+            if (lib.provided) try c.providedProblem(sub, in, lib);
             try out.append(lib);
         }
         return try out.toOwnedSlice();
+    }
+
+    /// `provided = true` says the archive is built elsewhere: it must be a static archive that is linked, and it may
+    /// not name anything mopm would compile with.
+    fn providedProblem(c: *Checker, sub: Table, in: []const u8, lib: NativeLib) Error!void {
+        const at = sub.get("provided").?.pos;
+        if (sub.get("kind") == null) return c.fail(at, "'provided' in {s} needs kind = \"static\"", .{in});
+        if (lib.kind != .static) return c.fail(at, "'provided' in {s} needs kind = \"static\", not \"{s}\"", .{ in, @tagName(lib.kind) });
+        if (lib.mode != .link) return c.fail(at, "'provided' in {s} needs mode = \"link\", not \"{s}\"", .{ in, @tagName(lib.mode) });
+        for ([_][]const u8{ "srcs", "hdrs", "cflags", "cflags_by_os", "includes", "build", "outputs" }) |key| {
+            if (sub.get(key)) |e| {
+                return c.fail(e.pos, "'{s}' in {s} contradicts provided = true: the archive is built elsewhere, and mopm compiles nothing for it", .{ key, in });
+            }
+        }
     }
 
     /// The array of package-relative paths or globs at `key` of `sub` (empty when absent); a path that is empty,
@@ -604,6 +623,7 @@ fn writeNativeLib(w: anytype, l: NativeLib) !void {
     try jsonOpt(w, l.build);
     try w.writeAll(", \"outputs\": ");
     try jsonStrList(w, l.outputs);
+    if (l.provided) try w.writeAll(", \"provided\": true");
     // Left out when absent, so that the output for a manifest that never used them is what it was.
     if (l.needs.len > 0) {
         try w.writeAll(", \"needs\": ");

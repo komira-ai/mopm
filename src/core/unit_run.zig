@@ -71,7 +71,8 @@ pub fn verify(arena: Allocator, g: unit_graph.Graph, idx: usize, d: Dirs, why: *
     }
 
     if (std.mem.eql(u8, u.kind, "native")) {
-        return refuse(arena, why, "{s} is a native unit: the build system compiles its C sources into {s}; 'mopm unit build' builds Mojo units", .{ u.id, u.soname });
+        const what = if (u.provided) "the build system supplies the archive" else "the build system compiles its C sources into";
+        return refuse(arena, why, "{s} is a native unit: {s} {s}; 'mopm unit build' builds Mojo units", .{ u.id, what, u.soname });
     }
 
     // The toolchain: the closure the graph pins, and the wrapper.

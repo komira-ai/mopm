@@ -94,6 +94,7 @@ test {
     _ = @import("unit_graph.zig");
     _ = @import("unit_graph_platform_test.zig");
     _ = @import("unit_graph_loads_test.zig");
+    _ = @import("unit_graph_provided_test.zig");
     _ = @import("install_plan_loads_test.zig");
     _ = @import("lock_libs.zig");
     _ = @import("lock_libs_test.zig");

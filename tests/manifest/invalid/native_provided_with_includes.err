@@ -1,0 +1,1 @@
+8:1: 'includes' in [native.shim] contradicts provided = true: the archive is built elsewhere, and mopm compiles nothing for it
