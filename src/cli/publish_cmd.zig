@@ -363,7 +363,7 @@ fn nativeFiles(arena: Allocator, m: manifest.Manifest, f: Flags) anyerror!Files 
                 return nativeBad(arena, "{s}: {s}", .{ nf.path, why });
             }
             // A native the build system builds from `srcs`, or another rule provides, has the name the unit graph gave its archive; consumers' `needs` name it.
-            if (n.srcs.len > 0) {
+            if (n.srcs.len > 0 or n.provided) {
                 const want = try n.archiveName(arena);
                 if (!std.mem.eql(u8, want, native.soname)) {
                     return nativeBad(arena, "{s}: native library '{s}' is built as {s} (its soname in {s}); the archive given is named {s}", .{ nf.path, n.id, want, f.manifest, native.soname });

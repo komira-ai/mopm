@@ -283,7 +283,7 @@ true`, the `soname` and `outputs`, and no `srcs`, `hdrs`, `cflags` or
 that name. The `lib`, `test` and `bin` units that link it list it in `natives`
 as built, in the link order of "Member natives" (a library before every library
 it `needs`). The unit's `key` covers the declaration, not the archive's bytes,
-so a build system that caches by `key` adds the archive's digest. A consumer
+so a build system that caches by `key` adds the archive's digest to the provided unit's key and to the key of every unit that links it: a dependent's `key` hashes the key of the provided unit, never the archive. A consumer
 that depends on the published package gets a prebuilt entry from its lock, as
 for any static native. A graph with a provided unit is format 4, which a reader
 that does not know `provided` refuses (it would make an empty archive of a unit
