@@ -600,6 +600,26 @@ test "archives that name no system library add no -l flag" {
     try expectList(&.{ "d/lib/liba.a", "d/lib/libb.a", "-lc++" }, one.build);
 }
 
+// Defect it catches: the plan and the unit graph putting the same names in different orders (the plan by package order,
+// the graph by soname), so that `mopm build` and a build system link differently.
+test "the system libraries are in one order whatever order the archives are given in" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const pa =
+        \\{"schema": 1, "name": "a", "native": [
+        \\  {"id": "a", "soname": "liba.a", "kind": "static", "static_file": "lib/liba.a", "link": ["m"]}]}
+    ;
+    const pb =
+        \\{"schema": 1, "name": "b", "native": [
+        \\  {"id": "b", "soname": "libb.a", "kind": "static", "static_file": "lib/libb.a", "link": ["c++"]}]}
+    ;
+    const ba = try plan(a, &.{ try mk(a, "d", pb), try mk(a, "d", pa) });
+    try expectList(&.{ "d/lib/libb.a", "d/lib/liba.a", "-lc++", "-lm" }, ba.build);
+    const ab = try plan(a, &.{ try mk(a, "d", pa), try mk(a, "d", pb) });
+    try expectList(&.{ "d/lib/liba.a", "d/lib/libb.a", "-lc++", "-lm" }, ab.build);
+}
+
 test "golden: static archives that name system libraries" {
     try golden("static_link", &.{ "plain_sys", "cxx_a", "cxx_b" });
 }

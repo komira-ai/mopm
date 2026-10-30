@@ -190,3 +190,22 @@ test "a lock that names a system library outside the allowed list is refused" {
     try std.testing.expectError(error.Invalid, lock.parse(a, shared, &why));
     try std.testing.expect(std.mem.indexOf(u8, why, "has a link but is not static") != null);
 }
+
+const toml_util_order = toml_util_head ++
+    "\n[native.aa]\nkind = \"static\"\nprovided = true\nlink = [\"m\"]\n" ++
+    "\n[native.bb]\nkind = \"static\"\nprovided = true\nlink = [\"c++\"]\n";
+
+// Defect it catches: the graph's link list in the order of the natives (soname order: libaa.a, libbb.a gives m, c++) while
+// `mopm build` puts libc++ first, so a build system and `mopm build` link differently.
+test "the link list of a unit is in the order of the allowed list, as the link plan puts it" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var why: []const u8 = "";
+    const g = try graphOf(a, toml_util_order, false, &why);
+    const u = g.units[g.find(id_app) orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("libaa.a libbb.a", try sonames(a, u));
+    try std.testing.expectEqual(@as(usize, 2), u.link.len);
+    try std.testing.expectEqualStrings("c++", u.link[0]);
+    try std.testing.expectEqualStrings("m", u.link[1]);
+}
