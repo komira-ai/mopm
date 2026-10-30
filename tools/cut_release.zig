@@ -215,21 +215,23 @@ fn nextPatch(base: []const u8, names: []const []const u8) u64 {
 const per_page = 100;
 const max_pages = 50;
 
-/// Every tag name that starts with `prefix` (paged).
+/// Every tag name that starts with `prefix`. Read from the tag list (`tags`), which pages: a page shorter than
+/// `per_page` is the last. (`git/matching-refs` is not used: it answers every match on every page whatever
+/// `page` says, so a repository with a full page of tags was read again and again until the cap.)
 fn tagsByPrefix(gh: Gh, prefix: []const u8) []const []const u8 {
     const a = gh.a;
     var names = std.ArrayList([]const u8).init(a);
-    const Ref = struct { ref: []const u8 = "" };
+    const Tag = struct { name: []const u8 = "" };
     var page: usize = 1;
     while (true) : (page += 1) {
-        if (page > max_pages) die("more than {d} tags starting with {s}: cannot tell which number is next", .{ max_pages * per_page, prefix });
-        const json = gh.must(&.{ "api", gh.api("git/matching-refs/tags/{s}?per_page={d}&page={d}", .{ prefix, per_page, page }) });
-        const parsed = std.json.parseFromSlice([]const Ref, a, json, .{ .ignore_unknown_fields = true }) catch |err| {
+        const json = gh.must(&.{ "api", gh.api("tags?per_page={d}&page={d}", .{ per_page, page }) });
+        const parsed = std.json.parseFromSlice([]const Tag, a, json, .{ .ignore_unknown_fields = true }) catch |err| {
             die("cannot read the tag list: {s}", .{@errorName(err)});
         };
-        for (parsed.value) |r| {
-            const head = "refs/tags/";
-            if (std.mem.startsWith(u8, r.ref, head)) names.append(r.ref[head.len..]) catch @panic("oom");
+        // The cap guards against a listing that never ends: tags past page max_pages are refused, an empty page there is the end.
+        if (page > max_pages and parsed.value.len > 0) die("more than {d} tags starting with {s}: cannot tell which number is next", .{ max_pages * per_page, prefix });
+        for (parsed.value) |t| {
+            if (std.mem.startsWith(u8, t.name, prefix)) names.append(t.name) catch @panic("oom");
         }
         if (parsed.value.len < per_page) break;
     }

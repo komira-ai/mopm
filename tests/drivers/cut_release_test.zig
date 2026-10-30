@@ -383,6 +383,40 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every known defec
         rep.check("plan: a draft on page 2 of the release list counts (gives 0.0.401)", q.code == 0 and h.contains(q.text, "version=0.0.401\n"), q.text);
     }
     {
+        // The tag list is read to its end however many tags there are: none, exactly one full page, one more than a page,
+        // several pages, and the largest list the tool accepts.
+        const Case = struct { name: []const u8, count: usize, next: []const u8 };
+        const cases = [_]Case{
+            .{ .name = "plan_tags_0", .count = 0, .next = "0.0.1" },
+            .{ .name = "plan_tags_99", .count = 99, .next = "0.0.100" },
+            .{ .name = "plan_tags_100", .count = 100, .next = "0.0.101" },
+            .{ .name = "plan_tags_101", .count = 101, .next = "0.0.102" },
+            .{ .name = "plan_tags_250", .count = 250, .next = "0.0.251" },
+            .{ .name = "plan_tags_5000", .count = 5000, .next = "0.0.5001" },
+        };
+        for (cases) |c| {
+            const w = try fresh(a, tools, &tmp, c.name);
+            if (c.count > 0) try w.put("tags", try tagLines(a, 1, c.count, sha));
+            const r = try w.runV(&.{"plan"});
+            rep.check(try h.fmt(a, "plan: {d} tags give version {s}", .{ c.count, c.next }), r.code == 0 and h.contains(r.text, try h.fmt(a, "version={s}\n", .{c.next})), r.text);
+        }
+        // A tag list longer than the tool accepts is refused, not guessed at.
+        const big = try fresh(a, tools, &tmp, "plan_tags_runaway");
+        try big.put("tags", try tagLines(a, 1, 5100, sha));
+        const refused = try big.runV(&.{"plan"});
+        rep.check("plan: more than 5000 tags are refused with the reason, and nothing is created", refused.code == 1 and h.contains(refused.text, "more than 5000 tags") and big.calls("api -X POST") == 0, refused.text);
+    }
+    {
+        // Names that start with v but are not v<major>.<minor>.<patch> take no part in the numbering, in a full page of tags too.
+        const w = try fresh(a, tools, &tmp, "plan_tags_not_semver");
+        var b = std.ArrayList(u8).init(a);
+        for ([_][]const u8{ "vnext", "v0", "v0.0", "v0.0.9-rc.1", "v0.0.x", "v0.0.7.1", "v0.0.08", "v-1", "v0.0.99999999999999999999" }) |n| try b.writer().print("{s} {s}\n", .{ n, sha });
+        try b.appendSlice(try tagLines(a, 1, 91, sha));
+        try w.put("tags", b.items);
+        const r = try w.runV(&.{"plan"});
+        rep.check("plan: a hundred v* tags of which nine are not semver give the next number after the highest semver tag (0.0.92)", r.code == 0 and h.contains(r.text, "version=0.0.92\n"), r.text);
+    }
+    {
         const bad = [_][]const u8{ "0.0.1\n", "v0.0\n", "", "0.0\n0.1\n", "00.1\n", "0.x\n", "0\n", "0.0-rc\n" };
         for (bad, 0..) |text, i| {
             const w = try fresh(a, tools, &tmp, try h.fmt(a, "plan_bad_{d}", .{i}));
