@@ -5,6 +5,8 @@
 //!
 //!   main_sha       the sha of main (the default commit of a tag)
 //!   tags           one line per tag, `<name> <commit>`; a tag-ref POST appends one
+//!                  (the tag listings: `git/matching-refs/tags/<prefix>` answers every match on every page, as GitHub does;
+//!                  `tags?per_page=&page=` pages)
 //!   race           `<name> <commit>`: the next tag-ref POST first creates that tag (another run took
 //!                  the number) and fails with HTTP 422 "Reference already exists"
 //!   ref_taken      every tag-ref POST fails with HTTP 422 "Reference already exists"
@@ -131,18 +133,34 @@ pub fn main() !void {
             const rest = path[(repo ++ "git/matching-refs/tags/").len..];
             const q = std.mem.indexOf(u8, rest, "?per_page=") orelse @panic("no per_page");
             const prefix = rest[0..q];
-            const at = std.mem.indexOf(u8, rest, "&page=") orelse @panic("no page");
-            const page = try std.fmt.parseInt(usize, rest[at + 6 ..], 10);
+            // Like GitHub: this listing is not paginated. It answers every match whatever `page` and `per_page` say,
+            // so a caller that pages through it gets the same answer on every page.
             var matched = std.ArrayList([]const u8).init(a);
             var lines = std.mem.splitScalar(u8, fileText(a, dir, "tags") orelse "", '\n');
             while (lines.next()) |l| {
                 const sp = std.mem.indexOfScalar(u8, l, ' ') orelse continue;
                 if (std.mem.startsWith(u8, l[0..sp], prefix)) try matched.append(l[0..sp]);
             }
-            const from = @min((page - 1) * 100, matched.items.len);
-            const to = @min(page * 100, matched.items.len);
             try w.writeAll("[");
-            for (matched.items[from..to], 0..) |n, i| try w.print("{s}{{\"ref\":\"refs/tags/{s}\"}}", .{ if (i == 0) "" else ",", n });
+            for (matched.items, 0..) |n, i| try w.print("{s}{{\"ref\":\"refs/tags/{s}\"}}", .{ if (i == 0) "" else ",", n });
+            try w.writeAll("]\n");
+        } else if (std.mem.startsWith(u8, path, repo ++ "tags?")) {
+            // The tag list proper: `per_page` tags a page (at most 100), an empty page past the end.
+            const q = std.mem.indexOf(u8, path, "per_page=") orelse @panic("no per_page");
+            const amp = std.mem.indexOfScalarPos(u8, path, q, '&') orelse @panic("no page");
+            const per = @min(try std.fmt.parseInt(usize, path[q + 9 .. amp], 10), 100);
+            const at = std.mem.indexOf(u8, path, "page=") orelse @panic("no page");
+            const page = try std.fmt.parseInt(usize, path[at + 5 ..], 10);
+            var names = std.ArrayList([]const u8).init(a);
+            var lines = std.mem.splitScalar(u8, fileText(a, dir, "tags") orelse "", '\n');
+            while (lines.next()) |l| {
+                const sp = std.mem.indexOfScalar(u8, l, ' ') orelse continue;
+                try names.append(l[0..sp]);
+            }
+            const from = @min((page - 1) * per, names.items.len);
+            const to = @min(page * per, names.items.len);
+            try w.writeAll("[");
+            for (names.items[from..to], 0..) |n, i| try w.print("{s}{{\"name\":\"{s}\"}}", .{ if (i == 0) "" else ",", n });
             try w.writeAll("]\n");
         } else if (std.mem.startsWith(u8, path, repo ++ "releases?")) {
             const at = std.mem.indexOf(u8, path, "&page=") orelse @panic("no page");
