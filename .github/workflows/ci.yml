@@ -118,15 +118,13 @@ jobs:
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
       - name: Build the CLI and the fake registry
         run: zig build
-      # The minimum macOS of what is built here must not be above the pinned one (tools/macho_minos.zig reads the Mach-O's minos).
-      - name: macOS minimum of the native build is at most 14.0
+      # The release builds the macOS binary for -Dtarget=aarch64-macos.11.7.1 on a newer runner. A build made natively takes the runner's own version
+      # (15.x on macos-15) as its minimum, so the one that is checked is the build for the pinned target: tools/macho_minos.zig reads the Mach-O's minos.
+      - name: Build the CLI for the pinned macOS target; its minimum macOS is at most 11.7.1
         if: runner.os == 'macOS'
-        run: zig run tools/macho_minos.zig -- --max 14.0 zig-out/bin/mopm
-      - name: macOS minimum of the release build (-Dtarget=aarch64-macos) is at most 14.0
-        if: ${{ runner.os == 'macOS' && !cancelled() }}
         run: |
-          zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-macos -Dstrip=true -p zig-release
-          zig run tools/macho_minos.zig -- --max 14.0 zig-release/bin/mopm
+          zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-macos.11.7.1 -Dstrip=true -p zig-pinned
+          zig run tools/macho_minos.zig -- --max 11.7.1 zig-pinned/bin/mopm
       # This job only builds. mopm login/logout/whoami and pack/publish against the fake registry, and mopm sync against it, are Zig tests
       # (//:registry_login, //:registry_publish, //:install_e2e) that farm.yml builds; the Python scripts are gone.
 

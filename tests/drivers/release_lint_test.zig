@@ -530,7 +530,7 @@ test "defect: the provenance subjects and the signed-assets upload leave out the
 }
 
 test "defect: the package matrix is not exactly the three release targets" {
-    const macos = "          - { target: macos-arm64, zig_target: aarch64-macos, os: macos-15, deb_arch: \"\" }\n";
+    const macos = "          - { target: macos-arm64, zig_target: aarch64-macos.11.7.1, os: macos-15, deb_arch: \"\" }\n";
     try buildDefect("an added macos-x86_64 leg", macos, macos ++ "          - { target: macos-x86_64, zig_target: x86_64-macos, os: macos-13, deb_arch: \"\" }\n", "the package matrix has 4 legs, expected exactly the 3 release targets");
     try buildDefect("an added leg of another kind", macos, macos ++ "          - { target: windows-x86_64, zig_target: x86_64-windows, os: windows-2022, deb_arch: \"\" }\n", "the package matrix has 4 legs");
     try buildDefect("the macos leg dropped", macos, "", "the package matrix has 2 legs");
@@ -539,6 +539,14 @@ test "defect: the package matrix is not exactly the three release targets" {
     try buildDefect("an include key that adds legs at run time", "      matrix:\n        include:", "      matrix:\n        extra: [1]\n        include:", "the package matrix has the key extra");
     try buildDefect("a leg on another runner", "os: macos-15,", "os: macos-14,", "the package leg macos-arm64 must run on macos-15");
     try buildDefect("a leg for another Zig target", "zig_target: x86_64-linux-musl,", "zig_target: x86_64-linux-gnu,", "the package leg linux-x86_64 must run on ubuntu-24.04 and build x86_64-linux-musl");
+}
+
+test "defect: the macOS leg is built for, or checked against, a different minimum than the pinned one" {
+    try buildDefect("the Zig target pin raised", "zig_target: aarch64-macos.11.7.1,", "zig_target: aarch64-macos.14.0,", "the package leg macos-arm64 must run on macos-15 and build aarch64-macos.11.7.1");
+    try buildDefect("the Zig target pin dropped", "zig_target: aarch64-macos.11.7.1,", "zig_target: aarch64-macos,", "the package leg macos-arm64 must run on macos-15 and build aarch64-macos.11.7.1");
+    try buildDefect("the check's limit raised", "--max 11.7.1 \"$RUNNER_TEMP", "--max 14.0 \"$RUNNER_TEMP", "the macOS minos check must take --max 11.7.1");
+    try buildDefect("the check dropped", "zig run tools/macho_minos.zig -- --max 11.7.1 \"$RUNNER_TEMP/mopm-$VERSION-$TARGET/mopm\"\n", "true\n", "package has no step that runs tools/macho_minos.zig");
+    try buildDefect("the check run on every leg", "        if: matrix.target == 'macos-arm64'\n", "", "the macOS minos check must run for the macos-arm64 leg only");
 }
 
 test "defect: the matrix gives a leg the wrong Debian architecture" {

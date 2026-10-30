@@ -1090,11 +1090,15 @@ fn attestDebProblems(a: Allocator, attest: Value, out: *Out) !void {
     try exactLines(a, out, "release.yml: attest's signed-assets artifact path", stepWith(attest, "actions/upload-artifact@", "path"), &.{ "dist/mopm-*.tar.gz", "dist/mopm_*.deb", "dist/SHA256SUMS", "dist/*.sigstore.json" });
 }
 
+/// The lowest macOS the release binary runs on: the version in the macOS leg's Zig target and the limit of the minos check after it. It is what
+/// the Zig 0.12.0 default for aarch64-macos was before the runner moved to macos-15, so the move did not raise it.
+pub const macos_min = "11.7.1";
+
 /// The package matrix of release-build.yml, exactly: the three release targets, each on its runner with its Zig target.
 const deb_legs = [_]struct { target: []const u8, zig_target: []const u8, os: []const u8, deb_arch: []const u8 }{
     .{ .target = "linux-x86_64", .zig_target = "x86_64-linux-musl", .os = "ubuntu-24.04", .deb_arch = "amd64" },
     .{ .target = "linux-aarch64", .zig_target = "aarch64-linux-musl", .os = "ubuntu-24.04-arm", .deb_arch = "arm64" },
-    .{ .target = "macos-arm64", .zig_target = "aarch64-macos", .os = "macos-15", .deb_arch = "" },
+    .{ .target = "macos-arm64", .zig_target = "aarch64-macos." ++ macos_min, .os = "macos-15", .deb_arch = "" },
 };
 
 /// release-build.yml: the linux legs have the Debian architecture of their target (the others none), the .deb is made from
@@ -1124,6 +1128,11 @@ pub fn buildDebProblems(a: Allocator, text: []const u8, out: *Out) !void {
         }
         if (!found) try c.problem(a, out, prefix ++ f ++ "the package matrix has no leg {s}", .{leg.target});
     }
+    const minos = stepRunning(job, "macho_minos.zig") orelse return c.problem(a, out, prefix ++ f ++ "package has no step that runs tools/macho_minos.zig on the macOS binary of the tarball", .{});
+    if (std.mem.indexOf(u8, c.str(c.get(minos, "run")) orelse "", "--max " ++ macos_min ++ " ") == null) {
+        try c.problem(a, out, prefix ++ f ++ "the macOS minos check must take --max " ++ macos_min ++ ", the version of the macOS leg's Zig target", .{});
+    }
+    if (!c.isStr(c.get(minos, "if"), "matrix.target == 'macos-arm64'")) try c.problem(a, out, prefix ++ f ++ "the macOS minos check must run for the macos-arm64 leg only (if: matrix.target == 'macos-arm64')", .{});
     const step = stepRunning(job, "deb-package") orelse return c.problem(a, out, prefix ++ f ++ "package has no step that runs `channels deb-package`", .{});
     const run = c.str(c.get(step, "run")) orelse "";
     if (std.mem.indexOf(u8, run, "--binary \"$RUNNER_TEMP/mopm-$VERSION-$TARGET/mopm\"") == null) {
