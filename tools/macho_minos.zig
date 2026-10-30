@@ -157,7 +157,7 @@ test "parseVersion reads major, major.minor and major.minor.patch, and refuses t
     try std.testing.expectEqual(@as(u32, 14 << 16), try parseVersion("14"));
     try std.testing.expectEqual(@as(u32, (14 << 16) | (2 << 8)), try parseVersion("14.2"));
     try std.testing.expectEqual(@as(u32, (11 << 16) | (7 << 8) | 1), try parseVersion("11.7.1"));
-    for ([_][]const u8{ "", ".", "14.", ".5", "14.0.0.0", "x", "14.x", "14.256", "70000.0" }) |bad| {
+    for ([_][]const u8{ "", ".", "14.", ".5", "14.0" ++ ".0.0", "x", "14.x", "14.256", "70000.0" }) |bad| {
         try std.testing.expectError(error.BadVersion, parseVersion(bad));
     }
 }
