@@ -24,6 +24,7 @@ const Allocator = std.mem.Allocator;
 const release_path = ".github/workflows/release.yml";
 const user_path = ".github/workflows/release-beta-user.yml";
 const build_path = ".github/workflows/release-build.yml";
+const ci_path = ".github/workflows/ci.yml";
 
 fn real(a: Allocator, path: []const u8) ![]u8 {
     const tree = try c.loadTree(a);
@@ -36,6 +37,8 @@ fn problemsOf(a: Allocator, path: []const u8, text: []const u8) ![]const []const
         try rl.userBetaProblems(a, text, &out);
     } else if (std.mem.eql(u8, path, build_path)) {
         try rl.buildDebProblems(a, text, &out);
+    } else if (std.mem.eql(u8, path, ci_path)) {
+        try rl.ciMinosProblems(a, text, &out);
     } else try rl.problems(a, text, &out);
     return out.items;
 }
@@ -44,7 +47,7 @@ test "the real release.yml, release-beta-user.yml, and release-build.yml pass ev
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    for ([_][]const u8{ release_path, user_path, build_path }) |p| {
+    for ([_][]const u8{ release_path, user_path, build_path, ci_path }) |p| {
         const got = try problemsOf(a, p, try real(a, p));
         for (got) |l| std.debug.print("{s}\n", .{l});
         try std.testing.expectEqual(@as(usize, 0), got.len);
@@ -547,6 +550,15 @@ test "defect: the macOS leg is built for, or checked against, a different minimu
     try buildDefect("the check's limit raised", "--max 11.7.1 \"$RUNNER_TEMP", "--max 14.0 \"$RUNNER_TEMP", "the macOS minos check must take --max 11.7.1");
     try buildDefect("the check dropped", "zig run tools/macho_minos.zig -- --max 11.7.1 \"$RUNNER_TEMP/mopm-$VERSION-$TARGET/mopm\"\n", "true\n", "package has no step that runs tools/macho_minos.zig");
     try buildDefect("the check run on every leg", "        if: matrix.target == 'macos-arm64'\n", "", "the macOS minos check must run for the macos-arm64 leg only");
+}
+
+test "defect: the minos check reads another file than the tarball's binary, or ci.yml builds for another minimum" {
+    try buildDefect("the release check reads the native build", "--max 11.7.1 \"$RUNNER_TEMP/mopm-$VERSION-$TARGET/mopm\"", "--max 11.7.1 zig-out/bin/mopm", "the macOS minos check must take --max 11.7.1 and read");
+    try defectIn(ci_path, "ci.yml builds for a higher target", "-Dtarget=aarch64-macos.11.7.1 ", "-Dtarget=aarch64-macos.14.0 ", "registry-build must build for -Dtarget=aarch64-macos.11.7.1");
+    try defectIn(ci_path, "ci.yml builds with no version", "-Dtarget=aarch64-macos.11.7.1 ", "-Dtarget=aarch64-macos ", "registry-build must build for -Dtarget=aarch64-macos.11.7.1");
+    try defectIn(ci_path, "ci.yml limit raised", "--max 11.7.1 zig-pinned/bin/mopm", "--max 14.0 zig-pinned/bin/mopm", "registry-build must check zig-pinned/bin/mopm");
+    try defectIn(ci_path, "ci.yml checks the native build", "--max 11.7.1 zig-pinned/bin/mopm", "--max 11.7.1 zig-out/bin/mopm", "registry-build must check zig-pinned/bin/mopm");
+    try defectIn(ci_path, "ci.yml check on every leg", "if: runner.os == 'macOS'\n        run: |\n          zig build -Doptimize", "run: |\n          zig build -Doptimize", "the macOS minos step must run on the macOS leg");
 }
 
 test "defect: the matrix gives a leg the wrong Debian architecture" {

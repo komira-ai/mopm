@@ -1094,6 +1094,23 @@ fn attestDebProblems(a: Allocator, attest: Value, out: *Out) !void {
 /// the Zig 0.12.0 default for aarch64-macos was before the runner moved to macos-15, so the move did not raise it.
 pub const macos_min = "11.7.1";
 
+/// ci.yml, the macOS leg of `registry-build`: the build for the pinned target and the minos check of its output name the same version as the release leg, and the
+/// check reads the file that build wrote.
+pub fn ciMinosProblems(a: Allocator, text: []const u8, out: *Out) !void {
+    const f = "ci.yml: ";
+    const doc = c.load(a, text) catch |err| return c.problem(a, out, prefix ++ f ++ "not readable as YAML: {s}", .{@errorName(err)});
+    const job = c.get(c.get(doc, "jobs"), "registry-build") orelse return c.problem(a, out, prefix ++ f ++ "there is no registry-build job", .{});
+    const step = stepRunning(job, "macho_minos.zig") orelse return c.problem(a, out, prefix ++ f ++ "registry-build has no step that runs tools/macho_minos.zig", .{});
+    const run = c.str(c.get(step, "run")) orelse "";
+    if (std.mem.indexOf(u8, run, "-Dtarget=aarch64-macos." ++ macos_min ++ " ") == null) {
+        try c.problem(a, out, prefix ++ f ++ "registry-build must build for -Dtarget=aarch64-macos." ++ macos_min ++ ", the Zig target of the release leg", .{});
+    }
+    if (std.mem.indexOf(u8, run, "-p zig-pinned") == null or std.mem.indexOf(u8, run, "--max " ++ macos_min ++ " zig-pinned/bin/mopm") == null) {
+        try c.problem(a, out, prefix ++ f ++ "registry-build must check zig-pinned/bin/mopm, the output of that build, with --max " ++ macos_min, .{});
+    }
+    if (!c.isStr(c.get(step, "if"), "runner.os == 'macOS'")) try c.problem(a, out, prefix ++ f ++ "the macOS minos step must run on the macOS leg (if: runner.os == 'macOS')", .{});
+}
+
 /// The package matrix of release-build.yml, exactly: the three release targets, each on its runner with its Zig target.
 const deb_legs = [_]struct { target: []const u8, zig_target: []const u8, os: []const u8, deb_arch: []const u8 }{
     .{ .target = "linux-x86_64", .zig_target = "x86_64-linux-musl", .os = "ubuntu-24.04", .deb_arch = "amd64" },
@@ -1129,8 +1146,8 @@ pub fn buildDebProblems(a: Allocator, text: []const u8, out: *Out) !void {
         if (!found) try c.problem(a, out, prefix ++ f ++ "the package matrix has no leg {s}", .{leg.target});
     }
     const minos = stepRunning(job, "macho_minos.zig") orelse return c.problem(a, out, prefix ++ f ++ "package has no step that runs tools/macho_minos.zig on the macOS binary of the tarball", .{});
-    if (std.mem.indexOf(u8, c.str(c.get(minos, "run")) orelse "", "--max " ++ macos_min ++ " ") == null) {
-        try c.problem(a, out, prefix ++ f ++ "the macOS minos check must take --max " ++ macos_min ++ ", the version of the macOS leg's Zig target", .{});
+    if (std.mem.indexOf(u8, c.str(c.get(minos, "run")) orelse "", "--max " ++ macos_min ++ " \"$RUNNER_TEMP/mopm-$VERSION-$TARGET/mopm\"") == null) {
+        try c.problem(a, out, prefix ++ f ++ "the macOS minos check must take --max " ++ macos_min ++ " and read \"$RUNNER_TEMP/mopm-$VERSION-$TARGET/mopm\", the binary of the tarball, with the limit being the version of the macOS leg's Zig target", .{});
     }
     if (!c.isStr(c.get(minos, "if"), "matrix.target == 'macos-arm64'")) try c.problem(a, out, prefix ++ f ++ "the macOS minos check must run for the macos-arm64 leg only (if: matrix.target == 'macos-arm64')", .{});
     const step = stepRunning(job, "deb-package") orelse return c.problem(a, out, prefix ++ f ++ "package has no step that runs `channels deb-package`", .{});

@@ -157,6 +157,9 @@ test "parseVersion reads major, major.minor and major.minor.patch, and refuses t
     try std.testing.expectEqual(@as(u32, 14 << 16), try parseVersion("14"));
     try std.testing.expectEqual(@as(u32, (14 << 16) | (2 << 8)), try parseVersion("14.2"));
     try std.testing.expectEqual(@as(u32, (11 << 16) | (7 << 8) | 1), try parseVersion("11.7.1"));
+    // "13.0" and "13.0.0" are one version, and 11.7.10 is above 11.7.1 (a version is numbers, not text).
+    try std.testing.expectEqual(try parseVersion("13.0"), try parseVersion("13.0.0"));
+    try std.testing.expect((try parseVersion("11.7.10")) > (try parseVersion("11.7.1")));
     for ([_][]const u8{ "", ".", "14.", ".5", "14.0" ++ ".0.0", "x", "14.x", "14.256", "70000.0" }) |bad| {
         try std.testing.expectError(error.BadVersion, parseVersion(bad));
     }
@@ -170,6 +173,9 @@ test "LC_BUILD_VERSION: the minos is read, and 14.0 is below 15.0" {
     try std.testing.expect((try minosOf(f[0..n])) > (try parseVersion("14.0")));
     const m = makeThin(&f, &.{buildVersion(&c, platform_macos, 14 << 16)});
     try std.testing.expect((try minosOf(f[0..m])) <= (try parseVersion("14.0")));
+    // 11.7.10 is above 11.7.1.
+    const q = makeThin(&f, &.{buildVersion(&c, platform_macos, (11 << 16) | (7 << 8) | 10)});
+    try std.testing.expect((try minosOf(f[0..q])) > (try parseVersion("11.7.1")));
     // One patch level above the limit is above it.
     const p = makeThin(&f, &.{buildVersion(&c, platform_macos, (14 << 16) | 1)});
     try std.testing.expect((try minosOf(f[0..p])) > (try parseVersion("14.0")));
