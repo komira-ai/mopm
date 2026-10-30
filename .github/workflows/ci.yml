@@ -37,7 +37,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'macos')) && '["ubuntu-24.04","ubuntu-24.04-arm","macos-15"]' || '["ubuntu-24.04","ubuntu-24.04-arm"]') }}
+        os: ${{ fromJSON(true && '["ubuntu-24.04","ubuntu-24.04-arm","macos-15"]' || '["ubuntu-24.04","ubuntu-24.04-arm"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Zig 0.12.0 (sha256-pinned)
@@ -109,7 +109,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'macos')) && '["ubuntu-24.04","ubuntu-24.04-arm","macos-15"]' || '["ubuntu-24.04","ubuntu-24.04-arm"]') }}
+        os: ${{ fromJSON(true && '["ubuntu-24.04","ubuntu-24.04-arm","macos-15"]' || '["ubuntu-24.04","ubuntu-24.04-arm"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
