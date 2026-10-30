@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const native_link = @import("native_link.zig");
 
 pub const supported_schema: u32 = 1;
 
@@ -33,6 +34,8 @@ pub const Native = struct {
     needs: []const []const u8 = &.{},
     /// An exclusivity group (a native library several packages could provide, of which a closure may link one), or "".
     exclusive: []const u8 = "",
+    /// System libraries the final link of a consumer adds as `-l<name>` (a static archive only; `native_link.allowed`).
+    link: []const []const u8 = &.{},
 };
 
 pub const Metadata = struct {
@@ -49,6 +52,7 @@ pub const ParseError = error{
     EmptyName,
     MissingFile,
     BadSoname,
+    BadLink,
     OutOfMemory,
 };
 
@@ -79,6 +83,10 @@ pub fn parse(arena: Allocator, text: []const u8) ParseError!Metadata {
         if (linkName(n.soname) == null) return error.BadSoname;
         if (n.kind != .static and n.file.len == 0) return error.MissingFile;
         if (n.kind != .shared and n.static_file.len == 0) return error.MissingFile;
+        if (n.link.len > 0) {
+            if (n.kind != .static or n.mode != .link) return error.BadLink;
+            if (!native_link.allAllowed(n.link)) return error.BadLink;
+        }
     }
     return m;
 }
@@ -179,4 +187,31 @@ test "a native library's exclusivity group is read, and is empty when the metada
     );
     try std.testing.expectEqualStrings("libcrypto", m.native[0].exclusive);
     try std.testing.expectEqualStrings("", m.native[1].exclusive);
+}
+
+// Defect it catches: `link` dropped on reading the metadata of an installed package (`mopm build` of a consumer of a C++
+// archive then adds no libc++); a name outside the allowed list reaching a linker command line from a published file.
+test "a static native's link names are read in order, empty when the metadata names none, and refused when they are not allowed" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = arenaFor(&t);
+    const m = try parse(a,
+        \\{"schema": 1, "name": "x", "native": [
+        \\  {"id": "a", "soname": "liba.a", "kind": "static", "static_file": "../liba.a", "link": ["c++", "m"]},
+        \\  {"id": "b", "soname": "libb.a", "kind": "static", "static_file": "../libb.a"}]}
+    );
+    try std.testing.expectEqual(@as(usize, 2), m.native[0].link.len);
+    try std.testing.expectEqualStrings("c++", m.native[0].link[0]);
+    try std.testing.expectEqualStrings("m", m.native[0].link[1]);
+    try std.testing.expectEqual(@as(usize, 0), m.native[1].link.len);
+
+    const head = "{\"schema\": 1, \"name\": \"x\", \"native\": [{\"id\": \"a\", \"soname\": \"liba.a\", ";
+    // outside the list, twice, on a shared library, on a library the package loads itself
+    try std.testing.expectError(error.BadLink, parse(a, head ++ "\"kind\": \"static\", \"static_file\": \"f\", \"link\": [\"stdc++\"]}]}"));
+    try std.testing.expectError(error.BadLink, parse(a, head ++ "\"kind\": \"static\", \"static_file\": \"f\", \"link\": [\"-Wl,-rpath,/x\"]}]}"));
+    try std.testing.expectError(error.BadLink, parse(a, head ++ "\"kind\": \"static\", \"static_file\": \"f\", \"link\": [\"m\", \"m\"]}]}"));
+    try std.testing.expectError(error.BadLink, parse(a, head ++ "\"file\": \"f\", \"link\": [\"m\"]}]}"));
+    try std.testing.expectError(error.BadLink, parse(a, head ++ "\"kind\": \"static\", \"mode\": \"load\", \"static_file\": \"f\", \"link\": [\"m\"]}]}"));
+    // not a list of strings
+    try std.testing.expectError(error.InvalidMetadata, parse(a, head ++ "\"kind\": \"static\", \"static_file\": \"f\", \"link\": \"m\"}]}"));
 }

@@ -358,7 +358,7 @@ fn nativeFiles(arena: Allocator, m: manifest.Manifest, f: Flags) anyerror!Files 
             const bytes = std.fs.cwd().readFileAlloc(arena, nf.path, 1 << 30) catch |e| {
                 return nativeBad(arena, "{s}: {s}", .{ nf.path, @errorName(e) });
             };
-            const native = conda.Native{ .id = n.id, .soname = std.fs.path.basename(nf.path), .needs = n.needs, .exclusive = n.exclusive, .archive = bytes };
+            const native = conda.Native{ .id = n.id, .soname = std.fs.path.basename(nf.path), .needs = n.needs, .exclusive = n.exclusive, .link = n.link, .archive = bytes };
             if (try conda.nativeProblem(arena, native)) |why| {
                 return nativeBad(arena, "{s}: {s}", .{ nf.path, why });
             }

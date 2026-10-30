@@ -21,10 +21,14 @@
 //!     same `exclusive` group (two copies of one C library under different
 //!     names) link without error and run with two copies of its state, so a
 //!     closure holding two is refused.
+//!   * A static archive can leave symbols to the platform (a C++ archive, to
+//!     libc++): its `link` names the system libraries, and the plan ends with
+//!     one `-l<name>` for each, after every archive.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const metadata = @import("metadata.zig");
+const native_link = @import("native_link.zig");
 
 const List = std.ArrayList([]const u8);
 
@@ -226,6 +230,7 @@ pub fn plan(arena: Allocator, inputs: []const Input) Allocator.Error!Plan {
     // shared flags, each before the archives it needs. Only the first owner of a soname
     // contributes.
     var archives = std.ArrayList(Archive).init(arena);
+    var system_libs = List.init(arena);
     for (inputs) |inp| {
         for (inp.meta.native) |n| {
             if (n.mode == .load) continue;
@@ -247,6 +252,7 @@ pub fn plan(arena: Allocator, inputs: []const Input) Allocator.Error!Plan {
                 try preload.append(path);
             } else {
                 try archives.append(.{ .soname = n.soname, .needs = n.needs, .path = try join(arena, inp.dir, n.static_file) });
+                try native_link.merge(&system_libs, n.link);
                 inline for (.{ Command.run, Command.repl }) |cmd| {
                     try diags.append(.{
                         .code = .static_only,
@@ -263,6 +269,9 @@ pub fn plan(arena: Allocator, inputs: []const Input) Allocator.Error!Plan {
     }
 
     try orderArchives(arena, archives.items, &build_args, &diags);
+    // The system libraries the archives name come last, once each: a linker takes the symbols an archive leaves
+    // undefined from the libraries after it.
+    for (system_libs.items) |name| try build_args.append(try std.fmt.allocPrint(arena, "-l{s}", .{name}));
 
     return .{
         .build = try build_args.toOwnedSlice(),
@@ -551,6 +560,48 @@ test "static archives that do not constrain one another keep their input order" 
     ;
     const p = try plan(a, &.{ try mk(a, "d", c), try mk(a, "d", static_b) });
     try expectList(&.{ "d/lib/libc.a", "d/lib/libb.a" }, p.build);
+}
+
+const cxx_a =
+    \\{"schema": 1, "name": "a", "deps": [{"name": "b"}], "native": [
+    \\  {"id": "a", "soname": "liba.a", "kind": "static", "static_file": "lib/liba.a", "needs": ["libb.a"], "link": ["c++"]}]}
+;
+const cxx_b =
+    \\{"schema": 1, "name": "b", "native": [
+    \\  {"id": "b", "soname": "libb.a", "kind": "static", "static_file": "lib/libb.a", "link": ["c++", "m"]}]}
+;
+
+// Defect it catches: a C++ archive linked without libc++ (the consumer fails on std::__1:: symbols); the -l flag ahead of
+// the archives, where a linker has not yet seen the symbols to look for; one -lc++ per archive that names it.
+test "system libraries named by static archives end the line, once each, after every archive" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    // b is given first and a needs b: archives a, b, then libc++ (named by both) once, then libm.
+    const p = try plan(a, &.{ try mk(a, "d", cxx_b), try mk(a, "d", cxx_a) });
+    try expectList(&.{ "d/lib/liba.a", "d/lib/libb.a", "-lc++", "-lm" }, p.build);
+    try std.testing.expect(has(p, .static_only, .run));
+    // Shared flags keep their place ahead of the archives; the system libraries still come last.
+    const mixed = try plan(a, &.{ try mk(a, "d", cxx_b), try mk(a, "e", pkg_shared), try mk(a, "d", cxx_a) });
+    try expectList(&.{ "-Le/lib", "-lx", "d/lib/liba.a", "d/lib/libb.a", "-lc++", "-lm" }, mixed.build);
+    // The run and preload lists are not touched: a system library is not a file to preload.
+    try std.testing.expectEqual(@as(usize, 1), mixed.run.len);
+}
+
+// Defect it catches: -l flags added for archives that name none, so every consumer of any static native links libc++.
+test "archives that name no system library add no -l flag" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const p = try plan(a, &.{ try mk(a, "d", static_b), try mk(a, "d", static_a_needs_b) });
+    try expectList(&.{ "d/lib/liba.a", "d/lib/libb.a" }, p.build);
+    // One archive that names libc++ is enough for the one flag.
+    const one = try plan(a, &.{ try mk(a, "d", static_b), try mk(a, "d", cxx_a) });
+    try expectList(&.{ "d/lib/liba.a", "d/lib/libb.a", "-lc++" }, one.build);
+}
+
+test "golden: static archives that name system libraries" {
+    try golden("static_link", &.{ "plain_sys", "cxx_a", "cxx_b" });
 }
 
 test "static archives that need each other are refused, once, and are still all on the line" {

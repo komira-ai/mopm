@@ -45,6 +45,7 @@ pub const repodata = @import("repodata.zig");
 pub const closure = @import("closure.zig");
 pub const native_catalog = @import("native_catalog.zig");
 pub const natives_libs = @import("natives_libs.zig");
+pub const native_link = @import("native_link.zig");
 pub const native_files = @import("native_files.zig");
 pub const unit_graph = @import("unit_graph.zig");
 pub const unit_run = @import("unit_run.zig");
@@ -90,6 +91,7 @@ test {
     _ = @import("closure.zig");
     _ = @import("native_catalog.zig");
     _ = @import("natives_libs.zig");
+    _ = @import("native_link.zig");
     _ = @import("native_files.zig");
     _ = @import("unit_graph.zig");
     _ = @import("unit_graph_platform_test.zig");

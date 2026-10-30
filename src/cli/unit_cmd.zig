@@ -119,8 +119,8 @@ pub fn main(arena: Allocator, args: []const []const u8) u8 {
 /// Why a graph of format `format` cannot be read, or null when this mopm reads it.
 pub fn formatProblem(arena: Allocator, path: []const u8, format: u32) Allocator.Error!?[]const u8 {
     const g = core.unit_graph;
-    if (format == g.format_version or format == g.format_loads or format == g.format_provided) return null;
-    return try std.fmt.allocPrint(arena, "{s} is unit graph format {d}; this mopm reads {d}, {d} and {d}", .{ path, format, g.format_version, g.format_loads, g.format_provided });
+    if (format == g.format_version or format == g.format_loads or format == g.format_provided or format == g.format_link) return null;
+    return try std.fmt.allocPrint(arena, "{s} is unit graph format {d}; this mopm reads {d}, {d}, {d} and {d}", .{ path, format, g.format_version, g.format_loads, g.format_provided, g.format_link });
 }
 
 /// Why `mopm unit test` cannot run `u`, or null: a unit with `loads` needs the system libraries of the graph on the
@@ -223,10 +223,11 @@ test "a unit graph of another format is refused with its message; this format is
     defer st.deinit();
     const a = st.allocator();
     try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_version)) == null);
-    try std.testing.expectEqualStrings("g.json is unit graph format 1; this mopm reads 2, 3 and 4", (try formatProblem(a, "g.json", 1)).?);
+    try std.testing.expectEqualStrings("g.json is unit graph format 1; this mopm reads 2, 3, 4 and 5", (try formatProblem(a, "g.json", 1)).?);
     try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_loads)) == null);
     try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_provided)) == null);
-    try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_provided + 1)) != null);
+    try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_link)) == null);
+    try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_link + 1)) != null);
 
     var with_loads = core.unit_graph.Unit{ .id = "p@1.0.0#mojo1.0.0/test:tests/test_p.mojo", .package = "p", .version = "1.0.0", .kind = "test" };
     try std.testing.expect((try testLoadsProblem(a, with_loads)) == null);

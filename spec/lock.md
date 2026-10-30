@@ -53,7 +53,7 @@ with. It does not duplicate package metadata; that stays in the installed
     one compiler, so it must equal `toolchain.mojo`.
   - `deps`: names of direct Mojo dependencies, each present in `packages`.
   - `native`: native libraries the package ships (`id`, `soname`, optional
-    `sha256` of the library file, `kind`, `needs`, `exclusive`), copied from the
+    `sha256` of the library file, `kind`, `needs`, `exclusive`, `link`), copied from the
     package metadata so that link planning can run from the lock alone. `mopm
     lock` writes `sha256`: it fetches the package file of a version that ships
     natives (once, and not again while the old lock pins that file), checks its
@@ -62,8 +62,15 @@ with. It does not duplicate package metadata; that stays in the installed
     archive for static), which must be `lib/<soname>` in the package. `kind` is
     `shared` (the default, left out), `static` or `both`; `needs` lists the
     sonames of other packages' libraries this one needs; `exclusive` names a
-    group of which a closure may hold one library. All three are the package's
-    own declarations, left out when they are the default.
+    group of which a closure may hold one library; `link` lists the system
+    libraries (`c++`, `dl`, `m`, `pthread`; a static library only) that the final
+    link of a consumer adds as `-l<name>` after every archive. All four are the
+    package's own declarations, left out when they are the default. `link` is an
+    optional key inside version 1 (readers ignore keys they do not know), so a
+    `mopm` older than this key reads such a lock without the libraries: a link
+    that needed them fails on undefined symbols, and the unit graph it makes has
+    no `link` (the graph a current `mopm` makes of the lock says format 5, which
+    an older `mopm unit` refuses).
 
 ## Rules the schema cannot express
 

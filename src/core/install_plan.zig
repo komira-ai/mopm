@@ -223,6 +223,7 @@ fn pinNatives(arena: Allocator, rec: *const resolve.Record, f: resolve.File, cha
             .kind = m.kind,
             .needs = m.needs,
             .exclusive = m.exclusive,
+            .link = m.link,
         });
     }
     return out.items;
@@ -296,6 +297,10 @@ fn sameNatives(a: []const lock.Native, b: []const lock.Native) bool {
     if (a.len != b.len) return false;
     for (a, b) |x, y| {
         if (!std.mem.eql(u8, x.id, y.id) or !std.mem.eql(u8, x.soname, y.soname) or x.kind != y.kind or !std.mem.eql(u8, x.exclusive, y.exclusive)) return false;
+        if (x.link.len != y.link.len) return false;
+        for (x.link, y.link) |u, v| {
+            if (!std.mem.eql(u8, u, v)) return false;
+        }
         if ((x.sha256 == null) != (y.sha256 == null)) return false;
         if (x.sha256) |h| {
             if (!std.mem.eql(u8, h, y.sha256.?)) return false;
@@ -896,7 +901,7 @@ fn world(a: Allocator) !World {
     const tls_archive = ar ++ "tls-members\n";
     const crypto_native = [_]conda.Native{.{ .id = "crypto_sys", .soname = "libcrypto_sys.a", .exclusive = "libcrypto", .archive = crypto_linux_archive }};
     const crypto_osx_native = [_]conda.Native{.{ .id = "crypto_sys", .soname = "libcrypto_sys.a", .exclusive = "libcrypto", .archive = crypto_osx_archive }};
-    const tls_native = [_]conda.Native{.{ .id = "tls_sys", .soname = "libtls_sys.a", .needs = &.{"libcrypto_sys.a"}, .archive = tls_archive }};
+    const tls_native = [_]conda.Native{.{ .id = "tls_sys", .soname = "libtls_sys.a", .needs = &.{"libcrypto_sys.a"}, .link = &.{ "c++", "m" }, .archive = tls_archive }};
     const cl = try conda.pack(a, .{ .name = "crypto_sys", .version = "1.39.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "MOJOC", .natives = &crypto_native });
     const co = try conda.pack(a, .{ .name = "crypto_sys", .version = "1.39.0", .compiler = "1.0.0", .subdir = "osx-arm64", .mojoc = "MOJOC", .natives = &crypto_osx_native });
     const tl = try conda.pack(a, .{
@@ -975,6 +980,11 @@ test "mopm lock pins each native library: the sha256 of the library file, per su
     try std.testing.expectEqual(@as(usize, 1), tls.needs.len);
     try std.testing.expectEqualStrings("libcrypto_sys.a", tls.needs[0]);
     try std.testing.expectEqualStrings("", tls.exclusive);
+    // The system libraries the package's metadata names are in the lock, in order; a library that names none has none.
+    try std.testing.expectEqual(@as(usize, 2), tls.link.len);
+    try std.testing.expectEqualStrings("c++", tls.link[0]);
+    try std.testing.expectEqualStrings("m", tls.link[1]);
+    try std.testing.expectEqual(@as(usize, 0), crypto.link.len);
 
     // What is written reads back, under every rule of spec/lock.md.
     const text = try lock.render(a, l);
@@ -1196,6 +1206,19 @@ test "builds for two Mojo versions that ship different natives are refused befor
         if (std.mem.eql(u8, p.name, "crypto_sys") and p.native.len > 0) {
             var n = p.native[0];
             n.exclusive = "other";
+            p.native = try a.dupe(lock.Native, &.{n});
+        }
+    }
+    two.packages = packages;
+    diag = .{};
+    try std.testing.expectError(error.ResolveFailed, checkNativesAgree(a, &.{ one, two }, &diag));
+
+    // So do the system libraries a native links.
+    packages = try a.dupe(lock.Package, one.packages);
+    for (packages) |*p| {
+        if (std.mem.eql(u8, p.name, "tls_sys") and p.native.len > 0) {
+            var n = p.native[0];
+            n.link = &.{"c++"};
             p.native = try a.dupe(lock.Native, &.{n});
         }
     }

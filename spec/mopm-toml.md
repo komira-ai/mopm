@@ -86,6 +86,13 @@ tests = ["tests"]
   archive is built by something else and packed as `lib<id>.a`; mopm compiles
   nothing for it, so `srcs`, `hdrs`, `cflags`, `cflags_by_os`, `includes`,
   `build` and `outputs` are refused (`unit-graph.md`, "Provided natives").
+  `link = ["c++"]` names the system libraries the final link of every consumer
+  of the static archive adds, as `-l<name>`, once each, after all archives. The
+  names are `c++`, `dl`, `m` and `pthread` (a closed list: the names of a
+  published package reach its consumers' linker command lines), none twice, and
+  the library must be `kind = "static"` with `mode = "link"`. It applies with and
+  without `provided = true`, and is carried into `<name>.mopm.json`, the lock and
+  the unit graph (`unit-graph.md`, "System libraries of a native").
 - `[targets]`: the library, executables and tests to build.
 
 ## Other tools' settings: `[package.metadata]`
