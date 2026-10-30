@@ -1,0 +1,18 @@
+# A native whose archive another build produces (spec/mopm-toml.md, [native.<id>] provided).
+[package]
+name = "tls_natives"
+version = "1.0.0"
+
+[toolchain]
+mojo = "1.0.0"
+
+[native.awslc]
+kind = "static"
+provided = true
+
+[native.s2n]
+kind = "static"
+provided = true
+needs = ["libawslc.a"]
+exclusive = "libs2n"
+soname = "libs2n.a"
