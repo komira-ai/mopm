@@ -1,0 +1,1 @@
+8:1: 'link' in [native.shim] needs kind = "static" and mode = "link": only a linked archive leaves symbols to the system

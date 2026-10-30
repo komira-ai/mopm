@@ -17,6 +17,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const manifest = @import("manifest.zig");
+const native_link = @import("native_link.zig");
 const semver = @import("semver.zig");
 
 /// The conda subdirs the registry serves (spec/channel.md).
@@ -70,6 +71,8 @@ pub const Native = struct {
     needs: []const []const u8 = &.{},
     /// An exclusivity group, or "".
     exclusive: []const u8 = "",
+    /// System libraries a consumer's final link adds (`native_link.allowed`), in the order the manifest gave.
+    link: []const []const u8 = &.{},
     /// The bytes of the archive built for the subdir.
     archive: []const u8,
 };
@@ -91,6 +94,7 @@ pub fn nativeProblem(arena: Allocator, n: Native) Allocator.Error!?[]const u8 {
         if (!validNeed(need)) return try std.fmt.allocPrint(arena, "native '{s}': '{s}' is not a library name (lib<name>.<suffix>)", .{ n.id, need });
         if (std.mem.eql(u8, need, n.soname)) return try std.fmt.allocPrint(arena, "native '{s}' needs itself", .{n.id});
     }
+    if (try native_link.problem(arena, n.link)) |why| return try std.fmt.allocPrint(arena, "native '{s}': link: {s}", .{ n.id, why });
     return null;
 }
 
@@ -394,7 +398,17 @@ pub fn mopmJson(arena: Allocator, in: Input) Allocator.Error![]u8 {
             }
             try w.writeAll("\"id\":");
             try jsonStr(w, n.id);
-            try w.writeAll(",\"kind\":\"static\",\"mode\":\"link\",\"needs\":[");
+            try w.writeAll(",\"kind\":\"static\"");
+            if (n.link.len > 0) {
+                // In the order given: a linker takes a symbol from a library after the one that left it undefined.
+                try w.writeAll(",\"link\":[");
+                for (n.link, 0..) |name, k| {
+                    if (k > 0) try w.writeByte(',');
+                    try jsonStr(w, name);
+                }
+                try w.writeByte(']');
+            }
+            try w.writeAll(",\"mode\":\"link\",\"needs\":[");
             const needs = try arena.dupe([]const u8, n.needs);
             std.mem.sort([]const u8, needs, {}, lessStr);
             for (needs, 0..) |need, k| {
@@ -1487,4 +1501,41 @@ test "the conda package of a system library: by name, library name or file name"
         .{ "libffi", "libffi" },
         .{ "lz4-c", "lz4-c" },
     }) |c| try std.testing.expectEqualStrings(c[1], condaPackageFor(c[0]));
+}
+
+// Defects it catches: `link` left out of the metadata a package is published with (consumers of the archive then add no
+// libc++); the order of the names changed (a linker takes a symbol from a library after the one that left it undefined);
+// a name outside the allowed list packed, for the registry to carry to every consumer's linker command line.
+test "a native's link names are in the published metadata, in order, and read back as the manifest said them" {
+    var st = testArena();
+    defer st.deinit();
+    const a = st.allocator();
+    var diag: manifest.Diagnostic = .{};
+    const m = try manifest.parse(a, "[package]\nname = \"snappy_sys\"\nversion = \"1.2.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n[native.snappy]\nkind = \"static\"\nprovided = true\nlink = [\"m\", \"c++\"]\n", &diag);
+    const n = m.native[0];
+    const input = Input{
+        .name = "snappy_sys",
+        .version = "1.2.0",
+        .compiler = "1.0.0",
+        .subdir = "linux-64",
+        .mojoc = "MOJOC",
+        .natives = try a.dupe(Native, &.{.{ .id = n.id, .soname = "libsnappy.a", .link = n.link, .archive = ar_x }}),
+    };
+    const json = try mopmJson(a, input);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"id\":\"snappy\",\"kind\":\"static\",\"link\":[\"m\",\"c++\"],\"mode\":\"link\"") != null);
+    const meta = try @import("metadata.zig").parse(a, json);
+    try std.testing.expectEqual(@as(usize, 2), meta.native[0].link.len);
+    try std.testing.expectEqualStrings("m", meta.native[0].link[0]);
+    try std.testing.expectEqualStrings("c++", meta.native[0].link[1]);
+
+    // The same bytes in the metadata of every subdir (the file is the same in each), and no key at all when none is named.
+    const mac = try mopmJson(a, .{ .name = input.name, .version = input.version, .compiler = input.compiler, .subdir = "osx-arm64", .mojoc = "MOJOC", .natives = input.natives });
+    try std.testing.expectEqualStrings(json, mac);
+    const plain = try mopmJson(a, .{ .name = input.name, .version = input.version, .compiler = input.compiler, .subdir = "linux-64", .mojoc = "MOJOC", .natives = try a.dupe(Native, &.{.{ .id = "snappy", .soname = "libsnappy.a", .archive = ar_x }}) });
+    try std.testing.expect(std.mem.indexOf(u8, plain, "\"link\":") == null);
+
+    const bad = Native{ .id = "snappy", .soname = "libsnappy.a", .link = &.{"stdc++"}, .archive = ar_x };
+    const why = (try nativeProblem(a, bad)) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("native 'snappy': link: 'stdc++' is not a system library a native may link; the allowed ones are c++, dl, m and pthread", why);
+    try std.testing.expectError(error.BadNative, pack(a, .{ .name = input.name, .version = input.version, .compiler = input.compiler, .subdir = "linux-64", .mojoc = "MOJOC", .natives = try a.dupe(Native, &.{bad}) }));
 }

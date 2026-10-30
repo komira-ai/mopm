@@ -1,0 +1,63 @@
+{
+  "lock_version": 1,
+  "toolchain": {
+    "mojo": "1.0.0"
+  },
+  "channels": [
+    "https://conda.mopm.dev/"
+  ],
+  "packages": [
+    {
+      "name": "crypto_sys",
+      "version": "1.39.0",
+      "build": "mojo1.0.0_0",
+      "subdir": "linux-64",
+      "channel": "https://conda.mopm.dev/",
+      "url": "https://conda.mopm.dev/linux-64/mojo-crypto_sys-1.39.0-mojo1.0.0_0.conda",
+      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "size": 4096,
+      "mojo": "1.0.0",
+      "native": [
+        {
+          "id": "crypto_sys",
+          "soname": "libcrypto_sys.a",
+          "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+          "kind": "static",
+          "exclusive": "libcrypto",
+          "link": [
+            "c++"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "tls_sys",
+      "version": "2.4.0",
+      "build": "mojo1.0.0_0",
+      "subdir": "linux-64",
+      "channel": "https://conda.mopm.dev/",
+      "url": "https://conda.mopm.dev/linux-64/mojo-tls_sys-2.4.0-mojo1.0.0_0.conda",
+      "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+      "size": 2048,
+      "mojo": "1.0.0",
+      "deps": [
+        "crypto_sys"
+      ],
+      "native": [
+        {
+          "id": "tls_sys",
+          "soname": "libtls_sys.a",
+          "sha256": "fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9",
+          "kind": "static",
+          "needs": [
+            "libcrypto_sys.a"
+          ],
+          "link": [
+            "c++",
+            "m"
+          ]
+        }
+      ]
+    }
+  ]
+}

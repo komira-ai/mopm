@@ -62,14 +62,16 @@ So the Mojo version is part of what a unit is.
 }
 ```
 
-`unit_graph` is the format version (this file describes 2, 3 and 4; a reader refuses
+`unit_graph` is the format version (this file describes 2, 3, 4 and 5; a reader refuses
 another). Version 2 adds the `native` unit and the `built` native entry
 ("Member natives", below); a graph of a project without member natives differs
 from a version 1 graph only in this number. Version 3 adds `system_libs` and the
 `loads` of a unit ("System libraries", below); a graph in which no unit has
 `loads` is version 2, byte for byte what it was before they existed, and has no
 `system_libs`. Version 4 adds `provided` on a `native` unit ("Provided natives",
-below); a graph with no provided native keeps its version 2 or 3. `package` is the root package. `units` are sorted by `id`, and the
+below); a graph with no provided native keeps its version 2 or 3. Version 5 adds
+`link` on the units that link archives ("System libraries of a native", below);
+a graph in which no unit has `link` keeps the version it had. `package` is the root package. `units` are sorted by `id`, and the
 text is one fixed layout, so the same inputs give the same bytes.
 
 ### toolchain
@@ -289,6 +291,36 @@ for any static native. A graph with a provided unit is format 4, which a reader
 that does not know `provided` refuses (it would make an empty archive of a unit
 with no sources); a format 4 graph has `system_libs` and `loads` exactly when a
 format 3 graph would.
+
+## System libraries of a native
+
+An archive can leave symbols to the platform: C++ code leaves `std::__1::...`,
+`operator new[]` and `__cxa_pure_virtual` to libc++. `[native.<id>] link =
+["c++"]` in `mopm.toml` names the system libraries the final link of any
+consumer adds. The names are `c++`, `dl`, `m` and `pthread`, a closed list
+(they come from published packages and reach linker command lines), none twice;
+the native must be `kind = "static"` with `mode = "link"`, and may be `provided`.
+`mopm pack`, `publish` and `stage` write `link` into the `<name>.mopm.json` of
+the package, `mopm lock` copies it into the lock, and `mopm build` adds it to
+the `mojo build` line (`-lc++` after every archive).
+
+A unit with `natives` (`lib`, `test`, `bin` and `prebuilt`) has **`link`**: the
+`link` of its natives, each name once, in the order `c++`, `dl`, `m`, `pthread`
+(whatever order the natives, or the names in a manifest, were in; libc++ comes
+before the libraries it needs). It is the list a build system adds to the final link,
+as `-l<name>`, after every archive: the final link of a `test` or `bin` unit,
+and the link of anything that links this unit's archives. It is absent when
+empty. The `native` units themselves have none: an archive is not linked. A
+build system reads the unit's `link` and does not collect the names of the
+natives itself; `mopm build` orders the same names the same way, so both give
+one list. `mopm unit` refuses a graph file whose `link` has a name outside the
+list or a repeated name.
+
+A graph in which any unit has `link` is format 5, because a reader that does not
+know `link` would link without the libraries and fail on the undefined symbols;
+a format 5 graph has `provided`, `system_libs` and `loads` exactly when a
+format 4 graph would. The unit's `key` covers its `link`, so adding a name moves
+the key of every unit that links the archive.
 
 ## The workspace
 

@@ -219,6 +219,11 @@ pub fn argv(arena: Allocator, g: unit_graph.Graph, idx: usize, d: Dirs) !Plan {
             try a.append("-Xlinker");
             try a.append(try join(arena, d.natives, n.soname));
         }
+        // The system libraries the archives leave symbols to come after every archive, once each.
+        for (u.link) |name| {
+            try a.append("-Xlinker");
+            try a.append(try std.fmt.allocPrint(arena, "-l{s}", .{name}));
+        }
         if (is_test) {
             exe = product;
             marker = try join(arena, d.out, out0);
@@ -492,6 +497,28 @@ test "a unit with every declared input verifies; each input missing or different
     try expectRefusal(a, g, lib, d, "missing input: ");
     try tmp.dir.writeFile("tc/mojo_compile", "stand-in\n");
     try verify(a, g, lib, d, &why);
+}
+
+// Defect it catches: a test or program of a C++ archive's consumer linked without libc++ by `mopm unit` (the same link
+// the graph describes to a build system); the -l ahead of the archives, or once per archive; a library unit given one.
+test "a unit's system libraries come last on the link line of a test, each once, and not at all on a library's" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const g0 = try fixtureGraph(a);
+    const units = try a.dupe(unit_graph.Unit, g0.units);
+    for (units) |*u| u.link = &.{ "c++", "m" };
+    var g = g0;
+    g.units = units;
+    const d = Dirs{ .src = "/s", .deps = "/d", .toolchain = "/t", .natives = "/n", .out = "/o", .stage = "/g" };
+
+    const tst = try argv(a, g, g.find("p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?, d);
+    const tail = [_][]const u8{ "-Xlinker", "/n/libn.so.1", "-Xlinker", "-lc++", "-Xlinker", "-lm" };
+    try std.testing.expect(tst.argv.len > tail.len);
+    for (tail, tst.argv[tst.argv.len - tail.len ..]) |w, got| try std.testing.expectEqualStrings(w, got);
+
+    const lib = try argv(a, g, g.find("p@2.0.0#mojo1.0.0/lib").?, d);
+    for (lib.argv) |arg| try std.testing.expect(!std.mem.startsWith(u8, arg, "-l") and !std.mem.eql(u8, arg, "-Xlinker"));
 }
 
 test "the wrapper gets the staged tree, the dependencies' -I directories and nothing else" {

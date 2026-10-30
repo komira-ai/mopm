@@ -131,3 +131,81 @@ test "a native built from srcs keeps format 2 and prints no provided" {
     const text = try ug.render(a, g);
     try std.testing.expect(std.mem.indexOf(u8, text, "provided") == null);
 }
+
+const toml_util_link = toml_util_head ++
+    "\n[native.awslc]\nkind = \"static\"\nprovided = true\nlink = [\"c++\"]\n" ++
+    "\n[native.s2n]\nkind = \"static\"\nprovided = true\nneeds = [\"libawslc.a\"]\nlink = [\"c++\", \"pthread\"]\n";
+
+// Defect it catches: the system libraries of a provided native (the archive of a C++ library another rule builds) left out
+// of the units that link it, so a Buck2 build of a consumer fails on libc++'s symbols; a name given once per archive;
+// the graph keeping format 4, which a reader that does not know `link` accepts and links without them.
+test "provided natives that name system libraries: one link list per linking unit, each name once, format 5" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var why: []const u8 = "";
+    const g = graphOf(a, toml_util_link, false, &why) catch |e| {
+        std.debug.print("refused: {s}\n", .{why});
+        return e;
+    };
+    try std.testing.expectEqual(ug.format_link, g.unit_graph);
+    for ([_][]const u8{ id_util, id_app }) |id| {
+        const u = g.units[g.find(id) orelse return error.NoSuchUnit];
+        try std.testing.expectEqualStrings("libs2n.a libawslc.a", try sonames(a, u));
+        try std.testing.expectEqual(@as(usize, 2), u.link.len);
+        try std.testing.expectEqualStrings("c++", u.link[0]);
+        try std.testing.expectEqualStrings("pthread", u.link[1]);
+    }
+    // The native units themselves are compiled by nobody and link nothing.
+    try std.testing.expectEqual(@as(usize, 0), g.units[g.find(id_awslc).?].link.len);
+    const text = try ug.render(a, g);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"unit_graph\": 5,") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"provided\": true") != null);
+    try std.testing.expectEqualStrings(text, try ug.render(a, try ug.parse(a, text)));
+
+    // The same natives without `link` are format 4, and the key of a linking unit moves when a name is added.
+    const plain = try graphOf(a, toml_util_provided, false, &why);
+    try std.testing.expectEqual(ug.format_provided, plain.unit_graph);
+    try std.testing.expect(!std.mem.eql(u8, plain.units[plain.find(id_app).?].key, g.units[g.find(id_app).?].key));
+}
+
+// Defect it catches: a name outside the allowed list reaching a graph by way of a lock someone edited or another tool wrote.
+test "a lock that names a system library outside the allowed list is refused" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var why: []const u8 = "";
+    const text =
+        \\{"lock_version": 1, "toolchain": {"mojo": "1.0.0"}, "channels": ["https://conda.mopm.dev/"], "packages": [
+        \\  {"name": "p", "version": "1.0.0", "build": "mojo1.0.0_0", "subdir": "linux-64", "channel": "https://conda.mopm.dev/",
+        \\   "url": "https://conda.mopm.dev/linux-64/mojo-p-1.0.0-mojo1.0.0_0.conda", "sha256": "
+    ++ ("a" ** 64) ++
+        \\", "size": 1, "mojo": "1.0.0",
+        \\   "native": [{"id": "p", "soname": "libp.a", "kind": "static", "link": ["-Wl,-z,execstack"]}]}
+        \\]}
+    ;
+    try std.testing.expectError(error.Invalid, lock.parse(a, text, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "native library p: link: '-Wl,-z,execstack' is not a system library a native may link") != null);
+    const shared = try std.mem.replaceOwned(u8, a, text, "\"kind\": \"static\", \"link\": [\"-Wl,-z,execstack\"]", "\"link\": [\"m\"]");
+    try std.testing.expectError(error.Invalid, lock.parse(a, shared, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "has a link but is not static") != null);
+}
+
+const toml_util_order = toml_util_head ++
+    "\n[native.aa]\nkind = \"static\"\nprovided = true\nlink = [\"m\"]\n" ++
+    "\n[native.bb]\nkind = \"static\"\nprovided = true\nlink = [\"c++\"]\n";
+
+// Defect it catches: the graph's link list in the order of the natives (soname order: libaa.a, libbb.a gives m, c++) while
+// `mopm build` puts libc++ first, so a build system and `mopm build` link differently.
+test "the link list of a unit is in the order of the allowed list, as the link plan puts it" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var why: []const u8 = "";
+    const g = try graphOf(a, toml_util_order, false, &why);
+    const u = g.units[g.find(id_app) orelse return error.NoSuchUnit];
+    try std.testing.expectEqualStrings("libaa.a libbb.a", try sonames(a, u));
+    try std.testing.expectEqual(@as(usize, 2), u.link.len);
+    try std.testing.expectEqualStrings("c++", u.link[0]);
+    try std.testing.expectEqualStrings("m", u.link[1]);
+}

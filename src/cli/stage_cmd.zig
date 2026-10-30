@@ -387,7 +387,7 @@ pub fn packMember(arena: Allocator, members: []const Member, m: Member, artifact
                     error.FileNotFound => return bad(T, arena, "{s}: native library '{s}' has no archive for {s}: expected {s}", .{ m.name, n.id, subdir, nfile }),
                     else => return bad(T, arena, "{s}: {s}: {s}", .{ m.name, nfile, @errorName(e) }),
                 };
-                const native = conda.Native{ .id = n.id, .soname = archive_name, .needs = n.needs, .exclusive = n.exclusive, .archive = nbytes };
+                const native = conda.Native{ .id = n.id, .soname = archive_name, .needs = n.needs, .exclusive = n.exclusive, .link = n.link, .archive = nbytes };
                 if (try conda.nativeProblem(arena, native)) |why_not| return bad(T, arena, "{s}: {s}: {s}", .{ m.name, nfile, why_not });
                 try natives.append(native);
             }

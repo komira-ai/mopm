@@ -11,6 +11,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const toml = @import("toml.zig");
 const metadata = @import("metadata.zig");
+const native_link = @import("native_link.zig");
 const semver = @import("semver.zig");
 
 pub const Diagnostic = toml.Diagnostic;
@@ -75,6 +76,8 @@ pub const NativeLib = struct {
     /// The static archive is built by something else (a build system's own rule) and packed as `lib<id>.a`: mopm
     /// compiles nothing for it, so it has no `srcs`, `hdrs`, `cflags`, `cflags_by_os`, `includes`, `build` or `outputs`.
     provided: bool = false,
+    /// System libraries the final link of any consumer adds, as `-l<name>` after all archives (`native_link.allowed`).
+    link: []const []const u8 = &.{},
 
     /// The archive file name: `soname`, else `lib<id>.a`.
     pub fn archiveName(self: NativeLib, arena: Allocator) Allocator.Error![]const u8 {
@@ -373,7 +376,7 @@ const Checker = struct {
                 return c.fail(e.pos, "native library id '{s}' must be a lowercase identifier (letters, digits, '_')", .{e.key});
             }
             const sub = try c.table(e, "[native]");
-            try c.onlyKeys(sub, in, &.{ "kind", "mode", "build", "outputs", "needs", "exclusive", "soname", "srcs", "hdrs", "cflags", "cflags_by_os", "includes", "provided" });
+            try c.onlyKeys(sub, in, &.{ "kind", "mode", "build", "outputs", "needs", "exclusive", "soname", "srcs", "hdrs", "cflags", "cflags_by_os", "includes", "provided", "link" });
             var lib = NativeLib{ .id = e.key };
             if (sub.get("kind")) |k| {
                 const kind = try c.str(k, in);
@@ -420,6 +423,13 @@ const Checker = struct {
                         return c.fail(oe.pos, "unknown operating system '{s}' in {s}; the known ones are linux and macos", .{ oe.key, where });
                     }
                 }
+            }
+            if (sub.get("link")) |o| {
+                lib.link = try c.strings(o, in);
+                if (lib.kind != .static or lib.mode != .link) {
+                    return c.fail(o.pos, "'link' in {s} needs kind = \"static\" and mode = \"link\": only a linked archive leaves symbols to the system", .{in});
+                }
+                if (try native_link.problem(c.arena, lib.link)) |why| return c.fail(o.pos, "'link' in {s}: {s}", .{ in, why });
             }
             lib.provided = try c.optBool(sub, "provided", in, false);
             if (lib.provided) try c.providedProblem(sub, in, lib);
@@ -632,6 +642,10 @@ fn writeNativeLib(w: anytype, l: NativeLib) !void {
     if (l.exclusive.len > 0) {
         try w.writeAll(", \"exclusive\": ");
         try jsonStr(w, l.exclusive);
+    }
+    if (l.link.len > 0) {
+        try w.writeAll(", \"link\": ");
+        try jsonStrList(w, l.link);
     }
     if (l.soname.len > 0) {
         try w.writeAll(", \"soname\": ");

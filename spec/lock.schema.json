@@ -66,7 +66,14 @@
                 "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
                 "kind": { "enum": ["shared", "static", "both"], "default": "shared" },
                 "needs": { "type": "array", "items": { "type": "string" } },
-                "exclusive": { "type": "string", "minLength": 1 }
+                "exclusive": { "type": "string", "minLength": 1 },
+                "link": {
+                  "description": "System libraries the final link of a consumer adds, as -l<name> after every archive. Only a static library has them.",
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": { "enum": ["c++", "dl", "m", "pthread"] }
+                }
               }
             }
           }
