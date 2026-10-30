@@ -149,8 +149,8 @@ pub fn main() !void {
             const q = std.mem.indexOf(u8, path, "per_page=") orelse @panic("no per_page");
             const amp = std.mem.indexOfScalarPos(u8, path, q, '&') orelse @panic("no page");
             const per = @min(try std.fmt.parseInt(usize, path[q + 9 .. amp], 10), 100);
-            const at = std.mem.indexOf(u8, path, "page=") orelse @panic("no page");
-            const page = try std.fmt.parseInt(usize, path[at + 5 ..], 10);
+            const at = std.mem.indexOf(u8, path, "&page=") orelse @panic("no page");
+            const page = try std.fmt.parseInt(usize, path[at + 6 ..], 10);
             var names = std.ArrayList([]const u8).init(a);
             var lines = std.mem.splitScalar(u8, fileText(a, dir, "tags") orelse "", '\n');
             while (lines.next()) |l| {
