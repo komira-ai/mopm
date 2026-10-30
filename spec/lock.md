@@ -68,7 +68,9 @@ with. It does not duplicate package metadata; that stays in the installed
     package's own declarations, left out when they are the default. `link` is an
     optional key inside version 1 (readers ignore keys they do not know), so a
     `mopm` older than this key reads such a lock without the libraries: a link
-    that needed them fails on undefined symbols, and the unit graph it makes has
+    that needed them fails on undefined symbols (or, for a symbol the library
+    would have supplied only weakly, such as `pthread_*` on an old glibc,
+    resolves to nothing without a message), and the unit graph it makes has
     no `link` (the graph a current `mopm` makes of the lock says format 5, which
     an older `mopm unit` refuses).
 

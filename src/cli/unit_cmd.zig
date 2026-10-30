@@ -123,6 +123,18 @@ pub fn formatProblem(arena: Allocator, path: []const u8, format: u32) Allocator.
     return try std.fmt.allocPrint(arena, "{s} is unit graph format {d}; this mopm reads {d}, {d}, {d} and {d}", .{ path, format, g.format_version, g.format_loads, g.format_provided, g.format_link });
 }
 
+/// Why a graph file cannot be used, or null: a unit's `link` names a system library outside `native_link.allowed`, or
+/// names one twice. `mopm unit` turns each name into `-l<name>` on a linker command line, so a graph file is held to the
+/// list that `mopm.toml`, the metadata and the lock are held to.
+pub fn linkProblem(arena: Allocator, path: []const u8, g: core.unit_graph.Graph) Allocator.Error!?[]const u8 {
+    for (g.units) |u| {
+        if (try core.native_link.problem(arena, u.link)) |why| {
+            return try std.fmt.allocPrint(arena, "{s}: unit {s}: link: {s}", .{ path, u.id, why });
+        }
+    }
+    return null;
+}
+
 /// Why `mopm unit test` cannot run `u`, or null: a unit with `loads` needs the system libraries of the graph on the
 /// loader path, which this command does not provide, so it would run against the machine's libraries.
 pub fn testLoadsProblem(arena: Allocator, u: core.unit_graph.Unit) Allocator.Error!?[]const u8 {
@@ -141,6 +153,10 @@ fn run(arena: Allocator, a: Args, cpu: ?[]const u8) !u8 {
         return 1;
     };
     if (try formatProblem(arena, a.graph, g.unit_graph)) |why| {
+        say("{s}\n", .{why});
+        return 1;
+    }
+    if (try linkProblem(arena, a.graph, g)) |why| {
         say("{s}\n", .{why});
         return 1;
     }
@@ -317,4 +333,18 @@ test "unit test refuses a unit that loads system libraries, before it looks at t
     if (run(a, args, null)) |_| {
         return error.TestUnexpectedResult;
     } else |e| try std.testing.expect(e != error.Refused);
+}
+
+// Defect it catches: `mopm unit` putting any string from a graph file after -Xlinker as -l<string>.
+test "a graph file whose link has a name outside the list, or a repeated name, is refused" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var units = [_]core.unit_graph.Unit{.{ .id = "p@1.0.0#mojo1.0.0/lib", .package = "p", .version = "1.0.0", .kind = "lib", .link = &.{ "c++", "m" } }};
+    var g = core.unit_graph.Graph{ .package = "p@1.0.0", .mojo = "1.0.0", .toolchain = undefined, .units = &units };
+    try std.testing.expect((try linkProblem(a, "g.json", g)) == null);
+    units[0].link = &.{ "c++", "-Wl,-z,execstack" };
+    try std.testing.expectEqualStrings("g.json: unit p@1.0.0#mojo1.0.0/lib: link: '-Wl,-z,execstack' is not a system library a native may link; the allowed ones are c++, dl, m and pthread", (try linkProblem(a, "g.json", g)).?);
+    units[0].link = &.{ "m", "m" };
+    try std.testing.expect(std.mem.indexOf(u8, (try linkProblem(a, "g.json", g)).?, "'m' is named twice") != null);
 }

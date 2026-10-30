@@ -41,8 +41,23 @@ pub fn problem(arena: Allocator, names: []const []const u8) Allocator.Error!?[]c
     return null;
 }
 
-/// Appends to `out` each of `names` that `out` does not hold yet, in order: the one place a closure's `link` lists are
-/// merged (the link plan and the unit graph both use it, so a consumer gets one `-l<name>` however many natives name it).
+fn rank(name: []const u8) usize {
+    for (allowed, 0..) |a, i| {
+        if (std.mem.eql(u8, a, name)) return i;
+    }
+    return allowed.len;
+}
+
+fn before(_: void, a: []const u8, b: []const u8) bool {
+    const ra = rank(a);
+    const rb = rank(b);
+    if (ra != rb) return ra < rb;
+    return std.mem.lessThan(u8, a, b);
+}
+
+/// Adds each of `names` that `out` does not hold yet, and leaves `out` in the order of `allowed` (libc++ first, as it
+/// needs libm and libpthread behind it). The one place a closure's `link` lists are merged: the link plan and the unit
+/// graph both use it, so a consumer gets one `-l<name>` per name, in one order, whatever order the natives are in.
 pub fn merge(out: *std.ArrayList([]const u8), names: []const []const u8) Allocator.Error!void {
     outer: for (names) |name| {
         for (out.items) |have| {
@@ -50,6 +65,7 @@ pub fn merge(out: *std.ArrayList([]const u8), names: []const []const u8) Allocat
         }
         try out.append(name);
     }
+    std.mem.sort([]const u8, out.items, {}, before);
 }
 
 test "the allowed names are accepted, anything else is refused with the list" {
@@ -72,10 +88,10 @@ test "the allowed list is sorted and every entry is a plain library name" {
     }
 }
 
-test "merge keeps the first place of a name and adds a name once" {
+test "merge adds a name once and leaves the names in the order of the allowed list, whatever order they came in" {
     var out = std.ArrayList([]const u8).init(std.testing.allocator);
     defer out.deinit();
-    try merge(&out, &.{ "c++", "m" });
+    try merge(&out, &.{ "m", "pthread" });
     try merge(&out, &.{ "pthread", "c++" });
     try merge(&out, &.{});
     try std.testing.expectEqual(@as(usize, 3), out.items.len);

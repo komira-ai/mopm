@@ -91,7 +91,7 @@ pub const Unit = struct {
     deps: []const []const u8 = &.{},
     natives: []const NativeRef = &.{},
     /// lib, test, bin, prebuilt: the system libraries the final link of the unit's `natives` adds, each once, as
-    /// `-l<name>` after every archive: the `link` of those natives in link order, the first place of a name kept.
+    /// `-l<name>` after every archive: the `link` of those natives, each name once, in the order of `native_link.allowed`.
     link: []const []const u8 = &.{},
     /// test and bin: the conda names of the system libraries the unit loads at run time, run dependencies included,
     /// sorted; each is an entry of the graph's `system_libs`.
