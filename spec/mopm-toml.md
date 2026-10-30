@@ -82,6 +82,10 @@ tests = ["tests"]
   declares one has no `noarch` file. A static library can also give `srcs`,
   `hdrs`, `cflags`, `cflags_by_os`, `includes` and `soname`: the C sources a
   build system compiles into its archive (`unit-graph.md`, "Member natives").
+  `provided = true` (with `kind = "static"` and `mode = "link"`) says the
+  archive is built by something else and packed as `lib<id>.a`; mopm compiles
+  nothing for it, so `srcs`, `hdrs`, `cflags`, `cflags_by_os`, `includes`,
+  `build` and `outputs` are refused (`unit-graph.md`, "Provided natives").
 - `[targets]`: the library, executables and tests to build.
 
 ## Other tools' settings: `[package.metadata]`

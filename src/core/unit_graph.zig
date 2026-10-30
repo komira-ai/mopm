@@ -35,6 +35,11 @@ pub const format_version: u32 = 2;
 /// know `loads` would run such a test against the machine's libraries, so a graph that has them says 3.
 pub const format_loads: u32 = 3;
 
+/// 4: a `native` unit with `provided` (its archive is built by another rule, not compiled from `srcs`). A reader that
+/// did not know `provided` would make an empty archive of a unit with no sources, so a graph that has one says 4. A
+/// format 4 graph also has `system_libs` and `loads` exactly when a format 3 graph would.
+pub const format_provided: u32 = 4;
+
 pub const Src = struct { path: []const u8, sha256: []const u8 };
 /// A native library in a unit's dependency closure: pinned by `sha256`, from `package`. `kind`, `needs` and `exclusive`
 /// are the package's declarations (the lock copies them); the unit's natives are in link order (see `orderNatives`).
@@ -65,6 +70,8 @@ pub const Unit = struct {
     root: []const u8 = "",
     /// native: the archive's file name.
     soname: []const u8 = "",
+    /// native: the archive is built by another rule and given to the build; there are no sources to compile.
+    provided: bool = false,
     srcs: []const Src = &.{},
     /// native: the headers, the flags (common, then per OS), the include directories (relative to the member) and
     /// the sonames of the libraries this one needs.
@@ -458,8 +465,8 @@ const Builder = struct {
             if (n.mode != .link) {
                 return b.fail("{s}: [native.{s}] is mode = \"load\"; a static archive is linked, not loaded", .{ file, n.id });
             }
-            if (n.srcs.len == 0) {
-                return b.fail("{s}: [native.{s}] has no srcs; a unit graph builds a member's native from its C sources", .{ file, n.id });
+            if (n.srcs.len == 0 and !n.provided) {
+                return b.fail("{s}: [native.{s}] has no srcs; a unit graph builds a member's native from its C sources (or give provided = true, if another rule builds the archive)", .{ file, n.id });
             }
             const soname = try n.archiveName(b.arena);
             const srcs = try b.nativeFiles(file, n.id, "srcs", member_rel, n.srcs);
@@ -481,6 +488,7 @@ const Builder = struct {
                 .version = m.package.version,
                 .kind = "native",
                 .soname = soname,
+                .provided = n.provided,
                 .srcs = srcs,
                 .hdrs = hdrs,
                 .cflags = n.cflags,
@@ -879,7 +887,11 @@ pub fn build(arena: Allocator, in: Input, why: *[]const u8) !Graph {
     try b.loadsPass();
     try b.keys();
     var with_loads = false;
-    for (b.units.items) |u| with_loads = with_loads or u.loads.len > 0;
+    var with_provided = false;
+    for (b.units.items) |u| {
+        with_loads = with_loads or u.loads.len > 0;
+        with_provided = with_provided or u.provided;
+    }
     var libs: []const SystemLib = &.{};
     if (with_loads) {
         const out = try arena.alloc(SystemLib, b.libs.len);
@@ -887,7 +899,7 @@ pub fn build(arena: Allocator, in: Input, why: *[]const u8) !Graph {
         libs = out;
     }
     return .{
-        .unit_graph = if (with_loads) format_loads else format_version,
+        .unit_graph = if (with_provided) format_provided else if (with_loads) format_loads else format_version,
         .package = try std.fmt.allocPrint(arena, "{s}@{s}", .{ m.package.name, m.package.version }),
         .mojo = in.mojo,
         .toolchain = tc,
@@ -944,6 +956,7 @@ pub fn writeUnit(w: anytype, u: Unit, ind: []const u8) !void {
     if (is_native) {
         try w.print(",\n{s}  \"soname\": ", .{ind});
         try str(w, u.soname);
+        if (u.provided) try w.print(",\n{s}  \"provided\": true", .{ind});
     }
     try srcList(w, ind, "srcs", u.srcs);
     if (is_native) {
