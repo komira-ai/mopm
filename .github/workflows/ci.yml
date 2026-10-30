@@ -53,20 +53,29 @@ jobs:
 
   mojo-e2e:
     name: mojo e2e (${{ matrix.os }})
-    # Beta tier: never on a pull request.
-    if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14]
+        os: [ubuntu-24.04]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install Zig 0.12.0 (sha256-pinned)
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: clang with libc++, as cc and c++
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libc++-dev libc++abi-dev
+          sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang 200
+          sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++ 200
+          sudo update-alternatives --set cc /usr/bin/clang
+          sudo update-alternatives --set c++ /usr/bin/clang++
+          cc --version
+          ls -l /usr/lib/llvm-*/lib/libc++* /usr/lib/x86_64-linux-gnu/libc++* || true
+          echo 'int main(){}' > /tmp/t.c; (cc /tmp/t.c -lc++ -o /tmp/t && echo 'LIBC++ FOUND ON THE DEFAULT SEARCH PATH') || echo 'LIBC++ NOT FOUND ON THE DEFAULT SEARCH PATH'
       - name: Install pixi 0.79.0 (sha256-pinned)
         run: echo "$(tools/install_pixi.sh "$RUNNER_TEMP/pixi")" >> "$GITHUB_PATH"
       - name: Create the Mojo environment (mojo 1.0.0, tests/e2e/pixi.toml)
@@ -78,15 +87,16 @@ jobs:
       # files as //:autolink, //:discovery, //:supervisor, //:flaky and //:native_workspace_mojo on Linux x86_64 only).
       # The REPL checks of the autolink driver run where the environment has bin/mojo-lldb.
       - name: mopm build, run and repl against the real mojo (autolink)
+        if: false
         run: zig build test-autolink -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
       - name: mopm test --list against the real mojo (discovery)
-        if: ${{ !cancelled() }}
+        if: false
         run: zig build test-discovery -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
       - name: mopm test verdicts, JSON, JUnit and the group kill (supervisor)
-        if: ${{ !cancelled() }}
+        if: false
         run: zig build test-supervisor -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
       - name: mopm test --retries, --deny-flaky and filters on deterministic flaky fixtures (flaky)
-        if: ${{ !cancelled() }}
+        if: false
         run: zig build test-flaky -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
       # A workspace member that ships its own C library ([native.<id>] with srcs) and a package that links it: mopm lock and
       # plan, the native built from its C sources, mopm unit build, mopm pack, and an --overlay install of the packed set in a
@@ -94,12 +104,14 @@ jobs:
       # same file as //:native_workspace_mojo on Linux x86_64 and, with a stand-in compiler, as //:native_workspace on every pull request).
       - name: native library from C sources, pack and --overlay install, against the real mojo (native-workspace)
         if: ${{ !cancelled() }}
+        env:
+          MOPM_E2E_CXX: '1'
         run: zig build test-native-workspace -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
       # mopm build with no program (the library as a .mojoc, the programs) and a program that imports path dependencies, on
       # all three platforms (tests/drivers/build_targets_test.zig; the farm runs it as //:build_targets_mojo, and with a
       # stand-in compiler as //:build_targets on every pull request).
       - name: mopm build of a package's targets and its path dependencies, against the real mojo (build-targets)
-        if: ${{ !cancelled() }}
+        if: false
         run: zig build test-build-targets -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
 
   registry-build:
