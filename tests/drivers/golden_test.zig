@@ -133,6 +133,8 @@ test "golden files: link-plan, metadata, new and init, build, run, repl, test --
         .{ .name = "dup", .want = 1, .pkgs = &.{ "pkg_a", "pkg_b" } },
         .{ .name = "static", .want = 1, .pkgs = &.{"staticpkg"} },
         .{ .name = "static_chain", .want = 1, .pkgs = &.{ "crypto_sys", "tls_sys" } },
+        // Three archives, two of which name libc++ (one also libm): one -lc++ and one -lm, after every archive.
+        .{ .name = "static_link", .want = 1, .pkgs = &.{ "plain_sys", "cxx_a", "cxx_b" } },
     };
     for (plans) |p| {
         var args = std.ArrayList([]const u8).init(a);
@@ -198,6 +200,11 @@ test "golden files: link-plan, metadata, new and init, build, run, repl, test --
     // `repl --debugserver <path>` is LLDB_DEBUGSERVER_PATH in mojo's environment, ahead of the command (the cases above,
     // which name none, print none: the golden files of macos/chain.repl.txt carry only MODULAR_HOME).
     try c.cmd("macos/chain repl --debugserver", "tests/golden/cmd/macos/chain.repl_debugserver.txt", 0, &.{ "repl", "--prefix=tests/fixtures/env/macos/chain", "--os=macos", "--debugserver", "/x/debugserver", "--print-cmd" }, .{});
+
+    // Static archives that name system libraries (`link`): each once, after every archive, inside the no-as-needed block on Linux.
+    for (oses) |os| {
+        try c.cmd(try std.fmt.allocPrint(a, "{s}/cxx build", .{os}), try std.fmt.allocPrint(a, "tests/golden/cmd/{s}/cxx.build.txt", .{os}), 0, &.{ "build", "hello.mojo", "-o", "hello", "--prefix", try std.fmt.allocPrint(a, "tests/fixtures/env/{s}/cxx", .{os}), "--os", os, "--print-cmd" }, .{});
+    }
 
     // A library the metadata names but the environment lacks.
     try c.cmd("linux/nofile build", "tests/golden/cmd/linux/nofile.build.txt", 1, &.{ "build", "hello.mojo", "-o", "hello", "--prefix", "tests/fixtures/env/linux/nofile", "--os", "linux", "--print-cmd" }, .{});

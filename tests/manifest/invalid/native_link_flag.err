@@ -1,0 +1,1 @@
+7:1: 'link' in [native.shim]: '-Wl,--wrap=malloc' is not a system library a native may link; the allowed ones are c++, dl, m and pthread
