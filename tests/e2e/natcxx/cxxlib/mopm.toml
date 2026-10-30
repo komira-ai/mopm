@@ -8,3 +8,4 @@ kind = "static"
 srcs = ["native/*.cpp"]
 hdrs = ["native/*.h"]
 cflags = ["-O1", "-std=c++17"]
+link = ["c++"]
