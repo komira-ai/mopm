@@ -91,7 +91,8 @@ pub const Mojo = struct {
             // Native: the system C compiler, as `cc`, in the directory
             // that comes first on PATH.
             const sys = try findOnPath(a, "cc");
-            try fs.cwd().symLink(sys, cc_path, .{});
+            // A second test of the same file finds the link its predecessor made.
+            fs.cwd().symLink(sys, cc_path, .{}) catch |e| if (e != error.PathAlreadyExists) return e;
             if (std.process.getEnvVarOwned(a, "MOPM_E2E_SRC")) |src| {
                 try h.copyTree(a, src, try h.join(a, &.{ work, "tests/e2e" }));
             } else |_| {}
