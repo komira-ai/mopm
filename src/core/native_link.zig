@@ -48,7 +48,7 @@ fn rank(name: []const u8) usize {
     return allowed.len;
 }
 
-fn before(_: void, a: []const u8, b: []const u8) bool {
+fn lessRank(_: void, a: []const u8, b: []const u8) bool {
     const ra = rank(a);
     const rb = rank(b);
     if (ra != rb) return ra < rb;
@@ -65,7 +65,7 @@ pub fn merge(out: *std.ArrayList([]const u8), names: []const []const u8) Allocat
         }
         try out.append(name);
     }
-    std.mem.sort([]const u8, out.items, {}, before);
+    std.mem.sort([]const u8, out.items, {}, lessRank);
 }
 
 test "the allowed names are accepted, anything else is refused with the list" {
