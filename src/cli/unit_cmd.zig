@@ -341,7 +341,7 @@ test "a graph file whose link has a name outside the list, or a repeated name, i
     defer st.deinit();
     const a = st.allocator();
     var units = [_]core.unit_graph.Unit{.{ .id = "p@1.0.0#mojo1.0.0/lib", .package = "p", .version = "1.0.0", .kind = "lib", .link = &.{ "c++", "m" } }};
-    var g = core.unit_graph.Graph{ .package = "p@1.0.0", .mojo = "1.0.0", .toolchain = undefined, .units = &units };
+    const g = core.unit_graph.Graph{ .package = "p@1.0.0", .mojo = "1.0.0", .toolchain = undefined, .units = &units };
     try std.testing.expect((try linkProblem(a, "g.json", g)) == null);
     units[0].link = &.{ "c++", "-Wl,-z,execstack" };
     try std.testing.expectEqualStrings("g.json: unit p@1.0.0#mojo1.0.0/lib: link: '-Wl,-z,execstack' is not a system library a native may link; the allowed ones are c++, dl, m and pthread", (try linkProblem(a, "g.json", g)).?);
