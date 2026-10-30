@@ -152,11 +152,7 @@ fn run(arena: Allocator, a: Args, cpu: ?[]const u8) !u8 {
         say("{s} is not a unit graph: {s}\n", .{ a.graph, @errorName(e) });
         return 1;
     };
-    if (try formatProblem(arena, a.graph, g.unit_graph)) |why| {
-        say("{s}\n", .{why});
-        return 1;
-    }
-    if (try linkProblem(arena, a.graph, g)) |why| {
+    if (try formatProblem(arena, a.graph, g.unit_graph) orelse try linkProblem(arena, a.graph, g)) |why| {
         say("{s}\n", .{why});
         return 1;
     }
