@@ -1,6 +1,6 @@
 //! The user-level beta of a mopm release: the CANDIDATE binary used as a customer uses it, every verb,
 //! end to end, against a fake registry this driver starts. Run by release-beta-user.yml on linux x86_64,
-//! linux arm64 and macOS 14 (GitHub-hosted runners) with the binary the release build produced, and by
+//! linux arm64 and macOS 15 (GitHub-hosted runners) with the binary the release build produced, and by
 //! Buck2 (//:user_beta, tests/drivers/user_beta_test.zig) on the farm in a reduced form (no pixi, no
 //! installer: see below). No shell: every step is a program started here, its exit status and output asserted.
 //!

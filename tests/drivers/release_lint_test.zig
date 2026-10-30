@@ -265,15 +265,15 @@ test "defect: the path filter" {
 }
 
 test "defect: a platform leg of the user-level beta is skipped, optional or missing" {
-    try userDefect("no macOS leg", "          - { target: macos-arm64, os: macos-14 }\n", "", "lacks the leg macos-arm64 on macos-14");
+    try userDefect("no macOS leg", "          - { target: macos-arm64, os: macos-15 }\n", "", "lacks the leg macos-arm64 on macos-15");
     try userDefect("no linux arm64 leg", "          - { target: linux-aarch64, os: ubuntu-24.04-arm }\n", "", "lacks the leg linux-aarch64 on ubuntu-24.04-arm");
     try userDefect("no linux x86_64 leg", "          - { target: linux-x86_64, os: ubuntu-24.04 }\n", "", "lacks the leg linux-x86_64 on ubuntu-24.04");
-    try userDefect("a leg on another runner", "{ target: macos-arm64, os: macos-14 }", "{ target: macos-arm64, os: macos-15 }", "lacks the leg macos-arm64 on macos-14");
-    try userDefect("an extra leg", "          - { target: macos-arm64, os: macos-14 }\n", "          - { target: macos-arm64, os: macos-14 }\n          - { target: linux-riscv64, os: ubuntu-24.04 }\n", "the matrix has 4 legs");
+    try userDefect("a leg on another runner", "{ target: macos-arm64, os: macos-15 }", "{ target: macos-arm64, os: macos-14 }", "lacks the leg macos-arm64 on macos-15");
+    try userDefect("an extra leg", "          - { target: macos-arm64, os: macos-15 }\n", "          - { target: macos-arm64, os: macos-15 }\n          - { target: linux-riscv64, os: ubuntu-24.04 }\n", "the matrix has 4 legs");
     try userDefect("an excluded leg", "      matrix:\n        include:", "      matrix:\n        exclude:\n          - { target: macos-arm64 }\n        include:", "the matrix has the key exclude");
     try userDefect("legs that may fail", "    timeout-minutes: 90\n", "    timeout-minutes: 90\n    continue-on-error: true\n", "user must not set continue-on-error");
     try userDefect("legs that run only sometimes", "    timeout-minutes: 90\n", "    timeout-minutes: 90\n    if: ${{ github.event_name == 'push' }}\n", "user must not set if");
-    try userDefect("a step that skips macOS", "      - name: Install Zig 0.12.0 (sha256-pinned)\n", "      - name: Install Zig 0.12.0 (sha256-pinned)\n        if: ${{ matrix.os != 'macos-14' }}\n", "must not set if");
+    try userDefect("a step that skips macOS", "      - name: Install Zig 0.12.0 (sha256-pinned)\n", "      - name: Install Zig 0.12.0 (sha256-pinned)\n        if: ${{ matrix.os != 'macos-15' }}\n", "must not set if");
     try userDefect("a step that may fail", "      - name: Build the user walk (tests/drivers/user_beta.zig)\n", "      - name: Build the user walk (tests/drivers/user_beta.zig)\n        continue-on-error: true\n", "must not set continue-on-error");
     try userDefect("another trigger", "on:\n  workflow_call:", "on:\n  pull_request:\n  workflow_call:", "not exactly workflow_call");
 }
@@ -530,21 +530,21 @@ test "defect: the provenance subjects and the signed-assets upload leave out the
 }
 
 test "defect: the package matrix is not exactly the three release targets" {
-    const macos = "          - { target: macos-arm64, zig_target: aarch64-macos, os: macos-14, deb_arch: \"\" }\n";
+    const macos = "          - { target: macos-arm64, zig_target: aarch64-macos, os: macos-15, deb_arch: \"\" }\n";
     try buildDefect("an added macos-x86_64 leg", macos, macos ++ "          - { target: macos-x86_64, zig_target: x86_64-macos, os: macos-13, deb_arch: \"\" }\n", "the package matrix has 4 legs, expected exactly the 3 release targets");
     try buildDefect("an added leg of another kind", macos, macos ++ "          - { target: windows-x86_64, zig_target: x86_64-windows, os: windows-2022, deb_arch: \"\" }\n", "the package matrix has 4 legs");
     try buildDefect("the macos leg dropped", macos, "", "the package matrix has 2 legs");
     try buildDefect("the macos leg dropped (its absence is named)", macos, "", "the package matrix has no leg macos-arm64");
     try buildDefect("an exclude key", "      matrix:\n        include:", "      matrix:\n        exclude:\n          - { target: macos-arm64 }\n        include:", "the package matrix has the key exclude");
     try buildDefect("an include key that adds legs at run time", "      matrix:\n        include:", "      matrix:\n        extra: [1]\n        include:", "the package matrix has the key extra");
-    try buildDefect("a leg on another runner", "os: macos-14,", "os: macos-15,", "the package leg macos-arm64 must run on macos-14");
+    try buildDefect("a leg on another runner", "os: macos-15,", "os: macos-14,", "the package leg macos-arm64 must run on macos-15");
     try buildDefect("a leg for another Zig target", "zig_target: x86_64-linux-musl,", "zig_target: x86_64-linux-gnu,", "the package leg linux-x86_64 must run on ubuntu-24.04 and build x86_64-linux-musl");
 }
 
 test "defect: the matrix gives a leg the wrong Debian architecture" {
     try buildDefect("amd64 leg without deb_arch", "deb_arch: amd64 }", "deb_arch: \"\" }", "the package leg linux-x86_64 has deb_arch");
     try buildDefect("aarch64 leg with the amd64 architecture", "deb_arch: arm64 }", "deb_arch: amd64 }", "the package leg linux-aarch64 has deb_arch");
-    try buildDefect("a macos leg that gets a .deb", "os: macos-14, deb_arch: \"\" }", "os: macos-14, deb_arch: amd64 }", "the package leg macos-arm64 has deb_arch");
+    try buildDefect("a macos leg that gets a .deb", "os: macos-15, deb_arch: \"\" }", "os: macos-15, deb_arch: amd64 }", "the package leg macos-arm64 has deb_arch");
 }
 
 test "defect: the .deb is not made from the binary of the tarball, for the architecture, at the path the upload takes" {

@@ -93,7 +93,7 @@ pub const concurrency_group = "release-${{ github.event_name == 'push' && 'push'
 pub const user_legs = [_][2][]const u8{
     .{ "linux-x86_64", "ubuntu-24.04" },
     .{ "linux-aarch64", "ubuntu-24.04-arm" },
-    .{ "macos-arm64", "macos-14" },
+    .{ "macos-arm64", "macos-15" },
 };
 
 /// The candidate the user beta walks, as release-beta-user.yml spells it: the binary inside the unpacked tarball,
@@ -1094,7 +1094,7 @@ fn attestDebProblems(a: Allocator, attest: Value, out: *Out) !void {
 const deb_legs = [_]struct { target: []const u8, zig_target: []const u8, os: []const u8, deb_arch: []const u8 }{
     .{ .target = "linux-x86_64", .zig_target = "x86_64-linux-musl", .os = "ubuntu-24.04", .deb_arch = "amd64" },
     .{ .target = "linux-aarch64", .zig_target = "aarch64-linux-musl", .os = "ubuntu-24.04-arm", .deb_arch = "arm64" },
-    .{ .target = "macos-arm64", .zig_target = "aarch64-macos", .os = "macos-14", .deb_arch = "" },
+    .{ .target = "macos-arm64", .zig_target = "aarch64-macos", .os = "macos-15", .deb_arch = "" },
 };
 
 /// release-build.yml: the linux legs have the Debian architecture of their target (the others none), the .deb is made from
