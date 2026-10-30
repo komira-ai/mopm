@@ -547,3 +547,209 @@ fn run(a: Allocator, rep: *h.Report) !void {
     r = try c.mopmRun(&build_env, consumer, &.{ "build", "main.mojo", "-o", try h.join(a, &.{ work, "consumer_demo_without" }), "--prefix", env_dir });
     rep.check("control: with lib/libshim.a taken out of the installed environment, mopm build fails", r.signaled or r.code != 0, try h.fmt(a, "exit {d}: {s}", .{ r.code, r.text }));
 }
+
+// ------------------------------------------------------------------------------------------------------------------
+// A native written in C++: `[native.cxxshim] link = ["c++"]`, from the workspace to a program built and run
+// ------------------------------------------------------------------------------------------------------------------
+//
+// The fixture is tests/e2e/natcxx: `cxxapp` (a library and the program `demo`) depends on the path member `cxxlib`, whose
+// native is `native/cxxshim.cpp` behind a C ABI (`cxx_answer`): it uses std::string, operator new[] and a virtual call,
+// so its archive leaves libc++'s symbols undefined. The walk is the one above, on linux-64: `mopm lock`, `mopm plan
+// --unit-graph` (the graph says format 5 and gives the program `link = ["c++"]`), the archive built with `c++ -c` and
+// `ar`, `mopm unit build` of the libraries and the program, the program run in an empty environment (it prints 42, which
+// only the C++ code gives), `mopm pack`, an `--overlay` install in a fresh project (the installed metadata carries the
+// link name) and `mopm build` of a program against it, run again. Without `link`, the program's link fails on libc++'s
+// symbols.
+//
+// It runs only natively (build.zig, ci.yml job `mojo e2e`, with the real Mojo) and only when MOPM_E2E_CXX is set: the
+// archive is compiled against libc++ (`c++ -stdlib=libc++`, so a runner needs clang and libc++ with `c++` and `cc` pointing
+// at clang), and the program is linked through `cc` with `-lc++`.
+
+test "native_workspace: a C++ native with link = [\"c++\"] is linked by mopm unit build and mopm build, and the program runs" {
+    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const a = arena_state.allocator();
+    var rep = h.Report{};
+    if (std.process.getEnvVarOwned(a, "FAKE_TOOLCHAIN")) |_| {
+        std.debug.print("SKIP the C++ native: the stand-in compiler cannot link it\n", .{});
+        return;
+    } else |_| {}
+    if (std.process.getEnvVarOwned(a, "MOPM_E2E_CXX")) |_| {} else |_| {
+        std.debug.print("SKIP the C++ native: MOPM_E2E_CXX is not set (it needs clang with libc++ as c++ and cc)\n", .{});
+        return;
+    }
+    runCxx(a, &rep) catch |e| switch (e) {
+        error.Fatal => {},
+        else => return e,
+    };
+    try rep.finish();
+}
+
+/// `c++` of `args` against libc++, the library the archive's consumers link.
+fn compileCxx(c: *Ctx, args: []const []const u8) !h.Ran {
+    var e = try c.m.freshEnv();
+    var argv = std.ArrayList([]const u8).init(c.a);
+    if (c.m.base.get("MOPM_ZIG")) |zig| {
+        try argv.appendSlice(&.{ zig, "c++" });
+    } else {
+        try argv.appendSlice(&.{ "c++", "-stdlib=libc++" });
+    }
+    try argv.appendSlice(args);
+    return h.run(c.a, argv.items, &e, .{});
+}
+
+fn runCxx(a: Allocator, rep: *h.Report) !void {
+    const cwd = std.fs.cwd();
+    const subdir = try hostSubdir();
+    if (!std.mem.eql(u8, subdir, "linux-64")) {
+        std.debug.print("SKIP the C++ native on {s}: this walk runs on linux-64\n", .{subdir});
+        return;
+    }
+    const base_work = try h.toolPathAbs(a, "BUILDRULES_TEST_WORK");
+    const work = try h.join(a, &.{ base_work, "natcxx" });
+    try cwd.makePath(work);
+    const m = try mojo_env.Mojo.init(a);
+    var c = Ctx{ .a = a, .rep = rep, .m = m, .mopm = try h.toolPathAbs(a, "MOPM"), .stand_in = null, .fake_pixi = try h.toolPathAbs(a, "FAKE_PIXI"), .work = work };
+    const env = try c.env();
+
+    const pixi = try h.join(a, &.{ work, "pixi" });
+    try m.prefix(pixi, true);
+    const tc = try h.join(a, &.{ work, "tc" });
+    const log = try h.join(a, &.{ work, "mojo_compile.log" });
+    try cwd.makePath(tc);
+    try cwd.copyFile(try h.toolPathAbs(a, "MOJO_COMPILE_SHIM"), cwd, try h.join(a, &.{ tc, "mojo_compile" }), .{});
+    {
+        const f = try cwd.openFile(try h.join(a, &.{ tc, "mojo_compile" }), .{});
+        defer f.close();
+        try f.chmod(0o755);
+    }
+    {
+        var conf = std.ArrayList(u8).init(a);
+        try conf.writer().print("mojo={s}/bin/mojo\nlog={s}\nenv.MODULAR_HOME={s}/share/max\n", .{ pixi, log, pixi });
+        var it = m.base.iterator();
+        while (it.next()) |e| {
+            if (std.mem.eql(u8, e.key_ptr.*, "MODULAR_HOME")) continue;
+            try conf.writer().print("env.{s}={s}\n", .{ e.key_ptr.*, e.value_ptr.* });
+        }
+        try h.writeFile(try h.join(a, &.{ tc, "mojo_compile.conf" }), conf.items);
+    }
+    try cwd.symLink(try h.join(a, &.{ m.tc, "lib" }), try h.join(a, &.{ tc, "lib" }), .{});
+
+    // 1. The workspace, locked and planned.
+    const ws = try h.join(a, &.{ work, "ws" });
+    try h.copyTree(a, try h.join(a, &.{ m.work, "tests/e2e/natcxx" }), ws);
+    var r = try c.mopmRun(&env, ws, &.{"lock"});
+    try c.must("mopm lock of the workspace", r);
+    const graph_path = try h.join(a, &.{ work, "graph.json" });
+    r = try c.mopmRun(&env, ws, &.{ "plan", "--unit-graph", "--locked", "--mojo", "1.0.0", "--subdir", subdir, "-o", graph_path });
+    try c.must("mopm plan --unit-graph of the workspace", r);
+    const graph_text = try h.readFile(a, graph_path);
+    const graph = try h.parseJson(a, graph_text);
+    const closure = blk: {
+        const tcv = graph.object.get("toolchain") orelse return error.BadGraph;
+        break :blk h.jsonString(tcv, "closure_sha256") orelse return error.BadGraph;
+    };
+    try h.writeFile(try h.join(a, &.{ tc, "CLOSURE_SHA256" }), try h.fmt(a, "{s}\n", .{closure}));
+    const lib_cxx = "cxxlib@1.0.0#mojo1.0.0/lib";
+    const lib_app = "cxxapp@1.0.0#mojo1.0.0/lib";
+    const bin_demo = "cxxapp@1.0.0#mojo1.0.0/bin:demo";
+    rep.check("the graph is format 5", h.contains(graph_text, "\"unit_graph\": 5"), graph_text);
+    for ([_][]const u8{ lib_cxx, lib_app, bin_demo }) |id| {
+        const u = unitById(graph, id);
+        rep.check(try h.fmt(a, "{s} has link = [\"c++\"]", .{id}), u != null and std.mem.eql(u8, try joined(a, u.?, "link", ","), "c++"), "the unit is missing or names no c++");
+    }
+
+    // 2. The member's native, built from its C++ source: `c++ -c`, then `ar`.
+    const member = try h.join(a, &.{ ws, "cxxlib" });
+    const objdir = try h.join(a, &.{ work, "obj" });
+    try cwd.makePath(objdir);
+    const obj = try h.join(a, &.{ objdir, "cxxshim.o" });
+    try c.must("c++ -c native/cxxshim.cpp (libc++)", try compileCxx(&c, &.{ "-c", "-fPIC", "-O1", "-std=c++17", try h.fmt(a, "-I{s}", .{try h.join(a, &.{ member, "native" })}), "-o", obj, try h.join(a, &.{ member, "native/cxxshim.cpp" }) }));
+    const natives = try h.join(a, &.{ work, "natives" });
+    try cwd.makePath(natives);
+    const archive_path = try h.join(a, &.{ natives, "libcxxshim.a" });
+    try c.must("ar libcxxshim.a", try c.archive(archive_path, &.{obj}));
+    const archive_bytes = try h.readFile(a, archive_path);
+
+    // 3. The libraries and the program, through `mopm unit build`; the program runs.
+    const deps = try h.join(a, &.{ work, "deps" });
+    const lib_out = try h.join(a, &.{ work, "lib_out" });
+    try cwd.makePath(deps);
+    for ([_]struct { id: []const u8, name: []const u8 }{ .{ .id = lib_cxx, .name = "cxxlib" }, .{ .id = lib_app, .name = "cxxapp" } }) |l| {
+        r = try c.mopmRun(&env, ws, &.{ "unit", "build", "--unit", l.id, "--graph", graph_path, "--out", lib_out, "--toolchain", tc, "--src", ".", "--deps", deps, "--natives", natives, "--stage", try h.fmt(a, "{s}/stage_{s}", .{ work, l.name }) });
+        try c.must(try h.fmt(a, "mopm unit build: the library {s}", .{l.name}), r);
+        try cwd.copyFile(try h.join(a, &.{ lib_out, try h.fmt(a, "{s}.mojoc", .{l.name}) }), cwd, try h.join(a, &.{ deps, try h.fmt(a, "{s}.mojoc", .{l.name}) }), .{});
+    }
+    const bin_out = try h.join(a, &.{ work, "bin_out" });
+    r = try c.mopmRun(&env, ws, &.{ "unit", "build", "--unit", bin_demo, "--graph", graph_path, "--out", bin_out, "--toolchain", tc, "--src", ".", "--deps", deps, "--natives", natives, "--stage", try h.join(a, &.{ work, "stage_demo" }) });
+    try c.must("mopm unit build: the program demo links libcxxshim.a and -lc++", r);
+    try runCxxProgram(&c, "the program built by mopm unit build", try h.join(a, &.{ bin_out, "demo" }));
+    const logged = try h.readFile(a, log);
+    var with_tail = false;
+    var log_lines = std.mem.splitScalar(u8, logged, '\n');
+    while (log_lines.next()) |l| {
+        if (h.contains(l, " build ") and h.contains(l, "/natives/libcxxshim.a") and h.contains(l, "-Xlinker -lc++")) with_tail = true;
+    }
+    rep.check("the compiler's link line of the program holds the archive and -Xlinker -lc++", with_tail, logged);
+
+    // 4. mopm pack of both packages; the staged set.
+    const dist = try h.join(a, &.{ work, "dist" });
+    const Pack = struct { name: []const u8, file: []const u8, bytes: []const u8, manifest_sha256: []const u8 };
+    var packs = std.ArrayList(Pack).init(a);
+    for ([_][]const u8{ "cxxlib", "cxxapp" }) |name| {
+        var args = std.ArrayList([]const u8).init(a);
+        try args.appendSlice(&.{ "pack", "--compiler", "1.0.0", "--manifest", if (std.mem.eql(u8, name, "cxxlib")) "cxxlib/mopm.toml" else "mopm.toml", "-o", dist, "--mojoc", try h.fmt(a, "{s}={s}/{s}.mojoc", .{ subdir, deps, name }) });
+        if (std.mem.eql(u8, name, "cxxlib")) try args.appendSlice(&.{ "--native", try h.fmt(a, "cxxshim={s}:{s}", .{ subdir, archive_path }) });
+        r = try c.mopmRun(&env, ws, args.items);
+        try c.must(try h.fmt(a, "mopm pack {s}", .{name}), r);
+        const file = try h.fmt(a, "mojo-{s}-1.0.0-mojo1.0.0_0.conda", .{name});
+        try packs.append(.{ .name = name, .file = file, .bytes = try h.readFile(a, try h.join(a, &.{ dist, subdir, file })), .manifest_sha256 = try valueOf(a, r.text, "manifest_sha256") });
+    }
+    {
+        var plan = std.ArrayList(u8).init(a);
+        try plan.appendSlice("{\"version\":1,\"members\":[");
+        for (packs.items, 0..) |p, i| {
+            if (i > 0) try plan.append(',');
+            try plan.writer().print(
+                "{{\"name\":\"{s}\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",\"files\":[{{\"subdir\":\"{s}\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":{d}}}]}}",
+                .{ p.name, p.manifest_sha256, subdir, p.file, try sha256Hex(a, p.bytes), p.bytes.len },
+            );
+        }
+        try plan.appendSlice("]}\n");
+        try h.writeFile(try h.join(a, &.{ dist, "plan.json" }), plan.items);
+    }
+
+    // 5. A fresh project locks and syncs the set; `mopm build` links the program against the installed set.
+    var fake = try h.Fake.start(a, try h.toolPathAbs(a, "MOPM_FAKE_REGISTRY"), try h.join(a, &.{ work, "fake" }));
+    defer fake.close();
+    const consumer = try h.join(a, &.{ work, "consumer" });
+    try h.writeFile(try h.join(a, &.{ consumer, "mopm.toml" }), "[package]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n[dependencies]\n");
+    try h.writeFile(try h.join(a, &.{ consumer, "main.mojo" }), "from cxxapp import plus_one\nfrom cxxlib import cxx_answer\n\n\ndef main():\n    print(\"cxx\", cxx_answer())\n    print(\"app\", plus_one())\n");
+    r = try c.mopmRun(&env, consumer, &.{ "add", "cxxapp@=1.0.0", "--registry", fake.base, "--overlay", dist });
+    try c.must("mopm add --overlay locks the staged set in a fresh project", r);
+    const consumer_lock = try h.readFile(a, try h.join(a, &.{ consumer, "mopm.lock" }));
+    rep.check("the lock carries link = [\"c++\"] for the native", h.contains(consumer_lock, "\"link\": [\n            \"c++\"\n          ]"), consumer_lock);
+    r = try c.mopmRun(&env, consumer, &.{ "sync", "--locked", "--overlay", dist, "--registry", fake.base, "--pixi", c.fake_pixi });
+    try c.must("mopm sync --locked --overlay installs the set", r);
+    const env_dir = try h.join(a, &.{ consumer, ".mopm/.pixi/envs/default" });
+    const installed = h.readFile(a, try h.join(a, &.{ env_dir, "lib/libcxxshim.a" })) catch "";
+    rep.check("the installed environment holds lib/libcxxshim.a, byte for byte the archive that was built", installed.len > 0 and std.mem.eql(u8, installed, archive_bytes), "lib/libcxxshim.a is missing or differs");
+    const meta = h.readFile(a, try h.join(a, &.{ env_dir, "lib/mojo/cxxlib.mopm.json" })) catch "";
+    rep.check("the installed metadata of cxxlib carries \"link\":[\"c++\"]", h.contains(meta, "\"link\":[\"c++\"]"), meta);
+    try m.prefix(env_dir, true);
+    const build_env = try c.env();
+    const consumer_bin = try h.join(a, &.{ work, "consumer_demo" });
+    r = try c.mopmRun(&build_env, consumer, &.{ "build", "main.mojo", "-o", consumer_bin, "--prefix", env_dir });
+    try c.must("mopm build: the program against the installed set links libcxxshim.a and -lc++", r);
+    try runCxxProgram(&c, "the program built by mopm build against the installed set", consumer_bin);
+}
+
+/// The program `path`, run in an empty environment: it prints what the C++ code computes (42) and what the Mojo above it adds
+/// (43). Whether the binary names libc++.so as a needed library is printed, for the record.
+fn runCxxProgram(c: *Ctx, what: []const u8, path: []const u8) !void {
+    const a = c.a;
+    var empty = std.process.EnvMap.init(a);
+    const r = try h.run(a, &.{path}, &empty, .{});
+    c.rep.check(try h.fmt(a, "{s}: runs in an empty environment and prints what the C++ code computes", .{what}), !r.signaled and r.code == 0 and h.contains(r.text, "cxx 42\n") and h.contains(r.text, "app 43\n"), try h.fmt(a, "exit {d}: {s}", .{ r.code, r.text }));
+    const bytes = h.readFile(a, path) catch "";
+    std.debug.print("INFO {s}: the binary names libc++.so as a needed library: {}\n", .{ what, h.contains(bytes, "libc++.so") });
+}
