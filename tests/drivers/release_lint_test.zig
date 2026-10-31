@@ -24,6 +24,7 @@ const Allocator = std.mem.Allocator;
 const release_path = ".github/workflows/release.yml";
 const user_path = ".github/workflows/release-beta-user.yml";
 const build_path = ".github/workflows/release-build.yml";
+const ci_path = ".github/workflows/ci.yml";
 
 fn real(a: Allocator, path: []const u8) ![]u8 {
     const tree = try c.loadTree(a);
@@ -36,6 +37,8 @@ fn problemsOf(a: Allocator, path: []const u8, text: []const u8) ![]const []const
         try rl.userBetaProblems(a, text, &out);
     } else if (std.mem.eql(u8, path, build_path)) {
         try rl.buildDebProblems(a, text, &out);
+    } else if (std.mem.eql(u8, path, ci_path)) {
+        try rl.ciMinosProblems(a, text, &out);
     } else try rl.problems(a, text, &out);
     return out.items;
 }
@@ -44,7 +47,7 @@ test "the real release.yml, release-beta-user.yml, and release-build.yml pass ev
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    for ([_][]const u8{ release_path, user_path, build_path }) |p| {
+    for ([_][]const u8{ release_path, user_path, build_path, ci_path }) |p| {
         const got = try problemsOf(a, p, try real(a, p));
         for (got) |l| std.debug.print("{s}\n", .{l});
         try std.testing.expectEqual(@as(usize, 0), got.len);
@@ -265,15 +268,15 @@ test "defect: the path filter" {
 }
 
 test "defect: a platform leg of the user-level beta is skipped, optional or missing" {
-    try userDefect("no macOS leg", "          - { target: macos-arm64, os: macos-14 }\n", "", "lacks the leg macos-arm64 on macos-14");
+    try userDefect("no macOS leg", "          - { target: macos-arm64, os: macos-15 }\n", "", "lacks the leg macos-arm64 on macos-15");
     try userDefect("no linux arm64 leg", "          - { target: linux-aarch64, os: ubuntu-24.04-arm }\n", "", "lacks the leg linux-aarch64 on ubuntu-24.04-arm");
     try userDefect("no linux x86_64 leg", "          - { target: linux-x86_64, os: ubuntu-24.04 }\n", "", "lacks the leg linux-x86_64 on ubuntu-24.04");
-    try userDefect("a leg on another runner", "{ target: macos-arm64, os: macos-14 }", "{ target: macos-arm64, os: macos-15 }", "lacks the leg macos-arm64 on macos-14");
-    try userDefect("an extra leg", "          - { target: macos-arm64, os: macos-14 }\n", "          - { target: macos-arm64, os: macos-14 }\n          - { target: linux-riscv64, os: ubuntu-24.04 }\n", "the matrix has 4 legs");
+    try userDefect("a leg on another runner", "{ target: macos-arm64, os: macos-15 }", "{ target: macos-arm64, os: macos-14 }", "lacks the leg macos-arm64 on macos-15");
+    try userDefect("an extra leg", "          - { target: macos-arm64, os: macos-15 }\n", "          - { target: macos-arm64, os: macos-15 }\n          - { target: linux-riscv64, os: ubuntu-24.04 }\n", "the matrix has 4 legs");
     try userDefect("an excluded leg", "      matrix:\n        include:", "      matrix:\n        exclude:\n          - { target: macos-arm64 }\n        include:", "the matrix has the key exclude");
     try userDefect("legs that may fail", "    timeout-minutes: 90\n", "    timeout-minutes: 90\n    continue-on-error: true\n", "user must not set continue-on-error");
     try userDefect("legs that run only sometimes", "    timeout-minutes: 90\n", "    timeout-minutes: 90\n    if: ${{ github.event_name == 'push' }}\n", "user must not set if");
-    try userDefect("a step that skips macOS", "      - name: Install Zig 0.12.0 (sha256-pinned)\n", "      - name: Install Zig 0.12.0 (sha256-pinned)\n        if: ${{ matrix.os != 'macos-14' }}\n", "must not set if");
+    try userDefect("a step that skips macOS", "      - name: Install Zig 0.12.0 (sha256-pinned)\n", "      - name: Install Zig 0.12.0 (sha256-pinned)\n        if: ${{ matrix.os != 'macos-15' }}\n", "must not set if");
     try userDefect("a step that may fail", "      - name: Build the user walk (tests/drivers/user_beta.zig)\n", "      - name: Build the user walk (tests/drivers/user_beta.zig)\n        continue-on-error: true\n", "must not set continue-on-error");
     try userDefect("another trigger", "on:\n  workflow_call:", "on:\n  pull_request:\n  workflow_call:", "not exactly workflow_call");
 }
@@ -530,21 +533,38 @@ test "defect: the provenance subjects and the signed-assets upload leave out the
 }
 
 test "defect: the package matrix is not exactly the three release targets" {
-    const macos = "          - { target: macos-arm64, zig_target: aarch64-macos, os: macos-14, deb_arch: \"\" }\n";
+    const macos = "          - { target: macos-arm64, zig_target: aarch64-macos.11.7.1, os: macos-15, deb_arch: \"\" }\n";
     try buildDefect("an added macos-x86_64 leg", macos, macos ++ "          - { target: macos-x86_64, zig_target: x86_64-macos, os: macos-13, deb_arch: \"\" }\n", "the package matrix has 4 legs, expected exactly the 3 release targets");
     try buildDefect("an added leg of another kind", macos, macos ++ "          - { target: windows-x86_64, zig_target: x86_64-windows, os: windows-2022, deb_arch: \"\" }\n", "the package matrix has 4 legs");
     try buildDefect("the macos leg dropped", macos, "", "the package matrix has 2 legs");
     try buildDefect("the macos leg dropped (its absence is named)", macos, "", "the package matrix has no leg macos-arm64");
     try buildDefect("an exclude key", "      matrix:\n        include:", "      matrix:\n        exclude:\n          - { target: macos-arm64 }\n        include:", "the package matrix has the key exclude");
     try buildDefect("an include key that adds legs at run time", "      matrix:\n        include:", "      matrix:\n        extra: [1]\n        include:", "the package matrix has the key extra");
-    try buildDefect("a leg on another runner", "os: macos-14,", "os: macos-15,", "the package leg macos-arm64 must run on macos-14");
+    try buildDefect("a leg on another runner", "os: macos-15,", "os: macos-14,", "the package leg macos-arm64 must run on macos-15");
     try buildDefect("a leg for another Zig target", "zig_target: x86_64-linux-musl,", "zig_target: x86_64-linux-gnu,", "the package leg linux-x86_64 must run on ubuntu-24.04 and build x86_64-linux-musl");
+}
+
+test "defect: the macOS leg is built for, or checked against, a different minimum than the pinned one" {
+    try buildDefect("the Zig target pin raised", "zig_target: aarch64-macos.11.7.1,", "zig_target: aarch64-macos.14.0,", "the package leg macos-arm64 must run on macos-15 and build aarch64-macos.11.7.1");
+    try buildDefect("the Zig target pin dropped", "zig_target: aarch64-macos.11.7.1,", "zig_target: aarch64-macos,", "the package leg macos-arm64 must run on macos-15 and build aarch64-macos.11.7.1");
+    try buildDefect("the check's limit raised", "--max 11.7.1 \"$RUNNER_TEMP", "--max 14.0 \"$RUNNER_TEMP", "the macOS minos check must take --max 11.7.1");
+    try buildDefect("the check dropped", "zig run tools/macho_minos.zig -- --max 11.7.1 \"$RUNNER_TEMP/mopm-$VERSION-$TARGET/mopm\"\n", "true\n", "package has no step that runs tools/macho_minos.zig");
+    try buildDefect("the check run on every leg", "        if: matrix.target == 'macos-arm64'\n", "", "the macOS minos check must run for the macos-arm64 leg only");
+}
+
+test "defect: the minos check reads another file than the tarball's binary, or ci.yml builds for another minimum" {
+    try buildDefect("the release check reads the native build", "--max 11.7.1 \"$RUNNER_TEMP/mopm-$VERSION-$TARGET/mopm\"", "--max 11.7.1 zig-out/bin/mopm", "the macOS minos check must take --max 11.7.1 and read");
+    try defectIn(ci_path, "ci.yml builds for a higher target", "-Dtarget=aarch64-macos.11.7.1 ", "-Dtarget=aarch64-macos.14.0 ", "registry-build must build for -Dtarget=aarch64-macos.11.7.1");
+    try defectIn(ci_path, "ci.yml builds with no version", "-Dtarget=aarch64-macos.11.7.1 ", "-Dtarget=aarch64-macos ", "registry-build must build for -Dtarget=aarch64-macos.11.7.1");
+    try defectIn(ci_path, "ci.yml limit raised", "--max 11.7.1 zig-pinned/bin/mopm", "--max 14.0 zig-pinned/bin/mopm", "registry-build must check zig-pinned/bin/mopm");
+    try defectIn(ci_path, "ci.yml checks the native build", "--max 11.7.1 zig-pinned/bin/mopm", "--max 11.7.1 zig-out/bin/mopm", "registry-build must check zig-pinned/bin/mopm");
+    try defectIn(ci_path, "ci.yml check on every leg", "if: runner.os == 'macOS'\n        run: |\n          zig build -Doptimize", "run: |\n          zig build -Doptimize", "the macOS minos step must run on the macOS leg");
 }
 
 test "defect: the matrix gives a leg the wrong Debian architecture" {
     try buildDefect("amd64 leg without deb_arch", "deb_arch: amd64 }", "deb_arch: \"\" }", "the package leg linux-x86_64 has deb_arch");
     try buildDefect("aarch64 leg with the amd64 architecture", "deb_arch: arm64 }", "deb_arch: amd64 }", "the package leg linux-aarch64 has deb_arch");
-    try buildDefect("a macos leg that gets a .deb", "os: macos-14, deb_arch: \"\" }", "os: macos-14, deb_arch: amd64 }", "the package leg macos-arm64 has deb_arch");
+    try buildDefect("a macos leg that gets a .deb", "os: macos-15, deb_arch: \"\" }", "os: macos-15, deb_arch: amd64 }", "the package leg macos-arm64 has deb_arch");
 }
 
 test "defect: the .deb is not made from the binary of the tarball, for the architecture, at the path the upload takes" {

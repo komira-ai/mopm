@@ -1,7 +1,7 @@
 name: release-beta-user
 
 # Tests the release CANDIDATE as a user would use it, on every platform the release serves
-# natively: linux x86_64, linux arm64 (ubuntu-24.04-arm) and macOS 14 (arm64). The candidate is the
+# natively: linux x86_64, linux arm64 (ubuntu-24.04-arm) and macOS 15 (arm64). The candidate is the
 # tarball release-build.yml built in this run (artifact release-<target>), the very file the release
 # publishes if this passes. tests/drivers/user_beta.zig takes that binary and walks every verb against
 # a fake registry started in the job: create a package (new, init), add and pull dependencies (add,
@@ -38,7 +38,7 @@ jobs:
         include:
           - { target: linux-x86_64, os: ubuntu-24.04 }
           - { target: linux-aarch64, os: ubuntu-24.04-arm }
-          - { target: macos-arm64, os: macos-14 }
+          - { target: macos-arm64, os: macos-15 }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -509,6 +509,12 @@ zig_test(  # buck-only: tools/build_parity.zig reads build.zig and this file
     **_TOOLS
 )
 
+zig_test(  # buck-only: tools/macho_minos.zig, the Mach-O minos reader that the macOS legs of release-build.yml and ci.yml run
+    name = "macho_minos",
+    src = "tools/macho_minos.zig",
+    **_TOOLS
+)
+
 # ---- The validator corpus: files made by a Zig generator, and the test that they are what it makes ----
 
 zig_test(  # buck-only: tests/validator_corpus is what tests/drivers/validator_corpus.zig makes

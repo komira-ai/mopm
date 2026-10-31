@@ -9,7 +9,7 @@
 #   gamma  the whole system with real consumers: promote.yml (deploy.yml, e2e.yml), not this file.
 # tests/drivers/hygiene.zig holds this split (the jobs that may run on a pull request, and which workflows may).
 #
-# macOS runs, Linux always runs. The GitHub macOS queue waits 50 to 120 minutes, so the macos-14 leg of the unit matrix
+# macOS runs, Linux always runs. The GitHub macOS queue waits 50 to 120 minutes, so the macos-15 leg of the unit matrix
 # is not part of a pull request's checks. It runs on a push to main (after the merge, so a Mac
 # regression is still caught and the main-red policy applies), on the nightly schedule, on workflow_dispatch, and on
 # a pull request only while it carries the label `macos` (adding the label starts the run). The Linux legs are
@@ -37,7 +37,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'macos')) && '["ubuntu-24.04","ubuntu-24.04-arm","macos-14"]' || '["ubuntu-24.04","ubuntu-24.04-arm"]') }}
+        os: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'macos')) && '["ubuntu-24.04","ubuntu-24.04-arm","macos-15"]' || '["ubuntu-24.04","ubuntu-24.04-arm"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Zig 0.12.0 (sha256-pinned)
@@ -60,7 +60,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14]
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -109,7 +109,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'macos')) && '["ubuntu-24.04","ubuntu-24.04-arm","macos-14"]' || '["ubuntu-24.04","ubuntu-24.04-arm"]') }}
+        os: ${{ fromJSON((github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'macos')) && '["ubuntu-24.04","ubuntu-24.04-arm","macos-15"]' || '["ubuntu-24.04","ubuntu-24.04-arm"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -118,6 +118,13 @@ jobs:
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
       - name: Build the CLI and the fake registry
         run: zig build
+      # The release builds the macOS binary for -Dtarget=aarch64-macos.11.7.1 on a newer runner. A build made natively takes the runner's own version
+      # (15.x on macos-15) as its minimum, so the one that is checked is the build for the pinned target: tools/macho_minos.zig reads the Mach-O's minos.
+      - name: Build the CLI for the pinned macOS target; its minimum macOS is at most 11.7.1
+        if: runner.os == 'macOS'
+        run: |
+          zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-macos.11.7.1 -Dstrip=true -p zig-pinned
+          zig run tools/macho_minos.zig -- --max 11.7.1 zig-pinned/bin/mopm
       # This job only builds. mopm login/logout/whoami and pack/publish against the fake registry, and mopm sync against it, are Zig tests
       # (//:registry_login, //:registry_publish, //:install_e2e) that farm.yml builds; the Python scripts are gone.
 
@@ -159,7 +166,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-14]
+        os: [ubuntu-24.04, macos-15]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
