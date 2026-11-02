@@ -202,7 +202,7 @@ app 0.1.0
 
 Running `mopm lock` again changes nothing and prints `locked 1 packages for mojo 1.0.0`. Removing the comment from the `http_client` line makes the project depend on the registry, and `mopm lock` then needs one: with the registry unreachable it stops with `cannot reach` and the address, and writes no lock. `mopm add http_client` writes that line for you, as `^X.Y.Z` for the newest version that fits, and locks.
 
-After `mopm sync` installs the lock into `.mopm/`, `mopm build src/main.mojo -o hello --prefix .mopm/.pixi/envs/default` builds the program with the native libraries of every installed package linked.
+After `mopm sync` installs the lock and the Mojo toolchain into `.mopm/env`, `mopm build src/main.mojo -o hello` builds the program with the native libraries of every installed package linked.
 
 ## 3. Several packages in one repository
 

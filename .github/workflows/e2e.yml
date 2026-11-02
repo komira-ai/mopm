@@ -335,7 +335,8 @@ jobs:
   # SKIPs, loudly: a SKIPPED heading and the reason in the job summary and a warning annotation, and the job is green, so this
   # job changes nothing until the secret is set and the switch is on. With a token and groups on nothing is skipped: a step that
   # cannot run is a failure (no step has an `if`, and none may end in `|| true`; the workflow lint holds that). The Mojo
-  # environment is made by the check itself, only once groups are known to be on, from tests/e2e/pixi.toml with the pinned pixi.
+  # environment is made before the check by the CLI built above, `mopm sync --locked` in tests/mojo_env (no pixi): the check gets
+  # tests/mojo_env/.mopm/env as --mojo-env, and its own `mopm sync --overlay` installs the staged set and the toolchain by itself.
   # Its checks need no AWS credential and no id-token. prod is never exercised: the job is skipped there.
   group-e2e:
     needs: guard
@@ -357,8 +358,9 @@ jobs:
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
       - name: Build the CLI and the group check
         run: zig build -Doptimize=ReleaseSafe
-      - name: Install pixi 0.79.0 (sha256-pinned)
-        run: echo "$(tools/install_pixi.sh "$RUNNER_TEMP/pixi")" >> "$GITHUB_PATH"
+      - name: Create the Mojo environment (mopm sync --locked, tests/mojo_env)
+        working-directory: tests/mojo_env
+        run: ../../zig-out/bin/mopm sync --locked
       - name: Group publish end to end
         env:
           STAGE: ${{ inputs.stage }}
@@ -367,4 +369,4 @@ jobs:
           RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
-          ./zig-out/bin/mopm-group-e2e --stage "$STAGE" --mopm "$PWD/zig-out/bin/mopm" --pixi "$(command -v pixi)" --pixi-manifest tests/e2e/pixi.toml --work "$RUNNER_TEMP/group-e2e" --run-id "$RUN_ID" --attempt "$RUN_ATTEMPT" --summary "$GITHUB_STEP_SUMMARY"
+          ./zig-out/bin/mopm-group-e2e --stage "$STAGE" --mopm "$PWD/zig-out/bin/mopm" --mojo-env "$PWD/tests/mojo_env/.mopm/env" --work "$RUNNER_TEMP/group-e2e" --run-id "$RUN_ID" --attempt "$RUN_ATTEMPT" --summary "$GITHUB_STEP_SUMMARY"
