@@ -7,9 +7,9 @@
 //!  - a copy edited along with it: tests/agents/shared_core.sha256 is `<sha256 of the copy, lowercase hex>  shared_core.md` and one
 //!    newline, the form `sha256sum` writes, and the digest is the copy's;
 //!  - markers that cannot delimit the core: each of the two is a line of its own, exactly once, the begin before the end;
-//!  - a CLAUDE.md that no longer imports AGENTS.md: a line that is exactly `@AGENTS.md`, outside a fenced code block of backticks or
-//!    tildes and outside a code span (an import inside either, inside a sentence or with anything after it, a carriage return included,
-//!    is not read as one).
+//!  - a CLAUDE.md that no longer imports AGENTS.md: a line that is exactly `@AGENTS.md`, a paragraph of its own (blank lines or the
+//!    file's edges around it), outside a fenced code block of backticks or tildes and outside an HTML comment (an import written any
+//!    other way, a carriage return after it included, is not read as one).
 const std = @import("std");
 
 pub const Findings = std.ArrayList([]const u8);
@@ -138,87 +138,44 @@ fn closes(line: []const u8, open: Fence) bool {
     return r.fence.char == open.char and r.fence.len >= open.len and std.mem.trim(u8, r.rest, " \t").len == 0;
 }
 
-/// A line that ends a paragraph: blank (spaces and tabs only), or an ATX heading (up to three spaces, one to six `#`, then a space, a tab or
-/// the end of the line). A code span never reaches past one.
-fn breaksParagraph(line: []const u8) bool {
-    if (std.mem.trim(u8, line, " \t").len == 0) return true;
+/// A blank line: nothing but spaces and tabs.
+fn blank(line: []const u8) bool {
+    return std.mem.trim(u8, line, " \t").len == 0;
+}
+
+/// The text after `<!--` when `line` starts an HTML comment block (CommonMark 0.31.2, HTML blocks, type 2: up to three spaces, then `<!--`).
+fn commentStart(line: []const u8) ?[]const u8 {
     const s = std.mem.trimLeft(u8, line, " ");
-    if (line.len - s.len > 3) return false;
-    var n: usize = 0;
-    while (n < s.len and s[n] == '#') n += 1;
-    return n >= 1 and n <= 6 and (n == s.len or s[n] == ' ' or s[n] == '\t');
+    if (line.len - s.len > 3 or !std.mem.startsWith(u8, s, "<!--")) return null;
+    return s[4..];
 }
 
-/// The number of backticks in the run that starts at `i`.
-fn runOf(text: []const u8, i: usize) usize {
-    var n: usize = 0;
-    while (i + n < text.len and text[i + n] == '`') n += 1;
-    return n;
-}
-
-/// One of `lines` (a paragraph, outside any fenced block) is exactly `@AGENTS.md` and starts outside a code span. A code span (CommonMark
-/// 0.31.2, code spans) opens at a run of backticks not escaped by a backslash and closes at the next run of exactly as many, on the same
-/// line or a later one of the paragraph; a run with no such closer is literal text.
-fn importIn(a: std.mem.Allocator, lines: []const []const u8) !bool {
-    const text = try std.mem.join(a, "\n", lines);
-    const code = try a.alloc(bool, text.len);
-    @memset(code, false);
-    var i: usize = 0;
-    while (i < text.len) {
-        if (text[i] == '\\' and i + 1 < text.len and std.ascii.isPrint(text[i + 1]) and !std.ascii.isAlphanumeric(text[i + 1]) and text[i + 1] != ' ') {
-            i += 2; // a backslash escape: `\`` is a literal backtick, `\\` a literal backslash
-            continue;
-        }
-        if (text[i] != '`') {
-            i += 1;
-            continue;
-        }
-        const n = runOf(text, i);
-        var j = i + n;
-        const close: ?usize = while (j < text.len) {
-            if (text[j] != '`') {
-                j += 1;
-                continue;
-            }
-            const m = runOf(text, j);
-            if (m == n) break j;
-            j += m;
-        } else null;
-        if (close) |c| {
-            @memset(code[i .. c + n], true);
-            i = c + n;
-        } else i += n;
-    }
-    var at: usize = 0;
-    for (lines) |line| {
-        if (std.mem.eql(u8, line, import_line) and !code[at]) return true;
-        at += line.len + 1;
-    }
-    return false;
-}
-
-/// CLAUDE.md imports AGENTS.md: a line that is exactly `@AGENTS.md`, outside a fenced code block and outside a code span (an import in
-/// either is not read as one).
+/// CLAUDE.md imports AGENTS.md: a line that is exactly `@AGENTS.md` and a paragraph of its own (a blank line, or the start or end of the
+/// file, on either side), outside a fenced code block and outside an HTML comment. A paragraph of its own is never inside a code span,
+/// which cannot reach past a blank line, nor inside an indented code block, a list item or a block quote (an unindented line after a
+/// blank line ends each), so no inline or other block precedence can make it something other than an import. An import written any
+/// other way (inside a sentence, next to other text, inside a fence or a comment) is not read as one.
 pub fn imports(a: std.mem.Allocator, f: *Findings, claude: []const u8) !void {
-    var open: ?Fence = null;
-    var para = std.ArrayList([]const u8).init(a);
+    var lines = std.ArrayList([]const u8).init(a);
     var it = std.mem.splitScalar(u8, claude, '\n');
-    while (it.next()) |line| {
+    while (it.next()) |line| try lines.append(line);
+    const ls = lines.items;
+    var open: ?Fence = null;
+    var comment = false;
+    for (ls, 0..) |line, i| {
         if (open) |o| {
             if (closes(line, o)) open = null;
+        } else if (comment) {
+            if (std.mem.indexOf(u8, line, "-->") != null) comment = false;
         } else if (opener(line)) |fence| {
-            if (try importIn(a, para.items)) return;
-            para.clearRetainingCapacity();
             open = fence;
-        } else if (breaksParagraph(line)) {
-            if (try importIn(a, para.items)) return;
-            para.clearRetainingCapacity();
-        } else {
-            try para.append(line);
+        } else if (commentStart(line)) |rest| {
+            comment = std.mem.indexOf(u8, rest, "-->") == null;
+        } else if (std.mem.eql(u8, line, import_line) and (i == 0 or blank(ls[i - 1])) and (i + 1 == ls.len or blank(ls[i + 1]))) {
+            return;
         }
     }
-    if (try importIn(a, para.items)) return;
-    try add(a, f, "CLAUDE.md does not import AGENTS.md: no line is exactly `{s}` outside a code block or code span", .{import_line});
+    try add(a, f, "CLAUDE.md does not import AGENTS.md: no line is exactly `{s}` as a paragraph of its own (a blank line or the file's edge on each side) outside a code block or HTML comment", .{import_line});
 }
 
 /// The most bytes a file of the check may hold; a larger one is an error, not a finding.

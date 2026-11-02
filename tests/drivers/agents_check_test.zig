@@ -210,9 +210,12 @@ test "a hash file that is not the sha256sum line of the copy is found" {
     });
 }
 
-test "CLAUDE.md imports AGENTS.md only on a line of its own outside a code block or code span" {
+const no_import = "CLAUDE.md does not import AGENTS.md: no line is exactly `@AGENTS.md` as a paragraph of its own (a blank line or the file's edge on each side) outside a code block or HTML comment";
+
+test "CLAUDE.md imports AGENTS.md only as a paragraph of its own outside a code block or HTML comment" {
     const s = try sumsOf(t.allocator, small_core);
     defer t.allocator.free(s);
+    const I = ac.import_line;
     const missing = [_][]const u8{
         "",
         "# CLAUDE.md\n\nRead AGENTS.md.\n",
@@ -221,41 +224,56 @@ test "CLAUDE.md imports AGENTS.md only on a line of its own outside a code block
         "@AGENTS.md \n", // anything after it
         " @AGENTS.md\n", // anything before it
         "@agents.md\n", // another case
-        "```\n" ++ ac.import_line ++ "\n```\n", // inside a fence
-        "  ```md\n" ++ ac.import_line ++ "\n```\n", // inside an indented fence with a language
-        "~~~\n" ++ ac.import_line ++ "\n~~~\n", // inside a tilde fence
-        "````\n```\n" ++ ac.import_line ++ "\n````\n", // a shorter fence inside a longer one does not close it
-        "~~~\n```\n" ++ ac.import_line ++ "\n~~~\n", // nor does a fence of the other character
-        "```\n" ++ ac.import_line ++ "\n", // inside a fence never closed
         "@AGENTS.md\r\n", // a CRLF line: strict, as the core is
-        "```\n```example\n" ++ ac.import_line ++ "\n```\n", // a backtick line with text after it does not close a fence
-        "~~~\n~~~ end\n" ++ ac.import_line ++ "\n~~~\n", // nor does a tilde line
-        "```\n```\t`\n" ++ ac.import_line ++ "\n```\n", // nor a backtick after the closer's spaces
-        "`example\n" ++ ac.import_line ++ "\n`\n", // inside a code span over three lines
-        "``a ` b\n" ++ ac.import_line ++ "\nc``\n", // inside a span of two backticks, which a single one does not close
-        "`open\n#tag\n" ++ ac.import_line ++ "\n`\n", // `#` with no space after it is no heading, so the span goes on
-        "Read \\\\`\n" ++ ac.import_line ++ "\n`\n", // an escaped backslash leaves the backtick after it to open a span
+        // not a paragraph of its own: the line before or after it is text, so it may be part of another construct
+        "Notes\n" ++ I ++ "\n", // after text
+        I ++ "\nNotes\n", // before text
+        "`open\n" ++ I ++ "\n`\n", // inside a code span over three lines
+        "text <a title=\"`\"> `open\n" ++ I ++ "\n`\n", // inside a code span after an HTML attribute holding a backtick
+        "<http://x/`> `open\n" ++ I ++ "\n`\n", // inside a code span after an autolink holding a backtick
+        "`open\n---\n" ++ I ++ "\n`\n", // after a setext underline: outside code, but not a paragraph of its own
+        "`open\n***\n" ++ I ++ "\n`\n", // after a thematic break: the same
+        "```\nx\n```\n" ++ I ++ "\n", // right after a closed fence
+        I ++ "\n---\n", // a setext heading's text
+        // inside a fenced code block
+        "```\n\n" ++ I ++ "\n\n```\n",
+        "  ```md\n\n" ++ I ++ "\n\n```\n", // an indented fence with a language
+        "~~~\n\n" ++ I ++ "\n\n~~~\n", // a tilde fence
+        "````\n```\n\n" ++ I ++ "\n\n````\n", // a shorter fence inside a longer one does not close it
+        "~~~\n```\n\n" ++ I ++ "\n\n~~~\n", // nor does a fence of the other character
+        "```\n\n" ++ I ++ "\n", // a fence never closed
+        "```\n```example\n\n" ++ I ++ "\n\n```\n", // a backtick line with text after it does not close a fence
+        "~~~\n~~~ end\n\n" ++ I ++ "\n\n~~~\n", // nor does a tilde line
+        "```\n```\t`\n\n" ++ I ++ "\n\n```\n", // nor a backtick after the closer's spaces
+        // inside an HTML comment
+        "<!--\n\n" ++ I ++ "\n\n-->\n",
+        "   <!-- a note\n\n" ++ I ++ "\n", // indented, never closed
+        "<!--\n-- not the end\n\n" ++ I ++ "\n\n-->\n", // `--` alone does not close it
     };
-    for (missing) |c| try expectFindings(small_agents, small_core, s, c, &.{"CLAUDE.md does not import AGENTS.md: no line is exactly `@AGENTS.md` outside a code block or code span"});
+    for (missing) |c| try expectFindings(small_agents, small_core, s, c, &.{no_import});
     const present = [_][]const u8{
-        "@AGENTS.md\n",
-        "@AGENTS.md", // no newline
-        "# CLAUDE.md\n\n" ++ ac.import_line ++ "\n\nThe repository's own notes.\n", // among other lines
-        "```\nan example\n```\n" ++ ac.import_line ++ "\n", // after a closed fence
-        "~~~\nan example\n~~~~\n" ++ ac.import_line ++ "\n", // after a tilde fence closed by a longer one
-        "``\n" ++ ac.import_line ++ "\n", // two backticks are no fence
-        "``code`` in a sentence\n" ++ ac.import_line ++ "\n", // nor are two backticks followed by text
-        "    ```\n" ++ ac.import_line ++ "\n", // four spaces of indent are no fence
-        "```example```\n" ++ ac.import_line ++ "\n", // a backtick line whose text holds a backtick opens no fence (it is a code span)
-        "~~~ a `b`\n~~~\n" ++ ac.import_line ++ "\n", // a tilde fence may have backticks in its text
-        "```\nx\n```  \t\n" ++ ac.import_line ++ "\n", // a closer followed by spaces and a tab closes
-        "~~~\nx\n  ~~~~ \n" ++ ac.import_line ++ "\n", // an indented, longer tilde closer with a space closes
-        "`one span`\n" ++ ac.import_line ++ "\n", // after a code span closed on its own line
-        "`a\nb`\n" ++ ac.import_line ++ "\n", // after a code span closed on a later line
-        "An unmatched ` here\n" ++ ac.import_line ++ "\n", // a backtick with no closer is literal
-        "An escaped \\` here\n" ++ ac.import_line ++ "\n`\n", // an escaped backtick opens no span
-        "`open\n\n" ++ ac.import_line ++ "\n", // a blank line ends the paragraph, so the span never opened
-        "`open\n# Heading\n" ++ ac.import_line ++ "\n`\n", // nor past a heading: the import starts a paragraph of its own
+        I ++ "\n",
+        I, // no newline
+        "# CLAUDE.md\n\n" ++ I ++ "\n\nThe repository's own notes.\n", // among other paragraphs
+        "Notes\n \t\n" ++ I ++ "\n", // a line of spaces and a tab is blank
+        "```\nan example\n```\n\n" ++ I ++ "\n", // after a closed fence
+        "~~~\nan example\n~~~~\n\n" ++ I ++ "\n", // after a tilde fence closed by a longer one
+        "```\nx\n```  \t\n\n" ++ I ++ "\n", // after a closer followed by spaces and a tab
+        "~~~\nx\n  ~~~~ \n\n" ++ I ++ "\n", // after an indented, longer tilde closer with a space
+        "```example```\n\n" ++ I ++ "\n", // a backtick line whose text holds a backtick opens no fence (it is a code span)
+        "~~~ a `b`\n~~~\n\n" ++ I ++ "\n", // a tilde fence may have backticks in its text
+        "``\n\n" ++ I ++ "\n", // two backticks are no fence
+        "    ```\n\n" ++ I ++ "\n", // four spaces of indent are no fence
+        "`open\n\n" ++ I ++ "\n\n`\n", // a span cannot reach past a blank line
+        "text <a title=\"`\"> `open\n\n" ++ I ++ "\n", // nor after an HTML attribute
+        "`open\n---\n\n" ++ I ++ "\n\n`\n", // after a setext heading
+        "`open\n***\n\n" ++ I ++ "\n", // after a thematic break
+        "- a list item\n\n" ++ I ++ "\n", // an unindented line after a blank line ends the list
+        "> a quote\n\n" ++ I ++ "\n", // and the block quote
+        "<!-- a note -->\n\n" ++ I ++ "\n", // after a comment closed on its line
+        "<!--\na note\n-->\n\n" ++ I ++ "\n", // after a comment closed on a later line
+        "    <!--\n\n" ++ I ++ "\n", // four spaces of indent are no comment
+        "Text <!--\n\n" ++ I ++ "\n", // nor is `<!--` after text
     };
     for (present) |c| try expectFindings(small_agents, small_core, s, c, &.{});
 }
@@ -267,7 +285,7 @@ test "every problem of the four files is reported together" {
     try expectFindings(try edit(a, small_agents, "One rule.", "One changed rule."), small_core, "", "", &.{
         "AGENTS.md:8: the shared core differs from tests/agents/shared_core.md:3: `- X1 BLOCK. One changed rule.` against `- X1 BLOCK. One rule.` (change the core in AGENTS.md, tests/agents/shared_core.md and tests/agents/shared_core.sha256 together)",
         "tests/agents/shared_core.sha256 is not one line `<64 lowercase hex>  shared_core.md` (what `sha256sum shared_core.md` writes): ``",
-        "CLAUDE.md does not import AGENTS.md: no line is exactly `@AGENTS.md` outside a code block or code span",
+        no_import,
     });
 }
 
@@ -291,14 +309,14 @@ test "markers that cannot delimit the core still let the hash and the import be 
     try expectFindings(small_core ++ ac.end_marker ++ "\n", small_core, "", "", &.{
         "AGENTS.md: the line `<!-- shared-core:begin -->` is there 0 times, not once",
         "tests/agents/shared_core.sha256 is not one line `<64 lowercase hex>  shared_core.md` (what `sha256sum shared_core.md` writes): ``",
-        "CLAUDE.md does not import AGENTS.md: no line is exactly `@AGENTS.md` outside a code block or code span",
+        no_import,
     });
     // the end before the begin, another digest, the import only inside a fence
     const swapped = "# AGENTS.md\n" ++ ac.end_marker ++ "\n" ++ small_core ++ ac.begin_marker ++ "\n";
     try expectFindings(swapped, small_core, "0" ** 64 ++ "  shared_core.md\n", "```\n@AGENTS.md\n```\n", &.{
         "AGENTS.md:2: the end of the shared core comes before its begin (line 7)",
         "tests/agents/shared_core.sha256 names 0000000000000000000000000000000000000000000000000000000000000000, but tests/agents/shared_core.md hashes to " ++ small_core_digest ++ ": the canonical core changed",
-        "CLAUDE.md does not import AGENTS.md: no line is exactly `@AGENTS.md` outside a code block or code span",
+        no_import,
     });
 }
 
