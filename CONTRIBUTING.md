@@ -7,11 +7,10 @@
   on manual dispatch, and on a pull request that carries the label `macos`
   (the macOS queue is slow, so add the label when your change touches
   platform-specific code).
-- A bug fix comes with a test that failed before the fix.
-- A behaviour change updates the golden files in `tests/golden` in the same
-  pull request, and says why.
-- Keep files small and the public surface smaller. Document only what the code
-  does.
+- The rules every change is written and reviewed against are in
+  [AGENTS.md](AGENTS.md), each with an id: among them, a bug fix comes with a
+  test that failed before the fix (T5), a behaviour change updates the golden
+  files (T19), and docs say only what the code does (P10).
 - Open an issue before a large change.
 - By contributing you agree your work is licensed under Apache-2.0.
 
@@ -82,7 +81,7 @@ Two builds describe the same program, and both stay.
   `//:workflows` (`tests/drivers/workflow_lint.zig`, over the workflows) and
   `//:lint_selftest` (both lints over `tests/lint/fixtures`, against the table in
   `tests/drivers/lint_selftest_test.zig`). Those readers are lenient about YAML, so `//:actionlint` also runs the pinned actionlint (1.7.12, as buildrules pins it) over every workflow, a strict parse (`lint.yml` installs the same release with `tools/install_actionlint.zig`). `farm.yml` runs them with `//...` (and fails a push to
-  `main` when the farm is not configured); `lint.yml` runs the same three tests with `zig test` on a
+  `main` when the farm is not configured); `lint.yml` runs the same Zig tests (with the release, autopin and `//:agents` checks) with `zig test` on a
   GitHub-hosted runner for every pull request, forks included, and every push to `main`, with no
   secret and a read-only token (without `BUILDRULES_TEST_WORK` they read the files `git ls-files`
   lists). The
@@ -161,11 +160,9 @@ when the scan cannot run (the download does not match its sha256, or the scanner
 
 A source file you add under `src/core`, `src/cli` or `registry/fake` is picked
 up by both (Buck2 takes each directory by glob; it skips dotfiles, so a new
-dotfile under `tests/` is named in `BUCK`). A new root source file, executable,
-module or `addTest` in `build.zig` needs the matching `zig_exe`, `zig_module`
-or `zig_test` in `BUCK`: `//:build_parity` (`zig test tools/build_parity.zig`
-from the root) fails when they differ. A call in `BUCK` with no `build.zig`
-counterpart (a helper, a driver) says `buck-only` on its first line.
+dotfile under `tests/` is named in `BUCK`). Keeping `build.zig` and `BUCK` in
+step is rule B18 of [AGENTS.md](AGENTS.md), with what it asks of each;
+`//:build_parity` (`zig test tools/build_parity.zig` from the root) checks it.
 
 The unit tests read `tests/...` relative to the working directory, the
 repository root under `zig build test` and in the Buck2 action; a runner that
