@@ -76,14 +76,16 @@ program. The tool of T11 is a Zig tool here (B7).
 - B1 BLOCK. Name targets; never `komira//...` in scripts, docs, or CI. A PR that reports build results uses the form `Commands: N (cached: N, remote: N, local: N)` with `local: 0`.
 - B2 SHOULD. No `--no-remote-cache`, `--isolation-dir`, or `buck2 killall` in committed scripts, docs, or CI, except a stated reproducibility or flake need, a sanctioned cold measurement, or a second concurrent daemon.
 - B4 BLOCK. No new shell scripts, shell actions in rules, or multi-line logic in workflow `run:` steps where a Zig/Rust/Starlark target will do. Every CI step is one named command or Buck2 target. No `sh -c` in production code. New scripts are shellcheck and `bash -n` clean.
-- B5 BLOCK. No Python (or other unpinned interpreter) dependency for non-Python targets: no `py_test`, `pyrun`, helper `.py` scripts. Allowed: Python SDK, UDF runtime, existing fixture generators.
+- B5 BLOCK. No Python (or other unpinned interpreter) dependency for non-Python targets: no `py_test`, `pyrun`, helper `.py` scripts.
 - B6 BLOCK. No negative fixtures or lints that only test buck2 built-ins or duplicate what the build already enforces. Negative fixtures for our own rules sit outside the PR query universe. A target the selection query cannot analyze fails loudly by name and never widens the PR check.
 - B7 SHOULD. Build tooling is Zig with Zig tests, one test target per scenario. A tool in another language needs a written justification.
 - B11 BLOCK. Release platforms are `linux-x86_64`, `linux-arm64`, `macos-arm64` only. Platform selection uses only daemon-reported properties; no hand-set `pool=` labels; unknown platform keys are refused loudly; `os_version` means at-least.
 
 ### Rust
 
-The registry's functions (`service/lambda/*`) and the Lambda packaging canary (`tools/lambda`), one Cargo workspace (`Cargo.toml`).
+The registry's functions (`service/lambda/*`) and the Lambda packaging canary (`tools/lambda`), one Cargo workspace (`Cargo.toml`). The
+workspace's `//:lint` runs clippy without denying warnings, and no target runs `cargo fmt --check` or `cargo deny`: until one does, R1 and R6
+are held in review.
 
 - R1 BLOCK. `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings` are green. No new `#[allow(...)]`/`#![allow(...)]` without a stated reason.
 - R2 BLOCK. No new `unsafe`. The one `unsafe` block is the canary test's call into AWS-LC's C API (`tools/lambda/canary/tls_test.rs`).
@@ -98,7 +100,7 @@ The registry's functions (`service/lambda/*`) and the Lambda packaging canary (`
 
 ### Mojo
 
-The Mojo here is test fixtures, examples and the scaffold goldens (`tests/`, `examples/`). Checked on added lines only.
+The Mojo here is test fixtures, examples and the scaffold goldens (`tests/`, `examples/`). The rules apply to added lines.
 
 - M1 BLOCK. No pointer type in a public API. No public `fn`/`def`/struct field takes or returns `UnsafePointer`, `Pointer[`, or an alias that resolves to one. Expose values, `ref [origin] T`, `ByteView`, `OwnedPointer[T]`, or `ArcPointer[T]`.
 - M2 SHOULD. Prefer, in order: no pointer, `OwnedPointer`, `ArcPointer` (shared ownership only), then a concrete-origin `UnsafePointer` inside a body or private signature.
