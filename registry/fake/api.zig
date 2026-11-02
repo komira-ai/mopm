@@ -92,10 +92,12 @@ fn match(arena: Allocator, pattern: []const []const u8, segs: []const []const u8
 }
 
 pub fn handle(ctx: *Ctx) anyerror!Response {
-    if (std.mem.startsWith(u8, ctx.path, "/channel/") or std.mem.startsWith(u8, ctx.path, "/index/")) return files.serve(ctx);
     const upload_prefix = "/_fake/upload/";
+    const is_control = std.mem.startsWith(u8, ctx.path, "/_fake/") and !std.mem.startsWith(u8, ctx.path, upload_prefix);
+    if (is_control) return control.handle(ctx);
+    ctx.state.api_requests += 1;
+    if (std.mem.startsWith(u8, ctx.path, "/channel/") or std.mem.startsWith(u8, ctx.path, "/index/")) return files.serve(ctx);
     if (std.mem.startsWith(u8, ctx.path, upload_prefix)) return publish.uploadBytes(ctx, ctx.path[upload_prefix.len..]);
-    if (std.mem.startsWith(u8, ctx.path, "/_fake/")) return control.handle(ctx);
     if (!std.mem.startsWith(u8, ctx.path, prefix ++ "/")) {
         return resp.fail(ctx.arena, .route_not_found, &.{});
     }

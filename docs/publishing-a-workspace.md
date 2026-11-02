@@ -39,6 +39,8 @@ A dependency on another member (a path dependency, or a registry dependency whos
 
 The run exits 0 when the set is staged, 1 when it refused or failed, and 2 for a usage error. A set with a `refuse` member is written all the same and `mopm stage` exits 1; `mopm publish --staged` will not send it.
 
+The readmes of the members to upload travel in the body of the group's commit request, and the registry's function takes that request with the body escaped into it, at most 6 MiB in all. After the registry has answered for every member, and before it writes anything, `mopm stage` refuses a set whose commit body could take more than 6 MiB less 64 KiB there, naming the three largest readmes ("...; nothing was written"), and exits 1. The size is counted conservatively: the larger of the body's base64 and the body as one JSON string, in which every character outside ASCII counts as `\u` escapes. That holds about 4.45 MiB of plain text, and less of text full of quotes, backslashes, control characters or non-ASCII characters. Shorten the readmes or stage fewer packages in one group.
+
 ### mopm publish --staged
 
 ```text
@@ -60,7 +62,7 @@ mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>
 
 The token is `$MOPM_TOKEN`, else the login's. It is read after the plan has been checked, goes only to the registry's API, is never printed, and is not in the environment of any program mopm starts. The uploads themselves carry no token.
 
-Before it sends anything, mopm checks every file against `plan.json`. Then it asks for the group (one request, repeated while the registry is still reserving the members), uploads each file the registry does not hold, member by member in dependency order, commits the group, and waits. The command exits 0 only when the group is visible.
+Before it sends anything, mopm checks every file against `plan.json`, reads the readmes and builds the commit request; a set whose commit request is over the size `mopm stage` holds it to is refused here, naming the largest readmes ("...; nothing was sent"), on a first run and on a resume, with `--dry-run` and `--no-commit` too (`--abort` reads no readme and is not refused). The commit sends the readmes as this check read them. Then it asks for the group (one request, repeated while the registry is still reserving the members), uploads each file the registry does not hold, member by member in dependency order, commits the group, and waits. The command exits 0 only when the group is visible.
 
 A member the registry rejects ends the whole group, and none of its members is published. A rejected group frees its version numbers. A group that fails after the registry has begun to copy files burns them, and the next run needs new version numbers.
 

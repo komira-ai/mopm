@@ -559,6 +559,21 @@ pub fn run(r: Run) !u8 {
         }
     }
 
+    // The commit request carries the readme of every member to upload; a request too large for the registry is refused here,
+    // before anything is written (the registry was asked only about the members, as above).
+    var entries = std.ArrayList(plan_mod.CommitEntry).init(arena);
+    for (staged.items, verdicts.items) |s, v| {
+        if (v != .upload) continue;
+        try entries.append(.{ .name = s.member.name, .manifest_sha256 = &s.packs[0].manifest_sha256, .readme = s.readme });
+    }
+    switch (try plan_mod.commitOf(arena, entries.items)) {
+        .body => {},
+        .bad => |why| {
+            c.fail("{s}; nothing was written\n", .{why});
+            return 1;
+        },
+    }
+
     // Everything is known: write. The old plan goes first, so a run that dies half way leaves no plan to publish.
     var out = std.fs.cwd().makeOpenPath(r.flags.out, .{}) catch |e| {
         c.fail("--out {s}: {s}\n", .{ r.flags.out, @errorName(e) });
