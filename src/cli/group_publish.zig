@@ -348,6 +348,9 @@ pub const Publisher = struct {
     console: *Console,
     dir: std.fs.Dir,
     plan: plan_mod.Plan,
+    /// The commit request's body, built by `plan_mod.verify` from the readmes it checked: the commit sends these bytes and
+    /// reads no readme again.
+    commit_body: []const u8,
     /// The registry's API root, without a trailing slash (`http://127.0.0.1:1234/api/v1`).
     api_url: []const u8,
     token: []const u8,
@@ -424,32 +427,6 @@ pub const Publisher = struct {
                 try w.print(",\"sha256\":\"{s}\",\"size\":{d}}}", .{ f.sha256, f.size });
             }
             try w.writeAll("]}");
-        }
-        try w.writeAll("]}");
-        return out.items;
-    }
-
-    fn commitBody(p: *Publisher) Stop![]const u8 {
-        var out = std.ArrayList(u8).init(p.arena);
-        const w = out.writer();
-        try w.writeAll("{\"members\":[");
-        var first = true;
-        for (p.plan.members) |m| {
-            if (m.action != .upload) continue;
-            if (!first) try w.writeByte(',');
-            first = false;
-            try w.writeAll("{\"name\":");
-            try std.json.encodeJsonString(m.name, .{}, w);
-            try w.print(",\"manifest_sha256\":\"{s}\"", .{m.manifest_sha256});
-            if (m.readme) |path| {
-                const text = p.dir.readFileAlloc(p.arena, path, plan_mod.max_readme_bytes + 1) catch |e| {
-                    p.console.fail("the readme {s} of {s}: {s}\n", .{ path, m.name, @errorName(e) });
-                    return error.Failed;
-                };
-                try w.writeAll(",\"readme\":");
-                try std.json.encodeJsonString(text, .{}, w);
-            }
-            try w.writeByte('}');
         }
         try w.writeAll("]}");
         return out.items;
@@ -611,7 +588,7 @@ pub const Publisher = struct {
 
     fn commit(p: *Publisher) Stop!void {
         const path = try std.fmt.allocPrint(p.arena, "/groups/{s}/commit", .{p.state.group_id});
-        const a = try p.call(.POST, path, try p.commitBody());
+        const a = try p.call(.POST, path, p.commit_body);
         if (!a.ok()) return p.refuse(a);
         p.state.committed = true;
         p.state.staged = false;
@@ -891,9 +868,13 @@ pub fn main(arena: Allocator, args: []const []const u8, cli_version: []const u8)
     };
 }
 
-/// The plan of a staged directory, or why the run stops before any request: the plan cannot be read or parsed, refuses a
-/// member, or its files are not as it says (this includes a commit request the registry would refuse).
-pub const Planned = union(enum) { ok: plan_mod.Plan, bad: []const u8 };
+/// A staged directory fit to run: its plan and the commit body `plan_mod.verify` built (null for `--abort`, which sends no
+/// commit).
+pub const Checked = struct { plan: plan_mod.Plan, commit_body: ?[]const u8 };
+
+/// The checked plan of a staged directory, or why the run stops before any request: the plan cannot be read or parsed,
+/// refuses a member, or its files are not as it says (this includes a commit request too large for the registry).
+pub const Planned = union(enum) { ok: Checked, bad: []const u8 };
 
 /// Reads the plan of `dir` and, unless the run is an `--abort`, checks it. An abort only ends the group `state.json` names
 /// and sends no file or readme, so it reads the plan and nothing more: a set that can no longer be published can still be
@@ -906,14 +887,14 @@ pub fn checkedPlan(arena: Allocator, dir: std.fs.Dir, staged: []const u8, abort:
         .ok => |p| p,
         .bad => |why| return .{ .bad = why },
     };
-    if (abort) return .{ .ok = plan };
+    if (abort) return .{ .ok = .{ .plan = plan, .commit_body = null } };
     if (plan_mod.refusedMember(plan)) |m| {
         return .{ .bad = try std.fmt.allocPrint(arena, "the plan refuses {s} {s}{s}{s}; nothing was sent", .{ m.name, m.version, if (m.reason.len > 0) ": " else "", m.reason }) };
     }
-    if (try plan_mod.verify(arena, dir, plan)) |why| {
-        return .{ .bad = try std.fmt.allocPrint(arena, "{s}; nothing was sent", .{why}) };
-    }
-    return .{ .ok = plan };
+    return switch (try plan_mod.verify(arena, dir, plan)) {
+        .body => |body| .{ .ok = .{ .plan = plan, .commit_body = body } },
+        .bad => |why| .{ .bad = try std.fmt.allocPrint(arena, "{s}; nothing was sent", .{why}) },
+    };
 }
 
 /// The time limit and the retries `flags` ask for.
@@ -929,20 +910,21 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
         return 1;
     };
     defer dir.close();
-    const plan = switch (try checkedPlan(arena, dir, flags.staged, flags.abort)) {
-        .ok => |p| p,
+    const checked = switch (try checkedPlan(arena, dir, flags.staged, flags.abort)) {
+        .ok => |c| c,
         .bad => |why| {
             err("{s}\n", .{why});
             return 1;
         },
     };
+    const plan = checked.plan;
     var console = Console.init(arena, Console.stdStreams);
     if (flags.abort) return abortCommand(arena, flags, cli_version, net, dir, plan, &console);
     const uploads = try plan.uploads(arena);
     if (flags.dry_run) return dryRun(flags, plan, uploads, &console);
     if (uploads.len == 0) {
         console.say("nothing to publish: every member of the plan is skipped\n", .{});
-        var idle = Publisher{ .arena = arena, .net = net, .console = &console, .dir = dir, .plan = plan, .api_url = flags.registry, .token = "", .wait_secs = 0, .state = .{ .registry = flags.registry, .plan_sha256 = plan.sha256 } };
+        var idle = Publisher{ .arena = arena, .net = net, .console = &console, .dir = dir, .plan = plan, .commit_body = "", .api_url = flags.registry, .token = "", .wait_secs = 0, .state = .{ .registry = flags.registry, .plan_sha256 = plan.sha256 } };
         // No request is made, so no registry is resolved: the report names the registry as it was given.
         const code = idle.finish(.published);
         return code;
@@ -957,6 +939,8 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
         .console = &console,
         .dir = dir,
         .plan = plan,
+        // Not an abort: checkedPlan verified the plan and built the body.
+        .commit_body = checked.commit_body.?,
         .api_url = creds.api_url,
         .token = creds.token,
         .wait_secs = flags.wait_secs orelse defaultWaitFor(uploads.len),
@@ -1044,6 +1028,8 @@ fn abortCommand(arena: Allocator, flags: Flags, cli_version: []const u8, net: Ne
         .console = console,
         .dir = dir,
         .plan = plan,
+        // An abort sends no commit.
+        .commit_body = "",
         .api_url = creds.api_url,
         .token = creds.token,
         .wait_secs = 0,

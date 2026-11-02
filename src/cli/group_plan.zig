@@ -205,37 +205,131 @@ pub fn filePath(arena: Allocator, f: File) Allocator.Error![]const u8 {
     return std.fmt.allocPrint(arena, "{s}/{s}", .{ f.subdir, f.filename });
 }
 
-/// Hashes every file of the upload members against the plan, and reads the readmes: the first thing that is not as the plan
-/// says (a file that is missing, of another size or another sha256, or a readme that cannot be sent), or null. Nothing has
-/// been sent when this runs; the bytes that are checked here are checked again as each one is read for its PUT.
-pub fn verify(arena: Allocator, dir: std.fs.Dir, plan: Plan) Allocator.Error!?[]const u8 {
-    var entries = std.ArrayList(CommitEntry).init(arena);
+/// Hashes every file of the upload members against the plan, then reads the readmes and builds the commit body
+/// (`readCommit`): that body, or the first thing that is not as the plan says (a file that is missing, of another size or
+/// another sha256, a readme that cannot be sent, or a body too large for the registry). Nothing has been sent when this
+/// runs; the files checked here are checked again as each one is read for its PUT, and the body returned is the one the
+/// commit sends, so a readme changed after this check does not reach the registry.
+pub fn verify(arena: Allocator, dir: std.fs.Dir, plan: Plan) Allocator.Error!Commit {
     for (plan.members) |m| {
         if (m.action != .upload) continue;
         for (m.files) |f| {
             const path = try filePath(arena, f);
-            const got = sumOf(dir, path) catch |e| return try std.fmt.allocPrint(arena, "{s} of {s}: {s}", .{ path, m.name, @errorName(e) });
-            if (got.size != f.size) return try std.fmt.allocPrint(arena, "{s} of {s} is {d} bytes; the plan says {d}", .{ path, m.name, got.size, f.size });
-            if (!std.mem.eql(u8, &got.sha256, f.sha256)) return try std.fmt.allocPrint(arena, "{s} of {s} has the sha256 {s}; the plan says {s}", .{ path, m.name, &got.sha256, f.sha256 });
-        }
-        if (m.readme) |r| {
-            const text = dir.readFileAlloc(arena, r, max_readme_bytes + 1) catch |e| return try std.fmt.allocPrint(arena, "the readme {s} of {s}: {s}", .{ r, m.name, @errorName(e) });
-            if (text.len > max_readme_bytes) return try std.fmt.allocPrint(arena, "the readme {s} of {s} is over {d} bytes", .{ r, m.name, max_readme_bytes });
-            if (!std.unicode.utf8ValidateSlice(text)) return try std.fmt.allocPrint(arena, "the readme {s} of {s} is not UTF-8 text", .{ r, m.name });
-            try entries.append(.{ .name = m.name, .manifest_sha256 = m.manifest_sha256, .readme = text });
-        } else {
-            try entries.append(.{ .name = m.name, .manifest_sha256 = m.manifest_sha256, .readme = null });
+            const got = sumOf(dir, path) catch |e| return .{ .bad = try std.fmt.allocPrint(arena, "{s} of {s}: {s}", .{ path, m.name, @errorName(e) }) };
+            if (got.size != f.size) return .{ .bad = try std.fmt.allocPrint(arena, "{s} of {s} is {d} bytes; the plan says {d}", .{ path, m.name, got.size, f.size }) };
+            if (!std.mem.eql(u8, &got.sha256, f.sha256)) return .{ .bad = try std.fmt.allocPrint(arena, "{s} of {s} has the sha256 {s}; the plan says {s}", .{ path, m.name, &got.sha256, f.sha256 }) };
         }
     }
-    return commitBodyProblem(arena, entries.items);
+    return readCommit(arena, dir, plan);
 }
 
-/// The most the commit request's JSON body may be. The registry's API function takes a request of at most 6 MiB, its
-/// envelope included, and every readme travels in that body; the client keeps to 5 MiB so the envelope has room.
-pub const max_commit_body_bytes: usize = 5 * 1024 * 1024;
+/// The body of the commit request, or why it cannot be sent.
+pub const Commit = union(enum) { body: []const u8, bad: []const u8 };
+
+/// Reads the readmes of the upload members as they are now in `dir` and builds the commit body (`commitOf`); the reason when
+/// a readme cannot be read, is over `max_readme_bytes` or is not UTF-8, or when the body is too large.
+pub fn readCommit(arena: Allocator, dir: std.fs.Dir, plan: Plan) Allocator.Error!Commit {
+    var entries = std.ArrayList(CommitEntry).init(arena);
+    for (plan.members) |m| {
+        if (m.action != .upload) continue;
+        var text: ?[]const u8 = null;
+        if (m.readme) |r| {
+            const got = dir.readFileAlloc(arena, r, max_readme_bytes + 1) catch |e| return .{ .bad = try std.fmt.allocPrint(arena, "the readme {s} of {s}: {s}", .{ r, m.name, @errorName(e) }) };
+            if (got.len > max_readme_bytes) return .{ .bad = try std.fmt.allocPrint(arena, "the readme {s} of {s} is over {d} bytes", .{ r, m.name, max_readme_bytes }) };
+            if (!std.unicode.utf8ValidateSlice(got)) return .{ .bad = try std.fmt.allocPrint(arena, "the readme {s} of {s} is not UTF-8 text", .{ r, m.name }) };
+            text = got;
+        }
+        try entries.append(.{ .name = m.name, .manifest_sha256 = m.manifest_sha256, .readme = text });
+    }
+    return commitOf(arena, entries.items);
+}
+
+/// The registry's API function is invoked with one event of at most 6 MiB (the function service's limit on a synchronous
+/// request), and the request's body travels inside it: as one JSON string, or as base64 when the gateway takes the body
+/// for binary.
+pub const max_event_bytes: usize = 6 * 1024 * 1024;
+
+/// Kept free in that event for what is not the body: the request's headers (the token among them) and its context.
+pub const event_room_bytes: usize = 64 * 1024;
+
+/// mopm's own cutoff for what the commit body may take in the event: the function's limit less the room. It is
+/// conservative: the size it is held to is the larger of the two encodings, with every non-ASCII character counted as the
+/// `\u` escapes a serialiser may write for it.
+pub const max_event_body_bytes: usize = max_event_bytes - event_room_bytes;
 
 /// What one upload member puts in the commit body.
 pub const CommitEntry = struct { name: []const u8, manifest_sha256: []const u8, readme: ?[]const u8 };
+
+/// The commit request's JSON body for these members, as `group_publish` sends it:
+/// `{"members":[{"name":<name>,"manifest_sha256":"<sha>","readme":<text>},...]}`; a member without a readme has no
+/// `readme`, and one with an empty readme has `"readme":""`.
+pub fn commitBody(arena: Allocator, entries: []const CommitEntry) Allocator.Error![]const u8 {
+    var out = std.ArrayList(u8).init(arena);
+    const w = out.writer();
+    try w.writeAll("{\"members\":[");
+    for (entries, 0..) |e, i| {
+        if (i != 0) try w.writeByte(',');
+        try w.writeAll("{\"name\":");
+        try std.json.encodeJsonString(e.name, .{}, w);
+        try w.writeAll(",\"manifest_sha256\":");
+        try std.json.encodeJsonString(e.manifest_sha256, .{}, w);
+        if (e.readme) |r| {
+            try w.writeAll(",\"readme\":");
+            try std.json.encodeJsonString(r, .{}, w);
+        }
+        try w.writeByte('}');
+    }
+    try w.writeAll("]}");
+    return out.items;
+}
+
+/// The most bytes `body` (UTF-8) takes in the function's event: the larger of its base64 and of it as one JSON string, in
+/// which a quote or a backslash is two bytes, a control character six (`\u0000`), and a character outside ASCII the
+/// `\u` escapes of its UTF-16 units (six bytes, twelve for one above U+FFFF).
+pub fn eventBytes(body: []const u8) usize {
+    var json: usize = 2;
+    for (body) |c| json += switch (c) {
+        '"', '\\' => 2,
+        0x00...0x1f, 0x7f => 6,
+        0x20...0x21, 0x23...0x5b, 0x5d...0x7e => 1,
+        // A continuation byte: counted with the first byte of its character.
+        0x80...0xbf => 0,
+        0xc0...0xef => 6,
+        0xf0...0xff => 12,
+    };
+    return @max(json, std.base64.standard.Encoder.calcSize(body.len));
+}
+
+/// The commit body for these members, or why it is too large: the reason names the largest readmes, by what each adds to
+/// the request, and says the limit is mopm's. Checked before anything is written or sent: the commit is the last request of
+/// a run, and a refusal there would come after every upload.
+pub fn commitOf(arena: Allocator, entries: []const CommitEntry) Allocator.Error!Commit {
+    const body = try commitBody(arena, entries);
+    const size = eventBytes(body);
+    if (size <= max_event_body_bytes) return .{ .body = body };
+    var list = std.ArrayList(u8).init(arena);
+    const w = list.writer();
+    try w.print(
+        "the commit request of the {d} members to upload is {d} bytes, which can take {d} bytes in the event the registry's function is invoked with; mopm keeps that to at most {d}, so the event fits the function's limit of {d} with room for the headers.",
+        .{ entries.len, body.len, size, max_event_body_bytes, max_event_bytes },
+    );
+    // The readmes, ranked by the bytes each adds to the request (its text as JSON escapes it, without the quotes).
+    const sizes = try arena.alloc(usize, entries.len);
+    const order = try arena.alloc(usize, entries.len);
+    for (sizes, order, entries, 0..) |*z, *o, e, i| {
+        z.* = if (e.readme) |r| jsonBytes(r) - 2 else 0;
+        o.* = i;
+    }
+    std.mem.sort(usize, order, @as([]const usize, sizes), biggerFirst);
+    var named: usize = 0;
+    for (order) |i| {
+        if (named == 3 or entries[i].readme == null) break;
+        try w.print("{s}{s} ({d} bytes in the request)", .{ if (named == 0) " The largest readmes: " else ", ", entries[i].name, sizes[i] });
+        named += 1;
+    }
+    try w.writeAll(if (named > 0) ". Shorten them or publish fewer packages in one group" else " No member has a readme: publish fewer packages in one group");
+    return .{ .bad = list.items };
+}
 
 fn jsonBytes(s: []const u8) usize {
     var cw = std.io.countingWriter(std.io.null_writer);
@@ -243,49 +337,8 @@ fn jsonBytes(s: []const u8) usize {
     return @intCast(cw.bytes_written);
 }
 
-fn entryBytes(e: CommitEntry) usize {
-    // {"name":<name>,"manifest_sha256":"<sha>"[,"readme":<text>]}
-    var n: usize = 8 + jsonBytes(e.name) + 20 + e.manifest_sha256.len + 1 + 1;
-    if (e.readme) |r| n += 10 + jsonBytes(r);
-    return n;
-}
-
-/// The exact length of the commit body `group_publish` sends for these members.
-pub fn commitBodyBytes(entries: []const CommitEntry) usize {
-    var n: usize = 12 + 2; // {"members":[ ... ]}
-    for (entries, 0..) |e, i| n += entryBytes(e) + @intFromBool(i != 0);
-    return n;
-}
-
 fn biggerFirst(sizes: []const usize, a: usize, b: usize) bool {
     return sizes[a] > sizes[b];
-}
-
-/// Why the commit body would be too large for the registry, naming the largest readmes, or null when it fits. Checked before
-/// anything is sent: the commit is the last request of a run, and a refusal there would come after every upload.
-pub fn commitBodyProblem(arena: Allocator, entries: []const CommitEntry) Allocator.Error!?[]const u8 {
-    const total = commitBodyBytes(entries);
-    if (total <= max_commit_body_bytes) return null;
-    // Readmes are ranked by what they add to the body, escaping included; each is measured once.
-    const sizes = try arena.alloc(usize, entries.len);
-    const order = try arena.alloc(usize, entries.len);
-    for (sizes, order, entries, 0..) |*z, *o, e, i| {
-        z.* = if (e.readme) |r| jsonBytes(r) else 0;
-        o.* = i;
-    }
-    std.mem.sort(usize, order, @as([]const usize, sizes), biggerFirst);
-    var list = std.ArrayList(u8).init(arena);
-    const w = list.writer();
-    for (order[0..@min(order.len, 3)], 0..) |i, k| {
-        if (entries[i].readme == null) break;
-        // The bytes it adds to the request: its text as JSON escapes it, without the two quotes.
-        try w.print("{s}{s} ({d} bytes in the request)", .{ if (k == 0) "" else ", ", entries[i].name, sizes[i] - 2 });
-    }
-    return try std.fmt.allocPrint(
-        arena,
-        "the readmes of the {d} members make a commit request of {d} bytes; the registry takes at most {d}. The largest readmes: {s}. Shorten them or publish fewer packages in one group",
-        .{ entries.len, total, max_commit_body_bytes, list.items },
-    );
 }
 
 /// The bytes of a file, checked against the plan once more; the reason when they are not the planned ones.
@@ -513,29 +566,29 @@ test "verify finds a missing file, another size, another sha256 and a bad readme
     , .{ sha_a, sha });
     const plan = try okPlan(a, text);
     // The readme is missing at first.
-    try std.testing.expect(std.mem.indexOf(u8, (try verify(a, tmp.dir, plan)).?, "the readme R.md of a: FileNotFound") != null);
+    try std.testing.expect(std.mem.indexOf(u8, (try verify(a, tmp.dir, plan)).bad, "the readme R.md of a: FileNotFound") != null);
     try tmp.dir.writeFile("R.md", "# a\n");
-    try std.testing.expect((try verify(a, tmp.dir, plan)) == null);
+    try std.testing.expect((try verify(a, tmp.dir, plan)) == .body);
     try tmp.dir.writeFile("R.md", "\xff\xfe");
-    try std.testing.expect(std.mem.indexOf(u8, (try verify(a, tmp.dir, plan)).?, "not UTF-8") != null);
+    try std.testing.expect(std.mem.indexOf(u8, (try verify(a, tmp.dir, plan)).bad, "not UTF-8") != null);
     const big = try a.alloc(u8, max_readme_bytes + 1);
     @memset(big, 'a');
     try tmp.dir.writeFile("R.md", big);
-    try std.testing.expect(std.mem.indexOf(u8, (try verify(a, tmp.dir, plan)).?, "is over 65536 bytes") != null);
+    try std.testing.expect(std.mem.indexOf(u8, (try verify(a, tmp.dir, plan)).bad, "is over 65536 bytes") != null);
     try tmp.dir.writeFile("R.md", "# a\n");
 
     try std.testing.expect((try readChecked(a, tmp.dir, plan.members[0].files[0])) == .bytes);
     try tmp.dir.writeFile("noarch/f.conda", "0123456780");
-    try std.testing.expect(std.mem.indexOf(u8, (try verify(a, tmp.dir, plan)).?, "has the sha256") != null);
+    try std.testing.expect(std.mem.indexOf(u8, (try verify(a, tmp.dir, plan)).bad, "has the sha256") != null);
     try std.testing.expect(std.mem.indexOf(u8, (try readChecked(a, tmp.dir, plan.members[0].files[0])).bad, "changed since the plan was read") != null);
     try tmp.dir.writeFile("noarch/f.conda", "short");
-    try std.testing.expect(std.mem.indexOf(u8, (try verify(a, tmp.dir, plan)).?, "is 5 bytes; the plan says 10") != null);
+    try std.testing.expect(std.mem.indexOf(u8, (try verify(a, tmp.dir, plan)).bad, "is 5 bytes; the plan says 10") != null);
     try tmp.dir.deleteFile("noarch/f.conda");
-    try std.testing.expect(std.mem.indexOf(u8, (try verify(a, tmp.dir, plan)).?, "FileNotFound") != null);
+    try std.testing.expect(std.mem.indexOf(u8, (try verify(a, tmp.dir, plan)).bad, "FileNotFound") != null);
     try std.testing.expect(std.mem.indexOf(u8, (try readChecked(a, tmp.dir, plan.members[0].files[0])).bad, "FileNotFound") != null);
     // Members that are not uploaded are not looked at.
     const skipped = try okPlan(a, "{\"version\":1,\"members\":[{\"name\":\"a\",\"version\":\"1.0.0\",\"action\":\"skip\"}]}");
-    try std.testing.expect((try verify(a, tmp.dir, skipped)) == null);
+    try std.testing.expect((try verify(a, tmp.dir, skipped)) == .body);
 }
 
 test "the state and the report are written whole, and the state is read back" {

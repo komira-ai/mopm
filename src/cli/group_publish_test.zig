@@ -34,7 +34,10 @@ pub const Script = struct {
         advance_clock: i64 = 0,
         /// The request fails with this error, as a broken or silent connection does, and gets no answer.
         err: ?anyerror = null,
+        /// A file changed while this request is answered: written with `bytes`, or deleted when `bytes` is null.
+        rewrite: ?Rewrite = null,
     };
+    pub const Rewrite = struct { dir: std.fs.Dir, path: []const u8, bytes: ?[]const u8 };
     pub const Seen = struct { method: std.http.Method, url: []const u8, token: ?[]const u8, body: ?[]const u8, content_type_set: bool, timeout_secs: u32 };
 
     /// More requests than any test legitimately makes (the longest poll is under a hundred).
@@ -76,6 +79,9 @@ pub const Script = struct {
             return error.ConnectionRefused;
         }
         s.clock += step.advance_clock;
+        if (step.rewrite) |r| {
+            if (r.bytes) |b| try r.dir.writeFile(r.path, b) else try r.dir.deleteFile(r.path);
+        }
         if (step.err) |e| return e;
         return .{ .status = step.status, .body = step.body, .request_id = "req-test", .retry_after = step.retry_after };
     }
@@ -155,12 +161,18 @@ const group_status = struct {
 const err_404 = "{\"error\":{\"code\":\"route_not_found\",\"message\":\"There is no such operation.\",\"hint\":\"x\"}}";
 
 fn publisher(a: Allocator, tmp: *std.testing.TmpDir, plan: plan_mod.Plan, script: *Script, console: *Console) Publisher {
+    return publisherWith(a, tmp, plan, (plan_mod.readCommit(a, tmp.dir, plan) catch @panic("out of memory")).body, script, console);
+}
+
+/// A publisher that sends `commit_body` as its commit, as `command` does with the body `checkedPlan` built.
+fn publisherWith(a: Allocator, tmp: *std.testing.TmpDir, plan: plan_mod.Plan, commit_body: []const u8, script: *Script, console: *Console) Publisher {
     return .{
         .arena = a,
         .net = script.net(),
         .console = console,
         .dir = tmp.dir,
         .plan = plan,
+        .commit_body = commit_body,
         .api_url = "http://127.0.0.1:1/api/v1",
         .token = "mopm_test_token",
         .wait_secs = 30,
@@ -1060,34 +1072,30 @@ test "group ids" {
     try std.testing.expect(!isGroupId(""));
 }
 
-test "a readme goes with the commit; one that vanished after the check stops the run" {
+test "a readme goes with the commit as it was checked; one deleted or changed during the run is not read again" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
     const a = st.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const plan = try stageWith(a, &tmp, "", true);
-    try std.testing.expect((try plan_mod.verify(a, tmp.dir, plan)) == null);
-    var script = newScript(a, &.{
-        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = createAnswer("open", .{ true, true, true }) },
-        .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
-        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
-    });
-    var console = Console.init(a, null);
-    var p = publisher(a, &tmp, plan, &script, &console);
-    try std.testing.expectEqual(Result.published, p.run());
-    try expectContains(script.seen.items[1].body.?, "{\"name\":\"a\",\"manifest_sha256\":\"" ++ sha_x ++ "\",\"readme\":\"# a readme\\n\"}");
-    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, script.seen.items[1].body.?, "\"readme\""));
-
-    try tmp.dir.deleteFile("R.md");
-    var again = newScript(a, &.{
-        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = createAnswer("open", .{ true, true, true }) },
-    });
-    var c2 = Console.init(a, null);
-    var q = publisher(a, &tmp, plan, &again, &c2);
-    try std.testing.expectEqual(Result.failed, q.run());
-    try expectContains(c2.err.items, "the readme R.md of a: FileNotFound");
-    try std.testing.expectEqual(@as(usize, 1), again.seen.items.len);
+    _ = try stageWith(a, &tmp, "", true);
+    const checked = try okOf(try gp.checkedPlan(a, tmp.dir, "staged", false));
+    const sent_readme = "{\"name\":\"a\",\"manifest_sha256\":\"" ++ sha_x ++ "\",\"readme\":\"# a readme\\n\"}";
+    // The readme is deleted, then rewritten, while the run is under way (as the registry answers the create).
+    for ([_]?[]const u8{ null, "# another readme, with \"quotes\" that the check never saw\n" }) |now| {
+        var script = newScript(a, &.{
+            .{ .method = .POST, .suffix = "/groups", .status = 201, .body = createAnswer("open", .{ true, true, true }), .rewrite = .{ .dir = tmp.dir, .path = "R.md", .bytes = now } },
+            .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
+            .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
+        });
+        var console = Console.init(a, null);
+        var p = publisherWith(a, &tmp, checked.plan, checked.commit_body.?, &script, &console);
+        try std.testing.expectEqual(Result.published, p.run());
+        try std.testing.expectEqualStrings(checked.commit_body.?, script.seen.items[1].body.?);
+        try expectContains(script.seen.items[1].body.?, sent_readme);
+        try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, script.seen.items[1].body.?, "\"readme\""));
+        try std.testing.expectEqual(now == null, std.meta.isError(tmp.dir.access("R.md", .{})));
+    }
 }
 
 /// The reason a staged directory stops the run; a test error, not a crash, when it does not.
@@ -1095,31 +1103,37 @@ fn badOf(p: gp.Planned) ![]const u8 {
     return if (p == .bad) p.bad else error.TestExpectedRefusal;
 }
 
-/// The plan of a staged directory that is fit to run; a test failure that shows the reason when it is not.
-fn okOf(p: gp.Planned) !plan_mod.Plan {
+/// A staged directory that is fit to run; a test failure that shows the reason when it is not.
+fn okOf(p: gp.Planned) !gp.Checked {
     try std.testing.expectEqualStrings("fit to run", if (p == .ok) "fit to run" else p.bad);
     return p.ok;
 }
 
 /// One unit of an escaping-heavy readme: 7 bytes on disk (a quote, a backslash, a newline, a tab, the control byte 0x01 and
-/// a two-byte é) and 16 in the commit body (`\"`, `\\`, `\n`, `\t`, `\u0001`, é as it is).
+/// a two-byte é), 16 in the commit body (`\"`, `\\`, `\n`, `\t`, `\u0001`, é) and 27 in the function's event, where the body
+/// is escaped once more and é may become `é`.
 const heavy_unit = "\"\\\n\t\x01\xc3\xa9";
-const heavy_unit_json: usize = 16;
 
-/// A readme whose JSON string in the commit body, its two quotes included, is `json_len` bytes: units of `heavy_unit`,
-/// padded with `a`.
-fn heavyReadme(a: Allocator, json_len: usize) ![]u8 {
-    const units = (json_len - 2) / heavy_unit_json;
-    const pad = (json_len - 2) % heavy_unit_json;
+/// `units` of `heavy_unit` followed by `pad` letters, or `len` plain letters when `units` is 0.
+fn readmeText(a: Allocator, units: usize, pad: usize) ![]u8 {
     const text = try a.alloc(u8, units * heavy_unit.len + pad);
     for (0..units) |u| @memcpy(text[u * heavy_unit.len ..][0..heavy_unit.len], heavy_unit);
     @memset(text[units * heavy_unit.len ..], 'a');
     return text;
 }
 
-/// A staged directory of `count` upload members m0.., each with an escaping-heavy readme whose JSON string is `json_len`
-/// bytes; m0's is `extra` bytes longer.
-fn stageReadmes(a: Allocator, tmp: *std.testing.TmpDir, count: usize, json_len: usize, extra: usize) !plan_mod.Plan {
+/// The readmes of a fixture: member i's is `readmeText(units, pad + (extra if i == 0))`.
+const Readmes = struct { units: usize, pad: usize, extra: usize };
+
+fn fixtureEntries(a: Allocator, count: usize, r: Readmes) ![]plan_mod.CommitEntry {
+    const entries = try a.alloc(plan_mod.CommitEntry, count);
+    for (entries, 0..) |*e, i| e.* = .{ .name = try std.fmt.allocPrint(a, "m{d}", .{i}), .manifest_sha256 = sha_x, .readme = try readmeText(a, r.units, r.pad + if (i == 0) r.extra else 0) };
+    return entries;
+}
+
+/// A staged directory of `count` upload members m0.. with the readmes `r`, then `extra_members` (JSON members, each
+/// starting with a comma).
+fn stageReadmes(a: Allocator, tmp: *std.testing.TmpDir, count: usize, r: Readmes, extra_members: []const u8) !plan_mod.Plan {
     var members = std.ArrayList(u8).init(a);
     try tmp.dir.makePath("noarch");
     const sha = try core.install.sha256Hex(a, "m-bytes");
@@ -1127,7 +1141,7 @@ fn stageReadmes(a: Allocator, tmp: *std.testing.TmpDir, count: usize, json_len: 
         if (i != 0) try members.append(',');
         const filename = try std.fmt.allocPrint(a, "mojo-m{d}-1.0.0-x.conda", .{i});
         try tmp.dir.writeFile(try std.fmt.allocPrint(a, "noarch/{s}", .{filename}), "m-bytes");
-        const readme = try heavyReadme(a, json_len + if (i == 0) extra else 0);
+        const readme = try readmeText(a, r.units, r.pad + if (i == 0) r.extra else 0);
         try std.testing.expect(readme.len <= plan_mod.max_readme_bytes);
         try tmp.dir.writeFile(try std.fmt.allocPrint(a, "R{d}.md", .{i}), readme);
         try members.writer().print(
@@ -1135,21 +1149,27 @@ fn stageReadmes(a: Allocator, tmp: *std.testing.TmpDir, count: usize, json_len: 
             .{ i, sha_x, i, filename, sha },
         );
     }
-    const text = try std.fmt.allocPrint(a, "{{\"version\":1,\"members\":[{s}]}}", .{members.items});
+    const text = try std.fmt.allocPrint(a, "{{\"version\":1,\"members\":[{s}{s}]}}", .{ members.items, extra_members });
     try tmp.dir.writeFile(plan_mod.plan_name, text);
     const parsed = try plan_mod.parsePlan(a, text);
     try std.testing.expectEqualStrings("a plan", if (parsed == .ok) "a plan" else parsed.bad);
     return parsed.ok;
 }
 
-/// The JSON length of the readme of members 1.. and the extra for member 0 that make the commit body of `count` members
-/// exactly `plan_mod.max_commit_body_bytes` long.
-fn exactReadmes(a: Allocator, count: usize) !struct { json_len: usize, extra: usize } {
-    const entries = try a.alloc(plan_mod.CommitEntry, count);
-    for (entries, 0..) |*e, i| e.* = .{ .name = try std.fmt.allocPrint(a, "m{d}", .{i}), .manifest_sha256 = sha_x, .readme = "" };
-    // Each empty readme is already counted as `""`, two bytes.
-    const room = plan_mod.max_commit_body_bytes - plan_mod.commitBodyBytes(entries);
-    return .{ .json_len = 2 + room / count, .extra = room % count };
+/// The readmes that make the event of `count` members' commit body exactly `plan_mod.max_event_body_bytes` with escaping-
+/// heavy text: there the body as a JSON string is the larger encoding, and each letter of padding adds one byte to it.
+fn heavyAtLimit(a: Allocator, count: usize) !Readmes {
+    const units = plan_mod.max_event_body_bytes / (27 * count) - 8;
+    const near = plan_mod.eventBytes(try plan_mod.commitBody(a, try fixtureEntries(a, count, .{ .units = units, .pad = 0, .extra = 0 })));
+    return .{ .units = units, .pad = 0, .extra = plan_mod.max_event_body_bytes - near };
+}
+
+/// The readmes that make the base64 of `count` members' commit body exactly `plan_mod.max_event_body_bytes` with plain text:
+/// there base64 is the larger encoding, four bytes for every three of the body.
+fn plainAtLimit(a: Allocator, count: usize) !Readmes {
+    const bare = try plan_mod.commitBody(a, try fixtureEntries(a, count, .{ .units = 0, .pad = 0, .extra = 0 }));
+    const room = plan_mod.max_event_body_bytes / 4 * 3 - bare.len;
+    return .{ .units = 0, .pad = room / count, .extra = room % count };
 }
 
 fn allHeld(a: Allocator, count: usize) ![]const u8 {
@@ -1165,77 +1185,163 @@ fn allHeld(a: Allocator, count: usize) ![]const u8 {
 
 const limit_members = 90;
 
-test "a commit request of escaping-heavy readmes exactly at the limit is sent whole, and is exactly that long" {
-    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer st.deinit();
-    const a = st.allocator();
-    const sizes = try exactReadmes(a, limit_members);
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const plan = try stageReadmes(a, &tmp, limit_members, sizes.json_len, sizes.extra);
-    try std.testing.expect((try plan_mod.verify(a, tmp.dir, plan)) == null);
-    _ = try okOf(try gp.checkedPlan(a, tmp.dir, "staged", false));
+/// Publishes a staged set the check passed, and gives the commit body the registry got.
+fn publishChecked(a: Allocator, tmp: *std.testing.TmpDir, checked: gp.Checked) ![]const u8 {
     var script = newScript(a, &.{
         .{ .method = .POST, .suffix = "/groups", .status = 201, .body = try allHeld(a, limit_members) },
         .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
         .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
     });
     var console = Console.init(a, null);
-    var p = publisher(a, &tmp, plan, &script, &console);
+    var p = publisherWith(a, tmp, checked.plan, checked.commit_body.?, &script, &console);
     try std.testing.expectEqual(Result.published, p.run());
-    try std.testing.expectEqual(plan_mod.max_commit_body_bytes, script.seen.items[1].body.?.len);
+    return script.seen.items[1].body.?;
 }
 
-test "a commit request one byte over the limit is refused, naming the largest readmes, before any request" {
+test "an escaping-heavy commit request exactly at the limit as the function receives it is sent whole; one byte more is refused" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
     const a = st.allocator();
-    const sizes = try exactReadmes(a, limit_members);
+    const at = try heavyAtLimit(a, limit_members);
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const over = try stageReadmes(a, &tmp, limit_members, sizes.json_len, sizes.extra + 1);
-    const why = (try plan_mod.verify(a, tmp.dir, over)) orelse return error.TestExpectedRefusal;
-    try expectContains(why, "the readmes of the 90 members make a commit request of 5242881 bytes; the registry takes at most 5242880. The largest readmes: m0 (");
-    try expectContains(why, "Shorten them or publish fewer packages in one group");
-    try std.testing.expectEqualStrings(try std.fmt.allocPrint(a, "{s}; nothing was sent", .{why}), try badOf(try gp.checkedPlan(a, tmp.dir, "staged", false)));
+    _ = try stageReadmes(a, &tmp, limit_members, at, "");
+    const sent = try publishChecked(a, &tmp, try okOf(try gp.checkedPlan(a, tmp.dir, "staged", false)));
+    try std.testing.expectEqual(plan_mod.max_event_body_bytes, plan_mod.eventBytes(sent));
+    // The body as sent is under 4 MiB: it is the second escaping, in the event, that reaches the limit.
+    try std.testing.expect(sent.len < 4 * 1024 * 1024);
+    try std.testing.expect(std.base64.standard.Encoder.calcSize(sent.len) < plan_mod.max_event_body_bytes);
+
+    var over_tmp = std.testing.tmpDir(.{});
+    defer over_tmp.cleanup();
+    _ = try stageReadmes(a, &over_tmp, limit_members, .{ .units = at.units, .pad = at.pad, .extra = at.extra + 1 }, "");
+    const why = try badOf(try gp.checkedPlan(a, over_tmp.dir, "staged", false));
+    try expectContains(why, "which can take 6225921 bytes in the event the registry's function is invoked with; mopm keeps that to at most 6225920, so the event fits the function's limit of 6291456 with room for the headers. The largest readmes: m0 (");
+    try expectContains(why, "Shorten them or publish fewer packages in one group; nothing was sent");
     // An --abort sends no readme: it reads the plan and goes on to end the group state.json names.
-    try std.testing.expectEqual(@as(usize, limit_members), (try okOf(try gp.checkedPlan(a, tmp.dir, "staged", true))).members.len);
+    const aborting = try okOf(try gp.checkedPlan(a, over_tmp.dir, "staged", true));
+    try std.testing.expectEqual(@as(usize, limit_members), aborting.plan.members.len);
+    try std.testing.expect(aborting.commit_body == null);
 }
 
-test "a resume of a set one byte over the limit is refused the same way, and its state.json is left as it was" {
+test "a plain-text commit request whose base64 is exactly at the limit is sent whole; one byte more is refused" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
     const a = st.allocator();
-    const sizes = try exactReadmes(a, limit_members);
+    const at = try plainAtLimit(a, limit_members);
+
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const over = try stageReadmes(a, &tmp, limit_members, sizes.json_len, sizes.extra + 1);
+    _ = try stageReadmes(a, &tmp, limit_members, at, "");
+    const sent = try publishChecked(a, &tmp, try okOf(try gp.checkedPlan(a, tmp.dir, "staged", false)));
+    try std.testing.expectEqual(plan_mod.max_event_body_bytes, std.base64.standard.Encoder.calcSize(sent.len));
+    try std.testing.expectEqual(plan_mod.max_event_body_bytes, plan_mod.eventBytes(sent));
+
+    var over_tmp = std.testing.tmpDir(.{});
+    defer over_tmp.cleanup();
+    _ = try stageReadmes(a, &over_tmp, limit_members, .{ .units = 0, .pad = at.pad, .extra = at.extra + 1 }, "");
+    // One byte more of body is four more of base64.
+    try expectContains(try badOf(try gp.checkedPlan(a, over_tmp.dir, "staged", false)), "which can take 6225924 bytes in the event");
+}
+
+test "a resume of a set over the limit is refused the same way, and its state.json is left as it was" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    const at = try heavyAtLimit(a, limit_members);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const over = try stageReadmes(a, &tmp, limit_members, .{ .units = at.units, .pad = at.pad, .extra = at.extra + 1 }, "");
     // What a --no-commit run leaves: the group open, a file of it held.
     try plan_mod.saveState(a, tmp.dir, .{ .registry = "http://127.0.0.1:1/api/v1", .plan_sha256 = over.sha256, .group_id = gid, .attempt = 1, .staged = true, .uploaded = &.{"m0/noarch/mojo-m0-1.0.0-x.conda"} });
     const before = try tmp.dir.readFileAlloc(a, plan_mod.state_name, 1 << 20);
     for (0..2) |_| {
-        try expectContains(try badOf(try gp.checkedPlan(a, tmp.dir, "staged", false)), "make a commit request of 5242881 bytes; the registry takes at most 5242880");
+        try expectContains(try badOf(try gp.checkedPlan(a, tmp.dir, "staged", false)), "which can take 6225921 bytes in the event");
         try std.testing.expectEqualStrings(before, try tmp.dir.readFileAlloc(a, plan_mod.state_name, 1 << 20));
     }
 }
 
-test "the readmes named are the largest by what they add to the body, and a member without one is never named" {
+test "only the members to upload count toward the limit, and a refused member is reported before the size" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
     const a = st.allocator();
-    // A name long enough to put the body over the limit alone: the one readme there is is the only one named.
-    const long_name = try a.alloc(u8, plan_mod.max_commit_body_bytes);
+    const at = try heavyAtLimit(a, limit_members);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // Skipped members whose readme fields name 64 KiB files: none of it is read or sent.
+    const big = try readmeText(a, plan_mod.max_readme_bytes / heavy_unit.len, 0);
+    var skips = std.ArrayList(u8).init(a);
+    for (0..5) |i| {
+        try tmp.dir.writeFile(try std.fmt.allocPrint(a, "S{d}.md", .{i}), big);
+        try skips.writer().print(",{{\"name\":\"s{d}\",\"version\":\"1.0.0\",\"action\":\"skip\",\"reason\":\"already published\",\"readme\":\"S{d}.md\"}}", .{ i, i });
+    }
+    _ = try stageReadmes(a, &tmp, limit_members, at, skips.items);
+    const checked = try okOf(try gp.checkedPlan(a, tmp.dir, "staged", false));
+    try std.testing.expectEqual(plan_mod.max_event_body_bytes, plan_mod.eventBytes(checked.commit_body.?));
+    try std.testing.expect(!contains(checked.commit_body.?, "\"s0\""));
+
+    // A refused member stops the run with its own reason, before the size of an oversized set is looked at.
+    var refusing = std.testing.tmpDir(.{});
+    defer refusing.cleanup();
+    _ = try stageReadmes(a, &refusing, limit_members, .{ .units = at.units, .pad = at.pad, .extra = at.extra + 1 }, ",{\"name\":\"d\",\"version\":\"2.0.0\",\"action\":\"refuse\",\"reason\":\"yanked\"}");
+    try std.testing.expectEqualStrings("the plan refuses d 2.0.0: yanked; nothing was sent", try badOf(try gp.checkedPlan(a, refusing.dir, "staged", false)));
+}
+
+test "the bytes a body takes in the function's event: each kind of character, and base64 when it is the larger" {
+    try std.testing.expectEqual(@as(usize, 2), plan_mod.eventBytes(""));
+    // A quote, a backslash, a control byte, DEL, then é, € and 𝄞 (two, three and four bytes): 2 + 2 + 2 + 6 + 6 + 6 + 6 + 12.
+    try std.testing.expectEqual(@as(usize, 42), plan_mod.eventBytes("\"\\\x01\x7f\xc3\xa9\xe2\x82\xac\xf0\x9d\x84\x9e"));
+    // Plain text: six letters are 8 bytes either way; nine are 11 as a string and 12 in base64.
+    try std.testing.expectEqual(@as(usize, 8), plan_mod.eventBytes("abcdef"));
+    try std.testing.expectEqual(@as(usize, 12), plan_mod.eventBytes("abcdefghi"));
+}
+
+test "the commit body: a name that needs escaping, and a readme absent, empty or not" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    const entries = [_]plan_mod.CommitEntry{
+        .{ .name = "q\"b\\s", .manifest_sha256 = sha_x, .readme = null },
+        .{ .name = "e", .manifest_sha256 = sha_x, .readme = "" },
+        .{ .name = "t", .manifest_sha256 = sha_x, .readme = "line\n\"x\"" },
+    };
+    const body = try plan_mod.commitBody(a, &entries);
+    try std.testing.expectEqualStrings(
+        "{\"members\":[{\"name\":\"q\\\"b\\\\s\",\"manifest_sha256\":\"" ++ sha_x ++ "\"},{\"name\":\"e\",\"manifest_sha256\":\"" ++ sha_x ++ "\",\"readme\":\"\"},{\"name\":\"t\",\"manifest_sha256\":\"" ++ sha_x ++ "\",\"readme\":\"line\\n\\\"x\\\"\"}]}",
+        body,
+    );
+    // Read back, it is the members as given: the absent readme absent, the empty one present and empty.
+    const back = try std.json.parseFromSliceLeaky(std.json.Value, a, body, .{});
+    const ms = back.object.get("members").?.array.items;
+    try std.testing.expectEqualStrings("q\"b\\s", ms[0].object.get("name").?.string);
+    try std.testing.expect(ms[0].object.get("readme") == null);
+    try std.testing.expectEqualStrings("", ms[1].object.get("readme").?.string);
+    try std.testing.expectEqualStrings("line\n\"x\"", ms[2].object.get("readme").?.string);
+}
+
+test "the refusal names the largest readmes by what each adds; with none, it does not blame readmes" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    const long_name = try a.alloc(u8, plan_mod.max_event_body_bytes);
     @memset(long_name, 'n');
+    // Nothing but names and hashes: the refusal says no member has a readme.
+    const bare = [_]plan_mod.CommitEntry{
+        .{ .name = long_name, .manifest_sha256 = sha_x, .readme = null },
+        .{ .name = "b", .manifest_sha256 = sha_x, .readme = null },
+    };
+    const bare_body = try plan_mod.commitBody(a, &bare);
+    try std.testing.expectEqualStrings(
+        try std.fmt.allocPrint(a, "the commit request of the 2 members to upload is {d} bytes, which can take {d} bytes in the event the registry's function is invoked with; mopm keeps that to at most 6225920, so the event fits the function's limit of 6291456 with room for the headers. No member has a readme: publish fewer packages in one group", .{ bare_body.len, plan_mod.eventBytes(bare_body) }),
+        try badOfCommit(try plan_mod.commitOf(a, &bare)),
+    );
+    // One readme: it alone is named.
     const one = [_]plan_mod.CommitEntry{
         .{ .name = long_name, .manifest_sha256 = sha_x, .readme = null },
         .{ .name = "b", .manifest_sha256 = sha_x, .readme = "xy" },
     };
-    try std.testing.expectEqualStrings(
-        "the readmes of the 2 members make a commit request of 5243102 bytes; the registry takes at most 5242880. The largest readmes: b (2 bytes in the request). Shorten them or publish fewer packages in one group",
-        (try plan_mod.commitBodyProblem(a, &one)) orelse return error.TestExpectedRefusal,
-    );
+    try expectContains(try badOfCommit(try plan_mod.commitOf(a, &one)), "for the headers. The largest readmes: b (2 bytes in the request). Shorten them or publish fewer packages in one group");
     // Ranked by escaped size: four quotes (8 bytes in the body) outrank five plain letters (5); only three are named.
     const many = [_]plan_mod.CommitEntry{
         .{ .name = long_name, .manifest_sha256 = sha_x, .readme = null },
@@ -1244,9 +1350,13 @@ test "the readmes named are the largest by what they add to the body, and a memb
         .{ .name = "short", .manifest_sha256 = sha_x, .readme = "a" },
         .{ .name = "empty", .manifest_sha256 = sha_x, .readme = "" },
     };
-    try expectContains((try plan_mod.commitBodyProblem(a, &many)) orelse return error.TestExpectedRefusal, "The largest readmes: quotes (8 bytes in the request), plain (5 bytes in the request), short (1 bytes in the request). Shorten");
-    // Under the limit there is nothing to say.
-    try std.testing.expect((try plan_mod.commitBodyProblem(a, one[1..])) == null);
+    try expectContains(try badOfCommit(try plan_mod.commitOf(a, &many)), "The largest readmes: quotes (8 bytes in the request), plain (5 bytes in the request), short (1 bytes in the request). Shorten");
+    // Under the limit the body is given back.
+    try std.testing.expectEqualStrings(try plan_mod.commitBody(a, one[1..]), (try plan_mod.commitOf(a, one[1..])).body);
+}
+
+fn badOfCommit(c: plan_mod.Commit) ![]const u8 {
+    return if (c == .bad) c.bad else error.TestExpectedRefusal;
 }
 
 test "a staged directory whose plan cannot be used stops the run before any request, with the reason" {
@@ -1281,43 +1391,12 @@ test "a staged directory whose plan cannot be used stops the run before any requ
     try changed.dir.writeFile("noarch/mojo-a-1.0.0-x.conda", "changed");
     try expectContains(try badOf(try gp.checkedPlan(a, changed.dir, "staged", false)), "has the sha256");
     // An --abort of a set whose files changed still reads its plan.
-    try std.testing.expectEqual(@as(usize, 3), (try okOf(try gp.checkedPlan(a, changed.dir, "staged", true))).members.len);
+    try std.testing.expectEqual(@as(usize, 3), (try okOf(try gp.checkedPlan(a, changed.dir, "staged", true))).plan.members.len);
 
     var fine = std.testing.tmpDir(.{});
     defer fine.cleanup();
     _ = try stageWith(a, &fine, "", true);
-    try std.testing.expectEqual(@as(usize, 3), (try okOf(try gp.checkedPlan(a, fine.dir, "staged", false))).members.len);
-}
-
-test "the length the client computes for a commit request is the length of the request it sends, escaping included" {
-    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer st.deinit();
-    const a = st.allocator();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const plan = try stageWith(a, &tmp, "", true);
-    // Every byte JSON escapes (the control bytes, a quote, a backslash), with a slash, multi-byte UTF-8 and plain text.
-    var readme = std.ArrayList(u8).init(a);
-    for (0..0x20) |b| try readme.append(@intCast(b));
-    try readme.appendSlice("\"\\/ é ✓ 𝄞 \x7f plain # a readme\n");
-    try tmp.dir.writeFile("R.md", readme.items);
-    var script = newScript(a, &.{
-        .{ .method = .POST, .suffix = "/groups", .status = 201, .body = createAnswer("open", .{ true, true, true }) },
-        .{ .method = .POST, .suffix = "/commit", .status = 202, .body = group_status.of("validating") },
-        .{ .method = .GET, .suffix = gid, .status = 200, .body = group_status.of("visible") },
-    });
-    var console = Console.init(a, null);
-    var p = publisher(a, &tmp, plan, &script, &console);
-    try std.testing.expectEqual(Result.published, p.run());
-    const entries = [_]plan_mod.CommitEntry{
-        .{ .name = "a", .manifest_sha256 = sha_x, .readme = readme.items },
-        .{ .name = "b", .manifest_sha256 = sha_x, .readme = null },
-        .{ .name = "c", .manifest_sha256 = sha_x, .readme = null },
-    };
-    const sent = script.seen.items[1].body.?;
-    try std.testing.expectEqual(sent.len, plan_mod.commitBodyBytes(&entries));
-    // The readme went escaped: a count of its raw bytes would come out short.
-    try expectContains(sent, "\"readme\":\"\\u0000\\u0001");
+    try std.testing.expectEqual(@as(usize, 3), (try okOf(try gp.checkedPlan(a, fine.dir, "staged", false))).plan.members.len);
 }
 
 test "a PUT that cannot be made, and a poll that cannot be read" {

@@ -13,8 +13,9 @@
 //! - the token must be in no program mopm starts (one stand-in plays mojo, the test binary and pixi, and records its
 //!   environment: `mopm run`, the compile and the `--skip-all` listing of `mopm test`, and the installer of `mopm sync`),
 //!   and in nothing mopm prints;
-//! - a set whose commit request would be over 5 MiB (escaped readmes) is refused before any request, by `--dry-run` too,
-//!   on a first run and on a resume, and nothing is written;
+//! - a set whose commit request is too large for the registry's function, for its readmes, is refused before any request
+//!   (the fake counts none) by a publish, `--dry-run` and `--no-commit`, on a first run and on a resume, with no file
+//!   changed; `--abort` still ends its staged group;
 //! - a yank of the group yanks its members, and an unyank restores those and not the one yanked by hand before.
 
 const std = @import("std");
@@ -496,64 +497,124 @@ fn refusalsBeforeAnyRequest(w: World) !void {
     w.rep.check("with no token and no login the run says to log in, before sending anything", r.code == 1 and h.contains(r.stderr, "not logged in") and (try w.visible("2.1.0")) == 0, r.stderr);
 }
 
-/// A set whose commit request would be one byte over 5 MiB: 90 members, each readme a run of quotes, backslashes, newlines
-/// and control bytes that JSON escaping makes about twice as long. `publish --staged` and `--dry-run` refuse it before any
-/// request, on a first run and on a resume, and write nothing.
+/// Every file below `dir`, sorted, each with its bytes: what a refusal must leave as it was.
+fn snapshot(a: Allocator, dir_path: []const u8) ![]const u8 {
+    var dir = try std.fs.cwd().openDir(dir_path, .{ .iterate = true });
+    defer dir.close();
+    var paths = std.ArrayList([]const u8).init(a);
+    var walker = try dir.walk(a);
+    defer walker.deinit();
+    while (try walker.next()) |e| {
+        if (e.kind == .file) try paths.append(try a.dupe(u8, e.path));
+    }
+    std.mem.sort([]const u8, paths.items, {}, struct {
+        fn lt(_: void, x: []const u8, y: []const u8) bool {
+            return std.mem.lessThan(u8, x, y);
+        }
+    }.lt);
+    var out = std.ArrayList(u8).init(a);
+    for (paths.items) |p| try out.writer().print("{s}\n{s}\n", .{ p, try dir.readFileAlloc(a, p, 1 << 22) });
+    return out.items;
+}
+
+/// The requests the fake registry has answered, its controls not counted.
+fn served(w: World) !i64 {
+    return (try w.fake.control(w.a, "/requests", "{}")).object.get("requests").?.integer;
+}
+
+const big_count = 16;
+
+/// Writes the readme of each of the 16 members: `bytes` of the control byte 0x01 when `big` (six bytes in the commit body,
+/// `\u0001`, and seven in the function's event, `\\u0001`: 16 of them are over the limit), else a line of text.
+fn writeBigReadmes(w: World, staged: []const u8, big: bool) !void {
+    const text = try w.a.alloc(u8, 60000);
+    @memset(text, 0x01);
+    for (0..big_count) |i| {
+        const name = try std.fmt.allocPrint(w.a, "big{d}", .{i});
+        try h.writeFile(try h.join(w.a, &.{ staged, try std.fmt.allocPrint(w.a, "{s}.md", .{name}) }), if (big) text else try std.fmt.allocPrint(w.a, "# {s}\n", .{name}));
+    }
+}
+
+/// A set whose commit request is over what the registry's function takes, for its readmes: `publish --staged`, `--dry-run`
+/// and `--no-commit` refuse it before any request (the fake counts none), on a first run and on the resume of a group that
+/// was staged while its readmes were short, and change no file of the directory; `--abort` still ends that group.
 fn anOversizedCommit(w: World) !void {
     const a = w.a;
+    // Sixteen names this account owns, and a token for them, made with a fresh session (earlier scenarios moved the clock).
+    const session = h.jsonString(try w.fake.control(a, "/session", "{\"handle\":\"group-user\"}"), "token") orelse "";
+    var quoted = std.ArrayList(u8).init(a);
+    for (0..big_count) |i| {
+        const name = try std.fmt.allocPrint(a, "big{d}", .{i});
+        const r = try h.request(a, "POST", w.fake.base, try std.fmt.allocPrint(a, "/api/v1/packages/{s}/claim", .{name}), "{}", session);
+        w.rep.check(try std.fmt.allocPrint(a, "{s} is claimed", .{name}), r.status == 201, r.body);
+        try quoted.writer().print("{s}\"{s}\"", .{ if (i == 0) "" else ",", name });
+    }
+    const made = try h.request(a, "POST", w.fake.base, "/api/v1/me/tokens", try std.fmt.allocPrint(a, "{{\"name\":\"big\",\"scopes\":[\"publish\"],\"packages\":[{s}],\"expires_in_days\":7}}", .{quoted.items}), session);
+    const token = if (made.status == 201) (h.jsonString(try h.parseJson(a, made.body), "token") orelse "") else "";
+    w.rep.check("a token that may publish the sixteen is made", token.len > 0, made.body);
+
+    // The staged set: sixteen members, each with one file and a readme.
     const staged = try w.dir("oversized");
-    const count = 90;
-    // One unit: 7 bytes on disk, 16 in the body (\", \\, \n, \t, \u0001, and a two-byte é as it is).
-    const unit = "\"\\\n\t\x01\xc3\xa9";
     var plan = std.ArrayList(u8).init(a);
     try plan.appendSlice("{\"version\":1,\"members\":[");
-    // The body without readmes: {"members":[...]} with {"name":"bigNN","manifest_sha256":"<64>","readme":""} per member.
-    var bare: usize = 14 + (count - 1);
-    for (0..count) |i| bare += (std.fmt.count("big{d}", .{i}) + 2) + 8 + 20 + 64 + 2 + 10 + 2;
-    const room = (5 * 1024 * 1024 + 1) - bare;
-    for (0..count) |i| {
-        const name = try std.fmt.allocPrint(a, "big{d}", .{i});
-        const json_len = room / count + if (i == 0) room % count else 0;
-        const units = json_len / 16;
-        const readme = try a.alloc(u8, units * unit.len + json_len % 16);
-        for (0..units) |u| @memcpy(readme[u * unit.len ..][0..unit.len], unit);
-        @memset(readme[units * unit.len ..], 'a');
-        try h.writeFile(try h.join(a, &.{ staged, try std.fmt.allocPrint(a, "{s}.md", .{name}) }), readme);
-        const m = Member{ .name = name, .version = "1.0.0", .bytes = name };
+    for (0..big_count) |i| {
+        const m = Member{ .name = try std.fmt.allocPrint(a, "big{d}", .{i}), .version = "1.0.0", .bytes = try std.fmt.allocPrint(a, "the bytes of big{d}", .{i}) };
         const filename = try filenameOf(a, m);
         try h.writeFile(try h.join(a, &.{ staged, "noarch", filename }), m.bytes);
-        if (i != 0) try plan.append(',');
         try plan.writer().print(
-            "{{\"name\":\"{s}\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",\"readme\":\"{s}.md\",\"files\":[{{\"subdir\":\"noarch\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":{d}}}]}}",
-            .{ name, try sha256Hex(a, name), name, filename, try sha256Hex(a, m.bytes), m.bytes.len },
+            "{s}{{\"name\":\"{s}\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",\"readme\":\"{s}.md\",\"files\":[{{\"subdir\":\"noarch\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":{d}}}]}}",
+            .{ if (i == 0) "" else ",", m.name, try sha256Hex(a, m.name), m.name, filename, try sha256Hex(a, m.bytes), m.bytes.len },
         );
     }
     try plan.appendSlice("]}");
     try h.writeFile(try h.join(a, &.{ staged, "plan.json" }), plan.items);
 
-    const refusal = "the readmes of the 90 members make a commit request of 5242881 bytes; the registry takes at most 5242880. The largest readmes: big0 (";
-    const state_path = try h.join(a, &.{ staged, "state.json" });
-    const report_path = try h.join(a, &.{ staged, "report.json" });
+    // A first run: the same set with long readmes in another directory, which also holds the report of an earlier run.
+    const first = try w.dir("oversized_first");
+    try h.writeFile(try h.join(a, &.{ first, "plan.json" }), plan.items);
+    for (0..big_count) |i| {
+        const name = try filenameOf(a, .{ .name = try std.fmt.allocPrint(a, "big{d}", .{i}), .version = "1.0.0", .bytes = "" });
+        try h.writeFile(try h.join(a, &.{ first, "noarch", name }), try h.readFile(a, try h.join(a, &.{ staged, "noarch", name })));
+    }
+    try writeBigReadmes(w, first, true);
+    try h.writeFile(try h.join(a, &.{ first, "report.json" }), "the report of an earlier run");
+
+    const refusal = "the commit request of the 16 members to upload is ";
+    const cutoff = "; mopm keeps that to at most 6225920, so the event fits the function's limit of 6291456 with room for the headers. The largest readmes: big";
+    const modes = [_][]const []const u8{ &.{}, &.{"--dry-run"}, &.{"--no-commit"} };
     for ([_][]const u8{ "first run", "resume" }) |when| {
         const resuming = std.mem.eql(u8, when, "resume");
-        // A resume: the state a --no-commit run leaves, naming an open group with a file held.
-        if (resuming) try h.writeFile(state_path, try std.fmt.allocPrint(a, "{{\"registry\":\"{s}/api/v1\",\"plan_sha256\":\"{s}\",\"group_id\":\"grp_0123456789abcdef0123456789abcdef\",\"attempt\":1,\"staged\":true,\"uploaded\":[\"big0/noarch/{s}\"]}}", .{ dead, try sha256Hex(a, plan.items), try filenameOf(a, .{ .name = "big0", .version = "1.0.0", .bytes = "" }) }));
-        const state_before = if (resuming) try h.readFile(a, state_path) else "";
-        for ([_]bool{ false, true }) |dry| {
-            const base = [_][]const u8{ "publish", "--staged", staged, "--registry", dead, "--config-dir", w.conf };
-            const r = try w.m.run(if (dry) &(base ++ [_][]const u8{"--dry-run"}) else &base, "mopm_unused");
+        const dir = if (resuming) staged else first;
+        if (resuming) {
+            // The resume: the set is staged while its readmes are short, and they grow before the next run.
+            try writeBigReadmes(w, staged, false);
+            const s = try w.m.run(&.{ "publish", "--staged", staged, "--registry", w.fake.base, "--config-dir", w.conf, "--no-commit" }, token);
+            w.rep.check("the set with short readmes is staged: the group is open", s.code == 0 and h.contains(s.stdout, "staged group grp_"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ s.code, s.stdout, s.stderr }));
+            try writeBigReadmes(w, staged, true);
+        }
+        for (modes) |mode| {
+            const label = if (mode.len == 0) "publish --staged" else try std.fmt.allocPrint(a, "publish --staged {s}", .{mode[0]});
+            const files_before = try snapshot(a, dir);
+            const requests_before = try served(w);
+            const base = [_][]const u8{ "publish", "--staged", dir, "--registry", w.fake.base, "--config-dir", w.conf };
+            const r = try w.m.run(try std.mem.concat(a, []const u8, &.{ &base, mode }), token);
             w.rep.check(
-                try std.fmt.allocPrint(a, "an oversized set is refused by publish --staged{s} on a {s}, naming the largest readmes, before any request", .{ if (dry) " --dry-run" else "", when }),
-                r.code == 1 and h.contains(r.stderr, refusal) and h.contains(r.stderr, "; nothing was sent") and !h.contains(r.stderr, "cannot reach") and r.stdout.len == 0,
+                try std.fmt.allocPrint(a, "{s} refuses an oversized set on a {s}, naming the largest readmes, and ends 1", .{ label, when }),
+                r.code == 1 and h.contains(r.stderr, refusal) and h.contains(r.stderr, cutoff) and h.contains(r.stderr, "; nothing was sent") and r.stdout.len == 0,
                 try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }),
             );
-            w.rep.check(
-                try std.fmt.allocPrint(a, "and{s} on a {s} it writes no report, and {s}", .{ if (dry) " --dry-run" else "", when, if (resuming) "leaves state.json as it was" else "no state.json" }),
-                !exists(report_path) and if (resuming) std.mem.eql(u8, try h.readFile(a, state_path), state_before) else !exists(state_path),
-                "a record was written or changed",
-            );
+            w.rep.check("and the registry got no request from it", (try served(w)) == requests_before, "a request was sent");
+            w.rep.check("and no file of the directory changed and none was added", std.mem.eql(u8, try snapshot(a, dir), files_before), "the directory changed");
         }
     }
+
+    // The group staged before the readmes grew is still open, and --abort, which sends no readme, ends it.
+    const id = try w.groupId(staged);
+    w.rep.check("the staged group is still open after the refusals", std.mem.eql(u8, try groupStatus(w, id), "open"), try groupStatus(w, id));
+    const uploads = try w.uploads();
+    const ended = try w.m.run(&.{ "publish", "--staged", staged, "--registry", w.fake.base, "--config-dir", w.conf, "--abort" }, token);
+    w.rep.check("--abort of the oversized set ends its group: aborted, with no file sent and no commit", ended.code == 0 and std.mem.eql(u8, try groupStatus(w, id), "aborted") and
+        (try w.uploads()) == uploads and !h.contains(ended.stdout, "committed group"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ ended.code, ended.stdout, ended.stderr }));
 }
 
 fn groupStatus(w: World, id: []const u8) ![]const u8 {

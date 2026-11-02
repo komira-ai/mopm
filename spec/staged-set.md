@@ -52,10 +52,15 @@ conda channel (`channel.md`). Other files in the directory are ignored.
     between pack and publish stays) and one to 20 `files`, each 1 to 100,000,000 bytes, with its
     `sha256` and `size`. A file name is a plain name: no `/`, no `\`, none that
     starts with a dot. `readme` is optional: a path below the directory, up to
-    64 KiB of UTF-8. Every readme travels in the body of the commit request,
-    which is at most 5 MiB for the whole group; `stage` and `publish --staged`
-    refuse a set over that, naming the largest readmes, before anything is
-    written or sent.
+    64 KiB of UTF-8. Every readme of a member to upload travels in the body of
+    the commit request, and the registry's function takes the request with
+    that body escaped into it, at most 6 MiB in all. mopm refuses a set whose
+    body could take more than 6 MiB less 64 KiB there (the larger of the body
+    as a JSON string, every non-ASCII character counted as `\u` escapes, and
+    its base64), naming the largest readmes: `stage` after it has asked the
+    registry about the members and before it writes anything, `publish
+    --staged` before it sends any request. The commit sends the readmes as
+    that check read them.
   - `skip`: the member is not in the group, because the registry already has it
     with these bytes. `reason` says why. The report names it.
   - `refuse`: the staging found the member cannot be published (a yanked version,
