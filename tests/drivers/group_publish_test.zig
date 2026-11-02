@@ -524,8 +524,8 @@ fn served(w: World) !i64 {
 
 const big_count = 16;
 
-/// Writes the readme of each of the 16 members: `bytes` of the control byte 0x01 when `big` (six bytes in the commit body,
-/// `\u0001`, and seven in the function's event, `\\u0001`: 16 of them are over the limit), else a line of text.
+/// Writes the readme of each of the 16 members: 60000 of the control byte 0x01 when `big` (six bytes each in the commit
+/// body, `\u0001`: the 16 readmes make a body of 5.8 MB, whose base64 is over the limit), else a line of text.
 fn writeBigReadmes(w: World, staged: []const u8, big: bool) !void {
     const text = try w.a.alloc(u8, 60000);
     @memset(text, 0x01);
