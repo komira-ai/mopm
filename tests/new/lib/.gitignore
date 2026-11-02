@@ -1,2 +1,3 @@
 /.mopm/
+/target/
 *.mojoc

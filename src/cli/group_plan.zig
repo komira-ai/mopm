@@ -257,8 +257,8 @@ pub fn commitBodyBytes(entries: []const CommitEntry) usize {
     return n;
 }
 
-fn readmeBigger(entries: []const CommitEntry, a: usize, b: usize) bool {
-    return jsonBytes(entries[a].readme orelse "") > jsonBytes(entries[b].readme orelse "");
+fn biggerFirst(sizes: []const usize, a: usize, b: usize) bool {
+    return sizes[a] > sizes[b];
 }
 
 /// Why the commit body would be too large for the registry, naming the largest readmes, or null when it fits. Checked before
@@ -266,9 +266,14 @@ fn readmeBigger(entries: []const CommitEntry, a: usize, b: usize) bool {
 pub fn commitBodyProblem(arena: Allocator, entries: []const CommitEntry) Allocator.Error!?[]const u8 {
     const total = commitBodyBytes(entries);
     if (total <= max_commit_body_bytes) return null;
+    // Readmes are ranked by what they add to the body, escaping included; each is measured once.
+    const sizes = try arena.alloc(usize, entries.len);
     const order = try arena.alloc(usize, entries.len);
-    for (order, 0..) |*o, i| o.* = i;
-    std.mem.sort(usize, order, entries, readmeBigger);
+    for (sizes, order, entries, 0..) |*z, *o, e, i| {
+        z.* = if (e.readme) |r| jsonBytes(r) else 0;
+        o.* = i;
+    }
+    std.mem.sort(usize, order, @as([]const usize, sizes), biggerFirst);
     var list = std.ArrayList(u8).init(arena);
     const w = list.writer();
     for (order[0..@min(order.len, 3)], 0..) |i, k| {
@@ -304,6 +309,9 @@ pub const State = struct {
     group_id: []const u8 = "",
     attempt: u32 = 0,
     committed: bool = false,
+    /// A `--no-commit` run uploaded every file and stopped with the group open: a later run resumes that group, and says so
+    /// clearly if the registry has ended it meanwhile (it does not open the group again behind the caller's back).
+    staged: bool = false,
     /// `<package>/<subdir>/<file name>` of each file the registry has taken.
     uploaded: []const []const u8 = &.{},
 };
@@ -343,7 +351,7 @@ pub const FileReport = struct { subdir: []const u8, filename: []const u8, sha256
 pub const MemberReport = struct {
     name: []const u8,
     version: []const u8,
-    /// `published`, `skipped`, `rejected`, `not_published` or `pending`.
+    /// `published`, `staged`, `skipped`, `rejected`, `not_published` or `pending`.
     outcome: []const u8,
     /// The registry's code for a rejected member, or why the plan skipped one.
     code: ?[]const u8 = null,
@@ -356,8 +364,10 @@ pub const Report = struct {
     group_id: ?[]const u8 = null,
     /// The group's status as last read, or null if it was not read.
     group_status: ?[]const u8 = null,
-    /// `published`, `dry_run`, `nothing_to_publish`, `failed`, `rate_limited`, `no_group_publish`, `timed_out`.
+    /// `published`, `staged`, `aborted`, `nothing_to_abort`, `failed`, `rate_limited`, `no_group_publish`, `timed_out`.
     outcome: []const u8,
+    /// The sha256 of plan.json this run published, staged or aborted; the stage and commit jobs compare it.
+    plan_sha256: ?[]const u8 = null,
     members: []const MemberReport,
 };
 

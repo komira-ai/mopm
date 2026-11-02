@@ -4,6 +4,7 @@ import type { Store } from '../store';
 import type { AuditEntry, Dep, FileRef, NativeRef } from '../types';
 import { validatePackage } from '../validate';
 import type { PackageFacts, RejectionCode, ValidatorOptions } from '../validate';
+import type { NativeMirror } from '../validate/native-mirror';
 import type { PublishConfig } from './config';
 import type { DisplayMeta } from './display';
 import type { ObjectStore, PublishStore, Queue } from './ports';
@@ -20,6 +21,7 @@ export interface ValidatorDeps {
   /** https://conda.<stage>.mopm.dev: the channel's public base, for the file URLs of published versions. */
   channelUrl: string;
   validatorOptions?: ValidatorOptions;
+  nativeMirror?: () => Promise<NativeMirror | undefined>;
   now?: () => Date;
   log?: (line: Record<string, unknown>) => void;
 }
@@ -78,12 +80,15 @@ export async function validatePublish(d: ValidatorDeps, publishId: string): Prom
     return 'processed';
   }
   if (version?.state === 'published' || version?.state === 'yanked') {
+    // An earlier attempt published the row; the store activates the package with that event, so this finishes what a crash between the two left.
+    await d.registry.activatePackage(rec.name);
     await moveToIndexing(d, rec);
     return 'processed';
   }
 
   try {
     const facts = await validateAll(d, rec);
+    await recordWarnings(d, rec, warningsOf(facts));
     await checkTotal(d, rec);
     await copyToChannel(d, rec);
     const fill = buildFill(d, rec, facts);
@@ -105,7 +110,30 @@ export async function validatePublish(d: ValidatorDeps, publishId: string): Prom
 }
 
 async function validateAll(d: ValidatorDeps, rec: PublishRecord): Promise<PackageFacts[]> {
-  return validateArchives(d.objects, d.validatorOptions, rec, rec.files);
+  return validateArchives(d.objects, await optionsFor(d), rec, rec.files);
+}
+
+/**
+ * The validator's options with the conda-forge name mirror the deployment could read. A mirror that cannot be read is not an error:
+ * the checks that need it warn (src/validate/metadata.ts), so this never throws.
+ */
+export async function optionsFor(d: Pick<ValidatorDeps, 'validatorOptions' | 'nativeMirror' | 'now' | 'log'>): Promise<ValidatorOptions> {
+  let nativeMirror: NativeMirror | undefined;
+  try {
+    nativeMirror = await d.nativeMirror?.();
+  } catch (err) {
+    (d.log ?? ((l) => console.log(JSON.stringify(l))))({ level: 'warn', msg: 'the conda-forge name mirror could not be read', error: String(err) });
+  }
+  return { ...d.validatorOptions, ...(nativeMirror ? { nativeMirror } : {}), ...(d.now ? { now: d.now } : {}) };
+}
+
+/** What the archives said that did not stop the publish, once each, in the order the files were validated. */
+export const warningsOf = (facts: readonly PackageFacts[]): string[] => [...new Set(facts.flatMap((f) => f.warnings ?? []))];
+
+/** Keep the warnings on the publish record, where the status route reads them; nothing is written when there are none. */
+async function recordWarnings(d: ValidatorDeps, rec: PublishRecord, warnings: string[]): Promise<void> {
+  if (warnings.length === 0) return;
+  await d.publishes.updatePublish(rec.publish_id, (c) => (c.status === 'validating' ? touch(d, { ...c, warnings }) : undefined));
 }
 
 /**
@@ -116,7 +144,7 @@ async function validateAll(d: ValidatorDeps, rec: PublishRecord): Promise<Packag
 export async function validateArchives(
   objects: Pick<ObjectStore, 'get'>,
   options: ValidatorOptions | undefined,
-  version: { name: string; version: string; manifest_sha256: string },
+  version: { name: string; version: string; manifest_sha256?: string },
   files: ReadonlyArray<Pick<PublishFile, 'key' | 'subdir' | 'filename' | 'sha256'>>,
 ): Promise<PackageFacts[]> {
   const out: PackageFacts[] = [];
@@ -125,7 +153,7 @@ export async function validateArchives(
     if (!bytes) throw new Rejected('archive_invalid', `the upload of ${f.filename} is missing from quarantine`);
     const verdict = validatePackage(
       bytes,
-      { name: version.name, version: version.version, subdir: f.subdir, filename: f.filename, sha256: f.sha256, manifestSha256: version.manifest_sha256 },
+      { name: version.name, version: version.version, subdir: f.subdir, filename: f.filename, sha256: f.sha256, ...(version.manifest_sha256 !== undefined ? { manifestSha256: version.manifest_sha256 } : {}) },
       options,
     );
     if (!verdict.ok) throw new Rejected(verdict.rejection_code, `${f.filename}: ${verdict.message}`);
@@ -134,8 +162,8 @@ export async function validateArchives(
   // One version, one build and one set of dependencies, whatever the platform.
   const first = out[0]!;
   for (const [i, facts] of out.entries()) {
-    const same = facts.build === first.build && JSON.stringify(depsOf(facts)) === JSON.stringify(depsOf(first)) && JSON.stringify(nativeOf(facts)) === JSON.stringify(nativeOf(first));
-    if (!same) throw new Rejected('manifest_invalid', `${files[i]!.filename} disagrees with ${files[0]!.filename} on build, dependencies or native libraries`);
+    const same = facts.build === first.build && JSON.stringify(depsOf(facts)) === JSON.stringify(depsOf(first)) && JSON.stringify(nativeOf(facts)) === JSON.stringify(nativeOf(first)) && JSON.stringify(facts.nativeDepends) === JSON.stringify(first.nativeDepends) && facts.manifestSha256 === first.manifestSha256;
+    if (!same) throw new Rejected('manifest_invalid', `${files[i]!.filename} disagrees with ${files[0]!.filename} on build, dependencies, native libraries or manifest`);
   }
   return out;
 }
@@ -177,7 +205,7 @@ function buildFill(d: ValidatorDeps, rec: PublishRecord, facts: PackageFacts[]):
 export function fillFrom(
   channelUrl: string,
   now: Date,
-  version: { version: string; display?: DisplayMeta; published_by: string },
+  version: { version: string; display?: DisplayMeta; source_commit?: string; published_by: string },
   declared: ReadonlyArray<Pick<PublishFile, 'subdir' | 'filename' | 'sha256' | 'size'>>,
   facts: PackageFacts[],
 ): PublishFill {
@@ -195,9 +223,11 @@ export function fillFrom(
     requires_mojo: `==${first.compiler}`,
     deps: depsOf(first),
     native: nativeOf(first),
+    native_depends: first.nativeDepends,
     files,
     manifest_sha256: first.manifestSha256,
     ...(version.display ?? {}),
+    ...(version.source_commit !== undefined ? { source_commit: version.source_commit } : {}),
     published_at: now.toISOString(),
     published_by: version.published_by,
   };
@@ -254,6 +284,6 @@ function audit(d: ValidatorDeps, rec: PublishRecord, action: string, detail: Rec
     actor: rec.actor,
     action,
     version: rec.version,
-    detail: { publish_id: rec.publish_id, ...detail },
+    detail: { publish_id: rec.publish_id, ...detail, ...(rec.via === undefined ? {} : { via: rec.via }) },
   };
 }

@@ -5,7 +5,8 @@
 //! The wire shapes, status codes and error codes are the contract's. What the
 //! fake chooses, as it does for single publishes:
 //! - a group's id is a function of the caller and the declared set, so the same
-//!   request is the same group;
+//!   request is the same group (the fake's own derivation: a client does not
+//!   compute these ids, unlike the hosted registry's documented ones);
 //! - a group runs one stage per status poll, after the commit: `validating`,
 //!   `committed`, `visible` (a rejected member ends it `rejected`, and nothing
 //!   is visible); a yank or unyank moves one stage per poll too;
@@ -21,10 +22,12 @@ const Allocator = std.mem.Allocator;
 const api = @import("api.zig");
 const Ctx = api.Ctx;
 const st = @import("state.zig");
+const srcc = @import("source_commit.zig");
 const resp = @import("resp.zig");
 const Response = resp.Response;
 const util = @import("util.zig");
 const auth = @import("auth.zig");
+const token_scopes = @import("token_scopes.zig");
 const publish = @import("publish.zig");
 const channel = @import("files.zig");
 
@@ -46,6 +49,20 @@ const max_readme: usize = 65536;
 const ReqFile = struct { subdir: []const u8, filename: []const u8, sha256: []const u8, size: u64 };
 const ReqMember = struct { name: []const u8, version: []const u8, files: []ReqFile };
 const Parsed = union(enum) { ok: []ReqMember, fail: Response };
+/// What a create does when the caller's own open groups share a version with the new set (`on_overlap` of the body).
+const OnOverlap = enum { supersede, refuse };
+const OverlapOption = union(enum) { ok: OnOverlap, fail: Response };
+
+/// The `on_overlap` option of the body: absent is `supersede`; a value that is not one of the two is invalid_request.
+fn parseOnOverlap(ctx: *Ctx) Allocator.Error!OverlapOption {
+    const obj = ctx.object() orelse return .{ .ok = .supersede };
+    const v = obj.get("on_overlap") orelse return .{ .ok = .supersede };
+    const text = switch (v) {
+        .string => |s| s,
+        else => "",
+    };
+    return .{ .ok = std.meta.stringToEnum(OnOverlap, text) orelse return .{ .fail = try resp.invalid(ctx.arena, "'on_overlap' is 'supersede' or 'refuse'") } };
+}
 
 fn isSha(s: []const u8) bool {
     return s.len == 64 and isHex(s);
@@ -206,6 +223,15 @@ fn tokenCovers(t: *const st.Token, name: []const u8, scopes: []const st.Scope) b
     return false;
 }
 
+/// Whether the token of a `packages` exchange names `name` at exactly `version`.
+fn oidcSetCovers(t: *const st.Token, name: []const u8, version: []const u8) bool {
+    if (t.kind != .oidc) return false;
+    for (t.oidc_set) |nv| {
+        if (std.mem.eql(u8, nv.name, name) and std.mem.eql(u8, nv.version, version)) return true;
+    }
+    return false;
+}
+
 fn findGroup(s: *st.State, id: []const u8) ?*st.Group {
     for (s.groups.items) |g| {
         if (std.mem.eql(u8, g.id, id)) return g;
@@ -245,7 +271,10 @@ fn jsonOmitting(arena: Allocator, status: std.http.Status, value: anytype) Alloc
     return .{ .status = status, .body = buf.items };
 }
 
-const MemberView = struct { name: []const u8, version: []const u8, state: []const u8 };
+/// One declared file of a member, as `getGroup` shows it. `uploaded` is set only while the group is open.
+const FileView = struct { subdir: []const u8, filename: []const u8, sha256: []const u8, size: u64, uploaded: ?bool = null };
+/// `files` is set on the answer of `getGroup` only.
+const MemberView = struct { name: []const u8, version: []const u8, state: []const u8, files: ?[]const FileView = null };
 const FailureView = struct { code: []const u8, message: []const u8, member: ?[]const u8 = null };
 const YankView = struct { state: []const u8, reason: []const u8, requested_at: []const u8, yanked_members: usize };
 const GroupView = struct {
@@ -269,12 +298,33 @@ fn memberState(g: *const st.Group, m: st.GroupMember) []const u8 {
     };
 }
 
-/// The group as `getGroup` shows it.
-fn view(arena: Allocator, g: *const st.Group) Allocator.Error!GroupView {
+/// Whether the member's row is still this group's: the group holds the number, or published the version. A row another group or a
+/// single publish took after this group ended is not.
+fn holdsRow(g: *const st.Group, m: st.GroupMember) bool {
+    if (m.row.group) |held| if (held == g) return true;
+    const id = m.row.group_id orelse return false;
+    return std.mem.eql(u8, id, g.id);
+}
+
+/// The declared files of one member, with `uploaded` while the group is open; empty when the row is no longer the group's.
+fn filesView(arena: Allocator, g: *const st.Group, m: st.GroupMember) Allocator.Error![]const FileView {
+    if (!holdsRow(g, m)) return &.{};
+    const n = @min(m.files.len, max_files);
+    const out = try arena.alloc(FileView, n);
+    for (m.files[0..n], out) |f, *o| {
+        o.* = .{ .subdir = f.subdir, .filename = f.filename, .sha256 = f.sha256, .size = f.size };
+        if (g.status == .open) o.uploaded = f.upload.path != null;
+    }
+    return out;
+}
+
+/// The group as the answers show it; `with_files` is `getGroup`'s, for which each member lists its files.
+fn view(arena: Allocator, g: *const st.Group, with_files: bool) Allocator.Error!GroupView {
     var members = std.ArrayList(MemberView).init(arena);
     var yanked: usize = 0;
-    for (g.members) |m| {
-        try members.append(.{ .name = m.package.name, .version = m.version, .state = memberState(g, m) });
+    for (g.members, 0..) |m, i| {
+        const files: ?[]const FileView = if (with_files and i < max_members) try filesView(arena, g, m) else if (with_files) &.{} else null;
+        try members.append(.{ .name = m.package.name, .version = m.version, .state = memberState(g, m), .files = files });
         if (m.yanked_by_group) yanked += 1;
     }
     return .{
@@ -315,6 +365,8 @@ const CreateAnswer = struct {
     status: []const u8,
     attempt: u32,
     deadline_at: []const u8,
+    /// The caller's own groups this call ended; absent when it ended none.
+    superseded: ?[]const []const u8 = null,
     members: []const MemberAnswer,
 };
 
@@ -379,7 +431,7 @@ fn holder(ctx: *Ctx, gid: []const u8, m: ReqMember, p: *st.Package, superseding:
     if (std.mem.eql(u8, h.id, gid)) return .mine;
     if (st.groupIsDead(h.status) or contains(superseding, h)) return .adopt;
     const detail = try std.fmt.allocPrint(ctx.arena, "{s} {s} is held by group {s}, which is {s}", .{ p.name, m.version, h.id, @tagName(h.status) });
-    return .{ .fail = try resp.fail(ctx.arena, .group_conflict, &.{.{ "detail", detail }}) };
+    return .{ .fail = try resp.conflict(ctx.arena, .number_held, detail) };
 }
 
 fn sameMember(g: *const st.Group, m: ReqMember) bool {
@@ -401,9 +453,14 @@ pub fn createGroup(ctx: *Ctx, _: []const []const u8) anyerror!Response {
         .ok => |m| m,
         .fail => |r| return r,
     };
-    // A group is made with an API token that may publish every member; a CI identity token is for one version of one package.
+    const on_overlap = switch (try parseOnOverlap(ctx)) {
+        .ok => |o| o,
+        .fail => |r| return r,
+    };
+    // A group is made with an API token that may publish every member, or with the token of a `packages` exchange that names
+    // every member at its version. The token of the single-package exchange is for one version of one package: no group.
     for (members) |m| {
-        if (!tokenCovers(t, m.name, &.{.publish})) {
+        if (!(tokenCovers(t, m.name, &.{ .publish, .stage }) or oidcSetCovers(t, m.name, m.version))) {
             return resp.fail(ctx.arena, .scope_missing, &.{ .{ "scope", "publish" }, .{ "name", m.name } });
         }
     }
@@ -422,15 +479,16 @@ pub fn createGroup(ctx: *Ctx, _: []const []const u8) anyerror!Response {
             .validating, .committed, .visible => return unchangedAnswer(ctx.arena, g, .ok),
             .failed => {
                 const detail = try std.fmt.allocPrint(ctx.arena, "group {s} failed after its files were copied, and its version numbers are burned; publish a new version of each package", .{gid});
-                return resp.fail(ctx.arena, .group_conflict, &.{.{ "detail", detail }});
+                return resp.conflict(ctx.arena, .group_failed, detail);
             },
             else => {},
         }
     }
 
     var created = false;
+    var superseded: []const []const u8 = &.{};
     if (group == null or st.groupIsDead(group.?.status)) {
-        const superseding = switch (try takeSlot(ctx, t.user, gid, members)) {
+        const superseding = switch (try takeSlot(ctx, t.user, gid, members, on_overlap)) {
             .ok => |l| l,
             .fail => |r| return r,
         };
@@ -450,7 +508,12 @@ pub fn createGroup(ctx: *Ctx, _: []const []const u8) anyerror!Response {
                 });
             }
         }
-        for (superseding) |o| o.status = .superseded;
+        var ended = std.ArrayList([]const u8).init(ctx.arena);
+        for (superseding) |o| {
+            o.status = .superseded;
+            try ended.append(o.id);
+        }
+        superseded = ended.items;
         const deadline = s.now() + deadline_secs;
         if (group) |g| {
             g.attempt += 1;
@@ -473,7 +536,7 @@ pub fn createGroup(ctx: *Ctx, _: []const []const u8) anyerror!Response {
         created = true;
     }
     const g = group.?;
-    return reserve(ctx, g, members, packages.items, created);
+    return reserve(ctx, g, members, packages.items, created, superseded);
 }
 
 fn liveBytes(p: *const st.Package) u64 {
@@ -488,7 +551,7 @@ fn liveBytes(p: *const st.Package) u64 {
 const Slot = union(enum) { ok: []const *st.Group, fail: Response };
 
 /// A place among the caller's open groups. The ones that share a member with this group are superseded by it.
-fn takeSlot(ctx: *Ctx, user: *const st.User, gid: []const u8, members: []const ReqMember) Allocator.Error!Slot {
+fn takeSlot(ctx: *Ctx, user: *const st.User, gid: []const u8, members: []const ReqMember, on_overlap: OnOverlap) Allocator.Error!Slot {
     const s = ctx.state;
     var overlapping = std.ArrayList(*st.Group).init(ctx.arena);
     var open: usize = 0;
@@ -504,19 +567,31 @@ fn takeSlot(ctx: *Ctx, user: *const st.User, gid: []const u8, members: []const R
             }
         }
     }
+    if (on_overlap == .refuse and overlapping.items.len > 0) {
+        var ids = std.ArrayList(u8).init(ctx.arena);
+        for (overlapping.items, 0..) |o, i| {
+            if (i > 0) try ids.appendSlice(", ");
+            try ids.appendSlice(o.id);
+        }
+        const one = overlapping.items.len == 1;
+        const plural: []const u8 = if (one) "" else "s";
+        const them: []const u8 = if (one) "it" else "them";
+        const detail = try std.fmt.allocPrint(ctx.arena, "it shares versions with your open group{s} {s}, and on_overlap is refuse; abort {s} first, or send on_overlap supersede", .{ plural, ids.items, them });
+        return .{ .fail = try resp.conflict(ctx.arena, .overlap_refused, detail) };
+    }
     if (overlapping.items.len > supersede_max) {
         const detail = try std.fmt.allocPrint(ctx.arena, "it shares versions with {d} of your open groups, and one create supersedes at most {d}; abort some first", .{ overlapping.items.len, supersede_max });
-        return .{ .fail = try resp.fail(ctx.arena, .group_conflict, &.{.{ "detail", detail }}) };
+        return .{ .fail = try resp.conflict(ctx.arena, .supersede_cap, detail) };
     }
     if (open - overlapping.items.len >= open_per_actor) {
         const detail = try std.fmt.allocPrint(ctx.arena, "you already have {d} open groups, and at most {d} may be open; abort one first", .{ open - overlapping.items.len, open_per_actor });
-        return .{ .fail = try resp.fail(ctx.arena, .group_conflict, &.{.{ "detail", detail }}) };
+        return .{ .fail = try resp.conflict(ctx.arena, .open_cap, detail) };
     }
     return .{ .ok = overlapping.items };
 }
 
 /// Writes the members' rows and uploads for a group that is new, opened again, or open and asked for again; answers with each file's URL.
-fn reserve(ctx: *Ctx, g: *st.Group, members: []const ReqMember, packages: []*st.Package, fresh: bool) anyerror!Response {
+fn reserve(ctx: *Ctx, g: *st.Group, members: []const ReqMember, packages: []*st.Package, fresh: bool, superseded: []const []const u8) anyerror!Response {
     const s = ctx.state;
     var stored = std.ArrayList(st.GroupMember).init(s.alloc);
     var answers = std.ArrayList(MemberAnswer).init(ctx.arena);
@@ -567,6 +642,7 @@ fn reserve(ctx: *Ctx, g: *st.Group, members: []const ReqMember, packages: []*st.
         .status = @tagName(g.status),
         .attempt = g.attempt,
         .deadline_at = try util.rfc3339(ctx.arena, g.deadline_at),
+        .superseded = if (superseded.len > 0) superseded else null,
         .members = answers.items,
     });
 }
@@ -587,12 +663,13 @@ pub fn getGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .ok => |t| t,
         .fail => |r| return r,
     };
+    if (!token_scopes.mayStage(t)) return resp.fail(ctx.arena, .scope_missing, &.{ .{ "scope", "publish" }, .{ "name", "this group" } });
     const g = switch (try load(ctx, t, params[0])) {
         .ok => |g| g,
         .fail => |r| return r,
     };
     // As a single publish does, the group shows the stage it is in and moves one stage for the next poll.
-    const shown = try view(ctx.arena, g);
+    const shown = try view(ctx.arena, g, true);
     try advance(ctx, g);
     return jsonOmitting(ctx.arena, .ok, shown);
 }
@@ -602,6 +679,7 @@ pub fn abortGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .ok => |t| t,
         .fail => |r| return r,
     };
+    if (!token_scopes.mayStage(t)) return resp.fail(ctx.arena, .scope_missing, &.{ .{ "scope", "publish" }, .{ "name", "this group" } });
     const g = switch (try load(ctx, t, params[0])) {
         .ok => |g| g,
         .fail => |r| return r,
@@ -610,7 +688,7 @@ pub fn abortGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
     if (g.status != .aborted) {
         return resp.fail(ctx.arena, .group_not_open, &.{ .{ "group_id", g.id }, .{ "status", @tagName(g.status) } });
     }
-    return jsonOmitting(ctx.arena, .ok, try view(ctx.arena, g));
+    return jsonOmitting(ctx.arena, .ok, try view(ctx.arena, g, false));
 }
 
 // ---------------------------------------------------------------------------
@@ -667,6 +745,8 @@ fn advance(ctx: *Ctx, g: *st.Group) anyerror!void {
                 m.row.state = .published;
                 m.row.published_at = g.committed_at;
                 m.row.group = null;
+                m.row.group_id = g.id;
+                m.row.source_commit = m.source_commit;
                 m.package.state = .active;
                 m.package.updated_at = g.committed_at;
                 try channel.addFiles(s, m.row);
@@ -717,7 +797,7 @@ fn advanceYank(ctx: *Ctx, g: *st.Group) anyerror!void {
 const Commit = union(enum) { ok: []const u8, fail: Response };
 
 /// Checks the commit request against the group's members and returns what names it: a string that is the same for the same request.
-fn parseCommit(ctx: *Ctx, g: *const st.Group, manifests: []?[]const u8) Allocator.Error!Commit {
+fn parseCommit(ctx: *Ctx, g: *const st.Group, manifests: []?[]const u8, sources: []?[]const u8) Allocator.Error!Commit {
     const a = ctx.arena;
     const obj = ctx.object() orelse return .{ .fail = try resp.invalid(a, "the body is not a JSON object") };
     const list = switch (obj.get("members") orelse return .{ .fail = try resp.invalid(a, "'members' lists the manifest of each member of the group") }) {
@@ -726,6 +806,7 @@ fn parseCommit(ctx: *Ctx, g: *const st.Group, manifests: []?[]const u8) Allocato
     };
     var hash = std.ArrayList(u8).init(a);
     for (manifests) |*slot| slot.* = null;
+    @memset(sources, null);
     var listed = std.ArrayList([]const u8).init(a);
     for (list) |item| {
         const m = switch (item) {
@@ -737,12 +818,24 @@ fn parseCommit(ctx: *Ctx, g: *const st.Group, manifests: []?[]const u8) Allocato
             if (std.mem.eql(u8, seen, name)) return .{ .fail = try resp.invalid(a, try std.fmt.allocPrint(a, "'{s}' appears twice", .{name})) };
         }
         try listed.append(name);
-        const sha = util.getStr(m, "manifest_sha256") orelse "";
-        if (!isSha(sha)) return .{ .fail = try resp.invalid(a, try std.fmt.allocPrint(a, "'manifest_sha256' of '{s}' is 64 lowercase hex digits", .{name})) };
+        // Optional: absent is "", which the fake keeps as it is (it opens no archive, so it has no hash of its own to put in its place:
+        // a published member's `manifest_sha256` is its first file's sha256 whatever the request said, as it always was).
+        const given: ?[]const u8 = if (m.get("manifest_sha256")) |v| switch (v) {
+            .string => |x| x,
+            else => "",
+        } else null;
+        if (given) |x| if (!isSha(x)) return .{ .fail = try resp.invalid(a, try std.fmt.allocPrint(a, "'manifest_sha256' of '{s}' is 64 lowercase hex digits", .{name})) };
+        const sha = given orelse "";
+        const source: ?[]const u8 = switch (srcc.parse(m)) {
+            .absent => null,
+            .ok => |x| x,
+            .invalid => return .{ .fail = try resp.invalid(a, try srcc.refusal(a, try std.fmt.allocPrint(a, " of '{s}'", .{name}))) },
+        };
         var found = false;
         for (g.members, 0..) |gm, i| {
             if (std.mem.eql(u8, gm.package.name, name)) {
                 manifests[i] = sha;
+                sources[i] = source;
                 found = true;
             }
         }
@@ -763,7 +856,7 @@ fn parseCommit(ctx: *Ctx, g: *const st.Group, manifests: []?[]const u8) Allocato
             }
             try shown_text.append(0);
         }
-        try hash.writer().print("{s}:{s}:{s}\n", .{ name, sha, shown_text.items });
+        try hash.writer().print("{s}:{s}:{s}:{s}\n", .{ name, sha, shown_text.items, source orelse "" });
     }
     for (g.members, manifests) |gm, got| {
         if (got == null) return .{ .fail = try resp.invalid(a, try std.fmt.allocPrint(a, "'members' has no entry for '{s}', a member of the group", .{gm.package.name})) };
@@ -794,12 +887,14 @@ pub fn commitGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .ok => |t| t,
         .fail => |r| return r,
     };
+    if (!token_scopes.mayCommit(t)) return resp.fail(ctx.arena, .scope_missing, &.{ .{ "scope", "publish" }, .{ "name", "this group" } });
     const g = switch (try load(ctx, t, params[0])) {
         .ok => |g| g,
         .fail => |r| return r,
     };
     const manifests = try ctx.arena.alloc(?[]const u8, g.members.len);
-    const hash = switch (try parseCommit(ctx, g, manifests)) {
+    const sources = try ctx.arena.alloc(?[]const u8, g.members.len);
+    const hash = switch (try parseCommit(ctx, g, manifests, sources)) {
         .ok => |h| h,
         .fail => |r| return r,
     };
@@ -834,7 +929,10 @@ pub fn commitGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
             }
         }
     }
-    for (g.members, manifests) |*m, sha| m.manifest_sha256 = try s.alloc.dupe(u8, sha.?);
+    for (g.members, manifests, sources) |*m, sha, src| {
+        m.manifest_sha256 = try s.alloc.dupe(u8, sha.?);
+        m.source_commit = if (src) |x| try s.alloc.dupe(u8, x) else null;
+    }
     g.commit_hash = try s.alloc.dupe(u8, hash);
     g.status = .validating;
     return resp.json(ctx.arena, .accepted, CommitAnswer{
@@ -883,18 +981,18 @@ pub fn yankGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
     const current: ?st.YankState = if (g.yank) |y| y.state else null;
     if (yanked) {
         if (current == .unyanking) return notSettled(ctx, g, "it is being unyanked");
-        if (current == .yanked) return jsonOmitting(ctx.arena, .ok, try view(ctx.arena, g));
-        if (current == .yanking) return jsonOmitting(ctx.arena, .accepted, try view(ctx.arena, g));
+        if (current == .yanked) return jsonOmitting(ctx.arena, .ok, try view(ctx.arena, g, false));
+        if (current == .yanking) return jsonOmitting(ctx.arena, .accepted, try view(ctx.arena, g, false));
         // A new yank starts from none yanked: what an earlier one changed is no longer the group's to restore.
         for (g.members) |*m| m.yanked_by_group = false;
         g.yank = .{ .state = .yanking, .reason = try s.alloc.dupe(u8, reason.?), .requested_at = s.now() };
-        return jsonOmitting(ctx.arena, .accepted, try view(ctx.arena, g));
+        return jsonOmitting(ctx.arena, .accepted, try view(ctx.arena, g, false));
     }
-    if (current == null or current == .restored) return jsonOmitting(ctx.arena, .ok, try view(ctx.arena, g));
+    if (current == null or current == .restored) return jsonOmitting(ctx.arena, .ok, try view(ctx.arena, g, false));
     if (current == .yanking) return notSettled(ctx, g, "it is being yanked");
-    if (current == .unyanking) return jsonOmitting(ctx.arena, .accepted, try view(ctx.arena, g));
+    if (current == .unyanking) return jsonOmitting(ctx.arena, .accepted, try view(ctx.arena, g, false));
     g.yank.?.state = .unyanking;
-    return jsonOmitting(ctx.arena, .accepted, try view(ctx.arena, g));
+    return jsonOmitting(ctx.arena, .accepted, try view(ctx.arena, g, false));
 }
 
 fn notSettled(ctx: *Ctx, g: *const st.Group, detail: []const u8) Allocator.Error!Response {

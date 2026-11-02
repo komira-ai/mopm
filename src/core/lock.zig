@@ -25,6 +25,8 @@ const testroot = @import("testroot.zig");
 const Allocator = std.mem.Allocator;
 const registry = @import("registry.zig");
 const metadata = @import("metadata.zig");
+const native_link = @import("native_link.zig");
+const lock_libs = @import("lock_libs.zig");
 
 /// The `lock_version` of a lock for one Mojo version (the `[toolchain]` form).
 pub const lock_version: i64 = 1;
@@ -63,6 +65,8 @@ pub const Native = struct {
     needs: []const []const u8 = &.{},
     /// An exclusivity group, or "".
     exclusive: []const u8 = "",
+    /// System libraries a consumer's final link adds (native_link.allowed), copied from the package's metadata.
+    link: []const []const u8 = &.{},
 };
 
 /// Where a locked package comes from.
@@ -88,6 +92,8 @@ pub const Package = struct {
     artifacts: []const Artifact = &.{},
     deps: []const []const u8 = &.{},
     native: []const Native = &.{},
+    /// The conda names of the system libraries the package loads, sorted (lock_libs.zig); each is pinned in `system_libs`.
+    loads: []const []const u8 = &.{},
 };
 
 pub const Lock = struct {
@@ -101,6 +107,9 @@ pub const Lock = struct {
     mojos: []const []const u8 = &.{},
     /// Version 2: mopm's toolchain closure hash per (mojo, subdir), sorted.
     closures: []const Closure = &.{},
+    /// The pinned conda packages of the system libraries that manifests and registry packages load, per subdir
+    /// (lock_libs.zig). Empty for a lock that names none.
+    system_libs: []const lock_libs.Subdir = &.{},
 
     /// The version locked for `name`, or null.
     pub fn versionOf(self: Lock, name: []const u8) ?[]const u8 {
@@ -165,7 +174,7 @@ pub fn forMojo(arena: Allocator, l: Lock, mojo: []const u8) Allocator.Error!Lock
         q.mojo = a.mojo;
         try out.append(q);
     }
-    return .{ .mojo = mojo, .channels = l.channels, .packages = out.items };
+    return .{ .mojo = mojo, .channels = l.channels, .packages = out.items, .system_libs = l.system_libs };
 }
 
 /// `<channel><subdir>/mojo-<name>-<version>-<build>.conda` (rule 3).
@@ -216,6 +225,7 @@ pub fn check(arena: Allocator, l: Lock) Allocator.Error!?[]const u8 {
     for (l.channels) |c| {
         if (!allowedChannel(c)) return try std.fmt.allocPrint(arena, "channel {s} is refused: {s}", .{ c, channel_rule });
     }
+    if (try lock_libs.checkLibs(arena, l.system_libs)) |broken| return broken;
     for (l.packages, 0..) |p, i| {
         if (i > 0 and order(l.packages[i - 1], p) != .lt) {
             return try std.fmt.allocPrint(arena, "packages are not sorted by name, version and subdir with no repeats (at {s} {s} {s})", .{ p.name, p.version, p.subdir });
@@ -254,6 +264,7 @@ pub fn check(arena: Allocator, l: Lock) Allocator.Error!?[]const u8 {
             for (l.packages) |q| found = found or std.mem.eql(u8, q.name, d);
             if (!found) return try std.fmt.allocPrint(arena, "{s}: dependency {s} is not in packages", .{ p.name, d });
         }
+        if (try lock_libs.checkLoads(arena, p.name, p.subdir, p.loads, l.system_libs)) |broken| return broken;
         for (p.native) |n| {
             for (n.needs) |need| {
                 if (std.mem.eql(u8, need, n.soname)) return try std.fmt.allocPrint(arena, "{s}: native library {s} needs itself ({s})", .{ p.name, n.id, need });
@@ -397,7 +408,7 @@ pub fn parse(arena: Allocator, text: []const u8, why: *[]const u8) ParseError!Lo
         if (o.get("source") != null) {
             const source = try r.string(o, "source", what);
             if (!std.mem.eql(u8, source, "path")) return r.bad("{s}'s source is {s}; a lock entry's source is path, or none for the registry", .{ what, source });
-            for ([_][]const u8{ "build", "subdir", "channel", "url", "sha256", "size", "mojo", "artifacts" }) |key| {
+            for ([_][]const u8{ "build", "subdir", "channel", "url", "sha256", "size", "mojo", "artifacts", "loads" }) |key| {
                 if (o.get(key) != null) return r.bad("{s} is a path dependency, which has no {s}", .{ what, key });
             }
             try packages.append(.{
@@ -460,9 +471,10 @@ pub fn parse(arena: Allocator, text: []const u8, why: *[]const u8) ParseError!Lo
             try natives.append(try readNative(r, no, what));
         }
         p.native = natives.items;
+        p.loads = try lock_libs.parseLoads(arena, r.why, o, what);
         try packages.append(p);
     }
-    const l = Lock{ .mojo = mojo, .channels = channels.items, .packages = packages.items, .mojos = mojos.items, .closures = closures.items };
+    const l = Lock{ .mojo = mojo, .channels = channels.items, .packages = packages.items, .mojos = mojos.items, .closures = closures.items, .system_libs = try lock_libs.parseSubdirs(arena, r.why, top) };
     if (try check(arena, l)) |broken| return r.bad("{s}", .{broken});
     return l;
 }
@@ -494,6 +506,16 @@ fn readNative(r: Reader, no: std.json.ObjectMap, what: []const u8) ParseError!Na
     }
     lib.needs = needs.items;
     if (no.get("exclusive") != null) lib.exclusive = try r.string(no, "exclusive", what);
+    var link = std.ArrayList([]const u8).init(r.arena);
+    for (try r.array(no, "link", what, false)) |n| {
+        switch (n) {
+            .string => |s| try link.append(s),
+            else => return r.bad("{s}'s native library {s} has a link name that is not a string", .{ what, lib.id }),
+        }
+    }
+    if (try native_link.problem(r.arena, link.items)) |why| return r.bad("{s}'s native library {s}: link: {s}", .{ what, lib.id, why });
+    if (link.items.len > 0 and lib.kind != .static) return r.bad("{s}'s native library {s} has a link but is not static", .{ what, lib.id });
+    lib.link = link.items;
     return lib;
 }
 
@@ -550,9 +572,12 @@ pub fn write(l: Lock, w: anytype) !void {
         try str(w, p.mojo);
         try writeDeps(w, p.deps);
         try writeNatives(w, p.native);
+        try lock_libs.writeLoads(w, p.loads);
         try w.writeAll("\n    }");
     }
-    try w.writeAll(if (l.packages.len == 0) "]\n}\n" else "\n  ]\n}\n");
+    try w.writeAll(if (l.packages.len == 0) "]" else "\n  ]");
+    try lock_libs.writeSubdirs(w, l.system_libs);
+    try w.writeAll("\n}\n");
 }
 
 fn writeNatives(w: anytype, native: []const Native) !void {
@@ -579,6 +604,14 @@ fn writeNatives(w: anytype, native: []const Native) !void {
         if (lib.exclusive.len > 0) {
             try w.writeAll(",\n          \"exclusive\": ");
             try str(w, lib.exclusive);
+        }
+        if (lib.link.len > 0) {
+            try w.writeAll(",\n          \"link\": [");
+            for (lib.link, 0..) |name, k| {
+                try w.writeAll(if (k == 0) "\n            " else ",\n            ");
+                try str(w, name);
+            }
+            try w.writeAll("\n          ]");
         }
         try w.writeAll("\n        }");
     }
@@ -651,9 +684,12 @@ fn writeV2(l: Lock, w: anytype) !void {
         try w.writeAll(if (p.artifacts.len == 0) "}" else "\n      }");
         try writeDeps(w, p.deps);
         try writeNatives(w, p.native);
+        try lock_libs.writeLoads(w, p.loads);
         try w.writeAll("\n    }");
     }
-    try w.writeAll(if (l.packages.len == 0) "]\n}\n" else "\n  ]\n}\n");
+    try w.writeAll(if (l.packages.len == 0) "]" else "\n  ]");
+    try lock_libs.writeSubdirs(w, l.system_libs);
+    try w.writeAll("\n}\n");
 }
 
 fn writeDeps(w: anytype, deps: []const []const u8) !void {
@@ -711,11 +747,16 @@ test "each invalid example lock is refused, for the reason its name gives" {
         .{ "future_lock_version.json", "Update mopm." },
         .{ "http_non_loopback_channel.json", "channel http://conda.mopm.dev/channel/ is refused" },
         .{ "missing_build.json", "has no build" },
+        .{ "loads_not_pinned.json", "which system_libs does not pin for linux-64" },
         .{ "mojo_mismatch.json", "but the toolchain is mojo" },
         .{ "name_from_two_channels.json", "comes from two channels" },
         .{ "native_bad_kind.json", "has kind weird; a kind is shared, static or both" },
+        .{ "native_link_twice.json", "native library crypto_sys: link: 'm' is named twice" },
+        .{ "native_link_unknown.json", "native library crypto_sys: link: '-lcurl' is not a system library a native may link" },
         .{ "native_need_not_string.json", "has a need that is not a string" },
         .{ "soname_clash.json", "is shipped by both" },
+        .{ "system_lib_bad_sha256.json", "sha256 is not 64 lowercase hex digits" },
+        .{ "system_libs_unsorted.json", "system_libs of linux-64 is not sorted by name with no repeats (at libsqlite)" },
         .{ "unsorted.json", "not sorted by name, version and subdir" },
         .{ "url_mismatch.json", "url is " },
     };
@@ -1082,4 +1123,33 @@ test "a native library that needs its own soname is refused when the lock is rea
     var why: []const u8 = "";
     try std.testing.expectError(error.Invalid, parse(a, selfish, &why));
     try std.testing.expectEqualStrings("tls_sys: native library tls_sys needs itself (libtls_sys.a)", why);
+}
+
+// Defects it catches: the system libraries of a package dropped on reading a lock (a unit graph made from it then links
+// a C++ archive without libc++), or written back differently; a library that is not static carrying them.
+test "a lock keeps the link names of a native through a read and a write, and a native without them writes none" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var dir = try std.fs.cwd().openDir(try testroot.path(a, "tests/contract/examples/lock/valid"), .{});
+    defer dir.close();
+    const text = try dir.readFileAlloc(a, "static_link.json", 1 << 20);
+    var why: []const u8 = "";
+    const l = try parse(a, text, &why);
+    const crypto = l.packages[0].native[0];
+    try std.testing.expectEqual(@as(usize, 1), crypto.link.len);
+    try std.testing.expectEqualStrings("c++", crypto.link[0]);
+    const tls = l.packages[1].native[0];
+    try std.testing.expectEqual(@as(usize, 2), tls.link.len);
+    try std.testing.expectEqualStrings("c++", tls.link[0]);
+    try std.testing.expectEqualStrings("m", tls.link[1]);
+    try std.testing.expectEqualStrings(text, try render(a, l));
+
+    const plain = try dir.readFileAlloc(a, "static_natives.json", 1 << 20);
+    try std.testing.expect(std.mem.indexOf(u8, try render(a, try parse(a, plain, &why)), "\"link\"") == null);
+
+    // A link on a library that is not static is refused.
+    const shared = try std.mem.replaceOwned(u8, a, text, "\"kind\": \"static\",\n          \"exclusive\"", "\"exclusive\"");
+    try std.testing.expectError(error.Invalid, parse(a, shared, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "has a link but is not static") != null);
 }

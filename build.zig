@@ -127,6 +127,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "supervisor", .root = "tests/drivers/test_supervisor_test.zig" },
         .{ .name = "flaky", .root = "tests/drivers/test_flaky_test.zig" },
         .{ .name = "native-workspace", .root = "tests/drivers/native_workspace_test.zig" },
+        .{ .name = "build-targets", .root = "tests/drivers/build_targets_test.zig" },
     };
     inline for (drivers) |d| {
         const drv = b.addTest(.{ // native-only

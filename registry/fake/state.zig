@@ -18,8 +18,8 @@ pub const poll_interval: i64 = 5;
 /// A claim with no version expires after 30 days; an invitation after 7.
 pub const claim_secs: i64 = 30 * day;
 pub const invitation_secs: i64 = 7 * day;
-/// An OIDC publish token lives 15 minutes.
-pub const oidc_secs: i64 = 15 * 60;
+/// An OIDC publish token lives 10 minutes.
+pub const oidc_secs: i64 = 10 * 60;
 /// An upload URL expires five minutes after beginUpload.
 pub const upload_secs: i64 = 5 * 60;
 /// The largest file v1 takes.
@@ -31,7 +31,8 @@ pub const User = struct { github_id: u64, handle: []const u8 };
 
 pub const TokenKind = enum { session, api, oidc };
 
-pub const Scope = enum { publish, yank };
+/// `stage` prepares a group (create, read, abort) and nothing else.
+pub const Scope = enum { publish, yank, stage };
 
 pub const Token = struct {
     id: []const u8,
@@ -54,7 +55,13 @@ pub const Token = struct {
     oidc_package: []const u8 = "",
     oidc_version: []const u8 = "",
     oidc_repository: []const u8 = "",
+    /// OIDC tokens of the `packages` form only: the package versions they may publish (they hold no `oidc_package`).
+    oidc_set: []const NameVersion = &.{},
+    /// OIDC tokens minted with `purpose: stage`: they prepare a group and never commit or yank.
+    oidc_stage: bool = false,
 };
+
+pub const NameVersion = struct { name: []const u8, version: []const u8 };
 
 /// `pending` while its publish runs; `rejected` burns the number.
 pub const VersionState = enum { pending, published, yanked, tombstoned, rejected };
@@ -85,6 +92,10 @@ pub const Version = struct {
     /// The group that reserved this number (a `pending` row of a group), or null. The group may have ended: its
     /// rows are then free for another group or a single publish to take.
     group: ?*Group = null,
+    /// The id of the group that published this version, kept after the group is visible (`group` is then null). getVersion shows it.
+    group_id: ?[]const u8 = null,
+    /// `source_commit` of the commit request that published this version: informational, never checked. Null when it had none.
+    source_commit: ?[]const u8 = null,
 
     /// Shown by getVersion and listed: every state but pending and rejected.
     pub fn visible(v: *const Version) bool {
@@ -147,6 +158,8 @@ pub const GroupMember = struct {
     /// The row that holds the number (`pending` until the group is visible).
     row: *Version,
     manifest_sha256: []const u8 = "",
+    /// `source_commit` of this member in the commit request, copied to its row when the group is visible.
+    source_commit: ?[]const u8 = null,
     /// Set when the group's yank changed this member: an unyank restores these and no others.
     yanked_by_group: bool = false,
 };
@@ -222,7 +235,7 @@ pub const DeviceLogin = struct {
     token: ?*Token = null,
 };
 
-/// A planted failure: the next request to `operation` answers `code`.
+/// A faulty failure: the next request to `operation` answers `code`.
 pub const Fault = struct { operation: []const u8, code: errors.Code };
 
 pub const State = struct {
@@ -246,6 +259,9 @@ pub const State = struct {
     logins: std.ArrayListUnmanaged(*DeviceLogin) = .{},
     faults: std.ArrayListUnmanaged(Fault) = .{},
     packages: std.ArrayListUnmanaged(*Package) = .{},
+    /// Repositories the deployment trusts as CI publishers by configuration (`/_fake/ci_publisher`): the `packages` form
+    /// of the OIDC exchange is for these, and it creates a package it is first to name.
+    ci_repos: std.ArrayListUnmanaged([]const u8) = .{},
     invitations: std.ArrayListUnmanaged(*Invitation) = .{},
     uploads: std.ArrayListUnmanaged(*Upload) = .{},
     publishes: std.ArrayListUnmanaged(*Publish) = .{},
@@ -386,7 +402,7 @@ pub const State = struct {
         return p;
     }
 
-    /// Removes and returns the planted failure for `operation`, if any.
+    /// Removes and returns the faulty failure for `operation`, if any.
     pub fn takeFault(s: *State, operation: []const u8) ?errors.Code {
         for (s.faults.items, 0..) |f, i| {
             if (std.mem.eql(u8, f.operation, operation)) {

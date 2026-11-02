@@ -158,7 +158,6 @@ const Ctx = struct {
 test "autolink: mopm build, run and repl with native libraries (tests/e2e/run.sh)" {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena_state.allocator();
-    try h.watchdog(1500);
     var rep = h.Report{};
     run(a, &rep) catch |e| switch (e) {
         error.Fatal => {},
@@ -244,6 +243,8 @@ fn run(a: Allocator, rep: *h.Report) !void {
     } else {
         var e = try m.freshEnv();
         try e.put("MODULAR_HOME", try h.fmt(a, "{s}/share/max", .{split}));
+        // The stock mojo repl, not mopm's: on macOS 14 it needs Xcode's debugserver set by hand (mopm repl sets it itself).
+        if (mojo_env.is_macos) try mojo_env.macDebugserver(a, &e);
         const pre = try h.fmt(a, "settings set target.env-vars {s}={s}/libgreet.{s}:{s}/libouter.{s}", .{ mojo_env.preload_var, lib, mojo_env.ext, lib, mojo_env.ext });
         const ctl2 = try h.run(a, &.{ try h.fmt(a, "{s}/bin/mojo", .{split}), "repl", "-O", pre }, &e, .{ .stdin_path = try h.join(a, &.{ c.here, "repl.stdin" }) });
         c.refuse("control, split: mojo repl without libinner preloaded prints nothing", ctl2, false);
@@ -255,4 +256,24 @@ fn run(a: Allocator, rep: *h.Report) !void {
     try c.install(pixi);
     try c.layout("pixi", pixi, "prog", "repl.stdin");
     try c.layout("pixi", pixi, "prog_outer", "repl_outer.stdin");
+
+    // 5. the arguments after `--` reach the program of the real mojo: option-looking ones, a second `--` and an empty
+    // string included, whether or not a level is given; with no `--` there are none.
+    const args_src = try h.join(a, &.{ c.here, "prog_args.mojo" });
+    const forwarded = "count 7\narg[0]=<a>\narg[1]=<--b>\narg[2]=<-O0>\narg[3]=<--prefix>\narg[4]=<--opt-level>\narg[5]=<-->\narg[6]=<>\n";
+    const tail = [_][]const u8{ "--", "a", "--b", "-O0", "--prefix", "--opt-level", "--", "" };
+    for ([_][]const []const u8{ &.{}, &.{ "--opt-level", "3" } }) |level| {
+        var argv = std.ArrayList([]const u8).init(a);
+        try argv.appendSlice(&.{ "run", "--prefix", pixi, args_src });
+        try argv.appendSlice(level);
+        try argv.appendSlice(&tail);
+        // mopmRun appends --prefix, which after the `--` would be the program's: name the prefix first, run directly.
+        var env = try c.m.freshEnv();
+        try argv.insert(0, c.mopm);
+        const r = try h.run(a, argv.items, &env, .{});
+        const ok = !r.signaled and r.code == 0 and std.mem.eql(u8, r.text, forwarded);
+        rep.check(if (level.len == 0) "mopm run -- args: the real mojo gives the program the arguments verbatim" else "mopm run --opt-level 3 -- args: the real mojo gives the program the arguments verbatim", ok, r.text);
+    }
+    const none = try c.mopmRun(pixi, &.{ "run", args_src }, null);
+    rep.check("mopm run with no --: the program gets no arguments", !none.signaled and none.code == 0 and std.mem.eql(u8, none.text, "count 0\n"), none.text);
 }

@@ -17,9 +17,10 @@
 //! hashes each. A `.conda` the old lock already pinned (same name, version,
 //! subdir and file sha256, every native hashed) is not fetched again: its natives
 //! are copied from the old lock. `mopm sync --locked` never gets here.
-//! Only `sha256`, `size` and `removed` are read from repodata.json: a lock
+//! Only `sha256`, `size`, `removed` and `depends` are read from repodata.json: a lock
 //! entry's `deps` come from the index record's `deps[]`, never from the
-//! repodata's `depends`. The channel URL must be one a lock may hold
+//! repodata's `depends`; the entry's `loads` (the system libraries the package loads,
+//! lock_libs.zig) are the non-Mojo names of that `depends`. The channel URL must be one a lock may hold
 //! (lock.allowedChannel), or no lock is built.
 
 const std = @import("std");
@@ -29,6 +30,8 @@ const resolve = @import("resolve.zig");
 const lock = @import("lock.zig");
 const metadata = @import("metadata.zig");
 const conda_unpack = @import("conda_unpack.zig");
+const lock_libs = @import("lock_libs.zig");
+const manifest = @import("manifest.zig");
 
 const Error = resolve.Error;
 const Diagnostic = resolve.Diagnostic;
@@ -108,6 +111,10 @@ pub fn buildLock(arena: Allocator, res: resolve.Resolution, channel_url: []const
             if (!std.mem.eql(u8, sha, f.sha256) or size != @as(i64, @intCast(f.size))) {
                 return bad(arena, diag, "{s}: the index says sha256 {s}, size {d}; {s}/repodata.json says sha256 {s}, size {d}", .{ f.filename, f.sha256, f.size, f.subdir, sha, size });
             }
+            const loads = lock_libs.loadsOfDepends(arena, entry.get("depends")) catch |e| switch (e) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.BadDepends => return bad(arena, diag, "{s}/repodata.json: the depends of {s} is not a list of strings", .{ f.subdir, f.filename }),
+            };
             var natives: []const lock.Native = &.{};
             if (rec.native.len > 0) {
                 if (reusable(old, rec, f)) |kept| {
@@ -129,6 +136,7 @@ pub fn buildLock(arena: Allocator, res: resolve.Resolution, channel_url: []const
                 .mojo = res.mojo,
                 .deps = p.deps,
                 .native = natives,
+                .loads = loads,
             });
         }
     }
@@ -215,6 +223,7 @@ fn pinNatives(arena: Allocator, rec: *const resolve.Record, f: resolve.File, cha
             .kind = m.kind,
             .needs = m.needs,
             .exclusive = m.exclusive,
+            .link = m.link,
         });
     }
     return out.items;
@@ -288,6 +297,10 @@ fn sameNatives(a: []const lock.Native, b: []const lock.Native) bool {
     if (a.len != b.len) return false;
     for (a, b) |x, y| {
         if (!std.mem.eql(u8, x.id, y.id) or !std.mem.eql(u8, x.soname, y.soname) or x.kind != y.kind or !std.mem.eql(u8, x.exclusive, y.exclusive)) return false;
+        if (x.link.len != y.link.len) return false;
+        for (x.link, y.link) |u, v| {
+            if (!std.mem.eql(u8, u, v)) return false;
+        }
         if ((x.sha256 == null) != (y.sha256 == null)) return false;
         if (x.sha256) |h| {
             if (!std.mem.eql(u8, h, y.sha256.?)) return false;
@@ -309,6 +322,8 @@ pub const PathDep = struct {
     path: []const u8,
     /// Names of its own dependencies (registry and path), sorted.
     deps: []const []const u8 = &.{},
+    /// Its `[native-dependencies]`: `mopm lock` pins the ones to load (system_libs.zig).
+    native_deps: []const manifest.NativeDep = &.{},
 };
 
 /// `l` with one `source = path` entry per path dependency (lock.zig): no
@@ -376,6 +391,15 @@ pub fn mergeMojos(arena: Allocator, per: []const lock.Lock, closures: []const lo
                 }
                 std.mem.sort([]const u8, names.items, {}, lessName);
                 packages.items[i].deps = names.items;
+                var loads = std.ArrayList([]const u8).init(arena);
+                try loads.appendSlice(packages.items[i].loads);
+                for (p.loads) |d| {
+                    var have = false;
+                    for (loads.items) |x| have = have or std.mem.eql(u8, x, d);
+                    if (!have) try loads.append(d);
+                }
+                std.mem.sort([]const u8, loads.items, {}, lessName);
+                packages.items[i].loads = loads.items;
             } else {
                 var q = p;
                 q.build = "";
@@ -485,7 +509,7 @@ pub fn writeTree(arena: Allocator, project: []const u8, version: []const u8, dep
 const MemoryIndex = resolve.MemoryIndex;
 
 /// A channel held in memory: subdir -> repodata.json text, and `<subdir>/<filename>` -> the bytes of a package file.
-const MemoryChannel = struct {
+pub const MemoryChannel = struct {
     files: []const resolve.Pair,
     conda: []const resolve.Pair = &.{},
     /// Counts the package files asked for, when set.
@@ -508,7 +532,7 @@ const MemoryChannel = struct {
     }
 };
 
-const digests = [_][]const u8{
+pub const digests = [_][]const u8{
     "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
     "fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9",
     "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
@@ -516,21 +540,21 @@ const digests = [_][]const u8{
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 };
 
-fn fileJson(comptime subdir: []const u8, comptime file: []const u8, comptime digest: []const u8) []const u8 {
+pub fn fileJson(comptime subdir: []const u8, comptime file: []const u8, comptime digest: []const u8) []const u8 {
     return "{\"filename\":\"" ++ file ++ "\",\"sha256\":\"" ++ digest ++ "\",\"size\":1000,\"subdir\":\"" ++ subdir ++ "\"}";
 }
 
-fn recJson(comptime name: []const u8, comptime version: []const u8, comptime deps: []const u8, comptime native: []const u8, comptime files: []const u8) []const u8 {
+pub fn recJson(comptime name: []const u8, comptime version: []const u8, comptime deps: []const u8, comptime native: []const u8, comptime files: []const u8) []const u8 {
     return "{\"build\":\"mojo1.0.0_0\",\"deps\":[" ++ deps ++ "],\"files\":[" ++ files ++ "],\"manifest_sha256\":\"" ++ digests[0] ++
         "\",\"name\":\"" ++ name ++ "\",\"native\":[" ++ native ++ "],\"published_at\":\"2026-10-13T12:00:00Z\",\"requires_mojo\":\"==1.0.0\",\"state\":\"published\",\"v\":1,\"version\":\"" ++ version ++ "\"}\n";
 }
 
-fn entryJson(comptime name: []const u8, comptime version: []const u8, comptime subdir: []const u8, comptime digest: []const u8) []const u8 {
+pub fn entryJson(comptime name: []const u8, comptime version: []const u8, comptime subdir: []const u8, comptime digest: []const u8) []const u8 {
     return "\"mojo-" ++ name ++ "-" ++ version ++ "-mojo1.0.0_0.conda\":{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\"],\"name\":\"mojo-" ++ name ++
         "\",\"sha256\":\"" ++ digest ++ "\",\"size\":1000,\"subdir\":\"" ++ subdir ++ "\",\"version\":\"" ++ version ++ "\"}";
 }
 
-fn repodataJson(comptime subdir: []const u8, comptime entries: []const u8, comptime removed: []const u8) []const u8 {
+pub fn repodataJson(comptime subdir: []const u8, comptime entries: []const u8, comptime removed: []const u8) []const u8 {
     return "{\"info\":{\"subdir\":\"" ++ subdir ++ "\"},\"packages\":{},\"packages.conda\":{" ++ entries ++ "},\"removed\":[" ++ removed ++ "]}\n";
 }
 
@@ -877,7 +901,7 @@ fn world(a: Allocator) !World {
     const tls_archive = ar ++ "tls-members\n";
     const crypto_native = [_]conda.Native{.{ .id = "crypto_sys", .soname = "libcrypto_sys.a", .exclusive = "libcrypto", .archive = crypto_linux_archive }};
     const crypto_osx_native = [_]conda.Native{.{ .id = "crypto_sys", .soname = "libcrypto_sys.a", .exclusive = "libcrypto", .archive = crypto_osx_archive }};
-    const tls_native = [_]conda.Native{.{ .id = "tls_sys", .soname = "libtls_sys.a", .needs = &.{"libcrypto_sys.a"}, .archive = tls_archive }};
+    const tls_native = [_]conda.Native{.{ .id = "tls_sys", .soname = "libtls_sys.a", .needs = &.{"libcrypto_sys.a"}, .link = &.{ "c++", "m" }, .archive = tls_archive }};
     const cl = try conda.pack(a, .{ .name = "crypto_sys", .version = "1.39.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "MOJOC", .natives = &crypto_native });
     const co = try conda.pack(a, .{ .name = "crypto_sys", .version = "1.39.0", .compiler = "1.0.0", .subdir = "osx-arm64", .mojoc = "MOJOC", .natives = &crypto_osx_native });
     const tl = try conda.pack(a, .{
@@ -928,7 +952,7 @@ fn nativeOf(l: lock.Lock, name: []const u8, subdir: []const u8) ?lock.Native {
 
 // Defects it catches: a lock that records no hash of a native library (a unit graph then refuses the project); the
 // hash of the whole `.conda`, or of the metadata, in place of the library's; the hash of one platform's library for
-// another's; `kind`, `needs` or `exclusive` dropped or taken from the wrong library. Mutants planted: the hash taken
+// another's; `kind`, `needs` or `exclusive` dropped or taken from the wrong library. Defect caught: the hash taken
 // over `bytes`; over the osx entry's archive for linux; `.kind = .shared`; `.needs = &.{}`.
 test "mopm lock pins each native library: the sha256 of the library file, per subdir, with its kind, needs and group" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -956,6 +980,11 @@ test "mopm lock pins each native library: the sha256 of the library file, per su
     try std.testing.expectEqual(@as(usize, 1), tls.needs.len);
     try std.testing.expectEqualStrings("libcrypto_sys.a", tls.needs[0]);
     try std.testing.expectEqualStrings("", tls.exclusive);
+    // The system libraries the package's metadata names are in the lock, in order; a library that names none has none.
+    try std.testing.expectEqual(@as(usize, 2), tls.link.len);
+    try std.testing.expectEqualStrings("c++", tls.link[0]);
+    try std.testing.expectEqualStrings("m", tls.link[1]);
+    try std.testing.expectEqual(@as(usize, 0), crypto.link.len);
 
     // What is written reads back, under every rule of spec/lock.md.
     const text = try lock.render(a, l);
@@ -968,7 +997,7 @@ test "mopm lock pins each native library: the sha256 of the library file, per su
 }
 
 // Defects it catches: a downloaded file believed without checking that it is the file the repodata and index agreed
-// on (a mirror or a man in the middle then chooses the hash that is pinned); a wrong size accepted. Mutants planted:
+// on (a mirror or a man in the middle then chooses the hash that is pinned); a wrong size accepted. Defect caught:
 // pinNatives drops the size check; drops the sha256 check.
 test "a package file that is not the one the index and repodata name pins nothing: the lock is refused" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -1035,7 +1064,7 @@ fn cryptoLock(w: World, a: Allocator, diag: *Diagnostic) Error!lock.Lock {
 
 // Defects it catches: a package whose own metadata disagrees with the index (a library the index lists that the file
 // does not declare, one it does not hold, or one it keeps somewhere the registry would not allow, or under another
-// name than its soname) pinned with a hash of something else, or of nothing. Mutants planted: the declared() check
+// name than its soname) pinned with a hash of something else, or of nothing. Defect caught: the declared() check
 // dropped; the file-name check in libraryPath dropped; the missing-file check dropped.
 test "a package whose metadata and files do not match what the index says is refused, saying what" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -1090,7 +1119,7 @@ test "a package whose metadata and files do not match what the index says is ref
 
 // Defects it catches: `mopm lock` and `mopm update` fetching every native `.conda` again each time (slow, and a
 // channel that is briefly down breaks a lock that needs nothing from it); the other way, a pin kept for a file that
-// is no longer the one pinned. Mutants planted: reusable() ignores the file sha256; ignores a missing native sha256.
+// is no longer the one pinned. Defect caught: reusable() ignores the file sha256; ignores a missing native sha256.
 test "a .conda the old lock already pins is not fetched again; a different file, or a pin without a hash, is" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -1149,7 +1178,7 @@ test "a package without natives is never fetched" {
 }
 
 // Defect it catches: a version 2 lock that keeps the natives of the first Mojo version's build and says nothing when
-// the build for another Mojo version ships a different archive. Mutant planted: checkNativesAgree returns at once.
+// the build for another Mojo version ships a different archive. Defect caught: checkNativesAgree returns at once.
 test "builds for two Mojo versions that ship different natives are refused before they are merged" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -1183,10 +1212,23 @@ test "builds for two Mojo versions that ship different natives are refused befor
     two.packages = packages;
     diag = .{};
     try std.testing.expectError(error.ResolveFailed, checkNativesAgree(a, &.{ one, two }, &diag));
+
+    // So do the system libraries a native links.
+    packages = try a.dupe(lock.Package, one.packages);
+    for (packages) |*p| {
+        if (std.mem.eql(u8, p.name, "tls_sys") and p.native.len > 0) {
+            var n = p.native[0];
+            n.link = &.{"c++"};
+            p.native = try a.dupe(lock.Native, &.{n});
+        }
+    }
+    two.packages = packages;
+    diag = .{};
+    try std.testing.expectError(error.ResolveFailed, checkNativesAgree(a, &.{ one, two }, &diag));
 }
 
 // Defect it catches: a repodata size that differs from the index's accepted when the sha256 agrees (the size is what
-// `mopm sync` and the lock hold the download to). Mutant planted: the size half of the comparison dropped.
+// `mopm sync` and the lock hold the download to). Defect caught: the size half of the comparison dropped.
 test "a repodata size that differs from the index's, with the same sha256, is refused, naming both" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -1202,7 +1244,7 @@ test "a repodata size that differs from the index's, with the same sha256, is re
 }
 
 // Defect it catches: a pin kept for a library the index now names differently, with the very same file bytes: the lock
-// would keep the stale soname. Mutant planted: reusable() stops comparing sonames.
+// would keep the stale soname. Defect caught: reusable() stops comparing sonames.
 test "an old pin is not reused when the index names the library differently, even for the same file" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();

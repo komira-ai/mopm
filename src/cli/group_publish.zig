@@ -2,7 +2,7 @@
 //! (spec/staged-set.md; the registry's side is `createGroup`, `commitGroup` and `getGroup` in spec/api/openapi.yaml).
 //!
 //!   mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>]
-//!                [--timeout <seconds>] [--retries <n>] [--dry-run]
+//!                [--timeout <seconds>] [--retries <n>] [--dry-run] [--oidc]
 //!
 //! The run, in order:
 //!   1. read `<dir>/plan.json`, refuse a plan that has a refused member, and check every file against the plan;
@@ -13,6 +13,14 @@
 //!   5. poll the group until it is `visible`, or ended.
 //! Nothing is visible until the group is: a member the registry rejects ends the group `rejected`, and none of its
 //! members is published.
+//!
+//! `--no-commit` stops after step 3: the group is open, every file is held, nothing is committed and nothing is readable.
+//! The run prints the group id and the plan digest, ends 0 with the outcome `staged`, and keeps `state.json` (with
+//! `staged: true`). The same command without `--no-commit`, in the same directory and with a token of the same actor (a
+//! fresh `--oidc` exchange will do), resumes that group, commits it and waits. If the registry ended the group in between
+//! (it expired, was aborted) that run says so and sends nothing. `--abort` is the failure job's verb: it ends the open group
+//! that `state.json` names (`DELETE /groups/{id}`), which frees the actor's place on the registry at once; a group that is
+//! already ended is not an error, and one that was committed is.
 //!
 //! `<dir>/state.json` names the group, so a rerun after a failure (a PUT that failed, a registry that was busy) asks for
 //! the same group and sends only what the registry does not hold. `<dir>/report.json` says what each member came to.
@@ -25,21 +33,38 @@
 //! final at once. The POSTs (create, commit) are sent once: a rerun of the command is their retry. The token (`$MOPM_TOKEN`, else the login's) is read after
 //! the plan has been checked, goes only to the registry's API, is never printed, and is taken out of the environment of every
 //! program mopm starts (src/core/child_env.zig).
+//!
+//! `--oidc` replaces that token with one from the CI job's identity (src/core/ci_oidc.zig): inside a GitHub Actions job
+//! that may request an identity token, mopm exchanges it at the registry, in memory only, for one token that may publish
+//! exactly the members the plan uploads, at their versions (the `packages` form of the exchange). An identity token is
+//! single-use, so there is one identity request and one exchange for the whole set, and that token serves the group's
+//! create, uploads, commit and waits. With `--no-commit` the exchange asks for `"purpose": "stage"` and the token is a
+//! stage-only one, which the registry refuses to commit with; a registry that predates stage tokens answers a publish
+//! token, and the run says so and goes on (src/cli/group_stage_token.zig). Every other run sends no `purpose`.
+//! A set of more than 500 members is refused before any
+//! request (a group is one unit and is not split); a rerun asks for a fresh token.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const core = @import("mopm_core");
 const http = core.http;
 const registry = core.registry;
+const ci_oidc = core.ci_oidc;
+const stage_token = @import("group_stage_token.zig");
 const plan_mod = @import("group_plan.zig");
 const registry_cmd = @import("registry_cmd.zig");
 const publish_cmd = @import("publish_cmd.zig");
 
 const usage =
-    \\usage: mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>] [--timeout <seconds>] [--retries <n>] [--dry-run]
+    \\usage: mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>] [--timeout <seconds>] [--retries <n>] [--dry-run] [--oidc] [--no-commit | --abort]
     \\
     \\  Publishes the staged set in <dir> (plan.json and the files it names) through one group: every member is visible
     \\  together, or none is. --registry is required. A rerun after a failure resumes the same group (<dir>/state.json).
+    \\  --oidc, inside a GitHub Actions job with 'id-token: write', gets the token from the job's identity, not $MOPM_TOKEN.
+    \\  --no-commit uploads every file and stops with the group open (nothing committed, nothing readable); a later run
+    \\  without it resumes the same group and commits. With --oidc, --no-commit asks the registry for a stage-only token (it
+    \\  can create, read and abort a group, not commit it); a registry without stage tokens answers a publish token, and the
+    \\  run goes on with it and says so. --abort ends the open group <dir>/state.json names.
     \\
 ;
 
@@ -57,6 +82,8 @@ pub fn defaultWaitFor(members: usize) i64 {
 }
 /// The most times one create is repeated while the registry answers `reserving`.
 pub const max_reserving_rounds: usize = 50;
+/// The registry signs upload URLs for 300 seconds. A URL older than this is not used: the run asks for fresh ones first.
+pub const url_refresh_secs: i64 = 240;
 
 pub const Flags = struct {
     staged: []const u8,
@@ -69,6 +96,12 @@ pub const Flags = struct {
     /// Repeats of a request that can be repeated, after its first try.
     retries: u8 = http.default_retries,
     dry_run: bool = false,
+    /// `--oidc`: the registry token comes from the CI job's identity, not `$MOPM_TOKEN` or a login.
+    oidc: bool = false,
+    /// `--no-commit`: upload, then stop with the group open.
+    no_commit: bool = false,
+    /// `--abort`: end the open group `state.json` names; no file is read, uploaded or committed.
+    abort: bool = false,
 };
 
 /// The command that waits for the group again: the flags of this run, without `--dry-run`.
@@ -84,6 +117,7 @@ pub fn rerunCommand(arena: Allocator, flags: Flags) Allocator.Error![]const u8 {
         try shellWord(w, c);
     }
     if (flags.wait_secs) |s| try w.print(" --wait {d}", .{s});
+    if (flags.oidc) try w.writeAll(" --oidc");
     return b.items;
 }
 
@@ -122,6 +156,18 @@ pub fn parseFlags(arena: Allocator, args: []const []const u8) Allocator.Error!Pa
             f.dry_run = true;
             continue;
         }
+        if (std.mem.eql(u8, a, "--oidc")) {
+            f.oidc = true;
+            continue;
+        }
+        if (std.mem.eql(u8, a, "--no-commit")) {
+            f.no_commit = true;
+            continue;
+        }
+        if (std.mem.eql(u8, a, "--abort")) {
+            f.abort = true;
+            continue;
+        }
         const takes = std.mem.eql(u8, a, "--staged") or std.mem.eql(u8, a, "--registry") or std.mem.eql(u8, a, "--config-dir") or std.mem.eql(u8, a, "--wait") or std.mem.eql(u8, a, "--timeout") or std.mem.eql(u8, a, "--retries");
         if (!takes) {
             const why = if (std.mem.eql(u8, a, "--compiler") or std.mem.eql(u8, a, "--mojoc") or std.mem.eql(u8, a, "--manifest") or std.mem.eql(u8, a, "--native") or std.mem.eql(u8, a, "--readme"))
@@ -153,6 +199,8 @@ pub fn parseFlags(arena: Allocator, args: []const []const u8) Allocator.Error!Pa
     }
     f.staged = staged orelse return .{ .bad = "--staged <dir> is required" };
     f.registry = reg orelse return .{ .bad = "--registry is required with --staged: there is no default, so a staged set is never published to a registry by accident" };
+    if (f.abort and f.no_commit) return .{ .bad = "--abort ends a group and --no-commit stages one: give one of them" };
+    if (f.abort and f.dry_run) return .{ .bad = "--abort cannot be a --dry-run: it sends one request and has nothing to preview" };
     return .{ .ok = f };
 }
 
@@ -186,7 +234,7 @@ pub const Net = struct {
     fn sleep(n: Net, secs: u64) void {
         n.vtable.sleep(n.ptr, secs);
     }
-    fn now(n: Net) i64 {
+    pub fn now(n: Net) i64 {
         return n.vtable.now(n.ptr);
     }
 };
@@ -253,9 +301,11 @@ pub const Console = struct {
     }
 };
 
-pub const Result = enum { published, failed, rate_limited, no_group_publish, timed_out };
+/// `staged`: `--no-commit` stopped with the group open and every file held. `aborted`: `--abort` ended the group, or found
+/// it already ended. `nothing_to_abort`: `--abort` found no group recorded in state.json. All three end 0.
+pub const Result = enum { published, staged, aborted, nothing_to_abort, failed, rate_limited, no_group_publish, timed_out };
 
-const Stop = error{ Failed, RateLimited, NoGroupPublish, TimedOut, OutOfMemory };
+const Stop = error{ Failed, RateLimited, NoGroupPublish, TimedOut, Staged, OutOfMemory };
 
 const FileAnswer = struct {
     subdir: []const u8,
@@ -275,6 +325,9 @@ const CreateAnswer = struct {
 };
 pub const Failure = struct { code: []const u8, message: []const u8 = "", member: ?[]const u8 = null };
 const GroupAnswer = struct { group_id: []const u8 = "", status: []const u8, failure: ?Failure = null };
+
+/// The statuses of a group that ended without being published.
+const ended_statuses = [_][]const u8{ "rejected", "failed", "expired", "aborted", "superseded" };
 
 pub fn isGroupId(s: []const u8) bool {
     if (s.len != 36 or !std.mem.startsWith(u8, s, "grp_")) return false;
@@ -299,11 +352,17 @@ pub const Publisher = struct {
     api_url: []const u8,
     token: []const u8,
     wait_secs: i64,
+    /// `--no-commit`: stop after the uploads, with the group open.
+    no_commit: bool = false,
     /// The command that waits for this group again, named when the wait runs out.
     rerun: []const u8 = "the same command",
     state: plan_mod.State,
     group_status: ?[]const u8 = null,
+    /// When the registry last signed the upload URLs in hand (`net.now()` at the create that returned them).
+    urls_signed_at: i64 = 0,
     failure: ?Failure = null,
+    /// The group `--abort` ended (state.json no longer names it), for the report.
+    reported_group: []const u8 = "",
     /// Seconds the registry asked the client to wait, when it answered 429.
     retry_after: ?u32 = null,
     /// Where the bytes of one file are held while it is uploaded; freed after each file.
@@ -418,7 +477,10 @@ pub const Publisher = struct {
                 p.console.fail("the registry named a group id that is not one: {s}\n", .{made.group_id});
                 return error.Failed;
             }
-            if (made.reserving == null) return made;
+            if (made.reserving == null) {
+                p.urls_signed_at = p.net.now();
+                return made;
+            }
             p.console.say("reserving: {d} of {d} members\n", .{ made.reserving.?.done, made.reserving.?.total });
         }
         p.console.fail("the registry is still reserving the members after {d} requests\n", .{max_reserving_rounds});
@@ -456,33 +518,62 @@ pub const Publisher = struct {
     }
 
     /// PUTs every file the registry does not hold, member by member in the plan's order.
-    fn upload(p: *Publisher, answer: CreateAnswer) Stop!void {
+    fn upload(p: *Publisher, first: CreateAnswer) Stop!void {
+        var answer = first;
         var held: usize = 0;
         for (p.plan.members) |m| {
             if (m.action != .upload) continue;
-            const am = findMember(answer, m.name, m.version) orelse {
-                p.console.fail("the registry's answer has no reservation for {s} {s}\n", .{ m.name, m.version });
-                return error.Failed;
-            };
             for (m.files) |f| {
-                const af = findFile(am, f) orelse {
-                    p.console.fail("the registry's answer has no upload for {s}/{s} of {s}\n", .{ f.subdir, f.filename, m.name });
-                    return error.Failed;
-                };
                 const key = try std.fmt.allocPrint(p.arena, "{s}/{s}/{s}", .{ m.name, f.subdir, f.filename });
+                // The URLs expire; a long run asks for fresh ones before the old ones are about to lapse.
+                if (p.net.now() - p.urls_signed_at >= url_refresh_secs) answer = try p.refresh(answer);
+                var af = try p.answerFor(answer, m, f);
                 if (af.uploaded) {
                     held += 1;
                     try p.markUploaded(key);
                     continue;
                 }
-                try p.put(m, f, af);
+                // A storage refusal (HTTP 403) is how an expired URL answers: ask for fresh URLs and try once more.
+                if (!try p.put(m, f, af, true)) {
+                    answer = try p.refresh(answer);
+                    af = try p.answerFor(answer, m, f);
+                    if (af.uploaded) {
+                        held += 1;
+                        try p.markUploaded(key);
+                        continue;
+                    }
+                    _ = try p.put(m, f, af, false);
+                }
                 try p.markUploaded(key);
             }
         }
         if (held > 0) p.console.say("{d} file(s) were already in the registry's storage\n", .{held});
     }
 
-    fn put(p: *Publisher, m: plan_mod.Member, f: plan_mod.File, af: FileAnswer) Stop!void {
+    fn answerFor(p: *Publisher, answer: CreateAnswer, m: plan_mod.Member, f: plan_mod.File) Stop!FileAnswer {
+        const am = findMember(answer, m.name, m.version) orelse {
+            p.console.fail("the registry's answer has no reservation for {s} {s}\n", .{ m.name, m.version });
+            return error.Failed;
+        };
+        return findFile(am, f) orelse {
+            p.console.fail("the registry's answer has no upload for {s}/{s} of {s}\n", .{ f.subdir, f.filename, m.name });
+            return error.Failed;
+        };
+    }
+
+    /// Asks again for the same group: for a group still open the registry writes nothing, signs the URLs anew and
+    /// reports the files it already holds as uploaded.
+    fn refresh(p: *Publisher, old: CreateAnswer) Stop!CreateAnswer {
+        const made = try p.create();
+        if (!std.mem.eql(u8, made.group_id, old.group_id) or !std.mem.eql(u8, made.status, "open")) {
+            p.console.fail("asking for fresh upload URLs of group {s}, the registry answered group {s} in the state '{s}'; run the same command again to resume\n", .{ old.group_id, made.group_id, made.status });
+            return error.Failed;
+        }
+        return made;
+    }
+
+    /// PUTs one file. With `may_retry`, a 403 is not a failure but a `false`: the caller refreshes the URLs and tries again.
+    fn put(p: *Publisher, m: plan_mod.Member, f: plan_mod.File, af: FileAnswer, may_retry: bool) Stop!bool {
         const url = af.put_url orelse {
             p.console.fail("the registry gave no upload URL for {s} of {s}\n", .{ f.filename, m.name });
             return error.Failed;
@@ -509,11 +600,13 @@ pub const Publisher = struct {
             return error.Failed;
         };
         if (r.status == 429) return p.refuse(r);
+        if (r.status == 403 and may_retry) return false;
         if (!r.ok()) {
             p.console.fail("uploading {s} failed: the storage answered HTTP {d}; run the same command again to resume group {s}\n", .{ f.filename, r.status, p.state.group_id });
             return error.Failed;
         }
         p.console.say("uploaded {s} ({s}) of {s}\n", .{ f.filename, f.subdir, m.name });
+        return true;
     }
 
     fn commit(p: *Publisher) Stop!void {
@@ -521,8 +614,83 @@ pub const Publisher = struct {
         const a = try p.call(.POST, path, try p.commitBody());
         if (!a.ok()) return p.refuse(a);
         p.state.committed = true;
+        p.state.staged = false;
         try p.save();
         p.console.say("committed group {s}\n", .{p.state.group_id});
+    }
+
+    /// A group an earlier `--no-commit` run staged: its state is read before anything is created, because a create would
+    /// open an ended group again as the next attempt, and a caller who staged a group, tested it and comes back to commit
+    /// it must hear that it ended, not find a different one committed. Only an `open` group (or one past open, which this
+    /// run then waits for, or refuses under `--no-commit`) goes on.
+    fn checkStaged(p: *Publisher) Stop!void {
+        const path = try std.fmt.allocPrint(p.arena, "/groups/{s}", .{p.state.group_id});
+        const a = try p.call(.GET, path, null);
+        if (a.status == 404) {
+            p.console.fail("group {s}, staged by an earlier run (see {s}), is not known to the registry; nothing was sent\n", .{ p.state.group_id, plan_mod.state_name });
+            p.console.note("remove {s} and stage the set again\n", .{plan_mod.state_name});
+            return error.Failed;
+        }
+        if (!a.ok()) return p.refuse(a);
+        const g = std.json.parseFromSliceLeaky(GroupAnswer, p.arena, a.body, .{ .ignore_unknown_fields = true }) catch {
+            p.console.fail("the registry's answer to GET {s} is not one this mopm reads\n", .{path});
+            return error.Failed;
+        };
+        p.group_status = g.status;
+        for (ended_statuses) |e| {
+            if (!std.mem.eql(u8, g.status, e)) continue;
+            p.console.fail("group {s}, staged by an earlier run, is {s}: it can no longer be committed; nothing was sent\n", .{ p.state.group_id, g.status });
+            p.console.note("the files tested locally are unchanged: remove {s} and stage the set again to get a new group\n", .{plan_mod.state_name});
+            return error.Failed;
+        }
+    }
+
+    /// Ends the group state.json names. Idempotent for a group that already ended without being published; refused, with the
+    /// reason, for one that was committed.
+    fn abortGroup(p: *Publisher) Stop!Result {
+        if (p.state.group_id.len == 0) {
+            p.console.say("{s} names no group: nothing to abort\n", .{plan_mod.state_name});
+            return .nothing_to_abort;
+        }
+        const path = try std.fmt.allocPrint(p.arena, "/groups/{s}", .{p.state.group_id});
+        const a = try p.call(.DELETE, path, null);
+        var gone = false;
+        if (a.ok()) {
+            p.group_status = "aborted";
+        } else if (a.status == 409) {
+            // Not open: read what it is. An ended group holds nothing; a committed one is not this command's to stop.
+            const g = try p.call(.GET, path, null);
+            if (!g.ok()) return p.refuse(g);
+            const now = std.json.parseFromSliceLeaky(GroupAnswer, p.arena, g.body, .{ .ignore_unknown_fields = true }) catch {
+                p.console.fail("the registry's answer to GET {s} is not one this mopm reads\n", .{path});
+                return error.Failed;
+            };
+            p.group_status = now.status;
+            var ended = false;
+            for (ended_statuses) |e| {
+                if (std.mem.eql(u8, now.status, e)) ended = true;
+            }
+            if (!ended) {
+                p.console.fail("group {s} is {s}: it was committed, so it cannot be aborted; if it becomes visible, 'mopm yank --group {s}' takes it back\n", .{ p.state.group_id, now.status, p.state.group_id });
+                return error.Failed;
+            }
+            p.console.say("group {s} is already {s}: nothing is held\n", .{ p.state.group_id, now.status });
+        } else if (a.status == 404) {
+            // The registry does not know the group (swept, or never created): nothing is left to abort.
+            p.group_status = "unknown";
+            gone = true;
+        } else return p.refuse(a);
+        p.reported_group = p.state.group_id;
+        p.state.group_id = "";
+        p.state.attempt = 0;
+        p.state.committed = false;
+        p.state.staged = false;
+        p.state.uploaded = &.{};
+        try p.save();
+        if (gone) {
+            p.console.say("the registry no longer has group {s}: nothing to abort; {s} no longer names it\n", .{ p.reported_group, plan_mod.state_name });
+        } else p.console.say("aborted group {s}: its place is free and none of its members was published\n", .{p.reported_group});
+        return .aborted;
     }
 
     /// Polls the group until it is visible. A group that ended without being visible is a failure, and says why.
@@ -538,8 +706,7 @@ pub const Publisher = struct {
             };
             p.group_status = g.status;
             if (std.mem.eql(u8, g.status, "visible")) return;
-            const ended = [_][]const u8{ "rejected", "failed", "expired", "aborted", "superseded" };
-            for (ended) |e| {
+            for (ended_statuses) |e| {
                 if (!std.mem.eql(u8, g.status, e)) continue;
                 p.failure = g.failure;
                 if (g.failure) |f| {
@@ -566,6 +733,7 @@ pub const Publisher = struct {
     fn execute(p: *Publisher) Stop!void {
         // The state file is written before the first request, so a directory that cannot be written is found while nothing is held.
         try p.save();
+        if (p.state.staged and p.state.group_id.len > 0) try p.checkStaged();
         const made = try p.create();
         if (p.state.group_id.len > 0 and !std.mem.eql(u8, p.state.group_id, made.group_id)) {
             p.console.fail("{s} names group {s}, but the registry answered {s} for this plan; remove {s} to start again\n", .{ plan_mod.state_name, p.state.group_id, made.group_id, plan_mod.state_name });
@@ -579,12 +747,22 @@ pub const Publisher = struct {
         var files: usize = 0;
         for (members) |m| files += m.files.len;
         p.console.say("group {s} (attempt {d}): {d} members, {d} files, status {s}\n", .{ made.group_id, made.attempt, members.len, files, made.status });
+        if (p.no_commit and !std.mem.eql(u8, made.status, "open")) {
+            p.console.fail("group {s} is {s}, not open: --no-commit stages a group before its commit, and this one has been committed or ended\n", .{ made.group_id, made.status });
+            return error.Failed;
+        }
         if (std.mem.eql(u8, made.status, "open")) {
             try p.upload(made);
+            if (p.no_commit) {
+                p.state.staged = true;
+                try p.save();
+                return error.Staged;
+            }
             try p.commit();
         } else if (std.mem.eql(u8, made.status, "validating") or std.mem.eql(u8, made.status, "committed") or std.mem.eql(u8, made.status, "visible")) {
             // The registry has the whole group: there is nothing to upload and nothing to commit again.
             p.state.committed = true;
+            p.state.staged = false;
             try p.save();
         } else {
             p.console.fail("the registry opened the group in the state '{s}', which this mopm does not know how to continue\n", .{made.status});
@@ -599,9 +777,18 @@ pub const Publisher = struct {
             error.RateLimited => .rate_limited,
             error.NoGroupPublish => .no_group_publish,
             error.TimedOut => .timed_out,
+            error.Staged => .staged,
             error.Failed, error.OutOfMemory => .failed,
         };
         return .published;
+    }
+
+    /// Runs `--abort`: ends the group state.json names. The result says how it ended.
+    pub fn abort(p: *Publisher) Result {
+        return p.abortGroup() catch |e| switch (e) {
+            error.RateLimited => .rate_limited,
+            else => .failed,
+        };
     }
 
     fn outcomeName(r: Result) []const u8 {
@@ -627,6 +814,10 @@ pub const Publisher = struct {
                 .upload => {
                     if (result == .published) {
                         outcome = "published";
+                    } else if (result == .staged) {
+                        outcome = "staged";
+                    } else if (result == .aborted or result == .nothing_to_abort) {
+                        outcome = "not_published";
                     } else if (p.failure != null and p.failure.?.member != null and std.mem.eql(u8, p.failure.?.member.?, m.name)) {
                         outcome = "rejected";
                         code = p.failure.?.code;
@@ -646,12 +837,23 @@ pub const Publisher = struct {
         const report = plan_mod.Report{
             .run_id = run_id,
             .registry = p.api_url,
-            .group_id = if (p.state.group_id.len > 0) p.state.group_id else null,
+            .group_id = if (p.state.group_id.len > 0) p.state.group_id else if (p.reported_group.len > 0) p.reported_group else null,
             .group_status = p.group_status,
             .outcome = outcomeName(result),
+            .plan_sha256 = p.plan.sha256,
             .members = members.items,
         };
         plan_mod.saveReport(p.arena, p.dir, report) catch |e| p.console.fail("cannot write {s}: {s}\n", .{ plan_mod.report_name, @errorName(e) });
+        if (result == .staged) {
+            var files: usize = 0;
+            for (p.plan.members) |m| {
+                if (m.action == .upload) files += m.files.len;
+            }
+            p.console.say("staged group {s}: open, {d} file(s) held, not committed, nothing readable\nplan sha256 {s}\n", .{ p.state.group_id, files, p.plan.sha256 });
+            p.console.say("to commit it (same directory, a token of the same actor): {s}\nto end it: {s} --abort\n", .{ p.rerun, p.rerun });
+            return 0;
+        }
+        if (result == .aborted or result == .nothing_to_abort) return 0;
         if (result == .published) {
             p.console.say("published group {s}:", .{p.state.group_id});
             for (p.plan.members) |m| {
@@ -693,7 +895,10 @@ pub fn main(arena: Allocator, args: []const []const u8, cli_version: []const u8)
 /// member, or its files are not as it says (this includes a commit request the registry would refuse).
 pub const Planned = union(enum) { ok: plan_mod.Plan, bad: []const u8 };
 
-pub fn checkedPlan(arena: Allocator, dir: std.fs.Dir, staged: []const u8) anyerror!Planned {
+/// Reads the plan of `dir` and, unless the run is an `--abort`, checks it. An abort only ends the group `state.json` names
+/// and sends no file or readme, so it reads the plan and nothing more: a set that can no longer be published can still be
+/// aborted.
+pub fn checkedPlan(arena: Allocator, dir: std.fs.Dir, staged: []const u8, abort: bool) anyerror!Planned {
     const text = dir.readFileAlloc(arena, plan_mod.plan_name, 1 << 26) catch |e| {
         return .{ .bad = try std.fmt.allocPrint(arena, "{s}/{s}: {s}", .{ staged, plan_mod.plan_name, @errorName(e) }) };
     };
@@ -701,6 +906,7 @@ pub fn checkedPlan(arena: Allocator, dir: std.fs.Dir, staged: []const u8) anyerr
         .ok => |p| p,
         .bad => |why| return .{ .bad = why },
     };
+    if (abort) return .{ .ok = plan };
     if (plan_mod.refusedMember(plan)) |m| {
         return .{ .bad = try std.fmt.allocPrint(arena, "the plan refuses {s} {s}{s}{s}; nothing was sent", .{ m.name, m.version, if (m.reason.len > 0) ": " else "", m.reason }) };
     }
@@ -723,7 +929,7 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
         return 1;
     };
     defer dir.close();
-    const plan = switch (try checkedPlan(arena, dir, flags.staged)) {
+    const plan = switch (try checkedPlan(arena, dir, flags.staged, flags.abort)) {
         .ok => |p| p,
         .bad => |why| {
             err("{s}\n", .{why});
@@ -731,6 +937,7 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
         },
     };
     var console = Console.init(arena, Console.stdStreams);
+    if (flags.abort) return abortCommand(arena, flags, cli_version, net, dir, plan, &console);
     const uploads = try plan.uploads(arena);
     if (flags.dry_run) return dryRun(flags, plan, uploads, &console);
     if (uploads.len == 0) {
@@ -741,32 +948,8 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
         return code;
     }
 
-    const s = registry_cmd.open(arena, .{ .registry = flags.registry, .config_dir = flags.config_dir }, cli_version) orelse return 1;
-    const token = (try publish_cmd.findToken(s)) orelse {
-        err("not logged in to {s}; run 'mopm login' or set MOPM_TOKEN\n", .{s.config.stage});
-        return 1;
-    };
-
-    var state = plan_mod.State{ .registry = s.config.api_url, .plan_sha256 = plan.sha256 };
-    switch (try plan_mod.loadState(arena, dir)) {
-        .none => {},
-        .bad => |why| {
-            err("{s}\n", .{why});
-            return 1;
-        },
-        .ok => |old| {
-            if (!std.mem.eql(u8, old.registry, state.registry)) {
-                err("{s} belongs to the registry {s}, not {s}; remove it to publish this set there\n", .{ plan_mod.state_name, old.registry, state.registry });
-                return 1;
-            }
-            if (!std.mem.eql(u8, old.plan_sha256, state.plan_sha256)) {
-                err("{s} belongs to another plan (the staged set changed since the run that wrote it); remove it to start a new group\n", .{plan_mod.state_name});
-                return 1;
-            }
-            state = old;
-            console.say("resuming group {s} from {s}\n", .{ if (old.group_id.len > 0) old.group_id else "(none yet)", plan_mod.state_name });
-        },
-    }
+    const creds = (try credentials(arena, net, flags, cli_version, uploads)) orelse return 1;
+    const loaded = (try loadStateFor(arena, dir, creds.api_url, plan.sha256, &console, "resuming")) orelse return 1;
 
     var p = Publisher{
         .arena = arena,
@@ -774,13 +957,99 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
         .console = &console,
         .dir = dir,
         .plan = plan,
-        .api_url = s.config.api_url,
-        .token = token,
+        .api_url = creds.api_url,
+        .token = creds.token,
         .wait_secs = flags.wait_secs orelse defaultWaitFor(uploads.len),
+        .no_commit = flags.no_commit,
         .rerun = try rerunCommand(arena, flags),
-        .state = state,
+        .state = loaded.state,
     };
     const result = p.run();
+    return p.finish(result);
+}
+
+/// A notice of the run, on stderr, in the voice of the other messages.
+const StderrNotes = struct {
+    pub fn writeAll(_: *StderrNotes, text: []const u8) !void {
+        err("{s}", .{text});
+    }
+};
+
+const Credentials = struct { api_url: []const u8, token: []const u8 };
+
+/// The registry's API root and the token of this run (`--oidc`, `$MOPM_TOKEN` or the login's), or null after saying why not.
+fn credentials(arena: Allocator, net: Net, flags: Flags, cli_version: []const u8, uploads: []const plan_mod.Member) anyerror!?Credentials {
+    // --oidc outside a job that can ask for an identity: stop before any request.
+    const actions = if (flags.oidc) (ci_oidc.actionsFromEnv(arena) orelse {
+        err("{s}\n", .{ci_oidc.outside_actions});
+        return null;
+    }) else null;
+    const s = registry_cmd.open(arena, .{ .registry = flags.registry, .config_dir = flags.config_dir }, cli_version) orelse return null;
+    var notes = StderrNotes{};
+    const purpose = stage_token.purposeOf(flags.no_commit, flags.abort);
+    const token = if (actions) |act| switch (try stage_token.token(arena, net, act, s.config.api_url, s.config.stage, uploads, purpose, &notes)) {
+        .ok => |t| t,
+        .bad => |why| {
+            err("{s}\n", .{why});
+            return null;
+        },
+    } else (try publish_cmd.findToken(s)) orelse {
+        err("not logged in to {s}; run 'mopm login' or set MOPM_TOKEN\n", .{s.config.stage});
+        return null;
+    };
+    return .{ .api_url = s.config.api_url, .token = token };
+}
+
+const LoadedFor = struct { state: plan_mod.State, found: bool };
+
+/// state.json of this directory for this registry and plan: a fresh state when there is none, the old one when it
+/// belongs to both, and null (after saying why) when it is another registry's, another plan's or not a state file.
+fn loadStateFor(arena: Allocator, dir: std.fs.Dir, api_url: []const u8, plan_sha256: []const u8, console: *Console, verb: []const u8) anyerror!?LoadedFor {
+    var state = plan_mod.State{ .registry = api_url, .plan_sha256 = plan_sha256 };
+    switch (try plan_mod.loadState(arena, dir)) {
+        .none => return .{ .state = state, .found = false },
+        .bad => |why| {
+            err("{s}\n", .{why});
+            return null;
+        },
+        .ok => |old| {
+            if (!std.mem.eql(u8, old.registry, state.registry)) {
+                err("{s} belongs to the registry {s}, not {s}; remove it to publish this set there\n", .{ plan_mod.state_name, old.registry, state.registry });
+                return null;
+            }
+            if (!std.mem.eql(u8, old.plan_sha256, state.plan_sha256)) {
+                err("{s} belongs to another plan (the staged set changed since the run that wrote it); remove it to start a new group\n", .{plan_mod.state_name});
+                return null;
+            }
+            state = old;
+            console.say("{s} group {s} from {s}\n", .{ verb, if (old.group_id.len > 0) old.group_id else "(none yet)", plan_mod.state_name });
+            return .{ .state = state, .found = true };
+        },
+    }
+}
+
+/// `--abort`: the plan is read (for the packages an `--oidc` exchange names and the digest state.json is checked against) but
+/// no file of the set is: the job that ends a group need not hold the bytes.
+fn abortCommand(arena: Allocator, flags: Flags, cli_version: []const u8, net: Net, dir: std.fs.Dir, plan: plan_mod.Plan, console: *Console) anyerror!u8 {
+    const uploads = try plan.uploads(arena);
+    const creds = (try credentials(arena, net, flags, cli_version, uploads)) orelse return 1;
+    const loaded = (try loadStateFor(arena, dir, creds.api_url, plan.sha256, console, "aborting")) orelse return 1;
+    if (!loaded.found) {
+        err("{s} has no {s}: this is not a directory that was staged (or it is another job's); nothing was sent\n", .{ flags.staged, plan_mod.state_name });
+        return 1;
+    }
+    var p = Publisher{
+        .arena = arena,
+        .net = net,
+        .console = console,
+        .dir = dir,
+        .plan = plan,
+        .api_url = creds.api_url,
+        .token = creds.token,
+        .wait_secs = 0,
+        .state = loaded.state,
+    };
+    const result = p.abort();
     return p.finish(result);
 }
 
@@ -799,6 +1068,10 @@ fn dryRun(flags: Flags, plan: plan_mod.Plan, uploads: []const plan_mod.Member, c
     for (plan.members) |m| {
         if (m.action == .skip) console.say("would skip {s} {s}: {s}\n", .{ m.name, m.version, if (m.reason.len > 0) m.reason else "skipped by the plan" });
     }
-    console.say("would upload each file the registry does not hold, commit the group, and wait for it to be visible\ndry run: nothing was sent\n", .{});
+    if (flags.no_commit) {
+        console.say("would upload each file the registry does not hold, and stop with the group open (--no-commit)\ndry run: nothing was sent\n", .{});
+    } else {
+        console.say("would upload each file the registry does not hold, commit the group, and wait for it to be visible\ndry run: nothing was sent\n", .{});
+    }
     return 0;
 }

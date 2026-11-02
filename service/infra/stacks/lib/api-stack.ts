@@ -26,7 +26,7 @@ export interface ApiStackProps extends StackProps {
   /** Interactive publishing needs a GitHub account with two-factor authentication on (the CEO's rule). On unless set false. */
   require2fa?: boolean;
   /** Rate limits of begin-upload per UTC day; the code's defaults (generous) apply when absent. */
-  limits?: { ratePerAccountPerDay?: number; ratePerTokenPerDay?: number; groupRatePerAccountPerDay?: number; groupRatePerTokenPerDay?: number };
+  limits?: { ratePerAccountPerDay?: number; ratePerTokenPerDay?: number; groupRatePerAccountPerDay?: number; groupRatePerTokenPerDay?: number; claimRatePerAccountPerDay?: number; claimRatePerTokenPerDay?: number };
 }
 
 /**
@@ -67,21 +67,79 @@ export const PUBLISH_ROUTES: Array<{ method: apigw.HttpMethod; path: string }> =
   // Yank and unyank of a visible group: queues the rows of the yank on the group queue. Not gated by the groups switch either.
   { method: apigw.HttpMethod.PUT, path: '/api/v1/groups/{group_id}/yank' },
 ];
+/** The claim operation of spec/api/openapi.yaml: reserve a free package name for the caller. The literal `claim` wins over `{version}`. */
+export const CLAIM_ROUTES: Array<{ method: apigw.HttpMethod; path: string }> = [{ method: apigw.HttpMethod.POST, path: '/api/v1/packages/{name}/claim' }];
 /**
  * What the handler may write, table by table (the reviewed list; api.test.ts pins it). No DeleteItem, no Scan, no
  * UpdateItem. (The tokens table, including the last-used mark, is granted by AUTH_GRANTS.) A new version is a transaction of two PutItems (version + audit).
+ * A claim is a transaction of three PutItems (package + owner + audit), each created only if its key is absent: hence PutItem on packages and
+ * owners, and nothing else there (an owner is never changed or removed by the API).
  */
 export const WRITE_GRANTS: Array<{ sid: string; actions: string[]; tables: string[] }> = [
   { sid: 'ReserveVersions', actions: ['dynamodb:PutItem'], tables: ['versions', 'audit'] },
+  { sid: 'ClaimPackages', actions: ['dynamodb:PutItem'], tables: ['packages', 'owners'] },
   { sid: 'RecordUploadsAndPublishes', actions: ['dynamodb:GetItem', 'dynamodb:PutItem'], tables: ['uploads', 'publishes'] },
   { sid: 'ReadSwitches', actions: ['dynamodb:GetItem'], tables: ['config'] },
 ];
+
+/** The environment variable the handler reads its configured CI publishers from. The code refuses to load it on any stage but beta and prod (prod: rows that act for an account only). */
+export const CI_PUBLISHERS_ENV = 'CI_PUBLISHERS';
+/**
+ * The CI identity the BETA stage trusts by configuration (config as code): the komira repository's release workflow, on
+ * main, from a push only (never a manual run), as the workflow itself and not as a reusable workflow called by another
+ * (`job_workflow_ref` is pinned as well as `workflow_ref`), in its `beta` environment. GitHub's numeric ids of the repository and its owner (public).
+ * Set on the beta stage only (see the ApiStack); gamma and prod get no such variable and keep the human step.
+ */
+export const BETA_CI_PUBLISHERS = [
+  {
+    repository_id: '1376408823',
+    repository_owner_id: '305577347',
+    workflow: '.github/workflows/release.yml',
+    ref: 'refs/heads/main',
+    job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
+    events: ['push'],
+    environment: 'beta',
+  },
+];
+
+/**
+ * The CI identity the PROD stage trusts by configuration, and only as one that ACTS FOR an account: the same komira release workflow
+ * (main, push only, `job_workflow_ref` pinned) in its `prod` environment. Its exchange mints a token whose principal is the account
+ * (`acts_for`, GitHub's numeric id of asuresh8): the packages must already be that account's, none is created, and no CI owner is set.
+ * Whether it may create a group is the account's `groups_enabled` item in the config table (a human flip), not configuration here.
+ * Removing this trust is a deploy without the row (service/docs/runbook.md). Set on the prod stage only; beta keeps BETA_CI_PUBLISHERS
+ * and gamma has none.
+ */
+export const PROD_CI_PUBLISHERS = [
+  {
+    repository_id: '1376408823',
+    repository_owner_id: '305577347',
+    workflow: '.github/workflows/release.yml',
+    ref: 'refs/heads/main',
+    job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
+    events: ['push'],
+    environment: 'prod',
+    acts_for: '15257031',
+  },
+];
+
+/** The environment variable the handler reads its static groups policy from. The code refuses to load it on any stage but beta. */
+export const GROUPS_POLICY_ENV = 'MOPM_GROUPS_POLICY';
+/**
+ * Who may create a group on the BETA stage by configuration (config as code): exactly the CI actors of BETA_CI_PUBLISHERS
+ * (`ci:gh-repo:<repository id>`), never mode `all`, never an account. A static policy is ORed with the `groups_enabled` item of the
+ * config table and an item's `deny` does not override it: stopping it takes a deploy. Gamma and prod keep the human flip.
+ */
+export const BETA_GROUPS_POLICY = { mode: 'allow', actors: BETA_CI_PUBLISHERS.map((p) => `ci:gh-repo:${p.repository_id}`) };
+// The CI publisher creates the packages it publishes with the same conditional PutItem on `packages` that the claim route uses
+// (WRITE_GRANTS, sid ClaimPackages, every stage). There is no CI-only grant: what is beta-only is the CI_PUBLISHERS variable.
 
 /** The operations of spec/api/openapi.yaml for login, tokens and CI exchange. */
 export const AUTH_ROUTES: { method: apigw.HttpMethod; path: string }[] = [
   { method: apigw.HttpMethod.POST, path: '/api/v1/auth/device' },
   { method: apigw.HttpMethod.POST, path: '/api/v1/auth/device/poll' },
   { method: apigw.HttpMethod.POST, path: '/api/v1/auth/oidc/exchange' },
+  { method: apigw.HttpMethod.GET, path: '/api/v1/me' },
   { method: apigw.HttpMethod.POST, path: '/api/v1/me/tokens' },
   { method: apigw.HttpMethod.GET, path: '/api/v1/me/tokens' },
   { method: apigw.HttpMethod.DELETE, path: '/api/v1/me/tokens/{token_id}' },
@@ -91,6 +149,8 @@ export const AUTH_ROUTES: { method: apigw.HttpMethod; path: string }[] = [
  * What the handler may do on the auth tables, and nothing more. No table gets DeleteItem (the tables deny it to this
  * role anyway; expiry is DynamoDB TTL). `indexes` are the only indexes it may query.
  * - tokens: create (PutItem), read by hash (GetItem), mark used or revoked (UpdateItem), list by account (Query on the index).
+ *   The same PutItem, conditional on the key being absent, claims a CI token's jti (key `jti#<digest>`, TTL a few minutes past
+ *   the CI token's expiry): the replay check of the OIDC exchange needs no grant beyond these.
  * - users: read and upsert a row at login.
  * - device_logins: start (PutItem), poll (GetItem), record the poll and consume (UpdateItem).
  * - trusted_publishers: read only; nothing in the Lambda registers publishers yet.
@@ -118,6 +178,10 @@ export const INDEX_THROTTLE = { rateLimit: 50, burstLimit: 100 };
 /** Methods a browser may use on the read API. HEAD and OPTIONS are listed for preflight; only GET routes exist. */
 export const CORS_METHODS = [apigw.CorsHttpMethod.GET, apigw.CorsHttpMethod.HEAD, apigw.CorsHttpMethod.OPTIONS];
 /** How long a browser may cache a preflight answer. */
+/** How long the HTTP API waits for an integration (its default and its largest). */
+export const API_GATEWAY_INTEGRATION_SECONDS = 30;
+/** The API Lambda's timeout: well under the gateway's wait. */
+export const API_LAMBDA_TIMEOUT_SECONDS = 25;
 export const CORS_MAX_AGE = Duration.hours(1);
 /** The response headers a page may read: the request id to show with an error, and Retry-After so it can say when to try again after a 429 or a read-only 503. */
 export const CORS_EXPOSED_HEADERS = ['x-mopm-request-id', 'retry-after'];
@@ -148,9 +212,13 @@ export class ApiStack extends Stack {
       // The asset holds one bundled file per handler (esbuild, service/api `npm run build`); the AWS SDK v3 comes with the
       // Node.js 22 runtime and is the one thing left out. test/bundle.test.ts loads every handler from its asset.
       code: lambda.Code.fromAsset(handlerDir),
-      memorySize: 256,
-      // Login calls GitHub and Secrets Manager; the gateway allows 30 seconds.
-      timeout: Duration.seconds(10),
+      // 1024 MB for the CPU it brings: a group create does hundreds of store and S3 calls, each signed and parsed in this process.
+      memorySize: 1024,
+      // Under the HTTP API's 30 s limit on an integration (API_GATEWAY_INTEGRATION_SECONDS), so a call the Lambda ends is the Lambda's
+      // timeout and not the gateway's: the gateway answers a Lambda that times out with a bare HTTP 500, the registry's own errors never
+      // run. A group create stops reserving after groupCreateBudgetMs (service/api/src/publish/config.ts, at most 9 s) and spends a
+      // batch more finishing; test/api.test.ts holds the budget and that tail under this timeout. Login calls GitHub and Secrets Manager.
+      timeout: Duration.seconds(API_LAMBDA_TIMEOUT_SECONDS),
       logGroup,
       environment: {
         MOPM_STAGE: c.stage,
@@ -161,6 +229,12 @@ export class ApiStack extends Stack {
         // service/infra/access/lib/oauth-secret.ts; until it exists the device login routes answer 503.
         MOPM_OAUTH_SECRET_NAME: oauthSecretName(c.stage),
         MOPM_REQUIRE_2FA: String(props.require2fa ?? true),
+        // Beta only: the CI identity this stage trusts (BETA_CI_PUBLISHERS). Absent elsewhere, and the handler refuses it elsewhere.
+        ...(c.stage === 'beta' ? { [CI_PUBLISHERS_ENV]: JSON.stringify(BETA_CI_PUBLISHERS) } : {}),
+        // Prod only: the CI identity that acts for an account (PROD_CI_PUBLISHERS). Gamma has none; the handler refuses a row without `acts_for` here.
+        ...(c.stage === 'prod' ? { [CI_PUBLISHERS_ENV]: JSON.stringify(PROD_CI_PUBLISHERS) } : {}),
+        // Beta only: who may create a group (BETA_GROUPS_POLICY: that CI identity). Absent elsewhere, and the handler refuses it elsewhere.
+        ...(c.stage === 'beta' ? { [GROUPS_POLICY_ENV]: JSON.stringify(BETA_GROUPS_POLICY) } : {}),
         // The hosts GET /index/config.json names, from the stage's configuration.
         MOPM_API_DOMAIN: c.apiDomain,
         MOPM_CHANNEL_DOMAIN: c.condaDomain,
@@ -176,6 +250,8 @@ export class ApiStack extends Stack {
         ...(props.limits?.ratePerTokenPerDay !== undefined ? { MOPM_RATE_PER_TOKEN_DAY: String(props.limits.ratePerTokenPerDay) } : {}),
         ...(props.limits?.groupRatePerAccountPerDay !== undefined ? { MOPM_GROUP_RATE_PER_ACCOUNT_DAY: String(props.limits.groupRatePerAccountPerDay) } : {}),
         ...(props.limits?.groupRatePerTokenPerDay !== undefined ? { MOPM_GROUP_RATE_PER_TOKEN_DAY: String(props.limits.groupRatePerTokenPerDay) } : {}),
+        ...(props.limits?.claimRatePerAccountPerDay !== undefined ? { MOPM_CLAIM_RATE_PER_ACCOUNT_DAY: String(props.limits.claimRatePerAccountPerDay) } : {}),
+        ...(props.limits?.claimRatePerTokenPerDay !== undefined ? { MOPM_CLAIM_RATE_PER_TOKEN_DAY: String(props.limits.claimRatePerTokenPerDay) } : {}),
       },
     });
 
@@ -309,6 +385,7 @@ export class ApiStack extends Stack {
     }
     for (const r of AUTH_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
     for (const r of PUBLISH_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
+    for (const r of CLAIM_ROUTES) this.api.addRoutes({ path: r.path, methods: [r.method], integration });
     // The CLI sends no token: neither index route has an authorizer. The literal route wins over the greedy one.
     const configRoutes = this.api.addRoutes({ path: '/index/config.json', methods: [apigw.HttpMethod.GET], integration });
     const readerRoutes = this.api.addRoutes({

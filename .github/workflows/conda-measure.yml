@@ -1,0 +1,31 @@
+# conda-measure: what conda-forge serves (sharded repodata, repodata sizes, a name-only index, fetch latency), by hand only.
+# It REPORTS and never gates: workflow_dispatch only, never a pull request, push or call. tools/conda_measure.zig says what it
+# measures; the result is the job summary. It runs here and not on the Buck2 farm because it needs the network (a farm action
+# is hermetic) and the zstd and gzip programs; docs/design/any-conda-forge-native.md records the figures.
+name: conda-measure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conda-measure
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    name: measure conda-forge (report only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Zig 0.12.0 (sha256-pinned)
+        run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
+      - name: Measure (the tables go to the job summary)
+        run: |
+          zig run -O ReleaseFast tools/conda_measure.zig -- "$RUNNER_TEMP/measure" > "$RUNNER_TEMP/report.md"
+          cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"

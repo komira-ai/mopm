@@ -41,12 +41,20 @@ export type GroupEvent =
 export type VersionEvent = UserEvent | GroupEvent;
 
 /**
+ * The two events that make a version `published`: a single publish (`publish`) and a group's flip (`group_publish`). The stores
+ * activate the package after either, so a package leaves `claimed` at its first published version whoever owns it and however
+ * it was published (src/store.ts, `activatePackage`).
+ */
+export const publishesVersion = (ev: VersionEvent): boolean => ev.type === 'publish' || ev.type === 'group_publish';
+
+/**
  * What the validator learned from the archives, written when the version goes `pending -> published`: a pending
  * record is only a reserved number, and these fields come from the validated files.
  */
 export interface PublishFill
   extends Pick<VersionRecord, 'version' | 'build' | 'requires_mojo' | 'deps' | 'native' | 'files' | 'manifest_sha256' | 'published_at'> {
   published_by?: string;
+  native_depends?: string[];
   /** The display metadata the commit request carried; stored on the version so the read API serves it. */
   description?: string;
   license?: string;
@@ -54,6 +62,8 @@ export interface PublishFill
   homepage?: string;
   keywords?: string[];
   readme?: string;
+  /** The commit request's `source_commit`, stored on the version. */
+  source_commit?: string;
 }
 
 /** Raised for an event the state does not allow. Reported as invalid_transition (409). */

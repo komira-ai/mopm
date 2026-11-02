@@ -1,4 +1,4 @@
-import { Authenticator, MemoryAuthStore, mintToken } from '../../src/auth';
+import { Authenticator, MemoryAuthStore, mintToken, type TokenScope } from '../../src/auth';
 import { route, type HttpResponse, type RouterDeps } from '../../src/http/router';
 import { Metrics } from '../../src/metrics';
 import { DEFAULT_PUBLISH_CONFIG, type PublishConfig } from '../../src/publish/config';
@@ -125,14 +125,14 @@ export class GroupEnv {
     }
   }
 
-  /** An API token of the account with `publish` for `packages`. */
-  async token(githubId: number, packages: string[]): Promise<string> {
+  /** An API token of the account with `publish` (or the given scopes) for `packages`. */
+  async token(githubId: number, packages: string[], scopes: TokenScope[] = ['publish']): Promise<string> {
     const t = this.clock.now();
     const m = await mintToken(this.authStore, {
       kind: 'api',
       github_id: githubId,
       name: 'test',
-      scopes: ['publish'],
+      scopes,
       packages,
       all_current: false,
       created_at: t.toISOString(),
@@ -182,8 +182,9 @@ export class GroupEnv {
     );
   }
 
-  create(token: string | undefined, members: MemberBody[]) {
-    return this.call('POST', '/api/v1/groups', token, { members });
+  /** `extra` is further keys of the body (an option such as `on_overlap`). */
+  create(token: string | undefined, members: MemberBody[], extra: Record<string, unknown> = {}) {
+    return this.call('POST', '/api/v1/groups', token, { members, ...extra });
   }
   get(token: string, id: string) {
     return this.call('GET', `/api/v1/groups/${id}`, token);

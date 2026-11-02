@@ -105,8 +105,9 @@ describe('names and audiences', () => {
   test('the secret is per stage and fixed in form', () => {
     expect(['beta', 'gamma', 'prod'].map(oauthSecretName)).toEqual(['mopm/beta/github-oauth', 'mopm/gamma/github-oauth', 'mopm/prod/github-oauth']);
   });
-  test('CI tokens are accepted for the bare domain and the stage host', () => {
-    expect(oidcAudiences('beta')).toEqual(['mopm.dev', 'beta.mopm.dev']);
+  test('CI tokens: beta accepts only its own host; gamma and prod keep their earlier audiences', () => {
+    expect(oidcAudiences('beta')).toEqual(['beta.mopm.dev']);
+    expect(oidcAudiences('gamma')).toEqual(['mopm.dev', 'gamma.mopm.dev']);
     expect(oidcAudiences('prod')).toEqual(['mopm.dev']);
   });
 });

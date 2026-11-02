@@ -221,6 +221,7 @@ describe('lambda entry points on recorded events', () => {
       'api_bad_stage.json',
       'api_cold_start_failure_is_retried.json',
       'api_configuration_is_kept.json',
+      'api_groups_policy_beta_only.json',
       'api_health_defaults.json',
       'api_health_env_switch.json',
       'api_health_flag_cache.json',

@@ -93,10 +93,10 @@ describe('a valid package', () => {
     expect(check(b).ok).toBe(true);
   });
 
-  test('an allow-listed native dependency in depends is accepted, and refused when the list is empty', () => {
+  test('a native dependency in depends is accepted whether or not the mirror lists it (test/validate/native-any.test.ts has the warnings)', () => {
     const b = buildConda({ index: { depends: ['mojo-compiler ==1.0.0', 'openssl >=3'] } });
-    expect(check(b, {}, { allowedNativeDeps: new Set(['openssl']) }).ok).toBe(true);
-    refused(check(b), 'dependency_not_allowed');
+    expect(check(b, {}, { nativeMirror: { names: new Set(['openssl']), generatedAt: new Date() } }).ok).toBe(true);
+    expect(check(b).ok).toBe(true);
   });
 
   test('a .tar.bz2 is accepted only when the formats allow it', () => {
@@ -319,6 +319,14 @@ describe('layout allow-list', () => {
     refusedBuild(over, rule);
   });
 
+  test('a program shipped as source is allowed below lib/mojo/<name>.bins, and only a plain <bin>.mojo file', () => {
+    expect(check(buildConda({ pkgExtra: [{ path: 'lib/mojo/demo.bins/agg_bench.mojo', data: 'def main(): pass' }] })).ok).toBe(true);
+    expect(check(buildConda({ pkgExtra: [{ path: 'lib/mojo/demo.bins', type: '5' }, { path: 'lib/mojo/demo.bins/a1.mojo', data: 'x' }] })).ok).toBe(true);
+    for (const path of ['lib/mojo/demo.bins/Bench.mojo', 'lib/mojo/demo.bins/a-b.mojo', 'lib/mojo/demo.bins/a.py', 'lib/mojo/demo.bins/sub/a.mojo', 'lib/mojo/other.bins/a.mojo']) {
+      refusedBuild({ pkgExtra: [{ path, data: 'x' }] }, 'layout_not_allowed');
+    }
+    refusedBuild({ pkgExtra: [{ path: 'lib/mojo/other.bins', type: '5' }] }, 'layout_not_allowed');
+  });
   test('a directory outside the layout', () => {
     refusedBuild({ pkgExtra: [{ path: 'share', type: '5' }] }, 'layout_not_allowed');
   });
@@ -423,8 +431,8 @@ describe('metadata consistency', () => {
     refusedBuild({ index: { depends: ['mojo-compiler >=1.0.0'] } }, 'compiler_mismatch');
     refusedBuild({ index: { depends: ['mojo-compiler ==1.0.0', 'mojo-compiler ==1.0.0'] } }, 'compiler_mismatch');
   });
-  test('depends are mojo packages, the compiler and allow-listed libraries, and match the metadata deps', () => {
-    refusedBuild({ index: { depends: ['mojo-compiler ==1.0.0', 'python >=3'] } }, 'dependency_not_allowed');
+  test('depends are mojo packages, the compiler and well-formed conda requirements, and match the metadata deps', () => {
+    refusedBuild({ index: { depends: ['mojo-compiler ==1.0.0', 'Python >=3'] } }, 'dependency_not_allowed');
     refusedBuild({ index: { depends: ['mojo-compiler ==1.0.0', 'mojo-'] } }, 'dependency_not_allowed');
     refusedBuild({ index: { depends: ['mojo-compiler ==1.0.0', 'mojo-json'] } }, 'deps_mismatch');
     refusedBuild({ mopm: { deps: [{ name: 'json' }] } }, 'deps_mismatch');

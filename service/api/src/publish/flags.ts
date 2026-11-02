@@ -26,6 +26,62 @@ export function parseGroupsPolicy(item: Record<string, unknown> | undefined): Gr
   return GROUPS_OFF;
 }
 
+/** The environment variable that carries the static groups policy of a deployment. The loader refuses it on any stage but beta. */
+export const GROUPS_POLICY_ENV = 'MOPM_GROUPS_POLICY';
+/** The one stage that may carry a static groups policy. */
+export const GROUPS_POLICY_STAGE = 'beta';
+/** The most actors a static policy may name. */
+export const MAX_STATIC_GROUP_ACTORS = 8;
+const CI_ACTOR = /^ci:gh-repo:[1-9][0-9]{0,19}$/;
+
+/**
+ * The static groups policy named by `MOPM_GROUPS_POLICY`: config as code, for the beta stage only. Absent or empty: `off`. Present on
+ * any stage but beta: an error, so the function does not start (a mistake in infrastructure cannot turn groups on at gamma or prod).
+ * The only form is `{"mode":"allow","actors":["ci:gh-repo:<repository id>", ...]}`: one to eight CI identities, never `all`, never
+ * an account, no other key. Anything else is an error naming what is wrong, never a partial policy.
+ *
+ * It is ORed with the `groups_enabled` item of the config table (AnyFlag), and an item's `deny` does not override it: stopping a
+ * static policy takes a deploy.
+ */
+export function parseStaticGroupsPolicy(stage: string, raw: string | undefined): GroupsPolicy {
+  if (raw === undefined || raw === '') return GROUPS_OFF;
+  if (stage !== GROUPS_POLICY_STAGE) throw new Error(`${GROUPS_POLICY_ENV} may be set on the ${GROUPS_POLICY_STAGE} stage only; this is ${stage}`);
+  const bad = (detail: string) => new Error(`${GROUPS_POLICY_ENV} is not valid: ${detail}`);
+  let v: unknown;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    throw bad('not JSON');
+  }
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw bad('not an object');
+  const o = v as Record<string, unknown>;
+  for (const k of Object.keys(o)) if (k !== 'mode' && k !== 'actors') throw bad(`unknown key '${k}'`);
+  if (o.mode !== 'allow') throw bad("'mode' must be 'allow'");
+  const actors = o.actors;
+  if (!Array.isArray(actors) || actors.length < 1 || actors.length > MAX_STATIC_GROUP_ACTORS) throw bad(`'actors' is a list of 1 to ${MAX_STATIC_GROUP_ACTORS} CI actors`);
+  if (!actors.every((a) => typeof a === 'string' && CI_ACTOR.test(a))) throw bad("every actor is 'ci:gh-repo:<repository id>'");
+  if (new Set(actors).size !== actors.length) throw bad('an actor is named twice');
+  return { mode: 'allow', actors: [...(actors as string[])], deny: [] };
+}
+
+/** The most claims a day any per-actor override may allow: a bad `claim_limits` item cannot remove the limit. */
+export const MAX_CLAIM_LIMIT = 1000;
+
+/**
+ * The per-actor daily claim limits an item of the config table says (`claim_limits`: `{limits: {"u:<github id>": <n>}}`). Only a
+ * whole number of 1 or more for a key that is a string counts, and it is clamped to MAX_CLAIM_LIMIT; every other entry, and an item
+ * whose `limits` is not an object, says nothing (the actor keeps the default).
+ */
+export function parseClaimLimits(item: Record<string, unknown> | undefined): ReadonlyMap<string, number> {
+  const out = new Map<string, number>();
+  const limits = item?.limits;
+  if (typeof limits !== 'object' || limits === null || Array.isArray(limits)) return out;
+  for (const [actor, n] of Object.entries(limits)) {
+    if (typeof n === 'number' && Number.isInteger(n) && n >= 1) out.set(actor, Math.min(n, MAX_CLAIM_LIMIT));
+  }
+  return out;
+}
+
 export function policyAllows(policy: GroupsPolicy, actor: string): boolean {
   if (policy.mode === 'off') return false;
   if (policy.deny.includes(actor)) return false;
@@ -44,6 +100,9 @@ export class StaticFlags implements Flags {
   async groupsFor(actor: string) {
     return policyAllows(this.groups, actor);
   }
+  async claimLimitFor(_actor: string) {
+    return undefined;
+  }
 }
 
 /**
@@ -54,6 +113,7 @@ export class StaticFlags implements Flags {
 export class DynamoFlags implements Flags {
   private cached?: { at: number; value: boolean };
   private cachedGroups?: { at: number; value: GroupsPolicy };
+  private cachedClaims?: { at: number; value: ReadonlyMap<string, number> };
   constructor(
     private readonly doc: DocClient,
     private readonly table: string,
@@ -76,6 +136,14 @@ export class DynamoFlags implements Flags {
     this.cachedGroups = { at: t, value };
     return policyAllows(value, actor);
   }
+  async claimLimitFor(actor: string): Promise<number | undefined> {
+    const t = this.now();
+    if (this.cachedClaims && t - this.cachedClaims.at < this.cacheMs) return this.cachedClaims.value.get(actor);
+    const r = await this.doc.send(new GetCommand({ TableName: this.table, Key: { key: 'claim_limits' }, ConsistentRead: true }));
+    const value = parseClaimLimits(r.Item as Record<string, unknown> | undefined);
+    this.cachedClaims = { at: t, value };
+    return value.get(actor);
+  }
 }
 
 /** Either switch makes the registry read-only. For groups, any one of them admitting the actor is enough (a static policy that says nothing is `off`). */
@@ -88,5 +156,12 @@ export class AnyFlag implements Flags {
   async groupsFor(actor: string) {
     for (const f of this.flags) if (await f.groupsFor(actor)) return true;
     return false;
+  }
+  async claimLimitFor(actor: string) {
+    for (const f of this.flags) {
+      const n = await f.claimLimitFor(actor);
+      if (n !== undefined) return n;
+    }
+    return undefined;
   }
 }

@@ -545,7 +545,7 @@ fn valid(g: *Gen) !void {
         .mopm = "{\"schema\":1,\"name\":\"demo\",\"version\":\"1.0.0\",\"deps\":[{\"name\":\"http_core\",\"range\":\">=1.2,<2\"}],\"native\":[]}",
         .index = "{\"name\":\"mojo-demo\",\"version\":\"1.0.0\",\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"subdir\":\"noarch\",\"depends\":[\"mojo-compiler ==1.0.0\",\"mojo-http_core >=1.2,<2\"]}",
     }, none);
-    try g.pkg("ok_allowed_native_dependency", "ok", "a native library in depends that the allow-list names", .{
+    try g.pkg("ok_allowed_native_dependency", "ok", "a native library in depends that the conda-forge name mirror lists", .{
         .index = "{\"name\":\"mojo-demo\",\"version\":\"1.0.0\",\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"subdir\":\"noarch\",\"depends\":[\"mojo-compiler ==1.0.0\",\"libssl >=3\"]}",
     }, .{ .id = "", .archive = "", .intent = "", .what = "", .allow_native = &[_][]const u8{"libssl"} });
     try g.pkg("ok_unicode_licence_name", "ok", "one non-ASCII licence file name, in one normalisation form", .{
@@ -1040,8 +1040,8 @@ fn metadataLevel(g: *Gen) !void {
     try g.pkg("meta_compiler_other_version", "compiler_mismatch", "a compiler version that is not the build string's", .{ .index = "{\"name\":\"mojo-demo\",\"version\":\"1.0.0\",\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"subdir\":\"noarch\",\"depends\":[\"mojo-compiler ==1.0.1\"]}" }, none);
     try g.pkg("meta_compiler_range", "compiler_mismatch", "a compiler range instead of an exact version", .{ .index = "{\"name\":\"mojo-demo\",\"version\":\"1.0.0\",\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"subdir\":\"noarch\",\"depends\":[\"mojo-compiler >=1.0.0\"]}" }, none);
     try g.pkg("meta_compiler_extra_spaces", "ok", "the compiler with extra spaces: they are collapsed before the comparison", .{ .index = "{\"name\":\"mojo-demo\",\"version\":\"1.0.0\",\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"subdir\":\"noarch\",\"depends\":[\"mojo-compiler   ==1.0.0\"]}" }, none);
-    try g.pkg("meta_dependency_not_allowed", "dependency_not_allowed", "a native dependency that is not on the allow-list", .{ .index = "{\"name\":\"mojo-demo\",\"version\":\"1.0.0\",\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"subdir\":\"noarch\",\"depends\":[\"mojo-compiler ==1.0.0\",\"libssl >=3\"]}" }, none);
-    try g.pkg("meta_dependency_python", "dependency_not_allowed", "a python dependency", .{ .index = "{\"name\":\"mojo-demo\",\"version\":\"1.0.0\",\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"subdir\":\"noarch\",\"depends\":[\"mojo-compiler ==1.0.0\",\"python >=3.9\"]}" }, none);
+    try g.pkg("meta_dependency_not_allowed", "dependency_not_allowed", "a dependency whose name is not a conda name (upper case)", .{ .index = "{\"name\":\"mojo-demo\",\"version\":\"1.0.0\",\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"subdir\":\"noarch\",\"depends\":[\"mojo-compiler ==1.0.0\",\"LibSSL >=3\"]}" }, none);
+    try g.pkg("meta_dependency_python", "ok", "a python dependency: any conda package may be named, and the mirror lists this one", .{ .index = "{\"name\":\"mojo-demo\",\"version\":\"1.0.0\",\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"subdir\":\"noarch\",\"depends\":[\"mojo-compiler ==1.0.0\",\"python >=3.9\"]}" }, .{ .id = "", .archive = "", .intent = "", .what = "", .allow_native = &[_][]const u8{"python"} });
     try g.pkg("meta_deps_missing_from_index", "deps_mismatch", "a manifest dependency that depends does not list", .{ .mopm = "{\"schema\":1,\"name\":\"demo\",\"deps\":[{\"name\":\"http_core\"}]}" }, none);
     try g.pkg("meta_deps_extra_in_index", "deps_mismatch", "a mojo-* dependency in depends that the manifest does not declare", .{ .index = "{\"name\":\"mojo-demo\",\"version\":\"1.0.0\",\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"subdir\":\"noarch\",\"depends\":[\"mojo-compiler ==1.0.0\",\"mojo-http_core\"]}" }, none);
     {

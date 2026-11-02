@@ -47,7 +47,9 @@ conda channel (`channel.md`). Other files in the directory are ignored.
 - `action` is `upload`, `skip` or `refuse`.
   - `upload`: the member goes into the group. It needs `manifest_sha256` (the
     hash `mopm pack` prints, which the registry compares with the manifest in
-    the archive) and one to 20 `files`, each 1 to 100,000,000 bytes, with its
+    the archive; the registry's commit accepts a request without it, and then
+    uses the hash it computes, but `mopm` always sends it so that the check
+    between pack and publish stays) and one to 20 `files`, each 1 to 100,000,000 bytes, with its
     `sha256` and `size`. A file name is a plain name: no `/`, no `\`, none that
     starts with a dot. `readme` is optional: a path below the directory, up to
     64 KiB of UTF-8. Every readme travels in the body of the commit request,
@@ -85,6 +87,69 @@ conda channel (`channel.md`). Other files in the directory are ignored.
    report names the member the registry blames, and none of the members is
    published. The wait is 600 seconds unless `--wait <seconds>` says.
 7. Writes `report.json`, and exits 0 only if the group is visible.
+
+### `--no-commit`, the resume, and `--abort`
+
+`publish --staged <dir> --no-commit` runs steps 1 to 4 and stops: the group is
+`open`, every file is held by the registry, nothing is committed, and nothing is
+readable (a member of a group that is not visible is in no API answer, index or
+channel). It prints the group id and the plan digest (the sha256 of
+`plan.json`), writes `state.json` with `"staged": true`, writes `report.json`
+with the run `outcome` `staged`, `group_status` `open`, `plan_sha256`, and each
+member that is to be uploaded as `staged`, and **exits 0**: staging is a
+success, and the only thing that distinguishes it from a publish is the outcome
+word, which is why the outcome is not `published`. A group that is not `open`
+when `--no-commit` reaches it (validating, committed, visible) is refused, exit
+1.
+
+The split between staging and committing is enforceable by the registry, not only by
+the client's discipline. The registry has a token scope `stage` that may create a group,
+read it and abort it (and a CI exchange with `"purpose": "stage"` mints such a token, pinned to the
+same packages and versions as the publish token of the same request, with the same owner and life),
+but cannot commit a group, publish a single version, or yank: those are refused as
+`scope_missing`, and the group stays `open`. A run that uploads with a `stage` token and a
+later run that commits with a `publish` token are one actor's two runs, so the resume
+below works across them. The ownership checks at create (every package exists and the caller
+owns it) apply to a `stage` token as to a `publish` one, so a stage token reserves no package
+its owner does not own; it can hold the version numbers of its group until the group
+expires or is aborted. A registry from before `stage` ignores an exchange's `purpose` and
+mints a `publish` token, and refuses `stage` as a token scope, so a client that needs the split
+reads `token_kind` in the exchange answer and does not treat a `publish` answer as a stage token.
+
+CLI. `mopm publish --staged --no-commit --oidc` is the run that asks for the stage token: its
+exchange (one identity token, the `packages` form) carries `"purpose": "stage"`, and when the answer's
+`token_kind` is `stage` the run uses it for the create, the uploads and the read of the group, and
+never sends a commit. When the answer has `token_kind` `publish` or none (a registry from before
+`purpose`), the run continues with that token and prints one line to stderr saying that the registry
+did not grant a stage-only token, so staging used a publish token; it does not fail. Every other
+`--oidc` run (the commit run, the one-shot run without `--no-commit`, and `--abort`) sends no
+`purpose`, which is `publish` on every registry, so it gets what it always got; an answer of
+`token_kind` `stage` to such a run is refused, because that token could not commit. Runs with an API
+token or a login send no exchange and change nothing. The run makes one exchange and has no
+re-exchange when the token expires, so there is no second purpose to keep in step.
+Which routes take which scope is in `api/openapi.yaml` (`stageToken`).
+
+The same command without `--no-commit`, in the same directory, resumes the same
+group: `state.json`'s `plan_sha256` must still match `plan.json`, the registry
+reports every file as held, nothing is sent again, and the run goes on with step
+5. The token need not be the first run's, only the same actor's (a fresh `--oidc`
+exchange of the same packages and versions is). Because the registry opens a group
+that ended again as a next attempt when asked for it, a run that finds `staged:
+true` in `state.json` first reads the group (`GET /groups/{id}`): `expired`,
+`aborted`, `rejected`, `failed`, `superseded` or unknown ends the run with exit 1
+and `nothing was sent`, and `state.json` is kept; the caller removes it to stage
+again. `committed` becomes true and `staged` false in `state.json` when the commit
+is sent.
+
+`publish --staged <dir> --abort` ends the group `state.json` names
+(`DELETE /groups/{id}`), which also gives back the actor's place among its open
+groups. It reads `plan.json` (for the packages of an `--oidc` exchange and the
+digest) and `state.json`; it reads none of the set's files. `state.json` is left
+with no group, and `report.json` has the `outcome` `aborted` (`nothing_to_abort`
+when `state.json` named no group). A group that already ended without being
+published is not an error (exit 0); a directory with no `state.json`, a state of
+another registry or plan, and a group that was committed are (exit 1). `--abort`
+cannot be combined with `--no-commit` or `--dry-run`.
 
 `--registry` is required, with no default. A rerun after any failure sends the
 same request and so asks for the same group: the registry's group id is a
@@ -154,3 +219,130 @@ mopm yank --group <id> --registry <name> --unyank
 (or `restored`). Only a group that is `visible` can be yanked. An unyank
 restores the versions the group's yank changed and no others: a version yanked
 by hand before stays yanked. `--registry` is required.
+
+### When the caller's own open groups share a version
+
+A different set that shares a `(name, version)` with one of the same caller's
+open groups takes that version from it: the registry ends the earlier group as
+`superseded` (the default, `"on_overlap": "supersede"` in the body of
+`POST /groups`), and the earlier run's next poll sees `superseded` and fails as
+above. Two runs of one caller that declare different bytes for one version are
+the usual cause. The answer to the create that did this lists the ended groups
+in `superseded`.
+
+A publisher that wants the second run to fail at create instead sends
+`"on_overlap": "refuse"`. The registry then ends nothing, leaves the earlier
+group open with its versions held, and answers `group_conflict` with the reason
+`overlap_refused` and the ids of the caller's own overlapping groups in the
+message. The option is not part of the group id, so a repeated request is the
+same group with either value. A registry that predates the option ignores it
+and supersedes, without a `superseded` list; `mopm publish --staged` sends
+neither today and keeps the default.
+
+Every `group_conflict` also carries `error.reason`, so a publisher need not read
+the message: `number_held` (a live group holds a version), `group_failed` (the
+group failed and its versions are burned), `open_cap` (the caller has the most
+groups open), `supersede_cap` (the set overlaps more open groups than one create
+supersedes), `takeover_blocked` (a reserved version whose group has no header is
+not free yet), `number_taken` (another publish took a version during the create)
+and `overlap_refused`. A reason a client does not know is treated as none.
+
+## The group id
+
+The id of a group is a function of the caller and the declared set, and the
+derivation is a stable interface of the hosted registry: a client can compute
+the id without any record of it, then `GET /groups/{id}` answers `404
+group_not_found` when the caller has no such group, and otherwise the group's
+status and, for each member, its declared files (the read creates, reopens and
+charges nothing; `POST /groups` of an ended group would reopen it as a next
+attempt and charge the group allowance).
+
+```text
+group_id = "grp_" + first 32 lowercase hex digits of
+           SHA-256( UTF-8 bytes of the compact JSON text of [ actor, set ] )
+```
+
+- `actor` is `u:<GitHub account id>` for an account's token (a CI token that
+  acts for an account has the account's id), and `ci:gh-repo:<repository id>`
+  for the token of a configured CI publisher, whichever token of that identity
+  it is. A CI token of any other kind is `ci:<token id>`; it creates no group.
+  A client that wants a stable id across runs uses an account token or a
+  configured CI publisher, never a per-run token.
+- `set` is the array of the members sorted by package `name`. A member is the
+  array `[name, version, files]`; `version` is exactly `MAJOR.MINOR.PATCH`.
+  `files` is the array of the member's files sorted by the text
+  `<subdir>/<filename>`, and a file is the array `[subdir, filename, sha256,
+  size]` with `sha256` in lowercase hex and `size` a JSON integer.
+- "Compact" is JSON with no white space between tokens and strings written as
+  JavaScript's `JSON.stringify` writes them. The order of members and files in
+  the request, `on_overlap` and any other option are not part of the id.
+
+For the actor `u:1234` declaring `alpha` 1.0.0 with the one file
+`linux-64/mojo-alpha-1.0.0-mojo1.0.0_0.conda` (sha256: 64 times `a`, size 1000)
+the text hashed is
+
+```text
+["u:1234",[["alpha","1.0.0",[["linux-64","mojo-alpha-1.0.0-mojo1.0.0_0.conda","aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",1000]]]]]
+```
+
+and the id is `grp_750db8c095f4c2517cedf12a308149e5`. Further vectors, for a
+configured CI publisher, several members and files sent out of order, and
+one-field differences, are in the registry's test fixtures
+(`service/api/test/fixtures/group-id-vectors.json`), and a test fails if any id
+changes. A different derivation would be introduced under a new prefix, not as
+a different hash under `grp_`.
+
+The fake registry's group ids are opaque: they are not derived this way, and a
+client must not compute them.
+
+### What `GET /groups/{id}` adds for each member
+
+`files` lists the facts the caller declared, `subdir`, `filename`, `sha256` and
+`size`, sorted by `subdir` and `filename`, from the member's reserved version.
+While the group is `open` each file also has `uploaded`: true when the file is in
+storage at its declared size. For any other status `uploaded` is absent and the
+registry makes no storage check. A member that is not reserved yet, or whose
+version number another group or publish took after this group ended, has an
+empty `files`. The answers of `DELETE /groups/{id}` and `PUT /groups/{id}/yank`
+do not carry `files`. The access rule is the one every read of a group has: the
+caller who created it, or an owner of every package in it (a token that acts for
+an account must also cover every package); anyone else gets `404
+group_not_found`, never 403.
+
+### The group of a version
+
+`GET /packages/{name}/{version}` carries `group_id` for a version a group
+published, and no `group_id` for a version a single publish made. A version that
+is still pending is not found. The id grants nothing: reading or yanking the
+group keeps its own ownership and scope rules.
+
+### A commit without `manifest_sha256`
+
+`manifest_sha256` is optional in the commit of a single publish and in each
+member of a group commit. When given it is checked as before (`invalid_request`
+for a bad format, `sha256_mismatch` for a difference). When absent the version
+holds the hash the registry computes from the archive, and a version whose files
+carry different manifest bytes is rejected `manifest_invalid`; when the hash is
+given, a file whose manifest differs from it is `sha256_mismatch` instead. A
+repeat of a group commit must repeat which members gave the hash and what they
+gave; otherwise it is another request and is refused (`group_commit_refused`). A
+repeat of a single commit with the same upload ids resumes the same publish
+whatever it says about the hash.
+
+### The source commit of a version
+
+`source_commit` is an optional field of the commit of a single publish and of each member of a group commit: the git commit
+id the version was built from, exactly 40 or 64 lowercase hexadecimal digits. Anything else (uppercase, another length, a
+character that is not a hex digit, a value that is not a string) is `invalid_request`, and for a group commit the message
+names the member. The registry stores it once with the version, on that member's version only, and
+`GET /packages/{name}/{version}` returns it as `source_commit`; a version committed without one, and every version published
+before the field existed, has no `source_commit` key.
+
+It is informational. The registry checks its form and nothing else: it does not look the commit up, does not compare it with
+the archive, the repository or the caller's identity, and never compares or orders versions by it. A reader must treat it as
+what the publisher said, not as proof of where the files came from.
+
+It cannot change after the version is committed. A repeat of a group commit must repeat which members gave it and what they
+gave; otherwise it is another request and is refused (`group_commit_refused`). A repeat of a single commit with the same
+upload ids resumes the same publish when it states the same value (or none, when the first stated none); a repeat that states
+another value is refused `version_exists`, and the stored value does not change.

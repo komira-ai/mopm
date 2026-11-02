@@ -24,9 +24,7 @@ const WIRE_STAGE = 'beta'; // the stage name inside the goldens' table names
 const NOT_ROUTED: Record<string, string> = {
   'dynamodb:PutItem trusted_publishers': 'no route registers a trusted publisher',
   'dynamodb:DeleteItem trusted_publishers': 'a real delete; the table policy denies it to this role',
-  'dynamodb:PutItem owners': 'addOwner: package claim is not routed',
   'dynamodb:DeleteItem owners': 'removeOwner: no route; a real delete',
-  'dynamodb:PutItem packages': 'createPackage: package claim is not routed',
   'dynamodb:Scan packages': 'listPackageNames: used by the index writer, never by a route; the API role gets no Scan',
   'dynamodb:Query publishes': 'listActiveGroups: the group sweeper reads the sparse index by_sweep; no route does, and the API role has no Query on the table or the index',
 };
@@ -102,7 +100,8 @@ describe('wire goldens', () => {
     expect([...new Set(group.map((c) => c.action))].sort()).toEqual(['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query']);
     // The Query is the sweeper's, of its sparse index and nothing else.
     expect(group.filter((c) => c.action === 'dynamodb:Query').map(keyOf)).toEqual(['dynamodb:Query publishes/index/by_sweep', 'dynamodb:Query publishes/index/by_sweep']);
-    expect([...new Set(group.map((c) => c.table))].sort()).toEqual(['audit', 'publishes', 'versions']);
+    // 'packages' is the activation after a publish (a GetItem and a conditional PutItem of the package row).
+    expect([...new Set(group.map((c) => c.table))].sort()).toEqual(['audit', 'packages', 'publishes', 'versions']);
   });
 
   describe.each(STAGES)('against the ApiStack %s policy', (stage) => {
@@ -145,6 +144,26 @@ describe('wire goldens', () => {
         expect(mine.length).toBeGreaterThan(0);
         for (const c of mine) expect(covered(c, st)).toBe(false);
       }
+    });
+
+    // The claim writes the package, its first owner and the audit row in one transaction; each Put needs PutItem on its own table.
+    test('can fail: the claim transaction is covered, and with the claim statement removed its package and owner writes are not', () => {
+      const claim = calls.filter((c) => c.via.endsWith(' store.claimPackage'));
+      expect([...new Set(claim.map(keyOf))].sort()).toEqual(['dynamodb:PutItem audit', 'dynamodb:PutItem owners', 'dynamodb:PutItem packages']);
+      expect(claim.every((c) => covered(c, allowed()))).toBe(true);
+      const stripped = allowed().filter((s) => s.Sid !== 'ClaimPackages');
+      expect([...new Set(claim.filter((c) => !covered(c, stripped)).map(keyOf))].sort()).toEqual(['dynamodb:PutItem owners', 'dynamodb:PutItem packages']);
+    });
+
+    // The claim route's rate counters (rl#ct#, rl#cu#, and the give-back of a charge) are the same `publish.hit` the publish limits use:
+    // a Get and a conditional Put on the publishes table, which RecordUploadsAndPublishes grants. The claim adds no grant.
+    test('can fail: the rate counter of a claim is a Get and a Put on publishes only, covered today and not without RecordUploadsAndPublishes', () => {
+      const hit = calls.filter((c) => c.via.startsWith('publish.json ') && c.via.endsWith(' publish.hit'));
+      expect([...new Set(hit.map(keyOf))].sort()).toEqual(['dynamodb:GetItem publishes', 'dynamodb:PutItem publishes']);
+      expect(hit.every((c) => covered(c, allowed()))).toBe(true);
+      const stripped = allowed().filter((s) => s.Sid !== 'RecordUploadsAndPublishes');
+      expect([...new Set(hit.filter((c) => !covered(c, stripped)).map(keyOf))].sort()).toEqual(['dynamodb:GetItem publishes', 'dynamodb:PutItem publishes']);
+      expect(allowed().filter((s) => acts(s).includes('dynamodb:UpdateItem') && JSON.stringify(s.Resource).includes('-publishes'))).toEqual([]);
     });
 
     test('can fail: with the owners index resource removed from the policy, the account-token query is not covered', () => {

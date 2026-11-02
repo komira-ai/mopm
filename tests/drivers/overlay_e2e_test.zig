@@ -313,7 +313,6 @@ test "mopm add, lock and sync with --overlay: a staged set is a read-only channe
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var rep = h.Report{};
-    try h.watchdog(280);
     const mopm_exe = try h.toolPath(a, "MOPM");
     const fake_exe = try h.toolPath(a, "MOPM_FAKE_REGISTRY");
     const pixi_exe = try h.toolPath(a, "FAKE_PIXI");

@@ -16,6 +16,10 @@ export interface PublishConfig {
   ratePerAccountPerDay: number;
   /** begin-upload calls per token per UTC day. */
   ratePerTokenPerDay: number;
+  /** Successful claims per account (GitHub id) per UTC day: a counter of its own, apart from the publish counters. */
+  claimRatePerAccountPerDay: number;
+  /** Successful claims per token per UTC day. */
+  claimRatePerTokenPerDay: number;
   /** Members in one group. */
   groupMaxMembers: number;
   /** Declared bytes of all the files of one group. */
@@ -28,7 +32,14 @@ export interface PublishConfig {
   groupRatePerTokenPerDay: number;
   /** Hours from the creation of a group (or its reopening) to its deadline; the quarantine prefix expires after a day, so this stays well below 24. */
   groupDeadlineHours: number;
-  /** Time a create call spends reserving members before it answers `reserving` (milliseconds; the API Lambda's timeout is 10 s). */
+  /**
+   * Time a create call spends before it stops reserving members and answers `reserving` (milliseconds). The clock starts with the
+   * call, so the preflight counts. The budget is looked at before each batch of sixteen members, so a call ends within it plus one
+   * batch (a reservation and a checkpoint) and, when it has reserved the last member, the lookup of every member's files. The API
+   * Lambda's timeout is 25 s (infra stacks, api-stack.ts) under the HTTP API's 30 s: a call that outlives the Lambda is answered
+   * with a bare HTTP 500, not the registry's own error. `GROUP_CREATE_BUDGET_MAX_MS` is the most the environment may set; the
+   * stacks' api.test.ts holds both under the timeout.
+   */
   groupCreateBudgetMs: number;
   /** Hours the validator reserves for a group out of the quarantine prefix's day: an upload older than 24 minus this is rejected before anything is copied. */
   groupValidateHours: number;
@@ -38,6 +49,9 @@ export interface PublishConfig {
   groupSupersedeMax: number;
 }
 
+/** The most MOPM_GROUP_CREATE_BUDGET_MS may raise `groupCreateBudgetMs` to. */
+export const GROUP_CREATE_BUDGET_MAX_MS = 9000;
+
 export const DEFAULT_PUBLISH_CONFIG: PublishConfig = {
   maxArchiveBytes: 100_000_000,
   projectQuotaBytes: 10_000_000_000,
@@ -45,6 +59,9 @@ export const DEFAULT_PUBLISH_CONFIG: PublishConfig = {
   uploadRecordTtlSeconds: 86_400,
   ratePerAccountPerDay: 2000,
   ratePerTokenPerDay: 1000,
+  // A claim reserves a name for 30 days: conservative, unlike the publish limits.
+  claimRatePerAccountPerDay: 50,
+  claimRatePerTokenPerDay: 50,
   groupMaxMembers: 500,
   groupMaxBytes: 20_000_000_000,
   groupOpenPerActor: 5,
@@ -75,6 +92,8 @@ export function publishConfigFromEnv(env: Record<string, string | undefined> = p
     uploadRecordTtlSeconds: intFrom(env, 'MOPM_UPLOAD_RECORD_TTL_SECONDS', d.uploadRecordTtlSeconds, 300),
     ratePerAccountPerDay: intFrom(env, 'MOPM_RATE_PER_ACCOUNT_DAY', d.ratePerAccountPerDay, 1),
     ratePerTokenPerDay: intFrom(env, 'MOPM_RATE_PER_TOKEN_DAY', d.ratePerTokenPerDay, 1),
+    claimRatePerAccountPerDay: intFrom(env, 'MOPM_CLAIM_RATE_PER_ACCOUNT_DAY', d.claimRatePerAccountPerDay, 1),
+    claimRatePerTokenPerDay: intFrom(env, 'MOPM_CLAIM_RATE_PER_TOKEN_DAY', d.claimRatePerTokenPerDay, 1),
     groupMaxMembers: intFrom(env, 'MOPM_GROUP_MAX_MEMBERS', d.groupMaxMembers, 1),
     groupMaxBytes: intFrom(env, 'MOPM_GROUP_MAX_BYTES', d.groupMaxBytes, 1),
     groupOpenPerActor: intFrom(env, 'MOPM_GROUP_OPEN_PER_ACTOR', d.groupOpenPerActor, 1),
@@ -82,7 +101,7 @@ export function publishConfigFromEnv(env: Record<string, string | undefined> = p
     groupRatePerTokenPerDay: intFrom(env, 'MOPM_GROUP_RATE_PER_TOKEN_DAY', d.groupRatePerTokenPerDay, 1),
     // Under the 24 hours the quarantine prefix keeps an upload (a group's files are copied from it after the deadline's work begins).
     groupDeadlineHours: Math.min(18, intFrom(env, 'MOPM_GROUP_DEADLINE_HOURS', d.groupDeadlineHours, 1)),
-    groupCreateBudgetMs: Math.min(9000, intFrom(env, 'MOPM_GROUP_CREATE_BUDGET_MS', d.groupCreateBudgetMs, 100)),
+    groupCreateBudgetMs: Math.min(GROUP_CREATE_BUDGET_MAX_MS, intFrom(env, 'MOPM_GROUP_CREATE_BUDGET_MS', d.groupCreateBudgetMs, 100)),
     // The quarantine prefix keeps an upload for a day; the validator's hours come out of it, so they are at most 23.
     groupValidateHours: Math.min(23, intFrom(env, 'MOPM_GROUP_VALIDATE_HOURS', d.groupValidateHours, 1)),
     // Under the 300 s the Lambda may run, with room for the member in flight.

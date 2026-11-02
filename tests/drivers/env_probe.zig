@@ -20,7 +20,7 @@ pub fn main() !void {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena_state.allocator();
     const out = std.io.getStdOut().writer();
-    for ([_][]const u8{ "MOPM_TOKEN", "MOPM_PROBE_MARK" }) |name| {
+    for ([_][]const u8{ "MOPM_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_URL", "MOPM_PROBE_MARK" }) |name| {
         try out.print("{s}={s}\n", .{ name, (try variable(a, name)) orelse "<unset>" });
     }
     const args = try std.process.argsAlloc(a);

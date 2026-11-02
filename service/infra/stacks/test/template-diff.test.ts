@@ -83,6 +83,9 @@ function differing(a: Map<string, string>, b: Map<string, string>): string[] {
 // keys, projection and name are the same in every stage (no stage-dependent setting), so it is in the shared template
 // and the "identical modulo names" checks below cover it. The 'search index is the same in every stage' test pins that.
 const EXPECTED_PROD_DIFF = [
+  // The API function's Environment: prod has CI_PUBLISHERS (the CI identity that acts for an account), gamma has no such variable;
+  // the next describe pins that this is the one variable by which their Environments differ.
+  'api:AWS::Lambda::Function:Properties.Environment',
   'api:AWS::Logs::LogGroup:DeletionPolicy',
   'api:AWS::Logs::LogGroup:UpdateReplacePolicy',
   'channel:AWS::S3::Bucket:DeletionPolicy',
@@ -98,15 +101,56 @@ const EXPECTED_PROD_DIFF = [
   'site:AWS::S3::Bucket:UpdateReplacePolicy',
 ].sort();
 
+// What only the beta stage has: two variables of the API function (its Environment), CI_PUBLISHERS and MOPM_GROUPS_POLICY, and
+// nothing else (the next describe pins that the Environment differs in exactly those two). The role's policy is identical on every
+// stage (package creation is the claim route's grant). Config-as-code trust is beta's alone, so this is the whole of beta's
+// difference from gamma. Adding to this list is a reviewed decision.
+const EXPECTED_BETA_ONLY_DIFF = ['api:AWS::Lambda::Function:Properties.Environment'];
+const EXPECTED_BETA_ONLY_ENV = ['CI_PUBLISHERS', 'MOPM_GROUPS_POLICY'];
+// What prod has that gamma does not: CI_PUBLISHERS, whose one row acts for an account (the stack test pins the row). No groups policy.
+const EXPECTED_PROD_ONLY_ENV = ['CI_PUBLISHERS'];
+
+/** The names of the environment variables of the API function (the one with the stage's OAuth secret name) on a stage. */
+function apiEnvNames(stage: Stage): string[] {
+  const fns = Object.values(Template.fromStack(build(stage).api).findResources('AWS::Lambda::Function')) as any[];
+  const api = fns.filter((f) => f.Properties.Environment?.Variables?.MOPM_OAUTH_SECRET_NAME !== undefined);
+  expect(api).toHaveLength(1);
+  return Object.keys(api[0].Properties.Environment.Variables).sort();
+}
+
 describe('whole-template stage diff', () => {
   const [beta, gamma, prod] = STAGES.map(fingerprint);
 
-  test('beta and gamma synthesize identical templates (modulo names and hosts)', () => {
-    expect(differing(beta, gamma)).toEqual([]);
+  test('beta and gamma synthesize identical templates (modulo names and hosts), except for the beta-only CI trust', () => {
+    expect(differing(beta, gamma)).toEqual(EXPECTED_BETA_ONLY_DIFF);
   });
 
-  test.each([['beta', beta], ['gamma', gamma]] as const)('%s differs from prod only in the expected properties', (_n, s) => {
-    expect(differing(s, prod)).toEqual(EXPECTED_PROD_DIFF);
+  test('gamma differs from prod only in the expected properties', () => {
+    expect(differing(gamma, prod)).toEqual(EXPECTED_PROD_DIFF);
+  });
+
+  test('beta differs from prod in the expected properties and the beta-only CI trust', () => {
+    expect(differing(beta, prod)).toEqual([...new Set([...EXPECTED_PROD_DIFF, ...EXPECTED_BETA_ONLY_DIFF])].sort());
+  });
+});
+
+describe('the environment of the API function per stage', () => {
+  const [beta, gamma, prod] = STAGES.map(apiEnvNames);
+
+  test('beta has exactly two variables that gamma does not, the two beta-only ones, and gamma has none that beta lacks', () => {
+    expect(beta!.filter((n) => !gamma!.includes(n))).toEqual(EXPECTED_BETA_ONLY_ENV);
+    expect(gamma!.filter((n) => !beta!.includes(n))).toEqual([]);
+  });
+
+  test('prod has exactly one variable that gamma does not, CI_PUBLISHERS, and gamma has none that prod lacks', () => {
+    expect(prod!.filter((n) => !gamma!.includes(n))).toEqual(EXPECTED_PROD_ONLY_ENV);
+    expect(gamma!.filter((n) => !prod!.includes(n))).toEqual([]);
+  });
+
+  test('neither gamma nor prod has the beta-only groups policy', () => {
+    expect(gamma).not.toContain('MOPM_GROUPS_POLICY');
+    expect(prod).not.toContain('MOPM_GROUPS_POLICY');
+    expect(gamma).not.toContain('CI_PUBLISHERS');
   });
 });
 

@@ -78,7 +78,7 @@ describe('zstd frame', () => {
 
 // ---- determinism: a can-fail proof, then properties ----------------------------------------------
 
-/** The mutant: iterates input order and never sorts, so the bytes depend on the order records arrive in. */
+/** The defect: iterates input order and never sorts, so the bytes depend on the order records arrive in. */
 function nonDeterministicWriter(subdir: string, records: readonly VersionRecord[]): string {
   const conda: Record<string, unknown> = {};
   const removed: string[] = [];

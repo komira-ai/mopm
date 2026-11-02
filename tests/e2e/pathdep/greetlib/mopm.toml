@@ -1,0 +1,12 @@
+[package]
+name = "greetlib"
+version = "0.1.0"
+
+[toolchain]
+mojo = "1.0.0"
+
+[dependencies]
+basepkg = { path = "../basepkg" }
+
+[targets]
+lib = { path = "src/greetlib" }

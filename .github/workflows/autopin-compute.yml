@@ -14,7 +14,7 @@
 # checked against a sha256 written here; it is never built from the pull request, and a bump of the pin is a
 # pull request to main. The same pin is in autopin-commit.yml and pin-verify.yml (the workflow lint compares).
 #
-# tests/drivers/autopin_lint.zig holds every line of this file to its rules, each with a planted mutant.
+# tests/drivers/autopin_lint.zig holds every line of this file to its rules, each with a faulty variant.
 name: autopin-compute
 
 on:

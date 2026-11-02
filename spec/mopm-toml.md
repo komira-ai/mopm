@@ -13,6 +13,7 @@ repository = "https://github.com/example/http_client"
 homepage = "https://example.com/http_client"
 keywords = ["http", "client"]
 readme = "README.md"
+publish = true                # false: never staged, packed or published (a test-support helper); default true
 mojo = ["1.0.0", "1.1.0"]     # exact compiler versions it builds for, one .mojoc each (a .mojoc is tied to one)
 
 [dependencies]                # Mojo packages
@@ -47,6 +48,14 @@ tests = ["tests"]
   the registry's read API (`description`, `license`, `repository`, `homepage`,
   `keywords` and `readme` of a version; spec/api/openapi.yaml). The publish
   pipeline copies them from the file at publish time.
+- `publish` (in `[package]`): a boolean, default true. `publish = false` marks a
+  package that is a member of a workspace but is never published, such as a
+  helper that is only a path `[dev-dependencies]` target of other members. It
+  still needs a `name` and `version` and is read like any other package by
+  `lock`, `sync`, `build`, `test` and `plan`. `pack`, `publish` and `stage`
+  refuse it (`stage` with no package names leaves it out), and a package that is
+  published may not list one in `[dependencies]`; `[dev-dependencies]` may.
+  Anything but `true` or `false` is refused, naming the key.
 - `[dependencies]`: Mojo packages with version requirements. A dependency may
   also have a `path`, for co-development against a local checkout; see
   Dependencies with a path.
@@ -73,6 +82,17 @@ tests = ["tests"]
   declares one has no `noarch` file. A static library can also give `srcs`,
   `hdrs`, `cflags`, `cflags_by_os`, `includes` and `soname`: the C sources a
   build system compiles into its archive (`unit-graph.md`, "Member natives").
+  `provided = true` (with `kind = "static"` and `mode = "link"`) says the
+  archive is built by something else and packed as `lib<id>.a`; mopm compiles
+  nothing for it, so `srcs`, `hdrs`, `cflags`, `cflags_by_os`, `includes`,
+  `build` and `outputs` are refused (`unit-graph.md`, "Provided natives").
+  `link = ["c++"]` names the system libraries the final link of every consumer
+  of the static archive adds, as `-l<name>`, once each, after all archives. The
+  names are `c++`, `dl`, `m` and `pthread` (a closed list: the names of a
+  published package reach its consumers' linker command lines), none twice, and
+  the library must be `kind = "static"` with `mode = "link"`. It applies with and
+  without `provided = true`, and is carried into `<name>.mopm.json`, the lock and
+  the unit graph (`unit-graph.md`, "System libraries of a native").
 - `[targets]`: the library, executables and tests to build.
 
 ## Other tools' settings: `[package.metadata]`

@@ -72,12 +72,12 @@ function usageCommands(zig: string): string[] {
     .split(/\s(?=mopm )/);
 }
 
-/** The flags a Zig parser takes: those of its `const takes = ...;`, and the flag that takes no value. */
-function flagsOf(zig: string, noValue?: string): string[] {
+/** The flags a Zig parser takes: those of its `const takes = ...;`, and the flags that take no value. */
+function flagsOf(zig: string, noValue: readonly string[] = []): string[] {
   const m = /const takes = ([^;]+);/.exec(zig);
   if (!m) throw new Error('no takes list');
-  if (noValue) expect(zig).toContain(`eql(u8, a, "${noValue}")`);
-  return sorted([...[...m[1].matchAll(/"(--[a-z-]+)"/g)].map((x) => x[1]), ...(noValue ? [noValue] : [])]);
+  for (const flag of noValue) expect(zig).toContain(`eql(u8, a, "${flag}")`);
+  return sorted([...[...m[1].matchAll(/"(--[a-z-]+)"/g)].map((x) => x[1]), ...noValue]);
 }
 
 const flagTokens = (text: string): string[] => sorted(text.match(/--[a-z]+(?:-[a-z]+)*/g) ?? []);
@@ -86,7 +86,7 @@ const flagTokens = (text: string): string[] => sorted(text.match(/--[a-z]+(?:-[a
 
 describe.each([
   ['mopm stage', stageZig, undefined],
-  ['mopm publish --staged', publishZig, '--dry-run'],
+  ['mopm publish --staged', publishZig, ['--dry-run', '--oidc', '--no-commit', '--abort']],
 ] as const)('docs: %s', (heading, zig, noValue) => {
   const sec = section(doc, heading);
   const source = flagsOf(zig, noValue);
@@ -112,7 +112,7 @@ describe.each([
 describe('docs: mopm yank --group', () => {
   const sec = section(doc, 'Yanking a group');
   const block = fences(sec)[0];
-  const source = flagsOf(yankZig, '--unyank');
+  const source = flagsOf(yankZig, ['--unyank']);
 
   test('the synopsis is the two usage lines of the command', () => {
     expect(block.trim().split('\n').map(squash)).toEqual(usageCommands(yankZig));
@@ -158,14 +158,14 @@ describe('docs: values and outcomes', () => {
 
   test('the outcomes of a run are the Result of the publisher, and are all named', () => {
     const names = /pub const Result = enum \{([^}]*)\}/.exec(publishZig)![1].split(',').map((s) => s.trim()).filter(Boolean);
-    expect(names).toEqual(['published', 'failed', 'rate_limited', 'no_group_publish', 'timed_out']);
+    expect(names).toEqual(['published', 'staged', 'aborted', 'nothing_to_abort', 'failed', 'rate_limited', 'no_group_publish', 'timed_out']);
     const sec = section(doc, 'report.json');
     expect(sec).toContain(`The outcome of a run is ${names.slice(0, -1).map((n) => `\`${n}\``).join(', ')} or \`${names[names.length - 1]}\``);
   });
 
   test('the outcomes of a member are the strings the report writes, one row each', () => {
     const outcomes = sorted([...publishZig.matchAll(/outcome = "([a-z_]+)"/g)].map((m) => m[1]));
-    expect(outcomes).toEqual(['not_published', 'pending', 'published', 'rejected', 'skipped']);
+    expect(outcomes).toEqual(['not_published', 'pending', 'published', 'rejected', 'skipped', 'staged']);
     const rows = section(doc, 'report.json').split('\n').filter((l) => l.startsWith('| `'));
     expect(sorted(rows.map((l) => /^\| `([a-z_]+)`/.exec(l)![1]))).toEqual(outcomes);
   });

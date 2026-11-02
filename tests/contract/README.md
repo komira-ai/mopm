@@ -38,7 +38,7 @@ Each file is `{"cases": [...]}`. A case:
 - `expect` is `valid` (default) or `invalid`. An `invalid` case is a
   counter-example and the check FAILS if the contract accepts it. Every
   counter-example has exactly one defect, named by its `name`. These are the
-  mutants that show the check can go red: a dropped required field, a wrong
+  variants that show the check can go red: a dropped required field, a wrong
   status, a missing header, a value outside a pattern or range, an auth scheme
   the operation does not accept, an error code or message off the catalogue.
 - `malformed_request: true` is for error answers to input that cannot satisfy
@@ -50,8 +50,7 @@ declared and match their schemas; the request body matches; the response
 status is declared by the operation (or is an error); required response
 headers are present; the response body matches; an error uses a code from the
 catalogue with that code's status, and its message and hint follow the
-catalogue template; `rate_limited` carries `Retry-After`; an embedded
-`manifest` is valid package metadata. It also requires a passing success case
+catalogue template; `rate_limited` carries `Retry-After`. It also requires a passing success case
 for every operation, a case for every error code and for every rejection code.
 
 ## Examples: `examples/<kind>/{valid,invalid}/`

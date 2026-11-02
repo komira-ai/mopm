@@ -1,7 +1,11 @@
-import { createPublicKey, verify as cryptoVerify, type KeyObject } from 'node:crypto';
+import { createHash, createPublicKey, verify as cryptoVerify, type KeyObject } from 'node:crypto';
+import { RegistryError } from '../errors';
+import type { Store } from '../store';
 import { canonicalVersion } from '../version';
+import { ciOwnerOf, type CiPublisher } from './ci-publishers';
+import { EXCHANGE_CONCURRENCY, mapBounded } from './bounded';
 import { AuthError, oidcInvalid } from './errors';
-import { mintToken, NAME_PATTERN, OIDC_TOKEN_TTL_MS, type Clock } from './tokens';
+import { mintToken, newId, NAME_PATTERN, OIDC_TOKEN_TTL_MS, type Clock } from './tokens';
 import type { AuthStore, TrustedPublisher } from './types';
 
 export const GITHUB_OIDC_ISSUER = 'https://token.actions.githubusercontent.com';
@@ -34,9 +38,26 @@ export interface GithubActionsClaims {
   repository_id: string;
   repository_owner_id: string;
   workflow_ref: string;
+  /** The workflow file the running job is defined in (a reusable workflow's own file when called). Absent on some tokens; a CI publisher requires it to match exactly. */
+  job_workflow_ref?: string;
+  /** The git ref the job runs on, e.g. `refs/heads/main`. */
+  ref: string;
+  /** What started the workflow: `push`, `workflow_dispatch`, `pull_request`, ... */
+  event_name: string;
+  /** The token's unique id: one exchange per jti. */
+  jti: string;
   environment?: string;
   [k: string]: unknown;
 }
+
+/** The ref a trusted publisher row means when it does not name one. */
+export const DEFAULT_TRUSTED_REF = 'refs/heads/main';
+/** The events a CI identity may exchange from. A row may narrow this to one; nothing widens it (a pull request job never qualifies). */
+export const ALLOWED_EVENTS: readonly string[] = ['push', 'workflow_dispatch'];
+/** A used jti stays claimed at least this long (and until its token has expired). */
+export const JTI_MIN_TTL_MS = 10 * 60_000;
+/** Claim keys cannot collide with a token hash (64 hex characters). */
+const jtiKey = (jti: string) => `jti#${createHash('sha256').update(jti).digest('hex')}`;
 
 export interface JwtVerifierOptions {
   issuer?: string;
@@ -147,7 +168,7 @@ export class GithubJwtVerifier {
     if (nbf !== undefined && (typeof nbf !== 'number' || nbf - this.leeway > nowS)) throw oidcInvalid('token not yet valid');
     if (typeof iat !== 'number' || !Number.isFinite(iat)) throw oidcInvalid('missing issued-at');
     if (iat - this.leeway > nowS) throw oidcInvalid('token issued in the future');
-    for (const c of ['repository', 'repository_id', 'repository_owner_id', 'workflow_ref'] as const) {
+    for (const c of ['repository', 'repository_id', 'repository_owner_id', 'workflow_ref', 'ref', 'event_name', 'jti'] as const) {
       if (typeof claims[c] !== 'string' || !claims[c]) throw oidcInvalid(`missing claim ${c}`);
     }
     return claims as GithubActionsClaims;
@@ -167,13 +188,56 @@ export function matchesTrustedPublisher(tp: TrustedPublisher, c: GithubActionsCl
   if (tp.repository_owner_id !== c.repository_owner_id) return false;
   if (workflowPath(c.workflow_ref, c.repository) !== tp.workflow) return false;
   if (tp.environment !== undefined && tp.environment !== c.environment) return false;
+  if ((tp.ref ?? DEFAULT_TRUSTED_REF) !== c.ref) return false;
+  if (!ALLOWED_EVENTS.includes(c.event_name)) return false;
+  if (tp.event_name !== undefined && tp.event_name !== c.event_name) return false;
   return true;
 }
+
+/** Whether this verified GitHub identity is the configured publisher: every field exactly, on numeric ids, never on names. */
+export function matchesCiPublisher(cp: CiPublisher, c: GithubActionsClaims): boolean {
+  return (
+    cp.repository_id === c.repository_id &&
+    cp.repository_owner_id === c.repository_owner_id &&
+    workflowPath(c.workflow_ref, c.repository) === cp.workflow &&
+    c.job_workflow_ref === cp.job_workflow_ref &&
+    cp.environment === c.environment &&
+    cp.ref === c.ref &&
+    ALLOWED_EVENTS.includes(c.event_name) &&
+    cp.events.includes(c.event_name)
+  );
+}
+
+/** The most packages one exchange of a configured CI publisher may name: the most members a group may have. */
+export const MAX_CI_PACKAGES = 500;
 
 export interface OidcExchangeOptions {
   store: AuthStore;
   verifier: GithubJwtVerifier;
   now?: Clock;
+  /**
+   * The CI publishers this deployment trusts by configuration (parseCiPublishers: beta only), and the registry they create
+   * their packages in. Both are needed for the `packages` form of the exchange; without them that form is refused.
+   */
+  ciPublishers?: readonly CiPublisher[];
+  registry?: Store;
+}
+
+export interface PackageVersion {
+  name: string;
+  version: string;
+}
+/** What a minted token is for: `publish` is the token of every exchange before `purpose` existed; `stage` may only prepare a group. */
+export type OidcPurpose = 'publish' | 'stage';
+export type OidcExchangeInput =
+  | { jwt: string; name: string; version: string; purpose?: OidcPurpose }
+  | { jwt: string; packages: PackageVersion[]; purpose?: OidcPurpose };
+
+function purposeOf(input: unknown): OidcPurpose {
+  const purpose = input !== null && typeof input === 'object' ? (input as { purpose?: unknown }).purpose : undefined;
+  if (purpose === undefined || purpose === 'publish') return 'publish';
+  if (purpose === 'stage') return 'stage';
+  throw new AuthError('invalid_request', "The request is not valid: 'purpose' is publish or stage.", { detail: "'purpose' is publish or stage" });
 }
 
 export class OidcExchange {
@@ -182,8 +246,132 @@ export class OidcExchange {
     this.now = o.now ?? (() => new Date());
   }
 
-  /** Verify the CI token, match a trusted publisher of the package, mint a 15 minute token for that package and version. */
-  async exchange(input: { jwt: string; name: string; version: string }) {
+  /**
+   * Two forms. `{jwt, name, version}`: verify the CI token, match a trusted publisher registered for the package, mint a
+   * 10 minute token for that package and version. `{jwt, packages}`: for a CI publisher the deployment trusts by
+   * configuration; every package must be unclaimed (it is created, owned by the publisher) or already the publisher's;
+   * the 10 minute token is good for exactly those packages and versions and acts as the publisher.
+   * Either form takes an optional `purpose`: `publish` (the default) or `stage`, which mints the same token with the one scope
+   * `stage` (it creates, reads and aborts a group but cannot commit or yank). Any other value is `invalid_request`.
+   */
+  exchange(input: { jwt: string; name: string; version: string; purpose?: OidcPurpose }): Promise<{ token: string; token_kind: OidcPurpose; expires_at: string; name: string; version: string }>;
+  exchange(input: { jwt: string; packages: PackageVersion[]; purpose?: OidcPurpose }): Promise<{ token: string; token_kind: OidcPurpose; expires_at: string; packages: PackageVersion[] }>;
+  exchange(input: OidcExchangeInput): Promise<unknown>;
+  async exchange(input: OidcExchangeInput): Promise<unknown> {
+    // Before anything is verified or spent: a purpose the registry does not know is the caller's mistake.
+    const purpose = purposeOf(input);
+    if (input !== null && typeof input === 'object' && 'packages' in input) return this.exchangeConfigured(input, purpose);
+    return this.exchangeRegistered(input as { jwt: string; name: string; version: string }, purpose);
+  }
+
+  private async exchangeConfigured(input: { jwt: string; packages: unknown }, purpose: OidcPurpose) {
+    const bad = (detail: string) => new AuthError('invalid_request', `The request is not valid: ${detail}.`, { detail });
+    if ('name' in input || 'version' in input) throw bad("send 'packages' or 'name' and 'version', not both");
+    const list = input.packages;
+    if (!Array.isArray(list) || list.length < 1 || list.length > MAX_CI_PACKAGES) throw bad(`'packages' holds 1 to ${MAX_CI_PACKAGES} entries`);
+    const wanted: PackageVersion[] = [];
+    for (const e of list) {
+      const name = (e as { name?: unknown } | null)?.name;
+      const version = (e as { version?: unknown } | null)?.version;
+      if (typeof name !== 'string' || !NAME_PATTERN.test(name)) throw new AuthError('invalid_name', `'${String(name)}' is not a valid package name.`, { name: String(name) });
+      try {
+        canonicalVersion(version as string);
+      } catch {
+        throw new AuthError('invalid_version', `'${String(version)}' is not a valid version.`, { version: String(version) });
+      }
+      wanted.push({ name, version: version as string });
+    }
+    if (new Set(wanted.map((w) => w.name)).size !== wanted.length) throw bad("'packages' names a package twice");
+
+    const claims = await this.o.verifier.verify(input.jwt);
+    const publisher = this.o.registry ? this.o.ciPublishers?.find((p) => matchesCiPublisher(p, claims)) : undefined;
+    if (!publisher || !this.o.registry) {
+      throw new AuthError('oidc_not_trusted', `No trusted publisher of '${wanted[0]!.name}' matches this CI identity.`, { name: wanted[0]!.name });
+    }
+    const registry = this.o.registry;
+    const owner = ciOwnerOf(publisher.repository_id);
+    const refuse = (name: string) => new AuthError('not_owner', `You are not an owner of '${name}'.`, { name });
+    if (publisher.acts_for !== undefined) return this.exchangeActsFor(claims, publisher.acts_for, owner, wanted, registry, purpose);
+
+    // Read first, so a name that belongs to someone else spends nothing and creates nothing.
+    const existing = await mapBounded(wanted, EXCHANGE_CONCURRENCY, (w) => registry.getPackage(w.name));
+    existing.forEach((p, i) => {
+      if (p && p.ci_owner !== owner) throw refuse(wanted[i]!.name);
+    });
+    const now = this.now();
+    const keepUntil = Math.max(claims.exp * 1000 + 60_000, now.getTime() + JTI_MIN_TTL_MS);
+    if (!(await this.o.store.claimOnce(jtiKey(claims.jti), new Date(keepUntil).toISOString()))) throw oidcInvalid('token already used');
+
+    // Sixteen names at a time. A name that is already this publisher's (made by an earlier attempt, or by another request between
+    // the read and the write) is not an error and is not written twice; one that is anyone else's is refused, the first in the
+    // order of the request, as it was when the names were taken one by one.
+    await mapBounded(
+      wanted.filter((_, i) => !existing[i]),
+      EXCHANGE_CONCURRENCY,
+      async (w) => {
+        try {
+          await registry.createPackage({ name: w.name, state: 'claimed', created_at: now.toISOString(), ci_owner: owner });
+        } catch (err) {
+          if (!(err instanceof RegistryError) || err.code !== 'name_taken') throw err;
+          // Someone created it between the read and the write: it is ours only if we are its owner.
+          if ((await registry.getPackage(w.name))?.ci_owner !== owner) throw refuse(w.name);
+          return;
+        }
+        await registry.appendAudit({ name: w.name, ts: now.toISOString(), id: newId('a'), actor: owner, action: 'ci_claim', detail: { repository: claims.repository } });
+      },
+    );
+
+    const m = await mintToken(this.o.store, {
+      kind: 'oidc',
+      name: `ci ${claims.repository}`,
+      scopes: [purpose],
+      packages: wanted.map((w) => w.name),
+      all_current: false,
+      versions: Object.fromEntries(wanted.map((w) => [w.name, w.version])),
+      ci_owner: owner,
+      issued_to: claims.repository,
+      created_at: now.toISOString(),
+      expires_at: new Date(now.getTime() + OIDC_TOKEN_TTL_MS).toISOString(),
+    });
+    return { token: m.secret, token_kind: purpose, expires_at: m.record.expires_at, packages: wanted };
+  }
+
+  /**
+   * A CI publisher that acts for an account: the token's principal IS the account (`github_id`), so ownership is the account's owner
+   * rows, the actor is `u:<id>` and the account's groups policy applies. Nothing is created: every name must already be claimed, and
+   * must have the account among its owners (a package owned by anyone else, or by a CI identity, is refused). The token records the
+   * CI identity it came through (`acts_via`) and carries no `ci_owner`.
+   */
+  private async exchangeActsFor(claims: GithubActionsClaims, actsFor: string, via: string, wanted: PackageVersion[], registry: Store, purpose: OidcPurpose) {
+    const account = Number(actsFor);
+    // Read first, and mint nothing, spend no jti, until every name is the account's.
+    // Sixteen names at a time; the refusal is that of the first name in the request that fails, as when they were read one by one.
+    await mapBounded(wanted, EXCHANGE_CONCURRENCY, async (w) => {
+      const pkg = await registry.getPackage(w.name);
+      if (!pkg) throw new RegistryError('package_not_found', `There is no package '${w.name}'.`, { name: w.name });
+      const mine = pkg.ci_owner === undefined && (await registry.listOwners(w.name)).some((o) => o.github_id === account);
+      if (!mine) throw new AuthError('not_owner', `You are not an owner of '${w.name}'.`, { name: w.name });
+    });
+    const now = this.now();
+    const keepUntil = Math.max(claims.exp * 1000 + 60_000, now.getTime() + JTI_MIN_TTL_MS);
+    if (!(await this.o.store.claimOnce(jtiKey(claims.jti), new Date(keepUntil).toISOString()))) throw oidcInvalid('token already used');
+    const m = await mintToken(this.o.store, {
+      kind: 'oidc',
+      github_id: account,
+      acts_via: via,
+      name: `ci ${claims.repository}`,
+      scopes: [purpose],
+      packages: wanted.map((w) => w.name),
+      all_current: false,
+      versions: Object.fromEntries(wanted.map((w) => [w.name, w.version])),
+      issued_to: claims.repository,
+      created_at: now.toISOString(),
+      expires_at: new Date(now.getTime() + OIDC_TOKEN_TTL_MS).toISOString(),
+    });
+    return { token: m.secret, token_kind: purpose, expires_at: m.record.expires_at, packages: wanted };
+  }
+
+  private async exchangeRegistered(input: { jwt: string; name: string; version: string }, purpose: OidcPurpose) {
     if (typeof input?.name !== 'string' || !NAME_PATTERN.test(input.name)) {
       throw new AuthError('invalid_name', `'${String(input?.name)}' is not a valid package name.`, { name: String(input?.name) });
     }
@@ -198,10 +386,13 @@ export class OidcExchange {
       throw new AuthError('oidc_not_trusted', `No trusted publisher of '${input.name}' matches this CI identity.`, { name: input.name });
     }
     const now = this.now();
+    // One exchange per CI token. Claimed only after the identity matched, so a token aimed at the wrong package is not spent.
+    const keepUntil = Math.max(claims.exp * 1000 + 60_000, now.getTime() + JTI_MIN_TTL_MS);
+    if (!(await this.o.store.claimOnce(jtiKey(claims.jti), new Date(keepUntil).toISOString()))) throw oidcInvalid('token already used');
     const m = await mintToken(this.o.store, {
       kind: 'oidc',
       name: `ci ${claims.repository}`,
-      scopes: ['publish'],
+      scopes: [purpose],
       packages: [input.name],
       all_current: false,
       version: input.version,
@@ -209,6 +400,6 @@ export class OidcExchange {
       created_at: now.toISOString(),
       expires_at: new Date(now.getTime() + OIDC_TOKEN_TTL_MS).toISOString(),
     });
-    return { token: m.secret, token_kind: 'publish' as const, expires_at: m.record.expires_at, name: input.name, version: input.version };
+    return { token: m.secret, token_kind: purpose, expires_at: m.record.expires_at, name: input.name, version: input.version };
   }
 }

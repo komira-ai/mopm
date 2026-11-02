@@ -7,6 +7,7 @@ const std = @import("std");
 const h = @import("harness.zig");
 const c = @import("contract.zig");
 const tbl = @import("replay_table.zig");
+const gc = @import("replay_group_conflicts.zig");
 const Value = std.json.Value;
 const Allocator = std.mem.Allocator;
 const Step = tbl.Step;
@@ -357,7 +358,8 @@ pub const Grp = struct {
         }
         const out = rsp.body orelse return error.CreateFailed;
         if (uploaded) {
-            for (c.getArr(out, "members"), 0..) |m, i| {
+            for (c.getArr(out, "members")) |m| {
+                const i = try gc.memberIndex(g.names, m);
                 for (c.getArr(m, "files")) |file| try g.put(file, try g.data(i));
             }
         }
@@ -512,16 +514,8 @@ fn groupRecipe(f: *F, e: Entry) !Step {
                 const g = try Grp.init(f, 1);
                 return groupStep(g, "getGroup", "grp_00000000000000000000000000000000");
             }
-            if (std.mem.eql(u8, e.arg, "conflict")) {
-                // The caller may have five groups open: a sixth, sharing nothing with them, has no place.
-                const g = try Grp.init(f, 1);
-                for ([_][]const u8{ "0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0" }) |v| _ = try g.create(v, false);
-                var s = step("createGroup");
-                s.body = try g.body("0.6.0");
-                s.token = g.token;
-                s.auth = "publishToken";
-                return s;
-            }
+            if (std.mem.eql(u8, e.arg, "conflict")) return gc.openCap(f);
+            if (std.mem.eql(u8, e.arg, "overlap_refused")) return gc.overlapRefused(f);
             const g = try Grp.init(f, 2);
             const id = try g.create("0.4.0", true);
             if (std.mem.eql(u8, e.arg, "not_open")) {
@@ -546,7 +540,7 @@ fn groupRecipe(f: *F, e: Entry) !Step {
 
 // ----------------------------------------------------------------- recipes
 
-fn step(op: []const u8) Step {
+pub fn step(op: []const u8) Step {
     return .{ .op = op };
 }
 
@@ -694,6 +688,16 @@ pub fn build(f: *F, e: Entry) !Step {
                 s.check = .name_is;
                 s.args[0] = pkg;
             }
+            return s;
+        },
+        .oidc_packages => {
+            const pkg: []const u8 = "ci_listed";
+            const repo = try f.fmt("octo/{s}", .{pkg});
+            _ = try f.control("/ci_publisher", try f.fmt("{{\"repository\":\"{s}\"}}", .{repo}));
+            var s = step("exchangeOidcToken");
+            s.body = try f.fmt("{{\"jwt\":\"{s}\",\"packages\":[{{\"name\":\"{s}\",\"version\":\"0.4.0\"}}]}}", .{ try jwt(f, repo), pkg });
+            s.check = .first_package_is;
+            s.args[0] = pkg;
             return s;
         },
         .oidc_invalid => {
@@ -1001,7 +1005,7 @@ pub fn build(f: *F, e: Entry) !Step {
             s.path = try f.json("{{\"name\":\"{s}\",\"version\":\"9.9.9\"}}", .{(try f.claimed()).name});
             return s;
         },
-        .group_create, .group_get, .group_abort, .group_commit, .group_yank, .group_error => return groupRecipe(f, e),
+        .group_create, .group_get, .group_abort, .group_commit, .group_yank, .group_error, .group_facts => return groupRecipe(f, e),
         .detail => {
             const r = try Release.init(f);
             try r.publish("0.4.0", "conda bytes");

@@ -11,6 +11,7 @@ const Response = resp.Response;
 const util = @import("util.zig");
 const auth = @import("auth.zig");
 const publish = @import("publish.zig");
+const token_scopes = @import("token_scopes.zig");
 
 /// Names nobody may claim.
 const reserved = [_][]const u8{ "mopm", "mojo", "max", "modular", "std", "stdlib" };
@@ -177,6 +178,8 @@ pub fn claimPackage(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .ok => |t| t,
         .fail => |r| return r,
     };
+    // A claim makes the caller the owner: a token that may only stage does not.
+    if (!token_scopes.mayClaim(t)) return resp.fail(ctx.arena, .scope_missing, &.{ .{ "scope", "publish" }, .{ "name", "this account" } });
     const name = params[0];
     if (!util.isName(name)) return resp.fail(ctx.arena, .invalid_name, &.{.{ "name", name }});
     var confirm = false;

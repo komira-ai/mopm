@@ -106,6 +106,7 @@ export const LEGACY: Record<string, (s: MemoryStore) => Promise<void>> = {
     keywords: ['http', 'client'],
     readme: '# http_client\n\nAn HTTP client.\n',
   }),
+  version_detail_source_commit: versionDetail('published', { source_commit: '0123456789abcdef0123456789abcdef01234567' }),
   ordering_demo: orderingDemo(),
   ordering_demo_with_owner: orderingDemo(true),
 };

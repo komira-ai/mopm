@@ -1,0 +1,1 @@
+MODULAR_HOME=@ROOT@/tests/fixtures/env/macos/chain/share/max LLDB_DEBUGSERVER_PATH=/x/debugserver @ROOT@/tests/fixtures/env/macos/chain/bin/mojo repl -O 'settings set target.env-vars DYLD_INSERT_LIBRARIES=@ROOT@/tests/fixtures/env/macos/chain/lib/libcrypto_native.1.dylib:@ROOT@/tests/fixtures/env/macos/chain/lib/libcurl_shim.1.dylib'

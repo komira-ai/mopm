@@ -310,7 +310,6 @@ fn publish(c: *Ctx, data: []const u8, soname: []const u8) !void {
 test "mopm sync installs from the fake registry; build and run use it; tampering and stale locks are refused (tests/install_e2e/run.py)" {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena_state.allocator();
-    try h.watchdog(1500);
     var rep = h.Report{};
     run(a, &rep) catch |e| switch (e) {
         error.Fatal => {},

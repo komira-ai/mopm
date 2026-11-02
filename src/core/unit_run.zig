@@ -71,7 +71,8 @@ pub fn verify(arena: Allocator, g: unit_graph.Graph, idx: usize, d: Dirs, why: *
     }
 
     if (std.mem.eql(u8, u.kind, "native")) {
-        return refuse(arena, why, "{s} is a native unit: the build system compiles its C sources into {s}; 'mopm unit build' builds Mojo units", .{ u.id, u.soname });
+        const what = if (u.provided) "the build system supplies the archive" else "the build system compiles its C sources into";
+        return refuse(arena, why, "{s} is a native unit: {s} {s}; 'mopm unit build' builds Mojo units", .{ u.id, what, u.soname });
     }
 
     // The toolchain: the closure the graph pins, and the wrapper.
@@ -217,6 +218,11 @@ pub fn argv(arena: Allocator, g: unit_graph.Graph, idx: usize, d: Dirs) !Plan {
         for (u.natives) |n| {
             try a.append("-Xlinker");
             try a.append(try join(arena, d.natives, n.soname));
+        }
+        // The system libraries the archives leave symbols to come after every archive, once each.
+        for (u.link) |name| {
+            try a.append("-Xlinker");
+            try a.append(try std.fmt.allocPrint(arena, "-l{s}", .{name}));
         }
         if (is_test) {
             exe = product;
@@ -493,6 +499,28 @@ test "a unit with every declared input verifies; each input missing or different
     try verify(a, g, lib, d, &why);
 }
 
+// Defect it catches: a test or program of a C++ archive's consumer linked without libc++ by `mopm unit` (the same link
+// the graph describes to a build system); the -l ahead of the archives, or once per archive; a library unit given one.
+test "a unit's system libraries come last on the link line of a test, each once, and not at all on a library's" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const g0 = try fixtureGraph(a);
+    const units = try a.dupe(unit_graph.Unit, g0.units);
+    for (units) |*u| u.link = &.{ "c++", "m" };
+    var g = g0;
+    g.units = units;
+    const d = Dirs{ .src = "/s", .deps = "/d", .toolchain = "/t", .natives = "/n", .out = "/o", .stage = "/g" };
+
+    const tst = try argv(a, g, g.find("p@2.0.0#mojo1.0.0/test:tests/test_p.mojo").?, d);
+    const tail = [_][]const u8{ "-Xlinker", "/n/libn.so.1", "-Xlinker", "-lc++", "-Xlinker", "-lm" };
+    try std.testing.expect(tst.argv.len > tail.len);
+    for (tail, tst.argv[tst.argv.len - tail.len ..]) |w, got| try std.testing.expectEqualStrings(w, got);
+
+    const lib = try argv(a, g, g.find("p@2.0.0#mojo1.0.0/lib").?, d);
+    for (lib.argv) |arg| try std.testing.expect(!std.mem.startsWith(u8, arg, "-l") and !std.mem.eql(u8, arg, "-Xlinker"));
+}
+
 test "the wrapper gets the staged tree, the dependencies' -I directories and nothing else" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -616,7 +644,7 @@ fn buildLibAt(a: Allocator, child: []const u8, stage_rel: []const u8) ![]const u
 
 // Defect it catches: `--source-root` naming the parent of the package, not the package. The wrapper then
 // replaces no argument, the compiler is given the absolute staged path and the `.mojoc` records it, so
-// one package staged at two paths is two different files. Mutant planted: argv's `root` is `stage_src`.
+// one package staged at two paths is two different files. Defect caught: argv's `root` is `stage_src`.
 test "a library's .mojoc is the same bytes when it is staged at two different paths" {
     const child_z = std.posix.getenv("MOPM_TEST_CHILD") orelse return error.SkipZigTest;
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -655,7 +683,7 @@ fn testEnvOf(a: Allocator, child: []const u8, with_lib: bool) ![]const u8 {
 }
 
 // Defect it catches: the test binary run with an empty environment cannot load
-// libKGENCompilerRTShared.so. Mutant planted: run passes null for the library path.
+// libKGENCompilerRTShared.so. Defect caught: run passes null for the library path.
 test "a unit test runs with LD_LIBRARY_PATH=<toolchain>/lib and nothing else; no lib dir, no variable" {
     const child_z = std.posix.getenv("MOPM_TEST_CHILD") orelse return error.SkipZigTest;
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -667,7 +695,7 @@ test "a unit test runs with LD_LIBRARY_PATH=<toolchain>/lib and nothing else; no
 
 // Defects it catches: the archives sorted by name on the way to the compiler (a library before the one it needs, so
 // the linker drops the symbols the first leaves undefined); an archive copied beside the binary as if it were loaded
-// at run time. Mutants planted: argv sorts `u.natives` by soname; stage drops the `.static` skip.
+// at run time. Defect caught: argv sorts `u.natives` by soname; stage drops the `.static` skip.
 test "a static archive is a linker input in the order the unit gives, and is not copied beside the binary" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();

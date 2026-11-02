@@ -266,6 +266,34 @@ pub fn readFilesLimited(arena: Allocator, bytes: []const u8, window: []u8, want:
     return out;
 }
 
+/// One entry of the package tar of a `.conda`, copied out of the reader's buffers.
+pub const Listed = struct { name: []const u8, link: []const u8, kind: tar_read.Kind };
+
+/// Lists the entries (name, kind, link target) of the files of the `.conda` in `bytes`, in tar order, under the same
+/// limits and checks as `readFiles` (nothing is written and no data is kept).
+pub fn listEntries(arena: Allocator, bytes: []const u8, window: []u8, diag: *Diag) ![]const Listed {
+    const limits = Limits{};
+    const entries = try readZip(arena, BytesSource{ .bytes = bytes }, diag);
+    var pkg: ?ZipEntry = null;
+    for (entries) |e| {
+        if (std.mem.startsWith(u8, e.name, "pkg-") and std.mem.endsWith(u8, e.name, ".tar.zst")) pkg = e;
+    }
+    const entry = pkg orelse {
+        diag.message = "the zip has no pkg-*.tar.zst: not a .conda (format 2)";
+        return error.BadConda;
+    };
+    var fbs = std.io.fixedBufferStream(bytes[@intCast(entry.offset)..][0..@intCast(entry.size)]);
+    var zs = std.compress.zstd.decompressor(fbs.reader(), .{ .window_buffer = window });
+    var lim = std.io.limitedReader(zs.reader(), limits.total + 1);
+    var tr = tar_read.tarReader(lim.reader());
+    var out = std.ArrayList(Listed).init(arena);
+    while (try tr.next()) |e| {
+        try out.append(.{ .name = try arena.dupe(u8, stripDotSlash(e.name)), .link = try arena.dupe(u8, e.link), .kind = e.kind });
+    }
+    if (lim.bytes_left == 0) return overTotal(arena, limits, diag);
+    return out.items;
+}
+
 fn overTotal(arena: Allocator, limits: Limits, diag: *Diag) error{ BadConda, OutOfMemory } {
     diag.message = std.fmt.allocPrint(arena, "the package decompresses to more than {d} bytes; mopm reads at most that", .{limits.total}) catch return error.OutOfMemory;
     return error.BadConda;
@@ -1001,7 +1029,7 @@ test "unpack: a .conda whose zip entries carry zip64 extra fields (as large pack
 }
 
 // Defects it catches: a read that follows what the package says (a symbolic link, a path through `..`), a file that
-// is returned for a path it is not at, the wrong file of two of one name. Mutants planted: readFiles accepts a
+// is returned for a path it is not at, the wrong file of two of one name. Defect caught: readFiles accepts a
 // symlink entry as the file; compares the name before stripping `./`; keeps the first of two duplicates silently.
 test "readFiles: the bytes of the wanted files in the wanted order, null for one the package does not hold" {
     var st = testArena();
@@ -1077,7 +1105,7 @@ fn lyingConda(a: Allocator, files: []const fx.Item, claimed: u64) ![]u8 {
 }
 
 // Defects it catches: memory spent from a size the header claims (a header of 1 GiB over a few bytes, which would
-// allocate before a byte is read), and a stream that decompresses without bound. Mutants planted: the member check
+// allocate before a byte is read), and a stream that decompresses without bound. Defect caught: the member check
 // removed; the total cap removed.
 test "readFiles: a header that claims more than the cap is refused before anything is read, and a short stream is an error" {
     var st = testArena();

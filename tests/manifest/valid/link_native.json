@@ -1,0 +1,25 @@
+{
+  "package": {
+    "name": "cxx_natives",
+    "version": "1.0.0",
+    "description": null,
+    "license": null,
+    "repository": null,
+    "readme": null
+  },
+  "toolchain": {
+    "mojo": ["1.0.0"]
+  },
+  "dependencies": [],
+  "dev-dependencies": [],
+  "native-dependencies": [],
+  "native": [
+    {"id": "snappy", "kind": "static", "mode": "link", "build": null, "outputs": [], "provided": true, "link": ["c++"]},
+    {"id": "codec", "kind": "static", "mode": "link", "build": null, "outputs": [], "needs": ["libsnappy.a"], "link": ["c++", "m", "pthread"]}
+  ],
+  "targets": {
+    "lib": null,
+    "bins": [],
+    "tests": []
+  }
+}

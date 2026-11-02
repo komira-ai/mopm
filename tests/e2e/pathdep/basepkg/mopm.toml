@@ -1,0 +1,11 @@
+[package]
+name = "basepkg"
+version = "0.1.0"
+
+[toolchain]
+mojo = "1.0.0"
+
+[dependencies]
+
+[targets]
+lib = { path = "src/basepkg" }

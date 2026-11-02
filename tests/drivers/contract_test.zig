@@ -57,7 +57,7 @@ fn stringSet(a: Allocator, items: []const Value) !std.StringHashMap(void) {
     return set;
 }
 
-fn checkApi(a: Allocator, t: *c.Tally, counts: *Counts, spec: Value, meta: Value) !void {
+fn checkApi(a: Allocator, t: *c.Tally, counts: *Counts, spec: Value) !void {
     var dups = c.Problems.init(a);
     const ops = try c.operations(a, spec, &dups);
     for (dups.items) |d| t.fail("{s}", .{d});
@@ -91,7 +91,7 @@ fn checkApi(a: Allocator, t: *c.Tally, counts: *Counts, spec: Value, meta: Value
         for (c.getArr(doc, "cases"), 0..) |case, i| {
             const name = try std.fmt.allocPrint(a, "{s}[{d}] {s}", .{ file, i, c.getStr(case, "name") orelse "" });
             counts.api_cases += 1;
-            const problems = try c.caseProblems(a, spec, ops, catalogue, meta, case);
+            const problems = try c.caseProblems(a, spec, ops, catalogue, case);
             const expect = c.getStr(case, "expect") orelse "valid";
             if (std.mem.eql(u8, expect, "valid")) {
                 for (problems.items) |p| t.fail("{s}: {s}", .{ name, p });
@@ -195,7 +195,7 @@ test "the registry contract: spec, API cases and examples" {
 
     const meta = try c.loadJson(a, "spec/package-metadata.schema.json");
     try checkSchemas(a, &t, &counts, meta);
-    try checkApi(a, &t, &counts, spec, meta);
+    try checkApi(a, &t, &counts, spec);
     try checkExamples(a, &t, &counts);
 
     std.debug.print("checked: api cases {d}, invalid cases rejected {d}, examples {d}, schemas {d}, metadata fixtures {d}\n", .{ counts.api_cases, counts.rejected, counts.examples, counts.schemas, counts.fixtures });

@@ -1,5 +1,5 @@
 //! Routing: `/api/v1/...` to the operation it names in spec/api/openapi.yaml,
-//! and `/_fake/...` to the test controls. A planted fault for an operation
+//! and `/_fake/...` to the test controls. A faulty fault for an operation
 //! answers before its handler runs.
 
 const std = @import("std");
@@ -108,7 +108,7 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
         const params = (try match(ctx.arena, r.pattern, segs.items)) orelse continue;
         if (!literalWins(r, segs.items)) continue;
         if (r.method != ctx.method) continue;
-        if (ctx.state.takeFault(r.operation)) |code| return plantedFault(ctx, code);
+        if (ctx.state.takeFault(r.operation)) |code| return injectedFault(ctx, code);
         return r.handler(ctx, params);
     }
     // An unknown path, or a known path with a method it does not take.
@@ -128,10 +128,10 @@ fn literalWins(r: Route, segs: []const []const u8) bool {
     return true;
 }
 
-fn plantedFault(ctx: *Ctx, code: errors.Code) anyerror!Response {
+fn injectedFault(ctx: *Ctx, code: errors.Code) anyerror!Response {
     return switch (code) {
         .rate_limited => resp.fail(ctx.arena, code, &.{.{ "retry_after", std.fmt.comptimePrint("{d}", .{resp.retry_seconds}) }}),
-        .invalid_request, .upload_invalid, .oidc_token_invalid => resp.fail(ctx.arena, code, &.{.{ "detail", "planted by the fake" }}),
+        .invalid_request, .upload_invalid, .oidc_token_invalid => resp.fail(ctx.arena, code, &.{.{ "detail", "faulty by the fake" }}),
         else => resp.fail(ctx.arena, code, &.{}),
     };
 }

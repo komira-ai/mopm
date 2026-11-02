@@ -12,7 +12,7 @@ import { rec } from '../helpers';
  * router's projections. This test holds that: the same five read requests, once over rows as written today and
  * once over the same rows with extra attributes, answer with identical bytes.
  *
- * Mutant planted to see it red: a router projection that spreads the stored record (`...p` in getPackage).
+ * Defect caught, to see it red: a router projection that spreads the stored record (`...p` in getPackage).
  */
 
 const PACKAGE = { name: 'http_client', state: 'active', created_at: '2026-10-01T09:00:00Z', description: 'HTTP/1.1 client', search_bucket: 'all' };

@@ -17,6 +17,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const manifest = @import("manifest.zig");
+const native_link = @import("native_link.zig");
 const semver = @import("semver.zig");
 
 /// The conda subdirs the registry serves (spec/channel.md).
@@ -48,6 +49,17 @@ pub const Input = struct {
     mojoc: []const u8,
     /// The static native libraries of this subdir: each one's archive goes to `lib/<soname>`.
     natives: []const Native = &.{},
+    /// The programs of this package (`[targets] bins`), as source: each one goes to `lib/mojo/<name>.bins/<bin>.mojo`,
+    /// to be built on the machine that installs the package (src/core/bins.zig).
+    bins: []const Bin = &.{},
+};
+
+/// A program a package ships as source.
+pub const Bin = struct {
+    /// The `[targets] bins` name: `[a-z0-9_]+`, and the stem of the file in the package.
+    name: []const u8,
+    /// The bytes of the Mojo file that holds the `main`.
+    source: []const u8,
 };
 
 /// A static native library a package ships (`[native.<id>] kind = "static"`), as it is packed for one subdir.
@@ -59,6 +71,8 @@ pub const Native = struct {
     needs: []const []const u8 = &.{},
     /// An exclusivity group, or "".
     exclusive: []const u8 = "",
+    /// System libraries a consumer's final link adds (`native_link.allowed`), in the order the manifest gave.
+    link: []const []const u8 = &.{},
     /// The bytes of the archive built for the subdir.
     archive: []const u8,
 };
@@ -80,6 +94,7 @@ pub fn nativeProblem(arena: Allocator, n: Native) Allocator.Error!?[]const u8 {
         if (!validNeed(need)) return try std.fmt.allocPrint(arena, "native '{s}': '{s}' is not a library name (lib<name>.<suffix>)", .{ n.id, need });
         if (std.mem.eql(u8, need, n.soname)) return try std.fmt.allocPrint(arena, "native '{s}' needs itself", .{n.id});
     }
+    if (try native_link.problem(arena, n.link)) |why| return try std.fmt.allocPrint(arena, "native '{s}': link: {s}", .{ n.id, why });
     return null;
 }
 
@@ -102,6 +117,15 @@ fn validNeed(s: []const u8) bool {
     return std.mem.indexOfScalar(u8, s, '/') == null;
 }
 
+/// `[a-z0-9_]+`: what the registry accepts as the stem of a program's source (`lib/mojo/<name>.bins/<stem>.mojo`).
+pub fn validBinName(s: []const u8) bool {
+    if (s.len == 0) return false;
+    for (s) |c| {
+        if (!(std.ascii.isLower(c) or std.ascii.isDigit(c) or c == '_')) return false;
+    }
+    return true;
+}
+
 pub const Packed = struct {
     subdir: []const u8,
     /// `mojo-<name>-<version>-mojo<compiler>_0.conda`
@@ -118,21 +142,12 @@ pub const Packed = struct {
 
 pub const NativeDigest = struct { soname: []const u8, sha256: [64]u8, size: u64 };
 
-pub const PackError = error{ BadCompiler, BadSubdir, BadVersion, BadNative, PathTooLong, TooLarge, OutOfMemory };
+pub const PackError = error{ BadCompiler, BadSubdir, BadVersion, BadNative, BadBin, PathTooLong, TooLarge, OutOfMemory };
 
 /// MAJOR.MINOR.PATCH: three numbers of digits, no leading zero except "0",
 /// and nothing else (no pre-release, no build metadata, no missing part).
 pub fn exactVersion(v: []const u8) bool {
-    var parts: usize = 0;
-    var it = std.mem.splitScalar(u8, v, '.');
-    while (it.next()) |p| : (parts += 1) {
-        if (p.len == 0 or p.len > 18) return false;
-        if (p.len > 1 and p[0] == '0') return false;
-        for (p) |c| {
-            if (!std.ascii.isDigit(c)) return false;
-        }
-    }
-    return parts == 3;
+    return semver.isPackageVersion(v);
 }
 
 /// A compiler version as the build string spells it: digits in dot-separated
@@ -383,7 +398,17 @@ pub fn mopmJson(arena: Allocator, in: Input) Allocator.Error![]u8 {
             }
             try w.writeAll("\"id\":");
             try jsonStr(w, n.id);
-            try w.writeAll(",\"kind\":\"static\",\"mode\":\"link\",\"needs\":[");
+            try w.writeAll(",\"kind\":\"static\"");
+            if (n.link.len > 0) {
+                // In the order given: a linker takes a symbol from a library after the one that left it undefined.
+                try w.writeAll(",\"link\":[");
+                for (n.link, 0..) |name, k| {
+                    if (k > 0) try w.writeByte(',');
+                    try jsonStr(w, name);
+                }
+                try w.writeByte(']');
+            }
+            try w.writeAll(",\"mode\":\"link\",\"needs\":[");
             const needs = try arena.dupe([]const u8, n.needs);
             std.mem.sort([]const u8, needs, {}, lessStr);
             for (needs, 0..) |need, k| {
@@ -467,6 +492,12 @@ pub fn pack(arena: Allocator, in: Input) PackError!Packed {
     for (in.natives) |n| {
         if ((try nativeProblem(arena, n)) != null) return error.BadNative;
     }
+    for (in.bins, 0..) |b, i| {
+        if (!validBinName(b.name) or b.source.len == 0) return error.BadBin;
+        for (in.bins[0..i]) |other| {
+            if (std.mem.eql(u8, other.name, b.name)) return error.BadBin;
+        }
+    }
 
     const stem = try std.fmt.allocPrint(arena, "mojo-{s}-{s}-mojo{s}_0", .{ in.name, in.version, in.compiler });
     const mopm = try mopmJson(arena, in);
@@ -476,6 +507,7 @@ pub fn pack(arena: Allocator, in: Input) PackError!Packed {
     try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mojoc", .{in.name}), .data = in.mojoc });
     try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mopm.json", .{in.name}), .data = mopm });
     for (in.natives) |n| try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/{s}", .{n.soname}), .data = n.archive });
+    for (in.bins) |b| try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.bins/{s}.mojo", .{ in.name, b.name }), .data = b.source });
     std.mem.sort(File, pkg_files.items, {}, lessFile);
     var info_files = std.ArrayList(File).init(arena);
     try info_files.append(.{ .path = "info/index.json", .data = index });
@@ -591,16 +623,22 @@ fn lessDep(_: void, a: Dep, b: Dep) bool {
 
 /// The conda package that provides a system library, from the name a manifest gives it (`lz4`, `liblz4`,
 /// `liblz4.so.1`): the packages of conda-forge whose names are not the library's. Any other name is the conda
-/// package name as written (`openssl`).
+/// package name as written (`openssl`). `lzma` and `xz` are `liblzma`, the package of the runtime library
+/// (`liblzma.so.5`); conda-forge's `xz` is a metapackage of command line tools and a development package, none of
+/// which holds the library a program loads.
 pub fn condaPackageFor(name: []const u8) []const u8 {
     const known = [_][2][]const u8{
         .{ "lz4", "lz4-c" },
         .{ "z", "libzlib" },
         .{ "zlib", "libzlib" },
         .{ "bz2", "bzip2" },
-        .{ "lzma", "xz" },
-        .{ "xz", "xz" },
+        .{ "lzma", "liblzma" },
+        .{ "xz", "liblzma" },
         .{ "zstd", "zstd" },
+        .{ "snappy", "snappy" },
+        .{ "brotlidec", "libbrotlidec" },
+        .{ "sqlite3", "libsqlite" },
+        .{ "sqlite", "libsqlite" },
     };
     var stem = if (std.mem.startsWith(u8, name, "lib")) name[3..] else name;
     if (std.mem.indexOfScalar(u8, stem, '.')) |dot| stem = stem[0..dot];
@@ -1181,7 +1219,7 @@ fn nativeInput(a: Allocator, subdir: []const u8, archive: []const u8) !Input {
 // (`lib/lib<stem>.a`, named by `static_file` from `lib/mojo/`); metadata that declares a library with the wrong key,
 // kind or path; `about.json` in the package tar (the registry refuses an info/ file there); a native id written
 // into `depends` (the registry refuses one that is not allow-listed); paths.json that omits the archive (pixi
-// cannot link a package whose file it does not list). Mutants planted: the archive left out of pkg_files; written
+// cannot link a package whose file it does not list). Defect caught: the archive left out of pkg_files; written
 // to lib/mojo/; about.json appended to pkg_files; the id appended to `depends`.
 test "a package with a static archive: where each file is, and what the metadata says" {
     var st = testArena();
@@ -1230,7 +1268,7 @@ test "a package with a static archive: where each file is, and what the metadata
 
 // Defect it catches: per-platform facts in `.mopm.json`, so that the files of one version carry different metadata and
 // the registry (which compares each file's metadata hash with the version's one `manifest_sha256`) rejects the
-// second platform. Mutant planted: the archive's size written into `static_file`.
+// second platform. Defect caught: the archive's size written into `static_file`.
 test "the metadata is the same bytes in every subdir; the archive, about.json and the file are not" {
     var st = testArena();
     defer st.deinit();
@@ -1281,7 +1319,7 @@ test "a package with static archives is the same bytes however the natives and t
 
 // Defects it catches: an archive the registry would refuse (or worse, would accept and a linker choke on) leaving
 // the packer: a file that is not an `ar` archive, a name that is not `lib<name>.a`, a need that is not a library name.
-// Mutants planted: the magic check dropped; staticSoname accepts any name ending `.a`; validNeed accepts any text.
+// Defect caught: the magic check dropped; staticSoname accepts any name ending `.a`; validNeed accepts any text.
 test "pack refuses a native library that is not a static archive named lib<name>.a, or a need that is not a library name" {
     var st = testArena();
     defer st.deinit();
@@ -1422,6 +1460,7 @@ test "native dependencies that cannot be packed are refused with their reason" {
         .{ "OpenSSL = { mode = \"load\" }\n", "native dependency 'OpenSSL' names the conda package 'OpenSSL', which has an upper case letter" },
         .{ "mojo-json = { mode = \"load\" }\n", "native dependency 'mojo-json' names the conda package 'mojo-json'; a Mojo package belongs in [dependencies]" },
         .{ "lz4 = { mode = \"load\" }\nliblz4 = { mode = \"load\" }\n", "native dependency 'liblz4' names the conda package 'lz4-c' a second time" },
+        .{ "sqlite = { mode = \"load\" }\nsqlite3 = { mode = \"load\" }\n", "native dependency 'sqlite3' names the conda package 'libsqlite' a second time" },
         .{ "lz4 = { version = \"^1.0.0-rc.1\", mode = \"load\" }\n", "native dependency 'lz4' = \"^1.0.0-rc.1\": a pre-release in a requirement has no conda spelling" },
     }) |c| {
         const m = try manifest.parse(a, try std.mem.concat(a, u8, &.{ head, c[0] }), &diag);
@@ -1440,10 +1479,63 @@ test "the conda package of a system library: by name, library name or file name"
         .{ "libz.so.1", "libzlib" },
         .{ "zlib", "libzlib" },
         .{ "libbz2.so.1.0", "bzip2" },
-        .{ "liblzma.so.5", "xz" },
+        .{ "liblzma.so.5", "liblzma" },
+        .{ "liblzma.5.dylib", "liblzma" },
+        .{ "liblzma", "liblzma" },
+        .{ "lzma", "liblzma" },
+        .{ "xz", "liblzma" },
         .{ "libzstd.so.1", "zstd" },
+        .{ "snappy", "snappy" },
+        .{ "libsnappy.so.1", "snappy" },
+        .{ "libsnappy.1.dylib", "snappy" },
+        .{ "brotlidec", "libbrotlidec" },
+        .{ "libbrotlidec", "libbrotlidec" },
+        .{ "libbrotlidec.so.1", "libbrotlidec" },
+        .{ "libbrotlidec.1.dylib", "libbrotlidec" },
+        .{ "sqlite3", "libsqlite" },
+        .{ "sqlite", "libsqlite" },
+        .{ "libsqlite", "libsqlite" },
+        .{ "libsqlite3.so.0", "libsqlite" },
+        .{ "libsqlite3.0.dylib", "libsqlite" },
         .{ "openssl", "openssl" },
         .{ "libffi", "libffi" },
         .{ "lz4-c", "lz4-c" },
     }) |c| try std.testing.expectEqualStrings(c[1], condaPackageFor(c[0]));
+}
+
+// Defects it catches: `link` left out of the metadata a package is published with (consumers of the archive then add no
+// libc++); the order of the names changed (a linker takes a symbol from a library after the one that left it undefined);
+// a name outside the allowed list packed, for the registry to carry to every consumer's linker command line.
+test "a native's link names are in the published metadata, in order, and read back as the manifest said them" {
+    var st = testArena();
+    defer st.deinit();
+    const a = st.allocator();
+    var diag: manifest.Diagnostic = .{};
+    const m = try manifest.parse(a, "[package]\nname = \"snappy_sys\"\nversion = \"1.2.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n[native.snappy]\nkind = \"static\"\nprovided = true\nlink = [\"m\", \"c++\"]\n", &diag);
+    const n = m.native[0];
+    const input = Input{
+        .name = "snappy_sys",
+        .version = "1.2.0",
+        .compiler = "1.0.0",
+        .subdir = "linux-64",
+        .mojoc = "MOJOC",
+        .natives = try a.dupe(Native, &.{.{ .id = n.id, .soname = "libsnappy.a", .link = n.link, .archive = ar_x }}),
+    };
+    const json = try mopmJson(a, input);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"id\":\"snappy\",\"kind\":\"static\",\"link\":[\"m\",\"c++\"],\"mode\":\"link\"") != null);
+    const meta = try @import("metadata.zig").parse(a, json);
+    try std.testing.expectEqual(@as(usize, 2), meta.native[0].link.len);
+    try std.testing.expectEqualStrings("m", meta.native[0].link[0]);
+    try std.testing.expectEqualStrings("c++", meta.native[0].link[1]);
+
+    // The same bytes in the metadata of every subdir (the file is the same in each), and no key at all when none is named.
+    const mac = try mopmJson(a, .{ .name = input.name, .version = input.version, .compiler = input.compiler, .subdir = "osx-arm64", .mojoc = "MOJOC", .natives = input.natives });
+    try std.testing.expectEqualStrings(json, mac);
+    const plain = try mopmJson(a, .{ .name = input.name, .version = input.version, .compiler = input.compiler, .subdir = "linux-64", .mojoc = "MOJOC", .natives = try a.dupe(Native, &.{.{ .id = "snappy", .soname = "libsnappy.a", .archive = ar_x }}) });
+    try std.testing.expect(std.mem.indexOf(u8, plain, "\"link\":") == null);
+
+    const bad = Native{ .id = "snappy", .soname = "libsnappy.a", .link = &.{"stdc++"}, .archive = ar_x };
+    const why = (try nativeProblem(a, bad)) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("native 'snappy': link: 'stdc++' is not a system library a native may link; the allowed ones are c++, dl, m and pthread", why);
+    try std.testing.expectError(error.BadNative, pack(a, .{ .name = input.name, .version = input.version, .compiler = input.compiler, .subdir = "linux-64", .mojoc = "MOJOC", .natives = try a.dupe(Native, &.{bad}) }));
 }

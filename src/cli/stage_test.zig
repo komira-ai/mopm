@@ -9,8 +9,7 @@ const conda = core.conda;
 const http = core.http;
 const gp = @import("group_publish.zig");
 const plan_mod = @import("group_plan.zig");
-const stage = @import("stage_cmd.zig");
-const Net = gp.Net;
+const stage = @import("stage_cmd.zig");const Net = gp.Net;
 const Console = gp.Console;
 
 const api = "http://registry.test/api/v1";
@@ -135,6 +134,11 @@ fn names(a: Allocator, plan: plan_mod.Plan) ![]const u8 {
 
 fn contains(hay: []const u8, needle: []const u8) bool {
     return std.mem.indexOf(u8, hay, needle) != null;
+}
+
+/// One line, so a failing test shows the text that lacked the needle.
+fn expectContainsText(hay: []const u8, needle: []const u8) !void {
+    try std.testing.expectEqualStrings(needle, if (contains(hay, needle)) needle else hay);
 }
 
 fn arenaTest() std.heap.ArenaAllocator {
@@ -305,10 +309,10 @@ test "a dependency that cannot be staged is refused with the reason" {
     r = try runStage(fx, &stub, "o4", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "pkg_b/mopm.toml:") and contains(r.err, "invalid version requirement"));
 
-    // Native libraries are not packed by stage.
+    // Native libraries are built for one platform: a noarch artifact cannot hold them.
     try fx.put("ws/src/pkg_b/mopm.toml", "[package]\nname = \"pkg_b\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[native.shim]\nkind = \"static\"\nmode = \"link\"\n");
     r = try runStage(fx, &stub, "o5", &.{});
-    try std.testing.expect(r.code == 1 and contains(r.err, "pkg_b declares native libraries, which stage does not pack"));
+    try std.testing.expect(r.code == 1 and contains(r.err, "pkg_b declares native libraries, which are built for one platform"));
 
     // Native dependencies to link are not packed by anything yet: the packer says so.
     try fx.put("ws/src/pkg_b/mopm.toml", "[package]\nname = \"pkg_b\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[native-dependencies]\nzlib = { version = \">=1.2\", kind = \"shared\", mode = \"link\" }\n");
@@ -533,6 +537,89 @@ test "a registry that cannot be asked, or answers what is not a version, stops t
 
 // ---------------------------------------------------------------- the packages
 
+/// A member `pkg_n` with `[native.shim]` (a static library) and `pkg_a` (no native), the way a caller lays out artifacts:
+/// `art/linux-64/pkg_n.mojoc` and `art/linux-64/pkg_n.native/libshim.a`.
+fn nativeWorkspace(fx: Fx) !void {
+    try fx.member("pkg_a", "1.0.0", "");
+    try fx.put("ws/src/pkg_n/mopm.toml", "[package]\nname = \"pkg_n\"\nversion = \"1.2.0\"\nmojo = [\"1.0.0\"]\n\n[native.shim]\nkind = \"static\"\nneeds = [\"libz.so.1\", \"libcore_sys.a\"]\nexclusive = \"libshim\"\n");
+    try fx.put("art/linux-64/pkg_n.mojoc", "the mojoc of pkg_n");
+}
+
+const shim_archive = "!<arch>\nthe archive of shim, a long enough body\n";
+
+test "a member with a native library is staged with its archive, byte for byte as mopm pack packs it" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    try nativeWorkspace(fx);
+    try fx.put("art/linux-64/pkg_n.native/libshim.a", shim_archive);
+    var stub = newStub(a);
+    const r = try runStage(fx, &stub, "out", &.{});
+    try std.testing.expect(r.code == 0);
+
+    // The package the packer makes of the same member and files (`mopm pack` hands it the same input; the driver test
+    // compares with the real `mopm pack`).
+    const by_pack = try conda.pack(a, .{
+        .name = "pkg_n",
+        .version = "1.2.0",
+        .compiler = "1.0.0",
+        .subdir = "linux-64",
+        .mojoc = "the mojoc of pkg_n",
+        .natives = &.{.{ .id = "shim", .soname = "libshim.a", .needs = &.{ "libz.so.1", "libcore_sys.a" }, .exclusive = "libshim", .archive = shim_archive }},
+    });
+    const staged = try fx.read(try std.fmt.allocPrint(a, "out/linux-64/{s}", .{by_pack.file_name}));
+    try std.testing.expectEqualSlices(u8, by_pack.bytes, staged);
+    // `needs` and `exclusive` reach the package's metadata: the same member packed without either is other bytes, so a
+    // stage that dropped one would not equal the line above, and these two lines say why that line has teeth.
+    const no_needs = try conda.pack(a, .{ .name = "pkg_n", .version = "1.2.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "the mojoc of pkg_n", .natives = &.{.{ .id = "shim", .soname = "libshim.a", .exclusive = "libshim", .archive = shim_archive }} });
+    const no_exclusive = try conda.pack(a, .{ .name = "pkg_n", .version = "1.2.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "the mojoc of pkg_n", .natives = &.{.{ .id = "shim", .soname = "libshim.a", .needs = &.{ "libz.so.1", "libcore_sys.a" }, .archive = shim_archive }} });
+    try std.testing.expect(!std.mem.eql(u8, no_needs.bytes, staged));
+    try std.testing.expect(!std.mem.eql(u8, no_exclusive.bytes, staged));
+    // The archive is in the package as lib/libshim.a, and the metadata declares the static native.
+    try std.testing.expect(contains(staged, "lib/libshim.a") and contains(staged, shim_archive));
+    try std.testing.expect(contains(staged, "\"mopm_native\":[{\"id\":\"shim\",\"sha256\":\"") and contains(staged, "\"soname\":\"libshim.a\""));
+    // The static archive and what it needs are not conda packages: depends names the compiler and nothing else.
+    try std.testing.expect(contains(staged, "\"depends\":[\"mojo-compiler ==1.0.0\"]"));
+    // The plan carries the hash pack prints for that file.
+    try std.testing.expect(contains(try fx.read("out/plan.json"), &by_pack.sha256));
+
+    // A member without natives is packed with none, as before.
+    const plain = try conda.pack(a, .{ .name = "pkg_a", .version = "1.0.0", .compiler = "1.0.0", .subdir = "noarch", .mojoc = "the mojoc of pkg_a" });
+    try std.testing.expectEqualSlices(u8, plain.bytes, try fx.read(try std.fmt.allocPrint(a, "out/noarch/{s}", .{plain.file_name})));
+}
+
+test "a native member whose archive is missing, not an archive, or for another subdir than its mojoc is refused with the member named" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    try nativeWorkspace(fx);
+    var stub = newStub(a);
+
+    var r = try runStage(fx, &stub, "o1", &.{});
+    try std.testing.expect(r.code == 1 and contains(r.err, "pkg_n: native library 'shim' has no archive for linux-64") and contains(r.err, "pkg_n.native/libshim.a"));
+
+    try fx.put("art/linux-64/pkg_n.native/libshim.a", "not an archive at all");
+    r = try runStage(fx, &stub, "o2", &.{});
+    try std.testing.expect(r.code == 1 and contains(r.err, "pkg_n: ") and contains(r.err, "libshim.a is not a static archive"));
+
+    // A second subdir whose mojoc has no archive of its own: the first one's does not stand in for it.
+    try fx.put("art/linux-64/pkg_n.native/libshim.a", shim_archive);
+    try fx.put("art/osx-arm64/pkg_n.mojoc", "the mojoc of pkg_n, for the Mac");
+    r = try runStage(fx, &stub, "o3", &.{});
+    try std.testing.expect(r.code == 1 and contains(r.err, "pkg_n: native library 'shim' has no archive for osx-arm64"));
+
+    // Natives cannot ride in a noarch artifact.
+    try fx.tmp.dir.deleteFile("art/osx-arm64/pkg_n.mojoc");
+    try fx.put("art/noarch/pkg_n.mojoc", "noarch mojoc");
+    r = try runStage(fx, &stub, "o4", &.{});
+    try std.testing.expect(r.code == 1 and contains(r.err, "pkg_n declares native libraries, which are built for one platform"));
+    for ([_][]const u8{ "o1", "o2", "o3", "o4" }) |o| try std.testing.expect(!fx.exists(o));
+}
+
 test "packing is deterministic, and what is packed holds no URL, no lock entry and no path" {
     var st = arenaTest();
     defer st.deinit();
@@ -612,13 +699,13 @@ test "a readme is staged beside the package and named in the plan" {
     try std.testing.expectEqualStrings("# pkg_a\n", try fx.read("readme/pkg_a/README.md"));
 }
 
-/// `count` packages, each with a README of `len` bytes; pkg_0's is `len + extra`.
-fn manyReadmes(fx: Fx, count: usize, len: usize, extra: usize) !void {
+/// `count` packages, each with a README of `len` bytes of `fill`; pkg_0's is `len + extra`.
+fn manyReadmes(fx: Fx, count: usize, len: usize, extra: usize, fill: u8) !void {
     for (0..count) |i| {
         const name = try std.fmt.allocPrint(fx.a, "pkg_{d}", .{i});
         try fx.member(name, "1.0.0", "");
         const text = try fx.a.alloc(u8, len + if (i == 0) extra else 0);
-        @memset(text, 'r');
+        @memset(text, fill);
         try fx.put(try std.fmt.allocPrint(fx.a, "ws/src/{s}/README.md", .{name}), text);
     }
 }
@@ -629,13 +716,22 @@ test "readmes that would make a commit request over the limit are refused at sta
     const a = st.allocator();
     var fx = try Fx.init(a);
     defer fx.deinit();
-    try manyReadmes(fx, 95, 60000, 5000);
+    // 45 readmes of quotes: 2.7 MB on disk, but each quote is two bytes in the body, so the request is 5.4 MB.
+    try manyReadmes(fx, 45, 60000, 5000, '"');
     var stub = newStub(a);
     const r = try runStage(fx, &stub, "over", &.{});
     try std.testing.expectEqual(@as(u8, 1), r.code);
-    try std.testing.expect(contains(r.err, "make a commit request of") and contains(r.err, "The largest readmes: pkg_0 (65000 bytes)"));
-    try std.testing.expect(contains(r.err, "nothing was written"));
+    try expectContainsText(r.err, "the readmes of the 45 members make a commit request of ");
+    try expectContainsText(r.err, "The largest readmes: pkg_0 (65000 bytes), ");
+    try expectContainsText(r.err, "; nothing was written\n");
     try std.testing.expect(!fx.exists("over"));
+
+    // An --out that holds an earlier staging is left as it was: its plan is not removed or replaced.
+    try fx.put("again/plan.json", "the earlier plan");
+    const again = try runStage(fx, &stub, "again", &.{});
+    try std.testing.expectEqual(@as(u8, 1), again.code);
+    try expectContainsText(again.err, "; nothing was written\n");
+    try std.testing.expectEqualStrings("the earlier plan", try fx.read("again/plan.json"));
 }
 
 test "readmes whose commit request is under the limit are staged" {
@@ -644,7 +740,7 @@ test "readmes whose commit request is under the limit are staged" {
     const a = st.allocator();
     var fx = try Fx.init(a);
     defer fx.deinit();
-    try manyReadmes(fx, 85, 60000, 0);
+    try manyReadmes(fx, 85, 60000, 0, 'r');
     var stub = newStub(a);
     const r = try runStage(fx, &stub, "under", &.{});
     try std.testing.expectEqual(@as(u8, 0), r.code);
@@ -817,4 +913,67 @@ test "the flags: all of them are needed, and --registry has no default" {
     try std.testing.expect(contains((try stage.parseFlags(a, &.{"--frob"})).bad, "unexpected argument '--frob'"));
     try std.testing.expect(contains((try stage.parseFlags(a, &.{"--out"})).bad, "--out needs a value"));
     try std.testing.expect(contains((try stage.parseFlags(a, &.{ "--out", "" })).bad, "--out needs a value"));
+}
+
+/// A member `benchy` whose `[targets] bins` is `bins`, its artifact for `noarch` and two source files for programs.
+fn binsWorkspace(fx: Fx, bins: []const u8) !void {
+    try fx.put("ws/benchy/mopm.toml", try std.fmt.allocPrint(fx.a, "[package]\nname = \"benchy\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[targets]\nbins = [{s}]\n", .{bins}));
+    try fx.put("art/noarch/benchy.mojoc", "the mojoc of benchy");
+    try fx.put("ws/benchy/src/agg.mojo", "def main(): print(\"agg\")\n");
+    try fx.put("ws/benchy/bench/ring.mojo", "def main(): print(\"ring\")\n");
+}
+
+const two_bins = "{ name = \"agg_state_bench\", path = \"src/agg.mojo\" }, { name = \"spsc_ring_bench\", path = \"bench/ring.mojo\" }";
+
+// Defect caught: a stage that drops the programs, ships one of two, packs the wrong file, or ships them in one subdir only.
+test "a member with programs is staged with their sources in every subdir's package, byte for byte as mopm pack packs them" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    try binsWorkspace(fx, two_bins);
+    try fx.put("art/linux-64/benchy.mojoc", "the linux mojoc of benchy");
+    var stub = newStub(a);
+    const r = try runStage(fx, &stub, "out", &.{});
+    try std.testing.expect(r.code == 0);
+
+    const bins = [_]conda.Bin{
+        .{ .name = "agg_state_bench", .source = "def main(): print(\"agg\")\n" },
+        .{ .name = "spsc_ring_bench", .source = "def main(): print(\"ring\")\n" },
+    };
+    for ([_][]const u8{ "noarch", "linux-64" }) |subdir| {
+        const mojoc: []const u8 = if (std.mem.eql(u8, subdir, "noarch")) "the mojoc of benchy" else "the linux mojoc of benchy";
+        const want = try conda.pack(a, .{ .name = "benchy", .version = "1.0.0", .compiler = "1.0.0", .subdir = subdir, .mojoc = mojoc, .bins = &bins });
+        const staged = try fx.read(try std.fmt.allocPrint(a, "out/{s}/{s}", .{ subdir, want.file_name }));
+        try std.testing.expectEqualSlices(u8, want.bytes, staged);
+        const without = try conda.pack(a, .{ .name = "benchy", .version = "1.0.0", .compiler = "1.0.0", .subdir = subdir, .mojoc = mojoc });
+        try std.testing.expect(!std.mem.eql(u8, without.bytes, staged));
+        try std.testing.expect(contains(staged, "lib/mojo/benchy.bins/agg_state_bench.mojo") and contains(staged, "lib/mojo/benchy.bins/spsc_ring_bench.mojo"));
+    }
+}
+
+// Defect caught: a declared program whose file is missing, empty, outside the package or badly named is staged anyway,
+// or the run leaves a half-written set behind.
+test "a member whose program cannot be shipped is refused with the member named, and nothing is written" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    var stub = newStub(a);
+    const cases = [_]struct { bins: []const u8, why: []const u8 }{
+        .{ .bins = "{ name = \"gone\", path = \"src/gone.mojo\" }", .why = "benchy: [targets] bin 'gone': cannot read " },
+        .{ .bins = "{ name = \"Agg\", path = \"src/agg.mojo\" }", .why = "benchy: [targets] bin 'Agg': a program's name is lower case letters" },
+        .{ .bins = "{ name = \"agg\", path = \"../agg.mojo\" }", .why = "benchy: [targets] bin 'agg' has a path that leaves the package directory" },
+        .{ .bins = "{ name = \"agg\", path = \"src/agg.mojo\" }, { name = \"agg\", path = \"bench/ring.mojo\" }", .why = "benchy: [targets] bin 'agg' is declared twice" },
+    };
+    for (cases, 0..) |c, i| {
+        try binsWorkspace(fx, c.bins);
+        const out = try std.fmt.allocPrint(a, "o{d}", .{i});
+        const r = try runStage(fx, &stub, out, &.{});
+        try std.testing.expect(r.code == 1);
+        try std.testing.expect(contains(r.err, c.why));
+        try std.testing.expect(!fx.exists(out));
+    }
 }

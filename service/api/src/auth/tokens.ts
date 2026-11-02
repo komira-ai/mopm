@@ -9,7 +9,8 @@ export const TOKEN_PATTERN = /^mopm_[a-z2-7]{32,64}$/;
 export const NAME_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
 
 export const SESSION_FRESH_MS = 15 * 60_000;
-export const OIDC_TOKEN_TTL_MS = 15 * 60_000;
+/** A token minted by the CI exchange lives this long (the spec says so; keep the fake and the contract fixtures in step). */
+export const OIDC_TOKEN_TTL_MS = 10 * 60_000;
 /** last_used_at is written at most this often per token, to keep reads from becoming writes. */
 const TOUCH_EVERY_MS = 60_000;
 const MAX_TOKENS_PER_USER = 50;
@@ -50,6 +51,12 @@ export interface Principal {
   scopes: TokenScope[];
   packages: string[];
   version?: string;
+  /** A configured CI publisher's token: package name to the exact version it may publish. */
+  versions?: Record<string, string>;
+  /** A configured CI publisher's token: the identity it acts as, `gh-repo:<repository_id>`. */
+  ci_owner?: string;
+  /** A CI publisher's token that acts for an account: the CI identity it came through, `gh-repo:<repository_id>`. `github_id` is then the account. */
+  acts_via?: string;
   fresh_until?: string;
 }
 
@@ -121,7 +128,7 @@ export class TokenService {
     const bad = (detail: string) => new AuthError('invalid_request', `The request is not valid: ${detail}.`, { detail });
     if (typeof input.name !== 'string' || input.name.length < 1 || input.name.length > 80) throw bad('name must be 1 to 80 characters');
     if (!Array.isArray(input.scopes) || input.scopes.length < 1) throw bad('scopes must not be empty');
-    for (const s of input.scopes) if (s !== 'publish' && s !== 'yank') throw bad(`unknown scope '${String(s)}'`);
+    for (const s of input.scopes) if (s !== 'publish' && s !== 'yank' && s !== 'stage') throw bad(`unknown scope '${String(s)}'`);
     if (!Number.isInteger(input.expires_in_days) || input.expires_in_days < 1 || input.expires_in_days > 90) {
       throw bad('expires_in_days must be an integer from 1 to 90');
     }
@@ -156,6 +163,14 @@ export class TokenService {
       expires_at: new Date(now.getTime() + input.expires_in_days * 86_400_000).toISOString(),
     });
     return { ...meta(m.record), token: m.secret };
+  }
+
+  /** `GET /me`: the account behind a token. A token whose account has no user row is not recognised. */
+  async me(github_id: number): Promise<{ github_id: number; handle: string; packages: string[]; pending_invitations: number }> {
+    const user = await this.store.getUser(github_id);
+    if (!user) throw new AuthError('token_unknown', 'The token is not recognised.');
+    // Invitations are not served yet (the /me/invitations paths), so none is ever pending.
+    return { github_id: user.github_id, handle: user.handle, packages: [...(await this.ownedPackages(github_id))].sort(), pending_invitations: 0 };
   }
 
   /** The caller's live API tokens: metadata only. */
@@ -216,6 +231,9 @@ export class Authenticator {
       scopes: rec.scopes,
       packages: rec.packages,
       version: rec.version,
+      versions: rec.versions,
+      ci_owner: rec.ci_owner,
+      acts_via: rec.acts_via,
       fresh_until: rec.fresh_until,
     };
   }
@@ -228,6 +246,16 @@ export class Authenticator {
     return p.github_id;
   }
 
+  /**
+   * `claimToken`: `userToken`, except that an API token whose only scope is `stage` is refused: a claim reserves a name and makes its
+   * account the owner, and a stage token reaches nothing that changes ownership. A token with `publish` or `yank` is as before.
+   */
+  claimToken(p: Principal): number {
+    const id = this.userToken(p);
+    if (p.kind === 'api' && p.scopes.includes('stage') && !p.scopes.includes('publish') && !p.scopes.includes('yank')) throw missingScope('publish', 'this account');
+    return id;
+  }
+
   /** `freshSession`: a session token younger than 15 minutes. An older session or an API token is stale_session. */
   freshSession(p: Principal): number {
     const id = this.userToken(p);
@@ -237,14 +265,34 @@ export class Authenticator {
     return id;
   }
 
-  /** `publishToken`: an API token with `publish` for the package, or a CI token for exactly this package and version. */
+  /** `publishToken`: an API token with `publish` for the package, or a CI token for exactly this package and version. `stage` is not enough. */
   publishToken(p: Principal, name: string, version: string): void {
+    this.covered(p, name, version, ['publish'], 'publish');
+  }
+
+  /**
+   * `stageToken`: what `publishToken` accepts, or the same token with `stage` instead of `publish`. For the steps that only prepare a
+   * group (create, read, abort); a commit and a yank never use it. The refusal names `publish`, the scope that always works.
+   */
+  stageToken(p: Principal, name: string, version: string): void {
+    this.covered(p, name, version, ['publish', 'stage'], 'publish');
+  }
+
+  private covered(p: Principal, name: string, version: string, scopes: TokenScope[], named: string): void {
+    const has = scopes.some((s) => p.scopes.includes(s));
     if (p.kind === 'oidc') {
-      if (p.scopes.includes('publish') && p.packages.length === 1 && p.packages[0] === name && p.version !== undefined && sameVersion(p.version, version)) return;
-    } else if (p.kind === 'api' && p.scopes.includes('publish') && p.packages.includes(name)) {
+      if (!has || !p.packages.includes(name)) throw missingScope(named, name);
+      if (p.versions !== undefined) {
+        // A configured CI publisher's token: the versions it was minted for, package by package.
+        const v = Object.prototype.hasOwnProperty.call(p.versions, name) ? p.versions[name] : undefined;
+        if (v !== undefined && sameVersion(v, version)) return;
+      } else if (p.packages.length === 1 && p.version !== undefined && sameVersion(p.version, version)) {
+        return;
+      }
+    } else if (p.kind === 'api' && has && p.packages.includes(name)) {
       return;
     }
-    throw missingScope('publish', name);
+    throw missingScope(named, name);
   }
 
   /** `yankToken`: an API token with `yank` (or `publish`, which the spec lets yank) for the package. */

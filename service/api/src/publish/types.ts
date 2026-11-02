@@ -1,7 +1,7 @@
 import type { RejectionCode } from '../validate';
 import type { DisplayMeta } from './display';
 
-/** `u:<github id>` for an account's token, `ci:<token id>` for a CI identity's token. */
+/** `u:<github id>` for an account's token, `ci:gh-repo:<repository id>` for a configured CI publisher's token, `ci:<token id>` for any other CI token. */
 export type Actor = string;
 
 /** One file of a version, announced by begin-upload. The presigned URL points at `key` in quarantine. */
@@ -18,6 +18,8 @@ export interface UploadRecord {
   /** quarantine/<upload id>/<filename> */
   key: string;
   actor: Actor;
+  /** Set when the request came through a CI identity acting for the actor (`ci:gh-repo:<repository id>`); absent for the account's own request. */
+  via?: string;
   created_at: string;
   url_expires_at: string;
   /** Epoch seconds: the table's TTL attribute (lazy cleanup) and the end of the commit window. */
@@ -43,13 +45,20 @@ export interface PublishRecord {
   version: string;
   canonical: string;
   actor: Actor;
+  /** Set when the publish came through a CI identity acting for the actor (`ci:gh-repo:<repository id>`); absent for the account's own. */
+  via?: string;
   published_by: string;
   status: PublishStatus;
   rejection_code?: RejectionCode;
   message?: string;
-  manifest_sha256: string;
+  /** Set by the validator when the archives passed with something to tell the publisher. */
+  warnings?: string[];
+  /** The hash the commit request declared for the embedded manifest; absent when it did not (the validator then uses the one it computes). */
+  manifest_sha256?: string;
   /** Display metadata from the commit request (description, license, repository, homepage, keywords, readme). */
   display?: DisplayMeta;
+  /** `source_commit` of the commit request (src/publish/source-commit.ts); stored on the version when it is published. */
+  source_commit?: string;
   files: PublishFile[];
   /** Subdirs whose repodata does not yet list this publish (set when the version is published). */
   remaining_subdirs: string[];

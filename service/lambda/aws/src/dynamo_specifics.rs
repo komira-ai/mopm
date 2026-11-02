@@ -529,7 +529,7 @@ async fn publish_uses_only_get_item_and_put_item_which_is_what_the_role_is_grant
     assert_eq!(fake.dump("mopm-t-uploads")[0]["used_by"], json!({"S": "p"}));
 }
 
-// ---- more of the fake's strictness: the defects the TypeScript fakes planted -----------------------------
+// ---- more of the fake's strictness: the defects the TypeScript fakes faulty -----------------------------
 
 async fn put_raw(c: &Client, table: &str, item: Value) -> Result<(), String> {
     use aws_sdk_dynamodb::types::AttributeValue;

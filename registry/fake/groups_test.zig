@@ -8,9 +8,9 @@ const Value = std.json.Value;
 const api = @import("api.zig");
 const st = @import("state.zig");
 
-const Reply = struct { status: u16, body: []const u8, value: Value };
+pub const Reply = struct { status: u16, body: []const u8, value: Value };
 
-const Fx = struct {
+pub const Fx = struct {
     tmp: std.testing.TmpDir,
     life: std.heap.ArenaAllocator,
     state: st.State,
@@ -20,7 +20,7 @@ const Fx = struct {
     bob_token: []const u8,
     session: []const u8,
 
-    fn setup(fx: *Fx) !void {
+    pub fn setup(fx: *Fx) !void {
         fx.tmp = std.testing.tmpDir(.{});
         fx.life = std.heap.ArenaAllocator.init(std.testing.allocator);
         const a = fx.life.allocator();
@@ -41,14 +41,14 @@ const Fx = struct {
         try @import("files.zig").rewrite(a, s);
     }
 
-    fn deinit(fx: *Fx) void {
+    pub fn deinit(fx: *Fx) void {
         fx.life.deinit();
         fx.tmp.cleanup();
     }
 
     /// One request, as the server serves it: everything the handler is given lives in an arena that is freed after the
     /// answer, so a record that kept a pointer into the request would read freed memory in the next call.
-    fn call(fx: *Fx, method: std.http.Method, path: []const u8, body: []const u8, token: ?[]const u8) !Reply {
+    pub fn call(fx: *Fx, method: std.http.Method, path: []const u8, body: []const u8, token: ?[]const u8) !Reply {
         const life = fx.life.allocator();
         var request_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
         defer request_arena.deinit();
@@ -68,14 +68,14 @@ const Fx = struct {
         return .{ .status = @intFromEnum(r.status), .body = kept, .value = value };
     }
 
-    fn sha(fx: *Fx, bytes: []const u8) ![]const u8 {
+    pub fn sha(fx: *Fx, bytes: []const u8) ![]const u8 {
         var d: [32]u8 = undefined;
         std.crypto.hash.sha2.Sha256.hash(bytes, &d, .{});
         return std.fmt.allocPrint(fx.life.allocator(), "{s}", .{std.fmt.fmtSliceHexLower(&d)});
     }
 
     /// A create request for pkg_a, pkg_b and pkg_c at `version`, with `bytes` as the content of each file.
-    fn request(fx: *Fx, names: []const []const u8, version: []const u8, bytes: []const u8) ![]const u8 {
+    pub fn request(fx: *Fx, names: []const []const u8, version: []const u8, bytes: []const u8) ![]const u8 {
         const a = fx.life.allocator();
         var out = std.ArrayList(u8).init(a);
         try out.appendSlice("{\"members\":[");
@@ -90,7 +90,7 @@ const Fx = struct {
         return out.items;
     }
 
-    fn commitBody(fx: *Fx, names: []const []const u8) ![]const u8 {
+    pub fn commitBody(fx: *Fx, names: []const []const u8) ![]const u8 {
         const a = fx.life.allocator();
         var out = std.ArrayList(u8).init(a);
         try out.appendSlice("{\"members\":[");
@@ -103,7 +103,7 @@ const Fx = struct {
     }
 
     /// PUTs the bytes of every file the create answer asks for.
-    fn upload(fx: *Fx, created: Reply, bytes: []const u8) !void {
+    pub fn upload(fx: *Fx, created: Reply, bytes: []const u8) !void {
         for (created.value.object.get("members").?.array.items) |m| {
             const name = m.object.get("name").?.string;
             for (m.object.get("files").?.array.items) |f| {
@@ -116,25 +116,25 @@ const Fx = struct {
         }
     }
 
-    fn status(fx: *Fx, id: []const u8) ![]const u8 {
+    pub fn status(fx: *Fx, id: []const u8) ![]const u8 {
         const path = try std.fmt.allocPrint(fx.life.allocator(), "/api/v1/groups/{s}", .{id});
         const r = try fx.call(.GET, path, "", fx.alice_token);
         try std.testing.expectEqual(@as(u16, 200), r.status);
         return r.value.object.get("status").?.string;
     }
 
-    fn code(r: Reply) []const u8 {
+    pub fn code(r: Reply) []const u8 {
         return r.value.object.get("error").?.object.get("code").?.string;
     }
 };
 
-const abc: []const []const u8 = &.{ "pkg_a", "pkg_b", "pkg_c" };
+pub const abc: []const []const u8 = &.{ "pkg_a", "pkg_b", "pkg_c" };
 
-fn idOf(r: Reply) []const u8 {
+pub fn idOf(r: Reply) []const u8 {
     return r.value.object.get("group_id").?.string;
 }
 
-fn expectCode(r: Reply, status: u16, want: []const u8) !void {
+pub fn expectCode(r: Reply, status: u16, want: []const u8) !void {
     if (r.status != status or !std.mem.eql(u8, Fx.code(r), want)) {
         std.debug.print("want {d} {s}, got {d}: {s}\n", .{ status, want, r.status, r.body });
         return error.TestUnexpectedResult;
@@ -236,7 +236,7 @@ fn declareOne(fx: *Fx, name: []const u8, version: []const u8, filename_name: []c
     , .{ name, version, filename_name, version, try fx.sha(content), content.len });
 }
 
-fn uploadPath(fx: *Fx, created: Reply, member: usize) ![]const u8 {
+pub fn uploadPath(fx: *Fx, created: Reply, member: usize) ![]const u8 {
     const m = created.value.object.get("members").?.array.items[member];
     return std.fmt.allocPrint(fx.life.allocator(), "/_fake/upload/{s}", .{m.object.get("files").?.array.items[0].object.get("upload_id").?.string});
 }
@@ -619,4 +619,236 @@ test "the controls: a PUT that fails once, and time that passes between the crea
     const again = try fx.call(.POST, "/api/v1/groups", body, fx.alice_token);
     try std.testing.expectEqual(@as(u16, 201), again.status);
     try std.testing.expectEqual(@as(u16, 202), (try fx.call(.POST, commit, try fx.commitBody(abc), fx.alice_token)).status);
+}
+
+/// A JWT-shaped CI identity token whose payload names `repository` (the fake reads no signature).
+fn jwtOf(fx: *Fx, repository: []const u8) ![]const u8 {
+    const a = fx.life.allocator();
+    const enc = std.base64.url_safe_no_pad.Encoder;
+    const payload = try std.fmt.allocPrint(a, "{{\"repository\":\"{s}\"}}", .{repository});
+    const part = try a.alloc(u8, enc.calcSize(payload.len));
+    _ = enc.encode(part, payload);
+    return std.fmt.allocPrint(a, "e30.{s}.c2ln", .{part});
+}
+
+fn exchange(fx: *Fx, jwt: []const u8, packages: []const u8) !Reply {
+    const body = try std.fmt.allocPrint(fx.life.allocator(), "{{\"jwt\":\"{s}\",\"packages\":{s}}}", .{ jwt, packages });
+    return fx.call(.POST, "/api/v1/auth/oidc/exchange", body, null);
+}
+
+test "the packages exchange: who it is for, what it refuses, and that nothing is made by a refusal" {
+    var fx: Fx = undefined;
+    try fx.setup();
+    defer fx.deinit();
+    const jwt = try jwtOf(&fx, "org/repo");
+    const one = "[{\"name\":\"new_one\",\"version\":\"1.0.0\"}]";
+
+    // A repository nobody configured is not a CI publisher, however well-formed the token and the list.
+    try expectCode(try exchange(&fx, jwt, one), 403, "oidc_not_trusted");
+    try fx.state.ci_repos.append(fx.life.allocator(), "org/repo");
+
+    // The list is checked before the token: each of these is the caller's mistake.
+    try expectCode(try exchange(&fx, jwt, "{}"), 400, "invalid_request");
+    try expectCode(try exchange(&fx, jwt, "[]"), 400, "invalid_request");
+    try expectCode(try exchange(&fx, jwt, "[1]"), 400, "invalid_request");
+    try expectCode(try exchange(&fx, jwt, "[{\"version\":\"1.0.0\"}]"), 400, "invalid_request");
+    try expectCode(try exchange(&fx, jwt, "[{\"name\":\"new_one\"}]"), 400, "invalid_request");
+    try expectCode(try exchange(&fx, jwt, "[{\"name\":\"Not A Name\",\"version\":\"1.0.0\"}]"), 400, "invalid_name");
+    try expectCode(try exchange(&fx, jwt, "[{\"name\":\"new_one\",\"version\":\"one\"}]"), 400, "invalid_version");
+    try expectCode(try exchange(&fx, jwt, "[{\"name\":\"new_one\",\"version\":\"1.0.0\"},{\"name\":\"new_one\",\"version\":\"1.0.1\"}]"), 400, "invalid_request");
+    var many = std.ArrayList(u8).init(fx.life.allocator());
+    try many.append('[');
+    for (0..501) |i| try many.writer().print("{s}{{\"name\":\"many_{d}\",\"version\":\"1.0.0\"}}", .{ if (i == 0) "" else ",", i });
+    try many.append(']');
+    try expectCode(try exchange(&fx, jwt, many.items), 400, "invalid_request");
+    const both = try std.fmt.allocPrint(fx.life.allocator(), "{{\"jwt\":\"{s}\",\"name\":\"new_one\",\"version\":\"1.0.0\",\"packages\":{s}}}", .{ jwt, one });
+    try expectCode(try fx.call(.POST, "/api/v1/auth/oidc/exchange", both, null), 400, "invalid_request");
+    try expectCode(try fx.call(.POST, "/api/v1/auth/oidc/exchange", "{\"jwt\":\"x\",\"packages\":3}", null), 400, "invalid_request");
+    try expectCode(try exchange(&fx, "not-a-jwt", one), 401, "oidc_token_invalid");
+
+    // A name someone else owns refuses the whole list, and the name before it is not created.
+    try expectCode(try exchange(&fx, jwt, "[{\"name\":\"new_one\",\"version\":\"1.0.0\"},{\"name\":\"pkg_a\",\"version\":\"1.0.0\"}]"), 403, "not_owner");
+    try std.testing.expect(fx.state.packageByName("new_one") == null);
+    // No token was minted by any refusal: the fixture's two API tokens and its session are all there are.
+    try std.testing.expectEqual(@as(usize, 3), fx.state.tokens.items.len);
+}
+
+test "the packages exchange takes 500 names, the most a group holds, and creates every one" {
+    var fx: Fx = undefined;
+    try fx.setup();
+    defer fx.deinit();
+    const a = fx.life.allocator();
+    try fx.state.ci_repos.append(a, "org/repo");
+    const jwt = try jwtOf(&fx, "org/repo");
+    var many = std.ArrayList(u8).init(a);
+    try many.append('[');
+    for (0..500) |i| try many.writer().print("{s}{{\"name\":\"many_{d}\",\"version\":\"1.0.0\"}}", .{ if (i == 0) "" else ",", i });
+    try many.append(']');
+    const minted = try exchange(&fx, jwt, many.items);
+    try std.testing.expectEqual(@as(u16, 200), minted.status);
+    try std.testing.expectEqual(@as(usize, 500), minted.value.object.get("packages").?.array.items.len);
+    try std.testing.expect(fx.state.packageByName("many_0") != null);
+    try std.testing.expect(fx.state.packageByName("many_499") != null);
+}
+
+test "a packages token creates and runs a group of exactly its versions, and no other" {
+    var fx: Fx = undefined;
+    try fx.setup();
+    defer fx.deinit();
+    const a = fx.life.allocator();
+    try fx.state.ci_repos.append(a, "org/repo");
+    const jwt = try jwtOf(&fx, "org/repo");
+    const names: []const []const u8 = &.{ "new_one", "new_two" };
+
+    const minted = try exchange(&fx, jwt, "[{\"name\":\"new_one\",\"version\":\"1.0.0\"},{\"name\":\"new_two\",\"version\":\"1.0.0\"}]");
+    try std.testing.expectEqual(@as(u16, 200), minted.status);
+    try std.testing.expectEqualStrings("publish", minted.value.object.get("token_kind").?.string);
+    try std.testing.expectEqual(@as(usize, 2), minted.value.object.get("packages").?.array.items.len);
+    try std.testing.expect(minted.value.object.get("name") == null);
+    const token = minted.value.object.get("token").?.string;
+    const publisher = fx.state.userByHandle("ci/org/repo").?;
+    try std.testing.expect(fx.state.packageByName("new_one").?.isOwner(publisher));
+
+    // The token is not for a version or a package it does not name.
+    try expectCode(try fx.call(.POST, "/api/v1/groups", try fx.request(names, "2.0.0", "x"), token), 403, "scope_missing");
+    try expectCode(try fx.call(.POST, "/api/v1/groups", try fx.request(&.{ "new_one", "pkg_a" }, "1.0.0", "x"), token), 403, "scope_missing");
+
+    // It creates the group, and the group runs to visible under it.
+    const created = try fx.call(.POST, "/api/v1/groups", try fx.request(names, "1.0.0", "x"), token);
+    try std.testing.expectEqual(@as(u16, 201), created.status);
+    try fx.upload(created, "x");
+    const commit = try std.fmt.allocPrint(a, "/api/v1/groups/{s}/commit", .{idOf(created)});
+    try std.testing.expectEqual(@as(u16, 202), (try fx.call(.POST, commit, try fx.commitBody(names), token)).status);
+    const poll = try std.fmt.allocPrint(a, "/api/v1/groups/{s}", .{idOf(created)});
+    var last: []const u8 = "";
+    for (0..4) |_| last = (try fx.call(.GET, poll, "", token)).value.object.get("status").?.string;
+    try std.testing.expectEqualStrings("visible", last);
+    try std.testing.expectEqual(@as(usize, 1), try versionsOf(&fx, "new_one"));
+    try std.testing.expectEqual(@as(usize, 1), try versionsOf(&fx, "new_two"));
+}
+
+// ---------------------------------------------------------------------------
+// error.reason of a group_conflict, and the on_overlap option
+// ---------------------------------------------------------------------------
+
+fn reasonOf(r: Reply) ?[]const u8 {
+    const e = r.value.object.get("error") orelse return null;
+    const v = e.object.get("reason") orelse return null;
+    return v.string;
+}
+
+/// A group_conflict (409) with `want` as its reason, and the reason in no other place of the answer.
+fn expectConflict(r: Reply, want: []const u8) !void {
+    try expectCode(r, 409, "group_conflict");
+    if (reasonOf(r) == null or !std.mem.eql(u8, reasonOf(r).?, want)) {
+        std.debug.print("want reason {s}, got: {s}\n", .{ want, r.body });
+        return error.TestUnexpectedResult;
+    }
+    const e = r.value.object.get("error").?.object;
+    try std.testing.expectEqual(@as(usize, 4), e.count());
+    try std.testing.expect(std.mem.indexOf(u8, e.get("message").?.string, want) == null);
+    try std.testing.expect(std.mem.indexOf(u8, e.get("hint").?.string, want) == null);
+}
+
+/// `body` (a create request) with `"on_overlap":<json>` added.
+fn withOverlap(fx: *Fx, body: []const u8, json: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(fx.life.allocator(), "{s},\"on_overlap\":{s}}}", .{ body[0 .. body.len - 1], json });
+}
+
+test "a group_conflict carries the reason of its cause at every site the fake has" {
+    var fx: Fx = undefined;
+    try fx.setup();
+    defer fx.deinit();
+    const only_a: []const []const u8 = &.{"pkg_a"};
+    // number_held: bob meets alice's open group.
+    _ = try fx.call(.POST, "/api/v1/groups", try fx.request(only_a, "1.0.0", "x"), fx.alice_token);
+    try expectConflict(try fx.call(.POST, "/api/v1/groups", try fx.request(only_a, "1.0.0", "y"), fx.bob_token), "number_held");
+    // number_held again, for the caller's own group once it is validating (never superseded).
+    fx.state.groups.items[0].status = .validating;
+    try expectConflict(try fx.call(.POST, "/api/v1/groups", try fx.request(&.{ "pkg_a", "pkg_b" }, "1.0.0", "y"), fx.alice_token), "number_held");
+    // group_failed: the same request again for a group that failed.
+    fx.state.groups.items[0].status = .failed;
+    try expectConflict(try fx.call(.POST, "/api/v1/groups", try fx.request(only_a, "1.0.0", "x"), fx.alice_token), "group_failed");
+}
+
+test "open_cap and supersede_cap" {
+    var fx: Fx = undefined;
+    try fx.setup();
+    defer fx.deinit();
+    var i: usize = 0;
+    while (i < 5) : (i += 1) {
+        const version = try std.fmt.allocPrint(fx.life.allocator(), "{d}.0.0", .{i + 1});
+        try std.testing.expectEqual(@as(u16, 201), (try fx.call(.POST, "/api/v1/groups", try fx.request(&.{"pkg_a"}, version, "x"), fx.alice_token)).status);
+    }
+    try expectConflict(try fx.call(.POST, "/api/v1/groups", try fx.request(&.{"pkg_b"}, "1.0.0", "x"), fx.alice_token), "open_cap");
+
+    // Four packages whose versions four open groups hold: one create over all four supersedes more than three.
+    var other: Fx = undefined;
+    try other.setup();
+    defer other.deinit();
+    const s = &other.state;
+    const p = try s.addPackage(.{ .name = "pkg_d", .created_at = s.now(), .updated_at = s.now(), .claim_expires_at = s.now() + st.claim_secs });
+    try p.owners.append(other.life.allocator(), other.alice);
+    const four: []const []const u8 = &.{ "pkg_a", "pkg_b", "pkg_c", "pkg_d" };
+    const token = (try s.addToken(.{ .id = "t9", .secret = "four-secret", .kind = .api, .user = other.alice, .scopes = &.{.publish}, .packages = four, .created_at = s.now(), .expires_at = s.now() + st.day })).secret;
+    for (four) |n| try std.testing.expectEqual(@as(u16, 201), (try other.call(.POST, "/api/v1/groups", try other.request(&.{n}, "1.0.0", "x"), token)).status);
+    try expectConflict(try other.call(.POST, "/api/v1/groups", try other.request(four, "1.0.0", "y"), token), "supersede_cap");
+    // Refusing overlap is decided first: the same create with refuse is overlap_refused.
+    try expectConflict(try other.call(.POST, "/api/v1/groups", try withOverlap(&other, try other.request(four, "1.0.0", "y"), "\"refuse\""), token), "overlap_refused");
+}
+
+test "on_overlap refuse: nothing is superseded, the old group stays open with its rows held, and the answer names it" {
+    var fx: Fx = undefined;
+    try fx.setup();
+    defer fx.deinit();
+    const old = try fx.call(.POST, "/api/v1/groups", try fx.request(&.{"pkg_a"}, "1.0.0", "x"), fx.alice_token);
+    const refused = try fx.call(.POST, "/api/v1/groups", try withOverlap(&fx, try fx.request(abc, "1.0.0", "y"), "\"refuse\""), fx.alice_token);
+    try expectConflict(refused, "overlap_refused");
+    try std.testing.expect(std.mem.indexOf(u8, refused.body, idOf(old)) != null);
+    try std.testing.expectEqualStrings("open", try fx.status(idOf(old)));
+    // No group was made, and the row of pkg_a is still the old group's.
+    try std.testing.expectEqual(@as(usize, 1), fx.state.groups.items.len);
+    try std.testing.expect(fx.state.packageByName("pkg_a").?.versions.items[0].group.? == fx.state.groups.items[0]);
+    try std.testing.expectEqual(@as(usize, 0), fx.state.packageByName("pkg_b").?.versions.items.len);
+    // The same set without the option (or with supersede) replaces it.
+    const replaced = try fx.call(.POST, "/api/v1/groups", try fx.request(abc, "1.0.0", "y"), fx.alice_token);
+    try std.testing.expectEqual(@as(u16, 201), replaced.status);
+    try std.testing.expectEqualStrings("superseded", try fx.status(idOf(old)));
+}
+
+test "the default is supersede, and the answer lists the groups it ended; no key when it ended none" {
+    var fx: Fx = undefined;
+    try fx.setup();
+    defer fx.deinit();
+    const old = try fx.call(.POST, "/api/v1/groups", try fx.request(&.{"pkg_a"}, "1.0.0", "x"), fx.alice_token);
+    try std.testing.expect(old.value.object.get("superseded") == null);
+    const next = try fx.call(.POST, "/api/v1/groups", try withOverlap(&fx, try fx.request(&.{ "pkg_a", "pkg_b" }, "1.0.0", "y"), "\"supersede\""), fx.alice_token);
+    try std.testing.expectEqual(@as(u16, 201), next.status);
+    const list = next.value.object.get("superseded").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), list.len);
+    try std.testing.expectEqualStrings(idOf(old), list[0].string);
+    try std.testing.expectEqualStrings("superseded", try fx.status(idOf(old)));
+    // Asked for again, the group is only continued: it ended nothing this time.
+    const again = try fx.call(.POST, "/api/v1/groups", try fx.request(&.{ "pkg_a", "pkg_b" }, "1.0.0", "y"), fx.alice_token);
+    try std.testing.expectEqual(@as(u16, 200), again.status);
+    try std.testing.expect(again.value.object.get("superseded") == null);
+}
+
+test "on_overlap refuse with nothing overlapping creates the group; an unknown value is invalid_request; the option is not in the group id" {
+    var fx: Fx = undefined;
+    try fx.setup();
+    defer fx.deinit();
+    const body = try fx.request(&.{"pkg_a"}, "1.0.0", "x");
+    for ([_][]const u8{ "\"replace\"", "5", "null", "true", "[\"refuse\"]" }) |bad| {
+        const r = try fx.call(.POST, "/api/v1/groups", try withOverlap(&fx, body, bad), fx.alice_token);
+        try expectCode(r, 400, "invalid_request");
+        try std.testing.expect(reasonOf(r) == null);
+    }
+    try std.testing.expectEqual(@as(usize, 0), fx.state.groups.items.len);
+    const refuse = try fx.call(.POST, "/api/v1/groups", try withOverlap(&fx, body, "\"refuse\""), fx.alice_token);
+    try std.testing.expectEqual(@as(u16, 201), refuse.status);
+    try std.testing.expect(refuse.value.object.get("superseded") == null);
+    const plain = try fx.call(.POST, "/api/v1/groups", body, fx.alice_token);
+    try std.testing.expectEqual(@as(u16, 200), plain.status);
+    try std.testing.expectEqualStrings(idOf(refuse), idOf(plain));
 }

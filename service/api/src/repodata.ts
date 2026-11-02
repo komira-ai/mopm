@@ -33,9 +33,9 @@ function dependsOf(r: VersionRecord): string[] {
   const specs = [
     `${COMPILER_PACKAGE} ${r.requires_mojo}`,
     ...r.deps.map(depSpec),
-    // Native libraries are named by their allow-list id, which is the conda package that provides them.
-    ...r.native.map((n) => n.id),
-  ];
+    // The system libraries the package loads, exactly as its index.json requires them. The libraries it ships (`native`) are
+    // not conda packages and are never named here.
+    ...(r.native_depends ?? []),  ];
   return [...new Set(specs)].sort();
 }
 

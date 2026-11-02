@@ -13,6 +13,8 @@ const plan_cmd = @import("plan_cmd.zig");
 const unit_cmd = @import("unit_cmd.zig");
 const yank_cmd = @import("yank_cmd.zig");
 const stage_cmd = @import("stage_cmd.zig");
+const build_cmd = @import("build_cmd.zig");
+const bin_run = @import("bin_run.zig");
 
 /// The release version, from the build (`zig build -Dversion=`; the dev default in build_options.zig).
 pub const version = @import("build_options").version;
@@ -41,10 +43,19 @@ const usage =
     \\  init [--lib|--bin] [--name <name>]
     \\                          make a package in this directory
     \\  build <file.mojo> [-o <out>]
-    \\  run <file.mojo>
-    \\  repl                    run the stock mojo of the environment, with its
+    \\  build [--out-dir <dir>] with no program: the [targets] of mopm.toml, the
+    \\                          library as <dir>/<name>.mojoc and each program as
+    \\                          <dir>/<name> (default dir: target/build)
+    \\  run <file.mojo> [--opt-level <0-3>] [-- <program argument>...]
+    \\  run --bin <package>:<program> [--opt-level <0-3>] [-- <program argument>...]
+    \\                          a program an installed package ships; what
+    \\                          follows -- reaches the program verbatim
+    \\  repl [--debugserver <path>]
+    \\                          run the stock mojo of the environment, with its
     \\                          native libraries linked or preloaded; the exit
-    \\                          status is mojo's
+    \\                          status is mojo's. On macOS 14 and older mopm
+    \\                          points lldb at Xcode's debugserver, which works
+    \\                          where the one packaged with mojo crashes
     \\  test [<path>...]        run the tests of tests/**/test_*.mojo and
     \\                          src/**/tests/test_*.mojo, one process per test
     \\                          (--timeout <s>, --memory <MiB>, --format json,
@@ -65,18 +76,29 @@ const usage =
     \\                          mopm.toml; --native <id>=<subdir>:<file> gives the
     \\                          static archive of a [native.<id>] for one subdir
     \\  publish [pack options] [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
-    \\          [--readme <file>] [--dry-run]
+    \\          [--readme <file>] [--dry-run] [--oidc]
     \\                          pack and publish to a registry; the token is
-    \\                          $MOPM_TOKEN, else the one 'mopm login' stored;
+    \\                          $MOPM_TOKEN, else the one 'mopm login' stored,
+    \\                          or with --oidc (inside GitHub Actions, with
+    \\                          'id-token: write') one from the job's identity;
     \\                          --dry-run packs and prints what would be sent
     \\  publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>]
-    \\          [--wait <seconds>] [--dry-run]
+    \\          [--wait <seconds>] [--dry-run] [--oidc] [--no-commit | --abort]
     \\                          publish a staged set (plan.json and the files it
     \\                          names, spec/staged-set.md) through one group:
     \\                          every member is visible together, or none is.
     \\                          --registry is required; a rerun after a failure
     \\                          resumes the same group (state.json); report.json
-    \\                          says what each member came to
+    \\                          says what each member came to. --no-commit
+    \\                          uploads every file and stops with the group open
+    \\                          (exit 0, outcome 'staged', nothing readable); the
+    \\                          same command without it resumes that group and
+    \\                          commits. With --oidc, --no-commit asks the
+    \\                          registry for a stage-only token (it cannot
+    \\                          commit); a registry without stage tokens gives a
+    \\                          publish token and the run says so. --abort ends
+    \\                          the open group state.json names, which frees
+    \\                          the actor's place
     \\  stage --workspace-root <dir> [<package>...] --artifacts <dir> --compiler <mojo version>
     \\        --out <dir> --registry <prod|gamma|beta|url>
     \\                          pack the workspace's members (the named ones and
@@ -281,6 +303,16 @@ pub const Opts = struct {
     print_cmd: bool = false,
     out: ?[]const u8 = null,
     file: ?[]const u8 = null,
+    /// `run --bin <package>:<program>`: a program an installed package ships, in place of a file.
+    bin: ?[]const u8 = null,
+    /// `run --opt-level <0-3>`: mojo's `--optimization-level`; absent leaves mojo's own default.
+    opt_level: ?u8 = null,
+    /// `run ... -- <args>`: everything after the first `--`, verbatim, for the program.
+    program_args: []const []const u8 = &.{},
+    /// `build` with no program: where the library and the programs go.
+    out_dir: ?[]const u8 = null,
+    /// `repl --debugserver <path>`: the debugserver to hand lldb instead of finding one.
+    debugserver: ?[]const u8 = null,
 };
 
 pub const Parsed = union(enum) {
@@ -302,11 +334,20 @@ fn optValue(args: []const []const u8, i: *usize, name: []const u8) ?[]const u8 {
     return null;
 }
 
+/// Whether `arg` is the option `name`, spelled `name` or `name=value`.
+fn isOpt(arg: []const u8, name: []const u8) bool {
+    return std.mem.eql(u8, arg, name) or (arg.len > name.len and std.mem.startsWith(u8, arg, name) and arg[name.len] == '=');
+}
+
 pub fn parseOpts(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const u8) std.mem.Allocator.Error!Parsed {
     var o = Opts{ .os = mojo_cmd.Os.host() };
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
+        if (tool == .run and std.mem.eql(u8, arg, "--")) {
+            o.program_args = args[i + 1 ..];
+            break;
+        }
         if (std.mem.eql(u8, arg, "--print-cmd")) {
             o.print_cmd = true;
         } else if (optValue(args, &i, "--prefix")) |v| {
@@ -320,6 +361,23 @@ pub fn parseOpts(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []
             if (i + 1 >= args.len) return .{ .usage = "-o needs a file name" };
             i += 1;
             o.out = args[i];
+        } else if (tool == .build and isOpt(arg, "--out-dir")) {
+            const v = optValue(args, &i, "--out-dir").?;
+            if (v.len == 0) return .{ .usage = "--out-dir needs a directory" };
+            o.out_dir = v;
+        } else if (tool == .repl and isOpt(arg, "--debugserver")) {
+            const v = optValue(args, &i, "--debugserver").?;
+            if (v.len == 0) return .{ .usage = "--debugserver needs the path of a debugserver" };
+            o.debugserver = v;
+        } else if (tool == .run and isOpt(arg, "--opt-level")) {
+            const v = optValue(args, &i, "--opt-level").?;
+            const n = std.fmt.parseInt(u8, v, 10) catch 255;
+            if (n > 3) return .{ .usage = try std.fmt.allocPrint(arena, "--opt-level takes 0 to 3, not '{s}'", .{v}) };
+            o.opt_level = n;
+        } else if (tool == .run and isOpt(arg, "--bin")) {
+            const v = optValue(args, &i, "--bin").?;
+            if (v.len == 0) return .{ .usage = "--bin needs <package>:<program>" };
+            o.bin = v;
         } else if (arg.len > 1 and arg[0] == '-') {
             return .{ .usage = try std.fmt.allocPrint(arena, "unknown option '{s}'", .{arg}) };
         } else if (tool == .repl) {
@@ -330,13 +388,27 @@ pub fn parseOpts(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []
             o.file = arg;
         }
     }
-    if (tool != .repl and o.file == null) return .{ .usage = "a program is required: <file.mojo>" };
+    if (o.bin != null and o.file != null) return .{ .usage = try std.fmt.allocPrint(arena, "--bin names the program: do not also give the file '{s}'", .{o.file.?}) };
+    if (tool != .repl and tool != .build and o.file == null and o.bin == null) return .{ .usage = "a program is required: <file.mojo>" };
+    if (tool == .build and o.file == null and o.out != null) return .{ .usage = "-o names the file of one program: name the program, or use --out-dir to say where the targets of mopm.toml go" };
+    if (tool == .build and o.file != null and o.out_dir != null) return .{ .usage = "--out-dir applies to a build with no program: with a program, -o names its file" };
     if (o.os_given and !o.print_cmd) return .{ .usage = "--os applies only with --print-cmd: a command that runs uses this host's spelling" };
     return .{ .ok = o };
 }
 
 fn getEnv(arena: std.mem.Allocator, key: []const u8) ?[]const u8 {
     return std.process.getEnvVarOwned(arena, key) catch null;
+}
+
+/// Whether an environment variable's value is absent or empty (the two are the same to mopm).
+fn isUnset(value: ?[]const u8) bool {
+    return value == null or value.?.len == 0;
+}
+
+/// Whether `mopm repl` looks for Xcode's debugserver: only for repl, when no `--debugserver` was given, `--os` did not
+/// spell another machine, and `LLDB_DEBUGSERVER_PATH` is unset or empty (an empty one names nothing).
+fn searchesDebugserver(tool: mojo_cmd.Tool, given: ?[]const u8, os_given: bool, env_value: ?[]const u8) bool {
+    return tool == .repl and given == null and !os_given and isUnset(env_value);
 }
 
 /// Replace this process with mojo: `argv`, and the caller's environment with
@@ -356,6 +428,15 @@ fn execMojo(arena: std.mem.Allocator, name: []const u8, cmd: mojo_cmd.Command) u
     return if (e == error.FileNotFound) 127 else 126;
 }
 
+/// The compiler flags `--opt-level` asks for: none when it was not given.
+fn optFlags(arena: std.mem.Allocator, level: ?u8) std.mem.Allocator.Error![]const []const u8 {
+    const n = level orelse return &.{};
+    const out = try arena.alloc([]const u8, 2);
+    out[0] = "--optimization-level";
+    out[1] = try std.fmt.allocPrint(arena, "{d}", .{n});
+    return out;
+}
+
 /// `mopm build|run|repl`: discover the environment, plan, refuse, then run
 /// mojo or print its command. Diagnostics go to stderr; a printed command
 /// line to stdout.
@@ -370,6 +451,28 @@ fn autolink(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const
             return 2;
         },
     };
+
+    const bin_ref: ?bin_run.Ref = if (o.bin) |text| switch (bin_run.parseRef(arena, text) catch return 1) {
+        .ok => |r| r,
+        .bad => |msg| {
+            err.print("mopm run: {s}\n\n{s}", .{ msg, usage }) catch {};
+            return 2;
+        },
+    } else null;
+
+    if (tool == .build and o.file == null) {
+        return build_cmd.run(arena, .{
+            .prefix = o.prefix,
+            .os = o.os,
+            .print_cmd = o.print_cmd,
+            .out_dir = o.out_dir orelse build_cmd.default_out_dir,
+        });
+    }
+    // A program is built with the path dependencies of the package in this directory importable (mopm.toml, if any).
+    const dep_dirs: []const []const u8 = if (tool == .build)
+        (build_cmd.importDirsHere(arena) catch return 1) orelse return 1
+    else
+        &.{};
 
     const chosen = core.env.choosePrefix(o.prefix, getEnv(arena, "CONDA_PREFIX"), getEnv(arena, "MODULAR_HOME")) catch |e| {
         switch (e) {
@@ -399,6 +502,20 @@ fn autolink(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const
         },
     };
 
+    // `run --bin`: the program is the source file the installed package ships, built and run by this environment's mojo.
+    var file = o.file;
+    if (bin_ref) |ref| {
+        var names = std.ArrayList([]const u8).init(arena);
+        for (inputs) |inp| names.append(inp.meta.name) catch return 1;
+        switch (bin_run.resolve(arena, prefix, names.items, ref) catch return 1) {
+            .ok => |path| file = path,
+            .bad => |msg| {
+                err.print("mopm run: {s}\n", .{msg}) catch {};
+                return 1;
+            },
+        }
+    }
+
     const plan = core.link_planner.plan(arena, inputs) catch return 1;
     const refused = mojo_cmd.refusals(arena, tool, plan) catch return 1;
     if (refused.len > 0) {
@@ -411,12 +528,28 @@ fn autolink(arena: std.mem.Allocator, tool: mojo_cmd.Tool, args: []const []const
         return 1;
     }
 
+    // macOS 14 and older: mojo's packaged debugserver crashes, so the REPL is pointed at Xcode's, unless the caller
+    // named one (--debugserver, or LLDB_DEBUGSERVER_PATH already in the environment). `--os` spells another
+    // machine's command line, which says nothing about this one: no search then.
+    var debugserver = o.debugserver;
+    if (searchesDebugserver(tool, debugserver, o.os_given, getEnv(arena, mojo_cmd.debugserver_var))) {
+        switch (core.debugserver.discover(arena) catch return 1) {
+            .not_needed => {},
+            .path => |p| debugserver = p,
+            .missing => |m| err.print("mopm repl: warning: {s}\n", .{m}) catch {},
+        }
+    }
+
     const cmd = mojo_cmd.construct(arena, .{
         .tool = tool,
         .prefix = prefix,
         .os = o.os,
-        .file = o.file orelse "",
+        .file = file orelse "",
         .out = o.out,
+        .include_dirs = dep_dirs,
+        .flags = if (tool == .run) (optFlags(arena, o.opt_level) catch return 1) else &.{},
+        .args = o.program_args,
+        .debugserver = debugserver,
     }, plan) catch return 1;
     if (!o.print_cmd) return execMojo(arena, name, cmd);
     var buf = std.ArrayList(u8).init(arena);
@@ -485,8 +618,12 @@ test {
     _ = @import("group_plan.zig");
     _ = @import("group_publish.zig");
     _ = @import("group_publish_test.zig");
+    _ = @import("group_stage_token.zig");
     _ = stage_cmd;
     _ = @import("stage_test.zig");
+    _ = @import("publish_false_test.zig");
+    _ = @import("bin_run.zig");
+    _ = build_cmd;
 }
 
 test "planned commands are recognised, working ones are not planned" {
@@ -560,12 +697,51 @@ test "options: both spellings, any order" {
     try std.testing.expectEqual(mojo_cmd.Os.host(), x.os);
 }
 
+test "options: build with no program takes --out-dir in both spellings; repl takes --debugserver" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const none = try parseOk(a, .build, &.{"--print-cmd"});
+    try std.testing.expect(none.file == null);
+    try std.testing.expect(none.out_dir == null);
+    const spaced = try parseOk(a, .build, &.{ "--out-dir", "out", "--prefix", "/e" });
+    try std.testing.expect(spaced.file == null);
+    try std.testing.expectEqualStrings("out", spaced.out_dir.?);
+    const joined = try parseOk(a, .build, &.{"--out-dir=dist/x"});
+    try std.testing.expectEqualStrings("dist/x", joined.out_dir.?);
+    const with_file = try parseOk(a, .build, &.{ "m.mojo", "-o", "m" });
+    try std.testing.expectEqualStrings("m.mojo", with_file.file.?);
+    const repl = try parseOk(a, .repl, &.{ "--debugserver", "/x/debugserver" });
+    try std.testing.expectEqualStrings("/x/debugserver", repl.debugserver.?);
+    const repl2 = try parseOk(a, .repl, &.{"--debugserver=/y"});
+    try std.testing.expectEqualStrings("/y", repl2.debugserver.?);
+}
+
+test "repl searches for a debugserver unless one is named; an empty LLDB_DEBUGSERVER_PATH names none" {
+    try std.testing.expect(searchesDebugserver(.repl, null, false, null));
+    try std.testing.expect(searchesDebugserver(.repl, null, false, ""));
+    try std.testing.expect(!searchesDebugserver(.repl, null, false, "/x/debugserver"));
+    try std.testing.expect(!searchesDebugserver(.repl, "/y/debugserver", false, null));
+    try std.testing.expect(!searchesDebugserver(.repl, null, true, null));
+    try std.testing.expect(!searchesDebugserver(.build, null, false, null));
+    try std.testing.expect(!searchesDebugserver(.run, null, false, ""));
+}
+
 test "options: usage errors" {
     var t = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer t.deinit();
     const a = t.allocator();
-    try parseUsage(a, .build, &.{"--print-cmd"}); // no program
+    try parseUsage(a, .run, &.{"--print-cmd"}); // no program
     try parseUsage(a, .run, &.{ "a.mojo", "b.mojo" }); // two programs
+    try parseUsage(a, .build, &.{ "a.mojo", "b.mojo" });
+    try parseUsage(a, .build, &.{ "-o", "x" }); // -o names one program's file
+    try parseUsage(a, .build, &.{"--out-dir"}); // flag without value
+    try parseUsage(a, .build, &.{ "--out-dir=", "--print-cmd" });
+    try parseUsage(a, .build, &.{ "a.mojo", "--out-dir", "d" }); // --out-dir is for a build with no program
+    try parseUsage(a, .run, &.{ "a.mojo", "--out-dir", "d" }); // build only
+    try parseUsage(a, .repl, &.{"--debugserver"});
+    try parseUsage(a, .build, &.{ "a.mojo", "--debugserver", "/d" }); // repl only
+    try parseUsage(a, .run, &.{ "a.mojo", "--debugserver", "/d" });
     try parseUsage(a, .run, &.{ "a.mojo", "-o", "x" }); // -o is build only
     try parseUsage(a, .repl, &.{"a.mojo"}); // repl takes no program
     try parseUsage(a, .build, &.{ "a.mojo", "--prefix" }); // flag without value
@@ -573,4 +749,64 @@ test "options: usage errors" {
     try parseUsage(a, .build, &.{ "a.mojo", "--frobnicate" });
     try parseUsage(a, .run, &.{ "a.mojo", "--os", "linux" }); // --os without --print-cmd
     try parseUsage(a, .repl, &.{"--os=macos"});
+}
+
+// Defect caught: `--bin` accepted by a command that has no use for it, taken together with a file, or with no value.
+test "run --bin: a program of an installed package in place of a file, for run only" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const spaced = try parseOk(a, .run, &.{ "--bin", "benchy:agg_state_bench" });
+    try std.testing.expectEqualStrings("benchy:agg_state_bench", spaced.bin.?);
+    try std.testing.expect(spaced.file == null);
+    const joined = try parseOk(a, .run, &.{ "--prefix", "/env", "--bin=benchy:spsc_ring_bench" });
+    try std.testing.expectEqualStrings("benchy:spsc_ring_bench", joined.bin.?);
+    try parseUsage(a, .run, &.{"--bin"});
+    try parseUsage(a, .run, &.{"--bin="});
+    try parseUsage(a, .run, &.{ "--bin", "benchy:x", "m.mojo" });
+    try parseUsage(a, .run, &.{ "m.mojo", "--bin", "benchy:x" });
+    try parseUsage(a, .build, &.{ "--bin", "benchy:x" });
+    try parseUsage(a, .repl, &.{ "--bin", "benchy:x" });
+    // A run with a file is what it was.
+    try std.testing.expectEqualStrings("m.mojo", (try parseOk(a, .run, &.{"m.mojo"})).file.?);
+    try parseUsage(a, .run, &.{});
+}
+
+// Defect caught: arguments after `--` dropped, reordered, or parsed as mopm's own options (even when they look like
+// flags); arguments taken from a run with no `--`.
+test "run: what follows -- is the program's, verbatim; with no -- there are none" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const o = try parseOk(a, .run, &.{ "--bin", "benchy:x", "--", "--prefix", "/no", "--bin=z", "-o", "--", "--opt-level", "9", "" });
+    try std.testing.expectEqualStrings("benchy:x", o.bin.?);
+    try std.testing.expect(o.prefix == null);
+    try std.testing.expectEqual(@as(?u8, null), o.opt_level);
+    try std.testing.expectEqual(@as(usize, 8), o.program_args.len);
+    try std.testing.expectEqualStrings("--prefix", o.program_args[0]);
+    try std.testing.expectEqualStrings("--", o.program_args[4]);
+    try std.testing.expectEqualStrings("", o.program_args[7]);
+    try std.testing.expectEqual(@as(usize, 0), (try parseOk(a, .run, &.{"m.mojo"})).program_args.len);
+    try std.testing.expectEqual(@as(usize, 0), (try parseOk(a, .run, &.{ "m.mojo", "--" })).program_args.len);
+    // `--` is still not an option of the other commands.
+    try parseUsage(a, .build, &.{ "m.mojo", "--", "x" });
+}
+
+// Defect caught: an optimisation level that never reaches the compile command, or one outside mojo's 0 to 3.
+test "run --opt-level: 0 to 3, in both spellings, for run only" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    try std.testing.expectEqual(@as(?u8, 3), (try parseOk(a, .run, &.{ "m.mojo", "--opt-level", "3" })).opt_level);
+    try std.testing.expectEqual(@as(?u8, 0), (try parseOk(a, .run, &.{ "--opt-level=0", "m.mojo" })).opt_level);
+    try parseUsage(a, .run, &.{ "m.mojo", "--opt-level", "4" });
+    try parseUsage(a, .run, &.{ "m.mojo", "--opt-level=x" });
+    try parseUsage(a, .run, &.{ "m.mojo", "--opt-level" });
+    try parseUsage(a, .build, &.{ "m.mojo", "--opt-level", "3" });
+    // The level reaches the command, between `run` and the program; no level leaves the command as it was.
+    const flags = try optFlags(a, 2);
+    try std.testing.expectEqual(@as(usize, 2), flags.len);
+    try std.testing.expectEqualStrings("--optimization-level", flags[0]);
+    try std.testing.expectEqualStrings("2", flags[1]);
+    try std.testing.expectEqual(@as(usize, 0), (try optFlags(a, null)).len);
 }

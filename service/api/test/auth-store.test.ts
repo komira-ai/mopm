@@ -66,6 +66,12 @@ const CHECKS: Record<string, Check> = {
     eq(await s.getTokenByHash(h(3)), t);
     eq(await s.listTokens(1), []);
   },
+  'a configured CI publisher token keeps its identity and the version of each package, exactly': async (s) => {
+    const t = tok({ id: 'tok_cfg', hash: h(4), kind: 'oidc', packages: ['alpha', 'beta_pkg'], versions: { alpha: '1.0.0', beta_pkg: '2.0.0' }, ci_owner: 'gh-repo:1376408823', issued_to: 'komira-ai/komira' });
+    delete t.github_id;
+    await s.putToken(t);
+    eq(await s.getTokenByHash(h(4)), t);
+  },
   'listTokens returns every token of the account (all kinds, any state) across pages, and nobody elses': async (s) => {
     for (let i = 1; i <= 5; i++) await s.putToken(tok({ id: `tok_${i}`, hash: h(i), github_id: 1, kind: i === 5 ? 'session' : 'api' }));
     await s.putToken(tok({ id: 'tok_other', hash: h(10), github_id: 2 }));
@@ -124,6 +130,21 @@ const CHECKS: Record<string, Check> = {
     eq(await ids('alpha'), ['tp2']);
     eq(await ids('nothing'), []);
   },
+  'a one-time key is claimed by the first caller only, at once and for good; other keys are independent': async (s) => {
+    const until = '2026-10-14T12:10:00.000Z';
+    eq(await s.claimOnce('jti#a', until), true);
+    eq(await s.claimOnce('jti#a', until), false);
+    eq(await s.claimOnce('jti#a', '2026-10-14T13:00:00.000Z'), false);
+    eq(await s.claimOnce('jti#b', until), true);
+    const racers = await Promise.all([1, 2, 3, 4, 5].map(() => s.claimOnce('jti#race', until)));
+    eq(racers.filter(Boolean).length, 1);
+  },
+  'a claimed key is on no account, and does not disturb the tokens next to it': async (s) => {
+    await s.putToken(tok({ id: 'tok_a', hash: h(1) }));
+    await s.claimOnce('jti#a', '2026-10-14T12:10:00.000Z');
+    eq((await s.listTokens(1)).map((t) => t.id), ['tok_a']);
+    eq((await s.getTokenByHash(h(1)))?.id, 'tok_a');
+  },
 };
 
 /** The DynamoDB adapter on the strict fake: full access (this suite also writes publishers, which the Lambda cannot). */
@@ -181,6 +202,21 @@ describe('the DynamoDB adapter under the Lambda grants', () => {
     eq(typeof row.github_id, 'string'); // index keys are strings
   });
 
+  test('a claim is one conditional PutItem into the tokens table with a numeric TTL, and needs no permission the role lacks', async () => {
+    const { doc, store } = lambdaStore();
+    eq(await store.claimOnce('jti#a', '2026-10-14T12:10:00.000Z'), true);
+    eq(await store.claimOnce('jti#a', '2026-10-14T12:10:00.000Z'), false);
+    eq(doc.commands, ['PutCommand', 'PutCommand']);
+    eq(doc.dump('tokens'), [{ token_hash: 'jti#a', expires_at: Math.floor(Date.parse('2026-10-14T12:10:00.000Z') / 1000) }]);
+  });
+
+  test('a claim the store cannot make is an error, not a replay verdict (no permission: AccessDenied surfaces, nothing is claimed)', async () => {
+    const doc = new FakeAuthDoc({ pageSize: 2, grants: { ...LAMBDA_GRANTS, tokens: { actions: ['dynamodb:GetItem'] } } });
+    const store = new DynamoAuthStore(doc, authTablesFor('t'));
+    await expect(store.claimOnce('jti#a', '2026-10-14T12:10:00.000Z')).rejects.toMatchObject({ name: 'AccessDeniedException' });
+    eq(doc.dump('tokens'), []);
+  });
+
   test('ownedPackagesFrom reads the owners index across pages, only that account', async () => {
     const doc = new FakeAuthDoc({ pageSize: 2, grants: LAMBDA_GRANTS });
     for (const [n, g] of [['aa', 1], ['bb', 1], ['cc', 1], ['dd', 2]] as const) doc.seed('owners', { name: n, github_id: String(g), github_id_num: g });
@@ -189,39 +225,39 @@ describe('the DynamoDB adapter under the Lambda grants', () => {
   });
 });
 
-// Can-fail proofs: each planted defect must turn a named check red. Without these, a green contract could mean
+// Can-fail proofs: each known defect must turn a named check red. Without these, a green contract could mean
 // the checks cannot see the defect.
-describe('the contract goes red on planted defects', () => {
+describe('the contract goes red on known defects', () => {
   const failing = async (name: string, s: AuthStore) => {
     await expect(CHECKS[name]!(s)).rejects.toThrow();
   };
 
   test('getUserToken that ignores the account', async () => {
-    class Mutant extends MemoryAuthStore {
+    class Variant extends MemoryAuthStore {
       override async getUserToken(_github_id: number, id: string) {
         return this.dumpTokens().find((t) => t.id === id);
       }
     }
-    await failing('getUserToken finds the account own token and never another accounts', new Mutant());
+    await failing('getUserToken finds the account own token and never another accounts', new Variant());
   });
 
   test('revocation that overwrites the first time', async () => {
-    class Mutant extends MemoryAuthStore {
+    class Variant extends MemoryAuthStore {
       override async revokeToken(hash: string, at: string) {
         const t = this.dumpTokens().find((x) => x.hash === hash);
         if (t) await this.putToken({ ...t, revoked_at: at });
       }
     }
-    await failing('revoking is idempotent, keeps the first time, and a missing token is nothing', new Mutant());
+    await failing('revoking is idempotent, keeps the first time, and a missing token is nothing', new Variant());
   });
 
   test('a consumed device login that can still be read', async () => {
-    class Mutant extends MemoryAuthStore {
+    class Variant extends MemoryAuthStore {
       override async deleteDeviceLogin() {
         /* forgets to consume */
       }
     }
-    await failing('a device login round-trips, records polls, and once consumed is gone for good', new Mutant());
+    await failing('a device login round-trips, records polls, and once consumed is gone for good', new Variant());
   });
 
   test('the DynamoDB adapter with a token TTL stored as the ISO string (DynamoDB would never expire the row)', async () => {

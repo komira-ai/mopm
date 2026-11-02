@@ -45,7 +45,7 @@ const INDEX_CACHE = 'public, max-age=60';
  * file it finds. A version is committed (published) before its message is sent, so the job that handles that
  * message, and every later one, reads it. Two packages published at once into one subdir therefore both end up in
  * the final file; they cannot overwrite each other, because the two writes never overlap and the second one
- * includes the first one's package. (test/publish/indexer.test.ts plants the unserialized writer and shows the
+ * includes the first one's package. (test/publish/indexer.test.ts injects the unserialized writer and shows the
  * loss.) The alternative, a DynamoDB lease, needs expiry and fencing to survive a dead holder; the queue's
  * group lock is already managed, ordered and visible.
  *

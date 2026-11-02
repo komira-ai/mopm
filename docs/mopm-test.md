@@ -141,6 +141,12 @@ self-test (`tests/drivers/test_supervisor_test.zig`): it signals only the test p
 and skips the cleanup kill, so the self-test can show that a process left
 behind is detected. Do not use it otherwise.
 
+`--test-only-deadline-after <file>` exists for the same end-to-end test: the
+deadline of each test counts from the first poll that finds that file (which
+the test creates when it is ready, for instance once it has touched its
+memory and before it sleeps), not from the start of the process, and until
+the file exists nothing times out. Do not use it otherwise.
+
 ## Verdicts
 
 The first rule that applies:

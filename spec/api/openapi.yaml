@@ -161,9 +161,20 @@ paths:
       tags: [auth]
       summary: Exchange a CI identity token for a short-lived publish token.
       description: |
-        The token is valid for 15 minutes, may only publish, and only for the
-        one package and version named in the request. The CI identity must
-        match a trusted publisher registered for the package.
+        The token is valid for 10 minutes, may only publish (or, with `purpose: stage`, only stage), and only for the
+        package versions named in the request (one, or the `packages` list). The CI identity must
+        match a trusted publisher registered for the package: its repository
+        and owner ids, workflow file and (when the publisher names one)
+        environment, the ref it runs on (`refs/heads/main` unless the
+        publisher names another) and the event that started it (a push or a
+        manual dispatch). A CI identity token can be exchanged once; a second
+        exchange of the same token is refused as `oidc_token_invalid`.
+
+        `purpose` is optional: `publish` (the default, the token this call has always minted) or `stage`. A `stage` token
+        has the one scope `stage`: the same packages, versions, owner and life as the `publish` token of the same request,
+        but it can only prepare a group (`createGroup`, `getGroup`, `abortGroup`); `commitGroup`, `commitPublish`, `setYanked`
+        and `yankGroup` refuse it as `scope_missing`. Who may be minted either token is unchanged. Any other `purpose` is
+        `invalid_request`, before the CI identity token is spent.
       security: []
       requestBody:
         required: true
@@ -172,7 +183,7 @@ paths:
             schema: { $ref: "#/components/schemas/OidcExchangeRequest" }
       responses:
         "200":
-          description: A publish token for one package version.
+          description: A publish (or, for `purpose: stage`, a stage) token for one package version.
           headers:
             x-mopm-request-id: { $ref: "#/components/headers/RequestId" }
           content:
@@ -343,7 +354,10 @@ paths:
       description: |
         The only way to create a package. A claim with no published version
         expires after 30 days. A name that is too similar to an existing one
-        needs `confirm_similar`.
+        needs `confirm_similar`. A claim is rate limited per account and per token: 50 claims a UTC day each, unless the operator of the
+        registry has set a higher daily limit for the account; over it the claim is `rate_limited` and `Retry-After` says when the day ends.
+        An API token that has only the `stage` scope is refused (`scope_missing`): a claim makes the caller the owner, and `stage`
+        reaches nothing that changes ownership.
       security:
         - userToken: []
       parameters:
@@ -531,6 +545,13 @@ paths:
         version when it is published and served back by `getVersion`. A value
         that breaks its rule is `invalid_request`. A client that sends none gets
         a version without them, as before.
+
+        The optional `source_commit` is the git commit id the version was built
+        from (40 or 64 lowercase hex digits). It is stored once with the version,
+        returned by `getVersion` as `source_commit`, and left out for a version
+        committed without one. The registry only checks its form: it is not verified
+        against the archives or the caller, and versions are never compared or
+        ordered by it.
       security:
         - publishToken: []
       parameters:
@@ -559,6 +580,7 @@ paths:
       description: |
         `pending`, `validating` and `indexing` are in progress; `published` and
         `rejected` are final. A rejected publish burns the version number.
+        A publish that passed can still carry `warnings`.
       security:
         - publishToken: []
       parameters:
@@ -584,26 +606,45 @@ paths:
         reserves the version numbers; the caller then PUTs each file to the URL it is given. Creating a group
         publishes nothing and makes nothing visible.
 
-        The token must be an API token with the `publish` scope for every member's package, and the caller must own
+        The token must be an API token with the `publish` or `stage` scope for every member's package, and the caller must own
         each package. A CI identity token is for one version of one package and cannot create a group. The first member
         that fails any of these refuses the whole group and is named in the error. A number that a published version
-        already holds is `version_exists`; one that another group is still using is `group_conflict`.
+        already holds is `version_exists`; one that another group is still using is `group_conflict`. A
+        `group_conflict` carries a `reason` (see `Error`) that tells the causes apart without reading the message.
 
-        The id of a group is a function of the caller and the declared set: the same request again is the same group.
-        Repeating it while the group is `open` returns `200` and continues it (a reply with `reserving` has not
+        The id of a group is a function of the caller and the declared set: the same request again is the same group. The
+        derivation is a stable interface, so a client can compute the id itself and read the group with `getGroup` (a 404
+        `group_not_found` means there is no such group of the caller's). The id is `grp_` followed by the first 32 lowercase hex
+        digits of the SHA-256 of the UTF-8 bytes of the compact JSON text (no white space) of the array
+        `[actor, set]`. `actor` is `u:<GitHub account id>` for an account's token, including a CI token that acts for an
+        account, and `ci:gh-repo:<repository id>` for a configured CI publisher's own token. `set` is the array of members
+        sorted by package name, each member `[name, version, files]`, with `files` the array of the member's files sorted by
+        the text `<subdir>/<filename>`, each file `[subdir, filename, sha256, size]` (`size` a JSON integer). The order of
+        members and files in the request, `on_overlap` and every other option are not part of it. For the actor `u:1234` and
+        the one file `linux-64/mojo-alpha-1.0.0-mojo1.0.0_0.conda` (sha256 `a` repeated 64 times, size 1000) of
+        `alpha` 1.0.0, the text hashed is
+        `["u:1234",[["alpha","1.0.0",[["linux-64","mojo-alpha-1.0.0-mojo1.0.0_0.conda","aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",1000]]]]]`
+        and the id is `grp_750db8c095f4c2517cedf12a308149e5`. More vectors are in the registry's test fixtures. A change to the
+        derivation would be a new id prefix, never a different hash under `grp_`. The hosted registry derives ids this way; the
+        fake registry's ids are opaque and a client must not compute them.
+
+        Repeating the request while the group is `open` returns `200` and continues it (a reply with `reserving` has not
         reached every member yet; send the same request again), with fresh upload URLs for the files not yet in
         storage. Repeating it for a group that ended without committing (`expired`, `aborted`, `rejected`,
         `superseded`) opens it again with the next `attempt` (`201`). A group that is `validating`, `committed` or
         `visible` is returned as it is. A `failed` group has burned its numbers: `group_conflict`.
 
         A caller has a limited number of open groups. A different set that shares a version with one of the caller's
-        own open groups supersedes it; a group that is validating is never superseded. A group that is past its
+        own open groups supersedes it; a group that is validating is never superseded. With `on_overlap: refuse` it is
+        refused instead (`group_conflict`, reason `overlap_refused`) and nothing is ended. The groups a create ended are
+        listed in `superseded` of its answer. A group that is past its
         `deadline_at` is expired by the next request that meets it. A group costs its number of files from a daily
         allowance of its own, once per attempt, which is not the allowance of single publishes.
 
         Group publishing is off unless the registry has enabled it for the caller. Until then this call is answered
         `route_not_found`; reading and aborting a group that exists keep working.
       security:
+        - stageToken: []
         - publishToken: []
       requestBody:
         required: true
@@ -634,10 +675,14 @@ paths:
       summary: Status of a group.
       description: |
         The group's status, attempt and deadline, and the state of each member: `pending` (its number is not reserved
-        yet), `reserved`, `staged` or `published`. Readable by the caller who created the group and by an owner of every
+        yet), `reserved`, `staged`, `published` or `yanked`. Each member also lists its `files`: the facts the caller declared at
+        `createGroup`, and, while the group is `open`, whether each file is in storage. The read reserves and charges nothing (it only
+        expires a group past its deadline), so it is the way to see a group, whatever its status, without `createGroup` (which reopens a group that ended).
+        Needs a token with `stage` or `publish`. Readable by the caller who created the group and by an owner of every
         package in it; anyone else gets `group_not_found`. A group past its deadline that was still open is expired
         by this read.
       security:
+        - stageToken: []
         - publishToken: []
       parameters:
         - { $ref: "#/components/parameters/GroupId" }
@@ -657,8 +702,9 @@ paths:
       description: |
         Ends a group that is `open`. Its reserved version numbers are free again: another group, or a single publish,
         may take them. Repeating the call on an aborted group is a no-op and returns 200. A group in any other state
-        (`validating`, `committed`, `expired`, ...) is `group_not_open`. Allowed for the same callers as `getGroup`.
+        (`validating`, `committed`, `expired`, ...) is `group_not_open`. Allowed for the same callers as `getGroup`: a token with `stage` or `publish`.
       security:
+        - stageToken: []
         - publishToken: []
       parameters:
         - { $ref: "#/components/parameters/GroupId" }
@@ -679,8 +725,9 @@ paths:
       summary: Say that a group's files are uploaded and ask for the group to be validated and committed.
       description: |
         Asynchronous. The caller has created the group and PUT every file to the URL it was given; this call hands over what
-        the archives cannot say for themselves, one entry per member: the `manifest_sha256` of its embedded manifest and the
-        optional display fields (the same rules as `commitPublish`). Every member of the group is listed exactly once.
+        the archives cannot say for themselves, one entry per member: the optional `manifest_sha256` of its embedded manifest (checked when given, as in
+        `commitPublish`), the optional display fields (the same rules as `commitPublish`) and the optional `source_commit` (the
+        same rules, informational and unverified; it lands on that member's version only). Every member of the group is listed exactly once.
 
         The registry checks that the group is `open`, not past its `deadline_at`, that every member is reserved and that every
         file is in storage at its declared size, stores the request, moves the group to `validating` and answers 202. It then
@@ -695,6 +742,9 @@ paths:
         A group that is not open (`aborted`, `expired`, `rejected`, ...) is refused with `group_commit_refused`; create it
         again with the same request to open it again. A commit is a write: read-only mode refuses it. It is not gated by the
         switch that enables group creation, since a group that exists is finished whatever the switch says.
+
+        The token must have the `publish` scope (or, for a CI identity token, be the `publish` token of the exchange). A token with
+        only `stage` is refused as `scope_missing`, and the group stays as it was.
 
         The request is one body: it holds the display fields of every member (a readme is up to 64 KiB), so a group of many
         members with readmes can exceed what the gateway accepts.
@@ -818,7 +868,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: mopm token
-      description: "Any live token of a user: a session token or an API token."
+      description: "Any live token of a user: a session token or an API token (but a claim refuses an API token that has only the `stage` scope)."
     freshSession:
       type: http
       scheme: bearer
@@ -839,6 +889,15 @@ components:
       scheme: bearer
       bearerFormat: mopm token
       description: An API token with the `yank` scope for the package.
+    stageToken:
+      type: http
+      scheme: bearer
+      bearerFormat: mopm token
+      description: |
+        An API token with the `stage` scope for the package, or a token from the OIDC exchange with `purpose: stage`
+        for exactly this package and version. Accepted only where an operation lists it (`createGroup`, `getGroup`,
+        `abortGroup`); `publishToken` is accepted there too. No other operation takes it: a commit needs `publishToken`
+        and a yank needs `yankToken` or `publishToken`.
 
   headers:
     RequestId:
@@ -943,6 +1002,15 @@ components:
     Sha256:
       type: string
       pattern: "^[0-9a-f]{64}$"
+    SourceCommit:
+      description: |
+        A git commit id: exactly 40 (SHA-1) or 64 (SHA-256) lowercase hex digits. The publisher states it when it commits a version
+        (`commitPublish`, `commitGroup`); the registry stores it once with the version and serves it back from `getVersion`. It is
+        informational: the registry does not verify it against the archives, the repository or the caller's identity, and it never
+        compares or orders versions by it. Anything else (uppercase, another length, a non-hex character, a value that is not a
+        string) is `invalid_request`.
+      type: string
+      pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"
     Subdir:
       description: A conda subdir. New values may be added.
       type: string
@@ -1006,6 +1074,21 @@ components:
             code: { $ref: "#/components/schemas/ErrorCode" }
             message: { type: string, minLength: 1 }
             hint: { type: string }
+            reason:
+              description: |
+                Why the request was refused, for a code that lists reasons (`x-mopm-error-reasons`; today only
+                `group_conflict`). Absent for every other code and may be absent for a listed one. A client MUST treat a
+                reason it does not know like an absent one, and must not parse `message` to learn it. It never holds an id
+                or anything of another account, and it is not part of the message.
+              type: string
+              enum:
+                - number_held
+                - group_failed
+                - open_cap
+                - supersede_cap
+                - takeover_blocked
+                - number_taken
+                - overlap_refused
     ErrorCode:
       description: |
         Stable machine-readable error codes. A client MUST treat a code it does
@@ -1128,20 +1211,56 @@ components:
         required: [token, token_kind, expires_at, fresh_until, handle]
     OidcExchangeRequest:
       type: object
-      required: [jwt, name, version]
+      description: |
+        Two forms. `name` and `version`: a token for that one package version, for a package with a trusted
+        publisher. `packages`: one token for every listed package version, for a CI publisher the deployment
+        trusts by configuration (a package nobody has claimed is created, owned by the publisher). Send one form,
+        not both; a name is listed once. Either form takes the optional `purpose`.
+      required: [jwt]
+      oneOf:
+        - required: [name, version]
+        - required: [packages]
       properties:
         jwt: { type: string, minLength: 1 }
+        purpose:
+          description: What the token is for. `publish` is the default; `stage` mints a token that cannot commit or yank.
+          type: string
+          enum: [publish, stage]
         name: { $ref: "#/components/schemas/Name" }
         version: { $ref: "#/components/schemas/Version" }
+        packages:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            type: object
+            required: [name, version]
+            properties:
+              name: { $ref: "#/components/schemas/Name" }
+              version: { $ref: "#/components/schemas/Version" }
     OidcExchangeResponse:
+      description: |
+        `name` and `version` answer the single-package form, `packages` the list form. Exactly one
+        of the two, as the request is.
       type: object
-      required: [token, token_kind, expires_at, name, version]
+      required: [token, token_kind, expires_at]
+      oneOf:
+        - required: [name, version]
+        - required: [packages]
       properties:
         token: { $ref: "#/components/schemas/Token" }
-        token_kind: { type: string, enum: [publish] }
+        token_kind: { type: string, enum: [publish, stage] }
         expires_at: { $ref: "#/components/schemas/Timestamp" }
         name: { $ref: "#/components/schemas/Name" }
         version: { $ref: "#/components/schemas/Version" }
+        packages:
+          type: array
+          items:
+            type: object
+            required: [name, version]
+            properties:
+              name: { $ref: "#/components/schemas/Name" }
+              version: { $ref: "#/components/schemas/Version" }
 
     # ---- me and tokens ----------------------------------------------------
     Me:
@@ -1155,8 +1274,12 @@ components:
           items: { $ref: "#/components/schemas/Name" }
         pending_invitations: { type: integer, minimum: 0 }
     TokenScope:
+      description: |
+        `publish` creates, uploads, reads, aborts and commits groups and publishes single versions; it may also yank.
+        `yank` yanks. `stage` prepares a group (create, read, abort) and nothing else: it cannot commit a group, publish a
+        single version, yank or claim a package, and it is not enough alone where `publish` or `yank` is asked for.
       type: string
-      enum: [publish, yank]
+      enum: [publish, yank, stage]
     TokenPackages:
       description: An explicit package list, or the string `all_current`.
       oneOf:
@@ -1302,8 +1425,12 @@ components:
       properties:
         name: { $ref: "#/components/schemas/Name" }
         display_name: { type: string }
-        state: { type: string, enum: [claimed, active] }
+        state:
+          type: string
+          enum: [claimed, active]
+          description: "`claimed` until the first version is published, `active` from then on. A claim that never publishes lapses; an active package does not."
         owners:
+          description: The accounts that own the package. Empty for a package a CI publisher created and owns (it has no account owner).
           type: array
           items: { $ref: "#/components/schemas/Owner" }
         latest:
@@ -1368,9 +1495,18 @@ components:
           minItems: 1
           items: { $ref: "#/components/schemas/FileRef" }
         manifest_sha256: { $ref: "#/components/schemas/Sha256" }
-        manifest:
-          description: The embedded `<name>.mopm.json` (see spec/package-metadata.schema.json).
-          type: object
+        group_id:
+          description: |
+            The group (`createGroup`) that published this version. Absent for a version a single publish made, and for a version
+            published before the registry recorded it. It can be used with `getGroup` and `yankGroup`, which keep their own
+            ownership and scope rules: knowing it grants nothing. A version that is still `pending` is not found, whatever its group.
+          $ref: "#/components/schemas/GroupId"
+        source_commit:
+          description: |
+            The git commit the publisher said the version was built from, as sent when it was committed. Absent for a version
+            committed without one, including every version published before the registry recorded it. Informational and unverified:
+            the registry checks its form only, so it is not proof of where the files came from.
+          $ref: "#/components/schemas/SourceCommit"
         description: { type: string, maxLength: 512, description: "`[package] description` of this version's mopm.toml. Absent when not set." }
         license: { type: string, maxLength: 128, description: "`[package] license`, an SPDX expression. Absent when not set." }
         repository: { type: string, format: uri, maxLength: 2048, description: An https URL. Absent when not set. }
@@ -1416,7 +1552,7 @@ components:
         expires_at: { $ref: "#/components/schemas/Timestamp" }
     CommitPublishRequest:
       type: object
-      required: [upload_ids, manifest_sha256]
+      required: [upload_ids]
       properties:
         upload_ids:
           type: array
@@ -1424,7 +1560,21 @@ components:
           maxItems: 20
           uniqueItems: true
           items: { type: string, minLength: 1 }
-        manifest_sha256: { $ref: "#/components/schemas/Sha256" }
+        manifest_sha256:
+          description: |
+            Optional. The SHA-256 of the bytes of `lib/mojo/<name>.mopm.json` in the archives (what `mopm pack` prints). When given
+            it is checked: a value that is not 64 lowercase hex digits is `invalid_request`, and an archive whose manifest hashes
+            to something else is rejected `sha256_mismatch`. When absent, nothing is checked and the version holds the hash the
+            registry computes from the archives; then every file of the version must carry the same manifest bytes, or the publish is
+            rejected `manifest_invalid`. When given, a file whose manifest hashes to something else is `sha256_mismatch`, so at
+            most the files that carry the given manifest bytes pass.
+          $ref: "#/components/schemas/Sha256"
+        source_commit:
+          description: |
+            Optional. The git commit the version was built from (see `SourceCommit`). Stored once with the version and served by
+            `getVersion`; the registry does not verify it. Committing the same upload ids again must repeat it (or its absence): a
+            repeat that states another value is refused `version_exists`, and the stored value does not change.
+          $ref: "#/components/schemas/SourceCommit"
         description: { type: string, minLength: 1, maxLength: 512, description: "`[package] description` of this version's mopm.toml: one line, no line breaks. Stored on the version and served back by `getVersion`." }
         license: { type: string, minLength: 1, maxLength: 128, description: "`[package] license`, an SPDX expression." }
         repository: { type: string, format: uri, maxLength: 2048, description: An https URL. }
@@ -1463,6 +1613,15 @@ components:
           enum: [pending, validating, indexing, published, rejected]
         rejection_code: { $ref: "#/components/schemas/RejectionCode" }
         message: { type: string }
+        warnings:
+          description: |
+            What did not stop the publish and the publisher should read: a native dependency whose name the registry's copy of
+            conda-forge's package names does not list (a typo, or a package newer than the copy), a copy more than a day old,
+            or a copy that could not be read. Present only once the validator has found something to say, and so may first
+            appear on a `validating` or later status. Absent means nothing to report. A client prints these and goes on;
+            a client built before this field ignores it.
+          type: array
+          items: { type: string }
       if:
         properties:
           status: { const: rejected }
@@ -1501,6 +1660,16 @@ components:
           minItems: 1
           maxItems: 500
           items: { $ref: "#/components/schemas/GroupMemberRequest" }
+        on_overlap:
+          description: |
+            What to do when the caller's own open groups share a version with this set. `supersede` (the default) ends
+            them, as described under `createGroup`. `refuse` ends nothing: the call is answered `group_conflict` with the
+            reason `overlap_refused`, and the message names the caller's own overlapping group ids. It is not part of
+            the group id, so the same set with either value is the same group. A registry that predates this option
+            ignores it and supersedes, and does not name what it ended in `superseded` either, so a client that must
+            never supersede cannot rely on `refuse` against a registry it has not seen name them.
+          type: string
+          enum: [supersede, refuse]
     GroupStatusName:
       description: Where a group is. A client treats a value it does not know as "unknown".
       type: string
@@ -1549,6 +1718,13 @@ components:
           description: Starts at 1; a group that ended and was created again has the next one.
           type: integer
           minimum: 1
+        superseded:
+          description: |
+            The ids of the caller's own groups this call ended as `superseded`, as the `group_supersede` audit rows record.
+            Absent when it ended none, and on a later call that only continues the group.
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/GroupId" }
         deadline_at: { $ref: "#/components/schemas/Timestamp" }
         reserving:
           description: Present when the call ran out of time before it reached every member; `members` holds the first `done`. Send the same request again.
@@ -1562,10 +1738,15 @@ components:
           items: { $ref: "#/components/schemas/GroupMemberAnswer" }
     CommitGroupMember:
       type: object
-      required: [name, manifest_sha256]
+      required: [name]
       properties:
         name: { $ref: "#/components/schemas/Name" }
-        manifest_sha256: { $ref: "#/components/schemas/Sha256" }
+        manifest_sha256:
+          description: Optional, member by member, with the meaning it has in `CommitPublishRequest`. A repeated commit must repeat which members gave it and what they gave, or it is another request (`group_commit_refused`).
+          $ref: "#/components/schemas/Sha256"
+        source_commit:
+          description: Optional, member by member, with the meaning it has in `CommitPublishRequest`. It is stored on that member's version only, and is part of the request a repeated commit must repeat.
+          $ref: "#/components/schemas/SourceCommit"
         description: { type: string, minLength: 1, maxLength: 512, description: "As in `CommitPublishRequest`." }
         license: { type: string, minLength: 1, maxLength: 128, description: "As in `CommitPublishRequest`." }
         repository: { type: string, format: uri, maxLength: 2048, description: An https URL. }
@@ -1645,6 +1826,29 @@ components:
               state:
                 type: string
                 enum: [pending, reserved, staged, published, yanked]
+              files:
+                description: |
+                  Present on the answer of `getGroup` only (not on the answers of `abortGroup` and `yankGroup`, which omit it). The
+                  files the caller declared for this member, sorted by `subdir` and `filename`, as the member's reserved version
+                  holds them. Empty for a member that is not reserved yet, and for a member whose version number the registry no
+                  longer holds for this group (the group ended and another group or publish took the number). A group is
+                  declared with at most 500 members of at most 20 files each; the answer lists no more than the registry's current
+                  member cap.
+                type: array
+                items:
+                  type: object
+                  required: [subdir, filename, sha256, size]
+                  properties:
+                    subdir: { type: string }
+                    filename: { type: string }
+                    sha256: { $ref: "#/components/schemas/Sha256" }
+                    size: { type: integer, minimum: 1 }
+                    uploaded:
+                      description: |
+                        Present only while the group is `open`: true when the file is in storage at its declared size (the same test
+                        `createGroup` makes when it answers a repeated request). Absent for every other status, for which the
+                        registry makes no storage check.
+                      type: boolean
     YankRequest:
       type: object
       required: [yanked]
@@ -1703,3 +1907,8 @@ x-mopm-errors:
   read_only_mode:        { status: 503, message: "The registry is read-only right now; new uploads are refused.", hint: "Installs still work. Try again later." }
   unavailable:           { status: 503, message: "The registry is temporarily unavailable.", hint: "Try again shortly." }
   route_not_found:       { status: 404, message: "There is no such operation.", hint: "Check the request against the API documentation; update mopm if it is old." }
+
+# The values of `error.reason`, for the codes that list them. Additive: a new value may be added; a client treats one it
+# does not know like an absent reason. service/api/test/publish/catalogue.test.ts compares this table with the service.
+x-mopm-error-reasons:
+  group_conflict: [number_held, group_failed, open_cap, supersede_cap, takeover_blocked, number_taken, overlap_refused]

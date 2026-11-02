@@ -8,12 +8,20 @@
 //!
 //! 1. Members. Every directory below `--workspace-root` that holds a `mopm.toml` is a member (a member's own
 //!    subdirectories are not searched; hidden directories, `buck-out`, `node_modules` and `zig-out` are skipped). With
-//!    packages named, the set is those and the members they depend on, at any depth.
+//!    packages named, the set is those and the members they depend on, at any depth. A member with
+//!    `[package] publish = false` is left out when no package is named (one line says so) and refused when named; a
+//!    member that is staged may not have one in its `[dependencies]` closure (its `[dev-dependencies]` may).
 //! 2. Order. An edge is a dependency on a member: a path dependency (its `version` must be met by the member it names),
 //!    or a registry dependency whose name is a member's (its requirement must be met by that member). A dependency
 //!    comes before its dependents; a cycle is refused. Dev-dependencies are not packed and are not edges.
 //! 3. Pack. The `.mojoc` of a member for a subdir is `<artifacts>/<subdir>/<name>.mojoc`; each subdir that has one is
 //!    packed, with the path of every path dependency dropped and its version requirement kept (src/core/conda.zig).
+//!    A member with `[native.<id>]` libraries also needs, per subdir, each one's static archive at
+//!    `<artifacts>/<subdir>/<name>.native/<archive name>` (`lib<id>.a`, or the native's `soname`), packed as
+//!    `mopm pack --native` packs it; one missing is refused, and `noarch` cannot hold natives.
+//!    A member with `[targets] bins` ships each program's source (the `.mojo` file the entry names, below the member
+//!    directory) in every subdir's package, at `lib/mojo/<name>.bins/<bin>.mojo` (src/core/bins.zig); an unreadable,
+//!    empty or badly named one is refused. Nothing built is packed: the program is built where it is run.
 //!    Every file is packed twice and the two must be the same bytes; the metadata inside must hold no URL, no lock
 //!    entry and no path.
 //! 4. Registry. `GET /packages/<name>/<version>` (no token) decides each member: not there, `upload`; published with
@@ -31,6 +39,7 @@ const core = @import("mopm_core");
 const http = core.http;
 const manifest = core.manifest;
 const conda = core.conda;
+const bins_mod = core.bins;
 const registry = core.registry;
 const semver = core.semver;
 const publish_cmd = @import("publish_cmd.zig");
@@ -232,13 +241,19 @@ pub fn link(arena: Allocator, members: []Member) !?[]const u8 {
     return null;
 }
 
-/// The members to stage as indices into `members`, dependencies first (ties by name), or why not. `named` empty is all.
+/// The members to stage as indices into `members`, dependencies first (ties by name), or why not. `named` empty is all
+/// the members that may be published: one with `publish = false` is left out then, and refused when named. A member to
+/// stage may not depend (outside `[dev-dependencies]`) on one that is not published, directly or through others.
 pub fn order(arena: Allocator, members: []const Member, named: []const []const u8) !Result([]const usize) {
     var wanted = try arena.alloc(bool, members.len);
-    @memset(wanted, named.len == 0);
     var stack = std.ArrayList(usize).init(arena);
+    for (members, 0..) |m, i| {
+        wanted[i] = named.len == 0 and m.m.package.publish;
+        if (wanted[i]) try stack.append(i);
+    }
     for (named) |n| {
         const i = indexOfName(members, n) orelse return bad([]const usize, arena, "{s} is not a member of the workspace", .{n});
+        if (!members[i].m.package.publish) return bad([]const usize, arena, "{s} has publish = false in its mopm.toml, so it cannot be staged or published; remove the key to publish it", .{n});
         if (!wanted[i]) {
             wanted[i] = true;
             try stack.append(i);
@@ -246,6 +261,9 @@ pub fn order(arena: Allocator, members: []const Member, named: []const []const u
     }
     while (stack.popOrNull()) |i| {
         for (members[i].deps) |d| {
+            if (!members[d].m.package.publish) {
+                return bad([]const usize, arena, "{s} is staged for publishing but depends on {s}, which has publish = false; a published package cannot need one that is never published (a dev-dependency may)", .{ members[i].name, members[d].name });
+            }
             if (!wanted[d]) {
                 wanted[d] = true;
                 try stack.append(d);
@@ -314,13 +332,15 @@ pub fn metadataProblem(arena: Allocator, in: conda.Input, paths: []const []const
     return null;
 }
 
+/// The directory of a member's native archives beside its `.mojoc`: `<artifacts>/<subdir>/<name>.native/<archive name>`,
+/// where the archive name is `lib<id>.a` (or the `soname` of the `[native.<id>]`).
+pub const native_dir_suffix = ".native";
+
 /// Packs `m` from the artifacts, or the reason it cannot be.
 pub fn packMember(arena: Allocator, members: []const Member, m: Member, artifacts: []const u8, compiler: []const u8) !Result(Staged) {
     const T = Staged;
     if (try publish_cmd.versionProblem(arena, m.version)) |p| return bad(T, arena, "{s}: {s}", .{ m.name, p });
     if (!conda.validCompiler(compiler)) return bad(T, arena, "--compiler {s}: an exact Mojo version is digits and dots, such as 1.0.0", .{compiler});
-    if (m.m.native.len > 0) return bad(T, arena, "{s} declares native libraries, which stage does not pack; publish it with 'mopm publish'", .{m.name});
-
     var path_versions = std.ArrayList(conda.PathVersion).init(arena);
     var paths = std.ArrayList([]const u8).init(arena);
     for (m.m.dependencies) |d| {
@@ -336,6 +356,8 @@ pub fn packMember(arena: Allocator, members: []const Member, m: Member, artifact
     var why: []const u8 = "";
     const deps = conda.depsOf(arena, m.m, path_versions.items, &why) catch |e| return if (e == error.Unpackable) try bad(T, arena, "{s}: {s}", .{ m.name, why }) else error.OutOfMemory;
     const native_deps = conda.nativeDepsOf(arena, m.m, &why) catch |e| return if (e == error.Unpackable) try bad(T, arena, "{s}: {s}", .{ m.name, why }) else error.OutOfMemory;
+    // The programs of `[targets] bins`, as source: the same files in every subdir's package.
+    const bins = bins_mod.read(arena, m.m, m.dir, &why) catch |e| return if (e == error.Unpackable) try bad(T, arena, "{s}: {s}", .{ m.name, why }) else error.OutOfMemory;
     // The packed dependencies on members are the edges, no more and no fewer.
     for (deps) |d| {
         const is_member = indexOfName(members, d.name) != null;
@@ -352,7 +374,25 @@ pub fn packMember(arena: Allocator, members: []const Member, m: Member, artifact
             else => return bad(T, arena, "{s}: {s}", .{ file, @errorName(e) }),
         };
         if (bytes.len == 0) return bad(T, arena, "{s} is empty", .{file});
-        const in = conda.Input{ .name = m.name, .version = m.version, .compiler = compiler, .subdir = subdir, .deps = deps, .native_deps = native_deps, .mojoc = bytes };
+        // The static archives of the member's `[native.<id>]`, as `mopm pack --native` would be given them.
+        var natives = std.ArrayList(conda.Native).init(arena);
+        if (m.m.native.len > 0) {
+            if (std.mem.eql(u8, subdir, "noarch")) {
+                return bad(T, arena, "{s} declares native libraries, which are built for one platform; its artifact must be under linux-64 (or another subdir), not noarch ({s})", .{ m.name, file });
+            }
+            for (m.m.native) |n| {
+                const archive_name = try n.archiveName(arena);
+                const nfile = try std.fmt.allocPrint(arena, "{s}/{s}/{s}{s}/{s}", .{ artifacts, subdir, m.name, native_dir_suffix, archive_name });
+                const nbytes = std.fs.cwd().readFileAlloc(arena, nfile, 1 << 30) catch |e| switch (e) {
+                    error.FileNotFound => return bad(T, arena, "{s}: native library '{s}' has no archive for {s}: expected {s}", .{ m.name, n.id, subdir, nfile }),
+                    else => return bad(T, arena, "{s}: {s}: {s}", .{ m.name, nfile, @errorName(e) }),
+                };
+                const native = conda.Native{ .id = n.id, .soname = archive_name, .needs = n.needs, .exclusive = n.exclusive, .link = n.link, .archive = nbytes };
+                if (try conda.nativeProblem(arena, native)) |why_not| return bad(T, arena, "{s}: {s}: {s}", .{ m.name, nfile, why_not });
+                try natives.append(native);
+            }
+        }
+        const in = conda.Input{ .name = m.name, .version = m.version, .compiler = compiler, .subdir = subdir, .deps = deps, .native_deps = native_deps, .mojoc = bytes, .natives = natives.items, .bins = bins };
         const p = conda.pack(arena, in) catch |e| return bad(T, arena, "{s}: cannot pack {s}: {s}", .{ m.name, file, @errorName(e) });
         const again = conda.pack(arena, in) catch |e| return bad(T, arena, "{s}: cannot pack {s}: {s}", .{ m.name, file, @errorName(e) });
         if (!std.mem.eql(u8, p.bytes, again.bytes)) return bad(T, arena, "{s}: packing {s} twice gave different bytes", .{ m.name, file });
@@ -479,6 +519,11 @@ pub fn run(r: Run) !u8 {
     if (try link(arena, members)) |why| {
         c.fail("{s}\n", .{why});
         return 1;
+    }
+    if (r.flags.packages.len == 0) {
+        for (members) |m| {
+            if (!m.m.package.publish) c.say("not staged {s} {s}: publish = false\n", .{ m.name, m.version });
+        }
     }
     const sequence = switch (try order(arena, members, r.flags.packages)) {
         .ok => |s| s,

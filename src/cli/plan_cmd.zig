@@ -24,7 +24,7 @@ pub const exit_stale: u8 = 3;
 pub const exit_refused: u8 = 4;
 
 pub const usage =
-    \\usage: mopm plan --unit-graph --locked [--mojo <version>] [--subdir <linux-64>] [--workspace-root <dir>] [-o <file>]
+    \\usage: mopm plan --unit-graph --locked [--mojo <version>] [--subdir <linux-64|linux-aarch64|osx-arm64>] [--workspace-root <dir>] [-o <file>]
     \\
     \\  print the unit graph (spec/unit-graph.md) of the project in this directory,
     \\  for one consumer Mojo version: --mojo, or the only one mopm.toml lists;

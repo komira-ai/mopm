@@ -24,6 +24,7 @@ pub fn rec(name: &str, version: &str) -> VersionRecord {
         requires_mojo: "==1.0.0".to_string(),
         deps: vec![],
         native: vec![],
+        native_depends: vec![],
         files: vec![FileRef {
             subdir: "linux-64".to_string(),
             filename: format!("mojo-{name}-{version}-{build}.conda"),

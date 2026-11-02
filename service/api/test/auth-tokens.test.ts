@@ -251,6 +251,22 @@ describe('the four security schemes', () => {
     expect(() => auth.publishToken(sess, 'alpha', '1.0.0')).toThrow(expect.objectContaining({ code: 'scope_missing' }));
   });
 
+  test('stage: a token can be made with it, and stageToken accepts stage or publish for the package while publishToken and yankToken ignore it', async () => {
+    const s = await principals();
+    const made = await s.tokens.create(ALICE, { name: 's', scopes: ['stage'], packages: ['alpha'], expires_in_days: 1 });
+    expect(made.scopes).toEqual(['stage']);
+    expect((await s.tokens.list(ALICE)).find((t) => t.id === made.id)?.scopes).toEqual(['stage']);
+    const stage = await s.P(made.token);
+    const { auth, api, yank, sess } = s;
+    expect(() => auth.stageToken(stage, 'alpha', '1.0.0')).not.toThrow();
+    expect(() => auth.stageToken(api, 'alpha', '1.0.0')).not.toThrow();
+    expect(() => auth.stageToken(stage, 'beta', '1.0.0')).toThrow(expect.objectContaining({ code: 'scope_missing', detail: { scope: 'publish', name: 'beta' } }));
+    expect(() => auth.stageToken(yank, 'alpha', '1.0.0')).toThrow(expect.objectContaining({ code: 'scope_missing' }));
+    expect(() => auth.stageToken(sess, 'alpha', '1.0.0')).toThrow(expect.objectContaining({ code: 'scope_missing' }));
+    expect(() => auth.publishToken(stage, 'alpha', '1.0.0')).toThrow(expect.objectContaining({ code: 'scope_missing' }));
+    expect(() => auth.yankToken(stage, 'alpha')).toThrow(expect.objectContaining({ code: 'scope_missing' }));
+  });
+
   test('yankToken: yank or publish for the package; nothing else', async () => {
     const { auth, api, yank, sess } = await principals();
     expect(() => auth.yankToken(yank, 'alpha')).not.toThrow();

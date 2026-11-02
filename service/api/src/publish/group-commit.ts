@@ -6,11 +6,12 @@ import type { Store } from '../store';
 import type { AuditEntry, VersionRecord } from '../types';
 import type { PublishConfig } from './config';
 import { parseDisplay } from './display';
+import { parseSourceCommit } from './source-commit';
 import { groupCommitRefused, invalidRequest, PublishError, uploadInvalid } from './errors';
 import { quarantineKeyFor, uploadIdFor } from './group-keys';
 import { ENDED_TAIL_SECONDS, groupAudit, pastDeadline } from './group-lifecycle';
 import type { ObjectStore, Queue } from './ports';
-import { actorOf } from './service';
+import { actorOf, detailVia } from './service';
 import type { ValidateGroupMessage } from './types';
 
 /**
@@ -47,9 +48,10 @@ export function parseGroupCommit(members: GroupMembers, body: unknown): { inputs
     const { name, manifest_sha256 } = m;
     if (typeof name !== 'string') throw invalidRequest("a member needs a 'name'");
     if (byName.has(name)) throw invalidRequest(`'${name}' appears twice`);
-    if (typeof manifest_sha256 !== 'string' || !SHA256.test(manifest_sha256)) throw invalidRequest(`'manifest_sha256' of '${name}' is 64 lowercase hex digits`);
+    if (manifest_sha256 !== undefined && (typeof manifest_sha256 !== 'string' || !SHA256.test(manifest_sha256))) throw invalidRequest(`'manifest_sha256' of '${name}' is 64 lowercase hex digits`);
     const display = parseDisplay(m);
-    byName.set(name, { name, manifest_sha256, ...(Object.keys(display).length > 0 ? { display } : {}) });
+    const source_commit = parseSourceCommit(m, ` of '${name}'`);
+    byName.set(name, { name, ...(manifest_sha256 !== undefined ? { manifest_sha256 } : {}), ...(Object.keys(display).length > 0 ? { display } : {}), ...(source_commit !== undefined ? { source_commit } : {}) });
   }
   const inputs: CommitInput[] = [];
   for (const m of members.members) {
@@ -120,7 +122,7 @@ export class GroupCommitter {
     await reg.putCommitInputs(id, hash, inputs, Math.floor(Date.parse(header.deadline_at) / 1000) + ENDED_TAIL_SECONDS);
 
     const at = now.toISOString();
-    const audit: AuditEntry = groupAudit(id, `a_${id}_commitreq_${header.attempt}`, 'group_commit_request', at, actorOf(p));
+    const audit: AuditEntry = groupAudit(id, `a_${id}_commitreq_${header.attempt}`, 'group_commit_request', at, actorOf(p), detailVia(p));
     // Compare-and-set on the header: only a group that is still open, and not past its deadline, begins validating.
     const after = await reg.updateGroup(
       id,

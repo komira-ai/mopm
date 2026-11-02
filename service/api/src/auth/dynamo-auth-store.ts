@@ -255,6 +255,28 @@ export class DynamoAuthStore implements AuthStore {
     return out;
   }
 
+  /**
+   * A conditional PutItem into the tokens table under a key no token hash can have (`jti#` plus a digest; a token's hash
+   * is 64 hex characters). The row has no github_id, so it is not in the by-account index. TTL (`expires_at`, seconds)
+   * removes it later; until then it still blocks the key, which is what a replay check wants.
+   */
+  async claimOnce(key: string, expires_at: string): Promise<boolean> {
+    try {
+      await this.doc.send(
+        new PutCommand({
+          TableName: this.tables.tokens,
+          Item: { token_hash: key, expires_at: epochSeconds(expires_at) },
+          ConditionExpression: 'attribute_not_exists(#h)',
+          ExpressionAttributeNames: { '#h': 'token_hash' },
+        }),
+      );
+      return true;
+    } catch (err) {
+      if (conditionFailed(err)) return false;
+      throw err;
+    }
+  }
+
   async removeTrustedPublisher(name: string, id: string): Promise<void> {
     await this.doc.send(new DeleteCommand({ TableName: this.tables.trusted_publishers, Key: { name, publisher: id } }));
   }

@@ -41,7 +41,9 @@ const m = require(require('path').join(process.env.ASSET_DIR, process.env.MODULE
 if (typeof m[process.env.EXPORT_NAME] !== 'function') throw new Error(process.env.MODULE_FILE + ' does not export a function ' + process.env.EXPORT_NAME);
 `;
 
-jest.setTimeout(120_000);
+// No time budget anywhere in this file: every step is synchronous (synthesis, `execFileSync`), so a wall-clock limit
+// could only fail the test on a slow machine and never catch a defect. Whether a module loads is decided by Node's
+// exit status and stderr alone.
 
 let scratch: string;
 let stubFile: string;
@@ -60,7 +62,6 @@ function loadFrom(assetDir: string, moduleFile: string, exportName: string): voi
       cwd,
       env: { ASSET_DIR: assetDir, MODULE_FILE: moduleFile, EXPORT_NAME: exportName },
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 60_000,
     });
   } catch (e: any) {
     throw new Error(`${moduleFile} does not load from ${assetDir}:\n${String(e.stderr ?? e.message).split('\n').slice(0, 8).join('\n')}`);
@@ -124,7 +125,7 @@ describe('the deployed Lambda assets', () => {
     loadFrom(dir, 'ok.js', 'handler');
   });
 
-  test('the six functions are the API, the index reader, the validator, the index writer, the group validator and the group sweeper', () => {
+  test('the seven functions are the API, the index reader, the validator, the index writer, the group validator, the group sweeper and the name mirror job', () => {
     expect(
       deployedFunctions()
         .map((f) => f.handler)
@@ -134,6 +135,7 @@ describe('the deployed Lambda assets', () => {
       'http/lambda.handler',
       'publish/group-validator-lambda.handler',
       'publish/indexer-lambda.handler',
+      'publish/native-mirror-lambda.handler',
       'publish/sweeper-lambda.handler',
       'publish/validator-lambda.handler',
     ]);
@@ -145,6 +147,7 @@ describe('the deployed Lambda assets', () => {
     'publish/validator-lambda.handler',
     'publish/indexer-lambda.handler',
     'publish/group-validator-lambda.handler',
+    'publish/native-mirror-lambda.handler',
     'publish/sweeper-lambda.handler',
   ])(
     '%s loads from the asset CDK uploads, with no node_modules in reach',

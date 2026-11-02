@@ -118,8 +118,29 @@ pub fn main(arena: Allocator, args: []const []const u8) u8 {
 
 /// Why a graph of format `format` cannot be read, or null when this mopm reads it.
 pub fn formatProblem(arena: Allocator, path: []const u8, format: u32) Allocator.Error!?[]const u8 {
-    if (format == core.unit_graph.format_version) return null;
-    return try std.fmt.allocPrint(arena, "{s} is unit graph format {d}; this mopm reads {d}", .{ path, format, core.unit_graph.format_version });
+    const g = core.unit_graph;
+    if (format == g.format_version or format == g.format_loads or format == g.format_provided or format == g.format_link) return null;
+    return try std.fmt.allocPrint(arena, "{s} is unit graph format {d}; this mopm reads {d}, {d}, {d} and {d}", .{ path, format, g.format_version, g.format_loads, g.format_provided, g.format_link });
+}
+
+/// Why a graph file cannot be used, or null: a unit's `link` names a system library outside `native_link.allowed`, or
+/// names one twice. `mopm unit` turns each name into `-l<name>` on a linker command line, so a graph file is held to the
+/// list that `mopm.toml`, the metadata and the lock are held to.
+pub fn linkProblem(arena: Allocator, path: []const u8, g: core.unit_graph.Graph) Allocator.Error!?[]const u8 {
+    for (g.units) |u| {
+        if (try core.native_link.problem(arena, u.link)) |why| {
+            return try std.fmt.allocPrint(arena, "{s}: unit {s}: link: {s}", .{ path, u.id, why });
+        }
+    }
+    return null;
+}
+
+/// Why `mopm unit test` cannot run `u`, or null: a unit with `loads` needs the system libraries of the graph on the
+/// loader path, which this command does not provide, so it would run against the machine's libraries.
+pub fn testLoadsProblem(arena: Allocator, u: core.unit_graph.Unit) Allocator.Error!?[]const u8 {
+    if (u.loads.len == 0) return null;
+    const list = try std.mem.join(arena, ", ", u.loads);
+    return try std.fmt.allocPrint(arena, "{s} loads system libraries ({s}); mopm unit test does not put them on the loader path, so the test would run against the machine's libraries", .{ u.id, list });
 }
 
 fn run(arena: Allocator, a: Args, cpu: ?[]const u8) !u8 {
@@ -131,7 +152,7 @@ fn run(arena: Allocator, a: Args, cpu: ?[]const u8) !u8 {
         say("{s} is not a unit graph: {s}\n", .{ a.graph, @errorName(e) });
         return 1;
     };
-    if (try formatProblem(arena, a.graph, g.unit_graph)) |why| {
+    if (try formatProblem(arena, a.graph, g.unit_graph) orelse try linkProblem(arena, a.graph, g)) |why| {
         say("{s}\n", .{why});
         return 1;
     }
@@ -139,6 +160,12 @@ fn run(arena: Allocator, a: Args, cpu: ?[]const u8) !u8 {
         std.io.getStdErr().writer().print("error: {s} has no unit {s}\n", .{ a.graph, a.unit }) catch {};
         return exit_refused;
     };
+    if (a.verb == .@"test") {
+        if (try testLoadsProblem(arena, g.units[idx])) |why| {
+            std.io.getStdErr().writer().print("error: {s}\n", .{why}) catch {};
+            return exit_refused;
+        }
+    }
     const dirs = core.unit_run.Dirs{
         .src = a.src,
         .deps = a.deps,
@@ -208,8 +235,17 @@ test "a unit graph of another format is refused with its message; this format is
     defer st.deinit();
     const a = st.allocator();
     try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_version)) == null);
-    try std.testing.expectEqualStrings("g.json is unit graph format 1; this mopm reads 2", (try formatProblem(a, "g.json", 1)).?);
-    try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_version + 1)) != null);
+    try std.testing.expectEqualStrings("g.json is unit graph format 1; this mopm reads 2, 3, 4 and 5", (try formatProblem(a, "g.json", 1)).?);
+    try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_loads)) == null);
+    try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_provided)) == null);
+    try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_link)) == null);
+    try std.testing.expect((try formatProblem(a, "g.json", core.unit_graph.format_link + 1)) != null);
+
+    var with_loads = core.unit_graph.Unit{ .id = "p@1.0.0#mojo1.0.0/test:tests/test_p.mojo", .package = "p", .version = "1.0.0", .kind = "test" };
+    try std.testing.expect((try testLoadsProblem(a, with_loads)) == null);
+    with_loads.loads = &.{ "libbrotlicommon", "libbrotlidec" };
+    const refused = (try testLoadsProblem(a, with_loads)).?;
+    try std.testing.expect(std.mem.indexOf(u8, refused, "loads system libraries (libbrotlicommon, libbrotlidec)") != null);
 
     // `run` stops at a format 1 graph (exit 1) before it looks for the unit, and goes on with a format 2 one (the unit is unknown: exit 4).
     var tmp = std.testing.tmpDir(.{});
@@ -267,4 +303,44 @@ test "--target-cpu: a known level resolves, none resolves to none, anything else
     const arm = base ++ [_][]const u8{ "--target-cpu", "armv8.2-a" };
     try std.testing.expectError(error.Usage, cpuOf(a, parseArgs(&arm).?, &why));
     try std.testing.expect(std.mem.indexOf(u8, why, "no verified Mojo spelling") != null);
+}
+
+// Defect it catches: `mopm unit test` running a test that loads system libraries against the machine's own libraries (the graph's
+// libraries are not on the loader path), or `mopm unit build` refusing the same unit.
+test "unit test refuses a unit that loads system libraries, before it looks at the toolchain; unit build does not" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    const loading_unit =
+        \\{"id": "p@1.0.0#mojo1.0.0/test:tests/test_p.mojo", "package": "p", "version": "1.0.0", "kind": "test", "root": "src/p", "deps": [], "natives": [], "outputs": [], "loads": ["libbrotlicommon"]}
+    ;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile("loads.json", try std.mem.replaceOwned(u8, a, try std.mem.replaceOwned(u8, a, empty_graph, "@U@", loading_unit), "@F@", "3"));
+    try tmp.dir.makePath("tc");
+    try tmp.dir.writeFile("tc/CLOSURE_SHA256", "c\n");
+    try tmp.dir.writeFile("tc/mojo_compile", "not executable\n");
+    const root = try tmp.dir.realpathAlloc(a, ".");
+    var args = Args{ .verb = .@"test", .unit = "p@1.0.0#mojo1.0.0/test:tests/test_p.mojo", .graph = try std.fs.path.join(a, &.{ root, "loads.json" }), .out = try std.fs.path.join(a, &.{ root, "out" }), .toolchain = try std.fs.path.join(a, &.{ root, "tc" }) };
+    // The toolchain is complete, so only the loads refuse the test.
+    try std.testing.expectEqual(exit_refused, try run(a, args, null));
+    // The same unit as a build is not refused for its loads: the run goes on to the wrapper, which here cannot be executed.
+    args.verb = .build;
+    if (run(a, args, null)) |_| {
+        return error.TestUnexpectedResult;
+    } else |e| try std.testing.expect(e != error.Refused);
+}
+
+// Defect it catches: `mopm unit` putting any string from a graph file after -Xlinker as -l<string>.
+test "a graph file whose link has a name outside the list, or a repeated name, is refused" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var units = [_]core.unit_graph.Unit{.{ .id = "p@1.0.0#mojo1.0.0/lib", .package = "p", .version = "1.0.0", .kind = "lib", .link = &.{ "c++", "m" } }};
+    const g = core.unit_graph.Graph{ .package = "p@1.0.0", .mojo = "1.0.0", .toolchain = undefined, .units = &units };
+    try std.testing.expect((try linkProblem(a, "g.json", g)) == null);
+    units[0].link = &.{ "c++", "-Wl,-z,execstack" };
+    try std.testing.expectEqualStrings("g.json: unit p@1.0.0#mojo1.0.0/lib: link: '-Wl,-z,execstack' is not a system library a native may link; the allowed ones are c++, dl, m and pthread", (try linkProblem(a, "g.json", g)).?);
+    units[0].link = &.{ "m", "m" };
+    try std.testing.expect(std.mem.indexOf(u8, (try linkProblem(a, "g.json", g)).?, "'m' is named twice") != null);
 }

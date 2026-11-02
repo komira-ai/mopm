@@ -14,7 +14,7 @@ verifying, and no beta. The tiers:
 
 | tier | what | when |
 |---|---|---|
-| unit (each library) | `ci.yml` `test` (`zig build test`) and `registry-build`; `service-ci.yml` (typecheck and tests of the API, site, stacks, DNS and access packages, and the CDK synth with dummy values); `farm.yml` (on the test farm, the tests are welded into the targets: a pull request builds every target except the beta ones that run against the real Mojo, `//:autolink`, `//:discovery`, `//:flaky`, `//:install_e2e`, `//:mojo_probe`, `//:native_static`, `//:native_workspace_mojo`, `//:supervisor` and `//:user_beta`; a push to main builds `//...`) | every pull request, and a push to main |
+| unit (each library) | `ci.yml` `test` (`zig build test`) and `registry-build`; `service-ci.yml` (typecheck and tests of the API, site, stacks, DNS and access packages, and the CDK synth with dummy values); `farm.yml` (on the test farm, the tests are welded into the targets: a pull request builds every target except the beta ones that run against the real Mojo, `//:autolink`, `//:build_targets_mojo`, `//:discovery`, `//:flaky`, `//:install_e2e`, `//:mojo_probe`, `//:native_static`, `//:native_workspace_mojo`, `//:supervisor` and `//:user_beta`; a push to main builds `//...`) | every pull request, and a push to main |
 | lint | `lint.yml`: hygiene, workflow lint, lint self-test, **the release lint of `release.yml`** (so a broken `release.yml` still fails a pull request) and actionlint | every pull request, and a push to main |
 | pin check | `pin-verify.yml`: every pin table it covers (`site/` and `service/api/`) is what its `package-lock.json` calls for; secretless, no condition, so it always reports (`autopin-compute.yml` runs only for Dependabot's own pull requests; see "The Dependabot pin update") | every pull request |
 | beta (each component) | `ci.yml` `mojo-e2e`, `pack-conformance` and `installer`; then `release-beta-user.yml`, the candidate used as a user | after the merge only: `release.yml` stage `beta` (the whole of `ci.yml`) and stage `beta-user` |
@@ -31,10 +31,10 @@ No job of this repository measures coverage today, so none is reported. `tests/d
 | stage | needs | what it does |
 |---|---|---|
 | `beta` | | the whole of `ci.yml` on the pushed commit: the unit tier a pull request runs (unit and golden tests, the CLI and fake registry build), then the beta tier that never runs on a pull request (the CLI against the real Mojo, the packer against the registry validator, `install.sh` against a fake release), on Linux and macOS. |
-| `lint` | | the whole of `lint.yml` (hygiene, workflow lint, the release lint with its planted mutants). |
+| `lint` | | the whole of `lint.yml` (hygiene, workflow lint, the release lint with its faulty variants). |
 | `plan` | `beta`, `lint` | the version this commit's release will have (`cut_release plan --sha`). Writes nothing. Refuses a commit that a newer release supersedes (below) and a `VERSION` base below an existing tag. Gamma and bake time are a slot for later stages between `lint` and `plan`. |
 | `build` | `plan` | the three binaries (`linux-x86_64`, `linux-aarch64`, `macos-arm64`) at that version, each reporting exactly it, and a `.deb` (`amd64`, `arm64`) for each linux binary, packaged by `tools/channels deb-package` from the binary inside the tarball just made (metadata in `packaging/deb/`). **These are the release files.** They are built once, before the tag, from the commit that is tagged later, and are not rebuilt. |
-| `beta-user` | `plan`, `build` | the candidate tested as a user (below), on linux x86_64, linux arm64 and macOS 14 (arm64). A red leg on any platform stops the release. |
+| `beta-user` | `plan`, `build` | the candidate tested as a user (below), on linux x86_64, linux arm64 and macOS 15 (arm64). A red leg on any platform stops the release. |
 | `attest` | `plan`, `build`, `beta-user` | refuses unless each tarball is the exact file the user beta passed (`release tested`), also refuses unless each `.deb` is, byte for byte, the one that its tarball's binary makes, then writes `SHA256SUMS` for the three tarballs and the two `.deb`s, a keyless cosign signature (Sigstore) of each of the six files, and build provenance (a signed attestation) for all six. Runs only on `main` (`if: github.ref == 'refs/heads/main'`), so a manual run from another branch signs and attests nothing; `verify` and the rest are skipped with it. Uploads the artifact `signed-assets`. |
 | `verify` | `plan`, `build`, `attest` | read-only, before any tag exists: exactly the twelve files (the six and the `<file>.sigstore.json` bundle of each: three tarballs, two `.deb`s, `SHA256SUMS`), `SHA256SUMS` matches, each `.deb` rebuilt from its tarball's binary and equal byte for byte, every attestation and every signature accepted and pinned to `release.yml`, the ref, the commit, the trigger (the event of this run: `push` for a release, `workflow_dispatch` for a dry run) and the repository, the tarball layout, the commit on main. Uploads the release notes and the pin (the `linux-x86_64` url, sha256 and size) as the artifact `notes-pin`. A dry run writes no `verified.sha256`, which `publish` requires. |
 | `tag` | `plan`, `build`, `beta-user`, `verify` | creates the annotated tag `v<version>` at the pushed commit, only after the files verified, so a failing attest, signature or verify leaves no orphan tag. The only write before the release. Refuses a superseded commit, and refuses unless the version it would take is the planned one (`--expect-version`), so the tested bytes are the released bytes. The tag ruleset admits only the GitHub App `komira-release-bot` to create `v*` tags, so the job mints that App's token for this repository alone (`repositories: mopm`, `permission-contents: write`, see "The tag token" below) and gives it to the tag step only; the job's own `GITHUB_TOKEN` holds `contents: read`. |
@@ -42,6 +42,8 @@ No job of this repository measures coverage today, so none is reported. `tests/d
 | `tap` | `tag`, `publish`, `verify` | renders `Formula/mopm.rb` from the verified `SHA256SUMS` and opens the pull request in komira-ai/homebrew-tap that adds it, with auto-merge when the tap allows it (below). Writes outside this repository; nothing needs it. |
 | `bump` | `tag`, `publish` | opens the pull request in komira-internal that moves its `mopm` submodule to this release, with auto-merge (below). The last stage with `tap`, the two that write outside this repository; nothing needs either. |
 | `apt-deploy-read`, `apt-index`, `apt-deploy-write` (up to three attempts) | `publish` | puts the two `.deb`s into the shared apt repository (below). Three jobs per attempt so that no job holds both the signing key and the cloud role. Until the repository owner has made the settings, every one of them ends green with a notice and writes nothing. Nothing needs them: a red apt job goes red alone and un-releases nothing. |
+
+**The minimum macOS.** The `macos-arm64` binary is built on a `macos-15` runner for the Zig target `aarch64-macos.11.7.1` (`release-build.yml`), so it runs on every macOS the release has run on: 11.7.1 is what the Zig 0.12.0 default for `aarch64-macos` is, and a target written without a version would be that default and not the runner's own version. The `build` stage then reads the binary of the tarball with `tools/macho_minos.zig` (the `minos` of its `LC_BUILD_VERSION`, what `otool -l` prints) and fails when it is above 11.7.1; `ci.yml` does the same on the macOS leg of `registry-build` for a build made for that target. A build made natively on the runner, with no target, takes the runner's version (15.x), which is why the pinned target is spelled out. `release_lint.zig` holds the target, the limit and the step together (`macos_min`).
 
 **The retry of `cosign verify-blob`.** `verify` calls `cosign verify-blob` once per file. When cosign cannot fetch the Sigstore trusted root (the
 TUF repository), the call is tried up to 3 times, waiting 2 s and then 4 s between the tries. Only the final line of cosign's error output decides:
@@ -57,7 +59,7 @@ only `publish` holds `contents: write` through the job token here; `tag`, `tap`,
 only `attest` holds `id-token` and `attestations` write. `tests/drivers/release_lint.zig` holds the workflow to
 that, to the order of the stages, to the data flow between them (the built and tested version is the planned
 version, the tagged version and the released version; `publish` releases the verified files) and to the path filter;
-`release_lint_test.zig` plants a defect for each rule and requires it to go red. The same file holds
+`release_lint_test.zig` injects a defect for each rule and requires it to go red. The same file holds
 `release-beta-user.yml`: exactly the three platform legs, none skippable, optional or allowed to fail.
 
 Pushes share the concurrency group `release-push` (one run at a time, none cancelled). GitHub keeps one pending run
@@ -234,12 +236,17 @@ walks the verbs against a fake registry (`registry/fake`) that it starts, assert
 status:
 
 1. create: `new --lib`, `new --bin`, `init`, `metadata`;
-2. test: `test --list`, `test`, and a planted failing test that must turn `test` red;
+2. test: `test --list`, `test`, and a faulty failing test that must turn `test` red;
 3. account: `login` (device flow approved on the fake), `whoami`;
 4. publish to the test registry: `pack`, `publish --dry-run`, `publish`; the registry serves the version, the
    sparse index and the channel with the packed sha256; publishing the same version again is refused;
 5. dependencies: `add`, `tree`, `lock`, `update`, `sync` (download, sha256 check, pixi installs the published package);
 6. `build` and `run` a program and the one that imports the package just published; `test` again;
+   native package (`tests/drivers/user_native.zig`): the member `tests/e2e/natws/shimlib`, which has its own C static library, is compiled with
+   the pinned zig, staged and published into the fake registry (`stage`, `publish --staged`); a new package adds it, syncs it and
+   runs `mopm build` (no file), and the program prints the value the C code computes (42 on Linux, 43 on macOS). The Linux
+   arm64 leg skips this step behind the one constant `linux_arm64_native_enabled` in that file, prints
+   `skipped: waiting on linux-arm64 hardware` and counts it as a skip, not a pass, until Linux arm64 build hardware exists;
 7. `remove`, `logout`;
 8. the documented install path: `site/static/install.sh` with `MOPM_RELEASES_URL` at a directory laid out like a
    GitHub release holding the candidate, then the installed `mopm --version` must equal the candidate version and
@@ -251,6 +258,8 @@ with golden tests).
 
 On the build farm `//:user_beta` runs the same driver without pixi and without the installer (the farm has neither);
 those steps print `SKIP`, they are never counted as passed.
+`//:user_native` runs the native step on every pull request with a stand-in compiler and pixi: the switch, the skip line, the output
+check, and the stage, publish, add, sync, build and run wiring.
 
 ## A superseded commit (the re-run hazard)
 
@@ -367,7 +376,7 @@ files (`BUILDRULES_VERSION` and `BUILDRULES_SHA256`), never built from a pull re
 main; `tests/drivers/autopin_lint.zig` fails when they differ. The directories the tool may write are the `--set` arguments, the same
 in all four invocations; `//:hygiene` fails a package with a `package-lock.json` that has no `--set` and is not in its list of packages left to a person.
 `tests/drivers/autopin_lint.zig` (`//:autopin_workflows`, run by `lint.yml`) holds the gates, the scope of every token, the order of
-the steps in `autopin-commit.yml` and the artifact's name, with a planted mutant per rule, and for every workflow: `workflow_run`
+the steps in `autopin-commit.yml` and the artifact's name, with a faulty variant per rule, and for every workflow: `workflow_run`
 in `autopin-commit.yml` alone, `push` only for `main` or tags, what a pull request can reach (no environment, no secret, one
 farm id-token that skips a Dependabot branch), the files the lints can read, and that no workflow merges or approves a Dependabot pull request.
 

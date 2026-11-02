@@ -226,6 +226,17 @@ zig_test(  # buck-only: mopm publish --staged and mopm yank --group against the 
     **_TOOLS
 )
 
+zig_test(  # buck-only: mopm publish --oidc against the fake registry and a stand-in for GitHub's identity-token endpoint
+    name = "oidc_publish",
+    src = "tests/drivers/oidc_publish_test.zig",
+    imports = ["tests/drivers/harness.zig"],
+    env_tools = {
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+    },
+    **_TOOLS
+)
+
 zig_test(  # buck-only: mopm stage against the fake registry, and publish --staged on what it writes
     name = "stage",
     src = "tests/drivers/stage_test.zig",
@@ -272,7 +283,7 @@ zig_exe(  # buck-only: a `git` whose answers are files, for :bump_internal and :
     **_TOOLS
 )
 
-zig_test(  # buck-only: cut_release against the fake gh, with planted defects it must refuse
+zig_test(  # buck-only: cut_release against the fake gh, with known defects it must refuse
     name = "cut_release",
     src = "tests/drivers/cut_release_test.zig",
     imports = ["tests/drivers/harness.zig"] + glob(["packaging/deb/*"]),
@@ -286,7 +297,7 @@ zig_test(  # buck-only: cut_release against the fake gh, with planted defects it
     **_TOOLS
 )
 
-zig_test(  # buck-only: cut_release bump-internal against the fake gh and the fake git, with planted defects it must refuse
+zig_test(  # buck-only: cut_release bump-internal against the fake gh and the fake git, with known defects it must refuse
     name = "bump_internal",
     src = "tests/drivers/bump_internal_test.zig",
     imports = ["tests/drivers/harness.zig"],
@@ -298,7 +309,7 @@ zig_test(  # buck-only: cut_release bump-internal against the fake gh and the fa
     **_TOOLS
 )
 
-zig_test(  # buck-only: cut_release tap against the fake gh and the fake git, with planted defects it must refuse
+zig_test(  # buck-only: cut_release tap against the fake gh and the fake git, with known defects it must refuse
     name = "tap",
     src = "tests/drivers/tap_test.zig",
     imports = ["tests/drivers/harness.zig", "tests/channels/golden/mopm.rb", "tests/channels/tap_guard/mopm.rb"],
@@ -422,6 +433,8 @@ zig_test(  # buck-only: tests/contract/replay.py: the fake registry answers the 
     imports = _CONTRACT_LIBS + [
         "tests/drivers/harness.zig",
         "tests/drivers/replay_recipes.zig",
+        "tests/drivers/replay_group_conflicts.zig",
+        "tests/drivers/replay_group_facts.zig",
         "tests/drivers/replay_table.zig",
         "tests/drivers/replay_checks.zig",
         "tests/drivers/yaml.zig",
@@ -496,6 +509,12 @@ zig_test(  # buck-only: tools/build_parity.zig reads build.zig and this file
     **_TOOLS
 )
 
+zig_test(  # buck-only: tools/macho_minos.zig, the Mach-O minos reader that the macOS legs of release-build.yml and ci.yml run
+    name = "macho_minos",
+    src = "tools/macho_minos.zig",
+    **_TOOLS
+)
+
 # ---- The validator corpus: files made by a Zig generator, and the test that they are what it makes ----
 
 zig_test(  # buck-only: tests/validator_corpus is what tests/drivers/validator_corpus.zig makes
@@ -533,6 +552,7 @@ _AUTOLINK_DATA = [
     "tests/e2e/native",
     "tests/e2e/pkgs",
     "tests/e2e/prog.mojo",
+    "tests/e2e/prog_args.mojo",
     "tests/e2e/prog_outer.mojo",
     "tests/e2e/repl.stdin",
     "tests/e2e/repl_outer.stdin",
@@ -560,8 +580,23 @@ zig_test(  # buck-only: the same walk with the farm's real Mojo 1.0.0, which bui
 zig_test(  # buck-only: the user-level beta walk (tests/drivers/user_beta.zig) in its farm form: no pixi, no installer
     name = "user_beta",
     src = "tests/drivers/user_beta_test.zig",
-    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig", "tests/drivers/user_beta.zig"],
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig", "tests/drivers/user_beta.zig", "tests/drivers/user_native.zig"],
     exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm", MOPM_FAKE_REGISTRY = ":mopm-fake-registry"),
+    **_TOOLS
+)
+
+zig_test(  # buck-only: the native step of the user-level beta walk (tests/drivers/user_native.zig) with a stand-in compiler and pixi: the switch, the skip line, the output check, and C sources to a published, added, synced, built and run package; it runs on every pull request
+    name = "user_native",
+    src = "tests/drivers/user_native_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/user_native.zig"],
+    exec_tools = {
+        "ZIG_DIR": "buildrules//rules/pins:zig",
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+        "FAKE_PIXI": ":fake-pixi",
+        "FAKE_TOOLCHAIN": ":fake-toolchain",
+    },
+    data = ["tests/e2e/natws"],
     **_TOOLS
 )
 
@@ -612,6 +647,29 @@ zig_test(  # buck-only: the same walk with a stand-in compiler and pixi (tests/d
         "MOJO_COMPILE_SHIM": ":mojo-compile-shim",
     },
     data = ["tests/e2e/natws"],
+    **_TOOLS
+)
+
+zig_test(  # buck-only: mopm build of a package's [targets] (the library as a .mojoc, the programs) and of a program that imports path dependencies, against the real Mojo (the beta tier of build_targets)
+    name = "build_targets_mojo",
+    src = "tests/drivers/build_targets_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig"],
+    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm"),
+    data = ["tests/e2e/pathdep"],
+    **_TOOLS
+)
+
+zig_test(  # buck-only: the same walk with a stand-in compiler (tests/drivers/fake_toolchain.zig) that logs its command lines, so it checks what mopm asked the compiler for; it runs on every pull request
+    name = "build_targets",
+    src = "tests/drivers/build_targets_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig"],
+    exec_tools = {
+        "CC_SHIM": ":zigcc",
+        "ZIG_DIR": "buildrules//rules/pins:zig",
+        "MOPM": ":mopm",
+        "FAKE_TOOLCHAIN": ":fake-toolchain",
+    },
+    data = ["tests/e2e/pathdep"],
     **_TOOLS
 )
 
@@ -669,7 +727,7 @@ filegroup(
         "index-config.schema.json": "spec/index-config.schema.json",
         "takedowns.schema.json": "spec/takedowns.schema.json",
     },
-    visibility = ["//service/api:"],
+    visibility = ["//service/api:", "//service/infra/stacks:"],
 )
 
 filegroup(
@@ -1033,7 +1091,7 @@ zig_test(  # buck-only: the workflow lint, over the workflows, with a stand-in f
     **_TOOLS
 )
 
-zig_test(  # buck-only: release.yml's scopes, stage order and path filter (tests/drivers/release_lint.zig), with a planted mutant per rule
+zig_test(  # buck-only: release.yml's scopes, stage order and path filter (tests/drivers/release_lint.zig), with a faulty variant per rule
     name = "release_workflow",
     src = "tests/drivers/release_lint_test.zig",
     imports = _LINT_LIBS + ["tests/drivers/release_lint.zig"],
@@ -1041,7 +1099,7 @@ zig_test(  # buck-only: release.yml's scopes, stage order and path filter (tests
     **_TOOLS
 )
 
-zig_test(  # buck-only: the Dependabot autopin workflows (tests/drivers/autopin_lint.zig): their gates, tokens and step order, R1-R4, M2/M2b, with a planted mutant per rule
+zig_test(  # buck-only: the Dependabot autopin workflows (tests/drivers/autopin_lint.zig): their gates, tokens and step order, R1-R4, M2/M2b, with a faulty variant per rule
     name = "autopin_workflows",
     src = "tests/drivers/autopin_lint_test.zig",
     imports = _LINT_LIBS + ["tests/drivers/autopin_lint.zig"],
@@ -1059,6 +1117,17 @@ zig_test(  # buck-only: both lints over the fixtures, against the table in the t
         "tests/drivers/workflow_lint.zig",
     ],
     data = {f: f for f in glob(["tests/lint/fixtures/*"])},
+    **_TOOLS
+)
+
+# AGENTS.md, the rules every change is written and reviewed against: its shared core (between the marker lines) is
+# tests/agents/shared_core.md byte for byte, that copy hashes to tests/agents/shared_core.sha256, and CLAUDE.md imports AGENTS.md
+# (tests/drivers/agents_check.zig). Each rule of the check is also shown failing on edited text.
+zig_test(  # buck-only: AGENTS.md's shared core against its hashed copy, and CLAUDE.md's import of AGENTS.md
+    name = "agents",
+    src = "tests/drivers/agents_check_test.zig",
+    imports = ["tests/drivers/agents_check.zig"],
+    data = {f: f for f in ["AGENTS.md", "CLAUDE.md", "tests/agents/shared_core.md", "tests/agents/shared_core.sha256"]},
     **_TOOLS
 )
 
@@ -1126,6 +1195,19 @@ zig_exe(  # buck-only: installs the pinned actionlint for lint.yml (sha256-check
 zig_exe(  # buck-only: installs the pinned OSV-Scanner for advisories.yml (sha256-checked download); built so the farm compiles it
     name = "install-osv-scanner",
     src = "tools/install_osv_scanner.zig",
+    **_TOOLS
+)
+
+zig_test(  # buck-only: the unit tests of tools/conda_measure.zig (shard hash and base URL from msgpack bytes, the name scan across chunk edges)
+    name = "conda_measure_test",
+    src = "tools/conda_measure.zig",
+    **_TOOLS
+)
+
+zig_exe(  # buck-only: tools/conda_measure.zig, built so the farm compiles it; it needs the network and runs in conda-measure.yml, not here
+    name = "conda-measure",
+    src = "tools/conda_measure.zig",
+    unit_tests = [":conda_measure_test"],
     **_TOOLS
 )
 
@@ -1202,6 +1284,15 @@ zig_coverage(
 )
 
 zig_coverage(
+    name = "agents_coverage",
+    blocks = False,
+    floor = "coverage/agents.txt",
+    test_targets = [":agents"],
+    # The check alone: the test file reads the real files and is not counted.
+    expect = ["tests/drivers/agents_check.zig"],
+)
+
+zig_coverage(
     name = "drivers_coverage",
     blocks = False,
     floor = "coverage/drivers.txt",
@@ -1227,6 +1318,7 @@ zig_coverage(
 filegroup(
     name = "coverage_floors",
     srcs = {
+        "agents": ":agents_coverage_floor",
         "apt_publish": ":apt_publish_coverage_floor",
         "build_parity": ":build_parity_coverage_floor",
         "channels": ":channels_coverage_floor",

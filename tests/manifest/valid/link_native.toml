@@ -1,0 +1,17 @@
+# A static native whose archive leaves symbols to the platform names the system libraries its consumers link.
+[package]
+name = "cxx_natives"
+version = "1.0.0"
+
+[toolchain]
+mojo = "1.0.0"
+
+[native.snappy]
+kind = "static"
+provided = true
+link = ["c++"]
+
+[native.codec]
+kind = "static"
+needs = ["libsnappy.a"]
+link = ["c++", "m", "pthread"]

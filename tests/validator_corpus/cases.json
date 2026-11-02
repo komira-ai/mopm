@@ -75,7 +75,7 @@
       "id": "ok_allowed_native_dependency",
       "archive": "ok_allowed_native_dependency.conda",
       "intent": "ok",
-      "what": "a native library in depends that the allow-list names",
+      "what": "a native library in depends that the conda-forge name mirror lists",
       "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
       "limits": {},
       "allow_native": ["libssl"],
@@ -1755,7 +1755,7 @@
       "id": "meta_dependency_not_allowed",
       "archive": "meta_dependency_not_allowed.conda",
       "intent": "dependency_not_allowed",
-      "what": "a native dependency that is not on the allow-list",
+      "what": "a dependency whose name is not a conda name (upper case)",
       "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
       "limits": {},
       "allow_native": [],
@@ -1764,11 +1764,11 @@
     {
       "id": "meta_dependency_python",
       "archive": "meta_dependency_python.conda",
-      "intent": "dependency_not_allowed",
-      "what": "a python dependency",
+      "intent": "ok",
+      "what": "a python dependency: any conda package may be named, and the mirror lists this one",
       "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
       "limits": {},
-      "allow_native": [],
+      "allow_native": ["python"],
       "note": ""
     },
     {

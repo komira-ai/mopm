@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "name": "plain_sys",
+  "version": "1.0.0",
+  "native": [
+    {
+      "id": "plain_sys",
+      "soname": "libplain_sys.a",
+      "kind": "static",
+      "static_file": "lib/libplain_sys.a"
+    }
+  ]
+}

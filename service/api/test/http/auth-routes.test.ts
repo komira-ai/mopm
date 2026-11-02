@@ -202,6 +202,100 @@ describe.each<Backing>(['memory', 'dynamodb'])('auth routes over %s', (backing) 
     expect(errorOf(await w.send('GET', '/me/tokens', { token: session }))).toEqual({ status: 401, code: 'stale_session' });
   });
 
+  // GET /me (spec: getMe, `userToken`): the account behind a session or an API token. What these prove: the fields are exactly the
+  // spec's Me schema and nothing of the token or user row leaks; each refusal carries the contract's code and status; a CI token, which is
+  // nobody's, is scope_missing. What they do not: the gateway route (infra/stacks tests) or the CLI's parse (tests/drivers).
+  describe('GET /me', () => {
+    const ME_KEYS = ['github_id', 'handle', 'packages', 'pending_invitations'];
+    const apiToken = async (w: World, session: string, days = 30) =>
+      (await w.send('POST', '/me/tokens', { token: session, body: { name: 'api', scopes: ['publish'], packages: ['alpha'], expires_in_days: days } })).json.token as string;
+
+    test('a session answers the account: id, handle, the packages it owns in name order, no pending invitation', async () => {
+      const w = world(backing);
+      const session = await login(w);
+      const r = await w.send('GET', '/me', { token: session });
+      expect(r.res.statusCode).toBe(200);
+      expect(r.res.headers['x-mopm-request-id']).toBe('req-auth');
+      expect(r.json).toEqual({ github_id: 4242, handle: 'octo', packages: ['alpha', 'beta_pkg'], pending_invitations: 0 });
+    });
+
+    test('an API token answers the same account, even a token scoped to one package, and a stale session still does', async () => {
+      const w = world(backing);
+      const session = await login(w);
+      const secret = await apiToken(w, session);
+      const viaApi = await w.send('GET', '/me', { token: secret });
+      expect(viaApi.res.statusCode).toBe(200);
+      expect(viaApi.json).toEqual({ github_id: 4242, handle: 'octo', packages: ['alpha', 'beta_pkg'], pending_invitations: 0 });
+      // /me/tokens needs a fresh session; /me does not.
+      w.clock.advance(16 * 60_000);
+      expect((await w.send('GET', '/me', { token: session })).res.statusCode).toBe(200);
+    });
+
+    test('an account that owns nothing has an empty package list', async () => {
+      const w = world(backing);
+      w.github.state.user = { id: 777, login: 'mallory', two_factor_authentication: true };
+      const r = await w.send('GET', '/me', { token: await login(w) });
+      expect(r.json).toEqual({ github_id: 777, handle: 'mallory', packages: [], pending_invitations: 0 });
+    });
+
+    test('the body is the Me schema and nothing else: no token, hash, scope or login detail', async () => {
+      const w = world(backing);
+      const session = await login(w);
+      const secret = await apiToken(w, session);
+      for (const token of [session, secret]) {
+        const r = await w.send('GET', '/me', { token });
+        expect(Object.keys(r.json).sort()).toEqual(ME_KEYS);
+        expect(Number.isInteger(r.json.github_id) && r.json.github_id >= 1).toBe(true);
+        expect(typeof r.json.handle === 'string' && r.json.handle.length >= 1).toBe(true);
+        expect(r.json.packages.every((n: unknown) => typeof n === 'string' && /^[a-z][a-z0-9_]{1,63}$/.test(n))).toBe(true);
+        expect(Number.isInteger(r.json.pending_invitations) && r.json.pending_invitations >= 0).toBe(true);
+        expect(r.res.body).not.toContain(session);
+        expect(r.res.body).not.toContain(secret);
+        expect(r.res.body).not.toMatch(/hash|two_factor|created_at|last_login|fresh_until|expires_at|scopes/);
+      }
+    });
+
+    test('no token is token_missing (401); a revoked or an expired token says so; an unknown one is token_unknown', async () => {
+      const w = world(backing);
+      const session = await login(w);
+      expect(errorOf(await w.send('GET', '/me'))).toEqual({ status: 401, code: 'token_missing' });
+      expect(errorOf(await w.send('GET', '/me', { headers: { authorization: `Basic ${session}` } }))).toEqual({ status: 401, code: 'token_missing' });
+      expect(errorOf(await w.send('GET', '/me', { token: `mopm_${'a'.repeat(40)}` }))).toEqual({ status: 401, code: 'token_unknown' });
+
+      const revoked = await w.send('POST', '/me/tokens', { token: session, body: { name: 'r', scopes: ['publish'], packages: ['alpha'], expires_in_days: 30 } });
+      expect((await w.send('GET', '/me', { token: revoked.json.token })).res.statusCode).toBe(200);
+      expect((await w.send('DELETE', `/me/tokens/${revoked.json.id}`, { token: session })).res.statusCode).toBe(204);
+      expect(errorOf(await w.send('GET', '/me', { token: revoked.json.token }))).toEqual({ status: 401, code: 'token_revoked' });
+
+      const short = await apiToken(w, session, 1);
+      expect((await w.send('GET', '/me', { token: short })).res.statusCode).toBe(200);
+      w.clock.advance(2 * 86_400_000);
+      expect(errorOf(await w.send('GET', '/me', { token: short }))).toEqual({ status: 401, code: 'token_expired' });
+    });
+
+    test('a CI token is scope_missing (403): it is nobody\'s', async () => {
+      const w = world(backing);
+      const tp = {
+        id: 'tp1', name: 'alpha', repository_id: '111', repository_owner_id: '222',
+        workflow: '.github/workflows/release.yml', added_by: 4242, added_at: '2026-10-01T00:00:00Z',
+      };
+      if (w.doc) w.doc.seed('trusted_publishers', { publisher: 'tp1', ...tp });
+      else await w.store.addTrustedPublisher(tp);
+      const jwt = signJwt(key, goodClaims(w.clock, { workflow_ref: 'acme/widgets/.github/workflows/release.yml@refs/tags/v1' }));
+      const ci = await w.send('POST', '/auth/oidc/exchange', { body: { jwt, name: 'alpha', version: '1.0.0' } });
+      expect(ci.res.statusCode).toBe(200);
+      const r = await w.send('GET', '/me', { token: ci.json.token });
+      expect(errorOf(r)).toEqual({ status: 403, code: 'scope_missing' });
+      expect(r.res.body).not.toContain('octo');
+    });
+
+    test('a token whose account has no user row is token_unknown, not an empty answer', async () => {
+      const principal = { token_id: 't', kind: 'api', github_id: 999, scopes: ['publish'], packages: [] };
+      const w = world(backing, { services: { authn: { authenticate: async () => principal, userToken: (p: { github_id: number }) => p.github_id } as never } });
+      expect(errorOf(await w.send('GET', '/me', { token: `mopm_${'a'.repeat(40)}` }))).toEqual({ status: 401, code: 'token_unknown' });
+    });
+  });
+
   test('bodies: missing, not JSON, an array, too large are invalid_request (400), after authentication', async () => {
     const w = world(backing);
     const session = await login(w);
@@ -215,7 +309,7 @@ describe.each<Backing>(['memory', 'dynamodb'])('auth routes over %s', (backing) 
     expect(bad.json.error.message).toBe("The request is not valid: unknown scope 'owners'.");
   });
 
-  test('CI exchange: a trusted publisher gets a 15 minute publish token for one version; others are refused', async () => {
+  test('CI exchange: a trusted publisher gets a 10 minute publish token for one version; others are refused', async () => {
     const w = world(backing);
     if (w.doc) {
       w.doc.seed('trusted_publishers', {
@@ -232,14 +326,25 @@ describe.each<Backing>(['memory', 'dynamodb'])('auth routes over %s', (backing) 
     const ok = await w.send('POST', '/auth/oidc/exchange', { body: { jwt, name: 'alpha', version: '1.0.0' } });
     expect(ok.res.statusCode).toBe(200);
     expect(ok.json).toMatchObject({ token_kind: 'publish', name: 'alpha', version: '1.0.0' });
-    expect(ok.json.expires_at).toBe(new Date(w.clock.t + 15 * 60_000).toISOString());
+    expect(ok.json.expires_at).toBe(new Date(w.clock.t + 10 * 60_000).toISOString());
     // The CI token is nobody's: it cannot manage tokens.
     expect(errorOf(await w.send('GET', '/me/tokens', { token: ok.json.token }))).toEqual({ status: 403, code: 'scope_missing' });
 
-    expect(errorOf(await w.send('POST', '/auth/oidc/exchange', { body: { jwt, name: 'beta_pkg', version: '1.0.0' } }))).toEqual({ status: 403, code: 'oidc_not_trusted' });
+    // The same CI token a second time is a replay.
+    const replay = await w.send('POST', '/auth/oidc/exchange', { body: { jwt, name: 'alpha', version: '1.0.0' } });
+    expect(errorOf(replay)).toEqual({ status: 401, code: 'oidc_token_invalid' });
+    expect(replay.json.error.message).toBe('The CI identity token was rejected: token already used.');
+    const fresh = signJwt(key, goodClaims(w.clock));
+    expect(errorOf(await w.send('POST', '/auth/oidc/exchange', { body: { jwt: fresh, name: 'beta_pkg', version: '1.0.0' } }))).toEqual({ status: 403, code: 'oidc_not_trusted' });
     expect(errorOf(await w.send('POST', '/auth/oidc/exchange', { body: { jwt: 'a.b.c', name: 'alpha', version: '1.0.0' } }))).toEqual({ status: 401, code: 'oidc_token_invalid' });
     expect(errorOf(await w.send('POST', '/auth/oidc/exchange', { body: { jwt, name: 'alpha', version: 'x.y' } }))).toEqual({ status: 400, code: 'invalid_version' });
     expect(errorOf(await w.send('POST', '/auth/oidc/exchange', { body: { jwt, name: 'Alpha', version: '1.0.0' } }))).toEqual({ status: 400, code: 'invalid_name' });
+    // A purpose is carried through the route: an unknown one is refused before the fresh token is spent, stage mints a stage token.
+    const staged = signJwt(key, goodClaims(w.clock, { workflow_ref: 'acme/widgets/.github/workflows/release.yml@refs/tags/v1' }));
+    expect(errorOf(await w.send('POST', '/auth/oidc/exchange', { body: { jwt: staged, name: 'alpha', version: '1.0.0', purpose: 'root' } }))).toEqual({ status: 400, code: 'invalid_request' });
+    const st = await w.send('POST', '/auth/oidc/exchange', { body: { jwt: staged, name: 'alpha', version: '1.0.0', purpose: 'stage' } });
+    expect(st.res.statusCode).toBe(200);
+    expect(st.json).toMatchObject({ token_kind: 'stage', name: 'alpha', version: '1.0.0' });
   });
 
   test('error bodies are the catalogue text of the contract, with the request id', async () => {
@@ -276,6 +381,7 @@ describe('without auth wiring (no OAuth secret configured, tables not wired)', (
     ['POST', '/auth/oidc/exchange'],
     ['POST', '/me/tokens'],
     ['GET', '/me/tokens'],
+    ['GET', '/me'],
     ['DELETE', '/me/tokens/tok_x'],
   ];
 
@@ -336,12 +442,12 @@ describe('without auth wiring (no OAuth secret configured, tables not wired)', (
   });
 });
 
-// Can-fail proof: routers with one planted defect each must break a named test above's expectation.
-describe('planted defects are caught', () => {
+// Can-fail proof: routers with one known defect each must break a named test above's expectation.
+describe('known defects are caught', () => {
   test('a router that answers a protected route without checking the token', async () => {
     const w = world('memory', { services: { authn: { authenticate: async () => ({ token_id: 't', kind: 'session', github_id: 4242, scopes: [], packages: [] }), freshSession: () => 4242 } as never } });
     const r = await w.send('GET', '/me/tokens'); // no token at all
-    expect(r.res.statusCode).toBe(200); // the mutant lets it through ...
+    expect(r.res.statusCode).toBe(200); // the variant lets it through ...
     const real = world('memory');
     expect((await real.send('GET', '/me/tokens')).res.statusCode).toBe(401); // ... and the real one does not
   });

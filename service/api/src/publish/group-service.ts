@@ -15,9 +15,10 @@ import { groupConflict, groupNotFound, groupNotOpen, invalidRequest, PublishErro
 import { ended, expireIfDue, freeAfterFor, groupAudit, isDead, orphanFree } from './group-lifecycle';
 import { GroupCommitter, type GroupCommitBody } from './group-commit';
 import { GroupYanker } from './group-yank-request';
+import { readMemberFiles, type GroupFileFact } from './group-read';
 import { GROUP_ID, quarantineKeyFor, uploadIdFor } from './group-keys';
 import type { ActorGroup, ObjectStore, Presigner, PublishStore, Queue } from './ports';
-import { actorOf, liveBytes, parseFileFacts, requireOwner } from './service';
+import { actorOf, detailVia, liveBytes, viaField, parseFileFacts, requireOwner } from './service';
 import type { UploadRecord } from './types';
 
 /**
@@ -72,9 +73,13 @@ export interface GroupMemberRequest {
   /** Sorted by subdir and file name. */
   files: GroupFileRequest[];
 }
-/** The declared set, members sorted by package name. */
+/** What a create does when the caller's own open groups share a version with the new set. */
+export type OnOverlap = 'supersede' | 'refuse';
+
+/** The declared set, members sorted by package name. `onOverlap` is an option of the call, not part of the set: it is not in the group id. */
 export interface GroupRequest {
   members: GroupMemberRequest[];
+  onOverlap?: OnOverlap;
 }
 
 const MAX_FILES_PER_MEMBER = 20;
@@ -84,7 +89,8 @@ const fileKey = (f: Pick<GroupFileRequest, 'subdir' | 'filename'>) => `${f.subdi
 /** The request body as a GroupRequest, or invalid_request (and the errors a single begin raises for a file). */
 export function parseGroupRequest(config: PublishConfig, body: unknown): GroupRequest {
   if (!isObject(body)) throw invalidRequest('the body is not a JSON object');
-  const { members } = body;
+  const { members, on_overlap: onOverlap } = body;
+  if (onOverlap !== undefined && onOverlap !== 'supersede' && onOverlap !== 'refuse') throw invalidRequest("'on_overlap' is 'supersede' or 'refuse'");
   if (!Array.isArray(members) || members.length < 1) throw invalidRequest("'members' lists at least one member");
   if (members.length > config.groupMaxMembers) throw invalidRequest(`a group has at most ${config.groupMaxMembers} members`);
   const names = new Set<string>();
@@ -112,7 +118,7 @@ export function parseGroupRequest(config: PublishConfig, body: unknown): GroupRe
     out.push({ name, version, canonical, files: facts.sort((a, b) => (fileKey(a) < fileKey(b) ? -1 : 1)) });
   }
   if (bytes > config.groupMaxBytes) throw invalidRequest(`the files total ${bytes} bytes; a group holds at most ${config.groupMaxBytes}`);
-  return { members: out.sort((a, b) => (a.name < b.name ? -1 : 1)) };
+  return { members: out.sort((a, b) => (a.name < b.name ? -1 : 1)), ...(onOverlap !== undefined ? { onOverlap } : {}) };
 }
 
 /**
@@ -152,6 +158,8 @@ export interface GroupCreateBody {
   deadline_at: string;
   /** Present when the call ran out of time: how many members are answered. The same request continues. */
   reserving?: { done: number; total: number };
+  /** The ids of the caller's own groups this create ended as `superseded`. Absent when it ended none. */
+  superseded?: string[];
   members: GroupMemberBody[];
 }
 export interface GroupStatusBody {
@@ -166,7 +174,8 @@ export interface GroupStatusBody {
   member_count: number;
   /** Present once the group has been yanked: where the yank is. */
   yank?: { state: 'yanking' | 'yanked' | 'unyanking' | 'restored'; reason: string; requested_at: string; yanked_members: number };
-  members: Array<{ name: string; version: string; state: 'pending' | 'reserved' | 'staged' | 'published' | 'yanked' }>;
+  /** `files` is present on the answer to GET /groups/{id} only (not on an abort's or a yank's). */
+  members: Array<{ name: string; version: string; state: 'pending' | 'reserved' | 'staged' | 'published' | 'yanked'; files?: GroupFileFact[] }>;
 }
 
 /** The row a member reserves: pending, the declared files (no urls), named by the group. */
@@ -227,8 +236,9 @@ export class GroupService {
     this.now = d.now ?? (() => new Date());
     this.clock = d.clock ?? (() => performance.now());
     this.metrics = d.metrics ?? new Metrics();
-    this.committer = new GroupCommitter({ registry: d.registry, objects: d.objects, config: d.config, ...(d.groupQueue ? { groupQueue: d.groupQueue } : {}), ...(d.now ? { now: d.now } : {}) }, this);
-    this.yanker = new GroupYanker({ registry: d.registry, ...(d.groupQueue ? { groupQueue: d.groupQueue } : {}), ...(d.now ? { now: d.now } : {}) }, this);
+    const scoped = { load: (p: Principal, id: string) => this.loadCovered(p, id) };
+    this.committer = new GroupCommitter({ registry: d.registry, objects: d.objects, config: d.config, ...(d.groupQueue ? { groupQueue: d.groupQueue } : {}), ...(d.now ? { now: d.now } : {}) }, scoped);
+    this.yanker = new GroupYanker({ registry: d.registry, ...(d.groupQueue ? { groupQueue: d.groupQueue } : {}), ...(d.now ? { now: d.now } : {}) }, scoped);
   }
 
   /** POST /groups/{id}/commit: see src/publish/group-commit.ts. */
@@ -266,21 +276,23 @@ export class GroupService {
       return { created: false, body: this.unchanged(header, req) };
     }
     if (header?.status === 'failed') {
-      throw groupConflict(`group ${gid} failed after its files were copied, and its version numbers are burned; publish a new version of each package`);
+      throw groupConflict('group_failed', `group ${gid} failed after its files were copied, and its version numbers are burned; publish a new version of each package`);
     }
 
     let created = false;
+    /** The caller's own groups this call ended. A later call that continues the group does not repeat them. */
+    let superseded: string[] = [];
     let pre: Pre = { dead: new Set(), orphans: new Set(), mine: new Set() };
     if (header === undefined || isDead(header.status)) {
       // The deadline first: a header is never written with one that is not a time, and nothing is written before it is known to be.
       const deadline = deadlineFor(now, this.d.config.groupDeadlineHours);
       this.rateFits(p, req);
-      const slot = await this.takeSlot(actor, gid, req, now);
+      const slot = await this.takeSlot(actor, gid, req, now, req.onOverlap ?? 'supersede');
       try {
         pre = await this.preflight(gid, req, new Set(slot.supersede), now);
         const refund = await this.charge(p, req, now);
-        await this.supersede(actor, slot.supersede, now);
-        const opened = await this.open(actor, gid, req, header, deadline, now);
+        superseded = await this.supersede(actor, slot.supersede, now);
+        const opened = await this.open(actor, viaField(p), gid, req, header, deadline, now);
         header = opened.header;
         created = opened.created;
         // Another create of the same request wrote the header (or reopened the group) first: that one is the attempt that is charged.
@@ -306,13 +318,14 @@ export class GroupService {
         attempt: reserved.header.attempt,
         deadline_at: reserved.header.deadline_at,
         ...(reserved.members.length < total ? { reserving: { done: reserved.members.length, total } } : {}),
+        ...(superseded.length > 0 ? { superseded } : {}),
         members: reserved.members,
       },
     };
   }
 
   /** The header of a new group, or of a dead one opened again with the next attempt (the member list and the old attempt's other checkpoints are reset). */
-  private async open(actor: string, gid: string, req: GroupRequest, dead: GroupRecord | undefined, deadline: string, now: Date): Promise<{ header: GroupRecord; created: boolean }> {
+  private async open(actor: string, via: { via?: string }, gid: string, req: GroupRequest, dead: GroupRecord | undefined, deadline: string, now: Date): Promise<{ header: GroupRecord; created: boolean }> {
     const reg = this.d.registry;
     const at = now.toISOString();
     if (dead === undefined) {
@@ -323,6 +336,7 @@ export class GroupService {
           attempt: 1,
           rev: 0,
           actor,
+          ...via,
           member_count: req.members.length,
           created_at: at,
           deadline_at: deadline,
@@ -337,7 +351,7 @@ export class GroupService {
           sweep_at: at,
         },
         membersOf(req),
-        groupAudit(gid, `a_${gid}_create_1`, 'group_create', at, actor),
+        groupAudit(gid, `a_${gid}_create_1`, 'group_create', at, actor, via.via === undefined ? undefined : { via: via.via }),
       );
       return { header: made.header, created: made.created };
     }
@@ -349,10 +363,10 @@ export class GroupService {
       (cur) => {
         wrote = isDead(cur.status);
         if (!wrote) return undefined;
-        const { cursor: _c, yank: _y, repodata_released: _r, index_released: _i, write_order: _w, expires_at: _e, phase: _p, commit_hash: _h, failure: _f, ...rest } = cur;
-        return { ...rest, status: 'open', attempt: cur.attempt + 1, deadline_at: deadline, progress_at: at, reserved: '', validated: '', staged: '', copied: '', flipped: '', resend: 0, sweep_pk: 'active', sweep_at: at };
+        const { cursor: _c, yank: _y, repodata_released: _r, index_released: _i, write_order: _w, expires_at: _e, phase: _p, commit_hash: _h, failure: _f, via: _v, ...rest } = cur;
+        return { ...rest, ...via, status: 'open', attempt: cur.attempt + 1, deadline_at: deadline, progress_at: at, reserved: '', validated: '', staged: '', copied: '', flipped: '', resend: 0, sweep_pk: 'active', sweep_at: at };
       },
-      groupAudit(gid, `a_${gid}_reopen_${attempt}`, 'group_reopen', at, actor, { attempt: String(attempt) }),
+      groupAudit(gid, `a_${gid}_reopen_${attempt}`, 'group_reopen', at, actor, { attempt: String(attempt), ...(via.via === undefined ? {} : { via: via.via }) }),
     );
     const header = after ?? dead;
     return { header, created: wrote };
@@ -371,8 +385,10 @@ export class GroupService {
 
   /** Every member's package exists and the caller owns it. The first member (in name order) that fails refuses the whole group. Returns the caller's handle. */
   private async requireOwners(p: Principal, req: GroupRequest): Promise<string> {
-    // A group is created by an account's token: a CI identity token is valid for one version of one package.
-    if (p.github_id === undefined) {
+    // A group is created by an account's token or by a configured CI publisher's (it owns packages through `ci_owner`). Any other
+    // CI token is valid for one version of one package and creates no group.
+    // A token that acts for an account has the account's `github_id`, so it passes by the first test.
+    if (p.github_id === undefined && !(p.kind === 'oidc' && p.ci_owner !== undefined)) {
       const name = req.members[0]!.name;
       throw new AuthError('scope_missing', `The token does not have the 'publish' scope for '${name}'.`, { scope: 'publish', name });
     }
@@ -395,7 +411,7 @@ export class GroupService {
    * superseded, so it does not count against the cap, and at most `groupSupersedeMax` may be. The list is written back
    * with a compare-and-set, so two creates of one actor cannot both take the last place.
    */
-  private async takeSlot(actor: string, gid: string, req: GroupRequest, now: Date): Promise<{ supersede: string[] }> {
+  private async takeSlot(actor: string, gid: string, req: GroupRequest, now: Date, onOverlap: OnOverlap): Promise<{ supersede: string[] }> {
     const cfg = this.d.config;
     const reg = this.d.registry;
     const wanted = new Set(req.members.map((m) => `${m.name}\0${m.canonical}`));
@@ -421,11 +437,15 @@ export class GroupService {
         const ms = await reg.getGroupMembers(e.id);
         if (ms?.members.some((m) => wanted.has(`${m.name}\0${m.canonical}`))) overlapping.push(e.id);
       }
+      // Refused before anything else: nothing is superseded, and the caller's own groups stay open with their rows held.
+      if (onOverlap === 'refuse' && overlapping.length > 0) {
+        throw groupConflict('overlap_refused', `it shares versions with your open group${overlapping.length === 1 ? '' : 's'} ${overlapping.join(', ')}, and on_overlap is refuse; abort ${overlapping.length === 1 ? 'it' : 'them'} first, or send on_overlap supersede`);
+      }
       if (overlapping.length > cfg.groupSupersedeMax) {
-        throw groupConflict(`it shares versions with ${overlapping.length} of your open groups, and one create supersedes at most ${cfg.groupSupersedeMax}; abort some first`);
+        throw groupConflict('supersede_cap', `it shares versions with ${overlapping.length} of your open groups, and one create supersedes at most ${cfg.groupSupersedeMax}; abort some first`);
       }
       if (open - overlapping.length >= cfg.groupOpenPerActor) {
-        throw groupConflict(`you already have ${open - overlapping.length} open groups, and at most ${cfg.groupOpenPerActor} may be open; abort one first`);
+        throw groupConflict('open_cap', `you already have ${open - overlapping.length} open groups, and at most ${cfg.groupOpenPerActor} may be open; abort one first`);
       }
       // The superseded groups stay on the list until they are seen to have ended: a create that stops before superseding them can still find them.
       if (await this.d.publishes.putActorGroups(actor, [...kept, { id: gid, at: now.toISOString() }], list?.rev)) return { supersede: overlapping };
@@ -486,12 +506,12 @@ export class GroupService {
         if (!h) {
           // No header: either a create that wrote the row before the header (it cannot; the header comes first), or a dead group
           // whose header the table's TTL removed. The row says which: it is free once its own free_after has passed.
-          if (!orphanFree(row, now)) throw groupConflict(`${m.name} ${m.version} belongs to group ${row.group_id}, which has no header and so cannot be taken over`);
+          if (!orphanFree(row, now)) throw groupConflict('takeover_blocked', `${m.name} ${m.version} belongs to group ${row.group_id}, which has no header and so cannot be taken over`);
           orphans.add(row.group_id);
           continue;
         }
         if (isDead(h.status)) dead.add(row.group_id);
-        else if (!dead.has(row.group_id)) throw groupConflict(`${m.name} ${m.version} is held by group ${row.group_id}, which is ${h.status}`);
+        else if (!dead.has(row.group_id)) throw groupConflict('number_held', `${m.name} ${m.version} is held by group ${row.group_id}, which is ${h.status}`);
       } else if ((await this.d.publishes.versionHolder(m.name, m.canonical)) !== undefined) {
         throw versionExists(m.name, m.version, sha);
       }
@@ -504,7 +524,7 @@ export class GroupService {
   private rateFits(p: Principal, req: GroupRequest): void {
     const cfg = this.d.config;
     const files = req.members.reduce((n, m) => n + m.files.length, 0);
-    const limit = Math.min(cfg.groupRatePerTokenPerDay, ...(p.github_id !== undefined ? [cfg.groupRatePerAccountPerDay] : []));
+    const limit = Math.min(cfg.groupRatePerTokenPerDay, ...(p.github_id !== undefined || p.ci_owner !== undefined ? [cfg.groupRatePerAccountPerDay] : []));
     if (files > limit) throw invalidRequest(`a group of ${files} files is more than the ${limit} files a day that groups may create`);
   }
 
@@ -523,6 +543,8 @@ export class GroupService {
     const expiresAt = Math.floor(midnight / 1000) + 86_400;
     const hits: Array<[string, number]> = [[`rl#gt#${p.token_id}#${day}`, cfg.groupRatePerTokenPerDay]];
     if (p.github_id !== undefined) hits.push([`rl#gu#${p.github_id}#${day}`, cfg.groupRatePerAccountPerDay]);
+    // A CI identity gets a new token for every job, so its counter is the identity's, as an account's is.
+    else if (p.ci_owner !== undefined) hits.push([`rl#gc#${p.ci_owner}#${day}`, cfg.groupRatePerAccountPerDay]);
     for (const [key, limit] of hits) {
       if (!(await this.d.publishes.hit(key, limit, expiresAt, files)).ok) {
         throw new PublishError('rate_limited', 'Too many requests.', { retry_after: String(retryAfter) }, retryAfter);
@@ -535,52 +557,70 @@ export class GroupService {
   }
 
   /** Supersede the actor's own open groups that share a member. A group that began validating meanwhile is never superseded: that refuses the create. */
-  private async supersede(actor: string, ids: readonly string[], now: Date): Promise<void> {
+  private async supersede(actor: string, ids: readonly string[], now: Date): Promise<string[]> {
     const at = now.toISOString();
+    const out: string[] = [];
     for (const id of ids) {
+      let ending = false;
       const after = await this.d.registry.updateGroup(
         id,
-        (cur) => (cur.status === 'open' ? ended(cur, 'superseded', at) : undefined),
+        (cur) => {
+          ending = cur.status === 'open';
+          return ending ? ended(cur, 'superseded', at) : undefined;
+        },
         groupAudit(id, `a_${id}_supersede`, 'group_supersede', at, actor),
       );
-      if (after && !isDead(after.status)) throw groupConflict(`your group ${id} is ${after.status} and shares a version with this one`);
+      if (after && !isDead(after.status)) throw groupConflict('number_held', `your group ${id} is ${after.status} and shares a version with this one`);
+      if (ending) out.push(id);
     }
+    return out;
   }
 
   /**
-   * Reserve the members' rows in batches of sixteen, and answer each member with its files and upload URLs. After every
-   * batch the header's `reserved` checkpoint is written; when the budget is spent the members not yet answered are left
-   * for the next call. A number taken from under the group in the meantime aborts the group and refuses the call.
+   * Reserve the members' rows in batches of sixteen. After every batch the header's `reserved` checkpoint is written, and the
+   * budget is looked at before the next batch starts: when it is spent the members not yet reached are left for the next call, which
+   * answers `reserving` with the members it has reached and no files for them (the client asks again and reads only the counts).
+   * Members an earlier call already checkpointed are not visited at all, so a resumed call spends its time on new members.
+   * The call stops only once it has reserved something, so a call whose preflight took the whole budget still moves the checkpoint.
+   * The call that reaches the last member answers every member with its files and upload URLs (`files`), the only answer that needs
+   * them. A number taken from under the group in the meantime aborts the group and refuses the call.
    */
   private async reserveAll(p: Principal, handle: string, start: GroupRecord, req: GroupRequest, pre: Pre, started: number) {
     const reg = this.d.registry;
     const gid = start.group_id;
     let header = start;
-    const out: GroupMemberBody[] = [];
     const total = req.members.length;
-    let progressed = false;
-    while (out.length < total) {
-      const from = out.length;
-      const indexes = Array.from({ length: Math.min(BATCH, total - from) }, (_, k) => from + k);
+    // The members this call has to reserve, in order: a prefix of them is reserved by the end of any call, as the checkpoint is.
+    const todo: number[] = [];
+    for (let i = 0; i < total; i++) if (!bitmapHas(start.reserved, i)) todo.push(i);
+    const actions = new Map<number, 'new' | 'join'>();
+    let next = 0;
+    while (next < todo.length) {
+      if (actions.size > 0 && this.clock() - started >= this.d.config.groupCreateBudgetMs) break;
+      const indexes = todo.slice(next, next + BATCH);
       // Wait for the whole batch, whatever happens to a member: a row that is still being written must not be written after the group has been ended.
-      const settled = await Promise.allSettled(indexes.map((i) => this.member(p, handle, header, i, req.members[i]!, pre)));
+      const settled = await Promise.allSettled(indexes.map((i) => this.reserve(p, handle, header, i, req.members[i]!, pre)));
       const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
       const results = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []));
-      const marks = results.filter((r) => r.marks).map((r) => r.idx);
-      if (marks.length > 0) header = await this.checkpoint(gid, marks, header);
+      if (results.length > 0) header = await this.checkpoint(gid, results.map((r) => r.idx), header);
       if (failed) {
         if (!(failed.reason instanceof Taken)) throw failed.reason;
         const at = this.now().toISOString();
         await reg.updateGroup(gid, (cur) => (cur.status === 'open' ? ended(cur, 'aborted', at) : undefined), groupAudit(gid, `a_${gid}_abort_${header.attempt}`, 'group_abort', at, actorOf(p), { reason: 'a version number was taken' }));
-        throw groupConflict(failed.reason.message);
+        throw groupConflict('number_taken', failed.reason.message);
       }
-      for (const r of results) out.push(r.body);
-      if (marks.length > 0) progressed = true;
-      // The call stops when its time is spent, but never before it has moved the checkpoint: a group whose first members
-      // took the whole budget to check would otherwise never get past them.
-      if (out.length < total && progressed && this.clock() - started >= this.d.config.groupCreateBudgetMs) break;
+      for (const r of results) actions.set(r.idx, r.action);
+      next += indexes.length;
     }
-    return { header, members: out };
+    const done = next < todo.length ? todo[next]! : total;
+    const answered = req.members.slice(0, done);
+    const filed: GroupFileBody[][] = [];
+    // Only the answer that ends the reserving carries the files: a client that gets `reserving` asks again.
+    if (done === total) {
+      for (let i = 0; i < total; i += BATCH) filed.push(...(await Promise.all(answered.slice(i, i + BATCH).map((m) => this.files(p, gid, m)))));
+    }
+    const members: GroupMemberBody[] = answered.map((m, i) => ({ name: m.name, version: m.version, action: actions.get(i) ?? 'join', files: filed[i] ?? [] }));
+    return { header, members };
   }
 
   /** Record in the header's `reserved` bitmap that these members' rows are the group's. Merges with what is there; an ended group is left as it is. */
@@ -595,11 +635,11 @@ export class GroupService {
     return after ?? header;
   }
 
-  private async member(p: Principal, handle: string, header: GroupRecord, idx: number, m: GroupMemberRequest, pre: Pre) {
+  /** Take the row of one member for the group, unless the checkpoint or the preflight says it is already the group's. */
+  private async reserve(p: Principal, handle: string, header: GroupRecord, idx: number, m: GroupMemberRequest, pre: Pre) {
     const gid = header.group_id;
-    const has = bitmapHas(header.reserved, idx);
     let action: 'new' | 'join' = 'join';
-    if (!has && !pre.mine.has(idx)) {
+    if (!pre.mine.has(idx)) {
       const at = this.now().toISOString();
       const audit: AuditEntry = {
         name: m.name,
@@ -608,7 +648,7 @@ export class GroupService {
         actor: actorOf(p),
         action: 'group_reserve',
         version: m.version,
-        detail: { group_id: gid },
+        detail: detailVia(p, { group_id: gid }),
       };
       // Free for the group: the row of a single's reservation that nobody committed, or of a group that is over.
       const out = await this.d.registry.adoptVersion(
@@ -620,7 +660,7 @@ export class GroupService {
       else if (out.outcome === 'taken' && out.existing.group_id === gid && out.existing.state === 'pending') action = 'join';
       else if (out.outcome !== 'adopted') throw new Taken(`${m.name} ${m.version} was taken by another publish while the group was being created`);
     }
-    return { idx, marks: !has, body: { name: m.name, version: m.version, action, files: await this.files(p, gid, m) } };
+    return { idx, action };
   }
 
   /** The upload of each file: a record that is the same on every call (so a resume finds it), and a fresh URL unless the bytes are already in quarantine. */
@@ -643,6 +683,7 @@ export class GroupService {
             size: f.size,
             key,
             actor: actorOf(p),
+            ...viaField(p),
             created_at: now.toISOString(),
             url_expires_at: new Date(now.getTime() + cfg.uploadUrlTtlSeconds * 1000).toISOString(),
             expires_at: Math.floor(now.getTime() / 1000) + cfg.uploadRecordTtlSeconds,
@@ -666,13 +707,14 @@ export class GroupService {
   // --- read and abort -------------------------------------------------------------------------------------
 
   async get(p: Principal, id: string): Promise<GroupStatusBody> {
-    const { header, members } = await this.load(p, id);
-    return statusBody(header, members);
+    const { header, members } = await this.loadCovered(p, id);
+    const files = await readMemberFiles(this.d, header, members, { members: this.d.config.groupMaxMembers, files: MAX_FILES_PER_MEMBER });
+    return statusBody(header, members, files);
   }
 
   /** Abort an open group (idempotent for one that is aborted). Its rows stay pending and free for any group or single to take. */
   async abort(p: Principal, id: string): Promise<GroupStatusBody> {
-    const loaded = await this.load(p, id);
+    const loaded = await this.loadCovered(p, id);
     const reg = this.d.registry;
     if (loaded.header.status === 'aborted') return statusBody(loaded.header, loaded.members);
     if (loaded.header.status !== 'open') throw groupNotOpen(id, loaded.header.status);
@@ -680,7 +722,7 @@ export class GroupService {
     const after = await reg.updateGroup(
       id,
       (cur) => (cur.status === 'open' ? ended(cur, 'aborted', at) : undefined),
-      groupAudit(id, `a_${id}_abort_${loaded.header.attempt}`, 'group_abort', at, actorOf(p)),
+      groupAudit(id, `a_${id}_abort_${loaded.header.attempt}`, 'group_abort', at, actorOf(p), detailVia(p)),
     );
     if (!after || after.status !== 'aborted') throw groupNotOpen(id, after?.status ?? 'missing');
     return statusBody(after, loaded.members);
@@ -698,6 +740,17 @@ export class GroupService {
     return { header, members };
   }
 
+  /**
+   * `load` for the read, abort, commit and yank routes. A token that acts for an account (`acts_via`) is the account's actor, so `load`
+   * lets it see every group of the account; it is good for exactly the packages it was minted for, so a group with a member outside
+   * them is not found. Any other token is as `load` has it.
+   */
+  async loadCovered(p: Principal, id: string): Promise<{ header: GroupRecord; members: GroupMembers }> {
+    const loaded = await this.load(p, id);
+    if (p.acts_via !== undefined && loaded.members.members.some((m) => !p.packages.includes(m.name))) throw groupNotFound();
+    return loaded;
+  }
+
   private async ownsAll(p: Principal, members: GroupMembers): Promise<boolean> {
     if (p.github_id === undefined || members.members.length === 0) return false;
     for (let i = 0; i < members.members.length; i += BATCH) {
@@ -713,7 +766,7 @@ function membersOf(req: GroupRequest): GroupMembers {
   return { members: req.members.map((m) => ({ name: m.name, version: m.version, canonical: m.canonical, subdirs: [...new Set(m.files.map((f) => f.subdir))].sort() })) };
 }
 
-function statusBody(h: GroupRecord, members: GroupMembers): GroupStatusBody {
+function statusBody(h: GroupRecord, members: GroupMembers, files?: readonly GroupFileFact[][]): GroupStatusBody {
   // A member the group's yank changed is `yanked` from the yank until the unyank has ended (the unyank restores them one batch at a time).
   const yankedNow = (i: number) => h.yank !== undefined && h.yank.state !== 'restored' && bitmapHas(h.yank.yanked_set, i);
   const state = (i: number) =>
@@ -728,6 +781,6 @@ function statusBody(h: GroupRecord, members: GroupMembers): GroupStatusBody {
     ...(h.failure ? { failure: h.failure } : {}),
     member_count: h.member_count,
     ...(h.yank ? { yank: { state: h.yank.state, reason: h.yank.reason, requested_at: h.yank.requested_at, yanked_members: bitmapIndexes(h.yank.yanked_set).length } } : {}),
-    members: members.members.map((m, i) => ({ name: m.name, version: m.version, state: state(i) })),
+    members: members.members.map((m, i) => ({ name: m.name, version: m.version, state: state(i), ...(files ? { files: files[i] ?? [] } : {}) })),
   };
 }

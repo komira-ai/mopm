@@ -24,13 +24,13 @@ NPM = {
         "sha256": "3f672dd43fdfbea6865907f8b8417b6776bcb443419ed336eb9c6c5ae9f91300",
         "size": 1550384,
     },
-    "@aws-cdk/cloud-assembly-schema@54.26.0": {
+    "@aws-cdk/cloud-assembly-schema@55.1.0": {
         "name": "@aws-cdk/cloud-assembly-schema",
-        "version": "54.26.0",
-        "url": "https://registry.npmjs.org/@aws-cdk/cloud-assembly-schema/-/cloud-assembly-schema-54.26.0.tgz",
-        "sri512": "sha512-zYI3XhQ/bpuSXuPaF77f7u2q6rZBPwdrPh8a0v+e/B3IxbRQAtQv0fmacQ8uYh9RPVuIVnExE6IsFJBSALH7BA==",
-        "sha256": "b309139a7cc969bef367e13741df565feb0063ed446d836a8027f3e2d6d3522f",
-        "size": 211020,
+        "version": "55.1.0",
+        "url": "https://registry.npmjs.org/@aws-cdk/cloud-assembly-schema/-/cloud-assembly-schema-55.1.0.tgz",
+        "sri512": "sha512-q8tWC7UBXb1KnKuJEoNL3qfYg5wQGARHrxXfTVgTPWyKwvk/w0PpRPIp0BiOgyox+obSHwCKjiieE4pYBs88fw==",
+        "sha256": "2da1ed29eca3556054ffd0a67e5df8c48df6022ac65ee06395daa7909ef4769c",
+        "size": 211187,
     },
     "@babel/code-frame@7.29.7": {
         "name": "@babel/code-frame",
@@ -728,21 +728,21 @@ NPM = {
         "sha256": "7faa149cd7811b7e11fc8353dc6e4e9c4de68a02f8221aa8f7dc22108315ac0d",
         "size": 29761,
     },
-    "aws-cdk-lib@2.273.0": {
+    "aws-cdk-lib@2.274.0": {
         "name": "aws-cdk-lib",
-        "version": "2.273.0",
-        "url": "https://registry.npmjs.org/aws-cdk-lib/-/aws-cdk-lib-2.273.0.tgz",
-        "sri512": "sha512-H7hBQHnKn0ZBbpnWRL1Hn0GunSQUsYaLqOk2xIqV0HWr3qbYMwTEZT0HbJBUSxeUdzp1nz0AE2LN3K6qvYr4Zg==",
-        "sha256": "bac9648bfb2f7d2e243fdcc1ddb5dbbc3085cd0d17b55c410e08b9e5e35ea699",
-        "size": 37460183,
+        "version": "2.274.0",
+        "url": "https://registry.npmjs.org/aws-cdk-lib/-/aws-cdk-lib-2.274.0.tgz",
+        "sri512": "sha512-jez6nnPRPGLRv6PfaVUdJNnIQN/5OQQRyQRfdf2lbkww5Z2W4FJ+RIEW1TpYgJ3oLXoM23f9LGA1kxoqvF/sFg==",
+        "sha256": "66ff7e9120c124930155b0ce8ccabe7482479b6da7b48686431c30f77c29ad66",
+        "size": 37678451,
     },
-    "aws-cdk@2.1145.0": {
+    "aws-cdk@2.1146.0": {
         "name": "aws-cdk",
-        "version": "2.1145.0",
-        "url": "https://registry.npmjs.org/aws-cdk/-/aws-cdk-2.1145.0.tgz",
-        "sri512": "sha512-kV3vJCQX5XvlyVvmRHH79Nn2kOmDicN1WSFGkSaZXsNaDdNj2Re25yehsp+L2ixv0VCm0/HLLmYSoehmVPDkJg==",
-        "sha256": "298ef17e50f63115d4c69118c48f0d06d5d5a27c72a3c5c498f60e65a3a9ef7b",
-        "size": 7513301,
+        "version": "2.1146.0",
+        "url": "https://registry.npmjs.org/aws-cdk/-/aws-cdk-2.1146.0.tgz",
+        "sri512": "sha512-MwIIRSSVGMFDwe0MysbD4H8UjUwC1Cfn/3WjShsjdmgwPlyFn/n4Vrn5pYxIoUCjRUBsPLtq0t5a0LSE2Um/eg==",
+        "sha256": "2eba07de2aee95735f7f329ff40f7bc3507857b5f5db1e2441e2b438f8d13000",
+        "size": 7575502,
     },
     "babel-jest@29.7.0": {
         "name": "babel-jest",

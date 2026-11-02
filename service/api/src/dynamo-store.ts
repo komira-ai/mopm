@@ -28,7 +28,7 @@ import {
   type GroupStore,
 } from './group-store';
 import type { RawVersionPort } from './raw-port';
-import { applyEvent, IllegalTransition, type GroupEvent, type UserEvent, type VersionEvent } from './state';
+import { applyEvent, IllegalTransition, publishesVersion, type GroupEvent, type UserEvent, type VersionEvent } from './state';
 import { auditSortKey, type Store } from './store';
 import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, VersionRecord } from './types';
 import { canonicalVersion } from './version';
@@ -97,6 +97,7 @@ const fromPackageItem = (i: Item): PackageRecord => {
   const { [SEARCH_INDEX.bucketAttribute]: _b, ...rest } = i;
   return rest as PackageRecord;
 };
+const ownerItem = (o: OwnerRecord): Item => ({ ...o, github_id: String(o.github_id), github_id_num: o.github_id });
 const auditItem = (e: AuditEntry): Item => ({ ...e, ts_seq: auditSortKey(e) });
 const fromAuditItem = (i: Item): AuditEntry => {
   const { ts_seq: _k, ...rest } = i;
@@ -167,9 +168,54 @@ export class DynamoStore implements Store, GroupStore {
       throw err;
     }
   }
+  /** One transaction: the package row, the owner row and the audit row, each created only if its key is absent. */
+  async claimPackage(pkg: PackageRecord, owner: OwnerRecord, audit: AuditEntry): Promise<void> {
+    const create = (table: string, item: Item) => ({
+      Put: { TableName: table, Item: item, ConditionExpression: 'attribute_not_exists(#n)', ExpressionAttributeNames: { '#n': 'name' } },
+    });
+    try {
+      await this.doc.send(
+        new TransactWriteCommand({
+          TransactItems: [create(this.tables.packages, packageItem(pkg)), create(this.tables.owners, ownerItem(owner)), create(this.tables.audit, auditItem(audit))],
+        }),
+      );
+    } catch (err) {
+      // The package or the owner row is already there: the name is taken. (The audit key is a fresh id.)
+      if (cancelledByCondition(err, 0) || cancelledByCondition(err, 1)) {
+        throw new RegistryError('name_taken', `'${pkg.name}' is already taken.`, { name: pkg.name });
+      }
+      throw err;
+    }
+  }
   async getPackage(name: string) {
     const r = await this.doc.send(new GetCommand({ TableName: this.tables.packages, Key: { name } }));
     return r.Item ? fromPackageItem(r.Item) : undefined;
+  }
+  /**
+   * A read, then a Put of the row without its expiry, conditional on the row still being `claimed` (the roles of the publish side
+   * have GetItem and PutItem and no UpdateItem). Only a `claimed` row is written, so a second call, or a package that is already
+   * active, writes nothing; nothing else changes a package row, so a lost race wrote the same row.
+   */
+  async activatePackage(name: string): Promise<boolean> {
+    const got = await this.doc.send(new GetCommand({ TableName: this.tables.packages, Key: { name }, ConsistentRead: true }));
+    const cur = got.Item ? fromPackageItem(got.Item) : undefined;
+    if (!cur || cur.state !== 'claimed') return false;
+    const { claim_expires_at: _c, ...rest } = cur;
+    try {
+      await this.doc.send(
+        new PutCommand({
+          TableName: this.tables.packages,
+          Item: packageItem({ ...rest, state: 'active' }),
+          ConditionExpression: '#s = :c',
+          ExpressionAttributeNames: { '#s': 'state' },
+          ExpressionAttributeValues: { ':c': 'claimed' },
+        }),
+      );
+      return true;
+    } catch (err) {
+      if ((err as { name?: string }).name === 'ConditionalCheckFailedException') return false;
+      throw err;
+    }
   }
   async listPackageNames() {
     const names: string[] = [];
@@ -283,16 +329,21 @@ export class DynamoStore implements Store, GroupStore {
       if (!cur) throw new RegistryError('version_not_found', `'${name}' has no version '${version}'.`, { name, version });
       if (asReader && cur.group_id !== undefined && cur.state === 'pending') throw new IllegalTransition(cur, event);
       const next = applyEvent(cur, event);
-      if (next === cur) return cur;
+      if (next === cur) return this.settle(event, cur);
       try {
         await this.doc.send(new TransactWriteCommand({ TransactItems: [this.versionPut(next, '#r = :r', { '#r': 'rev' }, { ':r': cur.rev }), this.auditPut(audit)] }));
-        return next;
+        return this.settle(event, next);
       } catch (err) {
         if (cancelledByCondition(err, 0)) continue;
         throw err;
       }
     }
     throw new RegistryError('internal_error', `'${name}' ${version} changed too often while updating.`, { name, version });
+  }
+  /** After a version event: the package of a version that is published now is active (also when the event changed nothing, so a repeat finishes what a crashed attempt left). */
+  private async settle(event: VersionEvent, rec: VersionRecord): Promise<VersionRecord> {
+    if (publishesVersion(event) && rec.state === 'published') await this.activatePackage(rec.name);
+    return rec;
   }
   private versionPut(rec: VersionRecord, cond: string, names: Record<string, string>, values?: Record<string, unknown>) {
     return {
@@ -525,7 +576,7 @@ export class DynamoStore implements Store, GroupStore {
       await this.doc.send(
         new PutCommand({
           TableName: this.tables.owners,
-          Item: { ...o, github_id: String(o.github_id), github_id_num: o.github_id },
+          Item: ownerItem(o),
           ConditionExpression: 'attribute_not_exists(#n)',
           ExpressionAttributeNames: { '#n': 'name' },
         }),

@@ -66,9 +66,11 @@ const overlay = core.overlay;
 const semver = core.semver;
 const toml_edit = core.toml_edit;
 const unit_graph = core.unit_graph;
+const system_libs = core.system_libs;
 const publish_cmd = @import("publish_cmd.zig");
 
-pub const Command = enum { lock, update, tree, sync, add, remove, plan };
+/// The command whose name prefixes a message. `plan` and `build` only read the project (`readProject`).
+pub const Command = enum { lock, update, tree, sync, add, remove, plan, build };
 
 const usage =
     \\usage: mopm lock   [--registry <prod|gamma|beta|url>] [--overlay <staged set>]
@@ -219,7 +221,7 @@ fn addPathDep(arena: Allocator, cmd: Command, name: []const u8, path: []const u8
         return false;
     }
     const at = paths.items.len;
-    try paths.append(.{ .name = name, .version = m.package.version, .path = path });
+    try paths.append(.{ .name = name, .version = m.package.version, .path = path, .native_deps = m.native_dependencies });
     var names = std.ArrayList([]const u8).init(arena);
     for (m.dependencies) |d| {
         try names.append(d.name);
@@ -542,7 +544,8 @@ fn resolveProject(arena: Allocator, cmd: Command, project: Project, old: ?lock.L
             err(cmd, "{s}\n", .{diag.message});
             return null;
         };
-        return .{ .lock = new, .count = res.packages.len + project.paths.len, .mojo = mojo };
+        const pinned = (try withSystemLibs(arena, cmd, project, new)) orelse return null;
+        return .{ .lock = pinned, .count = res.packages.len + project.paths.len, .mojo = mojo };
     }
     err(cmd, "cannot resolve the dependencies of {s}:\n{s}", .{ project.m.package.name, failures.items });
     return null;
@@ -550,6 +553,40 @@ fn resolveProject(arena: Allocator, cmd: Command, project: Project, old: ?lock.L
 
 fn lessStr(_: void, a: []const u8, b: []const u8) bool {
     return std.mem.order(u8, a, b) == .lt;
+}
+
+/// `l` with the system libraries the project loads pinned (system_libs.zig): the libraries its manifest and its path
+/// dependencies' manifests load, and its registry packages' `loads`. `l` itself when nothing is loaded. Null when mopm
+/// cannot pin one (reported).
+fn withSystemLibs(arena: Allocator, cmd: Command, project: Project, l: lock.Lock) !?lock.Lock {
+    var needs = std.ArrayList(system_libs.Need).init(arena);
+    var why: []const u8 = "";
+    const root = system_libs.needsOf(arena, manifest_path, project.m.native_dependencies, &why) catch |e| switch (e) {
+        error.Refused => {
+            err(cmd, "{s}\n", .{why});
+            return null;
+        },
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+    try needs.appendSlice(root);
+    for (project.paths) |d| {
+        const file = try std.fmt.allocPrint(arena, "{s}/{s}", .{ d.path, manifest_path });
+        const own = system_libs.needsOf(arena, file, d.native_deps, &why) catch |e| switch (e) {
+            error.Refused => {
+                err(cmd, "{s}\n", .{why});
+                return null;
+            },
+            error.OutOfMemory => return error.OutOfMemory,
+        };
+        try needs.appendSlice(own);
+    }
+    return system_libs.attach(arena, l, needs.items, &why) catch |e| switch (e) {
+        error.Refused => {
+            err(cmd, "{s}\n", .{why});
+            return null;
+        },
+        error.OutOfMemory => return error.OutOfMemory,
+    };
 }
 
 /// `[package] mojo`: resolves the project once for each Mojo version it lists
@@ -565,13 +602,16 @@ fn resolveAll(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock,
     for (versions.items) |mojo| {
         // A version mopm pins no toolchain for cannot be locked: say so first.
         var why: []const u8 = "";
-        const tc = unit_graph.toolchainFor(arena, mojo, unit_graph.lock_subdir, &why) catch |e| {
-            if (e == error.Refused) {
-                err(cmd, "{s}\n", .{why});
-                return null;
-            }
-            return e;
-        };
+        for (unit_graph.lock_subdirs) |subdir| {
+            const tc = unit_graph.toolchainFor(arena, mojo, subdir, &why) catch |e| {
+                if (e == error.Refused) {
+                    err(cmd, "{s}\n", .{why});
+                    return null;
+                }
+                return e;
+            };
+            try closures.append(.{ .mojo = mojo, .subdir = subdir, .sha256 = tc.closure_sha256 });
+        }
         var pins = std.ArrayList(resolve.Pin).init(arena);
         if (old) |o| {
             const update_all = cmd == .update and args.packages.len == 0;
@@ -600,7 +640,6 @@ fn resolveAll(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock,
             return null;
         };
         try per.append(one);
-        try closures.append(.{ .mojo = mojo, .subdir = unit_graph.lock_subdir, .sha256 = tc.closure_sha256 });
     }
     var diag: resolve.Diagnostic = .{};
     plan.checkNativesAgree(arena, per.items, &diag) catch |e| {
@@ -614,7 +653,8 @@ fn resolveAll(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock,
         err(cmd, "{s}\n", .{diag.message});
         return null;
     };
-    return .{ .lock = new, .count = merged.packages.len + project.paths.len, .mojo = try std.mem.join(arena, ", ", new.mojos) };
+    const pinned = (try withSystemLibs(arena, cmd, project, new)) orelse return null;
+    return .{ .lock = pinned, .count = merged.packages.len + project.paths.len, .mojo = try std.mem.join(arena, ", ", new.mojos) };
 }
 
 /// `mopm sync`: lock when needed (never with `--locked`), then install.
@@ -1182,15 +1222,20 @@ const BodyServer = struct {
     }
 };
 
-// Defect it catches: a package file read past the size a package may be, or cut short without saying so. Mutant
-// planted: fetchConda passes the HTTP client's own limit (64 MiB) instead of `max_conda`.
+// Defect it catches: a package file read past the size a package may be, or cut short without saying so. Variant
+// Defect caught: fetchConda passes the HTTP client's own limit (64 MiB) instead of `max_conda`.
 test "fetchConda reads a package file up to its limit and refuses a longer one by name" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
     const address = try std.net.Address.parseIp("127.0.0.1", 0);
-    var srv = BodyServer{ .server = try address.listen(.{ .reuse_address = true }), .body = "x" ** 2000 };
-    const t = try std.Thread.spawn(.{}, BodyServer.serve, .{&srv});
+    // The serving thread is detached and outlives this test, so the server it reads must not live on this stack:
+    // once the test returned, the next test reused those bytes and the thread's accept() got a garbage handle
+    // (EBADF, which std turns into `unreachable`, aborting the whole test binary). Same convention as the stubs
+    // in http.zig and pkg_fetch.zig: a page-allocated server that is never freed.
+    const srv = try std.heap.page_allocator.create(BodyServer);
+    srv.* = .{ .server = try address.listen(.{ .reuse_address = true }), .body = "x" ** 2000 };
+    const t = try std.Thread.spawn(.{}, BodyServer.serve, .{srv});
     t.detach();
     const url = try std.fmt.allocPrint(a, "http://127.0.0.1:{d}/", .{srv.server.listen_address.getPort()});
     var diag: resolve.Diagnostic = .{};

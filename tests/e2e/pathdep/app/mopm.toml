@@ -1,0 +1,13 @@
+[package]
+name = "app"
+version = "0.1.0"
+
+[toolchain]
+mojo = "1.0.0"
+
+[dependencies]
+greetlib = { path = "../greetlib" }
+
+[targets]
+lib = { path = "src/app" }
+bins = [{ name = "app", path = "src/main.mojo" }]

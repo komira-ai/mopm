@@ -12,7 +12,7 @@ This page lists every setting mopm reads, in `mopm.toml`, in `mopm.lock` and in 
 | which registry | `--registry prod, gamma, beta or a URL` | the command line | the commands that talk to a registry |
 | which Mojo environment | `--prefix`, `CONDA_PREFIX`, `MODULAR_HOME` | the command line, your shell | `build`, `run`, `repl`, `test` |
 
-There is no other file. `mopm build`, `run`, `repl` and `test` do not read `mopm.toml`: a test is found by its path, `tests/**/test_*.mojo` and `src/**/tests/test_*.mojo`. mopm does not read a global or a per-user settings file besides `credentials.json`, and the Mojo toolchain that a build system gets from `mopm plan` is pinned in mopm's own source (`src/core/toolchain/`), not in a file you edit. Two directories are made for you and are not settings: `.mopm/` (the environment `mopm sync` makes) and `target/mopm/` (what `mopm test` builds).
+There is no other file. `mopm run`, `repl` and `test` do not read `mopm.toml`: a test is found by its path, `tests/**/test_*.mojo` and `src/**/tests/test_*.mojo`. `mopm build` reads it for two things only: the `[targets]` it builds when you name no program, and the path dependencies whose source directories it makes importable (see [getting started](getting-started.md)). mopm does not read a global or a per-user settings file besides `credentials.json`, and the Mojo toolchain that a build system gets from `mopm plan` is pinned in mopm's own source (`src/core/toolchain/`), not in a file you edit. Two directories are made for you and are not settings: `.mopm/` (the environment `mopm sync` makes) and `target/` (`target/mopm/` is what `mopm test` builds; `target/build/` is where `mopm build` with no program writes the library and the programs).
 
 ## mopm.toml
 
@@ -53,6 +53,7 @@ Any key other than these is refused, including `workspace`, `tool` and `profile`
 | `license` | string | none | any string; mopm checks only that it is a string | `license = "Apache-2.0"` |
 | `repository` | string | none | any string; mopm checks only that it is a string | `repository = "https://github.com/example/http_client"` |
 | `readme` | string | none; `publish` uses `README.md` beside the manifest when it exists | a path, relative to the directory of `mopm.toml`, of a UTF-8 file of at most 64 KiB (65,536 bytes) | `readme = "README.md"` |
+| `publish` | boolean | `true` | `false` marks a package that is never published, such as a test-support helper that other members use by `path` (in `[dependencies]` or `[dev-dependencies]`). `pack`, `publish` and `mopm stage` refuse it; `mopm stage` with no package names leaves it out and prints a line for it. A package that is published may not have one in `[dependencies]` (a `[dev-dependencies]` entry is fine). `lock`, `sync`, `build`, `test` and `plan` treat it like any other package | `publish = false` |
 | `mojo` | string or array of strings | none | exact compiler versions, such as `"1.0.0"`: at least one, none empty, none repeated; not together with `[toolchain]` | `mojo = ["1.0.0", "1.1.0"]` |
 | `metadata` | table | none | any keys and values the TOML subset reads | `[package.metadata.some_tool]` |
 
@@ -111,7 +112,7 @@ One entry per library, `name = "1.6"` or `name = { version = ..., kind = ..., mo
 | `kind` | string | none | `"shared"` or `"static"` | `kind = "shared"` |
 | `mode` | string | `"link"` | `"link"`: mopm computes the linker flags; `"load"`: the package opens the library itself | `mode = "load"` |
 
-`mopm pack`, `mopm publish` and `mopm stage` record each library with `mode = "load"` (and `kind` shared or not set) in `depends` of `info/index.json`, after the compiler and the Mojo dependencies, so that installing the package installs the library: `lz4 = { version = ">=1.9.3", mode = "load" }` becomes `lz4-c >=1.9.3`. The name is the conda package name, except for these libraries, which are mapped from their name, their library name (`lib` before it) or their file name (`liblz4.so.1`): `lz4` to `lz4-c`, `z` and `zlib` to `libzlib`, `bz2` to `bzip2`, `lzma` and `xz` to `xz`, `zstd` to `zstd`. Two entries for one conda package, a name with an upper case letter and a name starting with `mojo-` are refused. The registry accepts such a package only when it has the conda package on its list of native libraries (spec/channel.md). A library with `mode = "link"` is not packed yet: `pack` says `only mode = "load" is packed`.
+`mopm pack`, `mopm publish` and `mopm stage` record each library with `mode = "load"` (and `kind` shared or not set) in `depends` of `info/index.json`, after the compiler and the Mojo dependencies, so that installing the package installs the library: `lz4 = { version = ">=1.9.3", mode = "load" }` becomes `lz4-c >=1.9.3`. The name is the conda package name, except for these libraries, which are mapped from their name, their library name (`lib` before it) or their file name (`liblz4.so.1`): `lz4` to `lz4-c`, `z` and `zlib` to `libzlib`, `bz2` to `bzip2`, `lzma` and `xz` to `liblzma` (the package of the runtime library `liblzma.so.5`; conda-forge's `xz` is a metapackage of command line tools and a development package, with no library to load, and is not written any more, but a package that names it is still accepted by the registry), `zstd` to `zstd`, `snappy` to `snappy`, `brotlidec` to `libbrotlidec` (the decoder only; the encoder and the `brotli` command are other packages and are not mapped), and `sqlite3` and `sqlite` to `libsqlite` (the library; the `sqlite` package is the command line tool and is not mapped). Two entries for one conda package, a name with an upper case letter and a name starting with `mojo-` are refused. The registry accepts a package that names any conda package here. It warns, and still publishes, when conda-forge does not list the name (a likely typo), and `mopm publish` prints the warning (spec/channel.md). A library with `mode = "link"` is not packed yet: `pack` says `only mode = "load" is packed`.
 
 ### Native libraries: `[native.<id>]`
 
@@ -131,8 +132,10 @@ A native library that the package builds and ships. The id is a lowercase identi
 | `cflags` | array of strings | empty | compiler flags for every platform | `cflags = ["-O2"]` |
 | `cflags_by_os` | table | empty | `linux` and/or `macos`, each an array of strings appended after `cflags` on that OS; any other key is refused | `cflags_by_os = { linux = ["-DLINUX"] }` |
 | `includes` | array of strings | the directories holding `hdrs` files | include directories relative to the package directory, as `srcs` paths; `"."` is the package directory | `includes = ["native"]` |
+| `link` | array of strings | empty | system libraries the final link of any consumer of this static archive adds, each as `-l<name>`, once, after every archive, in the order `c++`, `dl`, `m`, `pthread`; for an archive that leaves symbols to the platform (a C++ archive names `"c++"`). Only `"c++"`, `"dl"`, `"m"` and `"pthread"`, none twice; needs `kind = "static"` and `mode = "link"`; works with `provided = true` and without | `link = ["c++"]` |
+| `provided` | boolean | `false` | the static archive is built by something else (a build system's rule) and packed as `lib<id>.a`; mopm compiles nothing for it. Needs `kind = "static"` and `mode = "link"`, and refuses `srcs`, `hdrs`, `cflags`, `cflags_by_os`, `includes`, `build` and `outputs` | `provided = true` |
 
-`mopm plan --unit-graph` makes each native of a workspace member (the root package or a path dependency) with `srcs` a `native` unit that the build system compiles into the archive (spec/unit-graph.md, "Member natives"); it refuses one with `kind` other than `"static"`, `mode = "load"`, or no `srcs`. A manifest has no CPU level: the build system compiles at the platform baseline.
+`mopm plan --unit-graph` makes each native of a workspace member (the root package or a path dependency) with `srcs` a `native` unit that the build system compiles into the archive (spec/unit-graph.md, "Member natives"); it refuses one with `kind` other than `"static"`, `mode = "load"`, or no `srcs` unless it is `provided` (then the graph has a `native` unit with no sources, and the build system supplies the archive; the graph is format 4). A unit that links archives naming `link` libraries lists them in its own `link` (each once, in link order of the archives) and the graph is format 5 (spec/unit-graph.md, "System libraries of a native"). A manifest has no CPU level: the build system compiles at the platform baseline.
 
 `mopm pack` and `mopm publish` pack a library with `kind = "static"` and `mode = "link"`: the archive is not built by mopm (`build` and `outputs` are descriptive), it is the file named for each subdir with `--native <id>=<subdir>:<file>`, and its file name, `lib<name>.a`, is the library's soname. A package that declares a native library has no `noarch` file, and every subdir it packs needs an archive for every library it declares. The `.mopm.json` that `pack` writes is the same bytes in every subdir's file; what differs between platforms (the archive's sha256 and size) is in `info/about.json` of each file, under `mopm_native`, which nothing reads back.
 
@@ -151,6 +154,12 @@ The keys of `lib` and of each entry of `bins`:
 | `path` | string | none, required | the package directory (`lib`) or the Mojo file with the `main` (`bins`), relative to the manifest; for `mopm plan`, below the root project | `path = "src/main.mojo"` |
 | `name` | string | none, required (`bins` only) | the file name of the program that unit makes | `name = "fetch"` |
 
+### Programs in a published package
+
+A package can publish programs, for example benchmarks users run on their own machine. List each one in `[targets] bins`, with a `name` of lower case letters, digits and underscores and the `path` of the `.mojo` file with the `main`. `mopm pack`, `mopm publish` and `mopm stage` put that file in the package of every subdir, at `lib/mojo/<package>.bins/<name>.mojo`, and refuse a name the registry would refuse, a name listed twice, a path outside the package directory or not ending in `.mojo`, and a file that is missing or empty. What is published is source, never an executable (the registry refuses one): the program is built by the Mojo of the machine that runs it, so it is the same program everywhere and its numbers are that machine's.
+
+`mopm sync` installs the file with the rest of the package. `mopm run --bin <package>:<program>` runs it with the environment's packages importable, as `mopm run <file.mojo>` would run a file; it refuses a package that is not installed and a program the package does not ship (and says which it ships). A program is one file: it imports the package's library and its dependencies, not other files of its source tree. Arguments for the program go after `--` and reach it verbatim, even ones that look like options (`mopm run --bin benchy:agg_state_bench -- --iters 1000`); with no `--` the program gets none. `mopm run` builds with mojo's own default optimisation level unless you choose one: `--opt-level <0-3>` passes `--optimization-level <n>` to `mojo run`, so a benchmark that must be optimised and reproducible names it (`--opt-level 3`). The choice is a flag of the run, not a key of `[targets]` or an environment variable.
+
 ### What reads each key
 
 Accepted does not mean used. This table says, for every table and key, which commands act on it today; "metadata only" means that the key is checked and printed by `mopm metadata` and no other command reads it.
@@ -160,13 +169,15 @@ Accepted does not mean used. This table says, for every table and key, which com
 | `package.name`, `package.version` | `lock`, `tree`, `plan`, `pack`, `publish`, and the lock entry of a path dependency |
 | `package.description`, `package.license`, `package.repository` | metadata only: `pack` and `publish` do not send them |
 | `package.readme` | `publish`, which sends the file's text; `--readme <file>` overrides it |
+| `package.publish` | `pack`, `publish` and `stage`, which refuse a package with `publish = false` (`stage` with no names leaves it out); no other command reads it, so `lock`, `sync`, `build`, `test` and `plan` treat the package like any other |
 | `package.mojo`, `toolchain.mojo` | `lock`, `update`, `add`, `remove`, `sync`, `plan` |
 | `package.metadata` | metadata only |
 | `dependencies` | `lock`, `update`, `tree`, `sync`, `plan`; `pack` writes them as the package's conda dependencies |
 | `dev-dependencies` | `lock`, `tree`, `plan`; not packed |
 | `native-dependencies` | `pack`, `publish` and `stage` write each one with `mode = "load"` as a conda dependency (see Native dependencies) and refuse one with `mode = "link"` or `kind = "static"` |
 | `native` | `pack` and `publish` pack a library with `kind = "static"` and `mode = "link"` (`needs` and `exclusive` go into the package's metadata) and refuse any other kind or mode; `metadata` shows it |
-| `targets.lib`, `targets.bins` | `plan`, which makes a unit of each |
+| `targets.lib` | `plan`, which makes a unit of it |
+| `targets.bins` | `build` and `plan` (a unit of each program); `pack`, `publish` and `stage` ship each program's source in the package, and `mopm run --bin <package>:<program>` runs it from an installed package (see Programs in a published package) |
 | `targets.tests` | metadata only: `mopm test` and `mopm plan` find the tests by their path |
 
 ### What pack and publish refuse
@@ -227,6 +238,7 @@ Each entry of `native` describes a library the package ships. No two packages ma
 | `kind` | string | `"shared"`; left out when it is | `"shared"`, `"static"` or `"both"`, as the package's metadata says | `"kind": "static"` |
 | `needs` | array of strings | empty; left out when empty | the sonames the library needs, as the package's metadata says | `"needs": ["libcrypto_sys.a"]` |
 | `exclusive` | string | none; left out when none | the exclusivity group, as the package's metadata says | `"exclusive": "libcrypto"` |
+| `link` | array of strings | empty; left out when empty | the system libraries the final link of a consumer adds (`"c++"`, `"dl"`, `"m"`, `"pthread"`), as the package's metadata says; a static library only | `"link": ["c++"]` |
 
 ## The user's configuration
 

@@ -80,9 +80,11 @@ const Opts = struct {
     ignored: test_filter.Ignored = .skip,
     /// Test-only (the supervisor self-test): never kill the process group.
     no_group_kill: bool = false,
+    /// Test-only (the supervisor end-to-end test): the deadline counts from the poll that finds this file.
+    deadline_after: ?[]const u8 = null,
 
     fn runOnly(o: Opts) bool {
-        return o.timeout_s != null or o.memory_mib != null or o.format != null or o.junit != null or o.allow_empty or o.no_group_kill or o.retries != null or o.deny_flaky;
+        return o.timeout_s != null or o.memory_mib != null or o.format != null or o.junit != null or o.allow_empty or o.no_group_kill or o.deadline_after != null or o.retries != null or o.deny_flaky;
     }
 };
 
@@ -161,6 +163,9 @@ fn parse(arena: std.mem.Allocator, args: []const []const u8) !Parsed {
             o.allow_empty = true;
         } else if (std.mem.eql(u8, a, "--test-only-no-group-kill")) {
             o.no_group_kill = true;
+        } else if (optValue(args, &i, "--test-only-deadline-after")) |v| {
+            if (v.len == 0) return .{ .usage = "--test-only-deadline-after needs a file name" };
+            o.deadline_after = v;
         } else if (optValue(args, &i, "--prefix")) |v| {
             if (v.len == 0) return .{ .usage = "--prefix needs a directory" };
             o.prefix = v;
@@ -393,7 +398,7 @@ fn run(arena: std.mem.Allocator, args: []const []const u8) !u8 {
                 while (true) : (k += 1) {
                     // Attempt 1 writes <test>.stdout; attempt k > 1 <test>.attempt<k>.stdout.
                     const stem = if (k == 1) t.name else try std.fmt.allocPrint(arena, "{s}.attempt{d}", .{ t.name, k });
-                    const at = try runOnce(arena, id, k, bin, t.name, dir, stem, deadline_ns, memory_cap, !o.no_group_kill);
+                    const at = try runOnce(arena, id, k, bin, t.name, dir, stem, deadline_ns, memory_cap, !o.no_group_kill, o.deadline_after);
                     leftover = leftover or at.leftover;
                     try attempts.append(at);
                     if (!report.retryAfter(at.status, k, retries)) break;
@@ -501,14 +506,14 @@ fn listSelected(arena: std.mem.Allocator, plans: anytype) !u8 {
 /// One attempt of one test: `<bin> --only <name>` under the supervisor,
 /// output to `<dir>/<stem>.stdout` and `.stderr`, and its verdict.
 /// A process group that outlived the test is reported on stderr here.
-fn runOnce(arena: std.mem.Allocator, id: []const u8, attempt: u32, bin: []const u8, name: []const u8, dir: []const u8, stem: []const u8, deadline_ns: u64, memory_cap: ?u64, kill_group: bool) !report.Attempt {
+fn runOnce(arena: std.mem.Allocator, id: []const u8, attempt: u32, bin: []const u8, name: []const u8, dir: []const u8, stem: []const u8, deadline_ns: u64, memory_cap: ?u64, kill_group: bool, ready_file: ?[]const u8) !report.Attempt {
     const out_path = try std.fmt.allocPrint(arena, "{s}/{s}.stdout", .{ dir, stem });
     const err_path = try std.fmt.allocPrint(arena, "{s}/{s}.stderr", .{ dir, stem });
     const r = try test_proc.run(arena, .{
         .argv = &.{ bin, "--only", name },
         .stdout_path = out_path,
         .stderr_path = err_path,
-    }, .{ .deadline_ns = deadline_ns, .memory_bytes = memory_cap, .kill_group = kill_group });
+    }, .{ .deadline_ns = deadline_ns, .memory_bytes = memory_cap, .kill_group = kill_group, .ready_file = ready_file });
     const out_text = std.fs.cwd().readFileAlloc(arena, out_path, 64 << 20) catch "";
     const err_text = std.fs.cwd().readFileAlloc(arena, err_path, 64 << 20) catch "";
     const saw = (try report.sawPass(arena, out_text, name)) or (try report.sawPass(arena, err_text, name));
@@ -704,6 +709,11 @@ test "test options" {
     const d = try parsed(a, &.{});
     try std.testing.expectEqualStrings(".", d.paths.items[0]);
     try std.testing.expect(!d.no_group_kill);
+    try std.testing.expectEqual(@as(?[]const u8, null), d.deadline_after);
+    const da = try parsed(a, &.{ "--test-only-deadline-after", "/r/ready", "pkg" });
+    try std.testing.expectEqualStrings("/r/ready", da.deadline_after.?);
+    try refused(a, &.{"--test-only-deadline-after"});
+    try refused(a, &.{ "--list", "--test-only-deadline-after", "/r" });
     try refused(a, &.{ "--timeout", "0" });
     try refused(a, &.{ "--timeout", "x" });
     try refused(a, &.{"--timeout"});

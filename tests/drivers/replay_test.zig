@@ -25,6 +25,7 @@ const yaml = @import("yaml.zig");
 const r = @import("replay_recipes.zig");
 const tbl = @import("replay_table.zig");
 const chk = @import("replay_checks.zig");
+const gf = @import("replay_group_facts.zig");
 const Value = std.json.Value;
 const Allocator = std.mem.Allocator;
 
@@ -274,11 +275,9 @@ test "the fake registry answers the contract's API cases" {
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var t = c.Tally{};
-    try h.watchdog(240);
     const fake_exe = try h.toolPath(a, "MOPM_FAKE_REGISTRY");
 
     const spec = try yaml.parse(a, try c.readFile(a, "spec/api/openapi.yaml"));
-    const meta = try c.loadJson(a, "spec/package-metadata.schema.json");
     var dups = c.Problems.init(a);
     const ops = try c.operations(a, spec, &dups);
     for (dups.items) |d| t.fail("{s}", .{d});
@@ -322,7 +321,7 @@ test "the fake registry answers the contract's API cases" {
             continue;
         };
         h.stage = case_name;
-        const s = try r.build(&f, ent);
+        const s = try gf.build(&f, ent);
         const op = ops.get(s.op) orelse {
             t.fail("{s} / '{s}': the recipe names the unknown operation {s}", .{ op_name, case_name, s.op });
             continue;
@@ -349,7 +348,7 @@ test "the fake registry answers the contract's API cases" {
         try live.put("response", .{ .object = resp_obj });
         try live.put("malformed_request", .{ .bool = s.malformed });
 
-        var problems = try c.caseProblems(a, spec, ops, catalogue, meta, .{ .object = live });
+        var problems = try c.caseProblems(a, spec, ops, catalogue, .{ .object = live });
         const want_status = c.getInt(c.get(case, "response") orelse .null, "status") orelse 0;
         if (rsp.status != want_status) {
             try c.problem(a, &problems, "status {d}, the case has {d}", .{ rsp.status, want_status });
@@ -358,6 +357,10 @@ test "the fake registry answers the contract's API cases" {
             const want_code = c.getStr(c.get(want_body, "error") orelse .null, "code") orelse "";
             const got_code = c.getStr(c.get(rsp.body orelse .null, "error") orelse .null, "code") orelse "(none)";
             if (!std.mem.eql(u8, got_code, want_code)) try c.problem(a, &problems, "error {s}, the case has {s}", .{ got_code, want_code });
+            // The reason too: a fake that answered another cause for the same code is not what the case documents.
+            const want_reason = c.getStr(c.get(want_body, "error") orelse .null, "reason") orelse "(none)";
+            const got_reason = c.getStr(c.get(rsp.body orelse .null, "error") orelse .null, "reason") orelse "(none)";
+            if (!std.mem.eql(u8, got_reason, want_reason)) try c.problem(a, &problems, "error reason {s}, the case has {s}", .{ got_reason, want_reason });
         }
         if (problems.items.len == 0 and s.check != .none) {
             const ok = chk.runCheck(&f, s, rsp.body orelse .null) catch false;

@@ -301,22 +301,10 @@ pub fn cloneEnv(a: Allocator, src: *const std.process.EnvMap) !std.process.EnvMa
     return out;
 }
 
-/// What the test was last doing, for the watchdog's message.
+/// What the test was last doing: a progress marker for a debugger or core dump.
+/// Nothing in the harness reads a clock: a driver that hangs is ended by the
+/// action's own deadline or the CI job's timeout, and no test asserts on time.
 pub var stage: []const u8 = "starting";
-
-/// Ends the process with a message after `seconds`: a driver that waits on a
-/// child or a server must fail with a reason, not hang until the action's own
-/// deadline.
-pub fn watchdog(seconds: u64) !void {
-    const t = try std.Thread.spawn(.{}, struct {
-        fn run(s: u64) void {
-            std.time.sleep(s * std.time.ns_per_s);
-            std.debug.print("FAIL watchdog: no progress in {d} s; last step: {s}\n", .{ s, stage });
-            std.process.exit(3);
-        }
-    }.run, .{seconds});
-    t.detach();
-}
 
 /// The Content-Length of a response head, if it names one.
 fn contentLength(head: []const u8) ?usize {

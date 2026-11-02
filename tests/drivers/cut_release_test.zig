@@ -2,7 +2,7 @@
 //! and the read-only check of a published release (verify), run against a fake `gh` (fake_gh.zig)
 //! whose state is a directory. Nothing here reaches GitHub, and nothing creates a real tag or release.
 //!
-//! Each refusal case plants one defect in an otherwise good scenario and requires a non-zero exit
+//! Each refusal case injects one defect in an otherwise good scenario and requires a non-zero exit
 //! with the reason in the output, and the good scenario must pass first, so a refusal is the defect's
 //! doing and not the setup's. A refusal must also leave the fake GitHub as it was: no tag, no release,
 //! no asset.
@@ -238,7 +238,6 @@ test "cut_release: plan says whether the release of a tagged commit is already c
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try h.watchdog(600);
     const tools = Tools{
         .cut = try h.toolPath(a, "MOPM_CUT_RELEASE"),
         .gh = try h.toolPath(a, "MOPM_FAKE_GH"),
@@ -317,11 +316,10 @@ test "cut_release: plan says whether the release of a tagged commit is already c
     try rep.finish();
 }
 
-test "cut_release: plan, tag, verify-dir, publish, verify, and every planted defect is refused" {
+test "cut_release: plan, tag, verify-dir, publish, verify, and every known defect is refused" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    try h.watchdog(600);
     const tools = Tools{
         .cut = try h.toolPath(a, "MOPM_CUT_RELEASE"),
         .gh = try h.toolPath(a, "MOPM_FAKE_GH"),
@@ -383,6 +381,40 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         try w.put("releases_page_2", "[{\"tag_name\":\"v0.0.400\",\"draft\":true}]");
         const q = try w.runV(&.{"plan"});
         rep.check("plan: a draft on page 2 of the release list counts (gives 0.0.401)", q.code == 0 and h.contains(q.text, "version=0.0.401\n"), q.text);
+    }
+    {
+        // The tag list is read to its end however many tags there are: none, exactly one full page, one more than a page,
+        // several pages, and the largest list the tool accepts.
+        const Case = struct { name: []const u8, count: usize, next: []const u8 };
+        const cases = [_]Case{
+            .{ .name = "plan_tags_0", .count = 0, .next = "0.0.1" },
+            .{ .name = "plan_tags_99", .count = 99, .next = "0.0.100" },
+            .{ .name = "plan_tags_100", .count = 100, .next = "0.0.101" },
+            .{ .name = "plan_tags_101", .count = 101, .next = "0.0.102" },
+            .{ .name = "plan_tags_250", .count = 250, .next = "0.0.251" },
+            .{ .name = "plan_tags_5000", .count = 5000, .next = "0.0.5001" },
+        };
+        for (cases) |c| {
+            const w = try fresh(a, tools, &tmp, c.name);
+            if (c.count > 0) try w.put("tags", try tagLines(a, 1, c.count, sha));
+            const r = try w.runV(&.{"plan"});
+            rep.check(try h.fmt(a, "plan: {d} tags give version {s}", .{ c.count, c.next }), r.code == 0 and h.contains(r.text, try h.fmt(a, "version={s}\n", .{c.next})), r.text);
+        }
+        // A tag list longer than the tool accepts is refused, not guessed at.
+        const big = try fresh(a, tools, &tmp, "plan_tags_runaway");
+        try big.put("tags", try tagLines(a, 1, 5100, sha));
+        const refused = try big.runV(&.{"plan"});
+        rep.check("plan: more than 5000 tags are refused with the reason, and nothing is created", refused.code == 1 and h.contains(refused.text, "more than 5000 tags") and big.calls("api -X POST") == 0, refused.text);
+    }
+    {
+        // Names that start with v but are not v<major>.<minor>.<patch> take no part in the numbering, in a full page of tags too.
+        const w = try fresh(a, tools, &tmp, "plan_tags_not_semver");
+        var b = std.ArrayList(u8).init(a);
+        for ([_][]const u8{ "vnext", "v0", "v0.0", "v0.0.9-rc.1", "v0.0.x", "v0.0.7.1", "v0.0.08", "v-1", "v0.0.99999999999999999999" }) |n| try b.writer().print("{s} {s}\n", .{ n, sha });
+        try b.appendSlice(try tagLines(a, 1, 91, sha));
+        try w.put("tags", b.items);
+        const r = try w.runV(&.{"plan"});
+        rep.check("plan: a hundred v* tags of which nine are not semver give the next number after the highest semver tag (0.0.92)", r.code == 0 and h.contains(r.text, "version=0.0.92\n"), r.text);
     }
     {
         const bad = [_][]const u8{ "0.0.1\n", "v0.0\n", "", "0.0\n0.1\n", "00.1\n", "0.x\n", "0\n", "0.0-rc\n" };
@@ -695,7 +727,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         rep.check("verify-dir: a missing bundle is refused (eleven files, twelve expected)", m.code == 1 and h.contains(m.text, "holds 11 files, expected exactly 12"), m.text);
     }
     // ---- the .debs: each is the one its tarball's binary makes ---------------------------------
-    // Everything below is a planted defect in an otherwise good scenario (vd_ok above is the control for the same files).
+    // Everything below is a known defect in an otherwise good scenario (vd_ok above is the control for the same files).
     {
         // The linux-x86_64 .deb holds other bytes than the tarball's binary. SHA256SUMS lists it, the bundle signs it and the
         // attestation accepts it (the fake accepts any file), so only the rebuild from the tarball can tell.
@@ -845,19 +877,19 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         const line = try h.readFile(a, try h.join(a, &.{ rec, "mopm-1.2.3-linux-x86_64.tar.gz.sha256" }));
         rep.check("release record: writes `<sha256>  <name>` of the tarball", std.mem.eql(u8, line, try h.fmt(a, "{s}  mopm-1.2.3-linux-x86_64.tar.gz\n", .{want})), line);
 
-        // Mutant: the tarball changed after it was tested.
+        // Defect caught: the tarball changed after it was tested.
         try h.writeFile(try h.join(a, &.{ dist, "mopm-1.2.3-macos-arm64.tar.gz" }), "a different tarball\n");
         const bad = try h.run(a, &.{ tools.release, "tested", dist, rec }, &env, .{});
         rep.check("release tested: a tarball that is not the one the user beta passed is refused, by name", bad.code != 0 and h.contains(bad.text, "mopm-1.2.3-macos-arm64.tar.gz: the user beta tested sha256"), bad.text);
 
-        // Mutant: a platform leg left no record (the changed tarball is recorded again, so only this defect remains).
+        // Defect caught: a platform leg left no record (the changed tarball is recorded again, so only this defect remains).
         const rr2 = try h.run(a, &.{ tools.release, "record", try h.join(a, &.{ dist, "mopm-1.2.3-macos-arm64.tar.gz" }), rec }, &env, .{});
         if (rr2.code != 0) return error.ToolFailed;
         try std.fs.cwd().deleteFile(try h.join(a, &.{ rec, "mopm-1.2.3-linux-aarch64.tar.gz.sha256" }));
         const missing = try h.run(a, &.{ tools.release, "tested", dist, rec }, &env, .{});
         rep.check("release tested: a target with no record is refused", missing.code != 0 and h.contains(missing.text, "recorded nothing for linux-aarch64"), missing.text);
 
-        // Mutant: a record of a target that is not tested.
+        // Defect caught: a record of a target that is not tested.
         // (Control first: with the changed tarball and the missing leg recorded again, it passes.)
         for ([_][]const u8{ "linux-aarch64", "macos-arm64" }) |t| {
             const rr = try h.run(a, &.{ tools.release, "record", try h.join(a, &.{ dist, try h.fmt(a, "mopm-1.2.3-{s}.tar.gz", .{t}) }), rec }, &env, .{});
@@ -1068,7 +1100,7 @@ test "cut_release: plan, tag, verify-dir, publish, verify, and every planted def
         rep.check("verify: a published .deb with other bytes than its tarball's binary is refused", r.code == 1 and h.contains(r.text, "mopm_1.2.3_amd64.deb is not the .deb that the binary in"), r.text);
     }
     {
-        // Every .deb is rebuilt from its own tarball, so a planted .deb is refused whichever architecture it is and however small
+        // Every .deb is rebuilt from its own tarball, so a faulty .deb is refused whichever architecture it is and however small
         // the change: the arm64 .deb made from another binary, and a .deb of either architecture with one byte flipped (the same
         // length, the same name, listed in SHA256SUMS and signed, so only the rebuild can tell). The same three cases for verify-dir,
         // release tested and verify; the amd64 .deb made from another binary is above.

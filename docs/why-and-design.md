@@ -232,9 +232,10 @@ only), and native libraries that a workspace member builds itself.
 
 - **Publishing identity.** Interactive login is the device flow through GitHub; the token is stored in
   `credentials.json` (mode 0600) and never printed. For CI the API has an OIDC exchange
-  (`/auth/oidc/exchange`): a CI identity token is exchanged for a publish token that is valid for 15
+  (`/auth/oidc/exchange`): a CI identity token is exchanged for a publish token that is valid for 10
   minutes and for exactly one package and one version, and only if the identity matches a trusted
-  publisher registered for the package. Versions record provenance (`none` or `oidc`, with repository and
+  publisher registered for the package (repository and owner ids, workflow, and a job on `refs/heads/main`
+  started by a push or a manual dispatch). A CI identity token is exchanged once. Versions record provenance (`none` or `oidc`, with repository and
   workflow). The CLI does not call the exchange itself yet; a CI job would exchange and pass the result in
   `MOPM_TOKEN`. How a trusted publisher is registered is not in the public API today.
 - **What the consumer verifies.** Every download is checked against the lock's sha256 and size; the
@@ -252,7 +253,7 @@ only), and native libraries that a workspace member builds itself.
   build-provenance attestation. The workflow verifies all of it before any tag exists, then tags (through
   a dedicated GitHub App, since a repository ruleset allows only that App to create `v*` tags) and
   publishes exactly the verified files. A defect in this chain is meant to make the release red; the
-  workflow's own lint plants a defect for each rule to show that. macOS binaries are **not** code-signed
+  workflow's own lint injects a defect for each rule to show that. macOS binaries are **not** code-signed
   or notarized by Apple yet.
 - **CI deployment.** The registry is deployed from a public repository by short-lived OIDC credentials
   that only workflows on `main` can assume, with per-workflow trust. `docs/security/public-deploy.md` lists

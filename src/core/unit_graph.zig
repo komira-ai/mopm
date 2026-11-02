@@ -24,9 +24,27 @@ const resolve = @import("resolve.zig");
 const semver = @import("semver.zig");
 const metadata = @import("metadata.zig");
 const native_files = @import("native_files.zig");
+const lock_libs = @import("lock_libs.zig");
+const conda = @import("conda.zig");
+const native_link = @import("native_link.zig");
 
 /// 2: a `native` unit, and a `built` entry (no `sha256`) in `natives`, for a workspace member's own native libraries.
 pub const format_version: u32 = 2;
+
+/// 3: a graph in which a `test` or `bin` unit has `loads`, and the graph's `system_libs` (spec/unit-graph.md). A
+/// graph with no `loads` is format 2, byte for byte what mopm printed before they existed: a reader that did not
+/// know `loads` would run such a test against the machine's libraries, so a graph that has them says 3.
+pub const format_loads: u32 = 3;
+
+/// 4: a `native` unit with `provided` (its archive is built by another rule, not compiled from `srcs`). A reader that
+/// did not know `provided` would make an empty archive of a unit with no sources, so a graph that has one says 4. A
+/// format 4 graph also has `system_libs` and `loads` exactly when a format 3 graph would.
+pub const format_provided: u32 = 4;
+
+/// 5: a unit with `link` (system libraries its final link adds, `-l<name>` after every archive). A reader that did not
+/// know `link` would link without them and fail on the undefined symbols of a C++ archive, so a graph that has one says 5.
+/// A format 5 graph also has `provided`, `system_libs` and `loads` exactly when a format 4 graph would.
+pub const format_link: u32 = 5;
 
 pub const Src = struct { path: []const u8, sha256: []const u8 };
 /// A native library in a unit's dependency closure: pinned by `sha256`, from `package`. `kind`, `needs` and `exclusive`
@@ -40,6 +58,8 @@ pub const NativeRef = struct {
     kind: metadata.Kind = .shared,
     needs: []const []const u8 = &.{},
     exclusive: []const u8 = "",
+    /// System libraries the package's metadata (or the manifest, for a built native) names for the final link.
+    link: []const []const u8 = &.{},
     /// The id of the `native` unit (`native:<package>/<id>`) that builds this library, for a workspace member's own
     /// native; empty for a prebuilt one, which `sha256` pins.
     built: []const u8 = "",
@@ -58,6 +78,8 @@ pub const Unit = struct {
     root: []const u8 = "",
     /// native: the archive's file name.
     soname: []const u8 = "",
+    /// native: the archive is built by another rule and given to the build; there are no sources to compile.
+    provided: bool = false,
     srcs: []const Src = &.{},
     /// native: the headers, the flags (common, then per OS), the include directories (relative to the member) and
     /// the sonames of the libraries this one needs.
@@ -68,6 +90,12 @@ pub const Unit = struct {
     needs: []const []const u8 = &.{},
     deps: []const []const u8 = &.{},
     natives: []const NativeRef = &.{},
+    /// lib, test, bin, prebuilt: the system libraries the final link of the unit's `natives` adds, each once, as
+    /// `-l<name>` after every archive: the `link` of those natives, each name once, in the order of `native_link.allowed`.
+    link: []const []const u8 = &.{},
+    /// test and bin: the conda names of the system libraries the unit loads at run time, run dependencies included,
+    /// sorted; each is an entry of the graph's `system_libs`.
+    loads: []const []const u8 = &.{},
     /// prebuilt: the `.conda` and the `.mojoc` inside it.
     artifact: ?Archive = null,
     mojoc: []const u8 = "",
@@ -88,6 +116,9 @@ pub const Toolchain = struct {
     components: []const Component,
 };
 
+/// A system library the lock pins for the graph's subdir: a conda package (lock_libs.Lib without `deps`).
+pub const SystemLib = struct { name: []const u8, version: []const u8, build: []const u8, url: []const u8, sha256: []const u8, size: u64 };
+
 pub const Graph = struct {
     unit_graph: u32 = format_version,
     /// `<name>@<version>` of the root package.
@@ -95,6 +126,8 @@ pub const Graph = struct {
     /// The consumer's Mojo version: the one every unit id names.
     mojo: []const u8,
     toolchain: Toolchain,
+    /// Format 3 only: the lock's system libraries for this subdir, sorted by name.
+    system_libs: []const SystemLib = &.{},
     units: []const Unit,
 
     pub fn find(self: Graph, id: []const u8) ?usize {
@@ -137,7 +170,21 @@ fn visitDeps(g: Graph, at: usize, seen: []bool, out: *std.ArrayList(usize)) erro
 
 // ------------------------------------------------------------------ toolchain
 
-const closure_linux_64 = @embedFile("toolchain/mojo-1.0.0-linux-64.json");
+/// A platform mopm pins a toolchain for: its closure, and the packages of it that
+/// a unit graph lists as components (the linker's C runtime libraries exist in
+/// the Linux closures only; macOS has none).
+pub const Target = struct {
+    subdir: []const u8,
+    closure: []const u8,
+    components: []const []const u8,
+};
+
+pub const targets = [_]Target{
+    .{ .subdir = "linux-64", .closure = @embedFile("toolchain/mojo-1.0.0-linux-64.json"), .components = &.{ "mojo-compiler", "libgcc", "libstdcxx" } },
+    .{ .subdir = "linux-aarch64", .closure = @embedFile("toolchain/mojo-1.0.0-linux-aarch64.json"), .components = &.{ "mojo-compiler", "libgcc", "libstdcxx" } },
+    .{ .subdir = "osx-arm64", .closure = @embedFile("toolchain/mojo-1.0.0-osx-arm64.json"), .components = &.{"mojo-compiler"} },
+};
+
 const zig_pins_1_0_0 = @embedFile("toolchain/zig-for-mojo-1.0.0.json");
 
 const ZigFile = struct {
@@ -153,18 +200,23 @@ fn refuse(arena: Allocator, why: *[]const u8, comptime fmt: []const u8, args: an
     return error.Refused;
 }
 
-/// The subdir whose toolchain closure a version 2 lock records.
-pub const lock_subdir = "linux-64";
+/// The subdirs whose toolchain closure a version 2 lock records, for each Mojo version.
+pub const lock_subdirs = [_][]const u8{ "linux-64", "linux-aarch64", "osx-arm64" };
 
 /// The Mojo versions and subdirs a unit graph can be made for.
-pub const supported = "mojo 1.0.0 on linux-64";
+pub const supported = "mojo 1.0.0 on linux-64, linux-aarch64 and osx-arm64";
 
 /// mopm's pinned toolchain for `mojo` on `subdir`, or a refusal.
 pub fn toolchainFor(arena: Allocator, mojo: []const u8, subdir: []const u8, why: *[]const u8) anyerror!Toolchain {
-    if (!std.mem.eql(u8, mojo, "1.0.0") or !std.mem.eql(u8, subdir, "linux-64")) {
+    var target: ?Target = null;
+    for (targets) |t| {
+        if (std.mem.eql(u8, t.subdir, subdir)) target = t;
+    }
+    if (!std.mem.eql(u8, mojo, "1.0.0") or target == null) {
         return refuse(arena, why, "mopm has no pinned toolchain for mojo {s} on {s} (it pins {s})", .{ mojo, subdir, supported });
     }
-    const c = closure.parse(arena, closure_linux_64) catch return error.BadPins;
+    const c = closure.parse(arena, target.?.closure) catch return error.BadPins;
+    if (!std.mem.eql(u8, c.subdir, subdir)) return error.BadPins;
     const zf = std.json.parseFromSliceLeaky(ZigFile, arena, zig_pins_1_0_0, .{}) catch return error.BadPins;
     var zig_pin: ?ZigPin = null;
     var cc_target: []const u8 = "";
@@ -185,7 +237,8 @@ pub fn toolchainFor(arena: Allocator, mojo: []const u8, subdir: []const u8, why:
         line.clearRetainingCapacity();
         try line.writer().print("{s} {s} {s} {s}\n", .{ p.name, p.version, p.build, p.sha256 });
         h.update(line.items);
-        const wanted = std.mem.eql(u8, p.name, "mojo-compiler") or std.mem.eql(u8, p.name, "libgcc") or std.mem.eql(u8, p.name, "libstdcxx");
+        var wanted = false;
+        for (target.?.components) |n| wanted = wanted or std.mem.eql(u8, p.name, n);
         if (wanted) {
             try comps.append(.{ .name = p.name, .version = p.version, .url = try closure.urlOf(arena, c, p), .sha256 = p.sha256, .size = p.size });
         }
@@ -196,7 +249,7 @@ pub fn toolchainFor(arena: Allocator, mojo: []const u8, subdir: []const u8, why:
     var d: [32]u8 = undefined;
     h.final(&d);
     const hex = std.fmt.bytesToHex(d, .lower);
-    if (comps.items.len != 3) return error.BadPins;
+    if (comps.items.len != target.?.components.len) return error.BadPins;
     return .{
         .mojo = c.mojo,
         .subdir = c.subdir,
@@ -233,6 +286,11 @@ const Builder = struct {
     units: std.ArrayList(Unit),
     /// The natives a workspace member builds, by package name: what its units link (see `addNatives`).
     member_natives: std.StringHashMap([]const NativeRef),
+    /// The conda names of the system libraries each package loads, by package name: a member's and the root's from
+    /// their manifests, a registry package's from the lock's `loads`.
+    own_loads: std.StringHashMap([]const []const u8),
+    /// The lock's system libraries for this subdir, once `loadsPass` has run.
+    libs: []const lock_libs.Lib = &.{},
     closure: []const u8 = "",
 
     fn fail(b: *Builder, comptime fmt: []const u8, args: anytype) (Refused || Allocator.Error) {
@@ -418,8 +476,8 @@ const Builder = struct {
             if (n.mode != .link) {
                 return b.fail("{s}: [native.{s}] is mode = \"load\"; a static archive is linked, not loaded", .{ file, n.id });
             }
-            if (n.srcs.len == 0) {
-                return b.fail("{s}: [native.{s}] has no srcs; a unit graph builds a member's native from its C sources", .{ file, n.id });
+            if (n.srcs.len == 0 and !n.provided) {
+                return b.fail("{s}: [native.{s}] has no srcs; a unit graph builds a member's native from its C sources (or give provided = true, if another rule builds the archive)", .{ file, n.id });
             }
             const soname = try n.archiveName(b.arena);
             const srcs = try b.nativeFiles(file, n.id, "srcs", member_rel, n.srcs);
@@ -441,6 +499,7 @@ const Builder = struct {
                 .version = m.package.version,
                 .kind = "native",
                 .soname = soname,
+                .provided = n.provided,
                 .srcs = srcs,
                 .hdrs = hdrs,
                 .cflags = n.cflags,
@@ -449,7 +508,7 @@ const Builder = struct {
                 .needs = n.needs,
                 .outputs = try b.arena.dupe([]const u8, &.{soname}),
             });
-            try refs.append(.{ .id = n.id, .soname = soname, .package = m.package.name, .kind = .static, .needs = n.needs, .exclusive = n.exclusive, .built = id });
+            try refs.append(.{ .id = n.id, .soname = soname, .package = m.package.name, .kind = .static, .needs = n.needs, .exclusive = n.exclusive, .link = n.link, .built = id });
         }
         try b.member_natives.put(m.package.name, refs.items);
     }
@@ -481,6 +540,7 @@ const Builder = struct {
                 return b.fail("{s}:{d}:{d}: {s}", .{ file, diag.pos.line, diag.pos.col, if (e == error.Invalid) diag.message else @errorName(e) });
             };
             try b.listsMojo(file, pm);
+            try b.noteLoads(pm.package.name, pm.native_dependencies);
             const lib_rel = (try b.defaultLib(pm, mp)) orelse return b.fail("{s} has no library directory (src/{s} or [targets] lib)", .{ file, pm.package.name });
             try b.checkBelow("the library of a path dependency", lib_rel);
             try b.checkInside("the library of a path dependency", mp, lib_rel);
@@ -503,6 +563,59 @@ const Builder = struct {
             .artifact = .{ .url = art.url, .sha256 = art.sha256, .size = art.size },
             .mojoc = try std.fmt.allocPrint(b.arena, "lib/mojo/{s}.mojoc", .{p.name}),
         });
+        if (p.loads.len > 0) try b.own_loads.put(p.name, p.loads);
+    }
+
+    /// Records the libraries the package `package` loads, from the `[native-dependencies]` `deps` of its manifest:
+    /// `mode = "load"` ones, as the conda packages that provide them.
+    fn noteLoads(b: *Builder, package: []const u8, deps: []const manifest.NativeDep) !void {
+        var out = std.ArrayList([]const u8).init(b.arena);
+        for (deps) |d| {
+            if (d.mode != .load) continue;
+            const pkg = conda.condaPackageFor(d.name);
+            var have = false;
+            for (out.items) |o| have = have or std.mem.eql(u8, o, pkg);
+            if (!have) try out.append(pkg);
+        }
+        if (out.items.len > 0) try b.own_loads.put(package, out.items);
+    }
+
+    /// Sets `loads` of every `test` and `bin` unit: the libraries its closure loads and what they need, from the
+    /// lock's `system_libs` for this subdir. A lock with no `system_libs` at all was written before they existed:
+    /// it gives no `loads`, and the graph is what it always was. A library any manifest or registry package of the
+    /// project loads that the lock does not pin (a manifest changed since `mopm lock`) is refused.
+    fn loadsPass(b: *Builder) !void {
+        if (b.in.l.system_libs.len == 0) return;
+        b.libs = lock_libs.libsFor(b.in.l.system_libs, b.in.subdir) orelse &[_]lock_libs.Lib{};
+        var all = std.ArrayList([]const u8).init(b.arena);
+        var values = b.own_loads.valueIterator();
+        while (values.next()) |v| try all.appendSlice(v.*);
+        var missing: []const u8 = "";
+        _ = lock_libs.closureNames(b.arena, b.libs, all.items, &missing) catch |e| switch (e) {
+            error.MissingLib => return b.fail("mopm.lock has no system library {s} for {s}; run 'mopm lock'", .{ missing, b.in.subdir }),
+            error.OutOfMemory => return error.OutOfMemory,
+        };
+        var index = std.StringHashMap(usize).init(b.arena);
+        for (b.units.items, 0..) |u, i| try index.put(u.id, i);
+        for (b.units.items, 0..) |start, i| {
+            if (!(std.mem.eql(u8, start.kind, "test") or std.mem.eql(u8, start.kind, "bin"))) continue;
+            var wanted = std.ArrayList([]const u8).init(b.arena);
+            var seen = std.StringHashMap(void).init(b.arena);
+            var todo = std.ArrayList(usize).init(b.arena);
+            try todo.append(i);
+            while (todo.popOrNull()) |at| {
+                const u = b.units.items[at];
+                if (seen.contains(u.id)) continue;
+                try seen.put(u.id, {});
+                if (b.own_loads.get(u.package)) |own| try wanted.appendSlice(own);
+                for (u.deps) |d| try todo.append(index.get(d) orelse return b.fail("{s} depends on {s}, which is no unit", .{ u.id, d }));
+            }
+            if (wanted.items.len == 0) continue;
+            b.units.items[i].loads = lock_libs.closureNames(b.arena, b.libs, wanted.items, &missing) catch |e| switch (e) {
+                error.MissingLib => return b.fail("mopm.lock has no system library {s} for {s}; run 'mopm lock'", .{ missing, b.in.subdir }),
+                error.OutOfMemory => return error.OutOfMemory,
+            };
+        }
     }
 
     /// A package builds for the consumer's Mojo only if its mopm.toml lists it.
@@ -532,7 +645,7 @@ const Builder = struct {
                     const p = b.lockEntry(u.package).?;
                     for (p.native) |n| {
                         const sha = n.sha256 orelse return b.fail("{s} {s}: its native library {s} ({s}) has no sha256 in mopm.lock; a unit graph takes only pinned natives", .{ p.name, p.version, n.id, n.soname });
-                        try found.append(.{ .id = n.id, .soname = n.soname, .sha256 = sha, .package = p.name, .kind = n.kind, .needs = n.needs, .exclusive = n.exclusive });
+                        try found.append(.{ .id = n.id, .soname = n.soname, .sha256 = sha, .package = p.name, .kind = n.kind, .needs = n.needs, .exclusive = n.exclusive, .link = n.link });
                     }
                 } else if (b.member_natives.get(u.package)) |built| {
                     // A member's lib, tests and binaries all link its natives; each is listed once.
@@ -548,7 +661,11 @@ const Builder = struct {
                 }
             }
             std.mem.sort(NativeRef, found.items, {}, Builder.lessNative);
-            b.units.items[i].natives = try b.orderNatives(b.units.items[i].id, found.items);
+            const ordered = try b.orderNatives(b.units.items[i].id, found.items);
+            b.units.items[i].natives = ordered;
+            var system = std.ArrayList([]const u8).init(b.arena);
+            for (ordered) |n| try native_link.merge(&system, n.link);
+            b.units.items[i].link = system.items;
         }
     }
 
@@ -657,6 +774,14 @@ const Builder = struct {
             h.update("\nnative ");
             h.update(b.units.items[ni].key);
         }
+        // The names in `loads` do not move when a pin does: the bytes of each library are part of the key.
+        for (b.units.items[i].loads) |n| {
+            const lib = lock_libs.find(b.libs, n) orelse continue;
+            h.update("\nsystem_lib ");
+            h.update(lib.name);
+            h.update(" ");
+            h.update(lib.sha256);
+        }
         var d: [32]u8 = undefined;
         h.final(&d);
         const hex = std.fmt.bytesToHex(d, .lower);
@@ -673,7 +798,7 @@ const Builder = struct {
 /// the lock, the toolchain or the sources cannot make one. Reads the member
 /// sources below `in.dir`; no network, no run of any program.
 pub fn build(arena: Allocator, in: Input, why: *[]const u8) !Graph {
-    var b = Builder{ .arena = arena, .in = in, .why = why, .units = std.ArrayList(Unit).init(arena), .member_natives = std.StringHashMap([]const NativeRef).init(arena) };
+    var b = Builder{ .arena = arena, .in = in, .why = why, .units = std.ArrayList(Unit).init(arena), .member_natives = std.StringHashMap([]const NativeRef).init(arena), .own_loads = std.StringHashMap([]const []const u8).init(arena) };
     const tc = if (in.toolchain) |t| t else toolchainFor(arena, in.mojo, in.subdir, why) catch |e| switch (e) {
         error.BadPins => return refuse(arena, why, "the toolchain pins compiled into this mopm are unreadable", .{}),
         else => |x| return x,
@@ -707,6 +832,7 @@ pub fn build(arena: Allocator, in: Input, why: *[]const u8) !Graph {
     for (dev_names.items) |n| try todo.append(n);
     while (todo.popOrNull()) |n| try b.visit(n, &seen, &todo);
 
+    try b.noteLoads(m.package.name, m.native_dependencies);
     const dep_ids = try b.depIds(root_id, dep_names.items);
     const dev_ids = try b.depIds(root_id, dev_names.items);
 
@@ -773,11 +899,28 @@ pub fn build(arena: Allocator, in: Input, why: *[]const u8) !Graph {
     }
     std.mem.sort(Unit, b.units.items, {}, Builder.lessUnit);
     try b.natives();
+    try b.loadsPass();
     try b.keys();
+    var with_loads = false;
+    var with_provided = false;
+    var with_link = false;
+    for (b.units.items) |u| {
+        with_loads = with_loads or u.loads.len > 0;
+        with_provided = with_provided or u.provided;
+        with_link = with_link or u.link.len > 0;
+    }
+    var libs: []const SystemLib = &.{};
+    if (with_loads) {
+        const out = try arena.alloc(SystemLib, b.libs.len);
+        for (b.libs, 0..) |l, i| out[i] = .{ .name = l.name, .version = l.version, .build = l.build, .url = l.url, .sha256 = l.sha256, .size = l.size };
+        libs = out;
+    }
     return .{
+        .unit_graph = if (with_link) format_link else if (with_provided) format_provided else if (with_loads) format_loads else format_version,
         .package = try std.fmt.allocPrint(arena, "{s}@{s}", .{ m.package.name, m.package.version }),
         .mojo = in.mojo,
         .toolchain = tc,
+        .system_libs = libs,
         .units = b.units.items,
     };
 }
@@ -830,6 +973,7 @@ pub fn writeUnit(w: anytype, u: Unit, ind: []const u8) !void {
     if (is_native) {
         try w.print(",\n{s}  \"soname\": ", .{ind});
         try str(w, u.soname);
+        if (u.provided) try w.print(",\n{s}  \"provided\": true", .{ind});
     }
     try srcList(w, ind, "srcs", u.srcs);
     if (is_native) {
@@ -899,6 +1043,14 @@ pub fn writeUnit(w: anytype, u: Unit, ind: []const u8) !void {
         try w.writeAll("}");
     }
     if (u.natives.len == 0) try w.writeAll("]") else try w.print("\n{s}  ]", .{ind});
+    if (u.link.len > 0) {
+        try w.print(",\n{s}  \"link\": ", .{ind});
+        try strList(w, u.link);
+    }
+    if (u.loads.len > 0) {
+        try w.print(",\n{s}  \"loads\": ", .{ind});
+        try strList(w, u.loads);
+    }
     if (u.profile) |p| {
         try w.print(",\n{s}  \"profile\": {{\"opt\": {d}, \"assert\": ", .{ ind, p.opt });
         try str(w, p.assert);
@@ -949,7 +1101,25 @@ pub fn render(arena: Allocator, g: Graph) ![]const u8 {
         try str(w, c.sha256);
         try w.print(", \"size\": {d}}}", .{c.size});
     }
-    try w.writeAll("\n    ]\n  },\n  \"units\": [");
+    try w.writeAll("\n    ]\n  }");
+    if (g.system_libs.len > 0) {
+        try w.writeAll(",\n  \"system_libs\": [");
+        for (g.system_libs, 0..) |l, i| {
+            try w.print("{s}\n    {{\"name\": ", .{if (i == 0) "" else ","});
+            try str(w, l.name);
+            try w.writeAll(", \"version\": ");
+            try str(w, l.version);
+            try w.writeAll(", \"build\": ");
+            try str(w, l.build);
+            try w.writeAll(", \"url\": ");
+            try str(w, l.url);
+            try w.writeAll(", \"sha256\": ");
+            try str(w, l.sha256);
+            try w.print(", \"size\": {d}}}", .{l.size});
+        }
+        try w.writeAll("\n  ]");
+    }
+    try w.writeAll(",\n  \"units\": [");
     for (g.units, 0..) |u, i| {
         try w.writeAll(if (i == 0) "\n" else ",\n");
         try writeUnit(w, u, "    ");
@@ -1312,7 +1482,7 @@ test "a missing source is refused when the graph is made" {
     try std.testing.expect(std.mem.indexOf(u8, why, "util/src/util holds no .mojo file") != null);
 }
 
-test "planted defects: a reordered dependency, a changed source or another artifact changes the keys, and only the right ones" {
+test "known defects: a reordered dependency, a changed source or another artifact changes the keys, and only the right ones" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
@@ -1387,7 +1557,7 @@ test "mopm pins the toolchain of the Mojo it names, and refuses another" {
     // The same pins, the same hash.
     try std.testing.expectEqualStrings(tc.closure_sha256, (try toolchainFor(a, "1.0.0", "linux-64", &why)).closure_sha256);
     try std.testing.expectError(error.Refused, toolchainFor(a, "1.1.0", "linux-64", &why));
-    try std.testing.expectEqualStrings("mopm has no pinned toolchain for mojo 1.1.0 on linux-64 (it pins mojo 1.0.0 on linux-64)", why);
+    try std.testing.expectEqualStrings("mopm has no pinned toolchain for mojo 1.1.0 on linux-64 (it pins mojo 1.0.0 on linux-64, linux-aarch64 and osx-arm64)", why);
 }
 
 /// tls_sys (a static library) over crypto_sys (another, in the exclusivity group libcrypto): the lock of a project
@@ -1423,7 +1593,7 @@ fn nativeSonames(a: Allocator, u: Unit) ![]const u8 {
 
 // Defect it catches: static archives handed to the linker in soname order, so that an archive comes after the
 // archive it needs and the symbols it leaves undefined are not found (the link fails, or worse, links less).
-// Mutant planted: `orderNatives` returns `natives` as sorted by soname.
+// Defect caught: `orderNatives` returns `natives` as sorted by soname.
 test "the natives of a unit are in link order: an archive before the archives it needs, with its kind, needs and group" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -1464,7 +1634,7 @@ test "the natives of a unit are in link order: an archive before the archives it
 }
 
 // Defect it catches: a graph whose native libraries are all "shared, no needs" in the text, so a lock that says
-// otherwise (and a unit key that should change with it) prints the same. Mutant planted: `writeUnit` drops `kind`.
+// otherwise (and a unit key that should change with it) prints the same. Defect caught: `writeUnit` drops `kind`.
 test "a native's kind, needs and group are in the unit's key: changing one changes the key" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -1509,6 +1679,55 @@ test "a static library that needs an archive nobody ships, and archives that nee
     const shared = try std.mem.replaceOwned(u8, a, lock_static_chain, "\"soname\": \"libtls_sys.a\", \"sha256\": \"@D@\", \"kind\": \"static\", \"needs\": [\"libcrypto_sys.a\"]", "\"soname\": \"libtls_sys.so.1\", \"sha256\": \"@D@\", \"needs\": [\"libnothing.so.1\"]");
     const g = try graphOf(a, dir, toml_tls_dep, shared, "1.0.0", &why);
     try std.testing.expectEqual(@as(usize, 2), g.units[g.find(id_app).?].natives.len);
+}
+
+// Defect it catches: the system libraries of a published archive dropped from the graph, so a Buck2 consumer of a C++
+// archive links without libc++; a name listed twice (once per archive that names it); the format staying 2, which a reader
+// that does not know `link` would take and link without them.
+test "prebuilt natives that name system libraries give their units one link list, in link order, and the format 5" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try writeWorkspace(tmp.dir, app_init);
+    const dir = try tmp.dir.realpathAlloc(a, ".");
+    var why: []const u8 = "";
+    const base = try graphOf(a, dir, toml_tls_dep, lock_static_chain, "1.0.0", &why);
+    try std.testing.expectEqual(format_version, base.unit_graph);
+    try std.testing.expectEqual(@as(usize, 0), base.units[base.find(id_app).?].link.len);
+    try std.testing.expect(std.mem.indexOf(u8, try render(a, base), "\"link\"") == null);
+
+    // tls_sys (first in link order) names libc++ and libm, crypto_sys libc++ again: libc++ once, libm after it.
+    const with_tls = try std.mem.replaceOwned(u8, a, lock_static_chain, "\"kind\": \"static\", \"needs\": [\"libcrypto_sys.a\"]", "\"kind\": \"static\", \"needs\": [\"libcrypto_sys.a\"], \"link\": [\"c++\", \"m\"]");
+    const linked = try std.mem.replaceOwned(u8, a, with_tls, "\"kind\": \"static\", \"exclusive\": \"libcrypto\"", "\"kind\": \"static\", \"exclusive\": \"libcrypto\", \"link\": [\"c++\"]");
+    const g = graphOf(a, dir, toml_tls_dep, linked, "1.0.0", &why) catch |e| {
+        std.debug.print("refused: {s}\n", .{why});
+        return e;
+    };
+    try std.testing.expectEqual(format_link, g.unit_graph);
+    for ([_][]const u8{ id_app, id_test }) |id| {
+        const u = g.units[g.find(id).?];
+        try std.testing.expectEqualStrings("libtls_sys.a libcrypto_sys.a", try nativeSonames(a, u));
+        try std.testing.expectEqual(@as(usize, 2), u.link.len);
+        try std.testing.expectEqualStrings("c++", u.link[0]);
+        try std.testing.expectEqualStrings("m", u.link[1]);
+    }
+    // The unit of crypto_sys alone links its own archive and so only what that names.
+    const crypto = g.units[g.find("crypto_sys@1.39.0#mojo1.0.0/lib").?];
+    try std.testing.expectEqual(@as(usize, 1), crypto.link.len);
+    try std.testing.expectEqualStrings("c++", crypto.link[0]);
+
+    const text = try render(a, g);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"unit_graph\": 5,") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"link\": [\"c++\", \"m\"]") != null);
+    const back = try parse(a, text);
+    try std.testing.expectEqual(format_link, back.unit_graph);
+    try std.testing.expectEqualStrings("m", back.units[back.find(id_app).?].link[1]);
+    try std.testing.expectEqualStrings(text, try render(a, back));
+
+    // A name that a lock adds moves the key of every unit that links the archive.
+    try std.testing.expect(!std.mem.eql(u8, try keyOfId(base, id_app), try keyOfId(g, id_app)));
 }
 
 test "a graph for a lock whose natives carry no kind, needs or group prints exactly what it printed before they existed" {
@@ -1659,7 +1878,7 @@ fn graphWithThree(a: Allocator, dir: []const u8, z_group: []const u8, why: *[]co
 
 // Defects it catches: a clash found only between natives that are next to each other in link order, so that a library
 // with no group between two of one group hides the second; and group names compared without regard to case, so that
-// `libcrypto` and `LibCrypto` are one group. Mutants planted: the inner loop looks only at `found[i + 1]`; the
+// `libcrypto` and `LibCrypto` are one group. Defect caught: the inner loop looks only at `found[i + 1]`; the
 // comparison is `std.ascii.eqlIgnoreCase`.
 test "an exclusive clash is found between natives that are not next to each other; group names are exact, case included" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -1685,7 +1904,7 @@ test "an exclusive clash is found between natives that are not next to each othe
 }
 
 // Defect it catches: a closure that links two libraries of one exclusive group (two copies of a crypto library, each
-// with its own error queue and CPU-capability word) and builds. Mutants planted: the comparison of the two groups is
+// with its own error queue and CPU-capability word) and builds. Defect caught: the comparison of the two groups is
 // negated; the check returns at once; the group is compared only when the two natives are of one package.
 test "two natives of one exclusive group in a unit's closure are refused, naming both; different groups, and no group, are not" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -2555,4 +2774,28 @@ test "with a workspace root, the root package's and a sibling's own natives are 
     try std.testing.expectEqual(@as(usize, 1), bl.natives.len);
     try std.testing.expectEqualStrings("native:b/b_shim", bl.natives[0].built);
     try noDotDot(g);
+}
+
+// Defect it catches: a member with `publish = false` treated differently from any other when the graph is made (left out,
+// refused, or keyed differently), so a test-support helper stops being usable as a path dependency.
+test "a member with publish = false is in the graph exactly as the same member without the key" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var texts: [2][]const u8 = undefined;
+    for ([_][]const u8{ toml_util, toml_util ++ "publish = false\n" }, 0..) |util_toml, i| {
+        var tmp = std.testing.tmpDir(.{});
+        defer tmp.cleanup();
+        try writeWorkspace(tmp.dir, app_init);
+        try put(tmp.dir, "util/mopm.toml", util_toml);
+        const dir = try tmp.dir.realpathAlloc(a, ".");
+        var why: []const u8 = "";
+        const g = graphOf(a, dir, toml_util_dep, lock_two, "1.0.0", &why) catch |e| {
+            std.debug.print("refused: {s}\n", .{why});
+            return e;
+        };
+        try std.testing.expect(g.find("util@0.3.0#mojo1.0.0/lib") != null);
+        texts[i] = try std.mem.replaceOwned(u8, a, try render(a, g), dir, "<dir>");
+    }
+    try std.testing.expectEqualStrings(texts[0], texts[1]);
 }

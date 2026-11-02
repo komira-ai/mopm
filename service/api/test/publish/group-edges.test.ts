@@ -27,14 +27,21 @@ describe('the group service, at its edges', () => {
   test('built with its defaults (the real clock and time, metric lines on the console) it creates a group', async () => {
     await env.account(1, 'octocat', ['alpha']);
     const log = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    // The default clock reads `new Date()`; the system time is pinned (only Date is faked) so the deadline is an exact sum, not a comparison with the real now.
+    const pinned = new Date('2026-03-04T05:06:07.000Z');
+    jest.useFakeTimers({
+      now: pinned,
+      doNotFake: ['hrtime', 'nextTick', 'performance', 'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame', 'requestIdleCallback', 'cancelIdleCallback', 'setImmediate', 'clearImmediate', 'setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'],
+    });
     try {
       const svc = new GroupService({ registry: store(), publishes: env.publishes, objects: env.objects, presigner: new MemoryPresigner(), config: DEFAULT_PUBLISH_CONFIG });
       const out = await svc.create(principal(), svc.parse({ members: [env.member('alpha')] }));
       expect(out.created).toBe(true);
       expect(out.body.status).toBe('open');
-      expect(Date.parse(out.body.deadline_at)).toBeGreaterThan(Date.now());
+      expect(out.body.deadline_at).toBe(new Date(pinned.getTime() + DEFAULT_PUBLISH_CONFIG.groupDeadlineHours * 3_600_000).toISOString());
       expect(log).toHaveBeenCalled(); // the pending-rows metric line
     } finally {
+      jest.useRealTimers();
       log.mockRestore();
     }
   });

@@ -31,6 +31,7 @@ pub const Check = enum {
     packages_named,
     packages_all_current,
     name_is,
+    first_package_is,
     search_prefix,
     search_last_page,
     package_info,
@@ -47,6 +48,10 @@ pub const Check = enum {
     detail_published,
     group_failure,
     group_yank_state,
+    group_files_open,
+    group_files_past_open,
+    detail_group_id,
+    detail_source_commit,
 };
 
 pub const After = enum { none, read_only_off, project_limit_restore };
@@ -68,7 +73,7 @@ pub const Step = struct {
 pub const Kind = enum {
     health, health_read_only, device_start, poll, device_unknown, me_no_token, me_unknown_token, me_expired, me_revoked, me,
     token_stale, token_named, token_all, tokens_list, token_revoke_unknown, token_revoke,
-    oidc, oidc_invalid, oidc_untrusted,
+    oidc, oidc_packages, oidc_invalid, oidc_untrusted,
     search_invalid, fault_search, route_missing, search_prefix, search_last_page,
     pkg_invalid_name, pkg_missing, pkg_fault, pkg_info,
     claim_reserved, claim_taken, claim_similar, claim_plain, claim_similar_ok,
@@ -77,7 +82,7 @@ pub const Kind = enum {
     begin, begin_too_big, begin_limit, begin_version, begin_read_only,
     commit, commit_version, publish_missing, status, rejected,
     yank, detail, version_invalid, version_missing,
-    group_create, group_get, group_abort, group_commit, group_yank, group_error,
+    group_create, group_get, group_abort, group_commit, group_yank, group_error, group_facts,
 };
 
 pub const Entry = struct { op: []const u8, name: []const u8, kind: Kind, arg: []const u8 = "" };
@@ -105,6 +110,7 @@ pub const table = [_]Entry{
     .{ .op = "revokeToken", .name = "error token_not_found", .kind = .token_revoke_unknown },
     .{ .op = "revokeToken", .name = "revoke a token", .kind = .token_revoke },
     .{ .op = "exchangeOidcToken", .name = "exchange a CI identity token", .kind = .oidc },
+    .{ .op = "exchangeOidcToken", .name = "exchange a CI identity token for a list of packages", .kind = .oidc_packages },
     .{ .op = "exchangeOidcToken", .name = "error oidc_token_invalid", .kind = .oidc_invalid },
     .{ .op = "exchangeOidcToken", .name = "error oidc_not_trusted", .kind = .oidc_untrusted },
     .{ .op = "searchPackages", .name = "error invalid_request", .kind = .search_invalid },
@@ -180,6 +186,14 @@ pub const table = [_]Entry{
     .{ .op = "getGroup", .name = "group status committed", .kind = .group_get, .arg = "committed" },
     .{ .op = "getGroup", .name = "group status rejected, with why", .kind = .group_get, .arg = "rejected" },
     .{ .op = "abortGroup", .name = "abort a group", .kind = .group_abort },
+    .{ .op = "getGroup", .name = "group status open, with the files of each member", .kind = .group_facts, .arg = "files_open" },
+    .{ .op = "getGroup", .name = "group status visible, with the files of each member and no uploaded", .kind = .group_facts, .arg = "files_visible" },
+    .{ .op = "getVersion", .name = "version detail of a version a group published", .kind = .group_facts, .arg = "group_version" },
+    .{ .op = "commitPublish", .name = "commit without manifest_sha256", .kind = .group_facts, .arg = "commit_single" },
+    .{ .op = "commitGroup", .name = "commit a group, leaving manifest_sha256 out of some members", .kind = .group_facts, .arg = "commit_group" },
+    .{ .op = "getVersion", .name = "version detail with a source_commit", .kind = .group_facts, .arg = "source_version" },
+    .{ .op = "commitPublish", .name = "commit with a source_commit", .kind = .group_facts, .arg = "commit_single_source" },
+    .{ .op = "commitGroup", .name = "commit a group, with a source_commit on some members", .kind = .group_facts, .arg = "commit_group_source" },
     .{ .op = "commitGroup", .name = "commit a group", .kind = .group_commit, .arg = "fresh" },
     .{ .op = "commitGroup", .name = "commit a group that had already committed", .kind = .group_commit, .arg = "again" },
     .{ .op = "yankGroup", .name = "yank a group", .kind = .group_yank, .arg = "yank" },
@@ -187,6 +201,7 @@ pub const table = [_]Entry{
     .{ .op = "getGroup", .name = "error group_not_found", .kind = .group_error, .arg = "not_found" },
     .{ .op = "abortGroup", .name = "error group_not_open", .kind = .group_error, .arg = "not_open" },
     .{ .op = "createGroup", .name = "error group_conflict", .kind = .group_error, .arg = "conflict" },
+    .{ .op = "createGroup", .name = "error group_conflict, overlap refused", .kind = .group_error, .arg = "overlap_refused" },
     .{ .op = "commitGroup", .name = "error group_commit_refused", .kind = .group_error, .arg = "commit_refused" },
     .{ .op = "yankGroup", .name = "error group_not_settled", .kind = .group_error, .arg = "not_settled" },
 };

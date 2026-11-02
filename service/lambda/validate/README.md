@@ -28,6 +28,12 @@ table does not list exactly the archives `cases.json` names. Unit tests per modu
 
 ## Differences that are not in the corpus
 
+* The TypeScript warns about a native dependency whose name the conda-forge name mirror does not list, about a mirror more than a day old
+  and about a missing one (`facts.warnings`, which is absent when empty). This port has no mirror and no warnings. Every corpus case is
+  written so that the TypeScript has none to record (`allow_native` is the mirror's list for the case), so the two agree on the corpus.
+  Both accept any well-formed native name and refuse malformed text with `dependency_not_allowed`; the message of an entry longer than
+  80 UTF-16 units is cut there, and a cut through a surrogate pair gives U+FFFD here and a lone surrogate there.
+
 * A zstd frame's content checksum is not verified (fzstd does not either); `ruzstd` itself verifies it when the frame
   is read to its end only if asked, and this reader does not ask.
 * JSON is parsed by `serde_json`, JavaScript's `JSON.parse` differs on lone surrogate escapes (`"\ud800"` is valid there,

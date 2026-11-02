@@ -38,6 +38,18 @@ pub fn fail(arena: Allocator, code: errors.Code, params: []const errors.Param) A
     return r;
 }
 
+/// A `group_conflict` with `reason` beside its code (`error.reason`, spec/api/openapi.yaml): the cause as a value, apart from the message.
+pub fn conflict(arena: Allocator, reason: errors.GroupConflictReason, detail: []const u8) Allocator.Error!Response {
+    const e = errors.entry(.group_conflict);
+    const params = [_]errors.Param{.{ "detail", detail }};
+    return json(arena, e.status, .{ .@"error" = .{
+        .code = "group_conflict",
+        .message = try errors.fill(arena, e.message, &params),
+        .hint = try errors.fill(arena, e.hint, &params),
+        .reason = @tagName(reason),
+    } });
+}
+
 /// `invalid_request` with `detail`.
 pub fn invalid(arena: Allocator, detail: []const u8) Allocator.Error!Response {
     return fail(arena, .invalid_request, &.{.{ "detail", detail }});

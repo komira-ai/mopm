@@ -53,6 +53,17 @@ pub const Code = enum {
     route_not_found,
 };
 
+/// The `error.reason` values of `group_conflict` (`x-mopm-error-reasons`).
+pub const GroupConflictReason = enum {
+    number_held,
+    group_failed,
+    open_cap,
+    supersede_cap,
+    takeover_blocked,
+    number_taken,
+    overlap_refused,
+};
+
 pub const Entry = struct { status: std.http.Status, message: []const u8, hint: []const u8 };
 
 pub fn entry(code: Code) Entry {

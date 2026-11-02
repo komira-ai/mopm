@@ -34,7 +34,7 @@ So the Mojo version is part of what a unit is.
   so in its top-level `mojo`.
 - A lock made from `[package] mojo` is `lock_version` 2 (`lock.md`). It holds,
   per package version, one artifact for each Mojo version it was published
-  for, and mopm's toolchain closure hash for each Mojo version it locks.
+  for, and mopm's toolchain closure hash for each Mojo version it locks and each platform mopm pins (`linux-64`, `linux-aarch64`, `osx-arm64`); a lock that records `linux-64` only still reads.
 - `mopm lock` resolves once for each listed Mojo version and takes, for each
   dependency, the newest version in range that has a build for that Mojo. A
   version mopm pins no toolchain for cannot be listed: `mopm lock` stops with
@@ -57,14 +57,21 @@ So the Mojo version is part of what a unit is.
   "package": "app@1.0.0",
   "mojo": "1.0.0",
   "toolchain": { ... },
+  "system_libs": [ { ... }, ... ],
   "units": [ { ... }, ... ]
 }
 ```
 
-`unit_graph` is the format version (this file describes 2; a reader refuses
+`unit_graph` is the format version (this file describes 2, 3, 4 and 5; a reader refuses
 another). Version 2 adds the `native` unit and the `built` native entry
 ("Member natives", below); a graph of a project without member natives differs
-from a version 1 graph only in this number. `package` is the root package. `units` are sorted by `id`, and the
+from a version 1 graph only in this number. Version 3 adds `system_libs` and the
+`loads` of a unit ("System libraries", below); a graph in which no unit has
+`loads` is version 2, byte for byte what it was before they existed, and has no
+`system_libs`. Version 4 adds `provided` on a `native` unit ("Provided natives",
+below); a graph with no provided native keeps its version 2 or 3. Version 5 adds
+`link` on the units that link archives ("System libraries of a native", below);
+a graph in which no unit has `link` keeps the version it had. `package` is the root package. `units` are sorted by `id`, and the
 text is one fixed layout, so the same inputs give the same bytes.
 
 ### toolchain
@@ -73,10 +80,10 @@ mopm's own pin for `M`, never read from the environment:
 
 | field | meaning |
 |---|---|
-| `mojo`, `subdir` | the compiler version and platform (`linux-64`) |
+| `mojo`, `subdir` | the compiler version and platform (`linux-64`, `linux-aarch64` or `osx-arm64`) |
 | `cc_target` | the target triple the pinned Zig links for |
 | `zig` | `version`, `url`, `sha256`, `size` of the Zig that serves as the C compiler and linker |
-| `components` | `name`, `version`, `url`, `sha256`, `size` of the compiler package and the C++ runtime packages it needs |
+| `components` | `name`, `version`, `url`, `sha256`, `size` of the compiler package and, on Linux, the C++ runtime packages it needs (the macOS closure has no such packages) |
 | `closure_sha256` | a hash of the whole closure: the Mojo packages (name, version, build, sha256 of each, in order), then the Zig and `cc_target` |
 
 The pins are files in mopm's source, `src/core/toolchain/mojo-<M>-<subdir>.json`
@@ -97,6 +104,7 @@ lock whose recorded hash is not the one this mopm computes.
 | `soname`, `hdrs`, `cflags`, `cflags_by_os`, `includes`, `needs` | `native`: see "Member natives" |
 | `deps` | ids of the units this one imports, in the order `mopm.toml` lists them (order is significant) |
 | `natives` | `id`, `soname`, `sha256`, `package` of every prebuilt native library in the unit's dependency closure, and `kind`, `needs`, `exclusive` when the lock gives them (left out when `shared`, empty, none); a workspace member's own native library is listed with `id`, `soname`, `package`, `kind`, `needs`, `exclusive` (the same omissions) and `built`, the id of the `native` unit that builds it, and no `sha256`. They are in link order: a library before every library it `needs`, the sonames' order between libraries that do not constrain one another. A closure holding two libraries of one `exclusive` group is refused, naming both (group names are compared exactly: `libcrypto` and `LibCrypto` are two groups; `mopm.toml` refuses a name with leading or trailing whitespace or a control character). The refusal is graph-wide: one unit with a clash refuses the whole graph, so a clash reached only through a dev-only dependency, and so only by the `test:` unit, blocks the build |
+| `loads` | `test` and `bin`: the conda names of the system libraries the unit loads at run time, sorted, run dependencies included; each is an entry of the graph's `system_libs` (format 3 only; left out when empty, see "System libraries") |
 | `artifact` | `prebuilt`: `url`, `sha256`, `size` of the `.conda` for `M` (from the lock) |
 | `mojoc` | `prebuilt`: the `.mojoc` inside that package |
 | `profile` | `opt`, `assert`, `debug`: the compiler profile of a `lib`, `test` or `bin` |
@@ -118,6 +126,35 @@ closure ships is refused, and so are libraries that need each other, because no
 link order puts one before the other; a shared library resolves its needs when
 the loader runs, so a need it names that the closure lacks is not judged here.
 
+### System libraries
+
+A package can open a system library at run time: `[native-dependencies] libsqlite = { version = ">=3.40", mode = "load" }`
+in its `mopm.toml`, or the same in a registry package, which says so in the
+`depends` of its repodata entry. A test that loads such a library must find the
+one the lock pins, not whichever the machine has, so the lock names it
+(`lock.md`, "System libraries") and the graph passes the pin on.
+
+- `system_libs` (format 3): the lock's pins for this graph's `subdir`, sorted by
+  `name`, each `name`, `version`, `build`, `url`, `sha256`, `size`: a conda
+  package of the library or of something it needs to run. Present when some unit
+  has `loads`.
+- `loads` of a `test` or `bin` unit: the names of the system libraries of the
+  unit's closure (its own package, its dependencies, and for a test the
+  dev-dependencies) and, with them, the libraries those need. The library of a
+  package that is not in a unit's closure is not in its `loads`. A library is
+  loaded by its conda name; names the build system must match against
+  `system_libs`. The libraries are loaded, never linked: they are not in
+  `natives`.
+- A build system puts the unpacked libraries of `loads` on the loader path of
+  the run of that unit and of no other action. A rules version that does not know
+  `loads` must not read a version 3 graph (it would run the test against the
+  machine's libraries), which is why the format number changes.
+- A lock written before `system_libs` (it has none at all) gives no `loads`: the
+  graph is the one mopm printed before, and the run is not hermetic. A lock that
+  has `system_libs`, with a manifest or registry package that loads a library the
+  lock does not pin for the graph's subdir, is stale: `plan` refuses with
+  `mopm.lock has no system library <name> for <subdir>; run 'mopm lock'`.
+
 ### key
 
 `key` is the lower-case hex sha256 of
@@ -126,12 +163,15 @@ the loader runs, so a need it names that the closure lacks is not judged here.
     <the unit as printed, at four spaces of indent, without key>
     { "\n" <key of dependency> }    for each of deps, in order
     { "\nnative " <key of the native unit> }    for each built native of the unit, in link order
+    { "\nsystem_lib " <name> " " <sha256> }    for each of the unit's loads, in order
 
 It changes when the unit's id (so `M`), sources, dependency list or order,
 natives, profile or outputs change, when the toolchain closure changes, and,
 through the dependency keys, when anything it imports changes. A built native
 adds the key of its `native` unit, so a unit that links an archive changes
-when that archive's sources, headers or flags do. A build system
+when that archive's sources, headers or flags do. A unit that loads a system
+library changes when the pinned bytes of that library do, not only when its name
+does. A build system
 adds the hash of the mopm binary that runs the unit to its action key. Editing
 one package re-runs it and its dependents; unchanged `.mojoc` bytes stop the
 cascade there.
@@ -189,7 +229,8 @@ any other key is refused. There is no CPU level in a manifest: the build system
 compiles at the platform's baseline.
 
 A `shared` or `both` native, one with `mode = "load"`, and one with no `srcs`
-are refused when the graph is made, naming the manifest and the native.
+(unless it is `provided`, below) are refused when the graph is made, naming the
+manifest and the native.
 
 Each such native is one **`native` unit**, `native:<package>/<id>` (the id is
 not followed by `#mojo<M>`: C code does not depend on the Mojo version):
@@ -228,6 +269,58 @@ the member is, by the package and not by where the package sits: a member at
 `srcs` and `hdrs` are paths from the workspace (`src/app/native/shim.c`), while
 its `includes` stay relative to the member. This holds for the root package
 and for a path dependency at any depth.
+
+## Provided natives
+
+A static native can be built by something other than mopm: `[native.<id>]` with
+`kind = "static"` and `provided = true` (and no `srcs`, `hdrs`, `cflags`,
+`cflags_by_os`, `includes`, `build` or `outputs`; `mopm.toml` refuses them with
+`provided`). The archive is the product of a rule of the build system, which
+packs it as `lib<id>.a` into the conda artifact; `needs`, `exclusive` and
+`soname` are read as for any native.
+
+The graph has a `native` unit for it, as for a built native, with `"provided":
+true`, the `soname` and `outputs`, and no `srcs`, `hdrs`, `cflags` or
+`includes`. The build system does not compile it: it supplies the archive of
+that name. The `lib`, `test` and `bin` units that link it list it in `natives`
+as built, in the link order of "Member natives" (a library before every library
+it `needs`). The unit's `key` covers the declaration, not the archive's bytes,
+so a build system that caches by `key` adds the archive's digest to the provided unit's key and to the key of every unit that links it: a dependent's `key` hashes the key of the provided unit, never the archive. A consumer
+that depends on the published package gets a prebuilt entry from its lock, as
+for any static native. A graph with a provided unit is format 4, which a reader
+that does not know `provided` refuses (it would make an empty archive of a unit
+with no sources); a format 4 graph has `system_libs` and `loads` exactly when a
+format 3 graph would.
+
+## System libraries of a native
+
+An archive can leave symbols to the platform: C++ code leaves `std::__1::...`,
+`operator new[]` and `__cxa_pure_virtual` to libc++. `[native.<id>] link =
+["c++"]` in `mopm.toml` names the system libraries the final link of any
+consumer adds. The names are `c++`, `dl`, `m` and `pthread`, a closed list
+(they come from published packages and reach linker command lines), none twice;
+the native must be `kind = "static"` with `mode = "link"`, and may be `provided`.
+`mopm pack`, `publish` and `stage` write `link` into the `<name>.mopm.json` of
+the package, `mopm lock` copies it into the lock, and `mopm build` adds it to
+the `mojo build` line (`-lc++` after every archive).
+
+A unit with `natives` (`lib`, `test`, `bin` and `prebuilt`) has **`link`**: the
+`link` of its natives, each name once, in the order `c++`, `dl`, `m`, `pthread`
+(whatever order the natives, or the names in a manifest, were in; libc++ comes
+before the libraries it needs). It is the list a build system adds to the final link,
+as `-l<name>`, after every archive: the final link of a `test` or `bin` unit,
+and the link of anything that links this unit's archives. It is absent when
+empty. The `native` units themselves have none: an archive is not linked. A
+build system reads the unit's `link` and does not collect the names of the
+natives itself; `mopm build` orders the same names the same way, so both give
+one list. `mopm unit` refuses a graph file whose `link` has a name outside the
+list or a repeated name.
+
+A graph in which any unit has `link` is format 5, because a reader that does not
+know `link` would link without the libraries and fail on the undefined symbols;
+a format 5 graph has `provided`, `system_libs` and `loads` exactly when a
+format 4 graph would. The unit's `key` covers its `link`, so adding a name moves
+the key of every unit that links the archive.
 
 ## The workspace
 

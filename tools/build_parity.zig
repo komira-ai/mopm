@@ -32,7 +32,7 @@
 //!
 //! Run as a zig_test by Buck2 (//:build_parity), with build.zig and BUCK as
 //! inputs; `zig test tools/build_parity.zig` from the repository root runs it
-//! too. The mutants below show it can go red.
+//! too. The variants below show it can go red.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -302,16 +302,16 @@ test "the repository's build.zig and BUCK agree" {
     try std.testing.expectEqual(@as(usize, 0), f.items.len);
 }
 
-// The mutants: a copy of the real pair with one defect, which must be found,
-// and be found for the reason it was planted.
+// The defect: a copy of the real pair with one defect, which must be found,
+// and be found for the reason it was faulty.
 
-test "mutant: a test added to build.zig and not to BUCK" {
+test "defect: a test added to build.zig and not to BUCK" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
     const zig = try readAll(a, "build.zig");
     const end = std.mem.lastIndexOfScalar(u8, zig, '}').?;
-    const mutant = try std.mem.concat(a, u8, &.{ zig[0..end],
+    const variant = try std.mem.concat(a, u8, &.{ zig[0..end],
         \\
         \\    const toml_tests = b.addTest(.{
         \\        .root_source_file = b.path("src/core/toml.zig"),
@@ -322,7 +322,7 @@ test "mutant: a test added to build.zig and not to BUCK" {
         \\}
         \\
     });
-    const f = try findings(a, mutant, try readAll(a, "BUCK"), false);
+    const f = try findings(a, variant, try readAll(a, "BUCK"), false);
     try std.testing.expect(mentions(f, "build.zig has `test src/core/toml.zig`"));
 }
 
@@ -347,7 +347,7 @@ test "a native-only block of build.zig is left out, an unmarked one is not" {
     try std.testing.expect(mentions(try findings(a, plain, buck, false), "build.zig has `test src/core/toml.zig`"));
 }
 
-test "mutant: a zig_test removed from BUCK" {
+test "defect: a zig_test removed from BUCK" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
@@ -355,41 +355,41 @@ test "mutant: a zig_test removed from BUCK" {
     const at = std.mem.indexOf(u8, buck, "name = \"cli_test\"").?;
     const start = std.mem.lastIndexOf(u8, buck[0..at], "zig_test(").?;
     const stop = at + std.mem.indexOf(u8, buck[at..], "\n)\n").? + 3;
-    const mutant = try std.mem.concat(a, u8, &.{ buck[0..start], buck[stop..] });
-    const f = try findings(a, try readAll(a, "build.zig"), mutant, false);
+    const variant = try std.mem.concat(a, u8, &.{ buck[0..start], buck[stop..] });
+    const f = try findings(a, try readAll(a, "build.zig"), variant, false);
     try std.testing.expect(mentions(f, "build.zig has `test src/cli/main.zig`"));
 }
 
-test "mutant: a zig_test that no unit_tests list names" {
+test "defect: a zig_test that no unit_tests list names" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    const mutant = try std.mem.replaceOwned(u8, a, try readAll(a, "BUCK"), "\":fake_test\"", "\":nothing\"");
-    const f = try findings(a, try readAll(a, "build.zig"), mutant, false);
+    const variant = try std.mem.replaceOwned(u8, a, try readAll(a, "BUCK"), "\":fake_test\"", "\":nothing\"");
+    const f = try findings(a, try readAll(a, "build.zig"), variant, false);
     try std.testing.expect(mentions(f, "zig_test fake_test is in no unit_tests list"));
 }
 
-test "mutant: an executable renamed in BUCK" {
+test "defect: an executable renamed in BUCK" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    const mutant = try std.mem.replaceOwned(u8, a, try readAll(a, "BUCK"), "name = \"mopm-fake-registry\"", "name = \"mopm-fake\"");
-    const f = try findings(a, try readAll(a, "build.zig"), mutant, false);
+    const variant = try std.mem.replaceOwned(u8, a, try readAll(a, "BUCK"), "name = \"mopm-fake-registry\"", "name = \"mopm-fake\"");
+    const f = try findings(a, try readAll(a, "build.zig"), variant, false);
     try std.testing.expect(mentions(f, "build.zig has `exe mopm-fake-registry"));
 }
 
-test "mutant: a module root that differs" {
+test "defect: a module root that differs" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
     const zig = try readAll(a, "build.zig");
     const at = std.mem.indexOf(u8, zig, "src/core/mopm_core.zig").?;
-    const mutant = try std.mem.concat(a, u8, &.{ zig[0..at], "src/core/toml.zig", zig[at + "src/core/mopm_core.zig".len ..] });
-    const f = try findings(a, mutant, try readAll(a, "BUCK"), false);
+    const variant = try std.mem.concat(a, u8, &.{ zig[0..at], "src/core/toml.zig", zig[at + "src/core/mopm_core.zig".len ..] });
+    const f = try findings(a, variant, try readAll(a, "BUCK"), false);
     try std.testing.expect(mentions(f, "module mopm_core"));
 }
 
-test "mutant: a root file that does not exist" {
+test "defect: a root file that does not exist" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
@@ -399,21 +399,21 @@ test "mutant: a root file that does not exist" {
     try std.testing.expect(mentions(f, "registry/fake/gone.zig is named by build.zig and is not a file"));
 }
 
-test "mutant: the options module dropped from BUCK" {
+test "defect: the options module dropped from BUCK" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
     // (Both the executable and its test import it, so both lose it.)
-    const mutant = try std.mem.replaceOwned(u8, a, try readAll(a, "BUCK"), ", \":build_options\"]", "]");
-    const f = try findings(a, try readAll(a, "build.zig"), mutant, false);
+    const variant = try std.mem.replaceOwned(u8, a, try readAll(a, "BUCK"), ", \":build_options\"]", "]");
+    const f = try findings(a, try readAll(a, "build.zig"), variant, false);
     try std.testing.expect(mentions(f, "build.zig has `import src/cli/main.zig build_options`"));
 }
 
-test "mutant: an options module added to build.zig only" {
+test "defect: an options module added to build.zig only" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    const mutant = try std.mem.replaceOwned(u8, a, try readAll(a, "build.zig"), "closure_gen.root_module.addImport(\"mopm_core\", core);", "closure_gen.root_module.addImport(\"mopm_core\", core);\n    closure_gen.root_module.addOptions(\"flags\", opts);");
-    const f = try findings(a, mutant, try readAll(a, "BUCK"), false);
+    const variant = try std.mem.replaceOwned(u8, a, try readAll(a, "build.zig"), "closure_gen.root_module.addImport(\"mopm_core\", core);", "closure_gen.root_module.addImport(\"mopm_core\", core);\n    closure_gen.root_module.addOptions(\"flags\", opts);");
+    const f = try findings(a, variant, try readAll(a, "BUCK"), false);
     try std.testing.expect(mentions(f, "tools/flags.zig"));
 }

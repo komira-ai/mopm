@@ -1,6 +1,6 @@
 //! //:workflows: the workflow lint
 //! (tests/drivers/workflow_lint.zig), run by Buck2 over the repository's
-//! workflows, and shown able to fail: each rule has a planted defect that must
+//! workflows, and shown able to fail: each rule has a known defect that must
 //! be flagged, with its message.
 //!
 //! The syntax check of `run:` scripts is a stand-in for `bash -n` (the farm has
@@ -25,7 +25,7 @@ const Repo = struct {
         const text = try self.tree.read(a, try std.fmt.allocPrint(a, ".github/workflows/{s}", .{name}));
         if (!std.mem.eql(u8, name, self.name)) return text;
         if (std.mem.indexOf(u8, text, self.from) == null) {
-            std.debug.print("the planted change does not apply to {s}: {s} is not in it\n", .{ name, self.from });
+            std.debug.print("the faulty change does not apply to {s}: {s} is not in it\n", .{ name, self.from });
             return error.TestUnexpectedResult;
         }
         return std.mem.replaceOwned(u8, a, text, self.from, self.to);
@@ -499,7 +499,7 @@ test "actions/create-github-app-token is for release.yml alone, pinned by commit
     const a = arena.allocator();
     const pinned_use = try std.fmt.allocPrint(a, "{s}{s}    steps:\n      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510\n", .{ head, job_head });
     try c.expectLines("release.yml", try lint(a, "release.yml", pinned_use), &.{});
-    // Mutants: another workflow, and a tag instead of a commit.
+    // Defect caught: another workflow, and a tag instead of a commit.
     try c.expectLines("ci.yml", try lint(a, "ci.yml", pinned_use), &.{"only GitHub-owned actions pinned by full SHA"});
     const tagged = try std.fmt.allocPrint(a, "{s}{s}    steps:\n      - uses: actions/create-github-app-token@v3\n", .{ head, job_head });
     try c.expectLines("release.yml tag", try lint(a, "release.yml", tagged), &.{"only GitHub-owned actions pinned by full SHA"});
@@ -759,7 +759,7 @@ fn expectAdvisories(from: []const u8, to: []const u8, want: []const []const u8) 
     const tree = try c.loadTree(a);
     const text = try tree.read(a, advisories_path);
     if (std.mem.indexOf(u8, text, from) == null) {
-        std.debug.print("the planted change does not apply to advisories.yml: {s} is not in it\n", .{from});
+        std.debug.print("the faulty change does not apply to advisories.yml: {s} is not in it\n", .{from});
         return error.TestUnexpectedResult;
     }
     const mutated = try std.mem.replaceOwned(u8, a, text, from, to);
@@ -776,7 +776,7 @@ fn expectInstaller(from: []const u8, to: []const u8, want: []const []const u8) !
     const tree = try c.loadTree(a);
     const text = try tree.read(a, installer_path);
     if (std.mem.indexOf(u8, text, from) == null) {
-        std.debug.print("the planted change does not apply to {s}: {s} is not in it\n", .{ installer_path, from });
+        std.debug.print("the faulty change does not apply to {s}: {s} is not in it\n", .{ installer_path, from });
         return error.TestUnexpectedResult;
     }
     var out = c.Out.init(a);

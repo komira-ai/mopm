@@ -13,6 +13,8 @@
 //! - the token must be in no program mopm starts (one stand-in plays mojo, the test binary and pixi, and records its
 //!   environment: `mopm run`, the compile and the `--skip-all` listing of `mopm test`, and the installer of `mopm sync`),
 //!   and in nothing mopm prints;
+//! - a set whose commit request would be over 5 MiB (escaped readmes) is refused before any request, by `--dry-run` too,
+//!   on a first run and on a resume, and nothing is written;
 //! - a yank of the group yanks its members, and an unyank restores those and not the one yanked by hand before.
 
 const std = @import("std");
@@ -351,11 +353,15 @@ fn theTokenIsInNoChildEnvironment(w: World, probe: []const u8) !void {
     try h.writeFile(try h.join(a, &.{ w.work, "prog.mojo" }), "def main(): pass\n");
     var env = try h.cloneEnv(a, &w.m.env);
     try env.put("MOPM_TOKEN", w.token);
+    try env.put("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "actions_request_secret");
+    try env.put("ACTIONS_ID_TOKEN_REQUEST_URL", "https://pipelines.example/idtoken?api-version=2.0");
     try env.put("MOPM_PROBE_MARK", "kept");
     const argv = [_][]const u8{ w.m.exe, "run", "--prefix", prefix, try h.join(a, &.{ w.work, "prog.mojo" }) };
     const r = try h.run(a, &argv, &env, .{});
     w.rep.check("a program mopm starts has no MOPM_TOKEN in its environment, and the rest of the environment as it was", h.contains(r.text, "MOPM_TOKEN=<unset>") and
         h.contains(r.text, "MOPM_PROBE_MARK=kept") and !h.contains(r.text, w.token), r.text);
+    w.rep.check("nor the identity-token request token and URL that 'publish --oidc' asks GitHub with", h.contains(r.text, "ACTIONS_ID_TOKEN_REQUEST_TOKEN=<unset>") and
+        h.contains(r.text, "ACTIONS_ID_TOKEN_REQUEST_URL=<unset>") and !h.contains(r.text, "actions_request_secret") and !h.contains(r.text, "pipelines.example"), r.text);
 }
 
 /// The lines the stand-in program appended to `path`, or "" when there are none.
@@ -490,6 +496,203 @@ fn refusalsBeforeAnyRequest(w: World) !void {
     w.rep.check("with no token and no login the run says to log in, before sending anything", r.code == 1 and h.contains(r.stderr, "not logged in") and (try w.visible("2.1.0")) == 0, r.stderr);
 }
 
+/// A set whose commit request would be one byte over 5 MiB: 90 members, each readme a run of quotes, backslashes, newlines
+/// and control bytes that JSON escaping makes about twice as long. `publish --staged` and `--dry-run` refuse it before any
+/// request, on a first run and on a resume, and write nothing.
+fn anOversizedCommit(w: World) !void {
+    const a = w.a;
+    const staged = try w.dir("oversized");
+    const count = 90;
+    // One unit: 7 bytes on disk, 16 in the body (\", \\, \n, \t, \u0001, and a two-byte é as it is).
+    const unit = "\"\\\n\t\x01\xc3\xa9";
+    var plan = std.ArrayList(u8).init(a);
+    try plan.appendSlice("{\"version\":1,\"members\":[");
+    // The body without readmes: {"members":[...]} with {"name":"bigNN","manifest_sha256":"<64>","readme":""} per member.
+    var bare: usize = 14 + (count - 1);
+    for (0..count) |i| bare += (std.fmt.count("big{d}", .{i}) + 2) + 8 + 20 + 64 + 2 + 10 + 2;
+    const room = (5 * 1024 * 1024 + 1) - bare;
+    for (0..count) |i| {
+        const name = try std.fmt.allocPrint(a, "big{d}", .{i});
+        const json_len = room / count + if (i == 0) room % count else 0;
+        const units = json_len / 16;
+        const readme = try a.alloc(u8, units * unit.len + json_len % 16);
+        for (0..units) |u| @memcpy(readme[u * unit.len ..][0..unit.len], unit);
+        @memset(readme[units * unit.len ..], 'a');
+        try h.writeFile(try h.join(a, &.{ staged, try std.fmt.allocPrint(a, "{s}.md", .{name}) }), readme);
+        const m = Member{ .name = name, .version = "1.0.0", .bytes = name };
+        const filename = try filenameOf(a, m);
+        try h.writeFile(try h.join(a, &.{ staged, "noarch", filename }), m.bytes);
+        if (i != 0) try plan.append(',');
+        try plan.writer().print(
+            "{{\"name\":\"{s}\",\"version\":\"1.0.0\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",\"readme\":\"{s}.md\",\"files\":[{{\"subdir\":\"noarch\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":{d}}}]}}",
+            .{ name, try sha256Hex(a, name), name, filename, try sha256Hex(a, m.bytes), m.bytes.len },
+        );
+    }
+    try plan.appendSlice("]}");
+    try h.writeFile(try h.join(a, &.{ staged, "plan.json" }), plan.items);
+
+    const refusal = "the readmes of the 90 members make a commit request of 5242881 bytes; the registry takes at most 5242880. The largest readmes: big0 (";
+    const state_path = try h.join(a, &.{ staged, "state.json" });
+    const report_path = try h.join(a, &.{ staged, "report.json" });
+    for ([_][]const u8{ "first run", "resume" }) |when| {
+        const resuming = std.mem.eql(u8, when, "resume");
+        // A resume: the state a --no-commit run leaves, naming an open group with a file held.
+        if (resuming) try h.writeFile(state_path, try std.fmt.allocPrint(a, "{{\"registry\":\"{s}/api/v1\",\"plan_sha256\":\"{s}\",\"group_id\":\"grp_0123456789abcdef0123456789abcdef\",\"attempt\":1,\"staged\":true,\"uploaded\":[\"big0/noarch/{s}\"]}}", .{ dead, try sha256Hex(a, plan.items), try filenameOf(a, .{ .name = "big0", .version = "1.0.0", .bytes = "" }) }));
+        const state_before = if (resuming) try h.readFile(a, state_path) else "";
+        for ([_]bool{ false, true }) |dry| {
+            const base = [_][]const u8{ "publish", "--staged", staged, "--registry", dead, "--config-dir", w.conf };
+            const r = try w.m.run(if (dry) &(base ++ [_][]const u8{"--dry-run"}) else &base, "mopm_unused");
+            w.rep.check(
+                try std.fmt.allocPrint(a, "an oversized set is refused by publish --staged{s} on a {s}, naming the largest readmes, before any request", .{ if (dry) " --dry-run" else "", when }),
+                r.code == 1 and h.contains(r.stderr, refusal) and h.contains(r.stderr, "; nothing was sent") and !h.contains(r.stderr, "cannot reach") and r.stdout.len == 0,
+                try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }),
+            );
+            w.rep.check(
+                try std.fmt.allocPrint(a, "and{s} on a {s} it writes no report, and {s}", .{ if (dry) " --dry-run" else "", when, if (resuming) "leaves state.json as it was" else "no state.json" }),
+                !exists(report_path) and if (resuming) std.mem.eql(u8, try h.readFile(a, state_path), state_before) else !exists(state_path),
+                "a record was written or changed",
+            );
+        }
+    }
+}
+
+fn groupStatus(w: World, id: []const u8) ![]const u8 {
+    const r = try w.api("GET", try std.fmt.allocPrint(w.a, "/api/v1/groups/{s}", .{id}), null);
+    return h.jsonString(try h.parseJson(w.a, r.body), "status") orelse "(none)";
+}
+
+/// `--no-commit` stops with the group open and nothing readable; the same directory, run again without it, commits that group.
+fn stageThenCommit(w: World) !void {
+    const a = w.a;
+    const staged = try w.dir("staged_commit");
+    const members = chain("3.0.0", "the bytes of b");
+    try stage(a, staged, &members);
+    const digest = try sha256Hex(a, try h.readFile(a, try h.join(a, &.{ staged, "plan.json" })));
+    const r = try w.publish(staged, &.{"--no-commit"});
+    const id = try w.groupId(staged);
+    w.rep.check("--no-commit uploads the set and ends 0, saying the group and the plan digest", r.code == 0 and h.contains(r.stdout, "staged group grp_") and
+        h.contains(r.stdout, "open, 3 file(s) held, not committed") and h.contains(r.stdout, digest) and !h.contains(r.stdout, "published group"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+    w.rep.check("the registry holds the group open, and serves none of the three versions", std.mem.eql(u8, try groupStatus(w, id), "open") and (try w.visible("3.0.0")) == 0, "the group is not open or a member is visible");
+    const ch = try h.request(a, "GET", w.fake.base, "/channel/noarch/mojo-grp_c-3.0.0-mojo1.0.0_0.conda", null, null);
+    const idx = try h.request(a, "GET", w.fake.base, "/index/gr/p_/grp_b", null, null);
+    w.rep.check("and neither the channel nor the index serves a staged file", ch.status != 200 and !h.contains(idx.body, "\"3.0.0\""), "a staged file is readable");
+    const report = try w.reportJson(staged);
+    w.rep.check("report.json says the run is staged, names the group, the digest and the open status", std.mem.eql(u8, h.jsonString(report, "outcome") orelse "", "staged") and
+        std.mem.eql(u8, h.jsonString(report, "group_id") orelse "", id) and std.mem.eql(u8, h.jsonString(report, "plan_sha256") orelse "", digest) and
+        std.mem.eql(u8, h.jsonString(report, "group_status") orelse "", "open") and std.mem.eql(u8, World.memberOutcome(report, "grp_a"), "staged"), "the report is not as expected");
+    const state = try w.stateJson(staged);
+    w.rep.check("state.json keeps the group, marks it staged and not committed, and lists the three files", state.object.get("staged").?.bool and !state.object.get("committed").?.bool and
+        state.object.get("uploaded").?.array.items.len == 3, "the state is not as expected");
+
+    const again = try w.publish(staged, &.{});
+    w.rep.check("the same command without --no-commit resumes the SAME group, sends no file, commits, and waits", again.code == 0 and h.contains(again.stdout, "resuming group") and
+        h.contains(again.stdout, "3 file(s) were already in the registry's storage") and !h.contains(again.stdout, "uploaded mojo-") and h.contains(again.stdout, "committed group") and
+        std.mem.eql(u8, try w.groupId(staged), id) and try w.allIn("3.0.0", "published"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ again.code, again.stdout, again.stderr }));
+    w.rep.check("then report.json says published and state.json says committed, no longer staged", std.mem.eql(u8, h.jsonString(try w.reportJson(staged), "outcome") orelse "", "published") and
+        (try w.stateJson(staged)).object.get("committed").?.bool and !(try w.stateJson(staged)).object.get("staged").?.bool, "the records are not as expected");
+}
+
+/// `--abort` ends the staged group and frees the actor's place: five open groups fill the actor's places, a sixth is refused, an abort lets it in.
+fn abortFreesThePlace(w: World) !void {
+    const a = w.a;
+    const versions = [_][]const u8{ "4.0.0", "4.1.0", "4.2.0", "4.3.0", "4.4.0" };
+    var dirs: [5][]const u8 = undefined;
+    var ids: [5][]const u8 = undefined;
+    for (versions, 0..) |v, i| {
+        dirs[i] = try w.dir(try std.fmt.allocPrint(a, "slot_{d}", .{i}));
+        const members = chain(v, "the bytes of b");
+        try stage(a, dirs[i], &members);
+        const r = try w.publish(dirs[i], &.{"--no-commit"});
+        ids[i] = try w.groupId(dirs[i]);
+        w.rep.check(try std.fmt.allocPrint(a, "{s} is staged and open", .{v}), r.code == 0 and std.mem.eql(u8, try groupStatus(w, ids[i]), "open"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+    }
+    const sixth = try w.dir("slot_5");
+    const m6 = chain("4.5.0", "the bytes of b");
+    try stage(a, sixth, &m6);
+    const full = try w.publish(sixth, &.{"--no-commit"});
+    w.rep.check("with five groups open a sixth cannot be staged: the registry's refusal is shown", full.code == 1 and h.contains(full.stderr, "at most 5 may be open"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ full.code, full.stdout, full.stderr }));
+
+    const gone = try w.publish(dirs[0], &.{"--abort"});
+    w.rep.check("--abort ends the group state.json names, says so, and ends 0", gone.code == 0 and h.contains(gone.stdout, "aborted group grp_") and std.mem.eql(u8, try groupStatus(w, ids[0]), "aborted") and
+        (try w.visible("4.0.0")) == 0, try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ gone.code, gone.stdout, gone.stderr }));
+    const report = try w.reportJson(dirs[0]);
+    w.rep.check("report.json says aborted and names the group; state.json names none", std.mem.eql(u8, h.jsonString(report, "outcome") orelse "", "aborted") and
+        std.mem.eql(u8, h.jsonString(report, "group_id") orelse "", ids[0]) and (try w.groupId(dirs[0])).len == 0, "the records are not as expected");
+    const twice = try w.publish(dirs[0], &.{"--abort"});
+    w.rep.check("a second --abort has no group to end: it says so, sends nothing and ends 0", twice.code == 0 and h.contains(twice.stdout, "names no group: nothing to abort"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ twice.code, twice.stdout, twice.stderr }));
+
+    const freed = try w.publish(sixth, &.{"--no-commit"});
+    w.rep.check("the place is free: the sixth set is now staged", freed.code == 0 and h.contains(freed.stdout, "staged group grp_"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ freed.code, freed.stdout, freed.stderr }));
+
+    // An abort of a group that already ended (here: aborted from another directory's copy of the state) is not a failure of the failure job.
+    const copy = try w.dir("slot_1_copy");
+    try std.fs.cwd().makePath(copy);
+    try h.writeFile(try h.join(a, &.{ copy, "plan.json" }), try h.readFile(a, try h.join(a, &.{ dirs[1], "plan.json" })));
+    try h.writeFile(try h.join(a, &.{ copy, "state.json" }), try h.readFile(a, try h.join(a, &.{ dirs[1], "state.json" })));
+    const from_copy = try w.publish(copy, &.{"--abort"});
+    w.rep.check("--abort reads plan.json and state.json only: a directory without the set's files ends the group", from_copy.code == 0 and std.mem.eql(u8, try groupStatus(w, ids[1]), "aborted"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ from_copy.code, from_copy.stdout, from_copy.stderr }));
+    const ended = try w.publish(dirs[1], &.{"--abort"});
+    w.rep.check("--abort of a group that is already aborted ends 0 again", ended.code == 0 and std.mem.eql(u8, try groupStatus(w, ids[1]), "aborted"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ ended.code, ended.stdout, ended.stderr }));
+
+    // Leave no group open for the scenarios that follow (an actor holds at most five).
+    for (dirs[2..]) |d| _ = try w.publish(d, &.{"--abort"});
+    _ = try w.publish(sixth, &.{"--abort"});
+}
+
+/// A staged group left open past its deadline is ended by the registry; the resume says so, sends nothing, and keeps state.json.
+fn aStagedGroupThatExpired(w: World) !void {
+    const a = w.a;
+    const staged = try w.dir("staged_expired");
+    const members = chain("5.0.0", "the bytes of b");
+    try stage(a, staged, &members);
+    const r = try w.publish(staged, &.{"--no-commit"});
+    const id = try w.groupId(staged);
+    w.rep.check("a set is staged", r.code == 0 and id.len > 0, try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+    _ = try w.fake.control(a, "/clock", "{\"advance_seconds\":46800}");
+    const before = try w.uploads();
+    const again = try w.publish(staged, &.{});
+    w.rep.check("a resume after the group expired ends 1, names the group and its status, and says nothing was sent", again.code == 1 and h.contains(again.stderr, "staged by an earlier run, is expired") and
+        h.contains(again.stderr, id) and h.contains(again.stderr, "nothing was sent") and h.contains(again.stderr, "stage the set again"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ again.code, again.stdout, again.stderr }));
+    w.rep.check("the group was not opened again and nothing is served", std.mem.eql(u8, try groupStatus(w, id), "expired") and (try w.visible("5.0.0")) == 0 and (try w.uploads()) == before, "the registry was changed");
+    w.rep.check("state.json still names the group", std.mem.eql(u8, try w.groupId(staged), id), "the state was changed");
+    const gone = try w.publish(staged, &.{"--abort"});
+    w.rep.check("--abort of the expired group ends 0 and says it is already ended", gone.code == 0 and h.contains(gone.stdout, "already expired: nothing is held"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ gone.code, gone.stdout, gone.stderr }));
+}
+
+/// A group that was committed cannot be staged again, aborted, or mistaken for a staged one.
+fn refusalsOfStaging(w: World) !void {
+    const a = w.a;
+    const staged = try w.dir("staged_refused");
+    const members = chain("6.0.0", "the bytes of b");
+    try stage(a, staged, &members);
+    var r = try w.m.run(&.{ "publish", "--staged", staged, "--registry", dead, "--abort", "--no-commit" }, null);
+    w.rep.check("--abort with --no-commit is a usage error", r.code == 2 and h.contains(r.stderr, "--abort ends a group and --no-commit stages one"), r.stderr);
+    r = try w.m.run(&.{ "publish", "--staged", staged, "--registry", dead, "--abort", "--dry-run" }, null);
+    w.rep.check("--abort with --dry-run is a usage error", r.code == 2 and h.contains(r.stderr, "--abort cannot be a --dry-run"), r.stderr);
+    r = try w.m.run(&.{ "publish", "--staged", staged, "--registry", dead, "--config-dir", w.conf, "--no-commit", "--dry-run" }, null);
+    w.rep.check("--no-commit --dry-run says it would stop with the group open, and sends nothing", r.code == 0 and h.contains(r.stdout, "stop with the group open") and !exists(try h.join(a, &.{ staged, "state.json" })), r.stdout);
+    r = try w.publish(staged, &.{"--abort"});
+    w.rep.check("--abort in a directory that was never staged refuses, naming state.json, and sends nothing", r.code == 1 and h.contains(r.stderr, "has no state.json") and !exists(try h.join(a, &.{ staged, "report.json" })), r.stderr);
+
+    // Published already: --no-commit refuses (it stages before a commit), and --abort refuses (a committed group is not aborted).
+    const done = try w.publish(staged, &.{});
+    w.rep.check("the set is published", done.code == 0 and try w.allIn("6.0.0", "published"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ done.code, done.stdout, done.stderr }));
+    const id = try w.groupId(staged);
+    r = try w.publish(staged, &.{"--no-commit"});
+    w.rep.check("--no-commit on a published set is refused and publishes nothing new", r.code == 1 and h.contains(r.stderr, "not open: --no-commit stages a group before its commit"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+    r = try w.publish(staged, &.{"--abort"});
+    w.rep.check("--abort on a published group is refused, points at yank, and the set stays published", r.code == 1 and h.contains(r.stderr, "it was committed, so it cannot be aborted") and
+        h.contains(r.stderr, "mopm yank --group") and try w.allIn("6.0.0", "published") and std.mem.eql(u8, try w.groupId(staged), id), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+
+    // A state of another plan is refused by --abort as by every other run.
+    const other = try w.dir("staged_other_plan");
+    const m2 = chain("6.1.0", "the bytes of b");
+    try stage(a, other, &m2);
+    try h.writeFile(try h.join(a, &.{ other, "state.json" }), try std.fmt.allocPrint(a, "{{\"registry\":\"{s}/api/v1\",\"plan_sha256\":\"{s}\",\"group_id\":\"{s}\"}}", .{ w.fake.base, "0" ** 64, id }));
+    r = try w.publish(other, &.{"--abort"});
+    w.rep.check("--abort with a state.json of another plan is refused, and the group it names is untouched", r.code == 1 and h.contains(r.stderr, "belongs to another plan") and std.mem.eql(u8, try groupStatus(w, id), "visible"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+}
+
 fn exists(path: []const u8) bool {
     return if (std.fs.cwd().access(path, .{})) true else |_| false;
 }
@@ -501,7 +704,6 @@ test "mopm publish --staged and mopm yank --group against the fake registry" {
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var report = h.Report{};
-    try h.watchdog(180);
     const mopm_exe = try h.toolPath(a, "MOPM");
     const fake_exe = try h.toolPath(a, "MOPM_FAKE_REGISTRY");
     const probe = try h.toolPath(a, "MOPM_ENV_PROBE");
@@ -525,7 +727,7 @@ test "mopm publish --staged and mopm yank --group against the fake registry" {
         const r = try h.request(a, "POST", fake.base, try std.fmt.allocPrint(a, "/api/v1/packages/{s}/claim", .{n}), "{}", session);
         report.check(try std.fmt.allocPrint(a, "{s} is claimed", .{n}), r.status == 201, r.body);
     }
-    const made = try h.request(a, "POST", fake.base, "/api/v1/me/tokens", "{\"name\":\"e2e\",\"scopes\":[\"publish\",\"yank\"],\"packages\":[\"grp_a\",\"grp_b\",\"grp_c\"],\"expires_in_days\":1}", session);
+    const made = try h.request(a, "POST", fake.base, "/api/v1/me/tokens", "{\"name\":\"e2e\",\"scopes\":[\"publish\",\"yank\"],\"packages\":[\"grp_a\",\"grp_b\",\"grp_c\"],\"expires_in_days\":7}", session);
     const token = if (made.status == 201) (h.jsonString(try h.parseJson(a, made.body), "token") orelse "") else "";
     report.check("an API token that may publish and yank the three is made", token.len > 0, made.body);
 
@@ -533,6 +735,10 @@ test "mopm publish --staged and mopm yank --group against the fake registry" {
     try publishAChain(w);
     try aRejectedMember(w);
     try anExpiredGroup(w);
+    try stageThenCommit(w);
+    try abortFreesThePlace(w);
+    try aStagedGroupThatExpired(w);
+    try refusalsOfStaging(w);
     try aFailedPutThenARerun(w);
     try transientFailuresAreRetried(w);
     try noGroupPublish(w);
@@ -541,6 +747,7 @@ test "mopm publish --staged and mopm yank --group against the fake registry" {
     try theTokenIsInNoTestOrInstallerEnvironment(w, probe);
     try yankAndUnyank(w);
     try refusalsBeforeAnyRequest(w);
+    try anOversizedCommit(w);
 
     var leaked = false;
     for ([_][]const u8{ token, session }) |s| {

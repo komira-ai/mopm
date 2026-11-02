@@ -55,7 +55,7 @@ test('mopm-toml.md: the toml example, the sections list, and escaped placeholder
 });
 
 // tocNav renders each heading's text as its link, at its level, to its id; an id outside the anchor grammar is left
-// out. Mutants: the link text taken from the id; the level class dropped; an unsafe id linked.
+// out. Defect caught: the link text taken from the id; the level class dropped; an unsafe id linked.
 test('tocNav: one link per heading, reading as the heading, to its anchor', () => {
   const nav = tocNav([
     { level: 2, id: 'doc-a', text: 'A <b> & c' },
