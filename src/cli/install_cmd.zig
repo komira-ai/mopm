@@ -711,7 +711,7 @@ fn cacheDir(arena: Allocator, flag: ?[]const u8) ![]const u8 {
 /// The toolchain closure of `mojo` on `subdir`: the `--toolchain` file, else mopm's pinned one. Null when there is none
 /// (reported).
 fn loadToolchain(arena: Allocator, mojo: []const u8, subdir: []const u8, file: ?[]const u8) !?closure.Closure {
-    const path = file orelse {
+    const closure_file = file orelse {
         var why: []const u8 = "";
         return unit_graph.pinnedClosure(arena, mojo, subdir, &why) catch |e| {
             if (e != error.Refused) return e;
@@ -719,21 +719,21 @@ fn loadToolchain(arena: Allocator, mojo: []const u8, subdir: []const u8, file: ?
             return null;
         };
     };
-    const text = std.fs.cwd().readFileAlloc(arena, path, 16 << 20) catch |e| {
-        err(.sync, "--toolchain {s}: {s}\n", .{ path, @errorName(e) });
+    const text = std.fs.cwd().readFileAlloc(arena, closure_file, 16 << 20) catch |e| {
+        err(.sync, "--toolchain {s}: {s}\n", .{ closure_file, @errorName(e) });
         return null;
     };
     const c = closure.parse(arena, text) catch |e| {
         if (e == error.OutOfMemory) return e;
-        err(.sync, "--toolchain {s} is not a toolchain closure file: {s}\n", .{ path, @errorName(e) });
+        err(.sync, "--toolchain {s} is not a toolchain closure file: {s}\n", .{ closure_file, @errorName(e) });
         return null;
     };
     if (try closure.problem(arena, c)) |why| {
-        err(.sync, "--toolchain {s}: {s}\n", .{ path, why });
+        err(.sync, "--toolchain {s}: {s}\n", .{ closure_file, why });
         return null;
     }
     if (!std.mem.eql(u8, c.mojo, mojo) or !std.mem.eql(u8, c.subdir, subdir)) {
-        err(.sync, "--toolchain {s} is the closure of mojo {s} on {s}; this sync needs mojo {s} on {s}\n", .{ path, c.mojo, c.subdir, mojo, subdir });
+        err(.sync, "--toolchain {s} is the closure of mojo {s} on {s}; this sync needs mojo {s} on {s}\n", .{ closure_file, c.mojo, c.subdir, mojo, subdir });
         return null;
     }
     return c;
