@@ -722,7 +722,7 @@ test "readmes that would make a commit request over the limit are refused at sta
     const r = try runStage(fx, &stub, "over", &.{});
     try std.testing.expectEqual(@as(u8, 1), r.code);
     try expectContainsText(r.err, "the readmes of the 45 members make a commit request of ");
-    try expectContainsText(r.err, "The largest readmes: pkg_0 (65000 bytes), ");
+    try expectContainsText(r.err, "The largest readmes: pkg_0 (130000 bytes in the request), ");
     try expectContainsText(r.err, "; nothing was written\n");
     try std.testing.expect(!fx.exists("over"));
 

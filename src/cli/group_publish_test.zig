@@ -1241,7 +1241,7 @@ test "the readmes named are the largest by what they add to the body, and a memb
         .{ .name = "b", .manifest_sha256 = sha_x, .readme = "xy" },
     };
     try std.testing.expectEqualStrings(
-        "the readmes of the 2 members make a commit request of 5243102 bytes; the registry takes at most 5242880. The largest readmes: b (2 bytes). Shorten them or publish fewer packages in one group",
+        "the readmes of the 2 members make a commit request of 5243102 bytes; the registry takes at most 5242880. The largest readmes: b (2 bytes in the request). Shorten them or publish fewer packages in one group",
         (try plan_mod.commitBodyProblem(a, &one)) orelse return error.TestExpectedRefusal,
     );
     // Ranked by escaped size: four quotes (8 bytes in the body) outrank five plain letters (5); only three are named.
@@ -1252,7 +1252,7 @@ test "the readmes named are the largest by what they add to the body, and a memb
         .{ .name = "short", .manifest_sha256 = sha_x, .readme = "a" },
         .{ .name = "empty", .manifest_sha256 = sha_x, .readme = "" },
     };
-    try expectContains((try plan_mod.commitBodyProblem(a, &many)) orelse return error.TestExpectedRefusal, "The largest readmes: quotes (4 bytes), plain (5 bytes), short (1 bytes). Shorten");
+    try expectContains((try plan_mod.commitBodyProblem(a, &many)) orelse return error.TestExpectedRefusal, "The largest readmes: quotes (8 bytes in the request), plain (5 bytes in the request), short (1 bytes in the request). Shorten");
     // Under the limit there is nothing to say.
     try std.testing.expect((try plan_mod.commitBodyProblem(a, one[1..])) == null);
 }

@@ -277,8 +277,9 @@ pub fn commitBodyProblem(arena: Allocator, entries: []const CommitEntry) Allocat
     var list = std.ArrayList(u8).init(arena);
     const w = list.writer();
     for (order[0..@min(order.len, 3)], 0..) |i, k| {
-        const r = entries[i].readme orelse break;
-        try w.print("{s}{s} ({d} bytes)", .{ if (k == 0) "" else ", ", entries[i].name, r.len });
+        if (entries[i].readme == null) break;
+        // The bytes it adds to the request: its text as JSON escapes it, without the two quotes.
+        try w.print("{s}{s} ({d} bytes in the request)", .{ if (k == 0) "" else ", ", entries[i].name, sizes[i] - 2 });
     }
     return try std.fmt.allocPrint(
         arena,
