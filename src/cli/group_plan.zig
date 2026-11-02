@@ -205,12 +205,13 @@ pub fn filePath(arena: Allocator, f: File) Allocator.Error![]const u8 {
     return std.fmt.allocPrint(arena, "{s}/{s}", .{ f.subdir, f.filename });
 }
 
-/// Hashes every file of the upload members against the plan, then reads the readmes and builds the commit body
-/// (`readCommit`): that body, or the first thing that is not as the plan says (a file that is missing, of another size or
-/// another sha256, a readme that cannot be sent, or a body too large for the registry). Nothing has been sent when this
-/// runs; the files checked here are checked again as each one is read for its PUT, and the body returned is the one the
-/// commit sends, so a readme changed after this check does not reach the registry.
-pub fn verify(arena: Allocator, dir: std.fs.Dir, plan: Plan) Allocator.Error!Commit {
+/// Hashes every file of the upload members against the plan, then reads the readmes (`readEntries`): what each upload member
+/// puts in the commit, or the first thing that is not as the plan says (a file that is missing, of another size or another
+/// sha256, or a readme that cannot be sent). Nothing has been sent when this runs; the files checked here are checked again as
+/// each one is read for its PUT, and the readmes returned are the ones the commit sends (inline, or uploaded and named by
+/// digest), so a readme changed after this check does not reach the registry. The size of the commit is decided later, by
+/// the form the registry takes (`commitOf` for the inline form).
+pub fn verify(arena: Allocator, dir: std.fs.Dir, plan: Plan) Allocator.Error!Read {
     for (plan.members) |m| {
         if (m.action != .upload) continue;
         for (m.files) |f| {
@@ -220,28 +221,33 @@ pub fn verify(arena: Allocator, dir: std.fs.Dir, plan: Plan) Allocator.Error!Com
             if (!std.mem.eql(u8, &got.sha256, f.sha256)) return .{ .bad = try std.fmt.allocPrint(arena, "{s} of {s} has the sha256 {s}; the plan says {s}", .{ path, m.name, &got.sha256, f.sha256 }) };
         }
     }
-    return readCommit(arena, dir, plan);
+    return readEntries(arena, dir, plan);
 }
 
 /// The body of the commit request, or why it cannot be sent.
 pub const Commit = union(enum) { body: []const u8, bad: []const u8 };
 
-/// Reads the readmes of the upload members as they are now in `dir` and builds the commit body (`commitOf`); the reason when
-/// a readme cannot be read, is over `max_readme_bytes` or is not UTF-8, or when the body is too large.
-pub fn readCommit(arena: Allocator, dir: std.fs.Dir, plan: Plan) Allocator.Error!Commit {
+/// What the upload members put in the commit, or why a readme cannot be read.
+pub const Read = union(enum) { ok: []const CommitEntry, bad: []const u8 };
+
+/// Reads the readmes of the upload members as they are now in `dir`: one entry per upload member, in the plan's order, with
+/// the readme's text and its sha256; the reason when a readme cannot be read, is over `max_readme_bytes` or is not UTF-8.
+pub fn readEntries(arena: Allocator, dir: std.fs.Dir, plan: Plan) Allocator.Error!Read {
     var entries = std.ArrayList(CommitEntry).init(arena);
     for (plan.members) |m| {
         if (m.action != .upload) continue;
         var text: ?[]const u8 = null;
+        var sha: []const u8 = "";
         if (m.readme) |r| {
             const got = dir.readFileAlloc(arena, r, max_readme_bytes + 1) catch |e| return .{ .bad = try std.fmt.allocPrint(arena, "the readme {s} of {s}: {s}", .{ r, m.name, @errorName(e) }) };
             if (got.len > max_readme_bytes) return .{ .bad = try std.fmt.allocPrint(arena, "the readme {s} of {s} is over {d} bytes", .{ r, m.name, max_readme_bytes }) };
             if (!std.unicode.utf8ValidateSlice(got)) return .{ .bad = try std.fmt.allocPrint(arena, "the readme {s} of {s} is not UTF-8 text", .{ r, m.name }) };
             text = got;
+            if (got.len > 0) sha = try install.sha256Hex(arena, got);
         }
-        try entries.append(.{ .name = m.name, .manifest_sha256 = m.manifest_sha256, .readme = text });
+        try entries.append(.{ .name = m.name, .manifest_sha256 = m.manifest_sha256, .readme = text, .readme_sha256 = sha });
     }
-    return commitOf(arena, entries.items);
+    return .{ .ok = entries.items };
 }
 
 /// The registry's API function is invoked with one event of at most 6 MiB (the function service's limit on a synchronous
@@ -257,13 +263,23 @@ pub const event_room_bytes: usize = 64 * 1024;
 /// `\u` escapes a serialiser may write for it.
 pub const max_event_body_bytes: usize = max_event_bytes - event_room_bytes;
 
-/// What one upload member puts in the commit body.
-pub const CommitEntry = struct { name: []const u8, manifest_sha256: []const u8, readme: ?[]const u8 };
+/// What one upload member puts in the commit body. `readme_sha256` is the hex digest of a non-empty `readme`.
+pub const CommitEntry = struct { name: []const u8, manifest_sha256: []const u8, readme: ?[]const u8, readme_sha256: []const u8 = "" };
 
-/// The commit request's JSON body for these members, as `group_publish` sends it:
+/// The commit request's JSON body for these members, as `group_publish` sends it to a registry that takes the readme as text:
 /// `{"members":[{"name":<name>,"manifest_sha256":"<sha>","readme":<text>},...]}`; a member without a readme has no
 /// `readme`, and one with an empty readme has `"readme":""`.
 pub fn commitBody(arena: Allocator, entries: []const CommitEntry) Allocator.Error![]const u8 {
+    return writeBody(arena, entries, false);
+}
+
+/// The commit request's JSON body when the readmes are uploaded objects: as `commitBody`, but a non-empty readme is
+/// `"readme":{"sha256":"<sha>","size":<bytes>}`; an empty readme stays `"readme":""`.
+pub fn objectsBody(arena: Allocator, entries: []const CommitEntry) Allocator.Error![]const u8 {
+    return writeBody(arena, entries, true);
+}
+
+fn writeBody(arena: Allocator, entries: []const CommitEntry, objects: bool) Allocator.Error![]const u8 {
     var out = std.ArrayList(u8).init(arena);
     const w = out.writer();
     try w.writeAll("{\"members\":[");
@@ -275,7 +291,9 @@ pub fn commitBody(arena: Allocator, entries: []const CommitEntry) Allocator.Erro
         try std.json.encodeJsonString(e.manifest_sha256, .{}, w);
         if (e.readme) |r| {
             try w.writeAll(",\"readme\":");
-            try std.json.encodeJsonString(r, .{}, w);
+            if (objects and r.len > 0) {
+                try w.print("{{\"sha256\":\"{s}\",\"size\":{d}}}", .{ e.readme_sha256, r.len });
+            } else try std.json.encodeJsonString(r, .{}, w);
         }
         try w.writeByte('}');
     }
@@ -568,7 +586,7 @@ test "verify finds a missing file, another size, another sha256 and a bad readme
     // The readme is missing at first.
     try std.testing.expect(std.mem.indexOf(u8, (try verify(a, tmp.dir, plan)).bad, "the readme R.md of a: FileNotFound") != null);
     try tmp.dir.writeFile("R.md", "# a\n");
-    try std.testing.expect((try verify(a, tmp.dir, plan)) == .body);
+    try std.testing.expect((try verify(a, tmp.dir, plan)) == .ok);
     try tmp.dir.writeFile("R.md", "\xff\xfe");
     try std.testing.expect(std.mem.indexOf(u8, (try verify(a, tmp.dir, plan)).bad, "not UTF-8") != null);
     const big = try a.alloc(u8, max_readme_bytes + 1);
@@ -588,7 +606,7 @@ test "verify finds a missing file, another size, another sha256 and a bad readme
     try std.testing.expect(std.mem.indexOf(u8, (try readChecked(a, tmp.dir, plan.members[0].files[0])).bad, "FileNotFound") != null);
     // Members that are not uploaded are not looked at.
     const skipped = try okPlan(a, "{\"version\":1,\"members\":[{\"name\":\"a\",\"version\":\"1.0.0\",\"action\":\"skip\"}]}");
-    try std.testing.expect((try verify(a, tmp.dir, skipped)) == .body);
+    try std.testing.expect((try verify(a, tmp.dir, skipped)) == .ok);
 }
 
 test "the state and the report are written whole, and the state is read back" {

@@ -40,10 +40,12 @@ const continueFromFirstPage: Recipe['prepare'] = async (req, send) => {
 
 const RECIPES: Record<string, Recipe> = {
   // tests/contract/api/meta.json
-  'prod is up': { stage: 'prod', extraKeys: ['version', 'commit', 'impl'] },
-  'beta in read-only mode': { stage: 'beta', readOnly: true, extraKeys: ['version', 'commit', 'impl'] },
+  'prod is up': { stage: 'prod', extraKeys: ['version', 'commit', 'impl', 'features'] },
+  'beta in read-only mode': { stage: 'beta', readOnly: true, extraKeys: ['version', 'commit', 'impl', 'features'] },
+  // The one case that lists the features: the member is compared, not removed.
+  'prod is up and lists the optional features it serves': { stage: 'prod', extraKeys: ['version', 'commit', 'impl'] },
   // This implementation says 'ts', and the fixture does: the member is compared, not removed.
-  'prod is up and says which implementation answered': { stage: 'prod', extraKeys: ['version', 'commit'] },
+  'prod is up and says which implementation answered': { stage: 'prod', extraKeys: ['version', 'commit', 'features'] },
   // tests/contract/api/packages.json
   'search by prefix': {
     seed: seeded('search_prefix_http'),

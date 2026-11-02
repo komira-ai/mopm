@@ -226,6 +226,17 @@ zig_test(  # buck-only: mopm publish --staged and mopm yank --group against the 
     **_TOOLS
 )
 
+zig_test(  # buck-only: mopm publish --staged sends readmes as uploaded objects and falls back to inline, against the fake registry
+    name = "group_readmes",
+    src = "tests/drivers/group_readmes_test.zig",
+    imports = ["tests/drivers/harness.zig"],
+    env_tools = {
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+    },
+    **_TOOLS
+)
+
 zig_test(  # buck-only: mopm publish --oidc against the fake registry and a stand-in for GitHub's identity-token endpoint
     name = "oidc_publish",
     src = "tests/drivers/oidc_publish_test.zig",
@@ -435,6 +446,7 @@ zig_test(  # buck-only: tests/contract/replay.py: the fake registry answers the 
         "tests/drivers/replay_recipes.zig",
         "tests/drivers/replay_group_conflicts.zig",
         "tests/drivers/replay_group_facts.zig",
+        "tests/drivers/replay_group_readmes.zig",
         "tests/drivers/replay_table.zig",
         "tests/drivers/replay_checks.zig",
         "tests/drivers/yaml.zig",
@@ -846,6 +858,18 @@ export_file(
 export_file(
     name = "site.src.cli.group_publish.zig",
     src = "src/cli/group_publish.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.cli.group_flags.zig",
+    src = "src/cli/group_flags.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.cli.group_readmes.zig",
+    src = "src/cli/group_readmes.zig",
     visibility = ["//site:"],
 )
 

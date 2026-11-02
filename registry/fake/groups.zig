@@ -30,8 +30,18 @@ const auth = @import("auth.zig");
 const token_scopes = @import("token_scopes.zig");
 const publish = @import("publish.zig");
 const channel = @import("files.zig");
+const gr = @import("group_readmes.zig");
+const group_ids = @import("group_ids.zig");
+const ReqFile = group_ids.ReqFile;
+const ReqMember = group_ids.ReqMember;
+const isSha = group_ids.isSha;
+const isGroupId = group_ids.isGroupId;
+const isSubdir = group_ids.isSubdir;
+const memberLess = group_ids.memberLess;
+const fileLess = group_ids.fileLess;
+const groupId = group_ids.groupId;
+const uploadId = group_ids.uploadId;
 
-const subdirs = channel.subdirs;
 /// A group is open for this long; the quarantine of the hosted registry keeps an upload for a day.
 pub const deadline_secs: i64 = 12 * 60 * 60;
 const max_members: usize = 500;
@@ -40,14 +50,11 @@ const max_file_bytes: i64 = 100_000_000;
 const open_per_actor: usize = 5;
 const supersede_max: usize = 3;
 const max_reason: usize = 280;
-const max_readme: usize = 65536;
 
 // ---------------------------------------------------------------------------
 // The request of createGroup
 // ---------------------------------------------------------------------------
 
-const ReqFile = struct { subdir: []const u8, filename: []const u8, sha256: []const u8, size: u64 };
-const ReqMember = struct { name: []const u8, version: []const u8, files: []ReqFile };
 const Parsed = union(enum) { ok: []ReqMember, fail: Response };
 /// What a create does when the caller's own open groups share a version with the new set (`on_overlap` of the body).
 const OnOverlap = enum { supersede, refuse };
@@ -62,39 +69,6 @@ fn parseOnOverlap(ctx: *Ctx) Allocator.Error!OverlapOption {
         else => "",
     };
     return .{ .ok = std.meta.stringToEnum(OnOverlap, text) orelse return .{ .fail = try resp.invalid(ctx.arena, "'on_overlap' is 'supersede' or 'refuse'") } };
-}
-
-fn isSha(s: []const u8) bool {
-    return s.len == 64 and isHex(s);
-}
-
-/// The `GroupId` pattern: `grp_` and 32 lowercase hex digits.
-fn isGroupId(s: []const u8) bool {
-    return s.len == 36 and std.mem.startsWith(u8, s, "grp_") and isHex(s[4..]);
-}
-
-fn isHex(s: []const u8) bool {
-    for (s) |c| {
-        if (!std.ascii.isDigit(c) and !(c >= 'a' and c <= 'f')) return false;
-    }
-    return true;
-}
-
-fn isSubdir(s: []const u8) bool {
-    for (subdirs) |d| {
-        if (std.mem.eql(u8, d, s)) return true;
-    }
-    return false;
-}
-
-fn memberLess(_: void, a: ReqMember, b: ReqMember) bool {
-    return std.mem.order(u8, a.name, b.name) == .lt;
-}
-
-fn fileLess(_: void, a: ReqFile, b: ReqFile) bool {
-    const o = std.mem.order(u8, a.subdir, b.subdir);
-    if (o != .eq) return o == .lt;
-    return std.mem.order(u8, a.filename, b.filename) == .lt;
 }
 
 fn parseRequest(ctx: *Ctx) Allocator.Error!Parsed {
@@ -155,40 +129,15 @@ fn parseRequest(ctx: *Ctx) Allocator.Error!Parsed {
             try files.append(.{ .subdir = subdir, .filename = filename, .sha256 = sha256, .size = @intCast(size) });
         }
         std.mem.sort(ReqFile, files.items, {}, fileLess);
-        try out.append(.{ .name = name, .version = version, .files = files.items });
+        const readme: ?gr.Ref = switch (try gr.declared(ctx, m, name)) {
+            .none => null,
+            .ref => |r| r,
+            .fail => |r| return .{ .fail = r },
+        };
+        try out.append(.{ .name = name, .version = version, .files = files.items, .readme = readme });
     }
     std.mem.sort(ReqMember, out.items, {}, memberLess);
     return .{ .ok = out.items };
-}
-
-/// `grp_` and 32 hex digits: a hash of the caller and the declared set.
-fn groupId(arena: Allocator, handle: []const u8, members: []const ReqMember) Allocator.Error![]const u8 {
-    var h = std.crypto.hash.sha2.Sha256.init(.{});
-    h.update(handle);
-    h.update("\n");
-    for (members) |m| {
-        h.update(m.name);
-        h.update("\n");
-        h.update(m.version);
-        h.update("\n");
-        for (m.files) |f| {
-            const line = try std.fmt.allocPrint(arena, "{s}/{s}:{s}:{d}\n", .{ f.subdir, f.filename, f.sha256, f.size });
-            h.update(line);
-        }
-    }
-    var digest: [32]u8 = undefined;
-    h.final(&digest);
-    return std.fmt.allocPrint(arena, "grp_{s}", .{std.fmt.fmtSliceHexLower(digest[0..16])});
-}
-
-/// The id of the upload that carries one declared file; the same on every call, so a resume finds it.
-fn uploadId(arena: Allocator, gid: []const u8, m: ReqMember, f: ReqFile) Allocator.Error![]const u8 {
-    var h = std.crypto.hash.sha2.Sha256.init(.{});
-    const line = try std.fmt.allocPrint(arena, "{s}|{s}|{s}|{s}/{s}|{s}|{d}", .{ gid, m.name, m.version, f.subdir, f.filename, f.sha256, f.size });
-    h.update(line);
-    var digest: [32]u8 = undefined;
-    h.final(&digest);
-    return std.fmt.allocPrint(arena, "upl_{s}", .{std.fmt.fmtSliceHexLower(digest[0..12])});
 }
 
 // ---------------------------------------------------------------------------
@@ -359,7 +308,7 @@ const FileAnswer = struct {
     put_headers: ?PutHeaders = null,
     expires_at: ?[]const u8 = null,
 };
-const MemberAnswer = struct { name: []const u8, version: []const u8, action: []const u8, files: []const FileAnswer };
+const MemberAnswer = struct { name: []const u8, version: []const u8, action: []const u8, files: []const FileAnswer, readme: ?gr.Answer = null };
 const CreateAnswer = struct {
     group_id: []const u8,
     status: []const u8,
@@ -595,7 +544,7 @@ fn reserve(ctx: *Ctx, g: *st.Group, members: []const ReqMember, packages: []*st.
     const s = ctx.state;
     var stored = std.ArrayList(st.GroupMember).init(s.alloc);
     var answers = std.ArrayList(MemberAnswer).init(ctx.arena);
-    for (members, packages) |m, p| {
+    for (members, packages, 0..) |m, p, at| {
         var declared = std.ArrayList(st.File).init(s.alloc);
         var uploads = std.ArrayList(st.GroupFile).init(s.alloc);
         for (m.files) |f| {
@@ -631,10 +580,13 @@ fn reserve(ctx: *Ctx, g: *st.Group, members: []const ReqMember, packages: []*st.
             row.files = declared.items;
             row.manifest_sha256 = uploads.items[0].sha256;
         }
-        try stored.append(.{ .package = p, .version = row.version, .files = uploads.items, .row = row });
+        const readme: ?st.GroupReadme = if (m.readme) |r| try gr.declare(ctx, g, p.name, m.version, r) else null;
+        if (!fresh) g.members[at].readme = readme;
+        try stored.append(.{ .package = p, .version = row.version, .files = uploads.items, .row = row, .readme = readme });
         var files = std.ArrayList(FileAnswer).init(ctx.arena);
         for (uploads.items) |gf| try files.append(try fileAnswer(ctx, gf));
-        try answers.append(.{ .name = p.name, .version = row.version, .action = action, .files = files.items });
+        const readme_answer = if (readme) |r| try gr.answer(ctx, r) else null;
+        try answers.append(.{ .name = p.name, .version = row.version, .action = action, .files = files.items, .readme = readme_answer });
     }
     if (fresh) g.members = stored.items;
     return jsonOmitting(ctx.arena, if (fresh) .created else .ok, CreateAnswer{
@@ -747,6 +699,7 @@ fn advance(ctx: *Ctx, g: *st.Group) anyerror!void {
                 m.row.group = null;
                 m.row.group_id = g.id;
                 m.row.source_commit = m.source_commit;
+                m.row.readme = m.readme_text;
                 m.package.state = .active;
                 m.package.updated_at = g.committed_at;
                 try channel.addFiles(s, m.row);
@@ -797,7 +750,7 @@ fn advanceYank(ctx: *Ctx, g: *st.Group) anyerror!void {
 const Commit = union(enum) { ok: []const u8, fail: Response };
 
 /// Checks the commit request against the group's members and returns what names it: a string that is the same for the same request.
-fn parseCommit(ctx: *Ctx, g: *const st.Group, manifests: []?[]const u8, sources: []?[]const u8) Allocator.Error!Commit {
+fn parseCommit(ctx: *Ctx, g: *const st.Group, manifests: []?[]const u8, sources: []?[]const u8, readmes: []?gr.Readme) Allocator.Error!Commit {
     const a = ctx.arena;
     const obj = ctx.object() orelse return .{ .fail = try resp.invalid(a, "the body is not a JSON object") };
     const list = switch (obj.get("members") orelse return .{ .fail = try resp.invalid(a, "'members' lists the manifest of each member of the group") }) {
@@ -807,6 +760,7 @@ fn parseCommit(ctx: *Ctx, g: *const st.Group, manifests: []?[]const u8, sources:
     var hash = std.ArrayList(u8).init(a);
     for (manifests) |*slot| slot.* = null;
     @memset(sources, null);
+    @memset(readmes, null);
     var listed = std.ArrayList([]const u8).init(a);
     for (list) |item| {
         const m = switch (item) {
@@ -831,32 +785,17 @@ fn parseCommit(ctx: *Ctx, g: *const st.Group, manifests: []?[]const u8, sources:
             .ok => |x| x,
             .invalid => return .{ .fail = try resp.invalid(a, try srcc.refusal(a, try std.fmt.allocPrint(a, " of '{s}'", .{name}))) },
         };
-        var found = false;
-        for (g.members, 0..) |gm, i| {
-            if (std.mem.eql(u8, gm.package.name, name)) {
-                manifests[i] = sha;
-                sources[i] = source;
-                found = true;
-            }
-        }
-        if (!found) return .{ .fail = try resp.invalid(a, try std.fmt.allocPrint(a, "'{s}' is not a member of the group", .{name})) };
-        const display = [_][]const u8{ "description", "license", "readme" };
-        var shown_text = std.ArrayList(u8).init(a);
-        for (display) |key| {
-            if (m.get(key)) |v| {
-                switch (v) {
-                    .string => |text| {
-                        if (text.len == 0 or (std.mem.eql(u8, key, "readme") and text.len > max_readme) or (!std.mem.eql(u8, key, "readme") and text.len > 512)) {
-                            return .{ .fail = try resp.invalid(a, try std.fmt.allocPrint(a, "'{s}' of '{s}' is empty or too long", .{ key, name })) };
-                        }
-                        try shown_text.appendSlice(text);
-                    },
-                    else => return .{ .fail = try resp.invalid(a, try std.fmt.allocPrint(a, "'{s}' of '{s}' must be a string", .{ key, name })) },
-                }
-            }
-            try shown_text.append(0);
-        }
-        try hash.writer().print("{s}:{s}:{s}:{s}\n", .{ name, sha, shown_text.items, source orelse "" });
+        const at = for (g.members, 0..) |gm, i| {
+            if (std.mem.eql(u8, gm.package.name, name)) break i;
+        } else return .{ .fail = try resp.invalid(a, try std.fmt.allocPrint(a, "'{s}' is not a member of the group", .{name})) };
+        manifests[at] = sha;
+        sources[at] = source;
+        const shown = switch (try gr.display(ctx, m, name)) {
+            .ok => |d| d,
+            .fail => |r| return .{ .fail = r },
+        };
+        readmes[at] = shown.readme;
+        try hash.writer().print("{s}:{s}:{s}:{s}\n", .{ name, sha, shown.shown, source orelse "" });
     }
     for (g.members, manifests) |gm, got| {
         if (got == null) return .{ .fail = try resp.invalid(a, try std.fmt.allocPrint(a, "'members' has no entry for '{s}', a member of the group", .{gm.package.name})) };
@@ -894,7 +833,8 @@ pub fn commitGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
     };
     const manifests = try ctx.arena.alloc(?[]const u8, g.members.len);
     const sources = try ctx.arena.alloc(?[]const u8, g.members.len);
-    const hash = switch (try parseCommit(ctx, g, manifests, sources)) {
+    const readmes = try ctx.arena.alloc(?gr.Readme, g.members.len);
+    const hash = switch (try parseCommit(ctx, g, manifests, sources, readmes)) {
         .ok => |h| h,
         .fail => |r| return r,
     };
@@ -929,7 +869,12 @@ pub fn commitGroup(ctx: *Ctx, params: []const []const u8) anyerror!Response {
             }
         }
     }
-    for (g.members, manifests, sources) |*m, sha, src| {
+    const texts = switch (try gr.load(ctx, g, readmes)) {
+        .ok => |loaded| loaded,
+        .fail => |r| return r,
+    };
+    for (g.members, manifests, sources, texts) |*m, sha, src, text| {
+        m.readme_text = if (text) |x| try s.alloc.dupe(u8, x) else null;
         m.manifest_sha256 = try s.alloc.dupe(u8, sha.?);
         m.source_commit = if (src) |x| try s.alloc.dupe(u8, x) else null;
     }

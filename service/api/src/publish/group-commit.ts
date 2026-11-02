@@ -6,6 +6,7 @@ import type { Store } from '../store';
 import type { AuditEntry, VersionRecord } from '../types';
 import type { PublishConfig } from './config';
 import { parseDisplay } from './display';
+import { completeReadmes, parseReadmeNamed, type ReadmeNamed, type ReadmeRef } from './group-readmes';
 import { parseSourceCommit } from './source-commit';
 import { groupCommitRefused, invalidRequest, PublishError, uploadInvalid } from './errors';
 import { quarantineKeyFor, uploadIdFor } from './group-keys';
@@ -37,32 +38,42 @@ export interface GroupCommitBody {
   status_url: string;
 }
 
-/** The members' inputs of a commit request in the group's member order, and the hash that names them. Throws invalid_request. */
-export function parseGroupCommit(members: GroupMembers, body: unknown): { inputs: CommitInput[]; hash: string } {
+/**
+ * The members' inputs of a commit request in the group's member order, and the hash that names them. A member whose readme is
+ * named by digest has no readme in its input yet: `named` lists those, to be read once the uploads are checked. Throws invalid_request.
+ */
+export function parseGroupCommit(members: GroupMembers, body: unknown): { inputs: CommitInput[]; hash: string; named: ReadmeNamed[] } {
   if (!isObject(body)) throw invalidRequest('the body is not a JSON object');
   const list = body.members;
   if (!Array.isArray(list)) throw invalidRequest("'members' lists the manifest of each member of the group");
-  const byName = new Map<string, CommitInput>();
+  const byName = new Map<string, { input: CommitInput; member: Record<string, unknown>; ref?: ReadmeRef }>();
   for (const m of list) {
     if (!isObject(m)) throw invalidRequest('a member is not a JSON object');
     const { name, manifest_sha256 } = m;
     if (typeof name !== 'string') throw invalidRequest("a member needs a 'name'");
     if (byName.has(name)) throw invalidRequest(`'${name}' appears twice`);
     if (manifest_sha256 !== undefined && (typeof manifest_sha256 !== 'string' || !SHA256.test(manifest_sha256))) throw invalidRequest(`'manifest_sha256' of '${name}' is 64 lowercase hex digits`);
-    const display = parseDisplay(m);
+    const ref = m.readme === undefined || typeof m.readme === 'string' ? undefined : parseReadmeNamed(name, m.readme);
+    const display = parseDisplay(ref ? { ...m, readme: undefined } : m);
     const source_commit = parseSourceCommit(m, ` of '${name}'`);
-    byName.set(name, { name, ...(manifest_sha256 !== undefined ? { manifest_sha256 } : {}), ...(Object.keys(display).length > 0 ? { display } : {}), ...(source_commit !== undefined ? { source_commit } : {}) });
+    const input: CommitInput = { name, ...(manifest_sha256 !== undefined ? { manifest_sha256 } : {}), ...(Object.keys(display).length > 0 ? { display } : {}), ...(source_commit !== undefined ? { source_commit } : {}) };
+    byName.set(name, { input, member: m, ...(ref ? { ref } : {}) });
   }
   const inputs: CommitInput[] = [];
+  const named: ReadmeNamed[] = [];
+  const hashed: unknown[] = [];
   for (const m of members.members) {
     const got = byName.get(m.name);
     if (!got) throw invalidRequest(`'members' has no entry for '${m.name}', a member of the group`);
-    inputs.push(got);
+    if (got.ref) named.push({ index: inputs.length, ref: got.ref, member: got.member });
+    // An inline member is hashed as its input; a member that names its readme adds the reference, which is what the request said.
+    hashed.push(got.ref ? { ...got.input, readme_ref: got.ref } : got.input);
+    inputs.push(got.input);
     byName.delete(m.name);
   }
   const extra = [...byName.keys()][0];
   if (extra !== undefined) throw invalidRequest(`'${extra}' is not a member of the group`);
-  return { inputs, hash: commitRequestHash(JSON.stringify(inputs)) };
+  return { inputs, hash: commitRequestHash(JSON.stringify(hashed)), named };
 }
 
 /** The message that starts (or goes on with) a group's validation. `resend` separates the dedup ids of the sweeper's resends. */
@@ -74,8 +85,8 @@ export async function sendValidateGroup(queue: Queue, gid: string, attempt: numb
 
 export interface GroupCommitDeps {
   registry: Store & GroupStore;
-  /** Only `head` is used: every file must have arrived. */
-  objects: Pick<ObjectStore, 'head'>;
+  /** `head`: every file must have arrived. `get`: the readmes a commit names by digest are read. */
+  objects: Pick<ObjectStore, 'head' | 'get'>;
   config: PublishConfig;
   /** The group queue. Absent: the deployment has none and a commit answers `unavailable`. */
   groupQueue?: Queue;
@@ -101,7 +112,7 @@ export class GroupCommitter {
     const queue = this.d.groupQueue;
     if (!queue) throw new PublishError('unavailable', 'The registry is temporarily unavailable.');
     const { header, members } = await this.access.load(p, id);
-    const { inputs, hash } = parseGroupCommit(members, body);
+    const { inputs: declared, hash, named } = parseGroupCommit(members, body);
     const answer = (h: GroupRecord): GroupCommitBody => ({ group_id: id, status: h.status, attempt: h.attempt, status_url: `/api/v1/groups/${id}` });
 
     if (header.status === 'validating' || header.status === 'committed' || header.status === 'visible') {
@@ -119,6 +130,7 @@ export class GroupCommitter {
     if (unreserved > 0) throw groupCommitRefused(`${unreserved} of ${members.members.length} members are not reserved yet; repeat the create request until it answers without 'reserving'`);
 
     await this.requireUploads(id, members);
+    const inputs = await completeReadmes(this.d.objects, id, members.members, declared, named);
     await reg.putCommitInputs(id, hash, inputs, Math.floor(Date.parse(header.deadline_at) / 1000) + ENDED_TAIL_SECONDS);
 
     const at = now.toISOString();

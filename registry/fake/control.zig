@@ -83,6 +83,12 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
         s.groups_enabled = util.getBool(obj, "enabled") orelse return resp.invalid(ctx.arena, "'enabled' must be a boolean");
         return resp.json(ctx.arena, .ok, .{});
     }
+    // {"enabled"}: whether the registry takes group readmes as uploaded objects (the default). Off, /health lists no features,
+    // createGroup ignores a member's `readme`, and commitGroup refuses a readme that is not a string.
+    if (std.mem.eql(u8, path, "/readme_objects")) {
+        s.readme_objects = util.getBool(obj, "enabled") orelse return resp.invalid(ctx.arena, "'enabled' must be a boolean");
+        return resp.json(ctx.arena, .ok, .{});
+    }
     // {"advance_seconds"}: the clock moves forward by that much when the next
     // group commit arrives (once), so a group can pass its deadline between
     // the create and the commit.

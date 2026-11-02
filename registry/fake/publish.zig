@@ -20,6 +20,7 @@ const util = @import("util.zig");
 const auth = @import("auth.zig");
 const versions = @import("versions.zig");
 const channel = @import("files.zig");
+const gr = @import("group_readmes.zig");
 
 const subdirs = [_][]const u8{ "linux-64", "linux-aarch64", "osx-arm64", "noarch" };
 
@@ -595,7 +596,7 @@ pub fn getVersion(ctx: *Ctx, params: []const []const u8) anyerror!Response {
             .url = try std.fmt.allocPrint(ctx.arena, "{s}/channel/{s}/{s}", .{ s.base_url, f.subdir, f.filename }),
         });
     }
-    return withGroupId(ctx.arena, v, .{
+    return gr.withReadme(ctx.arena, try withGroupId(ctx.arena, v, .{
         .name = p.name,
         .version = v.version,
         .state = @tagName(v.state),
@@ -609,7 +610,7 @@ pub fn getVersion(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .manifest_sha256 = v.manifest_sha256,
         .readme_html = @as(?[]const u8, null),
         .provenance = provenance,
-    });
+    }), v.readme);
 }
 
 test "requires_mojo comes from the build string" {

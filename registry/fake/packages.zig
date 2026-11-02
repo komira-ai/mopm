@@ -12,6 +12,7 @@ const util = @import("util.zig");
 const auth = @import("auth.zig");
 const publish = @import("publish.zig");
 const token_scopes = @import("token_scopes.zig");
+const gr = @import("group_readmes.zig");
 
 /// Names nobody may claim.
 const reserved = [_][]const u8{ "mopm", "mojo", "max", "modular", "std", "stdlib" };
@@ -116,7 +117,8 @@ pub fn getPackage(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .ok => |p| p,
         .fail => |r| return r,
     };
-    return resp.json(ctx.arena, .ok, .{
+    const newest = if (publish.latest(p)) |v| publish.findVersion(p, v) else null;
+    return gr.withReadme(ctx.arena, try resp.json(ctx.arena, .ok, .{
         .name = p.name,
         .state = @tagName(p.state),
         .owners = try owners(ctx.arena, p),
@@ -126,7 +128,7 @@ pub fn getPackage(ctx: *Ctx, params: []const []const u8) anyerror!Response {
         .description = p.description,
         .created_at = try util.rfc3339(ctx.arena, p.created_at),
         .versions = try publish.summaries(ctx.arena, p),
-    });
+    }), if (newest) |v| v.readme else null);
 }
 
 pub fn listVersions(ctx: *Ctx, params: []const []const u8) anyerror!Response {
