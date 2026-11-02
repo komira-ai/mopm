@@ -1,5 +1,4 @@
-//! Stands in for `mojo` in tests/drivers/golden_test.zig (the Zig port of the
-//! #! script tests/fixtures/env/exec/bin/mojo, which needs /bin/sh): shows what
+//! Stands in for `mojo` in tests/drivers/golden_test.zig: shows what
 //! mopm handed over (one argument per line, two environment variables, stdin
 //! for the REPL) and exits with a status of its own, so the golden files can
 //! check that mopm passes argv, environment, stdin and exit status through.

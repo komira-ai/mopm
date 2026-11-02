@@ -1,0 +1,8 @@
+arg: run
+arg: -Xlinker
+arg: @ROOT@/tests/fixtures/env/exec/lib/libecho.so
+arg: @ROOT@/tests/fixtures/env/exec/lib/mojo/echo.bins/greet.mojo
+arg: --opt-level
+arg: 9
+MODULAR_HOME=@ROOT@/tests/fixtures/env/exec/share/max
+MOPM_GOLDEN_MARK=kept

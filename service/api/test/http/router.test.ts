@@ -25,7 +25,7 @@ describe('health', () => {
   });
 
   // Catches: a TypeScript build that reports another implementation, or none (e2e would then pass a stage whose
-  // routes the wrong implementation answers). Planted mutant: impl 'rust' in getHealth.
+  // routes the wrong implementation answers). Known defect: impl 'rust' in getHealth.
   test('says which implementation answered, in the position after commit', async () => {
     const { body } = await get(new MemoryStore(), '/api/v1/health');
     expect(body.impl).toBe('ts');

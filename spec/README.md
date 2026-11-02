@@ -12,7 +12,9 @@ contract. Nothing here describes the registry's internals.
 | `api/openapi.yaml` | the HTTP API under `/api/v1`: login, tokens, publish, yank, owners, packages, search, health; the error catalogue; auth schemes; the additive-only versioning rule |
 | `channel.md` | the conda channel at `conda.<site>`: layout, naming, immutability and yank as clients see them |
 | `index.md`, `index-record.schema.json`, `index-config.schema.json`, `takedowns.schema.json` | the static sparse index the CLI reads |
-| `lock.md`, `lock.schema.json` | `mopm.lock`, the resolved closure |
+| `lock.md`, `lock.schema.json` | `mopm.lock`, the resolved closure (version 2: one build per Mojo version) |
+| `unit-graph.md` | `mopm plan --unit-graph`, the unit ids with their Mojo version, and `mopm unit build` and `mopm unit test` |
+| `staged-set.md` | the staged set `mopm publish --staged` publishes through one group, its `plan.json`, `state.json` and `report.json`, and `mopm yank --group` |
 
 ## How the pieces fit
 
@@ -54,7 +56,7 @@ Readers ignore unknown keys and refuse a higher version number than they know.
 ## Tests
 
 `tests/contract/` holds example requests and responses for every API
-operation, example index files and locks, and `validate.py`, which CI runs:
+operation, example index files and locks, checked by `//:contract` (`tests/drivers/contract_test.zig`), which the farm builds:
 
 - the OpenAPI document is valid OpenAPI 3.1;
 - every example request and response is valid against it, and counter-examples

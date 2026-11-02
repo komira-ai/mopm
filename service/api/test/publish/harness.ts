@@ -1,10 +1,14 @@
 import { createHash } from 'node:crypto';
+import { indexKey } from '../../src/index-files';
 import { Authenticator, MemoryAuthStore, mintToken } from '../../src/auth';
 import type { PublishApi } from '../../src/http/publish-routes';
 import { route, type HttpResponse, type RouterDeps } from '../../src/http/router';
 import { MemoryStore } from '../../src/memory-store';
+import { Metrics } from '../../src/metrics';
+import { ClaimService } from '../../src/publish/claim';
+import { GroupService } from '../../src/publish/group-service';
 import { DEFAULT_PUBLISH_CONFIG, type PublishConfig } from '../../src/publish/config';
-import { indexSubdir, type IndexerDeps } from '../../src/publish/indexer';
+import { parseIndexMessage, processIndexMessage, type IndexerDeps } from '../../src/publish/indexer';
 import { FakeS3Upload, MemoryInvalidator, MemoryObjectStore, MemoryPresigner, MemoryPublishStore, MemoryQueue } from '../../src/publish/memory';
 import type { Flags } from '../../src/publish/ports';
 import { PublishService } from '../../src/publish/service';
@@ -16,9 +20,24 @@ import { TestClock } from '../auth-helpers';
 export class MutableFlags implements Flags {
   ro = false;
   broken = false;
+  /** The groups switch: the actors admitted (`u:<github id>`), everybody, or the switch unreadable. Off by default, as in production. */
+  groupActors = new Set<string>();
+  groupsAll = false;
+  groupsBroken = false;
+  /** The per-actor claim limits (`u:<github id>` to a daily limit), as the `claim_limits` item says them. */
+  claimLimits = new Map<string, number>();
+  claimLimitsBroken = false;
   async readOnly() {
     if (this.broken) throw new Error('config table unreadable');
     return this.ro;
+  }
+  async groupsFor(actor: string) {
+    if (this.groupsBroken) throw new Error('config table unreadable');
+    return this.groupsAll || this.groupActors.has(actor);
+  }
+  async claimLimitFor(actor: string) {
+    if (this.claimLimitsBroken) throw new Error('config table unreadable');
+    return this.claimLimits.get(actor);
   }
 }
 
@@ -64,9 +83,15 @@ export class Harness {
   flags = new MutableFlags();
   config: PublishConfig = { ...DEFAULT_PUBLISH_CONFIG };
   logs: Array<Record<string, unknown>> = [];
+  /** The metric lines the group service wrote. */
+  metricLines: Array<Record<string, unknown>> = [];
+  /** The monotonic clock of the group service's creation budget, in milliseconds: tests move it. */
+  mono = 0;
   private n = 0;
+  private claimN = 0;
 
   service!: PublishService;
+  groupService!: GroupService;
   deps!: RouterDeps;
   validatorDeps!: ValidatorDeps;
   indexerDeps!: IndexerDeps;
@@ -80,8 +105,19 @@ export class Harness {
   /** Rebuild the wiring after `config` changed. */
   build() {
     const now = this.clock.now;
+    this.groupService = new GroupService({
+      registry: this.registry,
+      publishes: this.publishes,
+      objects: this.objects,
+      presigner: new MemoryPresigner(),
+      config: this.config,
+      now,
+      clock: () => this.mono,
+      metrics: new Metrics((l) => this.metricLines.push(l)),
+    });
     this.service = new PublishService({
       registry: this.registry,
+      groups: this.registry,
       publishes: this.publishes,
       objects: this.objects,
       presigner: new MemoryPresigner(),
@@ -91,7 +127,8 @@ export class Harness {
       now,
       newId: () => (++this.n).toString(16).padStart(32, '0'),
     });
-    const api: PublishApi = { auth: new Authenticator({ store: this.authStore, now }), service: this.service, flags: this.flags };
+    const claims = new ClaimService({ registry: this.registry, users: this.authStore, publishes: this.publishes, config: this.config, flags: this.flags, now, newId: () => `claim${String(++this.claimN).padStart(4, '0')}` });
+    const api: PublishApi = { auth: new Authenticator({ store: this.authStore, now }), service: this.service, flags: this.flags, groups: this.groupService, claims };
     this.deps = { store: this.registry, stage: 'beta', version: 't', commit: 't', readOnly: false, publish: api };
     this.validatorDeps = {
       registry: this.registry,
@@ -108,6 +145,7 @@ export class Harness {
       publishes: this.publishes,
       objects: this.objects,
       invalidator: this.invalidator,
+      indexQueue: this.indexQueue,
       now,
       log: (l) => this.logs.push(l),
       ensured: new Set(),
@@ -123,7 +161,7 @@ export class Harness {
     return { github_id, handle, token: await this.token(github_id, packages, ['publish']) };
   }
 
-  async token(github_id: number, packages: string[], scopes: Array<'publish' | 'yank'>): Promise<string> {
+  async token(github_id: number, packages: string[], scopes: Array<'publish' | 'yank' | 'stage'>): Promise<string> {
     const t = this.clock.now();
     const m = await mintToken(this.authStore, {
       kind: 'api',
@@ -199,13 +237,25 @@ export class Harness {
     }
   }
 
-  /** Run every queued index message, one after the other. */
+  /** Run one index-queue message the way the Lambda does. */
+  async handleIndex(m: { body: string }) {
+    const msg = parseIndexMessage(JSON.parse(m.body));
+    if (!msg) throw new Error(`the harness was given a message the writer does not understand: ${m.body}`);
+    await processIndexMessage(this.indexerDeps, msg);
+  }
+
+  /** Run every queued index message, one after the other (including the ones the jobs queue meanwhile). */
   async runIndexer() {
-    for (let m = this.indexQueue.take(); m; m = this.indexQueue.take()) await indexSubdir(this.indexerDeps, JSON.parse(m.body));
+    for (let m = this.indexQueue.take(); m; m = this.indexQueue.take()) await this.handleIndex(m);
+  }
+
+  /** The sparse-index file of a package as the channel holds it, or undefined. */
+  indexFile(name: string): string | undefined {
+    return this.objects.objects.get(indexKey(name))?.body.toString('utf8');
   }
 
   /** The repodata.json the channel currently serves for a subdir. */
-  repodata(subdir: string): { 'packages.conda': Record<string, { name: string; version: string; sha256: string }>; removed: string[] } {
+  repodata(subdir: string): { 'packages.conda': Record<string, { name: string; version: string; sha256: string; size: number }>; removed: string[] } {
     const o = this.objects.objects.get(`${subdir}/repodata.json`);
     if (!o) throw new Error(`no repodata for ${subdir}`);
     return JSON.parse(o.body.toString('utf8'));

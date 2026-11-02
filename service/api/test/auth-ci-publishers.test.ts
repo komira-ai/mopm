@@ -1,0 +1,172 @@
+import { ALLOWED_EVENTS, CI_EVENTS, CI_PUBLISHERS_ENV, ciOwnerOf, matchesCiPublisher, parseCiPublishers, type GithubActionsClaims } from '../src/auth';
+import { configureAuth } from '../src/http/lambda';
+import { FakeAuthDoc } from './auth-fake-doc';
+
+// The CI_PUBLISHERS variable: what the code accepts, and that it refuses to load anywhere but beta.
+
+const ENTRY = {
+  repository_id: '1376408823',
+  repository_owner_id: '305577347',
+  workflow: '.github/workflows/release.yml',
+  ref: 'refs/heads/main',
+  job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
+  events: ['push'],
+  environment: 'beta',
+};
+/** The prod row: the same identity in the prod environment, acting for an account. */
+const PROD_ENTRY = { ...ENTRY, environment: 'prod', acts_for: '15257031' };
+const json = (v: unknown) => JSON.stringify(v);
+
+describe('parseCiPublishers: the stage gate', () => {
+  test('absent or empty is no publishers, on every stage', () => {
+    for (const stage of ['beta', 'gamma', 'prod']) {
+      expect(parseCiPublishers(stage, undefined)).toEqual([]);
+      expect(parseCiPublishers(stage, '')).toEqual([]);
+    }
+  });
+
+  test('beta loads a valid value', () => {
+    expect(parseCiPublishers('beta', json([ENTRY]))).toEqual([ENTRY]);
+    expect(ciOwnerOf('1376408823')).toBe('gh-repo:1376408823');
+  });
+
+  test.each(['gamma', 'dev', 'Beta', 'Prod', ''])('stage %j refuses to load a value, even a valid one (with or without acts_for) and even an empty list', (stage) => {
+    expect(() => parseCiPublishers(stage, json([ENTRY]))).toThrow(/beta stage only/);
+    expect(() => parseCiPublishers(stage, json([PROD_ENTRY]))).toThrow(/beta stage only/);
+    expect(() => parseCiPublishers(stage, '[]')).toThrow(/beta stage only/);
+  });
+});
+
+describe('parseCiPublishers: prod trusts only a row that acts for an account', () => {
+  test('prod loads a row with acts_for, and the row keeps its account', () => {
+    expect(parseCiPublishers('prod', json([PROD_ENTRY]))).toEqual([PROD_ENTRY]);
+    expect(parseCiPublishers('prod', json([PROD_ENTRY]))[0]!.acts_for).toBe('15257031');
+  });
+
+  test('prod refuses a row without acts_for (the beta-style row that would own packages itself), alone or beside a good one', () => {
+    expect(() => parseCiPublishers('prod', json([{ ...ENTRY, environment: 'prod' }]))).toThrow(/prod stage trusts only rows that carry 'acts_for'/);
+    expect(() => parseCiPublishers('prod', json([PROD_ENTRY, { ...ENTRY, repository_id: '5', environment: 'prod' }]))).toThrow(/trusts only rows that carry 'acts_for'/);
+  });
+
+  test('prod refuses an empty list and a malformed acts_for, whole', () => {
+    expect(() => parseCiPublishers('prod', '[]')).toThrow(/is not valid/);
+    for (const bad of ['15257031x', '', '0123', 15257031, null, '-1']) {
+      expect(() => parseCiPublishers('prod', json([{ ...PROD_ENTRY, acts_for: bad }]))).toThrow(/is not valid/);
+    }
+  });
+
+  test('beta still loads a row without acts_for (unchanged) and a row with one', () => {
+    expect(parseCiPublishers('beta', json([ENTRY]))[0]).not.toHaveProperty('acts_for');
+    expect(parseCiPublishers('beta', json([{ ...ENTRY, acts_for: '7' }]))[0]!.acts_for).toBe('7');
+  });
+});
+
+describe('parseCiPublishers: a malformed value is refused whole', () => {
+  const cases: Array<[string, string]> = [
+    ['not JSON', '{'],
+    ['an object, not an array', json(ENTRY)],
+    ['an empty list', '[]'],
+    ['too many entries', json(Array.from({ length: 9 }, (_x, i) => ({ ...ENTRY, repository_id: String(100 + i) })))],
+    ['an entry that is not an object', json(['x'])],
+    ['an unknown key', json([{ ...ENTRY, branches: ['*'] }])],
+    ['a missing environment', json([{ ...ENTRY, environment: undefined }])],
+    ['a missing ref', json([{ ...ENTRY, ref: undefined }])],
+    ['a missing job_workflow_ref', json([{ ...ENTRY, job_workflow_ref: undefined }])],
+    ['a job_workflow_ref with a wildcard', json([{ ...ENTRY, job_workflow_ref: 'komira-ai/komira/.github/workflows/*.yml@refs/heads/main' }])],
+    ['a job_workflow_ref of another file than workflow', json([{ ...ENTRY, job_workflow_ref: 'komira-ai/komira/.github/workflows/other.yml@refs/heads/main' }])],
+    ['a job_workflow_ref at another ref than ref', json([{ ...ENTRY, job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/dev' }])],
+    ['a job_workflow_ref without a repository', json([{ ...ENTRY, job_workflow_ref: '.github/workflows/release.yml@refs/heads/main' }])],
+    ['a numeric repository_id', json([{ ...ENTRY, repository_id: 1376408823 }])],
+    ['a repository_id with a leading zero', json([{ ...ENTRY, repository_id: '0123' }])],
+    ['a repository name instead of an id', json([{ ...ENTRY, repository_id: 'komira-ai/komira' }])],
+    ['a non-numeric owner id', json([{ ...ENTRY, repository_owner_id: 'komira-ai' }])],
+    ['a workflow outside .github/workflows', json([{ ...ENTRY, workflow: 'release.yml' }])],
+    ['a workflow that names a ref', json([{ ...ENTRY, workflow: '.github/workflows/release.yml@refs/heads/main' }])],
+    ['a wildcard ref', json([{ ...ENTRY, ref: 'refs/heads/*' }])],
+    ['a ref that is not a full ref', json([{ ...ENTRY, ref: 'main' }])],
+    ['no events', json([{ ...ENTRY, events: [] }])],
+    ['an event that is not allowed', json([{ ...ENTRY, events: ['pull_request'] }])],
+    ['a repeated event', json([{ ...ENTRY, events: ['push', 'push'] }])],
+    ['an environment with a wildcard', json([{ ...ENTRY, environment: '*' }])],
+    ['the same repository twice', json([ENTRY, ENTRY])],
+  ];
+  test.each(cases)('%s', (_n, raw) => {
+    expect(() => parseCiPublishers('beta', raw)).toThrow(new RegExp(`${CI_PUBLISHERS_ENV} is not valid`));
+  });
+
+  test('the events a configuration may name are exactly the events the exchange allows', () => {
+    expect([...CI_EVENTS]).toEqual([...ALLOWED_EVENTS]);
+  });
+});
+
+describe('matchesCiPublisher', () => {
+  const claims: GithubActionsClaims = {
+    iss: 'i',
+    aud: 'a',
+    exp: 1,
+    iat: 1,
+    repository: 'komira-ai/komira',
+    repository_id: '1376408823',
+    repository_owner_id: '305577347',
+    workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
+    job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
+    ref: 'refs/heads/main',
+    event_name: 'push',
+    jti: 'j',
+    environment: 'beta',
+  };
+  test('the identity matches; each field that differs does not', () => {
+    expect(matchesCiPublisher(ENTRY, claims)).toBe(true);
+    const diffs: Array<Partial<GithubActionsClaims>> = [
+      { repository_id: '1' },
+      { repository_owner_id: '1' },
+      { workflow_ref: 'komira-ai/komira/.github/workflows/x.yml@refs/heads/main' },
+      { ref: 'refs/heads/dev' },
+      { environment: 'prod' },
+      { environment: undefined },
+      { event_name: 'pull_request' },
+      { event_name: 'workflow_dispatch' },
+      { job_workflow_ref: 'komira-ai/komira/.github/workflows/other.yml@refs/heads/main' },
+      { job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/dev' },
+      { job_workflow_ref: undefined },
+    ];
+    for (const d of diffs) expect(matchesCiPublisher(ENTRY, { ...claims, ...d })).toBe(false);
+  });
+  test('an event the publisher does not list, though the exchange allows it, does not match', () => {
+    expect(matchesCiPublisher({ ...ENTRY, events: ['workflow_dispatch'] }, claims)).toBe(false);
+  });
+  test('a reusable-workflow call is not accepted by accident: the triggering workflow looks right, the running job is another file', () => {
+    // GitHub sets workflow_ref to the caller and job_workflow_ref to the called file.
+    const called = { ...claims, job_workflow_ref: 'komira-ai/komira/.github/workflows/build.yml@refs/heads/main' };
+    expect(called.workflow_ref).toBe(claims.workflow_ref);
+    expect(matchesCiPublisher(ENTRY, called)).toBe(false);
+  });
+});
+
+describe('configureAuth: the stage gate in the handler wiring', () => {
+  const doc = new FakeAuthDoc({});
+  const env = (extra: Record<string, string> = {}) => ({ MOPM_OAUTH_SECRET_NAME: 'mopm/x/github-oauth', ...extra });
+
+  test('gamma refuses to start with CI_PUBLISHERS set (a mistake in the infrastructure cannot turn the trust on there)', () => {
+    expect(() => configureAuth('gamma', doc, env({ [CI_PUBLISHERS_ENV]: json([ENTRY]) }))).toThrow(/beta stage only/);
+    expect(() => configureAuth('gamma', doc, env({ [CI_PUBLISHERS_ENV]: json([PROD_ENTRY]) }))).toThrow(/beta stage only/);
+    // even when auth is not otherwise wired
+    expect(() => configureAuth('gamma', doc, { [CI_PUBLISHERS_ENV]: json([ENTRY]) })).toThrow(/beta stage only/);
+  });
+
+  test('prod refuses to start with a row that does not act for an account, and wires the exchange with one that does', () => {
+    expect(() => configureAuth('prod', doc, env({ [CI_PUBLISHERS_ENV]: json([{ ...ENTRY, environment: 'prod' }]) }))).toThrow(/trusts only rows that carry 'acts_for'/);
+    // even when auth is not otherwise wired
+    expect(() => configureAuth('prod', doc, { [CI_PUBLISHERS_ENV]: json([ENTRY]) })).toThrow(/trusts only rows that carry 'acts_for'/);
+    expect(configureAuth('prod', doc, env({ [CI_PUBLISHERS_ENV]: json([PROD_ENTRY]) }))!.oidc).toBeDefined();
+  });
+
+  test('beta wires the exchange with the configured publisher; a malformed value stops the function', () => {
+    expect(configureAuth('beta', doc, env({ [CI_PUBLISHERS_ENV]: json([ENTRY]) }))!.oidc).toBeDefined();
+    expect(() => configureAuth('beta', doc, env({ [CI_PUBLISHERS_ENV]: '[{}]' }))).toThrow(/is not valid/);
+  });
+
+  test('gamma and prod without the variable are wired as before', () => {
+    for (const stage of ['gamma', 'prod'] as const) expect(configureAuth(stage, doc, env())!.oidc).toBeDefined();
+  });
+});

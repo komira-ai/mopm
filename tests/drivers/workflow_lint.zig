@@ -1,21 +1,20 @@
-//! .github/scripts/workflow_lint.rb in Zig, for the build farm, which has no
-//! Ruby. workflow_lint.rb stays for ci.yml until farm.yml has matched it; this
-//! file reproduces its rules and its messages (`workflow-lint: <file>: ...`).
+//! The workflow lint, run by Buck2 (//:workflows). Its messages read (`workflow-lint: <file>: ...`).
 //!
-//! `fileProblems` is the per-file half (what workflow_lint.rb does with path
-//! arguments, and for every file without): read-only token, no `write` outside
+//! `fileProblems` is the per-file half (what runs for every workflow, and for the
+//! fixtures): read-only token, no `write` outside
 //! the id-token grants, secrets reach a step only through env, only
 //! GitHub-owned actions pinned by SHA, no step that prints a secret-bearing
 //! variable, and a syntax check of every `run:` script. `repoProblems` is the
 //! whole-repository half: the promotion chain, the guard jobs of deploy.yml and
 //! e2e.yml, and oidc-subject-check.yml.
 //!
-//! The one rule that is not the same: workflow_lint.rb runs `bash -n` on each
-//! `run:` script and the farm has no bash. shell_syntax.zig is the stand-in
+//! One check is a stand-in: a shell has no place on the farm, so `run:` scripts are
+//! syntax-checked without bash. shell_syntax.zig is the stand-in
 //! and says what it does and does not catch.
 
 const std = @import("std");
 const c = @import("lint_common.zig");
+const rl = @import("release_lint.zig");
 const sh = @import("shell_syntax.zig");
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
@@ -25,16 +24,24 @@ pub const prefix = "workflow-lint: ";
 
 const oidc_files = [_][]const u8{ "deploy.yml", "e2e.yml", "promote.yml", "oidc-subject-check.yml" };
 /// farm.yml may also hold the id-token grant, and one action outside GitHub's own
-/// (komira's farm-connect, pinned by commit); hygiene.rb holds it to its conditions.
+/// (komira's farm-connect, pinned by commit); hygiene.zig holds it to its conditions.
 const farm_file = "farm.yml";
 /// kpin-update.yml (the weekly pin update) holds the two write grants it needs to push its branch
 /// and open its pull request with the default token, nothing else, and only on a schedule or a
 /// manual run: checked below.
 const kpin_file = "kpin-update.yml";
 const kpin_writes = [_][]const u8{ "contents", "pull-requests" };
+/// release.yml (a push to main releases) holds the three write grants a release with
+/// build-provenance attestations needs, on its jobs only (the top level stays read-only); release_lint.zig
+/// holds each of them to the one job that may have it, and hygiene holds its triggers.
+const release_file = "release.yml";
+const release_writes = [_][]const u8{ "contents", "id-token", "attestations" };
+/// autopin-commit.yml (the privileged half of the Dependabot pin update) is the one workflow that may be triggered by `workflow_run`, and
+/// the one other that mints an App token (the autopin App, contents write). autopin_lint.zig holds everything else about it.
+const autopin_commit_file = "autopin-commit.yml";
 /// Names whose values must never reach a log: no echo/printf/cat/tee of them.
-const secret_names = [_][]const u8{ "AWS_ACCOUNT_ID", "AWS_REGION", "ROLE_ARN", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN" };
-const owned_actions = [_][]const u8{ "checkout", "setup-node", "upload-artifact", "download-artifact" };
+const secret_names = [_][]const u8{ "AWS_ACCOUNT_ID", "AWS_REGION", "ROLE_ARN", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "MOPM_E2E_GROUP_TOKEN", "MOPM_E2E_TOKEN" };
+const owned_actions = [_][]const u8{ "checkout", "setup-node", "upload-artifact", "download-artifact", "attest-build-provenance" };
 
 // ---- secret-bearing variables -----------------------------------------------
 
@@ -165,6 +172,8 @@ fn checkPerm(a: Allocator, f: []const u8, base: []const u8, path: []const []cons
                 if (!c.isStr(e.value_ptr.*, "write")) continue;
                 const k = e.key_ptr.*;
                 if (std.mem.eql(u8, base, kpin_file) and c.containsStr(&kpin_writes, k) and path.len == 3 and std.mem.eql(u8, path[0], "jobs")) continue;
+                if (std.mem.eql(u8, base, release_file) and c.containsStr(&release_writes, k) and path.len == 3 and std.mem.eql(u8, path[0], "jobs")) continue;
+                if (std.mem.eql(u8, base, advisories_file) and std.mem.eql(u8, k, "issues") and path.len == 3 and std.mem.eql(u8, path[0], "jobs")) continue;
                 if (!(std.mem.eql(u8, k, "id-token") and (isOidc(base) or std.mem.eql(u8, base, farm_file)))) {
                     try c.problem(a, out, prefix ++ "{s}: {s}.{s}: write is not allowed", .{ f, try joinPath(a, path), k });
                 }
@@ -197,6 +206,9 @@ fn eachPerm(a: Allocator, f: []const u8, base: []const u8, node: Value, path: *s
     }
 }
 
+/// The variable (lower case) that holds the publish role of the shared apt repository; release.yml may read it.
+const apt_role_variable = "apt_publish_role_arn";
+
 /// /\bvars\.\w*(?:ACCOUNT|REGION|ARN)\w*/i, each match (non-overlapping) reported.
 fn varsProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !void {
     const low = try c.lower(a, text);
@@ -209,6 +221,12 @@ fn varsProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !void 
         var j = p + 5;
         while (j < low.len and c.isWord(low[j])) j += 1;
         const w = low[p + 5 .. j];
+        // The one role ARN that is a variable: the apt repository's publish role, which its owner sets as a variable of the environment
+        // `apt-publish` (the role's name is public, the trust policy is what protects it). Only release.yml reads it.
+        if (std.mem.eql(u8, w, apt_role_variable) and std.mem.eql(u8, c.basename(f), release_file)) {
+            i = j;
+            continue;
+        }
         if (std.mem.indexOf(u8, w, "account") != null or std.mem.indexOf(u8, w, "region") != null or std.mem.indexOf(u8, w, "arn") != null) {
             try c.problem(a, out, prefix ++ "{s}: {s}: account, region and role ARNs come from environment secrets, not vars", .{ f, text[p..j] });
             i = j;
@@ -278,6 +296,18 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
 
     try varsProblems(a, f, text, out);
 
+    // The e2e actor's token is read by one job of e2e.yml (groupE2eProblems holds that job to its conditions) and by nothing else.
+    // GitHub reads context names and function names without regard to case, so the match does too.
+    const live_lower = try std.ascii.allocLowerString(a, try c.nonCommentLines(a, text));
+    if (!std.mem.eql(u8, base, "e2e.yml") and std.mem.indexOf(u8, live_lower, "secrets." ++ group_secret_lower) != null) {
+        try c.problem(a, out, prefix ++ "{s}: secrets." ++ group_secret ++ " is for the " ++ group_job ++ " job of e2e.yml alone", .{f});
+    }
+    // A name can be built or the whole context dumped without ever writing the secret's name, so neither form is allowed in any
+    // workflow: the group-e2e step names its one secret with the dotted form.
+    if (secretsDump(live_lower)) |what| {
+        try c.problem(a, out, prefix ++ "{s}: {s} reads secrets without naming them; name each secret with secrets.NAME", .{ f, what });
+    }
+
     // Only promote.yml passes secrets to its reusable calls, and it must do so on every call.
     if (std.mem.eql(u8, base, "promote.yml")) {
         // Automated by CEO decision: exactly a push to main plus a manual run, serialized by a concurrency group.
@@ -337,6 +367,7 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
     // The privileged PR trigger is spelled in two pieces so hygiene does not flag this file.
     const on = try c.onKeys(a, doc);
     for ([_][]const u8{ "pull_request_" ++ "target", "workflow_run", "issue_comment" }) |t| {
+        if (std.mem.eql(u8, t, "workflow_run") and std.mem.eql(u8, base, autopin_commit_file)) continue;
         if (c.containsStr(on, t)) try c.problem(a, out, prefix ++ "{s}: trigger {s} is not allowed", .{ f, t });
     }
 
@@ -349,6 +380,8 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
         if (c.get(job, "uses")) |u| if (c.truthy(u)) {
             const us = c.str(u) orelse "";
             if (!localWorkflow(us)) try c.problem(a, out, prefix ++ "{s}: job {s} may only call a local workflow, not {s}", .{ f, jn, us });
+            // The advisory scan reports on its own schedule; a workflow that called it could be reddened by a finding.
+            if (std.mem.indexOf(u8, us, "advisories") != null) try c.problem(a, out, prefix ++ "{s}: job {s} calls {s}: the advisory scan must never run as part of another workflow", .{ f, jn, us });
         };
         const steps = c.get(job, "steps") orelse continue;
         if (steps != .array) continue;
@@ -356,7 +389,11 @@ pub fn fileProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !v
             const uses = c.str(c.get(st, "uses"));
             const farm_connect = std.mem.eql(u8, base, farm_file) and uses != null and pinned(uses.?, "komira-ai/komira/.github/actions/farm-connect");
             if (uses) |u| {
-                if (!farm_connect and !ownedActionPinned(u)) {
+                // release.yml signs with Sigstore's installer (not GitHub-owned), pinned by commit like the rest.
+                const cosign_installer = std.mem.eql(u8, base, release_file) and pinned(u, "sigstore/cosign-installer");
+                // ... and so is the action that mints the release bot's App token (release_lint.zig holds that only the tag, tap and bump jobs use it).
+                const app_token = (std.mem.eql(u8, base, release_file) or std.mem.eql(u8, base, autopin_commit_file)) and pinned(u, "actions/create-github-app-token");
+                if (!farm_connect and !cosign_installer and !app_token and !ownedActionPinned(u)) {
                     try c.problem(a, out, prefix ++ "{s}: {s} step {d}: only GitHub-owned actions pinned by full SHA are allowed: {s}", .{ f, jn, i, u });
                 }
             }
@@ -384,6 +421,151 @@ fn lessThan(_: void, x: []const u8, y: []const u8) bool {
     return std.mem.lessThan(u8, x, y);
 }
 
+
+// ---- advisories.yml: the daily scan, report only ---------------------------------------
+
+/// advisories.yml (the daily scan of the lockfiles for known vulnerabilities) holds `issues: write` on its job, to keep the one
+/// Advisories issue, and nothing else beyond `contents: read`. It reports and never gates: schedule and workflow_dispatch only (never
+/// pull_request, push or workflow_call), no other workflow calls it, the scanner is the pinned, sha256-verified release, and only the
+/// scan step may fail, and only when the scan cannot run (an exit code above 1; 1 means findings).
+const advisories_file = "advisories.yml";
+const advisories_installer = "tools/install_osv_scanner.zig";
+const advisories_scan_guard = "[ \"$rc\" -gt 1 ]";
+/// Ways a step could fetch a tool without the pinned, verified installer.
+const advisories_downloads = [_][]const u8{ "curl ", "wget ", "releases/download", "go install", "cargo install", "npm ", "npx ", "pip " };
+
+/// The text between the quotes of the first line `const <name> = "..."` of a Zig source, or null.
+fn zigStringConst(text: []const u8, name: []const u8) ?[]const u8 {
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        if (!std.mem.startsWith(u8, line, "const ")) continue;
+        const rest = line["const ".len..];
+        if (!std.mem.startsWith(u8, rest, name) or !std.mem.startsWith(u8, rest[name.len..], " = \"")) continue;
+        const v = rest[name.len + " = \"".len ..];
+        const end = std.mem.indexOfScalar(u8, v, '"') orelse return null;
+        return v[0..end];
+    }
+    return null;
+}
+
+/// tools/install_osv_scanner.zig pins an exact release and a sha256, and refuses a mismatch before it writes the binary.
+pub fn installerProblems(a: Allocator, text: []const u8, out: *Out) !void {
+    const f = advisories_installer;
+    const version = zigStringConst(text, "version") orelse "";
+    var exact = version.len > 0;
+    for (version) |ch| {
+        if (!((ch >= '0' and ch <= '9') or ch == '.')) exact = false;
+    }
+    if (!exact) try c.problem(a, out, prefix ++ "{s}: `const version` must be an exact release (digits and dots), got \"{s}\"", .{ f, version });
+    const sha = zigStringConst(text, "sha256_hex") orelse "";
+    var hex = sha.len == 64;
+    for (sha) |ch| {
+        if (!((ch >= '0' and ch <= '9') or (ch >= 'a' and ch <= 'f'))) hex = false;
+    }
+    if (!hex) try c.problem(a, out, prefix ++ "{s}: `const sha256_hex` must be 64 lowercase hex digits", .{f});
+    if (std.mem.indexOf(u8, text, "/releases/download/v\" ++ version") == null) {
+        try c.problem(a, out, prefix ++ "{s}: the url must be a release download of the pinned version (`/releases/download/v\" ++ version`)", .{f});
+    }
+    const check = std.mem.indexOf(u8, text, "if (!std.mem.eql(u8, &hex, sha256_hex)) die(");
+    const write = std.mem.indexOf(u8, text, "createFile(");
+    if (check == null) {
+        try c.problem(a, out, prefix ++ "{s}: no `if (!std.mem.eql(u8, &hex, sha256_hex)) die(`: the digest of the download is not compared", .{f});
+    } else if (write == null or write.? < check.?) {
+        try c.problem(a, out, prefix ++ "{s}: the binary must be written only after the sha256 comparison", .{f});
+    }
+}
+
+/// The rules for advisories.yml; `f` is the name the messages show.
+pub fn advisoriesProblems(a: Allocator, f: []const u8, text: []const u8, out: *Out) !void {
+    const doc = c.load(a, text) catch |err| return c.problem(a, out, prefix ++ "{s}: not readable as YAML: {s}", .{ f, @errorName(err) });
+    const on = try c.onKeys(a, doc);
+    const sorted = try a.dupe([]const u8, on);
+    std.mem.sort([]const u8, sorted, {}, lessThan);
+    if (!c.eqlList(sorted, &.{ "schedule", "workflow_dispatch" })) {
+        try c.problem(a, out, prefix ++ "{s}: triggers must be exactly schedule and workflow_dispatch (never pull_request, push or workflow_call: an advisory must not block or redden anything), got {s}", .{ f, try c.inspectList(a, on) });
+    }
+    var installs_zig = false;
+    var installs_scanner = false;
+    var scans = false;
+    var summary = false;
+    var opens = false;
+    var closes = false;
+    var labels_create = false;
+    var labels_edit = false;
+    var label_made = false;
+    const jobs = c.get(doc, "jobs");
+    if (jobs == null or jobs.? != .object) return c.problem(a, out, prefix ++ "{s}: no jobs", .{f});
+    if (c.get(c.get(doc, "env"), "GH_TOKEN") != null) try c.problem(a, out, prefix ++ "{s}: GH_TOKEN must not be set at workflow level", .{f});
+    var jit = jobs.?.object.iterator();
+    while (jit.next()) |je| {
+        const jn = je.key_ptr.*;
+        const job = je.value_ptr.*;
+        if (c.truthy(c.get(job, "continue-on-error"))) try c.problem(a, out, prefix ++ "{s}: job {s}: continue-on-error is not allowed (the job fails only when the scan cannot run)", .{ f, jn });
+        const perms = c.get(job, "permissions");
+        if (perms != null and perms.? == .object) {
+            var extra = std.ArrayList([]const u8).init(a);
+            for (perms.?.object.keys()) |k| if (!std.mem.eql(u8, k, "contents") and !std.mem.eql(u8, k, "issues")) try extra.append(k);
+            if (extra.items.len != 0) try c.problem(a, out, prefix ++ "{s}: job {s} may hold only contents and issues permissions, not {s}", .{ f, jn, try c.inspectList(a, extra.items) });
+        }
+        if (c.get(c.get(job, "env"), "GH_TOKEN") != null) try c.problem(a, out, prefix ++ "{s}: job {s}: GH_TOKEN must not be set at job level (the downloaded scanner would see it); set it on the report step alone", .{ f, jn });
+        const steps = c.get(job, "steps") orelse continue;
+        if (steps != .array) continue;
+        for (steps.array.items, 0..) |st, i| {
+            if (c.truthy(c.get(st, "continue-on-error"))) try c.problem(a, out, prefix ++ "{s}: {s} step {d}: continue-on-error is not allowed (the job fails only when the scan cannot run)", .{ f, jn, i });
+            const run = c.str(c.get(st, "run")) orelse continue;
+            const has_token = c.get(c.get(st, "env"), "GH_TOKEN") != null;
+            const uses_gh = std.mem.indexOf(u8, run, "gh issue") != null;
+            if (has_token and !uses_gh) try c.problem(a, out, prefix ++ "{s}: {s} step {d}: GH_TOKEN belongs on the step that runs `gh issue` alone", .{ f, jn, i });
+            if (uses_gh and !has_token) try c.problem(a, out, prefix ++ "{s}: {s} step {d}: the step that runs `gh issue` must set GH_TOKEN in its own env", .{ f, jn, i });
+            if (uses_gh) {
+                const guard = std.mem.indexOf(u8, run, "if [ \"$listed\" = 1 ]; then");
+                const create = std.mem.indexOf(u8, run, "gh issue create");
+                const edit = std.mem.indexOf(u8, run, "gh issue edit");
+                if (guard == null or create == null or edit == null or guard.? > create.? or guard.? > edit.?) {
+                    try c.problem(a, out, prefix ++ "{s}: {s} step {d}: `gh issue create` and `edit` must sit inside `if [ \"$listed\" = 1 ]; then` (a failed `gh issue list` must not create a duplicate)", .{ f, jn, i });
+                }
+                if (std.mem.indexOf(u8, run, "listed=1") == null or std.mem.indexOf(u8, run, "listed=0") == null) {
+                    try c.problem(a, out, prefix ++ "{s}: {s} step {d}: `listed=0` then `listed=1` after a successful `gh issue list` is required", .{ f, jn, i });
+                }
+            }
+            if (std.mem.indexOf(u8, run, "tools/install_zig.sh") != null) installs_zig = true;
+            if (std.mem.indexOf(u8, run, "zig run " ++ advisories_installer) != null) installs_scanner = true;
+            for (advisories_downloads) |d| {
+                if (std.mem.indexOf(u8, run, d) != null) try c.problem(a, out, prefix ++ "{s}: {s} step {d}: fetches a tool with `{s}`; the scanner comes from the pinned, verified {s} alone", .{ f, jn, i, std.mem.trim(u8, d, " "), advisories_installer });
+            }
+            if (std.mem.indexOf(u8, run, "|| true") != null) try c.problem(a, out, prefix ++ "{s}: {s} step {d}: `|| true` would hide a scan that could not run", .{ f, jn, i });
+            if (std.mem.indexOf(u8, run, "\"$OSV_SCANNER\"") != null) {
+                scans = true;
+                const call = std.mem.indexOf(u8, run, "\"$OSV_SCANNER\"").?;
+                const off = std.mem.indexOf(u8, run, "set +e");
+                const on_again = std.mem.lastIndexOf(u8, run, "set -e");
+                if (off == null or off.? > call) try c.problem(a, out, prefix ++ "{s}: {s} step {d}: `set +e` must come before the scanner call (GitHub runs bash -e, and exit 1 is findings)", .{ f, jn, i });
+                if (on_again == null or on_again.? < call) try c.problem(a, out, prefix ++ "{s}: {s} step {d}: `set -e` must come back after the scanner call", .{ f, jn, i });
+                if (std.mem.indexOf(u8, run, advisories_scan_guard) == null) {
+                    try c.problem(a, out, prefix ++ "{s}: {s} step {d}: the scan step must fail only on `{s}` (exit 1 is findings: reported, never a failure)", .{ f, jn, i, advisories_scan_guard });
+                }
+            } else if (c.hasAnyWord(run, &.{"exit"})) {
+                try c.problem(a, out, prefix ++ "{s}: {s} step {d}: only the scan step may exit nonzero (the report never fails the job)", .{ f, jn, i });
+            }
+            if (std.mem.indexOf(u8, run, "GITHUB_STEP_SUMMARY") != null) summary = true;
+            if (std.mem.indexOf(u8, run, "gh issue create --title Advisories") != null) opens = true;
+            if (std.mem.indexOf(u8, run, "gh issue create --title Advisories --label advisory ") != null) labels_create = true;
+            if (std.mem.indexOf(u8, run, "gh issue edit \"$number\" --add-label advisory ") != null) labels_edit = true;
+            if (std.mem.indexOf(u8, run, "gh label create advisory --force ") != null) label_made = true;
+            if (std.mem.indexOf(u8, run, "gh issue close") != null) closes = true;
+        }
+    }
+    if (!installs_zig) try c.problem(a, out, prefix ++ "{s}: no step runs tools/install_zig.sh (the installer is a Zig program)", .{f});
+    if (!installs_scanner) try c.problem(a, out, prefix ++ "{s}: no step runs `zig run {s}` (the pinned, sha256-verified OSV-Scanner)", .{ f, advisories_installer });
+    if (!scans) try c.problem(a, out, prefix ++ "{s}: no step runs \"$OSV_SCANNER\"", .{f});
+    if (!summary) try c.problem(a, out, prefix ++ "{s}: findings must go to the job summary ($GITHUB_STEP_SUMMARY)", .{f});
+    if (!opens) try c.problem(a, out, prefix ++ "{s}: findings must go to one issue titled Advisories (`gh issue create --title Advisories`)", .{f});
+    if (!closes) try c.problem(a, out, prefix ++ "{s}: the Advisories issue must be closed when there are no findings (`gh issue close`)", .{f});
+    if (!label_made) try c.problem(a, out, prefix ++ "{s}: the `advisory` label must be ensured before it is used (`gh label create advisory --force`)", .{f});
+    if (!labels_create) try c.problem(a, out, prefix ++ "{s}: the Advisories issue must be created with `--label advisory`", .{f});
+    if (!labels_edit) try c.problem(a, out, prefix ++ "{s}: the Advisories issue must keep the label on update (`--add-label advisory`)", .{f});
+}
+
 // ---- whole-repository rules ---------------------------------------------------------
 
 const Step = struct { job: []const u8, needs: ?[]const u8, uses: []const u8, stage: []const u8 };
@@ -402,15 +584,208 @@ fn idTokenWrite(job: Value) bool {
     return c.isStr(c.get(c.get(job, "permissions"), "id-token"), "write");
 }
 
+/// e2e.yml's index-gate job (Gate 1 of the sparse index): curl only, so it needs the guard, runs on main, holds no id-token and
+/// no environment, and reads the repository and nothing else. Its script must keep the three requests and the final failing exit.
+fn indexGateProblems(a: Allocator, doc: Value, out: *Out) !void {
+    const job = c.get(c.get(doc, "jobs"), "index-gate") orelse return c.problem(a, out, prefix ++ "e2e.yml: the index-gate job is missing", .{});
+    if (!c.containsStr(try c.arrayOf(a, c.get(job, "needs")), "guard")) try c.problem(a, out, prefix ++ "e2e.yml: index-gate must need the guard job", .{});
+    if (!c.isStr(c.get(job, "if"), "github.ref == 'refs/heads/main'")) try c.problem(a, out, prefix ++ "e2e.yml: index-gate must run on main only", .{});
+    if (c.truthy(c.get(job, "environment"))) try c.problem(a, out, prefix ++ "e2e.yml: index-gate must not declare an environment", .{});
+    if (c.truthy(c.get(job, "continue-on-error"))) try c.problem(a, out, prefix ++ "e2e.yml: index-gate must not set continue-on-error", .{});
+    const perms = c.get(job, "permissions");
+    const exact = perms != null and perms.? == .object and perms.?.object.count() == 1 and c.isStr(c.get(perms, "contents"), "read");
+    if (!exact) try c.problem(a, out, prefix ++ "e2e.yml: index-gate must grant exactly contents read", .{});
+    var script = std.ArrayList(u8).init(a);
+    if (c.get(job, "steps")) |steps| if (steps == .array) {
+        for (steps.array.items) |st| if (c.str(c.get(st, "run"))) |r| {
+            try script.appendSlice(r);
+            try script.append('\n');
+        };
+    };
+    const needles = [_][]const u8{
+        "get /config.json",
+        "get /takedowns.json",
+        "get /e2/e_/e2e_no_such_package",
+        "!= \"200\"",
+        "= \"404\"",
+        "if [ \"$code\" = \"404\" ]; then",
+        "and .stage == $stage",
+        "and .channel_url == $ch",
+        "\n[ \"$failed\" = \"0\" ] || { echo \"sparse index gate failed on stage ${STAGE}\" >&2; exit 1; }\n",
+    };
+    for (needles) |n| {
+        if (std.mem.indexOf(u8, script.items, n) == null) try c.problem(a, out, prefix ++ "e2e.yml: index-gate script lost `{s}`", .{n});
+    }
+    // Both the config and the takedown log must pin index_version to the number 1.
+    const version_pin = "(.index_version | type == \"number\" and . == 1)";
+    if (std.mem.count(u8, script.items, version_pin) < 2) try c.problem(a, out, prefix ++ "e2e.yml: index-gate script lost `{s}` (config.json and takedowns.json both need it)", .{version_pin});
+    // The absent package is accepted on exactly 404: no other status is compared for equality.
+    if (std.mem.count(u8, script.items, "\"$code\" = ") != 1) try c.problem(a, out, prefix ++ "e2e.yml: index-gate must accept only 404 for the absent package", .{});
+}
+
+/// The repository secret of the group end-to-end check: the token of the e2e actor, which may create groups on beta and gamma.
+const group_secret = "MOPM_E2E_GROUP_TOKEN";
+const group_secret_ref = "${{ secrets." ++ group_secret ++ " }}";
+const group_secret_lower = "mopm_e2e_group_token";
+
+/// An expression that reaches secrets without the dotted name, in lower-cased text: `toJSON(secrets)` (spaces allowed) or an
+/// index `secrets[...]`. Returns what it found, or null.
+fn secretsDump(s: []const u8) ?[]const u8 {
+    var from: usize = 0;
+    while (std.mem.indexOfPos(u8, s, from, "secrets")) |i| : (from = i + 1) {
+        if (!c.boundaryBefore(s, i)) continue;
+        var j = i + "secrets".len;
+        while (j < s.len and c.isSpace(s[j])) j += 1;
+        if (j < s.len and s[j] == '[') return "an index expression secrets[...]";
+        // toJSON( secrets ): walk back over spaces and the opening parenthesis.
+        var k = i;
+        while (k > 0 and c.isSpace(s[k - 1])) k -= 1;
+        if (k == 0 or s[k - 1] != '(') continue;
+        k -= 1;
+        while (k > 0 and c.isSpace(s[k - 1])) k -= 1;
+        if (k >= 6 and std.mem.eql(u8, s[k - 6 .. k], "tojson")) return "toJSON(secrets)";
+    }
+    return null;
+}
+
+/// How many times `needle` (lower case) occurs in `hay` without regard to case.
+fn countFold(a: Allocator, hay: []const u8, needle: []const u8) !usize {
+    return std.mem.count(u8, try std.ascii.allocLowerString(a, hay), needle);
+}
+const group_job = "group-e2e";
+const group_token_env = "MOPM_E2E_TOKEN";
+
+/// The key of the first entry of the mapping `env` whose value contains `needle`, or null.
+fn envHolding(env: ?Value, needle: []const u8) ?[]const u8 {
+    const m = env orelse return null;
+    if (m != .object) return null;
+    var it = m.object.iterator();
+    while (it.next()) |e| {
+        if (e.value_ptr.* == .string and std.ascii.indexOfIgnoreCase(e.value_ptr.string, needle) != null) return e.key_ptr.*;
+    }
+    return null;
+}
+
+/// e2e.yml's group-e2e job (the authenticated group publish, run after a stage's deploy or by hand). The workflow it sits in is
+/// called by promote.yml and started by hand, never by a pull request, because a pull request must not hold the token. The job
+/// is guarded, runs on main for beta and gamma, holds a read-only token and no id-token or environment, uses only the pinned
+/// checkout, and the repository secret is read once: on the step that runs the check, as MOPM_E2E_TOKEN, and nowhere else in the
+/// repository (fileProblems holds the other workflows to that).
+fn groupE2eProblems(a: Allocator, doc: Value, text: []const u8, out: *Out) !void {
+    const on = try c.onKeys(a, doc);
+    const sorted = try a.dupe([]const u8, on);
+    std.mem.sort([]const u8, sorted, {}, lessThan);
+    if (!c.eqlList(sorted, &.{ "workflow_call", "workflow_dispatch" })) {
+        try c.problem(a, out, prefix ++ "e2e.yml: triggers must be exactly workflow_call and workflow_dispatch (a pull request must not hold the group e2e token), got {s}", .{try c.inspectList(a, on)});
+    }
+    const jobs = c.get(doc, "jobs");
+    // The secret is named once in the file, outside comments, and the workflow itself carries no env.
+    const live = try c.nonCommentLines(a, text);
+    const mentions = try countFold(a, live, "secrets." ++ group_secret_lower);
+    if (mentions != 1) try c.problem(a, out, prefix ++ "e2e.yml: secrets." ++ group_secret ++ " must be referenced exactly once, on the step that runs the check, got {d}", .{mentions});
+    if (envHolding(c.get(doc, "env"), "secrets.") != null) try c.problem(a, out, prefix ++ "e2e.yml: the workflow must not set env from secrets (a secret belongs to the step that reads it)", .{});
+    if (jobs) |js| if (js == .object) {
+        var it = js.object.iterator();
+        while (it.next()) |e| {
+            const jn = e.key_ptr.*;
+            if (std.mem.eql(u8, jn, group_job)) continue;
+            if (try countFold(a, try c.inspect(a, e.value_ptr.*), group_secret_lower) != 0) {
+                try c.problem(a, out, prefix ++ "e2e.yml: job {s} reads " ++ group_secret ++ "; only " ++ group_job ++ " may", .{jn});
+            }
+        }
+    };
+
+    const job = c.get(jobs, group_job) orelse return c.problem(a, out, prefix ++ "e2e.yml: the " ++ group_job ++ " job is missing", .{});
+    if (!c.containsStr(try c.arrayOf(a, c.get(job, "needs")), "guard")) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " must need the guard job", .{});
+    if (!c.isStr(c.get(job, "if"), "github.ref == 'refs/heads/main' && inputs.stage != 'prod'")) {
+        try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " must run on main only, and never for prod (`if: github.ref == 'refs/heads/main' && inputs.stage != 'prod'`)", .{});
+    }
+    if (c.truthy(c.get(job, "environment"))) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " must not declare an environment (the token is a repository secret)", .{});
+    if (c.truthy(c.get(job, "continue-on-error"))) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " must not set continue-on-error", .{});
+    if (c.truthy(c.get(job, "uses"))) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " must not call a workflow", .{});
+    if (c.truthy(c.get(job, "env"))) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " must not set env at job level (the token is for one step)", .{});
+    const perms = c.get(job, "permissions");
+    const exact = perms != null and perms.? == .object and perms.?.object.count() == 1 and c.isStr(c.get(perms, "contents"), "read");
+    if (!exact) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " must grant exactly contents read", .{});
+
+    var holders: usize = 0;
+    var runs_check = false;
+    var passes_summary = false;
+    var pixi_step: ?usize = null;
+    var check_step: ?usize = null;
+    const steps = c.get(job, "steps");
+    if (steps != null and steps.? == .array) {
+        for (steps.?.array.items, 0..) |st, i| {
+            if (c.str(c.get(st, "uses"))) |u| {
+                if (!pinned(u, "actions/checkout")) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: only actions/checkout pinned by full SHA is allowed here: {s}", .{ i, u });
+            }
+            // No green-by-skip: a step that is skipped, or whose failure is tolerated, is a run that did nothing and says green.
+            if (c.truthy(c.get(st, "if"))) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: must not have an `if` (a skipped step is a green run that did nothing; the check decides what to skip, and says why in the summary)", .{i});
+            if (c.truthy(c.get(st, "continue-on-error"))) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: must not set continue-on-error", .{i});
+            const step_run = c.str(c.get(st, "run")) orelse "";
+            if (std.mem.indexOf(u8, step_run, "tools/install_pixi.sh") != null and pixi_step == null) pixi_step = i;
+            const env = c.get(st, "env");
+            const holds = envHolding(env, group_secret);
+            if (holds) |key| {
+                holders += 1;
+                check_step = i;
+                if (!std.mem.eql(u8, key, group_token_env) or !c.isStr(c.get(env, key), group_secret_ref)) {
+                    try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: the secret goes in as the variable " ++ group_token_env ++ ", set to secrets." ++ group_secret ++ " and nothing around it, not as {s}", .{ i, key });
+                }
+                const run = step_run;
+                runs_check = std.mem.indexOf(u8, run, "mopm-group-e2e") != null;
+                passes_summary = std.mem.indexOf(u8, run, "--summary \"$GITHUB_STEP_SUMMARY\"") != null;
+                // The real path needs the CLI by its absolute path (it is started in other directories), pixi, and pixi's manifest; the
+                // script stops at the first failure and tolerates none.
+                if (runs_check) for ([_][]const u8{ "--mopm \"$PWD/zig-out/bin/mopm\"", "--pixi \"$(command -v pixi)\"", "--pixi-manifest tests/e2e/pixi.toml", "set -euo pipefail" }) |want| {
+                    if (std.mem.indexOf(u8, run, want) == null) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: the check must be run with `{s}`", .{ i, want });
+                };
+                if (runs_check) for ([_][]const u8{ "|| true", "|| :", "set +e" }) |banned| {
+                    if (std.mem.indexOf(u8, run, banned) != null) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: the check must not tolerate a failure (`{s}`)", .{ i, banned });
+                };
+            }
+            // No other secret in the job, and none through `with:`.
+            if (env) |m| if (m == .object) {
+                var eit = m.object.iterator();
+                while (eit.next()) |ee| {
+                    if (ee.value_ptr.* == .string and std.mem.indexOf(u8, ee.value_ptr.string, "secrets.") != null and !(holds != null and std.mem.eql(u8, holds.?, ee.key_ptr.*))) {
+                        try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: reads {s} from secrets; the job reads no secret but " ++ group_secret, .{ i, ee.key_ptr.* });
+                    }
+                }
+            };
+            if (envHolding(c.get(st, "with"), "secrets.") != null) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: passes a secret through with:", .{i});
+        }
+    }
+    if (holders == 1) {
+        if (pixi_step == null) {
+            try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " must install the pinned pixi (tools/install_pixi.sh) before the check, which makes the Mojo environment and installs the staged set with it", .{});
+        } else if (pixi_step.? > check_step.?) {
+            try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " installs pixi (step {d}) after the check (step {d})", .{ pixi_step.?, check_step.? });
+        }
+    }
+    if (holders != 1) try c.problem(a, out, prefix ++ "e2e.yml: exactly one step of " ++ group_job ++ " must read the token, got {d}", .{holders});
+    if (holders == 1 and !runs_check) try c.problem(a, out, prefix ++ "e2e.yml: the step of " ++ group_job ++ " that holds the token must run mopm-group-e2e", .{});
+    if (holders == 1 and !passes_summary) try c.problem(a, out, prefix ++ "e2e.yml: the step of " ++ group_job ++ " that holds the token must pass --summary \"$GITHUB_STEP_SUMMARY\" (a skip says why there)", .{});
+}
+
 fn sortedKeys(a: Allocator, v: ?Value) ![]const []const u8 {
     const s = try a.dupe([]const u8, c.keys(v));
     std.mem.sort([]const u8, s, {}, lessThan);
     return s;
 }
 
-/// The checks workflow_lint.rb runs only without path arguments. The workflows
+/// The checks that run only without path arguments. The workflows
 /// are read by name through `read` (the repository's .github/workflows).
 pub fn repoProblems(a: Allocator, ctx: anytype, out: *Out) !void {
+    // advisories.yml: the daily scan, report only.
+    try advisoriesProblems(a, "advisories.yml", try ctx.read(a, "advisories.yml"), out);
+
+    // release.yml: who may write, what each stage needs, the triggers and the path filter.
+    try rl.problems(a, try ctx.read(a, "release.yml"), out);
+    try rl.userBetaProblems(a, try ctx.read(a, "release-beta-user.yml"), out);
+    try rl.buildDebProblems(a, try ctx.read(a, "release-build.yml"), out);
+    try rl.ciMinosProblems(a, try ctx.read(a, "ci.yml"), out);
+
     // promote.yml
     {
         const pdoc = c.load(a, try ctx.read(a, "promote.yml")) catch |err| return c.problem(a, out, prefix ++ "promote.yml: not readable as YAML: {s}", .{@errorName(err)});
@@ -452,7 +827,8 @@ pub fn repoProblems(a: Allocator, ctx: anytype, out: *Out) !void {
     // deploy.yml and e2e.yml: the guard job gates the credential job.
     for ([_][]const u8{ "deploy", "e2e" }) |w| {
         const name = try std.fmt.allocPrint(a, "{s}.yml", .{w});
-        const doc = c.load(a, try ctx.read(a, name)) catch |err| {
+        const wf_text = try ctx.read(a, name);
+        const doc = c.load(a, wf_text) catch |err| {
             try c.problem(a, out, prefix ++ "{s}: not readable as YAML: {s}", .{ name, @errorName(err) });
             continue;
         };
@@ -471,6 +847,10 @@ pub fn repoProblems(a: Allocator, ctx: anytype, out: *Out) !void {
         for (cred.items, cred_names.items) |j, jn| {
             if (!c.containsStr(try c.arrayOf(a, c.get(j, "needs")), "guard")) try c.problem(a, out, prefix ++ "{s}.yml: {s} must need the guard job", .{ w, jn });
             if (!c.truthy(c.get(j, "environment"))) try c.problem(a, out, prefix ++ "{s}.yml: {s} must declare an environment", .{ w, jn });
+        }
+        if (std.mem.eql(u8, w, "e2e")) {
+            try indexGateProblems(a, doc, out);
+            try groupE2eProblems(a, doc, wf_text, out);
         }
     }
 

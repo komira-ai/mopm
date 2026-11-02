@@ -1,6 +1,7 @@
 // Builds dist/: the prerendered pages and the hashed assets, then checks the result (check-dist.ts).
 //
 //   dist/index.html, app.html, 404.html, docs/index.html, docs/<slug>/index.html
+//   dist/install.sh    static/install.sh as it is: the installer, served at https://mopm.dev/install.sh
 //   dist/assets/<id>/  the browser modules (build/browser, from tsc) and the stylesheets of static/ (layout.ts says
 //                      which page loads which)
 //
@@ -11,7 +12,7 @@
 import { createHash } from 'crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
-import { checkDist, importsOf, listFiles } from './check-dist';
+import { checkDist, importsOf, INSTALLER, listFiles } from './check-dist';
 import { buildDocPages, docsIndexPage } from './docs';
 import { AREA_STYLESHEETS, type Assets, renderPage, SHARED_STYLESHEET } from './layout';
 import { appShell, homePage, notFoundPage } from './pages';
@@ -93,6 +94,7 @@ export function buildSite(opts: BuildOptions): { id: string; files: string[] } {
     ...docs.map((d): [string, string] => [`docs/${d.slug}/index.html`, renderPage(d.spec, refs)]),
   ];
   for (const [path, html] of pages) write(join(opts.outDir, path), html);
+  write(join(opts.outDir, INSTALLER), readFileSync(join(opts.staticDir, INSTALLER)));
 
   checkDist(opts.outDir);
   return { id, files: listFiles(opts.outDir) };

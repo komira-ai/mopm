@@ -1,7 +1,7 @@
-//! The golden tests of tests/run_golden.sh, in Zig: the same checks over the
-//! same files under tests/golden, for the build farm, which has neither a
-//! shell nor `diff`. tests/run_golden.sh stays for ci.yml until farm.yml has
-//! matched it, and is superseded by this file.
+//! The golden tests: `mopm link-plan`, `metadata`, `new`, `init`, `build`, `run`,
+//! `repl` and `test --list` run over the files under tests/golden, for the build
+//! farm, which has neither a shell nor `diff`. (This file replaced
+//! tests/run_golden.sh.)
 //!
 //! Run by Buck2 (//:golden_test): the working directory is the repository
 //! root with the test data present, MOPM is the built CLI, MOPM_FAKE_MOJO a
@@ -106,7 +106,6 @@ test "golden files: link-plan, metadata, new and init, build, run, repl, test --
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var rep = h.Report{};
-    try h.watchdog(90);
 
     const root = try std.fs.cwd().realpathAlloc(a, ".");
     const mopm = try h.toolPath(a, "MOPM");
@@ -133,6 +132,9 @@ test "golden files: link-plan, metadata, new and init, build, run, repl, test --
         .{ .name = "missing", .want = 1, .pkgs = &.{"http_client"} },
         .{ .name = "dup", .want = 1, .pkgs = &.{ "pkg_a", "pkg_b" } },
         .{ .name = "static", .want = 1, .pkgs = &.{"staticpkg"} },
+        .{ .name = "static_chain", .want = 1, .pkgs = &.{ "crypto_sys", "tls_sys" } },
+        // Three archives, two of which name libc++ (one also libm): one -lc++ and one -lm, after every archive.
+        .{ .name = "static_link", .want = 1, .pkgs = &.{ "plain_sys", "cxx_a", "cxx_b" } },
     };
     for (plans) |p| {
         var args = std.ArrayList([]const u8).init(a);
@@ -195,6 +197,15 @@ test "golden files: link-plan, metadata, new and init, build, run, repl, test --
         }
     }
 
+    // `repl --debugserver <path>` is LLDB_DEBUGSERVER_PATH in mojo's environment, ahead of the command (the cases above,
+    // which name none, print none: the golden files of macos/chain.repl.txt carry only MODULAR_HOME).
+    try c.cmd("macos/chain repl --debugserver", "tests/golden/cmd/macos/chain.repl_debugserver.txt", 0, &.{ "repl", "--prefix=tests/fixtures/env/macos/chain", "--os=macos", "--debugserver", "/x/debugserver", "--print-cmd" }, .{});
+
+    // Static archives that name system libraries (`link`): each once, after every archive, inside the no-as-needed block on Linux.
+    for (oses) |os| {
+        try c.cmd(try std.fmt.allocPrint(a, "{s}/cxx build", .{os}), try std.fmt.allocPrint(a, "tests/golden/cmd/{s}/cxx.build.txt", .{os}), 0, &.{ "build", "hello.mojo", "-o", "hello", "--prefix", try std.fmt.allocPrint(a, "tests/fixtures/env/{s}/cxx", .{os}), "--os", os, "--print-cmd" }, .{});
+    }
+
     // A library the metadata names but the environment lacks.
     try c.cmd("linux/nofile build", "tests/golden/cmd/linux/nofile.build.txt", 1, &.{ "build", "hello.mojo", "-o", "hello", "--prefix", "tests/fixtures/env/linux/nofile", "--os", "linux", "--print-cmd" }, .{});
 
@@ -224,7 +235,24 @@ test "golden files: link-plan, metadata, new and init, build, run, repl, test --
         else => "linux",
     };
     try c.cmd("exec: run", "tests/golden/exec/run.txt", 7, &.{ "run", "hello.mojo", "--prefix", stand_in_real }, .{ .set = &.{ .{ "MODULAR_HOME", dup_home }, .{ "MOPM_GOLDEN_MARK", "kept" } } });
-    try c.cmd("exec: build", try std.fmt.allocPrint(a, "tests/golden/exec/build.{s}.txt", .{host}), 7, &.{ "build", "hello.mojo", "-o", "hello", "--prefix", stand_in_real }, .{});
+    // `run --bin <package>:<program>` runs the source file an installed package ships (lib/mojo/<package>.bins/), with the
+    // environment's libraries linked as for any run; a program the package does not ship, and a package that is not
+    // installed (even one whose programs are on disk), are refused before mojo is started.
+    try h.writeFile(try h.join(a, &.{ stand_in_real, "lib/mojo/echo.bins/greet.mojo" }), "def main(): print(\"hi\")\n");
+    try h.writeFile(try h.join(a, &.{ stand_in_real, "lib/mojo/ghost.bins/greet.mojo" }), "def main(): print(\"boo\")\n");
+    try c.cmd("exec: run --bin", "tests/golden/exec/run_bin.txt", 7, &.{ "run", "--bin", "echo:greet", "--prefix", stand_in_real }, .{ .set = &.{ .{ "MODULAR_HOME", dup_home }, .{ "MOPM_GOLDEN_MARK", "kept" } } });
+    // The command mopm executes: the level after `run`, the program's arguments after the file, verbatim and in order
+    // (option-looking ones, a second `--` and an empty string included), mopm's own options before the `--` only.
+    try c.cmd("exec: run --bin with --opt-level and program arguments", "tests/golden/exec/run_bin_args.txt", 7, &.{ "run", "--bin", "echo:greet", "--prefix", stand_in_real, "--opt-level", "3", "--", "a", "--b", "--prefix", "/no", "--", "" }, .{ .set = &.{ .{ "MODULAR_HOME", dup_home }, .{ "MOPM_GOLDEN_MARK", "kept" } } });
+    try c.cmd("exec: run --bin with program arguments, no level", "tests/golden/exec/run_bin_args_only.txt", 7, &.{ "run", "--bin", "echo:greet", "--prefix", stand_in_real, "--", "--opt-level", "9" }, .{ .set = &.{ .{ "MODULAR_HOME", dup_home }, .{ "MOPM_GOLDEN_MARK", "kept" } } });
+    try c.cmd("exec: run --bin of a program the package does not ship", "tests/golden/exec/run_bin_unknown.txt", 1, &.{ "run", "--bin=echo:nope", "--prefix", stand_in_real }, .{});
+    try c.cmd("exec: run --bin of a package that is not installed", "tests/golden/exec/run_bin_missing.txt", 1, &.{ "run", "--bin", "ghost:greet", "--prefix", stand_in_real }, .{});
+    {
+        const r = try h.run(a, try c.mopmArgv(&.{ "run", "--bin", "../echo:greet", "--prefix", stand_in_real }), &base, .{});
+        const first = std.mem.sliceTo(r.text, '\n');
+        rep.check("exec: run --bin names a package and a program, never a path", !r.signaled and r.code == 2 and h.contains(first, "mopm run: --bin ../echo:greet: '../echo' is not a package name"), r.text);
+    }
+    try c.cmd("exec: build",try std.fmt.allocPrint(a, "tests/golden/exec/build.{s}.txt", .{host}), 7, &.{ "build", "hello.mojo", "-o", "hello", "--prefix", stand_in_real }, .{});
     try c.cmd("exec: repl reads stdin", try std.fmt.allocPrint(a, "tests/golden/exec/repl.{s}.txt", .{host}), 7, &.{ "repl", "--prefix", stand_in_real }, .{ .stdin = "tests/golden/exec/repl.stdin" });
     try c.cmd("exec: no bin/mojo in the environment", "tests/golden/exec/no_mojo.txt", 127, &.{ "run", "hello.mojo", "--prefix", chain }, .{});
     {
@@ -253,7 +281,7 @@ test "golden files: link-plan, metadata, new and init, build, run, repl, test --
     try c.cmd("test: no tests at all, --allow-empty", g ++ "/empty.txt", 0, &.{ "test", "--allow-empty", "tests/discovery/none.mojo" }, .{});
     try c.cmd("test --list: a path that does not exist", g ++ "/missing.txt", 2, &.{ "test", "--list", "tests/discovery/no_such_dir" }, .{});
 
-    // Selection over the fixture package of tests/e2e/test_flaky.sh.
+    // Selection over the fixture package of tests/drivers/test_flaky_test.zig.
     const fx = "tests/e2e/flaky";
     const fxt = fx ++ "/tests";
     try c.cmd("test --list: no filter (the ignored test is not listed)", g ++ "/filter_none.txt", 0, &.{ "test", "--list", fx }, .{});
@@ -270,7 +298,7 @@ test "golden files: link-plan, metadata, new and init, build, run, repl, test --
 
     {
         const v = try h.run(a, try c.mopmArgv(&.{"--version"}), &base, .{ .capture = .stdout });
-        rep.check("--version", std.mem.eql(u8, h.chomp(v.text), "mopm 0.0.1"), v.text);
+        rep.check("--version", std.mem.eql(u8, h.chomp(v.text), "mopm 0.0.1+dev"), v.text);
         // A planned command exits non-zero and says it is not implemented.
         const p = try h.run(a, try c.mopmArgv(&.{"cov"}), &base, .{});
         rep.check("planned command should exit non-zero", p.signaled or p.code != 0, "exit 0");

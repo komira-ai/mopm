@@ -18,10 +18,18 @@ export const PUBLISH_CATALOGUE: Record<string, { status: number; message: string
   token_revoked: { status: 401, message: 'The token was revoked.', hint: 'Create a new token.' },
   scope_missing: { status: 403, message: "The token does not have the '{scope}' scope for '{name}'.", hint: 'Create a token with that scope and that package.' },
   not_owner: { status: 403, message: "You are not an owner of '{name}'.", hint: 'Ask an owner to invite you.' },
+  name_reserved: { status: 403, message: "'{name}' is reserved.", hint: 'Choose another name.' },
   limit_exceeded: { status: 403, message: "Adding this file would put '{name}' over its storage limit of {limit} bytes; {remaining} bytes are left.", hint: 'Yanked versions still count toward the limit; only a takedown frees space. Reduce the package size.' },
   package_not_found: { status: 404, message: "There is no package '{name}'.", hint: 'Check the spelling, or claim the name.' },
   version_not_found: { status: 404, message: "'{name}' has no version '{version}'.", hint: "List the versions with 'mopm info {name}'." },
   publish_not_found: { status: 404, message: 'There is no such publish.', hint: 'Publish ids are only valid for the caller who made them.' },
+  group_not_found: { status: 404, message: 'There is no such group.', hint: 'Group ids are only valid for the caller who made them, or for an owner of every package in the group.' },
+  name_taken: { status: 409, message: "'{name}' is already taken.", hint: 'Choose another name.' },
+  name_too_similar: {
+    status: 409,
+    message: "'{name}' is too similar to '{other}'.",
+    hint: 'Choose another name, or claim again with confirm_similar if you are sure.',
+  },
   version_exists: { status: 409, message: "'{name}' {version} already exists (sha256 {sha256}); versions are immutable.", hint: 'Publish a new version.' },
   invalid_transition: {
     status: 409,
@@ -29,16 +37,29 @@ export const PUBLISH_CATALOGUE: Record<string, { status: number; message: string
     hint: 'Only a published version can be yanked, only a yanked version can be unyanked, and a tombstoned version never changes.',
   },
   upload_used: { status: 409, message: "The upload '{upload_id}' was already used.", hint: 'Begin a new upload.' },
+  group_not_open: { status: 409, message: 'Group {group_id} is {status}; only an open group can be aborted.', hint: 'Create the group again with the same request to open it again.' },
+  group_conflict: { status: 409, message: 'The group cannot be created: {detail}.', hint: 'Abort or finish your other groups, or publish a new version.' },
+  group_commit_refused: { status: 409, message: 'The group cannot be committed: {detail}.', hint: 'Read the group with its status request; create it again with the same request to open it again.' },
+  group_not_settled: { status: 409, message: 'Group {group_id} cannot be yanked or unyanked now: {detail}.', hint: 'A group is yanked once it is visible, and not while another yank or unyank of it is running; read the group with its status request.' },
   payload_too_large: { status: 413, message: 'The file is larger than the limit of {limit} bytes.', hint: 'Reduce the package size.' },
   rate_limited: { status: 429, message: 'Too many requests.', hint: 'Wait {retry_after} seconds; the Retry-After header says how long.' },
   internal_error: { status: 500, message: 'Something went wrong on our side.', hint: 'Try again; report the request id if it persists.' },
   read_only_mode: { status: 503, message: 'The registry is read-only right now; new uploads are refused.', hint: 'Installs still work. Try again later.' },
   unavailable: { status: 503, message: 'The registry is temporarily unavailable.', hint: 'Try again shortly.' },
+  route_not_found: { status: 404, message: 'There is no such operation.', hint: 'Check the request against the API documentation; update mopm if it is old.' },
+};
+
+/**
+ * The `error.reason` values a code may carry (`x-mopm-error-reasons` in spec/api/openapi.yaml; test/publish/catalogue.test.ts
+ * compares the two). A code with no entry here never carries one, whatever the error holds.
+ */
+export const PUBLISH_REASONS: Record<string, readonly string[]> = {
+  group_conflict: ['number_held', 'group_failed', 'open_cap', 'supersede_cap', 'takeover_blocked', 'number_taken', 'overlap_refused'],
 };
 
 export interface ErrorView {
   status: number;
-  body: { error: { code: string; message: string; hint: string } };
+  body: { error: { code: string; message: string; hint: string; reason?: string } };
   retryAfter?: number;
 }
 
@@ -54,9 +75,10 @@ export function errorView(err: unknown): ErrorView {
   }
   const entry = PUBLISH_CATALOGUE[code] ?? PUBLISH_CATALOGUE.internal_error!;
   if (!PUBLISH_CATALOGUE[code]) code = 'internal_error';
+  const reason = err instanceof PublishError && err.reason !== undefined && PUBLISH_REASONS[code]?.includes(err.reason) ? err.reason : undefined;
   return {
     status: entry.status,
-    body: { error: { code, message: render(entry.message, detail), hint: render(entry.hint, detail) } },
+    body: { error: { code, message: render(entry.message, detail), hint: render(entry.hint, detail), ...(reason !== undefined ? { reason } : {}) } },
     ...(retryAfter !== undefined ? { retryAfter } : {}),
   };
 }

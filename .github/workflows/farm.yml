@@ -10,29 +10,37 @@
 # it joins the farm's private network with the job's OIDC token (workload identity, no stored
 # secret), checks the farm answers, and writes the machine buckconfig. Its
 # inputs are repository variables; this repository holds no endpoint and no
-# worker property set. Until the variables are set the job does nothing and
-# says so, so it cannot fail a pull request before the farm is available.
+# worker property set. Until the variables are set a pull request's job does
+# nothing and says so, so it cannot fail a pull request before the farm is
+# available. A push to main is different: with no farm the job FAILS, because a
+# merge that nothing built must not look green.
 # A fork's pull request gets neither the token nor the variables and is
-# skipped. hygiene.rb and workflow_lint.rb allow the id-token grant and the
+# skipped; lint.yml runs the repository's lints for it on a GitHub-hosted runner,
+# as it does for every pull request and every push to main.
+# The hygiene and workflow lints (//:hygiene, //:workflows) allow the id-token grant and the
 # one action outside GitHub's own for this file only, under these conditions.
 name: farm
 
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
-  # A newer push to a pull request cancels its older farm build.
-  group: farm-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  # A newer push to a pull request cancels its older farm build; a build of main is never cancelled.
+  group: farm-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
-    # A pull request from a branch of this repository, and nothing else.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # A push to main, or a pull request from a branch of this repository that is not Dependabot's, and nothing else. A Dependabot
+    # branch gets no farm login (the farm's trust refuses its `head_ref` too, a setting outside this repository): the pin check
+    # that stands in for the build is pin-verify.yml, and the pull request template says the farm did not build it.
+    if: github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && !startsWith(github.head_ref, 'dependabot/'))
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
@@ -45,34 +53,60 @@ jobs:
           persist-credentials: false
       # The condition reads the variable without putting its value in a step's
       # environment, which GitHub prints in the log.
-      - name: the farm is not configured
-        if: ${{ vars.FARM_ADDRESS == '' }}
+      - name: the farm is not configured (pull request)
+        if: ${{ vars.FARM_ADDRESS == '' && github.event_name != 'push' }}
         run: |
           echo "::notice title=farm::the repository variable FARM_ADDRESS is not set, so there is no farm to build on. Skipping; nothing was built."
-      # The same komira commit as commit_hash in .buckconfig; bump them together (the action is
-      # byte for byte the one at the previous pin; see the TODO in .buckconfig).
+      - name: the farm is not configured (push to main)
+        if: ${{ vars.FARM_ADDRESS == '' && github.event_name == 'push' }}
+        run: |
+          echo "::error title=farm::the repository variable FARM_ADDRESS is not set, so nothing built this push to main. Set it, or the farm check is not a check."; exit 1
+      # The same komira commit as commit_hash in .buckconfig; bump them together.
       - name: connect to the farm
         if: ${{ vars.FARM_ADDRESS != '' }}
-        uses: komira-ai/komira/.github/actions/farm-connect@f8b0cd15c47ed0f00c212de6e6fc55c0a51fd572
+        uses: komira-ai/komira/.github/actions/farm-connect@9504a2daf88754de25d93f62a76ea2955ebc38c8
         with:
           ts-client-id: ${{ vars.TS_CLIENT_ID }}
           ts-audience: ${{ vars.TS_AUDIENCE }}
           farm-address: ${{ vars.FARM_ADDRESS }}
           farm-instance: ${{ vars.FARM_INSTANCE }}
           farm-properties: ${{ vars.FARM_LINUX_X86_64_PROPERTIES }}
+          tls: ${{ vars.FARM_TLS || 'false' }}
+      # farm-connect writes the worker property sets under [komira_re]; buildrules reads them
+      # from [buildrules_re] of this checkout's .buckconfig.local. Copy the keys across without
+      # printing them (the values are the farm's).
+      - name: hand the worker properties to buildrules
+        if: ${{ vars.FARM_ADDRESS != '' }}
+        run: |
+          set -eu
+          src="$HOME/.buckconfig.d/farm.buckconfig"
+          {
+            echo "[buildrules_re]"
+            awk '/^\[/ { keep = ($0 == "[komira_re]"); next } keep' "$src"
+          } >> .buckconfig.local
       # With no farm configured buck2 builds on the runner: refuse that.
       - name: the buckconfig names the farm
         if: ${{ vars.FARM_ADDRESS != '' }}
         run: |
           for key in linux_x86_64_properties; do
-            ./buck2 audit config "komira_re.$key" --style json | grep -q '": *"[^"]' ||
-              { echo "the buckconfig sets no [komira_re] $key: this job would build on the runner"; exit 1; }
+            ./buck2 audit config "buildrules_re.$key" --style json | grep -q '": *"[^"]' ||
+              { echo "the buckconfig sets no [buildrules_re] $key: this job would build on the runner"; exit 1; }
           done
-      - name: buck2 build //...
+      # A pull request builds the unit tier: every target except the beta ones (the tests that run against the real Mojo toolchain,
+      # and the user walk of the candidate; BUCK gives each of them _MOJO_TOOLS). A push to main builds every target, so those run
+      # after the merge.
+      - name: buck2 build (the unit tier on a pull request, every target on a push to main)
         if: ${{ vars.FARM_ADDRESS != '' }}
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
           set -o pipefail
-          ./buck2 build //... 2>&1 | tee "$RUNNER_TEMP/build.log"
+          if [ "$EVENT" = pull_request ]; then
+            ./buck2 uquery '//... - set(//:autolink //:build_targets_mojo //:discovery //:flaky //:group_e2e_mojo //:install_e2e //:mojo_probe //:native_static //:native_workspace_mojo //:supervisor //:user_beta)' > "$RUNNER_TEMP/targets"
+            ./buck2 build --skip-incompatible-targets "@$RUNNER_TEMP/targets" 2>&1 | tee "$RUNNER_TEMP/build.log"
+          else
+            ./buck2 build //... 2>&1 | tee "$RUNNER_TEMP/build.log"
+          fi
       # The summary line counts the actions run on this machine: all must have
       # run on the farm or come from its cache.
       - name: no action ran on the runner

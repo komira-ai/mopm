@@ -1,0 +1,48 @@
+# pin-verify: the required, secretless check that the pin tables agree with the lockfiles, on every pull request.
+#
+# Without it a bot-pinned Dependabot pull request would prove only that a table equals itself. This runs the
+# released `buildrules autopin verify-pins` over the pull request's checkout and fails (exit 1) when a table is out of
+# step with its lockfile or a row differs: it downloads every row from registry.npmjs.org and compares sha512 with the
+# lockfile, sha256 and size with the row. It covers the directories of the `--set` arguments (site and service/api);
+# the service/infra lockfiles bundle packages the tool refuses, so they are left out (see autopin-compute.yml).
+#
+# The job holds a read-only token and no secret, environment, id-token or cache, and has no condition and no
+# filter: a skipped check is a check that did not run. It does not look at who the actor is. The tool is the
+# released binary, fetched by tag and checked against a sha256 (the pin autopin-compute.yml and
+# autopin-commit.yml carry, which the workflow lint compares); it is never built from the pull request.
+#
+# A pull request that edits this file is checked by its own copy, so a green check on it means nothing: any pull
+# request that touches .github/ needs a human to read the change (the pull request template says so).
+name: pin-verify
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pin-verify:
+    name: pin-verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch the buildrules release (checked against its sha256; never built from this pull request)
+        env:
+          BUILDRULES_VERSION: "0.0.21"
+          BUILDRULES_SHA256: "0e595ed9b5f7f01f0ab923ded5ce46ebba7a665ed58f46e11d8e75e8ba2483ee"
+        run: |
+          set -eu
+          name="buildrules-cli-${BUILDRULES_VERSION}-linux-x86_64"
+          curl -fsSLo "$RUNNER_TEMP/$name.tar.gz" "https://github.com/komira-ai/buildrules/releases/download/v${BUILDRULES_VERSION}/$name.tar.gz"
+          echo "${BUILDRULES_SHA256}  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/br"
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP/br" --strip-components=1
+      - name: Every pin table row is what its lockfile calls for (each tarball re-downloaded)
+        run: |
+          "$RUNNER_TEMP/br/buildrules" autopin verify-pins --set site=buildrules-lock --set service/api=buildrules-lock

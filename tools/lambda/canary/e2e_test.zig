@@ -36,7 +36,25 @@ const State = struct {
     posted_path: ?[]u8 = null,
     posted_body: ?[]u8 = null,
     other: ?[]u8 = null,
+    /// Set (progress event) when the runtime API saw the response post, or any call it did not expect.
+    finished: std.Thread.ResetEvent = .{},
+    /// Set (progress event) when the bootstrap's stdout reached EOF: the process is gone or going.
+    exited: bool = false,
 };
+
+/// Drains the bootstrap's stdout until EOF, which is the process ending, then signals `finished` so the
+/// test fails at once on a bootstrap that dies instead of waiting on a clock.
+fn watchChild(state: *State, file: std.fs.File) void {
+    var tmp: [1024]u8 = undefined;
+    while (true) {
+        const n = file.read(&tmp) catch break;
+        if (n == 0) break;
+    }
+    state.mu.lock();
+    state.exited = true;
+    state.mu.unlock();
+    state.finished.set();
+}
 
 fn headerValue(head: []const u8, name: []const u8) ?[]const u8 {
     var lines = std.mem.splitSequence(u8, head, "\r\n");
@@ -86,8 +104,10 @@ fn serve(state: *State, stream: std.net.Stream) !void {
             state.mu.unlock();
             state.gpa.free(body);
             if (!first) {
-                // The runtime asks for the next event: there is none. Hold the request open.
-                std.time.sleep(120 * std.time.ns_per_s);
+                // The runtime asks for the next event: there is none. Hold the request open by
+                // blocking on the socket until the peer goes away (the test kills the bootstrap).
+                var drain: [256]u8 = undefined;
+                while ((stream.read(&drain) catch 0) != 0) {}
                 return;
             }
             var out = std.ArrayList(u8).init(state.gpa);
@@ -111,11 +131,13 @@ fn serve(state: *State, stream: std.net.Stream) !void {
                 state.other = try std.fmt.allocPrint(state.gpa, "{s} {s}: {s}", .{ method, path, body });
             }
             state.mu.unlock();
+            state.finished.set();
             try stream.writeAll("HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\r\n");
         } else {
             state.mu.lock();
             state.other = try std.fmt.allocPrint(state.gpa, "{s} {s}", .{ method, path });
             state.mu.unlock();
+            state.finished.set();
             try stream.writeAll("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
         }
     }
@@ -158,17 +180,16 @@ test "bootstrap answers one API Gateway v2 event" {
 
     var child = std.process.Child.init(&.{exe}, a);
     child.env_map = &env;
+    child.stdout_behavior = .Pipe;
     try child.spawn();
+    const watcher = try std.Thread.spawn(.{}, watchChild, .{ &state, child.stdout.? });
 
-    var waited: u32 = 0;
-    while (waited < 400) : (waited += 1) {
-        state.mu.lock();
-        const done = state.posted_body != null or state.other != null;
-        state.mu.unlock();
-        if (done) break;
-        std.time.sleep(50 * std.time.ns_per_ms);
-    }
-    _ = child.kill() catch {};
+    // Wait for a progress event, not for a clock: the response post, an unexpected call, or the
+    // bootstrap ending. Kill with the pid still unreaped (child.wait reaps it after the join).
+    state.finished.wait();
+    std.posix.kill(child.id, std.posix.SIG.KILL) catch {};
+    watcher.join();
+    _ = child.wait() catch {};
 
     state.mu.lock();
     defer state.mu.unlock();
@@ -177,7 +198,7 @@ test "bootstrap answers one API Gateway v2 event" {
         return error.UnexpectedRuntimeCall;
     }
     const body = state.posted_body orelse {
-        std.debug.print("bootstrap posted no response in 20 s\n", .{});
+        std.debug.print("bootstrap posted no response (exited: {})\n", .{state.exited});
         return error.NoResponse;
     };
     try std.testing.expectEqualStrings(response_path, state.posted_path.?);

@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "name": "cxxb",
+  "version": "1.0.0",
+  "native": [
+    {
+      "id": "cxxb",
+      "soname": "libcxxb.a",
+      "kind": "static",
+      "static_file": "../libcxxb.a",
+      "link": ["c++", "m"]
+    }
+  ]
+}

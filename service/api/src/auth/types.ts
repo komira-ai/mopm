@@ -1,5 +1,6 @@
 export type TokenKind = 'session' | 'api' | 'oidc';
-export type TokenScope = 'publish' | 'yank';
+/** `stage` may create, read and abort a group but never commit or yank one: see `Authenticator.stageToken`. */
+export type TokenScope = 'publish' | 'yank' | 'stage';
 
 export interface UserRecord {
   /** Numeric GitHub account id: the identity. The handle can change; the id cannot. */
@@ -31,6 +32,18 @@ export interface TokenRecord {
   all_current: boolean;
   /** An `oidc` token is good for exactly this version of its single package. */
   version?: string;
+  /**
+   * An `oidc` token minted for a configured CI publisher: the exact version of each package it may publish
+   * (`packages` holds the same names). Absent on a token for a package's registered trusted publisher.
+   */
+  versions?: Record<string, string>;
+  /** An `oidc` token minted for a configured CI publisher: the identity it acts as (`gh-repo:<repository_id>`), the owner it must match. */
+  ci_owner?: string;
+  /**
+   * An `oidc` token minted for a CI publisher that acts for an account (`acts_for`): the CI identity it came through
+   * (`gh-repo:<repository_id>`). The token's `github_id` is then the account, and `ci_owner` is absent.
+   */
+  acts_via?: string;
   /** Session tokens only: full-strength actions need a login newer than this. */
   fresh_until?: string;
   created_at: string;
@@ -68,6 +81,10 @@ export interface TrustedPublisher {
   workflow: string;
   /** When set, the job must run in this deployment environment. */
   environment?: string;
+  /** The git ref the job must run on. Absent means `refs/heads/main` (DEFAULT_TRUSTED_REF): a branch or tag is never trusted by default. */
+  ref?: string;
+  /** The event that started the workflow. Absent means `push` or `workflow_dispatch` (ALLOWED_EVENTS); set, it must equal the claim. */
+  event_name?: string;
   added_by: number;
   added_at: string;
 }
@@ -96,4 +113,11 @@ export interface AuthStore {
   addTrustedPublisher(tp: TrustedPublisher): Promise<void>;
   listTrustedPublishers(name: string): Promise<TrustedPublisher[]>;
   removeTrustedPublisher(name: string, id: string): Promise<void>;
+
+  /**
+   * Claim a one-time key (a CI token's jti, hashed): true for the first caller, false for every later one, atomically.
+   * `expires_at` is when the row may be forgotten (DynamoDB TTL removes it lazily; until then the key stays claimed).
+   * Used rows are never deleted by this port.
+   */
+  claimOnce(key: string, expires_at: string): Promise<boolean>;
 }

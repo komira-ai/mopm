@@ -33,8 +33,8 @@ pub struct RepodataFiles {
 }
 
 /// The conda dependencies of a record: the compiler pin, the package dependencies as `mojo-<name> <range>`
-/// (or `mojo-<name>`), and the native libraries by their allow-list id (the conda package that
-/// provides them); no duplicates, sorted as JavaScript sorts strings.
+/// (or `mojo-<name>`), and the system libraries the package loads (`native_depends`, as its index.json
+/// requires them); the libraries it ships are no dependency; no duplicates, sorted as JavaScript sorts strings.
 fn depends_of(r: &VersionRecord) -> Vec<String> {
     let mut specs: BTreeSet<String> = BTreeSet::new();
     specs.insert(format!("{COMPILER_PACKAGE} {}", r.requires_mojo));
@@ -44,10 +44,11 @@ fn depends_of(r: &VersionRecord) -> Vec<String> {
             None => specs.insert(format!("mojo-{}", d.name)),
         };
     }
-    for n in &r.native {
-        specs.insert(n.id.clone());
-    }
-    let mut out: Vec<String> = specs.into_iter().collect();
+    // The libraries the package loads, exactly as its index.json requires them; the ones it ships (`native`) are not
+    // conda packages and are never named here.
+    for n in &r.native_depends {
+        specs.insert(n.clone());
+    }    let mut out: Vec<String> = specs.into_iter().collect();
     out.sort_by(|a, b| cmp_utf16(a, b));
     out
 }
@@ -110,16 +111,16 @@ pub fn build_repodata(subdir: &str, records: &[VersionRecord]) -> Result<Repodat
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fixtures::{file, golden_records, hex, rec};
+    use crate::fixtures::{file, golden_records, group_row, hex, rec};
     use crate::state::{apply_event, VersionEvent};
     use crate::types::Dep;
     use ruzstd::decoding::StreamingDecoder;
     use std::io::Read;
 
     // The bytes the TypeScript registry wrote for the golden records (service/api/test/fixtures).
-    const GOLDEN_LINUX_64: &str = include_str!("../repodata.linux-64.json");
-    const GOLDEN_OSX_ARM64: &str = include_str!("../repodata.osx-arm64.json");
-    const GOLDEN_NOARCH: &str = include_str!("../repodata.noarch.json");
+    const GOLDEN_LINUX_64: &str = include_str!("../../../api/test/fixtures/repodata.linux-64.json");
+    const GOLDEN_OSX_ARM64: &str = include_str!("../../../api/test/fixtures/repodata.osx-arm64.json");
+    const GOLDEN_NOARCH: &str = include_str!("../../../api/test/fixtures/repodata.noarch.json");
 
     fn decode(frame: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
@@ -192,6 +193,57 @@ mod tests {
         assert!(build_repodata_json("linux-64", &[rec("p", "1.0.0"), pending]).is_ok());
     }
 
+    /// Group members that are not shown, each with a file in every subdir: staged now, reserved and not yet
+    /// staged, and stamped at an attempt other than the group's current one.
+    fn unshown_group_rows() -> Vec<VersionRecord> {
+        let spread = |name: &str| {
+            let mut r = rec(name, "1.0.0");
+            r.files = ["linux-64", "osx-arm64", "noarch"].iter().map(|s| file(s, name, "1.0.0", 'd', 10)).collect();
+            r
+        };
+        vec![
+            group_row(spread("grp_staged"), "g1", Some(2)),
+            group_row(spread("grp_reserved"), "g1", None),
+            group_row(spread("grp_stale"), "g0", Some(1)),
+        ]
+    }
+
+    #[test]
+    fn rows_a_group_has_not_flipped_leave_no_trace_in_any_subdir_and_the_golden_bytes_stand() {
+        let mut records = golden_records();
+        records.extend(unshown_group_rows());
+        for (subdir, golden) in [("linux-64", GOLDEN_LINUX_64), ("osx-arm64", GOLDEN_OSX_ARM64), ("noarch", GOLDEN_NOARCH)] {
+            assert_eq!(build_repodata_json(subdir, &records).unwrap(), golden, "{subdir}");
+            assert_eq!(build_repodata(subdir, &records).unwrap(), build_repodata(subdir, &golden_records()).unwrap(), "{subdir}: the zst too");
+        }
+        assert!(!build_repodata_json("linux-64", &records).unwrap().contains("grp_"));
+    }
+
+    #[test]
+    fn a_row_the_group_flipped_is_listed_exactly_like_one_a_single_publish_wrote() {
+        let single = rec("grp_staged", "1.0.0");
+        let flipped = VersionRecord { group_id: Some("g1".to_string()), staged_attempt: Some(2), ..single.clone() };
+        let with = |r: &VersionRecord| {
+            let mut rs = golden_records();
+            rs.push(r.clone());
+            build_repodata("linux-64", &rs).unwrap()
+        };
+        assert_eq!(with(&flipped), with(&single));
+        assert!(String::from_utf8(with(&flipped).json).unwrap().contains("mojo-grp_staged-1.0.0-mojo1.0.0_0.conda"));
+    }
+
+    #[test]
+    fn adding_unshown_group_rows_to_any_record_set_changes_no_byte() {
+        let mut rng = Rng(0x0bad_cafe_f00d_1234);
+        for _ in 0..200 {
+            let records = random_records(&mut rng);
+            let subdir = ["linux-64", "osx-arm64", "noarch"][rng.below(3) as usize];
+            let mut with_group = records.clone();
+            with_group.extend(unshown_group_rows());
+            assert_eq!(build_repodata(subdir, &with_group).unwrap(), build_repodata(subdir, &records).unwrap());
+        }
+    }
+
     #[test]
     fn depends_are_deduplicated_and_sorted_as_javascript_sorts_them() {
         let mut r = rec("p", "1.0.0");
@@ -202,16 +254,21 @@ mod tests {
             Dep { name: "beta".to_string(), range: Some(String::new()) }, // an empty range is no range
             Dep { name: "alpha".to_string(), range: Some(">=1".to_string()) },
         ];
-        r.native = vec![
-            crate::types::NativeRef { id: "zlib".to_string(), soname: "libz.so.1".to_string() },
-            crate::types::NativeRef { id: "\u{1f600}lib".to_string(), soname: "x".to_string() },
-            crate::types::NativeRef { id: "\u{ff5e}lib".to_string(), soname: "y".to_string() },
-        ];
+        r.native_depends = vec!["libzlib".to_string(), "\u{1f600}lib".to_string(), "\u{ff5e}lib".to_string(), "libzlib".to_string()];
         assert_eq!(
             depends_of(&r),
-            ["mojo-alpha >=1", "mojo-beta", "mojo-compiler ==1.0.0", "mojo-zeta", "zlib", "\u{1f600}lib", "\u{ff5e}lib"],
+            ["libzlib", "mojo-alpha >=1", "mojo-beta", "mojo-compiler ==1.0.0", "mojo-zeta", "\u{1f600}lib", "\u{ff5e}lib"],
             "the emoji (a surrogate pair) sorts before U+FF5E in UTF-16 order"
         );
+    }
+
+    #[test]
+    fn a_shipped_native_library_is_no_dependency() {
+        let mut r = rec("p", "1.0.0");
+        r.native = vec![crate::types::NativeRef { id: "komira_libc_posix".to_string(), soname: "libkomira_libc_posix.a".to_string() }];
+        assert_eq!(depends_of(&r), ["mojo-compiler ==1.0.0"]);
+        r.native_depends = vec!["lz4-c >=1.9.3".to_string()];
+        assert_eq!(depends_of(&r), ["lz4-c >=1.9.3", "mojo-compiler ==1.0.0"]);
     }
 
     /// A small deterministic generator (xorshift64*), so the properties below need no dependency.

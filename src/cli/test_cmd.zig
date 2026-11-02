@@ -9,7 +9,8 @@
 //!       a file is a test file as given; default "."), then build every file
 //!       that has tests with the `mojo build` command line `mopm build` uses
 //!       (core/autolink.zig: same environment, same native link arguments),
-//!       plus `-D ASSERT=all --optimization-level 1`. A bare file is built
+//!       plus `-D ASSERT=all --optimization-level 1` and `-I <root>/src` (the package's own sources,
+//!       which its tests import by name). A bare file is built
 //!       through its generated harness, target/mopm/gen/<hash>/<name>.mojo;
 //!       the binary is target/mopm/bin/<hash>/<stem>. Each binary's
 //!       `--skip-all` listing is compared with the scan as in --check. Then
@@ -79,9 +80,11 @@ const Opts = struct {
     ignored: test_filter.Ignored = .skip,
     /// Test-only (the supervisor self-test): never kill the process group.
     no_group_kill: bool = false,
+    /// Test-only (the supervisor end-to-end test): the deadline counts from the poll that finds this file.
+    deadline_after: ?[]const u8 = null,
 
     fn runOnly(o: Opts) bool {
-        return o.timeout_s != null or o.memory_mib != null or o.format != null or o.junit != null or o.allow_empty or o.no_group_kill or o.retries != null or o.deny_flaky;
+        return o.timeout_s != null or o.memory_mib != null or o.format != null or o.junit != null or o.allow_empty or o.no_group_kill or o.deadline_after != null or o.retries != null or o.deny_flaky;
     }
 };
 
@@ -160,6 +163,9 @@ fn parse(arena: std.mem.Allocator, args: []const []const u8) !Parsed {
             o.allow_empty = true;
         } else if (std.mem.eql(u8, a, "--test-only-no-group-kill")) {
             o.no_group_kill = true;
+        } else if (optValue(args, &i, "--test-only-deadline-after")) |v| {
+            if (v.len == 0) return .{ .usage = "--test-only-deadline-after needs a file name" };
+            o.deadline_after = v;
         } else if (optValue(args, &i, "--prefix")) |v| {
             if (v.len == 0) return .{ .usage = "--prefix needs a directory" };
             o.prefix = v;
@@ -322,10 +328,23 @@ fn run(arena: std.mem.Allocator, args: []const []const u8) !u8 {
     }
 
     const opt_level = o.opt_level orelse 1;
-    const flags = [_][]const u8{ "-D", "ASSERT=all", "--optimization-level", try std.fmt.allocPrint(arena, "{d}", .{opt_level}) };
+    var flag_list = std.ArrayList([]const u8).init(arena);
+    try flag_list.appendSlice(&.{ "-D", "ASSERT=all", "--optimization-level", try std.fmt.allocPrint(arena, "{d}", .{opt_level}) });
+    // A package's tests import the package by name (`from my_pkg import f`, as `mopm new` writes them): its
+    // sources are on the import path. The package root is each directory given, or the current one for a file.
+    for (o.paths.items) |p| {
+        const st = std.fs.cwd().statFile(p) catch continue;
+        const src_dir = try std.fs.path.join(arena, &.{ if (st.kind == .directory) p else ".", "src" });
+        const src_st = std.fs.cwd().statFile(src_dir) catch continue;
+        if (src_st.kind != .directory) continue;
+        var seen = false;
+        for (flag_list.items) |f| seen = seen or std.mem.eql(u8, f, src_dir);
+        if (!seen) try flag_list.appendSlice(&.{ "-I", src_dir });
+    }
+    const flags = flag_list.items;
     for (plans.items) |*plan| {
         if (plan.runs == 0) continue;
-        const bin = (try buildFile(arena, tc.?, plan.s.f, plan.s.src, plan.s.sc, &flags)) orelse {
+        const bin = (try buildFile(arena, tc.?, plan.s.f, plan.s.src, plan.s.sc, flags)) orelse {
             failed = true;
             plan.state = .compile_error;
             continue;
@@ -379,7 +398,7 @@ fn run(arena: std.mem.Allocator, args: []const []const u8) !u8 {
                 while (true) : (k += 1) {
                     // Attempt 1 writes <test>.stdout; attempt k > 1 <test>.attempt<k>.stdout.
                     const stem = if (k == 1) t.name else try std.fmt.allocPrint(arena, "{s}.attempt{d}", .{ t.name, k });
-                    const at = try runOnce(arena, id, k, bin, t.name, dir, stem, deadline_ns, memory_cap, !o.no_group_kill);
+                    const at = try runOnce(arena, id, k, bin, t.name, dir, stem, deadline_ns, memory_cap, !o.no_group_kill, o.deadline_after);
                     leftover = leftover or at.leftover;
                     try attempts.append(at);
                     if (!report.retryAfter(at.status, k, retries)) break;
@@ -487,14 +506,14 @@ fn listSelected(arena: std.mem.Allocator, plans: anytype) !u8 {
 /// One attempt of one test: `<bin> --only <name>` under the supervisor,
 /// output to `<dir>/<stem>.stdout` and `.stderr`, and its verdict.
 /// A process group that outlived the test is reported on stderr here.
-fn runOnce(arena: std.mem.Allocator, id: []const u8, attempt: u32, bin: []const u8, name: []const u8, dir: []const u8, stem: []const u8, deadline_ns: u64, memory_cap: ?u64, kill_group: bool) !report.Attempt {
+fn runOnce(arena: std.mem.Allocator, id: []const u8, attempt: u32, bin: []const u8, name: []const u8, dir: []const u8, stem: []const u8, deadline_ns: u64, memory_cap: ?u64, kill_group: bool, ready_file: ?[]const u8) !report.Attempt {
     const out_path = try std.fmt.allocPrint(arena, "{s}/{s}.stdout", .{ dir, stem });
     const err_path = try std.fmt.allocPrint(arena, "{s}/{s}.stderr", .{ dir, stem });
     const r = try test_proc.run(arena, .{
         .argv = &.{ bin, "--only", name },
         .stdout_path = out_path,
         .stderr_path = err_path,
-    }, .{ .deadline_ns = deadline_ns, .memory_bytes = memory_cap, .kill_group = kill_group });
+    }, .{ .deadline_ns = deadline_ns, .memory_bytes = memory_cap, .kill_group = kill_group, .ready_file = ready_file });
     const out_text = std.fs.cwd().readFileAlloc(arena, out_path, 64 << 20) catch "";
     const err_text = std.fs.cwd().readFileAlloc(arena, err_path, 64 << 20) catch "";
     const saw = (try report.sawPass(arena, out_text, name)) or (try report.sawPass(arena, err_text, name));
@@ -593,7 +612,7 @@ fn buildFile(arena: std.mem.Allocator, tc: autolink.Toolchain, f: File, src: []c
         .out = bin,
         .flags = flags,
     }, tc.plan);
-    var env_map = try std.process.getEnvMap(arena);
+    var env_map = try core.child_env.forChild(arena);
     try mojo_cmd.applyEnv(&env_map, cmd.env);
     const r = std.ChildProcess.run(.{ .allocator = arena, .argv = cmd.argv, .env_map = &env_map, .max_output_bytes = 16 << 20 }) catch |e| {
         try err.print("mopm test: {s}: cannot run {s}: {s}\n", .{ f.display, cmd.argv[0], @errorName(e) });
@@ -613,7 +632,8 @@ const Checked = enum { same, warned, failed, protocol };
 /// List the built binary with `--skip-all` and compare with the scan.
 fn check(arena: std.mem.Allocator, o: Opts, f: File, sc: test_scan.Scan, bin: []const u8) !Checked {
     const err = std.io.getStdErr().writer();
-    const listed = try std.ChildProcess.run(.{ .allocator = arena, .argv = &.{ bin, "--skip-all" }, .max_output_bytes = 16 << 20 });
+    var listed_env = try core.child_env.forChild(arena);
+    const listed = try std.ChildProcess.run(.{ .allocator = arena, .argv = &.{ bin, "--skip-all" }, .env_map = &listed_env, .max_output_bytes = 16 << 20 });
     if (!exitedZero(listed.term)) {
         try err.print("mopm test: {s}: `{s} --skip-all` failed:\n{s}{s}", .{ f.display, bin, listed.stdout, listed.stderr });
         return .failed;
@@ -689,6 +709,11 @@ test "test options" {
     const d = try parsed(a, &.{});
     try std.testing.expectEqualStrings(".", d.paths.items[0]);
     try std.testing.expect(!d.no_group_kill);
+    try std.testing.expectEqual(@as(?[]const u8, null), d.deadline_after);
+    const da = try parsed(a, &.{ "--test-only-deadline-after", "/r/ready", "pkg" });
+    try std.testing.expectEqualStrings("/r/ready", da.deadline_after.?);
+    try refused(a, &.{"--test-only-deadline-after"});
+    try refused(a, &.{ "--list", "--test-only-deadline-after", "/r" });
     try refused(a, &.{ "--timeout", "0" });
     try refused(a, &.{ "--timeout", "x" });
     try refused(a, &.{"--timeout"});

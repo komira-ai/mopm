@@ -1,31 +1,9 @@
-# mopm_ports: the traits the registry's logic is written against (stores, object store, presigner,
-# queue, flags, clock, rng) and the auth and publish records they carry. Nothing here does I/O.
-load("@komira//tools/build/rust:defs.bzl", "rust_library", "rust_test")
+# mopm_ports: the registry's ports (traits the adapters implement). Built from Cargo.toml by buildrules' cargo_package.
+load("//:buildrules.bzl", "cargo_package")
 
-_DEPS = [
-    "//service/lambda/core:mopm_core",
-    "//third_party/rust:jiff",
-    "//third_party/rust:serde",
-    "//third_party/rust:serde_json",
-    "//third_party/rust:thiserror",
-]
+cargo_package(path = ".")
 
-rust_test(
-    name = "mopm_ports_unit",
-    srcs = glob(["src/*.rs"]),
-    crate_root = "src/lib.rs",
-    deps = _DEPS,
-)
-
-rust_library(
-    name = "mopm_ports",
-    srcs = glob(["src/*.rs"]),
-    crate_root = "src/lib.rs",
-    deps = _DEPS,
-    tests = [":mopm_ports_unit"],
-    visibility = ["PUBLIC"],
-)
-
+# This package's files, for //:hygiene (a package boundary hides them from the root package's glob).
 filegroup(
     name = "lint_files",
     srcs = glob(["**"]) + [],

@@ -9,7 +9,8 @@
 //  - every <script> is empty and has a src under /assets/; no style attribute or element, no event-handler attribute,
 //    no javascript:, data: or vbscript: URL in any *href, src, action, formaction or data, read after entity decoding
 //    as a browser reads it (the required CSP would block them);
-//  - only .html, .js and .css files (the bucket is to serve nothing else);
+//  - only .html, .js and .css files, and the installer at the root, install.sh, a shell script (the bucket is to serve
+//    nothing else);
 //  - the JavaScript and CSS stay small: each module at most JS_MAX_BYTES, all of them at most JS_TOTAL_MAX_BYTES (tsc
 //    output is not minified; the edge is to compress it); the shared stylesheet at most SHARED_CSS_MAX_BYTES, each area
 //    stylesheet at most AREA_CSS_MAX_BYTES, and the stylesheets one page links at most PAGE_CSS_MAX_BYTES together.
@@ -51,7 +52,10 @@ export const AREA_CSS_MAX_BYTES = 16 * 1024;
  */
 export const PAGE_CSS_MAX_BYTES = 30 * 1024;
 
-export const REQUIRED = ['index.html', 'app.html', '404.html', 'docs/index.html', ...DOC_PAGES.map((d) => `docs/${d.slug}/index.html`)];
+/** The one other file the site publishes: the installer, `curl -fsSL https://mopm.dev/install.sh | sh`. */
+export const INSTALLER = 'install.sh';
+
+export const REQUIRED = ['index.html', 'app.html', '404.html', 'docs/index.html', INSTALLER, ...DOC_PAGES.map((d) => `docs/${d.slug}/index.html`)];
 
 export class DistError extends Error {
   constructor(problems: string[]) {
@@ -187,6 +191,10 @@ export function checkDist(dir: string): void {
   }
   for (const f of files) {
     const ext = posix.extname(f);
+    if (f === INSTALLER) {
+      if (!readFileSync(join(dir, f), 'utf8').startsWith('#!/bin/sh\n')) problems.push(`${f}: not a /bin/sh script`);
+      continue;
+    }
     if (!['.html', '.js', '.css'].includes(ext)) {
       problems.push(`${f}: only .html, .js and .css files are published`);
       continue;

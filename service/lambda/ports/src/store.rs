@@ -8,6 +8,10 @@
 //!   concurrent creates: exactly one wins.
 //! * Every change to a version also appends its audit entry, atomically with it.
 //! * Version rows are never deleted.
+//! * A row keeps every field it was written with, including `group_id` and `staged_attempt` (a group publish's
+//!   tag and stamp): a yank or an unyank rewrites the row whole.
+//! * A `pending` row with a `group_id` is a group's member that is not shown. Reads return it as stored, `pending`
+//!   (the channel index lists no `pending` row), and `update_version` refuses a single `Publish` of it.
 
 use std::cmp::Ordering;
 use std::future::Future;

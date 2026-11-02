@@ -264,6 +264,46 @@
       "view": null
     },
     {
+      "path": "/docs/why",
+      "edge": "/docs/why/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/why/",
+      "edge": "/docs/why/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/getting-started",
+      "edge": "/docs/getting-started/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/getting-started/",
+      "edge": "/docs/getting-started/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/configuration",
+      "edge": "/docs/configuration/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/configuration/",
+      "edge": "/docs/configuration/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/examples",
+      "edge": "/docs/examples/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/examples/",
+      "edge": "/docs/examples/index.html",
+      "view": null
+    },
+    {
       "path": "/docs/mopm-toml",
       "edge": "/docs/mopm-toml/index.html",
       "view": null
@@ -274,8 +314,23 @@
       "view": null
     },
     {
+      "path": "/docs/mopm-test",
+      "edge": "/docs/mopm-test/index.html",
+      "view": null
+    },
+    {
       "path": "/docs/mopm-test/",
       "edge": "/docs/mopm-test/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/publish-workspace",
+      "edge": "/docs/publish-workspace/index.html",
+      "view": null
+    },
+    {
+      "path": "/docs/publish-workspace/",
+      "edge": "/docs/publish-workspace/index.html",
       "view": null
     },
     {
@@ -320,6 +375,11 @@
     },
     {
       "path": "/robots.txt",
+      "edge": "pass",
+      "view": null
+    },
+    {
+      "path": "/install.sh",
       "edge": "pass",
       "view": null
     }

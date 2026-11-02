@@ -38,9 +38,33 @@ export interface Queue {
   send(m: QueueMessage): Promise<void>;
 }
 
-/** Whether new uploads are refused. Reads never consult it. */
+/** Whether new uploads are refused, and who may create a group. Reads never consult it. */
 export interface Flags {
   readOnly(): Promise<boolean>;
+  /**
+   * Whether `actor` (`u:<github id>`, `ci:gh-repo:<repository id>` or `ci:<token id>`) may create a group. It gates creation only: a group that exists
+   * is read, aborted and finished whatever this says. A flag that cannot be read throws (writers fail closed).
+   */
+  groupsFor(actor: string): Promise<boolean>;
+  /**
+   * The daily claim limit the `claim_limits` item of the config table sets for `actor` (`u:<github id>`), at most MAX_CLAIM_LIMIT, or
+   * undefined for the default. Absent or malformed config says undefined. A flag that cannot be read throws.
+   */
+  claimLimitFor(actor: string): Promise<number | undefined>;
+}
+
+/** A group on an actor's list, and when it was put there. */
+export interface ActorGroup {
+  id: string;
+  /** RFC 3339. A group with no header yet is a create that is still writing it, for a few minutes after this. */
+  at: string;
+}
+/** The groups an actor has open, or may have: a hint that creation prunes against the groups' own headers. Item `grpa#<actor>`. */
+export interface ActorGroups {
+  actor: string;
+  /** Oldest first. */
+  groups: ActorGroup[];
+  rev: number;
 }
 
 /**
@@ -66,6 +90,18 @@ export interface PublishStore {
    */
   updatePublish(id: string, fn: (cur: PublishRecord) => PublishRecord | undefined): Promise<PublishRecord | undefined>;
 
-  /** Count one hit on `key` unless it already has `limit`. `expiresAt` is epoch seconds (TTL cleanup). */
-  hit(key: string, limit: number, expiresAt: number): Promise<{ ok: boolean; count: number }>;
+  /**
+   * Count `n` hits (one by default) on `key` unless that would take it past `limit`: then nothing is counted and `ok` is
+   * false. `expiresAt` is epoch seconds (TTL cleanup). A group charges all its files at once with one `n`; the
+   * counter is one item, so the charge is one conditional write, all or nothing.
+   */
+  hit(key: string, limit: number, expiresAt: number, n?: number): Promise<{ ok: boolean; count: number }>;
+
+  /** The actor's list of groups (see ActorGroups), or undefined when it has none yet. A consistent read. */
+  getActorGroups(actor: string): Promise<ActorGroups | undefined>;
+  /**
+   * Write the actor's list. `rev` is the revision read (undefined: there was no list): the write happens only if the list is
+   * still at that revision, and then carries `rev + 1`. False when it was not.
+   */
+  putActorGroups(actor: string, groups: ActorGroup[], rev: number | undefined): Promise<boolean>;
 }

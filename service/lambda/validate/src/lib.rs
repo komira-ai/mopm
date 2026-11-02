@@ -48,8 +48,6 @@ pub struct PublishExpectation {
 pub struct ValidatorOptions {
     /// Defaults to [`Limits::DEFAULT`].
     pub limits: Limits,
-    /// Native library ids that may appear in `depends` (the maintained allow-list). Default: none.
-    pub allowed_native_deps: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -69,6 +67,9 @@ pub struct PackageFacts {
     /// Names of the `mojo-*` packages depended on, sorted, with the `mojo-` prefix.
     #[serde(rename = "mojoDeps")]
     pub mojo_deps: Vec<String>,
+    /// The allow-listed system libraries `depends` requires (`lz4-c >=1.9.3`), sorted; never a library the package ships.
+    #[serde(rename = "nativeDepends")]
+    pub native_depends: Vec<String>,
     pub metadata: Mopm,
     #[serde(rename = "manifestSha256")]
     pub manifest_sha256: String,
@@ -115,7 +116,7 @@ fn sha256_hex(b: &[u8]) -> String {
 
 /// Validate an uploaded package archive before it is committed.
 pub fn validate_package(archive: &[u8], expected: &PublishExpectation, options: &ValidatorOptions) -> Verdict {
-    match run(archive, expected, options, &options.limits) {
+    match run(archive, expected, &options.limits) {
         Ok(facts) => Verdict::Accepted(Box::new(facts)),
         Err(f) => Verdict::Rejected(f),
     }
@@ -126,7 +127,7 @@ fn tar_zst_named(name: &str, prefix: &str) -> bool {
     name.strip_prefix(prefix).and_then(|r| r.strip_suffix(".tar.zst")).is_some_and(|mid| !mid.is_empty() && !mid.contains(['\n', '\r', '\u{2028}', '\u{2029}']))
 }
 
-fn run(buf: &[u8], expected: &PublishExpectation, options: &ValidatorOptions, limits: &Limits) -> Checked<PackageFacts> {
+fn run(buf: &[u8], expected: &PublishExpectation, limits: &Limits) -> Checked<PackageFacts> {
     // 1. Size and declared hash.
     if buf.is_empty() {
         return fail(RuleCode::NotAnArchive, "the upload is empty");
@@ -238,7 +239,8 @@ fn run(buf: &[u8], expected: &PublishExpectation, options: &ValidatorOptions, li
     if idx.subdir != expected.subdir {
         return fail(RuleCode::SubdirMismatch, format!("info/index.json subdir '{}' is not '{}'", idx.subdir, expected.subdir));
     }
-    let mojo_deps = metadata::check_depends(&idx, &mopm, &options.allowed_native_deps)?;
+    let mojo_deps = metadata::check_depends(&idx, &mopm)?;
+    let native_depends = metadata::native_depends_of(&idx);
     let want_file = format!("mojo-{}-{}-{}.{format}", expected.name, expected.version, idx.build);
     if expected.filename != want_file {
         return fail(RuleCode::FilenameMismatch, format!("the file is named '{}' but its metadata says '{want_file}'", expected.filename));
@@ -275,6 +277,7 @@ fn run(buf: &[u8], expected: &PublishExpectation, options: &ValidatorOptions, li
         compiler: idx.compiler,
         subdir: idx.subdir,
         mojo_deps,
+        native_depends,
         metadata: mopm,
         manifest_sha256,
         files: entries.iter().filter(|e| e.kind == tar::Kind::File).map(|e| FactsFile { path: e.path.clone(), size: e.data.len() as u64 }).collect(),

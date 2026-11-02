@@ -1,5 +1,5 @@
 //! A syntax check of the shell scripts in `run:` steps, standing in for the
-//! `bash -n` of workflow_lint.rb: the build farm's image has no shell, and a
+//! `bash -n` an earlier Ruby lint ran: the build farm's image has no shell, and a
 //! build action runs none.
 //!
 //! This is NOT bash. It is a scanner that finds the mistakes a script gets
@@ -8,7 +8,7 @@
 //! command that owns it, a `;;` outside a case, an empty command before ; & |
 //! at the top level, and a ) with no (. What bash accepts and this refuses, or
 //! the reverse, is listed in tests/drivers/shell_syntax_test.zig; the
-//! Ruby lint stays in ci.yml, where bash exists, until farm.yml has matched it.
+//! gaps are the price of a farm with no bash.
 //!
 //! An unterminated here-document is not an error (bash warns and goes on), so
 //! it is not one here either.

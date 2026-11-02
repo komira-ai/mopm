@@ -55,11 +55,11 @@ from prod, `dig` verification. It needs no `cdk bootstrap`, so it can run before
 
 ## Step 2: access, per stage
 
-Run from a checkout of this repo. Preview first (the script prints and executes nothing without `--apply`):
+Run from a checkout of this repo, after `npm ci` in `service/infra/access` (the held commands are TypeScript, run with ts-node). Preview first (the command prints and executes nothing without `--apply`; with `--apply` it first refuses a profile that is not in `--account`):
 
 ```sh
-service/infra/access/bootstrap.sh --stage beta --account <12-digit id> --region <region> --profile <your profile>
-service/infra/access/bootstrap.sh --stage beta --account <id> --region <region> --profile <your profile> --apply
+npm --prefix service/infra/access run -s bootstrap -- --stage beta --account <12-digit id> --region <region> --profile <your profile>
+npm --prefix service/infra/access run -s bootstrap -- --stage beta --account <id> --region <region> --profile <your profile> --apply
 ```
 
 It does, in order:
@@ -82,7 +82,7 @@ now does that, and a re-run after a partial failure skips the policy it already 
 
 `cfn-exec-policy.template.json` is what CloudFormation may do when it deploys the service stacks (as
 `cdk-hnb659fds-cfn-exec-role`). Placeholders: `{{STAGE}}`, `{{ACCOUNT}}`, `{{ZONE}}` (`beta.mopm.dev`, `gamma.mopm.dev`,
-`mopm.dev`), filled in by `bootstrap.sh`. The policy is a managed policy attached to the exec role by ARN, so a new default
+`mopm.dev`), filled in by `lib/bootstrap.ts`. The policy is a managed policy attached to the exec role by ARN, so a new default
 version takes effect for the next deploy without another `cdk bootstrap`.
 
 1. Change the template in a pull request. `service/infra/stacks/test/cfn-exec-coverage.test.ts` synthesizes the beta, gamma and
@@ -91,8 +91,8 @@ version takes effect for the next deploy without another `cdk bootstrap`.
    Never loosen the two Deny statements; the test pins them.
 2. After merge, per stage, with that stage's admin credentials (beta first, then gamma, then prod):
    ```sh
-   service/infra/access/bootstrap.sh --stage <stage> --account <id> --region <region> --profile <profile> --update-policy --policy-only
-   service/infra/access/bootstrap.sh --stage <stage> --account <id> --region <region> --profile <profile> --update-policy --policy-only --apply
+   npm --prefix service/infra/access run -s bootstrap -- --stage <stage> --account <id> --region <region> --profile <profile> --update-policy --policy-only
+   npm --prefix service/infra/access run -s bootstrap -- --stage <stage> --account <id> --region <region> --profile <profile> --update-policy --policy-only --apply
    ```
    The first command is a dry run: it makes read-only IAM calls, prints the diff (current default version against the
    template, rendered for the stage) and the commands. The second runs them: when the policy already has 5 versions (IAM's limit)
@@ -163,8 +163,8 @@ everything else (the read API, token management, CI exchange) is unaffected, so 
 3. Store both with the held script, run with that stage's admin credentials. Preview first; nothing is read or called
    without `--apply`. The client secret is read from standard input (hidden prompt on a terminal), never from a flag:
    ```sh
-   service/infra/access/oauth-secret.sh --stage beta --profile <your profile> --client-id <client id>
-   service/infra/access/oauth-secret.sh --stage beta --profile <your profile> --client-id <client id> --apply
+   npm --prefix service/infra/access run -s oauth-secret -- --stage beta --profile <your profile> --client-id <client id>
+   npm --prefix service/infra/access run -s oauth-secret -- --stage beta --profile <your profile> --client-id <client id> --apply
    ```
    It creates the secret, or stores a new version when it exists (rotation: generate a new client secret in GitHub, run
    it again). The API picks the new value up within five minutes, with no redeploy. A client-secret rotation does not

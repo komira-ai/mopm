@@ -1,20 +1,28 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { Principal } from '../auth';
 import { NAME_PATTERN } from '../auth';
+import { ciActorOf } from '../auth/ci-publishers';
 import { RegistryError, versionExists } from '../errors';
+import type { GroupStore } from '../group-store';
 import type { Store } from '../store';
-import type { VersionRecord } from '../types';
+import type { AuditEntry, VersionRecord } from '../types';
 import { SUBDIRS_V1 } from '../types';
 import { canonicalVersion } from '../version';
 import type { PublishConfig } from './config';
 import { parseDisplay } from './display';
+import { parseSourceCommit } from './source-commit';
 import type { DisplayMeta } from './display';
 import { invalidRequest, PublishError, uploadInvalid } from './errors';
+import { expireIfDue, isDead, orphanFree } from './group-lifecycle';
 import type { ObjectStore, Presigner, PublishStore, Queue } from './ports';
+import { packageRev } from '../index-files';
+import { sendIndexPkg } from './indexer';
 import type { Actor, IndexMessage, PublishRecord, UploadRecord, ValidateMessage } from './types';
 
 export interface PublishServiceDeps {
   registry: Store;
+  /** The registry's group side (the same adapter object). With it, a single publish can take over the number of a dead group; without it, it never does. */
+  groups?: GroupStore;
   publishes: PublishStore;
   /** Only `head` is used here: commit checks that the bytes arrived. */
   objects: Pick<ObjectStore, 'head'>;
@@ -50,6 +58,8 @@ export interface PublishStatusBody {
   status: PublishRecord['status'];
   rejection_code?: string;
   message?: string;
+  /** What did not stop the publish (a native dependency name conda-forge does not list). Present only when there is something to say. */
+  warnings?: string[];
 }
 
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -58,7 +68,29 @@ const SAFE_FILENAME = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,254}$/;
 const dayOf = (d: Date) => d.toISOString().slice(0, 10);
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-export const actorOf = (p: Principal): Actor => (p.github_id !== undefined ? `u:${p.github_id}` : `ci:${p.token_id}`);
+/**
+ * `u:<github id>` for an account's token; `ci:gh-repo:<repository id>` for the token of a configured CI publisher (one stable actor
+ * for the identity, whichever token it holds); `ci:<token id>` for any other CI token (a package's registered trusted publisher).
+ */
+export const actorOf = (p: Principal): Actor =>
+  p.github_id !== undefined ? `u:${p.github_id}` : p.kind === 'oidc' && p.ci_owner !== undefined ? ciActorOf(p.ci_owner) : `ci:${p.token_id}`;
+
+/**
+ * The CI identity a request came through, `ci:gh-repo:<repository id>`, for a token of a CI publisher that acts for an account
+ * (the actor is then the account's `u:<id>`); undefined for a human's own token and for every other token. Recorded on the
+ * records and audit entries of what the token does, so a publish by CI is distinguishable from the account's own.
+ */
+export const viaOf = (p: Principal): string | undefined => (p.acts_via !== undefined ? ciActorOf(p.acts_via) : undefined);
+/** `{via}` for a record of a request that came through a CI identity, else nothing. */
+export const viaField = (p: Principal): { via?: string } => {
+  const via = viaOf(p);
+  return via === undefined ? {} : { via };
+};
+/** An audit entry's detail with `via` added when the request came through a CI identity; undefined when there is neither. */
+export const detailVia = (p: Principal, detail?: Record<string, string>): Record<string, string> | undefined => {
+  const via = viaOf(p);
+  return via === undefined ? detail : { ...detail, via };
+};
 
 /** Deterministic: committing the same upload ids again is the same publish, which is what makes a retry safe. */
 export const publishIdFor = (name: string, canonical: string, uploadIds: readonly string[]) =>
@@ -105,6 +137,7 @@ export class PublishService {
       size: req.size,
       key,
       actor: actorOf(p),
+      ...viaField(p),
       created_at: now.toISOString(),
       url_expires_at: urlExpires.toISOString(),
       expires_at: Math.floor(now.getTime() / 1000) + this.d.config.uploadRecordTtlSeconds,
@@ -125,34 +158,11 @@ export class PublishService {
   }
 
   private parseBegin(name: string, version: string, body: unknown) {
-    if (!isObject(body)) throw invalidRequest('the body is not a JSON object');
-    const { subdir, filename, sha256, size } = body;
-    if (typeof subdir !== 'string' || !SUBDIRS_V1.includes(subdir)) throw invalidRequest("'subdir' is not a known subdir");
-    if (typeof filename !== 'string' || !SAFE_FILENAME.test(filename)) throw invalidRequest("'filename' must be a plain file name");
-    if (typeof sha256 !== 'string' || !SHA256.test(sha256)) throw invalidRequest("'sha256' is 64 lowercase hex digits");
-    if (typeof size !== 'number' || !Number.isSafeInteger(size) || size < 1) throw invalidRequest("'size' must be a positive integer");
-    if (size > this.d.config.maxArchiveBytes) {
-      throw new PublishError('payload_too_large', 'The file is larger than the limit.', { limit: String(this.d.config.maxArchiveBytes) });
-    }
-    const prefix = `mojo-${name}-${version}-`;
-    const build = filename.startsWith(prefix) && filename.endsWith('.conda') ? filename.slice(prefix.length, -'.conda'.length) : undefined;
-    if (build === undefined || !BUILD.test(build)) {
-      throw uploadInvalid(`the file name must be ${prefix}<build>.conda`);
-    }
-    return { subdir, filename, sha256, size };
+    return parseFileFacts(this.d.config, name, version, body);
   }
 
-  /** The package must exist (claimed); an account token must belong to a current owner (a token outlives an ownership change). */
-  private async requireOwner(p: Principal, name: string): Promise<string> {
-    const pkg = await this.d.registry.getPackage(name);
-    if (!pkg) throw new PublishError('package_not_found', `There is no package '${name}'.`, { name });
-    if (p.github_id !== undefined) {
-      const owner = (await this.d.registry.listOwners(name)).find((o) => o.github_id === p.github_id);
-      if (!owner) throw new PublishError('not_owner', `You are not an owner of '${name}'.`, { name });
-      return owner.handle;
-    }
-    // A CI identity token was issued for exactly this package and version by a matching trusted publisher.
-    return 'ci';
+  private requireOwner(p: Principal, name: string): Promise<string> {
+    return requireOwner(this.d.registry, p, name);
   }
 
   private async rateLimit(p: Principal): Promise<void> {
@@ -208,7 +218,7 @@ export class PublishService {
       manifest_sha256: sha256,
       rev: 0,
     };
-    const audit = { name, ts: now, id: `a_${this.newId()}`, actor: actorOf(p), action: 'publish_begin', version };
+    const audit = { name, ts: now, id: `a_${this.newId()}`, actor: actorOf(p), action: 'publish_begin', version, ...(detailVia(p) ? { detail: detailVia(p) } : {}) };
     try {
       await this.d.registry.createVersion(rec, audit);
       return;
@@ -218,9 +228,37 @@ export class PublishService {
     // The number exists. A pending one that no commit has taken is still only a reservation: join it.
     const current = await this.d.registry.getVersion(name, version);
     if (!current) throw versionExists(name, version, sha256);
+    // A number held by a group is the group's: whether it has committed (the row reads `published`) or not (it reads
+    // `pending`), a single publish does not join it. The one exception is a group that is dead: its number is free, and
+    // the single takes it over (a compare-and-set on the row, so a group or another single that got there first wins).
+    if (current.group_id !== undefined) {
+      if (current.state === 'pending' && (await this.adoptFromDeadGroup(current, rec, audit))) return;
+      throw versionExists(name, version, current.files[0]?.sha256 ?? current.manifest_sha256);
+    }
     if (current.state !== 'pending' || (await this.d.publishes.versionHolder(name, canonical)) !== undefined) {
       throw versionExists(name, version, current.files[0]?.sha256 ?? current.manifest_sha256);
     }
+  }
+
+  /**
+   * Take the number a dead group's row holds for this single publish. False (nothing written) when there is no group
+   * store, the row has no header (hidden, and not adoptable), the group is not dead, or the row changed first.
+   */
+  private async adoptFromDeadGroup(current: VersionRecord, rec: VersionRecord, audit: AuditEntry): Promise<boolean> {
+    const groups = this.d.groups;
+    if (!groups || current.group_id === undefined) return false;
+    const gid = current.group_id;
+    const header = await groups.getGroup(gid);
+    // A row with no header is free only when its own free_after has passed (a dead group's header was removed by the table's TTL).
+    const now = this.now();
+    if (!header) {
+      if (!orphanFree(current, now)) return false;
+      const out = await groups.adoptSingle(rec, { ...audit, action: 'publish_adopt', detail: { group_id: gid } }, (cur) => cur.group_id === gid && orphanFree(cur, this.now()));
+      return out.outcome === 'created' || out.outcome === 'adopted';
+    }
+    if (!isDead((await expireIfDue(groups, header, now)).status)) return false;
+    const out = await groups.adoptSingle(rec, { ...audit, action: 'publish_adopt', detail: { group_id: gid } }, (cur) => cur.group_id === gid);
+    return out.outcome === 'created' || out.outcome === 'adopted';
   }
 
   // --- commit ---------------------------------------------------------------------------------------------
@@ -236,6 +274,8 @@ export class PublishService {
     // The same upload ids again resume the publish already made (and send the message again if it never left).
     const existing = await this.d.publishes.getPublish(publishId);
     if (existing && existing.actor === actor) {
+      // The value is written once with the version: a repeat that states another one is not the same request.
+      if (existing.source_commit !== req.source_commit) throw versionExists(name, version, existing.files[0]?.sha256 ?? existing.manifest_sha256 ?? '');
       if (existing.status === 'pending') await this.enqueue(existing);
       return accepted;
     }
@@ -262,7 +302,8 @@ export class PublishService {
 
     const v = await this.d.registry.getVersion(name, version);
     if (!v) throw new RegistryError('version_not_found', `'${name}' has no version '${version}'.`, { name, version });
-    if (v.state !== 'pending') throw versionExists(name, version, v.files[0]?.sha256 ?? v.manifest_sha256);
+    // A group's number is the group's: a single commit does not take it, whatever state it reads.
+    if (v.state !== 'pending' || v.group_id !== undefined) throw versionExists(name, version, v.files[0]?.sha256 ?? v.manifest_sha256);
     const holder = await this.d.publishes.claimVersion(name, canonical, publishId);
     if (holder !== publishId) {
       const other = await this.d.publishes.getPublish(holder);
@@ -281,10 +322,12 @@ export class PublishService {
       version,
       canonical,
       actor,
+      ...viaField(p),
       published_by: handle,
       status: 'pending',
-      manifest_sha256: req.manifest_sha256,
+      ...(req.manifest_sha256 !== undefined ? { manifest_sha256: req.manifest_sha256 } : {}),
       ...(Object.keys(req.display).length > 0 ? { display: req.display } : {}),
+      ...(req.source_commit !== undefined ? { source_commit: req.source_commit } : {}),
       files: uploads.map((u) => ({ upload_id: u.upload_id, subdir: u.subdir, filename: u.filename, sha256: u.sha256, size: u.size, key: u.key })),
       remaining_subdirs: [],
       created_at: now,
@@ -305,7 +348,8 @@ export class PublishService {
 
   /**
    * setYanked: yank (with a reason) or unyank a version, then ask the index writer to rewrite every subdir the
-   * version has files in, so repodata `packages.conda` and `removed` follow the state. The state change comes first
+   * version has files in, so repodata `packages.conda` and `removed` follow the state, and the package's
+   * sparse-index file (a yank queues it at once; an unyank chains it after the last subdir, see IndexMessage.then). The state change comes first
    * (it is the truth); the messages come after it, and they are sent again on a repeat of the same request, so a
    * crash between the two leaves a state that the next identical request repairs. A repeat of a change already made
    * is a no-op for the record and still queues the rebuild (the FIFO dedup id is the record's revision, so a quick
@@ -327,13 +371,29 @@ export class PublishService {
       actor: actorOf(p),
       action: req.yanked ? 'yank' : 'unyank',
       version,
-      detail: { by: handle, ...(req.yanked ? { reason: req.reason } : {}) },
+      detail: detailVia(p, { by: handle, ...(req.yanked ? { reason: req.reason } : {}) }),
     };
     const after = await this.d.registry.updateVersion(name, version, req.yanked ? { type: 'yank', reason: req.reason } : { type: 'unyank' }, audit);
-    for (const subdir of [...new Set(after.files.map((f) => f.subdir))].sort()) {
+    const subdirs = [...new Set(after.files.map((f) => f.subdir))].sort();
+    const rev = packageRev(await this.d.registry.listVersions(name));
+    if (!req.yanked && subdirs.length > 0) {
+      // Unyank: the sparse index must not say `published` before repodata lists the file (the CLI fails closed on
+      // that). One chain, one subdir at a time; the last repodata job sends the `index_pkg`.
+      const first: IndexMessage = { type: 'index', subdir: subdirs[0]!, then: { name, rev, next: subdirs.slice(1) } };
+      await queue.send({ body: JSON.stringify(first), groupId: subdirs[0]!, dedupId: `rebuild:${after.canonical}:${name}:${after.rev}:${subdirs[0]}` });
+      return this.yankResult(after);
+    }
+    for (const subdir of subdirs) {
       const msg: IndexMessage = { type: 'index', subdir };
       await queue.send({ body: JSON.stringify(msg), groupId: subdir, dedupId: `rebuild:${after.canonical}:${name}:${after.rev}:${subdir}` });
     }
+    // Yank is the safe direction (an index that says `yanked` while repodata still lists the file is not picked by
+    // the CLI), so the index file is asked for at once.
+    await sendIndexPkg({ registry: this.d.registry, indexQueue: queue }, { name, rev });
+    return this.yankResult(after);
+  }
+
+  private yankResult(after: VersionRecord): YankResult {
     return {
       version: after.version,
       state: after.state,
@@ -345,7 +405,9 @@ export class PublishService {
   // --- status ---------------------------------------------------------------------------------------------
 
   async status(p: Principal, publishId: string): Promise<PublishStatusBody> {
-    const rec = await this.d.publishes.getPublish(publishId);
+    // The table also holds the commit locks, the rate counters and the groups' items under other prefixes: only a
+    // publish record is a publish, so nothing else is ever read or returned through this route.
+    const rec = publishId.startsWith('pub_') ? await this.d.publishes.getPublish(publishId) : undefined;
     if (!rec || rec.actor !== actorOf(p)) throw new PublishError('publish_not_found', 'There is no such publish.');
     return {
       publish_id: rec.publish_id,
@@ -353,8 +415,52 @@ export class PublishService {
       version: rec.version,
       status: rec.status,
       ...(rec.status === 'rejected' ? { rejection_code: rec.rejection_code, message: rec.message } : {}),
+      ...(rec.warnings && rec.warnings.length > 0 ? { warnings: rec.warnings } : {}),
     };
   }
+}
+
+/** The facts one file of a version declares (begin-upload's body, and a member's file in a group): checked against the limits and the file name rule. */
+export function parseFileFacts(config: PublishConfig, name: string, version: string, body: unknown) {
+  if (!isObject(body)) throw invalidRequest('the body is not a JSON object');
+  const { subdir, filename, sha256, size } = body;
+  if (typeof subdir !== 'string' || !SUBDIRS_V1.includes(subdir)) throw invalidRequest("'subdir' is not a known subdir");
+  if (typeof filename !== 'string' || !SAFE_FILENAME.test(filename)) throw invalidRequest("'filename' must be a plain file name");
+  if (typeof sha256 !== 'string' || !SHA256.test(sha256)) throw invalidRequest("'sha256' is 64 lowercase hex digits");
+  if (typeof size !== 'number' || !Number.isSafeInteger(size) || size < 1) throw invalidRequest("'size' must be a positive integer");
+  if (size > config.maxArchiveBytes) {
+    throw new PublishError('payload_too_large', 'The file is larger than the limit.', { limit: String(config.maxArchiveBytes) });
+  }
+  const prefix = `mojo-${name}-${version}-`;
+  const build = filename.startsWith(prefix) && filename.endsWith('.conda') ? filename.slice(prefix.length, -'.conda'.length) : undefined;
+  if (build === undefined || !BUILD.test(build)) {
+    throw uploadInvalid(`the file name must be ${prefix}<build>.conda`);
+  }
+  return { subdir, filename, sha256, size };
+}
+
+/**
+ * The package must exist (claimed). An account token must belong to a current owner (a token outlives an ownership change).
+ * A CI token must name the package's `ci_owner` (a CI-owned package has no account owners).
+ */
+export async function requireOwner(registry: Store, p: Principal, name: string): Promise<string> {
+  const pkg = await registry.getPackage(name);
+  if (!pkg) throw new PublishError('package_not_found', `There is no package '${name}'.`, { name });
+  if (p.github_id !== undefined) {
+    const owner = (await registry.listOwners(name)).find((o) => o.github_id === p.github_id);
+    if (!owner) throw new PublishError('not_owner', `You are not an owner of '${name}'.`, { name });
+    return owner.handle;
+  }
+  const notOwner = () => new PublishError('not_owner', `You are not an owner of '${name}'.`, { name });
+  if (p.kind !== 'oidc') throw notOwner();
+  if (p.ci_owner !== undefined) {
+    // A configured CI publisher's token acts as one identity and owns only the packages that name it.
+    if (pkg.ci_owner !== p.ci_owner) throw notOwner();
+    return p.ci_owner;
+  }
+  // A token minted for a package's registered trusted publisher: it belongs to accounts, never to a CI identity's package.
+  if (pkg.ci_owner !== undefined) throw notOwner();
+  return 'ci';
 }
 
 /** Bytes of the files that are still on the channel: published and yanked versions (a tombstone's bytes are gone). */
@@ -364,7 +470,7 @@ export function liveBytes(versions: readonly VersionRecord[]): number {
   return n;
 }
 
-function parseYank(body: unknown): { yanked: true; reason: string } | { yanked: false } {
+export function parseYank(body: unknown): { yanked: true; reason: string } | { yanked: false } {
   if (!isObject(body)) throw invalidRequest('the body is not a JSON object');
   const { yanked, reason } = body;
   if (typeof yanked !== 'boolean') throw invalidRequest("'yanked' must be a boolean");
@@ -374,12 +480,14 @@ function parseYank(body: unknown): { yanked: true; reason: string } | { yanked: 
   return { yanked: true, reason };
 }
 
-function parseCommit(body: unknown): { upload_ids: string[]; manifest_sha256: string; display: DisplayMeta } {
+function parseCommit(body: unknown): { upload_ids: string[]; manifest_sha256?: string; display: DisplayMeta; source_commit?: string } {
   if (!isObject(body)) throw invalidRequest('the body is not a JSON object');
   const { upload_ids, manifest_sha256 } = body;
   if (!Array.isArray(upload_ids) || upload_ids.length < 1 || upload_ids.length > 20) throw invalidRequest("'upload_ids' holds 1 to 20 ids");
   if (!upload_ids.every((x) => typeof x === 'string' && x.length >= 1 && x.length <= 128)) throw invalidRequest('each upload id must be a string');
   if (new Set(upload_ids).size !== upload_ids.length) throw invalidRequest("'upload_ids' repeats an id");
-  if (typeof manifest_sha256 !== 'string' || !SHA256.test(manifest_sha256)) throw invalidRequest("'manifest_sha256' is 64 lowercase hex digits");
-  return { upload_ids: upload_ids as string[], manifest_sha256, display: parseDisplay(body) };
+  // Optional: given, it is checked against the archive's manifest; absent, the registry uses the hash it computes itself.
+  if (manifest_sha256 !== undefined && (typeof manifest_sha256 !== 'string' || !SHA256.test(manifest_sha256))) throw invalidRequest("'manifest_sha256' is 64 lowercase hex digits");
+  const source = parseSourceCommit(body);
+  return { upload_ids: upload_ids as string[], ...(manifest_sha256 !== undefined ? { manifest_sha256 } : {}), display: parseDisplay(body), ...(source !== undefined ? { source_commit: source } : {}) };
 }

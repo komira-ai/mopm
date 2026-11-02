@@ -1,0 +1,9 @@
+[package]
+name = "mathkit"
+version = "0.1.0"
+
+[toolchain]
+mojo = "1.0.0"
+
+[targets]
+lib = { path = "src/mathkit" }

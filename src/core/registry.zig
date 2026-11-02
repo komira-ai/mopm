@@ -76,6 +76,16 @@ pub const Config = struct {
 
 pub const Parsed = union(enum) { ok: Config, bad: []const u8 };
 
+/// The channel a lock lists when no registry was asked (a project with no
+/// registry dependency): the production channel, never contacted.
+pub const default_channel_url = "https://conda.mopm.dev/";
+
+/// The configuration of a lock that needs no registry: nothing is fetched
+/// from it, so nothing about it is known but the channel the lock lists.
+pub fn offlineConfig(base: []const u8) Config {
+    return .{ .base = base, .stage = "", .api_url = "", .channel_url = default_channel_url, .min_cli_version = "", .read_only = false };
+}
+
 /// Checks a config.json against what this mopm (`cli_version`) can use.
 pub fn parseConfig(arena: Allocator, text: []const u8, cli_version: []const u8) Allocator.Error!Parsed {
     const v = std.json.parseFromSliceLeaky(std.json.Value, arena, text, .{}) catch return .{ .bad = "config.json is not JSON" };

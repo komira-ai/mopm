@@ -1,3 +1,5 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import { Match } from 'aws-cdk-lib/assertions';
 import { STAGES } from '../lib/config';
 import { TABLES } from '../lib/data-stack';
@@ -96,6 +98,36 @@ describe.each(STAGES)('DataStack %s', (stage) => {
         }),
       ],
     });
+  });
+
+  test('publishes has one sparse index for the group sweeper: partition sweep_pk, sort sweep_at, only what a resume reads, on demand', () => {
+    const publishes = tables.find((r) => r.Properties.TableName === `mopm-${stage}-publishes`);
+    expect(publishes.Properties.GlobalSecondaryIndexes).toHaveLength(1); // a table update may add only one index at a time
+    t.hasResourceProperties('AWS::DynamoDB::Table', {
+      TableName: `mopm-${stage}-publishes`,
+      KeySchema: [{ AttributeName: 'publish_id', KeyType: 'HASH' }],
+      TimeToLiveSpecification: { AttributeName: 'expires_at', Enabled: true },
+      GlobalSecondaryIndexes: [
+        {
+          IndexName: 'by_sweep',
+          KeySchema: [{ AttributeName: 'sweep_pk', KeyType: 'HASH' }, { AttributeName: 'sweep_at', KeyType: 'RANGE' }],
+          Projection: { ProjectionType: 'INCLUDE', NonKeyAttributes: ['status', 'attempt', 'actor', 'rev', 'progress_at', 'deadline_at', 'resend'] },
+        },
+      ],
+    });
+    expect(publishes.Properties.GlobalSecondaryIndexes[0].ProvisionedThroughput).toBeUndefined();
+    // The index is additive: the table's key, billing and TTL are as they were, and no other table has gained one.
+    const indexed = tables.filter((r) => r.Properties.GlobalSecondaryIndexes).map((r) => r.Properties.TableName.replace(`mopm-${stage}-`, '')).sort();
+    expect(indexed).toEqual(['owners', 'packages', 'publishes', 'tokens']);
+  });
+
+  test('the index keys are the names the code writes on a group header, and a header carries them only while its group is not over', () => {
+    const read = (f: string) => fs.readFileSync(path.resolve(__dirname, '../../../api/src', f), 'utf8');
+    const store = read('group-store.ts');
+    expect(store).toMatch(/sweep_pk\?: string;/);
+    expect(store).toMatch(/sweep_at\?: string;/);
+    expect(read('publish/group-service.ts')).toMatch(/sweep_pk: 'active'/);
+    expect(TABLES.find((d) => d.id === 'publishes')!.gsi).toMatchObject({ name: 'by_sweep', pk: 'sweep_pk', sk: 'sweep_at' });
   });
 
   test('device logins are keyed by the hash of the code and expire by TTL', () => {

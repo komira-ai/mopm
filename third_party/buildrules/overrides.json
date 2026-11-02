@@ -1,0 +1,46 @@
+{
+ "crates": {
+  "aws-lc-sys 0.23.1": {
+   "why": "build.rs compiles the bundled AWS-LC with CMake and emits cfg x86_64_unknown_linux_gnu (it selects the pre-generated bindings) and the link of libaws_lc_0_23_1_crypto. Replaced by buildrules//third_party/aws-lc:crypto, linked into each executable or test (native_deps). That AWS-LC is the same release (1.39.0) but its symbols are buildrules_awslc_X where the bindings say aws_lc_0_23_1_X, so the prefix in the bindings is rewritten (2579 occurrences, counted); the three ERR_GET_*_RUST C wrappers of rust_wrapper.c become the Rust expressions of the static inline functions they wrap.",
+   "drop_build_script": true,
+   "cfgs": [
+    "x86_64_unknown_linux_gnu"
+   ],
+   "native_deps": [
+    "buildrules//third_party/aws-lc:crypto[static-pic]"
+   ],
+   "patch": {
+    "copy": [
+     "src"
+    ],
+    "sub": [
+     {
+      "file": "src/x86_64_unknown_linux_gnu_crypto.rs",
+      "from": "aws_lc_0_23_1_",
+      "to": "buildrules_awslc_",
+      "count": 2579
+     },
+     {
+      "file": "src/lib.rs",
+      "from": "unsafe { ERR_GET_LIB_RUST(packed_error) }",
+      "to": "((packed_error >> 24) & 0xff) as i32"
+     },
+     {
+      "file": "src/lib.rs",
+      "from": "unsafe { ERR_GET_REASON_RUST(packed_error) }",
+      "to": "(packed_error & 0xfff) as i32"
+     },
+     {
+      "file": "src/lib.rs",
+      "from": "unsafe { ERR_GET_FUNC_RUST(packed_error) }",
+      "to": "{ let _ = packed_error; 0 }"
+     }
+    ]
+   }
+  },
+  "aws-lc-rs 1.11.1": {
+   "why": "build.rs only re-exports the DEP_AWS_LC_* variables of aws-lc-sys to its dependents; it emits no cfg. aws-lc-sys has no build script run any more (above), so there is nothing to re-export, and the one script that depends on it (rustls: a probe for nightly-only read_buf) reads none of them.",
+   "drop_build_script": true
+  }
+ }
+}

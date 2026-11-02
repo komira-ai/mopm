@@ -1,0 +1,155 @@
+{
+  "description": "A yank_group message for a group the table does not hold is acknowledged (the invocation succeeds) with the outcome skipped: one consistent read of the header, nothing else is read or written. A yank_group whose group id is not a group id, whose attempt, resend or sequence number is not a count, or whose operation is neither yank nor unyank, is dropped like any message the validator does not understand.",
+  "lambda": "group_validator",
+  "env": {
+    "MOPM_STAGE": "beta",
+    "MOPM_CHANNEL_BUCKET": "channel-bucket",
+    "MOPM_GROUP_QUEUE_URL": "group-queue-url",
+    "MOPM_INDEX_QUEUE_URL": "index-queue-url",
+    "MOPM_CHANNEL_URL": "channel-url"
+  },
+  "invocations": [
+    {
+      "event": {
+        "Records": [
+          {
+            "messageId": "m1",
+            "receiptHandle": "handle-1",
+            "body": "{\"type\":\"yank_group\",\"group_id\":\"grp_0123456789abcdef0123456789abcdef\",\"attempt\":1,\"op\":\"yank\",\"seq\":1,\"resend\":0}",
+            "attributes": {
+              "MessageGroupId": "grp_0123456789abcdef0123456789abcdef"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          },
+          {
+            "messageId": "m2",
+            "receiptHandle": "handle-2",
+            "body": "{\"type\":\"yank_group\",\"group_id\":\"grp_0123456789abcdef0123456789abcdef\",\"attempt\":1,\"op\":\"pause\",\"seq\":1,\"resend\":0}",
+            "attributes": {
+              "MessageGroupId": "grp_0123456789abcdef0123456789abcdef"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          },
+          {
+            "messageId": "m3",
+            "receiptHandle": "handle-3",
+            "body": "{\"type\":\"yank_group\",\"group_id\":\"grp_0123456789abcdef0123456789abcdef\",\"attempt\":1,\"op\":\"unyank\",\"seq\":-1,\"resend\":0}",
+            "attributes": {
+              "MessageGroupId": "grp_0123456789abcdef0123456789abcdef"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          },
+          {
+            "messageId": "m4",
+            "receiptHandle": "handle-4",
+            "body": "{\"type\":\"yank_group\",\"group_id\":\"grp_0123\",\"attempt\":1,\"op\":\"yank\",\"seq\":1,\"resend\":0}",
+            "attributes": {
+              "MessageGroupId": "grp_0123"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          },
+          {
+            "messageId": "m5",
+            "receiptHandle": "handle-5",
+            "body": "{\"type\":\"yank_group\",\"group_id\":\"grp_0123456789abcdef0123456789abcdef\",\"attempt\":\"1\",\"op\":\"yank\",\"seq\":1,\"resend\":0}",
+            "attributes": {
+              "MessageGroupId": "grp_0123456789abcdef0123456789abcdef"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          },
+          {
+            "messageId": "m6",
+            "receiptHandle": "handle-6",
+            "body": "{\"type\":\"yank_group\",\"group_id\":\"grp_0123456789abcdef0123456789abcdef\",\"attempt\":1,\"op\":\"yank\",\"seq\":1,\"resend\":-1}",
+            "attributes": {
+              "MessageGroupId": "grp_0123456789abcdef0123456789abcdef"
+            },
+            "messageAttributes": {},
+            "eventSource": "aws:sqs"
+          }
+        ]
+      },
+      "expect": {
+        "returns": null
+      }
+    }
+  ],
+  "expect": {
+    "dynamo": [
+      {
+        "op": "Get",
+        "table": "mopm-beta-publishes",
+        "key": {
+          "publish_id": "grp#grp_0123456789abcdef0123456789abcdef"
+        }
+      }
+    ],
+    "aws_http": [],
+    "logs": [
+      {
+        "stream": "log",
+        "line": {
+          "level": "info",
+          "msg": "group yank: the rows of a yank that is not running; nothing done",
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "seq": 1
+        }
+      },
+      {
+        "stream": "log",
+        "line": {
+          "level": "info",
+          "msg": "yank_group",
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "op": "yank",
+          "outcome": "skipped"
+        }
+      },
+      {
+        "stream": "error",
+        "line": {
+          "level": "error",
+          "msg": "unrecognised message dropped",
+          "messageId": "m2"
+        }
+      },
+      {
+        "stream": "error",
+        "line": {
+          "level": "error",
+          "msg": "unrecognised message dropped",
+          "messageId": "m3"
+        }
+      },
+      {
+        "stream": "error",
+        "line": {
+          "level": "error",
+          "msg": "unrecognised message dropped",
+          "messageId": "m4"
+        }
+      },
+      {
+        "stream": "error",
+        "line": {
+          "level": "error",
+          "msg": "unrecognised message dropped",
+          "messageId": "m5"
+        }
+      },
+      {
+        "stream": "error",
+        "line": {
+          "level": "error",
+          "msg": "unrecognised message dropped",
+          "messageId": "m6"
+        }
+      }
+    ]
+  }
+}

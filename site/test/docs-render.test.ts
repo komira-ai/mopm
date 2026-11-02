@@ -14,8 +14,9 @@ function render(source: string) {
   return mdFull(src, { idPrefix: '', headingShift: 0, links: { mode: 'docs', source } });
 }
 
-test('the published docs are the two the plan names', () => {
-  expect(DOC_PAGES.map((d) => d.source)).toEqual(['spec/mopm-toml.md', 'docs/mopm-test.md']);
+test('the published docs are the seven the plan names: why and design, getting started, configuration, examples, mopm.toml, mopm test, publishing a workspace', () => {
+  expect(DOC_PAGES.map((d) => d.source)).toEqual(['docs/why-and-design.md', 'docs/getting-started.md', 'docs/configuration.md', 'docs/examples.md', 'spec/mopm-toml.md', 'docs/mopm-test.md', 'docs/publishing-a-workspace.md']);
+  expect(DOC_PAGES.map((d) => d.slug)).toEqual(['why', 'getting-started', 'configuration', 'examples', 'mopm-toml', 'mopm-test', 'publish-workspace']);
 });
 
 test.each(DOC_PAGES.map((d) => [d.source] as const))('%s renders with no literal fallback and unique ids', (source) => {
@@ -54,7 +55,7 @@ test('mopm-toml.md: the toml example, the sections list, and escaped placeholder
 });
 
 // tocNav renders each heading's text as its link, at its level, to its id; an id outside the anchor grammar is left
-// out. Mutants: the link text taken from the id; the level class dropped; an unsafe id linked.
+// out. Defect caught: the link text taken from the id; the level class dropped; an unsafe id linked.
 test('tocNav: one link per heading, reading as the heading, to its anchor', () => {
   const nav = tocNav([
     { level: 2, id: 'doc-a', text: 'A <b> & c' },

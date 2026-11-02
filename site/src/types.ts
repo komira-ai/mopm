@@ -1,7 +1,7 @@
 // Read API response shapes as the site sees them (spec/api/openapi.yaml, read operations).
 //
 // The API is additive-only: unknown fields are ignored and an enum value this build does not know decodes as
-// 'unknown'. Fields the spec defines but the server never sends (display_name, manifest, readme_html), and the
+// 'unknown'. Fields the spec defines but the server never sends (display_name, readme_html), and the
 // optional display metadata (homepage, keywords, readme), are optional here. readme_html is never read.
 
 export type Unknown = 'unknown';

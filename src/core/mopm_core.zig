@@ -3,8 +3,8 @@
 //! discovery, the stock `mojo` command lines, and `mopm test`: discovery,
 //! harness generation, the process supervisor, the reports and the filters, and
 //! version resolution over the sparse index into mopm.lock, and installing a
-//! lock and the Mojo toolchain into the project's environment (unpacking `.conda`
-//! packages into a conda environment, with no pixi, conda or solver).
+//! lock into the project's pixi environment; and, without pixi, unpacking
+//! `.conda` packages into a conda environment.
 
 pub const metadata = @import("metadata.zig");
 pub const link_planner = @import("link_planner.zig");
@@ -21,21 +21,36 @@ pub const autolink = @import("autolink.zig");
 pub const test_proc = @import("test_proc.zig");
 pub const test_report = @import("test_report.zig");
 pub const test_filter = @import("test_filter.zig");
+pub const child_env = @import("child_env.zig");
 pub const http = @import("http.zig");
 pub const registry = @import("registry.zig");
 pub const credentials = @import("credentials.zig");
+pub const ci_oidc = @import("ci_oidc.zig");
 pub const conda = @import("conda.zig");
+pub const bins = @import("bins.zig");
 pub const resolve = @import("resolve.zig");
 pub const lock = @import("lock.zig");
+pub const lock_libs = @import("lock_libs.zig");
+pub const system_libs = @import("system_libs.zig");
 pub const install_plan = @import("install_plan.zig");
 pub const install = @import("install.zig");
+pub const overlay = @import("overlay.zig");
 pub const tar_read = @import("tar_read.zig");
 pub const conda_prefix = @import("conda_prefix.zig");
 pub const conda_unpack = @import("conda_unpack.zig");
 pub const conda_env = @import("conda_env.zig");
 pub const pkg_fetch = @import("pkg_fetch.zig");
+pub const msgpack = @import("msgpack.zig");
+pub const repodata = @import("repodata.zig");
 pub const closure = @import("closure.zig");
-pub const closure_data = @import("closure_data.zig");
+pub const native_catalog = @import("native_catalog.zig");
+pub const natives_libs = @import("natives_libs.zig");
+pub const native_link = @import("native_link.zig");
+pub const native_files = @import("native_files.zig");
+pub const unit_graph = @import("unit_graph.zig");
+pub const unit_run = @import("unit_run.zig");
+pub const target_cpu = @import("target_cpu.zig");
+pub const debugserver = @import("debugserver.zig");
 
 test {
     _ = @import("metadata.zig");
@@ -56,17 +71,38 @@ test {
     _ = @import("http.zig");
     _ = @import("registry.zig");
     _ = @import("credentials.zig");
+    _ = @import("ci_oidc.zig");
     _ = @import("conda.zig");
+    _ = @import("bins.zig");
     _ = @import("resolve.zig");
     _ = @import("lock.zig");
     _ = @import("install_plan.zig");
     _ = @import("install.zig");
+    _ = @import("overlay.zig");
     _ = @import("tar_read.zig");
     _ = @import("conda_prefix.zig");
     _ = @import("conda_unpack.zig");
     _ = @import("conda_env.zig");
     _ = @import("pkg_fetch.zig");
+    _ = @import("msgpack.zig");
+    _ = @import("msgpack_test.zig");
+    _ = @import("repodata.zig");
+    _ = @import("repodata_test.zig");
     _ = @import("closure.zig");
-    _ = @import("closure_data.zig");
+    _ = @import("native_catalog.zig");
+    _ = @import("natives_libs.zig");
+    _ = @import("native_link.zig");
+    _ = @import("native_files.zig");
+    _ = @import("unit_graph.zig");
+    _ = @import("unit_graph_platform_test.zig");
+    _ = @import("unit_graph_loads_test.zig");
+    _ = @import("unit_graph_provided_test.zig");
+    _ = @import("install_plan_loads_test.zig");
+    _ = @import("lock_libs.zig");
+    _ = @import("lock_libs_test.zig");
+    _ = @import("system_libs.zig");
+    _ = @import("unit_run.zig");
+    _ = @import("target_cpu.zig");
+    _ = @import("debugserver.zig");
     _ = @import("testroot.zig");
 }

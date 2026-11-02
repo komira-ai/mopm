@@ -1,3 +1,3 @@
-SKIP          tests/e2e/flaky/tests/test_flaky.mojo::test_ignored_fails (0 ms): ignored: planted: fails when run (https://github.com/komira-ai/mopm/blob/main/docs/mopm-test.md); --ignored or --include-ignored runs it
+SKIP          tests/e2e/flaky/tests/test_flaky.mojo::test_ignored_fails (0 ms): ignored: faulty: fails when run (https://github.com/komira-ai/mopm/blob/main/docs/mopm-test.md); --ignored or --include-ignored runs it
 
 mopm test: 1 tests: 0 passed, 0 failed, 0 crashed, 0 timed out, 0 out of memory, 0 not built, 0 flaky, 1 ignored; 10 filtered out

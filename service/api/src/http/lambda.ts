@@ -1,6 +1,8 @@
 import {
   Authenticator,
   authTablesFor,
+  CI_PUBLISHERS_ENV,
+  parseCiPublishers,
   DeviceLogin,
   DynamoAuthStore,
   GithubJwtVerifier,
@@ -34,14 +36,26 @@ interface Configured {
 
 let configured: Configured | undefined;
 
-/** Accepted `aud` of a CI identity token: the bare domain and the stage's own host. */
-export const oidcAudiences = (stage: Stage) => (stage === 'prod' ? ['mopm.dev'] : ['mopm.dev', `${stage}.mopm.dev`]);
+/**
+ * Accepted `aud` of a CI identity token, per stage. Beta accepts only its own host, so a token minted for another stage
+ * is refused there. Gamma and prod keep what they accepted before (the bare domain, and gamma also its own host) until
+ * no live client of the exchange is known to depend on it; making them strict is a one-line change to this table.
+ */
+export const OIDC_AUDIENCES: Record<Stage, readonly string[]> = {
+  beta: ['beta.mopm.dev'],
+  gamma: ['mopm.dev', 'gamma.mopm.dev'],
+  prod: ['mopm.dev'],
+};
+export const oidcAudiences = (stage: Stage): string[] => [...OIDC_AUDIENCES[stage]];
 
 /**
  * Wires login, tokens and CI exchange. Needs only the table names (from the stage) and the name of the OAuth secret;
  * the secret itself is read when a device login first needs it, so a stage without it still serves everything else.
  */
 export function configureAuth(stage: Stage, doc: DocClient, env: NodeJS.ProcessEnv, read: SecretReader = readSecretFromAws): AuthServices | undefined {
+  // Parsed before anything else: a CI_PUBLISHERS value on a stage that may not have one stops the function from starting,
+  // whether or not auth is otherwise wired (the check is the code's, not only the infrastructure's).
+  const ciPublishers = parseCiPublishers(stage, env[CI_PUBLISHERS_ENV]);
   const secretId = env.MOPM_OAUTH_SECRET_NAME;
   if (!secretId) return undefined;
   const store = new DynamoAuthStore(doc, authTablesFor(stage));
@@ -51,7 +65,11 @@ export function configureAuth(stage: Stage, doc: DocClient, env: NodeJS.ProcessE
   return {
     authn: new Authenticator({ store }),
     tokens: new TokenService({ store, ownedPackages: ownedPackagesFrom(doc, tablesFor(stage).owners) }),
-    oidc: new OidcExchange({ store, verifier: new GithubJwtVerifier({ audiences: oidcAudiences(stage) }) }),
+    oidc: new OidcExchange({
+      store,
+      verifier: new GithubJwtVerifier({ audiences: oidcAudiences(stage) }),
+      ...(ciPublishers.length > 0 ? { ciPublishers, registry: new DynamoStore(doc, tablesFor(stage)) } : {}),
+    }),
     async devices() {
       const clientId = await secret.clientId();
       if (device?.clientId !== clientId) device = { clientId, svc: new DeviceLogin({ store, github: new HttpGitHubApi(clientId), require2fa }) };
@@ -74,6 +92,9 @@ function configure(): Configured {
       readOnly: envReadOnly,
       publish: publishApiFor(process.env, doc, stage, flags),
       auth: configureAuth(stage, doc, process.env),
+      ...(process.env.MOPM_API_DOMAIN && process.env.MOPM_CHANNEL_DOMAIN
+        ? { indexConfig: { apiDomain: process.env.MOPM_API_DOMAIN, channelDomain: process.env.MOPM_CHANNEL_DOMAIN } }
+        : {}),
     },
     flags,
     envReadOnly,

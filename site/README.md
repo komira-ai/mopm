@@ -50,14 +50,17 @@ npm run build       # compiles src and tools to build/, then writes dist/ (and c
 ```
 
 On the build farm the same commands are Buck2 targets (`site/BUCK`, run from the repository root), over
-`node_modules` laid out from `package-lock.json` and the pinned tarballs of `pins.lock.bzl` (see CONTRIBUTING.md,
-"The service packages (TypeScript) on the farm"; the site's kpin files are `pins.toml` and `pins.lock.bzl` here):
+`node_modules` laid out from `package-lock.json` and the pinned tarballs of `buildrules.lock.bzl` (buildrules' `npm_package`;
+regenerate it with `buildrules npm sync site` after `npm install`, see CONTRIBUTING.md, "The service packages (TypeScript) on
+the farm"). The steps are the scripts of `package.json`; the `buildrules` key there names the build output (`dist`) and the `ci` action:
 
 | target | the command it replaces |
 |---|---|
-| `//site:typecheck`, `//site:typecheck_browser` | the two `tsc --noEmit` runs of `npm run typecheck` |
+| `//site:typecheck` | `npm run typecheck` (both `tsc --noEmit` runs) |
 | `//site:test` | `npm test` (`jest --ci`, 2 workers) |
-| `//site:browser`, `//site:tools`, `//site:dist` | `npm run build`: the two `tsc -p` runs, then `build/tools/tools/build.js`; `:dist` is `dist/` |
+| `//site:build`, `//site:dist` | `npm run build` (the two `tsc -p` runs, then `build/tools/tools/build.js`); `:dist` is its `dist/` |
+| `//site:ci` | typecheck, test and build together |
+| `//site:check` | `buildrules.lock.bzl` still matches `package.json` and `package-lock.json` (also a validation of every step) |
 | `//site:dist_has_pages` | the job's `test -f dist/<page>` checks (`check_dist.js`) |
 
 `dist/` holds `index.html`, `app.html`, `404.html`, `docs/index.html`, `docs/<slug>/index.html` and
@@ -76,16 +79,18 @@ it loads, so it links both `package.css` and `search.css`; one sheet per view wo
 a flash of an unstyled view on every load. It is the heaviest page, and the 30 KiB page budget is set over it with room for
 its next view's styles.
 
-The home page copy is held to `README.md` and `src/cli/main.zig` by `test/layout.test.ts`: when the list of working
-or planned commands changes there, the page has to change too. Route vectors are in `test/fixtures/routes.json`; the
+The home page copy is held to `README.md`, `src/cli/main.zig`, `VERSION` and `static/install.sh` by
+`test/layout.test.ts`: when the list of working or planned commands, the install command, the release targets and file
+names, the verification commands or the version series change there, the page has to change too. The page names the
+version series (`0.0.x`), never a patch number, because a release is cut on every merge. Route vectors are in `test/fixtures/routes.json`; the
 site stack's edge router is tested against the same file. The Markdown attack corpus is `test/fixtures/attacks.md`.
 
 ## How it is served
 
 `service/infra/stacks/lib/site-stack.ts` deploys `dist/` (built by `npm run build` here in deploy.yml, or `//site:dist`
 with Buck2) to a private bucket behind CloudFront, and refuses to synthesize when `index.html`, `app.html`, `404.html`
-or `assets/` is missing. Merging a change under `site/` (or to `spec/mopm-toml.md` or `docs/mopm-test.md`, which the
-docs pages are rendered from) starts promote.yml, which deploys it to beta, gamma and prod in turn.
+or `assets/` is missing. Merging a change under `site/` (or to `spec/mopm-toml.md`, `docs/mopm-test.md`,
+`docs/why-and-design.md`, `docs/getting-started.md`, `docs/configuration.md`, `docs/examples.md` or `docs/publishing-a-workspace.md`, which the docs pages are rendered from) starts promote.yml, which deploys it to beta, gamma and prod in turn.
 
 - **Two uploads.** `assets/` goes first, with `Cache-Control: public, max-age=31536000, immutable`, and is never
   pruned: the pages of an earlier release (an open tab, a rollback) still find their assets. The pages (everything

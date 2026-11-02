@@ -1,15 +1,17 @@
 //! mopm.toml: read with the TOML subset in toml.zig, then checked against
 //! spec/mopm-toml.md. Unknown tables and keys are refused, so a typo is an error
-//! rather than a setting that silently does nothing.
+//! rather than a setting that silently does nothing; `[package.metadata]` is the one place a
+//! tool other than mopm keeps its settings, and mopm neither checks nor changes it.
 //!
 //! `writeJson` prints the checked manifest in one fixed shape (`mopm metadata`):
 //! every section is present, absent optional values are null, and entries keep
-//! the order of the file.
+//! the order of the file (`metadata`, under `package`, only when the file has `[package.metadata]`).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const toml = @import("toml.zig");
 const metadata = @import("metadata.zig");
+const native_link = @import("native_link.zig");
 const semver = @import("semver.zig");
 
 pub const Diagnostic = toml.Diagnostic;
@@ -22,12 +24,20 @@ pub const Package = struct {
     license: ?[]const u8 = null,
     repository: ?[]const u8 = null,
     readme: ?[]const u8 = null,
+    /// `[package] publish = false`: the package is a member of a workspace but is never staged, packed for a
+    /// registry or published (a test-support helper). Every other command treats it like any member.
+    publish: bool = true,
+    /// `[package.metadata]`: settings of other tools. mopm checks nothing in it and keeps it as written
+    /// (spec/mopm-toml.md, "Other tools' settings"); null when absent.
+    metadata: ?*const toml.Table = null,
 };
 
 /// Where a Mojo dependency comes from: a version requirement or a local path.
 pub const Source = union(enum) { version: []const u8, path: []const u8 };
 
-pub const Dep = struct { name: []const u8, source: Source };
+/// `requirement` is the `version` of a dependency that also has a `path`: `source` is then the path (lock, build
+/// and sync use it), and the requirement is what `pack` and `publish` write in its place.
+pub const Dep = struct { name: []const u8, source: Source, requirement: ?[]const u8 = null };
 
 /// What a native dependency asks for.
 pub const NativeDepKind = enum { shared, static };
@@ -48,6 +58,38 @@ pub const NativeLib = struct {
     mode: metadata.Mode = .link,
     build: ?[]const u8 = null,
     outputs: []const []const u8 = &.{},
+    /// Sonames of other packages' native libraries this one needs (the static link order, and the diagnostics of a
+    /// closure that lacks one).
+    needs: []const []const u8 = &.{},
+    /// An exclusivity group: a closure may hold one owner per group. "" for none.
+    exclusive: []const u8 = "",
+    /// The archive's file name (`lib<name>.a`); "" for `lib<id>.a`. Meant for a native the build system builds (`srcs`).
+    soname: []const u8 = "",
+    /// Globs, relative to the package, of the C sources and headers of a native the build system builds.
+    srcs: []const []const u8 = &.{},
+    hdrs: []const []const u8 = &.{},
+    /// Compiler flags for every platform, then those of one OS appended after them.
+    cflags: []const []const u8 = &.{},
+    cflags_by_os: OsFlags = .{},
+    /// Include directories, relative to the package; empty means the directories holding `hdrs` files.
+    includes: []const []const u8 = &.{},
+    /// The static archive is built by something else (a build system's own rule) and packed as `lib<id>.a`: mopm
+    /// compiles nothing for it, so it has no `srcs`, `hdrs`, `cflags`, `cflags_by_os`, `includes`, `build` or `outputs`.
+    provided: bool = false,
+    /// System libraries the final link of any consumer adds, as `-l<name>` after all archives (`native_link.allowed`).
+    link: []const []const u8 = &.{},
+
+    /// The archive file name: `soname`, else `lib<id>.a`.
+    pub fn archiveName(self: NativeLib, arena: Allocator) Allocator.Error![]const u8 {
+        if (self.soname.len > 0) return self.soname;
+        return std.fmt.allocPrint(arena, "lib{s}.a", .{self.id});
+    }
+};
+
+/// `cflags_by_os`: the operating systems a native's flags can be given for.
+pub const OsFlags = struct {
+    linux: []const []const u8 = &.{},
+    macos: []const []const u8 = &.{},
 };
 
 pub const Bin = struct { name: []const u8, path: []const u8 };
@@ -60,8 +102,12 @@ pub const Targets = struct {
 
 pub const Manifest = struct {
     package: Package,
-    /// `[toolchain] mojo`: one version, or several.
+    /// The Mojo versions, from `[package] mojo` (`mojo_all`) or `[toolchain] mojo`.
     mojo: []const []const u8 = &.{},
+    /// `[package] mojo`: the package builds for every version listed (one
+    /// `.mojoc` each), and a lock covers all of them. `[toolchain] mojo`, the
+    /// older form, lists alternatives: a lock is for the first that resolves.
+    mojo_all: bool = false,
     dependencies: []const Dep = &.{},
     dev_dependencies: []const Dep = &.{},
     native_dependencies: []const NativeDep = &.{},
@@ -160,6 +206,14 @@ const Checker = struct {
         return try c.str(e, where);
     }
 
+    fn optBool(c: *Checker, t: Table, key: []const u8, where: []const u8, default: bool) Error!bool {
+        const e = t.get(key) orelse return default;
+        return switch (e.value) {
+            .boolean => |b| b,
+            else => c.fail(e.pos, "'{s}' in {s} must be true or false, not {s}", .{ e.key, where, e.value.typeName() }),
+        };
+    }
+
     fn strings(c: *Checker, e: Entry, where: []const u8) Error![]const []const u8 {
         const items = switch (e.value) {
             .array => |a| a,
@@ -184,7 +238,13 @@ const Checker = struct {
             "package", "toolchain", "dependencies", "dev-dependencies", "native-dependencies", "native", "targets",
         });
         const pkg = root.get("package") orelse return c.fail(.{ .line = 1, .col = 1 }, "missing the [package] table", .{});
-        var m = Manifest{ .package = try c.package(try c.table(pkg, "mopm.toml")) };
+        const pkg_table = try c.table(pkg, "mopm.toml");
+        var m = Manifest{ .package = try c.package(pkg_table) };
+        if (pkg_table.get("mojo")) |e| {
+            if (root.get("toolchain") != null) return c.fail(e.pos, "mojo is set in [package] and in [toolchain]; keep [package] mojo", .{});
+            m.mojo = try c.mojoVersions(e, "[package]");
+            m.mojo_all = true;
+        }
         if (root.get("toolchain")) |e| m.mojo = try c.toolchain(try c.table(e, "mopm.toml"));
         if (root.get("dependencies")) |e| m.dependencies = try c.deps(try c.table(e, "mopm.toml"), "[dependencies]");
         if (root.get("dev-dependencies")) |e| m.dev_dependencies = try c.deps(try c.table(e, "mopm.toml"), "[dev-dependencies]");
@@ -196,14 +256,14 @@ const Checker = struct {
 
     fn package(c: *Checker, t: Table) Error!Package {
         const where = "[package]";
-        try c.onlyKeys(t, where, &.{ "name", "version", "description", "license", "repository", "readme" });
+        try c.onlyKeys(t, where, &.{ "name", "version", "description", "license", "repository", "readme", "publish", "mojo", "metadata" });
         const name_e = t.get("name") orelse return c.fail(t.pos, "[package] is missing 'name'", .{});
         const name = try c.str(name_e, where);
         try c.packageName(name, name_e.pos, "package name");
         const version_e = t.get("version") orelse return c.fail(t.pos, "[package] is missing 'version'", .{});
         const version = try c.str(version_e, where);
-        if (semver.parseVersion(version) == null) {
-            return c.fail(version_e.pos, "version '{s}' is not a semantic version (MAJOR.MINOR.PATCH, such as 0.1.0)", .{version});
+        if (!semver.isPackageVersion(version)) {
+            return c.fail(version_e.pos, "version '{s}' must be exactly MAJOR.MINOR.PATCH (digits, no leading zeros, no pre-release or build part, such as 0.1.0)", .{version});
         }
         return .{
             .name = name,
@@ -212,20 +272,30 @@ const Checker = struct {
             .license = try c.optStr(t, "license", where),
             .repository = try c.optStr(t, "repository", where),
             .readme = try c.optStr(t, "readme", where),
+            .publish = try c.optBool(t, "publish", where, true),
+            .metadata = if (t.get("metadata")) |e| try c.table(e, where) else null,
         };
     }
 
     fn toolchain(c: *Checker, t: Table) Error![]const []const u8 {
         try c.onlyKeys(t, "[toolchain]", &.{"mojo"});
         const e = t.get("mojo") orelse return c.fail(t.pos, "[toolchain] is missing 'mojo'", .{});
+        return c.mojoVersions(e, "[toolchain]");
+    }
+
+    /// A version string or an array of them, each exact, none repeated.
+    fn mojoVersions(c: *Checker, e: Entry, where: []const u8) Error![]const []const u8 {
         const versions = switch (e.value) {
             .string => |s| try c.arena.dupe([]const u8, &.{s}),
-            .array => try c.strings(e, "[toolchain]"),
-            else => return c.fail(e.pos, "'mojo' in [toolchain] must be a version string or an array of them, not {s}", .{e.value.typeName()}),
+            .array => try c.strings(e, where),
+            else => return c.fail(e.pos, "'mojo' in {s} must be a version string or an array of them, not {s}", .{ where, e.value.typeName() }),
         };
-        if (versions.len == 0) return c.fail(e.pos, "'mojo' in [toolchain] names no version", .{});
-        for (versions) |v| {
-            if (v.len == 0) return c.fail(e.pos, "'mojo' in [toolchain] has an empty version", .{});
+        if (versions.len == 0) return c.fail(e.pos, "'mojo' in {s} names no version", .{where});
+        for (versions, 0..) |v, i| {
+            if (v.len == 0) return c.fail(e.pos, "'mojo' in {s} has an empty version", .{where});
+            for (versions[0..i]) |u| {
+                if (std.mem.eql(u8, u, v)) return c.fail(e.pos, "'mojo' in {s} lists {s} twice", .{ where, v });
+            }
         }
         return versions;
     }
@@ -234,6 +304,7 @@ const Checker = struct {
         var out = std.ArrayList(Dep).init(c.arena);
         for (t.entries.items) |*e| {
             try c.packageName(e.key, e.pos, "dependency name");
+            var requirement: ?[]const u8 = null;
             const source: Source = switch (e.value) {
                 .string => |s| .{ .version = s },
                 .table => |sub| blk: {
@@ -242,7 +313,8 @@ const Checker = struct {
                     const version = try c.optStr(sub, "version", in);
                     const path = try c.optStr(sub, "path", in);
                     if (version != null and path != null) {
-                        return c.fail(e.pos, "dependency '{s}' sets both 'version' and 'path'; use one", .{e.key});
+                        requirement = version;
+                        break :blk .{ .path = path.? };
                     }
                     if (version) |v| break :blk .{ .version = v };
                     if (path) |p| break :blk .{ .path = p };
@@ -250,17 +322,17 @@ const Checker = struct {
                 },
                 else => return c.fail(e.pos, "dependency '{s}' in {s} must be a version string or a table with 'version' or 'path', not {s}", .{ e.key, where, e.value.typeName() }),
             };
-            switch (source) {
-                .version => |v| {
-                    var why: []const u8 = "";
-                    _ = semver.parseReq(c.arena, v, &why) catch |err| switch (err) {
-                        error.Invalid => return c.fail(e.pos, "dependency '{s}' has an invalid version requirement '{s}': {s}", .{ e.key, v, why }),
-                        error.OutOfMemory => return error.OutOfMemory,
-                    };
-                },
-                .path => |p| if (p.len == 0) return c.fail(e.pos, "dependency '{s}' has an empty path", .{e.key}),
+            if (source == .path and source.path.len == 0) return c.fail(e.pos, "dependency '{s}' has an empty path", .{e.key});
+            // The requirement of a path dependency is checked like any other: pack writes it into the published package.
+            const req_text: ?[]const u8 = if (requirement) |r| r else if (source == .version) source.version else null;
+            if (req_text) |v| {
+                var why: []const u8 = "";
+                _ = semver.parseReq(c.arena, v, &why) catch |err| switch (err) {
+                    error.Invalid => return c.fail(e.pos, "dependency '{s}' has an invalid version requirement '{s}': {s}", .{ e.key, v, why }),
+                    error.OutOfMemory => return error.OutOfMemory,
+                };
             }
-            try out.append(.{ .name = e.key, .source = source });
+            try out.append(.{ .name = e.key, .source = source, .requirement = requirement });
         }
         return try out.toOwnedSlice();
     }
@@ -304,7 +376,7 @@ const Checker = struct {
                 return c.fail(e.pos, "native library id '{s}' must be a lowercase identifier (letters, digits, '_')", .{e.key});
             }
             const sub = try c.table(e, "[native]");
-            try c.onlyKeys(sub, in, &.{ "kind", "mode", "build", "outputs" });
+            try c.onlyKeys(sub, in, &.{ "kind", "mode", "build", "outputs", "needs", "exclusive", "soname", "srcs", "hdrs", "cflags", "cflags_by_os", "includes", "provided", "link" });
             var lib = NativeLib{ .id = e.key };
             if (sub.get("kind")) |k| {
                 const kind = try c.str(k, in);
@@ -318,9 +390,77 @@ const Checker = struct {
             }
             lib.build = try c.optStr(sub, "build", in);
             if (sub.get("outputs")) |o| lib.outputs = try c.strings(o, in);
+            if (sub.get("needs")) |o| lib.needs = try c.strings(o, in);
+            if (try c.optStr(sub, "exclusive", in)) |x| {
+                if (x.len == 0) return c.fail(sub.get("exclusive").?.pos, "'exclusive' in {s} must not be empty", .{in});
+                if (std.ascii.isWhitespace(x[0]) or std.ascii.isWhitespace(x[x.len - 1])) {
+                    return c.fail(sub.get("exclusive").?.pos, "'exclusive' in {s} must not start or end with whitespace (groups are compared exactly)", .{in});
+                }
+                for (x) |ch| {
+                    if (ch < 0x20 or ch == 0x7f) return c.fail(sub.get("exclusive").?.pos, "'exclusive' in {s} must not contain a control character", .{in});
+                }
+                lib.exclusive = x;
+            }
+            if (try c.optStr(sub, "soname", in)) |s| {
+                if (!isArchiveName(s)) {
+                    return c.fail(sub.get("soname").?.pos, "'soname' in {s} must be an archive name lib<name>.a with no other dot, not \"{s}\"", .{ in, s });
+                }
+                lib.soname = s;
+            }
+            lib.srcs = try c.memberPaths(sub, "srcs", in, false);
+            lib.hdrs = try c.memberPaths(sub, "hdrs", in, false);
+            lib.includes = try c.memberPaths(sub, "includes", in, true);
+            if (sub.get("cflags")) |o| lib.cflags = try c.strings(o, in);
+            if (sub.get("cflags_by_os")) |o| {
+                const by_os = try c.table(o, in);
+                const where = try std.fmt.allocPrint(c.arena, "cflags_by_os of {s}", .{in});
+                for (by_os.entries.items) |*oe| {
+                    if (std.mem.eql(u8, oe.key, "linux")) {
+                        lib.cflags_by_os.linux = try c.strings(oe, where);
+                    } else if (std.mem.eql(u8, oe.key, "macos")) {
+                        lib.cflags_by_os.macos = try c.strings(oe, where);
+                    } else {
+                        return c.fail(oe.pos, "unknown operating system '{s}' in {s}; the known ones are linux and macos", .{ oe.key, where });
+                    }
+                }
+            }
+            if (sub.get("link")) |o| {
+                lib.link = try c.strings(o, in);
+                if (lib.kind != .static or lib.mode != .link) {
+                    return c.fail(o.pos, "'link' in {s} needs kind = \"static\" and mode = \"link\": only a linked archive leaves symbols to the system", .{in});
+                }
+                if (try native_link.problem(c.arena, lib.link)) |why| return c.fail(o.pos, "'link' in {s}: {s}", .{ in, why });
+            }
+            lib.provided = try c.optBool(sub, "provided", in, false);
+            if (lib.provided) try c.providedProblem(sub, in, lib);
             try out.append(lib);
         }
         return try out.toOwnedSlice();
+    }
+
+    /// `provided = true` says the archive is built elsewhere: it must be a static archive that is linked, and it may
+    /// not name anything mopm would compile with.
+    fn providedProblem(c: *Checker, sub: Table, in: []const u8, lib: NativeLib) Error!void {
+        const at = sub.get("provided").?.pos;
+        if (sub.get("kind") == null) return c.fail(at, "'provided' in {s} needs kind = \"static\"", .{in});
+        if (lib.kind != .static) return c.fail(at, "'provided' in {s} needs kind = \"static\", not \"{s}\"", .{ in, @tagName(lib.kind) });
+        if (lib.mode != .link) return c.fail(at, "'provided' in {s} needs mode = \"link\", not \"{s}\"", .{ in, @tagName(lib.mode) });
+        for ([_][]const u8{ "srcs", "hdrs", "cflags", "cflags_by_os", "includes", "build", "outputs" }) |key| {
+            if (sub.get(key)) |e| {
+                return c.fail(e.pos, "'{s}' in {s} contradicts provided = true: the archive is built elsewhere, and mopm compiles nothing for it", .{ key, in });
+            }
+        }
+    }
+
+    /// The array of package-relative paths or globs at `key` of `sub` (empty when absent); a path that is empty,
+    /// absolute or leaves the package is refused. `dot_ok`: a lone "." (the package directory) is allowed.
+    fn memberPaths(c: *Checker, sub: Table, key: []const u8, in: []const u8, dot_ok: bool) Error![]const []const u8 {
+        const e = sub.get(key) orelse return &.{};
+        const items = try c.strings(e, in);
+        for (items) |p| {
+            if (memberPathProblem(p, dot_ok)) |why| return c.fail(e.pos, "'{s}' in {s}: \"{s}\" {s}", .{ key, in, p, why });
+        }
+        return items;
     }
 
     fn targets(c: *Checker, t: Table) Error!Targets {
@@ -364,6 +504,31 @@ fn isIdentifier(s: []const u8) bool {
     return true;
 }
 
+/// Why `p` is not a path inside the package, or null.
+fn memberPathProblem(p: []const u8, dot_ok: bool) ?[]const u8 {
+    if (p.len == 0) return "is empty";
+    if (p[0] == '/') return "is absolute; write it relative to the package";
+    if (dot_ok and std.mem.eql(u8, p, ".")) return null;
+    var it = std.mem.splitScalar(u8, p, '/');
+    while (it.next()) |seg| {
+        if (seg.len == 0) return "has an empty path segment";
+        if (std.mem.eql(u8, seg, "..")) return "leaves the package with '..'";
+        if (std.mem.eql(u8, seg, ".")) return "has a '.' segment; leave it out";
+    }
+    return null;
+}
+
+/// `lib<name>.a`, the name of a static archive: no other dot, no slash.
+fn isArchiveName(s: []const u8) bool {
+    if (!std.mem.startsWith(u8, s, "lib") or !std.mem.endsWith(u8, s, ".a")) return false;
+    const stem = s[3 .. s.len - 2];
+    if (stem.len == 0) return false;
+    for (stem) |ch| {
+        if (ch == '.' or ch == '/') return false;
+    }
+    return true;
+}
+
 fn isNativeName(s: []const u8) bool {
     if (s.len == 0 or !std.ascii.isAlphanumeric(s[0])) return false;
     for (s) |b| {
@@ -391,6 +556,10 @@ pub fn writeJson(m: Manifest, w: anytype) !void {
     try jsonOpt(w, p.repository);
     try w.writeAll(",\n    \"readme\": ");
     try jsonOpt(w, p.readme);
+    if (p.metadata) |t| {
+        try w.writeAll(",\n    \"metadata\": ");
+        try jsonTable(w, t);
+    }
     try w.writeAll("\n  },\n  \"toolchain\": {\n    \"mojo\": ");
     try jsonStrList(w, m.mojo);
     try w.writeAll("\n  },\n  \"dependencies\": ");
@@ -432,6 +601,10 @@ fn writeDep(w: anytype, d: Dep) !void {
         .path => |v| {
             try w.writeAll(", \"path\": ");
             try jsonStr(w, v);
+            if (d.requirement) |r| {
+                try w.writeAll(", \"version\": ");
+                try jsonStr(w, r);
+            }
         },
     }
     try w.writeAll("}");
@@ -460,6 +633,50 @@ fn writeNativeLib(w: anytype, l: NativeLib) !void {
     try jsonOpt(w, l.build);
     try w.writeAll(", \"outputs\": ");
     try jsonStrList(w, l.outputs);
+    if (l.provided) try w.writeAll(", \"provided\": true");
+    // Left out when absent, so that the output for a manifest that never used them is what it was.
+    if (l.needs.len > 0) {
+        try w.writeAll(", \"needs\": ");
+        try jsonStrList(w, l.needs);
+    }
+    if (l.exclusive.len > 0) {
+        try w.writeAll(", \"exclusive\": ");
+        try jsonStr(w, l.exclusive);
+    }
+    if (l.link.len > 0) {
+        try w.writeAll(", \"link\": ");
+        try jsonStrList(w, l.link);
+    }
+    if (l.soname.len > 0) {
+        try w.writeAll(", \"soname\": ");
+        try jsonStr(w, l.soname);
+    }
+    const lists = [_]struct { key: []const u8, items: []const []const u8 }{
+        .{ .key = "srcs", .items = l.srcs },
+        .{ .key = "hdrs", .items = l.hdrs },
+        .{ .key = "cflags", .items = l.cflags },
+        .{ .key = "includes", .items = l.includes },
+    };
+    for (lists) |x| {
+        if (x.items.len == 0) continue;
+        try w.print(", \"{s}\": ", .{x.key});
+        try jsonStrList(w, x.items);
+    }
+    if (l.cflags_by_os.linux.len > 0 or l.cflags_by_os.macos.len > 0) {
+        try w.writeAll(", \"cflags_by_os\": {");
+        var first = true;
+        if (l.cflags_by_os.linux.len > 0) {
+            try w.writeAll("\"linux\": ");
+            try jsonStrList(w, l.cflags_by_os.linux);
+            first = false;
+        }
+        if (l.cflags_by_os.macos.len > 0) {
+            if (!first) try w.writeAll(", ");
+            try w.writeAll("\"macos\": ");
+            try jsonStrList(w, l.cflags_by_os.macos);
+        }
+        try w.writeAll("}");
+    }
     try w.writeAll("}");
 }
 
@@ -487,6 +704,35 @@ fn jsonStrList(w: anytype, items: []const []const u8) !void {
 fn jsonOpt(w: anytype, s: ?[]const u8) !void {
     if (s) |v| return jsonStr(w, v);
     try w.writeAll("null");
+}
+
+/// A TOML value as JSON (tables in file order). Only `[package.metadata]` is written this way.
+fn jsonValue(w: anytype, v: toml.Value) anyerror!void {
+    switch (v) {
+        .string => |s| try jsonStr(w, s),
+        .integer => |i| try w.print("{d}", .{i}),
+        .boolean => |b| try w.writeAll(if (b) "true" else "false"),
+        .array => |items| {
+            try w.writeAll("[");
+            for (items, 0..) |item, n| {
+                if (n > 0) try w.writeAll(", ");
+                try jsonValue(w, item);
+            }
+            try w.writeAll("]");
+        },
+        .table => |t| try jsonTable(w, t),
+    }
+}
+
+fn jsonTable(w: anytype, t: *const toml.Table) anyerror!void {
+    try w.writeAll("{");
+    for (t.entries.items, 0..) |e, n| {
+        if (n > 0) try w.writeAll(", ");
+        try jsonStr(w, e.key);
+        try w.writeAll(": ");
+        try jsonValue(w, e.value);
+    }
+    try w.writeAll("}");
 }
 
 fn jsonStr(w: anytype, s: []const u8) !void {
@@ -563,4 +809,83 @@ test "golden: each tests/manifest/valid/<name>.toml prints <name>.json" {
 
 test "golden: each tests/manifest/invalid/<name>.toml is refused with <name>.err" {
     try eachGolden("tests/manifest/invalid", "err", checkInvalid);
+}
+
+test "a dependency with a path and a version keeps both; the path is its source" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var diag: Diagnostic = .{};
+    const head = "[package]\nname = \"a\"\nversion = \"0.1.0\"\n\n[dependencies]\n";
+    const m = try parse(arena, head ++ "both = { version = \"^0.3\", path = \"../both\" }\nonly_path = { path = \"../p\" }\nonly_version = \"1\"\n", &diag);
+    try std.testing.expectEqual(@as(usize, 3), m.dependencies.len);
+    try std.testing.expectEqualStrings("../both", m.dependencies[0].source.path);
+    try std.testing.expectEqualStrings("^0.3", m.dependencies[0].requirement.?);
+    try std.testing.expectEqualStrings("../p", m.dependencies[1].source.path);
+    try std.testing.expect(m.dependencies[1].requirement == null);
+    try std.testing.expectEqualStrings("1", m.dependencies[2].source.version);
+    try std.testing.expect(m.dependencies[2].requirement == null);
+
+    // Each half is still checked: the requirement is a requirement, the path is not empty, a third key is unknown.
+    try std.testing.expectError(error.Invalid, parse(arena, head ++ "b = { version = \"=>1\", path = \"../b\" }\n", &diag));
+    try std.testing.expectError(error.Invalid, parse(arena, head ++ "b = { version = \"1\", path = \"\" }\n", &diag));
+    try std.testing.expectError(error.Invalid, parse(arena, head ++ "b = { version = \"1\", path = \"../b\", git = \"x\" }\n", &diag));
+}
+
+test "a package's own version is exactly MAJOR.MINOR.PATCH; the registry takes nothing else" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var diag: Diagnostic = .{};
+
+    for ([_][]const u8{ "0.1.123", "10.20.30", "0.0.0" }) |v| {
+        const src = try std.fmt.allocPrint(arena, "[package]\nname = \"a\"\nversion = \"{s}\"\n", .{v});
+        const m = parse(arena, src, &diag) catch |e| {
+            std.debug.print("refused {s}: {s}\n", .{ v, diag.message });
+            return e;
+        };
+        try std.testing.expectEqualStrings(v, m.package.version);
+    }
+
+    for ([_][]const u8{ "1.0.0+b1", "1.0.0-rc.1", "1.0.0.1", "01.0.0", "1.0", "1.0.0+", "1.0.00", "1.0.0 ", "v1.0.0", "1.0.1234567890123456789" }) |v| {
+        const src = try std.fmt.allocPrint(arena, "[package]\nname = \"a\"\nversion = \"{s}\"\n", .{v});
+        if (parse(arena, src, &diag)) |_| {
+            std.debug.print("accepted package version '{s}'\n", .{v});
+            return error.TestUnexpectedResult;
+        } else |e| {
+            try std.testing.expectEqual(error.Invalid, e);
+        }
+        try std.testing.expectEqual(@as(usize, 3), diag.pos.line);
+        const want = try std.fmt.allocPrint(arena, "version '{s}' must be exactly MAJOR.MINOR.PATCH", .{v});
+        try std.testing.expect(std.mem.startsWith(u8, diag.message, want));
+    }
+}
+
+test "dependency requirements keep the full requirement grammar" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var diag: Diagnostic = .{};
+    const head = "[package]\nname = \"a\"\nversion = \"0.1.0\"\n\n[dependencies]\n";
+    const m = parse(arena, head ++ "b = \">=0.1,<0.2\"\nc = \"^1.2.3-rc.1\"\nd = \"~1.2\"\n", &diag) catch |e| {
+        std.debug.print("refused: {s}\n", .{diag.message});
+        return e;
+    };
+    try std.testing.expectEqual(@as(usize, 3), m.dependencies.len);
+}
+
+test "[package] publish is a boolean that defaults to true; anything else names the key" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const head = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n";
+    var diag: Diagnostic = .{};
+    try std.testing.expect((try parse(a, head, &diag)).package.publish);
+    try std.testing.expect((try parse(a, head ++ "publish = true\n", &diag)).package.publish);
+    try std.testing.expect(!(try parse(a, head ++ "publish = false\n", &diag)).package.publish);
+    for ([_][]const u8{ "\"false\"", "0", "[false]" }) |bad| {
+        const text = try std.fmt.allocPrint(a, "{s}publish = {s}\n", .{ head, bad });
+        try std.testing.expectError(error.Invalid, parse(a, text, &diag));
+        try std.testing.expect(std.mem.indexOf(u8, diag.message, "'publish' in [package] must be true or false") != null);
+    }
 }

@@ -1,0 +1,24 @@
+# A package that builds its own static archive from C sources (spec/mopm-toml.md, [native.<id>]).
+[package]
+name = "zlib_sys"
+version = "1.3.1"
+
+[toolchain]
+mojo = "1.0.0"
+
+[native.zlib_sys]
+kind = "static"
+soname = "libz_sys.a"
+srcs = ["native/*.c", "native/impl/**/*.c"]
+hdrs = ["native/*.h"]
+cflags = ["-O2", "-DZLIB_CONST"]
+cflags_by_os = { linux = ["-D_LARGEFILE64_SOURCE=1"], macos = ["-DHAVE_UNISTD_H"] }
+includes = ["native", "."]
+needs = ["libc_sys.a"]
+
+[native.plain_shim]
+kind = "static"
+srcs = ["shim.c"]
+
+[native.plain_shim.cflags_by_os]
+macos = ["-DAPPLE"]

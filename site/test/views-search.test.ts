@@ -102,7 +102,7 @@ describe('the search page design', () => {
   const list = listFixture('search by prefix');
   const out = html(searchResultsView(sdoc, { q: 'http', sort: 'name' }, list));
 
-  // Mutant: a card that drops the description or the update date, or the glyph.
+  // Defect caught: a card that drops the description or the update date, or the glyph.
   test('each result is a card: glyph, name, latest version, description and the date of its last update', () => {
     const p = list.packages[0];
     const card = out.slice(out.indexOf('<li class="result">'), out.indexOf('</li>') + 5);
@@ -113,7 +113,7 @@ describe('the search page design', () => {
     expect(out.split('<li class="result">').length - 1).toBe(list.packages.length);
   });
 
-  // The API matches a name prefix only. Mutants: a ranking chip, a "why it matched" or a ranking explainer added to the
+  // The API matches a name prefix only. Defect caught: a ranking chip, a "why it matched" or a ranking explainer added to the
   // page; the note saying what search matches removed.
   test('the page says search matches the start of a name, and claims no ranking', () => {
     expect(text(out)).toContain('Search matches the start of a package name, not descriptions or readmes.');
@@ -128,7 +128,7 @@ describe('the search page design', () => {
     expect(text(out)).toContain('Packages starting with “http”');
   });
 
-  // Mutant: the Next link losing rel=next or its button styling; the count not saying more pages exist.
+  // Defect caught: the Next link losing rel=next or its button styling; the count not saying more pages exist.
   test('paging is a pair of buttons, and the count says when there is a next page', () => {
     expect(out).toMatch(/<a class="button button-primary" href="\/search\?q=http&amp;cursor=[^"]+" rel="next">Next page →<\/a>/);
     expect(text(out)).toMatch(/1 package, sorted by name; more on the next page\./);
@@ -138,7 +138,7 @@ describe('the search page design', () => {
   });
 
   // A cursor is issued for one sort; the API refuses it paired with another ("This page link is no longer valid.").
-  // Mutant: the Next href built from q and cursor only, dropping sort=updated.
+  // Defect caught: the Next href built from q and cursor only, dropping sort=updated.
   test('the Next link of a sort=updated search keeps sort=updated', () => {
     const upd = html(searchResultsView(sdoc, { q: 'http', sort: 'updated' }, { ...list, next_cursor: 'abc' }));
     expect(upd).toContain('<a class="button button-primary" href="/search?q=http&amp;sort=updated&amp;cursor=abc" rel="next">Next page →</a>');
@@ -146,7 +146,7 @@ describe('the search page design', () => {
 
   // The way out of each empty state sits in the empty-state block itself: the side panel's "Browse all packages" and
   // the pager's "First page" carry the same hrefs, so a page-wide href check passes with the block's link gone.
-  // Mutants: any of the three links replaced by a span, or pointing elsewhere.
+  // Defect caught: any of the three links replaced by a span, or pointing elsewhere.
   const emptyBlock = (out: string): string => {
     const start = out.indexOf('<div class="empty-state">');
     expect(start).toBeGreaterThanOrEqual(0);
@@ -175,7 +175,7 @@ describe('search errors', () => {
     return out.slice(start, out.indexOf('</div>', at) + 6);
   };
 
-  // Mutant: the reset link dropping sort=updated (the first page then sorts differently from the refused one).
+  // Defect caught: the reset link dropping sort=updated (the first page then sorts differently from the refused one).
   test('invalid_request with a cursor: a link back to the first page of the same query', () => {
     const block = alertBlock(html(searchErrorView(sdoc, { q: 'http', sort: 'updated', cursor: 'stale' }, invalid)));
     expect(text(block)).toContain('This page link is no longer valid.');
@@ -183,7 +183,7 @@ describe('search errors', () => {
     expect(block.match(/<a /g)).toHaveLength(1);
   });
 
-  // Mutant: the link keeping sort=updated (re-runs the refused search).
+  // Defect caught: the link keeping sort=updated (re-runs the refused search).
   test('invalid_request under sort=updated: the 1000-match cap, and a link to sort by name', () => {
     const block = alertBlock(html(searchErrorView(sdoc, { q: 'a', sort: 'updated' }, invalid)));
     expect(text(block)).toContain('up to 1000 matching packages');
@@ -192,7 +192,7 @@ describe('search errors', () => {
   });
 
   // A sort=name search with no cursor that the registry refuses: re-running the same q would fail the same way, so
-  // the way out is the unfiltered list. Mutant: the link built as searchPath({ q: state.q }).
+  // the way out is the unfiltered list. Defect caught: the link built as searchPath({ q: state.q }).
   test('invalid_request for a sort=name search with no cursor: a link to all packages, not the same query', () => {
     const block = alertBlock(html(searchErrorView(sdoc, { q: 'a', sort: 'name' }, invalid)));
     expect(text(block)).toContain('The registry did not accept this search.');
@@ -209,7 +209,7 @@ describe('search errors', () => {
   });
 
   // The band over a failed search carries the form but not the page heading: the error block has the one h1.
-  // Mutant: the band built with its heading -> two h1s.
+  // Defect caught: the band built with its heading -> two h1s.
   test('a failed search has exactly one h1, the error\'s', () => {
     const out = html(searchErrorView(sdoc, { q: 'a', sort: 'name' }, networkError()));
     expect(out.match(/<h1[ >]/g)).toHaveLength(1);
@@ -229,7 +229,7 @@ describe('shared views', () => {
     expect(out).toContain('&lt;b&gt;boom&lt;/b&gt;');
     expect(out).toContain('<code>abc-123</code>');
     expect(out).toContain('class="button button-primary retry"');
-    // A way home next to Retry. Mutant: the Home button dropped.
+    // A way home next to Retry. Defect caught: the Home button dropped.
     expect(hrefs(out)).toContain('/');
   });
 
@@ -250,7 +250,7 @@ describe('shared views', () => {
   });
 
   // A not-found page is a place to go on from, not a dead end: a search box (its own id, so the header's #q stays the
-  // one '/' focuses), Home, the package list and the docs. Mutants: the search box or the way-on row dropped; the box
+  // one '/' focuses), Home, the package list and the docs. Defect caught: the search box or the way-on row dropped; the box
   // given id q (two #q on the app shell).
   test.each([
     ['a package', () => notFoundView(sdoc, 'zz_absent'), 'zz_absent'],

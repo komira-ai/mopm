@@ -29,11 +29,27 @@ export interface Client {
 export const REQUEST_ID_HEADER = 'x-mopm-request-id';
 export const TIMEOUT_MS = 10_000;
 
+/** The timer the request deadline runs on. Tests pass a manual one and fire it by hand; the default is the real one. */
+export interface Timers {
+  set(fn: () => void, ms: number): unknown;
+  clear(handle: unknown): void;
+}
+
+const REAL_TIMERS: Timers = {
+  set: (fn, ms) => setTimeout(fn, ms),
+  clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
+
 /** `base` is apiBase(location.hostname), e.g. 'https://api.mopm.dev/api/v1'. */
-export function client(fetchFn: FetchFn, base: string, timeoutMs: number = TIMEOUT_MS): Client {
+export function client(
+  fetchFn: FetchFn,
+  base: string,
+  timeoutMs: number = TIMEOUT_MS,
+  timers: Timers = REAL_TIMERS,
+): Client {
   async function get<T>(path: string, decode: (v: unknown) => T): Promise<Result<T>> {
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), timeoutMs);
+    const timer = timers.set(() => ctl.abort(), timeoutMs);
     try {
       let res: Response;
       try {
@@ -55,7 +71,7 @@ export function client(fetchFn: FetchFn, base: string, timeoutMs: number = TIMEO
         return unreadable(res.status, requestId);
       }
     } finally {
-      clearTimeout(timer);
+      timers.clear(timer);
     }
   }
 

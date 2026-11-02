@@ -1,0 +1,4 @@
+would upload linux-64/mojo-slug-1.2.0-mojo1.0.0_0.conda (<n> bytes, sha256 <sha256>)
+would commit mojo-slug 1.2.0 (manifest_sha256 <sha256>)
+would send a readme of 38 bytes
+dry run: nothing was sent

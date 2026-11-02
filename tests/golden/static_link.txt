@@ -1,0 +1,15 @@
+build:
+  tests/fixtures/static_link/lib/libplain_sys.a
+  tests/fixtures/static_link/lib/libcxx_a.a
+  tests/fixtures/static_link/lib/libcxx_b.a
+  -lc++
+  -lm
+run:
+repl-preload:
+diagnostics:
+  [run] static_only: plain_sys ships only libplain_sys.a (native plain_sys); mojo run cannot load an archive: use mopm build or ask for a shared flavour
+  [repl] static_only: plain_sys ships only libplain_sys.a (native plain_sys); mojo repl cannot load an archive: use mopm build or ask for a shared flavour
+  [run] static_only: cxx_a ships only libcxx_a.a (native cxx_a); mojo run cannot load an archive: use mopm build or ask for a shared flavour
+  [repl] static_only: cxx_a ships only libcxx_a.a (native cxx_a); mojo repl cannot load an archive: use mopm build or ask for a shared flavour
+  [run] static_only: cxx_b ships only libcxx_b.a (native cxx_b); mojo run cannot load an archive: use mopm build or ask for a shared flavour
+  [repl] static_only: cxx_b ships only libcxx_b.a (native cxx_b); mojo repl cannot load an archive: use mopm build or ask for a shared flavour

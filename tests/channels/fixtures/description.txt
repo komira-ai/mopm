@@ -1,0 +1,3 @@
+Resolves, locks and builds Mojo packages.
+
+A static binary: it needs nothing else installed.

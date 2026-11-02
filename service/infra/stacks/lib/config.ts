@@ -58,7 +58,7 @@ export const channelBucketName = (s: Stage, account: string) => `mopm-${s}-chann
 export const siteBucketName = (s: Stage, account: string) => `mopm-${s}-site-${account}`;
 export const tableName = (s: Stage, table: string) => `mopm-${s}-${table}`;
 
-/** The secret holding a stage's GitHub OAuth app ({"client_id","client_secret"}); created by service/infra/access/oauth-secret.sh. */
+/** The secret holding a stage's GitHub OAuth app ({"client_id","client_secret"}); created by service/infra/access/lib/oauth-secret.ts. */
 export const oauthSecretName = (s: Stage) => `mopm/${s}/github-oauth`;
 
 /** FIFO queues of the publish pipeline (the API stack builds the validate queue's URL from the name, so the names live here). */
@@ -66,6 +66,14 @@ export const validateQueueName = (s: Stage) => `mopm-${s}-validate.fifo`;
 export const validateDlqName = (s: Stage) => `mopm-${s}-validate-dlq.fifo`;
 export const indexQueueName = (s: Stage) => `mopm-${s}-index.fifo`;
 export const indexDlqName = (s: Stage) => `mopm-${s}-index-dlq.fifo`;
+export const groupQueueName = (s: Stage) => `mopm-${s}-group.fifo`;
+export const groupDlqName = (s: Stage) => `mopm-${s}-group-dlq.fifo`;
 
 /** The four subdirs every channel has (spec/channel.md, Layout). Same list as SUBDIRS_V1 in service/api (a test compares them). */
 export const CHANNEL_SUBDIRS = ['noarch', 'linux-64', 'linux-aarch64', 'osx-arm64'] as const;
+
+/**
+ * The conda-forge name mirror: one object in the channel bucket, written by the mirror job and read by the validators
+ * (service/api/src/validate/native-mirror.ts, MIRROR_KEY; publish.test.ts holds the two equal).
+ */
+export const NATIVE_MIRROR_KEY = 'native-mirror/conda-forge-names.gz';

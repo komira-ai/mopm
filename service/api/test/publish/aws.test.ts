@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { CloudFrontInvalidator, S3Channel, SqsFifoQueue, type HttpFn, type HttpResponse } from '../../src/publish/aws';
+import { CloudFrontInvalidator, S3Channel, SqsFifoQueue, SqsQueueDepth, type HttpFn, type HttpResponse } from '../../src/publish/aws';
 
 const CREDS = { accessKeyId: 'AKIDTEST', secretAccessKey: 'secret', sessionToken: 'SESSION' };
 const NOW = new Date('2026-10-14T12:00:00Z');
@@ -77,6 +77,49 @@ describe('S3Channel', () => {
     await expect(new S3Channel('bkt', opts(fakeHttp({ status: 500 }).http)).get('k')).rejects.toThrow('s3 answered 500');
   });
 
+  test('getExact: 200 gives the bytes, 404 is absent, and every other answer throws', async () => {
+    const got = fakeHttp({ status: 200, body: 'bytes!' });
+    expect((await new S3Channel('bkt', opts(got.http)).getExact('index/ht/tp/http_client'))!.toString()).toBe('bytes!');
+    expect(got.seen.length).toBe(1);
+    expect(got.seen[0]!.method).toBe('GET');
+    expect(got.seen[0]!.url).toBe('https://bkt.s3.us-east-1.amazonaws.com/index/ht/tp/http_client');
+    expect(await new S3Channel('bkt', opts(fakeHttp({ status: 404 }).http)).getExact('k')).toBeUndefined();
+    for (const status of [400, 500, 503]) {
+      await expect(new S3Channel('bkt', opts(fakeHttp({ status, body: '<Error/>' }).http)).getExact('k')).rejects.toThrow(`s3 answered ${status}`);
+    }
+  });
+
+  const listing = (...keys: string[]) => ({ status: 200, body: `<?xml version="1.0"?><ListBucketResult><KeyCount>${keys.length}</KeyCount>${keys.map((k) => `<Contents><Key>${k}</Key></Contents>`).join('')}</ListBucketResult>` });
+
+  test('getExact on 403 lists with the exact key as the prefix, one key at most, signed; an empty listing is absent', async () => {
+    const t = fakeHttp({ status: 403, body: '<Error/>' }, listing());
+    expect(await new S3Channel('bkt', opts(t.http)).getExact('index/ab/cd/abcd')).toBeUndefined();
+    expect(t.seen.length).toBe(2);
+    expect(t.seen[1]!.method).toBe('GET');
+    expect(t.seen[1]!.url).toBe('https://bkt.s3.us-east-1.amazonaws.com/?list-type=2&max-keys=1&prefix=index%2Fab%2Fcd%2Fabcd');
+    expect(t.seen[1]!.headers.authorization).toContain('AWS4-HMAC-SHA256');
+  });
+
+  test('getExact on 403 where the listing has the exact key: present but forbidden throws', async () => {
+    const t = fakeHttp({ status: 403, body: '<Error/>' }, listing('index/ab/cd/abcd'));
+    await expect(new S3Channel('bkt', opts(t.http)).getExact('index/ab/cd/abcd')).rejects.toThrow('s3 answered 403');
+  });
+
+  test('getExact on 403 where the listing has only a longer key: that is not the key, so absent', async () => {
+    const t = fakeHttp({ status: 403, body: '<Error/>' }, listing('index/ab/cd/abcde'));
+    expect(await new S3Channel('bkt', opts(t.http)).getExact('index/ab/cd/abcd')).toBeUndefined();
+  });
+
+  test('getExact on 403 where the listing call fails throws', async () => {
+    const t = fakeHttp({ status: 403, body: '<Error/>' }, { status: 503, body: '<Error/>' });
+    await expect(new S3Channel('bkt', opts(t.http)).getExact('index/ab/cd/abcd')).rejects.toThrow('s3 answered 503');
+  });
+
+  test('getExact on 403 reads an XML-escaped key in the listing as the key it names', async () => {
+    const t = fakeHttp({ status: 403 }, listing('a&amp;b'));
+    await expect(new S3Channel('bkt', opts(t.http)).getExact('a&b')).rejects.toThrow('s3 answered 403');
+  });
+
   test('delete accepts 204, and 404 (already gone); a server error throws', async () => {
     for (const status of [204, 404]) await new S3Channel('bkt', opts(fakeHttp({ status }).http)).delete('k');
     await expect(new S3Channel('bkt', opts(fakeHttp({ status: 503 }).http)).delete('k')).rejects.toThrow('s3 answered 503');
@@ -111,6 +154,23 @@ describe('SqsFifoQueue', () => {
   test('a refusal is an error (the caller\'s request then fails, or the validator message is retried)', async () => {
     const q = new SqsFifoQueue('u', opts(fakeHttp({ status: 400, body: 'AccessDenied' }).http));
     await expect(q.send({ body: 'b', groupId: 'g', dedupId: 'd' })).rejects.toThrow('sqs answered 400');
+  });
+});
+
+describe('SqsQueueDepth', () => {
+  test('GetQueueUrl by name, then GetQueueAttributes: the messages waiting and the messages in flight', async () => {
+    const { http, seen } = fakeHttp({ status: 200, body: JSON.stringify({ QueueUrl: QUEUE_URL }) }, { status: 200, body: JSON.stringify({ Attributes: { ApproximateNumberOfMessages: '3', ApproximateNumberOfMessagesNotVisible: '1' } }) });
+    expect(await new SqsQueueDepth(opts(http)).depth('mopm-beta-group.fifo')).toEqual({ queue: 'mopm-beta-group.fifo', visible: 3, in_flight: 1 });
+    expect(seen.map((r) => r.headers['x-amz-target'])).toEqual(['AmazonSQS.GetQueueUrl', 'AmazonSQS.GetQueueAttributes']);
+    expect(JSON.parse(seen[0]!.body as string)).toEqual({ QueueName: 'mopm-beta-group.fifo' });
+    expect(JSON.parse(seen[1]!.body as string)).toEqual({ QueueUrl: QUEUE_URL, AttributeNames: ['ApproximateNumberOfMessages', 'ApproximateNumberOfMessagesNotVisible'] });
+    expect(seen[1]!.headers.authorization).toContain('/us-east-1/sqs/aws4_request');
+  });
+
+  test('a queue that does not report a count is empty, and a refusal is an error', async () => {
+    const { http } = fakeHttp({ status: 200, body: JSON.stringify({ QueueUrl: QUEUE_URL }) }, { status: 200, body: JSON.stringify({ Attributes: {} }) });
+    expect(await new SqsQueueDepth(opts(http)).depth('q')).toEqual({ queue: 'q', visible: 0, in_flight: 0 });
+    await expect(new SqsQueueDepth(opts(fakeHttp({ status: 400, body: 'AccessDenied' }).http)).depth('q')).rejects.toThrow('sqs answered 400');
   });
 });
 

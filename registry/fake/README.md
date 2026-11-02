@@ -26,6 +26,7 @@ line. The API is under `/api/v1`. It answers one request at a time.
 | packages | `searchPackages` (name prefix, `sort`, cursors), `getPackage`, `claimPackage`, `listVersions` |
 | owners | `listOwners`, `inviteOwner`, `removeOwner`, `listInvitations`, `acceptInvitation` |
 | publish | `beginUpload` (the `put_url` is the fake's own `/_fake/upload/<id>`, which refuses bytes of another size or sha256), `commitPublish` (single-use uploads, resume while pending, `version_exists` for a version that exists; versions are `MAJOR.MINOR.PATCH` only, anything else is `invalid_version`; `limit_exceeded` when a file would take a package over its byte limit, 10 GB unless `/_fake/limits` lowers it), `getPublishStatus`, `setYanked`, `getVersion` |
+| groups | `createGroup`, `getGroup`, `abortGroup`, `commitGroup`, `yankGroup` (spec/staged-set.md; groups.zig). A group's id is a function of the caller and the declared set, so the same request is the same group (the fake's ids are opaque: they are not derived the way the hosted registry's documented derivation is, and a client must not compute them); `getGroup` lists each member's declared files, with `uploaded` while the group is open; `getVersion` names the group that published a version (`group_id`, absent for a single publish); a commit may leave `manifest_sha256` out (the fake opens no archive, so it then keeps the sha256 of the version's first file as the version's hash, which is also what a group publish holds whatever its commit said); it is open for 12 hours of the fake's clock (an open group past that is expired by the next request that meets it) and reopens with the next `attempt` if it ended without committing. After the commit it runs one stage per status poll, as a single publish does: `validating`, `committed`, `visible`; a file whose bytes start with `REJECT:<rejection code>` ends it `rejected` and nothing is visible. A group yank or unyank moves one stage per poll too (`yanking`, `yanked`; `unyanking`, `restored`). The fake keeps no rate counter for groups: use `/_fake/fault`. |
 
 Claims follow the fake's own rules: `mopm`, `mojo`, `max`, `modular`, `std`
 and `stdlib` are reserved, and a name is too similar to another when the two
@@ -55,13 +56,16 @@ Not part of the contract. Each is a POST with a JSON object body.
 | `/_fake/limits` | `{"project_bytes"}` | the per-package byte limit (default 10 GB), to reach `limit_exceeded` with small files |
 | `/_fake/fault` | `{"operation", "code"}` | the next request to that operationId answers that error code |
 | `/_fake/trusted` | `{"name", "repository"}` | a trusted publisher of a package, for `exchangeOidcToken` |
+| `/_fake/ci_publisher` | `{"repository"}` | a CI publisher trusted by configuration, for the `packages` form of `exchangeOidcToken` (a name nobody has claimed is created, owned by the publisher; the one token it returns may create and run a group of exactly those versions) |
 | `/_fake/tombstone` | `{"name", "version", "reason_code"}` | an administrator's takedown: no `url`, the sha256 stays |
+| `/_fake/groups` | `{"enabled"}` | group publishing on (the default) or off: off, `createGroup` answers `route_not_found`, as a registry that has not enabled groups does |
+| `/_fake/put_fault` | `{"after"}` | after that many more PUTs of upload bytes, the next one answers `unavailable` (once), as storage can fail in the middle of a group |
+| `/_fake/commit_clock` | `{"advance_seconds"}` | the clock moves forward by that much when the next group commit arrives (once), so a group can pass its deadline between the create and the commit |
 
 ## Tested how
 
-`tests/contract/replay.py` replays every valid case of `tests/contract/api`
+`//:contract_replay` (`tests/drivers/replay_test.zig`) replays every valid case of `tests/contract/api`
 for the operations above against a running fake: each recipe sets the state
 the case describes, and the live answer must have the case's status and error
-code and pass the contract checks of `validate.py`. CI runs it in the
-`contract` job. Unit tests (`zig build test`) cover the catalogue templates,
+code and pass the contract checks of `//:contract`. The farm builds it. Unit tests (`zig build test`) cover the catalogue templates,
 times, tokens, names and routing.

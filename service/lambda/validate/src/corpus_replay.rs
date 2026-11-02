@@ -1,4 +1,4 @@
-//! Phase A's validator corpus (`tests/validator_corpus`, komira-ai/mopm#88): 217 inputs and the verdict the
+//! Phase A's validator corpus (`tests/validator_corpus`, komira-ai/mopm#88): 221 inputs and the verdict the
 //! TypeScript validator gave each. The Rust validator must answer the same, for every input: same
 //! acceptance, same rule, same rejection code, same message and path, and for an accepted package the same facts.
 //! "Same" is compared as JSON values, so only meaning counts, not key order. Inputs that are wrong in two ways fix
@@ -16,8 +16,8 @@ use sha2::Digest;
 use crate::corpus_table::ARCHIVES;
 use crate::{validate_package, PublishExpectation, ValidatorOptions};
 
-const CASES: &str = include_str!("../validator_corpus_files/cases.json");
-const VERDICTS: &str = include_str!("../validator_corpus_files/verdicts.json");
+const CASES: &str = include_str!("../../../../tests/validator_corpus/cases.json");
+const VERDICTS: &str = include_str!("../../../../tests/validator_corpus/verdicts.json");
 
 fn archive(name: &str) -> &'static [u8] {
     ARCHIVES.iter().find(|(n, _)| *n == name).map(|(_, b)| *b).unwrap_or_else(|| panic!("src/corpus_table.rs lacks the line for {name}"))
@@ -63,10 +63,9 @@ fn verdicts() -> Vec<Value> {
 }
 
 fn verdict_of(c: &Value) -> Value {
-    let options = ValidatorOptions {
-        limits: limits(c),
-        allowed_native_deps: c["allow_native"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect(),
-    };
+    // `allow_native` names what the conda-forge mirror lists for the case: it matters to the TypeScript (a name the mirror lacks is a
+    // warning there), and this port neither has a mirror nor warns, so it reads nothing from it.
+    let options = ValidatorOptions { limits: limits(c) };
     validate_package(archive(c["archive"].as_str().unwrap()), &expectation(c), &options).to_json()
 }
 
@@ -77,7 +76,7 @@ fn outcome(v: &Value) -> String {
 #[test]
 fn the_corpus_is_what_the_replay_expects() {
     let cases = cases();
-    assert_eq!(cases.len(), 217, "the corpus of komira-ai/mopm#88");
+    assert_eq!(cases.len(), 221, "the corpus of komira-ai/mopm#88");
     let verdicts = verdicts();
     assert_eq!(verdicts.len(), cases.len());
     for (c, v) in cases.iter().zip(&verdicts) {
@@ -138,7 +137,7 @@ fn declared_hashes_are_compared_case_insensitively_and_a_wrong_one_is_refused() 
         let mut e = expectation(&case);
         e.sha256 = sha;
         e.manifest_sha256 = manifest_sha;
-        let o = ValidatorOptions { limits: limits(&case), allowed_native_deps: Default::default() };
+        let o = ValidatorOptions { limits: limits(&case) };
         validate_package(archive("ok_minimal.conda"), &e, &o).to_json()
     };
     assert_eq!(run(Some(archive_sha.to_uppercase()), Some(manifest.to_uppercase()))["ok"], true);

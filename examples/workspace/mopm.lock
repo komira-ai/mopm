@@ -1,0 +1,32 @@
+{
+  "lock_version": 1,
+  "toolchain": {
+    "mojo": "1.0.0"
+  },
+  "channels": [
+    "https://conda.mopm.dev/"
+  ],
+  "packages": [
+    {
+      "name": "core",
+      "version": "0.1.0",
+      "source": "path",
+      "path": "core",
+      "deps": [
+        "util"
+      ]
+    },
+    {
+      "name": "testkit",
+      "version": "0.1.0",
+      "source": "path",
+      "path": "testkit"
+    },
+    {
+      "name": "util",
+      "version": "0.1.0",
+      "source": "path",
+      "path": "util"
+    }
+  ]
+}

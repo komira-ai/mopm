@@ -1,0 +1,22 @@
+{
+  "package": {
+    "name": "greeter",
+    "version": "0.1.0",
+    "description": "Greetings, as a library",
+    "license": "Apache-2.0",
+    "repository": "https://github.com/example/greeter",
+    "readme": null
+  },
+  "toolchain": {
+    "mojo": ["1.0.0"]
+  },
+  "dependencies": [],
+  "dev-dependencies": [],
+  "native-dependencies": [],
+  "native": [],
+  "targets": {
+    "lib": {"path": "src/greeter"},
+    "bins": [],
+    "tests": ["tests"]
+  }
+}

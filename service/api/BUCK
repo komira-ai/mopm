@@ -1,80 +1,58 @@
 # The registry API package's checks, run on the farm from the pinned npm packages
-# (pins.lock.bzl, from package-lock.json by kpin) with komira's node_modules rules:
-# the same commands as service-ci.yml (`tsc --noEmit`, `jest --ci` with 2 workers) and
-# `esbuild` (package.json "build"), whose output the infra stacks deploy. No install, no
-# script, no network. See service/README.md, "Building with Buck2".
+# (buildrules.lock.bzl, from package-lock.json by `buildrules npm sync`) with buildrules'
+# npm_package: the steps are package.json's own scripts (`tsc --noEmit`, `jest --ci` with 2
+# workers and `esbuild`, whose output the infra stacks deploy). No install, no script, no
+# network. See service/README.md, "Building with Buck2".
 
-load("@komira//tools/build/node:modules.bzl", "jest_test", "node_tree_build", "node_tree_test", "npm_modules", "tsc_check")
-load(":pins.lock.bzl", "NPM")
+load(":buildrules.bzl", "npm_package")
+load("@buildrules//rules/node:modules.bzl", "node_tree_test")
+load("//vendor/buildrules_coverage:jest_cover.bzl", "jest_coverage_floor", "jest_test")
 
 _NODE = "//tools/node:node"
-
-_SRCS = glob(["src/**", "test/**"]) + [
-    "jest.config.js",
-    "package.json",
-    "tsconfig.json",
-]
-
-npm_modules(
-    name = "modules",
-    lockfile = "package-lock.json",
-    npm = NPM,
-)
-
-tsc_check(
-    name = "typecheck",
-    modules = ":modules",
-    node = _NODE,
-    srcs = _SRCS,
-)
 
 # The tests read the specification and the contract cases at their paths in the repository
 # (`../../../../spec/api/openapi.yaml`, `.../tests/contract/api`), and the validator's tests run
 # `bzip2` (test/validate/builder.ts): the pinned busybox's applet is the only command on PATH.
-jest_test(
-    name = "test",
-    data = {
-        "spec": "//:spec",
-        "tests/contract/api": "//:contract_api",
-        "tests/validator_corpus": "//:validator_corpus_files",
-    },
-    modules = ":modules",
+_TEST_DATA = {
+    "spec": "//:spec",
+    "tests/contract/api": "//:contract_api",
+    "tests/validator_corpus": "//:validator_corpus_files",
+}
+
+_TEST_TOOLS = {"bzip2": "buildrules//rules/pins:busybox"}
+
+npm_package(
+    path = ".",
     node = _NODE,
-    srcs = _SRCS,
-    tools = {"bzip2": "komira//tools/build/toolchains:busybox"},
+    exclude = ["check_dist.js"],
+    step_data = {"test": _TEST_DATA},
+    step_tools = {"test": _TEST_TOOLS},
+    visibility = ["//service/infra/stacks:", "//service/api:"],
 )
 
-# `npm run build`: the handler bundle the API stack deploys. esbuild bundles each of the three
-# handlers (api, validator, index writer) with its own dependencies into one file; the AWS SDK
-# is left out, the Lambda runtime provides it. The arguments are package.json's "build" script.
-node_tree_build(
-    name = "dist",
-    args = [
-        "src/http/lambda.ts",
-        "src/publish/validator-lambda.ts",
-        "src/publish/indexer-lambda.ts",
-        "--bundle",
-        "--platform=node",
-        "--target=node22",
-        "--format=cjs",
-        "--external:@aws-sdk/*",
-        "--outbase=src",
-        "--outdir=dist",
-        "--log-level=warning",
-    ],
-    modules = ":modules",
+# `jest --ci --coverage` over the same tree, data, tools and config as `:test`: the target is the coverage directory.
+# npm_package's `:test` is a pass marker and does not write one, so the floor reads this run instead.
+jest_test(
+    name = "coverage_run",
+    data = _TEST_DATA,
+    modules = ":node_modules",
     node = _NODE,
-    out_dir = "dist",
-    program = "node_modules/.bin/esbuild",
-    srcs = _SRCS,
-    visibility = ["//service/infra/stacks:"],
+    srcs = glob(["src/**", "test/**"]) + [
+        "jest.config.js",
+        "package.json",
+        "tsconfig.json",
+    ],
+    tools = _TEST_TOOLS,
 )
+
+# The lines and branches of the package's own code that the tests reach (jest --coverage), held to coverage_floor.txt (vendor/buildrules_coverage/README.md).
+jest_coverage_floor(coverage = ":coverage_run")
 
 # service-ci.yml's `test -f dist/http/lambda.js`.
 node_tree_test(
     name = "dist_has_handler",
     data = {"service/api/dist": ":dist"},
-    modules = ":modules",
+    modules = ":node_modules",
     node = _NODE,
     program = "check_dist.js",
     srcs = ["check_dist.js"],
@@ -84,14 +62,38 @@ node_tree_test(
 export_file(
     name = "lambda-auth-grants.json",
     src = "test/fixtures/lambda-auth-grants.json",
+    mode = "reference",
     visibility = ["//service/infra/stacks:", "//service/lambda/aws:"],
 )
+
+# The validator's size caps (src/validate/limits.ts): the site's test holds the published docs to them.
+export_file(
+    name = "limits.ts",
+    src = "src/validate/limits.ts",
+    mode = "reference",
+    visibility = ["//site:"],
+)
+
+# The sources that decide what the group docs state (test/docs-group.test.ts of the site): the values of the groups switch, the
+# group tool's flags and exit statuses, its queues, and how the validator writes the channel's files.
+[export_file(
+    name = "site_" + name,
+    src = path,
+    mode = "reference",
+    visibility = ["//site:"],
+) for name, path in {
+    "flags.ts": "src/publish/flags.ts",
+    "group-ops.ts": "src/ops/group-ops.ts",
+    "group-ops-main.ts": "src/ops/group-ops-main.ts",
+    "group-validator.ts": "src/publish/group-validator.ts",
+}.items()]
 
 # The repodata the TS index writer produced for the golden records: the Rust core
 # (service/lambda/core) must write the same bytes.
 [export_file(
     name = "repodata." + subdir + ".json",
     src = "test/fixtures/repodata." + subdir + ".json",
+    mode = "reference",
     visibility = ["//service/lambda/core:"],
 ) for subdir in ["linux-64", "osx-arm64", "noarch"]]
 
@@ -102,6 +104,32 @@ filegroup(
     srcs = {f[len("test/fixtures/wire/"):]: f for f in glob(["test/fixtures/wire/*.json"])},
     visibility = ["//service/infra/stacks:"],
 )
+
+# The inventory of the readers of version rows and their leak cases (test/group-guards.test.ts): the stacks' test checks
+# that every route the API serves is in it.
+export_file(
+    name = "group-inventory.json",
+    src = "test/fixtures/group-inventory.json",
+    mode = "reference",
+    visibility = ["//service/infra/stacks:"],
+)
+
+# The sources that name the group metrics and their namespace, and the header's sweeper keys, and the key of the conda-forge name
+# mirror: the stacks' tests hold the alarms, the sweeper's index and the mirror's permissions to the names the code writes.
+[export_file(
+    name = "src_" + name,
+    src = path,
+    mode = "reference",
+    visibility = ["//service/infra/stacks:"],
+) for name, path in {
+    "metrics.ts": "src/metrics.ts",
+    "group.ts": "src/group.ts",
+    "config.ts": "src/publish/config.ts",
+    "native-mirror.ts": "src/validate/native-mirror.ts",
+    "group-service.ts": "src/publish/group-service.ts",
+    "group-store.ts": "src/group-store.ts",
+    "group-sweeper.ts": "src/publish/group-sweeper.ts",
+}.items()]
 
 # This package's files, for //:hygiene (the repository-wide scan reads every file, and a
 # package boundary hides these from the root package's glob). A copy of the tree, staged

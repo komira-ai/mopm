@@ -1,17 +1,21 @@
-load("@komira//tools/build/platforms:defs.bzl", "komira_default_execution_platforms")
+load("@buildrules//rules:platforms.bzl", "buildrules_execution_platforms")
 
-# The execution platforms of a standalone checkout (`[build]
-# execution_platforms` in .buckconfig). With no `.buckconfig.local`, every
-# action runs on this machine. When `.buckconfig.local` names the worker
-# property sets of a remote-execution service (`[komira_re]`), every action
-# runs there instead, exactly as `komira_execution_platforms` registers it.
-# `-c komira.execution=local|remote` forces one. See DEVELOPMENT.md.
-#
-# A repository that uses komira as a cell copies this file to its own
-# platforms/BUCK (tools/build/consumer.buckconfig): only the root cell's
-# `[komira_re]` is read, so its platforms live in its root cell.
+# One platform that is linux x86_64 for both rule sets: buildrules' constraints (zig, node, rust
+# rules) and the prelude's, which komira's Mojo toolchain and AWS-LC (kept on komira) use. It is the target
+# platform of every cell (.buckconfig [parser]) and the configuration of the execution platform.
+platform(
+    name = "linux_x86_64",
+    constraint_values = [
+        "buildrules//platforms:linux",
+        "buildrules//platforms:x86_64",
+        "prelude//os/constraints:linux",
+        "prelude//cpu/constraints:x86_64",
+    ],
+    visibility = ["PUBLIC"],
+)
 
-komira_default_execution_platforms(
+buildrules_execution_platforms(
     name = "default",
+    linux_x86_64 = ":linux_x86_64",
     visibility = ["PUBLIC"],
 )

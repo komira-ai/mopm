@@ -1,4 +1,4 @@
-//! The AWS SDK for Rust, pinned in third_party/rust, does one DynamoDB GetItem against a
+//! The AWS SDK for Rust, pinned by Cargo.lock, does one DynamoDB GetItem against a
 //! fake endpoint on loopback, and every service client the registry will use is built.
 //!
 //! What it proves: the SDK's request serialization (the JSON 1.0 protocol: target header,

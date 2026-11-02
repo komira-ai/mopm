@@ -6,7 +6,7 @@ Inputs and recorded verdicts of the registry's package validator. The TypeScript
 | file | what it is |
 |---|---|
 | `archives/*.conda` | the archives. Not all are valid packages: most are wrong in one way. |
-| `cases.json` | every case: the archive, what the publisher declared (`expect`), the limits in force (`limits`, names as in `Limits` of the validator in snake case; a missing key means the default), the allow-list of native dependencies, `intent` (the rule the case was written to hit, or `ok`) and `what` (the fault, in a line) |
+| `cases.json` | every case: the archive, what the publisher declared (`expect`), the limits in force (`limits`, names as in `Limits` of the validator in snake case; a missing key means the default), `allow_native` (the native names the conda-forge name mirror lists for the case: the TypeScript warns about a name it lacks, and the cases are written so that no case warns), `intent` (the rule the case was written to hit, or `ok`) and `what` (the fault, in a line) |
 | `verdicts.json` | what the TypeScript validator answered for each case, in order: `{ok: true, facts}` or `{ok: false, rejection_code, rule, message, path?}` |
 
 ## Provenance

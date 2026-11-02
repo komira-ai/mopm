@@ -57,5 +57,19 @@
       ],
       "returns": false
     }
+  },
+  {
+    "adapter": "flags",
+    "method": "groupsFor",
+    "args": ["u:1"],
+    "replies": [{"body": {"Item": {"key": "groups_enabled", "mode": "allow", "actors": ["u:1"]}}}],
+    "expect": {"requests":[{"target":"GetItem","body":{"ConsistentRead":true,"Key":{"key":{"S":"groups_enabled"}},"TableName":"mopm-beta-config"}}],"returns":true}
+  },
+  {
+    "adapter": "flags",
+    "method": "groupsFor",
+    "args": ["u:1"],
+    "replies": [{"body": {}}],
+    "expect": {"requests":[{"target":"GetItem","body":{"ConsistentRead":true,"Key":{"key":{"S":"groups_enabled"}},"TableName":"mopm-beta-config"}}],"returns":false}
   }
 ]

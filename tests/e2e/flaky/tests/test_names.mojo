@@ -1,4 +1,4 @@
-"""Fixtures of the filter end-to-end test (tests/e2e/test_flaky.sh): names
+"""Fixtures of the filter end-to-end test (tests/drivers/test_flaky_test.zig): names
 that the patterns select or leave out. Every test passes."""
 
 

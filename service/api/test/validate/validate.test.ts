@@ -5,7 +5,7 @@ import fc from 'fast-check';
 import { DEFAULT_LIMITS } from '../../src/validate/limits';
 import { validatePackage, RULE_TO_REJECTION } from '../../src/validate';
 import type { PublishExpectation, RejectionCode, RuleCode, ValidatorOptions, Verdict } from '../../src/validate';
-import { METADATA_SCHEMA_VERSION, NATIVE_KINDS, NATIVE_MODES, SONAME_PATTERN } from '../../src/validate/metadata';
+import { METADATA_SCHEMA_VERSION, NATIVE_KINDS, NATIVE_MODES, SONAME_PATTERN, EXCLUSIVE_PATTERN } from '../../src/validate/metadata';
 import { buildConda, buildTarBz2, bzip2, tar, zip, zst, zstdRleBomb } from './builder';
 import type { Built, Spec } from './builder';
 
@@ -85,10 +85,18 @@ describe('a valid package', () => {
     expect(check(b).ok).toBe(true);
   });
 
-  test('an allow-listed native dependency in depends is accepted, and refused when the list is empty', () => {
+  test('an exclusive group is accepted as exact text: case and inner spaces are part of the name', () => {
+    const b = buildConda({
+      mopm: { native: [{ id: 'bar', soname: 'libbar.so', file: '../libbar.so', exclusive: 'Lib crypto' }] },
+      pkgExtra: [{ path: 'lib/libbar.so', data: 'x' }],
+    });
+    expect(check(b).ok).toBe(true);
+  });
+
+  test('a native dependency in depends is accepted whether or not the mirror lists it (test/validate/native-any.test.ts has the warnings)', () => {
     const b = buildConda({ index: { depends: ['mojo-compiler ==1.0.0', 'openssl >=3'] } });
-    expect(check(b, {}, { allowedNativeDeps: new Set(['openssl']) }).ok).toBe(true);
-    refused(check(b), 'dependency_not_allowed');
+    expect(check(b, {}, { nativeMirror: { names: new Set(['openssl']), generatedAt: new Date() } }).ok).toBe(true);
+    expect(check(b).ok).toBe(true);
   });
 
   test('a .tar.bz2 is accepted only when the formats allow it', () => {
@@ -311,6 +319,14 @@ describe('layout allow-list', () => {
     refusedBuild(over, rule);
   });
 
+  test('a program shipped as source is allowed below lib/mojo/<name>.bins, and only a plain <bin>.mojo file', () => {
+    expect(check(buildConda({ pkgExtra: [{ path: 'lib/mojo/demo.bins/agg_bench.mojo', data: 'def main(): pass' }] })).ok).toBe(true);
+    expect(check(buildConda({ pkgExtra: [{ path: 'lib/mojo/demo.bins', type: '5' }, { path: 'lib/mojo/demo.bins/a1.mojo', data: 'x' }] })).ok).toBe(true);
+    for (const path of ['lib/mojo/demo.bins/Bench.mojo', 'lib/mojo/demo.bins/a-b.mojo', 'lib/mojo/demo.bins/a.py', 'lib/mojo/demo.bins/sub/a.mojo', 'lib/mojo/other.bins/a.mojo']) {
+      refusedBuild({ pkgExtra: [{ path, data: 'x' }] }, 'layout_not_allowed');
+    }
+    refusedBuild({ pkgExtra: [{ path: 'lib/mojo/other.bins', type: '5' }] }, 'layout_not_allowed');
+  });
   test('a directory outside the layout', () => {
     refusedBuild({ pkgExtra: [{ path: 'share', type: '5' }] }, 'layout_not_allowed');
   });
@@ -369,6 +385,15 @@ describe('metadata consistency', () => {
     ['a bad kind', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', kind: 'weird', file: '../libfoo.so' }] }],
     ['a bad mode', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', mode: 'x', file: '../libfoo.so' }] }],
     ['needs that is not strings', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', needs: [1] }] }],
+    ['an exclusive group that is not a string', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: 1 }] }],
+    ['an empty exclusive group', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: '' }] }],
+    ['an exclusive group with a leading space', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: ' libx' }] }],
+    ['an exclusive group with a trailing space', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: 'libx ' }] }],
+    ['an exclusive group with a trailing newline', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: 'libx\n' }] }],
+    ['an exclusive group with a control character inside', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: 'lib\u0001x' }] }],
+    ['an exclusive group with DEL inside', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: 'lib\u007fx' }] }],
+    ['an exclusive group with a tab inside', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: 'lib\tx' }] }],
+    ['an exclusive group that is only a space', { schema: 1, name: 'demo', native: [{ id: 'a', soname: 'libfoo.so', file: '../libfoo.so', exclusive: ' ' }] }],
   ];
   test.each(bad)('schema: %s', (_n, mopm) => {
     refusedBuild({ mopm: JSON.stringify(mopm) }, 'manifest_schema');
@@ -406,8 +431,8 @@ describe('metadata consistency', () => {
     refusedBuild({ index: { depends: ['mojo-compiler >=1.0.0'] } }, 'compiler_mismatch');
     refusedBuild({ index: { depends: ['mojo-compiler ==1.0.0', 'mojo-compiler ==1.0.0'] } }, 'compiler_mismatch');
   });
-  test('depends are mojo packages, the compiler and allow-listed libraries, and match the metadata deps', () => {
-    refusedBuild({ index: { depends: ['mojo-compiler ==1.0.0', 'python >=3'] } }, 'dependency_not_allowed');
+  test('depends are mojo packages, the compiler and well-formed conda requirements, and match the metadata deps', () => {
+    refusedBuild({ index: { depends: ['mojo-compiler ==1.0.0', 'Python >=3'] } }, 'dependency_not_allowed');
     refusedBuild({ index: { depends: ['mojo-compiler ==1.0.0', 'mojo-'] } }, 'dependency_not_allowed');
     refusedBuild({ index: { depends: ['mojo-compiler ==1.0.0', 'mojo-json'] } }, 'deps_mismatch');
     refusedBuild({ mopm: { deps: [{ name: 'json' }] } }, 'deps_mismatch');
@@ -495,7 +520,10 @@ describe('the verdict codes are the contract', () => {
     expect(native.properties.kind.enum).toEqual([...NATIVE_KINDS]);
     expect(native.properties.mode.enum).toEqual([...NATIVE_MODES]);
     expect(new RegExp(native.properties.soname.pattern).source).toBe(SONAME_PATTERN.source);
-    expect(Object.keys(native.properties).sort()).toEqual(['file', 'id', 'kind', 'mode', 'needs', 'soname', 'static_file']);
+    expect(Object.keys(native.properties).sort()).toEqual(['exclusive', 'file', 'id', 'kind', 'mode', 'needs', 'soname', 'static_file']);
+    expect(native.properties.exclusive.type).toBe('string');
+    expect(native.properties.exclusive.minLength).toBe(1);
+    expect(new RegExp(native.properties.exclusive.pattern).source).toBe(EXCLUSIVE_PATTERN.source);
     expect(Object.keys(schema.properties).sort()).toEqual(['deps', 'name', 'native', 'schema', 'version']);
   });
 });

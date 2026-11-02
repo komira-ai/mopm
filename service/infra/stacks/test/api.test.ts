@@ -1,10 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { App } from 'aws-cdk-lib';
-import { Match } from 'aws-cdk-lib/assertions';
-import { ApiStack, AUTH_GRANTS, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
+import { Match, Template } from 'aws-cdk-lib/assertions';
+import { API_GATEWAY_INTEGRATION_SECONDS, API_LAMBDA_TIMEOUT_SECONDS, ApiStack, AUTH_GRANTS, BETA_CI_PUBLISHERS, BETA_GROUPS_POLICY, PROD_CI_PUBLISHERS, CI_PUBLISHERS_ENV, GROUPS_POLICY_ENV, CLAIM_ROUTES, INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE, INDEX_THROTTLE, AUTH_ROUTES, PUBLISH_ROUTES, READ_ACTIONS, READ_INDEXES, READ_ROUTES, READ_TABLES, WRITE_GRANTS } from '../lib/api-stack';
 import { STAGES, stageConfig, tableName } from '../lib/config';
-import { DUMMY_ACCOUNT, tpl } from './util';
+import { DUMMY_ACCOUNT, HANDLER_STUB_DIR, tpl } from './util';
 
 const acts = (s: any): string[] => ([] as string[]).concat(s.Action);
 const flat = (v: any): string => (typeof v === 'string' ? v : JSON.stringify(v));
@@ -51,8 +51,14 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
   const { api: t } = tpl(stage);
   const host = stage === 'prod' ? 'api.mopm.dev' : `api.${stage}.mopm.dev`;
 
-  test('exactly one Node.js Lambda, from the built bundle, configured for its stage', () => {
-    t.resourceCountIs('AWS::Lambda::Function', 1);
+  test('two Node.js Lambdas, the API and the index reader, from the built bundle, configured for their stage', () => {
+    t.resourceCountIs('AWS::Lambda::Function', 2);
+    t.hasResourceProperties('AWS::Lambda::Function', {
+      Runtime: 'nodejs22.x',
+      Handler: 'http/index-lambda.handler',
+      Code: { S3Bucket: Match.anyValue(), S3Key: Match.stringLikeRegexp('\\.zip$') },
+      Environment: { Variables: { MOPM_STAGE: stage, MOPM_CHANNEL_BUCKET: `mopm-${stage}-channel-${DUMMY_ACCOUNT}` } },
+    });
     t.hasResourceProperties('AWS::Lambda::Function', {
       Runtime: 'nodejs22.x',
       Handler: 'http/lambda.handler',
@@ -63,6 +69,32 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     });
   });
 
+  test('the API Lambda times out under the gateway, and a group create stops reserving well before the Lambda does', () => {
+    // The HTTP API ends a call at its integration timeout and answers a Lambda that timed out with a bare HTTP 500 (no body of the
+    // registry's, so a client cannot tell it from a crash). The Lambda must end first, and the create's budget plus its tail must fit.
+    const fns = Object.values(t.findResources('AWS::Lambda::Function')) as any[];
+    const api = fns.find((f) => f.Properties.Handler === 'http/lambda.handler');
+    const timeoutMs = api.Properties.Timeout * 1000;
+    expect(timeoutMs).toBe(API_LAMBDA_TIMEOUT_SECONDS * 1000);
+    expect(timeoutMs).toBeLessThan(API_GATEWAY_INTEGRATION_SECONDS * 1000);
+    expect(api.Properties.MemorySize).toBeGreaterThanOrEqual(1024);
+    // No integration sets a longer wait than the 30 s the constant names (an absent one is the default, 30 s).
+    for (const i of Object.values(t.findResources('AWS::ApiGatewayV2::Integration')) as any[]) {
+      expect(i.Properties.TimeoutInMillis ?? API_GATEWAY_INTEGRATION_SECONDS * 1000).toBeLessThanOrEqual(API_GATEWAY_INTEGRATION_SECONDS * 1000);
+    }
+    // The budget the handler may be given (its default, and the largest the environment may set) is read from the source.
+    const src = fs.readFileSync(path.resolve(__dirname, '../../../api/src/publish/config.ts'), 'utf8');
+    const dflt = Number(/groupCreateBudgetMs: (\d[\d_]*),/.exec(src)![1]!.replace(/_/g, ''));
+    const max = Number(/GROUP_CREATE_BUDGET_MAX_MS = (\d[\d_]*);/.exec(src)![1]!.replace(/_/g, ''));
+    expect(dflt).toBeLessThanOrEqual(max);
+    // One member's worst case after the budget is looked at: a batch of sixteen runs at once, so it takes one reservation, one
+    // checkpoint and the two reads of a member's file, each at the slowest a store or S3 call is allowed to be.
+    const SLOW_CALL_MS = 1000;
+    const memberWorstMs = 4 * SLOW_CALL_MS;
+    expect(max + memberWorstMs).toBeLessThan(timeoutMs);
+    expect(dflt + memberWorstMs).toBeLessThan(timeoutMs);
+  });
+
   test('HTTP API serves the read, publish and auth operations, with the default endpoint disabled', () => {
     t.hasResourceProperties('AWS::ApiGatewayV2::Api', { ProtocolType: 'HTTP', DisableExecuteApiEndpoint: true });
     const keys = Object.values(t.findResources('AWS::ApiGatewayV2::Route')).map((r: any) => r.Properties.RouteKey as string);
@@ -70,19 +102,109 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
       [
         ...READ_ROUTES.map((r) => `GET ${r}`),
         ...PUBLISH_ROUTES.map((r) => `${r.method} ${r.path}`),
+        'POST /api/v1/packages/{name}/claim',
         'POST /api/v1/auth/device',
         'POST /api/v1/auth/device/poll',
         'POST /api/v1/auth/oidc/exchange',
+        'GET /api/v1/me',
         'POST /api/v1/me/tokens',
         'GET /api/v1/me/tokens',
         'DELETE /api/v1/me/tokens/{token_id}',
+        'GET /index/config.json',
+        'GET /index/{proxy+}',
       ].sort(),
     );
-    expect(AUTH_ROUTES).toHaveLength(6);
-    expect(keys).toHaveLength(READ_ROUTES.length + PUBLISH_ROUTES.length + AUTH_ROUTES.length);
-    // Claim is not routed yet; yank (PUT) is.
-    expect(keys.some((k) => /\/claim/.test(k))).toBe(false);
+    expect(AUTH_ROUTES).toHaveLength(7);
+    expect(CLAIM_ROUTES.map((r) => `${r.method} ${r.path}`)).toEqual(['POST /api/v1/packages/{name}/claim']);
+    expect(keys).toHaveLength(READ_ROUTES.length + PUBLISH_ROUTES.length + AUTH_ROUTES.length + CLAIM_ROUTES.length + 2);
+    // Claim is POST only (a GET of `.../claim` is the version route's, which the handler refuses); yank (PUT) is routed too.
+    expect(keys.filter((k) => /\/claim/.test(k))).toEqual(['POST /api/v1/packages/{name}/claim']);
     expect(keys).toContain('PUT /api/v1/packages/{name}/{version}/yank');
+  });
+
+  // Which function answers a route: the literal config route and every /api/v1 route go to the API; the greedy index route to the reader.
+  const functionOf = (routeKey: string): string => {
+    const route: any = Object.values(t.findResources('AWS::ApiGatewayV2::Route')).find((r: any) => r.Properties.RouteKey === routeKey);
+    const target = flatten(route.Properties.Target);
+    const integration: any = (t.toJSON().Resources as any)[/"Ref":"([^"]+)"/.exec(target)![1]!];
+    const fn = flatten(integration.Properties.IntegrationUri);
+    return Object.entries(t.findResources('AWS::Lambda::Function')).find(([id]) => fn.includes(`"${id}"`))![1].Properties.Handler;
+  };
+
+  test('the index routes: the config route goes to the API function, the greedy route to the reader, neither has an authorizer', () => {
+    expect(INDEX_CONFIG_ROUTE).toBe('GET /index/config.json');
+    expect(INDEX_READER_ROUTE).toBe('GET /index/{proxy+}');
+    expect(functionOf(INDEX_CONFIG_ROUTE)).toBe('http/lambda.handler');
+    expect(functionOf(INDEX_READER_ROUTE)).toBe('http/index-lambda.handler');
+    expect(functionOf('GET /api/v1/health')).toBe('http/lambda.handler');
+    const routes = Object.values(t.findResources('AWS::ApiGatewayV2::Route')) as any[];
+    for (const r of routes.filter((x) => /\/index\//.test(x.Properties.RouteKey))) {
+      expect(r.Properties.AuthorizationType ?? 'NONE').toBe('NONE');
+      expect(r.Properties.AuthorizerId).toBeUndefined();
+    }
+    expect(t.findResources('AWS::ApiGatewayV2::Authorizer')).toEqual({});
+  });
+
+  test('the two index routes are throttled at the gateway; no function reserves concurrency', () => {
+    const stages = Object.values(t.findResources('AWS::ApiGatewayV2::Stage')) as any[];
+    expect(stages).toHaveLength(1);
+    const settings = stages[0].Properties.RouteSettings;
+    const limits = { ThrottlingRateLimit: INDEX_THROTTLE.rateLimit, ThrottlingBurstLimit: INDEX_THROTTLE.burstLimit };
+    expect(Object.keys(settings).sort()).toEqual([INDEX_CONFIG_ROUTE, INDEX_READER_ROUTE].sort());
+    expect(settings[INDEX_CONFIG_ROUTE]).toEqual(limits);
+    expect(settings[INDEX_READER_ROUTE]).toEqual(limits);
+    for (const fn of Object.values(t.findResources('AWS::Lambda::Function')) as any[]) {
+      expect(fn.Properties.ReservedConcurrentExecutions).toBeUndefined();
+    }
+  });
+
+  // The route added for `mopm whoami` (GET /api/v1/me): a stage that named it in RouteSettings before CloudFormation created it would
+  // fail the update, so no stage setting names it (the index routes are the only ones), and the route exists exactly once.
+  test('GET /api/v1/me is one gateway route to the API function and no stage RouteSettings entry names it', () => {
+    const key = 'GET /api/v1/me';
+    expect(AUTH_ROUTES.filter((r) => r.method === 'GET' && r.path === '/api/v1/me')).toHaveLength(1);
+    const routes = Object.values(t.findResources('AWS::ApiGatewayV2::Route')) as any[];
+    expect(routes.filter((r) => r.Properties.RouteKey === key)).toHaveLength(1);
+    expect(functionOf(key)).toBe('http/lambda.handler');
+    for (const stageRes of Object.values(t.findResources('AWS::ApiGatewayV2::Stage')) as any[]) {
+      expect(Object.keys(stageRes.Properties.RouteSettings ?? {})).not.toContain(key);
+      expect(JSON.stringify(stageRes.Properties)).not.toContain('/api/v1/me');
+    }
+  });
+
+  // CloudFormation rejects a stage update that names a route which does not exist yet ("Unable to find Route by key ...
+  // within the provided RouteSettings"), so the stage must wait for every route its RouteSettings name.
+  test('the stage depends on every route its RouteSettings name', () => {
+    const stages = Object.entries(t.findResources('AWS::ApiGatewayV2::Stage')) as [string, any][];
+    expect(stages.length).toBeGreaterThan(0);
+    const routes = t.findResources('AWS::ApiGatewayV2::Route');
+    let named = 0;
+    for (const [, stageRes] of stages) {
+      const dependsOn: string[] = ([] as string[]).concat(stageRes.DependsOn ?? []);
+      for (const key of Object.keys(stageRes.Properties.RouteSettings ?? {})) {
+        named++;
+        const ids = Object.entries(routes).filter(([, r]: [string, any]) => r.Properties.RouteKey === key).map(([id]) => id);
+        expect({ key, routes: ids.length }).toEqual({ key, routes: 1 });
+        expect({ key, dependsOn: dependsOn.includes(ids[0]!) }).toEqual({ key, dependsOn: true });
+      }
+    }
+    expect(named).toBeGreaterThan(0);
+  });
+
+  // The deployed stage keeps its logical id (a failed update is recovered by naming it); this is what the L2 construct
+  // path Api/DefaultStage synthesises.
+  test('the default stage keeps its logical id', () => {
+    expect(Object.keys(t.findResources('AWS::ApiGatewayV2::Stage'))).toEqual(['ApiDefaultStage189A7074']);
+  });
+
+  test('the config the API serves is built from the stage hosts it is given', () => {
+    const c = stageConfig(stage);
+    t.hasResourceProperties('AWS::Lambda::Function', {
+      Handler: 'http/lambda.handler',
+      Environment: { Variables: Match.objectLike({ MOPM_API_DOMAIN: c.apiDomain, MOPM_CHANNEL_DOMAIN: c.condaDomain }) },
+    });
+    expect(c.apiDomain).toBe(host);
+    expect(c.condaDomain).toBe(stage === 'prod' ? 'conda.mopm.dev' : `conda.${stage}.mopm.dev`);
   });
 
   test('the handler is told where uploads go and where commits are queued, by name', () => {
@@ -118,6 +240,7 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
   test('writes: exactly the reviewed grants, table by table', () => {
     expect(WRITE_GRANTS.map((g) => [g.sid, g.actions, g.tables])).toEqual([
       ['ReserveVersions', ['dynamodb:PutItem'], ['versions', 'audit']],
+      ['ClaimPackages', ['dynamodb:PutItem'], ['packages', 'owners']],
       ['RecordUploadsAndPublishes', ['dynamodb:GetItem', 'dynamodb:PutItem'], ['uploads', 'publishes']],
       ['ReadSwitches', ['dynamodb:GetItem'], ['config']],
     ]);
@@ -185,15 +308,97 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
     expect(policyViolations(stage, statements())).toEqual([]);
   });
 
-  // Can-fail proof: the checker above flags each planted defect, so a clean result means something.
-  test('the policy checker goes red on planted defects', () => {
+  // Config-as-code trust is beta's alone: the variable that names the trusted CI identity exists on the beta template and on
+  // no other. Creating a package is the one PutItem on packages every stage has (ClaimPackages), for the claim route and the CI
+  // exchange alike: there is no CI-only grant.
+  test(stage === 'beta' ? 'beta: CI_PUBLISHERS names exactly the komira release workflow on main in the beta environment, and package creation has the one shared grant' : `${stage}: no function has CI_PUBLISHERS`, () => {
+    const fns = Object.values(t.findResources('AWS::Lambda::Function')) as any[];
+    const values = fns.map((f) => f.Properties.Environment?.Variables?.[CI_PUBLISHERS_ENV]).filter((v) => v !== undefined);
+    const creators = statements().filter(
+      (s) => s.Effect === 'Allow' && acts(s).includes('dynamodb:PutItem') && flatten(s.Resource).includes(`table/${tableName(stage, 'packages')}"`),
+    );
+    expect(creators.map((s) => s.Sid)).toEqual(['ClaimPackages']); // one grant on every stage, none named for CI
+    if (stage === 'beta') {
+      expect(values).toHaveLength(1); // the API function; the index reader has none
+      expect(JSON.parse(values[0])).toEqual([
+        {
+          repository_id: '1376408823',
+          repository_owner_id: '305577347',
+          workflow: '.github/workflows/release.yml',
+          ref: 'refs/heads/main',
+          job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
+          events: ['push'],
+          environment: 'beta',
+        },
+      ]);
+      expect(JSON.parse(values[0])).toEqual(BETA_CI_PUBLISHERS);
+      expect(acts(creators[0])).toEqual(['dynamodb:PutItem']);
+    } else if (stage === 'prod') {
+      // Prod trusts the same workflow only as an identity that ACTS FOR the owner account: its environment is prod, the row carries
+      // acts_for, and nothing else about the claim pins is looser than beta's.
+      expect(values).toHaveLength(1);
+      expect(JSON.parse(values[0])).toEqual([
+        {
+          repository_id: '1376408823',
+          repository_owner_id: '305577347',
+          workflow: '.github/workflows/release.yml',
+          ref: 'refs/heads/main',
+          job_workflow_ref: 'komira-ai/komira/.github/workflows/release.yml@refs/heads/main',
+          events: ['push'],
+          environment: 'prod',
+          acts_for: '15257031',
+        },
+      ]);
+      expect(JSON.parse(values[0])).toEqual(PROD_CI_PUBLISHERS);
+      expect(acts(creators[0])).toEqual(['dynamodb:PutItem']);
+    } else {
+      expect(values).toEqual([]);
+      // not even as a literal in the template
+      expect(JSON.stringify(t.toJSON())).not.toContain(CI_PUBLISHERS_ENV);
+      expect(JSON.stringify(t.toJSON())).not.toContain('1376408823');
+    }
+  });
+
+  // The handler's loader refuses a prod row that does not act for an account (and any row off beta and prod), which stops the function
+  // from starting: every row a template carries on prod names an account, and beta's rows name none.
+  test(stage === 'gamma' ? 'gamma: no CI row at all' : `${stage}: every CI row ${stage === 'prod' ? 'acts for the account' : 'acts for no account'}`, () => {
+    const fns = Object.values(t.findResources('AWS::Lambda::Function')) as any[];
+    const values = fns.map((f) => f.Properties.Environment?.Variables?.[CI_PUBLISHERS_ENV]).filter((v) => v !== undefined);
+    const rows = values.flatMap((v) => JSON.parse(v) as Array<{ acts_for?: string }>);
+    if (stage === 'gamma') expect(rows).toEqual([]);
+    else if (stage === 'prod') expect(rows.map((r) => r.acts_for)).toEqual(['15257031']);
+    else expect(rows.map((r) => r.acts_for)).toEqual([undefined]);
+  });
+
+  // The groups policy is beta's alone too: the variable exists on the beta template, names exactly the CI actor of the trusted
+  // publisher (never mode all, never an account), and no other stage's template carries it, as a name or as a value.
+  test(stage === 'beta' ? 'beta: MOPM_GROUPS_POLICY allows exactly the trusted CI identity as an actor' : `${stage}: no function has MOPM_GROUPS_POLICY`, () => {
+    const fns = Object.values(t.findResources('AWS::Lambda::Function')) as any[];
+    const values = fns.map((f) => f.Properties.Environment?.Variables?.[GROUPS_POLICY_ENV]).filter((v) => v !== undefined);
+    if (stage === 'beta') {
+      expect(values).toHaveLength(1); // the API function; the index reader has none
+      expect(JSON.parse(values[0])).toEqual({ mode: 'allow', actors: ['ci:gh-repo:1376408823'] });
+      expect(JSON.parse(values[0])).toEqual(BETA_GROUPS_POLICY);
+      expect(BETA_GROUPS_POLICY.actors).toEqual(BETA_CI_PUBLISHERS.map((p) => `ci:gh-repo:${p.repository_id}`));
+    } else {
+      expect(values).toEqual([]);
+      expect(JSON.stringify(t.toJSON())).not.toContain(GROUPS_POLICY_ENV);
+      expect(JSON.stringify(t.toJSON())).not.toContain('ci:gh-repo:');
+    }
+  });
+
+  // Can-fail proof: the checker above flags each known defect, so a clean result means something.
+  test('the policy checker goes red on known defects', () => {
     const base = statements();
     const withExtra = (extra: any) => [...base, { Effect: 'Allow', ...extra }];
     const tbl = (name: string) => `arn:aws:dynamodb:us-east-1:${DUMMY_ACCOUNT}:table/${tableName(stage, name)}`;
-    const mutants: Record<string, any[]> = {
+    const variants: Record<string, any[]> = {
       'DeleteItem on tokens': withExtra({ Action: 'dynamodb:DeleteItem', Resource: tbl('tokens') }),
       'Scan on users': withExtra({ Action: 'dynamodb:Scan', Resource: tbl('users') }),
-      'PutItem on packages (registry write)': withExtra({ Action: 'dynamodb:PutItem', Resource: tbl('packages') }),
+      // The claim grants PutItem on packages and owners (WRITE_GRANTS); any other write there is still a violation.
+      'UpdateItem on packages (registry write)': withExtra({ Action: 'dynamodb:UpdateItem', Resource: tbl('packages') }),
+      'DeleteItem on owners': withExtra({ Action: 'dynamodb:DeleteItem', Resource: tbl('owners') }),
+      'PutItem on trusted_publishers (no route registers one)': withExtra({ Action: 'dynamodb:PutItem', Resource: tbl('trusted_publishers') }),
       'UpdateItem on audit': withExtra({ Action: 'dynamodb:UpdateItem', Resource: tbl('audit') }),
       'wildcard dynamodb action': withExtra({ Action: 'dynamodb:*', Resource: tbl('tokens') }),
       'a table that is in no list': withExtra({ Action: 'dynamodb:GetItem', Resource: tbl('reserved_names') }),
@@ -203,28 +408,73 @@ describe.each(STAGES)('ApiStack %s', (stage) => {
       'secret write': withExtra({ Action: 'secretsmanager:PutSecretValue', Resource: `arn:aws:secretsmanager:us-east-1:${DUMMY_ACCOUNT}:secret:mopm/${stage}/github-oauth-??????` }),
     };
     expect(policyViolations(stage, base)).toEqual([]);
-    for (const [name, st] of Object.entries(mutants)) {
+    for (const [name, st] of Object.entries(variants)) {
       expect({ name, caught: policyViolations(stage, st).length > 0 }).toEqual({ name, caught: true });
     }
   });
 
-  test('S3 and SQS are reachable only where publishing needs them: quarantine/ and the validate queue', () => {
-    const s3 = statements().filter((s) => acts(s).some((a) => a.startsWith('s3:')));
+  test('the reader role: GetObject on index/* and ListBucket only with the prefix index/*, exactly, no wildcard', () => {
+    const bucket = `mopm-${stage}-channel-${DUMMY_ACCOUNT}`;
+    const read = statements().find((s) => s.Sid === 'ReadIndexObjects');
+    const list = statements().find((s) => s.Sid === 'ListIndexPrefix');
+    expect(read).toBeDefined();
+    expect(list).toBeDefined();
+    expect(read.Effect).toBe('Allow');
+    expect(acts(read)).toEqual(['s3:GetObject']);
+    expect(read.Resource).toBe(`arn:aws:s3:::${bucket}/index/*`);
+    expect(read.Condition).toBeUndefined();
+    expect(list.Effect).toBe('Allow');
+    expect(acts(list)).toEqual(['s3:ListBucket']);
+    expect(list.Resource).toBe(`arn:aws:s3:::${bucket}`);
+    expect(list.Condition).toEqual({ StringLike: { 's3:prefix': 'index/*' } });
+    // Nothing else is granted to the reader's role: its policy holds these two statements and no more.
+    const policies = Object.values(t.findResources('AWS::IAM::Policy')) as any[];
+    const mine = policies.filter((p) => p.Properties.PolicyDocument.Statement.some((x: any) => x.Sid === 'ReadIndexObjects'));
+    expect(mine).toHaveLength(1);
+    expect(mine[0].Properties.PolicyDocument.Statement.map((x: any) => x.Sid).sort()).toEqual(['ListIndexPrefix', 'ReadIndexObjects']);
+    for (const st of [read, list]) {
+      expect(acts(st).filter((a) => a === '*' || a.endsWith('*'))).toEqual([]);
+      expect(([] as any[]).concat(st.Resource)).not.toContain('*');
+    }
+  });
+
+
+  test('S3 and SQS are reachable only where publishing needs them: quarantine/ and the validate, group and index queues', () => {
+    const s3 = statements().filter((s) => acts(s).some((a) => a.startsWith('s3:')) && s.Sid === 'UploadToQuarantine');
     expect(s3).toHaveLength(1);
     expect(acts(s3[0]).sort()).toEqual(['s3:GetObject', 's3:PutObject']);
     expect(flatten(s3[0].Resource)).toContain('/quarantine/*');
     expect(flatten(s3[0].Resource)).toContain(`mopm-${stage}-channel-${DUMMY_ACCOUNT}`);
     const q = statements().filter((s) => acts(s).some((a) => a.startsWith('sqs:')));
-    // Two statements, send-only: the validate queue (publish) and the index queue (yank and unyank rebuild repodata).
-    expect(q).toHaveLength(2);
+    // Three statements, send-only: the validate queue (publish), the group queue (a group's commit) and the index queue (yank and unyank rebuild repodata).
+    expect(q).toHaveLength(3);
     for (const st of q) expect(acts(st)).toEqual(['sqs:SendMessage']);
     const validate = q.find((st) => st.Sid === 'QueueCommits') ?? q[0];
+    const group = q.find((st) => st.Sid === 'QueueGroupCommits');
     const index = q.find((st) => st.Sid === 'QueueIndexRebuilds');
     expect(index).toBeDefined();
+    expect(group).toBeDefined();
     expect(flatten(validate.Resource)).toContain(`mopm-${stage}-validate.fifo`);
     expect(flatten(validate.Resource)).not.toContain('index');
+    expect(flatten(validate.Resource)).not.toContain('group');
+    expect(flatten(group.Resource)).toContain(`mopm-${stage}-group.fifo`);
+    expect(flatten(group.Resource)).not.toContain('validate');
     expect(flatten(index.Resource)).toContain(`mopm-${stage}-index.fifo`);
     expect(flatten(index.Resource)).not.toContain('validate');
+    expect(flatten(index.Resource)).not.toContain('group');
+  });
+
+  test('the handler is told the group queue by name (the commit of a group queues its validation there), and the commit route is deployed', () => {
+    t.hasResourceProperties('AWS::Lambda::Function', {
+      Handler: 'http/lambda.handler',
+      Environment: { Variables: Match.objectLike({ MOPM_GROUP_QUEUE_URL: Match.anyValue() }) },
+    });
+    const env = (Object.values(t.findResources('AWS::Lambda::Function')) as any[]).find((f) => f.Properties.Handler === 'http/lambda.handler').Properties.Environment.Variables;
+    expect(flatten(env.MOPM_GROUP_QUEUE_URL)).toContain(`mopm-${stage}-group.fifo`);
+    expect(PUBLISH_ROUTES.map((r) => `${r.method} ${r.path}`)).toContain('POST /api/v1/groups/{group_id}/commit');
+    t.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: 'POST /api/v1/groups/{group_id}/commit' });
+    expect(PUBLISH_ROUTES.map((r) => `${r.method} ${r.path}`)).toContain('PUT /api/v1/groups/{group_id}/yank');
+    t.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: 'PUT /api/v1/groups/{group_id}/yank' });
   });
 
   test('custom domain with a DNS-validated certificate', () => {
@@ -268,6 +518,39 @@ test('a missing handler bundle stops the synth with the fix in the message', () 
         handlerDir: '/nonexistent/handler',
       }),
   ).toThrow(/npm run build/);
+});
+
+describe('the daily limits a stage may tune', () => {
+  const handlerEnv = (limits?: ConstructorParameters<typeof ApiStack>[2]['limits']) => {
+    const stack = new ApiStack(new App(), 'x', {
+      env: { account: DUMMY_ACCOUNT, region: 'us-east-1' },
+      config: stageConfig('beta', 'Z0DUMMYZONE'),
+      version: 'v',
+      commit: 'c',
+      handlerDir: HANDLER_STUB_DIR,
+      limits,
+    });
+    const fns = Object.values(Template.fromStack(stack).findResources('AWS::Lambda::Function')) as any[];
+    return fns.find((f) => f.Properties.Handler === 'http/lambda.handler').Properties.Environment.Variables;
+  };
+
+  test('the claim counters reach the handler as the environment variables the service reads, and are absent when not set', () => {
+    const env = handlerEnv({ claimRatePerAccountPerDay: 12, claimRatePerTokenPerDay: 3 });
+    expect(env.MOPM_CLAIM_RATE_PER_ACCOUNT_DAY).toBe('12');
+    expect(env.MOPM_CLAIM_RATE_PER_TOKEN_DAY).toBe('3');
+    const none = handlerEnv();
+    expect(none.MOPM_CLAIM_RATE_PER_ACCOUNT_DAY).toBeUndefined();
+    expect(none.MOPM_CLAIM_RATE_PER_TOKEN_DAY).toBeUndefined();
+  });
+
+  test('the group counters reach the handler as the environment variables the service reads, and are absent when not set', () => {
+    const env = handlerEnv({ groupRatePerAccountPerDay: 123, groupRatePerTokenPerDay: 45 });
+    expect(env.MOPM_GROUP_RATE_PER_ACCOUNT_DAY).toBe('123');
+    expect(env.MOPM_GROUP_RATE_PER_TOKEN_DAY).toBe('45');
+    const none = handlerEnv();
+    expect(none.MOPM_GROUP_RATE_PER_ACCOUNT_DAY).toBeUndefined();
+    expect(none.MOPM_GROUP_RATE_PER_TOKEN_DAY).toBeUndefined();
+  });
 });
 
 // The adapter tests in service/api run under exactly these grants (test/fixtures/lambda-auth-grants.json, enforced by

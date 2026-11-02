@@ -4,12 +4,13 @@
 //! held to what the real one does.
 
 use mopm_core::error::ErrorCode;
+use mopm_core::repodata::build_repodata_json;
 use mopm_core::state::VersionEvent;
-use mopm_core::types::{FileRef, OwnerRecord, PackageRecord, PackageState, VersionState};
+use mopm_core::types::{FileRef, OwnerRecord, PackageRecord, PackageState, VersionRecord, VersionState};
 use mopm_ports::error::PortResult;
 use mopm_ports::store::Store;
 
-use crate::records::{audit, rec, with_state};
+use crate::records::{audit, group_row, rec, with_state};
 
 /// The domain error code of a failed call; a fault, or a success, fails the scenario.
 pub fn code_of<T: std::fmt::Debug>(r: PortResult<T>) -> ErrorCode {
@@ -226,6 +227,66 @@ pub async fn a_yank_racing_a_takedown_ends_tombstoned<S: Store>(s: S) {
     assert_eq!(s.get_version("p", "1.0.0").await.unwrap().unwrap().state, VersionState::Tombstoned);
 }
 
+// ---- rows that belong to a group publish ---------------------------------------------------------
+//
+// A group member is a `pending` row tagged with its group and, once staged, stamped with an attempt. The Rust port has
+// no group header, so it can never tell that a group committed: it hides every such row and lets nothing but the
+// group's own steps (not ported yet) publish one.
+
+pub async fn a_single_publish_cannot_publish_a_group_row_and_changes_nothing<S: Store>(s: S) {
+    for (v, stamp) in [("1.0.0", None), ("1.1.0", Some(1))] {
+        s.create_version(&group_row(rec("p", v), "g1", stamp), &audit("p", "reserve", Some(v))).await.unwrap();
+        let err = s.update_version("p", v, &VersionEvent::Publish(None), &audit("p", "publish", Some(v))).await.unwrap_err();
+        let e = err.registry().expect("a domain error");
+        assert_eq!((e.code, e.status()), (ErrorCode::InvalidTransition, 409), "{v}");
+        let row = s.get_version("p", v).await.unwrap().unwrap();
+        assert_eq!((row.state, row.rev, row.group_id.as_deref(), row.staged_attempt), (VersionState::Pending, 0, Some("g1"), stamp), "{v}");
+    }
+    assert_eq!(s.list_audit("p").await.unwrap().len(), 2, "only the two reservations: a refused publish wrote nothing");
+}
+
+pub async fn a_single_reserve_cannot_take_a_number_a_group_holds<S: Store>(s: S) {
+    s.create_version(&group_row(rec("p", "1.0.0"), "g1", Some(1)), &audit("p", "reserve", None)).await.unwrap();
+    assert_eq!(code_of(s.create_version(&with_state(rec("p", "1.0.0"), VersionState::Pending), &audit("p", "begin", None)).await), ErrorCode::VersionExists);
+    let row = s.get_version("p", "1.0.0").await.unwrap().unwrap();
+    assert_eq!((row.group_id.as_deref(), row.staged_attempt), (Some("g1"), Some(1)), "the group's row stands");
+    assert_eq!(s.list_audit("p").await.unwrap().len(), 1);
+}
+
+pub async fn a_row_a_group_flipped_keeps_its_group_fields_through_yank_and_unyank<S: Store>(s: S) {
+    let flipped = VersionRecord { state: VersionState::Published, ..group_row(rec("p", "1.0.0"), "g1", Some(3)) };
+    s.create_version(&flipped, &audit("p", "flip", None)).await.unwrap();
+    s.update_version("p", "1.0.0", &VersionEvent::Yank { reason: "bad".to_string() }, &audit("p", "yank", None)).await.unwrap();
+    let u = s.update_version("p", "1.0.0", &VersionEvent::Unyank, &audit("p", "unyank", None)).await.unwrap();
+    for row in [u, s.get_version("p", "1.0.0").await.unwrap().unwrap()] {
+        assert_eq!((row.state, row.rev, row.group_id.as_deref(), row.staged_attempt), (VersionState::Published, 2, Some("g1"), Some(3)));
+    }
+}
+
+/// The leak case of the Rust read path: a package with one published version and a group's members in each way of
+/// not being shown. Only the published version reaches a listing's `published` set and the channel index.
+pub async fn group_rows_that_are_not_flipped_are_pending_in_the_store_and_absent_from_the_index<S: Store>(s: S) {
+    s.create_version(&rec("p", "1.0.0"), &audit("p", "publish", None)).await.unwrap();
+    let members = [("2.0.0", Some(2)), ("2.1.0", None), ("2.2.0", Some(1))];
+    for (v, stamp) in members {
+        s.create_version(&group_row(rec("p", v), "g1", stamp), &audit("p", "reserve", Some(v))).await.unwrap();
+    }
+    let all = s.list_versions("p").await.unwrap();
+    assert_eq!(all.len(), 4);
+    let shown: Vec<&str> = all.iter().filter(|r| r.state != VersionState::Pending).map(|r| r.version.as_str()).collect();
+    assert_eq!(shown, ["1.0.0"]);
+    for (v, stamp) in members {
+        let row = s.get_version("p", v).await.unwrap().unwrap();
+        assert_eq!((row.state, row.group_id.as_deref(), row.staged_attempt), (VersionState::Pending, Some("g1"), stamp), "{v}");
+    }
+    let only_published = build_repodata_json("linux-64", &[rec("p", "1.0.0")]).unwrap();
+    let index = build_repodata_json("linux-64", &all).unwrap();
+    assert_eq!(index, only_published);
+    for (v, _) in members {
+        assert!(!index.contains(&format!("-{v}-")), "{v} is in the index");
+    }
+}
+
 /// Every scenario, by name, for the macro that runs them.
 #[macro_export]
 macro_rules! store_contract_tests {
@@ -248,6 +309,10 @@ macro_rules! store_contract_tests {
             six_concurrent_creates_of_one_version_have_one_winner,
             two_concurrent_yanks_end_yanked_with_one_change_recorded,
             a_yank_racing_a_takedown_ends_tombstoned,
+            a_single_publish_cannot_publish_a_group_row_and_changes_nothing,
+            a_single_reserve_cannot_take_a_number_a_group_holds,
+            a_row_a_group_flipped_keeps_its_group_fields_through_yank_and_unyank,
+            group_rows_that_are_not_flipped_are_pending_in_the_store_and_absent_from_the_index,
         ]);
     };
 }

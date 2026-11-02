@@ -3,10 +3,12 @@ import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { Authenticator, authTablesFor, DynamoAuthStore } from '../auth';
 import { DynamoStore, tablesFor } from '../dynamo-store';
 import { S3Channel, S3Presigner, SqsFifoQueue } from './aws';
+import { ClaimService } from './claim';
 import { publishConfigFromEnv } from './config';
 import { DynamoPublishStore, publishTablesFor } from './dynamo-publish-store';
-import { AnyFlag, DynamoFlags, StaticFlags } from './flags';
+import { AnyFlag, DynamoFlags, GROUPS_POLICY_ENV, parseStaticGroupsPolicy, StaticFlags } from './flags';
 import type { Flags } from './ports';
+import { GroupService } from './group-service';
 import { PublishService } from './service';
 
 type Env = Record<string, string | undefined>;
@@ -28,9 +30,13 @@ export function stageOf(env: Env): string {
 
 export const regionOf = (env: Env) => env.AWS_REGION ?? 'us-east-1';
 
-/** The read-only switch: the environment value of the deployment, or the runtime item in the config table. */
+/**
+ * The switches: the read-only value and (beta only) the groups policy of the deployment's environment, or the runtime items in the
+ * config table. A static groups policy on any other stage makes this throw, so the function does not start.
+ */
 export function flagsFor(env: Env, doc: ReturnType<typeof documentClient>, stage: string): Flags {
-  return new AnyFlag([new StaticFlags(env.MOPM_READ_ONLY === 'true'), new DynamoFlags(doc, publishTablesFor(stage).config)]);
+  const groups = parseStaticGroupsPolicy(stage, env[GROUPS_POLICY_ENV]);
+  return new AnyFlag([new StaticFlags(env.MOPM_READ_ONLY === 'true', groups), new DynamoFlags(doc, publishTablesFor(stage).config)]);
 }
 
 /** The API Lambda's publish side, or undefined when the deployment has no upload bucket and queue (a stub). */
@@ -38,18 +44,32 @@ export function publishApiFor(env: Env, doc: ReturnType<typeof documentClient>, 
   const bucket = env.MOPM_CHANNEL_BUCKET;
   const queueUrl = env.MOPM_VALIDATE_QUEUE_URL;
   const indexQueueUrl = env.MOPM_INDEX_QUEUE_URL;
+  const groupQueueUrl = env.MOPM_GROUP_QUEUE_URL;
   if (!bucket || !queueUrl) return undefined;
   const region = regionOf(env);
   const t = publishTablesFor(stage);
+  const registry = new DynamoStore(doc, tablesFor(stage));
+  const publishes = new DynamoPublishStore(doc, t);
+  const objects = new S3Channel(bucket, { region });
+  const presigner = new S3Presigner(bucket, { region });
+  const config = publishConfigFromEnv(env);
   const service = new PublishService({
-    registry: new DynamoStore(doc, tablesFor(stage)),
-    publishes: new DynamoPublishStore(doc, t),
-    objects: new S3Channel(bucket, { region }),
-    presigner: new S3Presigner(bucket, { region }),
+    registry,
+    // A single publish may take over the number of a group that is dead.
+    groups: registry,
+    publishes,
+    objects,
+    presigner,
     validateQueue: new SqsFifoQueue(queueUrl, { region }),
     // Yank and unyank ask the index writer to rewrite repodata; without the queue they answer `unavailable`.
     ...(indexQueueUrl ? { indexQueue: new SqsFifoQueue(indexQueueUrl, { region }) } : {}),
-    config: publishConfigFromEnv(env),
+    config,
   });
-  return { auth: new Authenticator({ store: new DynamoAuthStore(doc, authTablesFor(stage)) }), service, flags };
+  // The group routes exist, and answer route_not_found until the `groups_enabled` item of the config table admits the caller.
+  // A commit queues the group's validation on the group queue; without the queue it answers `unavailable`.
+  const groups = new GroupService({ registry, publishes, objects, presigner, config, ...(groupQueueUrl ? { groupQueue: new SqsFifoQueue(groupQueueUrl, { region }) } : {}) });
+  const authStore = new DynamoAuthStore(doc, authTablesFor(stage));
+  // The claim route: a user token names the owner of a free package name.
+  const claims = new ClaimService({ registry, users: authStore, publishes, config, flags });
+  return { auth: new Authenticator({ store: authStore }), service, flags, groups, claims };
 }

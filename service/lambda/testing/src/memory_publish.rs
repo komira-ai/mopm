@@ -10,6 +10,7 @@ use mopm_ports::error::{PortError, PortResult};
 use mopm_ports::publish::{
     Flags, Hit, Invalidator, ObjectInfo, ObjectStore, PresignRequest, PresignedPut, Presigner, PublishStore, PutOptions, PutOutcome, Queue, QueueMessage,
 };
+use mopm_ports::secrets::SecretReader;
 use mopm_ports::types::{PublishRecord, UploadRecord};
 use sha2::{Digest, Sha256};
 
@@ -282,6 +283,26 @@ impl Invalidator for MemoryInvalidator {
     async fn invalidate(&self, paths: &[String], reference: &str) -> PortResult<()> {
         lock(&self.batches).push((paths.to_vec(), reference.to_string()));
         Ok(())
+    }
+}
+
+/// Secrets by id; an absent id is `None`, as in Secrets Manager.
+#[derive(Default)]
+pub struct MemorySecrets(Mutex<BTreeMap<String, String>>);
+
+impl MemorySecrets {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set(&self, id: &str, value: &str) {
+        lock(&self.0).insert(id.to_string(), value.to_string());
+    }
+}
+
+impl SecretReader for MemorySecrets {
+    async fn read(&self, secret_id: &str) -> PortResult<Option<String>> {
+        Ok(lock(&self.0).get(secret_id).cloned())
     }
 }
 

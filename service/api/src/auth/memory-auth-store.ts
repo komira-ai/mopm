@@ -77,6 +77,13 @@ export class MemoryAuthStore implements AuthStore {
     this.trusted.set(name, (this.trusted.get(name) ?? []).filter((t) => t.id !== id));
   }
 
+  private claimed = new Set<string>();
+  async claimOnce(key: string, _expires_at: string) {
+    if (this.claimed.has(key)) return false;
+    this.claimed.add(key);
+    return true;
+  }
+
   /** Test aid: every stored token row, to assert what is and is not persisted. */
   dumpTokens(): TokenRecord[] {
     return [...this.tokens.values()].map(copy);

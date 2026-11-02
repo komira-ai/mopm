@@ -1,0 +1,16 @@
+[package]
+name = "app"
+version = "0.2.0"
+
+[toolchain]
+mojo = "1.0.0"
+
+[dependencies]
+core = { path = "core" }
+util = { path = "util" }
+
+[dev-dependencies]
+testkit = { path = "testkit" }
+
+[targets]
+bins = [{ name = "run", path = "src/main.mojo" }]

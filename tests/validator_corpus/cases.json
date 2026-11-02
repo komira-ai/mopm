@@ -75,7 +75,7 @@
       "id": "ok_allowed_native_dependency",
       "archive": "ok_allowed_native_dependency.conda",
       "intent": "ok",
-      "what": "a native library in depends that the allow-list names",
+      "what": "a native library in depends that the conda-forge name mirror lists",
       "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
       "limits": {},
       "allow_native": ["libssl"],
@@ -1512,6 +1512,46 @@
       "note": ""
     },
     {
+      "id": "meta_manifest_native_bad_exclusive",
+      "archive": "meta_manifest_native_bad_exclusive.conda",
+      "intent": "manifest_schema",
+      "what": "a native exclusive group that is not a string",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_manifest_native_empty_exclusive",
+      "archive": "meta_manifest_native_empty_exclusive.conda",
+      "intent": "manifest_schema",
+      "what": "a native exclusive group that is an empty string",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_manifest_native_space_exclusive",
+      "archive": "meta_manifest_native_space_exclusive.conda",
+      "intent": "manifest_schema",
+      "what": "a native exclusive group with a leading space",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
+      "id": "meta_manifest_native_del_exclusive",
+      "archive": "meta_manifest_native_del_exclusive.conda",
+      "intent": "manifest_schema",
+      "what": "a native exclusive group with a DEL character inside",
+      "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
+      "limits": {},
+      "allow_native": [],
+      "note": ""
+    },
+    {
       "id": "meta_native_path_climbs",
       "archive": "meta_native_path_climbs.conda",
       "intent": "native_path",
@@ -1715,7 +1755,7 @@
       "id": "meta_dependency_not_allowed",
       "archive": "meta_dependency_not_allowed.conda",
       "intent": "dependency_not_allowed",
-      "what": "a native dependency that is not on the allow-list",
+      "what": "a dependency whose name is not a conda name (upper case)",
       "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
       "limits": {},
       "allow_native": [],
@@ -1724,11 +1764,11 @@
     {
       "id": "meta_dependency_python",
       "archive": "meta_dependency_python.conda",
-      "intent": "dependency_not_allowed",
-      "what": "a python dependency",
+      "intent": "ok",
+      "what": "a python dependency: any conda package may be named, and the mirror lists this one",
       "expect": {"name": "demo", "version": "1.0.0", "subdir": "noarch", "filename": "mojo-demo-1.0.0-mojo1.0.0_0.conda"},
       "limits": {},
-      "allow_native": [],
+      "allow_native": ["python"],
       "note": ""
     },
     {

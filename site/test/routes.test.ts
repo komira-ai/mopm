@@ -90,7 +90,9 @@ test('every docs page has a slug the edge router serves (DOC_SLUG), and a docs v
   const paths = V.map((v) => v.path);
   for (const d of DOC_PAGES) {
     expect([d.slug, DOC_SLUG.test(d.slug)]).toEqual([d.slug, true]);
+    // Both spellings: the address with its trailing slash, and without it.
     expect(paths).toContain(`/docs/${d.slug}/`);
+    expect(paths).toContain(`/docs/${d.slug}`);
   }
   expect(DOC_SLUG.test('Bad_Slug')).toBe(false);
   expect(DOC_SLUG.test('..')).toBe(false);

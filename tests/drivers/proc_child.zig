@@ -4,11 +4,19 @@
 //!
 //!   out_err_exit3   to-out on stdout, to-err on stderr, exit 3
 //!   segv, abrt      kill itself with that signal
-//!   sleep <secs>    sleep (the shell's `exec sleep N`)
-//!   spin            compute forever (`while :; do :; done`)
-//!   bg_sleep_wait   start a `sleep 60` child in this process group, wait for it
+//!   sleep <secs> [marker]
+//!                   create the marker file if one is named, then sleep (the shell's
+//!                   `touch "$1"; exec sleep N`)
+//!   compute         a fixed amount of work, then exit 0 (a counting loop in the shell)
+//!   bg_sleep_wait [marker]
+//!                   start a `sleep 60` child in this process group, create the marker file
+//!                   if one is named, wait for the child
 //!   bg_sleep_exit0  start a `sleep 60` child, exit 0 without waiting
 //!   exit0           exit 0
+//!   wait_pipe       close fd 9, read fd 8 until end of file, exit 0 (the shell's `exec 9>&-; read x <&8`)
+//!   env_to_stdout   print the environment, NAME=value per line
+//!   --source-root=<dir> ...   a stand-in for the `mojo_compile` wrapper (fakeMojoCompile)
+//!   (no arguments)  as a test binary built by that stand-in: writes its environment to <argv0>.env
 
 const std = @import("std");
 const posix = std.posix;
@@ -20,6 +28,12 @@ fn sleepSeconds(s: u64) void {
     std.time.sleep(s * std.time.ns_per_s);
 }
 
+/// Create an empty file: the signal to a test that this process is set up.
+fn touch(path: []const u8) !void {
+    const f = try std.fs.cwd().createFile(path, .{});
+    f.close();
+}
+
 /// Another copy of this program in `sleep 60` mode, same process group.
 fn startSleeper(a: std.mem.Allocator) !std.process.Child {
     const me = try std.fs.selfExePathAlloc(a);
@@ -28,12 +42,79 @@ fn startSleeper(a: std.mem.Allocator) !std.process.Child {
     return child;
 }
 
+/// Stands in for `mojo_compile`, the toolchain wrapper `mopm unit build` runs
+/// (src/core/unit_run.zig). It does what the real wrapper does to the line
+/// (tools/build/mojo/tools/compile_args.zig, `compilerArgs`): the argument that
+/// names the `--source-root` directory becomes that directory's basename, so a
+/// `precompile` records `p`, not the staged path. For `precompile` it writes
+/// what the compiler would have been given to the file after `-o`, one argument
+/// per line, then `env=<number of environment variables>`; the `-I` and `-o`
+/// arguments are left out, they are absolute staged paths the real `.mojoc`
+/// does not record. For `build` it makes the output a copy of this program,
+/// which, run with no arguments, writes its environment to `<its own path>.env`.
+fn fakeMojoCompile(a: std.mem.Allocator, args: []const [:0]u8) !void {
+    var out: ?[]const u8 = null;
+    var root: []const u8 = "";
+    var after_dashes = false;
+    var is_build = false;
+    for (args, 0..) |arg, i| {
+        if (std.mem.eql(u8, arg, "-o") and i + 1 < args.len) out = args[i + 1];
+        if (std.mem.startsWith(u8, arg, "--source-root=")) root = arg["--source-root=".len..];
+        if (after_dashes and std.mem.eql(u8, arg, "build")) is_build = true;
+        if (std.mem.eql(u8, arg, "--")) after_dashes = true;
+    }
+    const path = out orelse std.process.exit(2);
+    if (std.fs.path.dirname(path)) |d| try std.fs.cwd().makePath(d);
+    if (is_build) {
+        const me = try std.fs.selfExePathAlloc(a);
+        try std.fs.cwd().copyFile(me, std.fs.cwd(), path, .{});
+        return;
+    }
+    var text = std.ArrayList(u8).init(a);
+    var past = false;
+    var skip_next = false;
+    for (args[1..]) |arg| {
+        if (!past) {
+            past = std.mem.eql(u8, arg, "--");
+            continue;
+        }
+        if (skip_next) {
+            skip_next = false;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "-o")) {
+            skip_next = true;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "-I")) continue;
+        if (root.len > 0 and std.mem.eql(u8, arg, root)) {
+            try text.writer().print("{s}\n", .{std.fs.path.basename(root)});
+        } else try text.writer().print("{s}\n", .{arg});
+    }
+    var env = try std.process.getEnvMap(a);
+    try text.writer().print("env={d}\n", .{env.count()});
+    try std.fs.cwd().writeFile(path, text.items);
+}
+
+/// A test binary built by the fake wrapper, run: writes the environment it
+/// got, `NAME=value` per line, to `<its own path>.env`.
+fn fakeTestBinary(a: std.mem.Allocator, me: []const u8) !void {
+    var env = try std.process.getEnvMap(a);
+    var text = std.ArrayList(u8).init(a);
+    var it = env.iterator();
+    while (it.next()) |e| try text.writer().print("{s}={s}\n", .{ e.key_ptr.*, e.value_ptr.* });
+    const dest = try std.fmt.allocPrint(a, "{s}.env", .{me});
+    try std.fs.cwd().writeFile(dest, text.items);
+}
+
 pub fn main() !void {
     var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const a = arena_state.allocator();
     const args = try std.process.argsAlloc(a);
+    if (args.len == 1) return fakeTestBinary(a, args[0]);
     if (args.len < 2) std.process.exit(2);
     const mode = args[1];
+    if (std.mem.startsWith(u8, mode, "--source-root=") or std.mem.startsWith(u8, mode, "--runpath=")) return fakeMojoCompile(a, args);
     if (std.mem.eql(u8, mode, "out_err_exit3")) {
         try std.io.getStdOut().writeAll("to-out\n");
         try std.io.getStdErr().writeAll("to-err\n");
@@ -45,18 +126,28 @@ pub fn main() !void {
         try posix.raise(posix.SIG.ABRT);
         sleepSeconds(60);
     } else if (std.mem.eql(u8, mode, "sleep")) {
+        if (args.len > 3) try touch(args[3]);
         sleepSeconds(try std.fmt.parseInt(u64, args[2], 10));
-    } else if (std.mem.eql(u8, mode, "spin")) {
+    } else if (std.mem.eql(u8, mode, "compute")) {
         var n: u64 = 0;
-        while (true) {
-            n +%= 1;
-            std.mem.doNotOptimizeAway(n);
-        }
+        while (n < 200_000_000) : (n += 1) std.mem.doNotOptimizeAway(n);
     } else if (std.mem.eql(u8, mode, "bg_sleep_wait")) {
         var child = try startSleeper(a);
+        if (args.len > 2) try touch(args[2]);
         _ = try child.wait();
     } else if (std.mem.eql(u8, mode, "bg_sleep_exit0")) {
         _ = try startSleeper(a);
+    } else if (std.mem.eql(u8, mode, "env_to_stdout")) {
+        var env = try std.process.getEnvMap(a);
+        var it = env.iterator();
+        const out = std.io.getStdOut().writer();
+        while (it.next()) |e| try out.print("{s}={s}\n", .{ e.key_ptr.*, e.value_ptr.* });
+    } else if (std.mem.eql(u8, mode, "wait_pipe")) {
+        // Inherited descriptors: 9 is the write end of a pipe (closed here, so that the parent's copy is the last), 8 the read end;
+        // returns, exit 0, when the parent closes its write end.
+        posix.close(9);
+        var buf: [16]u8 = undefined;
+        while ((try posix.read(8, &buf)) != 0) {}
     } else if (std.mem.eql(u8, mode, "exit0")) {
         // nothing
     } else {

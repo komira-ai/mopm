@@ -1,6 +1,6 @@
 import { GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import type { DocClient } from '../dynamo-store';
-import type { PublishStore } from './ports';
+import type { ActorGroup, ActorGroups, PublishStore } from './ports';
 import type { PublishRecord, UploadRecord } from './types';
 
 /** Table names (service/infra/stacks/lib/config.ts: `mopm-<stage>-<table>`) the publish path uses. */
@@ -28,8 +28,10 @@ const condFailed = (err: unknown) => (err as { name?: string })?.name === 'Condi
 
 /**
  * DynamoDB adapter. Every mutation is a conditional PutItem (create-once, or compare-and-swap on `rev`), so the
- * role needs GetItem and PutItem only. `publishes` is keyed by `publish_id` and holds three kinds of row, told
- * apart by the key's prefix: `pub_...` publish records, `ver#<name>#<canonical>` commit locks, `rl#...` counters.
+ * role needs GetItem and PutItem only. `publishes` is keyed by `publish_id` and holds six kinds of row, told
+ * apart by the key's prefix: `pub_...` publish records, `ver#<name>#<canonical>` commit locks, `rl#...` counters,
+ * `grp#<id>` and `grpm#<id>`, a group's header and member list (written by the version store, src/group-store.ts), and
+ * `grpa#<actor>`, the list of groups an actor has open.
  */
 export class DynamoPublishStore implements PublishStore {
   constructor(
@@ -140,21 +142,32 @@ export class DynamoPublishStore implements PublishStore {
     throw new Error(`publish ${id} changed too often while updating`);
   }
 
-  async hit(key: string, limit: number, expiresAt: number): Promise<{ ok: boolean; count: number }> {
+  async hit(key: string, limit: number, expiresAt: number, n = 1): Promise<{ ok: boolean; count: number }> {
     for (let i = 0; i < MAX_HIT_ATTEMPTS; i++) {
       const cur = await this.get(this.tables.publishes, 'publish_id', key);
       if (!cur) {
-        if (await this.putIfAbsent(this.tables.publishes, 'publish_id', { publish_id: key, count: 1, rev: 0, expires_at: expiresAt })) {
-          return { ok: true, count: 1 };
+        if (n > limit) return { ok: false, count: 0 };
+        if (await this.putIfAbsent(this.tables.publishes, 'publish_id', { publish_id: key, count: n, rev: 0, expires_at: expiresAt })) {
+          return { ok: true, count: n };
         }
         continue;
       }
       const count = cur.count as number;
-      if (count >= limit) return { ok: false, count };
-      if (await this.swap(this.tables.publishes, { ...cur, count: count + 1, rev: (cur.rev as number) + 1 }, cur.rev as number)) {
-        return { ok: true, count: count + 1 };
+      if (count + n > limit) return { ok: false, count };
+      if (await this.swap(this.tables.publishes, { ...cur, count: count + n, rev: (cur.rev as number) + 1 }, cur.rev as number)) {
+        return { ok: true, count: count + n };
       }
     }
     throw new Error(`counter ${key} changed too often`);
+  }
+
+  private actorKey = (actor: string) => `grpa#${actor}`;
+  async getActorGroups(actor: string): Promise<ActorGroups | undefined> {
+    const i = await this.get(this.tables.publishes, 'publish_id', this.actorKey(actor));
+    return i && { actor, groups: i.groups as ActorGroup[], rev: i.rev as number };
+  }
+  async putActorGroups(actor: string, groups: ActorGroup[], rev: number | undefined): Promise<boolean> {
+    if (typeof rev !== 'number') return this.putIfAbsent(this.tables.publishes, 'publish_id', { publish_id: this.actorKey(actor), actor, groups, rev: 0 });
+    return this.swap(this.tables.publishes, { publish_id: this.actorKey(actor), actor, groups, rev: rev + 1 }, rev);
   }
 }

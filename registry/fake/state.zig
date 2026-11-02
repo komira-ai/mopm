@@ -18,8 +18,8 @@ pub const poll_interval: i64 = 5;
 /// A claim with no version expires after 30 days; an invitation after 7.
 pub const claim_secs: i64 = 30 * day;
 pub const invitation_secs: i64 = 7 * day;
-/// An OIDC publish token lives 15 minutes.
-pub const oidc_secs: i64 = 15 * 60;
+/// An OIDC publish token lives 10 minutes.
+pub const oidc_secs: i64 = 10 * 60;
 /// An upload URL expires five minutes after beginUpload.
 pub const upload_secs: i64 = 5 * 60;
 /// The largest file v1 takes.
@@ -31,7 +31,8 @@ pub const User = struct { github_id: u64, handle: []const u8 };
 
 pub const TokenKind = enum { session, api, oidc };
 
-pub const Scope = enum { publish, yank };
+/// `stage` prepares a group (create, read, abort) and nothing else.
+pub const Scope = enum { publish, yank, stage };
 
 pub const Token = struct {
     id: []const u8,
@@ -54,7 +55,13 @@ pub const Token = struct {
     oidc_package: []const u8 = "",
     oidc_version: []const u8 = "",
     oidc_repository: []const u8 = "",
+    /// OIDC tokens of the `packages` form only: the package versions they may publish (they hold no `oidc_package`).
+    oidc_set: []const NameVersion = &.{},
+    /// OIDC tokens minted with `purpose: stage`: they prepare a group and never commit or yank.
+    oidc_stage: bool = false,
 };
+
+pub const NameVersion = struct { name: []const u8, version: []const u8 };
 
 /// `pending` while its publish runs; `rejected` burns the number.
 pub const VersionState = enum { pending, published, yanked, tombstoned, rejected };
@@ -82,6 +89,13 @@ pub const Version = struct {
     tombstone_at: i64 = 0,
     /// The CI repository when published with an OIDC token.
     provenance: ?[]const u8 = null,
+    /// The group that reserved this number (a `pending` row of a group), or null. The group may have ended: its
+    /// rows are then free for another group or a single publish to take.
+    group: ?*Group = null,
+    /// The id of the group that published this version, kept after the group is visible (`group` is then null). getVersion shows it.
+    group_id: ?[]const u8 = null,
+    /// `source_commit` of the commit request that published this version: informational, never checked. Null when it had none.
+    source_commit: ?[]const u8 = null,
 
     /// Shown by getVersion and listed: every state but pending and rejected.
     pub fn visible(v: *const Version) bool {
@@ -113,6 +127,66 @@ pub const Publish = struct {
     /// moves one step.
     stage: u8 = 0,
     rejection: ?[]const u8 = null,
+};
+
+/// Where a group is (the `GroupStatusName` of the contract).
+pub const GroupStatus = enum { open, validating, committed, visible, rejected, failed, expired, aborted, superseded };
+
+/// A group that has ended without committing: its numbers are free.
+pub fn groupIsDead(s: GroupStatus) bool {
+    return switch (s) {
+        .rejected, .expired, .aborted, .superseded => true,
+        else => false,
+    };
+}
+
+pub const YankState = enum { yanking, yanked, unyanking, restored };
+
+/// One declared file of a group member, and the upload that carries its bytes.
+pub const GroupFile = struct {
+    subdir: []const u8,
+    filename: []const u8,
+    sha256: []const u8,
+    size: u64,
+    upload: *Upload,
+};
+
+pub const GroupMember = struct {
+    package: *Package,
+    version: []const u8,
+    files: []const GroupFile,
+    /// The row that holds the number (`pending` until the group is visible).
+    row: *Version,
+    manifest_sha256: []const u8 = "",
+    /// `source_commit` of this member in the commit request, copied to its row when the group is visible.
+    source_commit: ?[]const u8 = null,
+    /// Set when the group's yank changed this member: an unyank restores these and no others.
+    yanked_by_group: bool = false,
+};
+
+pub const GroupFailure = struct { code: []const u8, message: []const u8, member: ?[]const u8 = null };
+
+pub const GroupYank = struct {
+    state: YankState,
+    reason: []const u8,
+    requested_at: i64,
+};
+
+/// A set of versions declared up front and published together (spec/api/openapi.yaml, `createGroup`).
+pub const Group = struct {
+    id: []const u8,
+    user: *User,
+    attempt: u32 = 1,
+    status: GroupStatus = .open,
+    created_at: i64,
+    deadline_at: i64,
+    committed_at: i64 = 0,
+    failure: ?GroupFailure = null,
+    /// In package-name order.
+    members: []GroupMember,
+    /// What the commit request said, as one string; a different request for the same group is refused.
+    commit_hash: []const u8 = "",
+    yank: ?GroupYank = null,
 };
 
 pub const PackageState = enum { claimed, active };
@@ -161,7 +235,7 @@ pub const DeviceLogin = struct {
     token: ?*Token = null,
 };
 
-/// A planted failure: the next request to `operation` answers `code`.
+/// A faulty failure: the next request to `operation` answers `code`.
 pub const Fault = struct { operation: []const u8, code: errors.Code };
 
 pub const State = struct {
@@ -185,9 +259,21 @@ pub const State = struct {
     logins: std.ArrayListUnmanaged(*DeviceLogin) = .{},
     faults: std.ArrayListUnmanaged(Fault) = .{},
     packages: std.ArrayListUnmanaged(*Package) = .{},
+    /// Repositories the deployment trusts as CI publishers by configuration (`/_fake/ci_publisher`): the `packages` form
+    /// of the OIDC exchange is for these, and it creates a package it is first to name.
+    ci_repos: std.ArrayListUnmanaged([]const u8) = .{},
     invitations: std.ArrayListUnmanaged(*Invitation) = .{},
     uploads: std.ArrayListUnmanaged(*Upload) = .{},
     publishes: std.ArrayListUnmanaged(*Publish) = .{},
+    groups: std.ArrayListUnmanaged(*Group) = .{},
+    /// Whether the registry has group publishing on. Off, `createGroup` answers `route_not_found`, as a registry that
+    /// has not enabled groups for the caller does.
+    groups_enabled: bool = true,
+    /// The PUT of an upload answers 503 once, after this many more PUTs have succeeded (`/_fake/put_fault`).
+    put_fault_after: ?u32 = null,
+    /// The clock moves forward by this many seconds when the next group commit arrives, once (`/_fake/commit_clock`):
+    /// time passing between the create and the commit.
+    clock_jump_on_commit: i64 = 0,
 
     pub fn now(s: *const State) i64 {
         return std.time.timestamp() + s.clock_offset;
@@ -316,7 +402,7 @@ pub const State = struct {
         return p;
     }
 
-    /// Removes and returns the planted failure for `operation`, if any.
+    /// Removes and returns the faulty failure for `operation`, if any.
     pub fn takeFault(s: *State, operation: []const u8) ?errors.Code {
         for (s.faults.items, 0..) |f, i| {
             if (std.mem.eql(u8, f.operation, operation)) {

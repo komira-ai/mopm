@@ -14,11 +14,13 @@ same bytes go through every stage.
 
 ## The canary
 
-A function built from the pinned crates with komira's Rust rules to hold the foundation. Nothing deploys it.
+A function built from the pinned crates (`Cargo.toml`, `Cargo.lock`, `third_party/buildrules`) with buildrules' Rust rules to
+hold the foundation. Nothing deploys it. This directory is the Cargo package `mopm_canary` (`cargo_package` in `BUCK`), so
+its targets are `:release` (the executable), `:test` (one marker per test binary), `:lint`.
 
 | target | what it proves |
 |---|---|
-| `:canary_unit`, `:canary` | the API Gateway v2 handler on `lambda_runtime` and `aws_lambda_events`, in process; the binary is not published unless it passed |
+| `:test` (the unit tests of `canary/main.rs`), `:release` | the API Gateway v2 handler on `lambda_runtime` and `aws_lambda_events`, in process; `:canary_zip` is not built unless `:test` passed |
 | `:canary_e2e_test` | the built binary, run against a fake Lambda runtime API on loopback, answers one event with exactly the expected response bytes |
 | `:canary_zip` | the package; not built unless `:canary_e2e_test` passed on that binary |
-| `:tls_test`, `:sdk_test` | rustls and the AWS SDK over komira's AWS-LC (`third_party/rust/README.md`, "The AWS-LC pin") |
+| `:test` (`canary/tls_test.rs`, `canary/sdk_test.rs`) | rustls and the AWS SDK over buildrules' AWS-LC: `aws-lc-sys` is not built from its C sources, `third_party/buildrules/overrides.json` links `buildrules//third_party/aws-lc:crypto[static-pic]` into each test and executable (the symbol prefix in its bindings is rewritten by a counted patch) |

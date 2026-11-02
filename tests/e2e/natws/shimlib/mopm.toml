@@ -1,0 +1,11 @@
+[package]
+name = "shimlib"
+version = "1.0.0"
+mojo = ["1.0.0"]
+
+[native.shim]
+kind = "static"
+srcs = ["native/*.c"]
+hdrs = ["native/*.h"]
+cflags = ["-O1", "-DSHIM_SCALE=6"]
+cflags_by_os = { linux = ["-DSHIM_OS_ADD=0"], macos = ["-DSHIM_OS_ADD=1"] }

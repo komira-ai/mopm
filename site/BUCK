@@ -1,112 +1,118 @@
-# The site's checks and build, run on the farm from the pinned npm packages (pins.lock.bzl,
-# from package-lock.json by kpin) with komira's node_modules rules, as service/api/BUCK does:
-# the commands of service-ci.yml's site job. `npm run typecheck` is two tsc runs (`:typecheck`,
-# `:typecheck_browser`), `npm test` is `:test`, and `npm run build` is three programs, each
-# a target (`:browser`, `:tools`, `:dist`). No install, no script, no network.
+# The site's checks and build, run on the farm from the pinned npm packages (buildrules.lock.bzl,
+# from package-lock.json by `buildrules npm sync`) with buildrules' npm_package: the steps are
+# package.json's own scripts, `npm run typecheck` (both tsc runs, one step), `npm test` and
+# `npm run build` (the whole script: the tsc runs and tools/build.js; `:dist` is dist/).
+# No install, no script, no network. The policy is the "buildrules" key of package.json.
 
-load("@komira//tools/build/node:modules.bzl", "jest_test", "node_tree_build", "node_tree_test", "npm_modules", "tsc_build", "tsc_check")
-load(":pins.lock.bzl", "NPM")
+load(":buildrules.bzl", "npm_package")
+load("@buildrules//rules/node:modules.bzl", "node_tree_test")
+load("//vendor/buildrules_coverage:jest_cover.bzl", "jest_coverage_floor", "jest_test")
 
 _NODE = "//tools/node:node"
-
-_CONFIGS = [
-    "package.json",
-    "tsconfig.browser.json",
-    "tsconfig.json",
-    "tsconfig.tools.json",
-]
-
-_SRCS = glob(["src/**", "static/**", "test/**", "tools/**"]) + _CONFIGS + ["jest.config.js"]
 
 # The repository files the pages are rendered from (tools/docs.ts reads the published docs,
 # src/links.ts names them), at their paths in the repository.
 _DOCS = {
+    "docs/configuration.md": "//:site.docs.configuration.md",
+    "docs/examples.md": "//:site.docs.examples.md",
+    "docs/getting-started.md": "//:site.docs.getting-started.md",
     "docs/mopm-test.md": "//:site.docs.mopm-test.md",
+    "docs/publishing-a-workspace.md": "//:site.docs.publishing-a-workspace.md",
+    "docs/why-and-design.md": "//:site.docs.why-and-design.md",
     "spec/mopm-toml.md": "//:site.spec.mopm-toml.md",
 }
-
-npm_modules(
-    name = "modules",
-    lockfile = "package-lock.json",
-    npm = NPM,
-)
-
-tsc_check(
-    name = "typecheck",
-    modules = ":modules",
-    node = _NODE,
-    srcs = _SRCS,
-)
-
-# src alone, with no Node types.
-tsc_check(
-    name = "typecheck_browser",
-    modules = ":modules",
-    node = _NODE,
-    project = "tsconfig.browser.json",
-    srcs = _SRCS,
-)
 
 # The tests read files outside site/ by relative path (test/build-fixture.ts's REPO_ROOT,
 # test/fixtures.ts's CONTRACT_DIR, test/docs-render.test.ts): the API contract cases, the
 # published docs, spec/channel.md, README.md, src/cli/main.zig and the scaffold golden
-# tests/new/lib (test/layout.test.ts holds the home page copy to them).
+# tests/new/lib (test/layout.test.ts holds the home page copy to them), the validator's limits.ts, the two
+# workflows whose page lists test/pages-lists.test.ts compares with DOC_PAGES, the parsers whose keys
+# test/docs-facts.test.ts requires on the configuration page (src/core/manifest.zig, lock.zig, credentials.zig), the
+# sources of the sizes, registries, allowed values, variables and platforms test/docs-values.test.ts reads, and the
+# worked examples test/docs-examples.test.ts holds the examples page to (and the driver that runs them, tests/drivers/examples_test.zig).
+_TEST_DATA = _DOCS | {
+    "README.md": "//:site.README.md",
+    "RELEASING.md": "//:site.RELEASING.md",
+    "VERSION": "//:site.VERSION",
+    ".github/workflows/promote.yml": "//:site.workflows.promote.yml",
+    ".github/workflows/service-ci.yml": "//:site.workflows.service-ci.yml",
+    "service/api/src/validate/limits.ts": "//service/api:limits.ts",
+    "spec/channel.md": "//:site.spec.channel.md",
+    "spec/package-metadata.schema.json": "//:site.spec.package-metadata.schema.json",
+    "examples": "//:site_examples",
+    "src/cli/install_cmd.zig": "//:site.src.cli.install_cmd.zig",
+    "src/cli/main.zig": "//:site.src.cli.main.zig",
+    "src/cli/stage_cmd.zig": "//:site.src.cli.stage_cmd.zig",
+    "src/cli/group_publish.zig": "//:site.src.cli.group_publish.zig",
+    "src/cli/yank_cmd.zig": "//:site.src.cli.yank_cmd.zig",
+    "service/docs/runbook.md": "//:site.service.docs.runbook.md",
+    "CHANGELOG.md": "//:site.CHANGELOG.md",
+    "spec/staged-set.md": "//:site.spec.staged-set.md",
+    "service/api/src/publish/flags.ts": "//service/api:site_flags.ts",
+    "service/api/src/ops/group-ops.ts": "//service/api:site_group-ops.ts",
+    "service/api/src/ops/group-ops-main.ts": "//service/api:site_group-ops-main.ts",
+    "service/api/src/publish/group-validator.ts": "//service/api:site_group-validator.ts",
+    ".github/workflows/e2e.yml": "//:site.workflows.e2e.yml",
+    "service/infra/stacks/lib/config.ts": "//service/infra/stacks:site_config.ts",
+    "service/infra/stacks/lib/publish-stack.ts": "//service/infra/stacks:site_publish-stack.ts",
+    "src/cli/publish_cmd.zig": "//:site.src.cli.publish_cmd.zig",
+    "src/cli/test_cmd.zig": "//:site.src.cli.test_cmd.zig",
+    "src/core/closure.zig": "//:site.src.core.closure.zig",
+    "src/core/conda_unpack.zig": "//:site.src.core.conda_unpack.zig",
+    "src/core/credentials.zig": "//:site.src.core.credentials.zig",
+    "src/core/env.zig": "//:site.src.core.env.zig",
+    "src/core/lock.zig": "//:site.src.core.lock.zig",
+    "src/core/conda.zig": "//:site.src.core.conda.zig",
+    "src/core/manifest.zig": "//:site.src.core.manifest.zig",
+    "src/core/metadata.zig": "//:site.src.core.metadata.zig",
+    "src/core/registry.zig": "//:site.src.core.registry.zig",
+    "src/core/toml.zig": "//:site.src.core.toml.zig",
+    "src/core/unit_graph.zig": "//:site.src.core.unit_graph.zig",
+    "tools/cut_release.zig": "//:site.tools.cut_release.zig",
+    "tools/release.zig": "//:site.tools.release.zig",
+    "tests/contract/api": "//:contract_api",
+    "tests/drivers/examples_test.zig": "//:site.tests.drivers.examples_test.zig",
+    "tests/new/lib": "//:site_new_lib",
+}
+
+npm_package(
+    path = ".",
+    node = _NODE,
+    exclude = ["README.md"],
+    step_data = {
+        "test": _TEST_DATA,
+        # tools/build.js renders the pages from them.
+        "build": _DOCS,
+    },
+    # The site stack deploys dist/ (service/infra/stacks/BUCK, its tests and synths).
+    visibility = ["//service/infra/stacks:", "//site:"],
+)
+
+# `jest --ci --coverage` over the same tree, data and config as `:test`: the target is the coverage directory.
+# npm_package's `:test` is a pass marker and does not write one, so the floor reads this run instead.
 jest_test(
-    name = "test",
-    data = _DOCS | {
-        "README.md": "//:site.README.md",
-        "spec/channel.md": "//:site.spec.channel.md",
-        "src/cli/main.zig": "//:site.src.cli.main.zig",
-        "tests/contract/api": "//:contract_api",
-        "tests/new/lib": "//:site_new_lib",
-    },
-    modules = ":modules",
+    name = "coverage_run",
+    data = _TEST_DATA,
+    modules = ":node_modules",
     node = _NODE,
-    srcs = _SRCS,
+    srcs = glob(["src/**", "static/**", "test/**", "tools/**"]) + [
+        "check_dist.js",
+        "jest.config.js",
+        "package.json",
+        "tsconfig.browser.json",
+        "tsconfig.json",
+        "tsconfig.tools.json",
+    ],
 )
 
-# `npm run build`, step 1: `tsc -p tsconfig.browser.json`, the browser modules.
-tsc_build(
-    name = "browser",
-    modules = ":modules",
-    node = _NODE,
-    out_dir = "build/browser",
-    project = "tsconfig.browser.json",
-    srcs = glob(["src/**"]) + _CONFIGS,
-)
-
-# Step 2: `tsc -p tsconfig.tools.json`, the build program.
-tsc_build(
-    name = "tools",
-    modules = ":modules",
-    node = _NODE,
-    out_dir = "build/tools",
-    project = "tsconfig.tools.json",
-    srcs = glob(["src/**", "tools/**"]) + _CONFIGS,
-)
-
-# Step 3: `node build/tools/tools/build.js`, which renders the pages, hashes the assets into
-# dist/ and checks the tree (tools/check-dist.ts); the target is dist/.
-node_tree_build(
-    name = "dist",
-    data = _DOCS | {
-        "site/build/browser": ":browser",
-        "site/build/tools": ":tools",
-    },
-    modules = ":modules",
-    node = _NODE,
-    out_dir = "dist",
-    program = "build/tools/tools/build.js",
-    srcs = glob(["static/**"]),
-    # The site stack deploys this tree (service/infra/stacks/BUCK, its tests and synths).
-    visibility = ["//service/infra/stacks:"],
-)
+# The lines and branches of the package's own code that the tests reach (jest --coverage), held to coverage_floor.txt (vendor/buildrules_coverage/README.md).
+jest_coverage_floor(coverage = ":coverage_run")
 
 # service-ci.yml's `test -f dist/<page>` for each page the site job names.
 node_tree_test(
     name = "dist_has_pages",
     data = {"site/dist": ":dist"},
-    modules = ":modules",
+    modules = ":node_modules",
     node = _NODE,
     program = "check_dist.js",
     srcs = ["check_dist.js"],
@@ -125,4 +131,14 @@ export_file(
     name = "routes.json",
     src = "test/fixtures/routes.json",
     visibility = ["//service/infra/stacks:"],
+)
+
+# This package's files, for //:hygiene (the repository-wide scan reads every file, and a
+# package boundary hides these from the root package's glob). A copy of the tree, staged
+# by path from this package.
+filegroup(
+    name = "lint_files",
+    srcs = glob(["**"], exclude = ["dist/**", "coverage/**", "node_modules/**"]) + [".gitignore"],
+    copy = True,
+    visibility = ["//:"],
 )

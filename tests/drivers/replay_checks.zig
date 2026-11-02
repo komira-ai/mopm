@@ -1,5 +1,5 @@
-//! The assertions of tests/contract/replay.py's recipes (`check` lambdas) about
-//! the live answer, besides the contract checks. Used by replay_test.zig.
+//! The assertions of the replay recipes about the live answer, besides the
+//! contract checks. Used by replay_test.zig.
 
 const std = @import("std");
 const c = @import("contract.zig");
@@ -58,6 +58,10 @@ pub fn runCheck(f: *F, s: Step, body: Value) !bool {
             return std.mem.eql(u8, pk, "all_current");
         },
         .name_is => return std.mem.eql(u8, c.getStr(body, "name") orelse "", a0),
+        .first_package_is => {
+            const pk = c.getArr(body, "packages");
+            return pk.len == 1 and std.mem.eql(u8, c.getStr(pk[0], "name") orelse "", a0);
+        },
         .search_prefix => {
             const pk = c.getArr(body, "packages");
             if (pk.len != 2 or !isNull(c.get(body, "next_cursor"))) return false;
@@ -101,9 +105,34 @@ pub fn runCheck(f: *F, s: Step, body: Value) !bool {
             const reason = c.getStr(c.get(body, "tombstone") orelse .null, "reason_code") orelse "";
             return stateIs(body, "tombstoned") and files.len > 0 and c.get(files[0], "url") == null and std.mem.eql(u8, reason, "malware");
         },
+        .group_failure => {
+            const failure = c.get(body, "failure") orelse return false;
+            return std.mem.eql(u8, c.getStr(body, "status") orelse "", a0) and std.mem.eql(u8, c.getStr(failure, "code") orelse "", s.args[1]) and
+                (c.getStr(failure, "member") orelse "").len > 0;
+        },
+        .group_yank_state => return std.mem.eql(u8, c.getStr(c.get(body, "yank") orelse .null, "state") orelse "", a0),
+        .group_files_open, .group_files_past_open => {
+            // Every member lists its one declared file; `uploaded` is a boolean (not yet true here) while the group is open, and absent after.
+            const members = c.getArr(body, "members");
+            if (members.len != 2) return false;
+            for (members) |m| {
+                const files = c.getArr(m, "files");
+                if (files.len != 1) return false;
+                const file = files[0];
+                if (c.getStr(file, "subdir") == null or c.getStr(file, "filename") == null or c.getStr(file, "sha256") == null or c.getInt(file, "size") == null) return false;
+                const uploaded = c.get(file, "uploaded");
+                if (s.check == .group_files_open) {
+                    if (uploaded == null or uploaded.? != .bool or uploaded.?.bool) return false;
+                } else if (uploaded != null) return false;
+            }
+            return true;
+        },
+        .detail_group_id => return std.mem.eql(u8, c.getStr(body, "group_id") orelse "", a0),
+        .detail_source_commit => return stateIs(body, "published") and std.mem.eql(u8, c.getStr(body, "source_commit") orelse "", a0),
         .detail_published => {
             const prov = c.get(body, "provenance") orelse .null;
-            return stateIs(body, "published") and std.mem.eql(u8, c.getStr(body, "requires_mojo") orelse "", "==1.0.0") and
+            // A version a single publish made names no group.
+            return stateIs(body, "published") and c.get(body, "group_id") == null and std.mem.eql(u8, c.getStr(body, "requires_mojo") orelse "", "==1.0.0") and
                 std.mem.eql(u8, c.getStr(prov, "kind") orelse "", "none") and prov.object.count() == 1;
         },
     }

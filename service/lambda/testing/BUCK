@@ -1,37 +1,10 @@
-# mopm_testing: the in-memory implementations of the ports, the contract suites every implementation
-# of a port must pass (run here against the memory ones, in mopm_aws against the DynamoDB ones), a clock
-# and a random source a test sets, and seeds. A test dependency only: no function links it.
-load("@komira//tools/build/rust:defs.bzl", "rust_library", "rust_test")
+# mopm_testing: in-memory adapters and the contract scenarios the real adapters are held to. Built from Cargo.toml by
+# buildrules' cargo_package.
+load("//:buildrules.bzl", "cargo_package")
 
-_DEPS = [
-    "//service/lambda/core:mopm_core",
-    "//service/lambda/ports:mopm_ports",
-    "//third_party/rust:base64-0.23.1",
-    "//third_party/rust:hex",
-    "//third_party/rust:jiff",
-    "//third_party/rust:serde",
-    "//third_party/rust:serde_json",
-    "//third_party/rust:sha2-0.11.0",
-    "//third_party/rust:thiserror",
-    "//third_party/rust:tokio",
-]
+cargo_package(path = ".")
 
-rust_test(
-    name = "mopm_testing_unit",
-    srcs = glob(["src/*.rs"]),
-    crate_root = "src/lib.rs",
-    deps = _DEPS,
-)
-
-rust_library(
-    name = "mopm_testing",
-    srcs = glob(["src/*.rs"]),
-    crate_root = "src/lib.rs",
-    deps = _DEPS,
-    tests = [":mopm_testing_unit"],
-    visibility = ["PUBLIC"],
-)
-
+# This package's files, for //:hygiene (a package boundary hides them from the root package's glob).
 filegroup(
     name = "lint_files",
     srcs = glob(["**"]) + [],

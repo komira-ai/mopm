@@ -129,7 +129,7 @@ test('a page with no slot is left alone', async () => {
 });
 
 // '/' on the search page goes to the page's own box (it holds the query), elsewhere to the header's; the header box
-// stays on every app-shell view, so both exist on /search. Mutants: the header's #q preferred (the '/' shortcut lands in
+// stays on every app-shell view, so both exist on /search. Defect caught: the header's #q preferred (the '/' shortcut lands in
 // the small box on /search); no fallback to #q (no shortcut on the package and docs pages).
 test('searchFieldId: the search page\'s box when there is one, else the header\'s, else none', () => {
   expect(searchFieldId((id) => id === 'search-q' || id === 'q')).toBe('search-q');

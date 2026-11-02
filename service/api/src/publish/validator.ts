@@ -4,8 +4,11 @@ import type { Store } from '../store';
 import type { AuditEntry, Dep, FileRef, NativeRef } from '../types';
 import { validatePackage } from '../validate';
 import type { PackageFacts, RejectionCode, ValidatorOptions } from '../validate';
+import type { NativeMirror } from '../validate/native-mirror';
 import type { PublishConfig } from './config';
+import type { DisplayMeta } from './display';
 import type { ObjectStore, PublishStore, Queue } from './ports';
+import { sendIndexPkg } from './indexer';
 import { liveBytes } from './service';
 import type { IndexMessage, PublishFile, PublishRecord } from './types';
 
@@ -18,6 +21,7 @@ export interface ValidatorDeps {
   /** https://conda.<stage>.mopm.dev: the channel's public base, for the file URLs of published versions. */
   channelUrl: string;
   validatorOptions?: ValidatorOptions;
+  nativeMirror?: () => Promise<NativeMirror | undefined>;
   now?: () => Date;
   log?: (line: Record<string, unknown>) => void;
 }
@@ -26,7 +30,7 @@ const sha256Hex = (b: Uint8Array) => createHash('sha256').update(b).digest('hex'
 const MAX_MESSAGE = 500;
 
 /** A pass over one publish ended in a verdict that is final. */
-class Rejected extends Error {
+export class Rejected extends Error {
   constructor(
     readonly code: RejectionCode,
     message: string,
@@ -65,18 +69,26 @@ export async function validatePublish(d: ValidatorDeps, publishId: string): Prom
   rec = (await d.publishes.updatePublish(publishId, (c) => (c.status === 'pending' ? touch(d, { ...c, status: 'validating' }) : undefined)))!;
 
   const version = await d.registry.getVersion(rec.name, rec.version);
+  if (version?.group_id !== undefined) {
+    // Not a verdict on the archives and not ours to settle: the number belongs to a group, and only the group's own
+    // job fills, publishes or burns its rows. Thrown so the message is retried and then dead-lettered with its alarm.
+    throw new Error(`publish ${rec.publish_id}: ${rec.name} ${rec.version} belongs to group ${version.group_id}; the single validator does not touch it`);
+  }
   if (version?.state === 'tombstoned') {
     // A previous attempt burned the number and died before recording the verdict.
     await markRejected(d, rec, (version.tombstone?.reason_code as RejectionCode | undefined) ?? 'archive_invalid', 'the publish was rejected');
     return 'processed';
   }
   if (version?.state === 'published' || version?.state === 'yanked') {
+    // An earlier attempt published the row; the store activates the package with that event, so this finishes what a crash between the two left.
+    await d.registry.activatePackage(rec.name);
     await moveToIndexing(d, rec);
     return 'processed';
   }
 
   try {
     const facts = await validateAll(d, rec);
+    await recordWarnings(d, rec, warningsOf(facts));
     await checkTotal(d, rec);
     await copyToChannel(d, rec);
     const fill = buildFill(d, rec, facts);
@@ -98,14 +110,51 @@ export async function validatePublish(d: ValidatorDeps, publishId: string): Prom
 }
 
 async function validateAll(d: ValidatorDeps, rec: PublishRecord): Promise<PackageFacts[]> {
+  return validateArchives(d.objects, await optionsFor(d), rec, rec.files);
+}
+
+/**
+ * The validator's options with the conda-forge name mirror the deployment could read. A mirror that cannot be read is not an error:
+ * the checks that need it warn (src/validate/metadata.ts), so this never throws.
+ */
+export async function optionsFor(d: Pick<ValidatorDeps, 'validatorOptions' | 'nativeMirror' | 'now' | 'log'>): Promise<ValidatorOptions> {
+  let nativeMirror: NativeMirror | undefined;
+  try {
+    nativeMirror = await d.nativeMirror?.();
+  } catch (err) {
+    (d.log ?? ((l) => console.log(JSON.stringify(l))))({ level: 'warn', msg: 'the conda-forge name mirror could not be read', error: String(err) });
+  }
+  return { ...d.validatorOptions, ...(nativeMirror ? { nativeMirror } : {}), ...(d.now ? { now: d.now } : {}) };
+}
+
+/** What the archives said that did not stop the publish, once each, in the order the files were validated. */
+export const warningsOf = (facts: readonly PackageFacts[]): string[] => [...new Set(facts.flatMap((f) => f.warnings ?? []))];
+
+/** Keep the warnings on the publish record, where the status route reads them; nothing is written when there are none. */
+async function recordWarnings(d: ValidatorDeps, rec: PublishRecord, warnings: string[]): Promise<void> {
+  if (warnings.length === 0) return;
+  await d.publishes.updatePublish(rec.publish_id, (c) => (c.status === 'validating' ? touch(d, { ...c, warnings }) : undefined));
+}
+
+/**
+ * Validate every archive of one version, each on its own pass (the bytes are dropped after each, so memory stays at one
+ * archive), and check that they agree on build, dependencies and native libraries. The single publish and the group's
+ * validator both run exactly this. Throws `Rejected` for a verdict on the archives.
+ */
+export async function validateArchives(
+  objects: Pick<ObjectStore, 'get'>,
+  options: ValidatorOptions | undefined,
+  version: { name: string; version: string; manifest_sha256?: string },
+  files: ReadonlyArray<Pick<PublishFile, 'key' | 'subdir' | 'filename' | 'sha256'>>,
+): Promise<PackageFacts[]> {
   const out: PackageFacts[] = [];
-  for (const f of rec.files) {
-    const bytes = await d.objects.get(f.key);
+  for (const f of files) {
+    const bytes = await objects.get(f.key);
     if (!bytes) throw new Rejected('archive_invalid', `the upload of ${f.filename} is missing from quarantine`);
     const verdict = validatePackage(
       bytes,
-      { name: rec.name, version: rec.version, subdir: f.subdir, filename: f.filename, sha256: f.sha256, manifestSha256: rec.manifest_sha256 },
-      d.validatorOptions,
+      { name: version.name, version: version.version, subdir: f.subdir, filename: f.filename, sha256: f.sha256, ...(version.manifest_sha256 !== undefined ? { manifestSha256: version.manifest_sha256 } : {}) },
+      options,
     );
     if (!verdict.ok) throw new Rejected(verdict.rejection_code, `${f.filename}: ${verdict.message}`);
     out.push(verdict.facts);
@@ -113,8 +162,8 @@ async function validateAll(d: ValidatorDeps, rec: PublishRecord): Promise<Packag
   // One version, one build and one set of dependencies, whatever the platform.
   const first = out[0]!;
   for (const [i, facts] of out.entries()) {
-    const same = facts.build === first.build && JSON.stringify(depsOf(facts)) === JSON.stringify(depsOf(first)) && JSON.stringify(nativeOf(facts)) === JSON.stringify(nativeOf(first));
-    if (!same) throw new Rejected('manifest_invalid', `${rec.files[i]!.filename} disagrees with ${rec.files[0]!.filename} on build, dependencies or native libraries`);
+    const same = facts.build === first.build && JSON.stringify(depsOf(facts)) === JSON.stringify(depsOf(first)) && JSON.stringify(nativeOf(facts)) === JSON.stringify(nativeOf(first)) && JSON.stringify(facts.nativeDepends) === JSON.stringify(first.nativeDepends) && facts.manifestSha256 === first.manifestSha256;
+    if (!same) throw new Rejected('manifest_invalid', `${files[i]!.filename} disagrees with ${files[0]!.filename} on build, dependencies, native libraries or manifest`);
   }
   return out;
 }
@@ -146,25 +195,41 @@ const depsOf = (f: PackageFacts): Dep[] => f.metadata.deps.map((x) => (x.range =
 const nativeOf = (f: PackageFacts): NativeRef[] => f.metadata.native.map((n) => ({ id: n.id, soname: n.soname }));
 
 function buildFill(d: ValidatorDeps, rec: PublishRecord, facts: PackageFacts[]): PublishFill {
+  return fillFrom(d.channelUrl, (d.now ?? (() => new Date()))(), rec, rec.files, facts);
+}
+
+/**
+ * What a version row holds once its archives are validated: the facts the archives stated, the files with their public
+ * URLs, the display fields of the request and who published it. Pure. The single publish and the group's staging write this.
+ */
+export function fillFrom(
+  channelUrl: string,
+  now: Date,
+  version: { version: string; display?: DisplayMeta; source_commit?: string; published_by: string },
+  declared: ReadonlyArray<Pick<PublishFile, 'subdir' | 'filename' | 'sha256' | 'size'>>,
+  facts: PackageFacts[],
+): PublishFill {
   const first = facts[0]!;
-  const files: FileRef[] = rec.files.map((f) => ({
+  const files: FileRef[] = declared.map((f) => ({
     subdir: f.subdir,
     filename: f.filename,
     sha256: f.sha256,
     size: f.size,
-    url: `${d.channelUrl.replace(/\/+$/, '')}/${f.subdir}/${f.filename}`,
+    url: `${channelUrl.replace(/\/+$/, '')}/${f.subdir}/${f.filename}`,
   }));
   return {
-    version: rec.version,
+    version: version.version,
     build: first.build,
     requires_mojo: `==${first.compiler}`,
     deps: depsOf(first),
     native: nativeOf(first),
+    native_depends: first.nativeDepends,
     files,
     manifest_sha256: first.manifestSha256,
-    ...(rec.display ?? {}),
-    published_at: (d.now ?? (() => new Date()))().toISOString(),
-    published_by: rec.published_by,
+    ...(version.display ?? {}),
+    ...(version.source_commit !== undefined ? { source_commit: version.source_commit } : {}),
+    published_at: now.toISOString(),
+    published_by: version.published_by,
   };
 }
 
@@ -179,6 +244,11 @@ async function moveToIndexing(d: ValidatorDeps, rec: PublishRecord): Promise<voi
 }
 
 async function sendIndex(d: ValidatorDeps, rec: PublishRecord): Promise<void> {
+  if (rec.remaining_subdirs.length === 0 && rec.index_pending) {
+    // A retry after the last repodata job: only the package's index file is left to ask for.
+    await sendIndexPkg({ registry: d.registry, indexQueue: d.indexQueue }, { name: rec.name, publishId: rec.publish_id });
+    return;
+  }
   for (const subdir of rec.remaining_subdirs) {
     const msg: IndexMessage = { type: 'index', subdir, publish_id: rec.publish_id };
     // One group per subdir: its repodata is rewritten by one job at a time.
@@ -214,6 +284,6 @@ function audit(d: ValidatorDeps, rec: PublishRecord, action: string, detail: Rec
     actor: rec.actor,
     action,
     version: rec.version,
-    detail: { publish_id: rec.publish_id, ...detail },
+    detail: { publish_id: rec.publish_id, ...detail, ...(rec.via === undefined ? {} : { via: rec.via }) },
   };
 }

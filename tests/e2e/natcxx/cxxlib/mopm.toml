@@ -1,0 +1,11 @@
+[package]
+name = "cxxlib"
+version = "1.0.0"
+mojo = ["1.0.0"]
+
+[native.cxxshim]
+kind = "static"
+srcs = ["native/*.cpp"]
+hdrs = ["native/*.h"]
+cflags = ["-O1", "-std=c++17"]
+link = ["c++"]

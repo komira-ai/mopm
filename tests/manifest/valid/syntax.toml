@@ -1,6 +1,6 @@
 # Each construct of the TOML subset that a mopm.toml can use.
 package.name = "syntax_demo"
-package.version = '1.0.0-rc.1+build.7'
+package.version = '1.0.0'
 package."description" = "tab\there, quote \" and \u00e9"
 
 [toolchain]

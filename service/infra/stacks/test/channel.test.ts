@@ -79,6 +79,43 @@ describe.each(STAGES)('ChannelStack %s', (stage) => {
     expect(JSON.stringify(s.Resource)).toContain('/quarantine/*');
   });
 
+  test('index/ is unreachable through the distribution (the sparse index is served by the API host, never cached for a year)', () => {
+    const s = bucketStatements(t).find((x) => x.Sid === 'DenyCloudFrontIndex');
+    expect(s).toBeDefined();
+    expect(s.Effect).toBe('Deny');
+    expect(s.Principal).toEqual({ Service: 'cloudfront.amazonaws.com' });
+    expect(s.Action).toBe('s3:GetObject');
+    expect(JSON.stringify(s.Resource)).toContain('/index/*');
+    // It denies exactly index/*: the package and repodata paths stay served.
+    expect(JSON.stringify(s.Resource)).not.toContain('quarantine');
+    expect(bucketStatements(t).filter((x) => x.Effect === 'Deny' && x.Principal?.Service === 'cloudfront.amazonaws.com').map((x) => x.Sid).sort()).toEqual(['DenyCloudFrontIndex', 'DenyCloudFrontNativeMirror', 'DenyCloudFrontQuarantine']);
+  });
+
+  test('native-mirror/ is unreachable through the distribution, and its old versions expire after 7 days', () => {
+    const s = bucketStatements(t).find((x) => x.Sid === 'DenyCloudFrontNativeMirror');
+    expect(s).toBeDefined();
+    expect(s.Effect).toBe('Deny');
+    expect(s.Action).toBe('s3:GetObject');
+    expect(JSON.stringify(s.Resource)).toContain('/native-mirror/*');
+    t.hasResourceProperties('AWS::S3::Bucket', {
+      LifecycleConfiguration: {
+        Rules: Match.arrayWith([Match.objectLike({ Id: 'native-mirror-noncurrent-expiry', Prefix: 'native-mirror/', NoncurrentVersionExpiration: { NoncurrentDays: 7 }, Status: 'Enabled' })]),
+      },
+    });
+  });
+
+  test('old versions of index/ files expire after 30 days; the current file never does', () => {
+    t.hasResourceProperties('AWS::S3::Bucket', {
+      LifecycleConfiguration: {
+        Rules: Match.arrayWith([Match.objectLike({ Id: 'index-noncurrent-expiry', Prefix: 'index/', NoncurrentVersionExpiration: { NoncurrentDays: 30 }, Status: 'Enabled' })]),
+      },
+    });
+    const rules = Object.values(t.findResources('AWS::S3::Bucket'))[0]!.Properties.LifecycleConfiguration.Rules as any[];
+    const idx = rules.find((r) => r.Id === 'index-noncurrent-expiry');
+    expect(idx.ExpirationInDays).toBeUndefined();
+    expect(idx.ExpirationDate).toBeUndefined();
+  });
+
   test('repodata has a 60s cache policy and packages are immutable for a year', () => {
     t.hasResourceProperties('AWS::CloudFront::CachePolicy', {
       CachePolicyConfig: Match.objectLike({ Name: `mopm-${stage}-repodata`, DefaultTTL: 60, MaxTTL: 60, MinTTL: 0 }),

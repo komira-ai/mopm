@@ -1,0 +1,16 @@
+[package]
+name = "mopm_core"
+description = "The registry's rules that need no storage, no network and no clock (see README.md)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+ruzstd.workspace = true

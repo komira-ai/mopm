@@ -1,5 +1,5 @@
 {
-  "lock_version": 2,
+  "lock_version": 99,
   "toolchain": {
     "mojo": "1.0.0"
   },

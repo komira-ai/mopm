@@ -530,7 +530,7 @@ Not the port itself, only these interfaces from it (Q9):
 
 ### 6.2 PRs
 
-One PR each, built and tested by Buck2 targets on remote execution, each naming the mutant that must turn its tests
+One PR each, built and tested by Buck2 targets on remote execution, each naming the variant that must turn its tests
 red ([appendix D](mopm-dev-appendix.md#d-test-plan)). "Port" means it waits for that piece of the Rust API port.
 
 | # | kind | PR | waits for |

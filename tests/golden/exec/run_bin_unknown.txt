@@ -1,0 +1,1 @@
+mopm run: package 'echo' ships no program 'nope'; it ships: greet

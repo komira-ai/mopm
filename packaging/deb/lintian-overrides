@@ -1,0 +1,2 @@
+# mopm is one static binary on purpose: it needs no shared library, so nothing can be missing on the machine it runs on.
+mopm: statically-linked-binary [usr/bin/mopm]

@@ -1,4 +1,4 @@
-# Uses the package `greet` that `mopm sync` installed (tests/install_e2e/run.py).
+# Uses the package `greet` that `mopm sync` installed (tests/drivers/install_e2e_test.zig).
 # "greet 4242" comes only from libgreet, the native library greet ships.
 from greet import answer
 

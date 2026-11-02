@@ -1,0 +1,2 @@
+tests/test_double.mojo::test_double_two
+tests/test_double.mojo::test_double_zero

@@ -1,0 +1,16 @@
+Package: mopm
+Version: 1.2.3
+Architecture: arm64
+Maintainer: mopm authors <apt@mopm.dev>
+Installed-Size: 1
+Section: devel
+Priority: optional
+Homepage: https://mopm.dev
+Filename: pool/main/m/mopm/mopm_1.2.3_arm64.deb
+Size: 1038
+SHA256: 49d73c3657e0ba70a2a41f4a8c7f6d0d0b667e66cbb96644d0a5c79ff19f9722
+Description: package manager for Mojo
+ Resolves, locks and builds Mojo packages.
+ .
+ A static binary: it needs nothing else installed.
+

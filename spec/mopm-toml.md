@@ -13,9 +13,8 @@ repository = "https://github.com/example/http_client"
 homepage = "https://example.com/http_client"
 keywords = ["http", "client"]
 readme = "README.md"
-
-[toolchain]
-mojo = "1.0.0"                # exact compiler version, or an array of them; a .mojoc is tied to one
+publish = true                # false: never staged, packed or published (a test-support helper); default true
+mojo = ["1.0.0", "1.1.0"]     # exact compiler versions it builds for, one .mojoc each (a .mojoc is tied to one)
 
 [dependencies]                # Mojo packages
 http_core = "1.2"
@@ -49,6 +48,14 @@ tests = ["tests"]
   the registry's read API (`description`, `license`, `repository`, `homepage`,
   `keywords` and `readme` of a version; spec/api/openapi.yaml). The publish
   pipeline copies them from the file at publish time.
+- `publish` (in `[package]`): a boolean, default true. `publish = false` marks a
+  package that is a member of a workspace but is never published, such as a
+  helper that is only a path `[dev-dependencies]` target of other members. It
+  still needs a `name` and `version` and is read like any other package by
+  `lock`, `sync`, `build`, `test` and `plan`. `pack`, `publish` and `stage`
+  refuse it (`stage` with no package names leaves it out), and a package that is
+  published may not list one in `[dependencies]`; `[dev-dependencies]` may.
+  Anything but `true` or `false` is refused, naming the key.
 - `[dependencies]`: Mojo packages with version requirements. A dependency may
   also have a `path`, for co-development against a local checkout; see
   Dependencies with a path.
@@ -57,13 +64,58 @@ tests = ["tests"]
   default link) is how consumers' tooling uses it: link means mopm computes the
   link and load flags, load means the package opens the library itself.
 - `[dev-dependencies]`: not installed for consumers.
-- `[toolchain]`: the Mojo compiler version(s) the package is built with: a
-  string or an array of strings, each an exact version. Tools normalise it to an
-  array.
+- `mojo` (in `[package]`): the exact Mojo compiler versions the package builds
+  for, a string or an array of strings, none repeated. `mopm publish` builds
+  one `.mojoc` per version and uploads all of them under the one package
+  version; a lock covers every version listed (`lock.md`, "Version 2"), and a
+  build system makes one unit per version (`unit-graph.md`). Tools normalise it
+  to an array.
+- `[toolchain]` (older form): `mojo = <version or array>` read as
+  alternatives: a lock is made for the first that resolves. Setting `mojo` in
+  `[package]` and `[toolchain]` is an error.
 - `[native.<id>]`: a native library the package builds and ships. Its entry in
   the installed `<name>.mopm.json` (see `package-metadata.schema.json`) is what
-  consumers' tooling reads.
+  consumers' tooling reads. `needs` (sonames of other packages' libraries this
+  one needs) and `exclusive` (a group name) are copied into that entry. `mopm
+  pack` packs a library with `kind = "static"` and `mode = "link"`, from the
+  archive given per subdir (`--native <id>=<subdir>:<file>`); a package that
+  declares one has no `noarch` file. A static library can also give `srcs`,
+  `hdrs`, `cflags`, `cflags_by_os`, `includes` and `soname`: the C sources a
+  build system compiles into its archive (`unit-graph.md`, "Member natives").
+  `provided = true` (with `kind = "static"` and `mode = "link"`) says the
+  archive is built by something else and packed as `lib<id>.a`; mopm compiles
+  nothing for it, so `srcs`, `hdrs`, `cflags`, `cflags_by_os`, `includes`,
+  `build` and `outputs` are refused (`unit-graph.md`, "Provided natives").
+  `link = ["c++"]` names the system libraries the final link of every consumer
+  of the static archive adds, as `-l<name>`, once each, after all archives. The
+  names are `c++`, `dl`, `m` and `pthread` (a closed list: the names of a
+  published package reach its consumers' linker command lines), none twice, and
+  the library must be `kind = "static"` with `mode = "link"`. It applies with and
+  without `provided = true`, and is carried into `<name>.mopm.json`, the lock and
+  the unit graph (`unit-graph.md`, "System libraries of a native").
 - `[targets]`: the library, executables and tests to build.
+
+## Other tools' settings: `[package.metadata]`
+
+mopm refuses a key or table it does not know, so a typo is an error. One place
+is left for the settings of other tools, as in cargo's `package.metadata`:
+`[package.metadata]`, with one subtable per tool by convention
+(`[package.metadata.<tool>]`).
+
+```toml
+[package.metadata.buildrules]
+visibility = ["PUBLIC"]
+```
+
+- mopm reads nothing in it and checks nothing in it: any keys, nesting and
+  values the TOML subset mopm reads (strings, integers, booleans, arrays,
+  tables) are accepted. It must be a table; `metadata = "x"` is an error.
+- mopm preserves it. `mopm metadata` prints it, as JSON in file order, under
+  `package.metadata`; the key is there only when the file has the table, so
+  every other output is unchanged. It does not change a lock, a unit graph or
+  a unit's key, and `mopm pack` and `mopm publish` ignore it.
+- There is no other such table: `[tool.*]` or any other top-level table is
+  still refused.
 
 ## Version requirements
 
@@ -94,13 +146,17 @@ minor, then patch.
 ## Dependencies with a path
 
 A dependency may name a `path` as well as a `version`. The path is used only
-while developing in a checkout. Following cargo, a dependency that has a
-`path` and no `version` cannot be published: the registry refuses the package
-(`manifest_invalid`), because a consumer has no checkout to read the path from
-and nothing says which versions work. With both, the path is dropped at
-publish and the version requirement is what the registry records. The
-generated `<name>.mopm.json` carries the same rule (`dependentRequired` in
-`package-metadata.schema.json`).
+while developing in a checkout: `mopm lock`, `tree`, `plan`, `build` and `sync`
+use the path, not the registry. Following cargo, a dependency that has a
+`path` and no `version` cannot be packed: `mopm pack` and `mopm publish` refuse
+it before any file is made, because a consumer has no checkout to read the path
+from and nothing says which versions work. With both, `mopm pack` and
+`mopm publish` write the version requirement into the package and never the
+path, so the registry only ever sees a requirement. `mopm pack` checks the path package's version: it reads the `mopm.toml` at the path and refuses a package whose own version does not satisfy that requirement.
+The version of such a dependency must be a valid version requirement. The
+generated `<name>.mopm.json` therefore has a `range` and no `path` for it;
+`package-metadata.schema.json` still says `dependentRequired` `path` needs
+`range`, so metadata made by hand with a path and no range is refused.
 
 The requirement string of a dependency is recorded exactly as written in
 `mopm.toml`. It is the cargo-syntax requirement that mopm's own resolver reads

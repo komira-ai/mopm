@@ -1,0 +1,2 @@
+tests/test_greeter.mojo::test_greet
+tests/test_greeter.mojo::test_greet_twice

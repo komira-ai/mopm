@@ -1,12 +1,17 @@
 //! `mopm pack` and `mopm publish`: a package as a `.conda`, and onto a registry.
 //!
-//!   mopm pack    --compiler <version> --mojoc [<subdir>=]<path>... [--manifest <file>] [-o <dir>]
-//!   mopm publish --compiler <version> --mojoc [<subdir>=]<path>... [--manifest <file>]
-//!                [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
-//!                [--readme <file>] [--dry-run]
+//!   mopm pack    --compiler <version> --mojoc [<subdir>=]<file>... [--native <id>=<subdir>:<file>...]
+//!                [--manifest <file>] [-o <dir>]
+//!   mopm publish --compiler <version> --mojoc [<subdir>=]<file>... [--native <id>=<subdir>:<file>...]
+//!                [--manifest <file>] [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
+//!                [--readme <file>] [--dry-run] [--oidc]
 //!
 //! `pack` writes `<dir>/<subdir>/mojo-<name>-<version>-mojo<compiler>_0.conda`
-//! (src/core/conda.zig) and prints each file's sha256. `publish` packs the
+//! (src/core/conda.zig) and prints each file's sha256. A package that declares
+//! `[native.<id>] kind = "static"` gets its archive for each subdir from
+//! `--native <id>=<subdir>:<file>` (one per native and subdir; the `.conda` of a
+//! subdir holds that subdir's archives at `lib/lib<name>.a`), and a native
+//! library is never packed for `noarch`. `publish` packs the
 //! same way and then follows the registry's three steps (spec/api/openapi.yaml):
 //! begin an upload per file and PUT the bytes to the URL it names, commit the
 //! uploads, and poll the publish until it is `published` or `rejected`.
@@ -15,6 +20,13 @@
 //! `mopm login` stored for the registry. It is sent only to the registry's
 //! API, as a bearer token, and is never printed. The PUT to the storage URL
 //! carries no token, only the headers the registry named.
+//!
+//! `--oidc` takes no token from `$MOPM_TOKEN` or a login: inside a GitHub
+//! Actions job that may request an identity token, mopm asks GitHub for one
+//! with the registry's audience and exchanges it at the registry for a token
+//! that may publish this one package version (src/core/ci_oidc.zig). That token
+//! is held in memory only. Outside such a job the command stops before any
+//! request.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -22,17 +34,24 @@ const core = @import("mopm_core");
 const http = core.http;
 const manifest = core.manifest;
 const conda = core.conda;
+const bins_mod = core.bins;
 const registry = core.registry;
 const credentials = core.credentials;
+const ci_oidc = core.ci_oidc;
 const registry_cmd = @import("registry_cmd.zig");
+const group_publish = @import("group_publish.zig");
 
 const usage =
-    \\usage: mopm pack    --compiler <mojo version> --mojoc [<subdir>=]<file>... [--manifest <mopm.toml>] [-o <dir>]
-    \\       mopm publish --compiler <mojo version> --mojoc [<subdir>=]<file>... [--manifest <mopm.toml>]
-    \\                    [--registry <prod|gamma|beta|url>] [--config-dir <dir>] [--readme <file>] [--dry-run]
+    \\usage: mopm pack    --compiler <mojo version> --mojoc [<subdir>=]<file>... [--native <id>=<subdir>:<file>...]
+    \\                    [--manifest <mopm.toml>] [-o <dir>]
+    \\       mopm publish --compiler <mojo version> --mojoc [<subdir>=]<file>... [--native <id>=<subdir>:<file>...]
+    \\                    [--manifest <mopm.toml>] [--registry <prod|gamma|beta|url>] [--config-dir <dir>]
+    \\                    [--readme <file>] [--dry-run] [--oidc]
     \\
     \\  <subdir> is noarch (the default), linux-64, linux-aarch64 or osx-arm64.
+    \\  --native gives the static archive (lib<name>.a) of a [native.<id>] for one subdir; never noarch.
     \\  The token is $MOPM_TOKEN, else the one 'mopm login' stored.
+    \\  --oidc, inside a GitHub Actions job with 'id-token: write', gets the token from the job's identity instead.
     \\
 ;
 
@@ -50,15 +69,21 @@ pub const Cmd = enum { pack, publish };
 
 pub const Mojoc = struct { subdir: []const u8, path: []const u8 };
 
+/// `--native <id>=<subdir>:<file>`: the archive of native library `id` built for `subdir`.
+pub const NativeFile = struct { id: []const u8, subdir: []const u8, path: []const u8 };
+
 pub const Flags = struct {
     compiler: []const u8 = "",
     mojoc: []const Mojoc = &.{},
+    natives: []const NativeFile = &.{},
     manifest: []const u8 = "mopm.toml",
     out: []const u8 = "dist",
     registry: []const u8 = "prod",
     config_dir: ?[]const u8 = null,
     readme: ?[]const u8 = null,
     dry_run: bool = false,
+    /// `--oidc`: the registry token comes from the CI job's identity, not `$MOPM_TOKEN` or a login.
+    oidc: bool = false,
 };
 
 pub const Parsed = union(enum) { ok: Flags, bad: []const u8 };
@@ -68,7 +93,7 @@ fn bad(arena: Allocator, comptime fmt: []const u8, args: anytype) Allocator.Erro
 }
 
 fn takesValue(cmd: Cmd, flag: []const u8) bool {
-    const common = [_][]const u8{ "--compiler", "--mojoc", "--manifest" };
+    const common = [_][]const u8{ "--compiler", "--mojoc", "--manifest", "--native" };
     for (common) |c| {
         if (std.mem.eql(u8, c, flag)) return true;
     }
@@ -82,12 +107,17 @@ fn takesValue(cmd: Cmd, flag: []const u8) bool {
 pub fn parseFlags(arena: Allocator, cmd: Cmd, args: []const []const u8) Allocator.Error!Parsed {
     var f = Flags{};
     var mojoc = std.ArrayList(Mojoc).init(arena);
+    var natives = std.ArrayList(NativeFile).init(arena);
     var have_compiler = false;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const a = args[i];
         if (cmd == .publish and std.mem.eql(u8, a, "--dry-run")) {
             f.dry_run = true;
+            continue;
+        }
+        if (cmd == .publish and std.mem.eql(u8, a, "--oidc")) {
+            f.oidc = true;
             continue;
         }
         if (!takesValue(cmd, a)) return bad(arena, "unexpected argument '{s}'", .{a});
@@ -107,6 +137,24 @@ pub fn parseFlags(arena: Allocator, cmd: Cmd, args: []const []const u8) Allocato
             f.config_dir = v;
         } else if (std.mem.eql(u8, a, "--readme")) {
             f.readme = v;
+        } else if (std.mem.eql(u8, a, "--native")) {
+            // --native <id>=<subdir>:<file>
+            const eq = std.mem.indexOfScalar(u8, v, '=') orelse return bad(arena, "--native {s}: expected <id>=<subdir>:<file>", .{v});
+            const colon = std.mem.indexOfScalarPos(u8, v, eq + 1, ':') orelse return bad(arena, "--native {s}: expected <id>=<subdir>:<file>", .{v});
+            const entry = NativeFile{ .id = v[0..eq], .subdir = v[eq + 1 .. colon], .path = v[colon + 1 ..] };
+            if (entry.id.len == 0 or entry.path.len == 0) return bad(arena, "--native {s}: expected <id>=<subdir>:<file>", .{v});
+            if (!conda.isSubdir(entry.subdir)) {
+                return bad(arena, "--native {s}: '{s}' is not a subdir (linux-64, linux-aarch64, osx-arm64)", .{ v, entry.subdir });
+            }
+            if (std.mem.eql(u8, entry.subdir, "noarch")) {
+                return bad(arena, "--native {s}: an archive is built for one platform; it cannot be packed for noarch", .{v});
+            }
+            for (natives.items) |n| {
+                if (std.mem.eql(u8, n.id, entry.id) and std.mem.eql(u8, n.subdir, entry.subdir)) {
+                    return bad(arena, "--native names {s} for {s} twice", .{ entry.id, entry.subdir });
+                }
+            }
+            try natives.append(entry);
         } else {
             // --mojoc <path> or --mojoc <subdir>=<path>: a prefix before the
             // first '=' that has no '/' names a subdir.
@@ -129,6 +177,7 @@ pub fn parseFlags(arena: Allocator, cmd: Cmd, args: []const []const u8) Allocato
     if (!have_compiler) return bad(arena, "--compiler <exact mojo version> is required", .{});
     if (mojoc.items.len == 0) return bad(arena, "--mojoc <file> is required", .{});
     f.mojoc = mojoc.items;
+    f.natives = natives.items;
     return .{ .ok = f };
 }
 
@@ -184,6 +233,10 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
         }
         return null;
     };
+    if (!m.package.publish) {
+        err("{s}: {s} has publish = false, so it is not packed for a registry or published; remove the key to publish it\n", .{ f.manifest, m.package.name });
+        return null;
+    }
     if (try versionProblem(arena, m.package.version)) |problem| {
         err("{s}: {s}\n", .{ f.manifest, problem });
         return null;
@@ -193,7 +246,32 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
         return null;
     }
     var why: []const u8 = "";
-    const deps = conda.depsOf(arena, m, &why) catch |e| switch (e) {
+    const path_versions = (try pathVersions(arena, m, std.fs.path.dirname(f.manifest) orelse ".")) orelse return null;
+    const deps = conda.depsOf(arena, m, path_versions, &why) catch |e| switch (e) {
+        error.Unpackable => {
+            err("{s}: {s}\n", .{ f.manifest, why });
+            return null;
+        },
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+    const native_deps = conda.nativeDepsOf(arena, m, &why) catch |e| switch (e) {
+        error.Unpackable => {
+            err("{s}: {s}\n", .{ f.manifest, why });
+            return null;
+        },
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+
+    const native_files = switch (try nativeFiles(arena, m, f)) {
+        .ok => |files| files,
+        .bad => |reason| {
+            err("{s}\n", .{reason});
+            return null;
+        },
+    };
+
+    // The programs of `[targets] bins`, as source, in every subdir's package.
+    const bins = bins_mod.read(arena, m, std.fs.path.dirname(f.manifest) orelse ".", &why) catch |e| switch (e) {
         error.Unpackable => {
             err("{s}: {s}\n", .{ f.manifest, why });
             return null;
@@ -217,7 +295,10 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
             .compiler = f.compiler,
             .subdir = entry.subdir,
             .deps = deps,
+            .native_deps = native_deps,
             .mojoc = bytes,
+            .natives = native_files.get(entry.subdir) orelse &.{},
+            .bins = bins,
         });
         if (cmd == .publish and p.bytes.len > max_file_bytes) {
             err("{s} is {d} bytes; a package file is at most {d} bytes\n", .{ p.file_name, p.bytes.len, max_file_bytes });
@@ -230,6 +311,112 @@ fn prepare(arena: Allocator, cmd: Cmd, f: Flags) anyerror!?Prepared {
         return null;
     }
     return .{ .m = m, .packs = packs.items, .manifest_dir = std.fs.path.dirname(f.manifest) orelse "." };
+}
+
+/// What `nativeFiles` found: the archives by subdir, or why the package cannot be packed.
+const Files = union(enum) { ok: std.StringHashMap([]const conda.Native), bad: []const u8 };
+
+fn nativeBad(arena: Allocator, comptime fmt: []const u8, args: anytype) Allocator.Error!Files {
+    return .{ .bad = try std.fmt.allocPrint(arena, fmt, args) };
+}
+
+/// The static archives to pack, by subdir: for each `[native.<id>]` of `m` and each subdir `f.mojoc` packs, the file
+/// `--native` names, read and checked, or the reason it cannot be done. The registry wants every subdir's file to hold every
+/// native the metadata declares and every file of the version to carry the same `.mopm.json`, so a native without an
+/// archive for a subdir, a `--native` that nothing declares or packs, and a soname that differs between subdirs are
+/// refused here, before a byte is packed.
+fn nativeFiles(arena: Allocator, m: manifest.Manifest, f: Flags) anyerror!Files {
+    var by_subdir = std.StringHashMap([]const conda.Native).init(arena);
+    for (f.natives) |nf| {
+        var declared = false;
+        for (m.native) |n| declared = declared or std.mem.eql(u8, n.id, nf.id);
+        if (!declared) {
+            return nativeBad(arena, "--native {s}=...: {s} declares no [native.{s}]", .{ nf.id, f.manifest, nf.id });
+        }
+        var packed_here = false;
+        for (f.mojoc) |entry| packed_here = packed_here or std.mem.eql(u8, entry.subdir, nf.subdir);
+        if (!packed_here) {
+            return nativeBad(arena, "--native {s}={s}:...: no --mojoc packs the subdir {s}", .{ nf.id, nf.subdir, nf.subdir });
+        }
+    }
+    if (m.native.len == 0) return .{ .ok = by_subdir };
+    for (f.mojoc) |entry| {
+        if (std.mem.eql(u8, entry.subdir, "noarch")) {
+            return nativeBad(arena, "{s} declares native libraries, which are built for one platform; pack linux-64 (or another subdir), not noarch", .{f.manifest});
+        }
+    }
+    for (f.mojoc) |entry| {
+        var list = std.ArrayList(conda.Native).init(arena);
+        for (m.native) |n| {
+            var found: ?NativeFile = null;
+            for (f.natives) |nf| {
+                if (std.mem.eql(u8, nf.id, n.id) and std.mem.eql(u8, nf.subdir, entry.subdir)) found = nf;
+            }
+            const nf = found orelse {
+                return nativeBad(arena, "native library '{s}' has no archive for {s}: add --native {s}={s}:<lib<name>.a>", .{ n.id, entry.subdir, n.id, entry.subdir });
+            };
+            const bytes = std.fs.cwd().readFileAlloc(arena, nf.path, 1 << 30) catch |e| {
+                return nativeBad(arena, "{s}: {s}", .{ nf.path, @errorName(e) });
+            };
+            const native = conda.Native{ .id = n.id, .soname = std.fs.path.basename(nf.path), .needs = n.needs, .exclusive = n.exclusive, .link = n.link, .archive = bytes };
+            if (try conda.nativeProblem(arena, native)) |why| {
+                return nativeBad(arena, "{s}: {s}", .{ nf.path, why });
+            }
+            // A native the build system builds from `srcs`, or another rule provides, has the name the unit graph gave its archive; consumers' `needs` name it.
+            if (n.srcs.len > 0 or n.provided) {
+                const want = try n.archiveName(arena);
+                if (!std.mem.eql(u8, want, native.soname)) {
+                    return nativeBad(arena, "{s}: native library '{s}' is built as {s} (its soname in {s}); the archive given is named {s}", .{ nf.path, n.id, want, f.manifest, native.soname });
+                }
+            }
+            // The first subdir fixes the name; a later one that differs would make a different `.mopm.json`.
+            for (by_subdir.get(f.mojoc[0].subdir) orelse &.{}) |first| {
+                if (std.mem.eql(u8, first.id, n.id) and !std.mem.eql(u8, first.soname, native.soname)) {
+                    return nativeBad(arena, "native library '{s}' is {s} for {s} but {s} for {s}; every subdir's file carries the same metadata, so the archive has one name", .{ n.id, first.soname, f.mojoc[0].subdir, native.soname, entry.subdir });
+                }
+            }
+            try list.append(native);
+        }
+        try by_subdir.put(entry.subdir, list.items);
+    }
+    return .{ .ok = by_subdir };
+}
+
+/// The version of the package each path dependency (with a version) names, read from its own mopm.toml beside
+/// `manifest_dir`. Null after printing why not. A path dependency with no version is left for `depsOf` to refuse.
+fn pathVersions(arena: Allocator, m: manifest.Manifest, manifest_dir: []const u8) anyerror!?[]const conda.PathVersion {
+    var out = std.ArrayList(conda.PathVersion).init(arena);
+    for (m.dependencies) |d| {
+        const p = switch (d.source) {
+            .path => |p| p,
+            .version => continue,
+        };
+        if (d.requirement == null) continue;
+        const file = try std.fs.path.join(arena, &.{ manifest_dir, p, "mopm.toml" });
+        const src = std.fs.cwd().readFileAlloc(arena, file, 1 << 20) catch |e| {
+            err("{s}: dependency '{s}' has the path '{s}', which cannot be read: {s}\n", .{ file, d.name, p, @errorName(e) });
+            return null;
+        };
+        var diag: manifest.Diagnostic = .{};
+        const dm = manifest.parse(arena, src, &diag) catch |e| {
+            if (e == error.Invalid) {
+                err("{s}:{d}:{d}: {s}\n", .{ file, diag.pos.line, diag.pos.col, diag.message });
+            } else {
+                err("{s}: {s}\n", .{ file, @errorName(e) });
+            }
+            return null;
+        };
+        if (!std.mem.eql(u8, dm.package.name, d.name)) {
+            err("{s} names the package {s}, but dependency '{s}' calls it {s}\n", .{ file, dm.package.name, d.name, d.name });
+            return null;
+        }
+        if (!dm.package.publish) {
+            err("{s} depends on {s} (at {s}), which has publish = false; a published package cannot need one that is never published (a dev-dependency may)\n", .{ m.package.name, d.name, file });
+            return null;
+        }
+        try out.append(.{ .name = d.name, .version = dm.package.version });
+    }
+    return out.items;
 }
 
 fn fileExists(path: []const u8) bool {
@@ -270,6 +457,7 @@ fn loadReadme(arena: Allocator, f: Flags, prep: Prepared, refused: *bool) anyerr
 }
 
 pub fn main(arena: Allocator, cmd_name: []const u8, args: []const []const u8, cli_version: []const u8) u8 {
+    if (std.mem.eql(u8, cmd_name, "publish") and group_publish.wants(args)) return group_publish.main(arena, args, cli_version);
     const cmd: Cmd = if (std.mem.eql(u8, cmd_name, "pack")) .pack else .publish;
     const parsed = parseFlags(arena, cmd, args) catch return 1;
     const f = switch (parsed) {
@@ -299,12 +487,13 @@ fn packCmd(arena: Allocator, f: Flags) anyerror!u8 {
         const path = try std.fs.path.join(arena, &.{ dir, p.file_name });
         try std.fs.cwd().writeFile(path, p.bytes);
         try out.print("packed {s}\n  sha256 {s}\n  size {d}\n  manifest_sha256 {s}\n", .{ path, &p.sha256, p.bytes.len, &p.manifest_sha256 });
+        for (p.natives) |n| try out.print("  native {s} sha256 {s} size {d}\n", .{ n.soname, &n.sha256, n.size });
     }
     return 0;
 }
 
 /// `$MOPM_TOKEN` if set and not empty, else the stored credential.
-fn findToken(s: registry_cmd.Session) anyerror!?[]const u8 {
+pub fn findToken(s: registry_cmd.Session) anyerror!?[]const u8 {
     if (std.process.getEnvVarOwned(s.arena, "MOPM_TOKEN")) |t| {
         const trimmed = std.mem.trim(u8, t, " \t\r\n");
         if (trimmed.len > 0) return trimmed;
@@ -332,8 +521,19 @@ fn publishCmd(arena: Allocator, f: Flags, cli_version: []const u8) anyerror!u8 {
         return 0;
     }
 
+    // --oidc outside a job that can ask for an identity: stop before any request.
+    const actions = if (f.oidc) (ci_oidc.actionsFromEnv(arena) orelse {
+        err("{s}\n", .{ci_oidc.outside_actions});
+        return 1;
+    }) else null;
     const s = registry_cmd.open(arena, .{ .registry = f.registry, .config_dir = f.config_dir }, cli_version) orelse return 1;
-    const token = (try findToken(s)) orelse {
+    const token = if (actions) |act| switch (try ci_oidc.obtain(arena, http.Real{}, .{}, act, s.config.api_url, s.config.stage, name, version)) {
+        .ok => |t| t,
+        .bad => |why| {
+            err("{s}\n", .{why});
+            return 1;
+        },
+    } else (try findToken(s)) orelse {
         err("not logged in to {s}; run 'mopm login' or set MOPM_TOKEN\n", .{s.config.stage});
         return 1;
     };
@@ -374,7 +574,32 @@ fn publishCmd(arena: Allocator, f: Flags, cli_version: []const u8) anyerror!u8 {
         err("the registry sent a status URL that is not a path under /api/v1/publishes/\n", .{});
         return 1;
     };
-    return waitForPublish(s, token, status_url, name, version);
+    var con = group_publish.Console.init(arena, group_publish.Console.stdStreams);
+    return waitForPublish(s, group_publish.realNet(), &con, wait_secs, token, status_url, name, version);
+}
+
+/// Every header the registry named for a PUT, as given (the client sets Content-Length itself from the body, to the same
+/// value); null after printing why not, when a header's value is not text.
+pub fn putHeaders(arena: Allocator, put_headers: ?std.json.Value) Allocator.Error!?[]const std.http.Header {
+    var headers = std.ArrayList(std.http.Header).init(arena);
+    if (put_headers) |ph| switch (ph) {
+        .object => |o| {
+            var it = o.iterator();
+            while (it.next()) |e| {
+                const value = switch (e.value_ptr.*) {
+                    .string => |v| v,
+                    else => {
+                        err("the registry named an upload header that is not text\n", .{});
+                        return null;
+                    },
+                };
+                if (std.ascii.eqlIgnoreCase(e.key_ptr.*, "content-length")) continue;
+                try headers.append(.{ .name = e.key_ptr.*, .value = value });
+            }
+        },
+        else => {},
+    };
+    return headers.items;
 }
 
 /// Begins the upload of `p` and PUTs its bytes; the upload id, or null after
@@ -402,31 +627,12 @@ fn uploadFile(s: registry_cmd.Session, token: []const u8, name: []const u8, vers
         return null;
     }
 
-    // Every header the registry named, as given. The client sets
-    // Content-Length itself from the body, to the same value.
-    var headers = std.ArrayList(std.http.Header).init(arena);
-    if (up.put_headers) |ph| switch (ph) {
-        .object => |o| {
-            var it = o.iterator();
-            while (it.next()) |e| {
-                const value = switch (e.value_ptr.*) {
-                    .string => |v| v,
-                    else => {
-                        err("the registry named an upload header that is not text\n", .{});
-                        return null;
-                    },
-                };
-                if (std.ascii.eqlIgnoreCase(e.key_ptr.*, "content-length")) continue;
-                try headers.append(.{ .name = e.key_ptr.*, .value = value });
-            }
-        },
-        else => {},
-    };
+    const headers = (try putHeaders(arena, up.put_headers)) orelse return null;
     // No bearer token: the URL is presigned.
     const put = try http.request(arena, .PUT, up.put_url, .{
         .body = p.bytes,
         .content_type = null,
-        .extra_headers = headers.items,
+        .extra_headers = headers,
     });
     if (!put.ok()) {
         err("uploading {s} failed: the storage answered HTTP {d}\n", .{ p.file_name, put.status });
@@ -435,36 +641,45 @@ fn uploadFile(s: registry_cmd.Session, token: []const u8, name: []const u8, vers
     return up.upload_id;
 }
 
-fn waitForPublish(s: registry_cmd.Session, token: []const u8, url: []const u8, name: []const u8, version: []const u8) anyerror!u8 {
+/// Polls the publish at `url` until it is published or rejected, or `wait` seconds of `net`'s clock have passed. The
+/// clock and the pauses are `net`'s and everything it says goes through `con`, so a test drives it without waiting and
+/// without touching the real standard streams.
+fn waitForPublish(s: registry_cmd.Session, net: group_publish.Net, con: *group_publish.Console, wait: i64, token: []const u8, url: []const u8, name: []const u8, version: []const u8) anyerror!u8 {
     const arena = s.arena;
-    const out = std.io.getStdOut().writer();
-    const deadline = std.time.timestamp() + wait_secs;
-    while (std.time.timestamp() < deadline) {
-        const polled = try http.request(arena, .GET, url, .{ .token = token });
+    const deadline = net.now() + wait;
+    while (net.now() < deadline) {
+        const polled = try net.once(arena, .GET, url, .{ .token = token });
         if (polled.status == 429) {
-            std.time.sleep(@as(u64, @min(polled.retry_after orelse 1, 60)) * std.time.ns_per_s);
+            net.pause(@min(polled.retry_after orelse 1, 60));
             continue;
         }
         if (!polled.ok()) {
-            registry_cmd.printFailure(polled);
+            registry_cmd.reportFailure(con, polled);
             return 1;
         }
         const state = try std.json.parseFromSliceLeaky(struct {
             status: []const u8,
             rejection_code: ?[]const u8 = null,
             message: ?[]const u8 = null,
+            /// What did not stop the publish (a native dependency whose name conda-forge does not list). Registries that
+            /// predate the field do not send it; a CLI that predates it ignores it (`ignore_unknown_fields`).
+            warnings: ?[]const []const u8 = null,
         }, arena, polled.body, .{ .ignore_unknown_fields = true });
+        const finished = std.mem.eql(u8, state.status, "published") or std.mem.eql(u8, state.status, "rejected");
+        if (finished) {
+            for (state.warnings orelse &.{}) |w| con.fail("warning: {s}\n", .{w});
+        }
         if (std.mem.eql(u8, state.status, "published")) {
-            try out.print("published mojo-{s} {s}\n", .{ name, version });
+            con.say("published mojo-{s} {s}\n", .{ name, version });
             return 0;
         }
         if (std.mem.eql(u8, state.status, "rejected")) {
-            err("rejected: {s}: {s}\n", .{ state.rejection_code orelse "unknown", state.message orelse "" });
+            con.fail("rejected: {s}: {s}\n", .{ state.rejection_code orelse "unknown", state.message orelse "" });
             return 1;
         }
-        std.time.sleep(std.time.ns_per_s);
+        net.pause(1);
     }
-    err("gave up waiting for the publish after {d} minutes; it may still finish: check 'GET {s}'\n", .{ @divTrunc(wait_secs, 60), url });
+    con.fail("gave up waiting for the publish after {d} minutes; it may still finish: check 'GET {s}'\n", .{ @divTrunc(wait, 60), url });
     return 1;
 }
 
@@ -490,6 +705,20 @@ fn parseBad(a: Allocator, cmd: Cmd, args: []const []const u8, needle: []const u8
             return error.TestUnexpectedResult;
         },
     }
+}
+
+test "--oidc is a flag of publish and takes no value; pack does not know it" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    const base = [_][]const u8{ "--compiler", "1.0.0", "--mojoc", "a.mojoc" };
+    try std.testing.expect(!(try parseOk(a, .publish, &base)).oidc);
+    const f = try parseOk(a, .publish, &(base ++ [_][]const u8{ "--oidc", "--registry", "beta" }));
+    try std.testing.expect(f.oidc);
+    try std.testing.expectEqualStrings("beta", f.registry);
+    // It takes no value: a word after it is not one.
+    try parseBad(a, .publish, &(base ++ [_][]const u8{ "--oidc", "yes" }), "unexpected argument 'yes'");
+    try parseBad(a, .pack, &(base ++ [_][]const u8{"--oidc"}), "unexpected argument '--oidc'");
 }
 
 test "pack and publish flags" {
@@ -532,6 +761,179 @@ test "pack and publish flags" {
     try parseBad(a, .publish, &.{ "--compiler", "1.0.0", "--mojoc", "linux-64=" }, "no file");
 }
 
+test "--native names an archive per native library and subdir, and nothing that is not one" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    const f = try parseOk(a, .pack, &.{ "--compiler", "1.0.0", "--mojoc", "linux-64=m", "--native", "tls_sys=linux-64:dist/libtls_sys.a", "--native", "tls_sys=osx-arm64:other/libtls_sys.a", "--native", "z=linux-64:a:b" });
+    try std.testing.expectEqual(@as(usize, 3), f.natives.len);
+    try std.testing.expectEqualStrings("tls_sys", f.natives[0].id);
+    try std.testing.expectEqualStrings("linux-64", f.natives[0].subdir);
+    try std.testing.expectEqualStrings("dist/libtls_sys.a", f.natives[0].path);
+    try std.testing.expectEqualStrings("osx-arm64", f.natives[1].subdir);
+    // The first colon after the id ends the subdir: the rest is a path, colons and all.
+    try std.testing.expectEqualStrings("a:b", f.natives[2].path);
+    // publish takes them too.
+    const g = try parseOk(a, .publish, &.{ "--compiler", "1.0.0", "--mojoc", "linux-64=m", "--native", "x=linux-64:p", "--dry-run" });
+    try std.testing.expectEqual(@as(usize, 1), g.natives.len);
+
+    try parseBad(a, .pack, &.{ "--compiler", "1.0.0", "--mojoc", "m", "--native", "libx.a" }, "expected <id>=<subdir>:<file>");
+    try parseBad(a, .pack, &.{ "--compiler", "1.0.0", "--mojoc", "m", "--native", "x=linux-64" }, "expected <id>=<subdir>:<file>");
+    try parseBad(a, .pack, &.{ "--compiler", "1.0.0", "--mojoc", "m", "--native", "=linux-64:p" }, "expected <id>=<subdir>:<file>");
+    try parseBad(a, .pack, &.{ "--compiler", "1.0.0", "--mojoc", "m", "--native", "x=linux-64:" }, "expected <id>=<subdir>:<file>");
+    try parseBad(a, .pack, &.{ "--compiler", "1.0.0", "--mojoc", "m", "--native", "x=win-64:p" }, "is not a subdir");
+    try parseBad(a, .pack, &.{ "--compiler", "1.0.0", "--mojoc", "m", "--native", "x=noarch:p" }, "cannot be packed for noarch");
+    try parseBad(a, .pack, &.{ "--compiler", "1.0.0", "--mojoc", "m", "--native", "x=linux-64:p", "--native", "x=linux-64:q" }, "--native names x for linux-64 twice");
+    try parseBad(a, .pack, &.{ "--compiler", "1.0.0", "--mojoc", "m", "--native" }, "needs a value");
+}
+
+const native_manifest_text =
+    \\[package]
+    \\name = "demo"
+    \\version = "0.1.0"
+    \\
+    \\[toolchain]
+    \\mojo = "1.0.0"
+    \\
+    \\[native.nat]
+    \\kind = "static"
+    \\needs = ["libz.a"]
+    \\exclusive = "libnat"
+    \\
+;
+
+fn nativeOk(a: Allocator, m: manifest.Manifest, f: Flags) !std.StringHashMap([]const conda.Native) {
+    const found = try nativeFiles(a, m, f);
+    // A refusal is the test's failure; its reason is what `expectEqualStrings` shows.
+    if (found == .bad) try std.testing.expectEqualStrings("", found.bad);
+    return found.ok;
+}
+
+fn nativeFlags(mojoc: []const Mojoc, natives: []const NativeFile) Flags {
+    return .{ .compiler = "1.0.0", .mojoc = mojoc, .natives = natives, .manifest = "m/mopm.toml" };
+}
+
+test "nativeFiles reads the archive of each native library for each subdir it packs, and refuses what the registry would" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makePath("linux");
+    try tmp.dir.makePath("osx");
+    try tmp.dir.writeFile("linux/libnat.a", "!<arch>\nlinux\n");
+    try tmp.dir.writeFile("osx/libnat.a", "!<arch>\nosx\n");
+    try tmp.dir.writeFile("osx/libother.a", "!<arch>\nosx\n");
+    try tmp.dir.makePath("bad");
+    try tmp.dir.writeFile("bad/libnat.a", "not an archive at all");
+    const root = try tmp.dir.realpathAlloc(a, ".");
+    const p = struct {
+        fn of(arena: Allocator, r: []const u8, rel: []const u8) []const u8 {
+            return std.fs.path.join(arena, &.{ r, rel }) catch unreachable;
+        }
+    }.of;
+    var diag: manifest.Diagnostic = .{};
+    const m = try manifest.parse(a, native_manifest_text, &diag);
+    const linux = Mojoc{ .subdir = "linux-64", .path = "x" };
+    const osx = Mojoc{ .subdir = "osx-arm64", .path = "x" };
+    const n_linux = NativeFile{ .id = "nat", .subdir = "linux-64", .path = p(a, root, "linux/libnat.a") };
+    const n_osx = NativeFile{ .id = "nat", .subdir = "osx-arm64", .path = p(a, root, "osx/libnat.a") };
+
+    // Both subdirs: each gets its own archive, named for the library, with the manifest's needs and group.
+    const got = try nativeOk(a, m, nativeFlags(&.{ linux, osx }, &.{ n_linux, n_osx }));
+    const l = got.get("linux-64").?;
+    try std.testing.expectEqual(@as(usize, 1), l.len);
+    try std.testing.expectEqualStrings("nat", l[0].id);
+    try std.testing.expectEqualStrings("libnat.a", l[0].soname);
+    try std.testing.expectEqualStrings("libz.a", l[0].needs[0]);
+    try std.testing.expectEqualStrings("libnat", l[0].exclusive);
+    try std.testing.expectEqualStrings("!<arch>\nlinux\n", l[0].archive);
+    try std.testing.expectEqualStrings("!<arch>\nosx\n", got.get("osx-arm64").?[0].archive);
+
+    // A manifest with no native libraries packs as it always did: no entries, whatever the subdirs.
+    const plain = try manifest.parse(a, "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n", &diag);
+    const none = try nativeOk(a, plain, nativeFlags(&.{.{ .subdir = "noarch", .path = "x" }}, &.{}));
+    try std.testing.expectEqual(@as(u32, 0), none.count());
+
+    // Each of these is a refusal, with its reason.
+    const noarch = Mojoc{ .subdir = "noarch", .path = "x" };
+    const Refusal = struct { flags: Flags, want: []const u8 };
+    const refusals = [_]Refusal{
+        .{ .flags = nativeFlags(&.{ linux, osx }, &.{n_linux}), .want = "native library 'nat' has no archive for osx-arm64" },
+        .{ .flags = nativeFlags(&.{linux}, &.{ n_linux, .{ .id = "other", .subdir = "linux-64", .path = "x" } }), .want = "declares no [native.other]" },
+        .{ .flags = nativeFlags(&.{linux}, &.{ n_linux, n_osx }), .want = "no --mojoc packs the subdir osx-arm64" },
+        .{ .flags = nativeFlags(&.{ linux, noarch }, &.{n_linux}), .want = "built for one platform" },
+        .{ .flags = nativeFlags(&.{linux}, &.{.{ .id = "nat", .subdir = "linux-64", .path = p(a, root, "bad/libnat.a") }}), .want = "is not a static archive (it does not start with !<arch>)" },
+        .{ .flags = nativeFlags(&.{linux}, &.{.{ .id = "nat", .subdir = "linux-64", .path = p(a, root, "absent.a") }}), .want = "FileNotFound" },
+        .{ .flags = nativeFlags(&.{ linux, osx }, &.{ n_linux, .{ .id = "nat", .subdir = "osx-arm64", .path = p(a, root, "osx/libother.a") } }), .want = "is libnat.a for linux-64 but libother.a for osx-arm64" },
+    };
+    for (refusals) |r| {
+        const found = try nativeFiles(a, m, r.flags);
+        try std.testing.expect(found == .bad);
+        try std.testing.expect(std.mem.indexOf(u8, found.bad, r.want) != null);
+    }
+}
+
+test "a member's native built from srcs is packed from the archive the build system gives, under the soname the graph names" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile("libshim.a", "!<arch>\nshim\n");
+    try tmp.dir.writeFile("libother.a", "!<arch>\nother\n");
+    const root = try tmp.dir.realpathAlloc(a, ".");
+    var diag: manifest.Diagnostic = .{};
+    const head = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n";
+    const m = try manifest.parse(a, head ++ "[native.shim]\nkind = \"static\"\nsrcs = [\"native/*.c\"]\n", &diag);
+    const renamed = try manifest.parse(a, head ++ "[native.shim]\nkind = \"static\"\nsrcs = [\"native/*.c\"]\nsoname = \"libother.a\"\n", &diag);
+    const linux = Mojoc{ .subdir = "linux-64", .path = "x" };
+    const file = NativeFile{ .id = "shim", .subdir = "linux-64", .path = try std.fs.path.join(a, &.{ root, "libshim.a" }) };
+
+    // The archive is packed as a registry native is; its name is lib<id>.a, the soname the unit graph gave it.
+    const got = try nativeOk(a, m, nativeFlags(&.{linux}, &.{file}));
+    const packed_native = got.get("linux-64").?[0];
+    try std.testing.expectEqualStrings("shim", packed_native.id);
+    try std.testing.expectEqualStrings("libshim.a", packed_native.soname);
+    try std.testing.expectEqualStrings("!<arch>\nshim\n", packed_native.archive);
+
+    // An archive under another name than the unit's soname is refused: consumers' `needs` name the soname.
+    const found = try nativeFiles(a, renamed, nativeFlags(&.{linux}, &.{file}));
+    try std.testing.expect(found == .bad);
+    try std.testing.expect(std.mem.indexOf(u8, found.bad, "native library 'shim' is built as libother.a") != null);
+    try std.testing.expect(std.mem.indexOf(u8, found.bad, "the archive given is named libshim.a") != null);
+    // Pack checks the name only for a native with `srcs`; one without keeps the name of the file it is given.
+    const legacy = try manifest.parse(a, head ++ "[native.shim]\nkind = \"static\"\n", &diag);
+    const other_file = NativeFile{ .id = "shim", .subdir = "linux-64", .path = try std.fs.path.join(a, &.{ root, "libother.a" }) };
+    const kept = try nativeOk(a, legacy, nativeFlags(&.{linux}, &.{other_file}));
+    try std.testing.expectEqualStrings("libother.a", kept.get("linux-64").?[0].soname);
+}
+
+test "a provided native is packed under lib<id>.a or its soname, and an archive named otherwise is refused" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile("libshim.a", "!<arch>\nshim\n");
+    try tmp.dir.writeFile("libother.a", "!<arch>\nother\n");
+    const root = try tmp.dir.realpathAlloc(a, ".");
+    var diag: manifest.Diagnostic = .{};
+    const head = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n";
+    const m = try manifest.parse(a, head ++ "[native.shim]\nkind = \"static\"\nprovided = true\n", &diag);
+    const linux = Mojoc{ .subdir = "linux-64", .path = "x" };
+    const right = NativeFile{ .id = "shim", .subdir = "linux-64", .path = try std.fs.path.join(a, &.{ root, "libshim.a" }) };
+    const wrong = NativeFile{ .id = "shim", .subdir = "linux-64", .path = try std.fs.path.join(a, &.{ root, "libother.a" }) };
+
+    const got = try nativeOk(a, m, nativeFlags(&.{linux}, &.{right}));
+    try std.testing.expectEqualStrings("libshim.a", got.get("linux-64").?[0].soname);
+
+    const found = try nativeFiles(a, m, nativeFlags(&.{linux}, &.{wrong}));
+    try std.testing.expect(found == .bad);
+    try std.testing.expect(std.mem.indexOf(u8, found.bad, "native library 'shim' is built as libshim.a") != null);
+    try std.testing.expect(std.mem.indexOf(u8, found.bad, "the archive given is named libother.a") != null);
+}
+
 test "version refusals" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
@@ -563,6 +965,24 @@ test "the readme limit is 64 KiB" {
     try std.testing.expect((try readmeProblem(a, "README.md", "# caf\xc3\xa9\n")) == null);
 }
 
+test "a PUT carries the headers the registry named, as given, except the length the client sets itself" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    const named = try std.json.parseFromSliceLeaky(std.json.Value, a, "{\"x-amz-checksum-sha256\":\"abc=\",\"Content-Length\":\"7\",\"x-amz-meta-n\":\"v\"}", .{});
+    const headers = (try putHeaders(a, named)).?;
+    try std.testing.expectEqual(@as(usize, 2), headers.len);
+    try std.testing.expectEqualStrings("x-amz-checksum-sha256", headers[0].name);
+    try std.testing.expectEqualStrings("abc=", headers[0].value);
+    try std.testing.expectEqualStrings("x-amz-meta-n", headers[1].name);
+    // None named, or not an object: none sent.
+    try std.testing.expectEqual(@as(usize, 0), (try putHeaders(a, null)).?.len);
+    try std.testing.expectEqual(@as(usize, 0), (try putHeaders(a, .{ .string = "x" })).?.len);
+    // A value that is not text is refused.
+    const odd = try std.json.parseFromSliceLeaky(std.json.Value, a, "{\"x-n\":3}", .{});
+    try std.testing.expect((try putHeaders(a, odd)) == null);
+}
+
 test "the status URL resolves against the API host" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
@@ -579,4 +999,119 @@ test "the status URL resolves against the API host" {
     try std.testing.expect((try resolveStatusUrl(a, "https://mopm.dev/api/v1", "//evil.example/api/v1/publishes/x")) == null);
     try std.testing.expect((try resolveStatusUrl(a, "https://mopm.dev/api/v1", "/api/v1/publishes/")) == null);
     try std.testing.expect((try resolveStatusUrl(a, "https://mopm.dev/api/v1", "/other")) == null);
+}
+
+const gt = @import("group_publish_test.zig");
+const poll_url = "http://127.0.0.1:1/api/v1/publishes/pub_1";
+const pending = "{\"status\":\"validating\"}";
+const done = "{\"status\":\"published\"}";
+
+fn waitSession(a: Allocator) registry_cmd.Session {
+    return .{ .arena = a, .config = .{ .stage = "beta", .api_url = "http://127.0.0.1:1/api/v1", .channel_url = "", .min_cli_version = "", .read_only = false }, .config_dir = "unused" };
+}
+
+test "the wait for a publish polls once a second on the net's clock until the registry says published" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var con = group_publish.Console.init(a, null);
+    var script = gt.Script{ .steps = &.{
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = pending },
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = pending },
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = done },
+    }, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), script.net(), &con,600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expect(script.mismatch == null);
+    try std.testing.expectEqual(@as(usize, 3), script.seen.items.len);
+    // One second between polls: two pauses between three polls.
+    try std.testing.expectEqual(@as(u64, 2), script.slept);
+    for (script.seen.items) |x| try std.testing.expectEqualStrings("tok", x.token.?);
+    // What it says goes through the console it was given, not the process's standard output.
+    try std.testing.expectEqualStrings("published mojo-x 1.0.0\n", con.out.items);
+    try std.testing.expectEqualStrings("", con.err.items);
+}
+
+test "a publish that never finishes is given up on when the net's clock passes the wait, not before" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var con = group_publish.Console.init(a, null);
+    var script = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 200, .body = pending }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), script.net(), &con,5, "tok", poll_url, "x", "1.0.0"));
+    // A wait of 5 seconds is five polls, one at each second of the clock, and five pauses: the clock is exactly at the limit.
+    try std.testing.expectEqual(@as(usize, 5), script.seen.items.len);
+    try std.testing.expectEqual(@as(u64, 5), script.slept);
+    try std.testing.expect(std.mem.startsWith(u8, con.err.items, "mopm: gave up waiting for the publish after 0 minutes;"));
+
+    // A wait of zero polls nothing.
+    var none = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 200, .body = pending }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), none.net(), &con,0, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(usize, 0), none.seen.items.len);
+}
+
+test "a 429 waits the registry's Retry-After, one second when it names none, and never more than 60" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var con = group_publish.Console.init(a, null);
+    var named = gt.Script{ .steps = &.{
+        .{ .method = .GET, .suffix = "pub_1", .status = 429, .retry_after = 7 },
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = done },
+    }, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), named.net(), &con,600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(u64, 7), named.slept);
+    try std.testing.expectEqual(@as(usize, 2), named.seen.items.len);
+
+    var unnamed = gt.Script{ .steps = &.{
+        .{ .method = .GET, .suffix = "pub_1", .status = 429 },
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = done },
+    }, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), unnamed.net(), &con,600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(u64, 1), unnamed.slept);
+
+    var huge = gt.Script{ .steps = &.{
+        .{ .method = .GET, .suffix = "pub_1", .status = 429, .retry_after = 3600 },
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = done },
+    }, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), huge.net(), &con,600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(u64, 60), huge.slept);
+
+    // A pause that carries the clock past the wait ends the wait: no poll follows it.
+    var late = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 429, .retry_after = 60 }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), late.net(), &con,30, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(usize, 1), late.seen.items.len);
+    try std.testing.expectEqual(@as(u64, 60), late.slept);
+}
+
+test "the warnings of a finished publish are printed to standard error, and a status without them or with fields the CLI does not know is as before" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var con = group_publish.Console.init(a, null);
+    var warned = gt.Script{ .steps = &.{
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = "{\"status\":\"validating\",\"warnings\":[\"not yet\"]}" },
+        .{ .method = .GET, .suffix = "pub_1", .status = 200, .body = "{\"status\":\"published\",\"warnings\":[\"native dependency 'libpgn' is not a conda-forge package name\",\"second\"],\"future\":{\"a\":1}}" },
+    }, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), warned.net(), &con, 600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqualStrings("mopm: warning: native dependency 'libpgn' is not a conda-forge package name\nmopm: warning: second\n", con.err.items);
+    try std.testing.expectEqualStrings("published mojo-x 1.0.0\n", con.out.items);
+    var plain = group_publish.Console.init(a, null);
+    var quiet = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 200, .body = "{\"status\":\"published\",\"future\":[1]}" }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 0), try waitForPublish(waitSession(a), quiet.net(), &plain, 600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqualStrings("", plain.err.items);
+}
+
+test "a rejected publish and a failing poll end the wait at once, with no pause" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var con = group_publish.Console.init(a, null);
+    var rejected = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 200, .body = "{\"status\":\"rejected\",\"rejection_code\":\"bad\",\"message\":\"no\"}" }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), rejected.net(), &con,600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(u64, 0), rejected.slept);
+    try std.testing.expectEqualStrings("mopm: rejected: bad: no\n", con.err.items);
+    var broken = gt.Script{ .steps = &.{.{ .method = .GET, .suffix = "pub_1", .status = 500 }}, .seen = std.ArrayList(gt.Script.Seen).init(a) };
+    try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), broken.net(), &con,600, "tok", poll_url, "x", "1.0.0"));
+    try std.testing.expectEqual(@as(u64, 0), broken.slept);
+    try std.testing.expectEqual(@as(usize, 1), broken.seen.items.len);
 }

@@ -2,7 +2,7 @@
 //! checker that counts failed checks (and can be quiet, so a driver can show
 //! that it rejects a doctored result), JSON accessors, and a small XML tree
 //! for the JUnit file. Standard library only. The Zig port of the checkers
-//! tests/e2e/check_supervisor.py and tests/e2e/check_flaky.py use.
+//! check_supervisor.py and check_flaky.py (deleted) used.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

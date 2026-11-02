@@ -7,8 +7,29 @@ import {
   TransactWriteCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { RegistryError, versionExists } from './errors';
-import { applyEvent, type VersionEvent } from './state';
-import { auditSortKey, byVersion, type Store } from './store';
+import { API_VIEW, headerKey, membersKey, parseHeader, parseMembers, VersionFunnel, type FunnelOptions, type GroupMembers, type GroupReader, type View } from './group';
+import {
+  checkHeaderWrite,
+  commitInputItem,
+  commitInputKey,
+  commitToken,
+  committedRecord,
+  groupItem,
+  membersItem,
+  membersWithExpiry,
+  parseCommitInput,
+  parseGroupRecord,
+  type ActiveGroup,
+  type AdoptOutcome,
+  type CommitInput,
+  type CommitOutcome,
+  type GroupRecord,
+  type GroupStatus,
+  type GroupStore,
+} from './group-store';
+import type { RawVersionPort } from './raw-port';
+import { applyEvent, IllegalTransition, publishesVersion, type GroupEvent, type UserEvent, type VersionEvent } from './state';
+import { auditSortKey, type Store } from './store';
 import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, VersionRecord } from './types';
 import { canonicalVersion } from './version';
 
@@ -23,6 +44,8 @@ export interface Tables {
   versions: string;
   owners: string;
   audit: string;
+  /** The publish pipeline's table: it also holds the group headers and member lists a version read consults (src/group.ts). */
+  publishes: string;
 }
 
 export const tablesFor = (stage: string): Tables => ({
@@ -30,6 +53,7 @@ export const tablesFor = (stage: string): Tables => ({
   versions: `mopm-${stage}-versions`,
   owners: `mopm-${stage}-owners`,
   audit: `mopm-${stage}-audit`,
+  publishes: `mopm-${stage}-publishes`,
 });
 
 const MAX_UPDATE_ATTEMPTS = 5;
@@ -73,6 +97,7 @@ const fromPackageItem = (i: Item): PackageRecord => {
   const { [SEARCH_INDEX.bucketAttribute]: _b, ...rest } = i;
   return rest as PackageRecord;
 };
+const ownerItem = (o: OwnerRecord): Item => ({ ...o, github_id: String(o.github_id), github_id_num: o.github_id });
 const auditItem = (e: AuditEntry): Item => ({ ...e, ts_seq: auditSortKey(e) });
 const fromAuditItem = (i: Item): AuditEntry => {
   const { ts_seq: _k, ...rest } = i;
@@ -83,12 +108,48 @@ const cancelledByCondition = (err: unknown, index: number): boolean => {
   const e = err as { name?: string; CancellationReasons?: { Code?: string }[] };
   return e?.name === 'TransactionCanceledException' && e.CancellationReasons?.[index]?.Code === 'ConditionalCheckFailed';
 };
+/** A single conditional Put that lost: `ConditionalCheckFailedException`. */
+const putLost = (err: unknown): boolean => (err as { name?: string })?.name === 'ConditionalCheckFailedException';
 
-export class DynamoStore implements Store {
+/**
+ * A group's header and member list, read from the `publishes` table (key attribute `publish_id`, as for its other
+ * rows). Both reads are consistent: a reader that has seen a commit must not be answered from before it.
+ */
+class DynamoGroupReader implements GroupReader {
+  constructor(
+    private readonly doc: DocClient,
+    private readonly table: string,
+  ) {}
+  private async item(key: string): Promise<Item | undefined> {
+    const r = await this.doc.send(new GetCommand({ TableName: this.table, Key: { publish_id: key }, ConsistentRead: true }));
+    return r.Item as Item | undefined;
+  }
+  async header(gid: string) {
+    const i = await this.item(headerKey(gid));
+    return i && parseHeader(i);
+  }
+  async members(gid: string) {
+    const i = await this.item(membersKey(gid));
+    return i && parseMembers(i);
+  }
+}
+
+export class DynamoStore implements Store, GroupStore {
+  private readonly funnel: VersionFunnel;
+  /** The rows as stored (src/raw-port.ts): for the group module and for tests that must see the stored form. */
+  readonly raw: RawVersionPort;
+
   constructor(
     private readonly doc: DocClient,
     private readonly tables: Tables,
-  ) {}
+    funnel: FunnelOptions = {},
+  ) {
+    this.raw = {
+      rawGet: (name, version) => this.rowOf(name, version),
+      rawQuery: (name) => this.rowsOf(name),
+    };
+    this.funnel = new VersionFunnel(this.raw, new DynamoGroupReader(doc, tables.publishes), funnel);
+  }
 
   async createPackage(pkg: PackageRecord): Promise<void> {
     try {
@@ -107,16 +168,69 @@ export class DynamoStore implements Store {
       throw err;
     }
   }
+  /** One transaction: the package row, the owner row and the audit row, each created only if its key is absent. */
+  async claimPackage(pkg: PackageRecord, owner: OwnerRecord, audit: AuditEntry): Promise<void> {
+    const create = (table: string, item: Item) => ({
+      Put: { TableName: table, Item: item, ConditionExpression: 'attribute_not_exists(#n)', ExpressionAttributeNames: { '#n': 'name' } },
+    });
+    try {
+      await this.doc.send(
+        new TransactWriteCommand({
+          TransactItems: [create(this.tables.packages, packageItem(pkg)), create(this.tables.owners, ownerItem(owner)), create(this.tables.audit, auditItem(audit))],
+        }),
+      );
+    } catch (err) {
+      // The package or the owner row is already there: the name is taken. (The audit key is a fresh id.)
+      if (cancelledByCondition(err, 0) || cancelledByCondition(err, 1)) {
+        throw new RegistryError('name_taken', `'${pkg.name}' is already taken.`, { name: pkg.name });
+      }
+      throw err;
+    }
+  }
   async getPackage(name: string) {
     const r = await this.doc.send(new GetCommand({ TableName: this.tables.packages, Key: { name } }));
     return r.Item ? fromPackageItem(r.Item) : undefined;
+  }
+  /**
+   * A read, then a Put of the row without its expiry, conditional on the row still being `claimed` (the roles of the publish side
+   * have GetItem and PutItem and no UpdateItem). Only a `claimed` row is written, so a second call, or a package that is already
+   * active, writes nothing; nothing else changes a package row, so a lost race wrote the same row.
+   */
+  async activatePackage(name: string): Promise<boolean> {
+    const got = await this.doc.send(new GetCommand({ TableName: this.tables.packages, Key: { name }, ConsistentRead: true }));
+    const cur = got.Item ? fromPackageItem(got.Item) : undefined;
+    if (!cur || cur.state !== 'claimed') return false;
+    const { claim_expires_at: _c, ...rest } = cur;
+    try {
+      await this.doc.send(
+        new PutCommand({
+          TableName: this.tables.packages,
+          Item: packageItem({ ...rest, state: 'active' }),
+          ConditionExpression: '#s = :c',
+          ExpressionAttributeNames: { '#s': 'state' },
+          ExpressionAttributeValues: { ':c': 'claimed' },
+        }),
+      );
+      return true;
+    } catch (err) {
+      if ((err as { name?: string }).name === 'ConditionalCheckFailedException') return false;
+      throw err;
+    }
   }
   async listPackageNames() {
     const names: string[] = [];
     let start: Item | undefined;
     do {
+      // Consistent: the builders list the packages to read, and a package claimed a moment ago must be in the list.
+      // (A package claimed after the scan started is covered by the builders widening their read, src/group.ts.)
       const r = await this.doc.send(
-        new ScanCommand({ TableName: this.tables.packages, ProjectionExpression: '#n', ExpressionAttributeNames: { '#n': 'name' }, ExclusiveStartKey: start }),
+        new ScanCommand({
+          TableName: this.tables.packages,
+          ProjectionExpression: '#n',
+          ExpressionAttributeNames: { '#n': 'name' },
+          ConsistentRead: true,
+          ExclusiveStartKey: start,
+        }),
       );
       for (const i of r.Items ?? []) names.push(i.name);
       start = r.LastEvaluatedKey;
@@ -186,44 +300,39 @@ export class DynamoStore implements Store {
     }
   }
   async getVersion(name: string, version: string) {
+    return this.funnel.getOne(name, version);
+  }
+  private async rowOf(name: string, version: string) {
     const r = await this.doc.send(
       new GetCommand({ TableName: this.tables.versions, Key: { name, version: canonicalVersion(version) }, ConsistentRead: true }),
     );
     return r.Item ? fromItem(r.Item) : undefined;
   }
 
-  /** Read, apply the state machine, write back only if `rev` is unchanged; on a lost race read again. */
-  async updateVersion(name: string, version: string, event: VersionEvent, audit: AuditEntry): Promise<VersionRecord> {
+  /**
+   * Read (as a reader sees the row), apply the state machine, write back only if `rev` is unchanged; on a lost race
+   * read again. A member of a committed group is `published` here, and its `rev` is the stored one, so the write
+   * that follows is an ordinary one. A member of a group that has not committed is refused: only the group's own
+   * code may change it.
+   */
+  async updateVersion(name: string, version: string, event: UserEvent, audit: AuditEntry): Promise<VersionRecord> {
+    return this.change(name, version, event, audit, true);
+  }
+
+  /**
+   * Read the row, apply the state machine, write back only if `rev` is unchanged; on a lost race read again. `asReader`:
+   * the row is read as a reader sees it (see updateVersion's note); otherwise as stored, for a group's own event.
+   */
+  private async change(name: string, version: string, event: VersionEvent, audit: AuditEntry, asReader: boolean): Promise<VersionRecord> {
     for (let attempt = 0; attempt < MAX_UPDATE_ATTEMPTS; attempt++) {
-      const cur = await this.getVersion(name, version);
+      const cur = asReader ? await this.getVersion(name, version) : await this.rowOf(name, version);
       if (!cur) throw new RegistryError('version_not_found', `'${name}' has no version '${version}'.`, { name, version });
+      if (asReader && cur.group_id !== undefined && cur.state === 'pending') throw new IllegalTransition(cur, event);
       const next = applyEvent(cur, event);
-      if (next === cur) return cur;
+      if (next === cur) return this.settle(event, cur);
       try {
-        await this.doc.send(
-          new TransactWriteCommand({
-            TransactItems: [
-              {
-                Put: {
-                  TableName: this.tables.versions,
-                  Item: toItem(next),
-                  ConditionExpression: '#r = :r',
-                  ExpressionAttributeNames: { '#r': 'rev' },
-                  ExpressionAttributeValues: { ':r': cur.rev },
-                },
-              },
-              {
-                Put: {
-                  TableName: this.tables.audit,
-                  Item: auditItem(audit),
-                  ConditionExpression: 'attribute_not_exists(#n)',
-                  ExpressionAttributeNames: { '#n': 'name' },
-                },
-              },
-            ],
-          }),
-        );
-        return next;
+        await this.doc.send(new TransactWriteCommand({ TransactItems: [this.versionPut(next, '#r = :r', { '#r': 'rev' }, { ':r': cur.rev }), this.auditPut(audit)] }));
+        return this.settle(event, next);
       } catch (err) {
         if (cancelledByCondition(err, 0)) continue;
         throw err;
@@ -231,7 +340,217 @@ export class DynamoStore implements Store {
     }
     throw new RegistryError('internal_error', `'${name}' ${version} changed too often while updating.`, { name, version });
   }
+  /** After a version event: the package of a version that is published now is active (also when the event changed nothing, so a repeat finishes what a crashed attempt left). */
+  private async settle(event: VersionEvent, rec: VersionRecord): Promise<VersionRecord> {
+    if (publishesVersion(event) && rec.state === 'published') await this.activatePackage(rec.name);
+    return rec;
+  }
+  private versionPut(rec: VersionRecord, cond: string, names: Record<string, string>, values?: Record<string, unknown>) {
+    return {
+      Put: {
+        TableName: this.tables.versions,
+        Item: toItem(rec),
+        ConditionExpression: cond,
+        ExpressionAttributeNames: names,
+        ...(values ? { ExpressionAttributeValues: values } : {}),
+      },
+    };
+  }
+  private auditPut(audit: AuditEntry) {
+    return {
+      Put: {
+        TableName: this.tables.audit,
+        Item: auditItem(audit),
+        ConditionExpression: 'attribute_not_exists(#n)',
+        ExpressionAttributeNames: { '#n': 'name' },
+      },
+    };
+  }
+
+  // --- the writers of a group (src/group-store.ts) ----------------------------------------------------------------
+
+  private async publishItem(key: string): Promise<Item | undefined> {
+    const r = await this.doc.send(new GetCommand({ TableName: this.tables.publishes, Key: { publish_id: key }, ConsistentRead: true }));
+    return r.Item as Item | undefined;
+  }
+  private publishPut(item: Item, cond: string, names: Record<string, string>, values?: Record<string, unknown>) {
+    return {
+      Put: {
+        TableName: this.tables.publishes,
+        Item: item,
+        ConditionExpression: cond,
+        ExpressionAttributeNames: names,
+        ...(values ? { ExpressionAttributeValues: values } : {}),
+      },
+    };
+  }
+
+  async getGroup(gid: string): Promise<GroupRecord | undefined> {
+    const i = await this.publishItem(headerKey(gid));
+    return i && parseGroupRecord(i);
+  }
+  async getGroupMembers(gid: string): Promise<GroupMembers | undefined> {
+    const i = await this.publishItem(membersKey(gid));
+    return i && parseMembers(i);
+  }
+
+  async createGroup(header: GroupRecord, members: GroupMembers, audit: AuditEntry): Promise<{ created: boolean; header: GroupRecord }> {
+    checkHeaderWrite(undefined, header);
+    const gid = header.group_id;
+    const list = membersItem(gid, members);
+    try {
+      await this.doc.send(new PutCommand({ TableName: this.tables.publishes, Item: list, ConditionExpression: 'attribute_not_exists(#k)', ExpressionAttributeNames: { '#k': 'publish_id' } }));
+    } catch (err) {
+      if (!putLost(err)) throw err;
+      // Written before (a retried create): it is the same list, or this is not the same group.
+      if (JSON.stringify(await this.getGroupMembers(gid)) !== JSON.stringify(parseMembers(list))) throw new Error(`group ${gid} already has another member list`);
+    }
+    try {
+      await this.doc.send(new TransactWriteCommand({ TransactItems: [this.publishPut(groupItem(header), 'attribute_not_exists(#k)', { '#k': 'publish_id' }), this.auditPut(audit)] }));
+      return { created: true, header };
+    } catch (err) {
+      if (!cancelledByCondition(err, 0)) throw err;
+      return { created: false, header: (await this.getGroup(gid))! };
+    }
+  }
+
+  async updateGroup(gid: string, fn: (cur: GroupRecord) => GroupRecord | undefined, audit?: AuditEntry): Promise<GroupRecord | undefined> {
+    for (let attempt = 0; attempt < MAX_UPDATE_ATTEMPTS; attempt++) {
+      const cur = await this.getGroup(gid);
+      if (!cur) return undefined;
+      const changed = fn(structuredClone(cur));
+      if (changed === undefined) return cur;
+      const next = { ...changed, rev: cur.rev + 1 };
+      checkHeaderWrite(cur, next);
+      const put = this.publishPut(groupItem(next), '#r = :r', { '#r': 'rev' }, { ':r': cur.rev });
+      // A header that gains or loses its expiry (a group that ended, or was opened again) takes its member list along, in the
+      // same transaction: the list expires after the header, and a reopened group keeps it.
+      const list = next.expires_at !== cur.expires_at ? await this.publishItem(membersKey(gid)) : undefined;
+      const together = list ? [{ Put: { TableName: this.tables.publishes, Item: membersWithExpiry(list, next.expires_at) } }] : [];
+      try {
+        if (audit || together.length > 0) await this.doc.send(new TransactWriteCommand({ TransactItems: [put, ...(audit ? [this.auditPut(audit)] : []), ...together] }));
+        else await this.doc.send(new PutCommand(put.Put));
+        return next;
+      } catch (err) {
+        if (putLost(err) || cancelledByCondition(err, 0)) continue;
+        throw err;
+      }
+    }
+    throw new RegistryError('internal_error', `Group ${gid} changed too often while updating.`, { group_id: gid });
+  }
+
+  async commitGroup(gid: string, c: { rev: number; writeOrder: number[]; now: string; audit: AuditEntry }): Promise<CommitOutcome> {
+    // Read first: a commit whose answer was lost shows up here as the marker, and a stale `rev` must not look like a conflict.
+    const cur = await this.getGroup(gid);
+    if (!cur) return { outcome: 'missing' };
+    if (cur.committed_at !== undefined) return { outcome: 'already', header: cur };
+    if (cur.status !== 'validating' || cur.rev !== c.rev) return { outcome: 'conflict', header: cur };
+    if (!(Date.parse(c.now) <= Date.parse(cur.deadline_at))) return { outcome: 'deadline', header: cur }; // a deadline that is not a time is past
+    const next = committedRecord(cur, c.writeOrder, c.now);
+    try {
+      await this.doc.send(
+        new TransactWriteCommand({
+          ClientRequestToken: commitToken(gid, cur.attempt),
+          TransactItems: [
+            this.publishPut(groupItem(next), '#s = :s AND #r = :r', { '#s': 'status', '#r': 'rev' }, { ':s': 'validating', ':r': cur.rev }),
+            this.auditPut(c.audit),
+          ],
+        }),
+      );
+      return { outcome: 'committed', header: next };
+    } catch (err) {
+      if (!cancelledByCondition(err, 0)) throw err;
+      const now = (await this.getGroup(gid))!;
+      return now.committed_at !== undefined ? { outcome: 'already', header: now } : { outcome: 'conflict', header: now };
+    }
+  }
+
+  async adoptVersion(rec: VersionRecord, audit: AuditEntry, free: (cur: VersionRecord) => boolean): Promise<AdoptOutcome> {
+    if (rec.state !== 'pending' || rec.group_id === undefined) throw new Error('adoptVersion takes a pending row that names a group');
+    return this.adopt(rec, audit, free);
+  }
+  async adoptSingle(rec: VersionRecord, audit: AuditEntry, free: (cur: VersionRecord) => boolean): Promise<AdoptOutcome> {
+    if (rec.state !== 'pending' || rec.group_id !== undefined) throw new Error('adoptSingle takes a pending row that names no group');
+    return this.adopt(rec, audit, free);
+  }
+  private async adopt(rec: VersionRecord, audit: AuditEntry, free: (cur: VersionRecord) => boolean): Promise<AdoptOutcome> {
+    const fresh = { ...rec, canonical: canonicalVersion(rec.version) };
+    try {
+      await this.doc.send(new TransactWriteCommand({ TransactItems: [this.versionPut(fresh, 'attribute_not_exists(#n)', { '#n': 'name' }), this.auditPut(audit)] }));
+      return { outcome: 'created', record: fresh };
+    } catch (err) {
+      if (!cancelledByCondition(err, 0)) throw err;
+    }
+    const cur = (await this.rowOf(rec.name, rec.version))!; // rows are never deleted, so the one that stopped the create is still there
+    if (cur.state !== 'pending' || !free(cur)) return { outcome: 'taken', existing: cur };
+    const next = { ...fresh, rev: cur.rev + 1 };
+    try {
+      await this.doc.send(new TransactWriteCommand({ TransactItems: [this.versionPut(next, '#r = :r', { '#r': 'rev' }, { ':r': cur.rev }), this.auditPut(audit)] }));
+      return { outcome: 'adopted', record: next };
+    } catch (err) {
+      if (cancelledByCondition(err, 0)) return { outcome: 'lost' };
+      throw err;
+    }
+  }
+
+  async applyGroupEvent(name: string, version: string, event: GroupEvent, audit: AuditEntry): Promise<VersionRecord> {
+    return this.change(name, version, event, audit, false);
+  }
+
+  async putCommitInputs(gid: string, hash: string, inputs: readonly CommitInput[], expiresAt: number): Promise<void> {
+    // Sixteen at a time: a group has up to 500 members, and the call that stores them has a few seconds.
+    for (let i = 0; i < inputs.length; i += 16) {
+      await Promise.all(
+        inputs.slice(i, i + 16).map((input, k) => this.doc.send(new PutCommand({ TableName: this.tables.publishes, Item: commitInputItem(commitInputKey(gid, hash, i + k), input, expiresAt) }))),
+      );
+    }
+  }
+  async getCommitInput(gid: string, hash: string, index: number): Promise<CommitInput | undefined> {
+    const i = await this.publishItem(commitInputKey(gid, hash, index));
+    return i && parseCommitInput(i);
+  }
+
+  async listActiveGroups(): Promise<ActiveGroup[]> {
+    const out: ActiveGroup[] = [];
+    let start: Item | undefined;
+    do {
+      const r = await this.doc.send(
+        new QueryCommand({
+          TableName: this.tables.publishes,
+          IndexName: 'by_sweep',
+          KeyConditionExpression: '#p = :p',
+          ExpressionAttributeNames: { '#p': 'sweep_pk' },
+          ExpressionAttributeValues: { ':p': 'active' },
+          Limit: 100,
+          ExclusiveStartKey: start,
+        }),
+      );
+      for (const i of r.Items ?? []) {
+        const key = String(i.publish_id);
+        if (!key.startsWith('grp#')) continue;
+        out.push({
+          group_id: key.slice('grp#'.length),
+          status: i.status as GroupStatus,
+          attempt: Number(i.attempt),
+          actor: String(i.actor),
+          rev: Number(i.rev),
+          progress_at: String(i.progress_at),
+          sweep_at: String(i.sweep_at),
+          deadline_at: String(i.deadline_at),
+          resend: Number(i.resend ?? 0),
+        });
+      }
+      start = r.LastEvaluatedKey;
+    } while (start);
+    return out;
+  }
   async listVersions(name: string) {
+    return (await this.versionsOf([name], API_VIEW)).get(name)!;
+  }
+  async versionsOf(names: readonly string[], view: View) {
+    return this.funnel.versionsOf(names, view);
+  }
+  private async rowsOf(name: string) {
     const out: VersionRecord[] = [];
     let start: Item | undefined;
     do {
@@ -248,7 +567,7 @@ export class DynamoStore implements Store {
       for (const i of r.Items ?? []) out.push(fromItem(i));
       start = r.LastEvaluatedKey;
     } while (start);
-    return out.sort(byVersion);
+    return out;
   }
 
   // Owners: sort key github_id is a string in the table.
@@ -257,7 +576,7 @@ export class DynamoStore implements Store {
       await this.doc.send(
         new PutCommand({
           TableName: this.tables.owners,
-          Item: { ...o, github_id: String(o.github_id), github_id_num: o.github_id },
+          Item: ownerItem(o),
           ConditionExpression: 'attribute_not_exists(#n)',
           ExpressionAttributeNames: { '#n': 'name' },
         }),

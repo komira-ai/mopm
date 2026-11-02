@@ -1,0 +1,10 @@
+[package]
+name = "cxxapp"
+version = "1.0.0"
+mojo = ["1.0.0"]
+
+[dependencies]
+cxxlib = { path = "cxxlib", version = "^1.0.0" }
+
+[targets]
+bins = [{ name = "demo", path = "bin/demo.mojo" }]

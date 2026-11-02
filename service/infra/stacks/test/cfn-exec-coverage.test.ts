@@ -5,7 +5,7 @@ import { STAGES, Stage } from '../lib/config';
 import { DUMMY_ACCOUNT, DUMMY_ZONE_ID, build } from './util';
 
 // Does the scoped CloudFormation execution policy (service/infra/access/cfn-exec-policy.template.json, rendered the
-// way bootstrap.sh renders it) allow everything CloudFormation must do to create, update and delete the resources
+// way the bootstrap command renders it) allow everything CloudFormation must do to create, update and delete the resources
 // these stacks synthesize?
 //
 // Why it exists: the beta deploy failed because the policy had no Route 53 permission and no ssm:GetParameters for
@@ -24,14 +24,14 @@ const REGION = 'us-east-1';
 const POLICY_FILE = path.resolve(__dirname, '../../access/cfn-exec-policy.template.json');
 const ZONE: Record<Stage, string> = { beta: 'beta.mopm.dev', gamma: 'gamma.mopm.dev', prod: 'mopm.dev' };
 
-/** Renders the template the way bootstrap.sh does ({{STAGE}}, {{ACCOUNT}}, {{ZONE}}). */
+/** Renders the template the way lib/bootstrap.ts does ({{STAGE}}, {{ACCOUNT}}, {{ZONE}}). */
 export function renderPolicy(stage: Stage, account: string = DUMMY_ACCOUNT): Json {
   const text = fs
     .readFileSync(POLICY_FILE, 'utf8')
     .replace(/\{\{STAGE\}\}/g, stage)
     .replace(/\{\{ACCOUNT\}\}/g, account)
     .replace(/\{\{ZONE\}\}/g, ZONE[stage]);
-  if (text.includes('{{')) throw new Error('policy template has a placeholder this test (and bootstrap.sh) do not fill');
+  if (text.includes('{{')) throw new Error('policy template has a placeholder this test (and the bootstrap command) do not fill');
   return JSON.parse(text);
 }
 
@@ -264,6 +264,12 @@ export const REQUIRED: Record<string, Needs> = {
     ),
     ...each(['lambda:CreateEventSourceMapping', 'lambda:GetFunction'], functionArn(c, r.Properties.FunctionName)),
   ],
+  // The group sweeper's schedule. The policy's NameScopedServices allows events:* on rule/mopm-<stage>-* (the rule is named explicitly, so its name is in the scope); the Lambda permission that lets it invoke the function is an AWS::Lambda::Permission, which is mapped above.
+  'AWS::Events::Rule': (_r, id, c) =>
+    each(
+      ['events:PutRule', 'events:DescribeRule', 'events:DeleteRule', 'events:PutTargets', 'events:RemoveTargets', 'events:EnableRule', 'events:DisableRule', 'events:TagResource', 'events:UntagResource', 'events:ListTagsForResource'],
+      `arn:aws:events:${REGION}:${c.account}:rule/${physical(c, id, 'Name')}`,
+    ),
   'AWS::CloudWatch::Alarm': (_r, id, c) =>
     each(
       ['cloudwatch:PutMetricAlarm', 'cloudwatch:DeleteAlarms', 'cloudwatch:DescribeAlarms', 'cloudwatch:TagResource', 'cloudwatch:ListTagsForResource'],

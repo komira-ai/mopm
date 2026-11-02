@@ -27,7 +27,7 @@ def test_multi_line(
 
 
 def test_raises() raises:
-    raise Error("planted: this test always fails")
+    raise Error("faulty: this test always fails")
 
 
 # mopm: not-a-test

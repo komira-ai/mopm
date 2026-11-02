@@ -9,13 +9,26 @@
 //!   * The REPL needs the shared objects in the preload set of the JIT
 //!     process; static archives cannot be preloaded.
 //!   * Every transitive native library must be present in the set: a missing
-//!     one kills the process. Their order does not matter on Linux.
+//!     one kills the process. The order of shared objects does not matter on
+//!     Linux. The order of static archives does: a linker looks for the symbols
+//!     an archive leaves undefined only in the archives after it, so an archive
+//!     comes before every archive it `needs` (a static library may `need` a
+//!     static or a shared one; a shared object cannot take symbols from an
+//!     archive, so it may not need one).
 //!   * One owner per native library: two packages shipping one soname are
 //!     refused.
+//!   * One library per exclusive group: two native libraries that declare the
+//!     same `exclusive` group (two copies of one C library under different
+//!     names) link without error and run with two copies of its state, so a
+//!     closure holding two is refused.
+//!   * A static archive can leave symbols to the platform (a C++ archive, to
+//!     libc++): its `link` names the system libraries, and the plan ends with
+//!     one `-l<name>` for each, after every archive.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const metadata = @import("metadata.zig");
+const native_link = @import("native_link.zig");
 
 const List = std.ArrayList([]const u8);
 
@@ -29,10 +42,12 @@ pub const Input = struct {
 pub const Code = enum {
     duplicate_package,
     duplicate_owner,
+    exclusive_conflict,
     missing_package,
     missing_library,
     not_in_preload_set,
     static_only,
+    needs_cycle,
 };
 
 /// Which command a diagnostic blocks.
@@ -72,6 +87,22 @@ fn preloadable(n: metadata.Native) bool {
     return n.mode == .link and n.kind != .static;
 }
 
+/// What a soname's owner ships, for the `needs` of the libraries that name it.
+const Provides = enum {
+    /// A shared object in link mode: in the preload set.
+    preload,
+    /// A static archive in link mode: on the link line, ahead of what it needs.
+    archive,
+    /// Anything else (load mode): the package opens it itself.
+    other,
+};
+
+fn providesOf(n: metadata.Native) Provides {
+    if (preloadable(n)) return .preload;
+    if (n.mode == .link and n.kind == .static) return .archive;
+    return .other;
+}
+
 pub fn plan(arena: Allocator, inputs: []const Input) Allocator.Error!Plan {
     var diags = std.ArrayList(Diagnostic).init(arena);
     var build_args = List.init(arena);
@@ -80,7 +111,7 @@ pub fn plan(arena: Allocator, inputs: []const Input) Allocator.Error!Plan {
 
     var pkgs = std.StringHashMap(void).init(arena);
     var owners = std.StringHashMap([]const u8).init(arena); // soname -> package
-    var provides = std.StringHashMap(bool).init(arena); // soname -> preloadable
+    var provides = std.StringHashMap(Provides).init(arena); // soname -> what its owner ships
     var seen_dirs = std.StringHashMap(void).init(arena);
     var emitted = std.StringHashMap(void).init(arena);
 
@@ -102,7 +133,7 @@ pub fn plan(arena: Allocator, inputs: []const Input) Allocator.Error!Plan {
             const r = try owners.getOrPut(n.soname);
             if (!r.found_existing) {
                 r.value_ptr.* = inp.meta.name;
-                try provides.put(n.soname, preloadable(n));
+                try provides.put(n.soname, providesOf(n));
             } else if (!std.mem.eql(u8, r.value_ptr.*, inp.meta.name)) {
                 try diags.append(.{
                     .code = .duplicate_owner,
@@ -111,6 +142,28 @@ pub fn plan(arena: Allocator, inputs: []const Input) Allocator.Error!Plan {
                         arena,
                         "{s} is provided by both {s} and {s}; one owner per native library",
                         .{ n.soname, r.value_ptr.*, inp.meta.name },
+                    ),
+                });
+            }
+        }
+    }
+
+    // Pass 2b: at most one native library per exclusive group.
+    var group_owner = std.StringHashMap(GroupOwner).init(arena);
+    for (inputs) |inp| {
+        for (inp.meta.native) |n| {
+            if (n.exclusive.len == 0) continue;
+            const r = try group_owner.getOrPut(n.exclusive);
+            if (!r.found_existing) {
+                r.value_ptr.* = .{ .package = inp.meta.name, .id = n.id };
+            } else if (!std.mem.eql(u8, r.value_ptr.package, inp.meta.name) or !std.mem.eql(u8, r.value_ptr.id, n.id)) {
+                try diags.append(.{
+                    .code = .exclusive_conflict,
+                    .command = .all,
+                    .message = try std.fmt.allocPrint(
+                        arena,
+                        "{s} (native {s}) and {s} (native {s}) are both in exclusive group {s}; a closure links one library of a group",
+                        .{ r.value_ptr.package, r.value_ptr.id, inp.meta.name, n.id, n.exclusive },
                     ),
                 });
             }
@@ -135,8 +188,19 @@ pub fn plan(arena: Allocator, inputs: []const Input) Allocator.Error!Plan {
         for (inp.meta.native) |n| {
             if (n.mode != .link) continue; // a load-mode library resolves its own needs
             for (n.needs) |need| {
-                if (provides.get(need)) |can_preload| {
-                    if (!can_preload) {
+                if (std.mem.eql(u8, need, n.soname)) {
+                    try diags.append(.{
+                        .code = .needs_cycle,
+                        .command = .all,
+                        .message = try std.fmt.allocPrint(arena, "{s} (native {s}) needs itself ({s})", .{ inp.meta.name, n.id, need }),
+                    });
+                    continue;
+                }
+                if (provides.get(need)) |owner_ships| {
+                    // A static library takes what it needs from a shared object or from an archive; a shared
+                    // object is loaded at run time and cannot reach into an archive.
+                    const ok = owner_ships == .preload or (owner_ships == .archive and n.kind == .static);
+                    if (!ok) {
                         try diags.append(.{
                             .code = .not_in_preload_set,
                             .command = .all,
@@ -162,8 +226,11 @@ pub fn plan(arena: Allocator, inputs: []const Input) Allocator.Error!Plan {
         }
     }
 
-    // Pass 4: the flags, in input order. Only the first owner of a soname
+    // Pass 4: the flags, in input order, except that the static archives come after the
+    // shared flags, each before the archives it needs. Only the first owner of a soname
     // contributes.
+    var archives = std.ArrayList(Archive).init(arena);
+    var system_libs = List.init(arena);
     for (inputs) |inp| {
         for (inp.meta.native) |n| {
             if (n.mode == .load) continue;
@@ -184,7 +251,8 @@ pub fn plan(arena: Allocator, inputs: []const Input) Allocator.Error!Plan {
                 try run_paths.append(path);
                 try preload.append(path);
             } else {
-                try build_args.append(try join(arena, inp.dir, n.static_file));
+                try archives.append(.{ .soname = n.soname, .needs = n.needs, .path = try join(arena, inp.dir, n.static_file) });
+                try native_link.merge(&system_libs, n.link);
                 inline for (.{ Command.run, Command.repl }) |cmd| {
                     try diags.append(.{
                         .code = .static_only,
@@ -200,12 +268,65 @@ pub fn plan(arena: Allocator, inputs: []const Input) Allocator.Error!Plan {
         }
     }
 
+    try orderArchives(arena, archives.items, &build_args, &diags);
+    // The system libraries the archives name come last, once each: a linker takes the symbols an archive leaves
+    // undefined from the libraries after it.
+    for (system_libs.items) |name| try build_args.append(try std.fmt.allocPrint(arena, "-l{s}", .{name}));
+
     return .{
         .build = try build_args.toOwnedSlice(),
         .run = try run_paths.toOwnedSlice(),
         .preload = try preload.toOwnedSlice(),
         .diagnostics = try diags.toOwnedSlice(),
     };
+}
+
+/// A static archive on the link line.
+const GroupOwner = struct { package: []const u8, id: []const u8 };
+const Archive = struct { soname: []const u8, needs: []const []const u8, path: []const u8 };
+
+/// Appends the paths of `archives` to `build_args`, each before every archive it needs; archives that do not constrain
+/// one another stay in the order they came in. A cycle among them gets one `needs_cycle` diagnostic, and the archives
+/// of the cycle follow in input order.
+fn orderArchives(arena: Allocator, archives: []const Archive, build_args: *List, diags: *std.ArrayList(Diagnostic)) Allocator.Error!void {
+    const placed = try arena.alloc(bool, archives.len);
+    @memset(placed, false);
+    var left: usize = archives.len;
+    while (left > 0) {
+        var next: ?usize = null;
+        for (archives, 0..) |cand, i| {
+            if (placed[i]) continue;
+            var wanted = false;
+            for (archives, 0..) |other, j| {
+                if (j == i or placed[j]) continue;
+                for (other.needs) |need| wanted = wanted or std.mem.eql(u8, need, cand.soname);
+            }
+            if (!wanted) {
+                next = i;
+                break;
+            }
+        }
+        if (next == null) {
+            var names = std.ArrayList(u8).init(arena);
+            for (archives, 0..) |a, i| {
+                if (placed[i]) continue;
+                if (names.items.len > 0) try names.appendSlice(", ");
+                try names.appendSlice(a.soname);
+            }
+            try diags.append(.{
+                .code = .needs_cycle,
+                .command = .all,
+                .message = try std.fmt.allocPrint(arena, "{s} need each other; a link order cannot put one before the other", .{names.items}),
+            });
+            for (archives, 0..) |a, i| {
+                if (!placed[i]) try build_args.append(a.path);
+            }
+            return;
+        }
+        placed[next.?] = true;
+        left -= 1;
+        try build_args.append(archives[next.?].path);
+    }
 }
 
 /// Text form used by `mopm link-plan` and by the golden files.
@@ -343,7 +464,7 @@ test "order does not matter, presence does" {
     try expectList(&.{ "d/lib/libb.so.1", "d/lib/liba.so.1" }, p.preload);
 }
 
-test "a needed library that is only static or load-mode is not in the preload set" {
+test "a shared library that needs a load-mode library is told its owner does not ship it linked" {
     var t = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer t.deinit();
     const a = t.allocator();
@@ -353,6 +474,171 @@ test "a needed library that is only static or load-mode is not in the preload se
     ) });
     try std.testing.expect(has(p, .not_in_preload_set, .all));
     try std.testing.expect(!has(p, .missing_library, .all));
+}
+
+// A static archive that needs another (the shape of a TLS library over a crypto library).
+const static_a_needs_b =
+    \\{"schema": 1, "name": "a", "deps": [{"name": "b"}], "native": [
+    \\  {"id": "a", "soname": "liba.a", "kind": "static", "static_file": "lib/liba.a", "needs": ["libb.a"]}]}
+;
+const static_b =
+    \\{"schema": 1, "name": "b", "native": [
+    \\  {"id": "b", "soname": "libb.a", "kind": "static", "static_file": "lib/libb.a"}]}
+;
+
+test "a static library may need another static library: the edge is accepted" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const p = try plan(a, &.{ try mk(a, "d", static_a_needs_b), try mk(a, "d", static_b) });
+    try std.testing.expect(!has(p, .not_in_preload_set, .all));
+    try std.testing.expect(!has(p, .missing_library, .all));
+    try std.testing.expect(!has(p, .missing_package, .all));
+    try std.testing.expect(!has(p, .needs_cycle, .all));
+    try expectList(&.{ "d/lib/liba.a", "d/lib/libb.a" }, p.build);
+}
+
+test "a static library may need a shared one; a shared library may not need an archive" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    // static a -> shared b: both are linked, and b is in the preload set.
+    const ok = try plan(a, &.{ try mk(a, "d",
+        \\{"schema": 1, "name": "a", "deps": [{"name": "b"}], "native": [
+        \\  {"id": "a", "soname": "liba.a", "kind": "static", "static_file": "lib/liba.a", "needs": ["libb.so.1"]}]}
+    ), try mk(a, "d", provides_b) });
+    try std.testing.expect(!has(ok, .not_in_preload_set, .all));
+    // shared a -> static b: the loader cannot give a the symbols of an archive.
+    const bad = try plan(a, &.{ try mk(a, "d", needs_b), try mk(a, "d",
+        \\{"schema": 1, "name": "b", "native": [
+        \\  {"id": "b", "soname": "libb.so.1", "kind": "static", "static_file": "lib/libb.a"}]}
+    ) });
+    try std.testing.expect(has(bad, .not_in_preload_set, .all));
+}
+
+test "a static library that needs one nobody ships is missing_library, as a shared one is" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const p = try plan(a, &.{try mk(a, "d", static_a_needs_b)});
+    try std.testing.expect(has(p, .missing_library, .all));
+    try std.testing.expect(!has(p, .not_in_preload_set, .all));
+}
+
+test "static archives are linked each before the ones it needs, whatever order they are given in" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    // b is given first, but a needs b: a must come first on the link line.
+    const p = try plan(a, &.{ try mk(a, "d", static_b), try mk(a, "d", static_a_needs_b) });
+    try expectList(&.{ "d/lib/liba.a", "d/lib/libb.a" }, p.build);
+    // The shared flags stay where the input order put them, ahead of the archives.
+    const mixed = try plan(a, &.{ try mk(a, "d", static_b), try mk(a, "d", static_a_needs_b), try mk(a, "e", pkg_shared) });
+    try expectList(&.{ "-Le/lib", "-lx", "d/lib/liba.a", "d/lib/libb.a" }, mixed.build);
+    // Three in a chain, given in the worst order.
+    const chain = try plan(a, &.{
+        try mk(a, "d", static_b),
+        try mk(a, "d",
+            \\{"schema": 1, "name": "c", "native": [
+            \\  {"id": "c", "soname": "libc.a", "kind": "static", "static_file": "lib/libc.a"}]}
+        ),
+        try mk(a, "d",
+            \\{"schema": 1, "name": "a", "deps": [{"name": "b"}, {"name": "c"}], "native": [
+            \\  {"id": "a", "soname": "liba.a", "kind": "static", "static_file": "lib/liba.a", "needs": ["libb.a", "libc.a"]}]}
+        ),
+    });
+    try expectList(&.{ "d/lib/liba.a", "d/lib/libb.a", "d/lib/libc.a" }, chain.build);
+}
+
+test "static archives that do not constrain one another keep their input order" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const c =
+        \\{"schema": 1, "name": "c", "native": [
+        \\  {"id": "c", "soname": "libc.a", "kind": "static", "static_file": "lib/libc.a"}]}
+    ;
+    const p = try plan(a, &.{ try mk(a, "d", c), try mk(a, "d", static_b) });
+    try expectList(&.{ "d/lib/libc.a", "d/lib/libb.a" }, p.build);
+}
+
+const cxx_a =
+    \\{"schema": 1, "name": "a", "deps": [{"name": "b"}], "native": [
+    \\  {"id": "a", "soname": "liba.a", "kind": "static", "static_file": "lib/liba.a", "needs": ["libb.a"], "link": ["c++"]}]}
+;
+const cxx_b =
+    \\{"schema": 1, "name": "b", "native": [
+    \\  {"id": "b", "soname": "libb.a", "kind": "static", "static_file": "lib/libb.a", "link": ["c++", "m"]}]}
+;
+
+// Defect it catches: a C++ archive linked without libc++ (the consumer fails on std::__1:: symbols); the -l flag ahead of
+// the archives, where a linker has not yet seen the symbols to look for; one -lc++ per archive that names it.
+test "system libraries named by static archives end the line, once each, after every archive" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    // b is given first and a needs b: archives a, b, then libc++ (named by both) once, then libm.
+    const p = try plan(a, &.{ try mk(a, "d", cxx_b), try mk(a, "d", cxx_a) });
+    try expectList(&.{ "d/lib/liba.a", "d/lib/libb.a", "-lc++", "-lm" }, p.build);
+    try std.testing.expect(has(p, .static_only, .run));
+    // Shared flags keep their place ahead of the archives; the system libraries still come last.
+    const mixed = try plan(a, &.{ try mk(a, "d", cxx_b), try mk(a, "e", pkg_shared), try mk(a, "d", cxx_a) });
+    try expectList(&.{ "-Le/lib", "-lx", "d/lib/liba.a", "d/lib/libb.a", "-lc++", "-lm" }, mixed.build);
+    // The run and preload lists are not touched: a system library is not a file to preload.
+    try std.testing.expectEqual(@as(usize, 1), mixed.run.len);
+}
+
+// Defect it catches: -l flags added for archives that name none, so every consumer of any static native links libc++.
+test "archives that name no system library add no -l flag" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const p = try plan(a, &.{ try mk(a, "d", static_b), try mk(a, "d", static_a_needs_b) });
+    try expectList(&.{ "d/lib/liba.a", "d/lib/libb.a" }, p.build);
+    // One archive that names libc++ is enough for the one flag.
+    const one = try plan(a, &.{ try mk(a, "d", static_b), try mk(a, "d", cxx_a) });
+    try expectList(&.{ "d/lib/liba.a", "d/lib/libb.a", "-lc++" }, one.build);
+}
+
+// Defect it catches: the plan and the unit graph putting the same names in different orders (the plan by package order,
+// the graph by soname), so that `mopm build` and a build system link differently.
+test "the system libraries are in one order whatever order the archives are given in" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const pa =
+        \\{"schema": 1, "name": "a", "native": [
+        \\  {"id": "a", "soname": "liba.a", "kind": "static", "static_file": "lib/liba.a", "link": ["m"]}]}
+    ;
+    const pb =
+        \\{"schema": 1, "name": "b", "native": [
+        \\  {"id": "b", "soname": "libb.a", "kind": "static", "static_file": "lib/libb.a", "link": ["c++"]}]}
+    ;
+    const ba = try plan(a, &.{ try mk(a, "d", pb), try mk(a, "d", pa) });
+    try expectList(&.{ "d/lib/libb.a", "d/lib/liba.a", "-lc++", "-lm" }, ba.build);
+    const ab = try plan(a, &.{ try mk(a, "d", pa), try mk(a, "d", pb) });
+    try expectList(&.{ "d/lib/liba.a", "d/lib/libb.a", "-lc++", "-lm" }, ab.build);
+}
+
+test "golden: static archives that name system libraries" {
+    try golden("static_link", &.{ "plain_sys", "cxx_a", "cxx_b" });
+}
+
+test "static archives that need each other are refused, once, and are still all on the line" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const p = try plan(a, &.{ try mk(a, "d", static_a_needs_b), try mk(a, "d",
+        \\{"schema": 1, "name": "b", "native": [
+        \\  {"id": "b", "soname": "libb.a", "kind": "static", "static_file": "lib/libb.a", "needs": ["liba.a"]}]}
+    ) });
+    try std.testing.expect(has(p, .needs_cycle, .all));
+    var n: usize = 0;
+    for (p.diagnostics) |d| {
+        if (d.code == .needs_cycle) n += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), n);
+    try expectList(&.{ "d/lib/liba.a", "d/lib/libb.a" }, p.build);
 }
 
 test "two packages owning one native library are refused" {
@@ -441,4 +727,63 @@ test "golden: duplicate owner" {
 
 test "golden: static only" {
     try golden("static", &.{"staticpkg"});
+}
+
+test "golden: a static library over the static library it needs, given in the other order" {
+    try golden("static_chain", &.{ "crypto_sys", "tls_sys" });
+}
+
+test "a library that needs its own soname is refused" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const p = try plan(a, &.{try mk(a, "d",
+        \\{"schema": 1, "name": "a", "native": [
+        \\  {"id": "a", "soname": "liba.a", "kind": "static", "static_file": "lib/liba.a", "needs": ["liba.a"]}]}
+    )});
+    try std.testing.expect(has(p, .needs_cycle, .all));
+    try std.testing.expect(!has(p, .missing_library, .all));
+}
+
+fn groupPkg(a: Allocator, name: []const u8, soname: []const u8, group: []const u8) !Input {
+    const stem = soname[0 .. soname.len - 2];
+    const text = try std.fmt.allocPrint(a,
+        \\{{"schema": 1, "name": "{s}", "native": [
+        \\  {{"id": "{s}", "soname": "{s}", "kind": "static", "static_file": "lib/{s}"{s}{s}{s}}}]}}
+    , .{ name, stem, soname, soname, if (group.len > 0) ", \"exclusive\": \"" else "", group, if (group.len > 0) "\"" else "" });
+    return mk(a, "d", text);
+}
+
+// Defect it catches: two copies of one C library (say two prefixed builds of a crypto library) in one closure, which
+// link without error and run with two copies of its state. Defect caught: the groups are compared with `!`; the
+// pass is removed; a library with no group is made to conflict with another with none.
+test "two native libraries of one exclusive group are refused, naming both; other groups and no group are not" {
+    var t = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer t.deinit();
+    const a = t.allocator();
+    const bad = try plan(a, &.{ try groupPkg(a, "crypto_a", "libca.a", "libcrypto"), try groupPkg(a, "crypto_b", "libcb.a", "libcrypto") });
+    try std.testing.expect(has(bad, .exclusive_conflict, .all));
+    var found: usize = 0;
+    for (bad.diagnostics) |d| {
+        if (d.code != .exclusive_conflict) continue;
+        found += 1;
+        try std.testing.expectEqualStrings("crypto_a (native libca) and crypto_b (native libcb) are both in exclusive group libcrypto; a closure links one library of a group", d.message);
+    }
+    try std.testing.expectEqual(@as(usize, 1), found);
+    // Distinct groups, no group, and a group held once are all fine.
+    const other = try plan(a, &.{ try groupPkg(a, "crypto_a", "libca.a", "libcrypto"), try groupPkg(a, "tls_b", "libcb.a", "libtls") });
+    try std.testing.expect(!has(other, .exclusive_conflict, .all));
+    const none = try plan(a, &.{ try groupPkg(a, "crypto_a", "libca.a", ""), try groupPkg(a, "crypto_b", "libcb.a", "") });
+    try std.testing.expect(!has(none, .exclusive_conflict, .all));
+    // The same package given twice is duplicate_package and nothing more: its one library is not "two in the group".
+    const twice = try plan(a, &.{ try groupPkg(a, "crypto_a", "libca.a", "libcrypto"), try groupPkg(a, "crypto_a", "libca.a", "libcrypto") });
+    try std.testing.expect(has(twice, .duplicate_package, .all));
+    try std.testing.expect(!has(twice, .exclusive_conflict, .all));
+    // Two libraries of one package in one group are two libraries too.
+    const same_pkg = try plan(a, &.{try mk(a, "d",
+        \\{"schema": 1, "name": "both", "native": [
+        \\  {"id": "x", "soname": "libx.a", "kind": "static", "static_file": "lib/libx.a", "exclusive": "g"},
+        \\  {"id": "y", "soname": "liby.a", "kind": "static", "static_file": "lib/liby.a", "exclusive": "g"}]}
+    )});
+    try std.testing.expect(has(same_pkg, .exclusive_conflict, .all));
 }

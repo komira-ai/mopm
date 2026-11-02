@@ -1,5 +1,6 @@
 import { compareVersions } from './version';
-import type { VersionEvent } from './state';
+import type { View } from './group';
+import type { UserEvent } from './state';
 import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, VersionRecord } from './types';
 
 /**
@@ -10,11 +11,27 @@ import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, Vers
  *   version_exists, whatever state the first one is in (a tombstone keeps the number burned). Two concurrent creates: exactly one wins.
  * - Every change to a version also appends its audit entry, atomically with it.
  * - Version rows are never deleted.
+ * - Every read of a version row (`getVersion`, `listVersions`, `versionsOf`, and the row `updateVersion` starts
+ *   from) returns the projection of src/group.ts: a row that belongs to a group that has not committed is
+ *   `pending`; one that has is `published`. A row without a group is returned as stored, at no extra read.
  */
 export interface Store {
   /** Create-once. Throws name_taken when the package exists. */
   createPackage(pkg: PackageRecord): Promise<void>;
+  /**
+   * A claim: the package, its first owner and the audit entry, all or nothing (a name is never left without an owner,
+   * and an owner row never lands on a package somebody else created). Throws name_taken when the package exists.
+   */
+  claimPackage(pkg: PackageRecord, owner: OwnerRecord, audit: AuditEntry): Promise<void>;
   getPackage(name: string): Promise<PackageRecord | undefined>;
+  /**
+   * The package's first published version has happened: a `claimed` package becomes `active` and loses its `claim_expires_at`
+   * (a claim lapses only while it has no published version). Idempotent: an `active` or missing package is left alone, and the
+   * answer says whether this call changed it. The adapters call it themselves after `updateVersion` with `publish` and
+   * `applyGroupEvent` with `group_publish` (src/state.ts, `publishesVersion`), whoever owns the package (an account or `ci_owner`),
+   * so a caller need not; the validator calls it for a version that an earlier attempt published and died before activating.
+   */
+  activatePackage(name: string): Promise<boolean>;
   listPackageNames(): Promise<string[]>;
   /**
    * Packages whose name starts with `prefix` (empty matches all), ordered by name, strictly after `after`,
@@ -29,11 +46,19 @@ export interface Store {
   getVersion(name: string, version: string): Promise<VersionRecord | undefined>;
   /**
    * Apply an event through the state machine and persist it with its audit entry, retrying on a
-   * concurrent change. Throws version_not_found (missing, or an event the state refuses).
+   * concurrent change. Throws version_not_found (missing, or an event the state refuses). The two events only a group
+   * sends (`stage`, `group_publish`) are not accepted here: they go through `GroupStore.applyGroupEvent` (src/group-store.ts).
    */
-  updateVersion(name: string, version: string, event: VersionEvent, audit: AuditEntry): Promise<VersionRecord>;
+  updateVersion(name: string, version: string, event: UserEvent, audit: AuditEntry): Promise<VersionRecord>;
   /** Oldest to newest by conda ordering. */
   listVersions(name: string): Promise<VersionRecord[]>;
+  /**
+   * The rows of several packages in one call, as `view` shows them (src/group.ts): every row of a package, each
+   * package oldest to newest. The result has an entry for each name asked for; a repodata build also gets the
+   * packages of the members of a committed group that the caller had not listed. Search and the builders read
+   * through this, so that a group is seen whole or not at all within one call.
+   */
+  versionsOf(names: readonly string[], view: View): Promise<Map<string, VersionRecord[]>>;
 
   addOwner(owner: OwnerRecord): Promise<void>; // already_owner
   removeOwner(name: string, githubId: number): Promise<void>; // owner_not_found
