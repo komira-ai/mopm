@@ -7,11 +7,10 @@
   on manual dispatch, and on a pull request that carries the label `macos`
   (the macOS queue is slow, so add the label when your change touches
   platform-specific code).
-- A bug fix comes with a test that failed before the fix.
-- A behaviour change updates the golden files in `tests/golden` in the same
-  pull request, and says why.
-- Keep files small and the public surface smaller. Document only what the code
-  does.
+- The rules every change is written and reviewed against are in
+  [AGENTS.md](AGENTS.md), each with an id: among them, a bug fix comes with a
+  test that failed before the fix (T5), a behaviour change updates the golden
+  files (T19), and docs say only what the code does (P10).
 - Open an issue before a large change.
 - By contributing you agree your work is licensed under Apache-2.0.
 
@@ -161,11 +160,9 @@ when the scan cannot run (the download does not match its sha256, or the scanner
 
 A source file you add under `src/core`, `src/cli` or `registry/fake` is picked
 up by both (Buck2 takes each directory by glob; it skips dotfiles, so a new
-dotfile under `tests/` is named in `BUCK`). A new root source file, executable,
-module or `addTest` in `build.zig` needs the matching `zig_exe`, `zig_module`
-or `zig_test` in `BUCK`: `//:build_parity` (`zig test tools/build_parity.zig`
-from the root) fails when they differ. A call in `BUCK` with no `build.zig`
-counterpart (a helper, a driver) says `buck-only` on its first line.
+dotfile under `tests/` is named in `BUCK`). Keeping `build.zig` and `BUCK` in
+step is rule B18 of [AGENTS.md](AGENTS.md), with what it asks of each;
+`//:build_parity` (`zig test tools/build_parity.zig` from the root) checks it.
 
 The unit tests read `tests/...` relative to the working directory, the
 repository root under `zig build test` and in the Buck2 action; a runner that

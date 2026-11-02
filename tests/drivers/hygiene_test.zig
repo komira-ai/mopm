@@ -47,8 +47,12 @@ test "every file of the repository passes the text rules, and every workflow the
     try hyg.autopinSetsProblems(a, try tree.read(a, ".github/workflows/autopin-compute.yml"), tree.files, &out);
     try hyg.farmExclusionProblems(a, try tree.read(a, "BUCK"), try tree.read(a, ".github/workflows/farm.yml"), &out);
     try hyg.dependabotProblems(a, try tree.read(a, ".github/dependabot.yml"), tree, &out);
-    for (out.items) |l| std.debug.print("{s}\n", .{l});
-    try std.testing.expectEqual(@as(usize, 0), out.items.len);
+    // The only findings are rule B10 of the shared core quoting the trigger's name, in AGENTS.md and its canonical copy (both prose: no
+    // workflow reads them). The scan itself has no allow-list; this list is complete, so any other finding, in those files or others, fails.
+    try c.expectLines("hygiene", out.items, &.{
+        "hygiene: AGENTS.md: privileged PR-target trigger",
+        "hygiene: tests/agents/shared_core.md: privileged PR-target trigger",
+    });
 }
 
 fn text(a: Allocator, data: []const u8) ![]const []const u8 {

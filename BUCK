@@ -1120,6 +1120,17 @@ zig_test(  # buck-only: both lints over the fixtures, against the table in the t
     **_TOOLS
 )
 
+# AGENTS.md, the rules every change is written and reviewed against: its shared core (between the marker lines) is
+# tests/agents/shared_core.md byte for byte, that copy hashes to tests/agents/shared_core.sha256, and CLAUDE.md imports AGENTS.md
+# (tests/drivers/agents_check.zig). Each rule of the check is also shown failing on edited text.
+zig_test(  # buck-only: AGENTS.md's shared core against its hashed copy, and CLAUDE.md's import of AGENTS.md
+    name = "agents",
+    src = "tests/drivers/agents_check_test.zig",
+    imports = ["tests/drivers/agents_check.zig"],
+    data = {f: f for f in ["AGENTS.md", "CLAUDE.md", "tests/agents/shared_core.md", "tests/agents/shared_core.sha256"]},
+    **_TOOLS
+)
+
 # ---- Ports of the install e2e test and the fake registry's error generator ------------
 
 zig_exe(  # buck-only: stands in for pixi in install_e2e: unpacks the pinned conda files into the environment
@@ -1273,6 +1284,15 @@ zig_coverage(
 )
 
 zig_coverage(
+    name = "agents_coverage",
+    blocks = False,
+    floor = "coverage/agents.txt",
+    test_targets = [":agents"],
+    # The check alone: the test file reads the real files and is not counted.
+    expect = ["tests/drivers/agents_check.zig"],
+)
+
+zig_coverage(
     name = "drivers_coverage",
     blocks = False,
     floor = "coverage/drivers.txt",
@@ -1298,6 +1318,7 @@ zig_coverage(
 filegroup(
     name = "coverage_floors",
     srcs = {
+        "agents": ":agents_coverage_floor",
         "apt_publish": ":apt_publish_coverage_floor",
         "build_parity": ":build_parity_coverage_floor",
         "channels": ":channels_coverage_floor",
