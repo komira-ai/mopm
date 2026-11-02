@@ -1092,21 +1092,13 @@ test "a readme goes with the commit; one that vanished after the check stops the
 
 /// The reason a staged directory stops the run; a test error, not a crash, when it does not.
 fn badOf(p: gp.Planned) ![]const u8 {
-    return switch (p) {
-        .bad => |why| why,
-        .ok => error.TestExpectedRefusal,
-    };
+    return if (p == .bad) p.bad else error.TestExpectedRefusal;
 }
 
-/// The plan of a staged directory that is fit to run; a test error, with the reason shown, when it is not.
+/// The plan of a staged directory that is fit to run; a test failure that shows the reason when it is not.
 fn okOf(p: gp.Planned) !plan_mod.Plan {
-    return switch (p) {
-        .ok => |plan| plan,
-        .bad => |why| {
-            std.debug.print("refused: {s}\n", .{why});
-            return error.TestUnexpectedRefusal;
-        },
-    };
+    try std.testing.expectEqualStrings("fit to run", if (p == .ok) "fit to run" else p.bad);
+    return p.ok;
 }
 
 /// One unit of an escaping-heavy readme: 7 bytes on disk (a quote, a backslash, a newline, a tab, the control byte 0x01 and
