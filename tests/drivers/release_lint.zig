@@ -100,6 +100,9 @@ pub const user_legs = [_][2][]const u8{
 /// and the tarball itself. Both under the artifact download of this run.
 pub const candidate_binary = "$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET/mopm";
 pub const candidate_tarball = "$RUNNER_TEMP/candidate/mopm-$VERSION-$TARGET.tar.gz";
+/// The Mojo environment of the user-level beta: what the candidate's `mopm sync --locked` makes in `user_mojo_dir`.
+pub const user_mojo_dir = "tests/mojo_env";
+pub const user_mojo_env = user_mojo_dir ++ "/.mopm/env";
 
 /// The `if:` of `tag` and `publish`: a push to main, never a manual run.
 pub const push_to_main = "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}";
@@ -998,9 +1001,23 @@ pub fn userBetaProblems(a: Allocator, text: []const u8, out: *Out) !void {
     if (!c.eqlList(got, &.{"release-${{ matrix.target }}"})) try c.problem(a, out, prefix ++ f ++ "user must download exactly the build's artifact release-${{{{ matrix.target }}}}, got {s}", .{try c.inspectList(a, got)});
     const walk = stepRunContaining(job, "user_beta\" ") orelse "";
     if (walk.len == 0) try c.problem(a, out, prefix ++ f ++ "user must run the walk (tests/drivers/user_beta.zig)", .{});
-    for ([_][]const u8{ "--version \"$VERSION\"", "--tarball \"" ++ candidate_tarball ++ "\"", "--install-sh site/static/install.sh", "--fake-registry", "--mojo-env", "--pixi pixi", "--zig zig", "--native-fixture tests/e2e/natws/shimlib", "--ci" }) |need| {
+    for ([_][]const u8{ "--version \"$VERSION\"", "--tarball \"" ++ candidate_tarball ++ "\"", "--install-sh site/static/install.sh", "--fake-registry", "--mojo-env " ++ user_mojo_env, "--zig zig", "--native-fixture tests/e2e/natws/shimlib", "--ci" }) |need| {
         if (walk.len != 0 and !hasWords(walk, need)) try c.problem(a, out, prefix ++ f ++ "the walk must be given {s}", .{need});
     }
+    // The Mojo environment is made by the candidate itself (`mopm sync --locked` in tests/mojo_env), before the walk; pixi is not used.
+    const env_at = stepIndexRunContaining(job, " sync --locked");
+    if (env_at == null or !std.mem.eql(u8, stepRunContaining(job, " sync --locked").?, "\"" ++ candidate_binary ++ "\" sync --locked") or
+        !c.isStr(c.get(steps.?.array.items[env_at.?], "working-directory"), user_mojo_dir))
+    {
+        try c.problem(a, out, prefix ++ f ++ "user must make the Mojo environment with exactly `\"" ++ candidate_binary ++ "\" sync --locked` and working-directory " ++ user_mojo_dir, .{});
+    } else if (stepIndexRunContaining(job, "user_beta\" ")) |at| {
+        if (env_at.? > at) try c.problem(a, out, prefix ++ f ++ "user must make the Mojo environment before the walk", .{});
+    }
+    for (steps.?.array.items) |st| {
+        const run = c.str(c.get(st, "run")) orelse "";
+        if (std.mem.indexOf(u8, run, "pixi") != null) try c.problem(a, out, prefix ++ f ++ "no step may use pixi: the candidate's sync installs the toolchain", .{});
+    }
+    if (walk.len != 0 and std.mem.indexOf(u8, walk, "--pixi") != null) try c.problem(a, out, prefix ++ f ++ "the walk must not be given --pixi (sync does not use pixi)", .{});
     // The walk is the candidate binary (not a `mopm` found on PATH), and nothing on its line can swallow its exit status.
     if (walk.len != 0 and !std.mem.startsWith(u8, walk, "\"$RUNNER_TEMP/user_beta\" \"" ++ candidate_binary ++ "\" ")) {
         try c.problem(a, out, prefix ++ f ++ "the walk's first argument must be the candidate binary \"" ++ candidate_binary ++ "\"", .{});

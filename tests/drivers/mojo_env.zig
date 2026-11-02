@@ -2,8 +2,8 @@
 //! an unpacked, sha256-pinned Mojo 1.0.0) made into an environment prefix as
 //! mopm expects one (`bin/mojo`, `lib/`, `lib/mojo/*.mojoc`,
 //! `share/max/modular.cfg`), plus the `cc` that `mojo build` links through.
-//! Shared by the end-to-end drivers; replaces the pixi environment of
-//! tests/e2e/pixi.toml, which the farm cannot create (no network, no pixi).
+//! Shared by the end-to-end drivers; on the farm it stands for the environment
+//! `mopm sync` makes, which needs the network to download the toolchain.
 //!
 //! The Buck2 target gives the drivers, as exec_tools (absolute paths):
 //!   MOJO_TOOLCHAIN  the unpacked toolchain directory
@@ -14,8 +14,9 @@
 //!
 //! `zig build test-e2e` (build.zig) runs the same drivers natively, on the
 //! GitHub runners (Linux x86_64, Linux aarch64, macOS arm64). With no CC_SHIM
-//! the driver is native: MOJO_TOOLCHAIN is a pixi environment (mojo 1.0.0,
-//! tests/e2e/pixi.toml, `-Dmojo-env=<dir>`), `cc` is the system C compiler, the
+//! the driver is native: MOJO_TOOLCHAIN is a Mojo 1.0.0 environment (the one
+//! `mopm sync --locked` makes in tests/mojo_env, `-Dmojo-env=<dir>`), `cc` is
+//! the system C compiler, the
 //! run keeps the runner's HOME and TMPDIR, and MOPM_E2E_SRC names the
 //! repository's tests/e2e, which is copied into the work directory (the
 //! drivers edit the fixtures in place).
@@ -140,7 +141,7 @@ pub const Mojo = struct {
 
     /// A prefix at `dest` with the toolchain's compiler and libraries linked
     /// in. `rpath_in_prefix`: modular.cfg's `shared_libs` names the prefix's
-    /// own lib as run path of every program mojo links (the layout of a pixi
+    /// own lib as run path of every program mojo links (the layout of a conda
     /// environment, where natives sit beside the compiler's libraries); else
     /// the toolchain's lib (a split prefix, whose natives mopm must name
     /// itself). The import path is `dest/lib/mojo`.
@@ -160,7 +161,7 @@ pub const Mojo = struct {
             try cwd.symLink(try h.join(a, &.{ tc_lib, e.name }), try h.join(a, &.{ dest, "lib", e.name }), .{});
         }
         if (self.isNative()) {
-            // A pixi environment: every package the compiler ships.
+            // A conda environment: every package the compiler ships.
             var mdir = try cwd.openDir(try h.join(a, &.{ tc_lib, "mojo" }), .{ .iterate = true });
             defer mdir.close();
             var mit = mdir.iterate();
@@ -172,7 +173,7 @@ pub const Mojo = struct {
             try cwd.symLink(try h.join(a, &.{ self.tc, "lib/mojo/std.mojoc" }), try h.join(a, &.{ dest, "lib/mojo/std.mojoc" }), .{});
         }
         // modular.cfg: the toolchain's, rendered for this toolchain's path,
-        // with the import path and (pixi layout) the run path moved.
+        // with the import path and (conda layout) the run path moved.
         const cfg = try h.readFile(a, try h.join(a, &.{ self.tc, "share/max/modular.cfg" }));
         var out = std.ArrayList(u8).init(a);
         var lines = std.mem.splitScalar(u8, cfg, '\n');

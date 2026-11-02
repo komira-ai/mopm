@@ -269,6 +269,8 @@ pub const State = struct {
     /// Whether the registry has group publishing on. Off, `createGroup` answers `route_not_found`, as a registry that
     /// has not enabled groups for the caller does.
     groups_enabled: bool = true,
+    /// How many `.conda` files `GET /channel/...` has answered 200 for (`/_fake/served`).
+    conda_served: u64 = 0,
     /// The PUT of an upload answers 503 once, after this many more PUTs have succeeded (`/_fake/put_fault`).
     put_fault_after: ?u32 = null,
     /// The clock moves forward by this many seconds when the next group commit arrives, once (`/_fake/commit_clock`):

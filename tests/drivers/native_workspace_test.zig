@@ -26,18 +26,19 @@
 //! cannot build the program.
 //!
 //! Two tiers run this file (BUCK): `native_workspace` (pull requests) stands in for the Mojo compiler
-//! (tests/drivers/fake_toolchain.zig) and for pixi, so it checks the wiring (the graph, the C build, the link line, the
+//! (tests/drivers/fake_toolchain.zig) and for the toolchain closure (conda_pkg.zig `fakeToolchain`), so it checks the wiring (the graph, the C build, the link line, the
 //! packed archive, the lock and the install) and not the values the program prints; `native_workspace_mojo` (after the
-//! merge) runs the real Mojo 1.0.0 and checks the values. `zig build test-native-workspace -Dmojo-env=<pixi prefix>`
-//! runs it natively on a GitHub runner (ci.yml, job `mojo e2e`) against the system C compiler and a stand-in pixi.
+//! merge) runs the real Mojo 1.0.0 and checks the values. `zig build test-native-workspace -Dmojo-env=<Mojo environment>`
+//! runs it natively on a GitHub runner (ci.yml, job `mojo e2e`) against the system C compiler and a stand-in toolchain closure.
 //!
-//! Run by Buck2 as //:native_workspace and //:native_workspace_mojo; MOPM, MOPM_FAKE_REGISTRY and FAKE_PIXI are the
+//! Run by Buck2 as //:native_workspace and //:native_workspace_mojo; MOPM and MOPM_FAKE_REGISTRY are the
 //! built programs, MOJO_COMPILE_SHIM the `mojo_compile` of the toolchain directory `mopm unit` runs, and either
 //! MOJO_TOOLCHAIN (the real Mojo) or FAKE_TOOLCHAIN (the stand-in) names the compiler.
 
 const std = @import("std");
 const builtin = @import("builtin");
 const h = @import("harness.zig");
+const cp = @import("conda_pkg.zig");
 const mojo_env = @import("mojo_env.zig");
 const Allocator = std.mem.Allocator;
 const Value = std.json.Value;
@@ -182,7 +183,6 @@ const Ctx = struct {
     mopm: []const u8,
     /// The stand-in compiler (the unit tier), or null for the real Mojo.
     stand_in: ?[]const u8,
-    fake_pixi: []const u8,
     work: []const u8,
 
     fn env(c: *Ctx) !std.process.EnvMap {
@@ -303,16 +303,16 @@ fn run(a: Allocator, rep: *h.Report) !void {
     } else {
         m = try mojo_env.Mojo.init(a);
     }
-    var c = Ctx{ .a = a, .rep = rep, .m = m, .mopm = try h.toolPathAbs(a, "MOPM"), .stand_in = stand_in, .fake_pixi = try h.toolPathAbs(a, "FAKE_PIXI"), .work = work };
+    var c = Ctx{ .a = a, .rep = rep, .m = m, .mopm = try h.toolPathAbs(a, "MOPM"), .stand_in = stand_in, .work = work };
     const subdir = try hostSubdir();
     const env = try c.env();
 
     // The prefix the compiler of the toolchain directory runs from.
-    const pixi = try h.join(a, &.{ work, "pixi" });
+    const mojo_prefix = try h.join(a, &.{ work, "prefix" });
     if (stand_in != null) {
-        try c.laySkeleton(try h.join(a, &.{ pixi, "bin/mojo" }));
+        try c.laySkeleton(try h.join(a, &.{ mojo_prefix, "bin/mojo" }));
     } else {
-        try m.prefix(pixi, true);
+        try m.prefix(mojo_prefix, true);
     }
 
     // The toolchain directory `mopm unit` runs: the `mojo_compile` shim, its configuration, the runtime libraries.
@@ -327,7 +327,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     }
     {
         var conf = std.ArrayList(u8).init(a);
-        try conf.writer().print("mojo={s}/bin/mojo\nlog={s}\nenv.MODULAR_HOME={s}/share/max\n", .{ pixi, log, pixi });
+        try conf.writer().print("mojo={s}/bin/mojo\nlog={s}\nenv.MODULAR_HOME={s}/share/max\n", .{ mojo_prefix, log, mojo_prefix });
         var it = m.base.iterator();
         while (it.next()) |e| {
             if (std.mem.eql(u8, e.key_ptr.*, "MODULAR_HOME")) continue;
@@ -465,14 +465,14 @@ fn run(a: Allocator, rep: *h.Report) !void {
         try cwd.makePath(inc_app);
         const shim_mojoc = try h.join(a, &.{ deps, "shimlib.mojoc" });
         const app_mojoc = try h.join(a, &.{ deps, "nativeapp.mojoc" });
-        r = try m.run(pixi, &.{ "precompile", try h.join(a, &.{ ws, "shimlib/src/shimlib" }), "-o", shim_mojoc }, null);
+        r = try m.run(mojo_prefix, &.{ "precompile", try h.join(a, &.{ ws, "shimlib/src/shimlib" }), "-o", shim_mojoc }, null);
         try c.must("mojo precompile shimlib", r);
         try cwd.copyFile(shim_mojoc, cwd, try h.join(a, &.{ inc_shim, "shimlib.mojoc" }), .{});
-        r = try m.run(pixi, &.{ "precompile", try h.fmt(a, "-I{s}", .{inc_shim}), try h.join(a, &.{ ws, "src/nativeapp" }), "-o", app_mojoc }, null);
+        r = try m.run(mojo_prefix, &.{ "precompile", try h.fmt(a, "-I{s}", .{inc_shim}), try h.join(a, &.{ ws, "src/nativeapp" }), "-o", app_mojoc }, null);
         try c.must("mojo precompile nativeapp", r);
         try cwd.copyFile(app_mojoc, cwd, try h.join(a, &.{ inc_app, "nativeapp.mojoc" }), .{});
         const demo = try h.join(a, &.{ work, "demo" });
-        r = try m.run(pixi, &.{ "build", try h.fmt(a, "-I{s}", .{inc_shim}), try h.fmt(a, "-I{s}", .{inc_app}), try h.join(a, &.{ ws, "bin/demo.mojo" }), "-o", demo, "-Xlinker", archive_path }, null);
+        r = try m.run(mojo_prefix, &.{ "build", try h.fmt(a, "-I{s}", .{inc_shim}), try h.fmt(a, "-I{s}", .{inc_app}), try h.join(a, &.{ ws, "bin/demo.mojo" }), "-o", demo, "-Xlinker", archive_path }, null);
         try c.must("mojo build: the program demo, with libshim.a as a linker operand", r);
         try c.runProgram("the program built by the compiler", demo);
     }
@@ -515,16 +515,17 @@ fn run(a: Allocator, rep: *h.Report) !void {
     const consumer_lock = try h.readFile(a, try h.join(a, &.{ consumer, "mopm.lock" }));
     rep.check("the lock pins the sha256 of libshim.a, the archive the member's pack carries", h.contains(consumer_lock, try sha256Hex(a, archive_bytes)), consumer_lock);
     rep.check("the lock does not name the staged set's directory", !h.contains(consumer_lock, dist), consumer_lock);
-    r = try c.mopmRun(&env, consumer, &.{ "sync", "--locked", "--overlay", dist, "--registry", fake.base, "--pixi", c.fake_pixi });
+    const toolchain = try cp.fakeToolchain(a, try h.join(a, &.{ work, "fake" }), fake.base, "channel/toolchain", cp.hostSubdir(), "1.0.0", try h.join(a, &.{ work, "toolchain.json" }), "T");
+    r = try c.mopmRun(&env, consumer, &.{ "sync", "--locked", "--overlay", dist, "--registry", fake.base, "--toolchain", toolchain.closure, "--cache", try h.join(a, &.{ work, "toolchain-cache" }) });
     try c.must("mopm sync --locked --overlay installs the set (the registry holds none of it)", r);
     rep.check("sync read the packages from the staged set", h.contains(r.text, "from the staged set"), r.text);
-    const env_dir = try h.join(a, &.{ consumer, ".mopm/.pixi/envs/default" });
+    const env_dir = try h.join(a, &.{ consumer, ".mopm/env" });
     const installed = h.readFile(a, try h.join(a, &.{ env_dir, "lib/libshim.a" })) catch "";
     rep.check("the installed environment holds lib/libshim.a, byte for byte the archive that was built", installed.len > 0 and std.mem.eql(u8, installed, archive_bytes), "lib/libshim.a is missing or differs");
     const meta = h.readFile(a, try h.join(a, &.{ env_dir, "lib/mojo/shimlib.mopm.json" })) catch "";
     rep.check("the installed metadata of shimlib declares the static native libshim.a", h.contains(meta, "\"soname\":\"libshim.a\"") and h.contains(meta, "\"kind\":\"static\""), meta);
 
-    // The compiler goes into the environment, as a pixi environment holds it; then the program is built and run.
+    // The compiler goes into the environment, as the environment of a Mojo install holds it; then the program is built and run.
     if (stand_in != null) {
         try c.laySkeleton(try h.join(a, &.{ env_dir, "bin/mojo" }));
     } else {
@@ -539,7 +540,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     try c.runProgram("the program built by mopm build against the installed set", consumer_bin);
     if (stand_in != null) {
         const consumer_logged = try h.readFile(a, consumer_log);
-        rep.check("the link line of mopm build holds the installed archive as a linker operand", h.contains(consumer_logged, "-Xlinker ") and h.contains(consumer_logged, "/.pixi/envs/default/lib/libshim.a"), consumer_logged);
+        rep.check("the link line of mopm build holds the installed archive as a linker operand", h.contains(consumer_logged, "-Xlinker ") and h.contains(consumer_logged, "/.mopm/env/lib/libshim.a"), consumer_logged);
     }
 
     // Control: the same environment without the archive cannot build the program.
@@ -608,11 +609,11 @@ fn runCxx(a: Allocator, rep: *h.Report) !void {
     const work = try h.join(a, &.{ base_work, "natcxx" });
     try cwd.makePath(work);
     const m = try mojo_env.Mojo.init(a);
-    var c = Ctx{ .a = a, .rep = rep, .m = m, .mopm = try h.toolPathAbs(a, "MOPM"), .stand_in = null, .fake_pixi = try h.toolPathAbs(a, "FAKE_PIXI"), .work = work };
+    var c = Ctx{ .a = a, .rep = rep, .m = m, .mopm = try h.toolPathAbs(a, "MOPM"), .stand_in = null, .work = work };
     const env = try c.env();
 
-    const pixi = try h.join(a, &.{ work, "pixi" });
-    try m.prefix(pixi, true);
+    const mojo_prefix = try h.join(a, &.{ work, "prefix" });
+    try m.prefix(mojo_prefix, true);
     const tc = try h.join(a, &.{ work, "tc" });
     const log = try h.join(a, &.{ work, "mojo_compile.log" });
     try cwd.makePath(tc);
@@ -624,7 +625,7 @@ fn runCxx(a: Allocator, rep: *h.Report) !void {
     }
     {
         var conf = std.ArrayList(u8).init(a);
-        try conf.writer().print("mojo={s}/bin/mojo\nlog={s}\nenv.MODULAR_HOME={s}/share/max\n", .{ pixi, log, pixi });
+        try conf.writer().print("mojo={s}/bin/mojo\nlog={s}\nenv.MODULAR_HOME={s}/share/max\n", .{ mojo_prefix, log, mojo_prefix });
         var it = m.base.iterator();
         while (it.next()) |e| {
             if (std.mem.eql(u8, e.key_ptr.*, "MODULAR_HOME")) continue;
@@ -728,9 +729,10 @@ fn runCxx(a: Allocator, rep: *h.Report) !void {
     try c.must("mopm add --overlay locks the staged set in a fresh project", r);
     const consumer_lock = try h.readFile(a, try h.join(a, &.{ consumer, "mopm.lock" }));
     rep.check("the lock carries link = [\"c++\"] for the native", h.contains(consumer_lock, "\"link\": [\n            \"c++\"\n          ]"), consumer_lock);
-    r = try c.mopmRun(&env, consumer, &.{ "sync", "--locked", "--overlay", dist, "--registry", fake.base, "--pixi", c.fake_pixi });
+    const toolchain = try cp.fakeToolchain(a, try h.join(a, &.{ work, "fake" }), fake.base, "channel/toolchain", cp.hostSubdir(), "1.0.0", try h.join(a, &.{ work, "toolchain.json" }), "T");
+    r = try c.mopmRun(&env, consumer, &.{ "sync", "--locked", "--overlay", dist, "--registry", fake.base, "--toolchain", toolchain.closure, "--cache", try h.join(a, &.{ work, "toolchain-cache" }) });
     try c.must("mopm sync --locked --overlay installs the set", r);
-    const env_dir = try h.join(a, &.{ consumer, ".mopm/.pixi/envs/default" });
+    const env_dir = try h.join(a, &.{ consumer, ".mopm/env" });
     const installed = h.readFile(a, try h.join(a, &.{ env_dir, "lib/libcxxshim.a" })) catch "";
     rep.check("the installed environment holds lib/libcxxshim.a, byte for byte the archive that was built", installed.len > 0 and std.mem.eql(u8, installed, archive_bytes), "lib/libcxxshim.a is missing or differs");
     const meta = h.readFile(a, try h.join(a, &.{ env_dir, "lib/mojo/cxxlib.mopm.json" })) catch "";

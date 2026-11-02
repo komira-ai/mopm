@@ -1,0 +1,8 @@
+# The Mojo environment of the end-to-end jobs: `mopm sync --locked` here installs the pinned Mojo 1.0.0 toolchain
+# into tests/mojo_env/.mopm/env, which the jobs hand to the drivers (zig build test-* -Dmojo-env=...). No packages.
+[package]
+name = "mojo_env"
+version = "0.1.0"
+
+[toolchain]
+mojo = "1.0.0"

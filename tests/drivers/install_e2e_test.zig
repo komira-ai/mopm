@@ -2,7 +2,7 @@
 //! Mojo toolchain: the Zig port of tests/install_e2e/run.py, for the build
 //! farm (no pixi, no network, no system C compiler).
 //!
-//! What it does, as run.py did:
+//! What it does:
 //!   1. builds libgreet (tests/e2e/native/greet.c, with `cc` = komira's zig)
 //!      and precompiles the Mojo package greet (tests/e2e/pkgs/greet) with the
 //!      pinned Mojo 1.0.0;
@@ -12,20 +12,22 @@
 //!      and serves it from the fake registry with its sparse index line and
 //!      repodata.json entry;
 //!   3. in a project whose mopm.toml needs greet = "1", runs `mopm sync`, which
-//!      locks, downloads, verifies, writes .mopm/pixi.toml and runs pixi;
-//!   4. builds tests/install_e2e/prog.mojo with `mopm build --prefix
-//!      .mopm/.pixi/envs/default` and runs the binary in an empty environment,
-//!      and runs it with `mopm run`: both must print "greet 4242", which only
-//!      libgreet computes.
+//!      locks, downloads, verifies and installs the package and the toolchain
+//!      closure into .mopm/env by itself;
+//!   4. builds tests/install_e2e/prog.mojo with `mopm build --prefix .mopm/env`
+//!      and runs the binary in an empty environment, and runs it with `mopm
+//!      run` (with no --prefix: mopm finds .mopm/env): both must print "greet
+//!      4242", which only libgreet computes.
 //!
-//! One difference from run.py: pixi. The farm has none, so `--pixi` is
-//! tests/drivers/fake_pixi.zig, which unpacks the pinned files into the
-//! environment and writes pixi's conda-meta record (see its header). What is
-//! therefore NOT exercised here is pixi's own solver and installer; everything
-//! mopm decides (the lock, the download, the sha256 and size checks, the pixi
-//! manifest, the post-install check) is. The Mojo toolchain is laid into the
-//! environment by the driver (mojo_env.zig), as the pixi environment of
-//! run.py held it.
+//! The farm cannot download the pinned toolchain closure, so sync is given
+//! `--toolchain` with a stand-in closure the fake serves (conda_pkg.zig
+//! `fakeToolchain`), and the driver lays the real Mojo toolchain into
+//! .mopm/env after the sync (mojo_env.zig `prefix`). What the real closure
+//! installs is exercised where there is a network: the mojo-e2e job of ci.yml
+//! makes its Mojo environment with `mopm sync --locked` in tests/mojo_env.
+//! tests/drivers/sync_e2e_test.zig holds the install itself to its properties
+//! (no pixi, a current environment downloads nothing, a mirror, a whole
+//! environment or the old one) on every pull request.
 //!
 //! Can-fail checks (each is a refusal the test must see):
 //!   * a stale lock: mopm.toml changed after locking (a requirement the locked
@@ -35,180 +37,34 @@
 //!   * a tampered artifact: the channel's .conda is replaced by bytes of the
 //!     same size with one byte changed, then by bytes one longer. `mopm sync
 //!     --locked` must refuse each, naming the pinned and the actual value, must
-//!     not keep the file, and must not run pixi. A project that kept the good
-//!     file from an earlier sync and then has that copy tampered with must not
-//!     use it either. With the original bytes back, the same sync succeeds, so
-//!     the refusals came from the bytes and nothing else.
+//!     not keep the file, and must make no environment. A file kept from an
+//!     earlier download that was then tampered with must not be used either.
+//!     With the original bytes back, the same sync succeeds, so the refusals
+//!     came from the bytes and nothing else.
 //!
 //! A path dependency (`local = { path = "local" }`) is locked with
 //! `source = path`, its own mopm.toml's version and no sha256; sync must not
-//! download it (it has no url, so a download would fail), must leave it out of
-//! the pixi project and the local channel, and must see a lock that holds an
-//! older version of it as stale.
+//! download it (it has no url, so a download would fail) nor install it, and
+//! must see a lock that holds an older version of it as stale.
 
 const std = @import("std");
 const h = @import("harness.zig");
 const mojo_env = @import("mojo_env.zig");
+const cp = @import("conda_pkg.zig");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const fs = std.fs;
-const Sha256 = std.crypto.hash.sha2.Sha256;
 
 const mojo_version = "1.0.0";
 const build_tag = "mojo" ++ mojo_version ++ "_0";
-const env_rel = ".mopm/.pixi/envs/default";
+const env_rel = ".mopm/env";
 const filename = "mojo-greet-1.0.0-" ++ build_tag ++ ".conda";
 
-fn sha256Hex(a: Allocator, bytes: []const u8) ![]u8 {
-    var d: [32]u8 = undefined;
-    Sha256.hash(bytes, &d, .{});
-    return std.fmt.allocPrint(a, "{s}", .{std.fmt.fmtSliceHexLower(&d)});
-}
-
-// ------------------------------------------------------- the conda package
-
-/// A zstd frame holding `data` in raw (stored) blocks: valid zstd that any
-/// decoder reads, written without a compressor (RFC 8878, section 3.1.1).
-fn zstdRaw(a: Allocator, data: []const u8) ![]u8 {
-    var out = std.ArrayList(u8).init(a);
-    try out.appendSlice(&.{ 0x28, 0xb5, 0x2f, 0xfd }); // magic number 0xFD2FB528
-    try out.append(0x00); // frame header: no content size, no checksum, no dictionary
-    try out.append(0x38); // window descriptor: 2^17 bytes, the largest block size
-    const block: usize = 128 * 1024;
-    var at: usize = 0;
-    while (true) {
-        const n = @min(block, data.len - at);
-        const last: u32 = if (at + n >= data.len) 1 else 0;
-        const hdr: u32 = last | (@as(u32, @intCast(n)) << 3); // block type 0: raw
-        try out.appendSlice(&.{ @truncate(hdr), @truncate(hdr >> 8), @truncate(hdr >> 16) });
-        try out.appendSlice(data[at..][0..n]);
-        at += n;
-        if (last == 1) break;
-    }
-    return out.items;
-}
-
-const Entry = struct { path: []const u8, data: []const u8, mode: u32 };
-
-fn putOctal(dst: []u8, v: usize) void {
-    @memset(dst, '0');
-    var x = v;
-    var i = dst.len - 1; // the last byte is the NUL
-    dst[i] = 0;
-    while (i > 0) {
-        i -= 1;
-        dst[i] = '0' + @as(u8, @intCast(x & 7));
-        x >>= 3;
-    }
-}
-
-/// A ustar archive of `entries`.
-fn tar(a: Allocator, entries: []const Entry) ![]u8 {
-    var out = std.ArrayList(u8).init(a);
-    for (entries) |e| {
-        var hd = [_]u8{0} ** 512;
-        @memcpy(hd[0..e.path.len], e.path);
-        putOctal(hd[100..108], e.mode);
-        putOctal(hd[108..116], 0);
-        putOctal(hd[116..124], 0);
-        putOctal(hd[124..136], e.data.len);
-        putOctal(hd[136..148], 0); // mtime 0
-        @memset(hd[148..156], ' ');
-        hd[156] = '0';
-        @memcpy(hd[257..263], "ustar\x00");
-        @memcpy(hd[263..265], "00");
-        var sum: usize = 0;
-        for (hd) |b| sum += b;
-        putOctal(hd[148..155], sum); // six digits, NUL, then the space
-        hd[154] = 0;
-        hd[155] = ' ';
-        try out.appendSlice(&hd);
-        try out.appendSlice(e.data);
-        try out.appendNTimes(0, (512 - e.data.len % 512) % 512);
-    }
-    try out.appendNTimes(0, 1024);
-    return out.items;
-}
-
-/// A zip of stored members, dated 1980-01-01.
-fn zip(a: Allocator, members: []const Entry) ![]u8 {
-    var out = std.ArrayList(u8).init(a);
-    var central = std.ArrayList(u8).init(a);
-    const w = out.writer();
-    const cw = central.writer();
-    for (members) |m| {
-        const crc = std.hash.Crc32.hash(m.data);
-        const offset: u32 = @intCast(out.items.len);
-        try w.writeInt(u32, 0x04034b50, .little);
-        try w.writeInt(u16, 20, .little);
-        try w.writeInt(u16, 0, .little); // flags
-        try w.writeInt(u16, 0, .little); // stored
-        try w.writeInt(u16, 0, .little); // time
-        try w.writeInt(u16, 0x21, .little); // date 1980-01-01
-        try w.writeInt(u32, crc, .little);
-        try w.writeInt(u32, @intCast(m.data.len), .little);
-        try w.writeInt(u32, @intCast(m.data.len), .little);
-        try w.writeInt(u16, @intCast(m.path.len), .little);
-        try w.writeInt(u16, 0, .little);
-        try w.writeAll(m.path);
-        try w.writeAll(m.data);
-        try cw.writeInt(u32, 0x02014b50, .little);
-        try cw.writeInt(u16, 20, .little);
-        try cw.writeInt(u16, 20, .little);
-        try cw.writeInt(u16, 0, .little);
-        try cw.writeInt(u16, 0, .little);
-        try cw.writeInt(u16, 0, .little);
-        try cw.writeInt(u16, 0x21, .little);
-        try cw.writeInt(u32, crc, .little);
-        try cw.writeInt(u32, @intCast(m.data.len), .little);
-        try cw.writeInt(u32, @intCast(m.data.len), .little);
-        try cw.writeInt(u16, @intCast(m.path.len), .little);
-        try cw.writeInt(u16, 0, .little); // extra
-        try cw.writeInt(u16, 0, .little); // comment
-        try cw.writeInt(u16, 0, .little); // disk
-        try cw.writeInt(u16, 0, .little); // internal attributes
-        try cw.writeInt(u32, 0, .little); // external attributes
-        try cw.writeInt(u32, offset, .little);
-        try cw.writeAll(m.path);
-    }
-    const cd_offset: u32 = @intCast(out.items.len);
-    try out.appendSlice(central.items);
-    try w.writeInt(u32, 0x06054b50, .little);
-    try w.writeInt(u16, 0, .little);
-    try w.writeInt(u16, 0, .little);
-    try w.writeInt(u16, @intCast(members.len), .little);
-    try w.writeInt(u16, @intCast(members.len), .little);
-    try w.writeInt(u32, @intCast(central.items.len), .little);
-    try w.writeInt(u32, cd_offset, .little);
-    try w.writeInt(u16, 0, .little);
-    return out.items;
-}
+const sha256Hex = cp.sha256Hex;
 
 /// The bytes of mojo-greet-1.0.0-<build>.conda holding `files`.
-fn condaPackage(a: Allocator, subdir: []const u8, files: []const Entry) ![]u8 {
-    const stem = "mojo-greet-1.0.0-" ++ build_tag;
-    const index = try h.fmt(a,
-        \\{{"build": "{s}", "build_number": 0, "depends": ["mojo-compiler =={s}"], "name": "mojo-greet", "subdir": "{s}", "version": "1.0.0"}}
-    , .{ build_tag, mojo_version, subdir });
-    var paths = std.ArrayList(u8).init(a);
-    var list = std.ArrayList(u8).init(a);
-    try paths.appendSlice("{\"paths\": [");
-    for (files, 0..) |f, i| {
-        if (i != 0) try paths.appendSlice(", ");
-        try paths.writer().print("{{\"_path\": \"{s}\", \"path_type\": \"hardlink\", \"sha256\": \"{s}\", \"size_in_bytes\": {d}}}", .{ f.path, try sha256Hex(a, f.data), f.data.len });
-        try list.writer().print("{s}\n", .{f.path});
-    }
-    try paths.appendSlice("], \"paths_version\": 1}");
-    const info = try tar(a, &.{
-        .{ .path = "info/index.json", .data = index, .mode = 0o644 },
-        .{ .path = "info/paths.json", .data = paths.items, .mode = 0o644 },
-        .{ .path = "info/files", .data = list.items, .mode = 0o644 },
-    });
-    return zip(a, &.{
-        .{ .path = "metadata.json", .data = "{\"conda_pkg_format_version\": 2}", .mode = 0 },
-        .{ .path = "info-" ++ stem ++ ".tar.zst", .data = try zstdRaw(a, info), .mode = 0 },
-        .{ .path = "pkg-" ++ stem ++ ".tar.zst", .data = try zstdRaw(a, try tar(a, files)), .mode = 0 },
-    });
+fn condaPackage(a: Allocator, subdir: []const u8, files: []const cp.Entry) ![]u8 {
+    return cp.package(a, "mojo-greet", "1.0.0", build_tag, subdir, &.{"mojo-compiler ==" ++ mojo_version}, files);
 }
 
 // ------------------------------------------------------------ the driver
@@ -218,7 +74,9 @@ const Ctx = struct {
     rep: *h.Report,
     m: mojo_env.Mojo,
     mopm: []const u8,
-    fake_pixi: []const u8,
+    /// The stand-in toolchain closure, and the cache sync keeps its files in.
+    toolchain: []const u8 = "",
+    cache: []const u8 = "",
     work: []const u8,
     here: []const u8,
     subdir: []const u8,
@@ -242,7 +100,7 @@ const Ctx = struct {
 
     fn sync(c: *Ctx, dir: []const u8, extra: []const []const u8) !Out {
         var args = std.ArrayList([]const u8).init(c.a);
-        try args.appendSlice(&.{ "sync", "--pixi", c.fake_pixi });
+        try args.appendSlice(&.{ "sync", "--toolchain", c.toolchain, "--cache", c.cache });
         try args.appendSlice(extra);
         return c.run(dir, args.items);
     }
@@ -336,7 +194,6 @@ fn run(a: Allocator, rep: *h.Report) !void {
         .rep = rep,
         .m = m,
         .mopm = try h.toolPathAbs(a, "MOPM"),
-        .fake_pixi = try h.toolPathAbs(a, "FAKE_PIXI"),
         .work = work,
         .here = m.work,
         .subdir = subdir,
@@ -375,6 +232,8 @@ fn run(a: Allocator, rep: *h.Report) !void {
     defer fake.close();
     c.base = fake.base;
     try publish(&c, good, soname);
+    c.toolchain = (try cp.fakeToolchain(a, fake_dir, fake.base, "channel/toolchain", subdir, mojo_version, try h.join(a, &.{ work, "toolchain.json" }), "T")).closure;
+    c.cache = try h.join(a, &.{ work, "cache" });
     const reg = [_][]const u8{ "--registry", fake.base };
 
     const app = try c.project("app", "greet = \"1\"", mojo_version);
@@ -388,9 +247,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     rep.check("sync locks and installs", r.code == 0 and h.contains(r.stdout, installed_msg), c.detail(r));
     const lock = c.read(app, "mopm.lock") orelse "";
     rep.check("the lock pins the package's bytes", h.contains(lock, try h.fmt(a, "\"sha256\": \"{s}\"", .{good_sha})) and h.contains(lock, try h.fmt(a, "\"size\": {d}", .{good.len})), lock);
-    const pin = try h.fmt(a, "mojo-greet = {{ version = \"==1.0.0\", build = \"{s}\", sha256 = \"{s}\" }}", .{ build_tag, good_sha });
-    const toml = c.read(app, ".mopm/pixi.toml") orelse "";
-    rep.check("the pixi project pins the version, build and sha256", h.contains(toml, pin), toml);
+    rep.check("sync keeps exactly the locked bytes in .mopm/pkgs", std.mem.eql(u8, c.read(app, ".mopm/pkgs/" ++ filename) orelse "", good), "missing or other bytes");
     {
         const rec = c.read(app, env_rel ++ "/conda-meta/mojo-greet-1.0.0-" ++ build_tag ++ ".json");
         var ok = false;
@@ -398,14 +255,14 @@ fn run(a: Allocator, rep: *h.Report) !void {
             const v = h.parseJson(a, text) catch .null;
             ok = std.mem.eql(u8, h.jsonString(v, "sha256") orelse "", good_sha);
         }
-        rep.check("pixi installed exactly the locked file", ok, rec orelse "no conda-meta record");
+        rep.check("sync installed exactly the locked file", ok, rec orelse "no conda-meta record");
     }
     for ([_][]const u8{ "lib/mojo/greet.mojoc", "lib/mojo/greet.mopm.json", "lib/" ++ soname }) |p| {
         rep.check(try h.fmt(a, "installed: {s}", .{p}), c.exists(app, try h.join(a, &.{ env_rel, p })), "missing");
     }
 
-    // The Mojo toolchain goes into the environment (a pixi environment holds
-    // it beside the package), then mopm build and run use it.
+    // The real Mojo toolchain goes into the environment (sync installed the
+    // stand-in closure there), then mopm build and run use it.
     try m.prefix(try h.join(a, &.{ app, env_rel }), true);
     {
         const out = try h.join(a, &.{ app, "prog" });
@@ -416,12 +273,14 @@ fn run(a: Allocator, rep: *h.Report) !void {
             const run_out = try h.run(a, &.{out}, &empty, .{});
             rep.check("the binary, in an empty environment, prints greet 4242", run_out.code == 0 and !run_out.signaled and h.contains(run_out.text, "greet 4242"), run_out.text);
         }
-        b = try c.run(app, &.{ "run", "prog.mojo", "--prefix", env_rel });
-        rep.check("mopm run prints greet 4242", b.code == 0 and h.contains(b.stdout, "greet 4242"), c.detail(b));
+        // No --prefix, no CONDA_PREFIX, no MODULAR_HOME: mopm run finds the environment sync made.
+        b = try c.run(app, &.{ "run", "prog.mojo" });
+        rep.check("mopm run with no --prefix uses .mopm/env and prints greet 4242", b.code == 0 and h.contains(b.stdout, "greet 4242"), c.detail(b));
     }
 
     r = try c.sync(app, &.{"--locked"});
-    rep.check("sync --locked with a fresh lock installs it again and leaves the lock alone", r.code == 0 and std.mem.eql(u8, c.read(app, "mopm.lock") orelse "", lock), c.detail(r));
+    rep.check("sync --locked with a fresh lock finds the environment current and leaves the lock alone", r.code == 0 and h.contains(r.stdout, ".mopm/env is current: 1 packages for ") and
+        std.mem.eql(u8, c.read(app, "mopm.lock") orelse "", lock) and c.exists(app, env_rel ++ "/bin/mojo"), c.detail(r));
 
     // ------------------------------------------------ stale locks
     const Stale = struct { what: []const u8, deps: []const u8, mojo: []const u8, want: []const u8 };
@@ -444,30 +303,32 @@ fn run(a: Allocator, rep: *h.Report) !void {
     const longer = try std.mem.concat(a, u8, &.{ good, "\x00" });
     const fresh = try c.project("fresh", "greet = \"1\"", mojo_version);
     try fs.cwd().copyFile(try h.join(a, &.{ app, "mopm.lock" }), fs.cwd(), try h.join(a, &.{ fresh, "mopm.lock" }), .{});
-    const kept_rel = try h.fmt(a, ".mopm/channel/{s}/{s}", .{ subdir, filename });
+    const kept_rel = ".mopm/pkgs/" ++ filename;
+    const url = try h.fmt(a, "{s}/channel/{s}/{s}", .{ c.base, subdir, filename });
     const Tamper = struct { what: []const u8, data: []const u8, want: []const u8 };
     const tampers = [_]Tamper{
-        .{ .what = "one byte changed", .data = flipped, .want = try h.fmt(a, "{s}: sha256 mismatch: mopm.lock pins {s}, the file is {s}; refused", .{ filename, good_sha, try sha256Hex(a, flipped) }) },
-        .{ .what = "one byte longer", .data = longer, .want = try h.fmt(a, "{s}: mopm.lock pins {d} bytes, the file has {d}; refused", .{ filename, good.len, longer.len }) },
+        .{ .what = "one byte changed", .data = flipped, .want = try h.fmt(a, "mopm sync: {s} has sha256 {s}; the pin says {s}; refused\n", .{ url, try sha256Hex(a, flipped), good_sha }) },
+        .{ .what = "one byte longer", .data = longer, .want = try h.fmt(a, "mopm sync: {s} is larger than the pinned {d} bytes; refused\n", .{ url, good.len }) },
     };
     for (tampers) |t| {
         try c.serve(t.data);
         r = try c.sync(fresh, &.{"--locked"});
         rep.check(try h.fmt(a, "tampered artifact ({s}): sync --locked refuses it", .{t.what}), r.code == 1 and h.contains(r.stderr, t.want), c.detail(r));
-        rep.check(try h.fmt(a, "tampered artifact ({s}): the file is not kept and pixi does not run", .{t.what}), !c.exists(fresh, kept_rel) and !c.exists(fresh, ".mopm/pixi.toml"), "the file was kept or .mopm/pixi.toml exists");
+        rep.check(try h.fmt(a, "tampered artifact ({s}): the file is not kept and no environment is made", .{t.what}), !c.exists(fresh, kept_rel) and !c.exists(fresh, env_rel), "the file was kept or .mopm/env exists");
     }
 
-    // The project that synced before keeps the good file; tampered with, it
-    // is not used (and the channel's copy is tampered too).
+    // A file kept from an earlier download, tampered with afterwards, is not
+    // used: it is downloaded again (and the channel's copy is tampered too).
     try c.serve(flipped);
-    try h.writeFile(try h.join(a, &.{ app, kept_rel }), flipped);
-    r = try c.sync(app, &.{"--locked"});
-    rep.check("tampered kept file: sync --locked does not use it", r.code == 1 and h.contains(r.stderr, try h.fmt(a, "sha256 mismatch: mopm.lock pins {s}", .{good_sha})), c.detail(r));
+    try fs.cwd().makePath(try h.join(a, &.{ fresh, ".mopm/pkgs" }));
+    try h.writeFile(try h.join(a, &.{ fresh, kept_rel }), flipped);
+    r = try c.sync(fresh, &.{"--locked"});
+    rep.check("tampered kept file: sync --locked does not use it", r.code == 1 and h.contains(r.stderr, try h.fmt(a, "; the pin says {s}; refused", .{good_sha})) and !c.exists(fresh, env_rel), c.detail(r));
 
     // Control: the same sync with the original bytes back succeeds.
     try c.serve(good);
     r = try c.sync(fresh, &.{"--locked"});
-    rep.check("control: with the original bytes the same sync --locked succeeds", r.code == 0 and c.exists(fresh, kept_rel), c.detail(r));
+    rep.check("control: with the original bytes the same sync --locked succeeds", r.code == 0 and std.mem.eql(u8, c.read(fresh, kept_rel) orelse "", good), c.detail(r));
 
     // ------------------------------------------------ a path dependency
     // Locked as source = path with its own version and no file; sync uses it
@@ -491,17 +352,15 @@ fn run(a: Allocator, rep: *h.Report) !void {
     }
     {
         var names = std.ArrayList([]const u8).init(a);
-        if (fs.cwd().openDir(try h.fmt(a, "{s}/.mopm/channel/{s}", .{ withpath, subdir }), .{ .iterate = true })) |d0| {
+        if (fs.cwd().openDir(try h.join(a, &.{ withpath, ".mopm/pkgs" }), .{ .iterate = true })) |d0| {
             var d = d0;
             defer d.close();
             var it = d.iterate();
             while (try it.next()) |e| try names.append(try a.dupe(u8, e.name));
         } else |_| {}
         h.sortStrings(names.items);
-        const pixi_toml = c.read(withpath, ".mopm/pixi.toml");
-        const repo = c.read(withpath, try h.fmt(a, ".mopm/channel/{s}/repodata.json", .{subdir}));
-        rep.check("the path dependency is not downloaded nor given to pixi", h.eqlStrings(names.items, &.{ filename, "repodata.json" }) and
-            pixi_toml != null and !h.contains(pixi_toml.?, "mojo-local") and repo != null and !h.contains(repo.?, "mojo-local"), "the channel, pixi.toml or repodata.json holds the path dependency, or is missing");
+        rep.check("the path dependency is neither downloaded nor installed", h.eqlStrings(names.items, &.{filename}) and
+            c.exists(withpath, env_rel ++ "/lib/mojo/greet.mopm.json") and !c.exists(withpath, env_rel ++ "/lib/mojo/local.mopm.json"), "the kept files or the environment hold the path dependency, or greet is missing");
     }
     const locked = c.read(withpath, "mopm.lock") orelse "";
     try localVersion(&c, withpath, "0.2.1");

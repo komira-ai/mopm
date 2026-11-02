@@ -61,6 +61,7 @@ Not part of the contract. Each is a POST with a JSON object body.
 | `/_fake/groups` | `{"enabled"}` | group publishing on (the default) or off: off, `createGroup` answers `route_not_found`, as a registry that has not enabled groups does |
 | `/_fake/put_fault` | `{"after"}` | after that many more PUTs of upload bytes, the next one answers `unavailable` (once), as storage can fail in the middle of a group |
 | `/_fake/commit_clock` | `{"advance_seconds"}` | the clock moves forward by that much when the next group commit arrives (once), so a group can pass its deadline between the create and the commit |
+| `/_fake/served` | `{}` | `{"conda"}`: how many `.conda` files `GET /channel/...` has served since the fake started, to count a client's downloads |
 
 ## Tested how
 

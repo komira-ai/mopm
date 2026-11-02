@@ -1,10 +1,9 @@
-//! Stands in for the programs mopm starts in tests/drivers/group_publish_test.zig (`mojo`, the test binary `mojo build`
-//! writes, and `pixi`): prints what the registry token and one other variable look like in the environment mopm handed
+//! Stands in for the programs mopm starts in tests/drivers/group_publish_test.zig (`mojo` and the test binary `mojo build`
+//! writes): prints what the registry token and one other variable look like in the environment mopm handed
 //! to it, so the test can see that a program mopm starts never gets the token.
 //!
-//! Which program it stands in for is its first argument (`run`, `build`, `--skip-all` for a test binary, `install` for
-//! pixi). When MOPM_PROBE_OUT names a file, one line `<first argument>: MOPM_TOKEN=<value> MOPM_PROBE_MARK=<value>` is
-//! appended to it, so one run of mopm that starts several programs leaves a line for each. `build` also writes the
+//! Which program it stands in for is its first argument (`run`, `build`, `--skip-all` for a test binary). When MOPM_PROBE_OUT
+//! names a file, one line `<first argument>: MOPM_TOKEN=<value> MOPM_PROBE_MARK=<value>` is appended to it, so one run of mopm that starts several programs leaves a line for each. `build` also writes the
 //! output file it is asked for (`-o <path>`): a copy of this program, which is then the test binary mopm lists.
 
 const std = @import("std");

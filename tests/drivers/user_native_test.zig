@@ -1,7 +1,7 @@
 //! //:user_native: the native step of the user-level beta walk (tests/drivers/user_native.zig), on the build farm, on every
-//! pull request. The farm has no pixi and runs the Mojo toolchain only in the beta tier, so the step runs here with the stand-ins
-//! of the unit tier (tests/drivers/fake_toolchain.zig for the compiler, tests/drivers/fake_pixi.zig for pixi) and everything
-//! else real: the zig that compiles and archives the C sources, the built mopm, and the fake registry.
+//! pull request. The farm has no network and runs the Mojo toolchain only in the beta tier, so the step runs here with the stand-ins
+//! of the unit tier (tests/drivers/fake_toolchain.zig for the compiler, a stand-in toolchain closure of tests/drivers/conda_pkg.zig
+//! that the fake registry serves, for `mopm sync --toolchain`) and everything else real: the zig that compiles and archives the C sources, the built mopm, and the fake registry.
 //!
 //! What each test proves, and the defect it would catch:
 //!   - the switch: linux aarch64 is skipped while `linux_arm64_native_enabled` is off, every other platform runs, and turning
@@ -21,13 +21,14 @@
 //! The stand-in compiler prints what FAKE_TOOLCHAIN_PROGRAM_OUTPUT says, so the real values are checked by the walk on the
 //! hosted runners, where the real Mojo links the archive.
 //!
-//! Run by Buck2 as //:user_native. MOPM, MOPM_FAKE_REGISTRY, FAKE_PIXI and FAKE_TOOLCHAIN are the built programs, ZIG_DIR is
+//! Run by Buck2 as //:user_native. MOPM, MOPM_FAKE_REGISTRY and FAKE_TOOLCHAIN are the built programs, ZIG_DIR is
 //! the pinned zig's directory, and the data is tests/e2e/natws.
 
 const std = @import("std");
 const builtin = @import("builtin");
 const h = @import("harness.zig");
 const un = @import("user_native.zig");
+const cp = @import("conda_pkg.zig");
 const Allocator = std.mem.Allocator;
 
 test "user native: the one switch keeps linux aarch64 out and everything else in" {
@@ -84,6 +85,9 @@ fn stepWith(a: Allocator, rep: *h.Report, tag: []const u8, program_output: []con
     defer fake.close();
     const session = h.jsonString(try fake.control(a, "/session", "{\"handle\":\"native-user\"}"), "token") orelse "";
 
+    // The toolchain `mopm sync` installs: two stand-in packages the fake registry serves, and the closure that names them.
+    const closure = try cp.fakeToolchain(a, try h.join(a, &.{ work, "fake" }), fake.base, "channel/toolchain", cp.hostSubdir(), "1.0.0", try h.join(a, &.{ work, "toolchain.json" }), "T");
+
     const stand_in = try h.toolPathAbs(a, "FAKE_TOOLCHAIN");
     const prefix = try h.join(a, &.{ work, "prefix" });
     try un.installCompiler(stand_in, try h.join(a, &.{ prefix, "bin", "mojo" }));
@@ -96,7 +100,7 @@ fn stepWith(a: Allocator, rep: *h.Report, tag: []const u8, program_output: []con
         .session = session,
         .zig = try h.join(a, &.{ try h.toolPathAbs(a, "ZIG_DIR"), "zig" }),
         .mojo_env = prefix,
-        .pixi = try h.toolPathAbs(a, "FAKE_PIXI"),
+        .sync_args = &.{ "--toolchain", closure.closure, "--cache", try h.join(a, &.{ work, "cache" }) },
         .env = &env,
         .cc_target = if (builtin.os.tag == .linux and builtin.cpu.arch == .x86_64) "x86_64-linux-gnu.2.34" else null,
         .stand_in_mojo = stand_in,

@@ -127,6 +127,11 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
         }
         return resp.json(ctx.arena, .ok, .{ .stage = staged, .publish = published });
     }
+    // {} -> {"conda"}: how many `.conda` files `GET /channel/...` has served so far. A test reads it before and after a
+    // run to count the package downloads the run made.
+    if (std.mem.eql(u8, path, "/served")) {
+        return resp.json(ctx.arena, .ok, .{ .conda = s.conda_served });
+    }
     // {"name", "version", "reason_code"}: an administrator's takedown. The
     // bytes are gone (no url); the number and the sha256 stay.
     if (std.mem.eql(u8, path, "/tombstone")) {

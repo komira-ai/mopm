@@ -259,6 +259,9 @@ pub fn planInstall(arena: Allocator, pkgs: []const lock.Package, c: closure.Clos
 
 /// A digest of what `items` are, in order: the same list gives the same
 /// stamp, so an environment that records it need not be installed again.
+/// The leading "mopm-env 1" names how the files are unpacked (core/conda_env.zig,
+/// core/conda_unpack.zig): a change there that makes another environment of the
+/// same files must change it, so existing environments are installed again.
 pub fn stampOf(arena: Allocator, items: []const Item) Allocator.Error![]const u8 {
     var h = std.crypto.hash.sha2.Sha256.init(.{});
     h.update("mopm-env 1\n");
@@ -272,7 +275,6 @@ pub fn stampOf(arena: Allocator, items: []const Item) Allocator.Error![]const u8
     h.final(&d);
     return arena.dupe(u8, &std.fmt.bytesToHex(d, .lower));
 }
-
 
 /// Why the environment at `env` is not exactly `pkgs` as locked, or null.
 /// See the file comment for what is checked.

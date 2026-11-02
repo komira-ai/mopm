@@ -10,13 +10,14 @@
 //! - a group past its deadline when the commit arrives is refused, and a rerun opens it again and finishes;
 //! - a rerun after a failed PUT must ask for the same group (the id in state.json) and send only the files the registry
 //!   does not hold; a registry with no group publish (404) must get nothing uploaded; a 429 must stop the run where it is;
-//! - the token must be in no program mopm starts (one stand-in plays mojo, the test binary and pixi, and records its
-//!   environment: `mopm run`, the compile and the `--skip-all` listing of `mopm test`, and the installer of `mopm sync`),
-//!   and in nothing mopm prints;
+//! - the token must be in no program mopm starts (one stand-in plays mojo and the test binary, and records its
+//!   environment: `mopm run`, and the compile and the `--skip-all` listing of `mopm test`), in nothing mopm prints, and in no
+//!   file `mopm sync` writes (it starts no program; it downloads the toolchain itself, with the token in its environment);
 //! - a yank of the group yanks its members, and an unyank restores those and not the one yanked by hand before.
 
 const std = @import("std");
 const h = @import("harness.zig");
+const cp = @import("conda_pkg.zig");
 const Allocator = std.mem.Allocator;
 
 const dead = "http://127.0.0.1:1"; // nothing listens here
@@ -372,10 +373,27 @@ fn probeSawNoToken(lines: []const u8, role: []const u8, a: Allocator) !bool {
     return h.contains(lines, try std.fmt.allocPrint(a, "{s}: MOPM_TOKEN=<unset> MOPM_PROBE_MARK=kept\n", .{role}));
 }
 
-/// The compiler `mopm test` runs, the test binary it lists with `--skip-all`, and the installer `mopm sync` runs each get an
-/// environment without the token (`mopm run` is checked above). One stand-in plays all three: `mojo build` leaves a copy of it
-/// as the test binary, so a single `mopm test` starts two programs, and each appends a line saying what it was given.
-fn theTokenIsInNoTestOrInstallerEnvironment(w: World, probe: []const u8) !void {
+/// Every file under `dir`, read whole, holds no `token`: the names of the files and their bytes.
+fn treeHoldsNo(a: Allocator, dir: []const u8, token: []const u8) !bool {
+    var d = try std.fs.cwd().openDir(dir, .{ .iterate = true });
+    defer d.close();
+    var walker = try d.walk(a);
+    defer walker.deinit();
+    while (try walker.next()) |e| {
+        if (h.contains(e.path, token)) return false;
+        if (e.kind != .file) continue;
+        const bytes = try d.readFileAlloc(a, e.path, 1 << 28);
+        if (h.contains(bytes, token)) return false;
+    }
+    return true;
+}
+
+/// The compiler `mopm test` runs and the test binary it lists with `--skip-all` each get an environment without the token
+/// (`mopm run` is checked above). One stand-in plays both: `mojo build` leaves a copy of it as the test binary, so a single
+/// `mopm test` starts two programs, and each appends a line saying what it was given. `mopm sync` starts no program; it
+/// is given the token in its environment, and neither what it prints nor any file it writes (the environment, the kept
+/// packages, the cache of the toolchain) holds it.
+fn theTokenIsInNoTestEnvironmentAndNoSyncFile(w: World, probe: []const u8) !void {
     const a = w.a;
     const prefix = try w.dir("prefix_test");
     try std.fs.cwd().makePath(try h.join(a, &.{ prefix, "lib", "mojo" }));
@@ -396,16 +414,18 @@ fn theTokenIsInNoTestOrInstallerEnvironment(w: World, probe: []const u8) !void {
     w.rep.check("mopm test starts the compiler and the test binary, and neither has MOPM_TOKEN in its environment", (try probeSawNoToken(seen, "build", a)) and
         (try probeSawNoToken(seen, "--skip-all", a)) and !h.contains(seen, w.token) and !h.contains(t.text, w.token), try std.fmt.allocPrint(a, "{s}\n{s}", .{ seen, t.text }));
 
-    // `mopm sync`: the installer. A project with no dependency is locked with no registry.
+    // `mopm sync`: a project with no dependency is locked with no registry; the stand-in toolchain is served by the fake registry.
     const sync_dir = try w.dir("proj_sync");
     try std.fs.cwd().makePath(sync_dir);
     try h.writeFile(try h.join(a, &.{ sync_dir, "mopm.toml" }), "[package]\nname = \"probe_sync\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n");
-    const out_sync = try h.join(a, &.{ w.work, "probe_sync.txt" });
-    try env.put("MOPM_PROBE_OUT", out_sync);
-    const s = try h.run(a, &.{ w.m.exe, "sync", "--pixi", probe }, &env, .{ .cwd = sync_dir });
-    const installed = probeLines(w, out_sync);
-    w.rep.check("mopm sync starts the installer, and it has no MOPM_TOKEN in its environment", (try probeSawNoToken(installed, "install", a)) and
-        !h.contains(installed, w.token) and !h.contains(s.text, w.token), try std.fmt.allocPrint(a, "{s}\n{s}", .{ installed, s.text }));
+    const tc = try cp.fakeToolchain(a, w.fake_dir, w.fake.base, "channel/toolchain", cp.hostSubdir(), "1.0.0", try h.join(a, &.{ w.work, "toolchain.json" }), "T");
+    const cache = try h.join(a, &.{ w.work, "probe_cache" });
+    var sync_env = try h.cloneEnv(a, &w.m.env);
+    try sync_env.put("MOPM_TOKEN", w.token);
+    const s = try h.run(a, &.{ w.m.exe, "sync", "--toolchain", tc.closure, "--cache", cache }, &sync_env, .{ .cwd = sync_dir });
+    w.rep.check("mopm sync, with MOPM_TOKEN in its environment, installs the environment", s.code == 0 and h.contains(s.text, "into .mopm/env"), s.text);
+    w.rep.check("and neither what it prints nor a file it writes (.mopm, the cache) holds the token", !h.contains(s.text, w.token) and
+        try treeHoldsNo(a, try h.join(a, &.{ sync_dir, ".mopm" }), w.token) and try treeHoldsNo(a, cache, w.token), s.text);
 }
 
 fn yankAndUnyank(w: World) !void {
@@ -682,7 +702,7 @@ test "mopm publish --staged and mopm yank --group against the fake registry" {
     try noGroupPublish(w);
     try rateLimited(w);
     try theTokenIsInNoChildEnvironment(w, probe);
-    try theTokenIsInNoTestOrInstallerEnvironment(w, probe);
+    try theTokenIsInNoTestEnvironmentAndNoSyncFile(w, probe);
     try yankAndUnyank(w);
     try refusalsBeforeAnyRequest(w);
 

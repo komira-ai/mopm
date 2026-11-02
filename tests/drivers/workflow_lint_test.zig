@@ -150,16 +150,20 @@ test "e2e.yml: the repository secret is read once, as MOPM_E2E_TOKEN, by the ste
 
 test "e2e.yml: the group e2e job runs the real path with its tools, and nothing in it can be skipped or failed quietly" {
     const check_head = "      - name: Group publish end to end\n        env:\n";
-    // pixi is installed (pinned) before the check; without it the Mojo environment and the staged set's install cannot be made.
-    try expectRepo("e2e.yml", "      - name: Install pixi 0.79.0 (sha256-pinned)\n        run: echo \"$(tools/install_pixi.sh \"$RUNNER_TEMP/pixi\")\" >> \"$GITHUB_PATH\"\n", "", &.{"e2e.yml: group-e2e must install the pinned pixi (tools/install_pixi.sh) before the check"});
-    // The check is given the CLI by its absolute path, pixi, and the manifest of the Mojo environment, and stops at the first failure.
+    const env_step = "      - name: Create the Mojo environment (mopm sync --locked, tests/mojo_env)\n        working-directory: tests/mojo_env\n        run: ../../zig-out/bin/mopm sync --locked\n";
+    // The Mojo environment is made before the check, by `mopm sync --locked` in tests/mojo_env; without it the check has no compiler.
+    try expectRepo("e2e.yml", env_step, "", &.{"e2e.yml: group-e2e must make the Mojo environment before the check"});
+    try expectRepo("e2e.yml", "        working-directory: tests/mojo_env\n", "", &.{"e2e.yml: group-e2e must make the Mojo environment before the check"});
+    // A workflow that still uses pixi is refused: the install step, the flags of the check, and the manifest.
+    try expectRepo("e2e.yml", env_step, env_step ++ "      - name: Install pixi 0.79.0 (sha256-pinned)\n        run: echo \"$(tools/install_pixi.sh \"$RUNNER_TEMP/pixi\")\" >> \"$GITHUB_PATH\"\n", &.{"e2e.yml: group-e2e step 5: pixi is gone from this job"});
+    try expectRepo("e2e.yml", " --mojo-env \"$PWD/tests/mojo_env/.mopm/env\"", " --pixi \"$(command -v pixi)\" --pixi-manifest tests/e2e/pixi.toml", &.{ "e2e.yml: group-e2e step 5: pixi is gone from this job", "e2e.yml: group-e2e step 5: the check must be run with `--mojo-env \"$PWD/tests/mojo_env/.mopm/env\"`", "e2e.yml: group-e2e step 5: the check takes no `--pixi`" });
+    // The check is given the CLI by its absolute path and the Mojo environment, and stops at the first failure.
     try expectRepo("e2e.yml", "--mopm \"$PWD/zig-out/bin/mopm\"", "--mopm ./zig-out/bin/mopm", &.{"e2e.yml: group-e2e step 5: the check must be run with `--mopm \"$PWD/zig-out/bin/mopm\"`"});
-    try expectRepo("e2e.yml", " --pixi \"$(command -v pixi)\"", "", &.{"e2e.yml: group-e2e step 5: the check must be run with `--pixi \"$(command -v pixi)\"`"});
-    try expectRepo("e2e.yml", " --pixi-manifest tests/e2e/pixi.toml", "", &.{"e2e.yml: group-e2e step 5: the check must be run with `--pixi-manifest tests/e2e/pixi.toml`"});
+    try expectRepo("e2e.yml", " --mojo-env \"$PWD/tests/mojo_env/.mopm/env\"", "", &.{"e2e.yml: group-e2e step 5: the check must be run with `--mojo-env \"$PWD/tests/mojo_env/.mopm/env\"`"});
     try expectRepo("e2e.yml", "          set -euo pipefail\n          ./zig-out/bin/mopm-group-e2e", "          ./zig-out/bin/mopm-group-e2e", &.{"e2e.yml: group-e2e step 5: the check must be run with `set -euo pipefail`"});
     // No green-by-skip: no step of the job is conditional or allowed to fail, and the check's failure is not swallowed.
     try expectRepo("e2e.yml", check_head, "      - name: Group publish end to end\n        if: always()\n        env:\n", &.{"e2e.yml: group-e2e step 5: must not have an `if`"});
-    try expectRepo("e2e.yml", "      - name: Install pixi 0.79.0 (sha256-pinned)\n", "      - name: Install pixi 0.79.0 (sha256-pinned)\n        if: ${{ inputs.stage == 'gamma' }}\n", &.{"e2e.yml: group-e2e step 4: must not have an `if`"});
+    try expectRepo("e2e.yml", "      - name: Create the Mojo environment (mopm sync --locked, tests/mojo_env)\n", "      - name: Create the Mojo environment (mopm sync --locked, tests/mojo_env)\n        if: ${{ inputs.stage == 'gamma' }}\n", &.{"e2e.yml: group-e2e step 4: must not have an `if`"});
     try expectRepo("e2e.yml", "      - name: Build the CLI and the group check\n", "      - name: Build the CLI and the group check\n        continue-on-error: true\n", &.{"e2e.yml: group-e2e step 3: must not set continue-on-error"});
     try expectRepo("e2e.yml", " --summary \"$GITHUB_STEP_SUMMARY\"\n", " --summary \"$GITHUB_STEP_SUMMARY\" || true\n", &.{"e2e.yml: group-e2e step 5: the check must not tolerate a failure (`|| true`)"});
     try expectRepo("e2e.yml", " --summary \"$GITHUB_STEP_SUMMARY\"\n", " --summary \"$GITHUB_STEP_SUMMARY\" || :\n", &.{"e2e.yml: group-e2e step 5: the check must not tolerate a failure (`|| :`)"});

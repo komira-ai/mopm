@@ -89,8 +89,12 @@ pub const Opts = struct {
     zig: []const u8,
     /// A Mojo environment prefix (bin/mojo, share/max): precompiles the member.
     mojo_env: []const u8,
-    /// pixi, as `mopm sync --pixi` takes it.
-    pixi: []const u8,
+    /// Flags added to `mopm sync`: `--toolchain <closure> --cache <dir>` where the pinned toolchain cannot be downloaded (the
+    /// farm), none where sync installs the real one.
+    sync_args: []const []const u8 = &.{},
+    /// Called with the environment directory after a sync that left it without bin/mojo: lays the compiler in, as the farm
+    /// does (its stand-in toolchain holds no compiler). Null: sync's own toolchain has it.
+    lay_compiler: ?*const fn (env_dir: []const u8) anyerror!void = null,
     /// The environment of every child (no MOPM_TOKEN).
     env: *const std.process.EnvMap,
     /// `-target` for `zig cc`; null for the machine's own.
@@ -252,8 +256,15 @@ fn walk(w: *Walk) !void {
     _ = try w.mopm("native: mopm add shimlib from the registry", app, &.{ "add", "shimlib", "--registry", o.registry }, o.env);
     const lock = try h.readFile(a, try h.join(a, &.{ app, "mopm.lock" }));
     rep.check("native: the lock names shimlib", h.contains(lock, "shimlib"), lock);
-    _ = try w.mopm("native: mopm sync installs it", app, &.{ "sync", "--pixi", o.pixi, "--registry", o.registry }, o.env);
-    const env_dir = try h.join(a, &.{ app, ".mopm", ".pixi", "envs", "default" });
+    var sync_argv = std.ArrayList([]const u8).init(a);
+    try sync_argv.append("sync");
+    try sync_argv.appendSlice(o.sync_args);
+    try sync_argv.appendSlice(&.{ "--registry", o.registry });
+    _ = try w.mopm("native: mopm sync installs it", app, sync_argv.items, o.env);
+    const env_dir = try h.join(a, &.{ app, ".mopm", "env" });
+    if (o.lay_compiler) |lay| {
+        if (cwd.access(try h.join(a, &.{ env_dir, "bin", "mojo" }), .{})) |_| {} else |_| try lay(env_dir);
+    }
     const installed = h.readFile(a, try h.join(a, &.{ env_dir, "lib", "libshim.a" })) catch "";
     rep.check("native: the installed environment holds lib/libshim.a, byte for byte the archive that was built", archiveOk(installed, archive_bytes), "lib/libshim.a is missing or differs");
     if (o.stand_in_mojo) |stand_in| try installCompiler(stand_in, try h.join(a, &.{ env_dir, "bin", "mojo" }));

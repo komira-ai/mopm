@@ -7,3 +7,4 @@ service/api/dist/
 service/api/dist-validate/
 buck-out/
 .buckconfig.local
+tests/mojo_env/.mopm/

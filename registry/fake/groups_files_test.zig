@@ -193,3 +193,26 @@ test "a group commit takes manifest_sha256 from some members and not from others
         try std.testing.expectEqualStrings(try fx.sha(try std.fmt.allocPrint(a, "{s}x", .{n})), v.value.object.get("manifest_sha256").?.string);
     }
 }
+
+test "the /_fake/served control counts the .conda files the channel served, and nothing else" {
+    var fx: Fx = undefined;
+    try fx.setup();
+    defer fx.deinit();
+    try fx.tmp.dir.makePath("channel/noarch");
+    try fx.tmp.dir.writeFile("channel/noarch/mojo-a-1.0.0-b.conda", "abc");
+    try fx.tmp.dir.writeFile("channel/noarch/repodata.json", "{}");
+    const served = struct {
+        fn count(f: *Fx) !i64 {
+            return (try f.call(.POST, "/_fake/served", "{}", null)).value.object.get("conda").?.integer;
+        }
+    }.count;
+    try std.testing.expectEqual(@as(i64, 0), try served(&fx));
+    try std.testing.expectEqual(@as(u16, 200), (try fx.call(.GET, "/channel/noarch/mojo-a-1.0.0-b.conda", "", null)).status);
+    try std.testing.expectEqual(@as(i64, 1), try served(&fx));
+    // repodata.json and a file that is not there are not counted.
+    try std.testing.expectEqual(@as(u16, 200), (try fx.call(.GET, "/channel/noarch/repodata.json", "", null)).status);
+    try std.testing.expectEqual(@as(u16, 404), (try fx.call(.GET, "/channel/noarch/mojo-b-1.0.0-b.conda", "", null)).status);
+    try std.testing.expectEqual(@as(i64, 1), try served(&fx));
+    _ = try fx.call(.GET, "/channel/noarch/mojo-a-1.0.0-b.conda", "", null);
+    try std.testing.expectEqual(@as(i64, 2), try served(&fx));
+}

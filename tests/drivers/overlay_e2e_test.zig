@@ -1,6 +1,6 @@
 //! End-to-end tests of `--overlay <staged set>` for `mopm add`, `mopm lock` and `mopm sync`, against
-//! mopm-fake-registry and a small stand-in that records the requests it gets. Run by Buck2 (//:overlay_e2e); MOPM,
-//! MOPM_FAKE_REGISTRY and FAKE_PIXI are the built programs. Each check prints `ok` or `FAIL`.
+//! mopm-fake-registry and a small stand-in that records the requests it gets. Run by Buck2 (//:overlay_e2e); MOPM and
+//! MOPM_FAKE_REGISTRY are the built programs. Each check prints `ok` or `FAIL`.
 //!
 //! The packages are real: `mopm pack` makes them. libbase 0.1.0 ships a static archive; applib 0.2.0 depends on libbase
 //! and on regdep 1.0.0, which only the registry has. The staged set (spec/staged-set.md) holds libbase and applib, with
@@ -21,7 +21,7 @@
 //!   and for nothing else, and the same request without the set asks for the index file (so the recording can see one);
 //!   against the production registry it asks for nothing at all;
 //! - `sync --locked --overlay` installs the staged files from the set while the registry holds none of them, and the
-//!   same sync without the set fails, the registry's repodata.json not offering them;
+//!   same sync without the set fails, the registry answering HTTP 404 for the locked urls;
 //! - a missing set, and a staged file changed after the plan was made, are refused and write nothing.
 //!
 //! The production registry is not reachable from a test: the check that `--overlay` with the default registry makes a
@@ -32,6 +32,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const h = @import("harness.zig");
+const cp = @import("conda_pkg.zig");
 const Allocator = std.mem.Allocator;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 
@@ -105,6 +106,17 @@ const Cx = struct {
         const names = try h.findFilesAll(cx.a, dir);
         std.mem.sort([]const u8, names, {}, lessStr);
         return std.mem.join(cx.a, ",", names);
+    }
+
+    /// The names of the entries directly in `dir` below the project `project_dir`, sorted and joined by commas.
+    fn dirNames(cx: *Cx, project_dir: []const u8, dir: []const u8) ![]u8 {
+        var d = try std.fs.cwd().openDir(try h.join(cx.a, &.{ project_dir, dir }), .{ .iterate = true });
+        defer d.close();
+        var names = std.ArrayList([]const u8).init(cx.a);
+        var it = d.iterate();
+        while (try it.next()) |e| try names.append(try cx.a.dupe(u8, e.name));
+        std.mem.sort([]const u8, names.items, {}, lessStr);
+        return std.mem.join(cx.a, ",", names.items);
     }
 };
 
@@ -315,7 +327,6 @@ test "mopm add, lock and sync with --overlay: a staged set is a read-only channe
     var rep = h.Report{};
     const mopm_exe = try h.toolPath(a, "MOPM");
     const fake_exe = try h.toolPath(a, "MOPM_FAKE_REGISTRY");
-    const pixi_exe = try h.toolPath(a, "FAKE_PIXI");
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const work = try h.tmpPath(a, &tmp);
@@ -385,26 +396,32 @@ test "mopm add, lock and sync with --overlay: a staged set is a read-only channe
     // --- sync installs the staged files from the set, while the registry holds none of them
     h.stage = "sync";
     if (builtin.os.tag == .linux and builtin.cpu.arch == .x86_64) {
-        r = try cx.run(app1, &.{ "sync", "--locked", "--overlay", set, "--pixi", pixi_exe });
-        const kept = cx.read(app1, ".mopm/channel/linux-64/mojo-applib-0.2.0-mojo1.0.0_0.conda") orelse "";
+        // The stand-in toolchain closure sync installs beside the locked packages: served by the same fake registry.
+        const toolchain = try cp.fakeToolchain(a, fake_dir, fake.base, "channel/toolchain", "linux-64", "1.0.0", try h.join(a, &.{ work, "toolchain.json" }), "T");
+        const tc_args = [_][]const u8{ "--toolchain", toolchain.closure, "--cache", try h.join(a, &.{ work, "toolchain-cache" }) };
+        r = try cx.run(app1, &[_][]const u8{ "sync", "--locked", "--overlay", set } ++ tc_args);
+        const kept = cx.read(app1, ".mopm/pkgs/mojo-applib-0.2.0-mojo1.0.0_0.conda") orelse "";
         cx.ok("sync --locked --overlay installs libbase and applib from the set and regdep from the registry", r.code == 0 and has(r.stdout, "read 2 packages from the staged set") and
-            has(r.stdout, "installed 3 packages for linux-64") and std.mem.eql(u8, kept, app_bytes) and
-            std.mem.eql(u8, cx.read(app1, ".mopm/channel/linux-64/mojo-libbase-0.1.0-mojo1.0.0_0.conda") orelse "", base_bytes) and
-            std.mem.eql(u8, cx.read(app1, ".mopm/channel/linux-64/mojo-regdep-1.0.0-mojo1.0.0_0.conda") orelse "", reg_bytes) and
+            has(r.stdout, "installed 3 packages for linux-64 (mojo 1.0.0, 2 toolchain files) into .mopm/env") and std.mem.eql(u8, kept, app_bytes) and
+            std.mem.eql(u8, cx.read(app1, ".mopm/pkgs/mojo-libbase-0.1.0-mojo1.0.0_0.conda") orelse "", base_bytes) and
+            std.mem.eql(u8, cx.read(app1, ".mopm/pkgs/mojo-regdep-1.0.0-mojo1.0.0_0.conda") orelse "", reg_bytes) and
             std.mem.eql(u8, cx.read(app1, "mopm.lock") orelse "", lock1), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
-        cx.ok("the installed environment holds the staged packages and the archive of libbase", cx.read(app1, ".mopm/.pixi/envs/default/lib/libbase_sys.a") != null and
-            cx.read(app1, ".mopm/.pixi/envs/default/lib/mojo/applib.mopm.json") != null, try cx.files(app1));
+        cx.ok("the installed environment holds the staged packages and the archive of libbase", cx.read(app1, ".mopm/env/lib/libbase_sys.a") != null and
+            cx.read(app1, ".mopm/env/lib/mojo/applib.mopm.json") != null, try cx.files(app1));
+        cx.ok("the sync leaves .mopm holding env and pkgs only", std.mem.eql(u8, try cx.dirNames(app1, ".mopm"), "env,pkgs"), try cx.dirNames(app1, ".mopm"));
         const app1c = try cx.project("app1c", "applib = \"=0.2.0\"\n");
         try h.writeFile(try h.join(a, &.{ app1c, "mopm.lock" }), lock1);
-        r = try cx.run(app1c, &.{ "sync", "--locked", "--pixi", pixi_exe });
-        cx.ok("the same sync without the set fails on the registry, whose repodata.json offers none of the staged files", r.code == 1 and has(r.stderr, "does not offer mojo-applib-0.2.0-mojo1.0.0_0.conda"), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+        r = try cx.run(app1c, &[_][]const u8{ "sync", "--locked" } ++ tc_args);
+        const applib_url = try cx.fmt("{s}linux-64/mojo-applib-0.2.0-mojo1.0.0_0.conda", .{channel});
+        const gone = try cx.fmt("mopm sync: {s} answered HTTP 404: applib 0.2.0 has been taken down or is unavailable\n", .{applib_url});
+        cx.ok("the same sync without the set fails on the registry, which serves none of the staged files (HTTP 404 for the locked url)", r.code == 1 and std.mem.eql(u8, r.stderr, gone), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
         const app1d = try cx.project("app1d", "applib = \"=0.2.0\"\n");
         try h.writeFile(try h.join(a, &.{ app1d, "mopm.lock" }), lock1);
         const other = try h.join(a, &.{ work, "set_other" });
         _ = try pack(&cx, .{ .name = "applib", .version = "0.2.0", .extra = "[dependencies]\nlibbase = \"0.1\"\n" }, other);
         try writePlan(&cx, other, &.{.{ .name = "applib", .version = "0.2.0" }});
-        r = try cx.run(app1d, &.{ "sync", "--locked", "--overlay", other, "--pixi", pixi_exe });
-        cx.ok("a set holding another file under the locked name is not used: the lock pins the bytes", !has(r.stdout, "read 1 packages from the staged set") and r.code == 1 and has(r.stderr, "does not offer mojo-applib-0.2.0-mojo1.0.0_0.conda"), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+        r = try cx.run(app1d, &[_][]const u8{ "sync", "--locked", "--overlay", other } ++ tc_args);
+        cx.ok("a set holding another file under the locked name is not used: the lock pins the bytes", !has(r.stdout, "read 1 packages from the staged set") and r.code == 1 and std.mem.eql(u8, r.stderr, gone), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
     }
 
     // --- the publish: the registry holds all three
