@@ -8,7 +8,8 @@
 //!    newline, the form `sha256sum` writes, and the digest is the copy's;
 //!  - markers that cannot delimit the core: each of the two is a line of its own, exactly once, the begin before the end;
 //!  - a CLAUDE.md that no longer imports AGENTS.md: a line that is exactly `@AGENTS.md`, outside a fenced code block of backticks or
-//!    tildes (an import inside a fence, inside a sentence or with anything after it, a carriage return included, is not read as one).
+//!    tildes and outside a code span (an import inside either, inside a sentence or with anything after it, a carriage return included,
+//!    is not read as one).
 const std = @import("std");
 
 pub const Findings = std.ArrayList([]const u8);
@@ -111,33 +112,129 @@ pub fn sameHash(a: std.mem.Allocator, f: *Findings, sums: []const u8, copy: []co
     if (!std.mem.eql(u8, sums[0..64], &have)) try add(a, f, "tests/agents/shared_core.sha256 names {s}, but tests/agents/{s} hashes to {s}: the canonical core changed", .{ sums[0..64], copy_name, &have });
 }
 
-/// The fence a line opens or closes: its character (backtick or tilde) and length, when the line, after up to three spaces, starts with three
-/// or more of one of them.
-fn fenceOf(line: []const u8) ?struct { char: u8, len: usize } {
+/// A fence of a fenced code block: its character (backtick or tilde) and length.
+const Fence = struct { char: u8, len: usize };
+
+/// The run of three or more backticks or tildes a line starts with, after up to three spaces, and the rest of the line after it.
+fn fenceRun(line: []const u8) ?struct { fence: Fence, rest: []const u8 } {
     const s = std.mem.trimLeft(u8, line, " ");
-    if (line.len - s.len > 3 or s.len < 3 or (s[0] != '`' and s[0] != '~')) return null;
+    if (line.len - s.len > 3 or s.len == 0 or (s[0] != '`' and s[0] != '~')) return null;
     var n: usize = 0;
     while (n < s.len and s[n] == s[0]) n += 1;
     if (n < 3) return null;
-    return .{ .char = s[0], .len = n };
+    return .{ .fence = .{ .char = s[0], .len = n }, .rest = s[n..] };
 }
 
-/// CLAUDE.md has a line that is exactly `@AGENTS.md`, outside a fenced code block (a fence closes with its own character, at least as long).
+/// The fence `line` opens (CommonMark 0.31.2, fenced code blocks): any info string may follow, but a backtick fence's holds no backtick.
+fn opener(line: []const u8) ?Fence {
+    const r = fenceRun(line) orelse return null;
+    if (r.fence.char == '`' and std.mem.indexOfScalar(u8, r.rest, '`') != null) return null;
+    return r.fence;
+}
+
+/// `line` closes the block `open` opened: the same character, at least as many, then nothing but spaces and tabs.
+fn closes(line: []const u8, open: Fence) bool {
+    const r = fenceRun(line) orelse return false;
+    return r.fence.char == open.char and r.fence.len >= open.len and std.mem.trim(u8, r.rest, " \t").len == 0;
+}
+
+/// A line that ends a paragraph: blank (spaces and tabs only), or an ATX heading (up to three spaces, one to six `#`, then a space, a tab or
+/// the end of the line). A code span never reaches past one.
+fn breaksParagraph(line: []const u8) bool {
+    if (std.mem.trim(u8, line, " \t").len == 0) return true;
+    const s = std.mem.trimLeft(u8, line, " ");
+    if (line.len - s.len > 3) return false;
+    var n: usize = 0;
+    while (n < s.len and s[n] == '#') n += 1;
+    return n >= 1 and n <= 6 and (n == s.len or s[n] == ' ' or s[n] == '\t');
+}
+
+/// The number of backticks in the run that starts at `i`.
+fn runOf(text: []const u8, i: usize) usize {
+    var n: usize = 0;
+    while (i + n < text.len and text[i + n] == '`') n += 1;
+    return n;
+}
+
+/// One of `lines` (a paragraph, outside any fenced block) is exactly `@AGENTS.md` and starts outside a code span. A code span (CommonMark
+/// 0.31.2, code spans) opens at a run of backticks not escaped by a backslash and closes at the next run of exactly as many, on the same
+/// line or a later one of the paragraph; a run with no such closer is literal text.
+fn importIn(a: std.mem.Allocator, lines: []const []const u8) !bool {
+    const text = try std.mem.join(a, "\n", lines);
+    const code = try a.alloc(bool, text.len);
+    @memset(code, false);
+    var i: usize = 0;
+    while (i < text.len) {
+        if (text[i] == '\\' and i + 1 < text.len and std.ascii.isPrint(text[i + 1]) and !std.ascii.isAlphanumeric(text[i + 1]) and text[i + 1] != ' ') {
+            i += 2; // a backslash escape: `\`` is a literal backtick, `\\` a literal backslash
+            continue;
+        }
+        if (text[i] != '`') {
+            i += 1;
+            continue;
+        }
+        const n = runOf(text, i);
+        var j = i + n;
+        const close: ?usize = while (j < text.len) {
+            if (text[j] != '`') {
+                j += 1;
+                continue;
+            }
+            const m = runOf(text, j);
+            if (m == n) break j;
+            j += m;
+        } else null;
+        if (close) |c| {
+            @memset(code[i .. c + n], true);
+            i = c + n;
+        } else i += n;
+    }
+    var at: usize = 0;
+    for (lines) |line| {
+        if (std.mem.eql(u8, line, import_line) and !code[at]) return true;
+        at += line.len + 1;
+    }
+    return false;
+}
+
+/// CLAUDE.md imports AGENTS.md: a line that is exactly `@AGENTS.md`, outside a fenced code block and outside a code span (an import in
+/// either is not read as one).
 pub fn imports(a: std.mem.Allocator, f: *Findings, claude: []const u8) !void {
-    var open: ?struct { char: u8, len: usize } = null;
+    var open: ?Fence = null;
+    var para = std.ArrayList([]const u8).init(a);
     var it = std.mem.splitScalar(u8, claude, '\n');
     while (it.next()) |line| {
-        if (fenceOf(line)) |fence| {
-            if (open == null) {
-                open = .{ .char = fence.char, .len = fence.len };
-            } else if (open.?.char == fence.char and fence.len >= open.?.len) {
-                open = null;
-            }
-        } else if (open == null and std.mem.eql(u8, line, import_line)) {
-            return;
+        if (open) |o| {
+            if (closes(line, o)) open = null;
+        } else if (opener(line)) |fence| {
+            if (try importIn(a, para.items)) return;
+            para.clearRetainingCapacity();
+            open = fence;
+        } else if (breaksParagraph(line)) {
+            if (try importIn(a, para.items)) return;
+            para.clearRetainingCapacity();
+        } else {
+            try para.append(line);
         }
     }
-    try add(a, f, "CLAUDE.md does not import AGENTS.md: no line is exactly `{s}` outside a code block", .{import_line});
+    if (try importIn(a, para.items)) return;
+    try add(a, f, "CLAUDE.md does not import AGENTS.md: no line is exactly `{s}` outside a code block or code span", .{import_line});
+}
+
+/// The most bytes a file of the check may hold; a larger one is an error, not a finding.
+pub const max_bytes = 1 << 20;
+
+/// The four files the check reads.
+pub const Texts = struct { agents: []const u8, copy: []const u8, sums: []const u8, claude: []const u8 };
+
+/// The four files, read from the repository root `root`: a missing, unreadable or larger-than-`max_bytes` file is the error that read gave.
+pub fn load(a: std.mem.Allocator, root: std.fs.Dir) !Texts {
+    return .{
+        .agents = try root.readFileAlloc(a, "AGENTS.md", max_bytes),
+        .copy = try root.readFileAlloc(a, "tests/agents/shared_core.md", max_bytes),
+        .sums = try root.readFileAlloc(a, "tests/agents/shared_core.sha256", max_bytes),
+        .claude = try root.readFileAlloc(a, "CLAUDE.md", max_bytes),
+    };
 }
 
 /// Everything wrong with AGENTS.md, tests/agents/shared_core.md, tests/agents/shared_core.sha256 and CLAUDE.md.

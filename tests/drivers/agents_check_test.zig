@@ -6,20 +6,16 @@ const std = @import("std");
 const ac = @import("agents_check.zig");
 const t = std.testing;
 
-/// A file of the repository: under BUILDRULES_TEST_WORK (the target's `data`) in the Buck2 build, else relative to the current directory,
-/// the repository root (`zig test tests/drivers/agents_check_test.zig`, as lint.yml runs it).
-fn work(a: std.mem.Allocator, sub: []const u8) ![]const u8 {
+/// The repository root: BUILDRULES_TEST_WORK (the target's `data`) in the Buck2 build, else the current directory, the repository root
+/// (`zig test tests/drivers/agents_check_test.zig`, as lint.yml runs it).
+fn real(a: std.mem.Allocator) !ac.Texts {
     const root = std.process.getEnvVarOwned(a, "BUILDRULES_TEST_WORK") catch |err| switch (err) {
         error.EnvironmentVariableNotFound => try a.dupe(u8, "."),
         else => return err,
     };
-    return std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ root, sub }), 1 << 20);
-}
-
-const Real = struct { agents: []const u8, copy: []const u8, sums: []const u8, claude: []const u8 };
-
-fn real(a: std.mem.Allocator) !Real {
-    return .{ .agents = try work(a, "AGENTS.md"), .copy = try work(a, "tests/agents/shared_core.md"), .sums = try work(a, "tests/agents/shared_core.sha256"), .claude = try work(a, "CLAUDE.md") };
+    var dir = try std.fs.cwd().openDir(root, .{});
+    defer dir.close();
+    return ac.load(a, dir);
 }
 
 /// `text` with its one `from` replaced by `to`.
@@ -195,7 +191,14 @@ test "a hash file that is not the sha256sum line of the copy is found" {
         try std.mem.concat(a, u8, &.{ "g", s[1..] }), // a character that is not hex
         s[1..], // 63 digits
         "",
+        // the same length as a good line, one part wrong at a time
+        try std.mem.concat(a, u8, &.{ try std.ascii.allocUpperString(a, s[0..64]), s[64..] }), // the digest alone in uppercase
+        try edit(a, s, "shared_core.md", "shared_core.mx"), // another name of the same length
+        try edit(a, s, "  shared", " \tshared"), // a tab in the separator
+        try std.mem.concat(a, u8, &.{ s[0 .. s.len - 1], " " }), // a space for the final newline
     };
+    try t.expect(!std.mem.eql(u8, s[0..64], malformed[8][0..64])); // the digest has letters to uppercase
+    for (malformed[8..]) |m| try t.expectEqual(s.len, m.len);
     for (malformed) |m| {
         const want = try std.fmt.allocPrint(a, "tests/agents/shared_core.sha256 is not one line `<64 lowercase hex>  shared_core.md` (what `sha256sum shared_core.md` writes): `{s}`", .{m});
         try expectFindings(small_agents, small_core, m, "@AGENTS.md\n", &.{want});
@@ -207,7 +210,7 @@ test "a hash file that is not the sha256sum line of the copy is found" {
     });
 }
 
-test "CLAUDE.md imports AGENTS.md only on a line of its own outside a code block" {
+test "CLAUDE.md imports AGENTS.md only on a line of its own outside a code block or code span" {
     const s = try sumsOf(t.allocator, small_core);
     defer t.allocator.free(s);
     const missing = [_][]const u8{
@@ -225,8 +228,15 @@ test "CLAUDE.md imports AGENTS.md only on a line of its own outside a code block
         "~~~\n```\n" ++ ac.import_line ++ "\n~~~\n", // nor does a fence of the other character
         "```\n" ++ ac.import_line ++ "\n", // inside a fence never closed
         "@AGENTS.md\r\n", // a CRLF line: strict, as the core is
+        "```\n```example\n" ++ ac.import_line ++ "\n```\n", // a backtick line with text after it does not close a fence
+        "~~~\n~~~ end\n" ++ ac.import_line ++ "\n~~~\n", // nor does a tilde line
+        "```\n```\t`\n" ++ ac.import_line ++ "\n```\n", // nor a backtick after the closer's spaces
+        "`example\n" ++ ac.import_line ++ "\n`\n", // inside a code span over three lines
+        "``a ` b\n" ++ ac.import_line ++ "\nc``\n", // inside a span of two backticks, which a single one does not close
+        "`open\n#tag\n" ++ ac.import_line ++ "\n`\n", // `#` with no space after it is no heading, so the span goes on
+        "Read \\\\`\n" ++ ac.import_line ++ "\n`\n", // an escaped backslash leaves the backtick after it to open a span
     };
-    for (missing) |c| try expectFindings(small_agents, small_core, s, c, &.{"CLAUDE.md does not import AGENTS.md: no line is exactly `@AGENTS.md` outside a code block"});
+    for (missing) |c| try expectFindings(small_agents, small_core, s, c, &.{"CLAUDE.md does not import AGENTS.md: no line is exactly `@AGENTS.md` outside a code block or code span"});
     const present = [_][]const u8{
         "@AGENTS.md\n",
         "@AGENTS.md", // no newline
@@ -236,6 +246,16 @@ test "CLAUDE.md imports AGENTS.md only on a line of its own outside a code block
         "``\n" ++ ac.import_line ++ "\n", // two backticks are no fence
         "``code`` in a sentence\n" ++ ac.import_line ++ "\n", // nor are two backticks followed by text
         "    ```\n" ++ ac.import_line ++ "\n", // four spaces of indent are no fence
+        "```example```\n" ++ ac.import_line ++ "\n", // a backtick line whose text holds a backtick opens no fence (it is a code span)
+        "~~~ a `b`\n~~~\n" ++ ac.import_line ++ "\n", // a tilde fence may have backticks in its text
+        "```\nx\n```  \t\n" ++ ac.import_line ++ "\n", // a closer followed by spaces and a tab closes
+        "~~~\nx\n  ~~~~ \n" ++ ac.import_line ++ "\n", // an indented, longer tilde closer with a space closes
+        "`one span`\n" ++ ac.import_line ++ "\n", // after a code span closed on its own line
+        "`a\nb`\n" ++ ac.import_line ++ "\n", // after a code span closed on a later line
+        "An unmatched ` here\n" ++ ac.import_line ++ "\n", // a backtick with no closer is literal
+        "An escaped \\` here\n" ++ ac.import_line ++ "\n`\n", // an escaped backtick opens no span
+        "`open\n\n" ++ ac.import_line ++ "\n", // a blank line ends the paragraph, so the span never opened
+        "`open\n# Heading\n" ++ ac.import_line ++ "\n`\n", // nor past a heading: the import starts a paragraph of its own
     };
     for (present) |c| try expectFindings(small_agents, small_core, s, c, &.{});
 }
@@ -247,6 +267,102 @@ test "every problem of the four files is reported together" {
     try expectFindings(try edit(a, small_agents, "One rule.", "One changed rule."), small_core, "", "", &.{
         "AGENTS.md:8: the shared core differs from tests/agents/shared_core.md:3: `- X1 BLOCK. One changed rule.` against `- X1 BLOCK. One rule.` (change the core in AGENTS.md, tests/agents/shared_core.md and tests/agents/shared_core.sha256 together)",
         "tests/agents/shared_core.sha256 is not one line `<64 lowercase hex>  shared_core.md` (what `sha256sum shared_core.md` writes): ``",
-        "CLAUDE.md does not import AGENTS.md: no line is exactly `@AGENTS.md` outside a code block",
+        "CLAUDE.md does not import AGENTS.md: no line is exactly `@AGENTS.md` outside a code block or code span",
     });
+}
+
+test "a doubled end marker, or the whole core twice, is found" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const s = try sumsOf(a, small_core);
+    try expectFindings(try edit(a, small_agents, "## Repo\n", "## Repo\n" ++ ac.end_marker ++ "\n"), small_core, s, "@AGENTS.md\n", &.{
+        "AGENTS.md: the line `<!-- shared-core:end -->` is there 2 times, not once",
+    });
+    const twice = small_agents ++ ac.begin_marker ++ "\n" ++ small_core ++ ac.end_marker ++ "\n";
+    try expectFindings(twice, small_core, s, "@AGENTS.md\n", &.{
+        "AGENTS.md: the line `<!-- shared-core:begin -->` is there 2 times, not once",
+        "AGENTS.md: the line `<!-- shared-core:end -->` is there 2 times, not once",
+    });
+}
+
+test "markers that cannot delimit the core still let the hash and the import be checked" {
+    // no begin marker, a hash file that is no sha256sum line, no import
+    try expectFindings(small_core ++ ac.end_marker ++ "\n", small_core, "", "", &.{
+        "AGENTS.md: the line `<!-- shared-core:begin -->` is there 0 times, not once",
+        "tests/agents/shared_core.sha256 is not one line `<64 lowercase hex>  shared_core.md` (what `sha256sum shared_core.md` writes): ``",
+        "CLAUDE.md does not import AGENTS.md: no line is exactly `@AGENTS.md` outside a code block or code span",
+    });
+    // the end before the begin, another digest, the import only inside a fence
+    const swapped = "# AGENTS.md\n" ++ ac.end_marker ++ "\n" ++ small_core ++ ac.begin_marker ++ "\n";
+    try expectFindings(swapped, small_core, "0" ** 64 ++ "  shared_core.md\n", "```\n@AGENTS.md\n```\n", &.{
+        "AGENTS.md:2: the end of the shared core comes before its begin (line 7)",
+        "tests/agents/shared_core.sha256 names 0000000000000000000000000000000000000000000000000000000000000000, but tests/agents/shared_core.md hashes to " ++ small_core_digest ++ ": the canonical core changed",
+        "CLAUDE.md does not import AGENTS.md: no line is exactly `@AGENTS.md` outside a code block or code span",
+    });
+}
+
+/// The sha256 of `small_core`, written out so a finding that names it is compared to fixed text.
+const small_core_digest = "f812642f680c11b65958bcdf3e2b34fc2ccc2068622ab1bd4add9ae499d740dd";
+
+test "small_core_digest is the digest of small_core" {
+    const s = try sumsOf(t.allocator, small_core);
+    defer t.allocator.free(s);
+    try t.expectEqualStrings(small_core_digest, s[0..64]);
+}
+
+/// The paths `load` reads, and a repository root holding them (a scratch directory of the test, never the current directory).
+const files = [_][]const u8{ "AGENTS.md", "tests/agents/shared_core.md", "tests/agents/shared_core.sha256", "CLAUDE.md" };
+
+fn scratchRepo(a: std.mem.Allocator, dir: std.fs.Dir) !void {
+    try dir.makePath("tests/agents");
+    const texts = [_][]const u8{ small_agents, small_core, try sumsOf(a, small_core), "@AGENTS.md\n" };
+    for (files, texts) |p, x| try dir.writeFile(p, x);
+}
+
+test "the four files load from an explicit root, whatever the current directory" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try scratchRepo(a, tmp.dir);
+    const x = try ac.load(a, tmp.dir);
+    try t.expectEqualStrings(small_agents, x.agents);
+    try t.expectEqualStrings(small_core, x.copy);
+    try t.expectEqualStrings("@AGENTS.md\n", x.claude);
+    try expectFindings(x.agents, x.copy, x.sums, x.claude, &.{});
+}
+
+test "a missing file, or a directory where a file belongs, fails the load" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for (files) |gone| {
+        var tmp = t.tmpDir(.{});
+        defer tmp.cleanup();
+        try scratchRepo(a, tmp.dir);
+        try tmp.dir.deleteFile(gone);
+        try t.expectError(error.FileNotFound, ac.load(a, tmp.dir));
+        try tmp.dir.makeDir(gone);
+        try t.expectError(error.IsDir, ac.load(a, tmp.dir));
+    }
+}
+
+test "a file of max_bytes loads, and one byte more fails the load" {
+    var arena = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var tmp = t.tmpDir(.{});
+    defer tmp.cleanup();
+    try scratchRepo(a, tmp.dir);
+    // CLAUDE.md: the import, then a paragraph of `x` up to the limit
+    const big = try a.alloc(u8, ac.max_bytes);
+    @memset(big, 'x');
+    @memcpy(big[0..12], "@AGENTS.md\n\n");
+    try tmp.dir.writeFile("CLAUDE.md", big);
+    const x = try ac.load(a, tmp.dir);
+    try expectFindings(x.agents, x.copy, x.sums, x.claude, &.{});
+    try tmp.dir.writeFile("CLAUDE.md", try std.mem.concat(a, u8, &.{ big, "x" }));
+    try t.expectError(error.FileTooBig, ac.load(a, tmp.dir));
 }
