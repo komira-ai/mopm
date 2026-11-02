@@ -12,7 +12,11 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-pub const Diag = struct { message: []const u8 = "" };
+pub const Diag = struct {
+    message: []const u8 = "",
+    /// `fetch`: the HTTP status of an answer that was not 2xx (`error.BadStatus`), else 0.
+    status: u16 = 0,
+};
 
 pub const Pin = struct {
     /// Lowercase hex sha256 of the file.
@@ -102,6 +106,7 @@ pub fn fetch(arena: Allocator, dir: std.fs.Dir, name: []const u8, url: []const u
     const status = @intFromEnum(req.response.status);
     if (status < 200 or status >= 300) {
         diag.message = try std.fmt.allocPrint(arena, "{s} answered HTTP {d}", .{ url, status });
+        diag.status = status;
         return error.BadStatus;
     }
 
@@ -371,6 +376,7 @@ test "fetch: tampered bytes, a wrong length and an error status are refused and 
 
     try std.testing.expectError(error.BadStatus, fetch(a, tmp.dir, "pkg.conda", try stub.url(a, "/missing.conda"), pin, &diag));
     try std.testing.expect(std.mem.indexOf(u8, diag.message, "HTTP 404") != null);
+    try std.testing.expectEqual(@as(u16, 404), diag.status);
     try std.testing.expectEqualStrings("", try names(a, tmp.dir));
 
     // A refused download does not disturb a verified file that was there.

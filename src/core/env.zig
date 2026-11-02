@@ -1,15 +1,16 @@
-//! Environment discovery: which conda/pixi prefix a command works in, and
-//! which installed packages it holds.
+//! Environment discovery: which conda prefix a command works in, and which
+//! installed packages it holds.
 //!
 //! The prefix comes from, in order: the `--prefix` flag; `CONDA_PREFIX` (set
-//! by conda and pixi activation to the prefix itself); `MODULAR_HOME` (set by
+//! by conda or pixi activation to the prefix itself); `MODULAR_HOME` (set by
 //! the `mojo` package's activation to `<prefix>/share/max`, so the prefix is
-//! derived from it). A flag beats an environment variable; an empty variable
-//! counts as unset.
+//! derived from it); then, with `choosePrefixOrProject`, the environment
+//! `mopm sync` made in the current directory (`.mopm/env`), if it is there. A
+//! flag beats an environment variable; an empty variable counts as unset.
 //!
 //! The closure is every `<prefix>/lib/mojo/<name>.mopm.json`: the environment
-//! was solved by pixi, so what is installed is the closure. Files are read in
-//! name order so the plan does not depend on directory order.
+//! was installed from a lock, so what is installed is the closure. Files are
+//! read in name order so the plan does not depend on directory order.
 
 const std = @import("std");
 const testroot = @import("testroot.zig");
@@ -20,12 +21,15 @@ pub const Source = enum {
     flag,
     conda_prefix,
     modular_home,
+    /// The environment `mopm sync` made in the current directory.
+    project_env,
 
     pub fn describe(self: Source) []const u8 {
         return switch (self) {
             .flag => "--prefix",
             .conda_prefix => "CONDA_PREFIX",
             .modular_home => "MODULAR_HOME",
+            .project_env => "the environment mopm sync made, " ++ project_env_path,
         };
     }
 };
@@ -36,6 +40,9 @@ pub const Prefix = struct {
 };
 
 pub const PrefixError = error{ NoPrefix, BadModularHome };
+
+/// Where `mopm sync` puts the project's environment (core/install.zig `prefix`).
+pub const project_env_path = ".mopm/env";
 
 /// The tail `MODULAR_HOME` carries below the prefix.
 pub const modular_home_tail = "/share/max";
@@ -62,6 +69,18 @@ pub fn choosePrefix(flag: ?[]const u8, conda_prefix: ?[]const u8, modular_home: 
         return .{ .path = h[0 .. h.len - modular_home_tail.len], .source = .modular_home };
     }
     return error.NoPrefix;
+}
+
+/// `choosePrefix`, and when nothing names an environment, the one `mopm sync`
+/// made in `cwd` (`.mopm/env`), if it has a `lib/mojo`: after a sync, `mopm
+/// build`, `run` and `repl` need no flag and no activation. An environment that
+/// is named but wrong is still an error, never replaced by this one.
+pub fn choosePrefixOrProject(cwd: std.fs.Dir, flag: ?[]const u8, conda_prefix: ?[]const u8, modular_home: ?[]const u8) PrefixError!Prefix {
+    return choosePrefix(flag, conda_prefix, modular_home) catch |e| {
+        if (e != error.NoPrefix) return e;
+        cwd.access(project_env_path ++ "/lib/mojo", .{}) catch return e;
+        return .{ .path = project_env_path, .source = .project_env };
+    };
 }
 
 pub const metadata_suffix = ".mopm.json";
@@ -138,6 +157,25 @@ test "the flag beats CONDA_PREFIX, which beats MODULAR_HOME" {
     const p3 = try choosePrefix(null, null, "/m/share/max");
     try std.testing.expectEqualStrings("/m", p3.path);
     try std.testing.expectEqual(Source.modular_home, p3.source);
+}
+
+test "with nothing named, the environment mopm sync made is used; a named one is never replaced" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // No .mopm/env, or one without lib/mojo: there is no environment.
+    try std.testing.expectError(error.NoPrefix, choosePrefixOrProject(tmp.dir, null, "", null));
+    try tmp.dir.makePath(project_env_path);
+    try std.testing.expectError(error.NoPrefix, choosePrefixOrProject(tmp.dir, null, "", null));
+    try tmp.dir.makePath(project_env_path ++ "/lib/mojo");
+    const p = try choosePrefixOrProject(tmp.dir, null, "", null);
+    try std.testing.expectEqualStrings(project_env_path, p.path);
+    try std.testing.expectEqual(Source.project_env, p.source);
+    try std.testing.expectEqualStrings("the environment mopm sync made, .mopm/env", p.source.describe());
+    const named = try choosePrefixOrProject(tmp.dir, "/f", null, null);
+    try std.testing.expectEqualStrings("/f", named.path);
+    try std.testing.expectEqual(Source.flag, named.source);
+    try std.testing.expectEqual(Source.conda_prefix, (try choosePrefixOrProject(tmp.dir, null, "/c", null)).source);
+    try std.testing.expectError(error.BadModularHome, choosePrefixOrProject(tmp.dir, null, null, "/m/other"));
 }
 
 test "an empty value counts as unset" {

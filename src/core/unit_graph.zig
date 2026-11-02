@@ -206,6 +206,19 @@ pub const lock_subdirs = [_][]const u8{ "linux-64", "linux-aarch64", "osx-arm64"
 /// The Mojo versions and subdirs a unit graph can be made for.
 pub const supported = "mojo 1.0.0 on linux-64, linux-aarch64 and osx-arm64";
 
+/// The closure of mopm's pinned toolchain for `mojo` on `subdir`: every package `mopm sync` installs for it, or a
+/// refusal (the one `toolchainFor` gives).
+pub fn pinnedClosure(arena: Allocator, mojo: []const u8, subdir: []const u8, why: *[]const u8) anyerror!closure.Closure {
+    for (targets) |t| {
+        if (std.mem.eql(u8, mojo, "1.0.0") and std.mem.eql(u8, t.subdir, subdir)) {
+            const c = closure.parse(arena, t.closure) catch return error.BadPins;
+            if (!std.mem.eql(u8, c.subdir, subdir) or !std.mem.eql(u8, c.mojo, mojo)) return error.BadPins;
+            return c;
+        }
+    }
+    return refuse(arena, why, "mopm has no pinned toolchain for mojo {s} on {s} (it pins {s})", .{ mojo, subdir, supported });
+}
+
 /// mopm's pinned toolchain for `mojo` on `subdir`, or a refusal.
 pub fn toolchainFor(arena: Allocator, mojo: []const u8, subdir: []const u8, why: *[]const u8) anyerror!Toolchain {
     var target: ?Target = null;
@@ -1558,6 +1571,19 @@ test "mopm pins the toolchain of the Mojo it names, and refuses another" {
     try std.testing.expectEqualStrings(tc.closure_sha256, (try toolchainFor(a, "1.0.0", "linux-64", &why)).closure_sha256);
     try std.testing.expectError(error.Refused, toolchainFor(a, "1.1.0", "linux-64", &why));
     try std.testing.expectEqualStrings("mopm has no pinned toolchain for mojo 1.1.0 on linux-64 (it pins mojo 1.0.0 on linux-64, linux-aarch64 and osx-arm64)", why);
+    // The closure sync installs is the one the toolchain's hash is made of.
+    for (lock_subdirs) |subdir| {
+        const c = try pinnedClosure(a, "1.0.0", subdir, &why);
+        try std.testing.expectEqualStrings(subdir, c.subdir);
+        try std.testing.expectEqualStrings("1.0.0", c.mojo);
+        try std.testing.expectEqual(@as(?[]const u8, null), try closure.problem(a, c));
+        var has_mojo = false;
+        for (c.packages) |p| has_mojo = has_mojo or std.mem.eql(u8, p.name, "mojo-compiler");
+        try std.testing.expect(has_mojo);
+    }
+    try std.testing.expectError(error.Refused, pinnedClosure(a, "1.1.0", "linux-64", &why));
+    try std.testing.expectEqualStrings("mopm has no pinned toolchain for mojo 1.1.0 on linux-64 (it pins " ++ supported ++ ")", why);
+    try std.testing.expectError(error.Refused, pinnedClosure(a, "1.0.0", "win-64", &why));
 }
 
 /// tls_sys (a static library) over crypto_sys (another, in the exclusivity group libcrypto): the lock of a project
