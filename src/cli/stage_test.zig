@@ -136,6 +136,11 @@ fn contains(hay: []const u8, needle: []const u8) bool {
     return std.mem.indexOf(u8, hay, needle) != null;
 }
 
+/// One line, so a failing test shows the text that lacked the needle.
+fn expectContainsText(hay: []const u8, needle: []const u8) !void {
+    try std.testing.expectEqualStrings(needle, if (contains(hay, needle)) needle else hay);
+}
+
 fn arenaTest() std.heap.ArenaAllocator {
     return std.heap.ArenaAllocator.init(std.testing.allocator);
 }
@@ -424,7 +429,7 @@ test "a version published with the same bytes is skipped, and a rerun gives the 
     try std.testing.expect(plan_mod.refusedMember(second) == null);
     var dir = try fx.tmp.dir.openDir("second", .{});
     defer dir.close();
-    try std.testing.expect((try plan_mod.verify(a, dir, second)) == null);
+    try std.testing.expect((try plan_mod.verify(a, dir, second)) == .body);
 }
 
 test "a version published with different bytes is refused, and the plan says so" {
@@ -694,6 +699,115 @@ test "a readme is staged beside the package and named in the plan" {
     try std.testing.expectEqualStrings("# pkg_a\n", try fx.read("readme/pkg_a/README.md"));
 }
 
+/// `count` packages, each with a README of `len` bytes of `fill`; pkg_0's is `len + extra`.
+fn manyReadmes(fx: Fx, count: usize, len: usize, extra: usize, fill: u8) !void {
+    for (0..count) |i| {
+        const name = try std.fmt.allocPrint(fx.a, "pkg_{d}", .{i});
+        try fx.member(name, "1.0.0", "");
+        const text = try fx.a.alloc(u8, len + if (i == 0) extra else 0);
+        @memset(text, fill);
+        try fx.put(try std.fmt.allocPrint(fx.a, "ws/src/{s}/README.md", .{name}), text);
+    }
+}
+
+/// Every file below `rel`, sorted, each with its bytes: what a refusal must leave as it was.
+fn snapshot(fx: Fx, rel: []const u8) ![]const u8 {
+    var dir = try fx.tmp.dir.openDir(rel, .{ .iterate = true });
+    defer dir.close();
+    var paths = std.ArrayList([]const u8).init(fx.a);
+    var walker = try dir.walk(fx.a);
+    defer walker.deinit();
+    while (try walker.next()) |e| {
+        if (e.kind == .file) try paths.append(try fx.a.dupe(u8, e.path));
+    }
+    std.mem.sort([]const u8, paths.items, {}, struct {
+        fn lt(_: void, x: []const u8, y: []const u8) bool {
+            return std.mem.lessThan(u8, x, y);
+        }
+    }.lt);
+    var out = std.ArrayList(u8).init(fx.a);
+    for (paths.items) |p| try out.writer().print("{s}\n{s}\n", .{ p, try dir.readFileAlloc(fx.a, p, 1 << 20) });
+    return out.items;
+}
+
+test "readmes that would make a commit request over the limit are refused at stage, naming the largest, with nothing written" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    // 45 readmes of quotes: 2.7 MB on disk, 5.4 MB in the body (a quote is `\"`) and 10.8 MB in the function's event (where
+    // `\"` is `\\\"`), so a count of the bytes on disk would accept them.
+    try manyReadmes(fx, 45, 60000, 5000, '"');
+    var stub = newStub(a);
+    const r = try runStage(fx, &stub, "over", &.{});
+    try std.testing.expectEqual(@as(u8, 1), r.code);
+    try expectContainsText(r.err, "the commit request of the 45 members to upload is ");
+    try expectContainsText(r.err, "; mopm keeps that to at most 6225920, so the event fits the function's limit of 6291456 with room for the headers. The largest readmes: pkg_0 (130000 bytes in the request), ");
+    try expectContainsText(r.err, "; nothing was written\n");
+    try std.testing.expect(!fx.exists("over"));
+
+    // An --out that holds an earlier staging is left as it was: every file, byte for byte, and no file added.
+    try fx.put("again/plan.json", "the earlier plan");
+    try fx.put("again/report.json", "the earlier report");
+    try fx.put("again/state.json", "the earlier state");
+    try fx.put("again/noarch/mojo-pkg_0-1.0.0-mojo1.0.0_0.conda", "earlier package bytes");
+    try fx.put("again/pkg_0/README.md", "the earlier readme");
+    const before = try snapshot(fx, "again");
+    const again = try runStage(fx, &stub, "again", &.{});
+    try std.testing.expectEqual(@as(u8, 1), again.code);
+    try expectContainsText(again.err, "; nothing was written\n");
+    try std.testing.expectEqualStrings(before, try snapshot(fx, "again"));
+}
+
+test "readmes whose commit request is under the limit are staged" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    // 4.2 MB of plain text: 5.6 MB in base64, the larger encoding for it.
+    try manyReadmes(fx, 70, 60000, 0, 'r');
+    var stub = newStub(a);
+    const r = try runStage(fx, &stub, "under", &.{});
+    try std.testing.expectEqual(@as(u8, 0), r.code);
+    try std.testing.expect(fx.exists("under/plan.json"));
+}
+
+test "the readmes of skipped members do not count toward the limit: only the members to upload are sent" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    // 80 readmes of 60000 letters are over the limit (6.4 MB in base64); 70 are under.
+    try manyReadmes(fx, 80, 60000, 0, 'r');
+    var stub = newStub(a);
+    const all = try runStage(fx, &stub, "all", &.{});
+    try std.testing.expectEqual(@as(u8, 1), all.code);
+    try expectContainsText(all.err, "the commit request of the 80 members to upload");
+
+    // The registry holds pkg_70..pkg_79 with these bytes: staged alone first, to learn them.
+    var only = std.ArrayList([]const u8).init(a);
+    for (70..80) |i| try only.append(try std.fmt.allocPrint(a, "pkg_{d}", .{i}));
+    try std.testing.expectEqual(@as(u8, 0), (try runStage(fx, &stub, "probe", only.items)).code);
+    const probe = try readPlan(fx, "probe");
+    var held = std.ArrayList(Stub.Entry).init(a);
+    for (probe.members) |m| {
+        const path = try std.fmt.allocPrint(a, "/packages/{s}/1.0.0", .{m.name});
+        try held.append(.{ .path = path, .status = 200, .body = try publishedBody(a, m.name, "1.0.0", m.files[0].sha256, "published") });
+    }
+    stub.entries = held.items;
+    const mixed = try runStage(fx, &stub, "mixed", &.{});
+    try std.testing.expectEqual(@as(u8, 0), mixed.code);
+    try std.testing.expect(contains(mixed.out, "70 to upload, 10 skipped, 0 refused"));
+    var dir = try fx.tmp.dir.openDir("mixed", .{});
+    defer dir.close();
+    const commit = try plan_mod.verify(a, dir, try readPlan(fx, "mixed"));
+    try std.testing.expect(commit == .body);
+    try std.testing.expect(!contains(commit.body, "\"pkg_70\""));
+}
+
 test "the staged plan is the one publish --staged reads: members, files and hashes check out" {
     var st = arenaTest();
     defer st.deinit();
@@ -713,7 +827,7 @@ test "the staged plan is the one publish --staged reads: members, files and hash
     try std.testing.expectEqualStrings("linux-64", plan.members[0].files[1].subdir);
     var dir = try fx.tmp.dir.openDir("round", .{});
     defer dir.close();
-    try std.testing.expect((try plan_mod.verify(a, dir, plan)) == null);
+    try std.testing.expect((try plan_mod.verify(a, dir, plan)) == .body);
     // A stage that fails before it writes leaves the set it found as it was.
     const before = try fx.read("round/plan.json");
     try fx.member("pkg_b", "1.0.0", try fx.pathDep("pkg_a", "^3"));

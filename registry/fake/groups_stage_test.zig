@@ -207,3 +207,18 @@ test "the /_fake/oidc_tokens control counts the CI-identity tokens minted, by ki
     try std.testing.expectEqual(@as(i64, 1), counted.value.object.get("stage").?.integer);
     try std.testing.expectEqual(@as(i64, 2), counted.value.object.get("publish").?.integer);
 }
+
+test "the /_fake/requests control counts every request the fake answers but the controls, uploads and file reads included" {
+    var fx: Fx = undefined;
+    try fx.setup();
+    defer fx.deinit();
+    const before = (try fx.call(.POST, "/_fake/requests", "{}", null)).value.object.get("requests").?.integer;
+    // Controls are not counted, this one included.
+    _ = try fx.call(.POST, "/_fake/oidc_tokens", "{}", null);
+    try std.testing.expectEqual(before, (try fx.call(.POST, "/_fake/requests", "{}", null)).value.object.get("requests").?.integer);
+    // An API request (even one refused), a file read and an upload each count once.
+    _ = try fx.call(.GET, "/api/v1/groups/grp_00000000000000000000000000000000", "", null);
+    _ = try fx.call(.GET, "/index/config.json", "", null);
+    _ = try fx.call(.PUT, "/_fake/upload/upl_none", "x", null);
+    try std.testing.expectEqual(before + 3, (try fx.call(.POST, "/_fake/requests", "{}", null)).value.object.get("requests").?.integer);
+}

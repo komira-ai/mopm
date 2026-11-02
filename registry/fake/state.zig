@@ -253,6 +253,8 @@ pub const State = struct {
     /// Added to the wall clock: `/_fake/clock` moves time forward.
     clock_offset: i64 = 0,
     next_request: u64 = 1,
+    /// Requests answered that were not a `/_fake/` control (uploads to `/_fake/upload/` count): `/_fake/requests` reads it.
+    api_requests: u64 = 0,
     next_github_id: u64 = 1000,
     users: std.ArrayListUnmanaged(*User) = .{},
     tokens: std.ArrayListUnmanaged(*Token) = .{},

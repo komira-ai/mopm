@@ -127,6 +127,11 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
         }
         return resp.json(ctx.arena, .ok, .{ .stage = staged, .publish = published });
     }
+    // {} -> {"requests"}: how many requests the fake has answered that were not a control, uploads included; a test reads it
+    // before and after a run to see whether the run sent anything.
+    if (std.mem.eql(u8, path, "/requests")) {
+        return resp.json(ctx.arena, .ok, .{ .requests = s.api_requests });
+    }
     // {"name", "version", "reason_code"}: an administrator's takedown. The
     // bytes are gone (no url); the number and the sha256 stay.
     if (std.mem.eql(u8, path, "/tombstone")) {

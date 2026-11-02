@@ -141,6 +141,12 @@ with `mopm publish` is unchanged. See [Publishing a workspace as one group](docs
 - `mopm yank --group <id> --registry <prod|gamma|beta|url> --reason <text> [--config-dir <dir>] [--wait <seconds>]` yanks every version a group published, and `--unyank` restores
   the ones that yank changed.
 
+The readmes of a group's members travel in the body of its commit request, and the registry's function takes a request of
+at most 6 MiB with the body escaped into it. mopm holds that body to its own cutoff, a little under the limit and counted
+conservatively, and refuses a set over it, naming the largest readmes: `mopm stage` after asking the registry about the
+members and before it writes anything, and `mopm publish --staged` (with `--dry-run` or `--no-commit` too) before it sends
+any request. The commit sends the readmes as that check read them.
+
 Two things to know. The command line reads the registry's files, which are released in steps after the commit, so an install that runs
 during the release of a group can see some of its members (dependencies first); the API shows all or none. And a group yank is not one
 flip: members are yanked one by one, and only a group that is `visible` can be yanked.
