@@ -131,6 +131,13 @@ metadata file, every native library's hash, and that no `lib/mojo/*.mopm.json` i
 does not name. `mopm sync --locked` never changes the lock and never reads the index; CI should use it. A
 locked version that was yanked still installs (the lock pins its bytes); a locked version that was taken
 down fails: its file is gone, and sync says the package has been taken down or is unavailable.
+The lock's system libraries for the platform are installed with the toolchain. Only one `mopm sync` runs in a
+project at a time (a second waits on `.mopm/sync.lock`). The stamp includes the project's absolute path, so a
+moved project is installed again, and an environment that no longer matches its stamp (a missing file, a
+changed package) is installed again too. A version 2 lock that records the toolchain closure refuses a
+different closure before any download. The toolchain's files and the libraries' are kept in the shared cache as
+`<cache>/<sha256>/<file>`, and `--cache` inside `.mopm/env` is refused. The design is in
+[docs/design/native-sync.md](design/native-sync.md).
 
 **One lock for several Mojo versions.** A package may list `[package] mojo = ["1.0.0", "1.1.0"]`. Its
 lock is then `lock_version` 2: one entry per package version per platform with an `artifacts` map from

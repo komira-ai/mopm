@@ -145,6 +145,13 @@ every project, in `~/.cache/mopm/pkgs` (`$XDG_CACHE_HOME/mopm/pkgs` when that is
 choose). `--toolchain <file>` installs the toolchain from another list of the same files, for instance one
 whose channel URLs point at a mirror.
 
+`sync` also installs the lock's system libraries for your platform. Only one `sync` runs in a project at a
+time: a second one says it is waiting for `.mopm/sync.lock` and goes on when the first is done. The toolchain's
+files are kept as `<cache>/<sha256>/<file>`, and `--cache` may not point inside `.mopm/env`, which `sync`
+replaces. If `.mopm/env` has lost a file or no longer matches what `sync` recorded, the next `sync` says so and
+installs it again; so does moving the project to another directory. A lock made with several Mojo versions
+records the toolchain closure it was made for, and `sync` refuses a different one: run `mopm lock` again.
+
 Because a compiled Mojo package is tied to one compiler, a dependency is only chosen if it has a build for
 your exact Mojo. If none does, `mopm lock` says which versions have builds and for which Mojo.
 

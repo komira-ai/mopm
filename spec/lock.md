@@ -103,12 +103,17 @@ check them on every read. A violation is an error, not a warning.
 
 - `mopm sync --locked` installs exactly the lock and fails if it would change
   it. It does not read the index.
-- Every download is verified against `sha256` and `size`. When the sparse
-  index is reachable, `mopm` also compares the index's values with the lock's
-  and names both on a mismatch.
-- A locked version that was yanked still installs, with a warning that gives
-  the reason. A locked version that was taken down fails to install, and the
-  error shows the tombstone reason from the index.
+- Every download is verified against `sha256` and `size`.
+- `mopm sync` installs exactly the lock's pinned bytes. It does not read the
+  index, so it does not compare the index's values with the lock's.
+- A locked version that was yanked installs with no warning: the lock pins its
+  bytes. A locked version that was taken down fails at the download, when the
+  registry answers 403, 404 or 410, with
+  `<url> answered HTTP <status>: <name> <version> has been taken down or is unavailable`.
+- The Mojo toolchain's files and the lock's `system_libs` for the host's subdir
+  are installed too. In a version 2 lock, a recorded toolchain closure for the
+  lock's Mojo and the host's subdir must equal the closure being installed, or
+  sync refuses before any download.
 
 ## Version 2
 
