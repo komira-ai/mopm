@@ -408,7 +408,7 @@ test "mopm add, lock and sync with --overlay: a staged set is a read-only channe
             std.mem.eql(u8, cx.read(app1, "mopm.lock") orelse "", lock1), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
         cx.ok("the installed environment holds the staged packages and the archive of libbase", cx.read(app1, ".mopm/env/lib/libbase_sys.a") != null and
             cx.read(app1, ".mopm/env/lib/mojo/applib.mopm.json") != null, try cx.files(app1));
-        cx.ok("the sync leaves .mopm holding env and pkgs only", std.mem.eql(u8, try cx.dirNames(app1, ".mopm"), "env,pkgs"), try cx.dirNames(app1, ".mopm"));
+        cx.ok("the sync leaves .mopm holding env, pkgs and the project lock only", std.mem.eql(u8, try cx.dirNames(app1, ".mopm"), "env,pkgs,sync.lock"), try cx.dirNames(app1, ".mopm"));
         const app1c = try cx.project("app1c", "applib = \"=0.2.0\"\n");
         try h.writeFile(try h.join(a, &.{ app1c, "mopm.lock" }), lock1);
         r = try cx.run(app1c, &[_][]const u8{ "sync", "--locked" } ++ tc_args);

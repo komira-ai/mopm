@@ -1140,7 +1140,40 @@ zig_exe(  # buck-only: stands in for the Mojo compiler in the unit tier of group
 zig_test(  # buck-only: mopm sync installing an environment by itself (no pixi), against the fake registry and a stand-in toolchain closure; every pull request
     name = "sync_e2e",
     src = "tests/drivers/sync_e2e_test.zig",
-    imports = ["tests/drivers/harness.zig", "tests/drivers/conda_pkg.zig"],
+    imports = ["tests/drivers/harness.zig", "tests/drivers/conda_pkg.zig", "tests/drivers/sync_fixture.zig"],
+    env_tools = {
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+    },
+    **_TOOLS
+)
+
+zig_test(  # buck-only: mopm sync against environments in the states a project gets into (moved, damaged, a backup left, the legacy pixi layout, a second sync running); every pull request
+    name = "sync_state_e2e",
+    src = "tests/drivers/sync_state_e2e_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/conda_pkg.zig", "tests/drivers/sync_fixture.zig"],
+    env_tools = {
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+    },
+    **_TOOLS
+)
+
+zig_test(  # buck-only: what mopm sync refuses (bad archives, unsafe closures, path conflicts, a recorded toolchain closure, failed downloads) and that the old environment stays; every pull request
+    name = "sync_refuse_e2e",
+    src = "tests/drivers/sync_refuse_e2e_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/conda_pkg.zig", "tests/drivers/sync_fixture.zig"],
+    env_tools = {
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+    },
+    **_TOOLS
+)
+
+zig_test(  # buck-only: where mopm sync keeps its downloads (cache selection, content addressing, --cache inside the environment) and the lock's system libraries; every pull request
+    name = "sync_cache_e2e",
+    src = "tests/drivers/sync_cache_e2e_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/conda_pkg.zig", "tests/drivers/sync_fixture.zig"],
     env_tools = {
         "MOPM": ":mopm",
         "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",

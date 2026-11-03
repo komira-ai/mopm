@@ -219,6 +219,37 @@ pub fn pinnedClosure(arena: Allocator, mojo: []const u8, subdir: []const u8, why
     return refuse(arena, why, "mopm has no pinned toolchain for mojo {s} on {s} (it pins {s})", .{ mojo, subdir, supported });
 }
 
+/// The hash of the toolchain `c` (what a version 2 lock records and `Toolchain.closure_sha256` is): its
+/// Mojo version, subdir and every package's name, version, build and sha256, then the Zig pin and C target
+/// mopm pins for the subdir. Only pins enter it, so a mirror of the same files has the same hash.
+pub fn closureSha256(arena: Allocator, c: closure.Closure) ![]const u8 {
+    const zf = std.json.parseFromSliceLeaky(ZigFile, arena, zig_pins_1_0_0, .{}) catch return error.BadPins;
+    var zig_pin: ?ZigPin = null;
+    var cc_target: []const u8 = "";
+    for (zf.pins) |p| {
+        if (std.mem.eql(u8, p.subdir, c.subdir)) {
+            zig_pin = p.zig;
+            cc_target = p.cc_target;
+        }
+    }
+    const zig = zig_pin orelse return error.BadPins;
+    var h = Sha256.init(.{});
+    var line = std.ArrayList(u8).init(arena);
+    try line.writer().print("mopm-toolchain 1\nmojo {s}\nsubdir {s}\n", .{ c.mojo, c.subdir });
+    h.update(line.items);
+    for (c.packages) |p| {
+        line.clearRetainingCapacity();
+        try line.writer().print("{s} {s} {s} {s}\n", .{ p.name, p.version, p.build, p.sha256 });
+        h.update(line.items);
+    }
+    line.clearRetainingCapacity();
+    try line.writer().print("zig {s} {s}\ncc_target {s}\n", .{ zig.version, zig.sha256, cc_target });
+    h.update(line.items);
+    var d: [32]u8 = undefined;
+    h.final(&d);
+    return arena.dupe(u8, &std.fmt.bytesToHex(d, .lower));
+}
+
 /// mopm's pinned toolchain for `mojo` on `subdir`, or a refusal.
 pub fn toolchainFor(arena: Allocator, mojo: []const u8, subdir: []const u8, why: *[]const u8) anyerror!Toolchain {
     var target: ?Target = null;
@@ -241,33 +272,20 @@ pub fn toolchainFor(arena: Allocator, mojo: []const u8, subdir: []const u8, why:
     }
     const zig = zig_pin orelse return error.BadPins;
 
-    var h = Sha256.init(.{});
-    var line = std.ArrayList(u8).init(arena);
-    try line.writer().print("mopm-toolchain 1\nmojo {s}\nsubdir {s}\n", .{ c.mojo, c.subdir });
-    h.update(line.items);
     var comps = std.ArrayList(Component).init(arena);
     for (c.packages) |p| {
-        line.clearRetainingCapacity();
-        try line.writer().print("{s} {s} {s} {s}\n", .{ p.name, p.version, p.build, p.sha256 });
-        h.update(line.items);
         var wanted = false;
         for (target.?.components) |n| wanted = wanted or std.mem.eql(u8, p.name, n);
         if (wanted) {
             try comps.append(.{ .name = p.name, .version = p.version, .url = try closure.urlOf(arena, c, p), .sha256 = p.sha256, .size = p.size });
         }
     }
-    line.clearRetainingCapacity();
-    try line.writer().print("zig {s} {s}\ncc_target {s}\n", .{ zig.version, zig.sha256, cc_target });
-    h.update(line.items);
-    var d: [32]u8 = undefined;
-    h.final(&d);
-    const hex = std.fmt.bytesToHex(d, .lower);
     if (comps.items.len != target.?.components.len) return error.BadPins;
     return .{
         .mojo = c.mojo,
         .subdir = c.subdir,
         .cc_target = cc_target,
-        .closure_sha256 = try arena.dupe(u8, &hex),
+        .closure_sha256 = try closureSha256(arena, c),
         .zig = zig,
         .components = comps.items,
     };
@@ -782,7 +800,7 @@ const Builder = struct {
         // A built archive is linked into this unit: when its sources, headers or flags change, so does the result.
         for (b.units.items[i].natives) |n| {
             if (n.built.len == 0) continue;
-            const ni =index.get(n.built) orelse return b.fail("{s} links {s}, which is no unit", .{ b.units.items[i].id, n.built });
+            const ni = index.get(n.built) orelse return b.fail("{s} links {s}, which is no unit", .{ b.units.items[i].id, n.built });
             try b.keyOf(ni, index, state);
             h.update("\nnative ");
             h.update(b.units.items[ni].key);
@@ -1584,6 +1602,35 @@ test "mopm pins the toolchain of the Mojo it names, and refuses another" {
     try std.testing.expectError(error.Refused, pinnedClosure(a, "1.1.0", "linux-64", &why));
     try std.testing.expectEqualStrings("mopm has no pinned toolchain for mojo 1.1.0 on linux-64 (it pins " ++ supported ++ ")", why);
     try std.testing.expectError(error.Refused, pinnedClosure(a, "1.0.0", "win-64", &why));
+}
+
+test "closureSha256: the hash toolchainFor reports; pins change it, URLs do not" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var why: []const u8 = "";
+    for (lock_subdirs) |subdir| {
+        const c = try pinnedClosure(a, "1.0.0", subdir, &why);
+        const want = (try toolchainFor(a, "1.0.0", subdir, &why)).closure_sha256;
+        try std.testing.expectEqualStrings(want, try closureSha256(a, c));
+
+        // Another host for the same files: the channels' URLs are not pins.
+        const channels = try a.dupe(closure.Channel, c.channels);
+        for (channels) |*ch| ch.url = "https://mirror.example/other/";
+        var mirrored = c;
+        mirrored.channels = channels;
+        try std.testing.expectEqualStrings(want, try closureSha256(a, mirrored));
+
+        // Another byte of one file is another toolchain.
+        const packages = try a.dupe(closure.Package, c.packages);
+        packages[0].sha256 = try std.fmt.allocPrint(a, "{c}{s}", .{ @as(u8, if (packages[0].sha256[0] == '0') '1' else '0'), packages[0].sha256[1..] });
+        var changed = c;
+        changed.packages = packages;
+        try std.testing.expect(!std.mem.eql(u8, want, try closureSha256(a, changed)));
+    }
+    var other = try pinnedClosure(a, "1.0.0", "linux-64", &why);
+    other.subdir = "win-64";
+    try std.testing.expectError(error.BadPins, closureSha256(a, other));
 }
 
 /// tls_sys (a static library) over crypto_sys (another, in the exclusivity group libcrypto): the lock of a project
@@ -2553,7 +2600,7 @@ test "the root package's tests are planned from its own directory, named from th
             try std.testing.expect(std.mem.indexOf(u8, s.path, "test_c.mojo") == null);
         }
     }
-    const t =g.units[g.find("app@1.0.0#mojo1.0.0/test:app/tests/test_app.mojo") orelse return error.NoSuchUnit];
+    const t = g.units[g.find("app@1.0.0#mojo1.0.0/test:app/tests/test_app.mojo") orelse return error.NoSuchUnit];
     try std.testing.expectEqualStrings("app/tests/test_app.mojo", t.srcs[0].path);
     try std.testing.expectEqualStrings("test_app.pass", t.outputs[0]);
 }

@@ -16,7 +16,10 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 
-pub const Entry = struct { path: []const u8, data: []const u8, mode: u32 = 0o644 };
+/// One file of a package or of a tar. `link` makes it a symbolic link to that target (`data` is then empty); `placeholder`
+/// makes `package` list it in paths.json as a text file whose prefix placeholder is that string, which the install
+/// rewrites to the environment's path.
+pub const Entry = struct { path: []const u8, data: []const u8 = "", mode: u32 = 0o644, link: ?[]const u8 = null, placeholder: ?[]const u8 = null };
 
 pub fn sha256Hex(a: Allocator, bytes: []const u8) ![]u8 {
     var d: [32]u8 = undefined;
@@ -69,7 +72,8 @@ pub fn tar(a: Allocator, entries: []const Entry) ![]u8 {
         putOctal(hd[124..136], e.data.len);
         putOctal(hd[136..148], 0); // mtime 0
         @memset(hd[148..156], ' ');
-        hd[156] = '0';
+        hd[156] = if (e.link != null) '2' else '0';
+        if (e.link) |target| @memcpy(hd[157..][0..target.len], target);
         @memcpy(hd[257..263], "ustar\x00");
         @memcpy(hd[263..265], "00");
         var sum: usize = 0;
@@ -85,7 +89,7 @@ pub fn tar(a: Allocator, entries: []const Entry) ![]u8 {
     return out.items;
 }
 
-/// A zip of stored members, dated 1980-01-01.
+/// A zip of stored members, each stamped with the earliest date and time the ZIP format can encode.
 pub fn zip(a: Allocator, members: []const Entry) ![]u8 {
     var out = std.ArrayList(u8).init(a);
     var central = std.ArrayList(u8).init(a);
@@ -101,7 +105,7 @@ pub fn zip(a: Allocator, members: []const Entry) ![]u8 {
         try w.writeInt(u16, 0, .little); // flags
         try w.writeInt(u16, 0, .little); // stored
         try w.writeInt(u16, 0, .little); // time
-        try w.writeInt(u16, 0x21, .little); // date: 1980-01-01
+        try w.writeInt(u16, 0x21, .little); // date: the format's minimum (year offset 0, month 1, day 1)
         try w.writeInt(u32, crc, .little);
         try w.writeInt(u32, n, .little);
         try w.writeInt(u32, n, .little);
@@ -152,7 +156,10 @@ pub fn package(a: Allocator, name: []const u8, version: []const u8, build: []con
     try paths.appendSlice("{\"paths\": [");
     for (files, 0..) |f, i| {
         if (i != 0) try paths.appendSlice(", ");
-        try paths.writer().print("{{\"_path\": \"{s}\", \"path_type\": \"hardlink\", \"sha256\": \"{s}\", \"size_in_bytes\": {d}}}", .{ f.path, try sha256Hex(a, f.data), f.data.len });
+        const kind: []const u8 = if (f.link != null) "softlink" else "hardlink";
+        try paths.writer().print("{{\"_path\": \"{s}\", \"path_type\": \"{s}\", \"sha256\": \"{s}\", \"size_in_bytes\": {d}", .{ f.path, kind, try sha256Hex(a, f.data), f.data.len });
+        if (f.placeholder) |ph| try paths.writer().print(", \"file_mode\": \"text\", \"prefix_placeholder\": \"{s}\"", .{ph});
+        try paths.appendSlice("}");
         try list.writer().print("{s}\n", .{f.path});
     }
     try paths.appendSlice("], \"paths_version\": 1}");
@@ -202,11 +209,19 @@ pub fn markerPath(a: Allocator, name: []const u8) ![]u8 {
 /// another variant is other bytes; two calls with the same variant and another `channel_dir` make a mirror: the same
 /// bytes, another url.
 pub fn fakeToolchain(a: Allocator, fake_dir: []const u8, base: []const u8, channel_dir: []const u8, subdir: []const u8, mojo: []const u8, closure_path: []const u8, variant: []const u8) !Toolchain {
+    return fakeToolchainWith(a, fake_dir, base, channel_dir, subdir, mojo, closure_path, variant, &.{});
+}
+
+/// `fakeToolchain`, with `extra` files in the `mojo` package as well (an executable, a symbolic link, a file a locked
+/// package may also ship).
+pub fn fakeToolchainWith(a: Allocator, fake_dir: []const u8, base: []const u8, channel_dir: []const u8, subdir: []const u8, mojo: []const u8, closure_path: []const u8, variant: []const u8, extra: []const Entry) !Toolchain {
     var files: [2]ToolchainFile = undefined;
     var pkgs = std.ArrayList(u8).init(a);
     for (fake_names, 0..) |name, i| {
         const marker = try markerPath(a, name);
-        const bytes = try package(a, name, mojo, fake_build, subdir, &.{}, &.{.{ .path = marker, .data = try std.fmt.allocPrint(a, "{s} {s} ({s}), a stand-in of the toolchain for the tests\n", .{ name, mojo, variant }) }});
+        const marker_entry = Entry{ .path = marker, .data = try std.fmt.allocPrint(a, "{s} {s} ({s}), a stand-in of the toolchain for the tests\n", .{ name, mojo, variant }) };
+        const files_of = if (i == 0) try std.mem.concat(a, Entry, &.{ &.{marker_entry}, extra }) else try a.dupe(Entry, &.{marker_entry});
+        const bytes = try package(a, name, mojo, fake_build, subdir, &.{}, files_of);
         const file_name = try std.fmt.allocPrint(a, "{s}-{s}-{s}.conda", .{ name, mojo, fake_build });
         const served = try std.fmt.allocPrint(a, "{s}/{s}/{s}", .{ channel_dir, subdir, file_name });
         const full = try std.fs.path.join(a, &.{ fake_dir, served });

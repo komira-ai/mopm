@@ -17,22 +17,7 @@
 //! reads only mopm.toml and mopm.lock. Each index version that is not
 //! MAJOR.MINOR.PATCH is ignored with a warning on stderr.
 //!
-//! `sync` locks first when there is no lock or it no longer matches
-//! mopm.toml (as `lock` does), then installs the lock and the Mojo toolchain
-//! into `.mopm/env` (see core/install.zig), with no pixi, conda or solver: it
-//! downloads each locked file of this machine's subdir and each file of the
-//! pinned toolchain closure of the lock's Mojo (core/closure.zig), refuses one
-//! whose size or sha256 is not its pin, unpacks them all into a temporary
-//! directory beside `.mopm/env` and renames that into place (on any failure
-//! the old environment stays), and checks what it installed against the lock.
-//! Locked files are kept in `.mopm/pkgs`; the toolchain's, which are large and
-//! the same for every project, in `--cache` (default `$XDG_CACHE_HOME/mopm/pkgs`,
-//! else `~/.cache/mopm/pkgs`). The environment records a stamp of what it
-//! holds: a sync whose files have the same stamp downloads nothing.
-//! `--toolchain <file>` names another closure file than the built-in one (a
-//! mirror: the same pins, other channel urls; or a test). With `--locked` it
-//! never locks: a missing or out-of-date lock is an error, and the sparse index
-//! is not read.
+//! `sync` is in sync_cmd.zig.
 //!
 //! `--overlay <dir>` (`add`, `lock`, `sync`) reads a staged set (core/overlay.zig) as a read-only local channel
 //! ahead of the registry: a package the set holds is resolved and locked from the set, one it lacks from the
@@ -76,8 +61,8 @@ const toml_edit = core.toml_edit;
 const unit_graph = core.unit_graph;
 const system_libs = core.system_libs;
 const closure = core.closure;
-const conda_env = core.conda_env;
-const pkg_fetch = core.pkg_fetch;
+const sync_cmd = @import("sync_cmd.zig");
+const edit_cmd = @import("edit_cmd.zig");
 const publish_cmd = @import("publish_cmd.zig");
 
 /// The command whose name prefixes a message. `plan` and `build` only read the project (`readProject`).
@@ -93,8 +78,8 @@ const usage =
     \\
 ;
 
-const manifest_path = "mopm.toml";
-const lock_path = "mopm.lock";
+pub const manifest_path = "mopm.toml";
+pub const lock_path = "mopm.lock";
 
 pub const Args = struct {
     registry: []const u8 = "prod",
@@ -162,7 +147,7 @@ pub fn parseArgs(arena: Allocator, cmd: Command, args: []const []const u8) Alloc
     return out;
 }
 
-fn err(cmd: Command, comptime fmt: []const u8, args: anytype) void {
+pub fn err(cmd: Command, comptime fmt: []const u8, args: anytype) void {
     const w = std.io.getStdErr().writer();
     w.print("mopm {s}: ", .{@tagName(cmd)}) catch {};
     w.print(fmt, args) catch {};
@@ -202,7 +187,7 @@ fn readManifest(arena: Allocator, cmd: Command, path: []const u8) !?manifest.Man
 
 /// `src`, the text of `path`, checked as a manifest; null when it is not
 /// one (reported).
-fn parseManifest(arena: Allocator, cmd: Command, path: []const u8, src: []const u8) !?manifest.Manifest {
+pub fn parseManifest(arena: Allocator, cmd: Command, path: []const u8, src: []const u8) !?manifest.Manifest {
     var diag: manifest.Diagnostic = .{};
     return manifest.parse(arena, src, &diag) catch |e| {
         if (e == error.Invalid) {
@@ -269,7 +254,7 @@ pub fn readProject(arena: Allocator, cmd: Command) !?Project {
 
 /// The project `m` describes, with its path dependencies read; null when
 /// one of them cannot be (reported).
-fn projectOf(arena: Allocator, cmd: Command, m: manifest.Manifest) !?Project {
+pub fn projectOf(arena: Allocator, cmd: Command, m: manifest.Manifest) !?Project {
     var roots = std.ArrayList(resolve.Root).init(arena);
     var paths = std.ArrayList(plan.PathDep).init(arena);
     var lists = [2]std.ArrayList([]const u8){ std.ArrayList([]const u8).init(arena), std.ArrayList([]const u8).init(arena) };
@@ -442,7 +427,7 @@ const Layer = struct {
 };
 
 /// Reads the staged set `--overlay` names. Null when it is refused (reported).
-fn loadOverlay(arena: Allocator, cmd: Command, dir: []const u8) !?overlay.Overlay {
+pub fn loadOverlay(arena: Allocator, cmd: Command, dir: []const u8) !?overlay.Overlay {
     var why: []const u8 = "";
     return overlay.load(arena, dir, &why) catch |e| switch (e) {
         error.Refused => {
@@ -454,7 +439,7 @@ fn loadOverlay(arena: Allocator, cmd: Command, dir: []const u8) !?overlay.Overla
 }
 
 fn run(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8) !u8 {
-    if (cmd == .add or cmd == .remove) return edit(arena, cmd, args, cli_version);
+    if (cmd == .add or cmd == .remove) return edit_cmd.edit(arena, cmd, args, cli_version);
     const project = (try readProject(arena, cmd)) orelse return 1;
     const old = readLock(arena, cmd) catch |e| {
         if (e == error.Invalid) return 1;
@@ -466,7 +451,7 @@ fn run(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8) !u8 
         err(cmd, "{s} has no [toolchain] mojo; a lock pins the one compiler every package is built with\n", .{manifest_path});
         return 1;
     }
-    if (cmd == .sync) return sync(arena, project, old, args, cli_version);
+    if (cmd == .sync) return sync_cmd.sync(arena, project, old, args, cli_version);
     for (args.packages) |name| {
         const known = (old != null and old.?.versionOf(name) != null);
         if (!known) {
@@ -479,16 +464,16 @@ fn run(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8) !u8 
 
 /// Resolves the project, writes mopm.lock and prints what changed. Null when
 /// it failed (already reported).
-fn lockProject(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock, args: Args, cli_version: []const u8) !?lock.Lock {
+pub fn lockProject(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock, args: Args, cli_version: []const u8) !?lock.Lock {
     const r = (try resolveProject(arena, cmd, project, old, args, cli_version)) orelse return null;
     try writeLock(arena, old, r);
     return r.lock;
 }
 
-const Resolved = struct { lock: lock.Lock, count: usize, mojo: []const u8 };
+pub const Resolved = struct { lock: lock.Lock, count: usize, mojo: []const u8 };
 
 /// Writes mopm.lock and prints what changed.
-fn writeLock(arena: Allocator, old: ?lock.Lock, r: Resolved) !void {
+pub fn writeLock(arena: Allocator, old: ?lock.Lock, r: Resolved) !void {
     const text = try lock.render(arena, r.lock);
     try std.fs.cwd().writeFile(lock_path, text);
     const out = std.io.getStdOut().writer();
@@ -499,7 +484,7 @@ fn writeLock(arena: Allocator, old: ?lock.Lock, r: Resolved) !void {
 /// Resolves the project into a lock and writes nothing. The lock's pins are
 /// kept, except those of `args.packages` (of every package for `update`
 /// with none named). Null when it failed (already reported).
-fn resolveProject(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock, args: Args, cli_version: []const u8) !?Resolved {
+pub fn resolveProject(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock, args: Args, cli_version: []const u8) !?Resolved {
     const toolchains = project.m.mojo;
     const base = switch (registry.resolve(args.registry)) {
         .ok => |b| b,
@@ -674,212 +659,6 @@ fn resolveAll(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock,
     return .{ .lock = pinned, .count = merged.packages.len + project.paths.len, .mojo = try std.mem.join(arena, ", ", new.mojos) };
 }
 
-/// `mopm sync`: lock when needed (never with `--locked`), then install.
-fn sync(arena: Allocator, project: Project, old: ?lock.Lock, args: Args, cli_version: []const u8) !u8 {
-    var stale: ?[]const u8 = "there is no " ++ lock_path;
-    if (old) |o| {
-        stale = null;
-        if (try inst.staleness(arena, project.m.mojo, project.roots, project.paths, o)) |why| {
-            stale = try std.fmt.allocPrint(arena, "{s} is out of date with {s}: {s}", .{ lock_path, manifest_path, why });
-        }
-    }
-    const l = if (stale) |why| blk: {
-        if (args.locked) {
-            err(.sync, "--locked: {s}; run 'mopm lock' (or 'mopm sync' without --locked)\n", .{why});
-            return 1;
-        }
-        break :blk (try lockProject(arena, .sync, project, old, args, cli_version)) orelse return 1;
-    } else old.?;
-    const staged: ?overlay.Overlay = if (args.overlay) |dir| ((try loadOverlay(arena, .sync, dir)) orelse return 1) else null;
-    return install(arena, l, args, staged);
-}
-
-/// `--cache`, else `$XDG_CACHE_HOME/mopm/pkgs` when that is set and not empty, else `$HOME/.cache/mopm/pkgs` (the
-/// places core/repodata.zig keeps its cache in).
-fn cacheDir(arena: Allocator, flag: ?[]const u8) ![]const u8 {
-    if (flag) |f| return f;
-    if (std.process.getEnvVarOwned(arena, "XDG_CACHE_HOME")) |x| {
-        if (x.len > 0) return std.fs.path.join(arena, &.{ x, "mopm", "pkgs" });
-    } else |_| {}
-    const home = std.process.getEnvVarOwned(arena, "HOME") catch {
-        err(.sync, "no HOME, so no cache directory for the toolchain's files: pass --cache <dir>\n", .{});
-        return error.NoCacheDirectory;
-    };
-    return std.fs.path.join(arena, &.{ home, ".cache", "mopm", "pkgs" });
-}
-
-/// The toolchain closure of `mojo` on `subdir`: the `--toolchain` file, else mopm's pinned one. Null when there is none
-/// (reported).
-fn loadToolchain(arena: Allocator, mojo: []const u8, subdir: []const u8, file: ?[]const u8) !?closure.Closure {
-    const closure_file = file orelse {
-        var why: []const u8 = "";
-        return unit_graph.pinnedClosure(arena, mojo, subdir, &why) catch |e| {
-            if (e != error.Refused) return e;
-            err(.sync, "{s}\n", .{why});
-            return null;
-        };
-    };
-    const text = std.fs.cwd().readFileAlloc(arena, closure_file, 16 << 20) catch |e| {
-        err(.sync, "--toolchain {s}: {s}\n", .{ closure_file, @errorName(e) });
-        return null;
-    };
-    const c = closure.parse(arena, text) catch |e| {
-        if (e == error.OutOfMemory) return e;
-        err(.sync, "--toolchain {s} is not a toolchain closure file: {s}\n", .{ closure_file, @errorName(e) });
-        return null;
-    };
-    if (try closure.problem(arena, c)) |why| {
-        err(.sync, "--toolchain {s}: {s}\n", .{ closure_file, why });
-        return null;
-    }
-    if (!std.mem.eql(u8, c.mojo, mojo) or !std.mem.eql(u8, c.subdir, subdir)) {
-        err(.sync, "--toolchain {s} is the closure of mojo {s} on {s}; this sync needs mojo {s} on {s}\n", .{ closure_file, c.mojo, c.subdir, mojo, subdir });
-        return null;
-    }
-    return c;
-}
-
-/// Makes `dir/<item.file_name>` the item's pinned bytes, downloading it unless it is there already. False when that
-/// failed (reported).
-fn fetchItem(arena: Allocator, dir: std.fs.Dir, item: inst.Item) !bool {
-    const pin = pkg_fetch.Pin{ .sha256 = item.sha256, .size = item.size };
-    if (try pkg_fetch.matches(dir, item.file_name, pin)) return true;
-    try std.io.getStdOut().writer().print("downloading {s} ({d} bytes)\n", .{ item.file_name, item.size });
-    var diag = pkg_fetch.Diag{};
-    pkg_fetch.fetch(arena, dir, item.file_name, item.url, pin, &diag) catch |e| switch (e) {
-        error.DownloadFailed, error.BadStatus, error.SizeMismatch, error.HashMismatch => {
-            const p = item.locked orelse {
-                err(.sync, "{s}\n", .{diag.message});
-                return false;
-            };
-            switch (diag.status) {
-                403, 404, 410 => err(.sync, "{s}: {s} {s} has been taken down or is unavailable\n", .{ diag.message, p.name, p.version }),
-                else => err(.sync, "{s}\n", .{diag.message}),
-            }
-            return false;
-        },
-        else => return e,
-    };
-    return true;
-}
-
-/// Installs `whole` and its Mojo toolchain into `.mopm/env` (see core/install.zig); 0 when the environment is exactly
-/// the lock.
-fn install(arena: Allocator, whole: lock.Lock, args: Args, staged: ?overlay.Overlay) !u8 {
-    // A version 2 lock installs the builds for its first Mojo version.
-    const l = try lock.forMojo(arena, whole, whole.mojo);
-    const cwd = std.fs.cwd();
-    const subdir = inst.hostSubdir() orelse {
-        err(.sync, "no Mojo toolchain is published for this machine (linux-64, linux-aarch64 and osx-arm64 are)\n", .{});
-        return 1;
-    };
-    const pkgs = switch (try inst.forSubdir(arena, l, subdir)) {
-        .ok => |p| p,
-        .bad => |why| {
-            err(.sync, "{s}\n", .{why});
-            return 1;
-        },
-    };
-    const tc = (try loadToolchain(arena, l.mojo, subdir, args.toolchain)) orelse return 1;
-    const items = switch (try inst.planInstall(arena, pkgs, tc)) {
-        .ok => |i| i,
-        .bad => |why| {
-            err(.sync, "{s}\n", .{why});
-            return 1;
-        },
-    };
-    const stamp = try inst.stampOf(arena, items);
-
-    try cwd.makePath(inst.dir);
-    var parent = try cwd.openDir(inst.dir, .{});
-    defer parent.close();
-    const out = std.io.getStdOut().writer();
-
-    var from_set: usize = 0;
-    const have = conda_env.readStamp(arena, parent, inst.env_name);
-    const current = have != null and std.mem.eql(u8, have.?, stamp);
-    if (!current) {
-        // The toolchain's files are the same for every project: the cache. The locked packages are this project's.
-        const cache_path = cacheDir(arena, args.cache) catch |e| {
-            if (e == error.NoCacheDirectory) return 1;
-            return e;
-        };
-        var cache = cwd.makeOpenPath(cache_path, .{}) catch |e| {
-            err(.sync, "cannot make the cache directory {s}: {s}\n", .{ cache_path, @errorName(e) });
-            return 1;
-        };
-        defer cache.close();
-        var locked_dir = try cwd.makeOpenPath(inst.pkgs_dir, .{});
-        defer locked_dir.close();
-
-        var files = std.ArrayList(conda_env.Pkg).init(arena);
-        for (items) |item| {
-            const into = if (item.locked != null) locked_dir else cache;
-            // The staged set (--overlay) supplies exactly the file the lock pins, when it holds it: that file is not
-            // downloaded.
-            if (item.locked) |p| if (staged) |set| {
-                var why: []const u8 = "";
-                const bytes = set.bytesFor(arena, p, &why) catch |e| switch (e) {
-                    error.Refused => {
-                        err(.sync, "--overlay: {s}\n", .{why});
-                        return 1;
-                    },
-                    error.OutOfMemory => return error.OutOfMemory,
-                };
-                if (bytes) |b| {
-                    if (try inst.checkBytes(arena, p, b)) |why_not| {
-                        err(.sync, "{s} (read from the staged set)\n", .{why_not});
-                        return 1;
-                    }
-                    if (!try pkg_fetch.matches(into, item.file_name, .{ .sha256 = item.sha256, .size = item.size })) {
-                        try into.writeFile(item.file_name, b);
-                    }
-                    from_set += 1;
-                }
-            };
-            if (!try fetchItem(arena, into, item)) return 1;
-            try files.append(.{
-                .name = item.name,
-                .version = item.version,
-                .dir = into,
-                .file_name = item.file_name,
-                .sha256 = item.sha256,
-                .size = item.size,
-                .url = item.url,
-                .channel = item.channel,
-                .md5 = item.md5,
-            });
-        }
-        const prefix_abs = try std.fs.path.join(arena, &.{ try parent.realpathAlloc(arena, "."), inst.env_name });
-        var diag = conda_env.Diag{};
-        _ = conda_env.installEnv(arena, parent, inst.env_name, prefix_abs, files.items, stamp, &diag) catch |e| {
-            err(.sync, "cannot install into {s}: {s}; the environment is as it was\n", .{ inst.prefix, if (diag.message.len > 0) diag.message else @errorName(e) });
-            return 1;
-        };
-    }
-
-    var env = cwd.openDir(inst.prefix, .{}) catch |e| {
-        err(.sync, "no environment at {s}: {s}\n", .{ inst.prefix, @errorName(e) });
-        return 1;
-    };
-    defer env.close();
-    if (try inst.checkInstalled(arena, env, pkgs)) |why| {
-        err(.sync, "{s}\n", .{why});
-        return 1;
-    }
-    for (l.packages) |p| {
-        if (p.source == .path) try out.print("using {s} {s} from {s} (a path dependency: built from source, not downloaded)\n", .{ p.name, p.version, p.path });
-    }
-    if (current) {
-        try out.print("{s} is current: {d} packages for {s} (mojo {s}, {d} toolchain files); nothing to download\n", .{ inst.prefix, pkgs.len, subdir, l.mojo, tc.packages.len });
-        return 0;
-    }
-    if (from_set > 0) try out.print("read {d} packages from the staged set {s}\n", .{ from_set, staged.?.dir });
-    try out.print("installed {d} packages for {s} (mojo {s}, {d} toolchain files) into {s}\n", .{ pkgs.len, subdir, l.mojo, tc.packages.len, inst.prefix });
-    return 0;
-}
-
-/// Each warning once, in the order first given (a second toolchain reads
 /// the same index again).
 fn printWarnings(cmd: Command, warnings: []const []const u8) void {
     for (warnings, 0..) |w, i| {
@@ -906,127 +685,9 @@ fn tree(arena: Allocator, project: Project, l: ?lock.Lock) !u8 {
     return 0;
 }
 
-/// `<package>[@<requirement>]`: the name and the requirement, if any.
-const Spec = struct { name: []const u8, req: ?[]const u8 };
-
-fn splitSpec(spec: []const u8) Spec {
-    const at = std.mem.indexOfScalar(u8, spec, '@') orelse return .{ .name = spec, .req = null };
-    return .{ .name = spec[0..at], .req = spec[at + 1 ..] };
-}
-
-/// `s` as a TOML basic string.
-fn tomlString(arena: Allocator, s: []const u8) ![]const u8 {
-    var out = std.ArrayList(u8).init(arena);
-    try out.append('"');
-    for (s) |c| switch (c) {
-        '"' => try out.appendSlice("\\\""),
-        '\\' => try out.appendSlice("\\\\"),
-        0...0x1f, 0x7f => try out.writer().print("\\u{x:0>4}", .{c}),
-        else => try out.append(c),
-    };
-    try out.append('"');
-    return out.toOwnedSlice();
-}
-
-/// The requirement `add` writes for the version it picked: `^X.Y.Z`.
-fn caretOf(arena: Allocator, version: []const u8) ![]const u8 {
-    const v = resolve.semverOf(version) orelse return std.fmt.allocPrint(arena, "^{s}", .{version});
-    return std.fmt.allocPrint(arena, "^{d}.{d}.{d}", .{ v.major, v.minor, v.patch });
-}
-
-/// The TOML value `add` writes: `{ path = "<dir>" }` for a path dependency,
-/// else the requirement as a string.
-fn depValue(arena: Allocator, req: []const u8, path: ?[]const u8) ![]const u8 {
-    if (path) |p| return std.fmt.allocPrint(arena, "{{ path = {s} }}", .{try tomlString(arena, p)});
-    return tomlString(arena, req);
-}
-
-const Edited = union(enum) { ok: []const u8, bad: []const u8 };
-
-/// `setKey` for `add`, `removeKey` for `remove` (null: no such entry).
-fn applyEdit(arena: Allocator, cmd: Command, src: []const u8, table: []const u8, name: []const u8, value: []const u8) anyerror!?[]const u8 {
-    if (cmd == .remove) return toml_edit.removeKey(arena, src, table, name);
-    return try toml_edit.setKey(arena, src, table, name, value);
-}
-
-/// mopm.toml's text `src` with `name` set to `value` (`add`) or taken out
-/// (`remove`, which ignores `value`) in [dependencies], or with `dev` in
-/// [dev-dependencies]. Every other byte is kept.
-fn editText(arena: Allocator, cmd: Command, src: []const u8, dev: bool, name: []const u8, value: []const u8) !Edited {
-    const table = if (dev) "dev-dependencies" else "dependencies";
-    const result = applyEdit(arena, cmd, src, table, name, value) catch |e| switch (e) {
-        error.UnsupportedEdit => return .{ .bad = try std.fmt.allocPrint(arena, "[{s}] of {s} is written in a form mopm does not edit (a dotted key, an inline table or [[{s}]]); edit it by hand", .{ table, manifest_path, table }) },
-        error.InvalidToml => return .{ .bad = try std.fmt.allocPrint(arena, "{s} with {s} = {s} in [{s}] would not be a TOML file mopm reads", .{ manifest_path, name, value, table }) },
-        else => return e,
-    };
-    return .{ .ok = result orelse return .{ .bad = try std.fmt.allocPrint(arena, "{s} is not a dependency: [{s}] of {s} does not name it", .{ name, table, manifest_path }) } };
-}
-
-/// `mopm add` and `mopm remove`: edit one entry of mopm.toml, resolve the
-/// edited manifest, and only then write mopm.toml and mopm.lock.
-fn edit(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8) !u8 {
-    const spec = splitSpec(args.spec);
-    if (try manifest.nameProblem(arena, "dependency name", spec.name)) |why| {
-        err(cmd, "{s}\n", .{why});
-        return 1;
-    }
-    if (spec.req) |r| {
-        var why: []const u8 = "";
-        _ = semver.parseReq(arena, r, &why) catch |e| switch (e) {
-            error.Invalid => {
-                err(cmd, "{s}@{s}: invalid version requirement: {s}\n", .{ spec.name, r, why });
-                return 1;
-            },
-            error.OutOfMemory => return error.OutOfMemory,
-        };
-    }
-    const src = std.fs.cwd().readFileAlloc(arena, manifest_path, 1 << 20) catch |e| {
-        if (e == error.FileNotFound) {
-            err(cmd, "no {s} in this directory\n", .{manifest_path});
-            return 1;
-        }
-        return e;
-    };
-    _ = (try parseManifest(arena, cmd, manifest_path, src)) orelse return 1;
-    const old = readLock(arena, cmd) catch |e| {
-        if (e == error.Invalid) return 1;
-        return e;
-    };
-
-    // Without a requirement, any version: the resolver picks the newest that
-    // fits, and the caret requirement on it is written below.
-    const trial_value = try depValue(arena, spec.req orelse "*", args.path);
-    const trial = switch (try editText(arena, cmd, src, args.dev, spec.name, trial_value)) {
-        .ok => |t| t,
-        .bad => |why| {
-            err(cmd, "{s}\n", .{why});
-            return 1;
-        },
-    };
-    const m = (try parseManifest(arena, cmd, manifest_path, trial)) orelse return 1;
-    if (m.mojo.len == 0) {
-        err(cmd, "{s} has no [toolchain] mojo; a lock pins the one compiler every package is built with\n", .{manifest_path});
-        return 1;
-    }
-    const project = (try projectOf(arena, cmd, m)) orelse return 1;
-    var resolve_args = args;
-    resolve_args.packages = if (cmd == .add) try arena.dupe([]const u8, &.{spec.name}) else &.{};
-    const r = (try resolveProject(arena, cmd, project, old, resolve_args, cli_version)) orelse return 1;
-
-    var final = trial;
-    if (cmd == .add and spec.req == null and args.path == null) {
-        const picked = r.lock.versionOf(spec.name) orelse return error.AddedPackageNotLocked;
-        final = switch (try editText(arena, cmd, src, args.dev, spec.name, try tomlString(arena, try caretOf(arena, picked)))) {
-            .ok => |t| t,
-            .bad => |why| {
-                err(cmd, "{s}\n", .{why});
-                return 1;
-            },
-        };
-    }
-    try std.fs.cwd().writeFile(manifest_path, final);
-    try writeLock(arena, old, r);
-    return 0;
+test {
+    _ = sync_cmd;
+    _ = edit_cmd;
 }
 
 test "lock, update and tree arguments" {
@@ -1126,145 +787,6 @@ test "add and remove arguments" {
     try std.testing.expect((try parseArgs(a, .remove, &.{ "tls", "--path", "x" })) == null);
     try std.testing.expect((try parseArgs(a, .remove, &.{})) == null);
     try std.testing.expect((try parseArgs(a, .lock, &.{"--dev"})) == null);
-}
-
-test "a package spec, the caret requirement add writes, and TOML values" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const a = arena_state.allocator();
-    try std.testing.expectEqualStrings("tls", splitSpec("tls").name);
-    try std.testing.expect(splitSpec("tls").req == null);
-    try std.testing.expectEqualStrings("tls", splitSpec("tls@>=1.2, <2").name);
-    try std.testing.expectEqualStrings(">=1.2, <2", splitSpec("tls@>=1.2, <2").req.?);
-    try std.testing.expectEqualStrings("^0.5.0", try caretOf(a, "0.5.0"));
-    try std.testing.expectEqualStrings("^1.0.0", try caretOf(a, "1.0")); // a two-part index version is X.Y.0
-    try std.testing.expectEqualStrings("\"^1.2.5\"", try depValue(a, "^1.2.5", null));
-    try std.testing.expectEqualStrings("{ path = \"../local\" }", try depValue(a, "*", "../local"));
-    try std.testing.expectEqualStrings("{ path = \"a\\\\b \\\"q\\\" \\u0009\" }", try depValue(a, "*", "a\\b \"q\" \t"));
-}
-
-// The golden files of the add/remove tests: every byte outside the edited
-// entry must survive, so each comparison is of the whole file.
-const golden_before =
-    \\# The project. Comments, blank lines, order and spacing survive add and remove.
-    \\[package]
-    \\name    = "app"
-    \\version = "0.1.0"
-    \\
-    \\[toolchain]
-    \\mojo = "1.0.0"   # one compiler
-    \\
-    \\[dependencies]
-    \\# transport
-    \\tls   =   "1"        # the major only
-    \\legacy = "1"
-    \\
-    \\[dev-dependencies]  # tests only
-    \\
-    \\# trailing comment
-    \\
-;
-
-test "add keeps every other byte of mopm.toml, in [dependencies] and [dev-dependencies]" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const a = arena_state.allocator();
-    const one = (try editText(a, .add, golden_before, false, "http_client", try depValue(a, try caretOf(a, "0.5.0"), null))).ok;
-    const two = (try editText(a, .add, one, true, "http_core", try depValue(a, try caretOf(a, "1.2.5"), null))).ok;
-    try std.testing.expectEqualStrings(
-        \\# The project. Comments, blank lines, order and spacing survive add and remove.
-        \\[package]
-        \\name    = "app"
-        \\version = "0.1.0"
-        \\
-        \\[toolchain]
-        \\mojo = "1.0.0"   # one compiler
-        \\
-        \\[dependencies]
-        \\# transport
-        \\tls   =   "1"        # the major only
-        \\legacy = "1"
-        \\http_client = "^0.5.0"
-        \\
-        \\[dev-dependencies]  # tests only
-        \\http_core = "^1.2.5"
-        \\
-        \\# trailing comment
-        \\
-    , two);
-    const path = (try editText(a, .add, golden_before, false, "local", try depValue(a, "*", "local"))).ok;
-    try std.testing.expectEqualStrings(
-        \\# The project. Comments, blank lines, order and spacing survive add and remove.
-        \\[package]
-        \\name    = "app"
-        \\version = "0.1.0"
-        \\
-        \\[toolchain]
-        \\mojo = "1.0.0"   # one compiler
-        \\
-        \\[dependencies]
-        \\# transport
-        \\tls   =   "1"        # the major only
-        \\legacy = "1"
-        \\local = { path = "local" }
-        \\
-        \\[dev-dependencies]  # tests only
-        \\
-        \\# trailing comment
-        \\
-    , path);
-}
-
-test "add of an existing dependency replaces its value in place" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const a = arena_state.allocator();
-    const got = (try editText(a, .add, golden_before, false, "tls", try depValue(a, "~1.1", null))).ok;
-    const want = try std.mem.replaceOwned(u8, a, golden_before, "tls   =   \"1\"        #", "tls   =   \"~1.1\"        #");
-    try std.testing.expectEqualStrings(want, got);
-}
-
-test "remove of a key in the middle of a table takes its line and nothing else" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const a = arena_state.allocator();
-    const three = (try editText(a, .add, golden_before, false, "http_client", "\"^0.5.0\"")).ok;
-    const got = (try editText(a, .remove, three, false, "legacy", "")).ok;
-    try std.testing.expectEqualStrings(
-        \\# The project. Comments, blank lines, order and spacing survive add and remove.
-        \\[package]
-        \\name    = "app"
-        \\version = "0.1.0"
-        \\
-        \\[toolchain]
-        \\mojo = "1.0.0"   # one compiler
-        \\
-        \\[dependencies]
-        \\# transport
-        \\tls   =   "1"        # the major only
-        \\http_client = "^0.5.0"
-        \\
-        \\[dev-dependencies]  # tests only
-        \\
-        \\# trailing comment
-        \\
-    , got);
-}
-
-test "remove of an absent dependency is an error, and so is the other table's" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const a = arena_state.allocator();
-    try std.testing.expectEqualStrings("nosuch is not a dependency: [dependencies] of mopm.toml does not name it", (try editText(a, .remove, golden_before, false, "nosuch", "")).bad);
-    // A value that would leave mopm.toml unreadable is refused with the file, the entry and the table named.
-    const unreadable = (try editText(a, .add, golden_before, false, "tls", "\"1.0\"\nbroken = =")).bad;
-    try std.testing.expectEqualStrings("mopm.toml with tls = \"1.0\"\nbroken = = in [dependencies] would not be a TOML file mopm reads", unreadable);
-    // tls is in [dependencies], not [dev-dependencies].
-    try std.testing.expectEqualStrings("tls is not a dependency: [dev-dependencies] of mopm.toml does not name it", (try editText(a, .remove, golden_before, true, "tls", "")).bad);
-    // No [dev-dependencies] table at all.
-    try std.testing.expect((try editText(a, .remove, "[package]\nname = \"a\"\n", true, "tls", "")) == .bad);
-    // A table written as dotted keys is not edited.
-    try std.testing.expect((try editText(a, .add, "dependencies.tls = \"1\"\n\n[package]\nname = \"a\"\n", false, "x", "\"1\"")) == .bad);
 }
 
 /// A loopback server that answers every GET with `body`, for one connection at a time, until it is closed.
