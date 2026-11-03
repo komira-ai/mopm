@@ -148,5 +148,6 @@ test {
     _ = @import("source_commit_test.zig");
     _ = @import("groups_stage_test.zig");
     _ = @import("group_readmes_test.zig");
+    _ = @import("group_readmes_stored_test.zig");
     _ = @import("files.zig");
 }

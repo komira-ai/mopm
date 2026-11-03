@@ -762,6 +762,9 @@ fn parseCommit(ctx: *Ctx, g: *const st.Group, manifests: []?[]const u8, sources:
     @memset(sources, null);
     @memset(readmes, null);
     var listed = std.ArrayList([]const u8).init(a);
+    // What the inline lines cannot say: which members named their readme by ref, and which sent an empty one. These are
+    // length-prefixed entries, hashed apart from the lines, so no inline text can read as one.
+    var extras = std.ArrayList([]const u8).init(a);
     for (list) |item| {
         const m = switch (item) {
             .object => |o| o,
@@ -795,6 +798,10 @@ fn parseCommit(ctx: *Ctx, g: *const st.Group, manifests: []?[]const u8, sources:
             .fail => |r| return .{ .fail = r },
         };
         readmes[at] = shown.readme;
+        if (shown.readme) |readme| switch (readme) {
+            .ref => |r| try extras.append(try std.fmt.allocPrint(a, "ref {d}:{s} {s} {d}", .{ name.len, name, r.sha256, r.size })),
+            .text => |text| if (text.len == 0) try extras.append(try std.fmt.allocPrint(a, "empty {d}:{s}", .{ name.len, name })),
+        };
         try hash.writer().print("{s}:{s}:{s}:{s}\n", .{ name, sha, shown.shown, source orelse "" });
     }
     for (g.members, manifests) |gm, got| {
@@ -812,6 +819,21 @@ fn parseCommit(ctx: *Ctx, g: *const st.Group, manifests: []?[]const u8, sources:
         h.update("\n");
     }
     h.final(&digest);
+    if (extras.items.len > 0) {
+        // A request with only inline non-empty readmes is hashed as it always was; one with the extras is hashed as a
+        // structure that starts with a tag no such request has.
+        std.mem.sort([]const u8, extras.items, {}, st.lessString);
+        var x = std.crypto.hash.sha2.Sha256.init(.{});
+        x.update("commit-with-readme-objects\x00");
+        x.update(&digest);
+        for (extras.items) |e| {
+            var len: [8]u8 = undefined;
+            std.mem.writeInt(u64, &len, e.len, .big);
+            x.update(&len);
+            x.update(e);
+        }
+        x.final(&digest);
+    }
     return .{ .ok = try std.fmt.allocPrint(a, "{s}", .{std.fmt.fmtSliceHexLower(&digest)}) };
 }
 

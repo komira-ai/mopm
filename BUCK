@@ -226,14 +226,25 @@ zig_test(  # buck-only: mopm publish --staged and mopm yank --group against the 
     **_TOOLS
 )
 
-zig_test(  # buck-only: mopm publish --staged sends readmes as uploaded objects and falls back to inline, against the fake registry
+# The in-process tier of the readme objects: the client's publisher (src/cli/group_publish.zig) against the fake registry's handler
+# (registry/fake), through a Net that calls the handler; no socket and no child process. Each module is imported by its target name.
+zig_module(  # buck-only: the client's group publisher and its parts, for :group_readmes
+    name = "cli_publish",
+    src = "src/cli/group_publish.zig",
+    imports = glob(["src/cli/*.zig"], exclude = ["src/cli/main.zig", "src/cli/build_options.zig", "src/cli/group_publish.zig"]),
+    deps = [":mopm_core"],
+)
+
+zig_module(  # buck-only: the fake registry's handler with the fixture of its group tests (registry/fake/groups_test.zig), for :group_readmes
+    name = "fake_fixture",
+    src = "registry/fake/groups_test.zig",
+    imports = glob(["registry/fake/*.zig"], exclude = ["registry/fake/main.zig", "registry/fake/groups_test.zig"]),
+)
+
+zig_test(  # buck-only: readmes as uploaded objects, and the fall back to inline: the client against the fake registry's handler in one process
     name = "group_readmes",
-    src = "tests/drivers/group_readmes_test.zig",
-    imports = ["tests/drivers/harness.zig"],
-    env_tools = {
-        "MOPM": ":mopm",
-        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
-    },
+    src = "tests/drivers/group_readmes_inproc_test.zig",
+    deps = [":mopm_core", ":cli_publish", ":fake_fixture"],
     **_TOOLS
 )
 

@@ -69,7 +69,16 @@ fn findUpload(s: *st.State, id: []const u8) ?*st.Upload {
 pub fn declare(ctx: *Ctx, g: *const st.Group, package: []const u8, version: []const u8, r: Ref) Allocator.Error!st.GroupReadme {
     const s = ctx.state;
     const id = try uploadId(ctx.arena, g.id, package, r.sha256);
-    const u = findUpload(s, id) orelse try s.add(st.Upload, &s.uploads, .{
+    if (findUpload(s, id)) |u| {
+        // A declaration is the digest and the size: a repeat with another size replaces the size of the record, and an object
+        // stored under the old size is not the one now declared.
+        if (u.size != r.size) {
+            u.size = r.size;
+            u.path = null;
+        }
+        return .{ .sha256 = u.sha256, .size = u.size, .upload = u };
+    }
+    const u = try s.add(st.Upload, &s.uploads, .{
         .id = try s.alloc.dupe(u8, id),
         .user = g.user,
         .package = try s.alloc.dupe(u8, package),
@@ -81,6 +90,26 @@ pub fn declare(ctx: *Ctx, g: *const st.Group, package: []const u8, version: []co
         .expires_at = s.now() + st.upload_secs,
     });
     return .{ .sha256 = u.sha256, .size = u.size, .upload = u };
+}
+
+/// The bytes now in storage for `u`, or null when it has none: never stored, or its file is gone.
+fn stored(ctx: *Ctx, u: *const st.Upload) anyerror!?[]const u8 {
+    const path = u.path orelse return null;
+    var dir = try std.fs.cwd().openDir(ctx.state.dir, .{});
+    defer dir.close();
+    return dir.readFileAlloc(ctx.arena, path, std.math.maxInt(u32)) catch |e| switch (e) {
+        error.FileNotFound => null,
+        else => e,
+    };
+}
+
+fn isObject(bytes: []const u8, sha256: []const u8, size: usize) bool {
+    if (bytes.len != size) return false;
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
+    var hex: [64]u8 = undefined;
+    _ = std.fmt.bufPrint(&hex, "{s}", .{std.fmt.fmtSliceHexLower(&digest)}) catch unreachable;
+    return std.mem.eql(u8, &hex, sha256);
 }
 
 const PutHeaders = struct {
@@ -97,10 +126,11 @@ pub const Answer = struct {
     expires_at: ?[]const u8 = null,
 };
 
-/// The upload of one readme: a fresh URL unless the bytes are in storage.
-pub fn answer(ctx: *Ctx, r: st.GroupReadme) Allocator.Error!Answer {
+/// The upload of one readme: a fresh URL unless the bytes are in storage now, as declared.
+pub fn answer(ctx: *Ctx, r: st.GroupReadme) anyerror!Answer {
     const s = ctx.state;
-    var out = Answer{ .sha256 = r.sha256, .size = r.size, .upload_id = r.upload.id, .uploaded = r.upload.path != null };
+    const now_stored = if (try stored(ctx, r.upload)) |bytes| isObject(bytes, r.sha256, r.size) else false;
+    var out = Answer{ .sha256 = r.sha256, .size = r.size, .upload_id = r.upload.id, .uploaded = now_stored };
     if (out.uploaded) return out;
     r.upload.expires_at = s.now() + st.upload_secs;
     var digest: [32]u8 = undefined;
@@ -120,12 +150,13 @@ pub fn answer(ctx: *Ctx, r: st.GroupReadme) Allocator.Error!Answer {
 // ---------------------------------------------------------------------------
 
 pub const Display = union(enum) {
-    /// `shown` names the description, licence and readme for the request hash; `readme` is the member's, if it sent one.
+    /// `shown` names the description, licence and an inline readme for the request hash; `readme` is the member's, if it sent one.
     ok: struct { shown: []const u8, readme: ?Readme },
     fail: Response,
 };
 
-/// The description, licence and readme of one commit member. A readme is a string, or (capability on) a ref.
+/// The description, licence and readme of one commit member. A readme is a string (empty too, as the registry takes it), or
+/// (capability on) a ref. `shown` holds the inline texts only: a ref is for the caller to name in the request hash.
 pub fn display(ctx: *Ctx, m: std.json.ObjectMap, name: []const u8) Allocator.Error!Display {
     const a = ctx.arena;
     const objects = ctx.state.readme_objects;
@@ -136,10 +167,9 @@ pub fn display(ctx: *Ctx, m: std.json.ObjectMap, name: []const u8) Allocator.Err
         if (m.get(key)) |v| {
             if (if (is_readme and objects) refOf(v) else null) |r| {
                 readme = .{ .ref = r };
-                try shown.writer().print("\x00ref {s} {d}", .{ r.sha256, r.size });
             } else switch (v) {
                 .string => |text| {
-                    if (text.len == 0 or text.len > (if (is_readme) max_readme else 512)) {
+                    if ((text.len == 0 and !is_readme) or text.len > (if (is_readme) max_readme else 512)) {
                         return .{ .fail = try resp.invalid(a, try std.fmt.allocPrint(a, "'{s}' of '{s}' is empty or too long", .{ key, name })) };
                     }
                     if (is_readme) readme = .{ .text = text };
@@ -171,8 +201,6 @@ pub fn load(ctx: *Ctx, g: *const st.Group, readmes: []const ?Readme) anyerror!Lo
     const a = ctx.arena;
     const s = ctx.state;
     const out = try a.alloc(?[]const u8, readmes.len);
-    var dir = try std.fs.cwd().openDir(s.dir, .{});
-    defer dir.close();
     for (g.members, readmes, out) |m, readme, *text| {
         const name = m.package.name;
         text.* = null;
@@ -183,11 +211,11 @@ pub fn load(ctx: *Ctx, g: *const st.Group, readmes: []const ?Readme) anyerror!Lo
             },
             .ref => |r| r,
         };
-        const path = (if (findUpload(s, try uploadId(a, g.id, name, r.sha256))) |u| u.path else null) orelse
+        const found = findUpload(s, try uploadId(a, g.id, name, r.sha256));
+        const bytes = (if (found) |u| try stored(ctx, u) else null) orelse
             return .{ .fail = try uploadInvalid(a, "the readme of '{s}' (sha256 {s}) was not uploaded", .{ name, r.sha256 }) };
-        const bytes = try dir.readFileAlloc(a, path, max_readme + 1);
-        // The PUT stored these bytes under their digest, which the upload id carries: only the size can differ from the ref.
-        if (bytes.len != r.size) {
+        // What is in storage now, not what the PUT stored.
+        if (!isObject(bytes, r.sha256, r.size)) {
             return .{ .fail = try uploadInvalid(a, "the readme of '{s}' in storage is not the one named (sha256 {s}, {d} bytes)", .{ name, r.sha256, r.size }) };
         }
         if (!std.unicode.utf8ValidateSlice(bytes)) {

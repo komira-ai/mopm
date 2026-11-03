@@ -12,14 +12,14 @@ const abc = t.abc;
 const idOf = t.idOf;
 const expectCode = t.expectCode;
 
-const text_for = [_][]const u8{ "# pkg_a\nthe first\n", "# pkg_b\nthe second\n", "\xEF\xBB\xBF# pkg_c with a byte order mark and \xC3\xA9\n" };
+pub const text_for = [_][]const u8{ "# pkg_a\nthe first\n", "# pkg_b\nthe second\n", "\xEF\xBB\xBF# pkg_c with a byte order mark and \xC3\xA9\n" };
 
-fn refJson(fx: *Fx, text: []const u8) ![]const u8 {
+pub fn refJson(fx: *Fx, text: []const u8) ![]const u8 {
     return std.fmt.allocPrint(fx.life.allocator(), "{{\"sha256\":\"{s}\",\"size\":{d}}}", .{ try fx.sha(text), text.len });
 }
 
 /// A create request for `abc` at `version` whose members declare the readmes of `text_for`; `ref_of` is each member's `readme` value.
-fn createBody(fx: *Fx, version: []const u8) ![]const u8 {
+pub fn createBody(fx: *Fx, version: []const u8) ![]const u8 {
     const a = fx.life.allocator();
     var out = std.ArrayList(u8).init(a);
     try out.appendSlice("{\"members\":[");
@@ -35,7 +35,7 @@ fn createBody(fx: *Fx, version: []const u8) ![]const u8 {
 }
 
 /// A commit body for `abc`: each member names its readme by ref, or carries it inline.
-fn commitBody(fx: *Fx, refs: bool) ![]const u8 {
+pub fn commitBody(fx: *Fx, refs: bool) ![]const u8 {
     const a = fx.life.allocator();
     var out = std.ArrayList(u8).init(a);
     try out.appendSlice("{\"members\":[");
@@ -49,32 +49,32 @@ fn commitBody(fx: *Fx, refs: bool) ![]const u8 {
     return out.items;
 }
 
-fn commitPath(fx: *Fx, created: Reply) ![]const u8 {
+pub fn commitPath(fx: *Fx, created: Reply) ![]const u8 {
     return std.fmt.allocPrint(fx.life.allocator(), "/api/v1/groups/{s}/commit", .{idOf(created)});
 }
 
-fn readmeOf(created: Reply, member: usize) Value {
+pub fn readmeOf(created: Reply, member: usize) Value {
     return created.value.object.get("members").?.array.items[member].object.get("readme").?;
 }
 
-fn putReadme(fx: *Fx, created: Reply, member: usize, bytes: []const u8) !Reply {
+pub fn putReadme(fx: *Fx, created: Reply, member: usize, bytes: []const u8) !Reply {
     const id = readmeOf(created, member).object.get("upload_id").?.string;
     return fx.call(.PUT, try std.fmt.allocPrint(fx.life.allocator(), "/_fake/upload/{s}", .{id}), bytes, null);
 }
 
-fn putAllReadmes(fx: *Fx, created: Reply) !void {
+pub fn putAllReadmes(fx: *Fx, created: Reply) !void {
     for (text_for, 0..) |text, i| try std.testing.expectEqual(@as(u16, 200), (try putReadme(fx, created, i, text)).status);
 }
 
 /// Creates the group of `abc` with readme declarations and uploads its files, not its readmes.
-fn createWithFiles(fx: *Fx) !Reply {
+pub fn createWithFiles(fx: *Fx) !Reply {
     const created = try fx.call(.POST, "/api/v1/groups", try createBody(fx, "1.0.0"), fx.alice_token);
     try std.testing.expectEqual(@as(u16, 201), created.status);
     try fx.upload(created, "x");
     return created;
 }
 
-fn expectDetail(r: Reply, want_code: []const u8, status: u16, needle: []const u8) !void {
+pub fn expectDetail(r: Reply, want_code: []const u8, status: u16, needle: []const u8) !void {
     try expectCode(r, status, want_code);
     if (std.mem.indexOf(u8, r.body, needle) == null) {
         std.debug.print("want {s} in {s}\n", .{ needle, r.body });
@@ -87,13 +87,13 @@ fn setSwitch(fx: *Fx, on: bool) !void {
     try std.testing.expectEqual(@as(u16, 200), r.status);
 }
 
-fn toVisible(fx: *Fx, created: Reply) !void {
+pub fn toVisible(fx: *Fx, created: Reply) !void {
     _ = try fx.status(idOf(created));
     _ = try fx.status(idOf(created));
     try std.testing.expectEqualStrings("visible", try fx.status(idOf(created)));
 }
 
-fn getBody(fx: *Fx, path: []const u8) ![]const u8 {
+pub fn getBody(fx: *Fx, path: []const u8) ![]const u8 {
     const r = try fx.call(.GET, path, "", null);
     try std.testing.expectEqual(@as(u16, 200), r.status);
     return r.body;
@@ -252,8 +252,10 @@ test "a readme that is not a well-formed ref is refused at create and at commit,
     // A description that is not a string keeps its own refusal.
     const description = try std.mem.replaceOwned(u8, a, try commitBody(&fx, true), "\"readme\":", "\"description\":3,\"readme\":");
     try expectDetail(try fx.call(.POST, path, description, fx.alice_token), "invalid_request", 400, "'description' of 'pkg_a' must be a string");
-    // Nor is a ref's readme taken for an inline text of the wrong size.
-    try expectDetail(try fx.call(.POST, path, try std.mem.replaceOwned(u8, a, try commitBody(&fx, false), "# pkg_a\\nthe first\\n", ""), fx.alice_token), "invalid_request", 400, "'readme' of 'pkg_a' is empty or too long");
+    // Nor is an inline text over the limit taken.
+    const too_long = try a.alloc(u8, 65537);
+    @memset(too_long, 'x');
+    try expectDetail(try fx.call(.POST, path, try std.mem.replaceOwned(u8, a, try commitBody(&fx, false), "# pkg_a\\nthe first\\n", too_long), fx.alice_token), "invalid_request", 400, "'readme' of 'pkg_a' is empty or too long");
 }
 
 test "an inline commit is still accepted, also for a group created with readme declarations" {

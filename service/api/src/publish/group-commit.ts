@@ -146,6 +146,7 @@ export class GroupCommitter {
     );
     if (!after) throw groupCommitRefused(`group ${id} is gone`);
     if (after.status !== 'validating' || after.commit_hash !== hash) {
+      if (after.status === 'open' && after.attempt !== header.attempt) throw groupCommitRefused(`group ${id} was opened again while this request was read; send it again`);
       throw groupCommitRefused(after.status === 'open' ? `group ${id} is past its deadline, ${after.deadline_at}` : `group ${id} is ${after.status}`);
     }
     await sendValidateGroup(queue, id, after.attempt, 0, 0);

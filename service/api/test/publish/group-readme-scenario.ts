@@ -18,14 +18,32 @@ export class ReadmeScenario extends Scenario {
     /** The readme of each member, by name. */
     readonly readmes: Record<string, Buffer>,
     readonly declare = true,
+    githubId = 1,
   ) {
-    super(env, specs);
+    super(env, specs, githubId);
+  }
+
+  /** The archives and the account, and POST /groups with the answer as it is (no check of the status). */
+  async createRaw() {
+    this.pkgs = this.specs.map((sp) => pkg({ subdir: 'noarch', ...sp }));
+    if (!this.token) this.token = await this.account();
+    return this.env.create(this.token, this.members());
+  }
+
+  /** The account's token for the packages; it owns each one it does not own yet, so scenarios of one account can share an environment. */
+  private async account(): Promise<string> {
+    const names = [...new Set(this.names)];
+    const handle = `user${this.githubId}`;
+    for (const name of names) {
+      const owners = await this.env.rig.store.listOwners(name);
+      if (!owners.some((o) => o.github_id === this.githubId)) await this.env.own(this.githubId, handle, [name]);
+    }
+    this.env.allow(this.githubId);
+    return this.env.token(this.githubId, names);
   }
 
   async create(): Promise<this> {
-    this.pkgs = this.specs.map((sp) => pkg({ subdir: 'noarch', ...sp }));
-    this.token = await this.env.account(this.githubId, 'octocat', [...new Set(this.names)]);
-    const r = await this.env.create(this.token, this.members());
+    const r = await this.createRaw();
     expect([200, 201]).toContain(r.statusCode);
     this.created = json(r);
     this.gid = this.created!.group_id;

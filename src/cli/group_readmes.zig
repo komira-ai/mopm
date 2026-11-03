@@ -7,7 +7,9 @@
 //! commit request, which is held to what the registry's function receives (`group_plan.commitOf`).
 //!
 //! The form is chosen on every run, from `/health`, and is not stored: a run reads `GET <api>/health` (no token, and before
-//! any token exchange) when at least one member to upload has a non-empty readme.
+//! any token exchange) when at least one member to upload has a non-empty readme. A run with no group yet refuses an oversized
+//! inline commit at once; a run that resumes a group refuses it only when the group is found open (it is the commit that is
+//! too large), and a group whose commit was sent is waited for without reading /health (`decideResumed`).
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -53,7 +55,7 @@ pub const Chosen = union(enum) {
     /// The inline body is over the limit and the registry does not take objects: the reason, and whether `/health` was read
     /// (so the refusal can say what it listed).
     refused: struct { why: []const u8, health_read: bool },
-    /// `/health` could not be read: nothing else is sent.
+    /// `/health` could not be read: what failed.
     failed: []const u8,
 };
 
@@ -62,7 +64,7 @@ pub fn choose(arena: Allocator, net: io.Net, api_url: []const u8, entries: []con
     const asked = hasReadme(entries);
     if (asked) {
         const objects = takesObjects(arena, net, api_url) catch |e| {
-            return .{ .failed = try std.fmt.allocPrint(arena, "GET /health: {s}; nothing more was sent", .{@errorName(e)}) };
+            return .{ .failed = try std.fmt.allocPrint(arena, "GET /health: {s}", .{@errorName(e)}) };
         };
         if (objects) return .{ .ok = .{ .objects = true, .commit_body = "" } };
     }
@@ -76,7 +78,7 @@ pub fn choose(arena: Allocator, net: io.Net, api_url: []const u8, entries: []con
 pub fn decide(arena: Allocator, net: io.Net, api_url: []const u8, entries: []const plan_mod.CommitEntry, inline_commit: plan_mod.Commit, console: *io.Console) Allocator.Error!?Choice {
     switch (try choose(arena, net, api_url, entries, inline_commit)) {
         .ok => |c| return c,
-        .failed => |why| console.fail("{s}\n", .{why}),
+        .failed => |why| console.fail("{s}; nothing more was sent\n", .{why}),
         .refused => |r| {
             // A run that read /health sent that read and nothing else; a group an earlier run made is kept as it is.
             console.fail("{s}; {s}\n", .{ r.why, if (r.health_read) "this run created and uploaded nothing" else "nothing was sent" });
@@ -84,6 +86,30 @@ pub fn decide(arena: Allocator, net: io.Net, api_url: []const u8, entries: []con
         },
     }
     return null;
+}
+
+/// A refusal of this run that waits for the group's status: a run that resumes a group sends a commit only when the group is
+/// open, so a group the registry already holds past open is not refused for a commit it will not need.
+pub const Refusal = struct { why: []const u8, note: ?[]const u8 = null };
+
+pub const Resumed = struct { choice: Choice, refusal: ?Refusal };
+
+/// The form for a run that resumes a group (state.json names one). A group whose commit was sent (`committed`) is not asked
+/// about `/health`: no commit follows. Otherwise `/health` is read as in `choose`, and what would refuse or stop the run is
+/// returned in `refusal`, for the publisher to say when the group turns out to be open.
+pub fn decideResumed(arena: Allocator, net: io.Net, api_url: []const u8, entries: []const plan_mod.CommitEntry, inline_commit: plan_mod.Commit, committed: bool) Allocator.Error!Resumed {
+    const none = Choice{ .objects = false, .commit_body = "" };
+    if (committed) {
+        return switch (inline_commit) {
+            .body => |b| .{ .choice = .{ .objects = false, .commit_body = b }, .refusal = null },
+            .bad => |why| .{ .choice = none, .refusal = .{ .why = why } },
+        };
+    }
+    return switch (try choose(arena, net, api_url, entries, inline_commit)) {
+        .ok => |c| .{ .choice = c, .refusal = null },
+        .failed => |why| .{ .choice = none, .refusal = .{ .why = why } },
+        .refused => |r| .{ .choice = none, .refusal = .{ .why = r.why, .note = if (r.health_read) inline_note else null } },
+    };
 }
 
 /// What a registry's create answer says about a member's readme.
@@ -96,6 +122,30 @@ pub const ReadmeAnswer = struct {
     put_headers: ?std.json.Value = null,
 };
 
+/// How an answer's readme stands against the declaration of `e`.
+pub const Verdict = union(enum) {
+    /// The answer echoes the declared sha256 and size and is an upload descriptor.
+    confirmed,
+    /// The answer has no readme.
+    absent,
+    /// The answer names another sha256 or size than the one declared.
+    differs,
+    /// The answer is not an upload descriptor: what is wrong with it.
+    malformed: []const u8,
+};
+
+pub fn judge(e: plan_mod.CommitEntry, got: ?ReadmeAnswer) Verdict {
+    const r = got orelse return .absent;
+    if (!std.mem.eql(u8, r.sha256, e.readme_sha256) or r.size != e.readme.?.len) return .differs;
+    if (!r.uploaded) {
+        if (r.put_url == null) return .{ .malformed = "it is not uploaded and has no put_url" };
+        if (r.put_headers) |h| {
+            if (h != .object) return .{ .malformed = "its put_headers is not an object" };
+        }
+    }
+    return .confirmed;
+}
+
 /// The create request's `readme` member of `e`, or nothing for a member without a readme to upload.
 pub fn writeRef(w: anytype, e: plan_mod.CommitEntry) !void {
     try w.print(",\"readme\":{{\"sha256\":\"{s}\",\"size\":{d}}}", .{ e.readme_sha256, e.readme.?.len });
@@ -107,23 +157,6 @@ pub fn entryWithReadme(entries: []const plan_mod.CommitEntry, name: []const u8) 
         if (!std.mem.eql(u8, e.name, name)) continue;
         const r = e.readme orelse return null;
         return if (r.len > 0) e else null;
-    }
-    return null;
-}
-
-/// The first member of `entries` with a readme whose create answer does not carry it (`answers` is `(name, readme)` per
-/// answered member): the registry has stopped taking readmes as objects.
-pub fn missingRef(entries: []const plan_mod.CommitEntry, answers: anytype) ?[]const u8 {
-    for (entries) |e| {
-        const r = e.readme orelse continue;
-        if (r.len == 0) continue;
-        var found = false;
-        for (answers) |m| {
-            if (!std.mem.eql(u8, m.name, e.name)) continue;
-            const got = m.readme orelse continue;
-            if (std.mem.eql(u8, got.sha256, e.readme_sha256)) found = true;
-        }
-        if (!found) return e.name;
     }
     return null;
 }
@@ -142,7 +175,7 @@ pub fn dryRun(arena: Allocator, console: *io.Console, net: io.Net, api_url: []co
     if (hasReadme(entries)) {
         console.say("would send the readmes {s}; the commit request is {d} bytes\n", .{ if (choice.objects) "as uploaded objects (the registry lists " ++ feature ++ ")" else "inline", body.len });
     }
-    const end = if (hasReadme(entries)) "dry run: nothing was created or uploaded; only GET /health was sent\n" else "dry run: nothing was sent\n";
+    const end = if (hasReadme(entries)) "dry run: nothing was created or uploaded; the registry was only read (its config.json and GET /health)\n" else "dry run: nothing was sent\n";
     if (no_commit) {
         console.say("would upload each file the registry does not hold, and stop with the group open (--no-commit)\n{s}", .{end});
     } else {

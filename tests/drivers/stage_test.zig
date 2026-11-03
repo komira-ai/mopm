@@ -131,9 +131,9 @@ fn stageAndPublishAChain(w: World) !void {
         w.exists(&.{ w.work, "set", "noarch", "mojo-stg_z-1.0.0-mojo1.0.0_0.conda" }) and w.exists(&.{ w.work, "set", "stg_a", "README.md" }), "the set is not as expected");
 
     const dry = try w.m.run(&.{ "publish", "--staged", try w.path(&.{ w.work, "set" }), "--registry", w.fake.base, "--config-dir", w.conf, "--dry-run" }, null);
-    w.rep.check("the staged plan is read by publish --staged --dry-run, which reads no token and, for a set with readmes, only GET /health", dry.code == 0 and h.contains(dry.stdout, "would create one group of 3 members (3 files)") and
+    w.rep.check("the staged plan is read by publish --staged --dry-run, which reads no token and, for a set with readmes, only config.json and GET /health", dry.code == 0 and h.contains(dry.stdout, "would create one group of 3 members (3 files)") and
         h.contains(dry.stdout, "stg_z 1.0.0") and h.contains(dry.stdout, "would send the readmes as uploaded objects") and
-        h.contains(dry.stdout, "dry run: nothing was created or uploaded; only GET /health was sent"), try w.text(dry));
+        h.contains(dry.stdout, "dry run: nothing was created or uploaded; the registry was only read (its config.json and GET /health)"), try w.text(dry));
 
     const pub_ = try w.m.run(&.{ "publish", "--staged", try w.path(&.{ w.work, "set" }), "--registry", w.fake.base, "--config-dir", w.conf, "--wait", "60" }, w.token);
     var all = true;

@@ -63,8 +63,12 @@ conda channel (`channel.md`). Other files in the directory are ignored.
     larger of the body as a JSON string, every non-ASCII character counted as
     `\u` escapes, and its base64), naming the largest readmes, and saying that
     the registry does not take readmes as objects: `stage` after it has asked
-    the registry about the members and before it writes anything, `publish
-    --staged` before it sends any request. The commit sends the readmes as
+    the registry about the members and before it writes anything (it reads `GET
+    /health` only when the inline body is over the limit), `publish --staged`
+    before it creates a group or uploads anything, after the reads of the
+    registry's `config.json` and, for a set with a readme, `GET /health`. A run
+    that resumes a group defers that refusal to the group's status (step 5).
+    The commit sends the readmes as
     that check read them. `plan.json` is the same in both cases: it names the
     path and nothing says which form the run will use.
   - `skip`: the member is not in the group, because the registry already has it
@@ -85,11 +89,14 @@ conda channel (`channel.md`). Other files in the directory are ignored.
    inline in the commit for any other answer (an error status, a body it cannot
    read, no `features`). A transport failure ends the run, with nothing else
    sent. In inline mode a set whose commit body is over the limit above is
-   refused here. Otherwise nothing has been sent but that one read.
-   `--dry-run` stops here and says what it would send (the form of the readmes
-   and the size of the commit request); it reads no token and writes no file,
-   and the only request it makes is that `GET /health`, only when a member has a
-   readme.
+   refused here. Otherwise nothing has been sent but the registry's
+   `config.json` and that read. `--dry-run` stops here and says what it would
+   send (the form of the readmes and the size of the commit request); it reads
+   no token and writes no file, and the only requests it makes are the
+   registry's `config.json` and, when a member has a readme, that `GET /health`.
+   Its last line says so: `dry run: nothing was created or uploaded; the
+   registry was only read (its config.json and GET /health)` for a set with a
+   readme, `dry run: nothing was sent` for one without.
 2. Reads the token (`$MOPM_TOKEN`, else the login's) and `state.json`. A state
    written for another registry or another plan (a different `plan.json`) is
    refused: remove the file to start a new group.
@@ -172,9 +179,13 @@ group: `state.json`'s `plan_sha256` must still match `plan.json`, the registry
 reports every file as held, nothing is sent again, and the run goes on with step
 5. How the readmes travel is chosen again on every run, from `GET /health`, and
 is not stored: a resume after the registry stopped taking readme objects plans
-the commit inline, and goes on if the commit body is within the limit of step 1
-and is refused with the size message, before any commit and with the group still
-open, if it is not. `plan.json` and `state.json` are unchanged by readme objects. The token need not be the first run's, only the same actor's (a fresh `--oidc`
+the commit inline, and goes on if the commit body is within the limit of step 1.
+If it is not, the refusal waits for the group's status: a group found `open` is
+refused with the size message (and `nothing was uploaded or committed`), before
+any upload or commit and with the group still open; a group found past `open`
+(its commit was accepted) is waited for, and one whose `state.json` says
+`committed` reads no `GET /health` at all. An unreadable `/health` on a resume
+is deferred the same way. `plan.json` and `state.json` are unchanged by readme objects. The token need not be the first run's, only the same actor's (a fresh `--oidc`
 exchange of the same packages and versions is). Because the registry opens a group
 that ended again as a next attempt when asked for it, a run that finds `staged:
 true` in `state.json` first reads the group (`GET /groups/{id}`): `expired`,

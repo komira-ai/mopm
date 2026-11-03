@@ -58,6 +58,7 @@ const registry_cmd = @import("registry_cmd.zig");
 const publish_cmd = @import("publish_cmd.zig");
 const io = @import("group_io.zig");
 const readmes = @import("group_readmes.zig");
+const checked_mod = @import("group_checked.zig");
 
 /// The most times one create is repeated while the registry answers `reserving`.
 pub const max_reserving_rounds: usize = 50;
@@ -141,6 +142,9 @@ pub const Publisher = struct {
     entries: []const plan_mod.CommitEntry = &.{},
     /// The registry takes readmes as objects: the create names them, each is PUT, and the commit names them by digest.
     objects: bool = false,
+    /// What stops this run once the group turns out to be open (`readmes.decideResumed`): a run that resumes a group sends a
+    /// commit only for an open group, so a group the registry holds past open is waited for whatever this says.
+    refusal: ?readmes.Refusal = null,
     /// The registry's API root, without a trailing slash (`http://127.0.0.1:1234/api/v1`).
     api_url: []const u8,
     token: []const u8,
@@ -340,30 +344,61 @@ pub const Publisher = struct {
         return false;
     }
 
+    /// The upload descriptor of `m`'s readme in `answer`: one that echoes what was declared. A refreshed answer is held to the
+    /// same check as the first, so no run commits a reference the registry did not confirm.
     fn readmeFor(p: *Publisher, answer: CreateAnswer, m: plan_mod.Member) Stop!readmes.ReadmeAnswer {
         const am = findMember(answer, m.name, m.version) orelse {
             p.console.fail("the registry's answer has no reservation for {s} {s}\n", .{ m.name, m.version });
             return error.Failed;
         };
-        return am.readme orelse {
-            p.console.fail("the registry's answer has no readme upload for {s}\n", .{m.name});
-            return error.Failed;
-        };
+        const e = readmes.entryWithReadme(p.entries, m.name).?;
+        switch (readmes.judge(e, am.readme)) {
+            .confirmed => return am.readme.?,
+            .absent => p.console.fail("the registry's answer has no readme upload for {s}\n", .{m.name}),
+            .differs => p.console.fail("the registry's answer names another readme for {s} than the one declared (sha256 {s}, {d} bytes); nothing was committed\n", .{ m.name, e.readme_sha256, e.readme.?.len }),
+            .malformed => |why| p.console.fail("the registry's answer for the readme of {s} is not an upload descriptor: {s}; nothing was committed\n", .{ m.name, why }),
+        }
+        return error.Failed;
     }
 
-    /// A create answer of an open group that lacks the readme of a member means the registry stopped taking readmes as
-    /// objects since `/health` was read: the run goes on with the inline form if its commit request fits, and stops, with
-    /// nothing uploaded, if it does not.
+    /// The first create answer of an open group must carry, for each readme, the upload the declaration asked for. A member
+    /// without a readme, or with another one, means the registry does not hold our declaration (it stopped taking readmes as
+    /// objects since `/health` was read): the run goes on with the inline form if its commit request fits, and stops, with
+    /// nothing uploaded, if it does not. A descriptor that is not one is refused.
     fn confirmObjects(p: *Publisher, made: CreateAnswer) Stop!void {
-        const lacking = readmes.missingRef(p.entries, made.members) orelse return;
+        var lacking: ?[]const u8 = null;
+        var what: []const u8 = "";
+        for (try p.plan.uploads(p.arena)) |m| {
+            const e = readmes.entryWithReadme(p.entries, m.name) orelse continue;
+            const am = findMember(made, m.name, m.version) orelse {
+                p.console.fail("the registry's answer has no reservation for {s} {s}\n", .{ m.name, m.version });
+                return error.Failed;
+            };
+            switch (readmes.judge(e, am.readme)) {
+                .confirmed => {},
+                .absent => if (lacking == null) {
+                    lacking = m.name;
+                    what = "its answer has no readme upload for ";
+                },
+                .differs => if (lacking == null) {
+                    lacking = m.name;
+                    what = "its answer names another readme than the one declared for ";
+                },
+                .malformed => |why| {
+                    p.console.fail("the registry's answer for the readme of {s} is not an upload descriptor: {s}; nothing was uploaded\n", .{ m.name, why });
+                    return error.Failed;
+                },
+            }
+        }
+        const name = lacking orelse return;
         switch (try plan_mod.commitOf(p.arena, p.entries)) {
             .body => |b| {
                 p.objects = false;
                 p.commit_body = b;
-                p.console.say("the registry no longer takes readmes as objects (its answer has no readme upload for {s}); sending them inline\n", .{lacking});
+                p.console.say("the registry no longer takes readmes as objects ({s}{s}); sending them inline\n", .{ what, name });
             },
             .bad => |why| {
-                p.console.fail("the registry no longer takes readmes as objects (its answer has no readme upload for {s}), and sent inline they are too large: {s}; nothing was uploaded\n", .{ lacking, why });
+                p.console.fail("the registry no longer takes readmes as objects ({s}{s}), and sent inline they are too large: {s}; nothing was uploaded\n", .{ what, name, why });
                 p.console.note("{s} is kept; run the same command again when the registry takes readmes as objects\n", .{plan_mod.state_name});
                 return error.Failed;
             },
@@ -578,6 +613,14 @@ pub const Publisher = struct {
             return error.Failed;
         }
         if (p.objects and std.mem.eql(u8, made.status, "open")) try p.confirmObjects(made);
+        if (p.refusal) |r| {
+            if (std.mem.eql(u8, made.status, "open")) {
+                // Before any PUT and before state.json changes: the group is kept as it is.
+                p.console.fail("{s}; nothing was uploaded or committed\n", .{r.why});
+                if (r.note) |n| p.console.note("{s}\n", .{n});
+                return error.Failed;
+            }
+        }
         p.state.group_id = made.group_id;
         p.state.attempt = made.attempt;
         p.group_status = made.status;
@@ -730,50 +773,12 @@ pub fn main(arena: Allocator, args: []const []const u8, cli_version: []const u8)
     };
 }
 
-/// A staged directory fit to run: its plan, what each upload member puts in the commit (`entries`, empty for `--abort`, which
-/// sends no commit) and the check of the inline form: its `commit_body`, or in `over` the reason it is too large for the
-/// registry's function (null `commit_body`). Whether that refusal stands depends on the form the registry takes
-/// (`readmes.choose`); an `--abort` has neither.
-pub const Checked = struct {
-    plan: plan_mod.Plan,
-    commit_body: ?[]const u8,
-    entries: []const plan_mod.CommitEntry = &.{},
-    over: ?[]const u8 = null,
-
-    /// The inline form's check, as `readmes.choose` takes it. Not for an `--abort`.
-    pub fn inlineCommit(c: Checked) plan_mod.Commit {
-        return if (c.over) |why| .{ .bad = why } else .{ .body = c.commit_body.? };
-    }
-};
-
-/// The checked plan of a staged directory, or why the run stops before any request: the plan cannot be read or parsed,
-/// refuses a member, or its files or readmes are not as it says.
-pub const Planned = union(enum) { ok: Checked, bad: []const u8 };
-
-/// Reads the plan of `dir` and, unless the run is an `--abort`, checks it. An abort only ends the group `state.json` names
-/// and sends no file or readme, so it reads the plan and nothing more: a set that can no longer be published can still be
-/// aborted.
-pub fn checkedPlan(arena: Allocator, dir: std.fs.Dir, staged: []const u8, abort: bool) anyerror!Planned {
-    const text = dir.readFileAlloc(arena, plan_mod.plan_name, 1 << 26) catch |e| {
-        return .{ .bad = try std.fmt.allocPrint(arena, "{s}/{s}: {s}", .{ staged, plan_mod.plan_name, @errorName(e) }) };
-    };
-    const plan = switch (try plan_mod.parsePlan(arena, text)) {
-        .ok => |p| p,
-        .bad => |why| return .{ .bad = why },
-    };
-    if (abort) return .{ .ok = .{ .plan = plan, .commit_body = null } };
-    if (plan_mod.refusedMember(plan)) |m| {
-        return .{ .bad = try std.fmt.allocPrint(arena, "the plan refuses {s} {s}{s}{s}; nothing was sent", .{ m.name, m.version, if (m.reason.len > 0) ": " else "", m.reason }) };
-    }
-    const entries = switch (try plan_mod.verify(arena, dir, plan)) {
-        .ok => |e| e,
-        .bad => |why| return .{ .bad = try std.fmt.allocPrint(arena, "{s}; nothing was sent", .{why}) },
-    };
-    return switch (try plan_mod.commitOf(arena, entries)) {
-        .body => |body| .{ .ok = .{ .plan = plan, .commit_body = body, .entries = entries } },
-        .bad => |why| .{ .ok = .{ .plan = plan, .commit_body = null, .entries = entries, .over = why } },
-    };
-}
+pub const Checked = checked_mod.Checked;
+pub const Planned = checked_mod.Planned;
+pub const checkedPlan = checked_mod.checkedPlan;
+pub const Form = checked_mod.Form;
+pub const formOf = checked_mod.formOf;
+const resumedGroup = checked_mod.resumedGroup;
 
 /// The time limit and the retries `flags` ask for.
 pub fn policyOf(flags: Flags) http.Policy {
@@ -810,7 +815,8 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
 
     const opened = (try openRegistry(arena, flags, cli_version)) orelse return 1;
     // The form of the readmes is read from /health, without a token, before the token is asked for.
-    const choice = (try readmes.decide(arena, net, opened.session.config.api_url, checked.entries, checked.inlineCommit(), &console)) orelse return 1;
+    const form = (try formOf(arena, net, opened.session.config.api_url, checked, resumedGroup(arena, dir), &console)) orelse return 1;
+    const choice = form.choice;
     const creds = (try credentials(arena, net, flags, opened, uploads)) orelse return 1;
     const loaded = (try loadStateFor(arena, dir, creds.api_url, plan.sha256, &console, "resuming")) orelse return 1;
 
@@ -823,6 +829,7 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
         .commit_body = choice.commit_body,
         .entries = checked.entries,
         .objects = choice.objects,
+        .refusal = form.refusal,
         .api_url = creds.api_url,
         .token = creds.token,
         .wait_secs = flags.wait_secs orelse defaultWaitFor(uploads.len),

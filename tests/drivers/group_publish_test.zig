@@ -15,8 +15,10 @@
 //!   and in nothing mopm prints;
 //! - a set whose commit request is too large for the registry's function, for its readmes, with a registry that does not take
 //!   readmes as objects (the fake with the switch off), is refused after two requests, the lookup of its API root and GET /health (the
-//!   fake counts exactly those), by a publish, `--dry-run` and `--no-commit`, on a first run and on a resume, with no file changed; `--abort`
-//!   still ends its staged group;
+//!   fake counts exactly those), by a publish, `--dry-run` and `--no-commit` on a first run and by `--dry-run` on a resume, with no file
+//!   changed; a publish and a `--no-commit` on a resume read the staged group and ask for it again (four requests) and refuse once it is
+//!   found open, before any upload or commit, leaving state.json as it was and writing only report.json; `--abort` still ends its
+//!   staged group;
 //! - a yank of the group yanks its members, and an unyank restores those and not the one yanked by hand before.
 
 const std = @import("std");
@@ -499,14 +501,14 @@ fn refusalsBeforeAnyRequest(w: World) !void {
 }
 
 /// Every file below `dir`, sorted, each with its bytes: what a refusal must leave as it was.
-fn snapshot(a: Allocator, dir_path: []const u8) ![]const u8 {
+fn snapshot(a: Allocator, dir_path: []const u8, skip: []const u8) ![]const u8 {
     var dir = try std.fs.cwd().openDir(dir_path, .{ .iterate = true });
     defer dir.close();
     var paths = std.ArrayList([]const u8).init(a);
     var walker = try dir.walk(a);
     defer walker.deinit();
     while (try walker.next()) |e| {
-        if (e.kind == .file) try paths.append(try a.dupe(u8, e.path));
+        if (e.kind == .file and !std.mem.eql(u8, e.path, skip)) try paths.append(try a.dupe(u8, e.path));
     }
     std.mem.sort([]const u8, paths.items, {}, struct {
         fn lt(_: void, x: []const u8, y: []const u8) bool {
@@ -597,19 +599,23 @@ fn anOversizedCommit(w: World) !void {
         }
         for (modes) |mode| {
             const label = if (mode.len == 0) "publish --staged" else try std.fmt.allocPrint(a, "publish --staged {s}", .{mode[0]});
-            const files_before = try snapshot(a, dir);
+            // A run that resumes a group and finds it open sends the requests that tell so and refuses; it writes report.json.
+            const deferred = resuming and !(mode.len == 1 and std.mem.eql(u8, mode[0], "--dry-run"));
+            const skip: []const u8 = if (deferred) "report.json" else "";
+            const files_before = try snapshot(a, dir, skip);
             const requests_before = try served(w);
             const base = [_][]const u8{ "publish", "--staged", dir, "--registry", w.fake.base, "--config-dir", w.conf };
             const r = try w.m.run(try std.mem.concat(a, []const u8, &.{ &base, mode }), token);
             w.rep.check(
                 try std.fmt.allocPrint(a, "{s} refuses an oversized set on a {s}, naming the largest readmes, and ends 1", .{ label, when }),
-                r.code == 1 and h.contains(r.stderr, refusal) and h.contains(r.stderr, cutoff) and h.contains(r.stderr, "; this run created and uploaded nothing") and r.stdout.len == 0,
+                r.code == 1 and h.contains(r.stderr, refusal) and h.contains(r.stderr, cutoff) and h.contains(r.stderr, if (deferred) "; nothing was uploaded or committed" else "; this run created and uploaded nothing") and
+                    (if (deferred) !h.contains(r.stdout, "committed group") else r.stdout.len == 0),
                 try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }),
             );
             const asked = (try served(w)) - requests_before;
-            w.rep.check("and the registry answers exactly two requests: the lookup of its API root and GET /health", asked == 2 and
+            w.rep.check(if (deferred) "and the registry answers four requests: the lookup of its API root, GET /health, the staged group and its create" else "and the registry answers exactly two requests: the lookup of its API root and GET /health", asked == (if (deferred) @as(i64, 4) else 2) and
                 h.contains(r.stderr, "does not take readmes as objects"), try std.fmt.allocPrint(a, "{d} requests: {s}", .{ asked, r.stderr }));
-            w.rep.check("and no file of the directory changed and none was added", std.mem.eql(u8, try snapshot(a, dir), files_before), "the directory changed");
+            w.rep.check("and no file of the directory changed and none was added", std.mem.eql(u8, try snapshot(a, dir, skip), files_before), "the directory changed");
         }
     }
 

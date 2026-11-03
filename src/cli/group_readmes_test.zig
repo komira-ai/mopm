@@ -13,13 +13,13 @@ const Script = gt.Script;
 const Console = gp.Console;
 const Result = gp.Result;
 
-const api = "http://127.0.0.1:1/api/v1";
-const health_objects = "{\"status\":\"ok\",\"features\":[\"group_readme_objects\"]}";
-const health_plain = "{\"status\":\"ok\"}";
-const text_a = "# a readme\n";
+pub const api = "http://127.0.0.1:1/api/v1";
+pub const health_objects = "{\"status\":\"ok\",\"features\":[\"group_readme_objects\"]}";
+pub const health_plain = "{\"status\":\"ok\"}";
+pub const text_a = "# a readme\n";
 
 /// Members m0.. with the readmes `texts` (null: none), each with one file of 7 bytes.
-fn stageSet(a: Allocator, tmp: *std.testing.TmpDir, texts: []const ?[]const u8) !plan_mod.Plan {
+pub fn stageSet(a: Allocator, tmp: *std.testing.TmpDir, texts: []const ?[]const u8) !plan_mod.Plan {
     var members = std.ArrayList(u8).init(a);
     try tmp.dir.makePath("noarch");
     const sha = try core.install.sha256Hex(a, "m-bytes");
@@ -45,11 +45,16 @@ fn stageSet(a: Allocator, tmp: *std.testing.TmpDir, texts: []const ?[]const u8) 
 }
 
 /// How a create answer shows the readmes.
-const Ref = enum { none, pending, held };
+pub const Ref = enum { none, pending, held };
 
 /// The answer of a create of the members `texts`: the files of the first `held_files` are held, and the readmes are `ref`.
 /// URLs end `/put/f<i><variant>` and `/put/r<i><variant>`.
-fn answerOf(a: Allocator, texts: []const ?[]const u8, held_files: usize, ref: Ref, variant: []const u8) ![]const u8 {
+pub fn answerOf(a: Allocator, texts: []const ?[]const u8, held_files: usize, ref: Ref, variant: []const u8) ![]const u8 {
+    return answerPartial(a, texts, held_files, 0, ref, variant);
+}
+
+/// `answerOf`, with the readmes of the first `held_readmes` members held when `ref` is `.pending`.
+pub fn answerPartial(a: Allocator, texts: []const ?[]const u8, held_files: usize, held_readmes: usize, ref: Ref, variant: []const u8) ![]const u8 {
     var out = std.ArrayList(u8).init(a);
     const w = out.writer();
     try w.print("{{\"group_id\":\"{s}\",\"status\":\"open\",\"attempt\":1,\"members\":[", .{gt.gid});
@@ -57,8 +62,9 @@ fn answerOf(a: Allocator, texts: []const ?[]const u8, held_files: usize, ref: Re
         if (i != 0) try w.writeByte(',');
         try w.print("{{\"name\":\"m{d}\",\"version\":\"1.0.0\",\"action\":\"new\",", .{i});
         if (t) |text| if (ref != .none and text.len > 0) {
-            try w.print("\"readme\":{{\"sha256\":\"{s}\",\"size\":{d},\"upload_id\":\"upl_r{d}\",\"uploaded\":{s}", .{ try core.install.sha256Hex(a, text), text.len, i, if (ref == .held) "true" else "false" });
-            if (ref == .pending) try w.print(",\"put_url\":\"http://127.0.0.1:1/put/r{d}{s}\",\"put_headers\":{{\"content-length\":\"{d}\",\"x-amz-checksum-sha256\":\"rrr=\"}},\"expires_at\":\"2026-11-03T00:00:00Z\"", .{ i, variant, text.len });
+            const held_r = ref == .held or i < held_readmes;
+            try w.print("\"readme\":{{\"sha256\":\"{s}\",\"size\":{d},\"upload_id\":\"upl_r{d}\",\"uploaded\":{s}", .{ try core.install.sha256Hex(a, text), text.len, i, if (held_r) "true" else "false" });
+            if (!held_r) try w.print(",\"put_url\":\"http://127.0.0.1:1/put/r{d}{s}\",\"put_headers\":{{\"content-length\":\"{d}\",\"x-amz-checksum-sha256\":\"rrr=\"}},\"expires_at\":\"2026-11-03T00:00:00Z\"", .{ i, variant, text.len });
             try w.writeAll("},");
         };
         const held = i < held_files;
@@ -70,41 +76,49 @@ fn answerOf(a: Allocator, texts: []const ?[]const u8, held_files: usize, ref: Re
     return out.items;
 }
 
-const Driven = struct { p: gp.Publisher, result: ?Result };
+pub const Driven = struct { p: gp.Publisher, result: ?Result };
 
 /// The command between the plan and the run: the form from /health (`null` result when that stops the run), then the run.
-fn drive(a: Allocator, tmp: *std.testing.TmpDir, script: *Script, console: *Console, state: ?plan_mod.State) !Driven {
+pub fn drive(a: Allocator, tmp: *std.testing.TmpDir, script: *Script, console: *Console, state: ?plan_mod.State) !Driven {
     const planned = try gp.checkedPlan(a, tmp.dir, "staged", false);
     try std.testing.expectEqualStrings("a checked plan", if (planned == .ok) "a checked plan" else planned.bad);
     const checked = planned.ok;
     return driveChecked(a, tmp, checked, script, console, state);
 }
 
-fn driveChecked(a: Allocator, tmp: *std.testing.TmpDir, checked: gp.Checked, script: *Script, console: *Console, state: ?plan_mod.State) !Driven {
-    const choice = (try readmes.decide(a, script.net(), api, checked.entries, checked.inlineCommit(), console)) orelse return .{ .p = undefined, .result = null };
-    var p = gt.publisherWith(a, tmp, checked.plan, choice.commit_body, script, console);
+pub fn driveChecked(a: Allocator, tmp: *std.testing.TmpDir, checked: gp.Checked, script: *Script, console: *Console, state: ?plan_mod.State) !Driven {
+    return driveWith(a, tmp, checked, script, console, state, false);
+}
+
+/// `driveChecked` for a run with or without `--no-commit`. State that names a group is the group an earlier run made.
+pub fn driveWith(a: Allocator, tmp: *std.testing.TmpDir, checked: gp.Checked, script: *Script, console: *Console, state: ?plan_mod.State, no_commit: bool) !Driven {
+    const resumed: ?plan_mod.State = if (state) |s| (if (s.group_id.len > 0) s else null) else null;
+    const form = (try gp.formOf(a, script.net(), api, checked, resumed, console)) orelse return .{ .p = undefined, .result = null };
+    var p = gt.publisherWith(a, tmp, checked.plan, form.choice.commit_body, script, console);
     p.entries = checked.entries;
-    p.objects = choice.objects;
+    p.objects = form.choice.objects;
+    p.refusal = form.refusal;
+    p.no_commit = no_commit;
     if (state) |s| p.state = s;
     const result = p.run();
     return .{ .p = p, .result = result };
 }
 
 /// The checked plan of a set whose inline commit request is too large, with the commit's refusal in `over`.
-fn driveOver(a: Allocator, tmp: *std.testing.TmpDir, script: *Script, console: *Console, state: ?plan_mod.State) !Driven {
+pub fn driveOver(a: Allocator, tmp: *std.testing.TmpDir, script: *Script, console: *Console, state: ?plan_mod.State) !Driven {
     const checked = (try gp.checkedPlan(a, tmp.dir, "staged", false)).ok;
     try std.testing.expect(checked.over != null);
     return driveChecked(a, tmp, checked, script, console, state);
 }
 
-fn step(method: std.http.Method, suffix: []const u8, status: u16, body: []const u8) Script.Step {
+pub fn step(method: std.http.Method, suffix: []const u8, status: u16, body: []const u8) Script.Step {
     return .{ .method = method, .suffix = suffix, .status = status, .body = body };
 }
 
-const visible = gt.group_status.of("visible");
-const validating = gt.group_status.of("validating");
+pub const visible = gt.group_status.of("visible");
+pub const validating = gt.group_status.of("validating");
 
-fn expectHealthFirst(script: *const Script) !void {
+pub fn expectHealthFirst(script: *const Script) !void {
     const first = script.seen.items[0];
     try std.testing.expectEqual(std.http.Method.GET, first.method);
     try std.testing.expectEqualStrings(api ++ "/health", first.url);
@@ -112,7 +126,7 @@ fn expectHealthFirst(script: *const Script) !void {
 }
 
 /// How many `needle` the text holds.
-fn countOf(hay: []const u8, needle: []const u8) usize {
+pub fn countOf(hay: []const u8, needle: []const u8) usize {
     return std.mem.count(u8, hay, needle);
 }
 
@@ -454,27 +468,6 @@ test "a staged group resumed after the capability disappeared is committed inlin
     try std.testing.expect((try plan_mod.loadState(a, tmp.dir)).ok.committed);
 }
 
-test "a staged group resumed after the capability disappeared, with a set too large inline, is refused: nothing committed, state.json kept" {
-    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer st.deinit();
-    const a = st.allocator();
-    const at = try gt.heavyAtLimit(a, gt.limit_members);
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const over = try gt.stageReadmes(a, &tmp, gt.limit_members, .{ .units = at.units, .pad = at.pad, .extra = at.extra + 1 }, "");
-    const state = plan_mod.State{ .registry = api, .plan_sha256 = over.sha256, .group_id = gt.gid, .attempt = 1, .staged = true, .uploaded = &.{"m0/noarch/mojo-m0-1.0.0-x.conda"} };
-    try plan_mod.saveState(a, tmp.dir, state);
-    const before = try tmp.dir.readFileAlloc(a, plan_mod.state_name, 1 << 20);
-    var script = gt.newScript(a, &.{step(.GET, "/health", 200, health_plain)});
-    var console = Console.init(a, null);
-    const d = try driveOver(a, &tmp, &script, &console, state);
-    try std.testing.expect(d.result == null);
-    try std.testing.expectEqual(@as(usize, 1), script.seen.items.len);
-    try gt.expectContains(console.err.items, "; this run created and uploaded nothing\n");
-    try std.testing.expectEqualStrings(before, try tmp.dir.readFileAlloc(a, plan_mod.state_name, 1 << 20));
-    try std.testing.expect((try plan_mod.loadState(a, tmp.dir)).ok.staged);
-}
-
 test "an invalid_request about the readme of an objects-mode commit is shown with a note, other refusals without, and the group is left open" {
     var st = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer st.deinit();
@@ -617,7 +610,8 @@ test "a readme the registry gave no upload for stops the run, and a long run ask
     var c2 = Console.init(a, null);
     const d2 = try drive(a, &tmp, &bare, &c2, null);
     try std.testing.expectEqual(Result.failed, d2.result.?);
-    try gt.expectContains(c2.err.items, "the registry gave no upload URL for README.md of m0\n");
+    try gt.expectContains(c2.err.items, "the registry's answer for the readme of m0 is not an upload descriptor: it is not uploaded and has no put_url; nothing was uploaded\n");
+    try std.testing.expectEqual(@as(usize, 0), bare.count(.PUT));
 
     // The file took long enough for the URLs to lapse: the readme waits for fresh ones.
     var slow = gt.newScript(a, &.{
@@ -668,15 +662,30 @@ test "--dry-run reads /health without a token and says which form it would send;
     try std.testing.expectEqual(@as(u8, 0), try readmes.dryRun(a, &c1, objects.net(), api, false, plan, uploads, checked.entries, checked.inlineCommit()));
     try expectHealthFirst(&objects);
     try std.testing.expectEqual(@as(usize, 1), objects.seen.items.len);
-    try gt.expectContains(c1.out.items, try std.fmt.allocPrint(a, "would send the readmes as uploaded objects (the registry lists group_readme_objects); the commit request is {d} bytes\n", .{objects_len}));
-    try gt.expectContains(c1.out.items, "would create one group of 3 members (3 files), in this order:\n");
-    try gt.expectContains(c1.out.items, "commit the group, and wait for it to be visible\ndry run: nothing was created or uploaded; only GET /health was sent\n");
+    try std.testing.expectEqualStrings(try std.fmt.allocPrint(a,
+        \\would create one group of 3 members (3 files), in this order:
+        \\  m0 1.0.0 (1 files)
+        \\  m1 1.0.0 (1 files)
+        \\  m2 1.0.0 (1 files)
+        \\would send the readmes as uploaded objects (the registry lists group_readme_objects); the commit request is {d} bytes
+        \\would upload each file the registry does not hold, commit the group, and wait for it to be visible
+        \\dry run: nothing was created or uploaded; the registry was only read (its config.json and GET /health)
+        \\
+    , .{objects_len}), c1.out.items);
 
     var plain = gt.newScript(a, &.{step(.GET, "/health", 200, health_plain)});
     var c2 = Console.init(a, null);
     try std.testing.expectEqual(@as(u8, 0), try readmes.dryRun(a, &c2, plain.net(), api, true, plan, uploads, checked.entries, checked.inlineCommit()));
-    try gt.expectContains(c2.out.items, try std.fmt.allocPrint(a, "would send the readmes inline; the commit request is {d} bytes\n", .{inline_len}));
-    try gt.expectContains(c2.out.items, "stop with the group open (--no-commit)\ndry run: nothing was created or uploaded; only GET /health was sent\n");
+    try std.testing.expectEqualStrings(try std.fmt.allocPrint(a,
+        \\would create one group of 3 members (3 files), in this order:
+        \\  m0 1.0.0 (1 files)
+        \\  m1 1.0.0 (1 files)
+        \\  m2 1.0.0 (1 files)
+        \\would send the readmes inline; the commit request is {d} bytes
+        \\would upload each file the registry does not hold, and stop with the group open (--no-commit)
+        \\dry run: nothing was created or uploaded; the registry was only read (its config.json and GET /health)
+        \\
+    , .{inline_len}), c2.out.items);
 
     var broken = gt.newScript(a, &.{.{ .method = .GET, .suffix = "/health", .status = 0, .err = error.ConnectionRefused }});
     var c3 = Console.init(a, null);
@@ -692,8 +701,14 @@ test "--dry-run reads /health without a token and says which form it would send;
     var c4 = Console.init(a, null);
     try std.testing.expectEqual(@as(u8, 0), try readmes.dryRun(a, &c4, quiet.net(), api, false, bare_plan, try bare_plan.uploads(a), bare.entries, bare.inlineCommit()));
     try std.testing.expectEqual(@as(usize, 0), quiet.seen.items.len);
-    try gt.expectContains(c4.out.items, "wait for it to be visible\ndry run: nothing was sent\n");
-    try std.testing.expect(!gt.contains(c4.out.items, "would send the readmes"));
+    try std.testing.expectEqualStrings(
+        \\would create one group of 2 members (2 files), in this order:
+        \\  m0 1.0.0 (1 files)
+        \\  m1 1.0.0 (1 files)
+        \\would upload each file the registry does not hold, commit the group, and wait for it to be visible
+        \\dry run: nothing was sent
+        \\
+    , c4.out.items);
 
     // Too large inline: refused when /health lists nothing, accepted in the form of objects when it does.
     const at = try gt.heavyAtLimit(a, gt.limit_members);
@@ -738,7 +753,7 @@ test "the commit body in objects form: refs for readmes with text, \"\" kept, no
     try std.testing.expect(read[2].readme == null);
 }
 
-test "which members have a readme to send, and which a create answer leaves without it" {
+test "which members have a readme to send, and how a create answer's readme stands against the declaration" {
     const sha = "d" ** 64;
     const entries = [_]plan_mod.CommitEntry{
         .{ .name = "a", .manifest_sha256 = gt.sha_x, .readme = "text", .readme_sha256 = sha },
@@ -750,12 +765,15 @@ test "which members have a readme to send, and which a create answer leaves with
     try std.testing.expect(readmes.entryWithReadme(&entries, "a") != null);
     for ([_][]const u8{ "b", "c", "zz" }) |n| try std.testing.expect(readmes.entryWithReadme(&entries, n) == null);
 
-    const Answer = struct { name: []const u8, readme: ?readmes.ReadmeAnswer };
-    const good = [_]Answer{ .{ .name = "a", .readme = .{ .sha256 = sha } }, .{ .name = "b", .readme = null } };
-    try std.testing.expect(readmes.missingRef(&entries, &good) == null);
-    const other = [_]Answer{.{ .name = "a", .readme = .{ .sha256 = "e" ** 64 } }};
-    try std.testing.expectEqualStrings("a", readmes.missingRef(&entries, &other).?);
-    const without = [_]Answer{.{ .name = "a", .readme = null }};
-    try std.testing.expectEqualStrings("a", readmes.missingRef(&entries, &without).?);
-    try std.testing.expectEqualStrings("a", readmes.missingRef(&entries, &[_]Answer{}).?);
+    const e = entries[0];
+    const url = "http://127.0.0.1:1/put/r";
+    try std.testing.expectEqual(readmes.Verdict.absent, readmes.judge(e, null));
+    try std.testing.expectEqual(readmes.Verdict.differs, readmes.judge(e, .{ .sha256 = "e" ** 64, .size = 4, .put_url = url }));
+    try std.testing.expectEqual(readmes.Verdict.differs, readmes.judge(e, .{ .sha256 = sha, .size = 5, .put_url = url }));
+    try std.testing.expectEqual(readmes.Verdict.differs, readmes.judge(e, .{ .sha256 = sha, .put_url = url }));
+    try std.testing.expectEqual(readmes.Verdict.confirmed, readmes.judge(e, .{ .sha256 = sha, .size = 4, .put_url = url }));
+    try std.testing.expectEqual(readmes.Verdict.confirmed, readmes.judge(e, .{ .sha256 = sha, .size = 4, .uploaded = true }));
+    try std.testing.expectEqual(readmes.Verdict.confirmed, readmes.judge(e, .{ .sha256 = sha, .size = 4, .put_url = url, .put_headers = .{ .object = std.json.ObjectMap.init(std.testing.allocator) } }));
+    try std.testing.expectEqualStrings("it is not uploaded and has no put_url", readmes.judge(e, .{ .sha256 = sha, .size = 4 }).malformed);
+    try std.testing.expectEqualStrings("its put_headers is not an object", readmes.judge(e, .{ .sha256 = sha, .size = 4, .put_url = url, .put_headers = .{ .string = "x" } }).malformed);
 }
