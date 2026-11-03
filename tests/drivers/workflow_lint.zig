@@ -711,7 +711,7 @@ fn groupE2eProblems(a: Allocator, doc: Value, text: []const u8, out: *Out) !void
     var holders: usize = 0;
     var runs_check = false;
     var passes_summary = false;
-    var pixi_step: ?usize = null;
+    var env_step: ?usize = null;
     var check_step: ?usize = null;
     const steps = c.get(job, "steps");
     if (steps != null and steps.? == .array) {
@@ -723,7 +723,11 @@ fn groupE2eProblems(a: Allocator, doc: Value, text: []const u8, out: *Out) !void
             if (c.truthy(c.get(st, "if"))) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: must not have an `if` (a skipped step is a green run that did nothing; the check decides what to skip, and says why in the summary)", .{i});
             if (c.truthy(c.get(st, "continue-on-error"))) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: must not set continue-on-error", .{i});
             const step_run = c.str(c.get(st, "run")) orelse "";
-            if (std.mem.indexOf(u8, step_run, "tools/install_pixi.sh") != null and pixi_step == null) pixi_step = i;
+            // The Mojo environment: the candidate's own `mopm sync --locked` in tests/mojo_env, which needs no pixi.
+            if (std.mem.indexOf(u8, step_run, "mopm sync --locked") != null and c.isStr(c.get(st, "working-directory"), "tests/mojo_env") and env_step == null) env_step = i;
+            if (std.mem.indexOf(u8, step_run, "install_pixi") != null or std.mem.indexOf(u8, step_run, "pixi.toml") != null) {
+                try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: pixi is gone from this job (`mopm sync` installs by itself); the Mojo environment is `mopm sync --locked` in tests/mojo_env", .{i});
+            }
             const env = c.get(st, "env");
             const holds = envHolding(env, group_secret);
             if (holds) |key| {
@@ -735,11 +739,14 @@ fn groupE2eProblems(a: Allocator, doc: Value, text: []const u8, out: *Out) !void
                 const run = step_run;
                 runs_check = std.mem.indexOf(u8, run, "mopm-group-e2e") != null;
                 passes_summary = std.mem.indexOf(u8, run, "--summary \"$GITHUB_STEP_SUMMARY\"") != null;
-                // The real path needs the CLI by its absolute path (it is started in other directories), pixi, and pixi's manifest; the
-                // script stops at the first failure and tolerates none.
-                if (runs_check) for ([_][]const u8{ "--mopm \"$PWD/zig-out/bin/mopm\"", "--pixi \"$(command -v pixi)\"", "--pixi-manifest tests/e2e/pixi.toml", "set -euo pipefail" }) |want| {
+                // The real path needs the CLI by its absolute path (it is started in other directories) and the Mojo environment that
+                // `mopm sync --locked` made in tests/mojo_env; the script stops at the first failure and tolerates none.
+                if (runs_check) for ([_][]const u8{ "--mopm \"$PWD/zig-out/bin/mopm\"", "--mojo-env \"$PWD/tests/mojo_env/.mopm/env\"", "set -euo pipefail" }) |want| {
                     if (std.mem.indexOf(u8, run, want) == null) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: the check must be run with `{s}`", .{ i, want });
                 };
+                if (runs_check and std.mem.indexOf(u8, run, "--pixi") != null) {
+                    try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: the check takes no `--pixi` or `--pixi-manifest` (they are unknown flags; mopm sync runs no pixi)", .{i});
+                }
                 if (runs_check) for ([_][]const u8{ "|| true", "|| :", "set +e" }) |banned| {
                     if (std.mem.indexOf(u8, run, banned) != null) try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " step {d}: the check must not tolerate a failure (`{s}`)", .{ i, banned });
                 };
@@ -757,10 +764,10 @@ fn groupE2eProblems(a: Allocator, doc: Value, text: []const u8, out: *Out) !void
         }
     }
     if (holders == 1) {
-        if (pixi_step == null) {
-            try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " must install the pinned pixi (tools/install_pixi.sh) before the check, which makes the Mojo environment and installs the staged set with it", .{});
-        } else if (pixi_step.? > check_step.?) {
-            try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " installs pixi (step {d}) after the check (step {d})", .{ pixi_step.?, check_step.? });
+        if (env_step == null) {
+            try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " must make the Mojo environment before the check (`mopm sync --locked` with working-directory tests/mojo_env)", .{});
+        } else if (env_step.? > check_step.?) {
+            try c.problem(a, out, prefix ++ "e2e.yml: " ++ group_job ++ " makes the Mojo environment (step {d}) after the check (step {d})", .{ env_step.?, check_step.? });
         }
     }
     if (holders != 1) try c.problem(a, out, prefix ++ "e2e.yml: exactly one step of " ++ group_job ++ " must read the token, got {d}", .{holders});

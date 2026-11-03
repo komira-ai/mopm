@@ -209,7 +209,7 @@ zig_test(  # buck-only: mopm pack and publish against the fake registry and a st
     **_TOOLS
 )
 
-zig_exe(  # buck-only: stands in for mojo, the test binary and pixi in :group_publish; records whether MOPM_TOKEN reached it
+zig_exe(  # buck-only: stands in for mojo and the test binary in :group_publish; records whether MOPM_TOKEN reached it
     name = "env-probe",
     src = "tests/drivers/env_probe.zig",
     **_TOOLS
@@ -218,7 +218,7 @@ zig_exe(  # buck-only: stands in for mojo, the test binary and pixi in :group_pu
 zig_test(  # buck-only: mopm publish --staged and mopm yank --group against the fake registry
     name = "group_publish",
     src = "tests/drivers/group_publish_test.zig",
-    imports = ["tests/drivers/harness.zig"],
+    imports = ["tests/drivers/harness.zig", "tests/drivers/conda_pkg.zig"],
     env_tools = {
         "MOPM": ":mopm",
         "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
@@ -254,7 +254,7 @@ zig_test(  # buck-only: readmes as uploaded objects, and the fall back to inline
 # (registry/fake). A file of the release that is byte for byte what the live tree holds is read from the live tree; only the files
 # that differ are vendored under tests/compat/v0.0.104 (README.md there; SHA256SUMS pins every file, and the test checks it).
 # The `tree` targets (tests/compat/tree.bzl) lay both out in one directory, where the release's files find each other by their relative imports.
-_PREV_FAKE_LIVE = ["api", "errors", "files", "resp", "source_commit", "token_scopes", "util", "versions"]
+_PREV_FAKE_LIVE = ["api", "errors", "resp", "source_commit", "token_scopes", "util", "versions"]
 _PREV_CLI_LIVE = ["group_stage_token", "publish_cmd", "registry_cmd"]
 
 tree(  # buck-only: the fake registry of v0.0.104 as its files lay out at the tag, and the fixture that calls it
@@ -547,11 +547,10 @@ zig_test(  # buck-only: tests/resolve_e2e/run.py: mopm lock, update and tree aga
 zig_test(  # buck-only: mopm add, lock and sync with --overlay (a staged set) against the fake registry and a request-recording stand-in
     name = "overlay_e2e",
     src = "tests/drivers/overlay_e2e_test.zig",
-    imports = ["tests/drivers/harness.zig"],
+    imports = ["tests/drivers/harness.zig", "tests/drivers/conda_pkg.zig"],
     env_tools = {
         "MOPM": ":mopm",
         "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
-        "FAKE_PIXI": ":fake-pixi",
     },
     **_TOOLS
 )
@@ -643,40 +642,40 @@ _AUTOLINK_DATA = [
 zig_test(  # buck-only: the group-publish check (tests/drivers/group_e2e.zig) against a loopback registry that serves the group routes
     name = "group_e2e",
     src = "tests/drivers/group_e2e_test.zig",
-    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig", "tests/drivers/group_e2e.zig"],
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig", "tests/drivers/group_e2e.zig", "tests/drivers/conda_pkg.zig"],
     deps = [":mopm_core"],
-    # The unit tier: the walk is the real one but for the compiler and pixi. The built CLI stages, installs the staged set and
-    # publishes it; a stand-in compiler writes the stand-in packages and the README program; a stand-in pixi installs them.
-    env_tools = {"MOPM": ":mopm", "FAKE_PIXI": ":fake-pixi", "FAKE_TOOLCHAIN": ":fake-toolchain"},
+    # The unit tier: the walk is the real one but for the compiler and the toolchain closure. The built CLI stages, installs the
+    # staged set and publishes it; a stand-in compiler writes the stand-in packages and the README program; mopm sync installs
+    # them with a stand-in toolchain closure the fake registry serves.
+    env_tools = {"MOPM": ":mopm", "MOPM_FAKE_REGISTRY": ":mopm-fake-registry", "FAKE_TOOLCHAIN": ":fake-toolchain"},
     **_TOOLS
 )
 
 zig_test(  # buck-only: the same walk with the farm's real Mojo 1.0.0, which builds the packages and the README program
     name = "group_e2e_mojo",
     src = "tests/drivers/group_e2e_test.zig",
-    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig", "tests/drivers/group_e2e.zig"],
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig", "tests/drivers/group_e2e.zig", "tests/drivers/conda_pkg.zig"],
     deps = [":mopm_core"],
-    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm", FAKE_PIXI = ":fake-pixi"),
-    **_TOOLS
-)
-
-zig_test(  # buck-only: the user-level beta walk (tests/drivers/user_beta.zig) in its farm form: no pixi, no installer
-    name = "user_beta",
-    src = "tests/drivers/user_beta_test.zig",
-    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig", "tests/drivers/user_beta.zig", "tests/drivers/user_native.zig"],
     exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm", MOPM_FAKE_REGISTRY = ":mopm-fake-registry"),
     **_TOOLS
 )
 
-zig_test(  # buck-only: the native step of the user-level beta walk (tests/drivers/user_native.zig) with a stand-in compiler and pixi: the switch, the skip line, the output check, and C sources to a published, added, synced, built and run package; it runs on every pull request
+zig_test(  # buck-only: the user-level beta walk (tests/drivers/user_beta.zig) in its farm form: a stand-in toolchain closure for mopm sync, no installer
+    name = "user_beta",
+    src = "tests/drivers/user_beta_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig", "tests/drivers/user_beta.zig", "tests/drivers/user_native.zig", "tests/drivers/conda_pkg.zig"],
+    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm", MOPM_FAKE_REGISTRY = ":mopm-fake-registry"),
+    **_TOOLS
+)
+
+zig_test(  # buck-only: the native step of the user-level beta walk (tests/drivers/user_native.zig) with a stand-in compiler and toolchain closure: the switch, the skip line, the output check, and C sources to a published, added, synced, built and run package; it runs on every pull request
     name = "user_native",
     src = "tests/drivers/user_native_test.zig",
-    imports = ["tests/drivers/harness.zig", "tests/drivers/user_native.zig"],
+    imports = ["tests/drivers/harness.zig", "tests/drivers/user_native.zig", "tests/drivers/conda_pkg.zig"],
     exec_tools = {
         "ZIG_DIR": "buildrules//rules/pins:zig",
         "MOPM": ":mopm",
         "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
-        "FAKE_PIXI": ":fake-pixi",
         "FAKE_TOOLCHAIN": ":fake-toolchain",
     },
     data = ["tests/e2e/natws"],
@@ -710,22 +709,21 @@ zig_test(  # buck-only: an archive in an empty-module package, from mopm pack an
 zig_test(  # buck-only: a workspace member with its own C library and a package that links it, from mopm lock to an installed --overlay set, against the real Mojo (the beta tier of native_workspace)
     name = "native_workspace_mojo",
     src = "tests/drivers/native_workspace_test.zig",
-    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig"],
-    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm", MOPM_FAKE_REGISTRY = ":mopm-fake-registry", FAKE_PIXI = ":fake-pixi", MOJO_COMPILE_SHIM = ":mojo-compile-shim"),
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig", "tests/drivers/conda_pkg.zig"],
+    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm", MOPM_FAKE_REGISTRY = ":mopm-fake-registry", MOJO_COMPILE_SHIM = ":mojo-compile-shim"),
     data = ["tests/e2e/natws"],
     **_TOOLS
 )
 
-zig_test(  # buck-only: the same walk with a stand-in compiler and pixi (tests/drivers/fake_toolchain.zig, fake_pixi.zig): the graph, the C build, the link line, the packed archive, the lock and the install; it runs on every pull request
+zig_test(  # buck-only: the same walk with a stand-in compiler and toolchain closure (tests/drivers/fake_toolchain.zig, conda_pkg.zig): the graph, the C build, the link line, the packed archive, the lock and the install; it runs on every pull request
     name = "native_workspace",
     src = "tests/drivers/native_workspace_test.zig",
-    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig"],
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig", "tests/drivers/conda_pkg.zig"],
     exec_tools = {
         "CC_SHIM": ":zigcc",
         "ZIG_DIR": "buildrules//rules/pins:zig",
         "MOPM": ":mopm",
         "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
-        "FAKE_PIXI": ":fake-pixi",
         "FAKE_TOOLCHAIN": ":fake-toolchain",
         "MOJO_COMPILE_SHIM": ":mojo-compile-shim",
     },
@@ -1228,23 +1226,61 @@ zig_test(  # buck-only: AGENTS.md's shared core against its hashed copy, and CLA
 
 # ---- Ports of the install e2e test and the fake registry's error generator ------------
 
-zig_exe(  # buck-only: stands in for pixi in install_e2e: unpacks the pinned conda files into the environment
-    name = "fake-pixi",
-    src = "tests/drivers/fake_pixi.zig",
-    **_TOOLS
-)
-
 zig_exe(  # buck-only: stands in for the Mojo compiler in the unit tier of group_e2e: writes stand-in .mojoc files and executables
     name = "fake-toolchain",
     src = "tests/drivers/fake_toolchain.zig",
     **_TOOLS
 )
 
-zig_test(  # buck-only: mopm sync against the fake registry and the real Mojo; the Zig port of tests/install_e2e/run.py
+zig_test(  # buck-only: mopm sync installing an environment by itself (no pixi), against the fake registry and a stand-in toolchain closure; every pull request
+    name = "sync_e2e",
+    src = "tests/drivers/sync_e2e_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/conda_pkg.zig", "tests/drivers/sync_fixture.zig"],
+    env_tools = {
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+    },
+    **_TOOLS
+)
+
+zig_test(  # buck-only: mopm sync against environments in the states a project gets into (moved, damaged, a backup left, the legacy pixi layout, a second sync running); every pull request
+    name = "sync_state_e2e",
+    src = "tests/drivers/sync_state_e2e_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/conda_pkg.zig", "tests/drivers/sync_fixture.zig"],
+    env_tools = {
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+    },
+    **_TOOLS
+)
+
+zig_test(  # buck-only: what mopm sync refuses (bad archives, unsafe closures, path conflicts, a recorded toolchain closure, failed downloads) and that the old environment stays; every pull request
+    name = "sync_refuse_e2e",
+    src = "tests/drivers/sync_refuse_e2e_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/conda_pkg.zig", "tests/drivers/sync_fixture.zig"],
+    env_tools = {
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+    },
+    **_TOOLS
+)
+
+zig_test(  # buck-only: where mopm sync keeps its downloads (cache selection, content addressing, --cache inside the environment) and the lock's system libraries; every pull request
+    name = "sync_cache_e2e",
+    src = "tests/drivers/sync_cache_e2e_test.zig",
+    imports = ["tests/drivers/harness.zig", "tests/drivers/conda_pkg.zig", "tests/drivers/sync_fixture.zig"],
+    env_tools = {
+        "MOPM": ":mopm",
+        "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
+    },
+    **_TOOLS
+)
+
+zig_test(  # buck-only: mopm sync against the fake registry, then mopm build and run with the real Mojo; the Zig port of tests/install_e2e/run.py
     name = "install_e2e",
     src = "tests/drivers/install_e2e_test.zig",
-    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig"],
-    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm", MOPM_FAKE_REGISTRY = ":mopm-fake-registry", FAKE_PIXI = ":fake-pixi"),
+    imports = ["tests/drivers/harness.zig", "tests/drivers/mojo_env.zig", "tests/drivers/conda_pkg.zig"],
+    exec_tools = dict(_MOJO_TOOLS, MOPM = ":mopm", MOPM_FAKE_REGISTRY = ":mopm-fake-registry"),
     data = [
         "tests/e2e/native/greet.c",
         "tests/e2e/pkgs/greet",

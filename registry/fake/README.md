@@ -62,6 +62,7 @@ Not part of the contract. Each is a POST with a JSON object body.
 | `/_fake/readme_objects` | `{"enabled"}` | readmes as uploaded objects on (the default) or off: off, `/health` lists no `features`, a create ignores member `readme` and answers none, and a commit refuses a `readme` that is not a string (`'readme' of '<name>' must be a string`), as a registry from before the capability does; objects already uploaded stay |
 | `/_fake/put_fault` | `{"after"}` | after that many more PUTs of upload bytes, the next one answers `unavailable` (once), as storage can fail in the middle of a group |
 | `/_fake/commit_clock` | `{"advance_seconds"}` | the clock moves forward by that much when the next group commit arrives (once), so a group can pass its deadline between the create and the commit |
+| `/_fake/served` | `{}` | `{"conda"}`: how many `.conda` files `GET /channel/...` has served since the fake started, to count a client's downloads |
 
 ## Tested how
 

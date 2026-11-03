@@ -133,6 +133,11 @@ pub fn handle(ctx: *Ctx) anyerror!Response {
         }
         return resp.json(ctx.arena, .ok, .{ .stage = staged, .publish = published });
     }
+    // {} -> {"conda"}: how many `.conda` files `GET /channel/...` has served so far. A test reads it before and after a
+    // run to count the package downloads the run made.
+    if (std.mem.eql(u8, path, "/served")) {
+        return resp.json(ctx.arena, .ok, .{ .conda = s.conda_served });
+    }
     // {} -> {"requests"}: how many requests the fake has answered that were not a control, uploads included; a test reads it
     // before and after a run to see whether the run sent anything.
     if (std.mem.eql(u8, path, "/requests")) {

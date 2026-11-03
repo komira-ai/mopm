@@ -282,6 +282,7 @@ pub fn serve(ctx: *api.Ctx) anyerror!resp.Response {
         error.FileNotFound, error.IsDir, error.NotDir => return resp.empty(.not_found),
         else => return e,
     };
+    if (std.mem.endsWith(u8, rel, ".conda")) s.conda_served += 1;
     const content_type = if (std.mem.endsWith(u8, rel, ".json"))
         "application/json"
     else if (std.mem.endsWith(u8, rel, ".conda"))

@@ -153,7 +153,7 @@ time to read the gzip back and split it). It is the `conda-measure` workflow (`w
 
 - **The farm has no network.** A Buck2 action that ran the tool on the farm failed every request with
   `TemporaryNameServerFailure` (no DNS; `local: 0`). Farm actions are hermetic, so lookup latency "from the farm" cannot
-  be measured there; the jobs that fetch from the network (ci.yml's pixi and installer steps) run on hosted runners. The tool therefore runs on a
+  be measured there; the jobs that fetch from the network (ci.yml's `mopm sync` and installer steps) run on hosted runners. The tool therefore runs on a
   GitHub-hosted runner, and its latencies are that runner's, not the farm's. The Lambda's latency to its own S3 mirror is
   a separate figure that exists only once PR 2 writes the mirror.
 - **Figures** are measured from a development host on 2026-10-28 with curl, zstd and gzip -9 (the shard index keys give

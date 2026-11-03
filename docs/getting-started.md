@@ -78,24 +78,16 @@ A Homebrew tap is planned. It does not exist yet; use the script or the tarball.
 
 ### A Mojo environment
 
-`mopm build`, `run`, `repl` and `test` run the `mojo` of an environment, so you need one with `mojo` and
-`mojo-compiler` installed (Mojo 1.0.0 is the version mopm's tests and pinned toolchain use). The usual way is
-pixi:
-
-```toml
-# pixi.toml
-[workspace]
-name = "my_project"
-channels = ["https://conda.modular.com/max", "conda-forge"]
-platforms = ["linux-64"]          # or linux-aarch64, osx-arm64
-
-[dependencies]
-mojo = "==1.0.0"
-mojo-compiler = "==1.0.0"
-```
+`mopm build`, `run`, `repl` and `test` run the `mojo` of an environment. You need nothing else installed:
+`mopm sync` (section 3) installs the Mojo toolchain your `mopm.toml` names (Mojo 1.0.0 today), with
+everything it needs, into the project's `.mopm/env`, next to your dependencies. It does not use pixi or
+conda: every file comes from a list pinned in mopm (`mojo`, `mojo-compiler` and their dependencies, each
+with its sha256 and size), is checked against it, and is unpacked by mopm.
 
 mopm finds the environment from `--prefix <dir>`, else `CONDA_PREFIX`, else `MODULAR_HOME` without its
-trailing `/share/max`. `mopm sync` also needs `pixi` on your `PATH` (or `--pixi <path>`).
+trailing `/share/max`, else the `.mopm/env` that `mopm sync` made in the current directory. So an
+environment you made yourself (with pixi or conda, holding `mojo` and `mojo-compiler`) still works: activate
+it or pass `--prefix`.
 
 ## 2. Start a package: `new` and `init`
 
@@ -136,15 +128,29 @@ mopm remove http_client
 mopm lock                       # resolve mopm.toml against the registry's index, write mopm.lock
 mopm update [pkg...]            # move the named packages (all, with none) to the newest that fit
 mopm tree                       # draw the dependency graph in mopm.lock
-mopm sync                       # install mopm.lock into .mopm/ (locks first if needed)
+mopm sync                       # install mopm.lock and the Mojo toolchain into .mopm/env (locks first if needed)
 mopm sync --locked              # CI: install exactly the lock, fail if it would change
 ```
 
 `add` and `remove` keep the rest of `mopm.toml` byte for byte (comments, order, spacing), and write
 nothing if the result does not resolve. Reading the index needs no account. After `sync`, the environment is
-`.mopm/.pixi/envs/default`; pass it as `--prefix` to `build`, `run`, `repl` and `test`.
+`.mopm/env`, and `build`, `run`, `repl` and `test` run in the project directory use it without `--prefix`.
 
-Commit `mopm.lock`. Every download is checked against the lock's sha256 and size.
+Commit `mopm.lock`. Every download is checked against its pinned sha256 and size (the lock's for your
+dependencies, mopm's own list for the toolchain), and a file that differs is refused. `sync` builds the new
+environment beside `.mopm/env` and swaps it in at the end, so if anything fails the old environment is
+still there. A second `sync` with the same lock finds the environment current and downloads nothing.
+Downloaded dependencies are kept in `.mopm/pkgs`; the toolchain's files, which are large and the same for
+every project, in `~/.cache/mopm/pkgs` (`$XDG_CACHE_HOME/mopm/pkgs` when that is set; `--cache <dir>` to
+choose). `--toolchain <file>` installs the toolchain from another list of the same files, for instance one
+whose channel URLs point at a mirror.
+
+`sync` also installs the lock's system libraries for your platform. Only one `sync` runs in a project at a
+time: a second one says it is waiting for `.mopm/sync.lock` and goes on when the first is done. The toolchain's
+files are kept as `<cache>/<sha256>/<file>`, and `--cache` may not point inside `.mopm/env`, which `sync`
+replaces. If `.mopm/env` has lost a file or no longer matches what `sync` recorded, the next `sync` says so and
+installs it again; so does moving the project to another directory. A lock made with several Mojo versions
+records the toolchain closure it was made for, and `sync` refuses a different one: run `mopm lock` again.
 
 Because a compiled Mojo package is tied to one compiler, a dependency is only chosen if it has a build for
 your exact Mojo. If none does, `mopm lock` says which versions have builds and for which Mojo.
@@ -156,7 +162,7 @@ work now, and `--registry` can point at a local test registry.
 ## 4. Build, run, REPL
 
 ```sh
-mopm build hello.mojo -o hello --prefix .mopm/.pixi/envs/default
+mopm build hello.mojo -o hello
 mopm run hello.mojo
 mopm repl
 mopm build hello.mojo --print-cmd     # show the mojo command instead of running it
@@ -179,7 +185,7 @@ bins = [{ name = "my_pkg", path = "src/main.mojo" }]
 ```
 
 ```sh
-mopm build --prefix .mopm/.pixi/envs/default
+mopm build
 # mopm build: library my_pkg -> target/build/my_pkg.mojoc
 # mopm build: binary my_pkg -> target/build/my_pkg
 mopm build --out-dir dist ...         # somewhere else than target/build
@@ -335,7 +341,7 @@ archive of each platform with `--native <id>=<subdir>:<file>` (see [configuratio
 
 | variable | used by |
 |---|---|
-| `CONDA_PREFIX`, `MODULAR_HOME` | find the Mojo environment when `--prefix` is not given |
+| `CONDA_PREFIX`, `MODULAR_HOME` | find the Mojo environment when `--prefix` is not given (before the `.mopm/env` of `mopm sync`) |
 | `MOPM_TOKEN` | `publish` (CI) |
 | `XDG_CONFIG_HOME`, `HOME` | where credentials live |
 | `MOPM_VERSION`, `MOPM_HOME`, `MOPM_RELEASES_URL` | the install script |
@@ -355,14 +361,15 @@ The [examples page](examples.md) walks through six complete packages (a library,
 ```sh
 mopm new greeter --lib
 cd greeter
-mopm test --prefix <your env>       # builds tests/test_*.mojo and runs each test in its own process
+mopm sync                           # the Mojo toolchain into .mopm/env (no dependencies yet)
+mopm test                           # builds tests/test_*.mojo and runs each test in its own process
 ```
 
 **CI: lock-exact install and strict tests**
 
 ```sh
 mopm sync --locked
-mopm test --prefix .mopm/.pixi/envs/default --retries 2 --deny-flaky --junit report.xml
+mopm test --retries 2 --deny-flaky --junit report.xml
 ```
 
 **A package that depends on one with a native library**
@@ -379,8 +386,8 @@ crypto = "0.3"          # ships libcrypto_native.so.1
 
 ```sh
 mopm sync
-mopm build main.mojo -o app --prefix .mopm/.pixi/envs/default     # -Xlinker flags and run path added for you
-mopm build main.mojo --prefix .mopm/.pixi/envs/default --print-cmd   # see them
+mopm build main.mojo -o app                 # -Xlinker flags and run path added for you
+mopm build main.mojo --print-cmd            # see them
 ```
 
 **Seeing why a test flakes**

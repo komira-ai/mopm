@@ -7,8 +7,9 @@
 //! takes the headers the registry named and no bearer token, and the group yank moves every member.
 //!
 //! One test walks the whole check against a registry that does all of it right, with nothing stubbed on the client side
-//! but pixi: the farm's Mojo 1.0.0 precompiles the three packages, the built CLI (MOPM) stages them, locks and installs the
-//! staged set with --overlay (FAKE_PIXI stands in for pixi, which the farm lacks), the program of the app's README is built
+//! but the toolchain closure: the farm's Mojo 1.0.0 precompiles the three packages, the built CLI (MOPM) stages them, locks and installs the
+//! staged set with --overlay (the farm has no network, so `mopm sync` is given a stand-in closure of two small packages served by
+//! the fake registry, MOPM_FAKE_REGISTRY, with --toolchain and --cache), the program of the app's README is built
 //! with the farm's compiler and run, and `mopm publish --staged` sends the set to this registry. Each of the other tests breaks
 //! one rule in the registry (or leaves a piece of the client out) and asserts that the check goes red on the line that names
 //! it (or SKIPs, when that is the point). The packages the other tests need are precompiled once.
@@ -17,6 +18,7 @@ const std = @import("std");
 const core = @import("mopm_core");
 const h = @import("harness.zig");
 const mojo_env = @import("mojo_env.zig");
+const cp = @import("conda_pkg.zig");
 const g = @import("group_e2e.zig");
 const Allocator = std.mem.Allocator;
 
@@ -733,7 +735,7 @@ fn rfc3339(a: Allocator, secs: i64) ![]const u8 {
 // ---- running the check ----------------------------------------------------------------------------------------------
 
 var work_counter: usize = 0;
-/// What every run shares: the Mojo environment, the built CLI, the stand-in pixi, and the three packages precompiled once (the walk
+/// What every run shares: the Mojo environment, the built CLI, and the three packages precompiled once (the walk
 /// that precompiles them itself is the first test). Lives for the whole process.
 ///
 /// Two tiers run this file. The beta tier (//:group_e2e_mojo) has the farm's Mojo 1.0.0 (MOJO_TOOLCHAIN): the compiler builds the
@@ -751,7 +753,8 @@ const Tools = struct {
     /// The environment of the toolchain children.
     env: *const std.process.EnvMap,
     mopm: []const u8,
-    pixi: []const u8,
+    /// The fake registry that serves the stand-in toolchain closure of the overlay step's sync.
+    fake_registry: []const u8,
     prebuilt: []const u8,
 };
 
@@ -774,7 +777,7 @@ fn tools() !*const Tools {
         t.prefix = try h.join(a, &.{ work, "env" });
         try m.prefix(t.prefix, true);
         t.mopm = try h.toolPathAbs(a, "MOPM");
-        t.pixi = try h.toolPathAbs(a, "FAKE_PIXI");
+        t.fake_registry = try h.toolPathAbs(a, "MOPM_FAKE_REGISTRY");
     } else {
         tools_tmp = std.testing.tmpDir(.{});
         work = try h.tmpPath(a, &tools_tmp.?);
@@ -786,7 +789,7 @@ fn tools() !*const Tools {
         t.prefix = try h.join(a, &.{ work, "env" });
         try layFake(t.fake, t.prefix);
         t.mopm = try h.toolPath(a, "MOPM");
-        t.pixi = try h.toolPath(a, "FAKE_PIXI");
+        t.fake_registry = try h.toolPath(a, "MOPM_FAKE_REGISTRY");
     }
     const ws = try h.join(a, &.{ work, "prebuilt_ws" });
     const art = try h.join(a, &.{ work, "prebuilt_art" });
@@ -817,8 +820,8 @@ fn layFake(fake: []const u8, prefix: []const u8) !void {
     try f.chmod(0o755);
 }
 
-/// The stand-in pixi installs packages and nothing else; the Mojo toolchain goes into the environment it made, as a pixi
-/// environment holds it beside the packages.
+/// The stand-in closure installs two text files and no compiler; the Mojo toolchain is laid into the environment `mopm sync` made,
+/// beside the packages.
 fn layToolchain(a: Allocator, env: []const u8) anyerror!void {
     _ = a;
     const t = try tools();
@@ -846,11 +849,8 @@ const Extras = struct {
     summary: ?[]const u8 = null,
     registry_down: bool = false,
     no_mopm: bool = false,
-    no_pixi: bool = false,
-    /// No Mojo environment is given and no packages: with a pixi and its manifest the run makes the environment, else it has none.
+    /// No Mojo environment is given and no packages: the run has no compiler.
     no_toolchain: bool = false,
-    /// The manifest the run's pixi creates the Mojo environment from.
-    pixi_manifest: ?[]const u8 = null,
     /// Precompile the packages in the run (the farm's compiler), instead of using the ones built once.
     precompile: bool = false,
     /// The line the README's program prints (the stand-in compiler's programs only; the real compiler builds what the README says).
@@ -873,6 +873,15 @@ fn runCheckWith(a: Allocator, mode: Mode, token: []const u8, stage: []const u8, 
     defer tmp.cleanup();
     const work = try h.tmpPath(a, &tmp);
     var rep = h.Report{};
+    // The stand-in toolchain closure of the overlay step's sync, served by a fake registry that lives as long as the run.
+    var tc_tmp = std.testing.tmpDir(.{});
+    defer tc_tmp.cleanup();
+    const tc_dir = try h.tmpPath(a, &tc_tmp);
+    const fake_dir = try h.join(a, &.{ tc_dir, "fake" });
+    try std.fs.cwd().makePath(fake_dir);
+    var fake = try h.Fake.start(a, t.fake_registry, fake_dir);
+    defer fake.close();
+    const closure = try cp.fakeToolchain(a, fake_dir, fake.base, "channel/toolchain", cp.hostSubdir(), g.compiler, try h.join(a, &.{ tc_dir, "toolchain.json" }), "T");
     // This run's own environment, with the line its programs print when the test names one; the shared one is not touched.
     var parent_env: *const std.process.EnvMap = t.env;
     if (extras.program_says) |line| {
@@ -905,8 +914,8 @@ fn runCheckWith(a: Allocator, mode: Mode, token: []const u8, stage: []const u8, 
         .retry_ms = 10,
         .clock = stub.clock.clock(),
         .parent_env = parent_env,
-        .pixi = if (extras.no_pixi) null else t.pixi,
-        .pixi_manifest = extras.pixi_manifest,
+        .sync_toolchain = closure.closure,
+        .sync_cache = try h.join(a, &.{ tc_dir, "cache" }),
         .mojo_env = if (extras.no_toolchain) null else t.prefix,
         .prebuilt = if (extras.precompile or extras.no_toolchain) null else t.prebuilt,
         .after_sync = after_sync,
@@ -1058,27 +1067,11 @@ fn expectFailsNotSkips(extras: Extras, name: []const u8) !void {
 }
 
 test "with a token and groups on, a piece of the client that is missing is a failure, not a skip" {
-    // The CLI, pixi, and the Mojo environment (none given, no pixi to make one; a pixi with no manifest).
+    // The CLI, and the Mojo environment (none given).
     try expectFailsNotSkips(.{ .no_mopm = true }, "chain: --mopm names the CLI");
-    try expectFailsNotSkips(.{ .no_pixi = true }, "chain: --pixi names pixi, which mopm sync installs through");
-    try expectFailsNotSkips(.{ .no_toolchain = true, .no_pixi = true }, "toolchain: --pixi (or --mojo-env) names the Mojo environment");
-    try expectFailsNotSkips(.{ .no_toolchain = true }, "toolchain: --pixi-manifest names the Mojo environment pixi creates");
+    try expectFailsNotSkips(.{ .no_toolchain = true }, "toolchain: --mojo-env names the Mojo environment");
     // The same, for the rejected case, which needs the packages too: nothing there is skipped either.
     try expectFailsNotSkips(.{ .no_mopm = true }, "rejected: --mopm names the CLI");
-}
-
-test "pixi makes the Mojo environment: the run uses what it made, and a manifest it cannot make one from, or one with no compiler, fails" {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    const a = arena.allocator();
-    const t = try tools();
-    const ok_manifest = try h.join(a, &.{ t.work, "pixi_env_ok.toml" });
-    try h.writeFile(ok_manifest, "[workspace]\nname = \"empty\"\nchannels = [\"file:///nonexistent\"]\nplatforms = [\"linux-64\"]\n");
-    // The stand-in pixi installs no compiler, so the environment it makes has none: the build of the packages fails, on its line.
-    try expectFailsNotSkips(.{ .no_toolchain = true, .pixi_manifest = ok_manifest }, "packages: mojo precompile builds the three packages");
-    // A manifest the stand-in refuses: pixi fails, on its line.
-    const bad_manifest = try h.join(a, &.{ t.work, "pixi_env_bad.toml" });
-    try h.writeFile(bad_manifest, "[workspace]\nname = \"broken\"\n");
-    try expectFailsNotSkips(.{ .no_toolchain = true, .pixi_manifest = bad_manifest }, "toolchain: pixi creates the Mojo environment");
 }
 
 test "a group that is still reserving its members is created again until it has reached them all" {
@@ -1443,9 +1436,9 @@ test "the job summary: one line for a skip, the line and every check for a run" 
 }
 
 test "the command line: every flag, and the ways it is wrong" {
-    const ok = g.parseArgs(&.{ "--stage", "gamma", "--mopm", "/m", "--work", "/w", "--run-id", "123", "--attempt", "2", "--summary", "/s", "--wait-seconds", "30", "--registry", "http://127.0.0.1:9", "--pixi", "/p", "--pixi-manifest", "/p.toml", "--mojo-env", "/env" }).?;
-    try std.testing.expectEqualStrings("/p", ok.pixi.?);
-    try std.testing.expectEqualStrings("/p.toml", ok.pixi_manifest.?);
+    const ok = g.parseArgs(&.{ "--stage", "gamma", "--mopm", "/m", "--work", "/w", "--run-id", "123", "--attempt", "2", "--summary", "/s", "--wait-seconds", "30", "--registry", "http://127.0.0.1:9", "--toolchain", "/tc.json", "--cache", "/cache", "--mojo-env", "/env" }).?;
+    try std.testing.expectEqualStrings("/tc.json", ok.toolchain.?);
+    try std.testing.expectEqualStrings("/cache", ok.cache.?);
     try std.testing.expectEqualStrings("/env", ok.mojo_env.?);
     try std.testing.expectEqualStrings("gamma", ok.stage);
     try std.testing.expectEqualStrings("/m", ok.mopm.?);
@@ -1457,7 +1450,12 @@ test "the command line: every flag, and the ways it is wrong" {
     try std.testing.expectEqualStrings("http://127.0.0.1:9", ok.registry_spec.?);
     const least = g.parseArgs(&.{ "--stage", "beta", "--work", "/w", "--run-id", "1", "--attempt", "1" }).?;
     try std.testing.expectEqual(@as(?[]const u8, null), least.mopm);
+    try std.testing.expectEqual(@as(?[]const u8, null), least.toolchain);
+    try std.testing.expectEqual(@as(?[]const u8, null), least.cache);
     try std.testing.expectEqual(@as(u64, 600), least.wait_seconds);
+    // pixi is gone: its flags are unknown now.
+    try std.testing.expect(g.parseArgs(&.{ "--stage", "beta", "--work", "/w", "--run-id", "1", "--attempt", "1", "--pixi", "/p" }) == null);
+    try std.testing.expect(g.parseArgs(&.{ "--stage", "beta", "--work", "/w", "--run-id", "1", "--attempt", "1", "--pixi-manifest", "/p.toml" }) == null);
     // Each of these is refused: a missing required flag, a flag with no value, an unknown flag, a number that is not one.
     try std.testing.expect(g.parseArgs(&.{ "--work", "/w", "--run-id", "1", "--attempt", "1" }) == null);
     try std.testing.expect(g.parseArgs(&.{ "--stage", "beta", "--run-id", "1", "--attempt", "1" }) == null);
@@ -1595,7 +1593,7 @@ test "a path the check is given is made absolute, because its children start in 
     defer arena.deinit();
     const a = arena.allocator();
     try std.testing.expectEqualStrings("/abs/mopm", try g.absolute(a, "/abs/mopm"));
-    try std.testing.expectEqualStrings("pixi", try g.absolute(a, "pixi"));
+    try std.testing.expectEqualStrings("mojo", try g.absolute(a, "mojo"));
     const rel = try g.absolute(a, "./zig-out/bin/mopm");
     try std.testing.expect(std.fs.path.isAbsolute(rel));
     try std.testing.expect(std.mem.endsWith(u8, rel, "/zig-out/bin/mopm"));

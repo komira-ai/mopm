@@ -1,1 +1,1 @@
-mopm repl: no environment: pass --prefix <dir>, or run in an activated environment (CONDA_PREFIX or MODULAR_HOME)
+mopm repl: no environment: pass --prefix <dir>, run in an activated environment (CONDA_PREFIX or MODULAR_HOME), or run 'mopm sync' in the project first

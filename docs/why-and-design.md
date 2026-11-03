@@ -119,15 +119,25 @@ dead end backtracks to the latest choice. A failure names the requirements and w
 There is no pre-release logic because there are no pre-releases. `mopm lock` keeps versions that still
 fit; `mopm update` drops the pins of the named packages (all, with none named).
 
-**Installing from a lock.** `mopm sync` downloads each locked file for the host's platform, refuses any
-whose size or sha256 differs from the lock, builds a local channel of exactly those files under `.mopm/`,
-and has `pixi install` create the environment from that local channel (pixi runs only as an installer;
-the choice of what to install was made by mopm). Afterwards mopm checks the result against the lock:
-each package's recorded sha256, its metadata file, every native library's hash, and that no
-`lib/mojo/*.mopm.json` is installed that the lock does not name. `mopm sync --locked` never changes the
-lock and never reads the index; CI should use it. A locked version that was yanked still installs, with
-a warning that gives the reason; a locked version that was taken down fails, and the error shows the
-public reason.
+**Installing from a lock.** `mopm sync` installs the environment itself, with no pixi, conda or solver.
+It downloads each locked file for the host's platform and each file of the Mojo toolchain's closure (a
+list, built into mopm, of every package `mojo` needs for that Mojo version and platform, each with its
+sha256 and size, made once by a solver in CI: `toolchain/README.md`), refuses any file whose size or
+sha256 is not the pinned one, unpacks them all into a temporary directory beside `.mopm/env` (rewriting
+the conda prefix placeholders) and renames it into place, so the environment is the old one or the whole
+new one. The environment records a stamp of exactly which files it holds; a sync with the same files
+downloads nothing. Afterwards mopm checks the result against the lock: each package's recorded sha256, its
+metadata file, every native library's hash, and that no `lib/mojo/*.mopm.json` is installed that the lock
+does not name. `mopm sync --locked` never changes the lock and never reads the index; CI should use it. A
+locked version that was yanked still installs (the lock pins its bytes); a locked version that was taken
+down fails: its file is gone, and sync says the package has been taken down or is unavailable.
+The lock's system libraries for the platform are installed with the toolchain. Only one `mopm sync` runs in a
+project at a time (a second waits on `.mopm/sync.lock`). The stamp includes the project's absolute path, so a
+moved project is installed again, and an environment that no longer matches its stamp (a missing file, a
+changed package) is installed again too. A version 2 lock that records the toolchain closure refuses a
+different closure before any download. The toolchain's files and the libraries' are kept in the shared cache as
+`<cache>/<sha256>/<file>`, and `--cache` inside `.mopm/env` is refused. The design is in
+[docs/design/native-sync.md](design/native-sync.md).
 
 **One lock for several Mojo versions.** A package may list `[package] mojo = ["1.0.0", "1.1.0"]`. Its
 lock is then `lock_version` 2: one entry per package version per platform with an `artifacts` map from
@@ -268,8 +278,8 @@ Trade-offs accepted on purpose:
 - *Exact compiler match.* A package is usable only with the compiler it was built for. This is the
   truth about `.mojoc`, but it multiplies builds; publishing for several compilers is what `[package] mojo`
   lists are for.
-- *conda as the carrier.* It gets pixi compatibility and hashing for free, and costs a dependency on
-  pixi for `mopm sync` today (installing without pixi is **planned**).
+- *conda as the carrier.* It gets pixi compatibility and hashing for free; mopm unpacks the format
+  itself, so `mopm sync` needs no conda client, at the cost of an unpacker mopm must keep right.
 - *Registry-computed metadata.* The registry writes repodata and index entries from the validated
   manifest and never trusts the archive's own, at the cost of a validator that must be kept right.
 - *One process per test.* Strong isolation, slower on large suites.

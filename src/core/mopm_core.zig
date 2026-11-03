@@ -3,8 +3,8 @@
 //! discovery, the stock `mojo` command lines, and `mopm test`: discovery,
 //! harness generation, the process supervisor, the reports and the filters, and
 //! version resolution over the sparse index into mopm.lock, and installing a
-//! lock into the project's pixi environment; and, without pixi, unpacking
-//! `.conda` packages into a conda environment.
+//! lock and the Mojo toolchain into the project's environment (unpacking
+//! `.conda` packages into a conda environment, with no pixi, conda or solver).
 
 pub const metadata = @import("metadata.zig");
 pub const link_planner = @import("link_planner.zig");

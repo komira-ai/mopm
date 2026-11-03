@@ -240,7 +240,7 @@ status:
 3. account: `login` (device flow approved on the fake), `whoami`;
 4. publish to the test registry: `pack`, `publish --dry-run`, `publish`; the registry serves the version, the
    sparse index and the channel with the packed sha256; publishing the same version again is refused;
-5. dependencies: `add`, `tree`, `lock`, `update`, `sync` (download, sha256 check, pixi installs the published package);
+5. dependencies: `add`, `tree`, `lock`, `update`, `sync` (download, sha256 check, mopm installs the published package and the pinned Mojo toolchain into `.mopm/env`; a second `sync --locked` downloads nothing);
 6. `build` and `run` a program and the one that imports the package just published; `test` again;
    native package (`tests/drivers/user_native.zig`): the member `tests/e2e/natws/shimlib`, which has its own C static library, is compiled with
    the pinned zig, staged and published into the fake registry (`stage`, `publish --staged`); a new package adds it, syncs it and
@@ -252,13 +252,14 @@ status:
    GitHub release holding the candidate, then the installed `mopm --version` must equal the candidate version and
    the installed file must be the candidate byte for byte; a `SHA256SUMS` that lies installs nothing.
 
-The Mojo toolchain is the pinned pixi environment of `tests/e2e/pixi.toml`, as in `ci.yml`. Not walked: `repl`
+The Mojo toolchain for the walk's `--mojo-env` is the environment the candidate's `mopm sync --locked` makes in `tests/mojo_env`, as in `ci.yml`. Not walked: `repl`
 (`tests/e2e/run.sh` and `//:autolink` run it against the real mojo), `link-plan`, `plan` and `unit` (offline planners
 with golden tests).
 
-On the build farm `//:user_beta` runs the same driver without pixi and without the installer (the farm has neither);
-those steps print `SKIP`, they are never counted as passed.
-`//:user_native` runs the native step on every pull request with a stand-in compiler and pixi: the switch, the skip line, the output
+On the build farm `//:user_beta` runs the same driver without the installer and the native step (the farm has no tarball and
+no `--zig` there); those steps print `SKIP`, they are never counted as passed. The farm has no network, so its `sync` installs a
+stand-in toolchain closure the walk's fake registry serves (`tests/drivers/conda_pkg.zig`), and the real compiler is laid in after.
+`//:user_native` runs the native step on every pull request with a stand-in compiler and toolchain closure: the switch, the skip line, the output
 check, and the stage, publish, add, sync, build and run wiring.
 
 ## A superseded commit (the re-run hazard)

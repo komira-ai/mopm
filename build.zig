@@ -95,25 +95,18 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(fake_tests).step);
 
-    // `zig build test-e2e -Dmojo-env=<pixi environment>` runs the Mojo end-to-end
+    // `zig build test-e2e -Dmojo-env=<environment>` runs the Mojo end-to-end
     // drivers (tests/drivers/test_*_test.zig, the same files Buck2 runs on the
     // farm as //:autolink, //:discovery, //:supervisor and //:flaky) natively,
-    // against the real mojo of that environment (tests/e2e/pixi.toml) and the
-    // system C compiler. CI runs them on Linux x86_64, Linux aarch64 and macOS
+    // against the real mojo of that environment (the one `mopm sync --locked`
+    // makes in tests/mojo_env) and the system C compiler. CI runs them on Linux x86_64, Linux aarch64 and macOS
     // arm64. Each step is its own: test-autolink, test-discovery,
     // test-supervisor, test-flaky. The work directories
     // (.zig-cache/e2e/<driver>) are emptied first.
-    const mojo_env = b.option([]const u8, "mojo-env", "The Mojo environment (a pixi prefix) the e2e drivers run against");
-    const e2e_step = b.step("test-e2e", "Run the Mojo end-to-end drivers natively (-Dmojo-env=<pixi prefix>)");
+    const mojo_env = b.option([]const u8, "mojo-env", "The Mojo environment (a conda prefix) the e2e drivers run against");
+    const e2e_step = b.step("test-e2e", "Run the Mojo end-to-end drivers natively (-Dmojo-env=<prefix>)");
     // The native-workspace driver (tests/drivers/native_workspace_test.zig; the farm runs it as //:native_workspace_mojo) starts the
-    // fake registry, a stand-in pixi and the `mojo_compile` shim of `mopm unit`: built here and installed for this step only.
-    const fake_pixi = b.addExecutable(.{ // native-only
-        .name = "fake-pixi",
-        .root_source_file = b.path("tests/drivers/fake_pixi.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    const install_fake_pixi = b.addInstallArtifact(fake_pixi, .{});
+    // fake registry and the `mojo_compile` shim of `mopm unit`: built here and installed for this step only.
     const compile_shim = b.addExecutable(.{ // native-only
         .name = "mojo-compile-shim",
         .root_source_file = b.path("tests/drivers/mojo_compile_shim.zig"),
@@ -140,16 +133,14 @@ pub fn build(b: *std.Build) void {
         run.step.dependOn(&b.addRemoveDirTree(work).step);
         run.step.dependOn(b.getInstallStep());
         run.has_side_effects = true;
-        run.step.dependOn(&install_fake_pixi.step);
         run.step.dependOn(&install_compile_shim.step);
         run.setEnvironmentVariable("MOPM", b.getInstallPath(.bin, "mopm"));
         run.setEnvironmentVariable("MOPM_FAKE_REGISTRY", b.getInstallPath(.bin, "mopm-fake-registry"));
-        run.setEnvironmentVariable("FAKE_PIXI", b.getInstallPath(.bin, "fake-pixi"));
         run.setEnvironmentVariable("MOJO_COMPILE_SHIM", b.getInstallPath(.bin, "mojo-compile-shim"));
         run.setEnvironmentVariable("MOPM_E2E_SRC", b.pathFromRoot("tests/e2e"));
         run.setEnvironmentVariable("BUILDRULES_TEST_WORK", work);
         if (mojo_env) |m| run.setEnvironmentVariable("MOJO_TOOLCHAIN", b.pathFromRoot(m));
-        const step = b.step("test-" ++ d.name, "Run the " ++ d.name ++ " end-to-end driver natively (-Dmojo-env=<pixi prefix>)");
+        const step = b.step("test-" ++ d.name, "Run the " ++ d.name ++ " end-to-end driver natively (-Dmojo-env=<prefix>)");
         step.dependOn(&run.step);
         e2e_step.dependOn(&run.step);
     }

@@ -10,9 +10,9 @@
 //! - a group past its deadline when the commit arrives is refused, and a rerun opens it again and finishes;
 //! - a rerun after a failed PUT must ask for the same group (the id in state.json) and send only the files the registry
 //!   does not hold; a registry with no group publish (404) must get nothing uploaded; a 429 must stop the run where it is;
-//! - the token must be in no program mopm starts (one stand-in plays mojo, the test binary and pixi, and records its
-//!   environment: `mopm run`, the compile and the `--skip-all` listing of `mopm test`, and the installer of `mopm sync`),
-//!   and in nothing mopm prints;
+//! - the token must be in no program mopm starts (one stand-in plays mojo and the test binary, and records its
+//!   environment: `mopm run`, and the compile and the `--skip-all` listing of `mopm test`), in nothing mopm prints, and in no
+//!   file `mopm sync` writes (it starts no program; it downloads the toolchain itself, with the token in its environment);
 //! - a set whose commit request is too large for the registry's function, for its readmes, with a registry that does not take
 //!   readmes as objects (the fake with the switch off), is refused after two requests, the lookup of its API root and GET /health (the
 //!   fake counts exactly those), by a publish, `--dry-run` and `--no-commit` on a first run and by `--dry-run` on a resume, with no file
@@ -23,6 +23,7 @@
 
 const std = @import("std");
 const h = @import("harness.zig");
+const cp = @import("conda_pkg.zig");
 const Allocator = std.mem.Allocator;
 
 const dead = "http://127.0.0.1:1"; // nothing listens here
@@ -378,10 +379,27 @@ fn probeSawNoToken(lines: []const u8, role: []const u8, a: Allocator) !bool {
     return h.contains(lines, try std.fmt.allocPrint(a, "{s}: MOPM_TOKEN=<unset> MOPM_PROBE_MARK=kept\n", .{role}));
 }
 
-/// The compiler `mopm test` runs, the test binary it lists with `--skip-all`, and the installer `mopm sync` runs each get an
-/// environment without the token (`mopm run` is checked above). One stand-in plays all three: `mojo build` leaves a copy of it
-/// as the test binary, so a single `mopm test` starts two programs, and each appends a line saying what it was given.
-fn theTokenIsInNoTestOrInstallerEnvironment(w: World, probe: []const u8) !void {
+/// Every file under `dir`, read whole, holds no `token`: the names of the files and their bytes.
+fn treeHoldsNo(a: Allocator, dir: []const u8, token: []const u8) !bool {
+    var d = try std.fs.cwd().openDir(dir, .{ .iterate = true });
+    defer d.close();
+    var walker = try d.walk(a);
+    defer walker.deinit();
+    while (try walker.next()) |e| {
+        if (h.contains(e.path, token)) return false;
+        if (e.kind != .file) continue;
+        const bytes = try d.readFileAlloc(a, e.path, 1 << 28);
+        if (h.contains(bytes, token)) return false;
+    }
+    return true;
+}
+
+/// The compiler `mopm test` runs and the test binary it lists with `--skip-all` each get an environment without the token
+/// (`mopm run` is checked above). One stand-in plays both: `mojo build` leaves a copy of it as the test binary, so a single
+/// `mopm test` starts two programs, and each appends a line saying what it was given. `mopm sync` starts no program; it
+/// is given the token in its environment, and what it prints is compared whole against the text the fixture implies, and no file it writes (the environment, the kept
+/// packages, the cache of the toolchain) holds it.
+fn theTokenIsInNoTestEnvironmentAndNoSyncFile(w: World, probe: []const u8) !void {
     const a = w.a;
     const prefix = try w.dir("prefix_test");
     try std.fs.cwd().makePath(try h.join(a, &.{ prefix, "lib", "mojo" }));
@@ -402,16 +420,26 @@ fn theTokenIsInNoTestOrInstallerEnvironment(w: World, probe: []const u8) !void {
     w.rep.check("mopm test starts the compiler and the test binary, and neither has MOPM_TOKEN in its environment", (try probeSawNoToken(seen, "build", a)) and
         (try probeSawNoToken(seen, "--skip-all", a)) and !h.contains(seen, w.token) and !h.contains(t.text, w.token), try std.fmt.allocPrint(a, "{s}\n{s}", .{ seen, t.text }));
 
-    // `mopm sync`: the installer. A project with no dependency is locked with no registry.
+    // `mopm sync`: a project with no dependency is locked with no registry; the stand-in toolchain is served by the fake registry.
     const sync_dir = try w.dir("proj_sync");
     try std.fs.cwd().makePath(sync_dir);
     try h.writeFile(try h.join(a, &.{ sync_dir, "mopm.toml" }), "[package]\nname = \"probe_sync\"\nversion = \"0.1.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n");
-    const out_sync = try h.join(a, &.{ w.work, "probe_sync.txt" });
-    try env.put("MOPM_PROBE_OUT", out_sync);
-    const s = try h.run(a, &.{ w.m.exe, "sync", "--pixi", probe }, &env, .{ .cwd = sync_dir });
-    const installed = probeLines(w, out_sync);
-    w.rep.check("mopm sync starts the installer, and it has no MOPM_TOKEN in its environment", (try probeSawNoToken(installed, "install", a)) and
-        !h.contains(installed, w.token) and !h.contains(s.text, w.token), try std.fmt.allocPrint(a, "{s}\n{s}", .{ installed, s.text }));
+    const tc = try cp.fakeToolchain(a, w.fake_dir, w.fake.base, "channel/toolchain", cp.hostSubdir(), "1.0.0", try h.join(a, &.{ w.work, "toolchain.json" }), "T");
+    const cache = try h.join(a, &.{ w.work, "probe_cache" });
+    var sync_env = try h.cloneEnv(a, &w.m.env);
+    try sync_env.put("MOPM_TOKEN", w.token);
+    const sync_err = try h.join(a, &.{ w.work, "probe_sync_stderr.txt" });
+    const s = try h.run(a, &.{ w.m.exe, "sync", "--toolchain", tc.closure, "--cache", cache }, &sync_env, .{ .cwd = sync_dir, .capture = .stdout, .stderr_path = sync_err });
+    const s_err = try std.fs.cwd().readFileAlloc(a, sync_err, 1 << 20);
+    // What sync prints, built from the fixture: the lock it writes first, one "downloading" line per toolchain file, in the closure's order, then the
+    // summary line of a project with no dependency.
+    var want_out = std.ArrayList(u8).init(a);
+    try want_out.writer().print("locked 0 packages for mojo 1.0.0\n", .{});
+    for (tc.files) |f| try want_out.writer().print("downloading {s} ({d} bytes)\n", .{ f.file_name, f.bytes.len });
+    try want_out.writer().print("installed 0 packages for {s} (mojo 1.0.0, {d} toolchain files) into .mopm/env\n", .{ cp.hostSubdir(), tc.files.len });
+    w.rep.check("mopm sync, with MOPM_TOKEN in its environment, installs the environment", s.code == 0 and std.mem.eql(u8, s.text, want_out.items), s.text);
+    w.rep.check("and it prints exactly that on standard output and nothing on standard error", std.mem.eql(u8, s.text, want_out.items) and s_err.len == 0, try std.fmt.allocPrint(a, "stdout: {s}\nstderr: {s}", .{ s.text, s_err }));
+    w.rep.check("and no file it writes (.mopm, the cache) holds the token", try treeHoldsNo(a, try h.join(a, &.{ sync_dir, ".mopm" }), w.token) and try treeHoldsNo(a, cache, w.token), "a file holds the token");
 }
 
 fn yankAndUnyank(w: World) !void {
@@ -817,7 +845,7 @@ test "mopm publish --staged and mopm yank --group against the fake registry" {
     try noGroupPublish(w);
     try rateLimited(w);
     try theTokenIsInNoChildEnvironment(w, probe);
-    try theTokenIsInNoTestOrInstallerEnvironment(w, probe);
+    try theTokenIsInNoTestEnvironmentAndNoSyncFile(w, probe);
     try yankAndUnyank(w);
     try refusalsBeforeAnyRequest(w);
     try anOversizedCommit(w);

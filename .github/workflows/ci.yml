@@ -67,40 +67,41 @@ jobs:
           persist-credentials: false
       - name: Install Zig 0.12.0 (sha256-pinned)
         run: echo "$(tools/install_zig.sh "$RUNNER_TEMP/zig")" >> "$GITHUB_PATH"
-      - name: Install pixi 0.79.0 (sha256-pinned)
-        run: echo "$(tools/install_pixi.sh "$RUNNER_TEMP/pixi")" >> "$GITHUB_PATH"
-      - name: Create the Mojo environment (mojo 1.0.0, tests/e2e/pixi.toml)
-        run: |
-          mkdir -p "$RUNNER_TEMP/mojo-env"
-          cp tests/e2e/pixi.toml "$RUNNER_TEMP/mojo-env/pixi.toml"
-          pixi install --manifest-path "$RUNNER_TEMP/mojo-env/pixi.toml"
+      - name: Build the CLI
+        run: zig build
+      # The Mojo environment the drivers run against, made by the CLI under test with no pixi: mopm sync downloads the
+      # pinned Mojo 1.0.0 toolchain closure, checks each file's sha256 and size, and installs it into
+      # tests/mojo_env/.mopm/env (tests/mojo_env holds a mopm.toml and mopm.lock with no packages).
+      - name: Create the Mojo environment with mopm sync (mojo 1.0.0, tests/mojo_env)
+        working-directory: tests/mojo_env
+        run: ../../zig-out/bin/mopm sync --locked --cache "$RUNNER_TEMP/mopm-pkgs"
       # The Zig drivers of tests/drivers, run natively by build.zig (the farm runs the same
       # files as //:autolink, //:discovery, //:supervisor, //:flaky and //:native_workspace_mojo on Linux x86_64 only).
       # The REPL checks of the autolink driver run where the environment has bin/mojo-lldb.
       - name: mopm build, run and repl against the real mojo (autolink)
-        run: zig build test-autolink -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
+        run: zig build test-autolink -Dmojo-env=tests/mojo_env/.mopm/env
       - name: mopm test --list against the real mojo (discovery)
         if: ${{ !cancelled() }}
-        run: zig build test-discovery -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
+        run: zig build test-discovery -Dmojo-env=tests/mojo_env/.mopm/env
       - name: mopm test verdicts, JSON, JUnit and the group kill (supervisor)
         if: ${{ !cancelled() }}
-        run: zig build test-supervisor -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
+        run: zig build test-supervisor -Dmojo-env=tests/mojo_env/.mopm/env
       - name: mopm test --retries, --deny-flaky and filters on deterministic flaky fixtures (flaky)
         if: ${{ !cancelled() }}
-        run: zig build test-flaky -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
+        run: zig build test-flaky -Dmojo-env=tests/mojo_env/.mopm/env
       # A workspace member that ships its own C library ([native.<id>] with srcs) and a package that links it: mopm lock and
       # plan, the native built from its C sources, mopm unit build, mopm pack, and an --overlay install of the packed set in a
       # fresh project where the program is built and run again (tests/drivers/native_workspace_test.zig; the farm runs the
       # same file as //:native_workspace_mojo on Linux x86_64 and, with a stand-in compiler, as //:native_workspace on every pull request).
       - name: native library from C sources, pack and --overlay install, against the real mojo (native-workspace)
         if: ${{ !cancelled() }}
-        run: zig build test-native-workspace -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
+        run: zig build test-native-workspace -Dmojo-env=tests/mojo_env/.mopm/env
       # mopm build with no program (the library as a .mojoc, the programs) and a program that imports path dependencies, on
       # all three platforms (tests/drivers/build_targets_test.zig; the farm runs it as //:build_targets_mojo, and with a
       # stand-in compiler as //:build_targets on every pull request).
       - name: mopm build of a package's targets and its path dependencies, against the real mojo (build-targets)
         if: ${{ !cancelled() }}
-        run: zig build test-build-targets -Dmojo-env="$RUNNER_TEMP/mojo-env/.pixi/envs/default"
+        run: zig build test-build-targets -Dmojo-env=tests/mojo_env/.mopm/env
 
   registry-build:
     name: build cli and fake registry (${{ matrix.os }})

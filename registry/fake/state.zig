@@ -280,6 +280,8 @@ pub const State = struct {
     /// Whether the registry has group publishing on. Off, `createGroup` answers `route_not_found`, as a registry that
     /// has not enabled groups for the caller does.
     groups_enabled: bool = true,
+    /// How many `.conda` files `GET /channel/...` has answered 200 for (`/_fake/served`).
+    conda_served: u64 = 0,
     /// Whether the registry takes a readme as an uploaded object (`/_fake/readme_objects`). Off, `/health` lists no features, a
     /// create ignores member `readme`, and a commit takes a readme as a string only.
     readme_objects: bool = true,

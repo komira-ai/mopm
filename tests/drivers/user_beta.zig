@@ -1,20 +1,24 @@
 //! The user-level beta of a mopm release: the CANDIDATE binary used as a customer uses it, every verb,
 //! end to end, against a fake registry this driver starts. Run by release-beta-user.yml on linux x86_64,
 //! linux arm64 and macOS 15 (GitHub-hosted runners) with the binary the release build produced, and by
-//! Buck2 (//:user_beta, tests/drivers/user_beta_test.zig) on the farm in a reduced form (no pixi, no
-//! installer: see below). No shell: every step is a program started here, its exit status and output asserted.
+//! Buck2 (//:user_beta, tests/drivers/user_beta_test.zig) on the farm in a reduced form (a stand-in toolchain
+//! for `mopm sync`, no installer: see below). No shell: every step is a program started here, its exit status and output asserted.
 //!
 //!     user_beta <mopm> <work dir> --version <v> --fake-registry <exe> --mojo-env <prefix>
-//!               [--tarball <mopm-v-target.tar.gz> --install-sh <install.sh>] [--pixi <exe>] [--zig <exe> --native-fixture <dir>] [--ci]
+//!               [--tarball <mopm-v-target.tar.gz> --install-sh <install.sh>] [--zig <exe> --native-fixture <dir>] [--ci]
 //!
 //!   <mopm>            the candidate binary
 //!   --version         the version it must report (1.2.3: `mopm --version` prints `mopm 1.2.3`)
 //!   --fake-registry   registry/fake, built from the same commit (the test registry; started here)
-//!   --mojo-env        a Mojo environment prefix (bin/mojo, lib/mojo): tests/e2e/pixi.toml's, as ci.yml makes it
+//!   --mojo-env        a Mojo environment prefix (bin/mojo, lib/mojo): tests/mojo_env/.mopm/env, which `mopm sync --locked` makes in tests/mojo_env
 //!   --zig, --native-fixture
 //!                     the zig that compiles the native fixture and the fixture's directory (both, or the step is SKIP, and in CI a failure)
-//!   --pixi            enables `mopm sync` (it installs a published package through pixi); without it the
-//!                     dependency is locked but not installed, and the steps that need it are reported SKIP
+//!
+//! `mopm sync` runs in every form: it downloads the locked package and installs it, with the Mojo toolchain, into
+//! .mopm/env. The walk takes no flag for it. A run that cannot download the pinned toolchain (the farm has no network) sets
+//! `Opts.stand_in_toolchain` (not a flag of this program): the walk then writes a stand-in closure of two small packages
+//! (tests/drivers/conda_pkg.zig) into its fake registry and gives `mopm sync` `--toolchain <closure> --cache <dir>`, and
+//! `Opts.lay_compiler` puts the real compiler into the environment that sync made, as the toolchain does in CI.
 //!   --ci              the walk runs in CI (release-beta-user.yml): a step that would be skipped FAILS instead, so
 //!                     only the farm form (no --ci) may skip
 //!   --tarball, --install-sh
@@ -28,7 +32,7 @@
 //!   3  account    `login` (device flow, approved on the fake), `whoami`, an API token for publishing
 //!   4  publish    `pack`, `publish --dry-run`, `publish` to the test registry; the registry serves the version,
 //!                 the index and the channel with the packed sha256; publishing the same version again is refused
-//!   5  depend     `add`, `tree`, `lock`, `update` against that registry, `sync` (download, sha256 check, pixi)
+//!   5  depend     `add`, `tree`, `lock`, `update` against that registry, `sync` (download, sha256 check, install into .mopm/env)
 //!   6  build      `build` and `run` a program (and the one that imports the published dependency), `test` again
 //!   6b native     a workspace member with its own C static library (tests/e2e/natws/shimlib, compiled with `--zig`) is staged,
 //!                 published to the test registry (`stage`, `publish --staged`), added, synced and built (`mopm build`, no
@@ -46,6 +50,7 @@
 const std = @import("std");
 const h = @import("harness.zig");
 const un = @import("user_native.zig");
+const cp = @import("conda_pkg.zig");
 const Allocator = std.mem.Allocator;
 
 pub const Opts = struct {
@@ -56,7 +61,11 @@ pub const Opts = struct {
     mojo_env: []const u8,
     tarball: ?[]const u8 = null,
     install_sh: ?[]const u8 = null,
-    pixi: ?[]const u8 = null,
+    /// The farm form: `mopm sync` installs a stand-in toolchain the walk's fake registry serves, not the pinned one.
+    stand_in_toolchain: bool = false,
+    /// With `stand_in_toolchain`: called with an environment directory (.mopm/env) that sync made without bin/mojo, to lay the
+    /// real compiler in. Null: the environment is left as sync made it.
+    lay_compiler: ?*const fn (env_dir: []const u8) anyerror!void = null,
     /// The zig that compiles the native fixture (`zig cc`, `zig ar`), and the fixture member (tests/e2e/natws/shimlib); both
     /// or neither. Neither: the native step is reported SKIP (a failure in CI).
     zig: ?[]const u8 = null,
@@ -81,6 +90,8 @@ const Ctx = struct {
     skipped: usize = 0,
     /// The session token of the account `account` logged in.
     session: []const u8 = "",
+    /// Flags `mopm sync` takes for the stand-in toolchain (none when the pinned one is installed).
+    sync_args: []const []const u8 = &.{},
 
     fn run(c: *Ctx, exe: []const u8, dir: []const u8, args: []const []const u8, extra: []const [2][]const u8) !Out {
         const argv = try c.a.alloc([]const u8, args.len + 1);
@@ -125,6 +136,12 @@ const Ctx = struct {
         return h.readFile(c.a, p) catch "";
     }
 
+    /// The farm form: the stand-in toolchain holds no compiler, so the real one is laid into `env_dir` when it has none.
+    fn layCompiler(c: *Ctx, env_dir: []const u8) !void {
+        const lay = c.o.lay_compiler orelse return;
+        if (!exists(c.path(&.{ env_dir, "bin", "mojo" }))) try lay(env_dir);
+    }
+
     fn mojoEnv(c: *Ctx) []const [2][]const u8 {
         const home = std.fmt.allocPrint(c.a, "{s}/share/max", .{c.o.mojo_env}) catch @panic("oom");
         const pair = c.a.alloc([2][]const u8, 1) catch @panic("oom");
@@ -134,7 +151,7 @@ const Ctx = struct {
 };
 
 /// A step the walk cannot run here. On the farm (no --ci) it is reported SKIP; in CI it is a failure, so a
-/// release leg that lost its pixi (or its tarball) is red rather than green with the steps missing.
+/// release leg that lost its tarball (or its zig) is red rather than green with the steps missing.
 pub fn skipStep(rep: *h.Report, ci: bool, skipped: *usize, name: []const u8, why: []const u8) void {
     if (ci) {
         rep.check(name, false, why);
@@ -198,6 +215,11 @@ pub fn run(a: Allocator, rep: *h.Report, o: Opts) !void {
     defer fake.close();
 
     var c = Ctx{ .a = a, .rep = rep, .o = o, .env = base_env, .ws = ws, .fake = fake, .api = try fake.api(a), .conf = try h.join(a, &.{ o.work, "conf" }) };
+
+    if (o.stand_in_toolchain) {
+        const tc = try cp.fakeToolchain(a, try h.join(a, &.{ o.work, "registry" }), fake.base, "channel/toolchain", cp.hostSubdir(), "1.0.0", try h.join(a, &.{ o.work, "toolchain.json" }), "T");
+        c.sync_args = try cat(a, &.{&[_][]const u8{ "--toolchain", tc.closure, "--cache", try h.join(a, &.{ o.work, "toolchain-cache" }) }});
+    }
 
     try create(&c);
     try testing(&c);
@@ -373,17 +395,17 @@ fn depend(c: *Ctx) !void {
     r = try c.mopm(app, try cat(a, &.{ &[_][]const u8{ "add", "no_such_package_beta" }, &reg }));
     c.check("add of a package the registry does not have is refused and writes nothing", r.code != 0 and !h.contains(c.read(c.path(&.{ app, "mopm.toml" })), "no_such_package_beta"), r);
 
-    if (c.o.pixi) |pixi| {
-        h.stage = "sync";
-        r = try c.run(c.o.mopm, app, try cat(a, &.{ &[_][]const u8{ "sync", "--pixi", pixi }, &reg }), &.{});
-        const env = c.path(&.{ app, ".mopm/.pixi/envs/default" });
-        const found = try h.findFiles(a, c.path(&.{ env, "lib" }), "beta_lib.mojoc");
-        c.check("sync downloads the published package, checks its sha256 against the lock and installs it", r.code == 0 and h.contains(r.stdout, "installed 1 packages for ") and found.len >= 1, r);
-        r = try c.mopm(app, &.{ "sync", "--locked", "--pixi", pixi });
-        c.check("sync --locked installs the same lock again", r.code == 0, r);
-    } else {
-        c.skip("sync", "no --pixi: the dependency is locked but not installed");
-    }
+    h.stage = "sync";
+    r = try c.mopm(app, try cat(a, &.{ &[_][]const u8{"sync"}, c.sync_args, &reg }));
+    const env = c.path(&.{ app, ".mopm/env" });
+    const found = try h.findFiles(a, c.path(&.{ env, "lib" }), "beta_lib.mojoc");
+    c.check("sync downloads the published package, checks its sha256 against the lock and installs it into .mopm/env", r.code == 0 and h.contains(r.stdout, "installed 1 packages for ") and h.contains(r.stdout, "into .mopm/env") and found.len >= 1, r);
+    c.check("the locked file is kept in .mopm/pkgs", Ctx.exists(c.path(&.{ app, ".mopm/pkgs/mojo-beta_lib-0.1.0-mojo1.0.0_0.conda" })), r);
+    c.check(".mopm holds the environment and the kept packages, no pixi project", Ctx.exists(c.path(&.{ app, ".mopm/pkgs" })) and !Ctx.exists(c.path(&.{ app, ".mopm/pixi.toml" })) and !Ctx.exists(c.path(&.{ app, ".mopm/channel" })), r);
+    try c.layCompiler(env);
+    r = try c.mopm(app, try cat(a, &.{ &[_][]const u8{ "sync", "--locked" }, c.sync_args }));
+    c.check("sync --locked finds the environment current and downloads nothing", r.code == 0 and h.contains(r.stdout, ".mopm/env is current: 1 packages for ") and !h.contains(r.stdout, "downloading "), r);
+    try c.layCompiler(env);
 }
 
 /// 6: build, run and test.
@@ -411,26 +433,20 @@ fn build(c: *Ctx) !void {
     r = try c.mopm(app, &.{ "build", "src/does_not_exist.mojo", "--prefix", c.o.mojo_env });
     c.check("build of a file that is not there fails", r.code != 0, r);
 
-    // The program that uses the dependency pulled from the registry.
-    if (c.o.pixi != null) {
-        const env = ".mopm/.pixi/envs/default";
-        try h.writeFile(c.path(&.{ app, "src/main.mojo" }), "from beta_lib import greet\n\n\ndef main():\n    print(greet(\"beta\"))\n");
-        const bin = c.path(&.{ c.o.work, "app_bin" });
-        r = try c.mopm(app, &.{ "build", "src/main.mojo", "-o", bin, "--prefix", env });
-        c.check("build links the program against the dependency the registry gave", r.code == 0 and Ctx.exists(bin), r);
-        if (r.code == 0) {
-            const ran = try c.run(bin, app, &.{}, &.{});
-            c.check("the program prints what the published package computes", ran.code == 0 and std.mem.eql(u8, ran.stdout, "Hello, beta!\n"), ran);
-        }
-        r = try c.mopm(app, &.{ "run", "src/main.mojo", "--prefix", env });
-        c.check("run does the same", r.code == 0 and h.contains(r.stdout, "Hello, beta!"), r);
-        r = try c.mopm(app, &.{ "test", "--prefix", env });
-        c.check("test in the package that depends on the registry's package passes", r.code == 0 and h.contains(r.stdout, "passed, 0 failed"), r);
-    } else {
-        c.skip("build and run against the dependency", "no --pixi: the dependency is not installed");
-        r = try c.mopm(app, &.{ "test", "--prefix", c.o.mojo_env });
-        c.check("test in the second package passes", r.code == 0 and h.contains(r.stdout, "passed, 0 failed"), r);
+    // The program that uses the dependency pulled from the registry, built against the environment sync made.
+    const env = ".mopm/env";
+    try h.writeFile(c.path(&.{ app, "src/main.mojo" }), "from beta_lib import greet\n\n\ndef main():\n    print(greet(\"beta\"))\n");
+    const bin = c.path(&.{ c.o.work, "app_bin" });
+    r = try c.mopm(app, &.{ "build", "src/main.mojo", "-o", bin, "--prefix", env });
+    c.check("build links the program against the dependency the registry gave", r.code == 0 and Ctx.exists(bin), r);
+    if (r.code == 0) {
+        const ran = try c.run(bin, app, &.{}, &.{});
+        c.check("the program prints what the published package computes", ran.code == 0 and std.mem.eql(u8, ran.stdout, "Hello, beta!\n"), ran);
     }
+    r = try c.mopm(app, &.{ "run", "src/main.mojo", "--prefix", env });
+    c.check("run does the same", r.code == 0 and h.contains(r.stdout, "Hello, beta!"), r);
+    r = try c.mopm(app, &.{ "test", "--prefix", env });
+    c.check("test in the package that depends on the registry's package passes", r.code == 0 and h.contains(r.stdout, "passed, 0 failed"), r);
 }
 
 /// 6b: a package with its own static library, published into the registry and used as a customer uses it (tests/drivers/user_native.zig).
@@ -439,7 +455,6 @@ fn native(c: *Ctx) !void {
     switch (un.decision()) {
         .skip_waiting_on_arm64 => try un.reportSkip(&c.skipped, std.io.getStdErr().writer()),
         .run => {
-            const pixi = c.o.pixi orelse return c.skip("native package", "no --pixi: the package cannot be installed");
             const zig = c.o.zig orelse return c.skip("native package", "no --zig: the C library cannot be compiled");
             const fixture = c.o.native_fixture orelse return c.skip("native package", "no --native-fixture");
             try un.run(c.a, c.rep, .{
@@ -450,7 +465,8 @@ fn native(c: *Ctx) !void {
                 .session = c.session,
                 .zig = zig,
                 .mojo_env = c.o.mojo_env,
-                .pixi = pixi,
+                .sync_args = c.sync_args,
+                .lay_compiler = c.o.lay_compiler,
                 .env = &c.env,
             });
         },
@@ -514,7 +530,7 @@ fn install(c: *Ctx) !void {
 // ---------------------------------------------------------------------------- main
 
 fn usageDie() noreturn {
-    std.debug.print("usage: user_beta <mopm> <work dir> --version <v> --fake-registry <exe> --mojo-env <prefix> [--tarball <file> --install-sh <file>] [--pixi <exe>] [--zig <exe> --native-fixture <dir>] [--ci]\n", .{});
+    std.debug.print("usage: user_beta <mopm> <work dir> --version <v> --fake-registry <exe> --mojo-env <prefix> [--tarball <file> --install-sh <file>] [--zig <exe> --native-fixture <dir>] [--ci]\n", .{});
     std.process.exit(2);
 }
 
@@ -532,7 +548,6 @@ pub fn main() !void {
     var mojo: ?[]const u8 = null;
     var tarball: ?[]const u8 = null;
     var installer: ?[]const u8 = null;
-    var pixi: ?[]const u8 = null;
     var zig: ?[]const u8 = null;
     var fixture: ?[]const u8 = null;
     var ci = false;
@@ -555,8 +570,6 @@ pub fn main() !void {
             tarball = v;
         } else if (std.mem.eql(u8, argv[i], "--install-sh")) {
             installer = v;
-        } else if (std.mem.eql(u8, argv[i], "--pixi")) {
-            pixi = v;
         } else if (std.mem.eql(u8, argv[i], "--zig")) {
             zig = v;
         } else if (std.mem.eql(u8, argv[i], "--native-fixture")) {
@@ -566,7 +579,6 @@ pub fn main() !void {
     if (version == null or fake == null or mojo == null) usageDie();
     if ((tarball == null) != (installer == null)) usageDie();
     try std.fs.cwd().makePath(argv[2]);
-    // pixi is found on PATH by mopm; the child needs a name it can run, not an absolute path.
     var rep = h.Report{};
     try run(a, &rep, .{
         .mopm = try absolute(a, argv[1]),
@@ -576,7 +588,6 @@ pub fn main() !void {
         .mojo_env = try absolute(a, mojo.?),
         .tarball = if (tarball) |t| try absolute(a, t) else null,
         .install_sh = if (installer) |s| try absolute(a, s) else null,
-        .pixi = pixi,
         .zig = zig,
         .native_fixture = if (fixture) |f| try absolute(a, f) else null,
         .ci = ci,

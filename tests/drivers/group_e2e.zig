@@ -2,7 +2,7 @@
 //! `group-e2e` job of .github/workflows/e2e.yml after that stage's deploy, or by hand with workflow_dispatch.
 //!
 //!     mopm-group-e2e --stage beta|gamma [--registry <name|url>] --mopm <exe> --work <dir> --run-id <n> --attempt <n>
-//!                    --pixi <exe> [--pixi-manifest <pixi.toml> | --mojo-env <prefix>]
+//!                    --mojo-env <prefix> [--toolchain <closure.json> --cache <dir>]
 //!                    [--summary <file>] [--wait-seconds <n>]
 //!
 //! The token is the environment variable MOPM_E2E_TOKEN (the job maps the repository secret MOPM_E2E_GROUP_TOKEN to
@@ -11,8 +11,11 @@
 //! secret holds either a single token or a token for each stage, `beta=<token>` and `gamma=<token>` on lines of their
 //! own (tokenFor): a stage with no entry skips.
 //!
-//! This is the path of a person who publishes a workspace, run with the real CLI, the real Mojo toolchain and the
-//! real pixi. The e2e account owns a fixed set of throwaway packages (zz_e2e_core, zz_e2e_mid, zz_e2e_app; the
+//! This is the path of a person who publishes a workspace, run with the real CLI and the real Mojo toolchain.
+//! --mojo-env names the Mojo environment that precompiles the packages and builds the README program (the job makes it with
+//! `mopm sync --locked` in tests/mojo_env). `mopm sync --overlay` makes the environment of the consumer by itself, the Mojo
+//! toolchain included; it needs no option on a runner with a network. --toolchain and --cache are forwarded to that sync
+//! (`mopm sync --toolchain <closure.json> --cache <dir>`), for a machine with no network, where the closure is a stand-in. The e2e account owns a fixed set of throwaway packages (zz_e2e_core, zz_e2e_mid, zz_e2e_app; the
 //! package name pattern has no hyphen, so the namespace is spelled zz_e2e_*), and the token lists exactly those. A
 //! version is never deleted, so every run uses numbers no run has used: MAJOR is the case, MINOR the run id of the
 //! workflow run and PATCH its attempt.
@@ -43,11 +46,11 @@
 //! A skip has two causes and no more: the secret holds no token for the stage, or the registry says (route_not_found
 //! to the probe) that groups are off for the actor. Both end the run with a SKIP line in the job summary and a
 //! workflow warning annotation that names the reason. With a token and groups on, nothing is skipped: a missing
-//! piece of the toolchain (--mopm, --pixi, a Mojo environment) is a failed check.
+//! piece of the toolchain (--mopm, a Mojo environment) is a failed check.
 //!
 //! The pure parts (the version numbers, the dependency ranges, the time arithmetic, the environments of a child, the
 //! README program) are unit tests below; tests/drivers/group_e2e_test.zig runs the whole walk against a loopback registry that
-//! serves the group routes, with the farm's Mojo toolchain and a stand-in pixi, and with each way the registry could go wrong.
+//! serves the group routes, with the farm's Mojo toolchain (or a stand-in compiler) and a stand-in toolchain closure for the sync, and with each way the registry could go wrong.
 
 const std = @import("std");
 const core = @import("mopm_core");
@@ -129,7 +132,7 @@ fn withheld(name: []const u8) bool {
     return false;
 }
 
-/// The environment of a child that runs the toolchain (mojo, pixi, `mopm sync` and `mopm build`, the program built): the
+/// The environment of a child that runs the toolchain (mojo, `mopm sync` and `mopm build`, the program built): the
 /// parent's, because the compiler and the linker need what the runner set up (HOME, TMPDIR, the library path), without the
 /// token and without the credentials the runner holds.
 pub fn toolEnv(a: Allocator, parent: *const std.process.EnvMap) !std.process.EnvMap {
@@ -432,14 +435,15 @@ pub const Opts = struct {
     clock: Clock = .{},
     /// The environment of this process: what the toolchain children start from, and the PATH of the others.
     parent_env: ?*const std.process.EnvMap = null,
-    /// pixi: `mopm sync` installs through it, and, with no `mojo_env`, it creates the Mojo environment from `pixi_manifest`.
-    pixi: ?[]const u8 = null,
-    pixi_manifest: ?[]const u8 = null,
-    /// A Mojo environment that exists (`bin/mojo`, `lib/mojo`): then no environment is created.
+    /// `--toolchain` and `--cache` of the `mopm sync` of the overlay step: a closure file in place of the pinned one, and where
+    /// its files are kept. Null: sync's own (the pinned closure, the user's cache).
+    sync_toolchain: ?[]const u8 = null,
+    sync_cache: ?[]const u8 = null,
+    /// The Mojo environment (`bin/mojo`, `lib/mojo`) that precompiles the packages. Null is a failed check: nothing here creates one.
     mojo_env: ?[]const u8 = null,
     /// Packages already built: `<dir>/linux-64/<name>.mojoc` for the three. Then none is precompiled.
     prebuilt: ?[]const u8 = null,
-    /// Lays the Mojo toolchain into the environment `mopm sync` made, for a stand-in pixi that installs packages and nothing else.
+    /// Lays the Mojo toolchain into the environment `mopm sync` made, for a sync whose toolchain closure is a stand-in that installs no compiler.
     after_sync: ?*const fn (Allocator, []const u8) anyerror!void = null,
 };
 
@@ -675,36 +679,15 @@ fn probeStep(cx: *Cx) !bool {
     return true;
 }
 
-/// The Mojo environment: the one given, or one pixi creates from the manifest. Null (a failed check says why) when there is none.
+/// The Mojo environment: the one given. Null (a failed check says why) when there is none.
 fn toolchain(cx: *Cx) !?[]const u8 {
     if (cx.mojo_prefix) |p| return p;
     if (cx.o.mojo_env) |p| {
         cx.mojo_prefix = p;
         return p;
     }
-    const pixi = cx.o.pixi orelse {
-        cx.fail("toolchain: --pixi (or --mojo-env) names the Mojo environment", "neither was given");
-        return null;
-    };
-    const manifest = cx.o.pixi_manifest orelse {
-        cx.fail("toolchain: --pixi-manifest names the Mojo environment pixi creates", "no --pixi-manifest");
-        return null;
-    };
-    const dir = try cx.join(&.{ cx.o.work, "mojo-env" });
-    const toml = try cx.join(&.{ dir, "pixi.toml" });
-    h.writeFile(toml, try h.readFile(cx.a, manifest)) catch |e| {
-        cx.fail("toolchain: the pixi manifest is copied", @errorName(e));
-        return null;
-    };
-    const ran = try cx.toolRun(null, &.{ pixi, "install", "--manifest-path", toml });
-    cx.check("toolchain: pixi creates the Mojo environment", ran.code == 0 and !ran.signaled, tailOf(ran.text));
-    if (ran.code != 0 or ran.signaled) {
-        cx.stop = true;
-        return null;
-    }
-    const prefix = try cx.join(&.{ dir, ".pixi", "envs", "default" });
-    cx.mojo_prefix = prefix;
-    return prefix;
+    cx.fail("toolchain: --mojo-env names the Mojo environment", "no --mojo-env");
+    return null;
 }
 
 /// The `.mojoc` of the three packages (`<dir>/linux-64/<name>.mojoc`): the ones given, or built once with the toolchain. Null (a
@@ -809,16 +792,16 @@ fn overlayStep(cx: *Cx, label: []const u8, staged: []const u8, pkgs: []const Pkg
     const lock_text = h.readFile(cx.a, try cx.join(&.{ dir, "mopm.lock" })) catch "";
     try lockCheck(cx, "overlay", pkgs, lock_text, false);
 
-    const pixi = cx.o.pixi orelse {
-        cx.fail(try std.fmt.allocPrint(cx.a, "{s}: --pixi names pixi, which mopm sync installs through", .{label}), "no --pixi");
-        return lock_text;
-    };
     const mopm = cx.o.mopm orelse return lock_text;
-    ran = try cx.toolRun(dir, &.{ mopm, "sync", "--locked", "--overlay", staged, "--registry", cx.o.base, "--pixi", pixi });
+    var sync_argv = std.ArrayList([]const u8).init(cx.a);
+    try sync_argv.appendSlice(&.{ mopm, "sync", "--locked", "--overlay", staged, "--registry", cx.o.base });
+    if (cx.o.sync_toolchain) |f| try sync_argv.appendSlice(&.{ "--toolchain", f });
+    if (cx.o.sync_cache) |d| try sync_argv.appendSlice(&.{ "--cache", d });
+    ran = try cx.toolRun(dir, sync_argv.items);
     const want = try std.fmt.allocPrint(cx.a, "read {d} packages from the staged set", .{pkgs.len});
     cx.check(try std.fmt.allocPrint(cx.a, "{s}: mopm sync --overlay installs the whole set from the staged set", .{label}), ran.code == 0 and h.contains(ran.text, want), tailOf(ran.text));
     if (ran.code != 0) return lock_text;
-    const env = try cx.join(&.{ dir, ".mopm", ".pixi", "envs", "default" });
+    const env = try cx.join(&.{ dir, ".mopm", "env" });
     if (cx.o.after_sync) |lay| {
         lay(cx.a, env) catch |e| {
             cx.fail(try std.fmt.allocPrint(cx.a, "{s}: the toolchain is laid into the environment", .{label}), @errorName(e));
@@ -1324,7 +1307,8 @@ pub fn run(a: Allocator, rep: *h.Report, given: Opts) !Result {
     var o = given;
     o.work = try absolute(a, o.work);
     if (o.mopm) |p| o.mopm = try absolute(a, p);
-    if (o.pixi) |p| o.pixi = try absolute(a, p);
+    if (o.sync_toolchain) |p| o.sync_toolchain = try absolute(a, p);
+    if (o.sync_cache) |p| o.sync_cache = try absolute(a, p);
     if (o.mojo_env) |p| o.mojo_env = try absolute(a, p);
     if (o.prebuilt) |p| o.prebuilt = try absolute(a, p);
     var cx = Cx{ .a = a, .rep = rep, .o = o, .notes = std.ArrayList([]const u8).init(a), .empty = std.process.EnvMap.init(a) };
@@ -1410,7 +1394,7 @@ pub fn appendTo(path: []const u8, text: []const u8) !void {
 
 // ---- the command line -----------------------------------------------------------------------------------------------
 
-const usage = "usage: mopm-group-e2e --stage beta|gamma --mopm <exe> --work <dir> --run-id <n> --attempt <n> --pixi <exe> [--pixi-manifest <pixi.toml> | --mojo-env <prefix>] [--registry <name|url>] [--summary <file>] [--wait-seconds <n>]\n";
+const usage = "usage: mopm-group-e2e --stage beta|gamma --mopm <exe> --work <dir> --run-id <n> --attempt <n> --mojo-env <prefix> [--toolchain <closure.json> --cache <dir>] [--registry <name|url>] [--summary <file>] [--wait-seconds <n>]\n";
 
 /// The command line, flag by flag; null when it is not one this program takes.
 pub const Args = struct {
@@ -1423,9 +1407,10 @@ pub const Args = struct {
     attempt: u64,
     summary: ?[]const u8 = null,
     wait_seconds: u64 = 600,
-    pixi: ?[]const u8 = null,
-    pixi_manifest: ?[]const u8 = null,
     mojo_env: ?[]const u8 = null,
+    /// `--toolchain` and `--cache`, forwarded to `mopm sync`.
+    toolchain: ?[]const u8 = null,
+    cache: ?[]const u8 = null,
 };
 
 pub fn parseArgs(argv: []const []const u8) ?Args {
@@ -1455,10 +1440,10 @@ pub fn parseArgs(argv: []const []const u8) ?Args {
             out.summary = value;
         } else if (std.mem.eql(u8, flag, "--wait-seconds")) {
             out.wait_seconds = std.fmt.parseInt(u64, value, 10) catch return null;
-        } else if (std.mem.eql(u8, flag, "--pixi")) {
-            out.pixi = value;
-        } else if (std.mem.eql(u8, flag, "--pixi-manifest")) {
-            out.pixi_manifest = value;
+        } else if (std.mem.eql(u8, flag, "--toolchain")) {
+            out.toolchain = value;
+        } else if (std.mem.eql(u8, flag, "--cache")) {
+            out.cache = value;
         } else if (std.mem.eql(u8, flag, "--mojo-env")) {
             out.mojo_env = value;
         } else return null;
@@ -1495,8 +1480,8 @@ pub fn main() !void {
         .summary = args.summary,
         .wait_ms = args.wait_seconds * 1000,
         .parent_env = &env,
-        .pixi = args.pixi,
-        .pixi_manifest = args.pixi_manifest,
+        .sync_toolchain = args.toolchain,
+        .sync_cache = args.cache,
         .mojo_env = args.mojo_env,
     });
     std.debug.print("{s}\n", .{result.line});

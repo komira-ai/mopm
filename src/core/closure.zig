@@ -70,6 +70,16 @@ pub const Closure = struct {
     packages: []const Package,
 };
 
+/// True when `s` can be one component of a path and one part of a file name:
+/// not empty, not "." or "..", with no '/', '\\', NUL or other control byte.
+pub fn safeComponent(s: []const u8) bool {
+    if (s.len == 0 or std.mem.eql(u8, s, ".") or std.mem.eql(u8, s, "..")) return false;
+    for (s) |ch| {
+        if (ch == '/' or ch == '\\' or ch < 0x20 or ch == 0x7f) return false;
+    }
+    return true;
+}
+
 /// The file name of a package: the last part of its path.
 pub fn fileName(p: Package) []const u8 {
     return std.fs.path.basename(p.path);
@@ -116,6 +126,16 @@ pub fn problem(arena: Allocator, c: Closure) Allocator.Error!?[]const u8 {
     for (c.packages) |p| {
         if (p.name.len == 0 or p.version.len == 0 or p.build.len == 0)
             return try std.fmt.allocPrint(arena, "a package has no name, version or build ({s})", .{p.path});
+        const fields = [_]struct { what: []const u8, value: []const u8 }{
+            .{ .what = "name", .value = p.name },
+            .{ .what = "version", .value = p.version },
+            .{ .what = "build", .value = p.build },
+            .{ .what = "file name", .value = fileName(p) },
+        };
+        for (fields) |f| {
+            if (!safeComponent(f.value))
+                return try std.fmt.allocPrint(arena, "a package's {s} '{}' is not a safe file name part (no '/', '\\', control characters, '.' or '..')", .{ f.what, std.zig.fmtEscapes(f.value) });
+        }
         if ((try names.fetchPut(p.name, {})) != null)
             return try std.fmt.allocPrint(arena, "{s} is listed twice", .{p.name});
         if (!isHex64(p.sha256)) return try std.fmt.allocPrint(arena, "{s}: sha256 is not 64 lowercase hex digits", .{p.name});
@@ -636,9 +656,9 @@ test "problem: what the installer relies on" {
     try std.testing.expectEqual(@as(?[]const u8, null), try problem(a, c));
 
     var bad = c;
-    bad.channels = &.{.{ .name = "max", .url = "http://conda.example/max/" }, .{ .name = "conda-forge", .url = "https://conda.anaconda.org/conda-forge/" }};
+    bad.channels = &.{ .{ .name = "max", .url = "http://conda.example/max/" }, .{ .name = "conda-forge", .url = "https://conda.anaconda.org/conda-forge/" } };
     try std.testing.expect((try problem(a, bad)) != null);
-    bad.channels = &.{.{ .name = "max", .url = "https://conda.modular.com/max" }, .{ .name = "conda-forge", .url = "https://conda.anaconda.org/conda-forge/" }};
+    bad.channels = &.{ .{ .name = "max", .url = "https://conda.modular.com/max" }, .{ .name = "conda-forge", .url = "https://conda.anaconda.org/conda-forge/" } };
     try std.testing.expect((try problem(a, bad)) != null);
 
     // A mirror is a channel url change and nothing else.
@@ -656,6 +676,51 @@ test "problem: what the installer relies on" {
     pk.path = "linux-64/other.conda";
     wrong_path.packages = &.{ pk, c.packages[1], c.packages[2] };
     try std.testing.expect((try problem(a, wrong_path)) != null);
+}
+
+test "safeComponent: one plain path component, nothing else" {
+    try std.testing.expect(safeComponent("libfoo"));
+    try std.testing.expect(safeComponent("1.2.3+cu12"));
+    try std.testing.expect(safeComponent("h1_3"));
+    try std.testing.expect(safeComponent(".hidden"));
+    try std.testing.expect(!safeComponent(""));
+    try std.testing.expect(!safeComponent("."));
+    try std.testing.expect(!safeComponent(".."));
+    try std.testing.expect(!safeComponent("../../x"));
+    try std.testing.expect(!safeComponent("a/b"));
+    try std.testing.expect(!safeComponent("a\\b"));
+    try std.testing.expect(!safeComponent("a\x00b"));
+    try std.testing.expect(!safeComponent("a\nb"));
+    try std.testing.expect(!safeComponent("a\x7fb"));
+}
+
+test "problem: a package name, version, build or file name that is not a plain component is refused" {
+    var st = testArena();
+    defer st.deinit();
+    const a = st.allocator();
+    const c = try parse(a, sample_json);
+
+    const Case = struct { field: enum { name, version, build, path }, value: []const u8, message: []const u8 };
+    const cases = [_]Case{
+        .{ .field = .name, .value = "../../x", .message = "a package's name '../../x' is not a safe file name part (no '/', '\\', control characters, '.' or '..')" },
+        .{ .field = .version, .value = "1/2", .message = "a package's version '1/2' is not a safe file name part (no '/', '\\', control characters, '.' or '..')" },
+        .{ .field = .build, .value = "a/b", .message = "a package's build 'a/b' is not a safe file name part (no '/', '\\', control characters, '.' or '..')" },
+        .{ .field = .name, .value = "..", .message = "a package's name '..' is not a safe file name part (no '/', '\\', control characters, '.' or '..')" },
+        .{ .field = .version, .value = "1\x00", .message = "a package's version '1\\x00' is not a safe file name part (no '/', '\\', control characters, '.' or '..')" },
+        .{ .field = .path, .value = "linux-64/..", .message = "a package's file name '..' is not a safe file name part (no '/', '\\', control characters, '.' or '..')" },
+    };
+    for (cases) |case| {
+        var pk = c.packages[0];
+        switch (case.field) {
+            .name => pk.name = case.value,
+            .version => pk.version = case.value,
+            .build => pk.build = case.value,
+            .path => pk.path = case.value,
+        }
+        var bad = c;
+        bad.packages = &.{ pk, c.packages[1], c.packages[2] };
+        try std.testing.expectEqualStrings(case.message, (try problem(a, bad)).?);
+    }
 }
 
 test "alarms: the same file with other bytes is reported; a new version is not" {

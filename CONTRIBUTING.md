@@ -30,8 +30,11 @@ Two builds describe the same program, and both stay.
   The Zig drivers in `tests/drivers` run the built programs: `//:golden` (the
   golden files; it replaced `tests/run_golden.sh`), `//:registry_login` and
   `//:registry_publish` (the former `tests/registry_e2e/*.py`), `//:group_publish` (`mopm publish --staged` and `mopm yank --group` against the fake registry), `//:stage` (`mopm stage` against the fake registry, and `publish --staged` on its output), `//:install_e2e`
-  (`mopm sync`, the former `tests/install_e2e/run.py`; pixi is
-  `tests/drivers/fake_pixi.zig` there), `//:gen_errors_current` (the committed
+  (`mopm sync`, then `mopm build` and `run` with the real Mojo; the former `tests/install_e2e/run.py`), `//:sync_e2e` (`mopm sync`
+  installing the environment itself with no pixi on `PATH`: pinned bytes only, a current environment downloads nothing, a mirror
+  closure, a failed install leaves the old environment; on every pull request), `//:sync_state_e2e`, `//:sync_refuse_e2e`
+  and `//:sync_cache_e2e` (`mopm sync` against a moved, damaged, interrupted or concurrently synced project; each refusal and
+  what it leaves; the cache layout, system libraries and conflicting paths; on every pull request), `//:gen_errors_current` (the committed
   `registry/fake/errors.zig` is what `./buck2 run //:gen_errors -- spec/api/openapi.yaml registry/fake/errors.zig`
   makes of the spec; the former `gen_errors.py`), and the
   contract checks: `//:contract` (the OpenAPI
@@ -54,14 +57,15 @@ Two builds describe the same program, and both stay.
   the built `mopm`; `//:mojo_probe` shows the toolchain works from this cell.
   `//:group_e2e` is the check that the `group-e2e` job of `e2e.yml` runs against a deployed stage (`mojo precompile`, `mopm stage`, an
   `--overlay` install and the README's program, `mopm publish --staged`, a rejected member, yank), here against a loopback registry:
-  with a stand-in compiler (`tests/drivers/fake_toolchain.zig`) and a stand-in pixi it is a unit test; `//:group_e2e_mojo` is the same file
+  with a stand-in compiler (`tests/drivers/fake_toolchain.zig`) and a stand-in toolchain closure for `mopm sync --toolchain`
+  (`tests/drivers/conda_pkg.zig`) it is a unit test; `//:group_e2e_mojo` is the same file
   with the real Mojo 1.0.0 (beta tier, not built for a pull request).
   `//:native_static` (farm only, with `tests/drivers/mojo_compile_shim.zig` as the toolchain's `mojo_compile`) takes a
   static archive in an empty-module package from `mopm pack` and `mopm lock` to a test linked by `mopm unit test`.
   `//:native_workspace` is the walk of a user whose workspace member ships its own C library (`[native.<id>]` with `srcs`, fixture
   `tests/e2e/natws`) and whose other package links it: `mopm lock` and `mopm plan --unit-graph`, the native built from its C sources,
   `mopm unit build` of the libraries and the program, `mopm pack`, and an `--overlay` install of the packed set in a fresh project where
-  the program is built and run again. With a stand-in compiler and pixi it is a unit test (the graph, the C build, the link line, the
+  the program is built and run again. With a stand-in compiler and toolchain closure it is a unit test (the graph, the C build, the link line, the
   archive in the install, the lock); `//:native_workspace_mojo` is the same file with the real Mojo 1.0.0 and checks the values the
   program prints (beta tier, not built for a pull request).
   `//:build_targets` is `mopm build` of a package (fixture `tests/e2e/pathdep`): with no program it makes the library as a `.mojoc`
@@ -71,8 +75,8 @@ Two builds describe the same program, and both stay.
   The same drivers run natively on the GitHub runners (Linux x86_64, Linux
   aarch64, macOS arm64) from `ci.yml`: `zig build test-autolink`,
   `test-discovery`, `test-supervisor`, `test-flaky`, `test-native-workspace` and `test-build-targets` (`test-e2e` runs all
-  six) with `-Dmojo-env=<pixi environment>` (`tests/e2e/pixi.toml`, mojo
-  1.0.0) and the system C compiler.
+  six) with `-Dmojo-env=tests/mojo_env/.mopm/env`, the environment `mopm sync --locked` makes in `tests/mojo_env` (mojo
+  1.0.0, no pixi), and the system C compiler.
   The pinned compiler closure has no lldb, so `mojo repl` cannot run there and
   the REPL checks print `SKIP` (they run if the toolchain gains
   `bin/mojo-lldb`), so the REPL is not exercised in CI until then.
