@@ -250,7 +250,9 @@ fn install(arena: Allocator, whole: lock.Lock, args: Args, staged: ?overlay.Over
             err(.sync, "{s}\n", .{why});
             return 1;
         }
-        var cache = cwd.makeOpenPath(cache_path, .{}) catch |e| {
+        // The directory that was checked, not `cache_path` again: the two can differ when `..` follows a symbolic link.
+        const cache_real = try sync_cache.resolve(arena, cwd, cache_path);
+        var cache = cwd.makeOpenPath(cache_real, .{}) catch |e| {
             err(.sync, "cannot make the cache directory {s}: {s}\n", .{ cache_path, @errorName(e) });
             return 1;
         };

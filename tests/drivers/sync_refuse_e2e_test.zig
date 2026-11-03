@@ -122,6 +122,13 @@ test "a locked package that ships a toolchain file with other contents is refuse
     try c.publish("linked", linked);
     const twin = try fx.packageOf(a, c.subdir, "twin", &.{.{ .path = mojo_bin.path, .data = mojo_bin.data, .mode = mojo_bin.mode }});
     try c.publish("twin", twin);
+    // The same file under another spelling, which a check comparing path strings would not see.
+    const dotted_path = try c.fmt("bin/./{s}", .{mojo_bin.path["bin/".len..]});
+    const dotted = try fx.packageOf(a, c.subdir, "dotted", &.{.{ .path = dotted_path, .data = "#!/bin/sh\necho not the compiler\n", .mode = 0o755 }});
+    try c.publish("dotted", dotted);
+    // The toolchain's bytes, but not executable: it would leave a compiler that cannot run.
+    const plain = try fx.packageOf(a, c.subdir, "plain", &.{.{ .path = mojo_bin.path, .data = mojo_bin.data, .mode = 0o644 }});
+    try c.publish("plain", plain);
 
     for ([_][]const u8{ "clash", "linked" }) |name| {
         _ = try c.project("app", try c.fmt("greet = \"1\"\n{s} = \"1\"", .{name}));
@@ -132,8 +139,20 @@ test "a locked package that ships a toolchain file with other contents is refuse
         untouched(c, b, name);
     }
 
+    _ = try c.project("app", "greet = \"1\"\ndotted = \"1\"");
+    var r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t2 }));
+    rep.same("dotted ships bin/./mojo: the refusal", try c.fmt("mopm sync: cannot install into .mopm/env: the package holds the path '{s}', which has a '.' component; a path is written one way only; the environment is as it was\n", .{dotted_path}), r.stderr);
+    rep.check("dotted ships bin/./mojo: exit 1", r.code == 1, c.detail(r));
+    untouched(c, b, "dotted");
+
+    _ = try c.project("app", "greet = \"1\"\nplain = \"1\"");
+    r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t2 }));
+    rep.same("plain ships bin/mojo with the same bytes but not executable: the refusal", "mopm sync: cannot install into .mopm/env: bin/mojo is installed by both mojo 1.0.0 and mojo-plain 1.0.0 with different permissions; refused; the environment is as it was\n", r.stderr);
+    rep.check("plain ships bin/mojo not executable: exit 1", r.code == 1, c.detail(r));
+    untouched(c, b, "plain");
+
     _ = try c.project("app", "greet = \"1\"\ntwin = \"1\"");
-    const r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t2 }));
+    r = try c.run(b.app, try c.cat(&.{ &.{"sync"}, b.reg, b.with_t2 }));
     rep.check("twin ships bin/mojo with the toolchain's bytes: accepted, the file is the toolchain's", r.code == 0 and r.stderr.len == 0 and
         std.mem.eql(u8, c.read(b.env_dir, "bin/mojo") orelse "", mojo_bin.data) and c.exists(b.env_dir, "lib/libtwin.so"), c.detail(r));
     try rep.finish();

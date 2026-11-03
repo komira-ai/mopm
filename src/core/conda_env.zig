@@ -5,9 +5,12 @@
 //! before it replaces anything:
 //!
 //! - `recover` (first, under the caller's lock) finishes what an interrupted
-//!   run left beside the target: a backup `.<env>.old-*` is put back when the
-//!   target is missing, temporary `.<env>.tmp-*` directories and, once the
-//!   target exists, backups are deleted.
+//!   run left beside the target: when the target is missing, the latest backup
+//!   `.<env>.old-<n>` (the highest `n`; `commit` numbers each backup one past
+//!   the highest there) is put back; temporary `.<env>.tmp-*` directories and,
+//!   once the target exists, the older backups are deleted. When it cannot
+//!   tell which backup is the latest (two or more, one not numbered) it keeps
+//!   them all and says so.
 //! - `stage` builds the new environment in `.<env>.tmp-<rand>` beside the
 //!   target. The files are unpacked by core/conda_unpack.zig with the prefix
 //!   placeholders pointing at the target's own path; each package gets the
@@ -19,7 +22,8 @@
 //!   packages' own `info/` files, licences and notes, are the one exception:
 //!   the last package wins).
 //! - `commit` swaps the candidate in with renames: the target is moved to a
-//!   backup, the candidate becomes the target, the backup is deleted. If the
+//!   backup `.<env>.old-<n>`, the candidate becomes the target, the backup is
+//!   deleted. If the
 //!   second rename fails the backup is renamed back; if that fails too the
 //!   backup stays and the message names it, for the next `recover`.
 //! - `discard` deletes a candidate that was not committed.
@@ -140,6 +144,29 @@ fn tempName(arena: Allocator, env_name: []const u8, kind: []const u8) ![]u8 {
     return std.fmt.allocPrint(arena, ".{s}.{s}-{s}", .{ env_name, kind, std.fmt.bytesToHex(r, .lower) });
 }
 
+/// The number of the backup `name` (`.<env_name>.old-<n>`), or null when it is not numbered.
+fn backupNumber(env_name: []const u8, name: []const u8) ?u64 {
+    const digits = name[env_name.len + ".".len + ".old-".len ..];
+    if (digits.len == 0) return null;
+    for (digits) |ch| if (!std.ascii.isDigit(ch)) return null;
+    return std.fmt.parseInt(u64, digits, 10) catch null;
+}
+
+/// A name for the next backup of `env_name`: numbered one past the highest backup in `parent`, so that a later backup
+/// always has a higher number than one an earlier run failed to delete.
+fn backupName(arena: Allocator, parent: std.fs.Dir, env_name: []const u8) ![]u8 {
+    const prefix = try std.fmt.allocPrint(arena, ".{s}.old-", .{env_name});
+    var next: u64 = 1;
+    var listing = try parent.openDir(".", .{ .iterate = true });
+    defer listing.close();
+    var it = listing.iterate();
+    while (try it.next()) |e| {
+        if (!std.mem.startsWith(u8, e.name, prefix)) continue;
+        if (backupNumber(env_name, e.name)) |n| next = @max(next, n +| 1);
+    }
+    return std.fmt.allocPrint(arena, "{s}{d:0>12}", .{ prefix, next });
+}
+
 /// The file of an environment that holds its stamp: the caller's digest of
 /// what was installed (core/install.zig `stampOf`).
 pub const stamp_file = "conda-meta/mopm-stamp";
@@ -192,29 +219,49 @@ pub fn recoverWith(ops: anytype, arena: Allocator, parent: std.fs.Dir, env_name:
             if (std.mem.startsWith(u8, e.name, old_prefix)) try olds.append(try arena.dupe(u8, e.name));
         }
     }
+    // Sorted only so that messages list them the same way every time; the order of the backups is their numbers.
     std.mem.sort([]const u8, olds.items, {}, struct {
         fn less(_: void, x: []const u8, y: []const u8) bool {
             return std.mem.lessThan(u8, x, y);
         }
     }.less);
-
     var warnings = std.ArrayList([]const u8).init(arena);
     var out = Recovered{};
     var have_env = exists(parent, env_name);
-    var kept: usize = olds.items.len;
+    // The backup to put back: the only one, or the highest numbered when every one is numbered.
+    var latest: ?usize = if (olds.items.len == 1) 0 else null;
+    if (olds.items.len > 1) {
+        var best: u64 = 0;
+        for (olds.items, 0..) |n, i| {
+            const num = backupNumber(env_name, n) orelse {
+                latest = null;
+                break;
+            };
+            if (latest == null or num > best) {
+                latest = i;
+                best = num;
+            }
+        }
+    }
+    var restored: ?usize = null;
     if (!have_env and olds.items.len > 0) {
-        const newest = olds.items[olds.items.len - 1];
-        if (ops.rename(parent, newest, env_name)) {
-            out.restored = newest;
-            have_env = true;
-            kept -= 1;
-        } else |e| {
-            try warnings.append(try std.fmt.allocPrint(arena, "cannot put {s} back as {s}: {s}", .{ newest, env_name, @errorName(e) }));
+        if (latest) |i| {
+            if (ops.rename(parent, olds.items[i], env_name)) {
+                out.restored = olds.items[i];
+                restored = i;
+                have_env = true;
+            } else |e| {
+                try warnings.append(try std.fmt.allocPrint(arena, "cannot put {s} back as {s}: {s}", .{ olds.items[i], env_name, @errorName(e) }));
+            }
+        } else {
+            try warnings.append(try std.fmt.allocPrint(arena, "cannot tell which of {s} is the latest {s}, so all are kept; rename that one to {s}", .{ try std.mem.join(arena, ", ", olds.items), env_name, env_name }));
         }
     }
     for (tmps.items) |n| try deleteQuietly(ops, arena, parent, n, &warnings);
     if (have_env) {
-        for (olds.items[0..kept]) |n| try deleteQuietly(ops, arena, parent, n, &warnings);
+        for (olds.items, 0..) |n, i| {
+            if (restored != i) try deleteQuietly(ops, arena, parent, n, &warnings);
+        }
     }
     out.warnings = warnings.items;
     return out;
@@ -238,7 +285,15 @@ const Owner = struct {
     pkg: usize,
     kind: @TypeOf(@as(unpack.PathEntry, undefined).kind),
     sha256: []const u8,
+    /// Whether the file was executable as that package left it.
+    exec: bool,
 };
+
+/// Whether the regular file `rel` in `dir` has an execute bit; false for anything else or what cannot be read.
+fn executable(dir: std.fs.Dir, rel: []const u8) bool {
+    const st = dir.statFile(rel) catch return false;
+    return st.kind == .file and st.mode & 0o111 != 0;
+}
 
 fn contentSha(p: unpack.PathEntry) []const u8 {
     return if (p.sha256_in_prefix.len > 0) p.sha256_in_prefix else p.sha256;
@@ -311,13 +366,14 @@ pub fn stage(arena: Allocator, parent: std.fs.Dir, env_name: []const u8, prefix:
             // `info/` holds a package's own licences and notes, which many conda-forge packages ship under the same
             // names with different texts, and conda lets the last one win; no program reads them.
             if (std.mem.startsWith(u8, p.path, "info/")) continue;
-            const mine = Owner{ .pkg = index, .kind = p.kind, .sha256 = contentSha(p) };
+            // The mode is read now, before a later package can replace the file: it is part of what the package installs.
+            const mine = Owner{ .pkg = index, .kind = p.kind, .sha256 = contentSha(p), .exec = p.kind == .file and executable(tmp, p.path) };
             const prev = (try owners.fetchPut(p.path, mine)) orelse continue;
             const other = prev.value;
             const same = other.kind == .file and mine.kind == .file and mine.sha256.len > 0 and std.mem.eql(u8, other.sha256, mine.sha256);
-            if (!same) {
+            if (!same or other.exec != mine.exec) {
                 const a = pkgs[other.pkg];
-                diag.message = try std.fmt.allocPrint(arena, "{s} is installed by both {s} {s} and {s} {s} with different contents; refused", .{ p.path, a.name, a.version, pkg.name, pkg.version });
+                diag.message = try std.fmt.allocPrint(arena, "{s} is installed by both {s} {s} and {s} {s} with different {s}; refused", .{ p.path, a.name, a.version, pkg.name, pkg.version, if (same) "permissions" else "contents" });
                 return error.PathConflict;
             }
         }
@@ -360,7 +416,7 @@ pub fn commitWith(ops: anytype, arena: Allocator, parent: std.fs.Dir, env_name: 
         };
         return .{};
     }
-    const old_name = try tempName(arena, env_name, "old");
+    const old_name = try backupName(arena, parent, env_name);
     ops.rename(parent, env_name, old_name) catch |e| {
         diag.message = try std.fmt.allocPrint(arena, "cannot move {s} aside: {s}", .{ env_name, @errorName(e) });
         return e;

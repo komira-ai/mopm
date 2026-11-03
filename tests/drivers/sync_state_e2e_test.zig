@@ -146,6 +146,16 @@ test "a backup with no environment is put back by the next sync, and stays when 
     rep.check("the failing sync leaves the restored environment and no backup", r.code == 1 and std.mem.eql(u8, try c.fingerprint(b.env_dir), b.print) and
         std.mem.eql(u8, try c.names(dot_mopm), fx.beside), try c.names(dot_mopm));
 
+    // Two backups: a stale one an earlier sync failed to delete, and the environment a cut sync moved aside after it.
+    // The later has the higher number, though it sorts first as text; it is the one put back.
+    try fs.cwd().makePath(c.path(&.{ dot_mopm, ".env.old-9", "lib" }));
+    try h.writeFile(c.path(&.{ dot_mopm, ".env.old-9", "lib/stale" }), "stale");
+    try fs.cwd().rename(b.env_dir, c.path(&.{ dot_mopm, ".env.old-10" }));
+    r = try c.run(b.app, try c.cat(&.{ &.{ "sync", "--locked" }, b.with_t }));
+    rep.same("of two backups the higher numbered is put back", "mopm sync: restored .mopm/env from .mopm/.env.old-10\n", r.stderr);
+    rep.check("the environment put back is the previous one, and the stale backup is gone", r.code == 0 and h.contains(r.stdout, ".mopm/env is current") and
+        std.mem.eql(u8, try c.fingerprint(b.env_dir), b.print) and std.mem.eql(u8, try c.names(dot_mopm), fx.beside), c.detail(r));
+
     // A backup beside a live environment is stale: removed, nothing restored.
     try fs.cwd().makePath(c.path(&.{ dot_mopm, backup, "lib" }));
     try h.writeFile(c.path(&.{ dot_mopm, backup, "lib/old" }), "old");

@@ -91,7 +91,9 @@ test "--cache inside .mopm/env, equal to it, or reaching it through a symbolic l
     const link = c.path(&.{ c.work, "into-env" });
     try fs.cwd().symLink(b.env_dir, link, .{ .is_directory = true });
     const inside = c.path(&.{ b.env_dir, "kept-files" });
-    const cases = [_][]const u8{ inside, b.env_dir, c.path(&.{ link, "deeper", "still" }), link, ".mopm/env/relative", ".mopm/../.mopm/env" };
+    // In the project: a component that does not exist, `..` back out of it, then a symbolic link into the environment.
+    try fs.cwd().symLink(b.env_dir, c.path(&.{ b.app, "into-env" }), .{ .is_directory = true });
+    const cases = [_][]const u8{ inside, b.env_dir, c.path(&.{ link, "deeper", "still" }), link, ".mopm/env/relative", ".mopm/../.mopm/env", "newpart/../into-env/cache" };
     for (cases) |cache| {
         const r = try c.run(b.app, &.{ "sync", "--locked", "--toolchain", b.t2.closure, "--cache", cache });
         const want = try c.fmt("mopm sync: --cache {s} is inside .mopm/env, which mopm sync replaces; use a directory outside it\n", .{cache});
@@ -99,6 +101,14 @@ test "--cache inside .mopm/env, equal to it, or reaching it through a symbolic l
         rep.check(try c.fmt("--cache {s}: exit 1, nothing downloaded or created, the environment is as it was", .{cache}), r.code == 1 and r.stdout.len == 0 and
             std.mem.eql(u8, try c.fingerprint(b.env_dir), b.print) and std.mem.eql(u8, try c.names(c.path(&.{ b.app, ".mopm" })), fx.beside), c.detail(r));
     }
+    rep.check("no newpart directory was made in the project", !c.exists(b.app, "newpart"), "");
+
+    // A symbolic link whose target does not exist yet: what creating through it makes cannot be judged.
+    try fs.cwd().symLink(c.path(&.{ b.env_dir, "not-yet" }), c.path(&.{ b.app, "dangling" }), .{ .is_directory = true });
+    const r = try c.run(b.app, &.{ "sync", "--locked", "--toolchain", b.t2.closure, "--cache", "dangling/cache" });
+    rep.same("--cache through a dangling link: the refusal", "mopm sync: --cache dangling/cache passes through a symbolic link whose target does not exist; refused\n", r.stderr);
+    rep.check("--cache through a dangling link: exit 1, the environment is as it was, nothing made at its target", r.code == 1 and r.stdout.len == 0 and
+        std.mem.eql(u8, try c.fingerprint(b.env_dir), b.print) and !c.exists(b.env_dir, "not-yet"), c.detail(r));
     try rep.finish();
 }
 

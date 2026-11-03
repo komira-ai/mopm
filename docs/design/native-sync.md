@@ -22,19 +22,24 @@ lock's packages and system libraries, and the Mojo toolchain's closure built int
 
 A sync takes the project lock, then:
 
-1. Recover. If `.mopm/env` is missing and a backup `.env.old-*` exists, the newest is renamed back. Candidates
-   `.env.tmp-*` are deleted; backups are deleted only when `.mopm/env` exists. A failed delete is a warning.
+1. Recover. If `.mopm/env` is missing and backups `.env.old-<n>` exist, the one with the highest `n` is renamed back
+   (commit numbers each backup one past the highest it finds, so a backup a failed delete left behind is always
+   older than the one a later cut sync left). With two or more backups of which one is not numbered, none is
+   touched and a warning asks the user to rename the right one. Candidates `.env.tmp-*` are deleted; backups are
+   deleted only when `.mopm/env` exists. A failed delete is a warning.
 2. Plan and decide. The install list is the toolchain, then the system libraries, then the locked packages. Sync
    compares the stamp with the list. If it matches and the environment verifies (below), nothing is downloaded.
 3. Fetch every file, checking size and sha256.
 4. Stage a candidate beside `.mopm/env`: unpack every archive, rewrite the prefix placeholders, write the conda
    metadata and the stamp. A path installed by two packages is allowed only when both are regular files with the
-   same sha256; any other overlap is refused, naming the path and both packages. An archive whose name, version
+   same sha256 and the same execute bit; any other overlap is refused, naming the path and both packages. An
+   archive path with a `.` or empty component is refused, so every installed file has one spelling and the overlap
+   check compares like with like. An archive whose name, version
    or build is not a single safe path component (no separator, no NUL or control byte, not `.` or `..`) is
    refused before anything named after it is written; a lock or closure naming such a package is refused too.
 5. Verify the candidate: each package's metadata and sha256, each native library's hash, each system library's
    record, and that no `lib/mojo/*.mopm.json` is installed that the lock does not name.
-6. Commit: rename `.mopm/env` to a backup, rename the candidate to `.mopm/env`, delete the backup. If the second
+6. Commit: rename `.mopm/env` to a backup `.env.old-<n>`, rename the candidate to `.mopm/env`, delete the backup. If the second
    rename fails, the backup is renamed back; if that fails too, the backup stays and the error names it, and the
    next sync puts it back (step 1). A failed delete of the backup is a warning.
 
@@ -50,8 +55,11 @@ never deletes another's candidate or backup.
 ## Cache ownership and placement
 
 Cache files are named by their sha256, so two projects pinning different bytes under one file name never share an
-entry. Before anything is created, the cache path is resolved (symlinks included) and refused when it is
-`.mopm/env`, inside it, or inside a candidate or backup directory: those are replaced by the sync. A cache path
+entry. Before anything is created, the cache path is resolved component by component, every existing component through
+its symlinks (also one reached again by `..` after a component that does not exist yet), and refused when it is
+`.mopm/env`, inside it, or inside a candidate or backup directory: those are replaced by the sync. A path through a
+symlink whose target does not exist is refused. The sync then creates and uses the resolved path, not the one given,
+so what was checked is what is written. A cache path
 that cannot be made is an error and the environment is unchanged. Locked registry files stay in `.mopm/pkgs`.
 
 ## The stamp and repair

@@ -22,7 +22,8 @@
 //!
 //! What it refuses (an error and a message, never a guess): a post-link,
 //! pre-link or pre-unlink script (mopm runs no scripts); a path that is
-//! absolute, holds `..`, or goes below a symbolic link the install made; a zip
+//! absolute, holds `..`, a `.` component after its leading `./` or an empty one, or goes below a symbolic link the
+//! install made (so each installed file has exactly one spelling); a zip
 //! that is encrypted, compressed, zip64 or has no `info`/`pkg` pair; a prefix
 //! longer than a binary placeholder. Activation scripts (`etc/conda/activate.d`)
 //! are installed but never run.
@@ -411,6 +412,9 @@ const Unpacker = struct {
         while (it.next()) |comp| {
             if (std.mem.eql(u8, comp, "..") or (comp.len == 0 and it.peek() != null))
                 return self.fail(error.UnsafePath, "the package holds the path '{s}', which is not a relative path inside the environment", .{rel});
+            // One spelling per file (core/conda_env.zig compares installed paths as strings): no `.` component.
+            if (std.mem.eql(u8, comp, "."))
+                return self.fail(error.UnsafePath, "the package holds the path '{s}', which has a '.' component; a path is written one way only", .{rel});
             prefix_end += comp.len;
             // No component may be a symbolic link the install made.
             if (it.peek() != null and self.opts.links.contains(rel[0..prefix_end]))
@@ -918,6 +922,9 @@ test "unpack: paths that leave the environment are refused" {
         &.{.{ .name = "../evil", .data = "x" }},
         &.{.{ .name = "lib/../../evil", .data = "x" }},
         &.{.{ .name = "/etc/evil", .data = "x" }},
+        // Another spelling of a path, which an ownership check comparing paths would not match.
+        &.{.{ .name = "bin/./mojo", .data = "x" }},
+        &.{.{ .name = "bin//mojo", .data = "x" }},
         // A symbolic link out, then a file written through it.
         &.{ .{ .name = "lib64", .kind = .symlink, .link = "/tmp", .mode = 0o777 }, .{ .name = "lib64/evil", .data = "x" } },
         // Climbing out with "..", and a chain through a link that leaves.

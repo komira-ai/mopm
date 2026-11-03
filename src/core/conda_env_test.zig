@@ -386,24 +386,75 @@ test "recover: a backup alone is put back; a temporary directory is removed; a b
     try std.testing.expectEqual(@as(?[]const u8, null), got.restored);
     try std.testing.expectEqual(@as(usize, 0), got.warnings.len);
 
-    // Backups with no environment: the newest comes back, the other goes.
-    try f.parent.makePath(".env.old-aa/bin");
-    try f.parent.writeFile(".env.old-aa/bin/v", "aa");
-    try f.parent.makePath(".env.old-bb/bin");
-    try f.parent.writeFile(".env.old-bb/bin/v", "bb");
+    // Backups with no environment: the highest number comes back, though it sorts first as text; the other goes.
+    try f.parent.makePath(".env.old-9/bin");
+    try f.parent.writeFile(".env.old-9/bin/v", "stale");
+    try f.parent.makePath(".env.old-10/bin");
+    try f.parent.writeFile(".env.old-10/bin/v", "previous");
     try f.parent.makePath(".env.tmp-cc/bin");
     try f.parent.makePath(".other.old-dd");
     got = try env_mod.recover(a, f.parent, "env");
-    try std.testing.expectEqualStrings(".env.old-bb", got.restored.?);
+    try std.testing.expectEqualStrings(".env.old-10", got.restored.?);
     try std.testing.expectEqual(@as(usize, 0), got.warnings.len);
     try std.testing.expectEqualStrings(".other.old-dd,env", try f.listing(a));
-    try std.testing.expectEqualStrings("bb", try f.parent.readFileAlloc(a, "env/bin/v", 10));
+    try std.testing.expectEqualStrings("previous", try f.parent.readFileAlloc(a, "env/bin/v", 10));
+
+    // Two backups, one not numbered: which is the latest is not known, so neither is touched.
+    try f.parent.deleteTree("env");
+    try f.parent.makePath(".env.old-3");
+    try f.parent.makePath(".env.old-zz");
+    got = try env_mod.recover(a, f.parent, "env");
+    try std.testing.expectEqual(@as(?[]const u8, null), got.restored);
+    try std.testing.expectEqual(@as(usize, 1), got.warnings.len);
+    try std.testing.expectEqualStrings("cannot tell which of .env.old-3, .env.old-zz is the latest env, so all are kept; rename that one to env", got.warnings[0]);
+    try std.testing.expectEqualStrings(".env.old-3,.env.old-zz,.other.old-dd", try f.listing(a));
+    // A single backup is the latest whatever its name.
+    try f.parent.deleteTree(".env.old-3");
+    got = try env_mod.recover(a, f.parent, "env");
+    try std.testing.expectEqualStrings(".env.old-zz", got.restored.?);
+    try std.testing.expectEqualStrings(".other.old-dd,env", try f.listing(a));
 
     // With the environment present a backup is only removed.
     try f.parent.makePath(".env.old-ee");
     got = try env_mod.recover(a, f.parent, "env");
     try std.testing.expectEqual(@as(?[]const u8, null), got.restored);
     try std.testing.expectEqualStrings(".other.old-dd,env", try f.listing(a));
+}
+
+test "commit numbers each backup past the highest left beside it, so recover puts back the previous environment, not a stale one" {
+    var st = testArena();
+    defer st.deinit();
+    const a = st.allocator();
+    var f = try Fixture.init();
+    defer f.deinit();
+    var diag = Diag{};
+    const one = try f.add(a, "first", "1.0", &.{.{ .name = "bin/v", .data = "one\n" }});
+    const two = try f.add(a, "second", "1.0", &.{.{ .name = "bin/v", .data = "two\n" }});
+    const three = try f.add(a, "third", "1.0", &.{.{ .name = "bin/v", .data = "three\n" }});
+
+    // A stale backup sorting after everything a counter would make as text, from an earlier run whose delete failed.
+    try f.parent.makePath(".env.old-999999999/bin");
+    try f.parent.writeFile(".env.old-999999999/bin/v", "stale\n");
+    var cand = try env_mod.stage(a, f.parent, "env", "/opt/e", &.{one}, "s1", &diag);
+    _ = try env_mod.commit(a, f.parent, "env", cand, &diag);
+
+    // The next commit fails its delete: its backup (environment "one") is left too.
+    cand = try env_mod.stage(a, f.parent, "env", "/opt/e", &.{two}, "s2", &diag);
+    var ops = FailOps{ .fail_deletes = true };
+    const c2 = try env_mod.commitWith(&ops, a, f.parent, "env", cand, &diag);
+    try std.testing.expectEqual(@as(usize, 1), c2.warnings.len);
+
+    // Then a commit is cut between its renames, and its rollback fails: environment "two" is only a backup now.
+    cand = try env_mod.stage(a, f.parent, "env", "/opt/e", &.{three}, "s3", &diag);
+    ops = FailOps{ .fail_renames = 0b110 };
+    try std.testing.expectError(error.BackupKept, env_mod.commitWith(&ops, a, f.parent, "env", cand, &diag));
+    env_mod.discard(f.parent, cand);
+    try std.testing.expectError(error.FileNotFound, f.parent.access("env", .{}));
+
+    const got = try env_mod.recover(a, f.parent, "env");
+    try std.testing.expectEqualStrings(diag.message, got.restored.?);
+    try std.testing.expectEqualStrings("two\n", try f.parent.readFileAlloc(a, "env/bin/v", 10));
+    try std.testing.expectEqualStrings("env", try f.listing(a));
 }
 
 test "recover: what cannot be deleted or renamed is a warning, not an error" {
@@ -432,7 +483,7 @@ test "recover: what cannot be deleted or renamed is a warning, not an error" {
     try std.testing.expectEqualStrings(".env.old-bb,.env.tmp-aa", try f.listing(a));
 }
 
-test "stage: a path two packages install is allowed only with the same bytes in both" {
+test "stage: a path two packages install is allowed only with the same bytes and the same execute bit in both" {
     var st = testArena();
     defer st.deinit();
     const a = st.allocator();
@@ -457,6 +508,18 @@ test "stage: a path two packages install is allowed only with the same bytes in 
 
     try std.testing.expectError(error.PathConflict, env_mod.stage(a, f.parent, "env", "/opt/e", &.{ x_link, x_a }, "s", &diag));
     try std.testing.expectEqualStrings("lib/x is installed by both delta 4.0 and alpha 1.0 with different contents; refused", diag.message);
+    try std.testing.expectEqualStrings("", try f.listing(a));
+    // The same bytes, but one executable and one not: the second would take the execute bit away.
+    const tool = try f.add(a, "tool", "1.0", &.{.{ .name = "bin/tool", .data = "#!/bin/sh\n", .mode = 0o755 }});
+    const plain = try f.add(a, "plain", "1.0", &.{.{ .name = "bin/tool", .data = "#!/bin/sh\n", .mode = 0o644 }});
+    const tool_too = try f.add(a, "tool2", "1.0", &.{.{ .name = "bin/tool", .data = "#!/bin/sh\n", .mode = 0o755 }});
+    try std.testing.expectError(error.PathConflict, env_mod.stage(a, f.parent, "env", "/opt/e", &.{ tool, plain }, "s", &diag));
+    try std.testing.expectEqualStrings("bin/tool is installed by both tool 1.0 and plain 1.0 with different permissions; refused", diag.message);
+    try std.testing.expectError(error.PathConflict, env_mod.stage(a, f.parent, "env", "/opt/e", &.{ plain, tool }, "s", &diag));
+    try std.testing.expectEqualStrings("bin/tool is installed by both plain 1.0 and tool 1.0 with different permissions; refused", diag.message);
+    try std.testing.expectEqualStrings("", try f.listing(a));
+    const both = try env_mod.stage(a, f.parent, "env", "/opt/e", &.{ tool, tool_too }, "s", &diag);
+    env_mod.discard(f.parent, both);
     try std.testing.expectEqualStrings("", try f.listing(a));
 }
 

@@ -40,11 +40,14 @@ pub fn cacheDir(arena: Allocator, flag: ?[]const u8) Allocator.Error!?[]const u8
     return cacheDirOf(arena, flag, xdg, home);
 }
 
-/// `path` (relative to the absolute directory `base`) with every symlink of its existing part resolved; what does not
-/// exist yet is appended as written, with `.` and `..` applied.
+/// `path` (relative to the absolute directory `base`) as the absolute path the file system reaches: each component in
+/// turn, with `.` skipped, `..` taking the parent of what was reached so far, and every component that exists resolved
+/// through its symbolic links (also one reached again by `..` after a component that does not exist yet). A component
+/// that does not exist is appended as written; a symbolic link whose target does not exist is `error.BrokenLink`, since
+/// what creating through it would make cannot be judged. The result has no `.`, `..` or symbolic link in its existing
+/// part, so creating it creates exactly the directories it names.
 fn canonical(arena: Allocator, base: []const u8, path: []const u8) ![]const u8 {
     var cur: []const u8 = if (std.fs.path.isAbsolute(path)) "/" else base;
-    var exists = true;
     var it = std.mem.tokenizeScalar(u8, path, '/');
     while (it.next()) |part| {
         if (std.mem.eql(u8, part, ".")) continue;
@@ -53,17 +56,19 @@ fn canonical(arena: Allocator, base: []const u8, path: []const u8) ![]const u8 {
             continue;
         }
         const next = try std.fs.path.join(arena, &.{ cur, part });
-        if (exists) {
-            if (std.fs.cwd().realpathAlloc(arena, next)) |real| {
-                cur = real;
-                continue;
-            } else |_| {
-                exists = false;
-            }
-        }
-        cur = next;
+        cur = std.fs.cwd().realpathAlloc(arena, next) catch blk: {
+            var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            if (std.fs.cwd().readLink(next, &buf)) |_| return error.BrokenLink else |_| {}
+            break :blk next;
+        };
     }
     return cur;
+}
+
+/// The directory a sync makes and uses for `cache_path` (as given, relative to the project directory `project`): the
+/// path `placementProblem` judges, so what is checked is what is created.
+pub fn resolve(arena: Allocator, project: std.fs.Dir, cache_path: []const u8) ![]const u8 {
+    return canonical(arena, try project.realpathAlloc(arena, "."), cache_path);
 }
 
 fn under(path: []const u8, dir: []const u8) bool {
@@ -74,7 +79,10 @@ fn under(path: []const u8, dir: []const u8) bool {
 /// that replaces `<mopm_dir>/<env_name>`, or null when it can.
 pub fn placementProblem(arena: Allocator, project: std.fs.Dir, mopm_dir: []const u8, env_name: []const u8, cache_path: []const u8) !?[]const u8 {
     const root = try project.realpathAlloc(arena, ".");
-    const cache = try canonical(arena, root, cache_path);
+    const cache = resolve(arena, project, cache_path) catch |e| switch (e) {
+        error.BrokenLink => return try std.fmt.allocPrint(arena, "--cache {s} passes through a symbolic link whose target does not exist; refused", .{cache_path}),
+        else => return e,
+    };
     const dir = try canonical(arena, root, mopm_dir);
     const env = try std.fs.path.join(arena, &.{ dir, env_name });
     var refused = under(cache, env);
@@ -142,6 +150,9 @@ test "placementProblem: the environment, what is inside it and the directories o
         "elsewhere/link",
         "elsewhere/link/sub",
         "alias/env/lib",
+        "newpart/../elsewhere/link/cache",
+        "elsewhere/no/../../elsewhere/link",
+        "newpart/../alias/env",
         ".mopm/.env.tmp-ab12",
         ".mopm/.env.tmp-ab12/x",
         ".mopm/.env.old-cd34",
@@ -156,6 +167,33 @@ test "placementProblem: the environment, what is inside it and the directories o
         const want = try std.fmt.allocPrint(a, "--cache {s} is inside .mopm/env, which mopm sync replaces; use a directory outside it", .{path});
         try std.testing.expectEqualStrings(want, why);
     }
+}
+
+test "resolve: the directory a sync creates, symbolic links resolved again after a component that does not exist" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makePath(".mopm/env/lib");
+    try tmp.dir.makePath("elsewhere");
+    try tmp.dir.symLink("../.mopm/env", "elsewhere/link", .{});
+    const root = try tmp.dir.realpathAlloc(a, ".");
+    try std.testing.expectEqualStrings(try std.fs.path.join(a, &.{ root, ".mopm/env/cache" }), try resolve(a, tmp.dir, "newpart/../elsewhere/link/cache"));
+    try std.testing.expectEqualStrings(try std.fs.path.join(a, &.{ root, "elsewhere/new/cache" }), try resolve(a, tmp.dir, "./elsewhere/x/../new/cache"));
+    try std.testing.expectEqualStrings("/", try resolve(a, tmp.dir, "/.."));
+}
+
+test "placementProblem: a symbolic link whose target does not exist is refused, not created through" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.makePath(".mopm/env");
+    try tmp.dir.symLink(".mopm/env/not-yet", "dangling", .{});
+    try std.testing.expectEqualStrings("--cache dangling/cache passes through a symbolic link whose target does not exist; refused", (try placement(a, &tmp, "dangling/cache")).?);
+    try std.testing.expectError(error.BrokenLink, resolve(a, tmp.dir, "x/../dangling"));
 }
 
 test "placementProblem: a directory outside the environment is accepted, existing or not" {
