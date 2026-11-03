@@ -63,7 +63,9 @@ fn tempName(arena: Allocator, final: []const u8) ![]u8 {
 /// Makes `dir/name` the file at `url` with `pin`'s size and sha256, downloading
 /// it unless it is already there. On failure nothing is left at `name` that
 /// was not there before (a bad download is removed), and `diag` says why.
+/// `diag` is reset first, so one `Diag` can serve many calls.
 pub fn fetch(arena: Allocator, dir: std.fs.Dir, name: []const u8, url: []const u8, pin: Pin, diag: *Diag) !void {
+    diag.* = .{};
     if (try matches(dir, name, pin)) return;
 
     const tmp = try tempName(arena, name);
@@ -133,7 +135,7 @@ pub fn fetch(arena: Allocator, dir: std.fs.Dir, name: []const u8, url: []const u
         }
     }
     if (total != pin.size) {
-        diag.message = try std.fmt.allocPrint(arena, "{s} is {d} bytes; the pin says {d}; refused", .{ url, total, pin.size });
+        diag.message = try std.fmt.allocPrint(arena, "{s} is {d} bytes; the pin says {d}; the download is short or broke off; refused", .{ url, total, pin.size });
         return error.SizeMismatch;
     }
     var d: [32]u8 = undefined;
@@ -255,7 +257,8 @@ pub fn get(arena: Allocator, dir: std.fs.Dir, name: []const u8, url: []const u8,
 // ---------------------------------------------------------------- tests
 
 /// A loopback HTTP server: /good.conda, /bad.conda (the same length, other
-/// bytes), /long.conda (longer) and 404 for anything else. It counts requests.
+/// bytes), /long.conda (longer), /short.conda (a complete answer with a shorter
+/// body), /cut.conda (the connection closes before the announced length) and 404 for anything else. It counts requests.
 /// It is never shut down: its thread ends with the test process.
 const Stub = struct {
     server: std.net.Server,
@@ -291,6 +294,14 @@ const Stub = struct {
             req.respond(self.good, .{ .keep_alive = false }) catch {};
         } else if (std.mem.eql(u8, target, "/bad.conda")) {
             req.respond(self.bad, .{ .keep_alive = false }) catch {};
+        } else if (std.mem.eql(u8, target, "/short.conda")) {
+            req.respond(self.good[0..1000], .{ .keep_alive = false }) catch {};
+        } else if (std.mem.eql(u8, target, "/cut.conda")) {
+            // Promises the whole body, sends 1000 bytes of it, and closes.
+            var head: [128]u8 = undefined;
+            const text = std.fmt.bufPrint(&head, "HTTP/1.1 200 OK\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{self.good.len}) catch return;
+            conn.stream.writeAll(text) catch return;
+            conn.stream.writeAll(self.good[0..1000]) catch return;
         } else if (std.mem.eql(u8, target, "/long.conda")) {
             req.respond(self.long, .{ .keep_alive = false }) catch {};
         } else {
@@ -417,4 +428,55 @@ test "fetch: two fetches of the same file at once both end with the verified fil
     try std.testing.expect(ok1 and ok2);
     try std.testing.expect(try matches(tmp.dir, "pkg.conda", pin));
     try std.testing.expectEqualStrings("pkg.conda", try names(a, tmp.dir));
+}
+
+test "fetch: a body shorter than the pin, and one cut off mid-way, are refused and leave nothing" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const stub = try Stub.start(good_bytes, bad_bytes, long_bytes);
+    const pin = Pin{ .sha256 = try hexOf(a, good_bytes), .size = good_bytes.len };
+    var diag = Diag{};
+
+    // An old, different file is not disturbed by either.
+    try tmp.dir.writeFile("pkg.conda", "old");
+
+    const short_url = try stub.url(a, "/short.conda");
+    try std.testing.expectError(error.SizeMismatch, fetch(a, tmp.dir, "pkg.conda", short_url, pin, &diag));
+    const want_short = try std.fmt.allocPrint(a, "{s} is 1000 bytes; the pin says {d}; the download is short or broke off; refused", .{ short_url, good_bytes.len });
+    try std.testing.expectEqualStrings(want_short, diag.message);
+    try std.testing.expectEqualStrings("pkg.conda", try names(a, tmp.dir));
+    try std.testing.expectEqualStrings("old", try tmp.dir.readFileAlloc(a, "pkg.conda", 100));
+
+    const cut_url = try stub.url(a, "/cut.conda");
+    // The client ends the body at the close; the length check then catches it.
+    try std.testing.expectError(error.SizeMismatch, fetch(a, tmp.dir, "pkg.conda", cut_url, pin, &diag));
+    const want_cut = try std.fmt.allocPrint(a, "{s} is 1000 bytes; the pin says {d}; the download is short or broke off; refused", .{ cut_url, good_bytes.len });
+    try std.testing.expectEqualStrings(want_cut, diag.message);
+    try std.testing.expectEqualStrings("pkg.conda", try names(a, tmp.dir));
+    try std.testing.expectEqualStrings("old", try tmp.dir.readFileAlloc(a, "pkg.conda", 100));
+}
+
+test "fetch: a Diag reused after a failure is reset by the next call" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const stub = try Stub.start(good_bytes, bad_bytes, long_bytes);
+    const pin = Pin{ .sha256 = try hexOf(a, good_bytes), .size = good_bytes.len };
+    var diag = Diag{};
+
+    try std.testing.expectError(error.BadStatus, fetch(a, tmp.dir, "pkg.conda", try stub.url(a, "/missing.conda"), pin, &diag));
+    try std.testing.expectEqual(@as(u16, 404), diag.status);
+    try fetch(a, tmp.dir, "pkg.conda", try stub.url(a, "/good.conda"), pin, &diag);
+    try std.testing.expectEqual(@as(u16, 0), diag.status);
+    try std.testing.expectEqualStrings("", diag.message);
+
+    try std.testing.expectError(error.BadStatus, fetch(a, tmp.dir, "other.conda", try stub.url(a, "/missing.conda"), pin, &diag));
+    try std.testing.expectEqual(@as(u16, 404), diag.status);
+    try std.testing.expectError(error.HashMismatch, fetch(a, tmp.dir, "other.conda", try stub.url(a, "/bad.conda"), pin, &diag));
+    try std.testing.expectEqual(@as(u16, 0), diag.status);
 }
