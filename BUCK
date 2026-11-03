@@ -244,7 +244,36 @@ zig_module(  # buck-only: the fake registry's handler with the fixture of its gr
 zig_test(  # buck-only: readmes as uploaded objects, and the fall back to inline: the client against the fake registry's handler in one process
     name = "group_readmes",
     src = "tests/drivers/group_readmes_inproc_test.zig",
+    imports = ["tests/drivers/inproc_world.zig"],
     deps = [":mopm_core", ":cli_publish", ":fake_fixture"],
+    **_TOOLS
+)
+
+# The previous release (v0.0.104) in process, in both directions with the current code: its client (src/cli) and its fake registry
+# (registry/fake), vendored byte for byte under tests/compat/v0.0.104 (README.md there; SHA256SUMS is checked by the test).
+zig_module(  # buck-only: the v0.0.104 client's group publisher and the files it needs, for :compat_v0_0_104
+    name = "prev_cli",
+    src = "tests/compat/v0.0.104/cli/group_publish.zig",
+    imports = glob(["tests/compat/v0.0.104/cli/*.zig"], exclude = ["tests/compat/v0.0.104/cli/group_publish.zig"]),
+    deps = [":mopm_core"],
+)
+
+zig_module(  # buck-only: the v0.0.104 fake registry's handler (the vendored files) with the fixture of tests/compat/prev_fake.zig, for :compat_v0_0_104
+    name = "prev_fake",
+    src = "tests/compat/prev_fake.zig",
+    imports = glob(["tests/compat/v0.0.104/fake/*.zig"]),
+)
+
+_COMPAT_DATA = {f: f for f in glob(["tests/compat/v0.0.104/**"])}
+_COMPAT_DATA["service/api/test/fixtures"] = "//service/api:request_goldens"
+
+zig_test(  # buck-only: the v0.0.104 client against this registry and this client against the v0.0.104 registry, both in process; the request bodies shared with the TypeScript registry's tests
+    name = "compat_v0_0_104",
+    src = "tests/drivers/compat_v0_0_104_test.zig",
+    imports = ["tests/drivers/inproc_world.zig"],
+    deps = [":mopm_core", ":cli_publish", ":fake_fixture", ":prev_cli", ":prev_fake"],
+    # The vendored snapshot, hashed by the test against its SHA256SUMS, and the request goldens the TypeScript registry's tests replay.
+    data = _COMPAT_DATA,
     **_TOOLS
 )
 

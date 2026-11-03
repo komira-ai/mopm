@@ -1,32 +1,25 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { RIGS } from '../group-rig';
 import { Chain } from './group-chain-env';
 import { GroupEnv, json } from './group-env';
-import { pkg } from './harness';
+import { pkg, type Pkg } from './harness';
 import { Scenario } from './group-scenario';
 
 /**
- * The requests the released command line makes (the code at komira-ai/mopm commit d0b9020: `createBody` in
- * src/cli/group_publish.zig and `commitBody` in src/cli/group_plan.zig), replayed byte for byte against this registry. That client
- * knows nothing of readme objects: it sends no `readme` object in the create, and every readme inline in the commit.
+ * The requests the released command line (v0.0.104) makes, replayed byte for byte against this registry. The bodies are the files
+ * test/fixtures/released-client-v0.0.104/{create,commit}.json, which the Zig test //:compat_v0_0_104 holds to what the released
+ * client (its own code, tests/compat/v0.0.104) sends for a staged set of alpha, beta and gamma. That client knows nothing of readme
+ * objects: it sends no `readme` object in the create, and every readme inline in the commit.
+ *
+ * The one thing replaced is what depends on the archive: the Zig test's files are small texts, and this registry opens real
+ * archives, so each member's `subdir`, `filename`, `sha256` and `size` in the create, and `manifest_sha256` in the commit, are the
+ * ones of this test's archive for the same package. Every other byte (member order, key order, escaping of the readmes, spacing) is
+ * the client's.
  */
 
-/** Zig's `std.json.encodeJsonString` with default options: `"` and `\` escaped, \b \f \n \r \t by name, other control characters as \u00XX; everything else (non-ASCII too) as it is. */
-function zigString(s: string): string {
-  let out = '"';
-  for (const ch of s) {
-    const c = ch.codePointAt(0)!;
-    if (ch === '"') out += '\\"';
-    else if (ch === '\\') out += '\\\\';
-    else if (c === 8) out += '\\b';
-    else if (c === 12) out += '\\f';
-    else if (c === 10) out += '\\n';
-    else if (c === 13) out += '\\r';
-    else if (c === 9) out += '\\t';
-    else if (c < 0x20) out += `\\u${c.toString(16).padStart(4, '0')}`;
-    else out += ch;
-  }
-  return out + '"';
-}
+const FIXTURES = join(__dirname, '..', 'fixtures', 'released-client-v0.0.104');
+const golden = (name: string): string => readFileSync(join(FIXTURES, name), 'utf8');
 
 const READMES: Record<string, string | undefined> = {
   alpha: '# Alpha "quoted"\nline é 日本 😀 \\ end\n',
@@ -34,29 +27,36 @@ const READMES: Record<string, string | undefined> = {
   gamma: undefined,
 };
 
-/** `Publisher.createBody`: members in plan order, no spaces, files with subdir, filename, sha256 and size. */
-function createBody(pkgs: ReturnType<typeof pkg>[]): string {
-  const members = pkgs.map((p) => `{"name":${zigString(p.name)},"version":${zigString(p.version)},"files":[{"subdir":${zigString(p.subdir)},"filename":${zigString(p.filename)},"sha256":"${p.sha256}","size":${p.bytes.length}}]}`);
-  return `{"members":[${members.join(',')}]}`;
+/** The golden create request with each member's file facts replaced by those of `pkgs`. Throws when a member is not in the golden. */
+function createBody(pkgs: Pkg[]): string {
+  let body = golden('create.json');
+  for (const p of pkgs) {
+    const member = new RegExp(`("name":"${p.name}","version":"[^"]*","files":\\[\\{"subdir":")[^"]*(","filename":")[^"]*(","sha256":")[0-9a-f]{64}(","size":)\\d+`);
+    if (!member.test(body)) throw new Error(`the golden create request has no member ${p.name} in the released client's shape`);
+    body = body.replace(member, (_m, a, b, c, d) => `${a}${p.subdir}${b}${p.filename}${c}${p.sha256}${d}${p.bytes.length}`);
+  }
+  return body;
 }
 
-/** `group_plan.commitBody`: name, manifest_sha256, then `readme` when there is one (an empty readme is `""`). */
-function commitBody(pkgs: ReturnType<typeof pkg>[]): string {
-  const members = pkgs.map((p) => {
-    const readme = READMES[p.name];
-    return `{"name":${zigString(p.name)},"manifest_sha256":"${p.manifest}"${readme === undefined ? '' : `,"readme":${zigString(readme)}`}}`;
-  });
-  return `{"members":[${members.join(',')}]}`;
+/** The golden commit request with each member's `manifest_sha256` replaced by that of `pkgs`. */
+function commitBody(pkgs: Pkg[]): string {
+  let body = golden('commit.json');
+  for (const p of pkgs) {
+    const member = new RegExp(`("name":"${p.name}","manifest_sha256":")[0-9a-f]{64}`);
+    if (!member.test(body)) throw new Error(`the golden commit request has no member ${p.name} in the released client's shape`);
+    body = body.replace(member, (_m, a) => `${a}${p.manifest}`);
+  }
+  return body;
 }
 
 describe.each(RIGS)('the requests of the released command line: %s', (_label, make) => {
-  test('the bodies are the ones the released code writes', () => {
+  test('the golden bodies are the released client\'s: readmes inline in the commit, none declared in the create', () => {
     const pkgs = ['alpha', 'beta', 'gamma'].map((name) => pkg({ name, subdir: 'noarch' }));
-    const commit = commitBody(pkgs);
-    expect(commit).toBe(
-      `{"members":[{"name":"alpha","manifest_sha256":"${pkgs[0]!.manifest}","readme":"# Alpha \\"quoted\\"\\nline é 日本 😀 \\\\ end\\n"},` +
-        `{"name":"beta","manifest_sha256":"${pkgs[1]!.manifest}","readme":""},{"name":"gamma","manifest_sha256":"${pkgs[2]!.manifest}"}]}`,
-    );
+    const commit = JSON.parse(commitBody(pkgs)) as { members: Array<{ name: string; readme?: unknown }> };
+    expect(commit.members.map((m) => [m.name, m.readme])).toEqual([['alpha', READMES.alpha], ['beta', ''], ['gamma', undefined]]);
+    expect(commit.members[2]).not.toHaveProperty('readme');
+    const create = JSON.parse(createBody(pkgs)) as { members: Array<Record<string, unknown>> };
+    expect(create.members.map((m) => Object.keys(m))).toEqual([['name', 'version', 'files'], ['name', 'version', 'files'], ['name', 'version', 'files']]);
     expect(createBody(pkgs).startsWith('{"members":[{"name":"alpha","version":"1.0.0","files":[{"subdir":"noarch","filename":"')).toBe(true);
   });
 
