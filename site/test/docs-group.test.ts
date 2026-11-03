@@ -17,6 +17,9 @@ const runbook = read('service/docs/runbook.md');
 const changelog = read('CHANGELOG.md');
 const stageZig = read('src/cli/stage_cmd.zig');
 const publishZig = read('src/cli/group_publish.zig');
+// The flag parser, the usage string and the wait defaults of `mopm publish --staged` live in group_flags.zig.
+const flagsZig = read('src/cli/group_flags.zig');
+const readmesZig = read('src/cli/group_readmes.zig');
 const yankZig = read('src/cli/yank_cmd.zig');
 const flagsTs = read('service/api/src/publish/flags.ts');
 const opsTs = read('service/api/src/ops/group-ops.ts');
@@ -86,7 +89,7 @@ const flagTokens = (text: string): string[] => sorted(text.match(/--[a-z]+(?:-[a
 
 describe.each([
   ['mopm stage', stageZig, undefined],
-  ['mopm publish --staged', publishZig, ['--dry-run', '--oidc', '--no-commit', '--abort']],
+  ['mopm publish --staged', flagsZig, ['--dry-run', '--oidc', '--no-commit', '--abort']],
 ] as const)('docs: %s', (heading, zig, noValue) => {
   const sec = section(doc, heading);
   const source = flagsOf(zig, noValue);
@@ -149,8 +152,8 @@ describe('docs: mopm yank --group', () => {
 
 describe('docs: values and outcomes', () => {
   test('--wait defaults to the CLI default: a base plus an allowance for each member', () => {
-    const base = Number(/default_wait_secs: i64 = (\d+)/.exec(publishZig)![1]);
-    const each = Number(/wait_per_member_secs: i64 = (\d+)/.exec(publishZig)![1]);
+    const base = Number(/default_wait_secs: i64 = (\d+)/.exec(flagsZig)![1]);
+    const each = Number(/wait_per_member_secs: i64 = (\d+)/.exec(flagsZig)![1]);
     const sec = section(doc, 'mopm publish --staged');
     expect(sec).toContain(`The default grows with the group: ${base} seconds plus ${each} seconds for each member`);
     expect(sec).toContain(`(${base + each * 170} seconds at 170 members, ${base + each * 300} at 300)`);
@@ -186,7 +189,7 @@ describe('docs: values and outcomes', () => {
   });
 
   test('--registry has no default on the three commands', () => {
-    for (const z of [stageZig, publishZig, yankZig]) expect(z).toContain('there is no default');
+    for (const z of [stageZig, flagsZig, yankZig]) expect(z).toContain('there is no default');
     expect(doc.match(/no default/gi)!.length).toBeGreaterThanOrEqual(3);
   });
 });
@@ -215,7 +218,7 @@ describe('docs: errors and exit status', () => {
     expect(doc).toContain('`$MOPM_TOKEN`, else the login');
     expect(publishZig.indexOf('if (flags.dry_run) return dryRun')).toBeGreaterThan(0);
     expect(publishZig.indexOf('if (flags.dry_run) return dryRun')).toBeLessThan(publishZig.indexOf('findToken'));
-    expect(publishZig).toContain('dry run: nothing was sent');
+    expect(readmesZig).toContain('dry run: nothing was sent');
     expect(section(doc, 'mopm publish --staged')).toContain('It reads no token and writes no file');
   });
 
@@ -375,7 +378,7 @@ describe('CHANGELOG.md: group publish', () => {
 
   test('names the three commands as their usage strings give them', () => {
     expect(text).toContain(usageCommands(stageZig)[0]);
-    expect(text).toContain(usageCommands(publishZig)[0]);
+    expect(text).toContain(usageCommands(flagsZig)[0]);
     expect(text).toContain(usageCommands(yankZig)[0]);
     expect(text).toContain('`--unyank`');
   });

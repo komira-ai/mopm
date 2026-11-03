@@ -23,6 +23,7 @@ load("//vendor/buildrules_coverage:tools.bzl", "cov_tools")
 load("@buildrules//rules/core:platform.bzl", "LINUX_X86_64")
 load("@buildrules//ci:workflow_lint.bzl", "actionlint_check")
 load("//:buildrules.bzl", "cargo_workspace")
+load("//tests/compat:tree.bzl", "tree")
 
 # The Rust workspace (Cargo.toml): `:check` (is the generated table what Cargo.toml / Cargo.lock / rust-toolchain.toml say),
 # and one aggregate per step, `:lint :debug :test :release`, over every member. Each member's BUCK file has one
@@ -223,6 +224,87 @@ zig_test(  # buck-only: mopm publish --staged and mopm yank --group against the 
         "MOPM_FAKE_REGISTRY": ":mopm-fake-registry",
         "MOPM_ENV_PROBE": ":env-probe",
     },
+    **_TOOLS
+)
+
+# The in-process tier of the readme objects: the client's publisher (src/cli/group_publish.zig) against the fake registry's handler
+# (registry/fake), through a Net that calls the handler; no socket and no child process. Each module is imported by its target name.
+zig_module(  # buck-only: the client's group publisher and its parts, for :group_readmes
+    name = "cli_publish",
+    src = "src/cli/group_publish.zig",
+    imports = glob(["src/cli/*.zig"], exclude = ["src/cli/main.zig", "src/cli/build_options.zig", "src/cli/group_publish.zig"]),
+    deps = [":mopm_core"],
+)
+
+zig_module(  # buck-only: the fake registry's handler with the fixture of its group tests (registry/fake/groups_test.zig), for :group_readmes
+    name = "fake_fixture",
+    src = "registry/fake/groups_test.zig",
+    imports = glob(["registry/fake/*.zig"], exclude = ["registry/fake/main.zig", "registry/fake/groups_test.zig"]),
+)
+
+zig_test(  # buck-only: readmes as uploaded objects, and the fall back to inline: the client against the fake registry's handler in one process
+    name = "group_readmes",
+    src = "tests/drivers/group_readmes_inproc_test.zig",
+    imports = ["tests/drivers/inproc_world.zig"],
+    deps = [":mopm_core", ":cli_publish", ":fake_fixture"],
+    **_TOOLS
+)
+
+# The previous release (v0.0.104) in process, in both directions with the current code: its client (src/cli) and its fake registry
+# (registry/fake). A file of the release that is byte for byte what the live tree holds is read from the live tree; only the files
+# that differ are vendored under tests/compat/v0.0.104 (README.md there; SHA256SUMS pins every file, and the test checks it).
+# The `tree` targets (tests/compat/tree.bzl) lay both out in one directory, where the release's files find each other by their relative imports.
+_PREV_FAKE_LIVE = ["api", "errors", "resp", "source_commit", "token_scopes", "util", "versions"]
+_PREV_CLI_LIVE = ["group_stage_token", "publish_cmd", "registry_cmd"]
+
+tree(  # buck-only: the fake registry of v0.0.104 as its files lay out at the tag, and the fixture that calls it
+    name = "prev_fake_tree",
+    srcs = dict(
+        {"prev_fake.zig": "tests/compat/prev_fake.zig"},
+        **dict(
+            {"v0.0.104/fake/{}.zig".format(n): "registry/fake/{}.zig".format(n) for n in _PREV_FAKE_LIVE},
+            **{f[len("tests/compat/"):]: f for f in glob(["tests/compat/v0.0.104/fake/*.zig"])}
+        )
+    ),
+)
+
+tree(  # buck-only: the files of src/cli of v0.0.104 that its group publisher reaches, as they lay out at the tag
+    name = "prev_cli_tree",
+    srcs = dict(
+        {"{}.zig".format(n): "src/cli/{}.zig".format(n) for n in _PREV_CLI_LIVE},
+        **{f[len("tests/compat/v0.0.104/cli/"):]: f for f in glob(["tests/compat/v0.0.104/cli/*.zig"])}
+    ),
+)
+
+zig_module(  # buck-only: the v0.0.104 client's group publisher and the files it needs, for :compat_v0_0_104
+    name = "prev_cli",
+    src = ":prev_cli_tree[group_publish.zig]",
+    imports = [":prev_cli_tree[{}.zig]".format(n) for n in _PREV_CLI_LIVE + ["group_plan", "group_publish_test"]],
+    deps = [":mopm_core"],
+)
+
+zig_module(  # buck-only: the v0.0.104 fake registry's handler with the fixture of tests/compat/prev_fake.zig, for :compat_v0_0_104
+    name = "prev_fake",
+    src = ":prev_fake_tree[prev_fake.zig]",
+    imports = [":prev_fake_tree[{}]".format(k) for k in (
+        ["v0.0.104/fake/{}.zig".format(n) for n in _PREV_FAKE_LIVE] +
+        [f[len("tests/compat/"):] for f in glob(["tests/compat/v0.0.104/fake/*.zig"])]
+    )],
+)
+
+# The files the test hashes: the vendored ones and, at their live paths, the ones read from the live tree.
+_COMPAT_DATA = {f: f for f in glob(["tests/compat/v0.0.104/**"])}
+_COMPAT_DATA.update({"registry/fake/{}.zig".format(n): "registry/fake/{}.zig".format(n) for n in _PREV_FAKE_LIVE})
+_COMPAT_DATA.update({"src/cli/{}.zig".format(n): "src/cli/{}.zig".format(n) for n in _PREV_CLI_LIVE})
+_COMPAT_DATA["service/api/test/fixtures"] = "//service/api:request_goldens"
+
+zig_test(  # buck-only: the v0.0.104 client against this registry and this client against the v0.0.104 registry, both in process; the request bodies shared with the TypeScript registry's tests
+    name = "compat_v0_0_104",
+    src = "tests/drivers/compat_v0_0_104_test.zig",
+    imports = ["tests/drivers/inproc_world.zig"],
+    deps = [":mopm_core", ":cli_publish", ":fake_fixture", ":prev_cli", ":prev_fake"],
+    # The files of the release, hashed by the test against its SHA256SUMS, and the request goldens the TypeScript registry's tests replay.
+    data = _COMPAT_DATA,
     **_TOOLS
 )
 
@@ -435,6 +517,7 @@ zig_test(  # buck-only: tests/contract/replay.py: the fake registry answers the 
         "tests/drivers/replay_recipes.zig",
         "tests/drivers/replay_group_conflicts.zig",
         "tests/drivers/replay_group_facts.zig",
+        "tests/drivers/replay_group_readmes.zig",
         "tests/drivers/replay_table.zig",
         "tests/drivers/replay_checks.zig",
         "tests/drivers/yaml.zig",
@@ -844,6 +927,18 @@ export_file(
 export_file(
     name = "site.src.cli.group_publish.zig",
     src = "src/cli/group_publish.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.cli.group_flags.zig",
+    src = "src/cli/group_flags.zig",
+    visibility = ["//site:"],
+)
+
+export_file(
+    name = "site.src.cli.group_readmes.zig",
+    src = "src/cli/group_readmes.zig",
     visibility = ["//site:"],
 )
 

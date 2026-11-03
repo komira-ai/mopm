@@ -14,3 +14,7 @@ export const uploadIdFor = (gid: string, m: { name: string; canonical: string },
 
 /** Where the bytes of that upload are put: the quarantine prefix, which the channel's lifecycle empties after a day. */
 export const quarantineKeyFor = (uploadId: string, filename: string): string => `quarantine/${uploadId}/${filename}`;
+
+/** Id of the readme object a member of a group declared, named by the readme's digest: no upload record is kept for it. */
+export const readmeUploadIdFor = (gid: string, m: { name: string; canonical: string }, sha256: string): string =>
+  `upl_r${createHash('sha256').update(JSON.stringify([gid, m.name, m.canonical, 'readme', sha256])).digest('hex').slice(0, 31)}`;

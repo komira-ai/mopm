@@ -12,11 +12,11 @@ const plan_mod = @import("group_plan.zig");
 const stage = @import("stage_cmd.zig");const Net = gp.Net;
 const Console = gp.Console;
 
-const api = "http://registry.test/api/v1";
+pub const api = "http://registry.test/api/v1";
 const not_found = "{\"error\":{\"code\":\"version_not_found\",\"message\":\"no such version\",\"hint\":\"\"}}";
 
 /// A registry that answers the version reads of a run from a table; a version it does not list is not found.
-const Stub = struct {
+pub const Stub = struct {
     pub const Entry = struct { path: []const u8, status: u16, body: []const u8 };
 
     entries: []const Entry = &.{},
@@ -25,7 +25,7 @@ const Stub = struct {
     token_sent: bool = false,
     broken: bool = false,
 
-    fn net(s: *Stub) Net {
+    pub fn net(s: *Stub) Net {
         return .{ .ptr = s, .vtable = &.{ .request = request, .sleep = sleep, .now = now } };
     }
 
@@ -46,18 +46,18 @@ const Stub = struct {
     }
 };
 
-const Fx = struct {
+pub const Fx = struct {
     a: Allocator,
     tmp: std.testing.TmpDir,
     /// The temporary directory, absolute.
     root: []const u8,
 
-    fn init(a: Allocator) !Fx {
+    pub fn init(a: Allocator) !Fx {
         const tmp = std.testing.tmpDir(.{});
         return .{ .a = a, .tmp = tmp, .root = try tmp.dir.realpathAlloc(a, ".") };
     }
 
-    fn deinit(fx: *Fx) void {
+    pub fn deinit(fx: *Fx) void {
         fx.tmp.cleanup();
     }
 
@@ -65,7 +65,7 @@ const Fx = struct {
         return std.fs.path.join(fx.a, &.{ fx.root, rel });
     }
 
-    fn put(fx: Fx, rel: []const u8, bytes: []const u8) !void {
+    pub fn put(fx: Fx, rel: []const u8, bytes: []const u8) !void {
         if (std.fs.path.dirname(rel)) |d| try fx.tmp.dir.makePath(d);
         try fx.tmp.dir.writeFile(rel, bytes);
     }
@@ -74,13 +74,13 @@ const Fx = struct {
         return fx.tmp.dir.readFileAlloc(fx.a, rel, 1 << 26);
     }
 
-    fn exists(fx: Fx, rel: []const u8) bool {
+    pub fn exists(fx: Fx, rel: []const u8) bool {
         fx.tmp.dir.access(rel, .{}) catch return false;
         return true;
     }
 
     /// A member `name` at `version` in `ws/src/<name>`, with the lines of `[dependencies]`, and its noarch artifact.
-    fn member(fx: Fx, name: []const u8, version: []const u8, deps: []const u8) !void {
+    pub fn member(fx: Fx, name: []const u8, version: []const u8, deps: []const u8) !void {
         const manifest = try std.fmt.allocPrint(fx.a, "[package]\nname = \"{s}\"\nversion = \"{s}\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n{s}\n", .{ name, version, deps });
         try fx.put(try std.fmt.allocPrint(fx.a, "ws/src/{s}/mopm.toml", .{name}), manifest);
         try fx.put(try std.fmt.allocPrint(fx.a, "art/noarch/{s}.mojoc", .{name}), try std.fmt.allocPrint(fx.a, "the mojoc of {s}", .{name}));
@@ -91,7 +91,7 @@ const Fx = struct {
         return std.fmt.allocPrint(fx.a, "{s} = {{ path = \"../{s}\", version = \"{s}\" }}\n", .{ name, name, req });
     }
 
-    fn flags(fx: Fx, out: []const u8, packages: []const []const u8) !stage.Flags {
+    pub fn flags(fx: Fx, out: []const u8, packages: []const []const u8) !stage.Flags {
         return .{
             .workspace_root = try fx.path("ws"),
             .packages = packages,
@@ -105,13 +105,13 @@ const Fx = struct {
 
 const Ran = struct { code: u8, out: []const u8, err: []const u8 };
 
-fn runStage(fx: Fx, stub: *Stub, out: []const u8, packages: []const []const u8) !Ran {
+pub fn runStage(fx: Fx, stub: *Stub, out: []const u8, packages: []const []const u8) !Ran {
     var console = Console.init(fx.a, null);
     const code = try stage.run(.{ .arena = fx.a, .net = stub.net(), .console = &console, .api_url = api, .flags = try fx.flags(out, packages) });
     return .{ .code = code, .out = console.out.items, .err = console.err.items };
 }
 
-fn newStub(a: Allocator) Stub {
+pub fn newStub(a: Allocator) Stub {
     return .{ .asked = std.ArrayList([]const u8).init(a) };
 }
 
@@ -132,16 +132,16 @@ fn names(a: Allocator, plan: plan_mod.Plan) ![]const u8 {
     return std.mem.join(a, ",", list.items);
 }
 
-fn contains(hay: []const u8, needle: []const u8) bool {
+pub fn contains(hay: []const u8, needle: []const u8) bool {
     return std.mem.indexOf(u8, hay, needle) != null;
 }
 
 /// One line, so a failing test shows the text that lacked the needle.
-fn expectContainsText(hay: []const u8, needle: []const u8) !void {
+pub fn expectContainsText(hay: []const u8, needle: []const u8) !void {
     try std.testing.expectEqualStrings(needle, if (contains(hay, needle)) needle else hay);
 }
 
-fn arenaTest() std.heap.ArenaAllocator {
+pub fn arenaTest() std.heap.ArenaAllocator {
     return std.heap.ArenaAllocator.init(std.testing.allocator);
 }
 
@@ -429,7 +429,7 @@ test "a version published with the same bytes is skipped, and a rerun gives the 
     try std.testing.expect(plan_mod.refusedMember(second) == null);
     var dir = try fx.tmp.dir.openDir("second", .{});
     defer dir.close();
-    try std.testing.expect((try plan_mod.verify(a, dir, second)) == .body);
+    try std.testing.expect((try plan_mod.verify(a, dir, second)) == .ok);
 }
 
 test "a version published with different bytes is refused, and the plan says so" {
@@ -700,7 +700,7 @@ test "a readme is staged beside the package and named in the plan" {
 }
 
 /// `count` packages, each with a README of `len` bytes of `fill`; pkg_0's is `len + extra`.
-fn manyReadmes(fx: Fx, count: usize, len: usize, extra: usize, fill: u8) !void {
+pub fn manyReadmes(fx: Fx, count: usize, len: usize, extra: usize, fill: u8) !void {
     for (0..count) |i| {
         const name = try std.fmt.allocPrint(fx.a, "pkg_{d}", .{i});
         try fx.member(name, "1.0.0", "");
@@ -804,8 +804,8 @@ test "the readmes of skipped members do not count toward the limit: only the mem
     var dir = try fx.tmp.dir.openDir("mixed", .{});
     defer dir.close();
     const commit = try plan_mod.verify(a, dir, try readPlan(fx, "mixed"));
-    try std.testing.expect(commit == .body);
-    try std.testing.expect(!contains(commit.body, "\"pkg_70\""));
+    try std.testing.expect(commit == .ok);
+    try std.testing.expect(!contains(try plan_mod.commitBody(a, commit.ok), "\"pkg_70\""));
 }
 
 test "the staged plan is the one publish --staged reads: members, files and hashes check out" {
@@ -827,7 +827,7 @@ test "the staged plan is the one publish --staged reads: members, files and hash
     try std.testing.expectEqualStrings("linux-64", plan.members[0].files[1].subdir);
     var dir = try fx.tmp.dir.openDir("round", .{});
     defer dir.close();
-    try std.testing.expect((try plan_mod.verify(a, dir, plan)) == .body);
+    try std.testing.expect((try plan_mod.verify(a, dir, plan)) == .ok);
     // A stage that fails before it writes leaves the set it found as it was.
     const before = try fx.read("round/plan.json");
     try fx.member("pkg_b", "1.0.0", try fx.pathDep("pkg_a", "^3"));

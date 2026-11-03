@@ -26,6 +26,7 @@ pub const implemented = [_][]const u8{
 pub const Check = enum {
     none,
     read_only,
+    health_features,
     tokens_listed,
     token_gone,
     packages_named,
@@ -90,6 +91,7 @@ pub const Entry = struct { op: []const u8, name: []const u8, kind: Kind, arg: []
 pub const table = [_]Entry{
     .{ .op = "getHealth", .name = "prod is up", .kind = .health },
     .{ .op = "getHealth", .name = "beta in read-only mode", .kind = .health_read_only },
+    .{ .op = "getHealth", .name = "prod is up and lists the optional features it serves", .kind = .health, .arg = "features" },
     .{ .op = "getHealth", .name = "prod is up and says which implementation answered", .kind = .health },
     .{ .op = "getHealth", .name = "impl rust is in the contract", .kind = .health },
     .{ .op = "startDeviceLogin", .name = "start login", .kind = .device_start },
@@ -191,6 +193,10 @@ pub const table = [_]Entry{
     .{ .op = "getVersion", .name = "version detail of a version a group published", .kind = .group_facts, .arg = "group_version" },
     .{ .op = "commitPublish", .name = "commit without manifest_sha256", .kind = .group_facts, .arg = "commit_single" },
     .{ .op = "commitGroup", .name = "commit a group, leaving manifest_sha256 out of some members", .kind = .group_facts, .arg = "commit_group" },
+    .{ .op = "createGroup", .name = "create a group, declaring the readme of each member as an object, one still to upload and one already in storage", .kind = .group_facts, .arg = "readme_create_both" },
+    .{ .op = "createGroup", .name = "create a group, declaring the readme of one member only", .kind = .group_facts, .arg = "readme_create_one" },
+    .{ .op = "commitGroup", .name = "commit a group, naming a readme by sha256 and size", .kind = .group_facts, .arg = "readme_commit_ref" },
+    .{ .op = "commitGroup", .name = "commit a group, with an inline readme on one member and an object on another", .kind = .group_facts, .arg = "readme_commit_mixed" },
     .{ .op = "getVersion", .name = "version detail with a source_commit", .kind = .group_facts, .arg = "source_version" },
     .{ .op = "commitPublish", .name = "commit with a source_commit", .kind = .group_facts, .arg = "commit_single_source" },
     .{ .op = "commitGroup", .name = "commit a group, with a source_commit on some members", .kind = .group_facts, .arg = "commit_group_source" },

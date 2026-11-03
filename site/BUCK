@@ -44,6 +44,8 @@ _TEST_DATA = _DOCS | {
     "src/cli/main.zig": "//:site.src.cli.main.zig",
     "src/cli/stage_cmd.zig": "//:site.src.cli.stage_cmd.zig",
     "src/cli/group_publish.zig": "//:site.src.cli.group_publish.zig",
+    "src/cli/group_flags.zig": "//:site.src.cli.group_flags.zig",
+    "src/cli/group_readmes.zig": "//:site.src.cli.group_readmes.zig",
     "src/cli/yank_cmd.zig": "//:site.src.cli.yank_cmd.zig",
     "service/docs/runbook.md": "//:site.service.docs.runbook.md",
     "CHANGELOG.md": "//:site.CHANGELOG.md",

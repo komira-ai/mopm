@@ -158,7 +158,7 @@ fn parseHeaders(a: Allocator, head: []const u8) !Value {
     return .{ .object = out };
 }
 
-fn sha256Hex(a: Allocator, data: []const u8) ![]u8 {
+pub fn sha256Hex(a: Allocator, data: []const u8) ![]u8 {
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(data, &digest, .{});
     return a.dupe(u8, &std.fmt.bytesToHex(digest, .lower));
@@ -366,7 +366,7 @@ pub const Grp = struct {
         return c.getStr(out, "group_id") orelse error.NoGroupId;
     }
 
-    fn put(g: Grp, file: Value, bytes: []const u8) !void {
+    pub fn put(g: Grp, file: Value, bytes: []const u8) !void {
         const url = c.getStr(file, "put_url") orelse return;
         const scheme = "http://";
         if (!std.mem.startsWith(u8, url, scheme)) return error.PutUrlNotHttp;
@@ -575,7 +575,11 @@ fn status(f: *F, polls_before: usize, data: []const u8, file: ?[]const u8, want:
 
 pub fn build(f: *F, e: Entry) !Step {
     switch (e.kind) {
-        .health => return step("getHealth"),
+        .health => {
+            var s = step("getHealth");
+            if (std.mem.eql(u8, e.arg, "features")) s.check = .health_features;
+            return s;
+        },
         .health_read_only => {
             _ = try f.control("/mode", "{\"read_only\":true}");
             var s = step("getHealth");

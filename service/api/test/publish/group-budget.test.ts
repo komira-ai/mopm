@@ -2,6 +2,7 @@ import { bitmapIndexes } from '../../src/group-store';
 import { groupIdFor } from '../../src/publish/group-service';
 import { RIGS, type Rig } from '../group-rig';
 import { GroupEnv, json } from './group-env';
+import { CALL_MS, charged, VirtualTime } from './virtual-time';
 
 /**
  * How long one POST /groups call takes, with a clock that charges every store and S3 call: the preflight (the owner reads of
@@ -14,7 +15,6 @@ import { GroupEnv, json } from './group-env';
  */
 
 const N = 170;
-const CALL_MS = 20;
 /** A little above the preflight of a resumed call (about 0.48 s here: two reads for each of the 170 members, sixteen at a time), so a call has time for a few batches. */
 const BUDGET_MS = 560;
 /** One batch after the budget has been looked at: a reservation and the checkpoint, with room for a call the store makes twice. */
@@ -23,48 +23,6 @@ const MEMBER_MS = 4 * CALL_MS;
 const FILES_MS = Math.ceil(N / 16) * 3 * CALL_MS;
 
 const names = Array.from({ length: N }, (_, i) => `p${String(i).padStart(3, '0')}`);
-
-/** Virtual time: `sleep` is resolved in the order of its due times once every other promise has settled. */
-class VirtualTime {
-  now = 0;
-  private sleepers: Array<{ at: number; wake: () => void }> = [];
-  private armed = false;
-  constructor(private readonly moved: (now: number) => void) {}
-  sleep(ms: number): Promise<void> {
-    return new Promise((wake) => {
-      this.sleepers.push({ at: this.now + ms, wake });
-      this.arm();
-    });
-  }
-  private arm() {
-    if (this.armed) return;
-    this.armed = true;
-    setImmediate(() => {
-      this.armed = false;
-      if (this.sleepers.length === 0) return;
-      const at = Math.min(...this.sleepers.map((s) => s.at));
-      this.now = at;
-      this.moved(at);
-      const due = this.sleepers.filter((s) => s.at <= at);
-      this.sleepers = this.sleepers.filter((s) => s.at > at);
-      for (const s of due) s.wake();
-      if (this.sleepers.length > 0) this.arm();
-    });
-  }
-}
-
-/** Make these methods of `target` take `ms` of virtual time each, and count the calls by method name. */
-function charged(target: object, methods: readonly string[], time: VirtualTime, calls: Map<string, number>, callMs = CALL_MS, dearer: Record<string, number> = {}) {
-  const t = target as Record<string, (...a: unknown[]) => Promise<unknown>>;
-  for (const m of methods) {
-    const orig = t[m]!.bind(target);
-    t[m] = async (...a) => {
-      calls.set(m, (calls.get(m) ?? 0) + 1);
-      await time.sleep(dearer[m] ?? callMs);
-      return orig(...a);
-    };
-  }
-}
 
 describe.each(RIGS)('the time of a group create: %s', (_label, make) => {
   let rig: Rig;

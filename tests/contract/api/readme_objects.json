@@ -1,0 +1,803 @@
+{
+  "cases": [
+    {
+      "name": "create a group, declaring the readme of each member as an object, one still to upload and one already in storage",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            {
+              "name": "http_client",
+              "version": "0.4.0",
+              "files": [
+                {
+                  "subdir": "linux-64",
+                  "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                  "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                  "size": 123456
+                }
+              ],
+              "readme": {
+                "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                "size": 2048
+              }
+            },
+            {
+              "name": "json",
+              "version": "1.2.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-json-1.2.0-mojo1.0.0_0.conda",
+                  "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+                  "size": 4096
+                }
+              ],
+              "readme": {
+                "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+                "size": 70
+              }
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "members": [
+            {
+              "name": "http_client",
+              "version": "0.4.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "linux-64",
+                  "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_g0123456789abcdef0123456789abcd",
+                  "uploaded": true
+                }
+              ],
+              "readme": {
+                "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                "size": 2048,
+                "upload_id": "upl_r0123456789abcdef0123456789abcde",
+                "uploaded": false,
+                "put_url": "https://uploads.example.invalid/q/upl_r0123456789abcdef0123456789abcde/README.md",
+                "put_headers": {
+                  "content-length": "2048",
+                  "x-amz-checksum-sha256": "nhjQgIhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg="
+                },
+                "expires_at": "2026-10-13T12:05:00Z"
+              }
+            },
+            {
+              "name": "json",
+              "version": "1.2.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-json-1.2.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_g89abcdef0123456789abcdef012345",
+                  "uploaded": true
+                }
+              ],
+              "readme": {
+                "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+                "size": 70,
+                "upload_id": "upl_r89abcdef0123456789abcdef01234",
+                "uploaded": true
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "create a group, declaring the readme of one member only",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            {
+              "name": "http_client",
+              "version": "0.4.0",
+              "files": [
+                {
+                  "subdir": "linux-64",
+                  "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                  "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                  "size": 123456
+                }
+              ],
+              "readme": {
+                "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                "size": 2048
+              }
+            },
+            {
+              "name": "json",
+              "version": "1.2.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-json-1.2.0-mojo1.0.0_0.conda",
+                  "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+                  "size": 4096
+                }
+              ]
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "members": [
+            {
+              "name": "http_client",
+              "version": "0.4.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "linux-64",
+                  "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_g0123456789abcdef0123456789abcd",
+                  "uploaded": true
+                }
+              ],
+              "readme": {
+                "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                "size": 2048,
+                "upload_id": "upl_r0123456789abcdef0123456789abcde",
+                "uploaded": false,
+                "put_url": "https://uploads.example.invalid/q/upl_r0123456789abcdef0123456789abcde/README.md",
+                "put_headers": {
+                  "content-length": "2048",
+                  "x-amz-checksum-sha256": "nhjQgIhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg="
+                },
+                "expires_at": "2026-10-13T12:05:00Z"
+              }
+            },
+            {
+              "name": "json",
+              "version": "1.2.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-json-1.2.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_g89abcdef0123456789abcdef012345",
+                  "uploaded": true
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "create a group with a readme whose size is 0",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            {
+              "name": "http_client",
+              "version": "0.4.0",
+              "files": [
+                {
+                  "subdir": "linux-64",
+                  "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                  "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                  "size": 123456
+                }
+              ],
+              "readme": {
+                "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                "size": 0
+              }
+            },
+            {
+              "name": "json",
+              "version": "1.2.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-json-1.2.0-mojo1.0.0_0.conda",
+                  "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+                  "size": 4096
+                }
+              ]
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "members": [
+            {
+              "name": "http_client",
+              "version": "0.4.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "linux-64",
+                  "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_g0123456789abcdef0123456789abcd",
+                  "uploaded": true
+                }
+              ],
+              "readme": {
+                "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                "size": 2048,
+                "upload_id": "upl_r0123456789abcdef0123456789abcde",
+                "uploaded": false,
+                "put_url": "https://uploads.example.invalid/q/upl_r0123456789abcdef0123456789abcde/README.md",
+                "put_headers": {
+                  "content-length": "2048",
+                  "x-amz-checksum-sha256": "nhjQgIhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg="
+                },
+                "expires_at": "2026-10-13T12:05:00Z"
+              }
+            },
+            {
+              "name": "json",
+              "version": "1.2.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-json-1.2.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_g89abcdef0123456789abcdef012345",
+                  "uploaded": true
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "create a group with a readme that has no sha256",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            {
+              "name": "http_client",
+              "version": "0.4.0",
+              "files": [
+                {
+                  "subdir": "linux-64",
+                  "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                  "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                  "size": 123456
+                }
+              ],
+              "readme": {
+                "size": 2048
+              }
+            },
+            {
+              "name": "json",
+              "version": "1.2.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-json-1.2.0-mojo1.0.0_0.conda",
+                  "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+                  "size": 4096
+                }
+              ]
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "members": [
+            {
+              "name": "http_client",
+              "version": "0.4.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "linux-64",
+                  "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_g0123456789abcdef0123456789abcd",
+                  "uploaded": true
+                }
+              ],
+              "readme": {
+                "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                "size": 2048,
+                "upload_id": "upl_r0123456789abcdef0123456789abcde",
+                "uploaded": false,
+                "put_url": "https://uploads.example.invalid/q/upl_r0123456789abcdef0123456789abcde/README.md",
+                "put_headers": {
+                  "content-length": "2048",
+                  "x-amz-checksum-sha256": "nhjQgIhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg="
+                },
+                "expires_at": "2026-10-13T12:05:00Z"
+              }
+            },
+            {
+              "name": "json",
+              "version": "1.2.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-json-1.2.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_g89abcdef0123456789abcdef012345",
+                  "uploaded": true
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "create a group whose answer has a readme upload without an upload_id",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            {
+              "name": "http_client",
+              "version": "0.4.0",
+              "files": [
+                {
+                  "subdir": "linux-64",
+                  "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                  "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                  "size": 123456
+                }
+              ],
+              "readme": {
+                "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                "size": 2048
+              }
+            },
+            {
+              "name": "json",
+              "version": "1.2.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-json-1.2.0-mojo1.0.0_0.conda",
+                  "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+                  "size": 4096
+                }
+              ]
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "members": [
+            {
+              "name": "http_client",
+              "version": "0.4.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "linux-64",
+                  "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_g0123456789abcdef0123456789abcd",
+                  "uploaded": true
+                }
+              ],
+              "readme": {
+                "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                "size": 2048,
+                "uploaded": false,
+                "put_url": "https://uploads.example.invalid/q/upl_r0123456789abcdef0123456789abcde/README.md",
+                "put_headers": {
+                  "content-length": "2048",
+                  "x-amz-checksum-sha256": "nhjQgIhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg="
+                },
+                "expires_at": "2026-10-13T12:05:00Z"
+              }
+            },
+            {
+              "name": "json",
+              "version": "1.2.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-json-1.2.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_g89abcdef0123456789abcdef012345",
+                  "uploaded": true
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "create a group whose answer has a readme upload with no uploaded",
+      "operationId": "createGroup",
+      "request": {
+        "body": {
+          "members": [
+            {
+              "name": "http_client",
+              "version": "0.4.0",
+              "files": [
+                {
+                  "subdir": "linux-64",
+                  "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                  "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                  "size": 123456
+                }
+              ],
+              "readme": {
+                "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                "size": 2048
+              }
+            },
+            {
+              "name": "json",
+              "version": "1.2.0",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-json-1.2.0-mojo1.0.0_0.conda",
+                  "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+                  "size": 4096
+                }
+              ]
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "open",
+          "attempt": 1,
+          "deadline_at": "2026-10-14T00:00:00Z",
+          "members": [
+            {
+              "name": "http_client",
+              "version": "0.4.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "linux-64",
+                  "filename": "mojo-http_client-0.4.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_g0123456789abcdef0123456789abcd",
+                  "uploaded": true
+                }
+              ],
+              "readme": {
+                "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                "size": 2048,
+                "upload_id": "upl_r0123456789abcdef0123456789abcde",
+                "put_url": "https://uploads.example.invalid/q/upl_r0123456789abcdef0123456789abcde/README.md",
+                "put_headers": {
+                  "content-length": "2048",
+                  "x-amz-checksum-sha256": "nhjQgIhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg="
+                },
+                "expires_at": "2026-10-13T12:05:00Z"
+              }
+            },
+            {
+              "name": "json",
+              "version": "1.2.0",
+              "action": "new",
+              "files": [
+                {
+                  "subdir": "noarch",
+                  "filename": "mojo-json-1.2.0-mojo1.0.0_0.conda",
+                  "upload_id": "upl_g89abcdef0123456789abcdef012345",
+                  "uploaded": true
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "commit a group, naming a readme by sha256 and size",
+      "operationId": "commitGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef"
+        },
+        "body": {
+          "members": [
+            {
+              "name": "http_client",
+              "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+              "readme": {
+                "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                "size": 2048
+              }
+            },
+            {
+              "name": "json",
+              "manifest_sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "validating",
+          "attempt": 1,
+          "status_url": "/api/v1/groups/grp_0123456789abcdef0123456789abcdef"
+        }
+      }
+    },
+    {
+      "name": "commit a group, with an inline readme on one member and an object on another",
+      "operationId": "commitGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef"
+        },
+        "body": {
+          "members": [
+            {
+              "name": "http_client",
+              "manifest_sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+              "readme": "# http_client\n\nAn HTTP/1.1 client.\n"
+            },
+            {
+              "name": "json",
+              "readme": {
+                "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+                "size": 70
+              }
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "validating",
+          "attempt": 1,
+          "status_url": "/api/v1/groups/grp_0123456789abcdef0123456789abcdef"
+        }
+      }
+    },
+    {
+      "name": "commit a group with a readme object whose size is 0",
+      "operationId": "commitGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef"
+        },
+        "body": {
+          "members": [
+            {
+              "name": "http_client",
+              "readme": {
+                "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                "size": 0
+              }
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "validating",
+          "attempt": 1,
+          "status_url": "/api/v1/groups/grp_0123456789abcdef0123456789abcdef"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "commit a group with a readme object over 65536 bytes",
+      "operationId": "commitGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef"
+        },
+        "body": {
+          "members": [
+            {
+              "name": "http_client",
+              "readme": {
+                "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                "size": 65537
+              }
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "validating",
+          "attempt": 1,
+          "status_url": "/api/v1/groups/grp_0123456789abcdef0123456789abcdef"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "commit a group with a readme object whose sha256 is not 64 lowercase hex digits",
+      "operationId": "commitGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef"
+        },
+        "body": {
+          "members": [
+            {
+              "name": "http_client",
+              "readme": {
+                "sha256": "9F86D081884C7D659A2FEAA0C55AD015A3BF4F1B2B0B822CD15D6C15B0F00A08",
+                "size": 2048
+              }
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "validating",
+          "attempt": 1,
+          "status_url": "/api/v1/groups/grp_0123456789abcdef0123456789abcdef"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "commit a group with a readme object that has no size",
+      "operationId": "commitGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef"
+        },
+        "body": {
+          "members": [
+            {
+              "name": "http_client",
+              "readme": {
+                "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+              }
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "validating",
+          "attempt": 1,
+          "status_url": "/api/v1/groups/grp_0123456789abcdef0123456789abcdef"
+        }
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "commit a group with a readme that is a number",
+      "operationId": "commitGroup",
+      "request": {
+        "path": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef"
+        },
+        "body": {
+          "members": [
+            {
+              "name": "http_client",
+              "readme": 7
+            }
+          ]
+        },
+        "auth": "publishToken"
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "x-mopm-request-id": "req-7f3a2c19d0e4"
+        },
+        "body": {
+          "group_id": "grp_0123456789abcdef0123456789abcdef",
+          "status": "validating",
+          "attempt": 1,
+          "status_url": "/api/v1/groups/grp_0123456789abcdef0123456789abcdef"
+        }
+      },
+      "expect": "invalid"
+    }
+  ]
+}

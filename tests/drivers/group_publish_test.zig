@@ -13,9 +13,12 @@
 //! - the token must be in no program mopm starts (one stand-in plays mojo and the test binary, and records its
 //!   environment: `mopm run`, and the compile and the `--skip-all` listing of `mopm test`), in nothing mopm prints, and in no
 //!   file `mopm sync` writes (it starts no program; it downloads the toolchain itself, with the token in its environment);
-//! - a set whose commit request is too large for the registry's function, for its readmes, is refused before any request
-//!   (the fake counts none) by a publish, `--dry-run` and `--no-commit`, on a first run and on a resume, with no file
-//!   changed; `--abort` still ends its staged group;
+//! - a set whose commit request is too large for the registry's function, for its readmes, with a registry that does not take
+//!   readmes as objects (the fake with the switch off), is refused after two requests, the lookup of its API root and GET /health (the
+//!   fake counts exactly those), by a publish, `--dry-run` and `--no-commit` on a first run and by `--dry-run` on a resume, with no file
+//!   changed; a publish and a `--no-commit` on a resume read the staged group and ask for it again (four requests) and refuse once it is
+//!   found open, before any upload or commit, leaving state.json as it was and writing only report.json; `--abort` still ends its
+//!   staged group;
 //! - a yank of the group yanks its members, and an unyank restores those and not the one yanked by hand before.
 
 const std = @import("std");
@@ -526,14 +529,14 @@ fn refusalsBeforeAnyRequest(w: World) !void {
 }
 
 /// Every file below `dir`, sorted, each with its bytes: what a refusal must leave as it was.
-fn snapshot(a: Allocator, dir_path: []const u8) ![]const u8 {
+fn snapshot(a: Allocator, dir_path: []const u8, skip: []const u8) ![]const u8 {
     var dir = try std.fs.cwd().openDir(dir_path, .{ .iterate = true });
     defer dir.close();
     var paths = std.ArrayList([]const u8).init(a);
     var walker = try dir.walk(a);
     defer walker.deinit();
     while (try walker.next()) |e| {
-        if (e.kind == .file) try paths.append(try a.dupe(u8, e.path));
+        if (e.kind == .file and !std.mem.eql(u8, e.path, skip)) try paths.append(try a.dupe(u8, e.path));
     }
     std.mem.sort([]const u8, paths.items, {}, struct {
         fn lt(_: void, x: []const u8, y: []const u8) bool {
@@ -563,11 +566,13 @@ fn writeBigReadmes(w: World, staged: []const u8, big: bool) !void {
     }
 }
 
-/// A set whose commit request is over what the registry's function takes, for its readmes: `publish --staged`, `--dry-run`
-/// and `--no-commit` refuse it before any request (the fake counts none), on a first run and on the resume of a group that
-/// was staged while its readmes were short, and change no file of the directory; `--abort` still ends that group.
+/// A set whose commit request is over what the registry's function takes, for its readmes, sent to a registry that does not
+/// take readmes as objects (the fake with the switch off): `publish --staged`, `--dry-run` and `--no-commit` read GET /health
+/// (after the lookup of the registry's API root: the two requests the fake answers), then refuse it, on a first run and on the
+/// resume of a group that was staged while its readmes were short, and change no file of the directory; `--abort` still ends that group.
 fn anOversizedCommit(w: World) !void {
     const a = w.a;
+    _ = try w.fake.control(a, "/readme_objects", "{\"enabled\":false}");
     // Sixteen names this account owns, and a token for them, made with a fresh session (earlier scenarios moved the clock).
     const session = h.jsonString(try w.fake.control(a, "/session", "{\"handle\":\"group-user\"}"), "token") orelse "";
     var quoted = std.ArrayList(u8).init(a);
@@ -622,17 +627,23 @@ fn anOversizedCommit(w: World) !void {
         }
         for (modes) |mode| {
             const label = if (mode.len == 0) "publish --staged" else try std.fmt.allocPrint(a, "publish --staged {s}", .{mode[0]});
-            const files_before = try snapshot(a, dir);
+            // A run that resumes a group and finds it open sends the requests that tell so and refuses; it writes report.json.
+            const deferred = resuming and !(mode.len == 1 and std.mem.eql(u8, mode[0], "--dry-run"));
+            const skip: []const u8 = if (deferred) "report.json" else "";
+            const files_before = try snapshot(a, dir, skip);
             const requests_before = try served(w);
             const base = [_][]const u8{ "publish", "--staged", dir, "--registry", w.fake.base, "--config-dir", w.conf };
             const r = try w.m.run(try std.mem.concat(a, []const u8, &.{ &base, mode }), token);
             w.rep.check(
                 try std.fmt.allocPrint(a, "{s} refuses an oversized set on a {s}, naming the largest readmes, and ends 1", .{ label, when }),
-                r.code == 1 and h.contains(r.stderr, refusal) and h.contains(r.stderr, cutoff) and h.contains(r.stderr, "; nothing was sent") and r.stdout.len == 0,
+                r.code == 1 and h.contains(r.stderr, refusal) and h.contains(r.stderr, cutoff) and h.contains(r.stderr, if (deferred) "; nothing was uploaded or committed" else "; this run created and uploaded nothing") and
+                    (if (deferred) !h.contains(r.stdout, "committed group") else r.stdout.len == 0),
                 try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ r.code, r.stdout, r.stderr }),
             );
-            w.rep.check("and the registry got no request from it", (try served(w)) == requests_before, "a request was sent");
-            w.rep.check("and no file of the directory changed and none was added", std.mem.eql(u8, try snapshot(a, dir), files_before), "the directory changed");
+            const asked = (try served(w)) - requests_before;
+            w.rep.check(if (deferred) "and the registry answers four requests: the lookup of its API root, GET /health, the staged group and its create" else "and the registry answers exactly two requests: the lookup of its API root and GET /health", asked == (if (deferred) @as(i64, 4) else 2) and
+                h.contains(r.stderr, "does not take readmes as objects"), try std.fmt.allocPrint(a, "{d} requests: {s}", .{ asked, r.stderr }));
+            w.rep.check("and no file of the directory changed and none was added", std.mem.eql(u8, try snapshot(a, dir, skip), files_before), "the directory changed");
         }
     }
 
@@ -643,6 +654,7 @@ fn anOversizedCommit(w: World) !void {
     const ended = try w.m.run(&.{ "publish", "--staged", staged, "--registry", w.fake.base, "--config-dir", w.conf, "--abort" }, token);
     w.rep.check("--abort of the oversized set ends its group: aborted, with no file sent and no commit", ended.code == 0 and std.mem.eql(u8, try groupStatus(w, id), "aborted") and
         (try w.uploads()) == uploads and !h.contains(ended.stdout, "committed group"), try std.fmt.allocPrint(a, "{d}: {s}{s}", .{ ended.code, ended.stdout, ended.stderr }));
+    _ = try w.fake.control(a, "/readme_objects", "{\"enabled\":true}");
 }
 
 fn groupStatus(w: World, id: []const u8) ![]const u8 {

@@ -44,6 +44,7 @@ const registry = core.registry;
 const semver = core.semver;
 const publish_cmd = @import("publish_cmd.zig");
 const gp = @import("group_publish.zig");
+const readmes = @import("group_readmes.zig");
 const plan_mod = @import("group_plan.zig");
 const Net = gp.Net;
 const Console = gp.Console;
@@ -566,11 +567,20 @@ pub fn run(r: Run) !u8 {
         if (v != .upload) continue;
         try entries.append(.{ .name = s.member.name, .manifest_sha256 = &s.packs[0].manifest_sha256, .readme = s.readme });
     }
+    // A registry that takes the readmes as objects holds the commit request small, so it is asked only when the readmes are too
+    // large to go inline.
     switch (try plan_mod.commitOf(arena, entries.items)) {
         .body => {},
         .bad => |why| {
-            c.fail("{s}; nothing was written\n", .{why});
-            return 1;
+            const objects = readmes.takesObjects(arena, r.net, r.api_url) catch |e| {
+                c.fail("GET /health: {s}; nothing was written\n", .{@errorName(e)});
+                return 1;
+            };
+            if (!objects) {
+                c.fail("{s}; nothing was written\n", .{why});
+                c.note("{s}\n", .{readmes.inline_note});
+                return 1;
+            }
         },
     }
 

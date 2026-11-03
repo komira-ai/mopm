@@ -19,7 +19,7 @@ const wants = gp.wants;
 const default_wait_secs = gp.default_wait_secs;
 const max_reserving_rounds = gp.max_reserving_rounds;
 
-const sha_x = "c" ** 64;
+pub const sha_x = "c" ** 64;
 
 /// A scripted registry: it answers the requests of a run in the order a test lists them, and remembers what it was sent.
 pub const Script = struct {
@@ -38,7 +38,7 @@ pub const Script = struct {
         rewrite: ?Rewrite = null,
     };
     pub const Rewrite = struct { dir: std.fs.Dir, path: []const u8, bytes: ?[]const u8 };
-    pub const Seen = struct { method: std.http.Method, url: []const u8, token: ?[]const u8, body: ?[]const u8, content_type_set: bool, timeout_secs: u32 };
+    pub const Seen = struct { method: std.http.Method, url: []const u8, token: ?[]const u8, body: ?[]const u8, content_type_set: bool, timeout_secs: u32, headers: []const std.http.Header = &.{} };
 
     /// More requests than any test legitimately makes (the longest poll is under a hundred).
     pub const max_requests: usize = 1000;
@@ -62,7 +62,7 @@ pub const Script = struct {
         const s: *Script = @ptrCast(@alignCast(ptr));
         // The run frees what it passed once the request is over; the script keeps its own copy of the body.
         const kept = if (options.body) |b| try s.seen.allocator.dupe(u8, b) else null;
-        try s.seen.append(.{ .method = method, .url = url, .token = options.token, .body = kept, .content_type_set = options.content_type != null, .timeout_secs = options.timeout_secs });
+        try s.seen.append(.{ .method = method, .url = url, .token = options.token, .body = kept, .content_type_set = options.content_type != null, .timeout_secs = options.timeout_secs, .headers = try dupeHeaders(s.seen.allocator, options.extra_headers) });
         if (method == .PUT) {
             if (s.held_probe) |h| try s.held_at_put.append(h.*);
         }
@@ -86,6 +86,12 @@ pub const Script = struct {
         return .{ .status = step.status, .body = step.body, .request_id = "req-test", .retry_after = step.retry_after };
     }
 
+    fn dupeHeaders(a: Allocator, headers: []const std.http.Header) Allocator.Error![]const std.http.Header {
+        const out = try a.alloc(std.http.Header, headers.len);
+        for (headers, out) |h, *o| o.* = .{ .name = try a.dupe(u8, h.name), .value = try a.dupe(u8, h.value) };
+        return out;
+    }
+
     fn sleep(ptr: *anyopaque, secs: u64) void {
         const s: *Script = @ptrCast(@alignCast(ptr));
         s.slept += secs;
@@ -97,7 +103,7 @@ pub const Script = struct {
         return s.clock;
     }
 
-    fn count(s: *const Script, method: std.http.Method) usize {
+    pub fn count(s: *const Script, method: std.http.Method) usize {
         var n: usize = 0;
         for (s.seen.items) |x| {
             if (x.method == method) n += 1;
@@ -106,7 +112,7 @@ pub const Script = struct {
     }
 };
 
-const gid = "grp_0123456789abcdef0123456789abcdef";
+pub const gid = "grp_0123456789abcdef0123456789abcdef";
 const url_a = "http://127.0.0.1:1/put/a";
 const url_b = "http://127.0.0.1:1/put/b";
 const url_c = "http://127.0.0.1:1/put/c";
@@ -139,7 +145,7 @@ fn stageWith(a: Allocator, tmp: *std.testing.TmpDir, extra: []const u8, readme: 
     return parsed.ok;
 }
 
-fn createAnswer(comptime status: []const u8, comptime uploaded: [3]bool) []const u8 {
+pub fn createAnswer(comptime status: []const u8, comptime uploaded: [3]bool) []const u8 {
     const names = [_][]const u8{ "a", "b", "c" };
     const urls = [_][]const u8{ url_a, url_b, url_c };
     comptime var out: []const u8 = "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"" ++ status ++ "\",\"attempt\":1,\"deadline_at\":\"2026-10-23T00:00:00Z\",\"members\":[";
@@ -152,20 +158,21 @@ fn createAnswer(comptime status: []const u8, comptime uploaded: [3]bool) []const
 }
 
 const create_new = createAnswer("open", .{ false, false, false });
-const group_status = struct {
-    fn of(comptime status: []const u8) []const u8 {
+pub const group_status = struct {
+    pub fn of(comptime status: []const u8) []const u8 {
         return "{\"group_id\":\"" ++ gid ++ "\",\"status\":\"" ++ status ++ "\",\"attempt\":1}";
     }
 };
 
-const err_404 = "{\"error\":{\"code\":\"route_not_found\",\"message\":\"There is no such operation.\",\"hint\":\"x\"}}";
+pub const err_404 = "{\"error\":{\"code\":\"route_not_found\",\"message\":\"There is no such operation.\",\"hint\":\"x\"}}";
 
 fn publisher(a: Allocator, tmp: *std.testing.TmpDir, plan: plan_mod.Plan, script: *Script, console: *Console) Publisher {
-    return publisherWith(a, tmp, plan, (plan_mod.readCommit(a, tmp.dir, plan) catch @panic("out of memory")).body, script, console);
+    const entries = (plan_mod.readEntries(a, tmp.dir, plan) catch @panic("out of memory")).ok;
+    return publisherWith(a, tmp, plan, (plan_mod.commitOf(a, entries) catch @panic("out of memory")).body, script, console);
 }
 
 /// A publisher that sends `commit_body` as its commit, as `command` does with the body `checkedPlan` built.
-fn publisherWith(a: Allocator, tmp: *std.testing.TmpDir, plan: plan_mod.Plan, commit_body: []const u8, script: *Script, console: *Console) Publisher {
+pub fn publisherWith(a: Allocator, tmp: *std.testing.TmpDir, plan: plan_mod.Plan, commit_body: []const u8, script: *Script, console: *Console) Publisher {
     return .{
         .arena = a,
         .net = script.net(),
@@ -180,16 +187,16 @@ fn publisherWith(a: Allocator, tmp: *std.testing.TmpDir, plan: plan_mod.Plan, co
     };
 }
 
-fn newScript(a: Allocator, steps: []const Script.Step) Script {
+pub fn newScript(a: Allocator, steps: []const Script.Step) Script {
     return .{ .steps = steps, .seen = std.ArrayList(Script.Seen).init(a), .held_at_put = std.ArrayList(usize).init(a) };
 }
 
-fn contains(hay: []const u8, needle: []const u8) bool {
+pub fn contains(hay: []const u8, needle: []const u8) bool {
     return std.mem.indexOf(u8, hay, needle) != null;
 }
 
 /// One line, so a failing test shows the text that lacked the needle.
-fn expectContains(hay: []const u8, needle: []const u8) !void {
+pub fn expectContains(hay: []const u8, needle: []const u8) !void {
     try std.testing.expectEqualStrings(needle, if (contains(hay, needle)) needle else hay);
 }
 
@@ -1099,23 +1106,25 @@ test "a readme goes with the commit as it was checked; one deleted or changed du
 }
 
 /// The reason a staged directory stops the run; a test error, not a crash, when it does not.
-fn badOf(p: gp.Planned) ![]const u8 {
+pub fn badOf(p: gp.Planned) ![]const u8 {
+    // A commit request too large inline is reported by the check; whether it stands depends on the registry's form.
+    if (p == .ok and p.ok.over != null) return p.ok.over.?;
     return if (p == .bad) p.bad else error.TestExpectedRefusal;
 }
 
 /// A staged directory that is fit to run; a test failure that shows the reason when it is not.
-fn okOf(p: gp.Planned) !gp.Checked {
-    try std.testing.expectEqualStrings("fit to run", if (p == .ok) "fit to run" else p.bad);
+pub fn okOf(p: gp.Planned) !gp.Checked {
+    try std.testing.expectEqualStrings("fit to run", if (p == .ok and p.ok.over == null) "fit to run" else if (p == .ok) p.ok.over.? else p.bad);
     return p.ok;
 }
 
 /// One unit of an escaping-heavy readme: 7 bytes on disk (a quote, a backslash, a newline, a tab, the control byte 0x01 and
 /// a two-byte é), 16 in the commit body (`\"`, `\\`, `\n`, `\t`, `\u0001`, é) and 27 in the function's event, where the body
 /// is escaped once more and é may become `é`.
-const heavy_unit = "\"\\\n\t\x01\xc3\xa9";
+pub const heavy_unit = "\"\\\n\t\x01\xc3\xa9";
 
 /// `units` of `heavy_unit` followed by `pad` letters, or `len` plain letters when `units` is 0.
-fn readmeText(a: Allocator, units: usize, pad: usize) ![]u8 {
+pub fn readmeText(a: Allocator, units: usize, pad: usize) ![]u8 {
     const text = try a.alloc(u8, units * heavy_unit.len + pad);
     for (0..units) |u| @memcpy(text[u * heavy_unit.len ..][0..heavy_unit.len], heavy_unit);
     @memset(text[units * heavy_unit.len ..], 'a');
@@ -1123,7 +1132,7 @@ fn readmeText(a: Allocator, units: usize, pad: usize) ![]u8 {
 }
 
 /// The readmes of a fixture: member i's is `readmeText(units, pad + (extra if i == 0))`.
-const Readmes = struct { units: usize, pad: usize, extra: usize };
+pub const Readmes = struct { units: usize, pad: usize, extra: usize };
 
 fn fixtureEntries(a: Allocator, count: usize, r: Readmes) ![]plan_mod.CommitEntry {
     const entries = try a.alloc(plan_mod.CommitEntry, count);
@@ -1133,7 +1142,7 @@ fn fixtureEntries(a: Allocator, count: usize, r: Readmes) ![]plan_mod.CommitEntr
 
 /// A staged directory of `count` upload members m0.. with the readmes `r`, then `extra_members` (JSON members, each
 /// starting with a comma).
-fn stageReadmes(a: Allocator, tmp: *std.testing.TmpDir, count: usize, r: Readmes, extra_members: []const u8) !plan_mod.Plan {
+pub fn stageReadmes(a: Allocator, tmp: *std.testing.TmpDir, count: usize, r: Readmes, extra_members: []const u8) !plan_mod.Plan {
     var members = std.ArrayList(u8).init(a);
     try tmp.dir.makePath("noarch");
     const sha = try core.install.sha256Hex(a, "m-bytes");
@@ -1158,7 +1167,7 @@ fn stageReadmes(a: Allocator, tmp: *std.testing.TmpDir, count: usize, r: Readmes
 
 /// The readmes that make the event of `count` members' commit body exactly `plan_mod.max_event_body_bytes` with escaping-
 /// heavy text: there the body as a JSON string is the larger encoding, and each letter of padding adds one byte to it.
-fn heavyAtLimit(a: Allocator, count: usize) !Readmes {
+pub fn heavyAtLimit(a: Allocator, count: usize) !Readmes {
     const units = plan_mod.max_event_body_bytes / (27 * count) - 8;
     const near = plan_mod.eventBytes(try plan_mod.commitBody(a, try fixtureEntries(a, count, .{ .units = units, .pad = 0, .extra = 0 })));
     return .{ .units = units, .pad = 0, .extra = plan_mod.max_event_body_bytes - near };
@@ -1172,7 +1181,7 @@ fn plainAtLimit(a: Allocator, count: usize) !Readmes {
     return .{ .units = 0, .pad = room / count, .extra = room % count };
 }
 
-fn allHeld(a: Allocator, count: usize) ![]const u8 {
+pub fn allHeld(a: Allocator, count: usize) ![]const u8 {
     var out = std.ArrayList(u8).init(a);
     try out.writer().print("{{\"group_id\":\"{s}\",\"status\":\"open\",\"attempt\":1,\"members\":[", .{gid});
     for (0..count) |i| {
@@ -1183,7 +1192,7 @@ fn allHeld(a: Allocator, count: usize) ![]const u8 {
     return out.items;
 }
 
-const limit_members = 90;
+pub const limit_members = 90;
 
 /// Publishes a staged set the check passed, and gives the commit body the registry got.
 fn publishChecked(a: Allocator, tmp: *std.testing.TmpDir, checked: gp.Checked) ![]const u8 {
@@ -1218,7 +1227,7 @@ test "an escaping-heavy commit request exactly at the limit as the function rece
     _ = try stageReadmes(a, &over_tmp, limit_members, .{ .units = at.units, .pad = at.pad, .extra = at.extra + 1 }, "");
     const why = try badOf(try gp.checkedPlan(a, over_tmp.dir, "staged", false));
     try expectContains(why, "which can take 6225921 bytes in the event the registry's function is invoked with; mopm keeps that to at most 6225920, so the event fits the function's limit of 6291456 with room for the headers. The largest readmes: m0 (");
-    try expectContains(why, "Shorten them or publish fewer packages in one group; nothing was sent");
+    try std.testing.expect(std.mem.endsWith(u8, why, "Shorten them or publish fewer packages in one group"));
     // An --abort sends no readme: it reads the plan and goes on to end the group state.json names.
     const aborting = try okOf(try gp.checkedPlan(a, over_tmp.dir, "staged", true));
     try std.testing.expectEqual(@as(usize, limit_members), aborting.plan.members.len);
