@@ -1,5 +1,6 @@
-//! The fake registry of the previous release (v0.0.104) as a module: the request handler of the vendored files in
-//! tests/compat/v0.0.104/fake (byte for byte as released, see the README there) and a fixture to call it, the part of
+//! The fake registry of the previous release (v0.0.104) as a module: the request handler of the files of
+//! registry/fake at v0.0.104 (byte for byte as released: read from registry/fake where it is unchanged, vendored in
+//! tests/compat/v0.0.104/fake where not, see the README there) and a fixture to call it, the part of
 //! registry/fake/groups_test.zig at that tag (`Fx`) that the compat test needs. Only this file is written here.
 //!
 //! The handler is built as the server builds it: `api.handle` is given a `Ctx` whose request data lives in an arena that is

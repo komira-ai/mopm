@@ -1,9 +1,10 @@
 //! The previous release (v0.0.104, d0b9020) and this code, each way, in one process: no socket, no child process.
 //!
-//! The previous release's command line and registry are its own code, vendored byte for byte under tests/compat/v0.0.104 and built
-//! as the modules `prev_cli` (the `Publisher` of src/cli/group_publish.zig at the tag, with the files it needs) and `prev_fake` (the
+//! The previous release's command line and registry are its own code, byte for byte: the files that the live tree still holds
+//! unchanged are read from there, the others are vendored under tests/compat/v0.0.104 (README.md there), and BUCK lays both out as
+//! the release did. They are built as the modules `prev_cli` (the `Publisher` of src/cli/group_publish.zig at the tag, with the files it needs) and `prev_fake` (the
 //! fake registry's handler, registry/fake at the tag). The current ones are `cli_publish` and `fake_fixture`. Every test first
-//! checks that each vendored file still hashes to its line of SHA256SUMS, so a run that passes ran the released bytes.
+//! checks that each of these files still hashes to its line of SHA256SUMS, so a run that passes ran the released bytes.
 //!
 //! What the two clients send is also written down: the bodies of the create and commit requests of one set, for each client, are
 //! files under service/api/test/fixtures (released-client-v0.0.104/ and new-client/) that this test holds byte for byte to what the
@@ -64,12 +65,14 @@ fn sha256Of(a: Allocator, bytes: []const u8) ![]const u8 {
     return inproc.sha256Hex(a, bytes);
 }
 
-/// Every file under `dir`'s fake/ and cli/ hashes to its line of `dir`'s SHA256SUMS, and no line is without a file or file
-/// without a line: the vendored code is the released code, unedited. Null when that holds; otherwise the first problem.
-fn snapshotProblem(a: Allocator, dir: std.fs.Dir) !?[]const u8 {
-    const sums = dir.readFileAlloc(a, "SHA256SUMS", 1 << 20) catch |e| return try std.fmt.allocPrint(a, "SHA256SUMS: {s}", .{@errorName(e)});
+/// Every line of `dir`'s `sums` ("<sha256>  <path relative to dir>") names a file that hashes to it, and every file under
+/// `dir/<vendored>/fake` and `dir/<vendored>/cli` has a line: the code the modules are built from is the released code, unedited.
+/// A path outside `vendored` is a file of the live tree that the release had byte for byte; if it changes, the first problem
+/// names it, and that is the moment to vendor the released copy. Null when all of this holds; otherwise the first problem.
+fn snapshotProblem(a: Allocator, dir: std.fs.Dir, sums: []const u8, vendored: []const u8) !?[]const u8 {
+    const text = dir.readFileAlloc(a, sums, 1 << 20) catch |e| return try std.fmt.allocPrint(a, "{s}: {s}", .{ sums, @errorName(e) });
     var lines = std.ArrayList([]const u8).init(a);
-    var it = std.mem.splitScalar(u8, sums, '\n');
+    var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |line| {
         if (line.len == 0) continue;
         if (line.len <= 66 or !std.mem.eql(u8, line[64..66], "  ")) return try std.fmt.allocPrint(a, "not a SHA256SUMS line: {s}", .{line});
@@ -79,11 +82,12 @@ fn snapshotProblem(a: Allocator, dir: std.fs.Dir) !?[]const u8 {
         try lines.append(rel);
     }
     for ([_][]const u8{ "fake", "cli" }) |sub| {
-        var sub_dir = dir.openDir(sub, .{ .iterate = true }) catch |e| return try std.fmt.allocPrint(a, "{s}/: {s}", .{ sub, @errorName(e) });
+        const sub_path = try std.fmt.allocPrint(a, "{s}/{s}", .{ vendored, sub });
+        var sub_dir = dir.openDir(sub_path, .{ .iterate = true }) catch |e| return try std.fmt.allocPrint(a, "{s}/: {s}", .{ sub_path, @errorName(e) });
         defer sub_dir.close();
         var walk = sub_dir.iterate();
         while (try walk.next()) |entry| {
-            const rel = try std.fmt.allocPrint(a, "{s}/{s}", .{ sub, entry.name });
+            const rel = try std.fmt.allocPrint(a, "{s}/{s}", .{ sub_path, entry.name });
             var listed = false;
             for (lines.items) |l| listed = listed or std.mem.eql(u8, l, rel);
             if (!listed) return try std.fmt.allocPrint(a, "not in SHA256SUMS: {s}", .{rel});
@@ -92,13 +96,11 @@ fn snapshotProblem(a: Allocator, dir: std.fs.Dir) !?[]const u8 {
     return null;
 }
 
-/// The vendored snapshot passes `snapshotProblem`; the test fails with the problem otherwise.
+/// The files of the previous release pass `snapshotProblem`; the test fails with the problem otherwise.
 fn verifySnapshot(a: Allocator) !void {
     var root = try rootDir();
     defer root.close();
-    var dir = try root.openDir(snapshot, .{});
-    defer dir.close();
-    const problem = try snapshotProblem(a, dir);
+    const problem = try snapshotProblem(a, root, snapshot ++ "/SHA256SUMS", snapshot);
     try std.testing.expectEqual(@as(?[]const u8, null), problem);
 }
 
@@ -107,22 +109,27 @@ test "a snapshot with an edited, an unlisted or a missing file is refused, namin
     defer arena_state.deinit();
     const a = arena_state.allocator();
     const body = "pub const x = 1;\n";
-    const sums = try std.fmt.allocPrint(a, "{s}  fake/x.zig\n", .{try sha256Of(a, body)});
+    const sums = try std.fmt.allocPrint(a, "{s}  v/fake/x.zig\n{s}  live/y.zig\n", .{ try sha256Of(a, body), try sha256Of(a, body) });
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try tmp.dir.makePath("fake");
-    try tmp.dir.makePath("cli");
+    try tmp.dir.makePath("v/fake");
+    try tmp.dir.makePath("v/cli");
+    try tmp.dir.makePath("live");
     try tmp.dir.writeFile("SHA256SUMS", sums);
-    try tmp.dir.writeFile("fake/x.zig", body);
-    try std.testing.expectEqual(@as(?[]const u8, null), try snapshotProblem(a, tmp.dir));
-    try tmp.dir.writeFile("fake/x.zig", "pub const x = 2;\n");
-    try std.testing.expectEqualStrings("fake/x.zig does not hash to its line", (try snapshotProblem(a, tmp.dir)).?);
-    try tmp.dir.writeFile("fake/x.zig", body);
-    try tmp.dir.writeFile("cli/extra.zig", body);
-    try std.testing.expectEqualStrings("not in SHA256SUMS: cli/extra.zig", (try snapshotProblem(a, tmp.dir)).?);
-    try tmp.dir.deleteFile("cli/extra.zig");
-    try tmp.dir.deleteFile("fake/x.zig");
-    try std.testing.expectEqualStrings("fake/x.zig: FileNotFound", (try snapshotProblem(a, tmp.dir)).?);
+    try tmp.dir.writeFile("v/fake/x.zig", body);
+    try tmp.dir.writeFile("live/y.zig", body);
+    try std.testing.expectEqual(@as(?[]const u8, null), try snapshotProblem(a, tmp.dir, "SHA256SUMS", "v"));
+    try tmp.dir.writeFile("v/fake/x.zig", "pub const x = 2;\n");
+    try std.testing.expectEqualStrings("v/fake/x.zig does not hash to its line", (try snapshotProblem(a, tmp.dir, "SHA256SUMS", "v")).?);
+    try tmp.dir.writeFile("v/fake/x.zig", body);
+    try tmp.dir.writeFile("live/y.zig", "pub const y = 2;\n");
+    try std.testing.expectEqualStrings("live/y.zig does not hash to its line", (try snapshotProblem(a, tmp.dir, "SHA256SUMS", "v")).?);
+    try tmp.dir.writeFile("live/y.zig", body);
+    try tmp.dir.writeFile("v/cli/extra.zig", body);
+    try std.testing.expectEqualStrings("not in SHA256SUMS: v/cli/extra.zig", (try snapshotProblem(a, tmp.dir, "SHA256SUMS", "v")).?);
+    try tmp.dir.deleteFile("v/cli/extra.zig");
+    try tmp.dir.deleteFile("v/fake/x.zig");
+    try std.testing.expectEqualStrings("v/fake/x.zig: FileNotFound", (try snapshotProblem(a, tmp.dir, "SHA256SUMS", "v")).?);
 }
 
 fn golden(a: Allocator, dir: []const u8, name: []const u8) ![]u8 {
