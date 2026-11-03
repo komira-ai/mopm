@@ -17,6 +17,7 @@ import { GroupCommitter, type GroupCommitBody } from './group-commit';
 import { GroupYanker } from './group-yank-request';
 import { readMemberFiles, type GroupFileFact } from './group-read';
 import { GROUP_ID, quarantineKeyFor, uploadIdFor } from './group-keys';
+import { parseReadmeDeclaration, readmeUpload, type GroupReadmeBody, type ReadmeRef } from './group-readmes';
 import type { ActorGroup, ObjectStore, Presigner, PublishStore, Queue } from './ports';
 import { actorOf, detailVia, liveBytes, viaField, parseFileFacts, requireOwner } from './service';
 import type { UploadRecord } from './types';
@@ -47,7 +48,7 @@ export interface GroupServiceDeps {
   registry: GroupRegistry;
   publishes: PublishStore;
   /** Only `head` is used: a file already in quarantine needs no upload URL. */
-  objects: Pick<ObjectStore, 'head'>;
+  objects: Pick<ObjectStore, 'head' | 'get'>;
   presigner: Presigner;
   config: PublishConfig;
   /** The group queue: a commit queues the group's validation on it. Absent, the commit answers `unavailable`. */
@@ -72,6 +73,8 @@ export interface GroupMemberRequest {
   canonical: string;
   /** Sorted by subdir and file name. */
   files: GroupFileRequest[];
+  /** The readme the member will upload as an object. Not part of the group's id. */
+  readme?: ReadmeRef;
 }
 /** What a create does when the caller's own open groups share a version with the new set. */
 export type OnOverlap = 'supersede' | 'refuse';
@@ -115,7 +118,8 @@ export function parseGroupRequest(config: PublishConfig, body: unknown): GroupRe
       bytes += one.size;
       return one;
     });
-    out.push({ name, version, canonical, files: facts.sort((a, b) => (fileKey(a) < fileKey(b) ? -1 : 1)) });
+    const readme = parseReadmeDeclaration(name, m.readme);
+    out.push({ name, version, canonical, files: facts.sort((a, b) => (fileKey(a) < fileKey(b) ? -1 : 1)), ...(readme ? { readme } : {}) });
   }
   if (bytes > config.groupMaxBytes) throw invalidRequest(`the files total ${bytes} bytes; a group holds at most ${config.groupMaxBytes}`);
   return { members: out.sort((a, b) => (a.name < b.name ? -1 : 1)), ...(onOverlap !== undefined ? { onOverlap } : {}) };
@@ -150,6 +154,8 @@ export interface GroupMemberBody {
   /** `new`: this call reserved the number. `join`: it was already reserved for this group, or taken over. `skip_identical`: the group has no more to do for it. */
   action: 'new' | 'join' | 'skip_identical';
   files: GroupFileBody[];
+  /** Present when the member declared a readme, in the answer that carries the files. */
+  readme?: GroupReadmeBody;
 }
 export interface GroupCreateBody {
   group_id: string;
@@ -614,12 +620,18 @@ export class GroupService {
     }
     const done = next < todo.length ? todo[next]! : total;
     const answered = req.members.slice(0, done);
+    const now = this.now();
     const filed: GroupFileBody[][] = [];
+    const readmes: Array<GroupReadmeBody | undefined> = [];
     // Only the answer that ends the reserving carries the files: a client that gets `reserving` asks again.
     if (done === total) {
-      for (let i = 0; i < total; i += BATCH) filed.push(...(await Promise.all(answered.slice(i, i + BATCH).map((m) => this.files(p, gid, m)))));
+      for (let i = 0; i < total; i += BATCH) {
+        const batch = answered.slice(i, i + BATCH);
+        filed.push(...(await Promise.all(batch.map((m) => this.files(p, gid, m)))));
+        readmes.push(...(await Promise.all(batch.map((m) => readmeUpload({ ...this.d, now }, gid, m)))));
+      }
     }
-    const members: GroupMemberBody[] = answered.map((m, i) => ({ name: m.name, version: m.version, action: actions.get(i) ?? 'join', files: filed[i] ?? [] }));
+    const members: GroupMemberBody[] = answered.map((m, i) => ({ name: m.name, version: m.version, action: actions.get(i) ?? 'join', files: filed[i] ?? [], ...(readmes[i] ? { readme: readmes[i] } : {}) }));
     return { header, members };
   }
 

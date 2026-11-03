@@ -8,7 +8,9 @@
 //!   1. read `<dir>/plan.json`, refuse a plan that has a refused member, and check every file against the plan;
 //!   2. `POST /groups` with the members to upload (the plan's order is dependency order): the registry answers one
 //!      reservation per member, and a URL for each file it does not yet hold;
-//!   3. PUT each file, member by member in that order; the PUT carries no token;
+//!   3. PUT each file, member by member in that order; the PUT carries no token. When the registry takes readmes as objects
+//!      (its /health lists `group_readme_objects`, read first, without a token, if a member has a readme), the create names each
+//!      readme by sha256 and size, it is PUT after its member's files, and the commit names it again (src/cli/group_readmes.zig);
 //!   4. `POST /groups/{id}/commit`;
 //!   5. poll the group until it is `visible`, or ended.
 //! Nothing is visible until the group is: a member the registry rejects ends the group `rejected`, and none of its
@@ -54,252 +56,30 @@ const stage_token = @import("group_stage_token.zig");
 const plan_mod = @import("group_plan.zig");
 const registry_cmd = @import("registry_cmd.zig");
 const publish_cmd = @import("publish_cmd.zig");
+const io = @import("group_io.zig");
+const readmes = @import("group_readmes.zig");
+const checked_mod = @import("group_checked.zig");
 
-const usage =
-    \\usage: mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>] [--wait <seconds>] [--timeout <seconds>] [--retries <n>] [--dry-run] [--oidc] [--no-commit | --abort]
-    \\
-    \\  Publishes the staged set in <dir> (plan.json and the files it names) through one group: every member is visible
-    \\  together, or none is. --registry is required. A rerun after a failure resumes the same group (<dir>/state.json).
-    \\  --oidc, inside a GitHub Actions job with 'id-token: write', gets the token from the job's identity, not $MOPM_TOKEN.
-    \\  --no-commit uploads every file and stops with the group open (nothing committed, nothing readable); a later run
-    \\  without it resumes the same group and commits. With --oidc, --no-commit asks the registry for a stage-only token (it
-    \\  can create, read and abort a group, not commit it); a registry without stage tokens answers a publish token, and the
-    \\  run goes on with it and says so. --abort ends the open group <dir>/state.json names.
-    \\
-;
-
-/// The least the run waits for the group to be visible, unless `--wait` says: the base of the default.
-pub const default_wait_secs: i64 = 600;
-/// The longest `--timeout` may be: an hour, so a typo does not read as no limit.
-pub const max_timeout_secs: u32 = 3600;
-/// What each member adds to the default wait: validation and the chain take longer the more members a group has
-/// (about 8 to 12 minutes at 170 members, 15 to 25 at 300).
-pub const wait_per_member_secs: i64 = 5;
-
-/// The default wait of a group of `members`: `default_wait_secs` plus `wait_per_member_secs` for each member.
-pub fn defaultWaitFor(members: usize) i64 {
-    return default_wait_secs + wait_per_member_secs * @as(i64, @intCast(members));
-}
 /// The most times one create is repeated while the registry answers `reserving`.
 pub const max_reserving_rounds: usize = 50;
 /// The registry signs upload URLs for 300 seconds. A URL older than this is not used: the run asks for fresh ones first.
 pub const url_refresh_secs: i64 = 240;
 
-pub const Flags = struct {
-    staged: []const u8,
-    registry: []const u8,
-    config_dir: ?[]const u8 = null,
-    /// `--wait`; null means the default of the group's size (`defaultWaitFor`).
-    wait_secs: ?i64 = null,
-    /// The connect limit and the longest a read or write waits for the server, per request.
-    timeout_secs: u32 = http.default_timeout_secs,
-    /// Repeats of a request that can be repeated, after its first try.
-    retries: u8 = http.default_retries,
-    dry_run: bool = false,
-    /// `--oidc`: the registry token comes from the CI job's identity, not `$MOPM_TOKEN` or a login.
-    oidc: bool = false,
-    /// `--no-commit`: upload, then stop with the group open.
-    no_commit: bool = false,
-    /// `--abort`: end the open group `state.json` names; no file is read, uploaded or committed.
-    abort: bool = false,
-};
+const flags_mod = @import("group_flags.zig");
+pub const Flags = flags_mod.Flags;
+pub const Parsed = flags_mod.Parsed;
+pub const parseFlags = flags_mod.parseFlags;
+pub const wants = flags_mod.wants;
+pub const rerunCommand = flags_mod.rerunCommand;
+pub const defaultWaitFor = flags_mod.defaultWaitFor;
+pub const default_wait_secs = flags_mod.default_wait_secs;
+pub const max_timeout_secs = flags_mod.max_timeout_secs;
+pub const wait_per_member_secs = flags_mod.wait_per_member_secs;
+const usage = flags_mod.usage;
 
-/// The command that waits for the group again: the flags of this run, without `--dry-run`.
-pub fn rerunCommand(arena: Allocator, flags: Flags) Allocator.Error![]const u8 {
-    var b = std.ArrayList(u8).init(arena);
-    const w = b.writer();
-    try w.writeAll("mopm publish --staged ");
-    try shellWord(w, flags.staged);
-    try w.writeAll(" --registry ");
-    try shellWord(w, flags.registry);
-    if (flags.config_dir) |c| {
-        try w.writeAll(" --config-dir ");
-        try shellWord(w, c);
-    }
-    if (flags.wait_secs) |s| try w.print(" --wait {d}", .{s});
-    if (flags.oidc) try w.writeAll(" --oidc");
-    return b.items;
-}
-
-/// `s` as one shell word: bare when it has only safe characters, else in single quotes.
-fn shellWord(w: anytype, s: []const u8) !void {
-    var safe = s.len > 0;
-    for (s) |c| {
-        if (!(std.ascii.isAlphanumeric(c) or std.mem.indexOfScalar(u8, "/._-:=@+,", c) != null)) safe = false;
-    }
-    if (safe) return w.writeAll(s);
-    try w.writeByte('\'');
-    for (s) |c| {
-        if (c == '\'') try w.writeAll("'\\''") else try w.writeByte(c);
-    }
-    try w.writeByte('\'');
-}
-
-pub const Parsed = union(enum) { ok: Flags, bad: []const u8 };
-
-/// Whether `args` of `mopm publish` are the staged form.
-pub fn wants(args: []const []const u8) bool {
-    for (args) |a| {
-        if (std.mem.eql(u8, a, "--staged")) return true;
-    }
-    return false;
-}
-
-pub fn parseFlags(arena: Allocator, args: []const []const u8) Allocator.Error!Parsed {
-    var staged: ?[]const u8 = null;
-    var reg: ?[]const u8 = null;
-    var f = Flags{ .staged = "", .registry = "" };
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        const a = args[i];
-        if (std.mem.eql(u8, a, "--dry-run")) {
-            f.dry_run = true;
-            continue;
-        }
-        if (std.mem.eql(u8, a, "--oidc")) {
-            f.oidc = true;
-            continue;
-        }
-        if (std.mem.eql(u8, a, "--no-commit")) {
-            f.no_commit = true;
-            continue;
-        }
-        if (std.mem.eql(u8, a, "--abort")) {
-            f.abort = true;
-            continue;
-        }
-        const takes = std.mem.eql(u8, a, "--staged") or std.mem.eql(u8, a, "--registry") or std.mem.eql(u8, a, "--config-dir") or std.mem.eql(u8, a, "--wait") or std.mem.eql(u8, a, "--timeout") or std.mem.eql(u8, a, "--retries");
-        if (!takes) {
-            const why = if (std.mem.eql(u8, a, "--compiler") or std.mem.eql(u8, a, "--mojoc") or std.mem.eql(u8, a, "--manifest") or std.mem.eql(u8, a, "--native") or std.mem.eql(u8, a, "--readme"))
-                try std.fmt.allocPrint(arena, "{s} packs one package; --staged publishes a staged set, which was packed already", .{a})
-            else
-                try std.fmt.allocPrint(arena, "unexpected argument '{s}'", .{a});
-            return .{ .bad = why };
-        }
-        if (i + 1 >= args.len) return .{ .bad = try std.fmt.allocPrint(arena, "{s} needs a value", .{a}) };
-        i += 1;
-        const v = args[i];
-        if (std.mem.eql(u8, a, "--staged")) {
-            staged = v;
-        } else if (std.mem.eql(u8, a, "--registry")) {
-            reg = v;
-        } else if (std.mem.eql(u8, a, "--config-dir")) {
-            f.config_dir = v;
-        } else if (std.mem.eql(u8, a, "--timeout")) {
-            f.timeout_secs = std.fmt.parseInt(u32, v, 10) catch return .{ .bad = try std.fmt.allocPrint(arena, "--timeout {s}: a number of seconds", .{v}) };
-            if (f.timeout_secs == 0 or f.timeout_secs > max_timeout_secs) return .{ .bad = try std.fmt.allocPrint(arena, "--timeout is 1 to {d} seconds", .{max_timeout_secs}) };
-        } else if (std.mem.eql(u8, a, "--retries")) {
-            f.retries = std.fmt.parseInt(u8, v, 10) catch return .{ .bad = try std.fmt.allocPrint(arena, "--retries {s}: a number from 0 to {d}", .{ v, http.max_retries }) };
-            if (f.retries > http.max_retries) return .{ .bad = try std.fmt.allocPrint(arena, "--retries is 0 to {d}", .{http.max_retries}) };
-        } else {
-            const n = std.fmt.parseInt(i64, v, 10) catch return .{ .bad = try std.fmt.allocPrint(arena, "--wait {s}: a number of seconds", .{v}) };
-            if (n < 0) return .{ .bad = "--wait is not negative" };
-            f.wait_secs = n;
-        }
-    }
-    f.staged = staged orelse return .{ .bad = "--staged <dir> is required" };
-    f.registry = reg orelse return .{ .bad = "--registry is required with --staged: there is no default, so a staged set is never published to a registry by accident" };
-    if (f.abort and f.no_commit) return .{ .bad = "--abort ends a group and --no-commit stages one: give one of them" };
-    if (f.abort and f.dry_run) return .{ .bad = "--abort cannot be a --dry-run: it sends one request and has nothing to preview" };
-    return .{ .ok = f };
-}
-
-// ---------------------------------------------------------------- the network
-
-/// What the run needs of the world, so its tests need no socket: requests, time and sleeping.
-pub const Net = struct {
-    ptr: *anyopaque,
-    vtable: *const VTable,
-    /// The time limit of every request and how often an idempotent one is repeated (`--timeout`, `--retries`).
-    policy: http.Policy = .{},
-
-    pub const VTable = struct {
-        request: *const fn (ptr: *anyopaque, arena: Allocator, method: std.http.Method, url: []const u8, options: http.Options) anyerror!http.Answer,
-        sleep: *const fn (ptr: *anyopaque, secs: u64) void,
-        now: *const fn (ptr: *anyopaque) i64,
-    };
-
-    /// One request, repeated by the policy when it is idempotent and fails in a way a second try can cure.
-    fn request(n: Net, arena: Allocator, method: std.http.Method, url: []const u8, options: http.Options) anyerror!http.Answer {
-        return http.retrying(arena, n, method, url, options, n.policy);
-    }
-    /// One try, as `http.retrying` asks for it.
-    pub fn once(n: Net, arena: Allocator, method: std.http.Method, url: []const u8, options: http.Options) anyerror!http.Answer {
-        return n.vtable.request(n.ptr, arena, method, url, options);
-    }
-    /// The wait between tries, as `http.retrying` asks for it.
-    pub fn pause(n: Net, secs: u64) void {
-        n.sleep(secs);
-    }
-    fn sleep(n: Net, secs: u64) void {
-        n.vtable.sleep(n.ptr, secs);
-    }
-    pub fn now(n: Net) i64 {
-        return n.vtable.now(n.ptr);
-    }
-};
-
-var real_marker: u8 = 0;
-const real_vtable = Net.VTable{ .request = realRequest, .sleep = realSleep, .now = realNow };
-
-pub fn realNet() Net {
-    return .{ .ptr = &real_marker, .vtable = &real_vtable };
-}
-
-fn realRequest(_: *anyopaque, arena: Allocator, method: std.http.Method, url: []const u8, options: http.Options) anyerror!http.Answer {
-    return http.request(arena, method, url, options);
-}
-
-fn realSleep(_: *anyopaque, secs: u64) void {
-    std.time.sleep(secs * std.time.ns_per_s);
-}
-
-fn realNow(_: *anyopaque) i64 {
-    return std.time.timestamp();
-}
-
-// ----------------------------------------------------------------- the console
-
-/// What the run says. Each line is held until `flush`, which hands both streams to the sink; with no sink (the tests) the
-/// text stays in `out` and `err` to be read.
-pub const Console = struct {
-    out: std.ArrayList(u8),
-    err: std.ArrayList(u8),
-    sink: ?*const fn (out: []const u8, err: []const u8) void,
-
-    pub fn init(arena: Allocator, sink: ?*const fn (out: []const u8, err: []const u8) void) Console {
-        return .{ .out = std.ArrayList(u8).init(arena), .err = std.ArrayList(u8).init(arena), .sink = sink };
-    }
-
-    /// The sink of the real commands: standard output and standard error.
-    pub fn stdStreams(out: []const u8, errs: []const u8) void {
-        std.io.getStdOut().writeAll(out) catch {};
-        std.io.getStdErr().writeAll(errs) catch {};
-    }
-
-    pub fn say(c: *Console, comptime fmt: []const u8, args: anytype) void {
-        c.out.writer().print(fmt, args) catch {};
-        c.flush();
-    }
-
-    pub fn fail(c: *Console, comptime fmt: []const u8, args: anytype) void {
-        c.err.writer().print("mopm: " ++ fmt, args) catch {};
-        c.flush();
-    }
-
-    /// A line that goes on from the last `fail`: indented, with no `mopm:`.
-    pub fn note(c: *Console, comptime fmt: []const u8, args: anytype) void {
-        c.err.writer().print("  " ++ fmt, args) catch {};
-        c.flush();
-    }
-
-    fn flush(c: *Console) void {
-        const sink = c.sink orelse return;
-        sink(c.out.items, c.err.items);
-        c.out.clearRetainingCapacity();
-        c.err.clearRetainingCapacity();
-    }
-};
+pub const Net = io.Net;
+pub const realNet = io.realNet;
+pub const Console = io.Console;
 
 /// `staged`: `--no-commit` stopped with the group open and every file held. `aborted`: `--abort` ended the group, or found
 /// it already ended. `nothing_to_abort`: `--abort` found no group recorded in state.json. All three end 0.
@@ -315,7 +95,7 @@ const FileAnswer = struct {
     put_url: ?[]const u8 = null,
     put_headers: ?std.json.Value = null,
 };
-const MemberAnswer = struct { name: []const u8, version: []const u8, action: []const u8 = "", files: []const FileAnswer = &.{} };
+const MemberAnswer = struct { name: []const u8, version: []const u8, action: []const u8 = "", files: []const FileAnswer = &.{}, readme: ?readmes.ReadmeAnswer = null };
 const CreateAnswer = struct {
     group_id: []const u8,
     status: []const u8,
@@ -342,15 +122,29 @@ fn isHex32(s: []const u8) bool {
     return true;
 }
 
+/// What one PUT sends: a file read (and checked again) from the staged directory, or bytes the run holds.
+const Source = struct {
+    name: []const u8,
+    where: []const u8,
+    bytes: union(enum) { file: plan_mod.File, held: []const u8 },
+};
+
 pub const Publisher = struct {
     arena: Allocator,
     net: Net,
     console: *Console,
     dir: std.fs.Dir,
     plan: plan_mod.Plan,
-    /// The commit request's body, built by `plan_mod.verify` from the readmes it checked: the commit sends these bytes and
-    /// reads no readme again.
+    /// The commit request's body for the inline form (`readmes.choose`), built from the readmes `plan_mod.verify` checked: the
+    /// commit sends these bytes and reads no readme again. Not used while `objects` is set.
     commit_body: []const u8,
+    /// What each member to upload puts in the commit, with its readme as `plan_mod.verify` read it.
+    entries: []const plan_mod.CommitEntry = &.{},
+    /// The registry takes readmes as objects: the create names them, each is PUT, and the commit names them by digest.
+    objects: bool = false,
+    /// What stops this run once the group turns out to be open (`readmes.decideResumed`): a run that resumes a group sends a
+    /// commit only for an open group, so a group the registry holds past open is waited for whatever this says.
+    refusal: ?readmes.Refusal = null,
     /// The registry's API root, without a trailing slash (`http://127.0.0.1:1234/api/v1`).
     api_url: []const u8,
     token: []const u8,
@@ -426,7 +220,11 @@ pub const Publisher = struct {
                 try std.json.encodeJsonString(f.filename, .{}, w);
                 try w.print(",\"sha256\":\"{s}\",\"size\":{d}}}", .{ f.sha256, f.size });
             }
-            try w.writeAll("]}");
+            try w.writeAll("]");
+            if (p.objects) {
+                if (readmes.entryWithReadme(p.entries, m.name)) |e| try readmes.writeRef(w, e);
+            }
+            try w.writeAll("}");
         }
         try w.writeAll("]}");
         return out.items;
@@ -498,6 +296,7 @@ pub const Publisher = struct {
     fn upload(p: *Publisher, first: CreateAnswer) Stop!void {
         var answer = first;
         var held: usize = 0;
+        var held_readmes: usize = 0;
         for (p.plan.members) |m| {
             if (m.action != .upload) continue;
             for (m.files) |f| {
@@ -523,8 +322,87 @@ pub const Publisher = struct {
                 }
                 try p.markUploaded(key);
             }
+            if (p.objects and try p.uploadReadme(&answer, m)) held_readmes += 1;
         }
         if (held > 0) p.console.say("{d} file(s) were already in the registry's storage\n", .{held});
+        if (held_readmes > 0) p.console.say("{d} readme(s) were already in the registry's storage\n", .{held_readmes});
+    }
+
+    /// PUTs the readme of `m` when it has text and the registry does not hold it; true when the registry held it already.
+    fn uploadReadme(p: *Publisher, answer: *CreateAnswer, m: plan_mod.Member) Stop!bool {
+        const e = readmes.entryWithReadme(p.entries, m.name) orelse return false;
+        if (p.net.now() - p.urls_signed_at >= url_refresh_secs) answer.* = try p.refresh(answer.*);
+        var ra = try p.readmeFor(answer.*, m);
+        if (ra.uploaded) return true;
+        const held = Source{ .name = "README.md", .where = "readme", .bytes = .{ .held = e.readme.? } };
+        if (!try p.send(m, held, ra.put_url, ra.put_headers, true)) {
+            answer.* = try p.refresh(answer.*);
+            ra = try p.readmeFor(answer.*, m);
+            if (ra.uploaded) return true;
+            _ = try p.send(m, held, ra.put_url, ra.put_headers, false);
+        }
+        return false;
+    }
+
+    /// The upload descriptor of `m`'s readme in `answer`: one that echoes what was declared. A refreshed answer is held to the
+    /// same check as the first, so no run commits a reference the registry did not confirm.
+    fn readmeFor(p: *Publisher, answer: CreateAnswer, m: plan_mod.Member) Stop!readmes.ReadmeAnswer {
+        const am = findMember(answer, m.name, m.version) orelse {
+            p.console.fail("the registry's answer has no reservation for {s} {s}\n", .{ m.name, m.version });
+            return error.Failed;
+        };
+        const e = readmes.entryWithReadme(p.entries, m.name).?;
+        switch (readmes.judge(e, am.readme)) {
+            .confirmed => return am.readme.?,
+            .absent => p.console.fail("the registry's answer has no readme upload for {s}\n", .{m.name}),
+            .differs => p.console.fail("the registry's answer names another readme for {s} than the one declared (sha256 {s}, {d} bytes); nothing was committed\n", .{ m.name, e.readme_sha256, e.readme.?.len }),
+            .malformed => |why| p.console.fail("the registry's answer for the readme of {s} is not an upload descriptor: {s}; nothing was committed\n", .{ m.name, why }),
+        }
+        return error.Failed;
+    }
+
+    /// The first create answer of an open group must carry, for each readme, the upload the declaration asked for. A member
+    /// without a readme, or with another one, means the registry does not hold our declaration (it stopped taking readmes as
+    /// objects since `/health` was read): the run goes on with the inline form if its commit request fits, and stops, with
+    /// nothing uploaded, if it does not. A descriptor that is not one is refused.
+    fn confirmObjects(p: *Publisher, made: CreateAnswer) Stop!void {
+        var lacking: ?[]const u8 = null;
+        var what: []const u8 = "";
+        for (try p.plan.uploads(p.arena)) |m| {
+            const e = readmes.entryWithReadme(p.entries, m.name) orelse continue;
+            const am = findMember(made, m.name, m.version) orelse {
+                p.console.fail("the registry's answer has no reservation for {s} {s}\n", .{ m.name, m.version });
+                return error.Failed;
+            };
+            switch (readmes.judge(e, am.readme)) {
+                .confirmed => {},
+                .absent => if (lacking == null) {
+                    lacking = m.name;
+                    what = "its answer has no readme upload for ";
+                },
+                .differs => if (lacking == null) {
+                    lacking = m.name;
+                    what = "its answer names another readme than the one declared for ";
+                },
+                .malformed => |why| {
+                    p.console.fail("the registry's answer for the readme of {s} is not an upload descriptor: {s}; nothing was uploaded\n", .{ m.name, why });
+                    return error.Failed;
+                },
+            }
+        }
+        const name = lacking orelse return;
+        switch (try plan_mod.commitOf(p.arena, p.entries)) {
+            .body => |b| {
+                p.objects = false;
+                p.commit_body = b;
+                p.console.say("the registry no longer takes readmes as objects ({s}{s}); sending them inline\n", .{ what, name });
+            },
+            .bad => |why| {
+                p.console.fail("the registry no longer takes readmes as objects ({s}{s}), and sent inline they are too large: {s}; nothing was uploaded\n", .{ what, name, why });
+                p.console.note("{s} is kept; run the same command again when the registry takes readmes as objects\n", .{plan_mod.state_name});
+                return error.Failed;
+            },
+        }
     }
 
     fn answerFor(p: *Publisher, answer: CreateAnswer, m: plan_mod.Member, f: plan_mod.File) Stop!FileAnswer {
@@ -551,45 +429,63 @@ pub const Publisher = struct {
 
     /// PUTs one file. With `may_retry`, a 403 is not a failure but a `false`: the caller refreshes the URLs and tries again.
     fn put(p: *Publisher, m: plan_mod.Member, f: plan_mod.File, af: FileAnswer, may_retry: bool) Stop!bool {
-        const url = af.put_url orelse {
-            p.console.fail("the registry gave no upload URL for {s} of {s}\n", .{ f.filename, m.name });
+        return p.send(m, .{ .name = f.filename, .where = f.subdir, .bytes = .{ .file = f } }, af.put_url, af.put_headers, may_retry);
+    }
+
+    /// PUTs `what` to the URL the registry signed, with exactly the headers it named and no token. With `may_retry`, a 403
+    /// is a `false`.
+    fn send(p: *Publisher, m: plan_mod.Member, what: Source, put_url: ?[]const u8, put_headers: ?std.json.Value, may_retry: bool) Stop!bool {
+        const url = put_url orelse {
+            p.console.fail("the registry gave no upload URL for {s} of {s}\n", .{ what.name, m.name });
             return error.Failed;
         };
         if (!registry.allowedUrl(url)) {
             p.console.fail("the registry named an upload URL that is neither https nor loopback http\n", .{});
             return error.Failed;
         }
-        const headers = (publish_cmd.putHeaders(p.arena, af.put_headers) catch return error.OutOfMemory) orelse return error.Failed;
+        const headers = (publish_cmd.putHeaders(p.arena, put_headers) catch return error.OutOfMemory) orelse return error.Failed;
         // The file's bytes, the request and its answer live only for this PUT: one file at a time is held, not the whole set.
         var each = std.heap.ArenaAllocator.init(p.scratch);
         defer each.deinit();
         const scratch = each.allocator();
-        const bytes = switch (try plan_mod.readChecked(scratch, p.dir, f)) {
-            .bytes => |b| b,
-            .bad => |why| {
-                p.console.fail("{s}; nothing more was uploaded\n", .{why});
-                return error.Failed;
+        const bytes = switch (what.bytes) {
+            .held => |b| b,
+            .file => |f| switch (try plan_mod.readChecked(scratch, p.dir, f)) {
+                .bytes => |b| b,
+                .bad => |why| {
+                    p.console.fail("{s}; nothing more was uploaded\n", .{why});
+                    return error.Failed;
+                },
             },
         };
         // No bearer token: the URL is presigned.
         const r = p.net.request(scratch, .PUT, url, .{ .body = bytes, .content_type = null, .extra_headers = headers }) catch |e| {
-            p.console.fail("uploading {s} failed: {s}; run the same command again to resume group {s}\n", .{ f.filename, @errorName(e), p.state.group_id });
+            p.console.fail("uploading {s} failed: {s}; run the same command again to resume group {s}\n", .{ what.name, @errorName(e), p.state.group_id });
             return error.Failed;
         };
         if (r.status == 429) return p.refuse(r);
         if (r.status == 403 and may_retry) return false;
         if (!r.ok()) {
-            p.console.fail("uploading {s} failed: the storage answered HTTP {d}; run the same command again to resume group {s}\n", .{ f.filename, r.status, p.state.group_id });
+            p.console.fail("uploading {s} failed: the storage answered HTTP {d}; run the same command again to resume group {s}\n", .{ what.name, r.status, p.state.group_id });
             return error.Failed;
         }
-        p.console.say("uploaded {s} ({s}) of {s}\n", .{ f.filename, f.subdir, m.name });
+        p.console.say("uploaded {s} ({s}) of {s}\n", .{ what.name, what.where, m.name });
         return true;
     }
 
     fn commit(p: *Publisher) Stop!void {
         const path = try std.fmt.allocPrint(p.arena, "/groups/{s}/commit", .{p.state.group_id});
-        const a = try p.call(.POST, path, p.commit_body);
-        if (!a.ok()) return p.refuse(a);
+        const body = if (p.objects) try plan_mod.objectsBody(p.arena, p.entries) else p.commit_body;
+        const a = try p.call(.POST, path, body);
+        if (!a.ok()) {
+            const stop = p.refuse(a);
+            // A registry from before readme objects refuses a `readme` that is not a string; other refusals get no note.
+            const e = try http.apiError(p.arena, a);
+            if (p.objects and std.mem.eql(u8, e.code, "invalid_request") and std.mem.indexOf(u8, e.message, "'readme'") != null) {
+                p.console.note("the registry did not take the readmes as objects (it may have been rolled back since /health was read); group {s} is still open: run the same command again, which sends them inline if /health no longer lists {s}\n", .{ p.state.group_id, readmes.feature });
+            }
+            return stop;
+        }
         p.state.committed = true;
         p.state.staged = false;
         try p.save();
@@ -715,6 +611,15 @@ pub const Publisher = struct {
         if (p.state.group_id.len > 0 and !std.mem.eql(u8, p.state.group_id, made.group_id)) {
             p.console.fail("{s} names group {s}, but the registry answered {s} for this plan; remove {s} to start again\n", .{ plan_mod.state_name, p.state.group_id, made.group_id, plan_mod.state_name });
             return error.Failed;
+        }
+        if (p.objects and std.mem.eql(u8, made.status, "open")) try p.confirmObjects(made);
+        if (p.refusal) |r| {
+            if (std.mem.eql(u8, made.status, "open")) {
+                // Before any PUT and before state.json changes: the group is kept as it is.
+                p.console.fail("{s}; nothing was uploaded or committed\n", .{r.why});
+                if (r.note) |n| p.console.note("{s}\n", .{n});
+                return error.Failed;
+            }
         }
         p.state.group_id = made.group_id;
         p.state.attempt = made.attempt;
@@ -868,34 +773,12 @@ pub fn main(arena: Allocator, args: []const []const u8, cli_version: []const u8)
     };
 }
 
-/// A staged directory fit to run: its plan and the commit body `plan_mod.verify` built (null for `--abort`, which sends no
-/// commit).
-pub const Checked = struct { plan: plan_mod.Plan, commit_body: ?[]const u8 };
-
-/// The checked plan of a staged directory, or why the run stops before any request: the plan cannot be read or parsed,
-/// refuses a member, or its files are not as it says (this includes a commit request too large for the registry).
-pub const Planned = union(enum) { ok: Checked, bad: []const u8 };
-
-/// Reads the plan of `dir` and, unless the run is an `--abort`, checks it. An abort only ends the group `state.json` names
-/// and sends no file or readme, so it reads the plan and nothing more: a set that can no longer be published can still be
-/// aborted.
-pub fn checkedPlan(arena: Allocator, dir: std.fs.Dir, staged: []const u8, abort: bool) anyerror!Planned {
-    const text = dir.readFileAlloc(arena, plan_mod.plan_name, 1 << 26) catch |e| {
-        return .{ .bad = try std.fmt.allocPrint(arena, "{s}/{s}: {s}", .{ staged, plan_mod.plan_name, @errorName(e) }) };
-    };
-    const plan = switch (try plan_mod.parsePlan(arena, text)) {
-        .ok => |p| p,
-        .bad => |why| return .{ .bad = why },
-    };
-    if (abort) return .{ .ok = .{ .plan = plan, .commit_body = null } };
-    if (plan_mod.refusedMember(plan)) |m| {
-        return .{ .bad = try std.fmt.allocPrint(arena, "the plan refuses {s} {s}{s}{s}; nothing was sent", .{ m.name, m.version, if (m.reason.len > 0) ": " else "", m.reason }) };
-    }
-    return switch (try plan_mod.verify(arena, dir, plan)) {
-        .body => |body| .{ .ok = .{ .plan = plan, .commit_body = body } },
-        .bad => |why| .{ .bad = try std.fmt.allocPrint(arena, "{s}; nothing was sent", .{why}) },
-    };
-}
+pub const Checked = checked_mod.Checked;
+pub const Planned = checked_mod.Planned;
+pub const checkedPlan = checked_mod.checkedPlan;
+pub const Form = checked_mod.Form;
+pub const formOf = checked_mod.formOf;
+const resumedGroup = checked_mod.resumedGroup;
 
 /// The time limit and the retries `flags` ask for.
 pub fn policyOf(flags: Flags) http.Policy {
@@ -921,7 +804,7 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
     var console = Console.init(arena, Console.stdStreams);
     if (flags.abort) return abortCommand(arena, flags, cli_version, net, dir, plan, &console);
     const uploads = try plan.uploads(arena);
-    if (flags.dry_run) return dryRun(flags, plan, uploads, &console);
+    if (flags.dry_run) return dryRun(arena, flags, cli_version, net, plan, uploads, checked, &console);
     if (uploads.len == 0) {
         console.say("nothing to publish: every member of the plan is skipped\n", .{});
         var idle = Publisher{ .arena = arena, .net = net, .console = &console, .dir = dir, .plan = plan, .commit_body = "", .api_url = flags.registry, .token = "", .wait_secs = 0, .state = .{ .registry = flags.registry, .plan_sha256 = plan.sha256 } };
@@ -930,7 +813,11 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
         return code;
     }
 
-    const creds = (try credentials(arena, net, flags, cli_version, uploads)) orelse return 1;
+    const opened = (try openRegistry(arena, flags, cli_version)) orelse return 1;
+    // The form of the readmes is read from /health, without a token, before the token is asked for.
+    const form = (try formOf(arena, net, opened.session.config.api_url, checked, resumedGroup(arena, dir), &console)) orelse return 1;
+    const choice = form.choice;
+    const creds = (try credentials(arena, net, flags, opened, uploads)) orelse return 1;
     const loaded = (try loadStateFor(arena, dir, creds.api_url, plan.sha256, &console, "resuming")) orelse return 1;
 
     var p = Publisher{
@@ -939,8 +826,10 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
         .console = &console,
         .dir = dir,
         .plan = plan,
-        // Not an abort: checkedPlan verified the plan and built the body.
-        .commit_body = checked.commit_body.?,
+        .commit_body = choice.commit_body,
+        .entries = checked.entries,
+        .objects = choice.objects,
+        .refusal = form.refusal,
         .api_url = creds.api_url,
         .token = creds.token,
         .wait_secs = flags.wait_secs orelse defaultWaitFor(uploads.len),
@@ -961,17 +850,26 @@ const StderrNotes = struct {
 
 const Credentials = struct { api_url: []const u8, token: []const u8 };
 
-/// The registry's API root and the token of this run (`--oidc`, `$MOPM_TOKEN` or the login's), or null after saying why not.
-fn credentials(arena: Allocator, net: Net, flags: Flags, cli_version: []const u8, uploads: []const plan_mod.Member) anyerror!?Credentials {
-    // --oidc outside a job that can ask for an identity: stop before any request.
+/// The registry the flags name and, with `--oidc`, the job's identity request.
+const Opened = struct { session: registry_cmd.Session, actions: ?ci_oidc.Actions };
+
+/// Resolves the registry (`--oidc` outside a job that can ask for an identity stops here, before any request), or null after
+/// saying why not.
+fn openRegistry(arena: Allocator, flags: Flags, cli_version: []const u8) anyerror!?Opened {
     const actions = if (flags.oidc) (ci_oidc.actionsFromEnv(arena) orelse {
         err("{s}\n", .{ci_oidc.outside_actions});
         return null;
     }) else null;
     const s = registry_cmd.open(arena, .{ .registry = flags.registry, .config_dir = flags.config_dir }, cli_version) orelse return null;
+    return .{ .session = s, .actions = actions };
+}
+
+/// The registry's API root and the token of this run (`--oidc`, `$MOPM_TOKEN` or the login's), or null after saying why not.
+fn credentials(arena: Allocator, net: Net, flags: Flags, opened: Opened, uploads: []const plan_mod.Member) anyerror!?Credentials {
+    const s = opened.session;
     var notes = StderrNotes{};
     const purpose = stage_token.purposeOf(flags.no_commit, flags.abort);
-    const token = if (actions) |act| switch (try stage_token.token(arena, net, act, s.config.api_url, s.config.stage, uploads, purpose, &notes)) {
+    const token = if (opened.actions) |act| switch (try stage_token.token(arena, net, act, s.config.api_url, s.config.stage, uploads, purpose, &notes)) {
         .ok => |t| t,
         .bad => |why| {
             err("{s}\n", .{why});
@@ -1016,7 +914,8 @@ fn loadStateFor(arena: Allocator, dir: std.fs.Dir, api_url: []const u8, plan_sha
 /// no file of the set is: the job that ends a group need not hold the bytes.
 fn abortCommand(arena: Allocator, flags: Flags, cli_version: []const u8, net: Net, dir: std.fs.Dir, plan: plan_mod.Plan, console: *Console) anyerror!u8 {
     const uploads = try plan.uploads(arena);
-    const creds = (try credentials(arena, net, flags, cli_version, uploads)) orelse return 1;
+    const opened = (try openRegistry(arena, flags, cli_version)) orelse return 1;
+    const creds = (try credentials(arena, net, flags, opened, uploads)) orelse return 1;
     const loaded = (try loadStateFor(arena, dir, creds.api_url, plan.sha256, console, "aborting")) orelse return 1;
     if (!loaded.found) {
         err("{s} has no {s}: this is not a directory that was staged (or it is another job's); nothing was sent\n", .{ flags.staged, plan_mod.state_name });
@@ -1039,25 +938,28 @@ fn abortCommand(arena: Allocator, flags: Flags, cli_version: []const u8, net: Ne
     return p.finish(result);
 }
 
-fn dryRun(flags: Flags, plan: plan_mod.Plan, uploads: []const plan_mod.Member, console: *Console) anyerror!u8 {
-    switch (registry.resolve(flags.registry)) {
-        .ok => {},
+/// `--dry-run`: the registry is resolved; its API root is looked up (and /health read) only for a set with a readme, whose
+/// form the answer decides.
+fn dryRun(arena: Allocator, flags: Flags, cli_version: []const u8, net: Net, plan: plan_mod.Plan, uploads: []const plan_mod.Member, checked: Checked, console: *Console) anyerror!u8 {
+    const base = switch (registry.resolve(flags.registry)) {
+        .ok => |b| b,
         .bad => |why| {
             err("--registry {s}: {s}\n", .{ flags.registry, why });
             return 1;
         },
+    };
+    var api_url: []const u8 = "";
+    if (readmes.hasReadme(checked.entries)) {
+        api_url = switch (registry.load(arena, base, cli_version) catch |e| {
+            err("{s}: {s}\n", .{ base, @errorName(e) });
+            return 1;
+        }) {
+            .ok => |c| c.api_url,
+            .bad => |why| {
+                err("{s}: {s}\n", .{ base, why });
+                return 1;
+            },
+        };
     }
-    var files: usize = 0;
-    for (uploads) |m| files += m.files.len;
-    console.say("would create one group of {d} members ({d} files), in this order:\n", .{ uploads.len, files });
-    for (uploads) |m| console.say("  {s} {s} ({d} files)\n", .{ m.name, m.version, m.files.len });
-    for (plan.members) |m| {
-        if (m.action == .skip) console.say("would skip {s} {s}: {s}\n", .{ m.name, m.version, if (m.reason.len > 0) m.reason else "skipped by the plan" });
-    }
-    if (flags.no_commit) {
-        console.say("would upload each file the registry does not hold, and stop with the group open (--no-commit)\ndry run: nothing was sent\n", .{});
-    } else {
-        console.say("would upload each file the registry does not hold, commit the group, and wait for it to be visible\ndry run: nothing was sent\n", .{});
-    }
-    return 0;
+    return readmes.dryRun(arena, console, net, api_url, flags.no_commit, plan, uploads, checked.entries, checked.inlineCommit());
 }

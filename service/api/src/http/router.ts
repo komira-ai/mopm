@@ -176,6 +176,8 @@ const getHealth = (deps: RouterDeps) => ({
   commit: deps.commit,
   // Which implementation answered. This file is the TypeScript one; e2e compares it with the stage's expected implementation.
   impl: 'ts',
+  // The optional features this registry serves: a member's readme may travel as an uploaded object.
+  features: ['group_readme_objects'],
 });
 
 async function getPackage(deps: RouterDeps, name: string) {

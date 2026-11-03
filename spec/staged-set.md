@@ -52,15 +52,25 @@ conda channel (`channel.md`). Other files in the directory are ignored.
     between pack and publish stays) and one to 20 `files`, each 1 to 100,000,000 bytes, with its
     `sha256` and `size`. A file name is a plain name: no `/`, no `\`, none that
     starts with a dot. `readme` is optional: a path below the directory, up to
-    64 KiB of UTF-8. Every readme of a member to upload travels in the body of
-    the commit request, and the registry's function takes the request with
-    that body escaped into it, at most 6 MiB in all. mopm refuses a set whose
-    body could take more than 6 MiB less 64 KiB there (the larger of the body
-    as a JSON string, every non-ASCII character counted as `\u` escapes, and
-    its base64), naming the largest readmes: `stage` after it has asked the
-    registry about the members and before it writes anything, `publish
-    --staged` before it sends any request. The commit sends the readmes as
-    that check read them.
+    64 KiB of UTF-8. A registry that lists `group_readme_objects` in the
+    `features` of `GET /health` takes each readme as an object: it is declared
+    when the group is created, PUT like a file, and the commit names it by its
+    SHA-256 and size, so the commit body does not grow with the readmes. For a
+    registry that does not, every readme of a member to upload travels in the
+    body of the commit request, and the registry's function takes the request
+    with that body escaped into it, at most 6 MiB in all. In that case mopm
+    refuses a set whose body could take more than 6 MiB less 64 KiB there (the
+    larger of the body as a JSON string, every non-ASCII character counted as
+    `\u` escapes, and its base64), naming the largest readmes, and saying that
+    the registry does not take readmes as objects: `stage` after it has asked
+    the registry about the members and before it writes anything (it reads `GET
+    /health` only when the inline body is over the limit), `publish --staged`
+    before it creates a group or uploads anything, after the reads of the
+    registry's `config.json` and, for a set with a readme, `GET /health`. A run
+    that resumes a group defers that refusal to the group's status (step 5).
+    The commit sends the readmes as
+    that check read them. `plan.json` is the same in both cases: it names the
+    path and nothing says which form the run will use.
   - `skip`: the member is not in the group, because the registry already has it
     with these bytes. `reason` says why. The report names it.
   - `refuse`: the staging found the member cannot be published (a yanked version,
@@ -72,21 +82,51 @@ conda channel (`channel.md`). Other files in the directory are ignored.
 ## What `publish --staged` does
 
 1. Reads `plan.json`, refuses it if it is not as above or has a `refuse`
-   member, and hashes every file and reads every readme. Nothing has been sent.
-   `--dry-run` stops here and says what it would send; it reads no token and
-   writes no file.
+   member, and hashes every file and reads every readme. When a member to
+   upload has a readme that is not empty, it then reads `GET <api>/health`
+   with no token, before any token exchange, group or upload, and chooses how
+   the readmes travel: as objects when `features` lists `group_readme_objects`,
+   inline in the commit for any other answer (an error status, a body it cannot
+   read, no `features`). A transport failure ends the run, with nothing else
+   sent. In inline mode a set whose commit body is over the limit above is
+   refused here. Otherwise nothing has been sent but the registry's
+   `config.json` and that read. `--dry-run` stops here and says what it would
+   send (the form of the readmes and the size of the commit request); it reads
+   no token and writes no file, and the only requests it makes are the
+   registry's `config.json` and, when a member has a readme, that `GET /health`.
+   Its last line says so: `dry run: nothing was created or uploaded; the
+   registry was only read (its config.json and GET /health)` for a set with a
+   readme, `dry run: nothing was sent` for one without.
 2. Reads the token (`$MOPM_TOKEN`, else the login's) and `state.json`. A state
    written for another registry or another plan (a different `plan.json`) is
    refused: remove the file to start a new group.
-3. `POST /groups` with the members to upload. The registry's answer names a
+3. `POST /groups` with the members to upload; in objects mode each member with
+   a readme that is not empty carries `readme`, the `{sha256, size}` of its
+   bytes, which is not part of the group id. The registry's answer names a
    reservation for each member and a URL for each file it does not hold. While
    it answers `reserving`, the request is repeated. A group the registry
    already has in full (`validating`, `committed`, `visible`) skips to step 6.
+   In objects mode the answer of each member with a readme names where to PUT
+   it. If the final answer of an open group lacks the readme of a member that
+   declared one, the registry has stopped taking readme objects: the run says
+   so and chooses inline mode, and applies the size limit of step 1 before it
+   uploads anything. A set over the limit is refused with nothing uploaded; the
+   group is left as it is and `state.json` is kept.
 4. PUTs each file the registry does not hold, member by member in the plan's
    order, with exactly the headers it named and no token. Each file is read
    again and checked against the plan as it is sent. After each, `state.json`
-   is written.
+   is written. After the files of a member, its readme is PUT, when the
+   registry does not hold it, to the URL given, from the bytes read in step 1,
+   with exactly the headers named and no token; a 403 asks for fresh URLs once,
+   as for a file. A readme is not written to `state.json`: the registry says
+   which it holds.
 5. `POST /groups/{id}/commit` with each member's `manifest_sha256` and readme.
+   In objects mode the readme of a member is `{"sha256", "size"}` and the
+   request holds no readme text; an empty readme stays `""` and a member with
+   none has no `readme` key. In inline mode it is the text. An `invalid_request`
+   answer to an objects-mode commit is printed with a note that the registry did
+   not take the readmes as objects; the group is still open, and a rerun sends
+   the readmes inline.
 6. Polls `GET /groups/{id}` until the group is `visible`. A group that ends
    `rejected`, `failed`, `expired`, `aborted` or `superseded` is a failure: the
    report names the member the registry blames, and none of the members is
@@ -137,7 +177,15 @@ Which routes take which scope is in `api/openapi.yaml` (`stageToken`).
 The same command without `--no-commit`, in the same directory, resumes the same
 group: `state.json`'s `plan_sha256` must still match `plan.json`, the registry
 reports every file as held, nothing is sent again, and the run goes on with step
-5. The token need not be the first run's, only the same actor's (a fresh `--oidc`
+5. How the readmes travel is chosen again on every run, from `GET /health`, and
+is not stored: a resume after the registry stopped taking readme objects plans
+the commit inline, and goes on if the commit body is within the limit of step 1.
+If it is not, the refusal waits for the group's status: a group found `open` is
+refused with the size message (and `nothing was uploaded or committed`), before
+any upload or commit and with the group still open; a group found past `open`
+(its commit was accepted) is waited for, and one whose `state.json` says
+`committed` reads no `GET /health` at all. An unreadable `/health` on a resume
+is deferred the same way. `plan.json` and `state.json` are unchanged by readme objects. The token need not be the first run's, only the same actor's (a fresh `--oidc`
 exchange of the same packages and versions is). Because the registry opens a group
 that ended again as a next attempt when asked for it, a run that finds `staged:
 true` in `state.json` first reads the group (`GET /groups/{id}`): `expired`,

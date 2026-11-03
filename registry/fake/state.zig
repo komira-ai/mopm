@@ -96,6 +96,8 @@ pub const Version = struct {
     group_id: ?[]const u8 = null,
     /// `source_commit` of the commit request that published this version: informational, never checked. Null when it had none.
     source_commit: ?[]const u8 = null,
+    /// The readme text of the commit request that published this version, in either form. Null when it had none.
+    readme: ?[]const u8 = null,
 
     /// Shown by getVersion and listed: every state but pending and rejected.
     pub fn visible(v: *const Version) bool {
@@ -151,6 +153,9 @@ pub const GroupFile = struct {
     upload: *Upload,
 };
 
+/// The readme a member declared at create, and the upload that carries its bytes.
+pub const GroupReadme = struct { sha256: []const u8, size: u64, upload: *Upload };
+
 pub const GroupMember = struct {
     package: *Package,
     version: []const u8,
@@ -160,6 +165,10 @@ pub const GroupMember = struct {
     manifest_sha256: []const u8 = "",
     /// `source_commit` of this member in the commit request, copied to its row when the group is visible.
     source_commit: ?[]const u8 = null,
+    /// The readme declared at create (readme objects on), or null.
+    readme: ?GroupReadme = null,
+    /// The readme text of this member in the commit request, copied to its row when the group is visible.
+    readme_text: ?[]const u8 = null,
     /// Set when the group's yank changed this member: an unyank restores these and no others.
     yanked_by_group: bool = false,
 };
@@ -271,6 +280,9 @@ pub const State = struct {
     /// Whether the registry has group publishing on. Off, `createGroup` answers `route_not_found`, as a registry that
     /// has not enabled groups for the caller does.
     groups_enabled: bool = true,
+    /// Whether the registry takes a readme as an uploaded object (`/_fake/readme_objects`). Off, `/health` lists no features, a
+    /// create ignores member `readme`, and a commit takes a readme as a string only.
+    readme_objects: bool = true,
     /// The PUT of an upload answers 503 once, after this many more PUTs have succeeded (`/_fake/put_fault`).
     put_fault_after: ?u32 = null,
     /// The clock moves forward by this many seconds when the next group commit arrives, once (`/_fake/commit_clock`):

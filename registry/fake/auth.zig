@@ -58,6 +58,13 @@ pub fn freshSession(ctx: *Ctx) anyerror!Auth {
 // ---------------------------------------------------------------------------
 
 pub fn getHealth(ctx: *Ctx, _: []const []const u8) anyerror!Response {
+    if (ctx.state.readme_objects) return resp.json(ctx.arena, .ok, .{
+        .status = "ok",
+        .stage = ctx.state.stage,
+        .api_version = "v1",
+        .read_only = ctx.state.read_only,
+        .features = [_][]const u8{@import("group_readmes.zig").feature},
+    });
     return resp.json(ctx.arena, .ok, .{
         .status = "ok",
         .stage = ctx.state.stage,

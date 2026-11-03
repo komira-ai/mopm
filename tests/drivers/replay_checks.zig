@@ -36,6 +36,12 @@ pub fn runCheck(f: *F, s: Step, body: Value) !bool {
     const a0 = s.args[0];
     switch (s.check) {
         .none => return true,
+        .health_features => {
+            for (c.getArr(body, "features")) |v| {
+                if (v == .string and std.mem.eql(u8, v.string, "group_readme_objects")) return true;
+            }
+            return false;
+        },
         .read_only => return if (c.get(body, "read_only")) |v| v == .bool and v.bool else false,
         .tokens_listed => {
             const toks = c.getArr(body, "tokens");

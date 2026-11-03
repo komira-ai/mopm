@@ -6,11 +6,13 @@ const std = @import("std");
 const c = @import("contract.zig");
 const rr = @import("replay_recipes.zig");
 const tbl = @import("replay_table.zig");
+const gr = @import("replay_group_readmes.zig");
 
 const SOURCE_COMMIT = "0123456789abcdef0123456789abcdef01234567";
 
 pub fn build(f: *rr.F, e: tbl.Entry) !tbl.Step {
     if (e.kind != .group_facts) return rr.build(f, e);
+    if (std.mem.startsWith(u8, e.arg, "readme_")) return gr.build(f, e);
     if (std.mem.eql(u8, e.arg, "files_open") or std.mem.eql(u8, e.arg, "files_visible")) {
         const g = try rr.Grp.init(f, 2);
         const open = std.mem.eql(u8, e.arg, "files_open");

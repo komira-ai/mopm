@@ -618,6 +618,9 @@ test {
     _ = @import("group_plan.zig");
     _ = @import("group_publish.zig");
     _ = @import("group_publish_test.zig");
+    _ = @import("group_readmes_test.zig");
+    _ = @import("group_readmes_resume_test.zig");
+    _ = @import("stage_readmes_test.zig");
     _ = @import("group_stage_token.zig");
     _ = stage_cmd;
     _ = @import("stage_test.zig");

@@ -131,6 +131,14 @@ export_file(
     "group-sweeper.ts": "src/publish/group-sweeper.ts",
 }.items()]
 
+# The create and commit bodies of the released command line (v0.0.104) and of the current one for the same set: written by the Zig
+# test //:compat_v0_0_104 (which asserts the clients send exactly these bytes) and replayed by test/publish/group-readmes-released-client.test.ts.
+filegroup(
+    name = "request_goldens",
+    srcs = {f[len("test/fixtures/"):]: f for f in glob(["test/fixtures/released-client-v0.0.104/*.json", "test/fixtures/new-client/*.json"])},
+    visibility = ["//:"],
+)
+
 # This package's files, for //:hygiene (the repository-wide scan reads every file, and a
 # package boundary hides these from the root package's glob). A copy of the tree, staged
 # by path from this package.
