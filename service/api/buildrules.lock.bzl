@@ -3,8 +3,8 @@
 
 SCHEMA = 1
 NODE = "24.21.0"
-PACKAGE_JSON_SHA256 = "5b96b5d41779e57f8523e8baafc2a174cd0a9c69d8faa655f5edac232093bfcd"
-PACKAGE_LOCK_SHA256 = "d546aff9846226136d484034228a25beec7bd739c95a01e0004b7ba132a69128"
+PACKAGE_JSON_SHA256 = "ae37b36218d6c38b8663f42292450f3cf2fb4b73bab042b91310ebaa7ebed601"
+PACKAGE_LOCK_SHA256 = "2ba429f14aab429c12853937511668a5f329a2c8422ca75c4c4dc70277126b9e"
 
 PACKAGE = {
     "name": "mopm-registry-api",
@@ -24,93 +24,93 @@ PACKAGE = {
 }
 
 NPM = {
-    "@aws-sdk/client-dynamodb@3.1155.0": {
+    "@aws-sdk/client-dynamodb@3.1158.0": {
         "name": "@aws-sdk/client-dynamodb",
-        "version": "3.1155.0",
-        "url": "https://registry.npmjs.org/@aws-sdk/client-dynamodb/-/client-dynamodb-3.1155.0.tgz",
-        "sri512": "sha512-lbssxoO5CdXhza43hEzzFa0p5P2aa9IYAa5n2l4+g1uVFIKlPybBere3mBBMOUnVwsiVQgV0n2ERg9srNT/L8g==",
-        "sha256": "52156dc593f9c66b2095330e7841d5c622177ae3da01d0dec06df319c2d07e5e",
-        "size": 254339,
+        "version": "3.1158.0",
+        "url": "https://registry.npmjs.org/@aws-sdk/client-dynamodb/-/client-dynamodb-3.1158.0.tgz",
+        "sri512": "sha512-2nTIBFPBr5zv3cmSLZn4WExi9X4Ddoi2K9LWYUtHfj30v3XBhEmgkYcESHfJR8uzdzBUAI1N/sDFSkqA1gTASg==",
+        "sha256": "8a47f035e8ca7153bfbdf21c1f1cfa522ec2281ec35e1f2b706cad13f8844b45",
+        "size": 254342,
     },
-    "@aws-sdk/core@3.978.5": {
+    "@aws-sdk/core@3.978.6": {
         "name": "@aws-sdk/core",
-        "version": "3.978.5",
-        "url": "https://registry.npmjs.org/@aws-sdk/core/-/core-3.978.5.tgz",
-        "sri512": "sha512-ruI0AWqcrfL20XDS6SwZIJFPOBZ6N0ADa9nLzWlBhxk1aoUjbUX3JkTR9vEmk7o35XpAHi68ahZ4T6RE2U9XyA==",
-        "sha256": "6bfdf258d9c37824c0f6678ee5b8126d8676c26421042d2aded6b88a6e8b06ef",
-        "size": 83246,
+        "version": "3.978.6",
+        "url": "https://registry.npmjs.org/@aws-sdk/core/-/core-3.978.6.tgz",
+        "sri512": "sha512-ykF/MiYoM15dgZwF/WLgjJXVbAK2wU6vjPigeEnOHwyUJ0rdlraO5uekecKNVPkvOnz+oju/5zljViQs1nI1FQ==",
+        "sha256": "b2ad45fb8bd1f567fc0cf7abc3f1f5e3e594753b4bf86ec4acc69c5f2f60f6ea",
+        "size": 83245,
     },
-    "@aws-sdk/credential-provider-env@3.972.76": {
+    "@aws-sdk/credential-provider-env@3.972.77": {
         "name": "@aws-sdk/credential-provider-env",
-        "version": "3.972.76",
-        "url": "https://registry.npmjs.org/@aws-sdk/credential-provider-env/-/credential-provider-env-3.972.76.tgz",
-        "sri512": "sha512-YxmL1Ar7bV9ZkJvtv+lj+MF6le76NnZnbmgySyZuxpZaCv0/1lZ3KxKy6RIj1h9ui2hWnVjZxbmTMeO0y/NrQA==",
-        "sha256": "252db0d01283e331851c36b6f4b4fc3a3ba7585626b2a2b01670724a8fe0e3da",
+        "version": "3.972.77",
+        "url": "https://registry.npmjs.org/@aws-sdk/credential-provider-env/-/credential-provider-env-3.972.77.tgz",
+        "sri512": "sha512-CN6dQCDo32a8n2gvm2HBeqGV5BNI9noG96nTj5bGO2HWtt0Rucu/A8pcnJIqkzILOHSuilnCk0Do8/7h6SOXhQ==",
+        "sha256": "f6e68e51ad587d390ea7e0693b9df21dccc9f06866b45ac9712e8808c89e8e9d",
         "size": 6297,
     },
-    "@aws-sdk/credential-provider-http@3.972.78": {
+    "@aws-sdk/credential-provider-http@3.972.79": {
         "name": "@aws-sdk/credential-provider-http",
-        "version": "3.972.78",
-        "url": "https://registry.npmjs.org/@aws-sdk/credential-provider-http/-/credential-provider-http-3.972.78.tgz",
-        "sri512": "sha512-3VHknDRngoebsaqyT1iR75b5cBT2zfEtODK6yYmYltljkK1HEAQLs2FEd1IpWqAeOYdMGaG9wikngWLTufY7RA==",
-        "sha256": "ae524c2afe19885e6f434fba4950b57fcf9e22445ee2e4f5ae88beb95816cb98",
+        "version": "3.972.79",
+        "url": "https://registry.npmjs.org/@aws-sdk/credential-provider-http/-/credential-provider-http-3.972.79.tgz",
+        "sri512": "sha512-Netsu0nnmvP2HiN1ZFQBeUu+JehQIuubqz+j2kHDgeSE4HDzniCpIZ7RzoWABq+LTcbCi9W03hywifUagoVIWQ==",
+        "sha256": "86399f23f4f80563fbc5f7d18ba9ab65445622d1eeff4b190fc4008e79c48918",
         "size": 5166,
     },
-    "@aws-sdk/credential-provider-ini@3.973.21": {
+    "@aws-sdk/credential-provider-ini@3.973.22": {
         "name": "@aws-sdk/credential-provider-ini",
-        "version": "3.973.21",
-        "url": "https://registry.npmjs.org/@aws-sdk/credential-provider-ini/-/credential-provider-ini-3.973.21.tgz",
-        "sri512": "sha512-aLx9hbCX6mGAyv4ZZd8UagJ4RASHVJw6BFDSIyuKmLkqNL6H47EjBPK6qaJ4B5TDV6mc+vMa0SJFYyo4mkvVQg==",
-        "sha256": "13edaa0f0b4cf00b7da24060c9b4238c0803b23ec60005349fce970c3461b603",
-        "size": 11283,
+        "version": "3.973.22",
+        "url": "https://registry.npmjs.org/@aws-sdk/credential-provider-ini/-/credential-provider-ini-3.973.22.tgz",
+        "sri512": "sha512-x7/5h58cqOoZR0RWUZC7v/cJOADQR42iSIQkvU+00HVHR4jh8ZpqEgRPGf2zei59iH5qP40lL3bkq49PuWl71g==",
+        "sha256": "70b4b220ab9ea4ec0adb2b4bf2cb7bb79a4a7e2b8b26c1204cbe6da4bbff6de4",
+        "size": 11284,
     },
-    "@aws-sdk/credential-provider-login@3.972.83": {
+    "@aws-sdk/credential-provider-login@3.972.84": {
         "name": "@aws-sdk/credential-provider-login",
-        "version": "3.972.83",
-        "url": "https://registry.npmjs.org/@aws-sdk/credential-provider-login/-/credential-provider-login-3.972.83.tgz",
-        "sri512": "sha512-9bJU6FjRacF4FK/QHf8Dyxhur7B1grRj8C1Yh4IkpoFW2exQflPdCv0VrbemLW9ZctLNle+AE7TETs9KNvuLYg==",
-        "sha256": "680b3643924f2d8418cedb3905798107f27a87b02d69a485677fdb364fa3fa71",
-        "size": 6362,
+        "version": "3.972.84",
+        "url": "https://registry.npmjs.org/@aws-sdk/credential-provider-login/-/credential-provider-login-3.972.84.tgz",
+        "sri512": "sha512-G9Ty1uIV0laEvEp2KiMbEhsuBAjgaD3KYrwVjAM5VUxpcIuPBqQI5riA7/qzrnSgYiAKQbubbgkwcqCICKCIxg==",
+        "sha256": "35338304e3d890d323b73d61bd6dd279d2aba94ae62ba019312564b8de8c83ed",
+        "size": 6361,
     },
-    "@aws-sdk/credential-provider-node@3.972.88": {
+    "@aws-sdk/credential-provider-node@3.972.89": {
         "name": "@aws-sdk/credential-provider-node",
-        "version": "3.972.88",
-        "url": "https://registry.npmjs.org/@aws-sdk/credential-provider-node/-/credential-provider-node-3.972.88.tgz",
-        "sri512": "sha512-AG0KID5qhQPzrFkh5b0Cws1Amytvzo0L0Xj6hMgJXEwD6ZXAqninDhSNAWJiN5zU4YVVZnuidnqwPwYJ04IamA==",
-        "sha256": "5e6ac4feaa5b6bf4b40a527953f3f8a58813ec0b9ebad8cdb90fea08043ae1ef",
-        "size": 9823,
+        "version": "3.972.89",
+        "url": "https://registry.npmjs.org/@aws-sdk/credential-provider-node/-/credential-provider-node-3.972.89.tgz",
+        "sri512": "sha512-O8xj7/sanrnXfFHu/LUujVBiiwn5mknYenU7xt1w6+yvhR1QoDZWXLFh1gLITaFVPtb1jWgEirC+kFNw+//tyw==",
+        "sha256": "5b5e7acc6788ca4ac4d34760ed5024fbc455259e7c65da019829e22adf6be995",
+        "size": 9824,
     },
-    "@aws-sdk/credential-provider-process@3.972.76": {
+    "@aws-sdk/credential-provider-process@3.972.77": {
         "name": "@aws-sdk/credential-provider-process",
-        "version": "3.972.76",
-        "url": "https://registry.npmjs.org/@aws-sdk/credential-provider-process/-/credential-provider-process-3.972.76.tgz",
-        "sri512": "sha512-pdhKFTXv1zPYhh92MTlp0jVbLWvUEV9v+rziuEkoskGGQ2iJskxHTO38nA8UAbT/N4IM3n8OZJ9rIY5IBO15/A==",
-        "sha256": "8bd50cdd3e53c905933be77ab383021a3deb60f65f4ab138fbb525589d2b4d17",
+        "version": "3.972.77",
+        "url": "https://registry.npmjs.org/@aws-sdk/credential-provider-process/-/credential-provider-process-3.972.77.tgz",
+        "sri512": "sha512-sWA8Jm+ASzkTxoqLizHWRbt8Gj3yZCmZ0hYdvg0uIxuLzWseYcfrDFzaSnkRWlEWSJV38rAWFimdrN0J4NR7Pg==",
+        "sha256": "992fceff9d8fff084a5b757c01581d391babf84324426f672bdb2a26b76e40b0",
         "size": 7119,
     },
-    "@aws-sdk/credential-provider-sso@3.973.20": {
+    "@aws-sdk/credential-provider-sso@3.973.21": {
         "name": "@aws-sdk/credential-provider-sso",
-        "version": "3.973.20",
-        "url": "https://registry.npmjs.org/@aws-sdk/credential-provider-sso/-/credential-provider-sso-3.973.20.tgz",
-        "sri512": "sha512-DlxrAB3MnjNLx/da7b89W+3DyJQYso/q7Ns15MsST2IV2nkAYQOYTUCaffNSjgrpMP99Dm2mV2jxzcbyF94ZfA==",
-        "sha256": "91b769daba6428c9569a987da087436ed6c4528ecbdb5d36a9bd10bb0f45aca5",
-        "size": 9077,
+        "version": "3.973.21",
+        "url": "https://registry.npmjs.org/@aws-sdk/credential-provider-sso/-/credential-provider-sso-3.973.21.tgz",
+        "sri512": "sha512-KV2LM8fbYUhDzGEBnPwb+ISNfNlhmnpLS+y6A6VsJpg1EI9aUJ0+dRTxh2GrGdneFH0T4TiuboHxz8i6+M38JA==",
+        "sha256": "c2618d93acc1eeb8d805d2ce0d78adb50af62e3e306b81f498b27e1cc4c5c43c",
+        "size": 9080,
     },
-    "@aws-sdk/credential-provider-web-identity@3.972.82": {
+    "@aws-sdk/credential-provider-web-identity@3.972.83": {
         "name": "@aws-sdk/credential-provider-web-identity",
-        "version": "3.972.82",
-        "url": "https://registry.npmjs.org/@aws-sdk/credential-provider-web-identity/-/credential-provider-web-identity-3.972.82.tgz",
-        "sri512": "sha512-LUo46IqPTJ4xKBsrLuoaxiv/D2GTBCcFDMD1y3jKIqPR/p7Rw14RJFZ0iRWftqZtyLPQX9JMGnSi3mBu4y/pNA==",
-        "sha256": "7cda1004a0274c798c8f1efb0e0789bcdb2fc8588ce059a5ad9502faf594c24a",
-        "size": 9077,
+        "version": "3.972.83",
+        "url": "https://registry.npmjs.org/@aws-sdk/credential-provider-web-identity/-/credential-provider-web-identity-3.972.83.tgz",
+        "sri512": "sha512-iekYilmo2Re51fC7gMkEfZ7jFDXwehSCmXjDESaYQsdgYhsLQFG7rTYr3GBvRIyj+Fkda2NxbZX7hAZDaFD0JQ==",
+        "sha256": "300744cd8b68dd2441786259f8e025eca9f4d95063746113ea1bf3fecaffcc74",
+        "size": 9076,
     },
-    "@aws-sdk/dynamodb-codec@3.973.50": {
+    "@aws-sdk/dynamodb-codec@3.973.51": {
         "name": "@aws-sdk/dynamodb-codec",
-        "version": "3.973.50",
-        "url": "https://registry.npmjs.org/@aws-sdk/dynamodb-codec/-/dynamodb-codec-3.973.50.tgz",
-        "sri512": "sha512-1jn3q2Ik/qUjPw1su5Abu6nzeDutzYbNUYKt+AqUh+45rb+MVWhgP1QWarTuxrm4MJKcSLVHLCrvi0rY5jmJZw==",
-        "sha256": "8f65b61d1e6a2122e11f057ac5e2e3662e06d7adb1c663f704910d0d6cc7351b",
-        "size": 7210,
+        "version": "3.973.51",
+        "url": "https://registry.npmjs.org/@aws-sdk/dynamodb-codec/-/dynamodb-codec-3.973.51.tgz",
+        "sri512": "sha512-4feXxG9ICb/IdyKP4thAXTW4ufA4ubOJe5KYYYUi44ls1NzLy4TuHUWurOH/QnfKpaw9RCjxKoHyya8MS6F5hA==",
+        "sha256": "7a0310090de5fbf4ebf20542d6eb694d4576c0dfd58cc72e556025d4924f6bb6",
+        "size": 7211,
     },
     "@aws-sdk/endpoint-cache@3.972.11": {
         "name": "@aws-sdk/endpoint-cache",
@@ -120,28 +120,28 @@ NPM = {
         "sha256": "2e3b022fb01c2eb7312f05a58206534fae912e025b77d3fc62abca2309e2324b",
         "size": 6476,
     },
-    "@aws-sdk/lib-dynamodb@3.1155.0": {
+    "@aws-sdk/lib-dynamodb@3.1158.0": {
         "name": "@aws-sdk/lib-dynamodb",
-        "version": "3.1155.0",
-        "url": "https://registry.npmjs.org/@aws-sdk/lib-dynamodb/-/lib-dynamodb-3.1155.0.tgz",
-        "sri512": "sha512-/84eZiKfFPMPozNPMxX346C2KdziZOqrXk7lsBmcteE8HmFTphapaATgCq0785ts4TmK1J3L/65EdqU8rzYtSw==",
-        "sha256": "721b4d9acd50378ec91330cb131280c624c8388a8cd315cc9ad04cfc4a05d960",
-        "size": 29469,
+        "version": "3.1158.0",
+        "url": "https://registry.npmjs.org/@aws-sdk/lib-dynamodb/-/lib-dynamodb-3.1158.0.tgz",
+        "sri512": "sha512-TV1gdFR0iI6SogbdX484vMfOpFeqPlZdix7SfUldx7m2fiYYUx/xHEemNpkMH5r1AHxo1WYRqx4Iic33AsZr+Q==",
+        "sha256": "71314404978e4118f741eee19726e66d48b1dd93f760ee0c052e74ca20f2a1ed",
+        "size": 29470,
     },
-    "@aws-sdk/middleware-endpoint-discovery@3.972.34": {
+    "@aws-sdk/middleware-endpoint-discovery@3.972.35": {
         "name": "@aws-sdk/middleware-endpoint-discovery",
-        "version": "3.972.34",
-        "url": "https://registry.npmjs.org/@aws-sdk/middleware-endpoint-discovery/-/middleware-endpoint-discovery-3.972.34.tgz",
-        "sri512": "sha512-hwPWSvttg+bEpcM9e8HdVJF/oz79xInjnou23+GdsbDv75DVDLGhn2XhIbuNghp5SqyjtngXEI+K22Vq3VvSxw==",
-        "sha256": "681b3ab927de638566888eafe54cbff32d6b1b0cab3ea3df447c49b467e611e1",
-        "size": 8974,
+        "version": "3.972.35",
+        "url": "https://registry.npmjs.org/@aws-sdk/middleware-endpoint-discovery/-/middleware-endpoint-discovery-3.972.35.tgz",
+        "sri512": "sha512-1lGkWlzNhU+5HwNJqvwrGhnLJMwEQe0NErYKT+NvsMNIzZ68bz6fLi1e0QkLfmaUk7mLyXmiHkpIFTV/wJYkgw==",
+        "sha256": "91e25c9837c795e9a5bf47a7e22cb640ae9e3e7f53302baeda49ed4901e1e697",
+        "size": 8973,
     },
-    "@aws-sdk/nested-clients@3.997.50": {
+    "@aws-sdk/nested-clients@3.997.51": {
         "name": "@aws-sdk/nested-clients",
-        "version": "3.997.50",
-        "url": "https://registry.npmjs.org/@aws-sdk/nested-clients/-/nested-clients-3.997.50.tgz",
-        "sri512": "sha512-nKb8qu4QsnpZTq/6JIXc72mzuzfh7BK4sUQkpQznPec2z4W7Ob2xYkcM4i5e1yGTBnbJVeFv/0sf3jcz85hclA==",
-        "sha256": "df78c9abe428890bb230c66b5d782e0f4b0fb410851544a2d178c536b045260f",
+        "version": "3.997.51",
+        "url": "https://registry.npmjs.org/@aws-sdk/nested-clients/-/nested-clients-3.997.51.tgz",
+        "sri512": "sha512-DJK4iGIHWU8Jh8ODMvqFYcX9yGBMXV4tSZAvqlHF5EDd8hbmF3eFO9KIWOnA7wcQjPzEkyMMW1/FgZ9RU8oimQ==",
+        "sha256": "8450fe5e0e92dabae43ad11d2c09efb5853e220b785b61f3e43f01800eb9e886",
         "size": 93282,
     },
     "@aws-sdk/signature-v4-multi-region@3.996.49": {
@@ -152,12 +152,12 @@ NPM = {
         "sha256": "d634b6db3b8ca8dfea47bb5637401f967834d4918e82f6b73ec65885cf417f29",
         "size": 8367,
     },
-    "@aws-sdk/token-providers@3.1155.0": {
+    "@aws-sdk/token-providers@3.1157.0": {
         "name": "@aws-sdk/token-providers",
-        "version": "3.1155.0",
-        "url": "https://registry.npmjs.org/@aws-sdk/token-providers/-/token-providers-3.1155.0.tgz",
-        "sri512": "sha512-iIcQnYLhWuq9qOLQbIWFrxF3PF0svVeZvHnUS4DUnO4zUFmFHIyGyjqrntXG+e/5PUgfavV0pYfDIKHxTzN2LA==",
-        "sha256": "15652ac565d328ac610723db258e7b1045869ea6773ea1e13dcc6e5631a3869f",
+        "version": "3.1157.0",
+        "url": "https://registry.npmjs.org/@aws-sdk/token-providers/-/token-providers-3.1157.0.tgz",
+        "sri512": "sha512-AeAzcwWRP2uANO2TjFpKjRdvOCzgfIu6YQl9Ceibd6E0gnq5dfOzujFnq2aeqgbLg4wRtXbUZE4gekCCPrz/OQ==",
+        "sha256": "7814f6d6cee2ba490d886d1d1031897521f2e82706ea65b478d520ebd6380f5a",
         "size": 10173,
     },
     "@aws-sdk/types@3.975.0": {
@@ -924,13 +924,13 @@ NPM = {
         "sha256": "4376b65f997085a657a158a6db3e76b8a4020fbbedb00eba8ced9f053f42ed86",
         "size": 18451,
     },
-    "@smithy/core@3.36.2": {
+    "@smithy/core@3.37.0": {
         "name": "@smithy/core",
-        "version": "3.36.2",
-        "url": "https://registry.npmjs.org/@smithy/core/-/core-3.36.2.tgz",
-        "sri512": "sha512-oRw0rB9QSUiCZfEs23G5F4Af+b2rQt1lItIICWu5IejFNd+uPM8SWqiKLMpQ6bX1Q7slsLbjuoE2niErFtkVPQ==",
-        "sha256": "13dd02eeb9bf9ea90251b24c2ed996b8f6cf184ba816d9c634462c611efeb7e3",
-        "size": 413139,
+        "version": "3.37.0",
+        "url": "https://registry.npmjs.org/@smithy/core/-/core-3.37.0.tgz",
+        "sri512": "sha512-97imTcCyiPd8k0e9+ts/Sp0W65Dn9Ti357J7M09Ov4tI8Q1JDJVFSoAJtjEVKqfHEr3Pdo2jfolqKCaaiszH0g==",
+        "sha256": "3533fe5566d171aea0aab68981fee2f7d1afb1192c3eec0086871381537fce40",
+        "size": 414188,
     },
     "@smithy/credential-provider-imds@4.5.2": {
         "name": "@smithy/credential-provider-imds",
@@ -948,13 +948,13 @@ NPM = {
         "sha256": "e8d08130bff1b3aa99e738b9705fc9b5411dd6ce0f14371108a10ae968d79284",
         "size": 12024,
     },
-    "@smithy/node-http-handler@4.12.1": {
+    "@smithy/node-http-handler@4.13.0": {
         "name": "@smithy/node-http-handler",
-        "version": "4.12.1",
-        "url": "https://registry.npmjs.org/@smithy/node-http-handler/-/node-http-handler-4.12.1.tgz",
-        "sri512": "sha512-ThMkboGeONWXAelq9FvGsuJC4rOi+qyC4/zhUF58xYpxUg5sQKx2VXZYJmtNjr4dSuBJ1HeJXETQILCz3wOHvw==",
-        "sha256": "e9d05919fbdee16d095febc4fb5a88da22a8e9e5bb7afc7fbd9d86e4fccf8eeb",
-        "size": 26840,
+        "version": "4.13.0",
+        "url": "https://registry.npmjs.org/@smithy/node-http-handler/-/node-http-handler-4.13.0.tgz",
+        "sri512": "sha512-/GGcPoNJ2nzGytdAanpbx7mpp9Coa8LP+/Rpmbktr8YeLuIXs9B0SEz+X3AeonHdyzOIFJdKbN7jOZ+Tj+pMGw==",
+        "sha256": "1d70a136b4a3b59c136fa0f1204982bc823c6da56dff2e9af538dcc6b095d7f1",
+        "size": 28482,
     },
     "@smithy/signature-v4@5.7.4": {
         "name": "@smithy/signature-v4",
