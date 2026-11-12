@@ -1,12 +1,11 @@
 # Contributing
 
 - Tooling is written in Zig 0.12.0. Run `zig build test` from the repository
-  root before opening a pull request; CI runs it on Linux (x86_64, aarch64) on
+  root before opening a pull request; CI runs it on Linux x86_64 on
   every pull request (the unit tier only: the end-to-end, packer-conformance and `install.sh`
-  checks and the release run after the merge), and on macOS (arm64) after the merge (push to `main`), nightly,
-  on manual dispatch, and on a pull request that carries the label `macos`
-  (the macOS queue is slow, so add the label when your change touches
-  platform-specific code).
+  checks and the release run after the merge). The other platforms, Linux aarch64 and macOS (arm64), run after the merge
+  (push to `main`, as the beta stage of the release), nightly and on manual dispatch; a pull request never runs them
+  and no label asks for them, so a change that touches platform-specific code is checked on those platforms once it is on `main`.
 - The rules every change is written and reviewed against are in
   [AGENTS.md](AGENTS.md), each with an id: among them, a bug fix comes with a
   test that failed before the fix (T5), a behaviour change updates the golden

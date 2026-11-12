@@ -9,7 +9,7 @@ customer uses it, on every platform it ships for (`beta-user`).
 
 ## What a pull request runs
 
-A pull request runs build and unit tests only. Nothing of the release runs on it: no release dry run, no packaging, no signing, attesting or
+A pull request runs build and unit tests only, and only on Linux x86_64 (`ubuntu-24.04`): every other platform (Linux aarch64, macOS arm64) is a beta stage of the release, after the merge (`beta` and `beta-user` below), and no label puts one on a pull request. `tests/drivers/hygiene.zig` fails a workflow that runs on `pull_request` and names any other runner. Nothing of the release runs on it: no release dry run, no packaging, no signing, attesting or
 verifying, and no beta. The tiers:
 
 | tier | what | when |
@@ -30,7 +30,7 @@ No job of this repository measures coverage today, so none is reported. `tests/d
 
 | stage | needs | what it does |
 |---|---|---|
-| `beta` | | the whole of `ci.yml` on the pushed commit: the unit tier a pull request runs (unit and golden tests, the CLI and fake registry build), then the beta tier that never runs on a pull request (the CLI against the real Mojo, the packer against the registry validator, `install.sh` against a fake release), on Linux and macOS. |
+| `beta` | | the whole of `ci.yml` on the pushed commit: the unit tier a pull request runs (unit and golden tests, the CLI and fake registry build), then the beta tier that never runs on a pull request (the CLI against the real Mojo, the packer against the registry validator, `install.sh` against a fake release); the unit and beta jobs run here on Linux x86_64, Linux aarch64 and macOS, where a pull request runs Linux x86_64 only. |
 | `lint` | | the whole of `lint.yml` (hygiene, workflow lint, the release lint with its faulty variants). |
 | `plan` | `beta`, `lint` | the version this commit's release will have (`cut_release plan --sha`). Writes nothing. Refuses a commit that a newer release supersedes (below) and a `VERSION` base below an existing tag. Gamma and bake time are a slot for later stages between `lint` and `plan`. |
 | `build` | `plan` | the three binaries (`linux-x86_64`, `linux-aarch64`, `macos-arm64`) at that version, each reporting exactly it, and a `.deb` (`amd64`, `arm64`) for each linux binary, packaged by `tools/channels deb-package` from the binary inside the tarball just made (metadata in `packaging/deb/`). **These are the release files.** They are built once, before the tag, from the commit that is tagged later, and are not rebuilt. |
