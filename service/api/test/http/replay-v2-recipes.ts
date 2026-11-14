@@ -270,7 +270,7 @@ export const RECIPES: Record<string, Recipe> = {
     bearer: session(ALICE),
     setup: async (w) => {
       await w.mint('api', { github_id: ALICE, scopes: ['publish'], packages: ['alice/json'] });
-      await w.mint('api', { github_id: ALICE, scopes: ['yank'], packages: ['alice/json', 'alice/yaml'] });
+      await w.mint('api', { github_id: ALICE, scopes: ['yank'], packages: ['alice/json', 'alice/yaml'], createdAt: '2026-11-14T12:01:00.000Z' });
     },
   },
   'revoke a token': {

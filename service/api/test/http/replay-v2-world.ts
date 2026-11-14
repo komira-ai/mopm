@@ -132,7 +132,7 @@ export async function buildWorld(opts: WorldOptions = {}) {
 
   const mint = async (
     kind: 'session' | 'api' | 'oidc',
-    f: { github_id?: number; scopes?: TokenScope[]; packages?: string[]; ci_namespace?: string; fresh?: boolean; ttlMs?: number; version?: string },
+    f: { github_id?: number; scopes?: TokenScope[]; packages?: string[]; ci_namespace?: string; fresh?: boolean; ttlMs?: number; version?: string; createdAt?: string },
   ): Promise<{ bearer: string; id: string }> => {
     const t = h.clock.now();
     const m = await mintToken(h.authStore, {
@@ -145,7 +145,8 @@ export async function buildWorld(opts: WorldOptions = {}) {
       ...(f.ci_namespace ? { ci_namespace: f.ci_namespace } : {}),
       ...(f.version ? { version: f.version, versions: Object.fromEntries((f.packages ?? []).map((n) => [n, f.version!])) } : {}),
       ...(kind === 'session' ? { fresh_until: new Date(t.getTime() + (f.fresh === false ? -1000 : 15 * 60_000)).toISOString() } : {}),
-      created_at: t.toISOString(),
+      // Tokens listed together get distinct times: the list orders by created_at, then by the random id.
+      created_at: f.createdAt ?? t.toISOString(),
       expires_at: new Date(t.getTime() + (f.ttlMs ?? 30 * 86_400_000)).toISOString(),
     });
     return { bearer: `Bearer ${m.secret}`, id: m.record.id };
