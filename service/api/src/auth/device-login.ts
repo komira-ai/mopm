@@ -49,6 +49,8 @@ export type DevicePoll =
       expires_at: string;
       fresh_until: string;
       handle: string;
+      /** The account's user namespace, when this login made it or already held it. */
+      namespace?: string;
     };
 
 export class DeviceLogin {
@@ -144,7 +146,7 @@ export class DeviceLogin {
     // The user namespace: made, already held, or none (taken by another id, reserved, outside the grammar). None never
     // stops the login: the account can still publish in organization namespaces. A store failure fails the login, as a
     // failing user upsert does: the person logs in again, and the next login makes the namespace.
-    await ensureUserNamespace(this.namespaces, gh.id, gh.login, iso);
+    const ns = await ensureUserNamespace(this.namespaces, gh.id, gh.login, iso);
     const m = await mintToken(this.store, {
       kind: 'session',
       github_id: user.github_id,
@@ -163,6 +165,7 @@ export class DeviceLogin {
       expires_at: m.record.expires_at,
       fresh_until: m.record.fresh_until!,
       handle: user.handle,
+      ...(ns.status === 'created' || ns.status === 'held' ? { namespace: ns.namespace } : {}),
     };
   }
 
