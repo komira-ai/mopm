@@ -12,6 +12,7 @@ pub const toml = @import("toml.zig");
 pub const toml_edit = @import("toml_edit.zig");
 pub const manifest = @import("manifest.zig");
 pub const names = @import("names.zig");
+pub const import_names = @import("import_names.zig");
 pub const std_modules = @import("std_modules.zig");
 pub const scaffold = @import("scaffold.zig");
 pub const semver = @import("semver.zig");
@@ -61,6 +62,8 @@ test {
     _ = @import("toml_edit.zig");
     _ = @import("manifest.zig");
     _ = @import("names.zig");
+    _ = @import("import_names.zig");
+    _ = @import("import_names_test.zig");
     _ = @import("std_modules.zig");
     _ = @import("manifest_names_test.zig");
     _ = @import("scaffold.zig");
@@ -102,6 +105,7 @@ test {
     _ = @import("unit_graph_platform_test.zig");
     _ = @import("unit_graph_loads_test.zig");
     _ = @import("unit_graph_provided_test.zig");
+    _ = @import("unit_graph_imports_test.zig");
     _ = @import("install_plan_loads_test.zig");
     _ = @import("lock_libs.zig");
     _ = @import("lock_libs_test.zig");

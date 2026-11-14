@@ -44,8 +44,8 @@ import-name rules and the library directory rule are live in `spec/mopm-toml.md`
 
 - In the refusal of a name without a namespace, mopm puts the user namespace stored by `mopm login` in place of
   `<namespace>` when it has one.
-- New rule (under "Rules"): two packages in one dependency closure (the root, path packages and registry packages, from
-  `[dependencies]` and `[dev-dependencies]`) may not have the same import name. There is no rename.
+
+The rule of one package per import name in a closure is live in `spec/mopm-toml.md` ("Rules").
 
 ## package-metadata.schema.json
 
@@ -144,8 +144,7 @@ equal to the file's `<namespace>/<name>`. Takedown entries: `name` is `FullName`
 - Rules that change: rule 2, every `channel` is a listed root followed by the entry's namespace and `/`; rule 3, each
   artifact's `url` is `<channel><subdir>/mojo-<namespace>.<name>-<version>-<build>.conda`; rule 5, every full name in
   `deps` is the `name` of an entry; rule 6, a full name comes from at most one root.
-- New rule 10: no two entries whose full names differ have the same import name. The error names each full name and
-  the shortest dependency path from the root to it.
+- Rule 10 (one package per import name) is live in `spec/lock.md` on entries named by import name, mapped to full names through the manifests; with full names in the lock it compares the entries' own full names.
 - Versions 1 and 2 are read and reported as stale: `mopm lock` rewrites them; `mopm sync --locked` refuses with
   `mopm.lock predates namespaces (lock_version <n>); run 'mopm lock'`.
 
@@ -166,7 +165,6 @@ Format 6.
   reader splits at the first `@`.
 - A native unit is `native:<full name>/<id>`; the id follows the last `/`.
 - A unit's `package` is the full name. A new field `import` is the import name. Outputs are `<import>.mojoc`.
-- The refusal of two libraries of one name is by import name.
 
 ## staged-set.md
 

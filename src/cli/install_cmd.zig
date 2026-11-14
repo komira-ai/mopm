@@ -61,6 +61,7 @@ const toml_edit = core.toml_edit;
 const unit_graph = core.unit_graph;
 const system_libs = core.system_libs;
 const closure = core.closure;
+const import_names = core.import_names;
 const sync_cmd = @import("sync_cmd.zig");
 const edit_cmd = @import("edit_cmd.zig");
 const publish_cmd = @import("publish_cmd.zig");
@@ -213,12 +214,10 @@ fn joinPath(arena: Allocator, dir: []const u8, rel: []const u8) ![]const u8 {
 /// through it, its own dependencies. `fulls` holds the full name of each entry of `paths`, in step. False when it
 /// failed (reported).
 fn addPathDep(arena: Allocator, cmd: Command, full: []const u8, name: []const u8, path: []const u8, needed_by: []const u8, roots: *std.ArrayList(resolve.Root), paths: *std.ArrayList(plan.PathDep), fulls: *std.ArrayList([]const u8)) anyerror!bool {
+    // Two path packages of one import name and two full names are both read: `projectOf` refuses them together,
+    // with every other clash of the closure (import_names.zig).
     for (paths.items, 0..) |q, i| {
-        if (!std.mem.eql(u8, q.name, name)) continue;
-        if (!std.mem.eql(u8, fulls.items[i], full)) {
-            err(cmd, "{s} and {s} ({s}) have the same import name {s}; one project holds one package per import name\n", .{ fulls.items[i], full, needed_by, name });
-            return false;
-        }
+        if (!std.mem.eql(u8, q.name, name) or !std.mem.eql(u8, fulls.items[i], full)) continue;
         if (std.mem.eql(u8, q.path, path)) return true;
         err(cmd, "{s} is the path dependency {s} and also {s} ({s}); one name, one path\n", .{ full, q.path, path, needed_by });
         return false;
@@ -230,7 +229,7 @@ fn addPathDep(arena: Allocator, cmd: Command, full: []const u8, name: []const u8
         return false;
     }
     const at = paths.items.len;
-    try paths.append(.{ .name = name, .version = m.package.version, .path = path, .native_deps = m.native_dependencies });
+    try paths.append(.{ .name = name, .full_name = full, .version = m.package.version, .path = path, .native_deps = m.native_dependencies, .manifest_deps = m.dependencies });
     try fulls.append(full);
     var names = std.ArrayList([]const u8).init(arena);
     for (m.dependencies) |d| {
@@ -281,7 +280,20 @@ pub fn projectOf(arena: Allocator, cmd: Command, m: manifest.Manifest) !?Project
             }
         }
     }
+    // Before resolution: the root, its path packages and the registry dependencies their manifests name.
+    if (try import_names.check(arena, try import_names.ofProject(arena, m, paths.items, null))) |why| {
+        err(cmd, "{s}\n", .{why});
+        return null;
+    }
     return .{ .m = m, .roots = roots.items, .paths = paths.items, .deps = lists[0].items, .dev_deps = lists[1].items };
+}
+
+/// Whether the closure of `project` with the registry packages of `l` holds two packages of one import name
+/// (import_names.zig); true when it does (reported).
+pub fn importClash(arena: Allocator, cmd: Command, project: Project, l: lock.Lock) !bool {
+    const why = (try import_names.check(arena, try import_names.ofProject(arena, project.m, project.paths, l))) orelse return false;
+    err(cmd, "{s}\n", .{why});
+    return true;
 }
 
 /// The existing lock, null when there is none, or error.Invalid (reported).
@@ -454,6 +466,8 @@ fn run(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8) !u8 
         if (e == error.Invalid) return 1;
         return e;
     };
+    // Every read of a lock checks the closure it pins (spec/lock.md, rule 10); `lock` and `update` rewrite it.
+    if ((cmd == .tree or cmd == .sync) and old != null and try importClash(arena, cmd, project, old.?)) return 1;
     if (cmd == .tree) return tree(arena, project, old);
 
     if (project.m.mojo.len == 0) {
@@ -550,6 +564,7 @@ pub fn resolveProject(arena: Allocator, cmd: Command, project: Project, old: ?lo
             err(cmd, "{s}\n", .{diag.message});
             return null;
         };
+        if (try importClash(arena, cmd, project, from_registry)) return null;
         const new = plan.addPaths(arena, from_registry, project.paths, &diag) catch |e| {
             if (e != error.ResolveFailed) return e;
             err(cmd, "{s}\n", .{diag.message});
@@ -650,6 +665,7 @@ fn resolveAll(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock,
             err(cmd, "{s}\n", .{diag.message});
             return null;
         };
+        if (try importClash(arena, cmd, project, one)) return null;
         try per.append(one);
     }
     var diag: resolve.Diagnostic = .{};
@@ -869,4 +885,21 @@ test "path dependencies are matched by full name: one import name in two namespa
 
     const other = try manifest.parse(a, try std.fmt.allocPrint(a, top, .{ root, "mid_other", root, "mid_other" }), &diag);
     try std.testing.expect((try projectOf(a, .lock, other)) == null);
+}
+
+test "a lock read is checked: the root against a locked registry package of its import name is refused, a sound lock is not" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var diag: manifest.Diagnostic = .{};
+    const m = try manifest.parse(a, "[package]\nname = \"example/json\"\nversion = \"0.1.0\"\n\n[dependencies]\n\"example/http\" = \"0.3\"\n", &diag);
+    const project = Project{ .m = m, .roots = &.{}, .paths = &.{}, .deps = &.{"http"}, .dev_deps = &.{} };
+    // http 0.3.0 needs a json no manifest names: a second package with the import name json.
+    const clash = lock.Lock{ .mojo = "1.0.0", .channels = &.{}, .packages = &.{
+        .{ .name = "http", .version = "0.3.0", .deps = &.{"json"} },
+        .{ .name = "json", .version = "1.2.0" },
+    } };
+    try std.testing.expect(try importClash(a, .sync, project, clash));
+    const sound = lock.Lock{ .mojo = "1.0.0", .channels = &.{}, .packages = &.{.{ .name = "http", .version = "0.3.0" }} };
+    try std.testing.expect(!try importClash(a, .tree, project, sound));
 }
