@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { ActorGroup, ActorGroups, Invalidator, ObjectStore, PresignedPut, Presigner, PublishStore, Queue, QueueMessage } from './ports';
+import type { ActorGroup, ActorGroups, Invalidator, ListableObjectStore, ListedObject, PresignedPut, Presigner, PublishStore, Queue, QueueMessage } from './ports';
 import type { PublishRecord, UploadRecord } from './types';
 
 const copy = <T>(v: T): T => structuredClone(v);
@@ -71,7 +71,7 @@ export class MemoryPublishStore implements PublishStore {
   }
 }
 
-export class MemoryObjectStore implements ObjectStore {
+export class MemoryObjectStore implements ListableObjectStore {
   objects = new Map<string, { body: Buffer; contentType: string; cacheControl?: string }>();
   log: string[] = [];
   async head(key: string) {
@@ -91,6 +91,9 @@ export class MemoryObjectStore implements ObjectStore {
   async delete(key: string) {
     this.log.push(`delete ${key}`);
     this.objects.delete(key);
+  }
+  async list(prefix: string): Promise<ListedObject[]> {
+    return this.keys(prefix).map((key) => ({ key, size: this.objects.get(key)!.body.length }));
   }
   keys(prefix = ''): string[] {
     return [...this.objects.keys()].filter((k) => k.startsWith(prefix)).sort();

@@ -20,7 +20,7 @@ import {
 } from './group-store';
 import type { RawVersionPort } from './raw-port';
 import { applyEvent, IllegalTransition, publishesVersion, type GroupEvent, type UserEvent, type VersionEvent } from './state';
-import { auditSortKey, type Store } from './store';
+import { auditSortKey, type RowDeleter, type Store } from './store';
 import type { AuditEntry, OwnerRecord, PackageRecord, PackageSummaryRecord, VersionRecord } from './types';
 import { canonicalVersion } from './version';
 
@@ -75,7 +75,7 @@ export class MemoryGroupItems implements GroupReader {
  * revision after its reads), so each is atomic on the event loop, which is the property DynamoDB gives the other
  * adapter with conditions.
  */
-export class MemoryStore implements Store, GroupStore {
+export class MemoryStore implements Store, GroupStore, RowDeleter {
   private packages = new Map<string, PackageRecord>();
   private versions = new Map<string, VersionRecord>(); // `${name}\0${canonical}`
   private owners = new Map<string, OwnerRecord>(); // `${name}\0${github_id}`
@@ -311,6 +311,13 @@ export class MemoryStore implements Store, GroupStore {
   }
   async listOwners(name: string) {
     return [...this.owners.values()].filter((o) => o.name === name).map(copy).sort((a, b) => a.github_id - b.github_id);
+  }
+
+  async deleteVersionRow(name: string, canonical: string): Promise<void> {
+    this.versions.delete(`${name}\0${canonical}`);
+  }
+  async deletePackageRow(name: string): Promise<void> {
+    this.packages.delete(name);
   }
 
   async appendAudit(entry: AuditEntry): Promise<void> {
