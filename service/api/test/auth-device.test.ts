@@ -1,4 +1,4 @@
-import { AuthError, Authenticator, DeviceLogin, HttpGitHubApi, MemoryAuthStore, hashToken } from '../src/auth';
+import { AuthError, Authenticator, DeviceLogin, HttpGitHubApi, MemoryAuthStore, MemoryNamespaceStore, hashToken } from '../src/auth';
 import { fakeGitHub, TestClock } from './auth-helpers';
 
 function setup(opts: { require2fa?: boolean; gh?: Parameters<typeof fakeGitHub>[0] } = {}) {
@@ -6,9 +6,10 @@ function setup(opts: { require2fa?: boolean; gh?: Parameters<typeof fakeGitHub>[
   const store = new MemoryAuthStore();
   const fake = fakeGitHub(opts.gh);
   const github = new HttpGitHubApi('Iv1.testclientid', fake.fetchFn);
-  const login = new DeviceLogin({ store, github, now: clock.now, require2fa: opts.require2fa });
+  const namespaces = new MemoryNamespaceStore();
+  const login = new DeviceLogin({ store, namespaces, github, now: clock.now, require2fa: opts.require2fa });
   const auth = new Authenticator({ store, now: clock.now });
-  return { clock, store, fake, login, auth };
+  return { clock, store, namespaces, fake, login, auth };
 }
 
 async function err(p: Promise<unknown>): Promise<AuthError> {
@@ -40,7 +41,7 @@ describe('start', () => {
     const call = fake.state.calls[0]!;
     expect(call.url).toBe('https://github.com/login/device/code');
     expect(new URLSearchParams(call.body).get('client_id')).toBe('Iv1.testclientid');
-    expect(new URLSearchParams(call.body).get('scope')).toBe('read:user');
+    expect(new URLSearchParams(call.body).get('scope')).toBe('read:user read:org');
     expect(new URLSearchParams(call.body).has('client_secret')).toBe(false);
   });
 
@@ -56,6 +57,7 @@ describe('start', () => {
     const orig = fake.fetchFn;
     const down = new DeviceLogin({
       store: new MemoryAuthStore(),
+      namespaces: new MemoryNamespaceStore(),
       github: new HttpGitHubApi('cid', async (u, i) => ({ ...(await orig(u, i)), ok: false, status: 502 })),
     });
     const e = await err(down.start({ client: 'mopm' }));

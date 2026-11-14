@@ -13,7 +13,7 @@ describe.each(STAGES)('DataStack %s', (stage) => {
     expect(tables.map((r) => r.Properties.TableName).sort()).toEqual(
       TABLES.map((d) => `mopm-${stage}-${d.id}`).sort(),
     );
-    for (const id of ['packages', 'versions', 'owners', 'users', 'tokens', 'device_logins', 'trusted_publishers', 'audit']) {
+    for (const id of ['packages', 'versions', 'owners', 'users', 'tokens', 'device_logins', 'trusted_publishers', 'audit', 'namespaces']) {
       expect(TABLES.map((d) => d.id)).toContain(id);
     }
   });
@@ -36,6 +36,22 @@ describe.each(STAGES)('DataStack %s', (stage) => {
       KeySchema: [{ AttributeName: 'token_hash', KeyType: 'HASH' }],
       TimeToLiveSpecification: { AttributeName: 'expires_at', Enabled: true },
     });
+  });
+
+  test('namespaces is keyed on the namespace string, with an index by GitHub id sorted by namespace, and no TTL', () => {
+    t.hasResourceProperties('AWS::DynamoDB::Table', {
+      TableName: `mopm-${stage}-namespaces`,
+      KeySchema: [{ AttributeName: 'namespace', KeyType: 'HASH' }],
+      GlobalSecondaryIndexes: [
+        {
+          IndexName: 'by_github_id',
+          KeySchema: [{ AttributeName: 'github_id', KeyType: 'HASH' }, { AttributeName: 'namespace', KeyType: 'RANGE' }],
+          Projection: { ProjectionType: 'ALL' },
+        },
+      ],
+    });
+    const ns = tables.find((r) => r.Properties.TableName === `mopm-${stage}-namespaces`);
+    expect(ns.Properties.TimeToLiveSpecification).toBeUndefined();
   });
 
   test('deletion protection and retention only on prod', () => {
@@ -116,9 +132,10 @@ describe.each(STAGES)('DataStack %s', (stage) => {
       ],
     });
     expect(publishes.Properties.GlobalSecondaryIndexes[0].ProvisionedThroughput).toBeUndefined();
-    // The index is additive: the table's key, billing and TTL are as they were, and no other table has gained one.
+    // The index is additive: the table's key, billing and TTL are as they were. The tables with an index are pinned: an
+    // existing table gaining one shows here (the namespaces table was created with its index).
     const indexed = tables.filter((r) => r.Properties.GlobalSecondaryIndexes).map((r) => r.Properties.TableName.replace(`mopm-${stage}-`, '')).sort();
-    expect(indexed).toEqual(['owners', 'packages', 'publishes', 'tokens']);
+    expect(indexed).toEqual(['namespaces', 'owners', 'packages', 'publishes', 'tokens']);
   });
 
   test('the index keys are the names the code writes on a group header, and a header carries them only while its group is not over', () => {

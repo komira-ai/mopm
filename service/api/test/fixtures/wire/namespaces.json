@@ -1,0 +1,408 @@
+[
+  {
+    "adapter": "namespaces",
+    "method": "getNamespace",
+    "args": [
+      "octo"
+    ],
+    "replies": [
+      {
+        "body": {}
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "namespace": {
+                "S": "octo"
+              }
+            },
+            "TableName": "mopm-beta-namespaces"
+          }
+        }
+      ],
+      "returns": null
+    }
+  },
+  {
+    "adapter": "namespaces",
+    "method": "getNamespace",
+    "args": [
+      "komira-ai"
+    ],
+    "replies": [
+      {
+        "body": {
+          "Item": {
+            "namespace": "komira-ai",
+            "kind": "org",
+            "github_id": "77",
+            "github_id_num": 77,
+            "created_at": "2026-10-13T12:00:00.000Z",
+            "installation_id": 5555
+          }
+        }
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "namespace": {
+                "S": "komira-ai"
+              }
+            },
+            "TableName": "mopm-beta-namespaces"
+          }
+        }
+      ],
+      "returns": {
+        "namespace": "komira-ai",
+        "kind": "org",
+        "github_id": 77,
+        "created_at": "2026-10-13T12:00:00.000Z",
+        "installation_id": 5555
+      }
+    }
+  },
+  {
+    "adapter": "namespaces",
+    "method": "createNamespace",
+    "args": [
+      {
+        "namespace": "octo",
+        "kind": "user",
+        "github_id": 4242,
+        "created_at": "2026-10-13T12:00:00.000Z"
+      }
+    ],
+    "replies": [
+      {
+        "body": {}
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "PutItem",
+          "body": {
+            "ConditionExpression": "attribute_not_exists(#n)",
+            "ExpressionAttributeNames": {
+              "#n": "namespace"
+            },
+            "Item": {
+              "namespace": {
+                "S": "octo"
+              },
+              "kind": {
+                "S": "user"
+              },
+              "github_id": {
+                "S": "4242"
+              },
+              "github_id_num": {
+                "N": "4242"
+              },
+              "created_at": {
+                "S": "2026-10-13T12:00:00.000Z"
+              }
+            },
+            "TableName": "mopm-beta-namespaces"
+          }
+        }
+      ],
+      "returns": {
+        "created": true,
+        "record": {
+          "namespace": "octo",
+          "kind": "user",
+          "github_id": 4242,
+          "created_at": "2026-10-13T12:00:00.000Z"
+        }
+      }
+    }
+  },
+  {
+    "adapter": "namespaces",
+    "method": "createNamespace",
+    "args": [
+      {
+        "namespace": "octo",
+        "kind": "user",
+        "github_id": 4242,
+        "created_at": "2026-10-13T12:00:00.000Z"
+      }
+    ],
+    "replies": [
+      {
+        "error": "ConditionalCheckFailedException"
+      },
+      {
+        "body": {
+          "Item": {
+            "namespace": "octo",
+            "kind": "user",
+            "github_id": "9",
+            "github_id_num": 9,
+            "created_at": "2026-09-01T00:00:00.000Z"
+          }
+        }
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "PutItem",
+          "body": {
+            "ConditionExpression": "attribute_not_exists(#n)",
+            "ExpressionAttributeNames": {
+              "#n": "namespace"
+            },
+            "Item": {
+              "namespace": {
+                "S": "octo"
+              },
+              "kind": {
+                "S": "user"
+              },
+              "github_id": {
+                "S": "4242"
+              },
+              "github_id_num": {
+                "N": "4242"
+              },
+              "created_at": {
+                "S": "2026-10-13T12:00:00.000Z"
+              }
+            },
+            "TableName": "mopm-beta-namespaces"
+          }
+        },
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "namespace": {
+                "S": "octo"
+              }
+            },
+            "TableName": "mopm-beta-namespaces"
+          }
+        }
+      ],
+      "returns": {
+        "created": false,
+        "record": {
+          "namespace": "octo",
+          "kind": "user",
+          "github_id": 9,
+          "created_at": "2026-09-01T00:00:00.000Z"
+        }
+      }
+    }
+  },
+  {
+    "adapter": "namespaces",
+    "method": "createNamespace",
+    "args": [
+      {
+        "namespace": "octo",
+        "kind": "user",
+        "github_id": 4242,
+        "created_at": "2026-10-13T12:00:00.000Z"
+      }
+    ],
+    "replies": [
+      {
+        "error": "ConditionalCheckFailedException"
+      },
+      {
+        "body": {}
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "PutItem",
+          "body": {
+            "ConditionExpression": "attribute_not_exists(#n)",
+            "ExpressionAttributeNames": {
+              "#n": "namespace"
+            },
+            "Item": {
+              "namespace": {
+                "S": "octo"
+              },
+              "kind": {
+                "S": "user"
+              },
+              "github_id": {
+                "S": "4242"
+              },
+              "github_id_num": {
+                "N": "4242"
+              },
+              "created_at": {
+                "S": "2026-10-13T12:00:00.000Z"
+              }
+            },
+            "TableName": "mopm-beta-namespaces"
+          }
+        },
+        {
+          "target": "GetItem",
+          "body": {
+            "ConsistentRead": true,
+            "Key": {
+              "namespace": {
+                "S": "octo"
+              }
+            },
+            "TableName": "mopm-beta-namespaces"
+          }
+        }
+      ],
+      "throws": {
+        "name": "Error"
+      }
+    }
+  },
+  {
+    "adapter": "namespaces",
+    "method": "listNamespaces",
+    "args": [
+      4242
+    ],
+    "replies": [
+      {
+        "body": {
+          "Items": [
+            {
+              "namespace": "octo",
+              "kind": "user",
+              "github_id": "4242",
+              "github_id_num": 4242,
+              "created_at": "2026-10-13T12:00:00.000Z"
+            }
+          ],
+          "LastEvaluatedKey": {
+            "github_id": "4242",
+            "namespace": "octo"
+          }
+        }
+      },
+      {
+        "body": {
+          "Items": [
+            {
+              "namespace": "octo-renamed",
+              "kind": "user",
+              "github_id": "4242",
+              "github_id_num": 4242,
+              "created_at": "2026-10-14T12:00:00.000Z"
+            }
+          ]
+        }
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "Query",
+          "body": {
+            "ExpressionAttributeNames": {
+              "#g": "github_id"
+            },
+            "ExpressionAttributeValues": {
+              ":g": {
+                "S": "4242"
+              }
+            },
+            "IndexName": "by_github_id",
+            "KeyConditionExpression": "#g = :g",
+            "TableName": "mopm-beta-namespaces"
+          }
+        },
+        {
+          "target": "Query",
+          "body": {
+            "ExclusiveStartKey": {
+              "github_id": {
+                "S": "4242"
+              },
+              "namespace": {
+                "S": "octo"
+              }
+            },
+            "ExpressionAttributeNames": {
+              "#g": "github_id"
+            },
+            "ExpressionAttributeValues": {
+              ":g": {
+                "S": "4242"
+              }
+            },
+            "IndexName": "by_github_id",
+            "KeyConditionExpression": "#g = :g",
+            "TableName": "mopm-beta-namespaces"
+          }
+        }
+      ],
+      "returns": [
+        {
+          "namespace": "octo",
+          "kind": "user",
+          "github_id": 4242,
+          "created_at": "2026-10-13T12:00:00.000Z"
+        },
+        {
+          "namespace": "octo-renamed",
+          "kind": "user",
+          "github_id": 4242,
+          "created_at": "2026-10-14T12:00:00.000Z"
+        }
+      ]
+    }
+  },
+  {
+    "adapter": "namespaces",
+    "method": "listNamespaces",
+    "args": [
+      4242
+    ],
+    "replies": [
+      {
+        "body": {}
+      }
+    ],
+    "expect": {
+      "requests": [
+        {
+          "target": "Query",
+          "body": {
+            "ExpressionAttributeNames": {
+              "#g": "github_id"
+            },
+            "ExpressionAttributeValues": {
+              ":g": {
+                "S": "4242"
+              }
+            },
+            "IndexName": "by_github_id",
+            "KeyConditionExpression": "#g = :g",
+            "TableName": "mopm-beta-namespaces"
+          }
+        }
+      ],
+      "returns": []
+    }
+  }
+]

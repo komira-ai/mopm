@@ -5,6 +5,7 @@ import {
   parseCiPublishers,
   DeviceLogin,
   DynamoAuthStore,
+  DynamoNamespaceStore,
   GithubJwtVerifier,
   HttpGitHubApi,
   OidcExchange,
@@ -58,7 +59,9 @@ export function configureAuth(stage: Stage, doc: DocClient, env: NodeJS.ProcessE
   const ciPublishers = parseCiPublishers(stage, env[CI_PUBLISHERS_ENV]);
   const secretId = env.MOPM_OAUTH_SECRET_NAME;
   if (!secretId) return undefined;
-  const store = new DynamoAuthStore(doc, authTablesFor(stage));
+  const tables = authTablesFor(stage);
+  const store = new DynamoAuthStore(doc, tables);
+  const namespaces = new DynamoNamespaceStore(doc, tables.namespaces);
   const secret = new OAuthSecretSource({ secretId, read });
   const require2fa = env.MOPM_REQUIRE_2FA !== 'false';
   let device: { clientId: string; svc: DeviceLogin } | undefined;
@@ -72,7 +75,7 @@ export function configureAuth(stage: Stage, doc: DocClient, env: NodeJS.ProcessE
     }),
     async devices() {
       const clientId = await secret.clientId();
-      if (device?.clientId !== clientId) device = { clientId, svc: new DeviceLogin({ store, github: new HttpGitHubApi(clientId), require2fa }) };
+      if (device?.clientId !== clientId) device = { clientId, svc: new DeviceLogin({ store, namespaces, github: new HttpGitHubApi(clientId), require2fa }) };
       return device.svc;
     },
   };

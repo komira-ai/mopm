@@ -42,6 +42,9 @@ export const TABLES: TableDef[] = [
   // A started device login (CLI sign-in), keyed by the hash of the code the CLI holds. Lives ten minutes; TTL cleans up.
   { id: 'device_logins', pk: 'id', ttl: 'expires_at' },
   { id: 'trusted_publishers', pk: 'name', sk: 'publisher' },
+  // Owner namespaces (docs/design/namespaces.md): keyed by the namespace string, bound to a GitHub numeric id. A login makes
+  // the user's own (service/api/src/auth/namespaces.ts); the index lists an account's namespaces for whoami.
+  { id: 'namespaces', pk: 'namespace', gsi: { name: 'by_github_id', pk: 'github_id', sk: 'namespace' } },
   { id: 'audit', pk: 'name', sk: 'ts_seq', appendOnly: true },
   { id: 'reserved_names', pk: 'name' },
   // Publish pipeline. `publishes` holds publish records, the per-version commit lock and the rate counters (told apart by

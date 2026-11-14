@@ -53,6 +53,18 @@ const CHECKS: Record<string, Check> = {
     eq(await s.getUser(7), again);
     eq(await s.getUser(8), undefined);
   },
+  'the organization list of a login is stored as given, kept by a login that read none, and replaced (even by an empty one)': async (s) => {
+    const orgs = [{ github_id: 77, login: 'komira-ai', role: 'admin' as const }, { github_id: 78, login: 'acme', role: 'member' as const }];
+    eq((await s.upsertUser(7, 'octo', '2026-10-01T00:00:00.000Z', true, orgs)).orgs, orgs);
+    eq((await s.getUser(7))?.orgs, orgs);
+    const kept = await s.upsertUser(7, 'octo', '2026-10-02T00:00:00.000Z', true);
+    eq(kept.orgs, orgs);
+    eq(await s.getUser(7), kept);
+    eq((await s.upsertUser(7, 'octo', '2026-10-03T00:00:00.000Z', true, [])).orgs, []);
+    eq((await s.getUser(7))?.orgs, []);
+    // A user who never had a list read has none.
+    expect(await s.upsertUser(8, 'other', '2026-10-01T00:00:00.000Z')).not.toHaveProperty('orgs');
+  },
   'a token round-trips exactly, millisecond expiry included, by hash': async (s) => {
     const t = tok({ id: 'tok_a', hash: h(1), last_used_at: '2026-10-14T12:30:00.000Z' });
     await s.putToken(t);

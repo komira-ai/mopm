@@ -1,22 +1,30 @@
 import { AuthError } from './errors';
 import { GitHubUnavailable, type GitHubApi } from './github';
+import { ensureUserNamespace, type NamespaceStore } from './namespaces';
 import { hashToken, mintToken, newId, SESSION_FRESH_MS, type Clock } from './tokens';
-import type { AuthStore } from './types';
+import type { AuthStore, UserOrg } from './types';
 
 /** The approval page expires in ten minutes (spec), whatever GitHub allows. */
 export const DEVICE_LOGIN_TTL_S = 600;
 export const MIN_POLL_INTERVAL_S = 5;
+/** The OAuth scopes a login asks for: `read:user` for the account and its two-factor flag, `read:org` for its memberships. */
+export const DEFAULT_GITHUB_SCOPE = 'read:user read:org';
 const SLOW_DOWN_STEP_S = 5;
 
 export interface DeviceLoginConfig {
   store: AuthStore;
+  /** Where the account's user namespace is made at login (docs/design/namespaces.md 2.1). */
+  namespaces: NamespaceStore;
   github: GitHubApi;
   /**
    * Refuse a login whose GitHub account does not have two-factor authentication on. A LEAN pending the CEO:
    * defaults ON. It fails closed: if GitHub does not show the field, the login is denied.
    */
   require2fa?: boolean;
-  /** OAuth scope to request. Default `read:user`; see github.ts for what that shows. */
+  /**
+   * OAuth scope to request. Default `read:user read:org`: the user, and the organizations the user is an active member of,
+   * read once at login and recorded on the user row for a later `whoami` (nothing reads them yet); see github.ts.
+   */
   githubScope?: string;
   sessionTtlDays?: number;
   now?: Clock;
@@ -45,6 +53,7 @@ export type DevicePoll =
 
 export class DeviceLogin {
   private readonly store: AuthStore;
+  private readonly namespaces: NamespaceStore;
   private readonly github: GitHubApi;
   private readonly require2fa: boolean;
   private readonly scope: string;
@@ -53,9 +62,10 @@ export class DeviceLogin {
 
   constructor(c: DeviceLoginConfig) {
     this.store = c.store;
+    this.namespaces = c.namespaces;
     this.github = c.github;
     this.require2fa = c.require2fa ?? true;
-    this.scope = c.githubScope ?? 'read:user';
+    this.scope = c.githubScope ?? DEFAULT_GITHUB_SCOPE;
     this.sessionTtlMs = (c.sessionTtlDays ?? 30) * 86_400_000;
     this.now = c.now ?? (() => new Date());
   }
@@ -123,13 +133,18 @@ export class DeviceLogin {
     }
 
     const gh = await this.callGitHub(() => this.github.getUser(r.access_token));
-    // The GitHub token has done its job; it is never stored.
+    // The login is over at GitHub: the row goes, and GitHub's token, never stored, is used once more below and dropped.
     await this.store.deleteDeviceLogin(id);
     if (this.require2fa && gh.two_factor !== true) {
       return { status: 'denied', reason: 'two_factor_required' };
     }
+    const orgs = await this.readOrgs(r.access_token);
     const iso = now.toISOString();
-    const user = await this.store.upsertUser(gh.id, gh.login, iso, gh.two_factor);
+    const user = await this.store.upsertUser(gh.id, gh.login, iso, gh.two_factor, orgs);
+    // The user namespace: made, already held, or none (taken by another id, reserved, outside the grammar). None never
+    // stops the login: the account can still publish in organization namespaces. A store failure fails the login, as a
+    // failing user upsert does: the person logs in again, and the next login makes the namespace.
+    await ensureUserNamespace(this.namespaces, gh.id, gh.login, iso);
     const m = await mintToken(this.store, {
       kind: 'session',
       github_id: user.github_id,
@@ -149,6 +164,20 @@ export class DeviceLogin {
       fresh_until: m.record.fresh_until!,
       handle: user.handle,
     };
+  }
+
+  /**
+   * The account's active organization memberships, recorded for whoami. GitHub failing here does not fail the login, which
+   * has what it needs: the account keeps the list of its last successful read (undefined leaves it unchanged).
+   */
+  private async readOrgs(accessToken: string): Promise<UserOrg[] | undefined> {
+    try {
+      const list = await this.github.listOrgMemberships(accessToken);
+      return list.map((m) => ({ github_id: m.id, login: m.login, role: m.role }));
+    } catch (e) {
+      if (e instanceof GitHubUnavailable) return undefined;
+      throw e;
+    }
   }
 
   private async callGitHub<T>(f: () => Promise<T>): Promise<T> {
