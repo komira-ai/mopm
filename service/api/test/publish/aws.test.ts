@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { CloudFrontInvalidator, S3Channel, SqsFifoQueue, SqsQueueDepth, type HttpFn, type HttpResponse } from '../../src/publish/aws';
+import { CloudFrontInvalidator, S3Channel, sqsId, SqsFifoQueue, SqsQueueDepth, type HttpFn, type HttpResponse } from '../../src/publish/aws';
 
 const CREDS = { accessKeyId: 'AKIDTEST', secretAccessKey: 'secret', sessionToken: 'SESSION' };
 const NOW = new Date('2026-10-14T12:00:00Z');
@@ -180,6 +180,27 @@ describe('SqsFifoQueue', () => {
     });
     expect(signedHeaders(r.headers)).toEqual(expect.arrayContaining(['content-type', 'host', 'x-amz-target']));
     expect(r.headers.authorization).toContain('/us-east-1/sqs/aws4_request');
+  });
+
+  test('a deduplication id of 128 characters or fewer is sent unchanged; a longer one as a fixed-length digest, equal ids equal and different ids different', async () => {
+    const sentIds = async (...ids: string[]) => {
+      const { http, seen } = fakeHttp({ status: 200, body: '{}' });
+      const q = new SqsFifoQueue(QUEUE_URL, opts(http));
+      for (const dedupId of ids) await q.send({ body: 'b', groupId: 'g', dedupId });
+      return seen.map((r) => JSON.parse(r.body as string).MessageDeduplicationId as string);
+    };
+    const edge = 'a'.repeat(128);
+    const long1 = `rebuild:1.2.3:${'n'.repeat(104)}:7:${'m'.repeat(20)}`;
+    const long2 = `${long1}x`;
+    const [a, b, c, d, e] = await sentIds(edge, long1, long1, long2, 'pub_1');
+    expect(a).toBe(edge);
+    expect(e).toBe('pub_1');
+    expect(b).toBe(`sha256:${createHash('sha256').update(long1).digest('hex')}`);
+    expect(b).toHaveLength(71);
+    expect(c).toBe(b);
+    expect(d).not.toBe(b);
+    expect(d).toHaveLength(71);
+    expect(sqsId('a'.repeat(129))).toHaveLength(71);
   });
 
   test('a refusal is an error (the caller\'s request then fails, or the validator message is retried)', async () => {

@@ -34,7 +34,7 @@
           "headers": {
             "content-type": "application/json",
             "cache-control": "public, max-age=60",
-            "etag": "\"94816ed689de2fec9c7629805c102f772e4bd887af07840752f5ab41c921f529\"",
+            "etag": "\"ee841147e536b9ae717fb08fea0fa49ca7d160fabe5af789246ce7f5a7e04071\"",
             "x-mopm-request-id": "req-index-config"
           },
           "body_json": {

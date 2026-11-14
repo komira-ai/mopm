@@ -1,5 +1,5 @@
 # The access stack's checks (see service/api/BUCK): `tsc --noEmit` and `jest --ci`. The held commands
-# (bootstrap, oauth-secret) are TypeScript under bin/ and lib/, tested by test/*.test.ts against a fake host.
+# (bootstrap, oauth-secret, app-secret) are TypeScript under bin/ and lib/, tested by test/*.test.ts against a fake host.
 
 load("@buildrules//rules/node:modules.bzl", "npm_modules", "tsc_check")
 load("//vendor/buildrules_coverage:jest_cover.bzl", "jest_coverage_floor", "jest_test")

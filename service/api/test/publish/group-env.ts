@@ -1,4 +1,4 @@
-import { Authenticator, MemoryAuthStore, mintToken, type TokenScope } from '../../src/auth';
+import { Authenticator, MemoryAuthStore, MemoryNamespaceStore, mintToken, NamespaceAccess, type TokenScope } from '../../src/auth';
 import { route, type HttpResponse, type RouterDeps } from '../../src/http/router';
 import { Metrics } from '../../src/metrics';
 import { DEFAULT_PUBLISH_CONFIG, type PublishConfig } from '../../src/publish/config';
@@ -40,16 +40,21 @@ export class GroupEnv {
   readonly groups: GroupService;
   readonly single: PublishService;
   readonly deps: RouterDeps;
+  /** The namespaces of /api/v2 when the environment was built with `v2`: user namespaces only (no GitHub App), see `ownNamespaces`. */
+  readonly namespaceStore = new MemoryNamespaceStore();
   private n = 0;
 
   constructor(
     readonly rig: Rig,
     config: Partial<PublishConfig> = {},
+    v2 = false,
   ) {
     this.config = { ...DEFAULT_PUBLISH_CONFIG, ...config };
     const now = this.clock.now;
     const presigner = new MemoryPresigner();
+    const access = new NamespaceAccess({ namespaces: this.namespaceStore, users: this.authStore });
     this.groups = new GroupService({
+      ...(v2 ? { namespaces: access } : {}),
       registry: rig.store,
       publishes: this.publishes,
       objects: this.objects,
@@ -73,7 +78,7 @@ export class GroupEnv {
       newId: () => (++this.n).toString(16).padStart(32, '0'),
     });
     const auth = new Authenticator({ store: this.authStore, now });
-    this.deps = { store: rig.store, stage: 'beta', version: 't', commit: 't', readOnly: false, publish: { auth, service: this.single, flags: this.flags, groups: this.groups } };
+    this.deps = { store: rig.store, stage: 'beta', version: 't', commit: 't', readOnly: false, publish: { auth, service: this.single, flags: this.flags, groups: this.groups }, ...(v2 ? { v2: { access, namespaces: this.namespaceStore } } : {}) };
   }
 
   /** The deps of a group's validator job on this environment's ports (`over` replaces any of them). */
@@ -123,6 +128,13 @@ export class GroupEnv {
       if (!(await this.rig.store.getPackage(name))) await this.rig.store.createPackage({ name, state: 'claimed', created_at: this.clock.now().toISOString() });
       await this.rig.store.addOwner({ name, github_id: githubId, handle, added_at: this.clock.now().toISOString() });
     }
+  }
+
+  /** Make the account the owner of these user namespaces (only an environment built with `v2` reads them). */
+  async ownNamespaces(githubId: number, handle: string, namespaces: string[]) {
+    const at = this.clock.now().toISOString();
+    await this.authStore.upsertUser(githubId, handle, at);
+    for (const namespace of namespaces) await this.namespaceStore.createNamespace({ namespace, kind: 'user', github_id: githubId, created_at: at });
   }
 
   /** An API token of the account with `publish` (or the given scopes) for `packages`. */
@@ -183,8 +195,8 @@ export class GroupEnv {
   }
 
   /** `extra` is further keys of the body (an option such as `on_overlap`). */
-  create(token: string | undefined, members: MemberBody[], extra: Record<string, unknown> = {}) {
-    return this.call('POST', '/api/v1/groups', token, { members, ...extra });
+  create(token: string | undefined, members: MemberBody[], extra: Record<string, unknown> = {}, api: 'v1' | 'v2' = 'v1') {
+    return this.call('POST', `/api/${api}/groups`, token, { members, ...extra });
   }
   get(token: string, id: string) {
     return this.call('GET', `/api/v1/groups/${id}`, token);

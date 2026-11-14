@@ -10,7 +10,7 @@ import * as logs from 'aws-cdk-lib/aws-logs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import { Construct } from 'constructs';
-import { StageConfig, channelBucketName, groupQueueName, indexQueueName, oauthSecretName, tableName, validateQueueName } from './config';
+import { StageConfig, appSecretName, channelBucketName, groupQueueName, indexQueueName, oauthSecretName, tableName, validateQueueName } from './config';
 import { assertRegion, lookupZone, removalPolicyFor } from './common';
 
 export interface ApiStackProps extends StackProps {
@@ -330,6 +330,22 @@ export class ApiStack extends Stack {
             service: 'secretsmanager',
             resource: 'secret',
             resourceName: `${oauthSecretName(c.stage)}-??????`,
+            arnFormat: ArnFormat.COLON_RESOURCE_NAME,
+          }),
+        ],
+      }),
+    );
+
+    // The registry's GitHub App of this stage, same shape: one secret, read only, ARN suffix of six `?`.
+    this.handler.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: 'ReadGitHubAppSecret',
+        actions: ['secretsmanager:GetSecretValue'],
+        resources: [
+          this.formatArn({
+            service: 'secretsmanager',
+            resource: 'secret',
+            resourceName: `${appSecretName(c.stage)}-??????`,
             arnFormat: ArnFormat.COLON_RESOURCE_NAME,
           }),
         ],
