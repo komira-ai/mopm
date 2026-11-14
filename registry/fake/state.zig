@@ -7,6 +7,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const errors = @import("errors.zig");
 const util = @import("util.zig");
+const names = @import("names.zig");
 
 pub const day: i64 = 24 * 60 * 60;
 /// A session token is fresh for 15 minutes and lives for 30 days.
@@ -27,7 +28,86 @@ pub const max_upload: u64 = 52428800;
 /// The most bytes one package's live files (published and yanked versions) may hold: 10 GB.
 pub const max_project: u64 = 10_000_000_000;
 
-pub const User = struct { github_id: u64, handle: []const u8 };
+pub const User = struct {
+    github_id: u64,
+    /// The GitHub login it has now (`/_fake/rename` changes it).
+    handle: []const u8,
+    /// A CI identity of `/api/v2`'s OIDC exchange: the repository (`owner/repo`) it stands for. Null for a person.
+    ci_repository: ?[]const u8 = null,
+};
+
+/// What GitHub says of a member of an organization: role and whether the membership is active (not pending).
+pub const OrgRole = enum { admin, member, billing_manager };
+pub const Membership = struct { user: *User, role: OrgRole, active: bool = true };
+
+/// A GitHub organization, as the fake's stand-in for GitHub knows it (`/_fake/org`).
+pub const Org = struct {
+    /// The organization's login now.
+    login: []const u8,
+    github_id: u64,
+    /// The installation of the mopm registry App on it, 0 when it is not installed; each install gets a new id.
+    installation_id: u64 = 0,
+    members: std.ArrayListUnmanaged(Membership) = .{},
+
+    pub fn membership(o: *const Org, u: *const User) ?Membership {
+        for (o.members.items) |m| {
+            if (m.user == u) return m;
+        }
+        return null;
+    }
+};
+
+pub const NamespaceKind = enum { user, org };
+
+/// Whether an account may write in a namespace, and if not, why.
+pub const Right = enum { write, not_member, frozen };
+
+/// An owner namespace (docs/design/namespaces.md section 2): keyed by the GitHub id of its user or organization; its
+/// name never changes, whatever the account is called on GitHub now.
+pub const Namespace = struct {
+    name: []const u8,
+    kind: NamespaceKind,
+    github_id: u64,
+    created_at: i64,
+    /// Organization namespaces: the organization, and the App installation an admin bound when creating it.
+    org: ?*Org = null,
+    installation_id: u64 = 0,
+    /// Repositories (`owner/repo`) whose CI identity may write in it: its trusted publishers (`/_fake/trusted`).
+    publishers: std.ArrayListUnmanaged([]const u8) = .{},
+
+    /// An organization namespace whose bound installation is gone (the App uninstalled, or installed again and not yet
+    /// bound): reads work, every write is refused.
+    pub fn frozen(ns: *const Namespace) bool {
+        if (ns.kind == .user) return false;
+        const o = ns.org orelse return true;
+        return o.installation_id == 0 or o.installation_id != ns.installation_id;
+    }
+
+    /// The right of `u` in it, checked live: a CI identity by the publishers; a person by being the user of a user
+    /// namespace, or an active admin or member of the organization.
+    pub fn right(ns: *const Namespace, u: *const User) Right {
+        if (ns.frozen()) return .frozen;
+        if (u.ci_repository) |repo| {
+            for (ns.publishers.items) |r| {
+                if (std.mem.eql(u8, r, repo)) return .write;
+            }
+            return .not_member;
+        }
+        return switch (ns.kind) {
+            .user => if (u.github_id == ns.github_id) .write else .not_member,
+            .org => {
+                const m = ns.org.?.membership(u) orelse return .not_member;
+                return if (m.active and m.role != .billing_manager) .write else .not_member;
+            },
+        };
+    }
+
+    /// The role `GET /api/v2/me` gives `u` in it: `owner` of their user namespace, GitHub's role in an organization's.
+    pub fn role(ns: *const Namespace, u: *const User) []const u8 {
+        if (ns.kind == .user) return "owner";
+        return @tagName(ns.org.?.membership(u).?.role);
+    }
+};
 
 pub const TokenKind = enum { session, api, oidc };
 
@@ -201,7 +281,10 @@ pub const Group = struct {
 pub const PackageState = enum { claimed, active };
 
 pub const Package = struct {
+    /// The v1 name, or the full name `<namespace>/<name>` of a package in a namespace.
     name: []const u8,
+    /// The namespace of a package created through `/api/v2`; null for a v1 package.
+    namespace: ?*Namespace = null,
     state: PackageState = .claimed,
     owners: std.ArrayListUnmanaged(*User) = .{},
     /// Repositories (`owner/repo`) whose CI identity may publish it.
@@ -214,7 +297,10 @@ pub const Package = struct {
     repository: ?[]const u8 = null,
     license: ?[]const u8 = null,
 
+    /// Whether `u` may write it: an owner of a v1 package; for a package in a namespace, whoever may write in the
+    /// namespace now (it has no owners of its own).
     pub fn isOwner(p: *const Package, u: *const User) bool {
+        if (p.namespace) |ns| return ns.right(u) == .write;
         for (p.owners.items) |o| {
             if (o == u) return true;
         }
@@ -265,6 +351,8 @@ pub const State = struct {
     /// Requests answered that were not a `/_fake/` control (uploads to `/_fake/upload/` count): `/_fake/requests` reads it.
     api_requests: u64 = 0,
     next_github_id: u64 = 1000,
+    /// The id the next App installation (`/_fake/org`) gets.
+    next_installation_id: u64 = 1,
     users: std.ArrayListUnmanaged(*User) = .{},
     tokens: std.ArrayListUnmanaged(*Token) = .{},
     logins: std.ArrayListUnmanaged(*DeviceLogin) = .{},
@@ -277,6 +365,13 @@ pub const State = struct {
     uploads: std.ArrayListUnmanaged(*Upload) = .{},
     publishes: std.ArrayListUnmanaged(*Publish) = .{},
     groups: std.ArrayListUnmanaged(*Group) = .{},
+    /// Owner namespaces, and the GitHub organizations the fake knows (`/_fake/org`).
+    namespaces: std.ArrayListUnmanaged(*Namespace) = .{},
+    orgs: std.ArrayListUnmanaged(*Org) = .{},
+    /// Whether `/api/v1` still creates packages (`claimPackage`, and the OIDC `packages` form for a new name). Off
+    /// (`/_fake/v1_creation`), both answer `name_reserved` with the hint to update mopm, as the registry does once
+    /// package names are in namespaces.
+    v1_creation: bool = true,
     /// Whether the registry has group publishing on. Off, `createGroup` answers `route_not_found`, as a registry that
     /// has not enabled groups for the caller does.
     groups_enabled: bool = true,
@@ -334,14 +429,71 @@ pub const State = struct {
         return n;
     }
 
-    /// The names of the packages `user` owns, sorted.
+    /// The names of the v1 packages `user` owns, sorted.
     pub fn ownedNames(s: *State, arena: Allocator, user: *const User) Allocator.Error![]const []const u8 {
         var out = std.ArrayList([]const u8).init(arena);
         for (s.packages.items) |p| {
-            if (p.isOwner(user)) try out.append(p.name);
+            if (p.namespace == null and p.isOwner(user)) try out.append(p.name);
         }
         std.mem.sort([]const u8, out.items, {}, lessString);
         return try out.toOwnedSlice();
+    }
+
+    pub fn namespaceByName(s: *State, name: []const u8) ?*Namespace {
+        for (s.namespaces.items) |ns| {
+            if (std.mem.eql(u8, ns.name, name)) return ns;
+        }
+        return null;
+    }
+
+    /// The organization whose login is `login` now (GitHub logins ignore case).
+    pub fn orgByLogin(s: *State, login: []const u8) ?*Org {
+        for (s.orgs.items) |o| {
+            if (std.ascii.eqlIgnoreCase(o.login, login)) return o;
+        }
+        return null;
+    }
+
+    /// The namespace `u`'s login names, lower-cased, when it fits the grammar; null when it does not.
+    fn loginNamespaceName(buf: *[39]u8, u: *const User) ?[]const u8 {
+        if (u.ci_repository != null or u.handle.len > buf.len) return null;
+        const lower = std.ascii.lowerString(buf[0..u.handle.len], u.handle);
+        if (!names.isNamespace(lower) or names.isReservedNamespace(lower)) return null;
+        return lower;
+    }
+
+    /// At a login (docs/design/namespaces.md 2.1): `u`'s login, lower-cased, becomes `u`'s user namespace if no namespace
+    /// has it and it fits the grammar and is not reserved. Answers the namespace of that name when it is `u`'s, else null.
+    pub fn loginNamespace(s: *State, u: *User) Allocator.Error!?*Namespace {
+        var buf: [39]u8 = undefined;
+        const name = loginNamespaceName(&buf, u) orelse return null;
+        if (s.namespaceByName(name)) |ns| return if (ns.kind == .user and ns.github_id == u.github_id) ns else null;
+        return try s.add(Namespace, &s.namespaces, .{ .name = try s.alloc.dupe(u8, name), .kind = .user, .github_id = u.github_id, .created_at = s.now() });
+    }
+
+    /// `u`'s login when it cannot be `u`'s namespace: outside the grammar, reserved, or held by another account. Null when
+    /// it is `u`'s namespace, or is free (made at the next login).
+    pub fn unavailableNamespace(s: *State, u: *const User) ?[]const u8 {
+        var buf: [39]u8 = undefined;
+        const name = loginNamespaceName(&buf, u) orelse return u.handle;
+        const ns = s.namespaceByName(name) orelse return null;
+        return if (ns.kind == .user and ns.github_id == u.github_id) null else u.handle;
+    }
+
+    /// The account a `/api/v2` CI identity token acts as: one per repository.
+    pub fn ciUser(s: *State, repository: []const u8) Allocator.Error!*User {
+        for (s.users.items) |u| {
+            if (u.ci_repository) |r| {
+                if (std.mem.eql(u8, r, repository)) return u;
+            }
+        }
+        const u = try s.add(User, &s.users, .{
+            .github_id = s.next_github_id,
+            .handle = try std.fmt.allocPrint(s.alloc, "ci:{s}", .{repository}),
+            .ci_repository = try s.alloc.dupe(u8, repository),
+        });
+        s.next_github_id += 1;
+        return u;
     }
 
     pub fn addInvitation(s: *State, i: Invitation) Allocator.Error!*Invitation {
