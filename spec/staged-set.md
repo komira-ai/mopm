@@ -11,6 +11,16 @@ Nothing here is about how a staged set is made. Whatever makes it writes the
 files below; `publish --staged` reads them and checks them before it sends a
 request.
 
+## The built artifacts
+
+`mopm stage --artifacts <dir>` reads each member's library from
+`<dir>/<subdir>/<namespace>/<name>.mojoc`, and each of its natives from
+`<dir>/<subdir>/<namespace>/<name>.native/lib<id>.a`, where `<subdir>` is one of
+`noarch`, `linux-64`, `linux-aarch64`, `osx-arm64`. The layout without the
+namespace directory is not read. A member with none of the files is refused:
+`<full name> has no build artifact: expected <artifacts>/<subdir>/<namespace>/<name>.mojoc
+for one of noarch, linux-64, linux-aarch64, osx-arm64`.
+
 ## The directory
 
 ```text
@@ -105,7 +115,12 @@ conda channel (`channel.md`). Other files in the directory are ignored.
 2. Reads the token (`$MOPM_TOKEN`, else the login's) and `state.json`. A state
    written for another registry or another plan (a different `plan.json`) is
    refused: remove the file to start a new group.
-3. `POST /groups` with the members to upload; in objects mode each member with
+3. For a new group (`state.json` holds no `group_id`), `PUT <api_v2_url>/packages/<namespace>/<name>`
+   with no body for each member to upload, in plan order, with the token, before the group
+   is asked for. A 201 prints `created <full name> on <stage>`; a 200 (the package
+   existed) prints nothing; any other answer ends the run with exit 1. A run that
+   resumes a group, and `--dry-run`, send none.
+   `POST /groups` with the members to upload; in objects mode each member with
    a readme that is not empty carries `readme`, the `{sha256, size}` of its
    bytes, which is not part of the group id. The registry's answer names a
    reservation for each member and a URL for each file it does not hold. While

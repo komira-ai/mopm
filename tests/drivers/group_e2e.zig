@@ -18,7 +18,8 @@
 //! (`mopm sync --toolchain <closure.json> --cache <dir>`), for a machine with no network, where the closure is a stand-in. The e2e account owns a namespace (`zz-e2e`, or the one --namespace names) and, in it, a fixed set of throwaway
 //! packages (zz-e2e/zz_e2e_core, zz-e2e/zz_e2e_mid, zz-e2e/zz_e2e_app), and the token lists exactly those. Every request goes to
 //! the registry's `/api/v2` with full names, `<namespace>/<name>`; the run creates the packages that are not there yet, with
-//! `PUT /api/v2/packages/<namespace>/<name>`, before it publishes them. A
+//! `PUT /api/v2/packages/<namespace>/<name>`, before it publishes them (`mopm publish --staged` sends the same PUT for each member of a
+//! new group, and the registry answers 200 for a package the run made). A
 //! version is never deleted, so every run uses numbers no run has used: MAJOR is the case, MINOR the run id of the
 //! workflow run and PATCH its attempt.
 //!
@@ -243,8 +244,8 @@ pub fn writeWorkspace(a: Allocator, namespace: []const u8, ws: []const u8, versi
 }
 
 /// Builds the `.mojoc` of the three members of `ws`, each after the ones below it, with `<mojo_env>/bin/mojo`, into
-/// `<art>/<subdir>/<name>.mojoc` (the layout `mopm stage --artifacts` reads). Null when they are built, else what went wrong.
-pub fn precompileAll(a: Allocator, mojo_env: []const u8, parent: *const std.process.EnvMap, ws: []const u8, art: []const u8) !?[]const u8 {
+/// `<art>/<subdir>/<namespace>/<name>.mojoc` (the layout `mopm stage --artifacts` reads). Null when they are built, else what went wrong.
+pub fn precompileAll(a: Allocator, mojo_env: []const u8, parent: *const std.process.EnvMap, namespace: []const u8, ws: []const u8, art: []const u8) !?[]const u8 {
     var env = try toolEnv(a, parent);
     try env.put("MODULAR_HOME", try std.fmt.allocPrint(a, "{s}/share/max", .{mojo_env}));
     const mojo = try std.fs.path.join(a, &.{ mojo_env, "bin", "mojo" });
@@ -260,8 +261,8 @@ pub fn precompileAll(a: Allocator, mojo_env: []const u8, parent: *const std.proc
         const ran = try h.run(a, argv.items, &env, .{ .cwd = try std.fs.path.join(a, &.{ ws, name, "src" }) });
         if (ran.code != 0 or ran.signaled) return try std.fmt.allocPrint(a, "mojo precompile {s} ended {d}: {s}", .{ name, ran.code, tailOf(ran.text) });
         try dep_flags.append(try std.fmt.allocPrint(a, "-I{s}", .{out_dir}));
-        const staged = try std.fs.path.join(a, &.{ art, subdir, try std.fmt.allocPrint(a, "{s}.mojoc", .{name}) });
-        try std.fs.cwd().makePath(try std.fs.path.join(a, &.{ art, subdir }));
+        const staged = try std.fs.path.join(a, &.{ art, subdir, namespace, try std.fmt.allocPrint(a, "{s}.mojoc", .{name}) });
+        try std.fs.cwd().makePath(try std.fs.path.join(a, &.{ art, subdir, namespace }));
         try std.fs.cwd().copyFile(out, std.fs.cwd(), staged, .{});
     }
     return null;
@@ -460,7 +461,7 @@ pub const Opts = struct {
     sync_cache: ?[]const u8 = null,
     /// The Mojo environment (`bin/mojo`, `lib/mojo`) that precompiles the packages. Null is a failed check: nothing here creates one.
     mojo_env: ?[]const u8 = null,
-    /// Packages already built: `<dir>/linux-64/<name>.mojoc` for the three. Then none is precompiled.
+    /// Packages already built: `<dir>/linux-64/<namespace>/<name>.mojoc` for the three. Then none is precompiled.
     prebuilt: ?[]const u8 = null,
     /// Lays the Mojo toolchain into the environment `mopm sync` made, for a sync whose toolchain closure is a stand-in that installs no compiler.
     after_sync: ?*const fn (Allocator, []const u8) anyerror!void = null,
@@ -724,7 +725,7 @@ fn toolchain(cx: *Cx) !?[]const u8 {
     return null;
 }
 
-/// The `.mojoc` of the three packages (`<dir>/linux-64/<name>.mojoc`): the ones given, or built once with the toolchain. Null (a
+/// The `.mojoc` of the three packages (`<dir>/linux-64/<namespace>/<name>.mojoc`): the ones given, or built once with the toolchain. Null (a
 /// failed check says why) when they cannot be had.
 fn artifacts(cx: *Cx) !?[]const u8 {
     if (cx.art) |p| return p;
@@ -738,7 +739,7 @@ fn artifacts(cx: *Cx) !?[]const u8 {
     const ws = try cx.join(&.{ cx.o.work, "ws_build" });
     const art = try cx.join(&.{ cx.o.work, "art" });
     try writeWorkspace(cx.a, cx.o.namespace, ws, "0.0.1", &members);
-    const why = try precompileAll(cx.a, mojo, cx.parent(), ws, art);
+    const why = try precompileAll(cx.a, mojo, cx.parent(), cx.o.namespace, ws, art);
     cx.check("packages: mojo precompile builds the three packages", why == null, why orelse "");
     if (why != null) {
         cx.stop = true;

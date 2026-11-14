@@ -55,6 +55,7 @@ const Allocator = std.mem.Allocator;
 const core = @import("mopm_core");
 const http = core.http;
 const registry = core.registry;
+const bare_name = @import("bare_name.zig");
 const manifest = core.manifest;
 const resolve = core.resolve;
 const lock = core.lock;
@@ -179,7 +180,10 @@ pub const Project = struct {
     dev_deps: []const []const u8,
 };
 
-fn readManifest(arena: Allocator, cmd: Command, path: []const u8) !?manifest.Manifest {
+/// The registry a manifest refusal may ask which namespace the user logged in with (bare_name.zig).
+pub const Lookup = bare_name.Lookup;
+
+fn readManifest(arena: Allocator, cmd: Command, path: []const u8, lookup: ?Lookup) !?manifest.Manifest {
     const src = std.fs.cwd().readFileAlloc(arena, path, 1 << 20) catch |e| {
         if (e == error.FileNotFound) {
             err(cmd, "no {s}\n", .{path});
@@ -188,16 +192,25 @@ fn readManifest(arena: Allocator, cmd: Command, path: []const u8) !?manifest.Man
         }
         return null;
     };
-    return parseManifest(arena, cmd, path, src);
+    return parseManifestFor(arena, cmd, path, src, lookup);
 }
 
 /// `src`, the text of `path`, checked as a manifest; null when it is not
 /// one (reported).
 pub fn parseManifest(arena: Allocator, cmd: Command, path: []const u8, src: []const u8) !?manifest.Manifest {
+    return parseManifestFor(arena, cmd, path, src, null);
+}
+
+/// `parseManifest`; when it refuses a bare [package] name and `lookup` is set, the message names the stored namespace.
+pub fn parseManifestFor(arena: Allocator, cmd: Command, path: []const u8, src: []const u8, lookup: ?Lookup) !?manifest.Manifest {
     var diag: manifest.Diagnostic = .{};
     const m = manifest.parse(arena, src, &diag) catch |e| {
         if (e == error.Invalid) {
-            err(cmd, "{s}:{d}:{d}: {s}\n", .{ path, diag.pos.line, diag.pos.col, diag.message });
+            var message = diag.message;
+            if (lookup) |l| {
+                message = try bare_name.reword(arena, message, l);
+            }
+            err(cmd, "{s}:{d}:{d}: {s}\n", .{ path, diag.pos.line, diag.pos.col, message });
         } else {
             err(cmd, "{s}: {s}\n", .{ path, @errorName(e) });
         }
@@ -228,7 +241,7 @@ fn addPathDep(arena: Allocator, cmd: Command, full: []const u8, name: []const u8
         return false;
     }
     const file = try std.fmt.allocPrint(arena, "{s}/{s}", .{ path, manifest_path });
-    const m = (try readManifest(arena, cmd, file)) orelse return false;
+    const m = (try readManifest(arena, cmd, file, null)) orelse return false;
     if (!std.mem.eql(u8, m.package.full_name, full)) {
         err(cmd, "{s} names the package {s}, but {s} calls it {s}\n", .{ file, m.package.full_name, needed_by, full });
         return false;
@@ -254,13 +267,18 @@ fn addPathDep(arena: Allocator, cmd: Command, full: []const u8, name: []const u8
 }
 
 pub fn readProject(arena: Allocator, cmd: Command) !?Project {
+    return readProjectFor(arena, cmd, null);
+}
+
+/// `readProject`; with `lookup`, a refused bare [package] name is worded with the namespace stored for that registry.
+pub fn readProjectFor(arena: Allocator, cmd: Command, lookup: ?Lookup) !?Project {
     std.fs.cwd().access(manifest_path, .{}) catch |e| {
         if (e == error.FileNotFound) {
             err(cmd, "no {s} in this directory\n", .{manifest_path});
             return null;
         }
     };
-    const m = (try readManifest(arena, cmd, manifest_path)) orelse return null;
+    const m = (try readManifest(arena, cmd, manifest_path, lookup)) orelse return null;
     return projectOf(arena, cmd, m);
 }
 
@@ -491,7 +509,7 @@ pub fn loadOverlay(arena: Allocator, cmd: Command, dir: []const u8) !?overlay.Ov
 
 fn run(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8) !u8 {
     if (cmd == .add or cmd == .remove) return edit_cmd.edit(arena, cmd, args, cli_version);
-    const project = (try readProject(arena, cmd)) orelse return 1;
+    const project = (try readProjectFor(arena, cmd, .{ .registry = args.registry, .cli_version = cli_version })) orelse return 1;
     // `lock`, `update` and a `sync` that may lock treat a lock that predates namespaces as no lock; every other
     // command refuses it.
     var stale: ?[]const u8 = null;

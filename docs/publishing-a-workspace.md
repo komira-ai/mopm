@@ -22,7 +22,7 @@ mopm stage --workspace-root <dir> [<package>...] --artifacts <dir> --compiler <m
 |---|---|
 | `--workspace-root <dir>` | The directory searched for members: every directory below it that holds a `mopm.toml`. |
 | `<package>...` | Optional package names, each a full name (`example/util`) or its import name (`util`; one workspace holds one member per import name). With names, the set is those packages and the members they depend on; without, every member. |
-| `--artifacts <dir>` | Where the built `.mojoc` files are: `<dir>/<subdir>/<name>.mojoc` for each member. A member with `[native.<id>]` libraries also has each one's static archive beside it, at `<dir>/<subdir>/<name>.native/lib<id>.a` (the native's `soname`, if it sets one, is the file name); stage packs it as `mopm pack --native <id>=<subdir>:<file>` would, and refuses a member whose archive is missing or is not an `ar` archive. A native is built for one platform, so its `.mojoc` is never under `noarch`. |
+| `--artifacts <dir>` | Where the built `.mojoc` files are: `<dir>/<subdir>/<namespace>/<name>.mojoc` for each member (`<subdir>` is `noarch`, `linux-64`, `linux-aarch64` or `osx-arm64`; the layout without the namespace directory is not read). A member with `[native.<id>]` libraries also has each one's static archive beside it, at `<dir>/<subdir>/<namespace>/<name>.native/lib<id>.a` (the native's `soname`, if it sets one, is the file name); stage packs it as `mopm pack --native <id>=<subdir>:<file>` would, and refuses a member whose archive is missing or is not an `ar` archive. A native is built for one platform, so its `.mojoc` is never under `noarch`. |
 | `--compiler <mojo version>` | The exact Mojo version the artifacts were built with. |
 | `--out <dir>` | Where the staged set is written. |
 | `--registry <name>` | Which registry the versions are checked against: `prod`, `gamma`, `beta` or a URL. There is no default. |
@@ -59,6 +59,8 @@ mopm publish --staged <dir> --registry <prod|gamma|beta|url> [--config-dir <dir>
 | `--oidc` | Inside a GitHub Actions job, take the registry token from the job's identity instead of `$MOPM_TOKEN` or the login. See "Publishing from GitHub Actions without a token" below. |
 | `--no-commit` | Upload every file and stop with the group open. See "Staging a group and committing it later" below. With `--oidc` the run asks the registry for a stage-only token. |
 | `--abort` | End the open group that `state.json` names. Reads `plan.json` and `state.json` only. Cannot be combined with `--no-commit` or `--dry-run`. |
+
+A member whose package does not exist yet needs it created before a group can name it. For a new group (no `group_id` in `state.json`) mopm sends `PUT /packages/<namespace>/<name>` with no body for each member it uploads, in plan order, after the token is read and before the group is asked for: a 201 prints `created <full name> on <registry>`, a 200 prints nothing, any other answer ends the run with exit 1. A run that resumes a group and `--dry-run` send none.
 
 The token is `$MOPM_TOKEN`, else the login's. It is read after the plan has been checked, goes only to the registry's API, is never printed, and is not in the environment of any program mopm starts. The uploads themselves carry no token.
 

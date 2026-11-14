@@ -180,16 +180,19 @@ test "golden files: link-plan, metadata, new and init, build, run, repl, test --
         rep.check("new accepts a Mojo keyword as a name", r5.signaled or r5.code != 0, "accepted");
         const made = if (std.fs.cwd().access(try h.join(a, &.{ sub, "async" }), .{})) true else |_| false;
         rep.check("new made a directory for a refused name", !made, "made");
-        const r6 = try h.run(a, try c.mopmArgv(&.{ "new", "json" }), &base, .{ .cwd = sub, .capture = .stderr });
+        // An empty config directory: no login stored a namespace, so a bare name is refused without asking any registry.
+        const no_login = try h.join(a, &.{ work, "no-login" });
+        try std.fs.cwd().makePath(no_login);
+        const r6 = try h.run(a, try c.mopmArgv(&.{ "new", "json", "--config-dir", no_login }), &base, .{ .cwd = sub, .capture = .stderr });
         rep.check("new refuses a bare name", !r6.signaled and r6.code != 0, "accepted");
-        rep.check("new refuses a bare name: text", std.mem.eql(u8, "mopm new json needs a namespace: name it, as in 'mopm new <your GitHub login>/json'", h.chomp(r6.text)), r6.text);
+        rep.check("new refuses a bare name: text", std.mem.eql(u8, "mopm new json needs a namespace: run 'mopm login' (your GitHub login is your namespace) or name it, as in 'mopm new <your login>/json'", h.chomp(r6.text)), r6.text);
         const bare_dir = if (std.fs.cwd().access(try h.join(a, &.{ sub, "json" }), .{})) true else |_| false;
         rep.check("new made a directory for a bare name", !bare_dir, "made");
         const emptydir = try h.join(a, &.{ sub, "empty" });
         try std.fs.cwd().makePath(emptydir);
-        const r7 = try h.run(a, try c.mopmArgv(&.{"init"}), &base, .{ .cwd = emptydir, .capture = .stderr });
+        const r7 = try h.run(a, try c.mopmArgv(&.{ "init", "--config-dir", no_login }), &base, .{ .cwd = emptydir, .capture = .stderr });
         rep.check("init refuses the directory's bare name", !r7.signaled and r7.code != 0, "accepted");
-        rep.check("init refuses the directory's bare name: text", std.mem.eql(u8, "mopm init empty needs a namespace: name it, as in 'mopm init <your GitHub login>/empty' (the name comes from this directory; pass --name <namespace>/<name>)", h.chomp(r7.text)), r7.text);
+        rep.check("init refuses the directory's bare name: text", std.mem.eql(u8, "mopm init empty needs a namespace: run 'mopm login' (your GitHub login is your namespace) or name it, as in 'mopm init --name <your login>/empty' (the name comes from this directory)", h.chomp(r7.text)), r7.text);
     }
 
     // ---- build, run, repl --print-cmd on each environment, both spellings

@@ -84,7 +84,7 @@ pub const Fx = struct {
     pub fn member(fx: Fx, name: []const u8, version: []const u8, deps: []const u8) !void {
         const manifest = try std.fmt.allocPrint(fx.a, "[package]\nname = \"example/{s}\"\nversion = \"{s}\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n{s}\n", .{ name, version, deps });
         try fx.put(try std.fmt.allocPrint(fx.a, "ws/src/{s}/mopm.toml", .{name}), manifest);
-        try fx.put(try std.fmt.allocPrint(fx.a, "art/noarch/{s}.mojoc", .{name}), try std.fmt.allocPrint(fx.a, "the mojoc of {s}", .{name}));
+        try fx.put(try std.fmt.allocPrint(fx.a, "art/noarch/example/{s}.mojoc", .{name}), try std.fmt.allocPrint(fx.a, "the mojoc of {s}", .{name}));
     }
 
     /// `pkg_x = { path = "../pkg_x", version = "<req>" }`
@@ -359,15 +359,16 @@ test "a member with no artifact, an empty one, a version that is not one, or a r
     var stub = newStub(a);
     try fx.member("pkg_a", "1.0.0", "");
 
-    try fx.tmp.dir.deleteFile("art/noarch/pkg_a.mojoc");
+    try fx.tmp.dir.deleteFile("art/noarch/example/pkg_a.mojoc");
     var r = try runStage(fx, &stub, "p1", &.{});
-    try std.testing.expect(r.code == 1 and contains(r.err, "example/pkg_a has no build artifact: expected "));
+    const want_missing = try std.fmt.allocPrint(a, "example/pkg_a has no build artifact: expected {s}/<subdir>/example/pkg_a.mojoc for one of noarch, linux-64, linux-aarch64, osx-arm64", .{try fx.path("art")});
+    try std.testing.expect(r.code == 1 and contains(r.err, want_missing));
 
-    try fx.put("art/noarch/pkg_a.mojoc", "");
+    try fx.put("art/noarch/example/pkg_a.mojoc", "");
     r = try runStage(fx, &stub, "p2", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "pkg_a.mojoc is empty"));
 
-    try fx.put("art/noarch/pkg_a.mojoc", "bytes");
+    try fx.put("art/noarch/example/pkg_a.mojoc", "bytes");
     try fx.put("ws/src/pkg_a/README.md", "\xff\xfe not utf-8");
     r = try runStage(fx, &stub, "p3", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "is not UTF-8 text"));
@@ -612,11 +613,11 @@ test "a registry that cannot be asked, or answers what is not a version, stops t
 // ---------------------------------------------------------------- the packages
 
 /// A member `pkg_n` with `[native.shim]` (a static library) and `pkg_a` (no native), the way a caller lays out artifacts:
-/// `art/linux-64/pkg_n.mojoc` and `art/linux-64/pkg_n.native/libshim.a`.
+/// `art/linux-64/example/pkg_n.mojoc` and `art/linux-64/example/pkg_n.native/libshim.a`.
 fn nativeWorkspace(fx: Fx) !void {
     try fx.member("pkg_a", "1.0.0", "");
     try fx.put("ws/src/pkg_n/mopm.toml", "[package]\nname = \"example/pkg_n\"\nversion = \"1.2.0\"\nmojo = [\"1.0.0\"]\n\n[native.shim]\nkind = \"static\"\nneeds = [\"libz.so.1\", \"libcore_sys.a\"]\nexclusive = \"libshim\"\n");
-    try fx.put("art/linux-64/pkg_n.mojoc", "the mojoc of pkg_n");
+    try fx.put("art/linux-64/example/pkg_n.mojoc", "the mojoc of pkg_n");
 }
 
 const shim_archive = "!<arch>\nthe archive of shim, a long enough body\n";
@@ -628,7 +629,7 @@ test "a member with a native library is staged with its archive, byte for byte a
     var fx = try Fx.init(a);
     defer fx.deinit();
     try nativeWorkspace(fx);
-    try fx.put("art/linux-64/pkg_n.native/libshim.a", shim_archive);
+    try fx.put("art/linux-64/example/pkg_n.native/libshim.a", shim_archive);
     var stub = newStub(a);
     const r = try runStage(fx, &stub, "out", &.{});
     try std.testing.expect(r.code == 0);
@@ -676,19 +677,19 @@ test "a native member whose archive is missing, not an archive, or for another s
     var r = try runStage(fx, &stub, "o1", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "example/pkg_n: native library 'shim' has no archive for linux-64") and contains(r.err, "pkg_n.native/libshim.a"));
 
-    try fx.put("art/linux-64/pkg_n.native/libshim.a", "not an archive at all");
+    try fx.put("art/linux-64/example/pkg_n.native/libshim.a", "not an archive at all");
     r = try runStage(fx, &stub, "o2", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "example/pkg_n: ") and contains(r.err, "libshim.a is not a static archive"));
 
     // A second subdir whose mojoc has no archive of its own: the first one's does not stand in for it.
-    try fx.put("art/linux-64/pkg_n.native/libshim.a", shim_archive);
-    try fx.put("art/osx-arm64/pkg_n.mojoc", "the mojoc of pkg_n, for the Mac");
+    try fx.put("art/linux-64/example/pkg_n.native/libshim.a", shim_archive);
+    try fx.put("art/osx-arm64/example/pkg_n.mojoc", "the mojoc of pkg_n, for the Mac");
     r = try runStage(fx, &stub, "o3", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "example/pkg_n: native library 'shim' has no archive for osx-arm64"));
 
     // Natives cannot ride in a noarch artifact.
-    try fx.tmp.dir.deleteFile("art/osx-arm64/pkg_n.mojoc");
-    try fx.put("art/noarch/pkg_n.mojoc", "noarch mojoc");
+    try fx.tmp.dir.deleteFile("art/osx-arm64/example/pkg_n.mojoc");
+    try fx.put("art/noarch/example/pkg_n.mojoc", "noarch mojoc");
     r = try runStage(fx, &stub, "o4", &.{});
     try std.testing.expect(r.code == 1 and contains(r.err, "example/pkg_n declares native libraries, which are built for one platform"));
     for ([_][]const u8{ "o1", "o2", "o3", "o4" }) |o| try std.testing.expect(!fx.exists(o));
@@ -891,7 +892,7 @@ test "the staged plan is the one publish --staged reads: members, files and hash
     try fx.member("pkg_a", "1.0.0", "");
     try fx.member("pkg_b", "1.0.0", try fx.pathDep("pkg_a", "1"));
     // One member for two platforms.
-    try fx.put("art/linux-64/pkg_a.mojoc", "the linux mojoc of pkg_a");
+    try fx.put("art/linux-64/example/pkg_a.mojoc", "the linux mojoc of pkg_a");
     var stub = newStub(a);
     const r = try runStage(fx, &stub, "round", &.{});
     try std.testing.expectEqual(@as(u8, 0), r.code);
@@ -918,7 +919,7 @@ test "the plan's manifest_sha256 is the manifest hash mopm pack prints, not the 
     defer fx.deinit();
     try fx.member("pkg_a", "1.0.0", "");
     try fx.member("pkg_b", "1.0.0", try fx.pathDep("pkg_a", "1"));
-    try fx.put("art/linux-64/pkg_a.mojoc", "the linux mojoc of pkg_a");
+    try fx.put("art/linux-64/example/pkg_a.mojoc", "the linux mojoc of pkg_a");
     var stub = newStub(a);
     const r = try runStage(fx, &stub, "manifest", &.{});
     try std.testing.expectEqual(@as(u8, 0), r.code);
@@ -1053,7 +1054,7 @@ test "the flags: all of them are needed, and --registry has no default" {
 /// A member `benchy` whose `[targets] bins` is `bins`, its artifact for `noarch` and two source files for programs.
 fn binsWorkspace(fx: Fx, bins: []const u8) !void {
     try fx.put("ws/benchy/mopm.toml", try std.fmt.allocPrint(fx.a, "[package]\nname = \"example/benchy\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n\n[targets]\nbins = [{s}]\n", .{bins}));
-    try fx.put("art/noarch/benchy.mojoc", "the mojoc of benchy");
+    try fx.put("art/noarch/example/benchy.mojoc", "the mojoc of benchy");
     try fx.put("ws/benchy/src/agg.mojo", "def main(): print(\"agg\")\n");
     try fx.put("ws/benchy/bench/ring.mojo", "def main(): print(\"ring\")\n");
 }
@@ -1068,7 +1069,7 @@ test "a member with programs is staged with their sources in every subdir's pack
     var fx = try Fx.init(a);
     defer fx.deinit();
     try binsWorkspace(fx, two_bins);
-    try fx.put("art/linux-64/benchy.mojoc", "the linux mojoc of benchy");
+    try fx.put("art/linux-64/example/benchy.mojoc", "the linux mojoc of benchy");
     var stub = newStub(a);
     const r = try runStage(fx, &stub, "out", &.{});
     try std.testing.expect(r.code == 0);
@@ -1111,4 +1112,76 @@ test "a member whose program cannot be shipped is refused with the member named,
         try std.testing.expect(contains(r.err, c.why));
         try std.testing.expect(!fx.exists(out));
     }
+}
+
+// ------------------------------------------------------- the artifact layout by full name
+
+test "a member with no artifact is refused with the message naming the namespaced path, exactly" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    var stub = newStub(a);
+    try fx.member("pkg_a", "1.0.0", "");
+    try fx.tmp.dir.deleteFile("art/noarch/example/pkg_a.mojoc");
+    const r = try runStage(fx, &stub, "none", &.{});
+    const want = try std.fmt.allocPrint(a, "example/pkg_a has no build artifact: expected {s}/<subdir>/example/pkg_a.mojoc for one of noarch, linux-64, linux-aarch64, osx-arm64", .{try fx.path("art")});
+    try std.testing.expectEqual(@as(u8, 1), r.code);
+    try std.testing.expect(std.mem.indexOf(u8, r.err, want) != null);
+    try std.testing.expect(!fx.exists("none"));
+}
+
+test "a .mojoc left at the old path without the namespace is not read" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    var stub = newStub(a);
+    try fx.member("pkg_a", "1.0.0", "");
+    try fx.tmp.dir.deleteFile("art/noarch/example/pkg_a.mojoc");
+    try fx.put("art/noarch/pkg_a.mojoc", "the mojoc at the old path");
+    const r = try runStage(fx, &stub, "old", &.{});
+    try std.testing.expectEqual(@as(u8, 1), r.code);
+    try std.testing.expect(contains(r.err, "example/pkg_a has no build artifact: expected "));
+    try std.testing.expect(contains(r.err, "/<subdir>/example/pkg_a.mojoc for one of"));
+    try std.testing.expect(!fx.exists("old"));
+}
+
+test "a member's .mojoc is read from the directory of its own namespace, not another's" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    var stub = newStub(a);
+    try fx.put("ws/src/pkg_a/mopm.toml", "[package]\nname = \"other/pkg_a\"\nversion = \"1.0.0\"\nmojo = [\"1.0.0\"]\n");
+    try fx.put("art/noarch/example/pkg_a.mojoc", "the mojoc of example/pkg_a");
+    const r = try runStage(fx, &stub, "other_ns", &.{});
+    try std.testing.expectEqual(@as(u8, 1), r.code);
+    try std.testing.expect(contains(r.err, "other/pkg_a has no build artifact: expected "));
+    try std.testing.expect(contains(r.err, "/<subdir>/other/pkg_a.mojoc for one of"));
+
+    try fx.put("art/noarch/other/pkg_a.mojoc", "the mojoc of other/pkg_a");
+    const ok = try runStage(fx, &stub, "other_ok", &.{});
+    try std.testing.expectEqual(@as(u8, 0), ok.code);
+    const want = try conda.pack(a, .{ .name = "other/pkg_a", .version = "1.0.0", .compiler = "1.0.0", .subdir = "noarch", .mojoc = "the mojoc of other/pkg_a" });
+    try std.testing.expectEqualSlices(u8, want.bytes, try fx.read(try std.fmt.allocPrint(a, "other_ok/noarch/{s}", .{want.file_name})));
+}
+
+test "a native archive at the old path without the namespace is not read" {
+    var st = arenaTest();
+    defer st.deinit();
+    const a = st.allocator();
+    var fx = try Fx.init(a);
+    defer fx.deinit();
+    try nativeWorkspace(fx);
+    try fx.put("art/linux-64/pkg_n.native/libshim.a", shim_archive);
+    var stub = newStub(a);
+    const r = try runStage(fx, &stub, "old_native", &.{});
+    try std.testing.expectEqual(@as(u8, 1), r.code);
+    const want = try std.fmt.allocPrint(a, "example/pkg_n: native library 'shim' has no archive for linux-64: expected {s}/linux-64/example/pkg_n.native/libshim.a", .{try fx.path("art")});
+    try std.testing.expect(contains(r.err, want));
+    try std.testing.expect(!fx.exists("old_native"));
 }

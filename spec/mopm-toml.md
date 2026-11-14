@@ -57,7 +57,12 @@ A package's name is a full name, `<namespace>/<name>`, such as `komira-ai/json`.
 - A name without a namespace is refused, naming the key and giving the full
   form: `dependency 'json' has no namespace: write it "<namespace>/json" =
   "0.1"`, `package name 'json' has no namespace: write name =
-  "<namespace>/json"`.
+  "<namespace>/json"`. In the commands that read a `mopm.toml` with a registry
+  (`lock`, `update`, `sync`, `tree`, `add`, `remove`), a bare `[package]` name is
+  refused with the namespace `mopm login` stored for the registry, when there is
+  one: `package name 'json' has no namespace: write name = "alice/json" (alice
+  is your namespace), or another namespace you publish in`. Without a login,
+  or when the stored entry has no namespace, the first wording is used.
 - One spelling, lower case: `Komira-AI/json` is refused with a message that
   gives `komira-ai/json`. Nothing normalises a name.
 - The import name is what Mojo code imports (`import json`). It is never a Mojo

@@ -16,6 +16,10 @@
 //! begin an upload per file and PUT the bytes to the URL it names, commit the
 //! uploads, and poll the publish until it is `published` or `rejected`.
 //!
+//! Before the first upload, `publish` creates the package when the registry does not have it (`PUT /api/v2/packages/<namespace>/<name>`,
+//! no body: 201 says `created <name> on <stage>`, 200 means it was there already and says nothing). The registry checks first that
+//! the token's user may write the namespace; a refusal is printed and nothing is uploaded. `--dry-run` sends nothing.
+//!
 //! The token is `$MOPM_TOKEN` when that is set and not empty, else the one
 //! `mopm login` stored for the registry. It is sent only to the registry's
 //! API, as a bearer token, and is never printed. The PUT to the storage URL
@@ -542,6 +546,11 @@ fn publishCmd(arena: Allocator, f: Flags, cli_version: []const u8) anyerror!u8 {
         return 1;
     };
 
+    // The package is created when the registry does not have it; the right to write its namespace is the registry's to check, and
+    // it does so before anything is uploaded.
+    var con = group_publish.Console.init(arena, group_publish.Console.stdStreams);
+    if (!try ensurePackage(arena, group_publish.realNet(), &con, s.config.api_v2_url, token, s.config.stage, name)) return 1;
+
     var ids = std.ArrayList([]const u8).init(arena);
     for (prep.packs) |p| {
         const id = (try uploadFile(s, token, name, version, p)) orelse return 1;
@@ -578,8 +587,28 @@ fn publishCmd(arena: Allocator, f: Flags, cli_version: []const u8) anyerror!u8 {
         err("the registry sent a status URL that is not a path under /api/v2/publishes/\n", .{});
         return 1;
     };
-    var con = group_publish.Console.init(arena, group_publish.Console.stdStreams);
     return waitForPublish(s, group_publish.realNet(), &con, wait_secs, token, status_url, name, version);
+}
+
+/// Makes sure the package `name` (a full name) exists on the registry, before anything of it is uploaded: `PUT <api_v2_url>/packages/<name>`
+/// with the token and an empty body. The registry checks that the token's user may write the namespace; it answers 201 for a
+/// package it created, which this says (`created <name> on <stage>`), and 200 for one it already had, which is a no-op and
+/// is not said. Any other answer is printed as every failed request is and the result is false, so the caller stops before
+/// an upload. A request that fails before an answer is said the same way.
+pub fn ensurePackage(arena: Allocator, net: group_publish.Net, con: *group_publish.Console, api_v2_url: []const u8, token: []const u8, stage: []const u8, name: []const u8) Allocator.Error!bool {
+    const url = try std.fmt.allocPrint(arena, "{s}/packages/{s}", .{ api_v2_url, name });
+    // An empty body, not none: the request then carries `Content-Length: 0`, which a PUT needs.
+    const answer = net.request(arena, .PUT, url, .{ .token = token, .body = "", .content_type = null }) catch |e| {
+        con.fail("PUT /packages/{s}: {s}\n", .{ name, @errorName(e) });
+        return false;
+    };
+    if (answer.status == 200) return true;
+    if (answer.status == 201) {
+        con.say("created {s} on {s}\n", .{ name, stage });
+        return true;
+    }
+    registry_cmd.reportFailure(con, answer);
+    return false;
 }
 
 /// The URL of `path` on the version 2 API, which every operation naming a package uses (the package's full name is in `path`).
@@ -1105,4 +1134,72 @@ test "a rejected publish and a failing poll end the wait at once, with no pause"
     try std.testing.expectEqual(@as(u8, 1), try waitForPublish(waitSession(a), broken.net(), &con, 600, "tok", poll_url, "example/x", "1.0.0"));
     try std.testing.expectEqual(@as(u64, 0), broken.slept);
     try std.testing.expectEqual(@as(usize, 1), broken.seen.items.len);
+}
+
+test "publish creates a package the registry does not have: PUT to its full name with the token and no body, and says created" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var con = group_publish.Console.init(a, null);
+    var script = gt.newScript(a, &.{.{ .method = .PUT, .suffix = "/packages/example/x", .status = 201, .body = "{\"name\":\"example/x\"}" }});
+    try std.testing.expect(try ensurePackage(a, script.net(), &con, "http://127.0.0.1:1/api/v2", "tok", "beta", "example/x"));
+    try std.testing.expect(script.mismatch == null);
+    try std.testing.expectEqual(@as(usize, 1), script.seen.items.len);
+    const sent = script.seen.items[0];
+    try std.testing.expectEqual(std.http.Method.PUT, sent.method);
+    try std.testing.expectEqualStrings("http://127.0.0.1:1/api/v2/packages/example/x", sent.url);
+    try std.testing.expectEqualStrings("tok", sent.token.?);
+    try std.testing.expectEqual(@as(usize, 0), if (sent.body) |b| b.len else 0);
+    try std.testing.expect(!sent.content_type_set);
+    try std.testing.expectEqualStrings("created example/x on beta\n", con.out.items);
+    try std.testing.expectEqualStrings("", con.err.items);
+}
+
+test "publish of a package the registry already has says nothing about creating it and goes on" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var con = group_publish.Console.init(a, null);
+    var script = gt.newScript(a, &.{.{ .method = .PUT, .suffix = "/packages/example/x", .status = 200, .body = "{\"name\":\"example/x\"}" }});
+    try std.testing.expect(try ensurePackage(a, script.net(), &con, "http://127.0.0.1:1/api/v2", "tok", "beta", "example/x"));
+    try std.testing.expectEqual(@as(usize, 1), script.seen.items.len);
+    try std.testing.expectEqualStrings("", con.out.items);
+    try std.testing.expectEqualStrings("", con.err.items);
+}
+
+test "publish refuses with the registry's message, and goes no further, when the namespace is not the user's or is not valid" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    const refusals = [_]struct { status: u16, body: []const u8, err: []const u8 }{
+        .{
+            .status = 403,
+            .body = "{\"error\":{\"code\":\"not_namespace_member\",\"message\":\"You are not a member of the namespace 'example'.\",\"hint\":\"Ask an owner to add you.\"}}",
+            .err = "mopm: You are not a member of the namespace 'example'.\n  hint: Ask an owner to add you.\n  request id: req-test\n",
+        },
+        .{
+            .status = 400,
+            .body = "{\"error\":{\"code\":\"invalid_namespace\",\"message\":\"'Example' is not a valid namespace.\",\"hint\":\"Use lower case.\"}}",
+            .err = "mopm: 'Example' is not a valid namespace.\n  hint: Use lower case.\n  request id: req-test\n",
+        },
+    };
+    for (refusals) |r| {
+        var con = group_publish.Console.init(a, null);
+        var script = gt.newScript(a, &.{.{ .method = .PUT, .suffix = "/packages/example/x", .status = r.status, .body = r.body }});
+        try std.testing.expect(!(try ensurePackage(a, script.net(), &con, "http://127.0.0.1:1/api/v2", "tok", "beta", "example/x")));
+        try std.testing.expectEqual(@as(usize, 1), script.seen.items.len);
+        try std.testing.expectEqualStrings("", con.out.items);
+        try std.testing.expectEqualStrings(r.err, con.err.items);
+    }
+}
+
+test "publish stops when the request for the package fails before any answer, naming the request" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var con = group_publish.Console.init(a, null);
+    var script = gt.newScript(a, &.{.{ .method = .PUT, .suffix = "/packages/example/x", .status = 0, .err = error.InvalidUri }});
+    try std.testing.expect(!(try ensurePackage(a, script.net(), &con, "http://127.0.0.1:1/api/v2", "tok", "beta", "example/x")));
+    try std.testing.expectEqualStrings("mopm: PUT /packages/example/x: InvalidUri\n", con.err.items);
+    try std.testing.expectEqualStrings("", con.out.items);
 }
