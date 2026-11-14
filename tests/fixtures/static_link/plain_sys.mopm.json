@@ -1,6 +1,6 @@
 {
-  "schema": 1,
-  "name": "plain_sys",
+  "schema": 2,
+  "name": "example/plain_sys",
   "version": "1.0.0",
   "native": [
     {

@@ -3,7 +3,10 @@
 //!
 //! `buildLock` makes one lock entry per file of every picked version (one per
 //! subdir), taking `sha256` and `size` from the channel's
-//! `<subdir>/repodata.json` (spec/channel.md). The sparse index must carry
+//! `<subdir>/repodata.json` (spec/channel.md). A package is named by its full name
+//! `<namespace>/<name>`; its entry's `channel` is the namespace's channel under the root
+//! (`<root><namespace>/`), its file is `mojo-<namespace>.<name>-<version>-<build>.conda`,
+//! and its metadata is `lib/mojo/<import name>.mopm.json`. The sparse index must carry
 //! the same values (spec/index.md, "files[].sha256 and size"); a difference,
 //! or a file the repodata does not offer, is an error that names both sides.
 //!
@@ -32,6 +35,8 @@ const metadata = @import("metadata.zig");
 const conda_unpack = @import("conda_unpack.zig");
 const lock_libs = @import("lock_libs.zig");
 const manifest = @import("manifest.zig");
+const names = @import("names.zig");
+const registry = @import("registry.zig");
 
 const Error = resolve.Error;
 const Diagnostic = resolve.Diagnostic;
@@ -65,10 +70,11 @@ fn parseRepodata(arena: Allocator, subdir: []const u8, text: []const u8, diag: *
     return .{ .packages = packages, .removed = removed };
 }
 
-/// The lock of `res`: every file of every picked version, from `channel_url`.
-/// `channel.fetch(arena, subdir, diag)` returns the text of that subdir's
-/// repodata.json, or `error.ResolveFailed` with `diag` set;
-/// `channel.fetchConda(arena, subdir, filename, diag)` returns the bytes of one
+/// The lock of `res`: every file of every picked version, from the channels under `channel_url`, the channel root
+/// (each package's file is in its namespace's channel, `<channel_url><namespace>/`).
+/// `channel.fetch(arena, namespace, subdir, diag)` returns the text of the
+/// repodata.json of that subdir of the namespace's channel, or `error.ResolveFailed` with `diag` set;
+/// `channel.fetchConda(arena, namespace, subdir, filename, diag)` returns the bytes of one
 /// package file (asked only for a version that ships native libraries, and
 /// not when `old` already pins that file's natives).
 pub fn buildLock(arena: Allocator, res: resolve.Resolution, channel_url: []const u8, channel: anytype, old: ?lock.Lock, diag: *Diagnostic) Error!lock.Lock {
@@ -78,42 +84,46 @@ pub fn buildLock(arena: Allocator, res: resolve.Resolution, channel_url: []const
     var window: ?[]u8 = null;
     for (res.packages) |p| {
         const rec = p.record;
+        const namespace = names.namespaceOf(rec.name);
+        const entry_channel = try registry.namespaceChannel(arena, channel_url, rec.name);
         for (rec.files) |f| {
-            const want_name = try std.fmt.allocPrint(arena, "mojo-{s}-{s}-{s}.conda", .{ rec.name, rec.version, rec.build });
+            // Where the file's channel is under the root, for messages.
+            const at = try std.fmt.allocPrint(arena, "{s}/{s}", .{ namespace, f.subdir });
+            const want_name = try std.fmt.allocPrint(arena, "{s}-{s}-{s}.conda", .{ try names.condaName(arena, rec.name), rec.version, rec.build });
             if (!std.mem.eql(u8, want_name, f.filename)) {
                 return bad(arena, diag, "the index lists {s} for {s} {s} (build {s}); the channel name is {s}", .{ f.filename, rec.name, rec.version, rec.build, want_name });
             }
-            const rd = repodata.get(f.subdir) orelse blk: {
-                const text = try channel.fetch(arena, f.subdir, diag);
-                const parsed = try parseRepodata(arena, f.subdir, text, diag);
-                try repodata.put(f.subdir, parsed);
+            const rd = repodata.get(at) orelse blk: {
+                const text = try channel.fetch(arena, namespace, f.subdir, diag);
+                const parsed = try parseRepodata(arena, at, text, diag);
+                try repodata.put(at, parsed);
                 break :blk parsed;
             };
             const entry = switch (rd.packages.get(f.filename) orelse {
                 for (rd.removed) |r| {
                     if (r == .string and std.mem.eql(u8, r.string, f.filename)) {
-                        return bad(arena, diag, "{s}/repodata.json lists {s} as removed, but the index says {s} {s} is published", .{ f.subdir, f.filename, rec.name, rec.version });
+                        return bad(arena, diag, "{s}/repodata.json lists {s} as removed, but the index says {s} {s} is published", .{ at, f.filename, rec.name, rec.version });
                     }
                 }
-                return bad(arena, diag, "{s}/repodata.json does not offer {s}, which the index lists for {s} {s}", .{ f.subdir, f.filename, rec.name, rec.version });
+                return bad(arena, diag, "{s}/repodata.json does not offer {s}, which the index lists for {s} {s}", .{ at, f.filename, rec.name, rec.version });
             }) {
                 .object => |o| o,
-                else => return bad(arena, diag, "{s}/repodata.json: the entry of {s} is not an object", .{ f.subdir, f.filename }),
+                else => return bad(arena, diag, "{s}/repodata.json: the entry of {s} is not an object", .{ at, f.filename }),
             };
-            const sha = switch (entry.get("sha256") orelse return bad(arena, diag, "{s}/repodata.json: {s} has no sha256", .{ f.subdir, f.filename })) {
+            const sha = switch (entry.get("sha256") orelse return bad(arena, diag, "{s}/repodata.json: {s} has no sha256", .{ at, f.filename })) {
                 .string => |s| s,
-                else => return bad(arena, diag, "{s}/repodata.json: the sha256 of {s} is not a string", .{ f.subdir, f.filename }),
+                else => return bad(arena, diag, "{s}/repodata.json: the sha256 of {s} is not a string", .{ at, f.filename }),
             };
-            const size: i64 = switch (entry.get("size") orelse return bad(arena, diag, "{s}/repodata.json: {s} has no size", .{ f.subdir, f.filename })) {
+            const size: i64 = switch (entry.get("size") orelse return bad(arena, diag, "{s}/repodata.json: {s} has no size", .{ at, f.filename })) {
                 .integer => |s| s,
-                else => return bad(arena, diag, "{s}/repodata.json: the size of {s} is not an integer", .{ f.subdir, f.filename }),
+                else => return bad(arena, diag, "{s}/repodata.json: the size of {s} is not an integer", .{ at, f.filename }),
             };
             if (!std.mem.eql(u8, sha, f.sha256) or size != @as(i64, @intCast(f.size))) {
-                return bad(arena, diag, "{s}: the index says sha256 {s}, size {d}; {s}/repodata.json says sha256 {s}, size {d}", .{ f.filename, f.sha256, f.size, f.subdir, sha, size });
+                return bad(arena, diag, "{s}: the index says sha256 {s}, size {d}; {s}/repodata.json says sha256 {s}, size {d}", .{ f.filename, f.sha256, f.size, at, sha, size });
             }
             const loads = lock_libs.loadsOfDepends(arena, entry.get("depends")) catch |e| switch (e) {
                 error.OutOfMemory => return error.OutOfMemory,
-                error.BadDepends => return bad(arena, diag, "{s}/repodata.json: the depends of {s} is not a list of strings", .{ f.subdir, f.filename }),
+                error.BadDepends => return bad(arena, diag, "{s}/repodata.json: the depends of {s} is not a list of strings", .{ at, f.filename }),
             };
             var natives: []const lock.Native = &.{};
             if (rec.native.len > 0) {
@@ -129,8 +139,8 @@ pub fn buildLock(arena: Allocator, res: resolve.Resolution, channel_url: []const
                 .version = rec.version,
                 .build = rec.build,
                 .subdir = f.subdir,
-                .channel = channel_url,
-                .url = try lock.fileUrl(arena, channel_url, f.subdir, rec.name, rec.version, rec.build),
+                .channel = entry_channel,
+                .url = try lock.fileUrl(arena, entry_channel, f.subdir, rec.name, rec.version, rec.build),
                 .sha256 = f.sha256,
                 .size = f.size,
                 .mojo = res.mojo,
@@ -172,7 +182,7 @@ fn reusable(old: ?lock.Lock, rec: *const resolve.Record, f: resolve.File) ?[]con
 /// Fetches the file `f` of `rec`, checks it is the bytes the repodata and the index agreed on, and returns its
 /// natives with the sha256 of each library file.
 fn pinNatives(arena: Allocator, rec: *const resolve.Record, f: resolve.File, channel: anytype, window: []u8, diag: *Diagnostic) Error![]const lock.Native {
-    const bytes = try channel.fetchConda(arena, f.subdir, f.filename, diag);
+    const bytes = try channel.fetchConda(arena, names.namespaceOf(rec.name), f.subdir, f.filename, diag);
     if (bytes.len != f.size) {
         return bad(arena, diag, "{s}/{s}: {d} bytes were served, and the index and repodata.json say {d}", .{ f.subdir, f.filename, bytes.len, f.size });
     }
@@ -184,7 +194,7 @@ fn pinNatives(arena: Allocator, rec: *const resolve.Record, f: resolve.File, cha
     }
 
     var unpack_diag = conda_unpack.Diag{};
-    const meta_path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mopm.json", .{rec.name});
+    const meta_path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mopm.json", .{names.importName(rec.name)});
     const meta_files = conda_unpack.readFiles(arena, bytes, window, &.{meta_path}, &unpack_diag) catch |e| return unreadable(arena, diag, rec, f, e, unpack_diag);
     const meta_text = meta_files[0] orelse return bad(arena, diag, "{s}/{s} has no {s}", .{ f.subdir, f.filename, meta_path });
     const meta = metadata.parse(arena, meta_text) catch |e| switch (e) {
@@ -275,7 +285,7 @@ fn unreadable(arena: Allocator, diag: *Diagnostic, rec: *const resolve.Record, f
     return bad(arena, diag, "{s} {s}: {s}/{s} cannot be read: {s}", .{ rec.name, rec.version, f.subdir, f.filename, why });
 }
 
-/// A version 2 lock holds one entry, and so one set of natives, per package version and subdir, whatever the number
+/// A lock holds one entry, and so one set of natives, per package version and subdir, whatever the number
 /// of Mojo versions it is built for. The locks `per` (one per Mojo version, as `buildLock` made them) must therefore
 /// agree on the natives of every version they share, or the entry would pin the first build's.
 pub fn checkNativesAgree(arena: Allocator, per: []const lock.Lock, diag: *Diagnostic) Error!void {
@@ -315,42 +325,49 @@ fn sameNatives(a: []const lock.Native, b: []const lock.Native) bool {
 
 /// A path dependency of the project, read from its own mopm.toml.
 pub const PathDep = struct {
+    /// Its import name, the part of `full_name` after the `/`.
     name: []const u8,
-    /// `[package] name` of its mopm.toml, `<namespace>/<name>`; `name` is the part after the `/`. Empty when the
-    /// caller knows only `name` (import_names.zig then uses `name`).
+    /// `[package] name` of its mopm.toml, `<namespace>/<name>`. Empty when the caller knows only `name`, which `full`
+    /// then returns.
     full_name: []const u8 = "",
     /// `[package] version` of its mopm.toml.
     version: []const u8,
     /// Its directory, relative to the project, `/`-separated.
     path: []const u8,
-    /// Names of its own dependencies (registry and path), sorted.
+    /// Full names of its own dependencies (registry and path), sorted.
     deps: []const []const u8 = &.{},
     /// Its `[native-dependencies]`: `mopm lock` pins the ones to load (system_libs.zig).
     native_deps: []const manifest.NativeDep = &.{},
     /// Its `[dependencies]` as its mopm.toml writes them, with their full names (import_names.zig reads them).
     manifest_deps: []const manifest.Dep = &.{},
+
+    /// The full name it is locked and keyed by.
+    pub fn full(self: PathDep) []const u8 {
+        return if (self.full_name.len > 0) self.full_name else self.name;
+    }
 };
 
 /// `l` with one `source = path` entry per path dependency (lock.zig): no
-/// file, so nothing to download. A path dependency whose name the registry
+/// file, so nothing to download. A path dependency whose full name the registry
 /// resolution also picked (some registry package depends on that name) is
 /// refused: a name comes from one place.
 pub fn addPaths(arena: Allocator, l: lock.Lock, paths: []const PathDep, diag: *Diagnostic) Error!lock.Lock {
     var packages = std.ArrayList(lock.Package).init(arena);
     try packages.appendSlice(l.packages);
     for (paths) |d| {
+        const full = d.full();
         for (l.packages) |p| {
-            if (!std.mem.eql(u8, p.name, d.name)) continue;
+            if (!std.mem.eql(u8, p.name, full)) continue;
             var by = std.ArrayList(u8).init(arena);
             for (l.packages, 0..) |q, qi| {
                 if (qi > 0 and std.mem.eql(u8, l.packages[qi - 1].name, q.name)) continue; // another subdir
                 for (q.deps) |x| {
-                    if (std.mem.eql(u8, x, d.name)) try by.writer().print("{s}{s} {s}", .{ if (by.items.len == 0) "" else ", ", q.name, q.version });
+                    if (std.mem.eql(u8, x, full)) try by.writer().print("{s}{s} {s}", .{ if (by.items.len == 0) "" else ", ", q.name, q.version });
                 }
             }
-            return resolve.fail(arena, diag, .conflict, "{s} is a path dependency ({s}), and the registry's {s} needs {s} {s} too; a package comes from one place", .{ d.name, d.path, by.items, d.name, p.version });
+            return resolve.fail(arena, diag, .conflict, "{s} is a path dependency ({s}), and the registry's {s} needs {s} {s} too; a package comes from one place", .{ full, d.path, by.items, full, p.version });
         }
-        try packages.append(.{ .name = d.name, .version = d.version, .source = .path, .path = d.path, .deps = d.deps });
+        try packages.append(.{ .name = full, .version = d.version, .source = .path, .path = d.path, .deps = d.deps });
     }
     lock.sortPackages(packages.items);
     var out = l;
@@ -366,7 +383,7 @@ fn lessArtifact(_: void, a: lock.Artifact, b: lock.Artifact) bool {
     return std.mem.order(u8, a.mojo, b.mojo) == .lt;
 }
 
-/// One version 2 lock from `per`, a lock (as `buildLock` makes it) for each
+/// One lock from `per`, a lock (as `buildLock` makes it) for each
 /// Mojo version in `per[i].mojo`. A package version picked for several Mojo
 /// versions becomes one entry with one artifact each; a version picked for
 /// one only has one. `closures` are the toolchain hashes of those versions.
@@ -387,15 +404,15 @@ pub fn mergeMojos(arena: Allocator, per: []const lock.Lock, closures: []const lo
                 @memcpy(grown[0..old.len], old);
                 grown[old.len] = art;
                 packages.items[i].artifacts = grown;
-                var names = std.ArrayList([]const u8).init(arena);
-                try names.appendSlice(packages.items[i].deps);
+                var dep_names = std.ArrayList([]const u8).init(arena);
+                try dep_names.appendSlice(packages.items[i].deps);
                 for (p.deps) |d| {
                     var have = false;
-                    for (names.items) |x| have = have or std.mem.eql(u8, x, d);
-                    if (!have) try names.append(d);
+                    for (dep_names.items) |x| have = have or std.mem.eql(u8, x, d);
+                    if (!have) try dep_names.append(d);
                 }
-                std.mem.sort([]const u8, names.items, {}, lessName);
-                packages.items[i].deps = names.items;
+                std.mem.sort([]const u8, dep_names.items, {}, lessName);
+                packages.items[i].deps = dep_names.items;
                 var loads = std.ArrayList([]const u8).init(arena);
                 try loads.appendSlice(packages.items[i].loads);
                 for (p.loads) |d| {
@@ -479,9 +496,9 @@ const Tree = struct {
     }
 };
 
-/// The name of the first of `names` that `l` does not lock, or null.
-pub fn missing(l: lock.Lock, names: []const []const u8) ?[]const u8 {
-    for (names) |n| {
+/// The full name of the first of `wanted` that `l` does not lock, or null.
+pub fn missing(l: lock.Lock, wanted: []const []const u8) ?[]const u8 {
+    for (wanted) |n| {
         if (find(l, n) == null) return n;
     }
     return null;
@@ -513,23 +530,25 @@ pub fn writeTree(arena: Allocator, project: []const u8, version: []const u8, dep
 
 const MemoryIndex = resolve.MemoryIndex;
 
-/// A channel held in memory: subdir -> repodata.json text, and `<subdir>/<filename>` -> the bytes of a package file.
+/// A channel held in memory: `<namespace>/<subdir>` -> repodata.json text, and `<namespace>/<subdir>/<filename>` -> the
+/// bytes of a package file.
 pub const MemoryChannel = struct {
     files: []const resolve.Pair,
     conda: []const resolve.Pair = &.{},
     /// Counts the package files asked for, when set.
     fetches: ?*usize = null,
 
-    pub fn fetch(self: MemoryChannel, arena: Allocator, subdir: []const u8, diag: *Diagnostic) Error![]const u8 {
+    pub fn fetch(self: MemoryChannel, arena: Allocator, namespace: []const u8, subdir: []const u8, diag: *Diagnostic) Error![]const u8 {
+        const key = try std.fmt.allocPrint(arena, "{s}/{s}", .{ namespace, subdir });
         for (self.files) |f| {
-            if (std.mem.eql(u8, f[0], subdir)) return f[1];
+            if (std.mem.eql(u8, f[0], key)) return f[1];
         }
-        return resolve.fail(arena, diag, .bad_channel, "no {s}/repodata.json", .{subdir});
+        return resolve.fail(arena, diag, .bad_channel, "no {s}/repodata.json", .{key});
     }
 
-    pub fn fetchConda(self: MemoryChannel, arena: Allocator, subdir: []const u8, filename: []const u8, diag: *Diagnostic) Error![]const u8 {
+    pub fn fetchConda(self: MemoryChannel, arena: Allocator, namespace: []const u8, subdir: []const u8, filename: []const u8, diag: *Diagnostic) Error![]const u8 {
         if (self.fetches) |n| n.* += 1;
-        const key = try std.fmt.allocPrint(arena, "{s}/{s}", .{ subdir, filename });
+        const key = try std.fmt.allocPrint(arena, "{s}/{s}/{s}", .{ namespace, subdir, filename });
         for (self.conda) |f| {
             if (std.mem.eql(u8, f[0], key)) return f[1];
         }
@@ -545,17 +564,28 @@ pub const digests = [_][]const u8{
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 };
 
+/// `mojo-<namespace>.<name>`, the conda name of the full name `full`.
+pub fn condaOf(comptime full: []const u8) []const u8 {
+    const slash = comptime std.mem.indexOfScalar(u8, full, '/').?;
+    return "mojo-" ++ full[0..slash] ++ "." ++ full[slash + 1 ..];
+}
+
+/// The file name of version `version` of `full`, built for mojo 1.0.0.
+pub fn fileName(comptime full: []const u8, comptime version: []const u8) []const u8 {
+    return condaOf(full) ++ "-" ++ version ++ "-mojo1.0.0_0.conda";
+}
+
 pub fn fileJson(comptime subdir: []const u8, comptime file: []const u8, comptime digest: []const u8) []const u8 {
     return "{\"filename\":\"" ++ file ++ "\",\"sha256\":\"" ++ digest ++ "\",\"size\":1000,\"subdir\":\"" ++ subdir ++ "\"}";
 }
 
 pub fn recJson(comptime name: []const u8, comptime version: []const u8, comptime deps: []const u8, comptime native: []const u8, comptime files: []const u8) []const u8 {
     return "{\"build\":\"mojo1.0.0_0\",\"deps\":[" ++ deps ++ "],\"files\":[" ++ files ++ "],\"manifest_sha256\":\"" ++ digests[0] ++
-        "\",\"name\":\"" ++ name ++ "\",\"native\":[" ++ native ++ "],\"published_at\":\"2026-10-13T12:00:00Z\",\"requires_mojo\":\"==1.0.0\",\"state\":\"published\",\"v\":1,\"version\":\"" ++ version ++ "\"}\n";
+        "\",\"name\":\"" ++ name ++ "\",\"native\":[" ++ native ++ "],\"published_at\":\"2026-10-13T12:00:00Z\",\"requires_mojo\":\"==1.0.0\",\"state\":\"published\",\"v\":2,\"version\":\"" ++ version ++ "\"}\n";
 }
 
 pub fn entryJson(comptime name: []const u8, comptime version: []const u8, comptime subdir: []const u8, comptime digest: []const u8) []const u8 {
-    return "\"mojo-" ++ name ++ "-" ++ version ++ "-mojo1.0.0_0.conda\":{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\"],\"name\":\"mojo-" ++ name ++
+    return "\"" ++ fileName(name, version) ++ "\":{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\"],\"name\":\"" ++ condaOf(name) ++
         "\",\"sha256\":\"" ++ digest ++ "\",\"size\":1000,\"subdir\":\"" ++ subdir ++ "\",\"version\":\"" ++ version ++ "\"}";
 }
 
@@ -566,21 +596,28 @@ pub fn repodataJson(comptime subdir: []const u8, comptime entries: []const u8, c
 /// The diamond of tests/resolve/golden/diamond.lock: http_client and tls
 /// both need http_core; crypto ships a native library and has two subdirs.
 const diamond_index = MemoryIndex{ .files = &.{
-    .{ "http_client", recJson("http_client", "0.4.0", "{\"name\":\"http_core\",\"range\":\">=1.2,<2\"},{\"name\":\"crypto\",\"range\":\"2\"}", "", fileJson("linux-64", "mojo-http_client-0.4.0-mojo1.0.0_0.conda", digests[0])) },
-    .{ "tls", recJson("tls", "1.1.0", "{\"name\":\"http_core\",\"range\":\"~1.2\"}", "", fileJson("linux-64", "mojo-tls-1.1.0-mojo1.0.0_0.conda", digests[1])) },
-    .{ "http_core", recJson("http_core", "1.2.5", "", "", fileJson("linux-64", "mojo-http_core-1.2.5-mojo1.0.0_0.conda", digests[2])) ++
-        recJson("http_core", "1.3.0", "", "", fileJson("linux-64", "mojo-http_core-1.3.0-mojo1.0.0_0.conda", digests[4])) },
-    .{ "crypto", recJson("crypto", "2.0.1", "", "{\"id\":\"crypto\",\"soname\":\"libcrypto_native.so.1\"}", fileJson("linux-64", "mojo-crypto-2.0.1-mojo1.0.0_0.conda", digests[3]) ++ "," ++
-        fileJson("osx-arm64", "mojo-crypto-2.0.1-mojo1.0.0_0.conda", digests[4])) },
+    .{ "komira-ai/http_client", recJson("komira-ai/http_client", "0.4.0", "{\"name\":\"komira-ai/http_core\",\"range\":\">=1.2,<2\"},{\"name\":\"acme/crypto\",\"range\":\"2\"}", "", fileJson("linux-64", fileName("komira-ai/http_client", "0.4.0"), digests[0])) },
+    .{ "komira-ai/tls", recJson("komira-ai/tls", "1.1.0", "{\"name\":\"komira-ai/http_core\",\"range\":\"~1.2\"}", "", fileJson("linux-64", fileName("komira-ai/tls", "1.1.0"), digests[1])) },
+    .{ "komira-ai/http_core", recJson("komira-ai/http_core", "1.2.5", "", "", fileJson("linux-64", fileName("komira-ai/http_core", "1.2.5"), digests[2])) ++
+        recJson("komira-ai/http_core", "1.3.0", "", "", fileJson("linux-64", fileName("komira-ai/http_core", "1.3.0"), digests[4])) },
+    .{ "acme/crypto", recJson("acme/crypto", "2.0.1", "", "{\"id\":\"crypto\",\"soname\":\"libcrypto_native.so.1\"}", fileJson("linux-64", fileName("acme/crypto", "2.0.1"), digests[3]) ++ "," ++
+        fileJson("osx-arm64", fileName("acme/crypto", "2.0.1"), digests[4])) },
 } };
 
+/// Each namespace has its own channel: acme's holds crypto for two subdirs, komira-ai's the rest for one.
 const diamond_channel = MemoryChannel{ .files = &.{
-    .{ "linux-64", repodataJson("linux-64", entryJson("crypto", "2.0.1", "linux-64", digests[3]) ++ "," ++ entryJson("http_client", "0.4.0", "linux-64", digests[0]) ++ "," ++
-        entryJson("http_core", "1.2.5", "linux-64", digests[2]) ++ "," ++ entryJson("http_core", "1.3.0", "linux-64", digests[4]) ++ "," ++ entryJson("tls", "1.1.0", "linux-64", digests[1]), "") },
-    .{ "osx-arm64", repodataJson("osx-arm64", entryJson("crypto", "2.0.1", "osx-arm64", digests[4]), "") },
+    .{ "acme/linux-64", repodataJson("linux-64", entryJson("acme/crypto", "2.0.1", "linux-64", digests[3]), "") },
+    .{ "acme/osx-arm64", repodataJson("osx-arm64", entryJson("acme/crypto", "2.0.1", "osx-arm64", digests[4]), "") },
+    .{ "komira-ai/linux-64", repodataJson("linux-64", entryJson("komira-ai/http_client", "0.4.0", "linux-64", digests[0]) ++ "," ++
+        entryJson("komira-ai/http_core", "1.2.5", "linux-64", digests[2]) ++ "," ++ entryJson("komira-ai/http_core", "1.3.0", "linux-64", digests[4]) ++ "," ++ entryJson("komira-ai/tls", "1.1.0", "linux-64", digests[1]), "") },
 } };
 
-const diamond_roots = [_]resolve.Root{ .{ .name = "tls", .requirement = "1" }, .{ .name = "http_client", .requirement = "0.4" } };
+/// `diamond_channel` with another repodata.json for komira-ai's linux-64.
+fn diamondWith(comptime komira_linux: []const u8) MemoryChannel {
+    return .{ .files = &.{ diamond_channel.files[0], diamond_channel.files[1], .{ "komira-ai/linux-64", komira_linux } } };
+}
+
+const diamond_roots = [_]resolve.Root{ .{ .name = "komira-ai/tls", .requirement = "1" }, .{ .name = "komira-ai/http_client", .requirement = "0.4" } };
 
 fn diamondLock(a: Allocator, channel: anytype, diag: *Diagnostic) Error!lock.Lock {
     return diamondLockAt(a, "https://conda.mopm.dev/", channel, diag);
@@ -590,12 +627,12 @@ fn diamondLock(a: Allocator, channel: anytype, diag: *Diagnostic) Error!lock.Loc
 /// the lock `mopm lock` made when crypto was first locked. Its digests are the diamond's fake ones, so the `.conda`
 /// cannot be served; the natives come from here, which is how a second `mopm lock` finds them.
 const diamond_pinned =
-    \\{"lock_version": 1, "toolchain": {"mojo": "1.0.0"}, "channels": ["https://conda.mopm.dev/"], "packages": [
-    \\  {"name": "crypto", "version": "2.0.1", "build": "mojo1.0.0_0", "subdir": "linux-64", "channel": "https://conda.mopm.dev/",
-    \\   "url": "https://conda.mopm.dev/linux-64/mojo-crypto-2.0.1-mojo1.0.0_0.conda", "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9", "size": 1000, "mojo": "1.0.0",
+    \\{"lock_version": 3, "mojo": ["1.0.0"], "toolchain": {}, "channels": ["https://conda.mopm.dev/"], "packages": [
+    \\  {"name": "acme/crypto", "version": "2.0.1", "subdir": "linux-64", "channel": "https://conda.mopm.dev/acme/",
+    \\   "artifacts": {"1.0.0": {"build": "mojo1.0.0_0", "url": "https://conda.mopm.dev/acme/linux-64/mojo-acme.crypto-2.0.1-mojo1.0.0_0.conda", "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9", "size": 1000}},
     \\   "native": [{"id": "crypto", "soname": "libcrypto_native.so.1", "sha256": "1111111111111111111111111111111111111111111111111111111111111111"}]},
-    \\  {"name": "crypto", "version": "2.0.1", "build": "mojo1.0.0_0", "subdir": "osx-arm64", "channel": "https://conda.mopm.dev/",
-    \\   "url": "https://conda.mopm.dev/osx-arm64/mojo-crypto-2.0.1-mojo1.0.0_0.conda", "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "size": 1000, "mojo": "1.0.0",
+    \\  {"name": "acme/crypto", "version": "2.0.1", "subdir": "osx-arm64", "channel": "https://conda.mopm.dev/acme/",
+    \\   "artifacts": {"1.0.0": {"build": "mojo1.0.0_0", "url": "https://conda.mopm.dev/acme/osx-arm64/mojo-acme.crypto-2.0.1-mojo1.0.0_0.conda", "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "size": 1000}},
     \\   "native": [{"id": "crypto", "soname": "libcrypto_native.so.1", "sha256": "2222222222222222222222222222222222222222222222222222222222222222"}]}
     \\]}
 ;
@@ -616,7 +653,9 @@ test "the lock is written for a loopback http channel with a path, and refused f
         std.debug.print("{s}: {s}\n", .{ @tagName(diag.kind), diag.message });
         return e;
     };
-    try std.testing.expectEqualStrings("http://127.0.0.1:5000/channel/linux-64/mojo-crypto-2.0.1-mojo1.0.0_0.conda", l.packages[0].url);
+    try std.testing.expectEqualStrings("http://127.0.0.1:5000/channel/acme/linux-64/mojo-acme.crypto-2.0.1-mojo1.0.0_0.conda", l.packages[0].url);
+    try std.testing.expectEqualStrings("http://127.0.0.1:5000/channel/acme/", l.packages[0].channel);
+    try std.testing.expectEqualStrings("http://127.0.0.1:5000/channel/komira-ai/", l.packages[1].channel);
     const text = try lock.render(a, l);
     var why: []const u8 = "";
     _ = lock.parse(a, text, &why) catch |e| {
@@ -637,12 +676,10 @@ test "a lock entry's deps come from the index record's deps[], never from the re
     const a = arena_state.allocator();
     // The repodata says http_client depends on http_core >=2 and on zlib;
     // the index record says http_core ">=1.2,<2" and crypto "2".
-    const disagreeing = comptime MemoryChannel{ .files = &.{
-        .{ "linux-64", repodataJson("linux-64", entryJson("crypto", "2.0.1", "linux-64", digests[3]) ++ "," ++
-            "\"mojo-http_client-0.4.0-mojo1.0.0_0.conda\":{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\",\"mojo-http_core >=2\",\"mojo-zlib 1\"],\"name\":\"mojo-http_client\",\"sha256\":\"" ++ digests[0] ++ "\",\"size\":1000,\"subdir\":\"linux-64\",\"version\":\"0.4.0\"}," ++
-            entryJson("http_core", "1.2.5", "linux-64", digests[2]) ++ "," ++ entryJson("http_core", "1.3.0", "linux-64", digests[4]) ++ "," ++ entryJson("tls", "1.1.0", "linux-64", digests[1]), "") },
-        .{ "osx-arm64", repodataJson("osx-arm64", entryJson("crypto", "2.0.1", "osx-arm64", digests[4]), "") },
-    } };
+    const disagreeing = comptime diamondWith(
+        repodataJson("linux-64", "\"mojo-komira-ai.http_client-0.4.0-mojo1.0.0_0.conda\":{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\",\"mojo-komira-ai.http_core >=2\",\"mojo-komira-ai.zlib 1\"],\"name\":\"mojo-komira-ai.http_client\",\"sha256\":\"" ++ digests[0] ++ "\",\"size\":1000,\"subdir\":\"linux-64\",\"version\":\"0.4.0\"}," ++
+            entryJson("komira-ai/http_core", "1.2.5", "linux-64", digests[2]) ++ "," ++ entryJson("komira-ai/http_core", "1.3.0", "linux-64", digests[4]) ++ "," ++ entryJson("komira-ai/tls", "1.1.0", "linux-64", digests[1]), ""),
+    );
     var diag: Diagnostic = .{};
     const l = diamondLock(a, disagreeing, &diag) catch |e| {
         std.debug.print("{s}: {s}\n", .{ @tagName(diag.kind), diag.message });
@@ -678,25 +715,19 @@ test "a repodata sha256 or size that differs from the index is refused, naming b
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    const wrong = comptime MemoryChannel{ .files = &.{
-        .{ "linux-64", repodataJson("linux-64", entryJson("crypto", "2.0.1", "linux-64", digests[3]) ++ "," ++ entryJson("http_client", "0.4.0", "linux-64", digests[1]) ++ "," ++
-            entryJson("http_core", "1.2.5", "linux-64", digests[2]) ++ "," ++ entryJson("tls", "1.1.0", "linux-64", digests[1]), "") },
-        .{ "osx-arm64", repodataJson("osx-arm64", entryJson("crypto", "2.0.1", "osx-arm64", digests[4]), "") },
-    } };
+    const wrong = comptime diamondWith(repodataJson("linux-64", entryJson("komira-ai/http_client", "0.4.0", "linux-64", digests[1]) ++ "," ++
+        entryJson("komira-ai/http_core", "1.2.5", "linux-64", digests[2]) ++ "," ++ entryJson("komira-ai/tls", "1.1.0", "linux-64", digests[1]), ""));
     var diag: Diagnostic = .{};
     try std.testing.expectError(error.ResolveFailed, diamondLock(a, wrong, &diag));
     try std.testing.expectEqual(resolve.Kind.bad_channel, diag.kind);
     try std.testing.expect(std.mem.indexOf(u8, diag.message, "the index says sha256 " ++ digests[0]) != null);
     try std.testing.expect(std.mem.indexOf(u8, diag.message, "repodata.json says sha256 " ++ digests[1]) != null);
 
-    const gone = comptime MemoryChannel{ .files = &.{
-        .{ "linux-64", repodataJson("linux-64", entryJson("crypto", "2.0.1", "linux-64", digests[3]) ++ "," ++
-            entryJson("http_core", "1.2.5", "linux-64", digests[2]) ++ "," ++ entryJson("tls", "1.1.0", "linux-64", digests[1]), "\"mojo-http_client-0.4.0-mojo1.0.0_0.conda\"") },
-        .{ "osx-arm64", repodataJson("osx-arm64", entryJson("crypto", "2.0.1", "osx-arm64", digests[4]), "") },
-    } };
+    const gone = comptime diamondWith(repodataJson("linux-64", entryJson("komira-ai/http_core", "1.2.5", "linux-64", digests[2]) ++ "," ++
+        entryJson("komira-ai/tls", "1.1.0", "linux-64", digests[1]), "\"mojo-komira-ai.http_client-0.4.0-mojo1.0.0_0.conda\""));
     diag = .{};
     try std.testing.expectError(error.ResolveFailed, diamondLock(a, gone, &diag));
-    try std.testing.expect(std.mem.indexOf(u8, diag.message, "lists mojo-http_client-0.4.0-mojo1.0.0_0.conda as removed") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diag.message, "lists mojo-komira-ai.http_client-0.4.0-mojo1.0.0_0.conda as removed") != null);
 }
 
 test "tree and changes" {
@@ -706,31 +737,33 @@ test "tree and changes" {
     var diag: Diagnostic = .{};
     const l = try diamondLock(a, diamond_channel, &diag);
     var out = std.ArrayList(u8).init(a);
-    try writeTree(a, "app", "0.1.0", &.{ "tls", "http_client" }, &.{"crypto"}, l, out.writer());
+    try writeTree(a, "komira-ai/app", "0.1.0", &.{ "komira-ai/tls", "komira-ai/http_client" }, &.{"acme/crypto"}, l, out.writer());
     try std.testing.expectEqualStrings(
-        \\app 0.1.0
-        \\├── http_client 0.4.0
-        \\│   ├── crypto 2.0.1
-        \\│   └── http_core 1.2.5
-        \\└── tls 1.1.0
-        \\    └── http_core 1.2.5
+        \\komira-ai/app 0.1.0
+        \\├── komira-ai/http_client 0.4.0
+        \\│   ├── acme/crypto 2.0.1
+        \\│   └── komira-ai/http_core 1.2.5
+        \\└── komira-ai/tls 1.1.0
+        \\    └── komira-ai/http_core 1.2.5
         \\[dev-dependencies]
-        \\└── crypto 2.0.1
+        \\└── acme/crypto 2.0.1
         \\
     , out.items);
-    try std.testing.expect(missing(l, &.{ "tls", "nope" }) != null);
+    try std.testing.expect(missing(l, &.{ "komira-ai/tls", "nope" }) != null);
+    // A name is a full name: the import name alone locks nothing.
+    try std.testing.expectEqualStrings("tls", missing(l, &.{ "komira-ai/tls", "tls" }).?);
 
     out.clearRetainingCapacity();
     const old_pkgs = try a.dupe(lock.Package, l.packages);
     old_pkgs[3].version = "1.2.4"; // http_core
     var gone = std.ArrayList(lock.Package).init(a);
     for (old_pkgs) |p| {
-        if (!std.mem.eql(u8, p.name, "tls")) try gone.append(p);
+        if (!std.mem.eql(u8, p.name, "komira-ai/tls")) try gone.append(p);
     }
-    try gone.append(.{ .name = "zlib", .version = "1.0.0", .build = "b", .subdir = "linux-64", .channel = "", .url = "", .sha256 = "", .size = 1, .mojo = "" });
+    try gone.append(.{ .name = "komira-ai/zlib", .version = "1.0.0", .build = "b", .subdir = "linux-64", .channel = "", .url = "", .sha256 = "", .size = 1, .mojo = "" });
     const old = lock.Lock{ .mojo = "1.0.0", .channels = l.channels, .packages = gone.items };
     try writeChanges(old, l, out.writer());
-    try std.testing.expectEqualStrings("updating http_core 1.2.4 -> 1.2.5\nadding tls 1.1.0\nremoving zlib 1.0.0\n", out.items);
+    try std.testing.expectEqualStrings("updating komira-ai/http_core 1.2.4 -> 1.2.5\nadding komira-ai/tls 1.1.0\nremoving komira-ai/zlib 1.0.0\n", out.items);
 }
 
 test "path dependencies: one entry each with source path, no file; a name the registry also picked is refused" {
@@ -740,27 +773,27 @@ test "path dependencies: one entry each with source path, no file; a name the re
     var diag: Diagnostic = .{};
     const base = try diamondLock(a, diamond_channel, &diag);
     const paths = [_]PathDep{
-        .{ .name = "util", .version = "0.0.7", .path = "../util" },
-        .{ .name = "local", .version = "0.3.0", .path = "local", .deps = &.{ "tls", "util" } },
+        .{ .name = "util", .full_name = "komira-ai/util", .version = "0.0.7", .path = "../util" },
+        .{ .name = "local", .full_name = "komira-ai/local", .version = "0.3.0", .path = "local", .deps = &.{ "komira-ai/tls", "komira-ai/util" } },
     };
     const l = try addPaths(a, base, &paths, &diag);
     try std.testing.expectEqual(base.packages.len + 2, l.packages.len);
     const text = try lock.render(a, l);
     try std.testing.expect(std.mem.indexOf(u8, text,
         \\    {
-        \\      "name": "local",
+        \\      "name": "komira-ai/local",
         \\      "version": "0.3.0",
         \\      "source": "path",
         \\      "path": "local",
         \\      "deps": [
-        \\        "tls",
-        \\        "util"
+        \\        "komira-ai/tls",
+        \\        "komira-ai/util"
         \\      ]
         \\    },
     ) != null);
     try std.testing.expect(std.mem.endsWith(u8, text,
         \\    {
-        \\      "name": "util",
+        \\      "name": "komira-ai/util",
         \\      "version": "0.0.7",
         \\      "source": "path",
         \\      "path": "../util"
@@ -777,31 +810,37 @@ test "path dependencies: one entry each with source path, no file; a name the re
     try std.testing.expectEqualStrings(text, try lock.render(a, again));
 
     var out = std.ArrayList(u8).init(a);
-    try writeTree(a, "app", "0.1.0", &.{"local"}, &.{}, l, out.writer());
+    try writeTree(a, "komira-ai/app", "0.1.0", &.{"komira-ai/local"}, &.{}, l, out.writer());
     try std.testing.expectEqualStrings(
-        \\app 0.1.0
-        \\└── local 0.3.0 (local)
-        \\    ├── tls 1.1.0
-        \\    │   └── http_core 1.2.5
-        \\    └── util 0.0.7 (../util)
+        \\komira-ai/app 0.1.0
+        \\└── komira-ai/local 0.3.0 (local)
+        \\    ├── komira-ai/tls 1.1.0
+        \\    │   └── komira-ai/http_core 1.2.5
+        \\    └── komira-ai/util 0.0.7 (../util)
         \\
     , out.items);
 
-    const clash = [_]PathDep{.{ .name = "http_core", .version = "9.0.0", .path = "vendor/http_core" }};
+    // The same import name in another namespace is another package: addPaths keys by full name, and import_names.zig
+    // refuses the closure that holds both.
+    const other = [_]PathDep{.{ .name = "http_core", .full_name = "acme/http_core", .version = "9.0.0", .path = "vendor/http_core" }};
+    try std.testing.expectEqual(base.packages.len + 1, (try addPaths(a, base, &other, &diag)).packages.len);
+
+    const clash = [_]PathDep{.{ .name = "http_core", .full_name = "komira-ai/http_core", .version = "9.0.0", .path = "vendor/http_core" }};
     try std.testing.expectError(error.ResolveFailed, addPaths(a, base, &clash, &diag));
     try std.testing.expectEqual(resolve.Kind.conflict, diag.kind);
-    try std.testing.expectEqualStrings("http_core is a path dependency (vendor/http_core), and the registry's http_client 0.4.0, tls 1.1.0 needs http_core 1.2.5 too; a package comes from one place", diag.message);
+    try std.testing.expectEqualStrings("komira-ai/http_core is a path dependency (vendor/http_core), and the registry's komira-ai/http_client 0.4.0, komira-ai/tls 1.1.0 needs komira-ai/http_core 1.2.5 too; a package comes from one place", diag.message);
 }
 
 fn flatPackage(a: Allocator, name: []const u8, version: []const u8, mojo: []const u8, deps: []const []const u8) !lock.Package {
     const build = try std.fmt.allocPrint(a, "mojo{s}_0", .{mojo});
+    const channel = try registry.namespaceChannel(a, "https://conda.mopm.dev/", name);
     return .{
         .name = name,
         .version = version,
         .build = build,
         .subdir = "linux-64",
-        .channel = "https://conda.mopm.dev/",
-        .url = try lock.fileUrl(a, "https://conda.mopm.dev/", "linux-64", name, version, build),
+        .channel = channel,
+        .url = try lock.fileUrl(a, channel, "linux-64", name, version, build),
         .sha256 = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
         .size = 1000,
         .mojo = mojo,
@@ -816,12 +855,12 @@ test "mergeMojos: a version picked for two Mojo versions is one entry with two b
     const channels = [_][]const u8{"https://conda.mopm.dev/"};
     // With Mojo 1.0.0 core 1.2.0 is the newest build; with 1.1.0 it is core 1.3.0. app 1.0.0 serves both.
     const for_10 = lock.Lock{ .mojo = "1.0.0", .channels = &channels, .packages = &.{
-        try flatPackage(a, "app", "1.0.0", "1.0.0", &.{"core"}),
-        try flatPackage(a, "core", "1.2.0", "1.0.0", &.{}),
+        try flatPackage(a, "komira-ai/app", "1.0.0", "1.0.0", &.{"komira-ai/core"}),
+        try flatPackage(a, "komira-ai/core", "1.2.0", "1.0.0", &.{}),
     } };
     const for_11 = lock.Lock{ .mojo = "1.1.0", .channels = &channels, .packages = &.{
-        try flatPackage(a, "app", "1.0.0", "1.1.0", &.{"core"}),
-        try flatPackage(a, "core", "1.3.0", "1.1.0", &.{}),
+        try flatPackage(a, "komira-ai/app", "1.0.0", "1.1.0", &.{"komira-ai/core"}),
+        try flatPackage(a, "komira-ai/core", "1.3.0", "1.1.0", &.{}),
     } };
     const closures = [_]lock.Closure{
         .{ .mojo = "1.0.0", .subdir = "linux-64", .sha256 = "c" ** 64 },
@@ -832,7 +871,7 @@ test "mergeMojos: a version picked for two Mojo versions is one entry with two b
     try std.testing.expectEqualStrings("1.0.0", merged.mojos[0]);
     try std.testing.expectEqualStrings("1.1.0", merged.mojos[1]);
     try std.testing.expectEqual(@as(usize, 3), merged.packages.len);
-    try std.testing.expectEqualStrings("app", merged.packages[0].name);
+    try std.testing.expectEqualStrings("komira-ai/app", merged.packages[0].name);
     try std.testing.expectEqual(@as(usize, 2), merged.packages[0].artifacts.len);
     try std.testing.expectEqualStrings("1.0.0", merged.packages[0].artifacts[0].mojo);
     try std.testing.expectEqualStrings("mojo1.1.0_0", merged.packages[0].artifacts[1].build);
@@ -851,7 +890,7 @@ test "mergeMojos: a version picked for two Mojo versions is one entry with two b
 
     // A path dependency added after the merge keeps the Mojo versions and the closures.
     var diag: Diagnostic = .{};
-    const with_path = try addPaths(a, merged, &.{.{ .name = "util", .version = "0.3.0", .path = "util" }}, &diag);
+    const with_path = try addPaths(a, merged, &.{.{ .name = "util", .full_name = "komira-ai/util", .version = "0.3.0", .path = "util" }}, &diag);
     try std.testing.expectEqual(@as(usize, 4), with_path.packages.len);
     try std.testing.expectEqual(@as(usize, 2), with_path.mojos.len);
     try std.testing.expectEqual(@as(usize, 2), with_path.closures.len);
@@ -889,11 +928,11 @@ fn recLine(a: Allocator, name: []const u8, version: []const u8, deps: []const u8
         if (i > 0) try fl.append(',');
         try fl.writer().print("{{\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":{d},\"subdir\":\"{s}\"}}", .{ f.p.file_name, &f.p.sha256, f.p.bytes.len, f.subdir });
     }
-    return std.fmt.allocPrint(a, "{{\"build\":\"mojo1.0.0_0\",\"deps\":[{s}],\"files\":[{s}],\"manifest_sha256\":\"{s}\",\"name\":\"{s}\",\"native\":[{s}],\"published_at\":\"2026-10-13T12:00:00Z\",\"requires_mojo\":\"==1.0.0\",\"state\":\"published\",\"v\":1,\"version\":\"{s}\"}}\n", .{ deps, fl.items, digests[0], name, native, version });
+    return std.fmt.allocPrint(a, "{{\"build\":\"mojo1.0.0_0\",\"deps\":[{s}],\"files\":[{s}],\"manifest_sha256\":\"{s}\",\"name\":\"{s}\",\"native\":[{s}],\"published_at\":\"2026-10-13T12:00:00Z\",\"requires_mojo\":\"==1.0.0\",\"state\":\"published\",\"v\":2,\"version\":\"{s}\"}}\n", .{ deps, fl.items, digests[0], name, native, version });
 }
 
 fn repoEntry(a: Allocator, name: []const u8, version: []const u8, subdir: []const u8, p: conda.Packed) ![]const u8 {
-    return std.fmt.allocPrint(a, "\"{s}\":{{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\"],\"name\":\"mojo-{s}\",\"sha256\":\"{s}\",\"size\":{d},\"subdir\":\"{s}\",\"version\":\"{s}\"}}", .{ p.file_name, name, &p.sha256, p.bytes.len, subdir, version });
+    return std.fmt.allocPrint(a, "\"{s}\":{{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\"],\"name\":\"{s}\",\"sha256\":\"{s}\",\"size\":{d},\"subdir\":\"{s}\",\"version\":\"{s}\"}}", .{ p.file_name, try names.condaName(a, name), &p.sha256, p.bytes.len, subdir, version });
 }
 
 fn repoJson(a: Allocator, subdir: []const u8, entries: []const []const u8) ![]const u8 {
@@ -907,28 +946,28 @@ fn world(a: Allocator) !World {
     const crypto_native = [_]conda.Native{.{ .id = "crypto_sys", .soname = "libcrypto_sys.a", .exclusive = "libcrypto", .archive = crypto_linux_archive }};
     const crypto_osx_native = [_]conda.Native{.{ .id = "crypto_sys", .soname = "libcrypto_sys.a", .exclusive = "libcrypto", .archive = crypto_osx_archive }};
     const tls_native = [_]conda.Native{.{ .id = "tls_sys", .soname = "libtls_sys.a", .needs = &.{"libcrypto_sys.a"}, .link = &.{ "c++", "m" }, .archive = tls_archive }};
-    const cl = try conda.pack(a, .{ .name = "crypto_sys", .version = "1.39.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "MOJOC", .natives = &crypto_native });
-    const co = try conda.pack(a, .{ .name = "crypto_sys", .version = "1.39.0", .compiler = "1.0.0", .subdir = "osx-arm64", .mojoc = "MOJOC", .natives = &crypto_osx_native });
+    const cl = try conda.pack(a, .{ .name = "acme/crypto_sys", .version = "1.39.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "MOJOC", .natives = &crypto_native });
+    const co = try conda.pack(a, .{ .name = "acme/crypto_sys", .version = "1.39.0", .compiler = "1.0.0", .subdir = "osx-arm64", .mojoc = "MOJOC", .natives = &crypto_osx_native });
     const tl = try conda.pack(a, .{
-        .name = "tls_sys",
+        .name = "acme/tls_sys",
         .version = "2.4.0",
         .compiler = "1.0.0",
         .subdir = "linux-64",
-        .deps = &.{.{ .name = "crypto_sys", .range = ">=1.39,<2" }},
+        .deps = &.{.{ .name = "acme/crypto_sys", .range = ">=1.39,<2" }},
         .mojoc = "MOJOC",
         .natives = &tls_native,
     });
-    const crypto_rec = try recLine(a, "crypto_sys", "1.39.0", "", "{\"id\":\"crypto_sys\",\"soname\":\"libcrypto_sys.a\"}", &.{ .{ .subdir = "linux-64", .p = cl }, .{ .subdir = "osx-arm64", .p = co } });
-    const tls_rec = try recLine(a, "tls_sys", "2.4.0", "{\"name\":\"crypto_sys\",\"range\":\"1.39\"}", "{\"id\":\"tls_sys\",\"soname\":\"libtls_sys.a\"}", &.{.{ .subdir = "linux-64", .p = tl }});
-    const index_files = try a.dupe(resolve.Pair, &.{ .{ "crypto_sys", crypto_rec }, .{ "tls_sys", tls_rec } });
+    const crypto_rec = try recLine(a, "acme/crypto_sys", "1.39.0", "", "{\"id\":\"crypto_sys\",\"soname\":\"libcrypto_sys.a\"}", &.{ .{ .subdir = "linux-64", .p = cl }, .{ .subdir = "osx-arm64", .p = co } });
+    const tls_rec = try recLine(a, "acme/tls_sys", "2.4.0", "{\"name\":\"acme/crypto_sys\",\"range\":\"1.39\"}", "{\"id\":\"tls_sys\",\"soname\":\"libtls_sys.a\"}", &.{.{ .subdir = "linux-64", .p = tl }});
+    const index_files = try a.dupe(resolve.Pair, &.{ .{ "acme/crypto_sys", crypto_rec }, .{ "acme/tls_sys", tls_rec } });
     const repo_files = try a.dupe(resolve.Pair, &.{
-        .{ "linux-64", try repoJson(a, "linux-64", &.{ try repoEntry(a, "crypto_sys", "1.39.0", "linux-64", cl), try repoEntry(a, "tls_sys", "2.4.0", "linux-64", tl) }) },
-        .{ "osx-arm64", try repoJson(a, "osx-arm64", &.{try repoEntry(a, "crypto_sys", "1.39.0", "osx-arm64", co)}) },
+        .{ "acme/linux-64", try repoJson(a, "linux-64", &.{ try repoEntry(a, "acme/crypto_sys", "1.39.0", "linux-64", cl), try repoEntry(a, "acme/tls_sys", "2.4.0", "linux-64", tl) }) },
+        .{ "acme/osx-arm64", try repoJson(a, "osx-arm64", &.{try repoEntry(a, "acme/crypto_sys", "1.39.0", "osx-arm64", co)}) },
     });
     const conda_files = try a.dupe(resolve.Pair, &.{
-        .{ try std.fmt.allocPrint(a, "linux-64/{s}", .{cl.file_name}), cl.bytes },
-        .{ try std.fmt.allocPrint(a, "osx-arm64/{s}", .{co.file_name}), co.bytes },
-        .{ try std.fmt.allocPrint(a, "linux-64/{s}", .{tl.file_name}), tl.bytes },
+        .{ try std.fmt.allocPrint(a, "acme/linux-64/{s}", .{cl.file_name}), cl.bytes },
+        .{ try std.fmt.allocPrint(a, "acme/osx-arm64/{s}", .{co.file_name}), co.bytes },
+        .{ try std.fmt.allocPrint(a, "acme/linux-64/{s}", .{tl.file_name}), tl.bytes },
     });
     return .{
         .index = .{ .files = index_files },
@@ -941,7 +980,7 @@ fn world(a: Allocator) !World {
     };
 }
 
-const world_roots = [_]resolve.Root{.{ .name = "tls_sys", .requirement = "2" }};
+const world_roots = [_]resolve.Root{.{ .name = "acme/tls_sys", .requirement = "2" }};
 
 fn worldLock(a: Allocator, w: World, old: ?lock.Lock, diag: *Diagnostic) Error!lock.Lock {
     const res = try resolve.resolve(a, w.index, .{ .mojo = "1.0.0", .roots = &world_roots }, diag);
@@ -969,17 +1008,17 @@ test "mopm lock pins each native library: the sha256 of the library file, per su
         std.debug.print("{s}: {s}\n", .{ @tagName(diag.kind), diag.message });
         return e;
     };
-    const crypto = nativeOf(l, "crypto_sys", "linux-64").?;
+    const crypto = nativeOf(l, "acme/crypto_sys", "linux-64").?;
     try std.testing.expectEqualStrings(try hexOf(a, w.crypto_linux_archive), crypto.sha256.?);
     try std.testing.expect(!std.mem.eql(u8, &w.crypto_linux.sha256, crypto.sha256.?)); // not the whole .conda
     try std.testing.expectEqual(metadata.Kind.static, crypto.kind);
     try std.testing.expectEqualStrings("libcrypto", crypto.exclusive);
     try std.testing.expectEqual(@as(usize, 0), crypto.needs.len);
     // The other platform has its own archive, so its own hash.
-    const osx = nativeOf(l, "crypto_sys", "osx-arm64").?;
+    const osx = nativeOf(l, "acme/crypto_sys", "osx-arm64").?;
     try std.testing.expectEqualStrings(try hexOf(a, w.crypto_osx_archive), osx.sha256.?);
     try std.testing.expect(!std.mem.eql(u8, osx.sha256.?, crypto.sha256.?));
-    const tls = nativeOf(l, "tls_sys", "linux-64").?;
+    const tls = nativeOf(l, "acme/tls_sys", "linux-64").?;
     try std.testing.expectEqualStrings(try hexOf(a, w.tls_archive), tls.sha256.?);
     try std.testing.expectEqual(metadata.Kind.static, tls.kind);
     try std.testing.expectEqual(@as(usize, 1), tls.needs.len);
@@ -1009,7 +1048,7 @@ test "a package file that is not the one the index and repodata name pins nothin
     defer arena_state.deinit();
     const a = arena_state.allocator();
     var w = try world(a);
-    const key = try std.fmt.allocPrint(a, "linux-64/{s}", .{w.crypto_linux.file_name});
+    const key = try std.fmt.allocPrint(a, "acme/linux-64/{s}", .{w.crypto_linux.file_name});
 
     // Other bytes of another size.
     const longer = try std.mem.concat(a, u8, &.{ w.crypto_linux.bytes, "x" });
@@ -1039,31 +1078,31 @@ test "a package file that is not the one the index and repodata name pins nothin
 /// world's index and repodata lines for it, so that it is the file the registry would have served.
 fn handmade(a: Allocator, files: []const fx.Item) !World {
     var w = try world(a);
-    const stem = "mojo-crypto_sys-1.39.0-mojo1.0.0_0";
+    const stem = "mojo-acme.crypto_sys-1.39.0-mojo1.0.0_0";
     const bytes = try fx.simple(a, "crypto_sys", "1.39.0", files);
     var p = w.crypto_linux;
     p.bytes = bytes;
     p.sha256 = (try hexOf(a, bytes))[0..64].*;
-    const rec = try recLine(a, "crypto_sys", "1.39.0", "", "{\"id\":\"crypto_sys\",\"soname\":\"libcrypto_sys.a\"}", &.{.{ .subdir = "linux-64", .p = p }});
-    const idx = try a.dupe(resolve.Pair, &.{ .{ "crypto_sys", rec }, w.index.files[1] });
+    const rec = try recLine(a, "acme/crypto_sys", "1.39.0", "", "{\"id\":\"crypto_sys\",\"soname\":\"libcrypto_sys.a\"}", &.{.{ .subdir = "linux-64", .p = p }});
+    const idx = try a.dupe(resolve.Pair, &.{ .{ "acme/crypto_sys", rec }, w.index.files[1] });
     w.index = .{ .files = idx };
-    const tl = try repoEntry(a, "tls_sys", "2.4.0", "linux-64", w.tls);
+    const tl = try repoEntry(a, "acme/tls_sys", "2.4.0", "linux-64", w.tls);
     w.channel.files = try a.dupe(resolve.Pair, &.{
-        .{ "linux-64", try repoJson(a, "linux-64", &.{ try repoEntry(a, "crypto_sys", "1.39.0", "linux-64", p), tl }) },
+        .{ "acme/linux-64", try repoJson(a, "linux-64", &.{ try repoEntry(a, "acme/crypto_sys", "1.39.0", "linux-64", p), tl }) },
     });
     w.channel.conda = try a.dupe(resolve.Pair, &.{
-        .{ try std.fmt.allocPrint(a, "linux-64/{s}.conda", .{stem}), bytes },
+        .{ try std.fmt.allocPrint(a, "acme/linux-64/{s}.conda", .{stem}), bytes },
     });
     // tls_sys is not built: only crypto_sys is asked for.
     return w;
 }
 
 const good_meta =
-    \\{"schema":1,"name":"crypto_sys","version":"1.39.0","native":[{"id":"crypto_sys","soname":"libcrypto_sys.a","kind":"static","static_file":"../libcrypto_sys.a"}]}
+    \\{"schema":2,"name":"acme/crypto_sys","version":"1.39.0","native":[{"id":"crypto_sys","soname":"libcrypto_sys.a","kind":"static","static_file":"../libcrypto_sys.a"}]}
 ;
 
 fn cryptoLock(w: World, a: Allocator, diag: *Diagnostic) Error!lock.Lock {
-    const res = try resolve.resolve(a, w.index, .{ .mojo = "1.0.0", .roots = &.{.{ .name = "crypto_sys", .requirement = "1" }} }, diag);
+    const res = try resolve.resolve(a, w.index, .{ .mojo = "1.0.0", .roots = &.{.{ .name = "acme/crypto_sys", .requirement = "1" }} }, diag);
     return buildLock(a, res, "https://conda.mopm.dev/", w.channel, null, diag);
 }
 
@@ -1083,7 +1122,7 @@ test "a package whose metadata and files do not match what the index says is ref
         std.debug.print("{s}: {s}\n", .{ @tagName(diag.kind), diag.message });
         return e;
     };
-    try std.testing.expectEqualStrings(try hexOf(a, ar ++ "x"), nativeOf(l, "crypto_sys", "linux-64").?.sha256.?);
+    try std.testing.expectEqualStrings(try hexOf(a, ar ++ "x"), nativeOf(l, "acme/crypto_sys", "linux-64").?.sha256.?);
 
     const Case = struct { files: []const fx.Item, want: []const u8 };
     const cases = [_]Case{
@@ -1091,22 +1130,26 @@ test "a package whose metadata and files do not match what the index says is ref
         .{ .files = &.{.{ .name = "lib/libcrypto_sys.a", .data = ar ++ "x" }}, .want = "has no lib/mojo/crypto_sys.mopm.json" },
         // metadata that is not JSON
         .{ .files = &.{ .{ .name = "lib/mojo/crypto_sys.mopm.json", .data = "{" }, .{ .name = "lib/libcrypto_sys.a", .data = ar ++ "x" } }, .want = "is not valid package metadata" },
+        // metadata of an older schema
+        .{ .files = &.{ .{ .name = "lib/mojo/crypto_sys.mopm.json", .data = "{\"schema\":1,\"name\":\"crypto_sys\"}" }, .{ .name = "lib/libcrypto_sys.a", .data = ar ++ "x" } }, .want = "is not valid package metadata (UnsupportedSchema)" },
+        // metadata that names the package without its namespace
+        .{ .files = &.{ .{ .name = "lib/mojo/crypto_sys.mopm.json", .data = "{\"schema\":2,\"name\":\"crypto_sys\"}" }, .{ .name = "lib/libcrypto_sys.a", .data = ar ++ "x" } }, .want = "is not valid package metadata (BadName)" },
         // metadata of another package
-        .{ .files = &.{ .{ .name = "lib/mojo/crypto_sys.mopm.json", .data = "{\"schema\":1,\"name\":\"other\",\"native\":[{\"id\":\"crypto_sys\",\"soname\":\"libcrypto_sys.a\",\"kind\":\"static\",\"static_file\":\"../libcrypto_sys.a\"}]}" }, .{ .name = "lib/libcrypto_sys.a", .data = ar ++ "x" } }, .want = "names the package other, not crypto_sys" },
+        .{ .files = &.{ .{ .name = "lib/mojo/crypto_sys.mopm.json", .data = "{\"schema\":2,\"name\":\"acme/other\",\"native\":[{\"id\":\"crypto_sys\",\"soname\":\"libcrypto_sys.a\",\"kind\":\"static\",\"static_file\":\"../libcrypto_sys.a\"}]}" }, .{ .name = "lib/libcrypto_sys.a", .data = ar ++ "x" } }, .want = "names the package acme/other, not acme/crypto_sys" },
         // the index lists a library the file does not declare
-        .{ .files = &.{ .{ .name = "lib/mojo/crypto_sys.mopm.json", .data = "{\"schema\":1,\"name\":\"crypto_sys\",\"native\":[{\"id\":\"crypto_sys\",\"soname\":\"libother.a\",\"kind\":\"static\",\"static_file\":\"../libother.a\"}]}" }, .{ .name = "lib/libother.a", .data = ar ++ "x" } }, .want = "does not declare it" },
+        .{ .files = &.{ .{ .name = "lib/mojo/crypto_sys.mopm.json", .data = "{\"schema\":2,\"name\":\"acme/crypto_sys\",\"native\":[{\"id\":\"crypto_sys\",\"soname\":\"libother.a\",\"kind\":\"static\",\"static_file\":\"../libother.a\"}]}" }, .{ .name = "lib/libother.a", .data = ar ++ "x" } }, .want = "does not declare it" },
         // the file declares none
-        .{ .files = &.{ .{ .name = "lib/mojo/crypto_sys.mopm.json", .data = "{\"schema\":1,\"name\":\"crypto_sys\"}" }, .{ .name = "lib/libcrypto_sys.a", .data = ar ++ "x" } }, .want = "declares 0" },
+        .{ .files = &.{ .{ .name = "lib/mojo/crypto_sys.mopm.json", .data = "{\"schema\":2,\"name\":\"acme/crypto_sys\"}" }, .{ .name = "lib/libcrypto_sys.a", .data = ar ++ "x" } }, .want = "declares 0" },
         // the declared archive is not in the package
         .{ .files = &.{.{ .name = "lib/mojo/crypto_sys.mopm.json", .data = good_meta }}, .want = "holds no lib/libcrypto_sys.a" },
         // the declared archive is empty
         .{ .files = &.{ .{ .name = "lib/mojo/crypto_sys.mopm.json", .data = good_meta }, .{ .name = "lib/libcrypto_sys.a", .data = "" } }, .want = "is empty" },
         // the archive is not named for its soname
-        .{ .files = &.{ .{ .name = "lib/mojo/crypto_sys.mopm.json", .data = "{\"schema\":1,\"name\":\"crypto_sys\",\"native\":[{\"id\":\"crypto_sys\",\"soname\":\"libcrypto_sys.a\",\"kind\":\"static\",\"static_file\":\"../libelsewhere.a\"}]}" }, .{ .name = "lib/libelsewhere.a", .data = ar ++ "x" } }, .want = "the file must be lib/libcrypto_sys.a" },
+        .{ .files = &.{ .{ .name = "lib/mojo/crypto_sys.mopm.json", .data = "{\"schema\":2,\"name\":\"acme/crypto_sys\",\"native\":[{\"id\":\"crypto_sys\",\"soname\":\"libcrypto_sys.a\",\"kind\":\"static\",\"static_file\":\"../libelsewhere.a\"}]}" }, .{ .name = "lib/libelsewhere.a", .data = ar ++ "x" } }, .want = "the file must be lib/libcrypto_sys.a" },
         // the archive is not directly under lib/
-        .{ .files = &.{ .{ .name = "lib/mojo/crypto_sys.mopm.json", .data = "{\"schema\":1,\"name\":\"crypto_sys\",\"native\":[{\"id\":\"crypto_sys\",\"soname\":\"libcrypto_sys.a\",\"kind\":\"static\",\"static_file\":\"sub/libcrypto_sys.a\"}]}" }, .{ .name = "lib/mojo/sub/libcrypto_sys.a", .data = ar ++ "x" } }, .want = "the file must be lib/libcrypto_sys.a" },
+        .{ .files = &.{ .{ .name = "lib/mojo/crypto_sys.mopm.json", .data = "{\"schema\":2,\"name\":\"acme/crypto_sys\",\"native\":[{\"id\":\"crypto_sys\",\"soname\":\"libcrypto_sys.a\",\"kind\":\"static\",\"static_file\":\"sub/libcrypto_sys.a\"}]}" }, .{ .name = "lib/mojo/sub/libcrypto_sys.a", .data = ar ++ "x" } }, .want = "the file must be lib/libcrypto_sys.a" },
         // the archive climbs out of the package
-        .{ .files = &.{ .{ .name = "lib/mojo/crypto_sys.mopm.json", .data = "{\"schema\":1,\"name\":\"crypto_sys\",\"native\":[{\"id\":\"crypto_sys\",\"soname\":\"libcrypto_sys.a\",\"kind\":\"static\",\"static_file\":\"../../../libcrypto_sys.a\"}]}" }, .{ .name = "lib/libcrypto_sys.a", .data = ar ++ "x" } }, .want = "the file must be lib/libcrypto_sys.a" },
+        .{ .files = &.{ .{ .name = "lib/mojo/crypto_sys.mopm.json", .data = "{\"schema\":2,\"name\":\"acme/crypto_sys\",\"native\":[{\"id\":\"crypto_sys\",\"soname\":\"libcrypto_sys.a\",\"kind\":\"static\",\"static_file\":\"../../../libcrypto_sys.a\"}]}" }, .{ .name = "lib/libcrypto_sys.a", .data = ar ++ "x" } }, .want = "the file must be lib/libcrypto_sys.a" },
     };
     for (cases) |c| {
         const w = try handmade(a, c.files);
@@ -1145,7 +1188,7 @@ test "a .conda the old lock already pins is not fetched again; a different file,
     // An old lock for another file of the same version (its sha256 is not the file's): fetched, and the new hash wins.
     const other = try a.dupe(lock.Package, first.packages);
     for (other) |*p| {
-        if (std.mem.eql(u8, p.name, "crypto_sys") and std.mem.eql(u8, p.subdir, "linux-64")) {
+        if (std.mem.eql(u8, p.name, "acme/crypto_sys") and std.mem.eql(u8, p.subdir, "linux-64")) {
             p.sha256 = "3" ** 64;
             p.native = &.{.{ .id = "crypto_sys", .soname = "libcrypto_sys.a", .sha256 = "4" ** 64, .kind = .static }};
         }
@@ -1155,7 +1198,7 @@ test "a .conda the old lock already pins is not fetched again; a different file,
     fetches = 0;
     const third = try worldLock(a, w, old_other, &diag);
     try std.testing.expectEqual(@as(usize, 1), fetches);
-    try std.testing.expectEqualStrings(try hexOf(a, w.crypto_linux_archive), nativeOf(third, "crypto_sys", "linux-64").?.sha256.?);
+    try std.testing.expectEqualStrings(try hexOf(a, w.crypto_linux_archive), nativeOf(third, "acme/crypto_sys", "linux-64").?.sha256.?);
 
     // An old lock that has the file but no hash for its native (written before hashes were): fetched.
     const bare = try a.dupe(lock.Package, first.packages);
@@ -1182,7 +1225,7 @@ test "a package without natives is never fetched" {
     try std.testing.expectEqual(@as(usize, 0), fetches);
 }
 
-// Defect it catches: a version 2 lock that keeps the natives of the first Mojo version's build and says nothing when
+// Defect it catches: a lock of several Mojo versions that keeps the natives of the first Mojo version's build and says nothing when
 // the build for another Mojo version ships a different archive. Defect caught: checkNativesAgree returns at once.
 test "builds for two Mojo versions that ship different natives are refused before they are merged" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -1197,18 +1240,18 @@ test "builds for two Mojo versions that ship different natives are refused befor
 
     var packages = try a.dupe(lock.Package, one.packages);
     for (packages) |*p| {
-        if (std.mem.eql(u8, p.name, "tls_sys")) p.native = &.{.{ .id = "tls_sys", .soname = "libtls_sys.a", .sha256 = "5" ** 64, .kind = .static, .needs = &.{"libcrypto_sys.a"} }};
+        if (std.mem.eql(u8, p.name, "acme/tls_sys")) p.native = &.{.{ .id = "tls_sys", .soname = "libtls_sys.a", .sha256 = "5" ** 64, .kind = .static, .needs = &.{"libcrypto_sys.a"} }};
     }
     two.packages = packages;
     diag = .{};
     try std.testing.expectError(error.ResolveFailed, checkNativesAgree(a, &.{ one, two }, &diag));
     try std.testing.expectEqual(resolve.Kind.bad_channel, diag.kind);
-    try std.testing.expect(std.mem.indexOf(u8, diag.message, "tls_sys 2.4.0 (linux-64) ships different native libraries in its builds for mojo 1.0.0 and mojo 1.1.0") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diag.message, "acme/tls_sys 2.4.0 (linux-64) ships different native libraries in its builds for mojo 1.0.0 and mojo 1.1.0") != null);
 
     // The needs and the group count as well.
     packages = try a.dupe(lock.Package, one.packages);
     for (packages) |*p| {
-        if (std.mem.eql(u8, p.name, "crypto_sys") and p.native.len > 0) {
+        if (std.mem.eql(u8, p.name, "acme/crypto_sys") and p.native.len > 0) {
             var n = p.native[0];
             n.exclusive = "other";
             p.native = try a.dupe(lock.Native, &.{n});
@@ -1221,7 +1264,7 @@ test "builds for two Mojo versions that ship different natives are refused befor
     // So do the system libraries a native links.
     packages = try a.dupe(lock.Package, one.packages);
     for (packages) |*p| {
-        if (std.mem.eql(u8, p.name, "tls_sys") and p.native.len > 0) {
+        if (std.mem.eql(u8, p.name, "acme/tls_sys") and p.native.len > 0) {
             var n = p.native[0];
             n.link = &.{"c++"};
             p.native = try a.dupe(lock.Native, &.{n});
@@ -1238,14 +1281,14 @@ test "a repodata size that differs from the index's, with the same sha256, is re
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    const linux_text = diamond_channel.files[0][1];
+    const linux_text = diamond_channel.files[2][1];
     const resized = try std.mem.replaceOwned(u8, a, linux_text, "\"sha256\":\"" ++ digests[0] ++ "\",\"size\":1000", "\"sha256\":\"" ++ digests[0] ++ "\",\"size\":1001");
     try std.testing.expect(!std.mem.eql(u8, linux_text, resized));
-    const ch = MemoryChannel{ .files = &.{ .{ "linux-64", resized }, diamond_channel.files[1] } };
+    const ch = MemoryChannel{ .files = &.{ diamond_channel.files[0], diamond_channel.files[1], .{ "komira-ai/linux-64", resized } } };
     var diag: Diagnostic = .{};
     try std.testing.expectError(error.ResolveFailed, diamondLock(a, ch, &diag));
     try std.testing.expectEqual(resolve.Kind.bad_channel, diag.kind);
-    try std.testing.expect(std.mem.indexOf(u8, diag.message, "the index says sha256 " ++ digests[0] ++ ", size 1000; linux-64/repodata.json says sha256 " ++ digests[0] ++ ", size 1001") != null);
+    try std.testing.expect(std.mem.indexOf(u8, diag.message, "the index says sha256 " ++ digests[0] ++ ", size 1000; komira-ai/linux-64/repodata.json says sha256 " ++ digests[0] ++ ", size 1001") != null);
 }
 
 // Defect it catches: a pin kept for a library the index now names differently, with the very same file bytes: the lock
@@ -1260,7 +1303,7 @@ test "an old pin is not reused when the index names the library differently, eve
     // The same files, the same hashes; only the index's soname for crypto_sys is another.
     const renamed = try std.mem.replaceOwned(u8, a, w.index.files[0][1], "\"soname\":\"libcrypto_sys.a\"", "\"soname\":\"libcrypto_other.a\"");
     try std.testing.expect(!std.mem.eql(u8, renamed, w.index.files[0][1]));
-    w.index = .{ .files = try a.dupe(resolve.Pair, &.{ .{ "crypto_sys", renamed }, w.index.files[1] }) };
+    w.index = .{ .files = try a.dupe(resolve.Pair, &.{ .{ "acme/crypto_sys", renamed }, w.index.files[1] }) };
     diag = .{};
     try std.testing.expectError(error.ResolveFailed, worldLock(a, w, first, &diag));
     try std.testing.expect(std.mem.indexOf(u8, diag.message, "does not declare it") != null);

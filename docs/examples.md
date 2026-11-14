@@ -167,7 +167,7 @@ mopm tree
 **`examples/app/expected/lock.txt`**
 
 ```text
-adding greeter 0.1.0
+adding example/greeter 0.1.0
 locked 1 packages for mojo 1.0.0
 ```
 
@@ -175,16 +175,23 @@ locked 1 packages for mojo 1.0.0
 
 ```json
 {
-  "lock_version": 1,
+  "lock_version": 3,
+  "mojo": [
+    "1.0.0"
+  ],
   "toolchain": {
-    "mojo": "1.0.0"
+    "1.0.0": {
+      "linux-64": "3ed75e01401544e0d660ee48dc387dacce437e3833ac296d4a0601f28abd4aec",
+      "linux-aarch64": "84a22df9ff1ca84c7eb47a3b3d5eaede4c970ee85b660853f640841b5dfa03c3",
+      "osx-arm64": "0d34e9a60951231f6c2161f6620957ff086542b217b187774fdf9d82b76046a1"
+    }
   },
   "channels": [
     "https://conda.mopm.dev/"
   ],
   "packages": [
     {
-      "name": "greeter",
+      "name": "example/greeter",
       "version": "0.1.0",
       "source": "path",
       "path": "../greeter"
@@ -196,8 +203,8 @@ locked 1 packages for mojo 1.0.0
 **`examples/app/expected/tree.txt`**
 
 ```text
-app 0.1.0
-└── greeter 0.1.0 (../greeter)
+example/app 0.1.0
+└── example/greeter 0.1.0 (../greeter)
 ```
 
 Running `mopm lock` again changes nothing and prints `locked 1 packages for mojo 1.0.0`. Removing the comment from the `http_client` line makes the project depend on the registry, and `mopm lock` then needs one: with the registry unreachable it stops with `cannot reach` and the address, and writes no lock. `mopm add example/http_client` writes that line for you, as `^X.Y.Z` for the newest version that fits, and locks.
@@ -319,9 +326,9 @@ mopm plan --unit-graph --locked
 **`examples/workspace/expected/lock.txt`**
 
 ```text
-adding core 0.1.0
-adding testkit 0.1.0
-adding util 0.1.0
+adding example/core 0.1.0
+adding example/testkit 0.1.0
+adding example/util 0.1.0
 locked 3 packages for mojo 1.0.0
 ```
 
@@ -329,31 +336,38 @@ locked 3 packages for mojo 1.0.0
 
 ```json
 {
-  "lock_version": 1,
+  "lock_version": 3,
+  "mojo": [
+    "1.0.0"
+  ],
   "toolchain": {
-    "mojo": "1.0.0"
+    "1.0.0": {
+      "linux-64": "3ed75e01401544e0d660ee48dc387dacce437e3833ac296d4a0601f28abd4aec",
+      "linux-aarch64": "84a22df9ff1ca84c7eb47a3b3d5eaede4c970ee85b660853f640841b5dfa03c3",
+      "osx-arm64": "0d34e9a60951231f6c2161f6620957ff086542b217b187774fdf9d82b76046a1"
+    }
   },
   "channels": [
     "https://conda.mopm.dev/"
   ],
   "packages": [
     {
-      "name": "core",
+      "name": "example/core",
       "version": "0.1.0",
       "source": "path",
       "path": "core",
       "deps": [
-        "util"
+        "example/util"
       ]
     },
     {
-      "name": "testkit",
+      "name": "example/testkit",
       "version": "0.1.0",
       "source": "path",
       "path": "testkit"
     },
     {
-      "name": "util",
+      "name": "example/util",
       "version": "0.1.0",
       "source": "path",
       "path": "util"
@@ -365,15 +379,15 @@ locked 3 packages for mojo 1.0.0
 **`examples/workspace/expected/tree.txt`**
 
 ```text
-app 0.2.0
-├── core 0.1.0 (core)
-│   └── util 0.1.0 (util)
-└── util 0.1.0 (util)
+example/app 0.2.0
+├── example/core 0.1.0 (core)
+│   └── example/util 0.1.0 (util)
+└── example/util 0.1.0 (util)
 [dev-dependencies]
-└── testkit 0.1.0 (testkit)
+└── example/testkit 0.1.0 (testkit)
 ```
 
-`mopm plan --unit-graph --locked` prints the build as JSON for a build system (see `spec/unit-graph.md`): a unit for each of `util@0.1.0#mojo1.0.0/lib`, `core@0.1.0#mojo1.0.0/lib` and `testkit@0.1.0#mojo1.0.0/lib`, and for the program, `app@0.2.0#mojo1.0.0/bin:run`. It takes only members that are below the root project, which is why the members are directories of the root here and not its siblings (`mopm lock` and `mopm tree` take siblings too). Two mistakes are refused, each with exit status 1:
+`mopm plan --unit-graph --locked` prints the build as JSON for a build system (see `spec/unit-graph.md`): a unit for each of `example/util@0.1.0#mojo1.0.0/lib`, `example/core@0.1.0#mojo1.0.0/lib` and `example/testkit@0.1.0#mojo1.0.0/lib`, and for the program, `example/app@0.2.0#mojo1.0.0/bin:run`. It takes only members that are below the root project, which is why the members are directories of the root here and not its siblings (`mopm lock` and `mopm tree` take siblings too). Two mistakes are refused, each with exit status 1:
 
 | mistake | message |
 |---|---|
@@ -573,12 +587,12 @@ mopm pack --compiler 1.0.0 --mojoc linux-64=slug.mojoc -o dist
 mopm publish --compiler 1.0.0 --mojoc linux-64=slug.mojoc --dry-run
 ```
 
-`pack` writes `dist/linux-64/mojo-slug-1.2.0-mojo1.0.0_0.conda` and prints its digests. In the output, `<sha256>` stands for 64 hexadecimal digits and `<n>` for a number of bytes, which depend on the packed bytes:
+`pack` writes `dist/linux-64/mojo-example.slug-1.2.0-mojo1.0.0_0.conda` and prints its digests. In the output, `<sha256>` stands for 64 hexadecimal digits and `<n>` for a number of bytes, which depend on the packed bytes:
 
 **`examples/publish/expected/pack.txt`**
 
 ```text
-packed dist/linux-64/mojo-slug-1.2.0-mojo1.0.0_0.conda
+packed dist/linux-64/mojo-example.slug-1.2.0-mojo1.0.0_0.conda
   sha256 <sha256>
   size <n>
   manifest_sha256 <sha256>
@@ -589,8 +603,8 @@ packed dist/linux-64/mojo-slug-1.2.0-mojo1.0.0_0.conda
 **`examples/publish/expected/publish-dry-run.txt`**
 
 ```text
-would upload linux-64/mojo-slug-1.2.0-mojo1.0.0_0.conda (<n> bytes, sha256 <sha256>)
-would commit mojo-slug 1.2.0 (manifest_sha256 <sha256>)
+would upload linux-64/mojo-example.slug-1.2.0-mojo1.0.0_0.conda (<n> bytes, sha256 <sha256>)
+would commit example/slug 1.2.0 (manifest_sha256 <sha256>)
 would send a readme of 38 bytes
 dry run: nothing was sent
 ```
@@ -639,13 +653,13 @@ mopm plan --unit-graph --locked
 locked 0 packages for mojo 1.0.0
 ```
 
-The lock is `lock_version` 2. It records, for each Mojo version and platform, the hash of the toolchain that mopm pins for it (the pins are in mopm's own source), so that a build system gets the same compiler on every machine, and `mopm plan` refuses a lock whose hash this mopm does not compute. The hashes are written `<sha256>` here, because they change when the pin does:
+The lock is `lock_version` 3. It records, for each Mojo version and platform, the hash of the toolchain that mopm pins for it (the pins are in mopm's own source), so that a build system gets the same compiler on every machine, and `mopm plan` refuses a lock whose hash this mopm does not compute. The hashes are written `<sha256>` here, because they change when the pin does:
 
 **`examples/toolchain/expected/mopm.lock`**
 
 ```json
 {
-  "lock_version": 2,
+  "lock_version": 3,
   "mojo": [
     "1.0.0"
   ],
@@ -663,11 +677,11 @@ The lock is `lock_version` 2. It records, for each Mojo version and platform, th
 }
 ```
 
-`mopm plan --unit-graph --locked` then prints the unit graph for the one listed version, with `"id": "pinned@0.1.0#mojo1.0.0/lib"` among its units. mopm pins a toolchain only for the Mojo versions in `src/core/toolchain/` (1.0.0 today), and says so for the others:
+`mopm plan --unit-graph --locked` then prints the unit graph for the one listed version, with `"id": "example/pinned@0.1.0#mojo1.0.0/lib"` among its units. mopm pins a toolchain only for the Mojo versions in `src/core/toolchain/` (1.0.0 today), and says so for the others:
 
 | change | message |
 |---|---|
 | `mojo = ["1.0.0", "1.1.0"]` | `mopm has no pinned toolchain for mojo 1.1.0` |
 | a `[toolchain]` table beside `[package] mojo` | `mojo is set in [package] and in [toolchain]; keep [package] mojo` |
 
-`[toolchain] mojo = "1.0.0"`, the form `mopm new` writes, is the older way: one version, or a list read as alternatives, and a `lock_version` 1 lock.
+`[toolchain] mojo = "1.0.0"`, the form `mopm new` writes, is the older way: one version, or a list read as alternatives. It makes a `lock_version` 3 lock with one Mojo version.

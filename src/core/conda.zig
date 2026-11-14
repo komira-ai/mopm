@@ -3,7 +3,7 @@
 //!
 //! A `.conda` is a zip of exactly three stored (method 0) entries, in this
 //! order: `metadata.json`, `info-<stem>.tar.zst` and `pkg-<stem>.tar.zst`,
-//! where `<stem>` is `mojo-<name>-<version>-<build>` (spec/channel.md). The
+//! where `<stem>` is `mojo-<namespace>.<name>-<version>-<build>` (spec/channel.md). The
 //! zip has a fixed DOS timestamp (the DOS epoch, January 1st of year 1980, at 00:00), no zip64 and no data
 //! descriptors. Each tar is ustar: regular files only, mode 0644, uid and gid
 //! 0, mtime 0, no user or group names, paths sorted, two zero blocks at the
@@ -17,6 +17,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const manifest = @import("manifest.zig");
+const names = @import("names.zig");
 const native_link = @import("native_link.zig");
 const semver = @import("semver.zig");
 
@@ -30,11 +31,13 @@ pub fn isSubdir(s: []const u8) bool {
     return false;
 }
 
-/// A Mojo dependency as written to the package: `range` is a conda
-/// constraint such as `>=1.2,<2`, or "" for any version.
+/// A Mojo dependency as written to the package: `name` is the full name (`komira-ai/json`) of the package it needs,
+/// and `range` is a conda constraint such as `>=1.2,<2`, or "" for any version.
 pub const Dep = struct { name: []const u8, range: []const u8 };
 
 pub const Input = struct {
+    /// The full name of the package, `<namespace>/<name>`: the conda package is `mojo-<namespace>.<name>`
+    /// (`names.condaName`), and its files in `lib/mojo/` are named by the import name (`names.importName`).
     name: []const u8,
     /// Exactly MAJOR.MINOR.PATCH (`exactVersion`).
     version: []const u8,
@@ -128,7 +131,7 @@ pub fn validBinName(s: []const u8) bool {
 
 pub const Packed = struct {
     subdir: []const u8,
-    /// `mojo-<name>-<version>-mojo<compiler>_0.conda`
+    /// `mojo-<namespace>.<name>-<version>-mojo<compiler>_0.conda`
     file_name: []const u8,
     bytes: []const u8,
     /// Lowercase hex sha256 of `bytes`.
@@ -342,10 +345,11 @@ pub fn indexJson(arena: Allocator, in: Input) Allocator.Error![]u8 {
     try jsonStr(w, compiler_dep);
     for (in.deps) |d| {
         try w.writeByte(',');
+        const conda = try names.condaName(arena, d.name);
         const dep = if (d.range.len == 0)
-            try std.fmt.allocPrint(arena, "mojo-{s}", .{d.name})
+            conda
         else
-            try std.fmt.allocPrint(arena, "mojo-{s} {s}", .{ d.name, d.range });
+            try std.fmt.allocPrint(arena, "{s} {s}", .{ conda, d.range });
         try jsonStr(w, dep);
     }
     for (in.native_deps) |d| {
@@ -357,7 +361,7 @@ pub fn indexJson(arena: Allocator, in: Input) Allocator.Error![]u8 {
         try jsonStr(w, dep);
     }
     try w.writeAll("],\"name\":");
-    try jsonStr(w, try std.fmt.allocPrint(arena, "mojo-{s}", .{in.name}));
+    try jsonStr(w, try names.condaName(arena, in.name));
     try w.writeAll(",\"subdir\":");
     try jsonStr(w, in.subdir);
     try w.writeAll(",\"version\":");
@@ -366,7 +370,7 @@ pub fn indexJson(arena: Allocator, in: Input) Allocator.Error![]u8 {
     return out.items;
 }
 
-/// `lib/mojo/<name>.mopm.json` (spec/package-metadata.schema.json): keys sorted.
+/// `lib/mojo/<import name>.mopm.json` (spec/package-metadata.schema.json): keys sorted.
 pub fn mopmJson(arena: Allocator, in: Input) Allocator.Error![]u8 {
     var out = std.ArrayList(u8).init(arena);
     const w = out.writer();
@@ -424,7 +428,7 @@ pub fn mopmJson(arena: Allocator, in: Input) Allocator.Error![]u8 {
         }
         try w.writeByte(']');
     }
-    try w.writeAll(",\"schema\":1,\"version\":");
+    try w.writeAll(",\"schema\":2,\"version\":");
     try jsonStr(w, in.version);
     try w.writeByte('}');
     return out.items;
@@ -499,15 +503,16 @@ pub fn pack(arena: Allocator, in: Input) PackError!Packed {
         }
     }
 
-    const stem = try std.fmt.allocPrint(arena, "mojo-{s}-{s}-mojo{s}_0", .{ in.name, in.version, in.compiler });
+    const import_name = names.importName(in.name);
+    const stem = try std.fmt.allocPrint(arena, "{s}-{s}-mojo{s}_0", .{ try names.condaName(arena, in.name), in.version, in.compiler });
     const mopm = try mopmJson(arena, in);
     const index = try indexJson(arena, in);
 
     var pkg_files = std.ArrayList(File).init(arena);
-    try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mojoc", .{in.name}), .data = in.mojoc });
-    try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mopm.json", .{in.name}), .data = mopm });
+    try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mojoc", .{import_name}), .data = in.mojoc });
+    try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.mopm.json", .{import_name}), .data = mopm });
     for (in.natives) |n| try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/{s}", .{n.soname}), .data = n.archive });
-    for (in.bins) |b| try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.bins/{s}.mojo", .{ in.name, b.name }), .data = b.source });
+    for (in.bins) |b| try pkg_files.append(.{ .path = try std.fmt.allocPrint(arena, "lib/mojo/{s}.bins/{s}.mojo", .{ import_name, b.name }), .data = b.source });
     std.mem.sort(File, pkg_files.items, {}, lessFile);
     var info_files = std.ArrayList(File).init(arena);
     try info_files.append(.{ .path = "info/index.json", .data = index });
@@ -766,7 +771,7 @@ pub fn depsOf(arena: Allocator, m: manifest.Manifest, path_versions: []const Pat
             },
             error.OutOfMemory => return error.OutOfMemory,
         };
-        try out.append(.{ .name = d.name, .range = range });
+        try out.append(.{ .name = d.full_name, .range = range });
     }
     std.mem.sort(Dep, out.items, {}, lessDep);
     return out.items;
@@ -929,29 +934,29 @@ test "a package: zip structure, tars, index.json and mopm.json bytes" {
     defer st.deinit();
     const a = st.allocator();
     const p = try pack(a, .{
-        .name = "demo",
+        .name = "example/demo",
         .version = "1.2.3",
         .compiler = "1.0.0",
         .subdir = "linux-64",
-        .deps = &.{ .{ .name = "alpha", .range = ">=1.2,<2" }, .{ .name = "beta", .range = "" } },
+        .deps = &.{ .{ .name = "example/alpha", .range = ">=1.2,<2" }, .{ .name = "example/beta", .range = "" } },
         .mojoc = "MOJOC-BYTES",
     });
-    try std.testing.expectEqualStrings("mojo-demo-1.2.3-mojo1.0.0_0.conda", p.file_name);
+    try std.testing.expectEqualStrings("mojo-example.demo-1.2.3-mojo1.0.0_0.conda", p.file_name);
     try std.testing.expectEqualSlices(u8, &p.sha256, &hex(p.bytes));
 
     const entries = try readZip(a, p.bytes);
     try std.testing.expectEqual(@as(usize, 3), entries.len);
     try std.testing.expectEqualStrings("metadata.json", entries[0].name);
     try std.testing.expectEqualStrings("{\"conda_pkg_format_version\": 2}", entries[0].data);
-    try std.testing.expectEqualStrings("info-mojo-demo-1.2.3-mojo1.0.0_0.tar.zst", entries[1].name);
-    try std.testing.expectEqualStrings("pkg-mojo-demo-1.2.3-mojo1.0.0_0.tar.zst", entries[2].name);
+    try std.testing.expectEqualStrings("info-mojo-example.demo-1.2.3-mojo1.0.0_0.tar.zst", entries[1].name);
+    try std.testing.expectEqualStrings("pkg-mojo-example.demo-1.2.3-mojo1.0.0_0.tar.zst", entries[2].name);
 
     const info = try readTar(a, try unzstd(a, entries[1].data));
     try std.testing.expectEqual(@as(usize, 2), info.len);
     try std.testing.expectEqualStrings("info/index.json", info[0].path);
     try std.testing.expectEqualStrings(
-        "{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\",\"mojo-alpha >=1.2,<2\",\"mojo-beta\"]," ++
-            "\"name\":\"mojo-demo\",\"subdir\":\"linux-64\",\"version\":\"1.2.3\"}",
+        "{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\",\"mojo-example.alpha >=1.2,<2\",\"mojo-example.beta\"]," ++
+            "\"name\":\"mojo-example.demo\",\"subdir\":\"linux-64\",\"version\":\"1.2.3\"}",
         info[0].data,
     );
     // paths.json lists exactly the package's files, with the sha256 and size of each (pixi cannot link a
@@ -975,18 +980,18 @@ test "a package: zip structure, tars, index.json and mopm.json bytes" {
     try std.testing.expectEqualStrings("MOJOC-BYTES", pkg[0].data);
     try std.testing.expectEqualStrings("lib/mojo/demo.mopm.json", pkg[1].path);
     try std.testing.expectEqualStrings(
-        "{\"deps\":[{\"name\":\"alpha\",\"range\":\">=1.2,<2\"},{\"name\":\"beta\"}],\"name\":\"demo\",\"schema\":1,\"version\":\"1.2.3\"}",
+        "{\"deps\":[{\"name\":\"example/alpha\",\"range\":\">=1.2,<2\"},{\"name\":\"example/beta\"}],\"name\":\"example/demo\",\"schema\":2,\"version\":\"1.2.3\"}",
         pkg[1].data,
     );
     try std.testing.expectEqualSlices(u8, &p.manifest_sha256, &hex(pkg[1].data));
 
     // Deterministic: the same input, the same bytes.
     const q = try pack(a, .{
-        .name = "demo",
+        .name = "example/demo",
         .version = "1.2.3",
         .compiler = "1.0.0",
         .subdir = "linux-64",
-        .deps = &.{ .{ .name = "alpha", .range = ">=1.2,<2" }, .{ .name = "beta", .range = "" } },
+        .deps = &.{ .{ .name = "example/alpha", .range = ">=1.2,<2" }, .{ .name = "example/beta", .range = "" } },
         .mojoc = "MOJOC-BYTES",
     });
     try std.testing.expectEqualSlices(u8, p.bytes, q.bytes);
@@ -996,7 +1001,7 @@ test "pack refuses a bad version, compiler and subdir" {
     var st = testArena();
     defer st.deinit();
     const a = st.allocator();
-    const base = Input{ .name = "demo", .version = "1.0.0", .compiler = "1.0.0", .subdir = "noarch", .mojoc = "x" };
+    const base = Input{ .name = "example/demo", .version = "1.0.0", .compiler = "1.0.0", .subdir = "noarch", .mojoc = "x" };
     var in = base;
     in.version = "1.0";
     try std.testing.expectError(error.BadVersion, pack(a, in));
@@ -1083,9 +1088,9 @@ test "a manifest: dependencies, and what cannot be packed" {
     var why: []const u8 = "";
     const deps = try depsOf(a, ok, &.{}, &why);
     try std.testing.expectEqual(@as(usize, 2), deps.len);
-    try std.testing.expectEqualStrings("alpha", deps[0].name);
+    try std.testing.expectEqualStrings("example/alpha", deps[0].name);
     try std.testing.expectEqualStrings(">=0.3", deps[0].range);
-    try std.testing.expectEqualStrings("zeta", deps[1].name);
+    try std.testing.expectEqualStrings("example/zeta", deps[1].name);
     try std.testing.expectEqualStrings(">=1.0,<2", deps[1].range);
 
     const native = try manifest.parse(a,
@@ -1140,19 +1145,19 @@ test "a path dependency with a version: the version is packed when the package s
     const m = try pathDepManifest(a, "\"example/local\" = { path = \"../local\", version = \"^0.3\" }");
     const deps = try depsOf(a, m, &.{.{ .name = "example/local", .version = "0.3.7" }}, &why);
     try std.testing.expectEqual(@as(usize, 1), deps.len);
-    try std.testing.expectEqualStrings("local", deps[0].name);
+    try std.testing.expectEqualStrings("example/local", deps[0].name);
     try std.testing.expectEqualStrings(">=0.3,<0.4", deps[0].range);
 
     // The bytes of the package carry the requirement and nothing of the path.
-    const p = try pack(a, .{ .name = "demo", .version = "0.1.0", .compiler = "1.0.0", .subdir = "linux-64", .deps = deps, .mojoc = "MOJOC" });
+    const p = try pack(a, .{ .name = "example/demo", .version = "0.1.0", .compiler = "1.0.0", .subdir = "linux-64", .deps = deps, .mojoc = "MOJOC" });
     const entries = try readZip(a, p.bytes);
     const pkg = try readTar(a, try unzstd(a, entries[2].data));
     try std.testing.expectEqualStrings(
-        "{\"deps\":[{\"name\":\"local\",\"range\":\">=0.3,<0.4\"}],\"name\":\"demo\",\"schema\":1,\"version\":\"0.1.0\"}",
+        "{\"deps\":[{\"name\":\"example/local\",\"range\":\">=0.3,<0.4\"}],\"name\":\"example/demo\",\"schema\":2,\"version\":\"0.1.0\"}",
         pkg[1].data,
     );
     const info = try readTar(a, try unzstd(a, entries[1].data));
-    try std.testing.expect(std.mem.indexOf(u8, info[0].data, "mojo-local >=0.3,<0.4") != null);
+    try std.testing.expect(std.mem.indexOf(u8, info[0].data, "mojo-example.local >=0.3,<0.4") != null);
     for ([_][]const u8{ pkg[1].data, info[0].data, p.bytes }) |bytes| {
         try std.testing.expect(std.mem.indexOf(u8, bytes, "../local") == null);
         try std.testing.expect(std.mem.indexOf(u8, bytes, "\"path\"") == null);
@@ -1207,7 +1212,7 @@ const ar_y = ar_magic ++ "members of y\n";
 
 fn nativeInput(a: Allocator, subdir: []const u8, archive: []const u8) !Input {
     return .{
-        .name = "tls_sys",
+        .name = "example/tls_sys",
         .version = "2.4.0",
         .compiler = "1.0.0",
         .subdir = subdir,
@@ -1237,8 +1242,8 @@ test "a package with a static archive: where each file is, and what the metadata
     try std.testing.expectEqualStrings("lib/mojo/tls_sys.mojoc", pkg[1].path);
     try std.testing.expectEqualStrings("lib/mojo/tls_sys.mopm.json", pkg[2].path);
     try std.testing.expectEqualStrings(
-        "{\"deps\":[],\"name\":\"tls_sys\",\"native\":[{\"exclusive\":\"libtls\",\"id\":\"tls_sys\",\"kind\":\"static\",\"mode\":\"link\"," ++
-            "\"needs\":[\"libc_sys.a\",\"libcrypto_sys.a\"],\"soname\":\"libtls_sys.a\",\"static_file\":\"../libtls_sys.a\"}],\"schema\":1,\"version\":\"2.4.0\"}",
+        "{\"deps\":[],\"name\":\"example/tls_sys\",\"native\":[{\"exclusive\":\"libtls\",\"id\":\"tls_sys\",\"kind\":\"static\",\"mode\":\"link\"," ++
+            "\"needs\":[\"libc_sys.a\",\"libcrypto_sys.a\"],\"soname\":\"libtls_sys.a\",\"static_file\":\"../libtls_sys.a\"}],\"schema\":2,\"version\":\"2.4.0\"}",
         pkg[2].data,
     );
     try std.testing.expectEqualSlices(u8, &p.manifest_sha256, &hex(pkg[2].data));
@@ -1250,7 +1255,7 @@ test "a package with a static archive: where each file is, and what the metadata
     try std.testing.expectEqualStrings("info/paths.json", info[2].path);
     const about = try std.fmt.allocPrint(a, "{{\"mopm_native\":[{{\"id\":\"tls_sys\",\"sha256\":\"{s}\",\"size\":{d},\"soname\":\"libtls_sys.a\"}}]}}", .{ &hex(ar_x), ar_x.len });
     try std.testing.expectEqualStrings(about, info[0].data);
-    try std.testing.expectEqualStrings("{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\"],\"name\":\"mojo-tls_sys\",\"subdir\":\"linux-64\",\"version\":\"2.4.0\"}", info[1].data);
+    try std.testing.expectEqualStrings("{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\"],\"name\":\"mojo-example.tls_sys\",\"subdir\":\"linux-64\",\"version\":\"2.4.0\"}", info[1].data);
 
     // paths.json lists the archive, with its own sha256 and size.
     const pj = try std.json.parseFromSlice(std.json.Value, a, info[2].data, .{});
@@ -1302,7 +1307,7 @@ test "a package with static archives is the same bytes however the natives and t
         .{ .id = "b_sys", .soname = "libb_sys.a", .archive = ar_y },
         .{ .id = "a_sys", .soname = "liba_sys.a", .needs = &.{ "libb_sys.a", "libz.so.1" }, .archive = ar_x },
     };
-    const base = Input{ .name = "pair", .version = "1.0.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "M" };
+    const base = Input{ .name = "example/pair", .version = "1.0.0", .compiler = "1.0.0", .subdir = "linux-64", .mojoc = "M" };
     var in = base;
     in.natives = &one;
     const p1 = try pack(a, in);
@@ -1425,14 +1430,14 @@ test "native dependencies to load are conda dependencies, in the order of their 
     }
 
     // They reach info/index.json, after the compiler and the Mojo dependencies, and nothing else of the package changes.
-    const idx = try indexJson(a, .{ .name = "demo", .version = "0.1.0", .compiler = "1.0.0", .subdir = "linux-64", .deps = deps, .native_deps = native, .mojoc = "x" });
+    const idx = try indexJson(a, .{ .name = "example/demo", .version = "0.1.0", .compiler = "1.0.0", .subdir = "linux-64", .deps = deps, .native_deps = native, .mojoc = "x" });
     try std.testing.expectEqualStrings(
-        "{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\",\"mojo-alpha >=1.0,<2\"," ++
-            "\"libzlib\",\"lz4-c >=1.9.3\",\"openssl >=3\",\"zstd >=1.5.2,<2\"],\"name\":\"mojo-demo\",\"subdir\":\"linux-64\",\"version\":\"0.1.0\"}",
+        "{\"build\":\"mojo1.0.0_0\",\"build_number\":0,\"depends\":[\"mojo-compiler ==1.0.0\",\"mojo-example.alpha >=1.0,<2\"," ++
+            "\"libzlib\",\"lz4-c >=1.9.3\",\"openssl >=3\",\"zstd >=1.5.2,<2\"],\"name\":\"mojo-example.demo\",\"subdir\":\"linux-64\",\"version\":\"0.1.0\"}",
         idx,
     );
     // ... and into the file mopm pack writes.
-    const p = try pack(a, .{ .name = "demo", .version = "0.1.0", .compiler = "1.0.0", .subdir = "linux-64", .native_deps = native, .mojoc = "x" });
+    const p = try pack(a, .{ .name = "example/demo", .version = "0.1.0", .compiler = "1.0.0", .subdir = "linux-64", .native_deps = native, .mojoc = "x" });
     const entries = try readZip(a, p.bytes);
     const info = try readTar(a, try unzstd(a, entries[1].data));
     try std.testing.expectEqualStrings("info/index.json", info[0].path);
@@ -1515,7 +1520,7 @@ test "a native's link names are in the published metadata, in order, and read ba
     const m = try manifest.parse(a, "[package]\nname = \"example/snappy_sys\"\nversion = \"1.2.0\"\n\n[toolchain]\nmojo = \"1.0.0\"\n\n[native.snappy]\nkind = \"static\"\nprovided = true\nlink = [\"m\", \"c++\"]\n", &diag);
     const n = m.native[0];
     const input = Input{
-        .name = "snappy_sys",
+        .name = "example/snappy_sys",
         .version = "1.2.0",
         .compiler = "1.0.0",
         .subdir = "linux-64",

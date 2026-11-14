@@ -15,7 +15,7 @@ const Command = ic.Command;
 const err = ic.err;
 const manifest_path = ic.manifest_path;
 const parseManifest = ic.parseManifest;
-const readLock = ic.readLock;
+const readLockStale = ic.readLockStale;
 const projectOf = ic.projectOf;
 const resolveProject = ic.resolveProject;
 const writeLock = ic.writeLock;
@@ -34,11 +34,6 @@ fn specProblem(arena: Allocator, full: []const u8) Allocator.Error!?[]const u8 {
         return try std.fmt.allocPrint(arena, "dependency '{s}' has no namespace: write it as <namespace>/<name>, as in 'mopm add <namespace>/<name>'", .{full});
     }
     return core.names.fullNameProblem(arena, "dependency", full, .allow);
-}
-
-/// The import name of a full name: the name the lock, the index and the resolver know it by.
-fn importName(full: []const u8) []const u8 {
-    return if (core.names.split(full)) |parts| parts.name else full;
 }
 
 /// `s` as a TOML basic string.
@@ -115,7 +110,9 @@ pub fn edit(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8)
         return e;
     };
     _ = (try parseManifest(arena, cmd, manifest_path, src)) orelse return 1;
-    const old = readLock(arena, cmd) catch |e| {
+    // A lock that predates namespaces is no lock: `add` and `remove` write a new one.
+    var stale: ?[]const u8 = null;
+    const old = readLockStale(arena, cmd, &stale) catch |e| {
         if (e == error.Invalid) return 1;
         return e;
     };
@@ -137,12 +134,12 @@ pub fn edit(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8)
     }
     const project = (try projectOf(arena, cmd, m)) orelse return 1;
     var resolve_args = args;
-    resolve_args.packages = if (cmd == .add) try arena.dupe([]const u8, &.{importName(spec.name)}) else &.{};
+    resolve_args.packages = if (cmd == .add) try arena.dupe([]const u8, &.{spec.name}) else &.{};
     const r = (try resolveProject(arena, cmd, project, old, resolve_args, cli_version)) orelse return 1;
 
     var final = trial;
     if (cmd == .add and spec.req == null and args.path == null) {
-        const picked = r.lock.versionOf(importName(spec.name)) orelse return error.AddedPackageNotLocked;
+        const picked = r.lock.versionOf(spec.name) orelse return error.AddedPackageNotLocked;
         final = switch (try editText(arena, cmd, src, args.dev, spec.name, try tomlString(arena, try caretOf(arena, picked)))) {
             .ok => |t| t,
             .bad => |why| {
@@ -155,7 +152,6 @@ pub fn edit(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8)
     try writeLock(arena, old, r);
     return 0;
 }
-
 
 test "a package spec, the caret requirement add writes, and TOML values" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -177,7 +173,7 @@ test "a package spec, the caret requirement add writes, and TOML values" {
 const golden_before =
     \\# The project. Comments, blank lines, order and spacing survive add and remove.
     \\[package]
-    \\name    = "app"
+    \\name    = "example/app"
     \\version = "0.1.0"
     \\
     \\[toolchain]
@@ -185,8 +181,8 @@ const golden_before =
     \\
     \\[dependencies]
     \\# transport
-    \\tls   =   "1"        # the major only
-    \\legacy = "1"
+    \\"example/tls"   =   "1"        # the major only
+    \\"example/legacy" = "1"
     \\
     \\[dev-dependencies]  # tests only
     \\
@@ -211,7 +207,7 @@ test "a dependency is named by a full name, and a bare one is refused with the f
         "dependency 'komira-ai/fn': the import name 'fn' is a Mojo keyword; choose another name",
         (try specProblem(a, "komira-ai/fn")).?,
     );
-    try std.testing.expectEqualStrings("json", importName("komira-ai/json"));
+    try std.testing.expectEqualStrings("json", core.names.importName("komira-ai/json"));
     try std.testing.expectEqualStrings("komira-ai/json", splitSpec("komira-ai/json@^1.2").name);
     try std.testing.expectEqualStrings("^1.2", splitSpec("komira-ai/json@^1.2").req.?);
 }
@@ -224,7 +220,7 @@ test "add writes the full name as a quoted key, and remove finds it" {
     try std.testing.expectEqualStrings(
         \\# The project. Comments, blank lines, order and spacing survive add and remove.
         \\[package]
-        \\name    = "app"
+        \\name    = "example/app"
         \\version = "0.1.0"
         \\
         \\[toolchain]
@@ -232,8 +228,8 @@ test "add writes the full name as a quoted key, and remove finds it" {
         \\
         \\[dependencies]
         \\# transport
-        \\tls   =   "1"        # the major only
-        \\legacy = "1"
+        \\"example/tls"   =   "1"        # the major only
+        \\"example/legacy" = "1"
         \\"komira-ai/json" = "^0.5.0"
         \\
         \\[dev-dependencies]  # tests only
@@ -250,12 +246,12 @@ test "add keeps every other byte of mopm.toml, in [dependencies] and [dev-depend
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    const one = (try editText(a, .add, golden_before, false, "http_client", try depValue(a, try caretOf(a, "0.5.0"), null))).ok;
-    const two = (try editText(a, .add, one, true, "http_core", try depValue(a, try caretOf(a, "1.2.5"), null))).ok;
+    const one = (try editText(a, .add, golden_before, false, "example/http_client", try depValue(a, try caretOf(a, "0.5.0"), null))).ok;
+    const two = (try editText(a, .add, one, true, "example/http_core", try depValue(a, try caretOf(a, "1.2.5"), null))).ok;
     try std.testing.expectEqualStrings(
         \\# The project. Comments, blank lines, order and spacing survive add and remove.
         \\[package]
-        \\name    = "app"
+        \\name    = "example/app"
         \\version = "0.1.0"
         \\
         \\[toolchain]
@@ -263,21 +259,21 @@ test "add keeps every other byte of mopm.toml, in [dependencies] and [dev-depend
         \\
         \\[dependencies]
         \\# transport
-        \\tls   =   "1"        # the major only
-        \\legacy = "1"
-        \\http_client = "^0.5.0"
+        \\"example/tls"   =   "1"        # the major only
+        \\"example/legacy" = "1"
+        \\"example/http_client" = "^0.5.0"
         \\
         \\[dev-dependencies]  # tests only
-        \\http_core = "^1.2.5"
+        \\"example/http_core" = "^1.2.5"
         \\
         \\# trailing comment
         \\
     , two);
-    const path = (try editText(a, .add, golden_before, false, "local", try depValue(a, "*", "local"))).ok;
+    const path = (try editText(a, .add, golden_before, false, "example/local", try depValue(a, "*", "local"))).ok;
     try std.testing.expectEqualStrings(
         \\# The project. Comments, blank lines, order and spacing survive add and remove.
         \\[package]
-        \\name    = "app"
+        \\name    = "example/app"
         \\version = "0.1.0"
         \\
         \\[toolchain]
@@ -285,9 +281,9 @@ test "add keeps every other byte of mopm.toml, in [dependencies] and [dev-depend
         \\
         \\[dependencies]
         \\# transport
-        \\tls   =   "1"        # the major only
-        \\legacy = "1"
-        \\local = { path = "local" }
+        \\"example/tls"   =   "1"        # the major only
+        \\"example/legacy" = "1"
+        \\"example/local" = { path = "local" }
         \\
         \\[dev-dependencies]  # tests only
         \\
@@ -300,8 +296,8 @@ test "add of an existing dependency replaces its value in place" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    const got = (try editText(a, .add, golden_before, false, "tls", try depValue(a, "~1.1", null))).ok;
-    const want = try std.mem.replaceOwned(u8, a, golden_before, "tls   =   \"1\"        #", "tls   =   \"~1.1\"        #");
+    const got = (try editText(a, .add, golden_before, false, "example/tls", try depValue(a, "~1.1", null))).ok;
+    const want = try std.mem.replaceOwned(u8, a, golden_before, "\"example/tls\"   =   \"1\"        #", "\"example/tls\"   =   \"~1.1\"        #");
     try std.testing.expectEqualStrings(want, got);
 }
 
@@ -309,12 +305,12 @@ test "remove of a key in the middle of a table takes its line and nothing else" 
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    const three = (try editText(a, .add, golden_before, false, "http_client", "\"^0.5.0\"")).ok;
-    const got = (try editText(a, .remove, three, false, "legacy", "")).ok;
+    const three = (try editText(a, .add, golden_before, false, "example/http_client", "\"^0.5.0\"")).ok;
+    const got = (try editText(a, .remove, three, false, "example/legacy", "")).ok;
     try std.testing.expectEqualStrings(
         \\# The project. Comments, blank lines, order and spacing survive add and remove.
         \\[package]
-        \\name    = "app"
+        \\name    = "example/app"
         \\version = "0.1.0"
         \\
         \\[toolchain]
@@ -322,8 +318,8 @@ test "remove of a key in the middle of a table takes its line and nothing else" 
         \\
         \\[dependencies]
         \\# transport
-        \\tls   =   "1"        # the major only
-        \\http_client = "^0.5.0"
+        \\"example/tls"   =   "1"        # the major only
+        \\"example/http_client" = "^0.5.0"
         \\
         \\[dev-dependencies]  # tests only
         \\
@@ -336,14 +332,14 @@ test "remove of an absent dependency is an error, and so is the other table's" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    try std.testing.expectEqualStrings("nosuch is not a dependency: [dependencies] of mopm.toml does not name it", (try editText(a, .remove, golden_before, false, "nosuch", "")).bad);
+    try std.testing.expectEqualStrings("example/nosuch is not a dependency: [dependencies] of mopm.toml does not name it", (try editText(a, .remove, golden_before, false, "example/nosuch", "")).bad);
     // A value that would leave mopm.toml unreadable is refused with the file, the entry and the table named.
-    const unreadable = (try editText(a, .add, golden_before, false, "tls", "\"1.0\"\nbroken = =")).bad;
-    try std.testing.expectEqualStrings("mopm.toml with tls = \"1.0\"\nbroken = = in [dependencies] would not be a TOML file mopm reads", unreadable);
-    // tls is in [dependencies], not [dev-dependencies].
-    try std.testing.expectEqualStrings("tls is not a dependency: [dev-dependencies] of mopm.toml does not name it", (try editText(a, .remove, golden_before, true, "tls", "")).bad);
+    const unreadable = (try editText(a, .add, golden_before, false, "example/tls", "\"1.0\"\nbroken = =")).bad;
+    try std.testing.expectEqualStrings("mopm.toml with example/tls = \"1.0\"\nbroken = = in [dependencies] would not be a TOML file mopm reads", unreadable);
+    // example/tls is in [dependencies], not [dev-dependencies].
+    try std.testing.expectEqualStrings("example/tls is not a dependency: [dev-dependencies] of mopm.toml does not name it", (try editText(a, .remove, golden_before, true, "example/tls", "")).bad);
     // No [dev-dependencies] table at all.
-    try std.testing.expect((try editText(a, .remove, "[package]\nname = \"a\"\n", true, "tls", "")) == .bad);
+    try std.testing.expect((try editText(a, .remove, "[package]\nname = \"a\"\n", true, "example/tls", "")) == .bad);
     // A table written as dotted keys is not edited.
     try std.testing.expect((try editText(a, .add, "dependencies.tls = \"1\"\n\n[package]\nname = \"a\"\n", false, "x", "\"1\"")) == .bad);
 }

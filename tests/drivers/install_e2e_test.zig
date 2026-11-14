@@ -6,12 +6,13 @@
 //!   1. builds libgreet (tests/e2e/native/greet.c, with `cc` = komira's zig)
 //!      and precompiles the Mojo package greet (tests/e2e/pkgs/greet) with the
 //!      pinned Mojo 1.0.0;
-//!   2. packs them into a real conda package, mojo-greet-1.0.0-mojo1.0.0_0.conda,
+//!   2. packs them into a real conda package, mojo-example.greet-1.0.0-mojo1.0.0_0.conda,
 //!      laid out as spec/channel.md says (lib/mojo/greet.mojoc,
 //!      lib/mojo/greet.mopm.json, lib/libgreet.so; a zip of two zstd'd tars),
-//!      and serves it from the fake registry with its sparse index line and
-//!      repodata.json entry;
-//!   3. in a project whose mopm.toml needs greet = "1", runs `mopm sync`, which
+//!      and serves it from the channel of the namespace `example` of the fake
+//!      registry with its sparse index line (index version 2) and repodata.json
+//!      entry;
+//!   3. in a project whose mopm.toml needs "example/greet" = "1", runs `mopm sync`, which
 //!      locks, downloads, verifies and installs the package and the toolchain
 //!      closure into .mopm/env by itself;
 //!   4. builds tests/install_e2e/prog.mojo with `mopm build --prefix .mopm/env`
@@ -58,13 +59,14 @@ const fs = std.fs;
 const mojo_version = "1.0.0";
 const build_tag = "mojo" ++ mojo_version ++ "_0";
 const env_rel = ".mopm/env";
-const filename = "mojo-greet-1.0.0-" ++ build_tag ++ ".conda";
+const namespace = "example";
+const filename = "mojo-example.greet-1.0.0-" ++ build_tag ++ ".conda";
 
 const sha256Hex = cp.sha256Hex;
 
-/// The bytes of mojo-greet-1.0.0-<build>.conda holding `files`.
+/// The bytes of mojo-example.greet-1.0.0-<build>.conda holding `files`.
 fn condaPackage(a: Allocator, subdir: []const u8, files: []const cp.Entry) ![]u8 {
-    return cp.package(a, "mojo-greet", "1.0.0", build_tag, subdir, &.{"mojo-compiler ==" ++ mojo_version}, files);
+    return cp.package(a, "mojo-example.greet", "1.0.0", build_tag, subdir, &.{"mojo-compiler ==" ++ mojo_version}, files);
 }
 
 // ------------------------------------------------------------ the driver
@@ -135,7 +137,7 @@ const Ctx = struct {
 
     /// The channel's copy of the package, replaced by `data`.
     fn serve(c: *Ctx, data: []const u8) !void {
-        try h.writeFile(try h.fmt(c.a, "{s}/channel/{s}/{s}", .{ c.fake_dir, c.subdir, filename }), data);
+        try h.writeFile(try h.fmt(c.a, "{s}/channel/" ++ namespace ++ "/{s}/{s}", .{ c.fake_dir, c.subdir, filename }), data);
     }
 
     fn detail(c: *Ctx, r: Out) []const u8 {
@@ -143,25 +145,25 @@ const Ctx = struct {
     }
 };
 
-/// greet 1.0.0 in the fake's sparse index and channel (spec/index.md,
-/// spec/channel.md), as its data directory serves them.
+/// example/greet 1.0.0 in the fake's sparse index (version 2) and in the channel of its
+/// namespace (spec/index.md, spec/channel.md), as its data directory serves them.
 fn publish(c: *Ctx, data: []const u8, soname: []const u8) !void {
     const a = c.a;
     const sha = try sha256Hex(a, data);
     const manifest_sha = try sha256Hex(a, "greet manifest");
     const rec = try h.fmt(a,
-        \\{{"build":"{s}","deps":[],"files":[{{"filename":"{s}","sha256":"{s}","size":{d},"subdir":"{s}","url":"{s}/channel/{s}/{s}"}}],"manifest_sha256":"{s}","name":"greet","native":[{{"id":"greet","soname":"{s}"}}],"published_at":"2026-10-14T12:00:00Z","requires_mojo":"=={s}","state":"published","v":1,"version":"1.0.0"}}
+        \\{{"build":"{s}","deps":[],"files":[{{"filename":"{s}","sha256":"{s}","size":{d},"subdir":"{s}","url":"{s}/channel/{s}/{s}/{s}"}}],"manifest_sha256":"{s}","name":"example/greet","native":[{{"id":"greet","soname":"{s}"}}],"published_at":"2026-11-13T12:00:00Z","requires_mojo":"=={s}","state":"published","v":2,"version":"1.0.0"}}
         \\
-    , .{ build_tag, filename, sha, data.len, c.subdir, c.base, c.subdir, filename, manifest_sha, soname, mojo_version });
-    const index = try h.join(a, &.{ c.fake_dir, "index/gr/ee" });
+    , .{ build_tag, filename, sha, data.len, c.subdir, c.base, namespace, c.subdir, filename, manifest_sha, soname, mojo_version });
+    const index = try h.join(a, &.{ c.fake_dir, "index/v2/ex/am/" ++ namespace });
     try fs.cwd().makePath(index);
     try h.writeFile(try h.join(a, &.{ index, "greet" }), rec);
     const repodata = try h.fmt(a,
-        \\{{"info":{{"subdir":"{s}"}},"packages":{{}},"packages.conda":{{"{s}":{{"build":"{s}","build_number":0,"depends":["mojo-compiler =={s}"],"name":"mojo-greet","sha256":"{s}","size":{d},"subdir":"{s}","version":"1.0.0"}}}},"removed":[]}}
+        \\{{"info":{{"subdir":"{s}"}},"packages":{{}},"packages.conda":{{"{s}":{{"build":"{s}","build_number":0,"depends":["mojo-compiler =={s}"],"name":"mojo-example.greet","sha256":"{s}","size":{d},"subdir":"{s}","version":"1.0.0"}}}},"removed":[]}}
         \\
     , .{ c.subdir, filename, build_tag, mojo_version, sha, data.len, c.subdir });
-    try fs.cwd().makePath(try h.fmt(a, "{s}/channel/{s}", .{ c.fake_dir, c.subdir }));
-    try h.writeFile(try h.fmt(a, "{s}/channel/{s}/repodata.json", .{ c.fake_dir, c.subdir }), repodata);
+    try fs.cwd().makePath(try h.fmt(a, "{s}/channel/" ++ namespace ++ "/{s}", .{ c.fake_dir, c.subdir }));
+    try h.writeFile(try h.fmt(a, "{s}/channel/" ++ namespace ++ "/{s}/repodata.json", .{ c.fake_dir, c.subdir }), repodata);
     try c.serve(data);
 }
 
@@ -219,7 +221,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     // 2. the package
     const lib_bytes = try h.readFile(a, lib);
     const mojoc_bytes = try h.readFile(a, mojoc);
-    const meta = try h.fmt(a, "{{\"deps\": [], \"name\": \"greet\", \"native\": [{{\"file\": \"../{s}\", \"id\": \"greet\", \"soname\": \"{s}\"}}], \"schema\": 1, \"version\": \"1.0.0\"}}\n", .{ soname, soname });
+    const meta = try h.fmt(a, "{{\"deps\": [], \"name\": \"example/greet\", \"native\": [{{\"file\": \"../{s}\", \"id\": \"greet\", \"soname\": \"{s}\"}}], \"schema\": 2, \"version\": \"1.0.0\"}}\n", .{ soname, soname });
     const good = try condaPackage(a, subdir, &.{
         .{ .path = "lib/mojo/greet.mojoc", .data = mojoc_bytes, .mode = 0o644 },
         .{ .path = "lib/mojo/greet.mopm.json", .data = meta, .mode = 0o644 },
@@ -249,7 +251,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     rep.check("the lock pins the package's bytes", h.contains(lock, try h.fmt(a, "\"sha256\": \"{s}\"", .{good_sha})) and h.contains(lock, try h.fmt(a, "\"size\": {d}", .{good.len})), lock);
     rep.check("sync keeps exactly the locked bytes in .mopm/pkgs", std.mem.eql(u8, c.read(app, ".mopm/pkgs/" ++ filename) orelse "", good), "missing or other bytes");
     {
-        const rec = c.read(app, env_rel ++ "/conda-meta/mojo-greet-1.0.0-" ++ build_tag ++ ".json");
+        const rec = c.read(app, env_rel ++ "/conda-meta/mojo-example.greet-1.0.0-" ++ build_tag ++ ".json");
         var ok = false;
         if (rec) |text| {
             const v = h.parseJson(a, text) catch .null;
@@ -285,10 +287,10 @@ fn run(a: Allocator, rep: *h.Report) !void {
     // ------------------------------------------------ stale locks
     const Stale = struct { what: []const u8, deps: []const u8, mojo: []const u8, want: []const u8 };
     const stale = [_]Stale{
-        .{ .what = "a requirement the locked version does not meet", .deps = "\"example/greet\" = \"2\"", .mojo = mojo_version, .want = "mopm.lock is out of date with mopm.toml: mopm.toml needs greet \"2\", but mopm.lock has greet 1.0.0" },
-        .{ .what = "a new dependency", .deps = "\"example/greet\" = \"1\"\n\"example/other\" = \"1\"", .mojo = mojo_version, .want = "mopm.lock is out of date with mopm.toml: mopm.toml needs other, which mopm.lock does not lock" },
-        .{ .what = "a removed dependency", .deps = "", .mojo = mojo_version, .want = "mopm.lock is out of date with mopm.toml: mopm.lock locks greet 1.0.0, which nothing in mopm.toml needs" },
-        .{ .what = "another toolchain", .deps = "\"example/greet\" = \"1\"", .mojo = "1.1.0", .want = "mopm.lock is out of date with mopm.toml: mopm.lock is for mojo 1.0.0; mopm.toml's [toolchain] allows 1.1.0" },
+        .{ .what = "a requirement the locked version does not meet", .deps = "\"example/greet\" = \"2\"", .mojo = mojo_version, .want = "mopm.lock is out of date with mopm.toml: mopm.toml needs example/greet \"2\", but mopm.lock has example/greet 1.0.0" },
+        .{ .what = "a new dependency", .deps = "\"example/greet\" = \"1\"\n\"example/other\" = \"1\"", .mojo = mojo_version, .want = "mopm.lock is out of date with mopm.toml: mopm.toml needs example/other, which mopm.lock does not lock" },
+        .{ .what = "a removed dependency", .deps = "", .mojo = mojo_version, .want = "mopm.lock is out of date with mopm.toml: mopm.lock locks example/greet 1.0.0, which nothing in mopm.toml needs" },
+        .{ .what = "another toolchain", .deps = "\"example/greet\" = \"1\"", .mojo = "1.1.0", .want = "mopm.lock is out of date with mopm.toml: mopm.lock is for mojo 1.0.0; mopm.toml's mojo is 1.1.0" },
     };
     for (stale) |s| {
         _ = try c.project("app", s.deps, s.mojo);
@@ -304,7 +306,7 @@ fn run(a: Allocator, rep: *h.Report) !void {
     const fresh = try c.project("fresh", "\"example/greet\" = \"1\"", mojo_version);
     try fs.cwd().copyFile(try h.join(a, &.{ app, "mopm.lock" }), fs.cwd(), try h.join(a, &.{ fresh, "mopm.lock" }), .{});
     const kept_rel = ".mopm/pkgs/" ++ filename;
-    const url = try h.fmt(a, "{s}/channel/{s}/{s}", .{ c.base, subdir, filename });
+    const url = try h.fmt(a, "{s}/channel/" ++ namespace ++ "/{s}/{s}", .{ c.base, subdir, filename });
     const Tamper = struct { what: []const u8, data: []const u8, want: []const u8 };
     const tampers = [_]Tamper{
         .{ .what = "one byte changed", .data = flipped, .want = try h.fmt(a, "mopm sync: {s} has sha256 {s}; the pin says {s}; refused\n", .{ url, try sha256Hex(a, flipped), good_sha }) },
@@ -342,13 +344,13 @@ fn run(a: Allocator, rep: *h.Report) !void {
         const parsed = h.parseJson(a, lock_text) catch .null;
         var local_ok = false;
         if (parsed == .object) if (parsed.object.get("packages")) |pk| if (pk == .array) for (pk.array.items) |p| {
-            if (!std.mem.eql(u8, h.jsonString(p, "name") orelse "", "local")) continue;
+            if (!std.mem.eql(u8, h.jsonString(p, "name") orelse "", "example/local")) continue;
             // exactly {name, version, source, path}: no sha256, no url
             local_ok = p.object.count() == 4 and std.mem.eql(u8, h.jsonString(p, "version") orelse "", "0.2.0") and
                 std.mem.eql(u8, h.jsonString(p, "source") orelse "", "path") and std.mem.eql(u8, h.jsonString(p, "path") orelse "", "local");
         };
         rep.check("sync with a path dependency locks it as source path, with no sha256, and installs the rest", r.code == 0 and local_ok and
-            h.contains(r.stdout, "using local 0.2.0 from local (a path dependency: built from source, not downloaded)\n") and h.contains(r.stdout, installed_msg), c.detail(r));
+            h.contains(r.stdout, "using example/local 0.2.0 from local (a path dependency: built from source, not downloaded)\n") and h.contains(r.stdout, installed_msg), c.detail(r));
     }
     {
         var names = std.ArrayList([]const u8).init(a);
@@ -366,10 +368,10 @@ fn run(a: Allocator, rep: *h.Report) !void {
     try localVersion(&c, withpath, "0.2.1");
     r = try c.sync(withpath, &.{"--locked"});
     rep.check("a path dependency's new version makes the lock stale for sync --locked", r.code == 1 and
-        h.contains(r.stderr, "mopm.lock is out of date with mopm.toml: local/mopm.toml says local 0.2.1, but mopm.lock has local 0.2.0") and
+        h.contains(r.stderr, "mopm.lock is out of date with mopm.toml: local/mopm.toml says example/local 0.2.1, but mopm.lock has example/local 0.2.0") and
         std.mem.eql(u8, c.read(withpath, "mopm.lock") orelse "", locked), c.detail(r));
     r = try c.sync(withpath, &reg);
-    rep.check("sync relocks the path dependency's new version and installs", r.code == 0 and h.contains(r.stdout, "updating local 0.2.0 -> 0.2.1\n") and h.contains(r.stdout, "using local 0.2.1 from local"), c.detail(r));
+    rep.check("sync relocks the path dependency's new version and installs", r.code == 0 and h.contains(r.stdout, "updating example/local 0.2.0 -> 0.2.1\n") and h.contains(r.stdout, "using example/local 0.2.1 from local"), c.detail(r));
 }
 
 fn localVersion(c: *Ctx, withpath: []const u8, v: []const u8) !void {

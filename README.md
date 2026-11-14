@@ -95,7 +95,7 @@ spelling to print.
 | path | what |
 |---|---|
 | `src/cli/` | the `mopm` command line (Zig) |
-| `src/core/` | `metadata.zig` (parse `<name>.mopm.json`), `link_planner.zig` (compute link arguments), `toml.zig` (the strict TOML subset), `manifest.zig` (check `mopm.toml`), `scaffold.zig` (`mopm new` and `mopm init`), `env.zig` (find the environment and its packages), `mojo_cmd.zig` (the `mojo` command lines) |
+| `src/core/` | `metadata.zig` (parse `<import name>.mopm.json`, schema 2), `link_planner.zig` (compute link arguments), `toml.zig` (the strict TOML subset), `manifest.zig` (check `mopm.toml`), `scaffold.zig` (`mopm new` and `mopm init`), `env.zig` (find the environment and its packages), `mojo_cmd.zig` (the `mojo` command lines) |
 | `spec/` | draft `mopm.toml` spec and the JSON Schema for `<name>.mopm.json` |
 | `tests/` | fixtures (metadata sets, and environment trees under `tests/fixtures/env`) and golden files for `link-plan`, `--print-cmd` and running mojo; `tests/manifest/{valid,invalid}` for `mopm.toml`; `tests/new/{lib,bin}` for `mopm new`; `tests/e2e` builds real fixture packages with native libraries and runs `mopm build`, `run` and `repl` against the pinned `mojo` |
 | `rules/buck2`, `rules/bazel` | build rules (placeholders) |

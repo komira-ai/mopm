@@ -1,14 +1,21 @@
 {
-  "lock_version": 1,
+  "lock_version": 3,
+  "mojo": [
+    "1.0.0"
+  ],
   "toolchain": {
-    "mojo": "1.0.0"
+    "1.0.0": {
+      "linux-64": "3ed75e01401544e0d660ee48dc387dacce437e3833ac296d4a0601f28abd4aec",
+      "linux-aarch64": "84a22df9ff1ca84c7eb47a3b3d5eaede4c970ee85b660853f640841b5dfa03c3",
+      "osx-arm64": "0d34e9a60951231f6c2161f6620957ff086542b217b187774fdf9d82b76046a1"
+    }
   },
   "channels": [
     "https://conda.mopm.dev/"
   ],
   "packages": [
     {
-      "name": "greeter",
+      "name": "example/greeter",
       "version": "0.1.0",
       "source": "path",
       "path": "../greeter"

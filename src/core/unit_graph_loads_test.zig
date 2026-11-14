@@ -1,5 +1,5 @@
 //! Tests of the system libraries in the unit graph (spec/unit-graph.md, "System libraries"): `loads` on the
-//! `test` and `bin` units, the graph's `system_libs`, format 3 only when a unit loads, the refusal of a stale lock,
+//! `test` and `bin` units, the graph's `system_libs`, `loads` and `system_libs` only when a unit loads, the refusal of a stale lock,
 //! and a graph that is byte for byte what it was when the lock pins none. They are in a file of their own so
 //! unit_graph.zig stays small; mopm_core.zig runs them with the rest.
 
@@ -25,7 +25,7 @@ const toml_app_tail = "\n[targets]\nbins = [{ name = \"appbin\", path = \"src/ma
 const toml_app_plain = toml_app_head ++ toml_app_tail;
 const toml_app_loads = toml_app_head ++ "\n[native-dependencies]\nlibsqlite = { version = \">=3.40\", mode = \"load\" }\nz = { mode = \"link\" }\n" ++ toml_app_tail;
 
-const members = [_]install_plan.PathDep{.{ .name = "util", .version = "0.3.0", .path = "util" }};
+const members = [_]install_plan.PathDep{.{ .name = "util", .full_name = "example/util", .version = "0.3.0", .path = "util" }};
 
 fn writeWorkspace(dir: std.fs.Dir, util_toml: []const u8) !void {
     try put(dir, "src/app/__init__.mojo", "def run():\n    pass\n");
@@ -54,7 +54,7 @@ const Pins = enum {
     legacy,
 };
 
-/// A version 1 lock of the fixture: http_core for two subdirs (on linux-64 it loads libbrotlidec; the lock pins
+/// A lock of the fixture: http_core for two subdirs (on linux-64 it loads libbrotlidec; the lock pins
 /// libraries for linux-64 only, so the osx-arm64 entry loads nothing), and the member util. `sqlite_sha` is the character the sha256 of libsqlite repeats.
 fn lockText(a: Allocator, pins: Pins, sqlite_sha: u8) ![]const u8 {
     const loads: []const u8 = if (pins == .legacy) "" else ", \"loads\": [\"libbrotlidec\"]";
@@ -69,13 +69,13 @@ fn lockText(a: Allocator, pins: Pins, sqlite_sha: u8) ![]const u8 {
         });
     }
     return std.fmt.allocPrint(a,
-        \\{{"lock_version": 1, "toolchain": {{"mojo": "1.0.0"}}, "channels": ["https://conda.mopm.dev/"], "packages": [
-        \\  {{"name": "http_core", "version": "1.2.5", "build": "mojo1.0.0_0", "subdir": "linux-64", "channel": "https://conda.mopm.dev/", "url": "https://conda.mopm.dev/linux-64/mojo-http_core-1.2.5-mojo1.0.0_0.conda", "sha256": "{s}", "size": 1000, "mojo": "1.0.0"{s}}},
-        \\  {{"name": "http_core", "version": "1.2.5", "build": "mojo1.0.0_0", "subdir": "osx-arm64", "channel": "https://conda.mopm.dev/", "url": "https://conda.mopm.dev/osx-arm64/mojo-http_core-1.2.5-mojo1.0.0_0.conda", "sha256": "{s}", "size": 1000, "mojo": "1.0.0"}},
-        \\  {{"name": "util", "version": "0.3.0", "source": "path", "path": "util"}}
+        \\{{"lock_version": 3, "mojo": ["1.0.0"], "toolchain": {{"1.0.0": {{"linux-64": "{s}"}}}}, "channels": ["https://conda.mopm.dev/"], "packages": [
+        \\  {{"name": "example/http_core", "version": "1.2.5", "subdir": "linux-64", "channel": "https://conda.mopm.dev/example/", "artifacts": {{"1.0.0": {{"build": "mojo1.0.0_0", "url": "https://conda.mopm.dev/example/linux-64/mojo-example.http_core-1.2.5-mojo1.0.0_0.conda", "sha256": "{s}", "size": 1000}}}}{s}}},
+        \\  {{"name": "example/http_core", "version": "1.2.5", "subdir": "osx-arm64", "channel": "https://conda.mopm.dev/example/", "artifacts": {{"1.0.0": {{"build": "mojo1.0.0_0", "url": "https://conda.mopm.dev/example/osx-arm64/mojo-example.http_core-1.2.5-mojo1.0.0_0.conda", "sha256": "{s}", "size": 1000}}}}}},
+        \\  {{"name": "example/util", "version": "0.3.0", "source": "path", "path": "util"}}
         \\]{s}}}
         \\
-    , .{ try shaOf(a, 'a'), loads, try shaOf(a, 'a'), sys });
+    , .{ try shaOf(a, 'c'), try shaOf(a, 'a'), loads, try shaOf(a, 'a'), sys });
 }
 
 fn fakeToolchain(subdir: []const u8) ug.Toolchain {
@@ -142,8 +142,8 @@ test "the test and the binary load the libraries of their closure and what those
     }
     try std.testing.expectEqual(@as(usize, 1), tests);
     try std.testing.expectEqual(@as(usize, 1), bins);
-    // A graph with loads says so, and lists the pins of its subdir: every library of the lock, by name.
-    try std.testing.expectEqual(ug.format_loads, g.unit_graph);
+    // A graph with loads lists the pins of its subdir: every library of the lock, by name.
+    try std.testing.expectEqual(ug.format_version, g.unit_graph);
     try std.testing.expectEqual(@as(usize, 4), g.system_libs.len);
     try std.testing.expectEqualStrings("libbrotlicommon", g.system_libs[0].name);
     try std.testing.expectEqualStrings("lz4-c", g.system_libs[3].name);
@@ -158,17 +158,17 @@ test "the graph is printed with its format, system_libs and loads, and read back
     var why: []const u8 = "";
     const g = try graphOf(a, toml_app_loads, toml_util_loads, try lockText(a, .full, 'e'), "linux-64", &why);
     const text = try ug.render(a, g);
-    try std.testing.expect(std.mem.indexOf(u8, text, "\"unit_graph\": 3,") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"unit_graph\": 6,") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "\"system_libs\": [\n    {\"name\": \"libbrotlicommon\", \"version\": \"1.0\", \"build\": \"h0_0\", \"url\": ") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "\"loads\": [\"libbrotlicommon\", \"libbrotlidec\", \"libsqlite\", \"lz4-c\"],\n      \"profile\"") != null);
     const again = try ug.parse(a, text);
-    try std.testing.expectEqual(ug.format_loads, again.unit_graph);
+    try std.testing.expectEqual(ug.format_version, again.unit_graph);
     try std.testing.expectEqual(g.system_libs.len, again.system_libs.len);
     try expectLoads((try unitNamed(g, "test")).loads, (try unitNamed(again, "test")).loads);
     try std.testing.expectEqualStrings(text, try ug.render(a, again));
 }
 
-test "a lock that pins no system library gives the graph it always gave: format 2, no loads, the same bytes" {
+test "a lock that pins no system library gives a graph with no loads and no system_libs, the same bytes as a project that names no library" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
@@ -182,12 +182,12 @@ test "a lock that pins no system library gives the graph it always gave: format 
     for (old.units) |u| try std.testing.expectEqual(@as(usize, 0), u.loads.len);
     const text = try ug.render(a, old);
     try std.testing.expectEqualStrings(try ug.render(a, plain), text);
-    try std.testing.expect(std.mem.indexOf(u8, text, "\"unit_graph\": 2,") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"unit_graph\": 6,") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "loads") == null);
     try std.testing.expect(std.mem.indexOf(u8, text, "system_libs") == null);
 }
 
-test "a project that loads nothing keeps format 2 even when the lock pins libraries" {
+test "a project that loads nothing has no system_libs even when the lock pins libraries" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();

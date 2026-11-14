@@ -1,6 +1,6 @@
-app 0.2.0
-├── core 0.1.0 (core)
-│   └── util 0.1.0 (util)
-└── util 0.1.0 (util)
+example/app 0.2.0
+├── example/core 0.1.0 (core)
+│   └── example/util 0.1.0 (util)
+└── example/util 0.1.0 (util)
 [dev-dependencies]
-└── testkit 0.1.0 (testkit)
+└── example/testkit 0.1.0 (testkit)

@@ -17,6 +17,11 @@
 //! reads only mopm.toml and mopm.lock. Each index version that is not
 //! MAJOR.MINOR.PATCH is ignored with a warning on stderr.
 //!
+//! A package is named by its full name, `<namespace>/<name>`, in the lock, in `update` and `add`, and in every message.
+//! A lock of version 1 or 2 predates namespaces: `lock`, `update`, `add`, `remove` and `sync` without `--locked` take it
+//! for no lock and write a version 3 one; `tree`, `plan`, `build` and `sync --locked` refuse it, saying so. A lock is
+//! always written for the Mojo versions of the project, with the toolchain closure of each that mopm pins.
+//!
 //! `sync` is in sync_cmd.zig.
 //!
 //! `--overlay <dir>` (`add`, `lock`, `sync`) reads a staged set (core/overlay.zig) as a read-only local channel
@@ -28,7 +33,7 @@
 //! versions are published. When the registry is asked anyway, a staged version it already holds with other bytes is
 //! refused. `sync` installs a locked file from the set when the set holds exactly the bytes the lock pins.
 //!
-//! A path dependency (`name = { path = "..." }`, in [dependencies] or
+//! A path dependency (`"<namespace>/<name>" = { path = "..." }`, in [dependencies] or
 //! [dev-dependencies], and in a path dependency's own [dependencies]) is
 //! read from `<path>/mopm.toml`: it is locked with `source = path` and that
 //! file's version, and its own requirements are resolved with the project's.
@@ -210,7 +215,7 @@ fn joinPath(arena: Allocator, dir: []const u8, rel: []const u8) ![]const u8 {
     return std.fs.path.resolvePosix(arena, &.{ dir, r });
 }
 
-/// Reads the path dependency `full` (flat name `name`, its import name) at `path` (relative to the project) and,
+/// Reads the path dependency `full` (`name` is its import name) at `path` (relative to the project) and,
 /// through it, its own dependencies. `fulls` holds the full name of each entry of `paths`, in step. False when it
 /// failed (reported).
 fn addPathDep(arena: Allocator, cmd: Command, full: []const u8, name: []const u8, path: []const u8, needed_by: []const u8, roots: *std.ArrayList(resolve.Root), paths: *std.ArrayList(plan.PathDep), fulls: *std.ArrayList([]const u8)) anyerror!bool {
@@ -233,9 +238,9 @@ fn addPathDep(arena: Allocator, cmd: Command, full: []const u8, name: []const u8
     try fulls.append(full);
     var names = std.ArrayList([]const u8).init(arena);
     for (m.dependencies) |d| {
-        try names.append(d.name);
+        try names.append(d.full_name);
         switch (d.source) {
-            .version => |req| try roots.append(.{ .name = d.name, .requirement = req, .from = file }),
+            .version => |req| try roots.append(.{ .name = d.full_name, .requirement = req, .from = file }),
             .path => |p| if (!try addPathDep(arena, cmd, d.full_name, d.name, try joinPath(arena, path, p), file, roots, paths, fulls)) return false,
         }
     }
@@ -270,12 +275,12 @@ pub fn projectOf(arena: Allocator, cmd: Command, m: manifest.Manifest) !?Project
         for (group) |d| {
             switch (d.source) {
                 .version => |req| {
-                    try roots.append(.{ .name = d.name, .requirement = req });
-                    try lists[g].append(d.name);
+                    try roots.append(.{ .name = d.full_name, .requirement = req });
+                    try lists[g].append(d.full_name);
                 },
                 .path => |p| {
                     if (!try addPathDep(arena, cmd, d.full_name, d.name, try joinPath(arena, "", p), manifest_path, &roots, &paths, &fulls)) return null;
-                    try lists[g].append(d.name);
+                    try lists[g].append(d.full_name);
                 },
             }
         }
@@ -296,17 +301,42 @@ pub fn importClash(arena: Allocator, cmd: Command, project: Project, l: lock.Loc
     return true;
 }
 
-/// The existing lock, null when there is none, or error.Invalid (reported).
-pub fn readLock(arena: Allocator, cmd: Command) !?lock.Lock {
+/// The existing lock, null when there is none or it predates namespaces (`stale` then holds the message that says
+/// so), or error.Invalid (reported).
+pub fn readLockStale(arena: Allocator, cmd: Command, stale: *?[]const u8) !?lock.Lock {
     const text = std.fs.cwd().readFileAlloc(arena, lock_path, 64 << 20) catch |e| {
         if (e == error.FileNotFound) return null;
         return e;
     };
+    return parseLock(arena, cmd, text, stale);
+}
+
+fn parseLock(arena: Allocator, cmd: Command, text: []const u8, stale: *?[]const u8) !?lock.Lock {
     var why: []const u8 = "";
-    return lock.parse(arena, text, &why) catch |e| {
-        if (e == error.Invalid) err(cmd, "{s}: {s}\n", .{ lock_path, why });
-        return e;
+    const l = lock.parse(arena, text, &why) catch |e| switch (e) {
+        error.Stale => {
+            stale.* = why;
+            return null;
+        },
+        error.Invalid => {
+            err(cmd, "{s}: {s}\n", .{ lock_path, why });
+            return e;
+        },
+        error.OutOfMemory => return e,
     };
+    return l;
+}
+
+/// The existing lock, null when there is none, or error.Invalid (reported): a lock that predates namespaces is
+/// refused with the message that says so.
+pub fn readLock(arena: Allocator, cmd: Command) !?lock.Lock {
+    var stale: ?[]const u8 = null;
+    const l = try readLockStale(arena, cmd, &stale);
+    if (stale) |why| {
+        err(cmd, "{s}\n", .{why});
+        return error.Invalid;
+    }
+    return l;
 }
 
 /// Reads the sparse index of a registry, anonymously.
@@ -327,14 +357,14 @@ const IndexSource = struct {
     }
 };
 
-/// Reads `<channel><subdir>/repodata.json`.
+/// Reads `<channel><namespace>/<subdir>/repodata.json`: each namespace has its own channel under the root.
 const ChannelSource = struct {
     channel_url: []const u8,
     /// The most a package file may be: what `mopm publish` sends (the registry's 100 MB), no more.
     max_conda: usize = publish_cmd.max_file_bytes,
 
-    pub fn fetch(self: ChannelSource, arena: Allocator, subdir: []const u8, diag: *resolve.Diagnostic) resolve.Error![]const u8 {
-        const url = try std.fmt.allocPrint(arena, "{s}{s}/repodata.json", .{ self.channel_url, subdir });
+    pub fn fetch(self: ChannelSource, arena: Allocator, namespace: []const u8, subdir: []const u8, diag: *resolve.Diagnostic) resolve.Error![]const u8 {
+        const url = try std.fmt.allocPrint(arena, "{s}{s}/{s}/repodata.json", .{ self.channel_url, namespace, subdir });
         const answer = http.request(arena, .GET, url, .{}) catch |e| {
             return resolve.fail(arena, diag, .bad_channel, "cannot read {s}: {s}", .{ url, @errorName(e) });
         };
@@ -342,10 +372,10 @@ const ChannelSource = struct {
         return answer.body;
     }
 
-    /// Reads `<channel><subdir>/<filename>`: a package file, for the natives `mopm lock` hashes. The body is held
+    /// Reads `<channel><namespace>/<subdir>/<filename>`: a package file, for the natives `mopm lock` hashes. The body is held
     /// in memory, up to `max_conda` bytes; a longer one is refused as too large.
-    pub fn fetchConda(self: ChannelSource, arena: Allocator, subdir: []const u8, filename: []const u8, diag: *resolve.Diagnostic) resolve.Error![]const u8 {
-        const url = try std.fmt.allocPrint(arena, "{s}{s}/{s}", .{ self.channel_url, subdir, filename });
+    pub fn fetchConda(self: ChannelSource, arena: Allocator, namespace: []const u8, subdir: []const u8, filename: []const u8, diag: *resolve.Diagnostic) resolve.Error![]const u8 {
+        const url = try std.fmt.allocPrint(arena, "{s}{s}/{s}/{s}", .{ self.channel_url, namespace, subdir, filename });
         const answer = http.request(arena, .GET, url, .{ .max_body = self.max_conda }) catch |e| {
             if (e == error.StreamTooLong) return resolve.fail(arena, diag, .bad_channel, "{s} is larger than {d} bytes, the most a package file may be", .{ url, self.max_conda });
             return resolve.fail(arena, diag, .bad_channel, "cannot read {s}: {s}", .{ url, @errorName(e) });
@@ -392,14 +422,14 @@ const RegistryIndex = struct {
 const RegistryChannel = struct {
     reg: *Registry,
 
-    pub fn fetch(self: RegistryChannel, arena: Allocator, subdir: []const u8, diag: *resolve.Diagnostic) resolve.Error![]const u8 {
+    pub fn fetch(self: RegistryChannel, arena: Allocator, namespace: []const u8, subdir: []const u8, diag: *resolve.Diagnostic) resolve.Error![]const u8 {
         const c = try self.reg.get(arena, diag);
-        return (ChannelSource{ .channel_url = c.channel_url }).fetch(arena, subdir, diag);
+        return (ChannelSource{ .channel_url = c.channel_url }).fetch(arena, namespace, subdir, diag);
     }
 
-    pub fn fetchConda(self: RegistryChannel, arena: Allocator, subdir: []const u8, filename: []const u8, diag: *resolve.Diagnostic) resolve.Error![]const u8 {
+    pub fn fetchConda(self: RegistryChannel, arena: Allocator, namespace: []const u8, subdir: []const u8, filename: []const u8, diag: *resolve.Diagnostic) resolve.Error![]const u8 {
         const c = try self.reg.get(arena, diag);
-        return (ChannelSource{ .channel_url = c.channel_url }).fetchConda(arena, subdir, filename, diag);
+        return (ChannelSource{ .channel_url = c.channel_url }).fetchConda(arena, namespace, subdir, filename, diag);
     }
 };
 
@@ -462,7 +492,11 @@ pub fn loadOverlay(arena: Allocator, cmd: Command, dir: []const u8) !?overlay.Ov
 fn run(arena: Allocator, cmd: Command, args: Args, cli_version: []const u8) !u8 {
     if (cmd == .add or cmd == .remove) return edit_cmd.edit(arena, cmd, args, cli_version);
     const project = (try readProject(arena, cmd)) orelse return 1;
-    const old = readLock(arena, cmd) catch |e| {
+    // `lock`, `update` and a `sync` that may lock treat a lock that predates namespaces as no lock; every other
+    // command refuses it.
+    var stale: ?[]const u8 = null;
+    const rewrites = cmd == .lock or cmd == .update or (cmd == .sync and !args.locked);
+    const old = (if (rewrites) readLockStale(arena, cmd, &stale) else readLock(arena, cmd)) catch |e| {
         if (e == error.Invalid) return 1;
         return e;
     };
@@ -544,8 +578,8 @@ pub fn resolveProject(arena: Allocator, cmd: Command, project: Project, old: ?lo
         var pins = std.ArrayList(resolve.Pin).init(arena);
         if (old) |o| {
             const update_all = cmd == .update and args.packages.len == 0;
-            if (std.mem.eql(u8, o.mojo, mojo) and !update_all) {
-                for (o.packages) |p| {
+            if (!update_all and (o.mojos.len > 0 or std.mem.eql(u8, o.mojo, mojo))) {
+                for ((try lock.forMojo(arena, o, mojo)).packages) |p| {
                     if (p.source == .path) continue;
                     var named = false;
                     for (args.packages) |n| named = named or std.mem.eql(u8, n, p.name);
@@ -559,12 +593,18 @@ pub fn resolveProject(arena: Allocator, cmd: Command, project: Project, old: ?lo
             try failures.writer().print("  with mojo {s}: {s}\n", .{ mojo, diag.message });
             continue;
         };
-        const from_registry = layer.build(arena, res, old, &diag) catch |e| {
+        const built = layer.build(arena, res, old, &diag) catch |e| {
             if (e != error.ResolveFailed) return e;
             err(cmd, "{s}\n", .{diag.message});
             return null;
         };
-        if (try importClash(arena, cmd, project, from_registry)) return null;
+        if (try importClash(arena, cmd, project, built)) return null;
+        // The lock is written in the shape of a lock for several Mojo versions, with the toolchain closures mopm
+        // pins for this one (none for a version mopm pins no toolchain for).
+        var closures = std.ArrayList(lock.Closure).init(arena);
+        var why: []const u8 = "";
+        if (!try addClosures(arena, mojo, &closures, &why)) closures.clearRetainingCapacity();
+        const from_registry = try plan.mergeMojos(arena, &.{built}, closures.items);
         const new = plan.addPaths(arena, from_registry, project.paths, &diag) catch |e| {
             if (e != error.ResolveFailed) return e;
             err(cmd, "{s}\n", .{diag.message});
@@ -573,8 +613,21 @@ pub fn resolveProject(arena: Allocator, cmd: Command, project: Project, old: ?lo
         const pinned = (try withSystemLibs(arena, cmd, project, new)) orelse return null;
         return .{ .lock = pinned, .count = res.packages.len + project.paths.len, .mojo = mojo };
     }
-    err(cmd, "cannot resolve the dependencies of {s}:\n{s}", .{ project.m.package.name, failures.items });
+    err(cmd, "cannot resolve the dependencies of {s}:\n{s}", .{ project.m.package.full_name, failures.items });
     return null;
+}
+
+/// Appends the toolchain closure of `mojo` for each subdir mopm pins one for. False, with the refusal in `why`, when
+/// mopm pins no toolchain for `mojo`.
+fn addClosures(arena: Allocator, mojo: []const u8, closures: *std.ArrayList(lock.Closure), why: *[]const u8) !bool {
+    for (unit_graph.lock_subdirs) |subdir| {
+        const tc = unit_graph.toolchainFor(arena, mojo, subdir, why) catch |e| {
+            if (e == error.Refused) return false;
+            return e;
+        };
+        try closures.append(.{ .mojo = mojo, .subdir = subdir, .sha256 = tc.closure_sha256 });
+    }
+    return true;
 }
 
 fn lessStr(_: void, a: []const u8, b: []const u8) bool {
@@ -617,7 +670,7 @@ fn withSystemLibs(arena: Allocator, cmd: Command, project: Project, l: lock.Lock
 
 /// `[package] mojo`: resolves the project once for each Mojo version it lists
 /// (each takes the newest version that has a build for it) and makes one
-/// version 2 lock of the results. Null when a version cannot be resolved or
+/// version 3 lock of the results. Null when a version cannot be resolved or
 /// has no toolchain pinned by this mopm (reported).
 fn resolveAll(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock, args: Args, layer: *Layer, warnings: *std.ArrayList([]const u8)) !?Resolved {
     var versions = std.ArrayList([]const u8).init(arena);
@@ -628,15 +681,9 @@ fn resolveAll(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock,
     for (versions.items) |mojo| {
         // A version mopm pins no toolchain for cannot be locked: say so first.
         var why: []const u8 = "";
-        for (unit_graph.lock_subdirs) |subdir| {
-            const tc = unit_graph.toolchainFor(arena, mojo, subdir, &why) catch |e| {
-                if (e == error.Refused) {
-                    err(cmd, "{s}\n", .{why});
-                    return null;
-                }
-                return e;
-            };
-            try closures.append(.{ .mojo = mojo, .subdir = subdir, .sha256 = tc.closure_sha256 });
+        if (!try addClosures(arena, mojo, &closures, &why)) {
+            err(cmd, "{s}\n", .{why});
+            return null;
         }
         var pins = std.ArrayList(resolve.Pin).init(arena);
         if (old) |o| {
@@ -656,7 +703,7 @@ fn resolveAll(arena: Allocator, cmd: Command, project: Project, old: ?lock.Lock,
             if (diag.kind == .compiler_mismatch) {
                 std.io.getStdErr().writer().print("error: {s}\n", .{diag.message}) catch {};
             } else {
-                err(cmd, "cannot resolve the dependencies of {s} with mojo {s}: {s}\n", .{ project.m.package.name, mojo, diag.message });
+                err(cmd, "cannot resolve the dependencies of {s} with mojo {s}: {s}\n", .{ project.m.package.full_name, mojo, diag.message });
             }
             return null;
         };
@@ -705,7 +752,7 @@ fn tree(arena: Allocator, project: Project, l: ?lock.Lock) !u8 {
         }
     }
     var buf = std.ArrayList(u8).init(arena);
-    try plan.writeTree(arena, project.m.package.name, project.m.package.version, project.deps, project.dev_deps, locked, buf.writer());
+    try plan.writeTree(arena, project.m.package.full_name, project.m.package.version, project.deps, project.dev_deps, locked, buf.writer());
     try std.io.getStdOut().writeAll(buf.items);
     return 0;
 }
@@ -850,9 +897,9 @@ test "fetchConda reads a package file up to its limit and refuses a longer one b
     var diag: resolve.Diagnostic = .{};
     // The default limit is publish's maximum, which is more than the 64 MiB the HTTP client used to impose.
     try std.testing.expectEqual(@as(usize, 100_000_000), (ChannelSource{ .channel_url = url }).max_conda);
-    const ok = try (ChannelSource{ .channel_url = url, .max_conda = 2000 }).fetchConda(a, "linux-64", "f.conda", &diag);
+    const ok = try (ChannelSource{ .channel_url = url, .max_conda = 2000 }).fetchConda(a, "komira-ai", "linux-64", "f.conda", &diag);
     try std.testing.expectEqual(@as(usize, 2000), ok.len);
-    try std.testing.expectError(error.ResolveFailed, (ChannelSource{ .channel_url = url, .max_conda = 1999 }).fetchConda(a, "linux-64", "f.conda", &diag));
+    try std.testing.expectError(error.ResolveFailed, (ChannelSource{ .channel_url = url, .max_conda = 1999 }).fetchConda(a, "komira-ai", "linux-64", "f.conda", &diag));
     try std.testing.expect(std.mem.indexOf(u8, diag.message, "f.conda is larger than 1999 bytes, the most a package file may be") != null);
 }
 
@@ -882,6 +929,9 @@ test "path dependencies are matched by full name: one import name in two namespa
     const p = (try projectOf(a, .lock, same)).?;
     try std.testing.expectEqual(@as(usize, 2), p.paths.len);
     try std.testing.expectEqualStrings("util", p.paths[0].name);
+    try std.testing.expectEqualStrings("example/util", p.paths[0].full_name);
+    try std.testing.expectEqualStrings("example/util", p.deps[0]);
+    try std.testing.expectEqualStrings("example/util", p.paths[1].deps[0]);
 
     const other = try manifest.parse(a, try std.fmt.allocPrint(a, top, .{ root, "mid_other", root, "mid_other" }), &diag);
     try std.testing.expect((try projectOf(a, .lock, other)) == null);
@@ -893,13 +943,38 @@ test "a lock read is checked: the root against a locked registry package of its 
     const a = arena_state.allocator();
     var diag: manifest.Diagnostic = .{};
     const m = try manifest.parse(a, "[package]\nname = \"example/json\"\nversion = \"0.1.0\"\n\n[dependencies]\n\"example/http\" = \"0.3\"\n", &diag);
-    const project = Project{ .m = m, .roots = &.{}, .paths = &.{}, .deps = &.{"http"}, .dev_deps = &.{} };
-    // http 0.3.0 needs a json no manifest names: a second package with the import name json.
+    const project = Project{ .m = m, .roots = &.{}, .paths = &.{}, .deps = &.{"example/http"}, .dev_deps = &.{} };
+    // example/http 0.3.0 needs other/json, which no manifest names: a second package with the import name json.
     const clash = lock.Lock{ .mojo = "1.0.0", .channels = &.{}, .packages = &.{
-        .{ .name = "http", .version = "0.3.0", .deps = &.{"json"} },
-        .{ .name = "json", .version = "1.2.0" },
+        .{ .name = "example/http", .version = "0.3.0", .deps = &.{"other/json"} },
+        .{ .name = "other/json", .version = "1.2.0" },
     } };
     try std.testing.expect(try importClash(a, .sync, project, clash));
-    const sound = lock.Lock{ .mojo = "1.0.0", .channels = &.{}, .packages = &.{.{ .name = "http", .version = "0.3.0" }} };
+    const sound = lock.Lock{ .mojo = "1.0.0", .channels = &.{}, .packages = &.{.{ .name = "example/http", .version = "0.3.0" }} };
     try std.testing.expect(!try importClash(a, .tree, project, sound));
+}
+
+test "a lock that predates namespaces is no lock to a command that rewrites it, and its message to the rest" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const v2 = "{\"lock_version\": 2, \"mojo\": [\"1.0.0\"], \"toolchain\": {}, \"channels\": [\"https://conda.mopm.dev/\"], \"packages\": []}";
+    var stale: ?[]const u8 = null;
+    try std.testing.expect((try parseLock(a, .lock, v2, &stale)) == null);
+    try std.testing.expectEqualStrings("mopm.lock predates namespaces (lock_version 2); run 'mopm lock'", stale.?);
+
+    const v1 = "{\"lock_version\": 1, \"toolchain\": {\"mojo\": \"1.0.0\"}, \"channels\": [\"https://conda.mopm.dev/\"], \"packages\": []}";
+    stale = null;
+    try std.testing.expect((try parseLock(a, .sync, v1, &stale)) == null);
+    try std.testing.expectEqualStrings("mopm.lock predates namespaces (lock_version 1); run 'mopm lock'", stale.?);
+
+    const v3 = "{\"lock_version\": 3, \"mojo\": [\"1.0.0\"], \"toolchain\": {}, \"channels\": [\"https://conda.mopm.dev/\"], \"packages\": []}";
+    stale = null;
+    const l = (try parseLock(a, .lock, v3, &stale)).?;
+    try std.testing.expect(stale == null);
+    try std.testing.expectEqualStrings("1.0.0", l.mojo);
+
+    stale = null;
+    try std.testing.expectError(error.Invalid, parseLock(a, .lock, "{\"lock_version\": 3}", &stale));
+    try std.testing.expect(stale == null);
 }

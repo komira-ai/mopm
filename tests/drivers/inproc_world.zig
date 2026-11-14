@@ -2,6 +2,10 @@
 //! host. Shared by the in-process tests of the current client (group_readmes_inproc_test.zig) and of the previous release's client
 //! and registry (compat_v0_0_104_test.zig), which are different types of the same shape; `Wire` is generic over both.
 //!
+//! A package name is a full name, `<namespace>/<name>`, for the current client and registry (plan.json version 2, `/api/v2`, files
+//! `mojo-<namespace>.<name>-...`) and a bare name for the previous release (plan.json version 1, `/api/v1`, files
+//! `mojo-<name>-...`); every helper here takes the form from the name: a name with a `/` is a full name.
+//!
 //! `Wire(NetT, FxT, ReplyT)` is a world of one registry: `FxT` is its fixture (`setup`, `deinit`, `call`, `state`, `alice`, `life`),
 //! `NetT` the client's `Net` type (a `ptr`, and a `vtable` of `request`, `sleep` and `now`), `ReplyT` what `FxT.call` answers. The
 //! `Net` hands each request to the handler, records what the run sent, and keeps a clock that only `sleep` moves.
@@ -13,6 +17,10 @@ const core = @import("mopm_core");
 /// A loopback address: the client sends an upload only to https or loopback http. No socket is ever opened to it.
 pub const base = "http://127.0.0.1:1";
 pub const api_url = base ++ "/api/v1";
+pub const api_v2_url = base ++ "/api/v2";
+
+/// The namespace of the packages a world made with full names: the user namespace of the account that owns them.
+pub const namespace = "example";
 
 pub const Seen = struct { method: std.http.Method, path: []const u8, token: ?[]const u8, body: []const u8 };
 
@@ -27,12 +35,21 @@ pub fn Wire(comptime NetT: type, comptime FxT: type, comptime ReplyT: type) type
         clock: i64 = 1000,
         /// The next commit is applied by the registry and its answer is lost (the connection resets).
         lose_commit_answer: bool = false,
+        /// The packages are full names, served under `/api/v2`; otherwise bare names under `/api/v1`.
+        v2: bool = false,
 
+        /// Opens a registry holding the packages `names`, all full names of the namespace `example` (an account `example` creates
+        /// them through the API and holds a token that publishes and yanks them) or all bare names (v1 packages of the account
+        /// `alice`, added directly).
         pub fn open(a: Allocator, w: *World, names: []const []const u8) !void {
             w.* = .{ .a = a, .seen = std.ArrayList(Seen).init(a) };
             try w.fx.setup();
             w.fx.state.base_url = base;
             const life = w.fx.life.allocator();
+            if (names.len > 0 and std.mem.indexOfScalar(u8, names[0], '/') != null) {
+                w.v2 = true;
+                return w.openV2(names);
+            }
             const s = &w.fx.state;
             const owned = try life.alloc([]const u8, names.len);
             for (names, owned) |n, *o| {
@@ -41,6 +58,25 @@ pub fn Wire(comptime NetT: type, comptime FxT: type, comptime ReplyT: type) type
                 try p.owners.append(life, w.fx.alice);
             }
             _ = try s.addToken(.{ .id = "t9", .secret = w.token, .kind = .api, .user = w.fx.alice, .scopes = &.{ .publish, .yank }, .packages = owned, .created_at = s.now(), .expires_at = s.now() + 86400 });
+        }
+
+        fn openV2(w: *World, names: []const []const u8) !void {
+            const life = w.fx.life.allocator();
+            const login = try w.fx.call(.POST, "/_fake/session", "{\"handle\":\"" ++ namespace ++ "\"}", null);
+            const session = stringKey(login.value, "token") orelse return error.NoSession;
+            var list = std.ArrayList(u8).init(life);
+            try list.appendSlice("{\"name\":\"inproc\",\"scopes\":[\"publish\",\"yank\"],\"expires_in_days\":1,\"packages\":[");
+            for (names, 0..) |n, i| {
+                if (!std.mem.startsWith(u8, n, namespace ++ "/")) return error.NameOutsideNamespace;
+                const made = try w.fx.call(.PUT, try std.fmt.allocPrint(life, "/api/v2/packages/{s}", .{n}), "", session);
+                if (made.status != 201) return error.PackageNotCreated;
+                if (i != 0) try list.append(',');
+                try list.writer().print("\"{s}\"", .{n});
+            }
+            try list.appendSlice("]}");
+            const token = try w.fx.call(.POST, "/api/v2/me/tokens", list.items, session);
+            if (token.status != 201) return error.TokenNotCreated;
+            w.token = stringKey(token.value, "token") orelse return error.TokenNotCreated;
         }
 
         pub fn close(w: *World) void {
@@ -80,19 +116,24 @@ pub fn Wire(comptime NetT: type, comptime FxT: type, comptime ReplyT: type) type
             _ = try w.fx.call(.POST, "/_fake/readme_objects", if (on) "{\"enabled\":true}" else "{\"enabled\":false}", null);
         }
 
+        /// The path prefix of the API the packages of this world are served under.
+        pub fn apiPath(w: *const World) []const u8 {
+            return if (w.v2) "/api/v2" else "/api/v1";
+        }
+
         pub fn get(w: *World, path: []const u8) !ReplyT {
             return w.fx.call(.GET, path, "", null);
         }
 
         /// The `readme` of a published version as getVersion serves it: null when the version has no such key.
         pub fn versionReadme(w: *World, name: []const u8, version: []const u8) !?[]const u8 {
-            const r = try w.get(try std.fmt.allocPrint(w.a, "/api/v1/packages/{s}/{s}", .{ name, version }));
+            const r = try w.get(try std.fmt.allocPrint(w.a, "{s}/packages/{s}/{s}", .{ w.apiPath(), name, version }));
             try std.testing.expectEqual(@as(u16, 200), r.status);
             return stringKey(r.value, "readme");
         }
 
         pub fn packageReadme(w: *World, name: []const u8) !?[]const u8 {
-            const r = try w.get(try std.fmt.allocPrint(w.a, "/api/v1/packages/{s}", .{name}));
+            const r = try w.get(try std.fmt.allocPrint(w.a, "{s}/packages/{s}", .{ w.apiPath(), name }));
             try std.testing.expectEqual(@as(u16, 200), r.status);
             return stringKey(r.value, "readme");
         }
@@ -101,14 +142,14 @@ pub fn Wire(comptime NetT: type, comptime FxT: type, comptime ReplyT: type) type
         pub fn published(w: *World, prefix: []const u8, members: usize, version: []const u8) !usize {
             var n: usize = 0;
             for (0..members) |i| {
-                const r = try w.get(try std.fmt.allocPrint(w.a, "/api/v1/packages/{s}{d}/{s}", .{ prefix, i, version }));
+                const r = try w.get(try std.fmt.allocPrint(w.a, "{s}/packages/{s}{d}/{s}", .{ w.apiPath(), prefix, i, version }));
                 if (r.status == 200 and std.mem.eql(u8, stringKey(r.value, "state") orelse "", "published")) n += 1;
             }
             return n;
         }
 
         pub fn groupStatus(w: *World, id: []const u8) ![]const u8 {
-            const r = try w.fx.call(.GET, try std.fmt.allocPrint(w.a, "/api/v1/groups/{s}", .{id}), "", w.token);
+            const r = try w.fx.call(.GET, try std.fmt.allocPrint(w.a, "{s}/groups/{s}", .{ w.apiPath(), id }), "", w.token);
             return stringKey(r.value, "status") orelse "(none)";
         }
 
@@ -154,7 +195,11 @@ pub fn nameOf(a: Allocator, prefix: []const u8, i: usize) ![]u8 {
     return std.fmt.allocPrint(a, "{s}{d}", .{ prefix, i });
 }
 
+/// The file of `name` at `version`: `mojo-<namespace>.<name>-...` for a full name, `mojo-<name>-...` for a bare one.
 pub fn filenameOf(a: Allocator, name: []const u8, version: []const u8) ![]u8 {
+    if (std.mem.indexOfScalar(u8, name, '/')) |at| {
+        return std.fmt.allocPrint(a, "mojo-{s}.{s}-{s}-mojo1.0.0_0.conda", .{ name[0..at], name[at + 1 ..], version });
+    }
     return std.fmt.allocPrint(a, "mojo-{s}-{s}-mojo1.0.0_0.conda", .{ name, version });
 }
 
@@ -186,10 +231,11 @@ pub fn stageSet(a: Allocator, dir: std.fs.Dir, prefix: []const u8, version: []co
     return stageNamed(a, dir, try namesOf(a, prefix, texts.len), version, texts);
 }
 
-/// `stageSet` for members of the given names.
+/// `stageSet` for members of the given names: full names make a plan of version 2, bare names one of version 1.
 pub fn stageNamed(a: Allocator, dir: std.fs.Dir, names: []const []const u8, version: []const u8, texts: []const ?[]const u8) !void {
     var plan = std.ArrayList(u8).init(a);
-    try plan.appendSlice("{\"version\":1,\"members\":[");
+    const plan_version: u8 = if (names.len > 0 and std.mem.indexOfScalar(u8, names[0], '/') != null) 2 else 1;
+    try plan.writer().print("{{\"version\":{d},\"members\":[", .{plan_version});
     try dir.makePath("noarch");
     for (texts, names, 0..) |text, name, i| {
         const bytes = try std.fmt.allocPrint(a, "the bytes of {s} {s}", .{ name, version });
@@ -197,7 +243,9 @@ pub fn stageNamed(a: Allocator, dir: std.fs.Dir, names: []const []const u8, vers
         try dir.writeFile(try std.fmt.allocPrint(a, "noarch/{s}", .{filename}), bytes);
         var key: []const u8 = "";
         if (text) |t| {
-            try dir.writeFile(try std.fmt.allocPrint(a, "{s}.md", .{name}), t);
+            const readme_file = try std.fmt.allocPrint(a, "{s}.md", .{name});
+            if (std.fs.path.dirname(readme_file)) |parent| try dir.makePath(parent);
+            try dir.writeFile(readme_file, t);
             key = try std.fmt.allocPrint(a, "\"readme\":\"{s}.md\",", .{name});
         }
         if (i != 0) try plan.append(',');
@@ -260,7 +308,7 @@ pub fn Client(comptime gp: type) type {
             const resumed: ?StateT = if (old) |s| (if (s.group_id.len > 0) s else null) else null;
             const console = try a.create(gp.Console);
             console.* = gp.Console.init(a, null);
-            const form = (try gp.formOf(a, w.net(), api_url, checked, resumed, console)) orelse
+            const form = (try gp.formOf(a, w.net(), api_v2_url, checked, resumed, console)) orelse
                 return .{ .result = null, .out = console.out.items, .err = console.err.items, .from = from, .group_id = "" };
             var p = gp.Publisher{
                 .arena = a,
@@ -272,7 +320,7 @@ pub fn Client(comptime gp: type) type {
                 .entries = checked.entries,
                 .objects = form.choice.objects,
                 .refusal = form.refusal,
-                .api_url = api_url,
+                .api_url = api_v2_url,
                 .token = w.token,
                 .wait_secs = 120,
                 .no_commit = no_commit,
@@ -284,12 +332,32 @@ pub fn Client(comptime gp: type) type {
     };
 }
 
+/// The path of the sparse-index record of `name`: a full name is read from index version 2 (`/index/v2/<aa>/<bb>/<namespace>/<name>`, the
+/// two pairs being the first four characters of the namespace), a bare name from index version 1.
+pub fn indexPath(a: Allocator, name: []const u8) ![]u8 {
+    if (std.mem.indexOfScalar(u8, name, '/')) |at| {
+        var pad: [4]u8 = .{ '_', '_', '_', '_' };
+        const n = @min(at, 4);
+        @memcpy(pad[0..n], name[0..n]);
+        return std.fmt.allocPrint(a, "/index/v2/{s}/{s}/{s}", .{ pad[0..2], pad[2..4], name });
+    }
+    return std.fmt.allocPrint(a, "/index/{s}/{s}/{s}", .{ name[0..2], name[2..4], name });
+}
+
+/// The path of the channel file of `name` at `version` under `noarch`: below the namespace's channel for a full name, below the flat
+/// channel for a bare one.
+pub fn channelPath(a: Allocator, name: []const u8, version: []const u8) ![]u8 {
+    const file = try filenameOf(a, name, version);
+    if (std.mem.indexOfScalar(u8, name, '/')) |at| return std.fmt.allocPrint(a, "/channel/{s}/noarch/{s}", .{ name[0..at], file });
+    return std.fmt.allocPrint(a, "/channel/noarch/{s}", .{file});
+}
+
 /// getVersion and getPackage readmes, the sparse-index record (the clock of each fake blanked) and the channel file of member `name`.
 pub fn servedFacts(w: anytype, name: []const u8, version: []const u8) ![4][]const u8 {
     const a = w.a;
-    const idx = try w.get(try std.fmt.allocPrint(a, "/index/{s}/{s}/{s}", .{ name[0..2], name[2..4], name }));
+    const idx = try w.get(try indexPath(a, name));
     try std.testing.expectEqual(@as(u16, 200), idx.status);
-    const channel = try w.get(try std.fmt.allocPrint(a, "/channel/noarch/{s}", .{try filenameOf(a, name, version)}));
+    const channel = try w.get(try channelPath(a, name, version));
     try std.testing.expectEqual(@as(u16, 200), channel.status);
     return .{
         (try w.versionReadme(name, version)) orelse "(none)",

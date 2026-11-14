@@ -12,9 +12,9 @@ const toml_app = "[package]\nname = \"example/app\"\nversion = \"1.0.0\"\nmojo =
 const toml_util = "[package]\nname = \"example/util\"\nversion = \"0.3.0\"\nmojo = [\"1.0.0\"]\n\n[dependencies]\n\"{s}/app\" = {{ path = \"../app2\" }}\n";
 
 const lock_text =
-    \\{"lock_version": 1, "toolchain": {"mojo": "1.0.0"}, "channels": ["https://conda.mopm.dev/"], "packages": [
-    \\  {"name": "app", "version": "0.5.0", "source": "path", "path": "app2"},
-    \\  {"name": "util", "version": "0.3.0", "source": "path", "path": "util", "deps": ["app"]}
+    \\{"lock_version": 3, "mojo": ["1.0.0"], "toolchain": {"1.0.0": {"linux-64": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}, "channels": ["https://conda.mopm.dev/"], "packages": [
+    \\  {"name": "example/util", "version": "0.3.0", "source": "path", "path": "util", "deps": ["other/app"]},
+    \\  {"name": "other/app", "version": "0.5.0", "source": "path", "path": "app2"}
     \\]}
     \\
 ;
@@ -38,7 +38,7 @@ test "a member with the root's import name in another namespace is refused with 
     const m = try manifest.parse(a, toml_app, &diag);
     const util = try manifest.parse(a, try std.fmt.allocPrint(a, toml_util, .{"other"}), &diag);
     const members = [_]install_plan.PathDep{
-        .{ .name = "util", .full_name = "example/util", .version = "0.3.0", .path = "util", .deps = &.{"app"}, .manifest_deps = util.dependencies },
+        .{ .name = "util", .full_name = "example/util", .version = "0.3.0", .path = "util", .deps = &.{"other/app"}, .manifest_deps = util.dependencies },
         .{ .name = "app", .full_name = "other/app", .version = "0.5.0", .path = "app2" },
     };
     var why: []const u8 = "";

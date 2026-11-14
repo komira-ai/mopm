@@ -5,7 +5,8 @@
 //! The packages are real: `mopm pack` makes them. libbase 0.1.0 ships a static archive; applib 0.2.0 depends on libbase
 //! and on regdep 1.0.0, which only the registry has. The staged set (spec/staged-set.md) holds libbase and applib, with
 //! a plan.json written here; the registry holds regdep, and later, as the published registry, all three (its index files
-//! and repodata.json are written below the way spec/index.md and spec/channel.md say; the fake does not open archives).
+//! and repodata.json are written below the way spec/index.md and spec/channel.md say, in the namespace `example`; the fake
+//! does not open archives).
 //!
 //! What can go red, and why:
 //! - the lock `add --overlay` and `lock --overlay` make before the versions are published must be byte for byte the lock
@@ -143,11 +144,11 @@ fn pack(cx: *Cx, p: Pkg, out: []const u8) ![]u8 {
         std.debug.print("mopm pack of {s} failed: {s}{s}\n", .{ p.name, r.stdout, r.stderr });
         return error.PackFailed;
     }
-    return h.readFile(cx.a, try h.join(cx.a, &.{ out, "linux-64", try cx.fmt("mojo-{s}-{s}-mojo1.0.0_0.conda", .{ p.name, p.version }) }));
+    return h.readFile(cx.a, try h.join(cx.a, &.{ out, "linux-64", try cx.fmt("mojo-example.{s}-{s}-mojo1.0.0_0.conda", .{ p.name, p.version }) }));
 }
 
 fn fileName(cx: *Cx, name: []const u8, version: []const u8) ![]u8 {
-    return cx.fmt("mojo-{s}-{s}-mojo1.0.0_0.conda", .{ name, version });
+    return cx.fmt("mojo-example.{s}-{s}-mojo1.0.0_0.conda", .{ name, version });
 }
 
 // ---------------------------------------------------------------- the staged set
@@ -157,17 +158,17 @@ const Planned = struct { name: []const u8, version: []const u8, skip: bool = fal
 /// plan.json for the files of `set`, the members in the order given.
 fn writePlan(cx: *Cx, set: []const u8, members: []const Planned) !void {
     var plan = std.ArrayList(u8).init(cx.a);
-    try plan.appendSlice("{\"version\":1,\"members\":[");
+    try plan.appendSlice("{\"version\":2,\"members\":[");
     for (members, 0..) |m, i| {
         if (i > 0) try plan.append(',');
         if (m.skip) {
-            try plan.writer().print("{{\"name\":\"{s}\",\"version\":\"{s}\",\"action\":\"skip\",\"reason\":\"already published with these bytes\"}}", .{ m.name, m.version });
+            try plan.writer().print("{{\"name\":\"example/{s}\",\"version\":\"{s}\",\"action\":\"skip\",\"reason\":\"already published with these bytes\"}}", .{ m.name, m.version });
             continue;
         }
         const name = try fileName(cx, m.name, m.version);
         const bytes = try h.readFile(cx.a, try h.join(cx.a, &.{ set, "linux-64", name }));
         try plan.writer().print(
-            "{{\"name\":\"{s}\",\"version\":\"{s}\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",\"files\":[{{\"subdir\":\"linux-64\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":{d}}}]}}",
+            "{{\"name\":\"example/{s}\",\"version\":\"{s}\",\"action\":\"upload\",\"manifest_sha256\":\"{s}\",\"files\":[{{\"subdir\":\"linux-64\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":{d}}}]}}",
             .{ m.name, m.version, try sha256Hex(cx.a, m.name), name, try sha256Hex(cx.a, bytes), bytes.len },
         );
     }
@@ -211,12 +212,12 @@ const Entry = struct {
 };
 const IFile = struct { filename: []const u8, sha256: []const u8, size: usize, subdir: []const u8, url: []const u8 };
 const Record = struct {
-    v: u8 = 1,
+    v: u8 = 2,
     name: []const u8,
     version: []const u8,
     build: []const u8 = "mojo1.0.0_0",
     state: []const u8 = "published",
-    published_at: []const u8 = "2026-10-13T12:00:00Z",
+    published_at: []const u8 = "2026-11-13T12:00:00Z",
     requires_mojo: []const u8 = "==1.0.0",
     deps: []const Dep,
     native: []const Native,
@@ -246,23 +247,23 @@ fn writeRegistry(cx: *Cx, root: []const u8, base: []const u8, entries: []const E
     for (entries, 0..) |e, i| {
         const filename = try fileName(cx, e.name, e.version);
         const sha = try sha256Hex(a, e.bytes);
-        try h.writeFile(try cx.fmt("{s}/channel/linux-64/{s}", .{ root, filename }), e.bytes);
+        const deps = try a.alloc(Dep, e.deps.len);
+        for (e.deps, deps) |d, *out| out.* = .{ .name = try cx.fmt("example/{s}", .{d.name}), .range = d.range };
+        try h.writeFile(try cx.fmt("{s}/channel/example/linux-64/{s}", .{ root, filename }), e.bytes);
         const rec = Record{
-            .name = e.name,
+            .name = try cx.fmt("example/{s}", .{e.name}),
             .version = e.version,
-            .deps = e.deps,
+            .deps = deps,
             .native = e.native,
-            .files = &.{.{ .filename = filename, .sha256 = sha, .size = e.bytes.len, .subdir = "linux-64", .url = try cx.fmt("{s}/channel/linux-64/{s}", .{ base, filename }) }},
+            .files = &.{.{ .filename = filename, .sha256 = sha, .size = e.bytes.len, .subdir = "linux-64", .url = try cx.fmt("{s}/channel/example/linux-64/{s}", .{ base, filename }) }},
             .manifest_sha256 = try sha256Hex(a, e.name),
         };
-        var padded: [4]u8 = "____".*;
-        for (e.name[0..@min(e.name.len, 4)], 0..) |b, k| padded[k] = b;
-        try h.writeFile(try cx.fmt("{s}/index/{s}/{s}/{s}", .{ root, padded[0..2], padded[2..4], e.name }), try cx.fmt("{s}\n", .{try toJson(a, rec)}));
+        try h.writeFile(try cx.fmt("{s}/index/v2/ex/am/example/{s}", .{ root, e.name }), try cx.fmt("{s}\n", .{try toJson(a, rec)}));
         if (i > 0) try repo.append(',');
-        try repo.writer().print("\"{s}\":{s}", .{ filename, try toJson(a, RepoEntry{ .name = try cx.fmt("mojo-{s}", .{e.name}), .sha256 = sha, .size = e.bytes.len, .version = e.version }) });
+        try repo.writer().print("\"{s}\":{s}", .{ filename, try toJson(a, RepoEntry{ .name = try cx.fmt("mojo-example.{s}", .{e.name}), .sha256 = sha, .size = e.bytes.len, .version = e.version }) });
     }
     const doc = try cx.fmt("{{\"info\":{{\"subdir\":\"linux-64\"}},\"packages\":{{}},\"packages.conda\":{{{s}}},\"removed\":[]}}\n", .{repo.items});
-    try h.writeFile(try cx.fmt("{s}/channel/linux-64/repodata.json", .{root}), doc);
+    try h.writeFile(try cx.fmt("{s}/channel/example/linux-64/repodata.json", .{root}), doc);
 }
 
 // ---------------------------------------------------------------- the stand-in
@@ -304,8 +305,8 @@ const Stub = struct {
         if (std.mem.eql(u8, target, "/index/config.json")) {
             const b = try self.base(a);
             return req.respond(try std.fmt.allocPrint(a,
-                \\{{"index_version":1,"stage":"stub","api_url":"{s}/api/v1","channel_url":"{s}/channel/","min_cli_version":"0.0.1"}}
-            , .{ b, b }), .{ .status = .ok, .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }}, .keep_alive = false });
+                \\{{"index_version":1,"index_versions":[1,2],"stage":"stub","api_url":"{s}/api/v1","api_v2_url":"{s}/api/v2","channel_url":"{s}/channel/","min_cli_version":"0.0.1"}}
+            , .{ b, b, b }), .{ .status = .ok, .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }}, .keep_alive = false });
         }
         return req.respond("{}", .{ .status = .not_found, .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }}, .keep_alive = false });
     }
@@ -343,7 +344,7 @@ test "mopm add, lock and sync with --overlay: a staged set is a read-only channe
     try writePlan(&cx, set, &.{ .{ .name = "libbase", .version = "0.1.0" }, .{ .name = "applib", .version = "0.2.0" }, .{ .name = "regdep", .version = "1.0.0", .skip = true } });
     const before = try snapshot(a, set);
     cx.ok("the staged set holds plan.json and the two files, and the snapshot lists them", has(before, "file plan.json") and
-        has(before, "mojo-libbase-0.1.0-mojo1.0.0_0.conda") and has(before, "mojo-applib-0.2.0-mojo1.0.0_0.conda"), before);
+        has(before, "mojo-example.libbase-0.1.0-mojo1.0.0_0.conda") and has(before, "mojo-example.applib-0.2.0-mojo1.0.0_0.conda"), before);
 
     const libbase_entry = Entry{ .name = "libbase", .version = "0.1.0", .native = &.{.{ .id = "base_sys", .soname = "libbase_sys.a" }}, .bytes = base_bytes };
     const applib_entry = Entry{ .name = "applib", .version = "0.2.0", .deps = &.{ .{ .name = "libbase", .range = "0.1" }, .{ .name = "regdep", .range = "1" } }, .bytes = app_bytes };
@@ -364,9 +365,9 @@ test "mopm add, lock and sync with --overlay: a staged set is a read-only channe
     const lock1 = cx.read(app1, "mopm.lock") orelse "";
     const toml1 = cx.read(app1, "mopm.toml") orelse "";
     cx.ok("add --overlay locks the staged closure and what the registry adds (exit 0, three packages)", r.code == 0 and
-        has(r.stdout, "adding applib 0.2.0\n") and has(r.stdout, "adding libbase 0.1.0\n") and has(r.stdout, "adding regdep 1.0.0\n") and has(r.stdout, "locked 3 packages for mojo 1.0.0\n"), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+        has(r.stdout, "adding example/applib 0.2.0\n") and has(r.stdout, "adding example/libbase 0.1.0\n") and has(r.stdout, "adding example/regdep 1.0.0\n") and has(r.stdout, "locked 3 packages for mojo 1.0.0\n"), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
     cx.ok("the lock names the registry's channel and file URLs, and the hashes of the staged files and of libbase's archive", has(lock1, channel) and
-        has(lock1, try cx.fmt("{s}linux-64/mojo-applib-0.2.0-mojo1.0.0_0.conda", .{channel})) and
+        has(lock1, try cx.fmt("{s}example/linux-64/mojo-example.applib-0.2.0-mojo1.0.0_0.conda", .{channel})) and
         has(lock1, try sha256Hex(a, base_bytes)) and has(lock1, try sha256Hex(a, app_bytes)) and has(lock1, try sha256Hex(a, archive)) and has(lock1, try sha256Hex(a, reg_bytes)), lock1);
     cx.ok("add writes the requirement into mopm.toml, and nothing about the set", has(toml1, "\"example/applib\" = \"=0.2.0\"\n") and !has(toml1, set) and !has(toml1, "overlay") and !has(toml1, "staged"), toml1);
     cx.ok("nothing of the set is in the lock, and the project holds mopm.lock and mopm.toml only", !has(lock1, set) and !has(lock1, "overlay") and !has(lock1, "staged") and !has(lock1, "plan.json") and
@@ -386,11 +387,11 @@ test "mopm add, lock and sync with --overlay: a staged set is a read-only channe
     r = try cx.run(app5, &.{ "add", "example/regdep", "--overlay", set, "--registry", fake.base });
     const lock5 = cx.read(app5, "mopm.lock") orelse "";
     cx.ok("a package the set lacks is resolved from the registry: its version, URL and hash are the registry's", r.code == 0 and has(r.stdout, "locked 1 packages for mojo 1.0.0\n") and
-        has(lock5, try cx.fmt("{s}linux-64/mojo-regdep-1.0.0-mojo1.0.0_0.conda", .{channel})) and has(lock5, try sha256Hex(a, reg_bytes)) and
+        has(lock5, try cx.fmt("{s}example/linux-64/mojo-example.regdep-1.0.0-mojo1.0.0_0.conda", .{channel})) and has(lock5, try sha256Hex(a, reg_bytes)) and
         has(cx.read(app5, "mopm.toml") orelse "", "\"example/regdep\" = \"^1.0.0\""), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
     const app6 = try cx.project("app6", "");
     r = try cx.run(app6, &.{ "add", "example/nosuch", "--overlay", set, "--registry", fake.base });
-    cx.ok("a package neither the set nor the registry has is refused, and nothing is written", r.code == 1 and has(r.stderr, "nosuch (required by mopm.toml) is not in the registry's index") and
+    cx.ok("a package neither the set nor the registry has is refused, and nothing is written", r.code == 1 and has(r.stderr, "example/nosuch (required by mopm.toml) is not in the registry's index") and
         std.mem.eql(u8, cx.read(app6, "mopm.toml") orelse "", head) and cx.read(app6, "mopm.lock") == null, try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
 
     // --- sync installs the staged files from the set, while the registry holds none of them
@@ -400,11 +401,11 @@ test "mopm add, lock and sync with --overlay: a staged set is a read-only channe
         const toolchain = try cp.fakeToolchain(a, fake_dir, fake.base, "channel/toolchain", "linux-64", "1.0.0", try h.join(a, &.{ work, "toolchain.json" }), "T");
         const tc_args = [_][]const u8{ "--toolchain", toolchain.closure, "--cache", try h.join(a, &.{ work, "toolchain-cache" }) };
         r = try cx.run(app1, &[_][]const u8{ "sync", "--locked", "--overlay", set } ++ tc_args);
-        const kept = cx.read(app1, ".mopm/pkgs/mojo-applib-0.2.0-mojo1.0.0_0.conda") orelse "";
+        const kept = cx.read(app1, ".mopm/pkgs/mojo-example.applib-0.2.0-mojo1.0.0_0.conda") orelse "";
         cx.ok("sync --locked --overlay installs libbase and applib from the set and regdep from the registry", r.code == 0 and has(r.stdout, "read 2 packages from the staged set") and
             has(r.stdout, "installed 3 packages for linux-64 (mojo 1.0.0, 2 toolchain files) into .mopm/env") and std.mem.eql(u8, kept, app_bytes) and
-            std.mem.eql(u8, cx.read(app1, ".mopm/pkgs/mojo-libbase-0.1.0-mojo1.0.0_0.conda") orelse "", base_bytes) and
-            std.mem.eql(u8, cx.read(app1, ".mopm/pkgs/mojo-regdep-1.0.0-mojo1.0.0_0.conda") orelse "", reg_bytes) and
+            std.mem.eql(u8, cx.read(app1, ".mopm/pkgs/mojo-example.libbase-0.1.0-mojo1.0.0_0.conda") orelse "", base_bytes) and
+            std.mem.eql(u8, cx.read(app1, ".mopm/pkgs/mojo-example.regdep-1.0.0-mojo1.0.0_0.conda") orelse "", reg_bytes) and
             std.mem.eql(u8, cx.read(app1, "mopm.lock") orelse "", lock1), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
         cx.ok("the installed environment holds the staged packages and the archive of libbase", cx.read(app1, ".mopm/env/lib/libbase_sys.a") != null and
             cx.read(app1, ".mopm/env/lib/mojo/applib.mopm.json") != null, try cx.files(app1));
@@ -412,8 +413,8 @@ test "mopm add, lock and sync with --overlay: a staged set is a read-only channe
         const app1c = try cx.project("app1c", "\"example/applib\" = \"=0.2.0\"\n");
         try h.writeFile(try h.join(a, &.{ app1c, "mopm.lock" }), lock1);
         r = try cx.run(app1c, &[_][]const u8{ "sync", "--locked" } ++ tc_args);
-        const applib_url = try cx.fmt("{s}linux-64/mojo-applib-0.2.0-mojo1.0.0_0.conda", .{channel});
-        const gone = try cx.fmt("mopm sync: {s} answered HTTP 404: applib 0.2.0 has been taken down or is unavailable\n", .{applib_url});
+        const applib_url = try cx.fmt("{s}example/linux-64/mojo-example.applib-0.2.0-mojo1.0.0_0.conda", .{channel});
+        const gone = try cx.fmt("mopm sync: {s} answered HTTP 404: example/applib 0.2.0 has been taken down or is unavailable\n", .{applib_url});
         cx.ok("the same sync without the set fails on the registry, which serves none of the staged files (HTTP 404 for the locked url)", r.code == 1 and std.mem.eql(u8, r.stderr, gone), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
         const app1d = try cx.project("app1d", "\"example/applib\" = \"=0.2.0\"\n");
         try h.writeFile(try h.join(a, &.{ app1d, "mopm.lock" }), lock1);
@@ -446,7 +447,7 @@ test "mopm add, lock and sync with --overlay: a staged set is a read-only channe
     try writeRegistry(&cx, fake_dir_c, fake_c.base, &.{ regdep_entry, .{ .name = "libbase", .version = "0.1.0", .native = libbase_entry.native, .bytes = changed } });
     const app7 = try cx.project("app7", "");
     r = try cx.run(app7, &.{ "add", "example/applib@=0.2.0", "--overlay", set, "--registry", fake_c.base });
-    cx.ok("a staged version the registry holds with other bytes is refused, naming the version and the way out", r.code == 1 and has(r.stderr, "libbase 0.1.0 is staged in") and
+    cx.ok("a staged version the registry holds with other bytes is refused, naming the version and the way out", r.code == 1 and has(r.stderr, "example/libbase 0.1.0 is staged in") and
         has(r.stderr, try sha256Hex(a, base_bytes)) and has(r.stderr, try sha256Hex(a, changed)) and has(r.stderr, "needs a new version"), try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
     cx.ok("the refusal leaves mopm.toml as it was and writes no lock", std.mem.eql(u8, cx.read(app7, "mopm.toml") orelse "", head) and cx.read(app7, "mopm.lock") == null, cx.read(app7, "mopm.toml") orelse "");
 
@@ -462,11 +463,11 @@ test "mopm add, lock and sync with --overlay: a staged set is a read-only channe
     const asked = try stub.asked(a);
     const lock8 = cx.read(app8, "mopm.lock") orelse "";
     cx.ok("a closure the set holds is locked, asking the registry for its configuration only", r.code == 0 and std.mem.eql(u8, asked, "/index/config.json") and
-        has(lock8, try cx.fmt("{s}/channel/linux-64/mojo-libbase-0.1.0-mojo1.0.0_0.conda", .{stub_base})) and has(lock8, try sha256Hex(a, archive)), try cx.fmt("exit {d}, asked [{s}]: {s}{s}", .{ r.code, asked, r.stdout, r.stderr }));
+        has(lock8, try cx.fmt("{s}/channel/example/linux-64/mojo-example.libbase-0.1.0-mojo1.0.0_0.conda", .{stub_base})) and has(lock8, try sha256Hex(a, archive)), try cx.fmt("exit {d}, asked [{s}]: {s}{s}", .{ r.code, asked, r.stdout, r.stderr }));
     const app9 = try cx.project("app9", "");
     r = try cx.run(app9, &.{ "add", "example/libbase@=0.1.0", "--registry", stub_base });
     const asked_after = try stub.asked(a);
-    cx.ok("without the set the same add asks for libbase's index file (so the recording can see a request), and fails", r.code == 1 and has(asked_after, "/index/li/bb/libbase"), try cx.fmt("exit {d}, asked [{s}]", .{ r.code, asked_after }));
+    cx.ok("without the set the same add asks for libbase's index file (so the recording can see a request), and fails", r.code == 1 and has(asked_after, "/index/v2/ex/am/example/libbase"), try cx.fmt("exit {d}, asked [{s}]", .{ r.code, asked_after }));
     const app10 = try cx.project("app10", "");
     r = try cx.run(app10, &.{ "add", "example/libbase@=0.1.0", "--overlay", set, "--registry", "http://127.0.0.1:1" });
     cx.ok("a registry that cannot be reached cannot name the lock's channel: refused, nothing written", r.code == 1 and has(r.stderr, "cannot reach") and cx.read(app10, "mopm.lock") == null and
@@ -474,7 +475,7 @@ test "mopm add, lock and sync with --overlay: a staged set is a read-only channe
     const app11 = try cx.project("app11", "");
     r = try cx.run(app11, &.{ "add", "example/libbase@=0.1.0", "--overlay", set });
     cx.ok("against the production registry a closure the set holds is locked with the production channel", r.code == 0 and
-        has(cx.read(app11, "mopm.lock") orelse "", "https://conda.mopm.dev/linux-64/mojo-libbase-0.1.0-mojo1.0.0_0.conda"), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
+        has(cx.read(app11, "mopm.lock") orelse "", "https://conda.mopm.dev/example/linux-64/mojo-example.libbase-0.1.0-mojo1.0.0_0.conda"), try cx.fmt("exit {d}: {s}{s}", .{ r.code, r.stdout, r.stderr }));
 
     // --- sets that are refused
     h.stage = "refused sets";
@@ -486,7 +487,7 @@ test "mopm add, lock and sync with --overlay: a staged set is a read-only channe
     cx.ok("a directory with no plan.json is refused, naming the file", r.code == 1 and has(r.stderr, "notaset/plan.json: FileNotFound"), try cx.fmt("exit {d}: {s}", .{ r.code, r.stderr }));
     const set2 = try h.join(a, &.{ work, "set2" });
     try h.copyTree(a, set, set2);
-    try h.writeFile(try h.join(a, &.{ set2, "linux-64", "mojo-applib-0.2.0-mojo1.0.0_0.conda" }), try std.mem.concat(a, u8, &.{ app_bytes, "x" }));
+    try h.writeFile(try h.join(a, &.{ set2, "linux-64", "mojo-example.applib-0.2.0-mojo1.0.0_0.conda" }), try std.mem.concat(a, u8, &.{ app_bytes, "x" }));
     const app13 = try cx.project("app13", "");
     r = try cx.run(app13, &.{ "add", "example/applib@=0.2.0", "--overlay", set2, "--registry", fake.base });
     cx.ok("a staged file changed after the plan was made is refused, and nothing is written", r.code == 1 and has(r.stderr, "is not the file plan.json describes") and

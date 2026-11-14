@@ -1,6 +1,6 @@
 {
-  "schema": 1,
-  "name": "staticpkg",
+  "schema": 2,
+  "name": "example/staticpkg",
   "version": "1.0.0",
   "native": [
     {

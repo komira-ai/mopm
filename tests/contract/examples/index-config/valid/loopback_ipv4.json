@@ -3,5 +3,10 @@
   "stage": "beta",
   "api_url": "http://127.0.0.1:8080/api/v1",
   "channel_url": "http://127.0.0.1:8081/",
-  "min_cli_version": "0.1.0"
+  "min_cli_version": "0.1.0",
+  "index_versions": [
+    1,
+    2
+  ],
+  "api_v2_url": "http://127.0.0.1:8080/api/v2"
 }

@@ -3,7 +3,8 @@
 //! the pinned Mojo one, which the farm cannot download. Run by Buck2 as //:sync_e2e on every pull request; MOPM and
 //! MOPM_FAKE_REGISTRY are the built programs. Each check prints `ok` or `FAIL`.
 //!
-//! The fake serves a package greet 1.0.0 (a real .conda: lib/mojo/greet.mopm.json and a library), the stand-in
+//! The fake serves a package example/greet 1.0.0 (a real .conda named mojo-example.greet-1.0.0-<build>.conda, in the
+//! channel of its namespace: lib/mojo/greet.mopm.json and a library), the stand-in
 //! toolchain T (`mojo` and `mojo-compiler` 1.0.0), a mirror of T (the same bytes under another url), a second
 //! toolchain T2 (other bytes), and a package broken 1.0.0 whose payload ends in the middle of its second file. Downloads
 //! are counted by the fake (`/_fake/served`), never by time.
@@ -51,7 +52,7 @@ test "mopm sync installs the lock and the toolchain itself: no pixi, pinned byte
 
     const greet = try fx.packageOf(a, c.subdir, "greet", &.{});
     try c.publish("greet", greet);
-    const greet_file = "mojo-greet-1.0.0-" ++ build_tag ++ ".conda";
+    const greet_file = fx.conda_prefix ++ "greet-1.0.0-" ++ build_tag ++ ".conda";
     const tc = try c.toolchain("channel/toolchain", "toolchain.json", "T");
     const mirror = try c.toolchain("channel/mirror", "mirror.json", "T");
     const tc2 = try c.toolchain("channel/toolchain2", "toolchain2.json", "T2");
@@ -72,10 +73,10 @@ test "mopm sync installs the lock and the toolchain itself: no pixi, pinned byte
         rep.check(try c.fmt("installed: {s}", .{p}), c.exists(env_dir, p), try c.names(env_dir));
     }
     {
-        const rec = c.read(env_dir, "conda-meta/mojo-greet-1.0.0-" ++ build_tag ++ ".json") orelse "";
+        const rec = c.read(env_dir, "conda-meta/" ++ fx.conda_prefix ++ "greet-1.0.0-" ++ build_tag ++ ".json") orelse "";
         const v = h.parseJson(a, rec) catch std.json.Value{ .null = {} };
         rep.check("the locked package's conda-meta record names its pinned sha256 and its url", std.mem.eql(u8, h.jsonString(v, "sha256") orelse "", try cp.sha256Hex(a, greet)) and
-            std.mem.eql(u8, h.jsonString(v, "url") orelse "", try c.fmt("{s}/channel/{s}/{s}", .{ fake.base, c.subdir, greet_file })), rec);
+            std.mem.eql(u8, h.jsonString(v, "url") orelse "", try c.fmt("{s}/channel/{s}/{s}/{s}", .{ fake.base, fx.ns, c.subdir, greet_file })), rec);
         for (tc.files) |f| {
             const t = c.read(env_dir, try c.fmt("conda-meta/{s}-{s}-{s}.json", .{ f.name, mojo, cp.fake_build })) orelse "";
             const tv = h.parseJson(a, t) catch std.json.Value{ .null = {} };
@@ -149,7 +150,7 @@ test "mopm sync installs the lock and the toolchain itself: no pixi, pinned byte
     const flipped_greet = try a.dupe(u8, greet);
     flipped_greet[flipped_greet.len / 2] ^= 0x01;
     const longer_greet = try std.mem.concat(a, u8, &.{ greet, "\x00" });
-    const greet_served = try c.fmt("channel/{s}/{s}", .{ c.subdir, greet_file });
+    const greet_served = try c.fmt("channel/{s}/{s}/{s}", .{ fx.ns, c.subdir, greet_file });
     const t2_url = try c.fmt("{s}/{s}", .{ fake.base, t2_mojo.served });
     const greet_url = try c.fmt("{s}/{s}", .{ fake.base, greet_served });
     const tampers = [_]Tamper{
@@ -186,7 +187,7 @@ test "mopm sync installs the lock and the toolchain itself: no pixi, pinned byte
     try c.publish("broken", try fx.brokenPackage(a, c.subdir));
     _ = try c.project("app", "\"example/greet\" = \"1\"\n\"example/broken\" = \"1\"");
     r = try c.run(app, &(.{"sync"} ++ reg ++ with_t2));
-    rep.check("an unpack that fails in the middle fails the sync, saying the environment is as it was", r.code == 1 and h.contains(r.stderr, "mopm sync: cannot install into .mopm/env: mojo-broken-1.0.0-" ++ build_tag ++ ".conda: ") and
+    rep.check("an unpack that fails in the middle fails the sync, saying the environment is as it was", r.code == 1 and h.contains(r.stderr, "mopm sync: cannot install into .mopm/env: " ++ fx.conda_prefix ++ "broken-1.0.0-" ++ build_tag ++ ".conda: ") and
         h.contains(r.stderr, "; the environment is as it was\n"), c.detail(r));
     rep.check("the interrupted unpack leaves the environment as it was", std.mem.eql(u8, c.read(env_dir, "conda-meta/mopm-stamp") orelse "", stamp2) and
         std.mem.eql(u8, try c.fingerprint(env_dir), print2), "the environment changed");

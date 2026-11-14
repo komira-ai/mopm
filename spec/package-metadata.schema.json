@@ -1,11 +1,29 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mopm.dev/schema/package-metadata-1.json",
-  "title": "mopm package metadata (<name>.mopm.json)",
+  "$id": "https://mopm.dev/schema/package-metadata-2.json",
+  "title": "mopm package metadata (<import name>.mopm.json)",
+  "$defs": {
+    "FullName": {
+      "description": "<namespace>/<name>: the namespace is a GitHub login in lower case, at most 39 characters; the name is what Mojo code imports.",
+      "type": "string",
+      "maxLength": 104,
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*/[a-z][a-z0-9_]{1,63}$"
+    }
+  },
   "type": "object",
   "required": ["schema", "name"],
+  "if": { "properties": { "schema": { "const": 2 } } },
+  "then": {
+    "properties": {
+      "name": { "$ref": "#/$defs/FullName" },
+      "deps": { "items": { "properties": { "name": { "$ref": "#/$defs/FullName" } } } }
+    }
+  },
   "properties": {
-    "schema": { "const": 1 },
+    "schema": {
+      "description": "2: a package in a namespace, whose name and dependency names are full names; mopm reads only 2. 1: a package of the flat names a registry still serves to older clients.",
+      "enum": [1, 2]
+    },
     "name": { "type": "string", "minLength": 1 },
     "version": {
       "description": "The package version, MAJOR.MINOR.PATCH. When present it must equal the version being published.",

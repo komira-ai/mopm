@@ -1,21 +1,17 @@
-//! A staged set read as a read-only local channel: what `--overlay <dir>` of
-//! `mopm add`, `mopm lock` and `mopm sync` is.
+//! A staged set read as a read-only local channel: what `--overlay <dir>` of `mopm add`, `mopm lock` and `mopm sync` is.
 //!
-//! The directory is a staged set (spec/staged-set.md): a `plan.json` that lists
-//! members in dependency order, and the `.conda` files it names under
-//! `<subdir>/<filename>`. `load` reads it and checks every file against the plan
-//! (size, sha256) and every member against its own package metadata, once; after
-//! that the set can answer what the registry answers for a package, from the
-//! files alone:
+//! The directory is a staged set (spec/staged-set.md): a `plan.json` (version 2) that lists members, each by its full
+//! name `<namespace>/<name>`, in dependency order, and the `.conda` files it names under `<subdir>/<filename>`
+//! (`mojo-<namespace>.<name>-...`). `load` reads it and checks every file against the plan (size, sha256) and every
+//! member against its own package metadata, once; after that the set can answer what the registry answers for a
+//! package, from the files alone:
 //!
-//! - `indexText` is the sparse-index file of a staged package (the records the
-//!   registry will serve once the version is published), with the dependencies
-//!   and native libraries the package's own `lib/mojo/<name>.mopm.json` declares
-//!   and a build for exactly the compiler its file name names;
-//! - `repodata` is the `<subdir>/repodata.json` entries of its files, merged into
-//!   the registry's when the registry is asked at all;
-//! - `fileBytes` and `bytesFor` are the bytes of a file, for the natives a lock
-//!   hashes and for an install.
+//! - `indexText` is the sparse-index file of a staged package (the records the registry will serve once the version
+//!   is published), with the dependencies and native libraries the package's own `lib/mojo/<import name>.mopm.json`
+//!   declares and a build for exactly the compiler its file name names;
+//! - `repodata` is the `<namespace>/<subdir>/repodata.json` entries of its files, merged into the registry's when the
+//!   registry is asked at all;
+//! - `fileBytes` and `bytesFor` are the bytes of a file, for the natives a lock hashes and for an install.
 //!
 //! The set never reaches a lock or a manifest: a lock made with it names the
 //! registry's channel and file URLs and the files' sha256, so the same lock holds
@@ -32,7 +28,7 @@ const Allocator = std.mem.Allocator;
 const resolve = @import("resolve.zig");
 const lock = @import("lock.zig");
 const metadata = @import("metadata.zig");
-const manifest = @import("manifest.zig");
+const names = @import("names.zig");
 const semver = @import("semver.zig");
 const conda_unpack = @import("conda_unpack.zig");
 
@@ -43,6 +39,7 @@ pub const subdirs = [_][]const u8{ "noarch", "linux-64", "linux-aarch64", "osx-a
 
 /// One staged version: its record in the index as the registry will hold it.
 pub const Member = struct {
+    /// The full name, `<namespace>/<name>`.
     name: []const u8,
     version: []const u8,
     /// `mojo1.0.0_0`: the same for every file.
@@ -163,10 +160,11 @@ pub const Overlay = struct {
         return null;
     }
 
-    /// `<subdir>/repodata.json` for the staged files of `subdir`. With `inner` (the registry's), its `packages.conda`
-    /// with the staged entries added; a registry entry for a staged file name that holds other bytes is refused.
+    /// `<namespace>/<subdir>/repodata.json` for the staged files of the namespace's packages in `subdir`. With `inner` (the
+    /// registry's), its `packages.conda` with the staged entries added; a registry entry for a staged file name that holds
+    /// other bytes is refused.
     /// Text of `inner` that is not a repodata.json is returned as it is, for the reader of it to refuse.
-    pub fn repodata(self: Overlay, arena: Allocator, subdir: []const u8, inner: ?[]const u8, why: *[]const u8) Error![]const u8 {
+    pub fn repodata(self: Overlay, arena: Allocator, namespace: []const u8, subdir: []const u8, inner: ?[]const u8, why: *[]const u8) Error![]const u8 {
         var doc: std.json.Value = undefined;
         if (inner) |text| {
             doc = std.json.parseFromSliceLeaky(std.json.Value, arena, text, .{}) catch |e| switch (e) {
@@ -183,6 +181,7 @@ pub const Overlay = struct {
         }
         const packages = doc.object.getPtr("packages.conda").?;
         for (self.members) |m| {
+            if (!std.mem.eql(u8, names.namespaceOf(m.name), namespace)) continue;
             for (m.files) |f| {
                 if (!std.mem.eql(u8, f.subdir, subdir)) continue;
                 if (packages.object.get(f.filename)) |held| {
@@ -196,7 +195,7 @@ pub const Overlay = struct {
                 }
                 var entry = std.json.ObjectMap.init(arena);
                 try entry.put("build", .{ .string = m.build });
-                try entry.put("name", .{ .string = try std.fmt.allocPrint(arena, "mojo-{s}", .{m.name}) });
+                try entry.put("name", .{ .string = try names.condaName(arena, m.name) });
                 try entry.put("sha256", .{ .string = f.sha256 });
                 try entry.put("size", .{ .integer = @intCast(f.size) });
                 try entry.put("subdir", .{ .string = f.subdir });
@@ -210,7 +209,7 @@ pub const Overlay = struct {
 
 const IndexDep = struct { name: []const u8, range: ?[]const u8 = null };
 const IndexLine = struct {
-    v: u8 = 1,
+    v: u8 = 2,
     name: []const u8,
     version: []const u8,
     build: []const u8,
@@ -272,14 +271,15 @@ pub fn registryDiffers(arena: Allocator, dir: []const u8, m: *const Member, reco
     return null;
 }
 
-/// The subdirs whose repodata.json the registry has to be asked for: those of the files of every picked version the
-/// set does not hold.
+/// The channels whose repodata.json the registry has to be asked for, each as `<namespace>/<subdir>`: those of the files
+/// of every picked version the set does not hold.
 pub fn registrySubdirs(arena: Allocator, ov: Overlay, res: resolve.Resolution) Allocator.Error![]const []const u8 {
     var out = std.ArrayList([]const u8).init(arena);
     for (res.packages) |p| {
         if (ov.member(p.record.name) != null) continue;
         for (p.record.files) |f| {
-            if (!contains(out.items, f.subdir)) try out.append(f.subdir);
+            const key = try std.fmt.allocPrint(arena, "{s}/{s}", .{ names.namespaceOf(p.record.name), f.subdir });
+            if (!contains(out.items, key)) try out.append(key);
         }
     }
     return out.items;
@@ -301,31 +301,33 @@ pub fn Index(comptime Inner: type) type {
     };
 }
 
-/// The lock builder's channel: the staged files' entries (merged into `Inner`'s repodata.json for the subdirs listed
-/// in `registry_subdirs`, the only ones `Inner` is asked about) and their bytes.
+/// The lock builder's channel: the staged files' entries (merged into `Inner`'s repodata.json for the
+/// `<namespace>/<subdir>` channels listed in `registry_subdirs`, the only ones `Inner` is asked about) and their bytes.
+/// `Inner` is a `plan.buildLock` channel: `fetch(arena, namespace, subdir, diag)`, `fetchConda(arena, namespace, subdir, filename, diag)`.
 pub fn Channel(comptime Inner: type) type {
     return struct {
         overlay: *const Overlay,
         inner: Inner,
         registry_subdirs: []const []const u8,
 
-        pub fn fetch(self: @This(), arena: Allocator, subdir: []const u8, diag: *resolve.Diagnostic) resolve.Error![]const u8 {
+        pub fn fetch(self: @This(), arena: Allocator, namespace: []const u8, subdir: []const u8, diag: *resolve.Diagnostic) resolve.Error![]const u8 {
             var why: []const u8 = "";
-            const held: ?[]const u8 = if (contains(self.registry_subdirs, subdir)) try self.inner.fetch(arena, subdir, diag) else null;
-            return self.overlay.repodata(arena, subdir, held, &why) catch |e| switch (e) {
+            const key = try std.fmt.allocPrint(arena, "{s}/{s}", .{ namespace, subdir });
+            const held: ?[]const u8 = if (contains(self.registry_subdirs, key)) try self.inner.fetch(arena, namespace, subdir, diag) else null;
+            return self.overlay.repodata(arena, namespace, subdir, held, &why) catch |e| switch (e) {
                 error.Refused => return resolve.fail(arena, diag, .bad_channel, "{s}", .{why}),
                 error.OutOfMemory => return error.OutOfMemory,
             };
         }
 
-        pub fn fetchConda(self: @This(), arena: Allocator, subdir: []const u8, filename: []const u8, diag: *resolve.Diagnostic) resolve.Error![]const u8 {
+        pub fn fetchConda(self: @This(), arena: Allocator, namespace: []const u8, subdir: []const u8, filename: []const u8, diag: *resolve.Diagnostic) resolve.Error![]const u8 {
             var why: []const u8 = "";
             const bytes = self.overlay.fileBytes(arena, subdir, filename, &why) catch |e| switch (e) {
                 error.Refused => return resolve.fail(arena, diag, .bad_channel, "{s}", .{why}),
                 error.OutOfMemory => return error.OutOfMemory,
             };
             if (bytes) |b| return b;
-            return self.inner.fetchConda(arena, subdir, filename, diag);
+            return self.inner.fetchConda(arena, namespace, subdir, filename, diag);
         }
     };
 }
@@ -345,8 +347,11 @@ pub fn load(arena: Allocator, dir_path: []const u8, why: *[]const u8) Error!Over
     };
     if (doc != .object) return refuse(arena, why, "{s}/plan.json is not a JSON object", .{dir_path});
     const version = doc.object.get("version") orelse return refuse(arena, why, "{s}/plan.json has no version", .{dir_path});
-    if (version != .integer or version.integer != 1) {
-        return refuse(arena, why, "{s}/plan.json: this mopm reads plan version 1", .{dir_path});
+    if (version == .integer and version.integer == 1) {
+        return refuse(arena, why, "{s}/plan.json is version 1 (it predates namespaces); stage the set again", .{dir_path});
+    }
+    if (version != .integer or version.integer != 2) {
+        return refuse(arena, why, "{s}/plan.json: this mopm reads plan version 2", .{dir_path});
     }
     const list = doc.object.get("members") orelse return refuse(arena, why, "{s}/plan.json has no members", .{dir_path});
     if (list != .array) return refuse(arena, why, "{s}/plan.json: members is not an array", .{dir_path});
@@ -368,7 +373,7 @@ pub fn load(arena: Allocator, dir_path: []const u8, why: *[]const u8) Error!Over
             return refuse(arena, why, "the staged set {s} cannot be published: it refuses {s} {s}: {s}", .{ dir_path, name, ver, getStr(mo, "reason") orelse "no reason given" });
         }
         if (!std.mem.eql(u8, action, "upload")) return refuse(arena, why, "{s}/plan.json: {s} {s} has the action {s}; it is upload, skip or refuse", .{ dir_path, name, ver, action });
-        if (try manifest.nameProblem(arena, "package name", name)) |problem| {
+        if (try names.fullNameProblem(arena, "package name", name, .refuse)) |problem| {
             return refuse(arena, why, "{s}/plan.json: {s}", .{ dir_path, problem });
         }
         if (resolve.semverOf(ver) == null or std.mem.count(u8, ver, ".") != 2) {
@@ -402,10 +407,11 @@ pub fn load(arena: Allocator, dir_path: []const u8, why: *[]const u8) Error!Over
                 }
             }
 
-            // The name says the build: mojo-<name>-<version>-<build>.conda, and the build mojo<compiler>_<n>.
-            const head = try std.fmt.allocPrint(arena, "mojo-{s}-{s}-", .{ name, ver });
+            // The name says the build: mojo-<namespace>.<name>-<version>-<build>.conda, and the build mojo<compiler>_<n>.
+            const conda_name = try names.condaName(arena, name);
+            const head = try std.fmt.allocPrint(arena, "{s}-{s}-", .{ conda_name, ver });
             if (!std.mem.startsWith(u8, filename, head) or !std.mem.endsWith(u8, filename, ".conda")) {
-                return refuse(arena, why, "{s}/plan.json: {s} is not a file of {s} {s} (mojo-{s}-{s}-<build>.conda)", .{ dir_path, filename, name, ver, name, ver });
+                return refuse(arena, why, "{s}/plan.json: {s} is not a file of {s} {s} ({s}-{s}-<build>.conda)", .{ dir_path, filename, name, ver, conda_name, ver });
             }
             const build = filename[head.len .. filename.len - ".conda".len];
             const compiler = compilerOf(build) orelse {
@@ -430,7 +436,7 @@ pub fn load(arena: Allocator, dir_path: []const u8, why: *[]const u8) Error!Over
             if (@as(i64, @intCast(bytes.len)) != size_v.integer or !std.mem.eql(u8, &got, sha)) {
                 return refuse(arena, why, "{s}/{s} is not the file plan.json describes: plan.json says {d} bytes, sha256 {s}; the file has {d} bytes, sha256 {s}", .{ dir_path, rel, size_v.integer, sha, bytes.len, &got });
             }
-            const meta_path = try std.fmt.allocPrint(sa, "lib/mojo/{s}.mopm.json", .{name});
+            const meta_path = try std.fmt.allocPrint(sa, "lib/mojo/{s}.mopm.json", .{names.importName(name)});
             var unpack_diag = conda_unpack.Diag{};
             const held = conda_unpack.readFiles(sa, bytes, window, &.{meta_path}, &unpack_diag) catch |e| switch (e) {
                 error.OutOfMemory => return error.OutOfMemory,
@@ -486,22 +492,17 @@ const test_sha = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a
 
 /// A staged package file: a `.conda` whose metadata is `meta`.
 fn testConda(a: Allocator, name: []const u8, version: []const u8, meta: []const u8) ![]u8 {
-    const path = try std.fmt.allocPrint(a, "lib/mojo/{s}.mopm.json", .{name});
-    return conda_fixture.simple(a, name, version, &.{.{ .name = path, .data = meta }});
+    const path = try std.fmt.allocPrint(a, "lib/mojo/{s}.mopm.json", .{names.importName(name)});
+    return conda_fixture.simple(a, try names.condaName(a, name), version, &.{.{ .name = path, .data = meta }});
 }
 
 const TestFile = struct { subdir: []const u8 = "linux-64", build: []const u8 = "mojo1.0.0_0", bytes: []const u8 };
-const TestMember = struct {
-    name: []const u8,
-    version: []const u8,
-    action: []const u8 = "upload",
-    files: []const TestFile = &.{},
-};
+const TestMember = struct { name: []const u8, version: []const u8, action: []const u8 = "upload", files: []const TestFile = &.{} };
 
 /// Writes a staged set into a fresh temporary directory and returns its path; plan.json is the one `members` give.
 fn testSet(a: Allocator, tmp: *std.testing.TmpDir, members: []const TestMember) ![]const u8 {
     var plan = std.ArrayList(u8).init(a);
-    try plan.appendSlice("{\"version\":1,\"members\":[");
+    try plan.appendSlice("{\"version\":2,\"members\":[");
     for (members, 0..) |m, i| {
         if (i > 0) try plan.append(',');
         try plan.writer().print("{{\"name\":\"{s}\",\"version\":\"{s}\",\"action\":\"{s}\"", .{ m.name, m.version, m.action });
@@ -511,7 +512,7 @@ fn testSet(a: Allocator, tmp: *std.testing.TmpDir, members: []const TestMember) 
             try plan.appendSlice(",\"manifest_sha256\":\"" ++ test_sha ++ "\",\"files\":[");
             for (m.files, 0..) |f, j| {
                 if (j > 0) try plan.append(',');
-                const filename = try std.fmt.allocPrint(a, "mojo-{s}-{s}-{s}.conda", .{ m.name, m.version, f.build });
+                const filename = try std.fmt.allocPrint(a, "{s}-{s}-{s}.conda", .{ try names.condaName(a, m.name), m.version, f.build });
                 try tmp.dir.makePath(f.subdir);
                 try tmp.dir.writeFile(try std.fmt.allocPrint(a, "{s}/{s}", .{ f.subdir, filename }), f.bytes);
                 try plan.writer().print("{{\"subdir\":\"{s}\",\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":{d}}}", .{ f.subdir, filename, sha256Hex(f.bytes), f.bytes.len });
@@ -538,8 +539,8 @@ fn expectRefused(a: Allocator, dir: []const u8, contains_text: []const u8) !void
     }
 }
 
-const base_meta = "{\"schema\":1,\"name\":\"libbase\",\"version\":\"0.1.0\",\"deps\":[]}";
-const app_meta = "{\"schema\":1,\"name\":\"applib\",\"version\":\"0.2.0\",\"deps\":[{\"name\":\"libbase\",\"range\":\"0.1\"},{\"name\":\"outside\"}],\"native\":[{\"id\":\"zz\",\"soname\":\"libzz.a\",\"kind\":\"static\",\"static_file\":\"../libzz.a\"}]}";
+const base_meta = "{\"schema\":2,\"name\":\"acme/libbase\",\"version\":\"0.1.0\",\"deps\":[]}";
+const app_meta = "{\"schema\":2,\"name\":\"acme/applib\",\"version\":\"0.2.0\",\"deps\":[{\"name\":\"acme/libbase\",\"range\":\"0.1\"},{\"name\":\"acme/outside\"}],\"native\":[{\"id\":\"zz\",\"soname\":\"libzz.a\",\"kind\":\"static\",\"static_file\":\"../libzz.a\"}]}";
 
 test "a staged set is read: each member's record has the dependencies and natives of its own metadata, and a build for the compiler its file names" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -548,19 +549,19 @@ test "a staged set is read: each member's record has the dependencies and native
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const dir = try testSet(a, &tmp, &.{
-        .{ .name = "libbase", .version = "0.1.0", .files = &.{.{ .bytes = try testConda(a, "libbase", "0.1.0", base_meta) }} },
-        .{ .name = "applib", .version = "0.2.0", .files = &.{.{ .bytes = try testConda(a, "applib", "0.2.0", app_meta) }} },
-        .{ .name = "published", .version = "1.0.0", .action = "skip" },
+        .{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .bytes = try testConda(a, "acme/libbase", "0.1.0", base_meta) }} },
+        .{ .name = "acme/applib", .version = "0.2.0", .files = &.{.{ .bytes = try testConda(a, "acme/applib", "0.2.0", app_meta) }} },
+        .{ .name = "acme/published", .version = "1.0.0", .action = "skip" },
     });
     var why: []const u8 = "";
     const ov = try load(a, dir, &why);
     try std.testing.expectEqual(@as(usize, 2), ov.members.len);
-    try std.testing.expect(ov.member("published") == null);
-    try std.testing.expect(ov.member("elsewhere") == null);
+    try std.testing.expect(ov.member("acme/published") == null);
+    try std.testing.expect(ov.member("acme/elsewhere") == null);
 
     // The text parses with the resolver's own reader, and says what the registry will say.
     var diag: resolve.Diagnostic = .{};
-    const recs = try resolve.parseIndex(a, "applib", try indexText(a, ov.member("applib").?), &diag);
+    const recs = try resolve.parseIndex(a, "acme/applib", try indexText(a, ov.member("acme/applib").?), &diag);
     try std.testing.expectEqual(@as(usize, 1), recs.len);
     const r = recs[0];
     try std.testing.expectEqualStrings("0.2.0", r.version);
@@ -569,20 +570,20 @@ test "a staged set is read: each member's record has the dependencies and native
     try std.testing.expect(!r.builtFor("1.1.0"));
     try std.testing.expect(r.state == .published);
     try std.testing.expectEqual(@as(usize, 2), r.deps.len);
-    try std.testing.expectEqualStrings("libbase", r.deps[0].name);
+    try std.testing.expectEqualStrings("acme/libbase", r.deps[0].name);
     try std.testing.expectEqualStrings("0.1", r.deps[0].range.?);
     try std.testing.expect(r.deps[1].range == null);
     try std.testing.expectEqual(@as(usize, 1), r.native.len);
     try std.testing.expectEqualStrings("libzz.a", r.native[0].soname);
     try std.testing.expectEqualStrings("linux-64", r.files[0].subdir);
-    try std.testing.expectEqualStrings("mojo-applib-0.2.0-mojo1.0.0_0.conda", r.files[0].filename);
+    try std.testing.expectEqualStrings("mojo-acme.applib-0.2.0-mojo1.0.0_0.conda", r.files[0].filename);
 }
 
 test "a staged set that is not what it says is refused, naming why" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    const good = try testConda(a, "libbase", "0.1.0", base_meta);
+    const good = try testConda(a, "acme/libbase", "0.1.0", base_meta);
 
     // A directory with no plan.
     {
@@ -595,42 +596,42 @@ test "a staged set that is not what it says is refused, naming why" {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
         const dir = try testSet(a, &tmp, &.{
-            .{ .name = "libbase", .version = "0.1.0", .files = &.{.{ .bytes = good }} },
-            .{ .name = "burnt", .version = "0.3.0", .action = "refuse" },
+            .{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .bytes = good }} },
+            .{ .name = "acme/burnt", .version = "0.3.0", .action = "refuse" },
         });
-        try expectRefused(a, dir, "refuses burnt 0.3.0");
+        try expectRefused(a, dir, "refuses acme/burnt 0.3.0");
     }
     // A file changed after the plan was made: other bytes, then other length.
     {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
-        const dir = try testSet(a, &tmp, &.{.{ .name = "libbase", .version = "0.1.0", .files = &.{.{ .bytes = good }} }});
+        const dir = try testSet(a, &tmp, &.{.{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .bytes = good }} }});
         var changed = try a.dupe(u8, good);
         changed[changed.len / 2] ^= 1;
-        try tmp.dir.writeFile("linux-64/mojo-libbase-0.1.0-mojo1.0.0_0.conda", changed);
+        try tmp.dir.writeFile("linux-64/mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda", changed);
         try expectRefused(a, dir, "is not the file plan.json describes");
-        try tmp.dir.writeFile("linux-64/mojo-libbase-0.1.0-mojo1.0.0_0.conda", try std.mem.concat(a, u8, &.{ good, "x" }));
+        try tmp.dir.writeFile("linux-64/mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda", try std.mem.concat(a, u8, &.{ good, "x" }));
         try expectRefused(a, dir, "is not the file plan.json describes");
     }
     // A file the plan names that is not there.
     {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
-        const dir = try testSet(a, &tmp, &.{.{ .name = "libbase", .version = "0.1.0", .files = &.{.{ .bytes = good }} }});
-        try tmp.dir.deleteFile("linux-64/mojo-libbase-0.1.0-mojo1.0.0_0.conda");
+        const dir = try testSet(a, &tmp, &.{.{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .bytes = good }} }});
+        try tmp.dir.deleteFile("linux-64/mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda");
         try expectRefused(a, dir, "FileNotFound");
     }
     // Metadata of another package, and none at all.
     {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
-        const dir = try testSet(a, &tmp, &.{.{ .name = "libbase", .version = "0.1.0", .files = &.{.{ .bytes = try testConda(a, "libbase", "0.1.0", app_meta) }} }});
-        try expectRefused(a, dir, "describes applib 0.2.0, not libbase 0.1.0");
+        const dir = try testSet(a, &tmp, &.{.{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .bytes = try testConda(a, "acme/libbase", "0.1.0", app_meta) }} }});
+        try expectRefused(a, dir, "describes acme/applib 0.2.0, not acme/libbase 0.1.0");
     }
     {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
-        const dir = try testSet(a, &tmp, &.{.{ .name = "libbase", .version = "0.1.0", .files = &.{.{ .bytes = try conda_fixture.simple(a, "libbase", "0.1.0", &.{.{ .name = "lib/other.txt", .data = "x" }}) }} }});
+        const dir = try testSet(a, &tmp, &.{.{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .bytes = try conda_fixture.simple(a, "mojo-acme.libbase", "0.1.0", &.{.{ .name = "lib/other.txt", .data = "x" }}) }} }});
         try expectRefused(a, dir, "has no lib/mojo/libbase.mopm.json");
     }
     // The same package twice; a name that is not the package's; a build that is not a build.
@@ -638,39 +639,32 @@ test "a staged set that is not what it says is refused, naming why" {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
         const dir = try testSet(a, &tmp, &.{
-            .{ .name = "libbase", .version = "0.1.0", .files = &.{.{ .bytes = good }} },
-            .{ .name = "libbase", .version = "0.1.0", .files = &.{.{ .bytes = good }} },
+            .{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .bytes = good }} },
+            .{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .bytes = good }} },
         });
-        try expectRefused(a, dir, "lists libbase twice");
+        try expectRefused(a, dir, "lists acme/libbase twice");
     }
     {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
-        const dir = try testSet(a, &tmp, &.{.{ .name = "libbase", .version = "0.1.0", .files = &.{.{ .build = "py3_0", .bytes = good }} }});
+        const dir = try testSet(a, &tmp, &.{.{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .build = "py3_0", .bytes = good }} }});
         try expectRefused(a, dir, "is not mojo<compiler>_<n>");
     }
     {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
-        const dir = try testSet(a, &tmp, &.{.{ .name = "libbase", .version = "0.1", .files = &.{.{ .bytes = good }} }});
+        const dir = try testSet(a, &tmp, &.{.{ .name = "acme/libbase", .version = "0.1", .files = &.{.{ .bytes = good }} }});
         try expectRefused(a, dir, "a version is MAJOR.MINOR.PATCH");
     }
     // Two subdirs that disagree on dependencies: the registry refuses that at publish, so the set is refused now.
     {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
-        const dir = try testSet(a, &tmp, &.{.{ .name = "applib", .version = "0.2.0", .files = &.{
-            .{ .subdir = "linux-64", .bytes = try testConda(a, "applib", "0.2.0", app_meta) },
-            .{ .subdir = "osx-arm64", .bytes = try testConda(a, "applib", "0.2.0", "{\"schema\":1,\"name\":\"applib\",\"version\":\"0.2.0\",\"deps\":[]}") },
+        const dir = try testSet(a, &tmp, &.{.{ .name = "acme/applib", .version = "0.2.0", .files = &.{
+            .{ .subdir = "linux-64", .bytes = try testConda(a, "acme/applib", "0.2.0", app_meta) },
+            .{ .subdir = "osx-arm64", .bytes = try testConda(a, "acme/applib", "0.2.0", "{\"schema\":2,\"name\":\"acme/applib\",\"version\":\"0.2.0\",\"deps\":[]}") },
         } }});
-        try expectRefused(a, dir, "disagrees with the first file of applib 0.2.0");
-    }
-    // A plan of another version.
-    {
-        var tmp = std.testing.tmpDir(.{});
-        defer tmp.cleanup();
-        try tmp.dir.writeFile("plan.json", "{\"version\":2,\"members\":[]}");
-        try expectRefused(a, try tmp.dir.realpathAlloc(a, "."), "reads plan version 1");
+        try expectRefused(a, dir, "disagrees with the first file of acme/applib 0.2.0");
     }
 }
 
@@ -680,8 +674,16 @@ const Forbidden = struct {
         std.debug.print("the registry was asked for {s}\n", .{what});
         return error.ResolveFailed;
     }
-    pub fn fetchConda(_: Forbidden, _: Allocator, what: []const u8, _: []const u8, _: *resolve.Diagnostic) resolve.Error![]const u8 {
-        std.debug.print("the registry was asked for {s}\n", .{what});
+};
+
+/// A channel that fails the test when it is asked anything.
+const ForbiddenChannel = struct {
+    pub fn fetch(_: ForbiddenChannel, _: Allocator, namespace: []const u8, subdir: []const u8, _: *resolve.Diagnostic) resolve.Error![]const u8 {
+        std.debug.print("the registry was asked for {s}/{s}\n", .{ namespace, subdir });
+        return error.ResolveFailed;
+    }
+    pub fn fetchConda(_: ForbiddenChannel, _: Allocator, _: []const u8, _: []const u8, filename: []const u8, _: *resolve.Diagnostic) resolve.Error![]const u8 {
+        std.debug.print("the registry was asked for {s}\n", .{filename});
         return error.ResolveFailed;
     }
 };
@@ -695,11 +697,11 @@ test "a closure the set holds is resolved and locked without asking the registry
     const a = arena_state.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const outside_meta = "{\"schema\":1,\"name\":\"outside\",\"version\":\"1.0.0\",\"deps\":[]}";
+    const outside_meta = "{\"schema\":2,\"name\":\"acme/outside\",\"version\":\"1.0.0\",\"deps\":[]}";
     const dir = try testSet(a, &tmp, &.{
-        .{ .name = "libbase", .version = "0.1.0", .files = &.{.{ .bytes = try testConda(a, "libbase", "0.1.0", base_meta) }} },
-        .{ .name = "applib", .version = "0.2.0", .files = &.{.{ .bytes = try testConda(a, "applib", "0.2.0", "{\"schema\":1,\"name\":\"applib\",\"version\":\"0.2.0\",\"deps\":[{\"name\":\"libbase\",\"range\":\"0.1\"}]}") }} },
-        .{ .name = "outside", .version = "1.0.0", .files = &.{.{ .bytes = try testConda(a, "outside", "1.0.0", outside_meta) }} },
+        .{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .bytes = try testConda(a, "acme/libbase", "0.1.0", base_meta) }} },
+        .{ .name = "acme/applib", .version = "0.2.0", .files = &.{.{ .bytes = try testConda(a, "acme/applib", "0.2.0", "{\"schema\":2,\"name\":\"acme/applib\",\"version\":\"0.2.0\",\"deps\":[{\"name\":\"acme/libbase\",\"range\":\"0.1\"}]}") }} },
+        .{ .name = "acme/outside", .version = "1.0.0", .files = &.{.{ .bytes = try testConda(a, "acme/outside", "1.0.0", outside_meta) }} },
     });
     var why: []const u8 = "";
     const ov = try load(a, dir, &why);
@@ -707,23 +709,23 @@ test "a closure the set holds is resolved and locked without asking the registry
     // Fully staged: the inner source fails the test if it is asked for anything.
     var asked = false;
     var diag: resolve.Diagnostic = .{};
-    const roots = [_]resolve.Root{.{ .name = "applib", .requirement = "=0.2.0" }};
+    const roots = [_]resolve.Root{.{ .name = "acme/applib", .requirement = "=0.2.0" }};
     const res = try resolve.resolve(a, Index(Forbidden){ .overlay = &ov, .inner = .{}, .asked = &asked }, .{ .mojo = "1.0.0", .roots = &roots }, &diag);
     try std.testing.expect(!asked);
     try std.testing.expectEqual(@as(usize, 2), res.packages.len);
-    try std.testing.expectEqualStrings("applib", res.packages[0].record.name);
-    try std.testing.expectEqualStrings("libbase", res.packages[1].record.name);
+    try std.testing.expectEqualStrings("acme/applib", res.packages[0].record.name);
+    try std.testing.expectEqualStrings("acme/libbase", res.packages[1].record.name);
     try std.testing.expectEqual(@as(usize, 0), (try registrySubdirs(a, ov, res)).len);
-    const channel = Channel(Forbidden){ .overlay = &ov, .inner = .{}, .registry_subdirs = &.{} };
+    const channel = Channel(ForbiddenChannel){ .overlay = &ov, .inner = .{}, .registry_subdirs = &.{} };
     const l = try plan.buildLock(a, res, "https://conda.example/", channel, null, &diag);
     try std.testing.expectEqual(@as(usize, 2), l.packages.len);
-    try std.testing.expectEqualStrings("https://conda.example/linux-64/mojo-applib-0.2.0-mojo1.0.0_0.conda", l.packages[0].url);
-    try std.testing.expectEqualStrings(&sha256Hex(try testConda(a, "libbase", "0.1.0", base_meta)), l.packages[1].sha256);
+    try std.testing.expectEqualStrings("https://conda.example/acme/linux-64/mojo-acme.applib-0.2.0-mojo1.0.0_0.conda", l.packages[0].url);
+    try std.testing.expectEqualStrings(&sha256Hex(try testConda(a, "acme/libbase", "0.1.0", base_meta)), l.packages[1].sha256);
     try std.testing.expectEqualStrings("https://conda.example/", l.channels[0]);
 
     // A package the set lacks is asked of the registry, and its subdir's repodata with it.
-    const reg_line = "{\"build\":\"mojo1.0.0_0\",\"deps\":[],\"files\":[{\"filename\":\"mojo-registryonly-2.0.0-mojo1.0.0_0.conda\",\"sha256\":\"" ++ test_sha ++ "\",\"size\":1000,\"subdir\":\"linux-64\"}],\"name\":\"registryonly\",\"requires_mojo\":\"==1.0.0\",\"state\":\"published\",\"v\":1,\"version\":\"2.0.0\"}\n";
-    const reg_repodata = "{\"packages.conda\":{\"mojo-registryonly-2.0.0-mojo1.0.0_0.conda\":{\"sha256\":\"" ++ test_sha ++ "\",\"size\":1000}},\"removed\":[]}";
+    const reg_line = "{\"build\":\"mojo1.0.0_0\",\"deps\":[],\"files\":[{\"filename\":\"mojo-acme.registryonly-2.0.0-mojo1.0.0_0.conda\",\"sha256\":\"" ++ test_sha ++ "\",\"size\":1000,\"subdir\":\"linux-64\"}],\"name\":\"acme/registryonly\",\"requires_mojo\":\"==1.0.0\",\"state\":\"published\",\"v\":2,\"version\":\"2.0.0\"}\n";
+    const reg_repodata = "{\"packages.conda\":{\"mojo-acme.registryonly-2.0.0-mojo1.0.0_0.conda\":{\"sha256\":\"" ++ test_sha ++ "\",\"size\":1000}},\"removed\":[]}";
     const Registry = struct {
         index: MemoryIndex,
         pub fn fetch(self: @This(), arena: Allocator, name: []const u8, d: *resolve.Diagnostic) resolve.Error!?[]const u8 {
@@ -731,19 +733,19 @@ test "a closure the set holds is resolved and locked without asking the registry
         }
     };
     asked = false;
-    const mixed_roots = [_]resolve.Root{ .{ .name = "applib", .requirement = "=0.2.0" }, .{ .name = "registryonly", .requirement = "2" } };
-    const reg = Registry{ .index = .{ .files = &.{.{ "registryonly", reg_line }} } };
+    const mixed_roots = [_]resolve.Root{ .{ .name = "acme/applib", .requirement = "=0.2.0" }, .{ .name = "acme/registryonly", .requirement = "2" } };
+    const reg = Registry{ .index = .{ .files = &.{.{ "acme/registryonly", reg_line }} } };
     const res2 = try resolve.resolve(a, Index(Registry){ .overlay = &ov, .inner = reg, .asked = &asked }, .{ .mojo = "1.0.0", .roots = &mixed_roots }, &diag);
     try std.testing.expect(asked);
     try std.testing.expectEqual(@as(usize, 3), res2.packages.len);
     const subs = try registrySubdirs(a, ov, res2);
     try std.testing.expectEqual(@as(usize, 1), subs.len);
-    try std.testing.expectEqualStrings("linux-64", subs[0]);
+    try std.testing.expectEqualStrings("acme/linux-64", subs[0]);
     const Chan = struct {
-        pub fn fetch(_: @This(), _: Allocator, _: []const u8, _: *resolve.Diagnostic) resolve.Error![]const u8 {
+        pub fn fetch(_: @This(), _: Allocator, _: []const u8, _: []const u8, _: *resolve.Diagnostic) resolve.Error![]const u8 {
             return reg_repodata;
         }
-        pub fn fetchConda(_: @This(), _: Allocator, _: []const u8, _: []const u8, _: *resolve.Diagnostic) resolve.Error![]const u8 {
+        pub fn fetchConda(_: @This(), _: Allocator, _: []const u8, _: []const u8, _: []const u8, _: *resolve.Diagnostic) resolve.Error![]const u8 {
             return error.ResolveFailed;
         }
     };
@@ -757,32 +759,32 @@ test "the registry's repodata.json is merged with the staged entries, and a stag
     const a = arena_state.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const bytes = try testConda(a, "libbase", "0.1.0", base_meta);
-    const dir = try testSet(a, &tmp, &.{.{ .name = "libbase", .version = "0.1.0", .files = &.{.{ .bytes = bytes }} }});
+    const bytes = try testConda(a, "acme/libbase", "0.1.0", base_meta);
+    const dir = try testSet(a, &tmp, &.{.{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .bytes = bytes }} }});
     var why: []const u8 = "";
     const ov = try load(a, dir, &why);
 
-    const only = try ov.repodata(a, "linux-64", null, &why);
-    try std.testing.expect(std.mem.indexOf(u8, only, "mojo-libbase-0.1.0-mojo1.0.0_0.conda") != null);
+    const only = try ov.repodata(a, "acme", "linux-64", null, &why);
+    try std.testing.expect(std.mem.indexOf(u8, only, "mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda") != null);
     try std.testing.expect(std.mem.indexOf(u8, only, &sha256Hex(bytes)) != null);
 
-    const theirs = "{\"info\":{\"subdir\":\"linux-64\"},\"packages.conda\":{\"mojo-other-1.0.0-mojo1.0.0_0.conda\":{\"sha256\":\"" ++ test_sha ++ "\",\"size\":7}},\"removed\":[\"x\"]}";
-    const merged = try ov.repodata(a, "linux-64", theirs, &why);
-    try std.testing.expect(std.mem.indexOf(u8, merged, "mojo-other-1.0.0-mojo1.0.0_0.conda") != null);
-    try std.testing.expect(std.mem.indexOf(u8, merged, "mojo-libbase-0.1.0-mojo1.0.0_0.conda") != null);
+    const theirs = "{\"info\":{\"subdir\":\"linux-64\"},\"packages.conda\":{\"mojo-acme.other-1.0.0-mojo1.0.0_0.conda\":{\"sha256\":\"" ++ test_sha ++ "\",\"size\":7}},\"removed\":[\"x\"]}";
+    const merged = try ov.repodata(a, "acme", "linux-64", theirs, &why);
+    try std.testing.expect(std.mem.indexOf(u8, merged, "mojo-acme.other-1.0.0-mojo1.0.0_0.conda") != null);
+    try std.testing.expect(std.mem.indexOf(u8, merged, "mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda") != null);
     try std.testing.expect(std.mem.indexOf(u8, merged, "\"removed\"") != null);
 
     // The same bytes under the same name: fine. Other bytes, or another size: refused, naming both sides' file.
-    const same = try std.fmt.allocPrint(a, "{{\"packages.conda\":{{\"mojo-libbase-0.1.0-mojo1.0.0_0.conda\":{{\"sha256\":\"{s}\",\"size\":{d}}}}},\"removed\":[]}}", .{ sha256Hex(bytes), bytes.len });
-    _ = try ov.repodata(a, "linux-64", same, &why);
-    const other = "{\"packages.conda\":{\"mojo-libbase-0.1.0-mojo1.0.0_0.conda\":{\"sha256\":\"" ++ test_sha ++ "\",\"size\":9}},\"removed\":[]}";
-    try std.testing.expectError(error.Refused, ov.repodata(a, "linux-64", other, &why));
-    try std.testing.expect(std.mem.indexOf(u8, why, "linux-64/mojo-libbase-0.1.0-mojo1.0.0_0.conda is staged in") != null);
-    const resized = try std.fmt.allocPrint(a, "{{\"packages.conda\":{{\"mojo-libbase-0.1.0-mojo1.0.0_0.conda\":{{\"sha256\":\"{s}\",\"size\":{d}}}}},\"removed\":[]}}", .{ sha256Hex(bytes), bytes.len + 1 });
-    try std.testing.expectError(error.Refused, ov.repodata(a, "linux-64", resized, &why));
+    const same = try std.fmt.allocPrint(a, "{{\"packages.conda\":{{\"mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda\":{{\"sha256\":\"{s}\",\"size\":{d}}}}},\"removed\":[]}}", .{ sha256Hex(bytes), bytes.len });
+    _ = try ov.repodata(a, "acme", "linux-64", same, &why);
+    const other = "{\"packages.conda\":{\"mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda\":{\"sha256\":\"" ++ test_sha ++ "\",\"size\":9}},\"removed\":[]}";
+    try std.testing.expectError(error.Refused, ov.repodata(a, "acme", "linux-64", other, &why));
+    try std.testing.expect(std.mem.indexOf(u8, why, "linux-64/mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda is staged in") != null);
+    const resized = try std.fmt.allocPrint(a, "{{\"packages.conda\":{{\"mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda\":{{\"sha256\":\"{s}\",\"size\":{d}}}}},\"removed\":[]}}", .{ sha256Hex(bytes), bytes.len + 1 });
+    try std.testing.expectError(error.Refused, ov.repodata(a, "acme", "linux-64", resized, &why));
 
     // Text that is not a repodata.json is handed back for the reader to refuse.
-    try std.testing.expectEqualStrings("not json", try ov.repodata(a, "linux-64", "not json", &why));
+    try std.testing.expectEqualStrings("not json", try ov.repodata(a, "acme", "linux-64", "not json", &why));
 }
 
 test "the registry holding a staged version with other bytes is named; the same bytes, another version and no record are not" {
@@ -791,29 +793,28 @@ test "the registry holding a staged version with other bytes is named; the same 
     const a = arena_state.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const bytes = try testConda(a, "libbase", "0.1.0", base_meta);
-    const dir = try testSet(a, &tmp, &.{.{ .name = "libbase", .version = "0.1.0", .files = &.{.{ .bytes = bytes }} }});
+    const bytes = try testConda(a, "acme/libbase", "0.1.0", base_meta);
+    const dir = try testSet(a, &tmp, &.{.{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .bytes = bytes }} }});
     var why: []const u8 = "";
     const ov = try load(a, dir, &why);
-    const m = ov.member("libbase").?;
-    const file = "mojo-libbase-0.1.0-mojo1.0.0_0.conda";
+    const m = ov.member("acme/libbase").?;
     const line = struct {
-        fn make(arena: Allocator, version: []const u8, sha: []const u8, size: usize, filename: []const u8) ![]const resolve.Record {
-            const text = try std.fmt.allocPrint(arena, "{{\"build\":\"mojo1.0.0_0\",\"deps\":[],\"files\":[{{\"filename\":\"{s}\",\"sha256\":\"{s}\",\"size\":{d},\"subdir\":\"linux-64\"}}],\"name\":\"libbase\",\"requires_mojo\":\"==1.0.0\",\"state\":\"published\",\"v\":1,\"version\":\"{s}\"}}\n", .{ filename, sha, size, version });
+        fn make(arena: Allocator, version: []const u8, build: []const u8, sha: []const u8, size: usize) ![]const resolve.Record {
+            const text = try std.fmt.allocPrint(arena, "{{\"build\":\"{s}\",\"deps\":[],\"files\":[{{\"filename\":\"mojo-acme.libbase-{s}-{s}.conda\",\"sha256\":\"{s}\",\"size\":{d},\"subdir\":\"linux-64\"}}],\"name\":\"acme/libbase\",\"requires_mojo\":\"==1.0.0\",\"state\":\"published\",\"v\":2,\"version\":\"{s}\"}}\n", .{ build, version, build, sha, size, version });
             var d: resolve.Diagnostic = .{};
-            return try resolve.parseIndex(arena, "libbase", text, &d);
+            return try resolve.parseIndex(arena, "acme/libbase", text, &d);
         }
     }.make;
     const mine = sha256Hex(bytes);
-    try std.testing.expect((try registryDiffers(a, dir, m, try line(a, "0.1.0", &mine, bytes.len, file))) == null);
-    try std.testing.expect((try registryDiffers(a, dir, m, try line(a, "0.1.1", test_sha, 5, file))) == null);
+    try std.testing.expect((try registryDiffers(a, dir, m, try line(a, "0.1.0", "mojo1.0.0_0", &mine, bytes.len))) == null);
+    try std.testing.expect((try registryDiffers(a, dir, m, try line(a, "0.1.1", "mojo1.0.0_0", test_sha, 5))) == null);
     try std.testing.expect((try registryDiffers(a, dir, m, &.{})) == null);
-    const other = (try registryDiffers(a, dir, m, try line(a, "0.1.0", test_sha, bytes.len, file))).?;
-    try std.testing.expect(std.mem.indexOf(u8, other, "libbase 0.1.0 is staged in") != null);
+    const other = (try registryDiffers(a, dir, m, try line(a, "0.1.0", "mojo1.0.0_0", test_sha, bytes.len))).?;
+    try std.testing.expect(std.mem.indexOf(u8, other, "acme/libbase 0.1.0 is staged in") != null);
     try std.testing.expect(std.mem.indexOf(u8, other, "needs a new version") != null);
-    const resized = try registryDiffers(a, dir, m, try line(a, "0.1.0", &mine, bytes.len + 1, file));
+    const resized = try registryDiffers(a, dir, m, try line(a, "0.1.0", "mojo1.0.0_0", &mine, bytes.len + 1));
     try std.testing.expect(resized != null);
-    const renamed = try registryDiffers(a, dir, m, try line(a, "0.1.0", &mine, bytes.len, "mojo-libbase-0.1.0-mojo1.0.0_1.conda"));
+    const renamed = try registryDiffers(a, dir, m, try line(a, "0.1.0", "mojo1.0.0_1", &mine, bytes.len));
     try std.testing.expect(renamed != null);
 }
 
@@ -823,14 +824,23 @@ test "the bytes of a file come only for the file a lock pins, and from the set i
     const a = arena_state.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const bytes = try testConda(a, "libbase", "0.1.0", base_meta);
-    const dir = try testSet(a, &tmp, &.{.{ .name = "libbase", .version = "0.1.0", .files = &.{.{ .bytes = bytes }} }});
+    const bytes = try testConda(a, "acme/libbase", "0.1.0", base_meta);
+    const dir = try testSet(a, &tmp, &.{.{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .bytes = bytes }} }});
     var why: []const u8 = "";
     const ov = try load(a, dir, &why);
     const sha = sha256Hex(bytes);
     var p = lock.Package{
-        .name = "libbase", .version = "0.1.0", .build = "mojo1.0.0_0", .subdir = "linux-64", .channel = "https://conda.example/",
-        .url = "https://conda.example/linux-64/mojo-libbase-0.1.0-mojo1.0.0_0.conda", .sha256 = &sha, .size = bytes.len, .mojo = "1.0.0", .deps = &.{}, .native = &.{},
+        .name = "acme/libbase",
+        .version = "0.1.0",
+        .build = "mojo1.0.0_0",
+        .subdir = "linux-64",
+        .channel = "https://conda.example/",
+        .url = "https://conda.example/linux-64/mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda",
+        .sha256 = &sha,
+        .size = bytes.len,
+        .mojo = "1.0.0",
+        .deps = &.{},
+        .native = &.{},
     };
     const got = (try ov.bytesFor(a, p, &why)).?;
     try std.testing.expectEqualSlices(u8, bytes, got);
@@ -844,11 +854,11 @@ test "the bytes of a file come only for the file a lock pins, and from the set i
     p.subdir = "osx-arm64";
     try std.testing.expect((try ov.bytesFor(a, p, &why)) == null);
     p.subdir = "linux-64";
-    p.name = "other";
+    p.name = "acme/other";
     try std.testing.expect((try ov.bytesFor(a, p, &why)) == null);
     // A file changed after the set was read is refused.
-    try tmp.dir.writeFile("linux-64/mojo-libbase-0.1.0-mojo1.0.0_0.conda", "changed");
-    p.name = "libbase";
+    try tmp.dir.writeFile("linux-64/mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda", "changed");
+    p.name = "acme/libbase";
     try std.testing.expectError(error.Refused, ov.bytesFor(a, p, &why));
 }
 
@@ -876,41 +886,41 @@ test "the set answers for the files it holds only; the channel hands any other p
     const a = arena_state.allocator();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    const bytes = try testConda(a, "libbase", "0.1.0", base_meta);
-    const dir = try testSet(a, &tmp, &.{.{ .name = "libbase", .version = "0.1.0", .files = &.{.{ .bytes = bytes }} }});
+    const bytes = try testConda(a, "acme/libbase", "0.1.0", base_meta);
+    const dir = try testSet(a, &tmp, &.{.{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .bytes = bytes }} }});
     var why: []const u8 = "";
     const ov = try load(a, dir, &why);
-    try std.testing.expect((try ov.fileBytes(a, "linux-64", "mojo-other-1.0.0-mojo1.0.0_0.conda", &why)) == null);
-    try std.testing.expect((try ov.fileBytes(a, "osx-arm64", "mojo-libbase-0.1.0-mojo1.0.0_0.conda", &why)) == null);
+    try std.testing.expect((try ov.fileBytes(a, "linux-64", "mojo-acme.other-1.0.0-mojo1.0.0_0.conda", &why)) == null);
+    try std.testing.expect((try ov.fileBytes(a, "osx-arm64", "mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda", &why)) == null);
 
     const Inner = struct {
-        pub fn fetch(_: @This(), _: Allocator, _: []const u8, _: *resolve.Diagnostic) resolve.Error![]const u8 {
+        pub fn fetch(_: @This(), _: Allocator, _: []const u8, _: []const u8, _: *resolve.Diagnostic) resolve.Error![]const u8 {
             return "{\"packages.conda\":{}}";
         }
-        pub fn fetchConda(_: @This(), _: Allocator, _: []const u8, filename: []const u8, _: *resolve.Diagnostic) resolve.Error![]const u8 {
+        pub fn fetchConda(_: @This(), _: Allocator, _: []const u8, _: []const u8, filename: []const u8, _: *resolve.Diagnostic) resolve.Error![]const u8 {
             return filename;
         }
     };
-    const channel = Channel(Inner){ .overlay = &ov, .inner = .{}, .registry_subdirs = &.{"linux-64"} };
+    const channel = Channel(Inner){ .overlay = &ov, .inner = .{}, .registry_subdirs = &.{"acme/linux-64"} };
     var diag: resolve.Diagnostic = .{};
-    try std.testing.expectEqualSlices(u8, bytes, try channel.fetchConda(a, "linux-64", "mojo-libbase-0.1.0-mojo1.0.0_0.conda", &diag));
-    try std.testing.expectEqualStrings("mojo-theirs-1.0.0-mojo1.0.0_0.conda", try channel.fetchConda(a, "linux-64", "mojo-theirs-1.0.0-mojo1.0.0_0.conda", &diag));
-    try std.testing.expect(std.mem.indexOf(u8, try channel.fetch(a, "linux-64", &diag), "mojo-libbase-0.1.0-mojo1.0.0_0.conda") != null);
+    try std.testing.expectEqualSlices(u8, bytes, try channel.fetchConda(a, "acme", "linux-64", "mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda", &diag));
+    try std.testing.expectEqualStrings("mojo-acme.theirs-1.0.0-mojo1.0.0_0.conda", try channel.fetchConda(a, "acme", "linux-64", "mojo-acme.theirs-1.0.0-mojo1.0.0_0.conda", &diag));
+    try std.testing.expect(std.mem.indexOf(u8, try channel.fetch(a, "acme", "linux-64", &diag), "mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda") != null);
 
     // A file changed after the set was read is an error of the channel, naming the file.
-    try tmp.dir.writeFile("linux-64/mojo-libbase-0.1.0-mojo1.0.0_0.conda", "changed");
-    try std.testing.expectError(error.ResolveFailed, channel.fetchConda(a, "linux-64", "mojo-libbase-0.1.0-mojo1.0.0_0.conda", &diag));
+    try tmp.dir.writeFile("linux-64/mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda", "changed");
+    try std.testing.expectError(error.ResolveFailed, channel.fetchConda(a, "acme", "linux-64", "mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda", &diag));
     try std.testing.expectEqual(resolve.Kind.bad_channel, diag.kind);
     try std.testing.expect(std.mem.indexOf(u8, diag.message, "changed after it was read") != null);
 
     // A registry entry for a staged file name with other bytes is an error of the channel too.
     const Clashing = struct {
-        pub fn fetch(_: @This(), _: Allocator, _: []const u8, _: *resolve.Diagnostic) resolve.Error![]const u8 {
-            return "{\"packages.conda\":{\"mojo-libbase-0.1.0-mojo1.0.0_0.conda\":{\"sha256\":\"" ++ test_sha ++ "\",\"size\":3}}}";
+        pub fn fetch(_: @This(), _: Allocator, _: []const u8, _: []const u8, _: *resolve.Diagnostic) resolve.Error![]const u8 {
+            return "{\"packages.conda\":{\"mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda\":{\"sha256\":\"" ++ test_sha ++ "\",\"size\":3}}}";
         }
     };
-    const clash = Channel(Clashing){ .overlay = &ov, .inner = .{}, .registry_subdirs = &.{"linux-64"} };
-    try std.testing.expectError(error.ResolveFailed, clash.fetch(a, "linux-64", &diag));
+    const clash = Channel(Clashing){ .overlay = &ov, .inner = .{}, .registry_subdirs = &.{"acme/linux-64"} };
+    try std.testing.expectError(error.ResolveFailed, clash.fetch(a, "acme", "linux-64", &diag));
     try std.testing.expectEqual(resolve.Kind.bad_channel, diag.kind);
     try std.testing.expect(std.mem.indexOf(u8, diag.message, "needs a new version") != null);
 }
@@ -919,31 +929,34 @@ test "a plan that is not what the spec says is refused, naming the member" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    const good = try testConda(a, "libbase", "0.1.0", base_meta);
+    const good = try testConda(a, "acme/libbase", "0.1.0", base_meta);
     const sha = sha256Hex(good);
-    const file = try std.fmt.allocPrint(a, "{{\"subdir\":\"linux-64\",\"filename\":\"mojo-libbase-0.1.0-mojo1.0.0_0.conda\",\"sha256\":\"{s}\",\"size\":{d}}}", .{ sha, good.len });
+    const file = try std.fmt.allocPrint(a, "{{\"subdir\":\"linux-64\",\"filename\":\"mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda\",\"sha256\":\"{s}\",\"size\":{d}}}", .{ sha, good.len });
     const Case = struct { plan: []const u8, want: []const u8 };
     const cases = [_]Case{
         .{ .plan = "[]", .want = "is not a JSON object" },
         .{ .plan = "{", .want = "is not JSON" },
         .{ .plan = "{\"members\":[]}", .want = "has no version" },
-        .{ .plan = "{\"version\":1}", .want = "has no members" },
-        .{ .plan = "{\"version\":1,\"members\":{}}", .want = "members is not an array" },
-        .{ .plan = "{\"version\":1,\"members\":[1]}", .want = "a member is not an object" },
-        .{ .plan = "{\"version\":1,\"members\":[{\"version\":\"1.0.0\"}]}", .want = "a member has no name" },
-        .{ .plan = "{\"version\":1,\"members\":[{\"name\":\"x\"}]}", .want = "x has no version" },
-        .{ .plan = "{\"version\":1,\"members\":[{\"name\":\"x\",\"version\":\"1.0.0\"}]}", .want = "x 1.0.0 has no action" },
-        .{ .plan = "{\"version\":1,\"members\":[{\"name\":\"x\",\"version\":\"1.0.0\",\"action\":\"publish\"}]}", .want = "has the action publish" },
-        .{ .plan = "{\"version\":1,\"members\":[{\"name\":\"BadName\",\"version\":\"1.0.0\",\"action\":\"upload\"}]}", .want = "must start with a lowercase letter" },
-        .{ .plan = "{\"version\":1,\"members\":[{\"name\":\"x\",\"version\":\"1.0.0\",\"action\":\"upload\"}]}", .want = "x 1.0.0 has no files" },
-        .{ .plan = "{\"version\":1,\"members\":[{\"name\":\"x\",\"version\":\"1.0.0\",\"action\":\"upload\",\"files\":[]}]}", .want = "files is one to 20 entries" },
-        .{ .plan = "{\"version\":1,\"members\":[{\"name\":\"x\",\"version\":\"1.0.0\",\"action\":\"upload\",\"files\":[1]}]}", .want = "a file of x 1.0.0 is not an object" },
-        .{ .plan = "{\"version\":1,\"members\":[{\"name\":\"x\",\"version\":\"1.0.0\",\"action\":\"upload\",\"files\":[{}]}]}", .want = "a file of x 1.0.0 has no subdir" },
-        .{ .plan = "{\"version\":1,\"members\":[{\"name\":\"x\",\"version\":\"1.0.0\",\"action\":\"upload\",\"files\":[{\"subdir\":\"win-64\",\"filename\":\"f\",\"sha256\":\"a\",\"size\":1}]}]}", .want = "win-64 is not a subdir" },
-        .{ .plan = "{\"version\":1,\"members\":[{\"name\":\"x\",\"version\":\"1.0.0\",\"action\":\"upload\",\"files\":[{\"subdir\":\"noarch\",\"filename\":\"../f\",\"sha256\":\"a\",\"size\":1}]}]}", .want = "is not a plain file name" },
-        .{ .plan = "{\"version\":1,\"members\":[{\"name\":\"x\",\"version\":\"1.0.0\",\"action\":\"upload\",\"files\":[{\"subdir\":\"noarch\",\"filename\":\"f\",\"sha256\":\"a\",\"size\":1}]}]}", .want = "is not 64 lowercase hex digits" },
-        .{ .plan = "{\"version\":1,\"members\":[{\"name\":\"x\",\"version\":\"1.0.0\",\"action\":\"upload\",\"files\":[{\"subdir\":\"noarch\",\"filename\":\"f\",\"sha256\":\"" ++ test_sha ++ "\",\"size\":0}]}]}", .want = "the size of f is not 1 to" },
-        .{ .plan = "{\"version\":1,\"members\":[{\"name\":\"x\",\"version\":\"1.0.0\",\"action\":\"upload\",\"files\":[{\"subdir\":\"noarch\",\"filename\":\"mojo-y-1.0.0-mojo1.0.0_0.conda\",\"sha256\":\"" ++ test_sha ++ "\",\"size\":5}]}]}", .want = "is not a file of x 1.0.0" },
+        .{ .plan = "{\"version\":3,\"members\":[]}", .want = "this mopm reads plan version 2" },
+        .{ .plan = "{\"version\":1,\"members\":[]}", .want = "/plan.json is version 1 (it predates namespaces); stage the set again" },
+        .{ .plan = "{\"version\":2,\"members\":[{\"name\":\"xx\",\"version\":\"1.0.0\",\"action\":\"upload\"}]}", .want = "package name 'xx' has no namespace: write <namespace>/xx" },
+        .{ .plan = "{\"version\":2}", .want = "has no members" },
+        .{ .plan = "{\"version\":2,\"members\":{}}", .want = "members is not an array" },
+        .{ .plan = "{\"version\":2,\"members\":[1]}", .want = "a member is not an object" },
+        .{ .plan = "{\"version\":2,\"members\":[{\"version\":\"1.0.0\"}]}", .want = "a member has no name" },
+        .{ .plan = "{\"version\":2,\"members\":[{\"name\":\"acme/xx\"}]}", .want = "acme/xx has no version" },
+        .{ .plan = "{\"version\":2,\"members\":[{\"name\":\"acme/xx\",\"version\":\"1.0.0\"}]}", .want = "acme/xx 1.0.0 has no action" },
+        .{ .plan = "{\"version\":2,\"members\":[{\"name\":\"acme/xx\",\"version\":\"1.0.0\",\"action\":\"publish\"}]}", .want = "has the action publish" },
+        .{ .plan = "{\"version\":2,\"members\":[{\"name\":\"acme/BadName\",\"version\":\"1.0.0\",\"action\":\"upload\"}]}", .want = "is not in lower case; write 'acme/badname'" },
+        .{ .plan = "{\"version\":2,\"members\":[{\"name\":\"acme/xx\",\"version\":\"1.0.0\",\"action\":\"upload\"}]}", .want = "acme/xx 1.0.0 has no files" },
+        .{ .plan = "{\"version\":2,\"members\":[{\"name\":\"acme/xx\",\"version\":\"1.0.0\",\"action\":\"upload\",\"files\":[]}]}", .want = "files is one to 20 entries" },
+        .{ .plan = "{\"version\":2,\"members\":[{\"name\":\"acme/xx\",\"version\":\"1.0.0\",\"action\":\"upload\",\"files\":[1]}]}", .want = "a file of acme/xx 1.0.0 is not an object" },
+        .{ .plan = "{\"version\":2,\"members\":[{\"name\":\"acme/xx\",\"version\":\"1.0.0\",\"action\":\"upload\",\"files\":[{}]}]}", .want = "a file of acme/xx 1.0.0 has no subdir" },
+        .{ .plan = "{\"version\":2,\"members\":[{\"name\":\"acme/xx\",\"version\":\"1.0.0\",\"action\":\"upload\",\"files\":[{\"subdir\":\"win-64\",\"filename\":\"f\",\"sha256\":\"a\",\"size\":1}]}]}", .want = "win-64 is not a subdir" },
+        .{ .plan = "{\"version\":2,\"members\":[{\"name\":\"acme/xx\",\"version\":\"1.0.0\",\"action\":\"upload\",\"files\":[{\"subdir\":\"noarch\",\"filename\":\"../f\",\"sha256\":\"a\",\"size\":1}]}]}", .want = "is not a plain file name" },
+        .{ .plan = "{\"version\":2,\"members\":[{\"name\":\"acme/xx\",\"version\":\"1.0.0\",\"action\":\"upload\",\"files\":[{\"subdir\":\"noarch\",\"filename\":\"f\",\"sha256\":\"a\",\"size\":1}]}]}", .want = "is not 64 lowercase hex digits" },
+        .{ .plan = "{\"version\":2,\"members\":[{\"name\":\"acme/xx\",\"version\":\"1.0.0\",\"action\":\"upload\",\"files\":[{\"subdir\":\"noarch\",\"filename\":\"f\",\"sha256\":\"" ++ test_sha ++ "\",\"size\":0}]}]}", .want = "the size of f is not 1 to" },
+        .{ .plan = "{\"version\":2,\"members\":[{\"name\":\"acme/xx\",\"version\":\"1.0.0\",\"action\":\"upload\",\"files\":[{\"subdir\":\"noarch\",\"filename\":\"mojo-acme.y-1.0.0-mojo1.0.0_0.conda\",\"sha256\":\"" ++ test_sha ++ "\",\"size\":5}]}]}", .want = "is not a file of acme/xx 1.0.0" },
     };
     for (cases) |case| {
         var tmp = std.testing.tmpDir(.{});
@@ -953,19 +966,19 @@ test "a plan that is not what the spec says is refused, naming the member" {
     }
 
     // The same file twice, two builds in one version, and bytes that are not a package or have broken metadata.
-    const twice = try std.fmt.allocPrint(a, "{{\"version\":1,\"members\":[{{\"name\":\"libbase\",\"version\":\"0.1.0\",\"action\":\"upload\",\"files\":[{s},{s}]}}]}}", .{ file, file });
+    const twice = try std.fmt.allocPrint(a, "{{\"version\":2,\"members\":[{{\"name\":\"acme/libbase\",\"version\":\"0.1.0\",\"action\":\"upload\",\"files\":[{s},{s}]}}]}}", .{ file, file });
     {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
         try tmp.dir.makePath("linux-64");
-        try tmp.dir.writeFile("linux-64/mojo-libbase-0.1.0-mojo1.0.0_0.conda", good);
+        try tmp.dir.writeFile("linux-64/mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda", good);
         try tmp.dir.writeFile("plan.json", twice);
-        try expectRefused(a, try tmp.dir.realpathAlloc(a, "."), "lists linux-64/mojo-libbase-0.1.0-mojo1.0.0_0.conda twice");
+        try expectRefused(a, try tmp.dir.realpathAlloc(a, "."), "lists linux-64/mojo-acme.libbase-0.1.0-mojo1.0.0_0.conda twice");
     }
     {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
-        const dir = try testSet(a, &tmp, &.{.{ .name = "libbase", .version = "0.1.0", .files = &.{
+        const dir = try testSet(a, &tmp, &.{.{ .name = "acme/libbase", .version = "0.1.0", .files = &.{
             .{ .subdir = "linux-64", .bytes = good },
             .{ .subdir = "osx-arm64", .build = "mojo1.1.0_0", .bytes = good },
         } }});
@@ -974,13 +987,13 @@ test "a plan that is not what the spec says is refused, naming the member" {
     {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
-        const dir = try testSet(a, &tmp, &.{.{ .name = "libbase", .version = "0.1.0", .files = &.{.{ .bytes = "this is not a zip" }} }});
+        const dir = try testSet(a, &tmp, &.{.{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .bytes = "this is not a zip" }} }});
         try expectRefused(a, dir, "is not a readable .conda");
     }
     {
         var tmp = std.testing.tmpDir(.{});
         defer tmp.cleanup();
-        const dir = try testSet(a, &tmp, &.{.{ .name = "libbase", .version = "0.1.0", .files = &.{.{ .bytes = try testConda(a, "libbase", "0.1.0", "not json") }} }});
+        const dir = try testSet(a, &tmp, &.{.{ .name = "acme/libbase", .version = "0.1.0", .files = &.{.{ .bytes = try testConda(a, "acme/libbase", "0.1.0", "not json") }} }});
         try expectRefused(a, dir, "is not valid package metadata");
     }
 }

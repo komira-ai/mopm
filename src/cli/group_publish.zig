@@ -145,7 +145,8 @@ pub const Publisher = struct {
     /// What stops this run once the group turns out to be open (`readmes.decideResumed`): a run that resumes a group sends a
     /// commit only for an open group, so a group the registry holds past open is waited for whatever this says.
     refusal: ?readmes.Refusal = null,
-    /// The registry's API root, without a trailing slash (`http://127.0.0.1:1234/api/v1`).
+    /// The registry's version 2 API root, without a trailing slash (`http://127.0.0.1:1234/api/v2`): every request of the run goes
+    /// under it, with full names in paths and bodies.
     api_url: []const u8,
     token: []const u8,
     wait_secs: i64,
@@ -718,7 +719,7 @@ pub const Publisher = struct {
         }
         const report = plan_mod.Report{
             .run_id = run_id,
-            .registry = p.api_url,
+            .registry = p.state.registry,
             .group_id = if (p.state.group_id.len > 0) p.state.group_id else if (p.reported_group.len > 0) p.reported_group else null,
             .group_status = p.group_status,
             .outcome = outcomeName(result),
@@ -815,7 +816,7 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
 
     const opened = (try openRegistry(arena, flags, cli_version)) orelse return 1;
     // The form of the readmes is read from /health, without a token, before the token is asked for.
-    const form = (try formOf(arena, net, opened.session.config.api_url, checked, resumedGroup(arena, dir), &console)) orelse return 1;
+    const form = (try formOf(arena, net, opened.session.config.api_v2_url, checked, resumedGroup(arena, dir), &console)) orelse return 1;
     const choice = form.choice;
     const creds = (try credentials(arena, net, flags, opened, uploads)) orelse return 1;
     const loaded = (try loadStateFor(arena, dir, creds.api_url, plan.sha256, &console, "resuming")) orelse return 1;
@@ -830,7 +831,7 @@ fn command(arena: Allocator, flags: Flags, cli_version: []const u8, base_net: Ne
         .entries = checked.entries,
         .objects = choice.objects,
         .refusal = form.refusal,
-        .api_url = creds.api_url,
+        .api_url = creds.api_v2_url,
         .token = creds.token,
         .wait_secs = flags.wait_secs orelse defaultWaitFor(uploads.len),
         .no_commit = flags.no_commit,
@@ -848,7 +849,8 @@ const StderrNotes = struct {
     }
 };
 
-const Credentials = struct { api_url: []const u8, token: []const u8 };
+/// `api_url` (version 1) names the registry in state.json and the login's credentials; `api_v2_url` is where the requests go.
+const Credentials = struct { api_url: []const u8, api_v2_url: []const u8, token: []const u8 };
 
 /// The registry the flags name and, with `--oidc`, the job's identity request.
 const Opened = struct { session: registry_cmd.Session, actions: ?ci_oidc.Actions };
@@ -869,7 +871,7 @@ fn credentials(arena: Allocator, net: Net, flags: Flags, opened: Opened, uploads
     const s = opened.session;
     var notes = StderrNotes{};
     const purpose = stage_token.purposeOf(flags.no_commit, flags.abort);
-    const token = if (opened.actions) |act| switch (try stage_token.token(arena, net, act, s.config.api_url, s.config.stage, uploads, purpose, &notes)) {
+    const token = if (opened.actions) |act| switch (try stage_token.token(arena, net, act, s.config.api_v2_url, s.config.stage, uploads, purpose, &notes)) {
         .ok => |t| t,
         .bad => |why| {
             err("{s}\n", .{why});
@@ -879,7 +881,7 @@ fn credentials(arena: Allocator, net: Net, flags: Flags, opened: Opened, uploads
         err("not logged in to {s}; run 'mopm login' or set MOPM_TOKEN\n", .{s.config.stage});
         return null;
     };
-    return .{ .api_url = s.config.api_url, .token = token };
+    return .{ .api_url = s.config.api_url, .api_v2_url = s.config.api_v2_url, .token = token };
 }
 
 const LoadedFor = struct { state: plan_mod.State, found: bool };
@@ -929,7 +931,7 @@ fn abortCommand(arena: Allocator, flags: Flags, cli_version: []const u8, net: Ne
         .plan = plan,
         // An abort sends no commit.
         .commit_body = "",
-        .api_url = creds.api_url,
+        .api_url = creds.api_v2_url,
         .token = creds.token,
         .wait_secs = 0,
         .state = loaded.state,
@@ -948,18 +950,18 @@ fn dryRun(arena: Allocator, flags: Flags, cli_version: []const u8, net: Net, pla
             return 1;
         },
     };
-    var api_url: []const u8 = "";
+    var api_v2_url: []const u8 = "";
     if (readmes.hasReadme(checked.entries)) {
-        api_url = switch (registry.load(arena, base, cli_version) catch |e| {
+        api_v2_url = switch (registry.load(arena, base, cli_version) catch |e| {
             err("{s}: {s}\n", .{ base, @errorName(e) });
             return 1;
         }) {
-            .ok => |c| c.api_url,
+            .ok => |c| c.api_v2_url,
             .bad => |why| {
                 err("{s}: {s}\n", .{ base, why });
                 return 1;
             },
         };
     }
-    return readmes.dryRun(arena, console, net, api_url, flags.no_commit, plan, uploads, checked.entries, checked.inlineCommit());
+    return readmes.dryRun(arena, console, net, api_v2_url, flags.no_commit, plan, uploads, checked.entries, checked.inlineCommit());
 }

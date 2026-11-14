@@ -1,13 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mopm.dev/schema/index-record-1.json",
-  "title": "mopm sparse index record (one line of /index/<aa>/<bb>/<name>)",
-  "description": "One published version of one package. A package file is newline-delimited JSON: one record per line. Unknown keys are ignored; a higher v is refused.",
+  "$id": "https://mopm.dev/schema/index-record-2.json",
+  "title": "mopm sparse index record, version 2 (one line of /index/v2/<aa>/<bb>/<namespace>/<name>)",
+  "description": "One published version of one package. A package file is newline-delimited JSON: one record per line, every line with the same name, the full name <namespace>/<name> of the file. Unknown keys are ignored; a v this reader does not know is refused.",
+  "$defs": {
+    "FullName": { "type": "string", "maxLength": 104, "pattern": "^[a-z0-9]+(-[a-z0-9]+)*/[a-z][a-z0-9_]{1,63}$" }
+  },
   "type": "object",
   "required": ["v", "name", "version", "build", "state", "published_at", "requires_mojo", "deps", "files", "manifest_sha256"],
   "properties": {
-    "v": { "const": 1 },
-    "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,63}$" },
+    "v": { "const": 2 },
+    "name": { "$ref": "#/$defs/FullName" },
     "version": {
       "description": "MAJOR.MINOR.PATCH: three numbers, no leading zeros, no pre-release or other suffix.",
       "type": "string",
@@ -32,7 +35,7 @@
         "type": "object",
         "required": ["name"],
         "properties": {
-          "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,63}$" },
+          "name": { "$ref": "#/$defs/FullName" },
           "range": { "type": "string" }
         }
       }
@@ -56,10 +59,10 @@
         "required": ["subdir", "filename", "sha256", "size"],
         "properties": {
           "subdir": { "enum": ["linux-64", "linux-aarch64", "osx-arm64", "noarch"] },
-          "filename": { "type": "string", "pattern": "^mojo-[a-z][a-z0-9_]{1,63}-[0-9][0-9a-z.]*-[A-Za-z0-9_.]+\\.conda$" },
+          "filename": { "description": "mojo-<namespace>.<name>-<version>-<build>.conda: the conda name of the record's name, then its version and build.", "type": "string", "pattern": "^mojo-[a-z0-9]+(-[a-z0-9]+)*\\.[a-z][a-z0-9_]{1,63}-[0-9][0-9a-z.]*-[A-Za-z0-9_.]+\\.conda$" },
           "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
           "size": { "type": "integer", "minimum": 1 },
-          "url": { "type": "string", "format": "uri" }
+          "url": { "description": "<channel_url><namespace>/<subdir>/<filename>.", "type": "string", "format": "uri" }
         }
       }
     },

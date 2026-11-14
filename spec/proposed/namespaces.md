@@ -47,106 +47,12 @@ import-name rules and the library directory rule are live in `spec/mopm-toml.md`
 
 The rule of one package per import name in a closure is live in `spec/mopm-toml.md` ("Rules").
 
-## package-metadata.schema.json
+## Live already
 
-`schema` 2. Changed properties; everything else is schema 1's.
-
-```json
-{
-  "schema": { "const": 2 },
-  "name": { "$ref": "#/$defs/FullName" },
-  "deps": { "type": "array", "items": { "type": "object", "required": ["name"],
-            "properties": { "name": { "$ref": "#/$defs/FullName" }, "range": { "type": "string" } } } }
-}
-```
-
-The file stays at `lib/mojo/<import name>.mopm.json`, beside `lib/mojo/<import name>.mojoc`. A reader refuses a
-`schema` it does not know, so a mopm without namespaces refuses schema 2.
-
-## channel.md
-
-- Layout: one channel per namespace, `https://conda.<site>/<namespace>/`, with the four subdirs and the files of
-  "Layout (v1)" below it. A namespace channel holds only that namespace's packages.
-- The channel root `https://conda.<site>/` keeps its four subdirs, each with a valid `repodata.json` that holds only
-  the packages kept under flat names (on mopm.dev, the `kci_*` packages).
-- Package naming: the conda package name is `mojo-<namespace>.<name>`; the file is
-  `mojo-<namespace>.<name>-<version>-<build>.conda`. `pixi workspace channel add https://conda.mopm.dev/komira-ai/`
-  then `pixi add mojo-komira-ai.json` installs `komira-ai/json`.
-- `depends`: another mopm package is `mojo-<namespace>.<name> <range>`. A conda client finds it in the channels its user
-  lists; a package whose closure spans namespaces needs every one of those channels.
-- Inside a package: `lib/mojo/<import name>.mojoc` and `lib/mojo/<import name>.mopm.json` (schema 2, whose `name` is
-  the full name).
-
-## index.md, index-record.schema.json, index-config.schema.json, takedowns.schema.json
-
-Version 2 is served beside version 1.
-
-| path | content |
-|---|---|
-| `/index/config.json` | as today, plus the optional keys below |
-| `/index/v2/<aa>/<bb>/<namespace>/<name>` | one package, newline-delimited JSON, record `v` 2 |
-| `/index/v2/takedowns.json` | the public log of removed versions, with full names |
-
-`aa` is the namespace's first two characters and `bb` its third and fourth, padded on the right with `_` when it is
-shorter than four: `komira-ai/json` is `/index/v2/ko/mi/komira-ai/json`; `ab/x1` is `/index/v2/ab/__/ab/x1`.
-
-`config.json`, two optional keys (a reader that does not know them ignores them):
-
-```json
-{
-  "index_versions": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "minItems": 1, "uniqueItems": true },
-  "api_v2_url": { "type": "string", "format": "uri" }
-}
-```
-
-`index_versions` lists every index version served, sorted; when absent it is `[index_version]`. `api_v2_url` follows
-the rules of `api_url` and ends in `/api/v2`. A namespace's channel is `channel_url` followed by `<namespace>/`. A
-client that reads version 2 refuses a registry whose `index_versions` lacks 2, naming the registry.
-
-A record, version 2:
-
-```json
-{"v":2,"name":"komira-ai/json","version":"0.1.0","build":"mojo1.0.0_0","state":"published","published_at":"2026-11-13T12:00:00Z","requires_mojo":"==1.0.0","deps":[{"name":"komira-ai/encoding","range":"0.1"}],"native":[],"files":[{"subdir":"linux-64","filename":"mojo-komira-ai.json-0.1.0-mojo1.0.0_0.conda","sha256":"...","size":123456,"url":"https://conda.mopm.dev/komira-ai/linux-64/mojo-komira-ai.json-0.1.0-mojo1.0.0_0.conda"}],"manifest_sha256":"..."}
-```
-
-Schema changes from record version 1: `v` const 2; `name` and `deps[].name` are `FullName`; `files[].filename` is
-`^mojo-[a-z0-9]+(-[a-z0-9]+)*\.[a-z][a-z0-9_]{1,63}-[0-9][0-9a-z.]*-[A-Za-z0-9_.]+\.conda$`, its conda name the
-record's; `files[].url` is `<channel_url><namespace>/<subdir>/<filename>`. Every line of a file has the same `name`,
-equal to the file's `<namespace>/<name>`. Takedown entries: `name` is `FullName`.
-
-## lock.md, lock.schema.json
-
-`lock_version` 3: the shape of version 2 for every project (a `[toolchain] mojo` project has a one-element `mojo`).
-
-```json
-{
-  "lock_version": 3,
-  "mojo": ["1.0.0"],
-  "toolchain": { "1.0.0": { "linux-64": "<64 hex digits>" } },
-  "channels": ["https://conda.mopm.dev/"],
-  "packages": [
-    {
-      "name": "komira-ai/json",
-      "version": "0.1.0",
-      "subdir": "linux-64",
-      "channel": "https://conda.mopm.dev/komira-ai/",
-      "artifacts": {
-        "1.0.0": { "build": "mojo1.0.0_0", "url": "https://conda.mopm.dev/komira-ai/linux-64/mojo-komira-ai.json-0.1.0-mojo1.0.0_0.conda", "sha256": "<64 hex digits>", "size": 1000 }
-      },
-      "deps": ["komira-ai/encoding"]
-    }
-  ]
-}
-```
-
-- `channels` is the root project's set of channel roots, as today.
-- `packages[].name` and `deps` items are `FullName`.
-- Rules that change: rule 2, every `channel` is a listed root followed by the entry's namespace and `/`; rule 3, each
-  artifact's `url` is `<channel><subdir>/mojo-<namespace>.<name>-<version>-<build>.conda`; rule 5, every full name in
-  `deps` is the `name` of an entry; rule 6, a full name comes from at most one root.
-- Rule 10 (one package per import name) is live in `spec/lock.md` on entries named by import name, mapped to full names through the manifests; with full names in the lock it compares the entries' own full names.
-- Versions 1 and 2 are read and reported as stale: `mopm lock` rewrites them; `mopm sync --locked` refuses with
-  `mopm.lock predates namespaces (lock_version <n>); run 'mopm lock'`.
+The index (version 2, `config.json`'s `index_versions` and `api_v2_url`), the channel (one per namespace, conda name
+`mojo-<namespace>.<name>`), package metadata schema 2, the lock (`lock_version` 3), the unit graph (format 6) and the
+staged set's `plan.json` version 2 are live in `spec/index.md`, `spec/channel.md`, `spec/package-metadata.schema.json`,
+`spec/lock.md`, `spec/unit-graph.md` and `spec/staged-set.md`, with their schemas.
 
 ## api/openapi.yaml
 
@@ -157,23 +63,10 @@ state of `/api/v1` once v2 is served: `claimPackage`, and `exchangeOidcToken` fo
 `spec/api/openapi.yaml`). Every other v1 operation is unchanged. Flat names that remain after the deletion (on mopm.dev,
 the `kci_*` packages) are served by v1 and the version 1 index as before.
 
-## unit-graph.md
-
-Format 6.
-
-- A unit id is `<full name>@<version>#mojo<M>/<mode>[:<file>]`, for example `komira-ai/json@0.1.0#mojo1.0.0/lib`. A
-  reader splits at the first `@`.
-- A native unit is `native:<full name>/<id>`; the id follows the last `/`.
-- A unit's `package` is the full name. A new field `import` is the import name. Outputs are `<import>.mojoc`.
-
 ## staged-set.md
 
-`plan.json` `version` 2.
+The staged set's `plan.json` version 2 is live in `spec/staged-set.md`. What is left:
 
-- Members' `name` are full names.
-- Files stay at `<dir>/<subdir>/<file>.conda`; their names carry the namespace (`mojo-<namespace>.<name>-...`).
-- The group's `set` digest is over members sorted by full name.
-- A version 1 `plan.json` is refused, naming the file; the set is staged again.
 - `mopm stage --artifacts <dir>`: `<dir>/<subdir>/<namespace>/<name>.mojoc`, natives at
   `<dir>/<subdir>/<namespace>/<name>.native/lib<id>.a`.
 
