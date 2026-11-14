@@ -1,6 +1,7 @@
 //! The `Net` between a client and a fake registry's request handler, in one process: no socket, no child process, no clock of the
 //! host. Shared by the in-process tests of the current client (group_readmes_inproc_test.zig) and of the previous release's client
-//! and registry (compat_v0_0_104_test.zig), which are different types of the same shape; `Wire` is generic over both.
+//! and registry (compat_v0_0_104_test.zig), which are different types of the same shape; `Wire` is generic over both. The namespaces
+//! cross-version test (compat_namespaces_test.zig) uses its staging and hashing helpers.
 //!
 //! A package name is a full name, `<namespace>/<name>`, for the current client and registry (plan.json version 2, `/api/v2`, files
 //! `mojo-<namespace>.<name>-...`) and a bare name for the previous release (plan.json version 1, `/api/v1`, files

@@ -107,7 +107,7 @@ zig_exe(
     src = "src/cli/main.zig",
     imports = _CLI_SRCS,
     deps = [":mopm_core", ":build_options"],
-    unit_tests = [":cli_test"],
+    unit_tests = [":cli_test", ":compat_namespaces"],
     visibility = ["PUBLIC"],
     **_TOOLS
 )
@@ -236,7 +236,7 @@ zig_module(  # buck-only: the client's group publisher and its parts, for :group
     deps = [":mopm_core"],
 )
 
-zig_module(  # buck-only: the fake registry's handler with the fixture of its group tests (registry/fake/groups_test.zig), for :group_readmes
+zig_module(  # the fake registry's handler with the fixture of its group tests (registry/fake/groups_test.zig), for :group_readmes and :compat_namespaces
     name = "fake_fixture",
     src = "registry/fake/groups_test.zig",
     imports = glob(["registry/fake/*.zig"], exclude = ["registry/fake/main.zig", "registry/fake/groups_test.zig"]),
@@ -305,6 +305,29 @@ zig_test(  # buck-only: the v0.0.104 client against this registry and this clien
     deps = [":mopm_core", ":cli_publish", ":fake_fixture", ":prev_cli", ":prev_fake"],
     # The files of the release, hashed by the test against its SHA256SUMS, and the request goldens the TypeScript registry's tests replay.
     data = _COMPAT_DATA,
+    **_TOOLS
+)
+
+# The previous release before namespaces (v0.0.108) against this code, for every row of the table in docs/design/namespaces.md,
+# section 11: its core readers and its fake registry, vendored byte for byte under tests/compat/v0.0.108 (README.md there; SHA256SUMS
+# pins every file, and the test checks it). The vendored core imports only its own files, so it builds as one module, which
+# `zig build test` builds too. Welded into :mopm: a CLI that misreads, or is misread by, the previous release is not built.
+zig_module(
+    name = "prev_v0_0_108",
+    src = "tests/compat/prev_v0_0_108.zig",
+    imports = glob(["tests/compat/v0.0.108/core/**", "tests/compat/v0.0.108/fake/*.zig"]),
+)
+
+# The files the test reads: the snapshot (hashed against its SHA256SUMS) and what each side writes for the other.
+_COMPAT_NS_DATA = {f: f for f in glob(["tests/compat/v0.0.108/**", "tests/contract/examples/lock/valid/*.json"])}
+_COMPAT_NS_DATA["tests/fixtures/env/linux/dup/lib/mojo/pkg_a.mopm.json"] = "tests/fixtures/env/linux/dup/lib/mojo/pkg_a.mopm.json"
+
+zig_test(
+    name = "compat_namespaces",
+    src = "tests/drivers/compat_namespaces_test.zig",
+    imports = ["tests/drivers/inproc_world.zig"],
+    deps = [":mopm_core", ":fake_fixture", ":prev_v0_0_108"],
+    data = _COMPAT_NS_DATA,
     **_TOOLS
 )
 
