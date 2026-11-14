@@ -45,6 +45,9 @@ const Node = union(enum) {
     str: []const u8,
     map: []const Entry,
     seq: []const Node,
+    /// A mapping of scalars written on one line, `{ status: 400, message: "...", hint: "..." }` (an `x-mopm-errors` entry),
+    /// its strings always quoted.
+    flow: []const Entry,
 };
 
 const max_depth = 16;
@@ -449,7 +452,7 @@ pub const Writer = struct {
             try add(&e, "status", try self.int(err.status));
             try add(&e, "message", str(err.message));
             try add(&e, "hint", str(err.hint));
-            try add(&codes, j, mapNode(e));
+            try add(&codes, j, .{ .flow = e.items });
             if (err.reasons.len > 0) try add(&reasons, j, try self.strings(err.reasons));
         }
         return .{ .codes = mapNode(codes), .reasons = mapNode(reasons) };
@@ -678,6 +681,22 @@ pub const Writer = struct {
         return true;
     }
 
+    /// Whether `s` reads back as the same string when written plain: a word of letters, digits, `_`, `.` and `-` that starts
+    /// with a letter or `_` and is not a word YAML or a reader of it may take for a null or a boolean.
+    pub fn plainScalar(s: []const u8) bool {
+        if (s.len == 0 or !(std.ascii.isAlphabetic(s[0]) or s[0] == '_')) return false;
+        for (s) |c| if (!(std.ascii.isAlphanumeric(c) or c == '_' or c == '.' or c == '-')) return false;
+        for ([_][]const u8{ "null", "true", "false", "yes", "no", "on", "off", "y", "n" }) |w| {
+            if (std.ascii.eqlIgnoreCase(s, w)) return false;
+        }
+        return true;
+    }
+
+    /// `s` plain when `plainScalar` says it may be, else quoted.
+    fn scalar(out: *std.ArrayList(u8), s: []const u8) Err!void {
+        if (plainScalar(s)) try out.appendSlice(s) else try quote(out, s);
+    }
+
     pub fn quote(out: *std.ArrayList(u8), s: []const u8) Err!void {
         try out.append('"');
         for (s) |c| switch (c) {
@@ -738,9 +757,23 @@ pub const Writer = struct {
                             try out.append('\n');
                         }
                     } else {
-                        try quote(out, s);
+                        try scalar(out, s);
                         try out.append('\n');
                     }
+                },
+                .flow => |f| {
+                    try out.appendSlice(" { ");
+                    for (f, 0..) |fe, k| {
+                        if (k > 0) try out.appendSlice(", ");
+                        try out.appendSlice(fe.key);
+                        try out.appendSlice(": ");
+                        switch (fe.value) {
+                            .raw => |r| try out.appendSlice(r),
+                            .str => |fs| try quote(out, fs),
+                            else => return self.fail("a flow mapping holds only scalars", .{}),
+                        }
+                    }
+                    try out.appendSlice(" }\n");
                 },
                 .map => |m| if (m.len == 0) {
                     try out.appendSlice(" {}\n");
@@ -766,7 +799,7 @@ pub const Writer = struct {
                 .raw => |r| try out.appendSlice(r),
                 .str => |s| {
                     if (std.mem.indexOfScalar(u8, s, '\n') != null) return self.fail("the text {s} is in a list and has several lines", .{try self.preview(s)});
-                    try quote(out, s);
+                    try scalar(out, s);
                 },
                 .map => |m| if (m.len == 0) {
                     try out.appendSlice("{}");
@@ -775,6 +808,7 @@ pub const Writer = struct {
                     continue;
                 },
                 .seq => return self.fail("a list inside a list", .{}),
+                .flow => return self.fail("a flow mapping in a list", .{}),
             }
             try out.append('\n');
         }

@@ -92,8 +92,8 @@ info:
     token is accepted, named below as security schemes. A request with no token
     where one is required gets `token_missing`.
   license:
-    name: "Apache-2.0"
-    identifier: "Apache-2.0"
+    name: Apache-2.0
+    identifier: Apache-2.0
 servers:
   - url: "https://{host}/api/v2"
     description: |
@@ -103,26 +103,26 @@ servers:
       channel is conda.<site>; a namespace's channel is conda.<site>/<namespace>/.
     variables:
       host:
-        default: "api.mopm.dev"
+        default: api.mopm.dev
         enum:
-          - "api.mopm.dev"
-          - "api.gamma.mopm.dev"
-          - "api.beta.mopm.dev"
+          - api.mopm.dev
+          - api.gamma.mopm.dev
+          - api.beta.mopm.dev
 tags:
-  - name: "auth"
-  - name: "tokens"
-  - name: "publish"
-  - name: "packages"
-  - name: "namespaces"
-  - name: "me"
-  - name: "meta"
+  - name: auth
+  - name: tokens
+  - name: publish
+  - name: packages
+  - name: namespaces
+  - name: me
+  - name: meta
 security: []
 paths:
   /health:
     get:
-      operationId: "getHealth"
+      operationId: getHealth
       tags:
-        - "meta"
+        - meta
       summary: "Liveness and mode of the stage."
       security: []
       responses:
@@ -139,9 +139,9 @@ paths:
           $ref: "#/components/responses/Error"
   /auth/device:
     post:
-      operationId: "startDeviceLogin"
+      operationId: startDeviceLogin
       tags:
-        - "auth"
+        - auth
       summary: "Start the device login flow (CLI login through GitHub)."
       description: |
         Returns a user code to show the person and a device code to poll with.
@@ -168,9 +168,9 @@ paths:
           $ref: "#/components/responses/Error"
   /auth/device/poll:
     post:
-      operationId: "pollDeviceLogin"
+      operationId: pollDeviceLogin
       tags:
-        - "auth"
+        - auth
       summary: "Poll a started device login."
       description: |
         Poll no faster than `interval` seconds. While the person has not
@@ -198,9 +198,9 @@ paths:
           $ref: "#/components/responses/Error"
   /auth/oidc/exchange:
     post:
-      operationId: "exchangeOidcToken"
+      operationId: exchangeOidcToken
       tags:
-        - "auth"
+        - auth
       summary: "Exchange a CI identity token for a short-lived publish token."
       description: |
         The token is valid for 10 minutes, may only publish (or, with `purpose: stage`, only stage), and only for the
@@ -239,9 +239,9 @@ paths:
           $ref: "#/components/responses/Error"
   /me:
     get:
-      operationId: "getMe"
+      operationId: getMe
       tags:
-        - "me"
+        - me
       summary: "The calling user and the namespaces they can write in."
       security:
         - userToken: []
@@ -259,9 +259,9 @@ paths:
           $ref: "#/components/responses/Error"
   /me/tokens:
     post:
-      operationId: "createToken"
+      operationId: createToken
       tags:
-        - "tokens"
+        - tokens
       summary: "Create an API token."
       description: |
         Needs a fresh session. The secret is shown once and stored hashed.
@@ -289,9 +289,9 @@ paths:
         default:
           $ref: "#/components/responses/Error"
     get:
-      operationId: "listTokens"
+      operationId: listTokens
       tags:
-        - "tokens"
+        - tokens
       summary: "List the caller's tokens (metadata only, never secrets)."
       security:
         - freshSession: []
@@ -309,9 +309,9 @@ paths:
           $ref: "#/components/responses/Error"
   /me/tokens/{token_id}:
     delete:
-      operationId: "revokeToken"
+      operationId: revokeToken
       tags:
-        - "tokens"
+        - tokens
       summary: "Revoke a token. Revocation is immediate."
       security:
         - freshSession: []
@@ -327,9 +327,9 @@ paths:
           $ref: "#/components/responses/Error"
   /namespaces:
     post:
-      operationId: "createNamespace"
+      operationId: createNamespace
       tags:
-        - "namespaces"
+        - namespaces
       summary: "Start registering an organization namespace."
       description: |
         Needs a fresh session. The namespace string is the lower-case login of a GitHub organization. A user's
@@ -364,9 +364,9 @@ paths:
           $ref: "#/components/responses/Error"
   /namespaces/poll:
     post:
-      operationId: "pollNamespace"
+      operationId: pollNamespace
       tags:
-        - "namespaces"
+        - namespaces
       summary: "Poll a started organization registration."
       description: |
         Poll no faster than `interval` seconds, with a session or a user token of the account that started the
@@ -404,9 +404,9 @@ paths:
           $ref: "#/components/responses/Error"
   /namespaces/{namespace}:
     get:
-      operationId: "getNamespace"
+      operationId: getNamespace
       tags:
-        - "namespaces"
+        - namespaces
       summary: "A namespace."
       security: []
       parameters:
@@ -425,9 +425,9 @@ paths:
           $ref: "#/components/responses/Error"
   /namespaces/{namespace}/members:
     get:
-      operationId: "listMembers"
+      operationId: listMembers
       tags:
-        - "namespaces"
+        - namespaces
       summary: "The members of an organization namespace."
       description: |
         Readable by an owner or a member of the namespace; any other account is `not_namespace_member`. A user
@@ -450,9 +450,9 @@ paths:
           $ref: "#/components/responses/Error"
   /namespaces/{namespace}/members/{user}:
     put:
-      operationId: "setMember"
+      operationId: setMember
       tags:
-        - "namespaces"
+        - namespaces
       summary: "Add a member to an organization namespace, or change its role."
       description: |
         Needs a fresh session of an `owner` of the namespace (a `member` is `not_namespace_owner`; an account that is
@@ -493,9 +493,9 @@ paths:
         default:
           $ref: "#/components/responses/Error"
     delete:
-      operationId: "removeMember"
+      operationId: removeMember
       tags:
-        - "namespaces"
+        - namespaces
       summary: "Remove a member from an organization namespace."
       description: |
         Needs a fresh session of an `owner`. The removal takes effect at once: the next write of that account in the
@@ -516,9 +516,9 @@ paths:
           $ref: "#/components/responses/Error"
   /packages:
     get:
-      operationId: "searchPackages"
+      operationId: searchPackages
       tags:
-        - "packages"
+        - packages
       summary: "List or search packages."
       description: |
         Filters only what the index serves: a prefix (`q`) and a sort order. `q` is a name prefix, or
@@ -544,9 +544,9 @@ paths:
           $ref: "#/components/responses/Error"
   /packages/{namespace}/{name}:
     get:
-      operationId: "getPackage"
+      operationId: getPackage
       tags:
-        - "packages"
+        - packages
       summary: "Package information."
       security: []
       parameters:
@@ -565,9 +565,9 @@ paths:
         default:
           $ref: "#/components/responses/Error"
     put:
-      operationId: "createPackage"
+      operationId: createPackage
       tags:
-        - "packages"
+        - packages
       summary: "Create a package in a namespace."
       description: |
         The only way to create a package; it takes no body. The right to write the namespace is checked before anything
@@ -609,9 +609,9 @@ paths:
           $ref: "#/components/responses/Error"
   /packages/{namespace}/{name}/versions:
     get:
-      operationId: "listVersions"
+      operationId: listVersions
       tags:
-        - "packages"
+        - packages
       summary: "Versions of a package, newest first."
       description: "Includes yanked and tombstoned versions, with their state."
       security: []
@@ -634,9 +634,9 @@ paths:
           $ref: "#/components/responses/Error"
   /packages/{namespace}/{name}/{version}:
     get:
-      operationId: "getVersion"
+      operationId: getVersion
       tags:
-        - "packages"
+        - packages
       summary: "One version of a package."
       description: |
         A yanked version is returned with `state: yanked` and its reason. A
@@ -661,9 +661,9 @@ paths:
           $ref: "#/components/responses/Error"
   /packages/{namespace}/{name}/{version}/files:
     post:
-      operationId: "beginUpload"
+      operationId: beginUpload
       tags:
-        - "publish"
+        - publish
       summary: "Begin the upload of one file of a version."
       description: |
         Publishing is three steps: begin an upload per file (this call), PUT the
@@ -705,9 +705,9 @@ paths:
           $ref: "#/components/responses/Error"
   /packages/{namespace}/{name}/{version}/publish:
     post:
-      operationId: "commitPublish"
+      operationId: commitPublish
       tags:
-        - "publish"
+        - publish
       summary: "Commit uploaded files as a version."
       description: |
         Asynchronous. The registry answers 202 with a status URL; the CLI
@@ -758,9 +758,9 @@ paths:
           $ref: "#/components/responses/Error"
   /publishes/{publish_id}:
     get:
-      operationId: "getPublishStatus"
+      operationId: getPublishStatus
       tags:
-        - "publish"
+        - publish
       summary: "Status of a publish."
       description: |
         `pending`, `validating` and `indexing` are in progress; `published` and
@@ -784,9 +784,9 @@ paths:
           $ref: "#/components/responses/Error"
   /groups:
     post:
-      operationId: "createGroup"
+      operationId: createGroup
       tags:
-        - "publish"
+        - publish
       summary: "Declare a set of versions to publish together."
       description: |
         A group is a set of versions, at most one per package, that are meant to be published together. This call
@@ -870,9 +870,9 @@ paths:
           $ref: "#/components/responses/Error"
   /groups/{group_id}:
     get:
-      operationId: "getGroup"
+      operationId: getGroup
       tags:
-        - "publish"
+        - publish
       summary: "Status of a group."
       description: |
         The group's status, attempt and deadline, and the state of each member: `pending` (its number is not reserved
@@ -900,9 +900,9 @@ paths:
         default:
           $ref: "#/components/responses/Error"
     delete:
-      operationId: "abortGroup"
+      operationId: abortGroup
       tags:
-        - "publish"
+        - publish
       summary: "Abort an open group."
       description: |
         Ends a group that is `open`. Its reserved version numbers are free again: another group, or a single publish,
@@ -927,9 +927,9 @@ paths:
           $ref: "#/components/responses/Error"
   /groups/{group_id}/commit:
     post:
-      operationId: "commitGroup"
+      operationId: commitGroup
       tags:
-        - "publish"
+        - publish
       summary: "Say that a group's files are uploaded and ask for the group to be validated and committed."
       description: |
         Asynchronous. The caller has created the group and PUT every file to the URL it was given; this call hands over what
@@ -993,9 +993,9 @@ paths:
           $ref: "#/components/responses/Error"
   /groups/{group_id}/yank:
     put:
-      operationId: "yankGroup"
+      operationId: yankGroup
       tags:
-        - "publish"
+        - publish
       summary: "Yank or unyank every version a group published."
       description: |
         The body is that of `setYanked`. `yanked: true` yanks the group's versions that are `published`; `yanked: false` restores
@@ -1044,9 +1044,9 @@ paths:
           $ref: "#/components/responses/Error"
   /packages/{namespace}/{name}/{version}/yank:
     put:
-      operationId: "setYanked"
+      operationId: setYanked
       tags:
-        - "publish"
+        - publish
       summary: "Yank or unyank a version."
       description: |
         `yanked: true` hides the version from new resolution; its files stay
@@ -1095,33 +1095,33 @@ paths:
 components:
   securitySchemes:
     userToken:
-      type: "http"
-      scheme: "bearer"
+      type: http
+      scheme: bearer
       bearerFormat: "mopm token"
       description: "Any live token of a user: a session token or an API token (but `createPackage` refuses an API token that has only the `stage` scope)."
     freshSession:
-      type: "http"
-      scheme: "bearer"
+      type: http
+      scheme: bearer
       bearerFormat: "mopm session token"
       description: |
         A session token younger than 15 minutes (login again to refresh). An
         older session, or an API token, gets `stale_session`. Used for creating
         a namespace and for token management.
     publishToken:
-      type: "http"
-      scheme: "bearer"
+      type: http
+      scheme: bearer
       bearerFormat: "mopm token"
       description: |
         An API token with the `publish` scope for the package (its full name), or a token from
         the OIDC exchange for exactly this package and version.
     yankToken:
-      type: "http"
-      scheme: "bearer"
+      type: http
+      scheme: bearer
       bearerFormat: "mopm token"
       description: "An API token with the `yank` scope for the package (its full name)."
     stageToken:
-      type: "http"
-      scheme: "bearer"
+      type: http
+      scheme: bearer
       bearerFormat: "mopm token"
       description: |
         An API token with the `stage` scope for the package, or a token from the OIDC exchange with `purpose: stage`
@@ -1133,12 +1133,12 @@ components:
       description: "Identifies the request in the registry's logs. Print it with every error."
       required: true
       schema:
-        type: "string"
+        type: string
         minLength: 1
     RetryAfter:
       description: "Seconds to wait before retrying. Present on `rate_limited` and `read_only_mode`."
       schema:
-        type: "integer"
+        type: integer
         minimum: 0
   responses:
     Error:
@@ -1156,109 +1156,109 @@ components:
             $ref: "#/components/schemas/Error"
   parameters:
     TokenId:
-      name: "token_id"
-      in: "path"
+      name: token_id
+      in: path
       required: true
       schema:
-        type: "string"
+        type: string
         minLength: 1
         maxLength: 64
     Namespace:
-      name: "namespace"
-      in: "path"
+      name: namespace
+      in: path
       required: true
       description: "The namespace of the package, a GitHub login in lower case."
       schema:
         $ref: "#/components/schemas/Namespace"
     User:
-      name: "user"
-      in: "path"
+      name: user
+      in: path
       required: true
       description: "A mopm username, the user namespace of an account (its GitHub login in lower case)."
       schema:
         $ref: "#/components/schemas/Namespace"
     Query:
-      name: "q"
-      in: "query"
+      name: q
+      in: query
       required: false
       description: "A name prefix, or `<namespace>/` with an optional name prefix; normalised before matching."
       schema:
-        type: "string"
+        type: string
         maxLength: 104
     Sort:
-      name: "sort"
-      in: "query"
+      name: sort
+      in: query
       required: false
       schema:
-        type: "string"
+        type: string
         enum:
-          - "name"
-          - "updated"
-        default: "name"
+          - name
+          - updated
+        default: name
     Cursor:
-      name: "cursor"
-      in: "query"
+      name: cursor
+      in: query
       required: false
       description: "Opaque. Pass the `next_cursor` of the previous page."
       schema:
-        type: "string"
+        type: string
         minLength: 1
         maxLength: 512
     Limit:
-      name: "limit"
-      in: "query"
+      name: limit
+      in: query
       required: false
       schema:
-        type: "integer"
+        type: integer
         minimum: 1
         maximum: 100
         default: 20
     Name:
-      name: "name"
-      in: "path"
+      name: name
+      in: path
       required: true
       description: "Normalised package name, the part of the full name after the `/`."
       schema:
         $ref: "#/components/schemas/Name"
     Version:
-      name: "version"
-      in: "path"
+      name: version
+      in: path
       required: true
       schema:
         $ref: "#/components/schemas/Version"
     PublishId:
-      name: "publish_id"
-      in: "path"
+      name: publish_id
+      in: path
       required: true
       schema:
-        type: "string"
+        type: string
         minLength: 1
         maxLength: 64
     GroupId:
-      name: "group_id"
-      in: "path"
+      name: group_id
+      in: path
       required: true
       schema:
-        type: "string"
+        type: string
         pattern: "^grp_[0-9a-f]{32}$"
   schemas:
     Namespace:
       description: |
         A namespace: a GitHub login in lower case, letters, digits and single hyphens, at most 39 characters. Nothing
         normalises it; a reader checks the length as well as the pattern.
-      type: "string"
+      type: string
       pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
       minLength: 1
       maxLength: 39
     Name:
       description: "A normalised package name; in a full name, the import name."
-      type: "string"
+      type: string
       pattern: "^[a-z][a-z0-9_]{1,63}$"
     FullName:
       description: |
         `<namespace>/<name>`, the name of a package: a `Namespace`, one `/` and a `Name`. The conda name of the package is
         `mojo-<namespace>.<name>`.
-      type: "string"
+      type: string
       pattern: "^[a-z0-9]+(-[a-z0-9]+)*/[a-z][a-z0-9_]{1,63}$"
       maxLength: 104
     Version:
@@ -1269,10 +1269,10 @@ components:
         `1.0.0.0`, `1.0.0-rc.1`, `1.0rc1` are all invalid), so a version has one
         spelling and two versions are equal exactly when their text is. Anything
         else is `invalid_version`.
-      type: "string"
+      type: string
       pattern: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
     Sha256:
-      type: "string"
+      type: string
       pattern: "^[0-9a-f]{64}$"
     SourceCommit:
       description: |
@@ -1281,44 +1281,44 @@ components:
         informational: the registry does not verify it against the archives, the repository or the caller's identity, and it never
         compares or orders versions by it. Anything else (uppercase, another length, a non-hex character, a value that is not a
         string) is `invalid_request`.
-      type: "string"
+      type: string
       pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"
     Subdir:
       description: "A conda subdir. New values may be added."
-      type: "string"
+      type: string
       enum:
-        - "linux-64"
-        - "linux-aarch64"
-        - "osx-arm64"
-        - "noarch"
+        - linux-64
+        - linux-aarch64
+        - osx-arm64
+        - noarch
     Filename:
       description: "The conda file name, `mojo-<namespace>.<name>-<version>-<build>.conda`."
-      type: "string"
+      type: string
       pattern: "^mojo-[a-z0-9]+(-[a-z0-9]+)*\\.[a-z][a-z0-9_]{1,63}-[0-9][0-9a-z.]*-[A-Za-z0-9_.]+\\.conda$"
     Timestamp:
-      type: "string"
-      format: "date-time"
+      type: string
+      format: date-time
     Token:
       description: "A bearer token. Shown once, at creation."
-      type: "string"
+      type: string
       pattern: "^mopm_[a-z2-7]{32,64}$"
     VersionState:
       description: |
         `published`: resolvable. `yanked`: hidden from new resolution, bytes
         stay. `tombstoned`: bytes removed by an administrator; the number stays
         burned. Clients treat an unknown state as not resolvable.
-      type: "string"
+      type: string
       enum:
-        - "published"
-        - "yanked"
-        - "tombstoned"
+        - published
+        - yanked
+        - tombstoned
     FileRef:
-      type: "object"
+      type: object
       required:
-        - "subdir"
-        - "filename"
-        - "sha256"
-        - "size"
+        - subdir
+        - filename
+        - sha256
+        - size
       properties:
         subdir:
           $ref: "#/components/schemas/Subdir"
@@ -1327,257 +1327,257 @@ components:
         sha256:
           $ref: "#/components/schemas/Sha256"
         size:
-          type: "integer"
+          type: integer
           minimum: 1
         url:
           description: "Absolute URL on the channel host. Absent when the version is tombstoned."
-          type: "string"
-          format: "uri"
+          type: string
+          format: uri
     Dep:
-      type: "object"
+      type: object
       required:
-        - "name"
+        - name
       properties:
         name:
           $ref: "#/components/schemas/FullName"
         range:
-          type: "string"
+          type: string
     NativeRef:
-      type: "object"
+      type: object
       required:
-        - "id"
-        - "soname"
+        - id
+        - soname
       properties:
         id:
-          type: "string"
+          type: string
           minLength: 1
         soname:
-          type: "string"
+          type: string
           minLength: 1
     Keywords:
       description: "Free-form tags from `keywords` in mopm.toml, at most 10, each 1 to 32 characters (see spec/mopm-toml.md)."
-      type: "array"
+      type: array
       maxItems: 10
       uniqueItems: true
       items:
-        type: "string"
+        type: string
         minLength: 1
         maxLength: 32
     GroupId:
-      type: "string"
+      type: string
       pattern: "^grp_[0-9a-f]{32}$"
     Error:
-      type: "object"
+      type: object
       required:
-        - "error"
+        - error
       properties:
         error:
-          type: "object"
+          type: object
           required:
-            - "code"
-            - "message"
-            - "hint"
+            - code
+            - message
+            - hint
           properties:
             code:
               $ref: "#/components/schemas/ErrorCode"
             message:
-              type: "string"
+              type: string
               minLength: 1
             hint:
-              type: "string"
+              type: string
             reason:
               description: |
                 Why the request was refused, for a code that lists reasons (`x-mopm-error-reasons`; today only
                 `group_conflict`). Absent for every other code and may be absent for a listed one. A client MUST treat a
                 reason it does not know like an absent one, and must not parse `message` to learn it. It never holds an id
                 or anything of another account, and it is not part of the message.
-              type: "string"
+              type: string
               enum:
-                - "number_held"
-                - "group_failed"
-                - "open_cap"
-                - "supersede_cap"
-                - "takeover_blocked"
-                - "number_taken"
-                - "overlap_refused"
+                - number_held
+                - group_failed
+                - open_cap
+                - supersede_cap
+                - takeover_blocked
+                - number_taken
+                - overlap_refused
     ErrorCode:
       description: |
         Stable machine-readable error codes. A client MUST treat a code it does
         not know as the generic failure of the HTTP status class.
-      type: "string"
+      type: string
       enum:
-        - "invalid_request"
-        - "invalid_name"
-        - "invalid_version"
-        - "upload_invalid"
-        - "token_missing"
-        - "token_unknown"
-        - "token_expired"
-        - "token_revoked"
-        - "stale_session"
-        - "oidc_token_invalid"
-        - "scope_missing"
-        - "not_owner"
-        - "name_reserved"
-        - "oidc_not_trusted"
-        - "limit_exceeded"
-        - "package_not_found"
-        - "version_not_found"
-        - "device_code_unknown"
-        - "token_not_found"
-        - "publish_not_found"
-        - "group_not_found"
-        - "version_exists"
-        - "upload_used"
-        - "group_not_open"
-        - "group_conflict"
-        - "group_commit_refused"
-        - "group_not_settled"
-        - "invalid_transition"
-        - "payload_too_large"
-        - "rate_limited"
-        - "internal_error"
-        - "read_only_mode"
-        - "unavailable"
-        - "route_not_found"
-        - "invalid_namespace"
-        - "not_namespace_member"
-        - "namespace_reserved"
-        - "namespace_not_found"
-        - "namespace_taken"
-        - "not_org_admin"
-        - "github_account_mismatch"
-        - "not_namespace_owner"
-        - "last_owner"
-        - "member_not_found"
-        - "user_not_found"
+        - invalid_request
+        - invalid_name
+        - invalid_version
+        - upload_invalid
+        - token_missing
+        - token_unknown
+        - token_expired
+        - token_revoked
+        - stale_session
+        - oidc_token_invalid
+        - scope_missing
+        - not_owner
+        - name_reserved
+        - oidc_not_trusted
+        - limit_exceeded
+        - package_not_found
+        - version_not_found
+        - device_code_unknown
+        - token_not_found
+        - publish_not_found
+        - group_not_found
+        - version_exists
+        - upload_used
+        - group_not_open
+        - group_conflict
+        - group_commit_refused
+        - group_not_settled
+        - invalid_transition
+        - payload_too_large
+        - rate_limited
+        - internal_error
+        - read_only_mode
+        - unavailable
+        - route_not_found
+        - invalid_namespace
+        - not_namespace_member
+        - namespace_reserved
+        - namespace_not_found
+        - namespace_taken
+        - not_org_admin
+        - github_account_mismatch
+        - not_namespace_owner
+        - last_owner
+        - member_not_found
+        - user_not_found
     RejectionCode:
       description: |
         Why a publish was rejected after it was accepted (`PublishStatus`).
         Not an HTTP error. Clients treat an unknown value as a generic rejection.
-      type: "string"
+      type: string
       enum:
-        - "archive_invalid"
-        - "path_not_allowed"
-        - "limit_exceeded"
-        - "manifest_invalid"
-        - "filename_mismatch"
-        - "sha256_mismatch"
-        - "dependency_not_allowed"
+        - archive_invalid
+        - path_not_allowed
+        - limit_exceeded
+        - manifest_invalid
+        - filename_mismatch
+        - sha256_mismatch
+        - dependency_not_allowed
     Health:
-      type: "object"
+      type: object
       required:
-        - "status"
-        - "stage"
-        - "api_version"
-        - "read_only"
+        - status
+        - stage
+        - api_version
+        - read_only
       properties:
         status:
-          type: "string"
+          type: string
           enum:
-            - "ok"
+            - ok
         stage:
-          type: "string"
+          type: string
           enum:
-            - "beta"
-            - "gamma"
-            - "prod"
+            - beta
+            - gamma
+            - prod
         api_version:
           description: "`v2` at `/api/v2`, `v1` at `/api/v1`."
-          type: "string"
+          type: string
           enum:
-            - "v1"
-            - "v2"
+            - v1
+            - v2
         read_only:
-          type: "boolean"
+          type: boolean
         impl:
           description: |
             Which implementation of the registry answered: `ts` or `rust`. Additive: a
             client that does not know it ignores it, and a server may omit it.
-          type: "string"
+          type: string
           enum:
-            - "ts"
-            - "rust"
+            - ts
+            - rust
         features:
           description: |
             The optional features this registry serves, by name. Additive: a client treats a name it does not know as absent,
             and a missing list as empty, so a registry from before the list answers none. One name is defined:
             `group_readme_objects`, which says that `createGroup` takes `readme` on a member and answers where to PUT it,
             and that `commitGroup` takes a readme as `{sha256, size}` (see `ReadmeRef`).
-          type: "array"
+          type: array
           items:
-            type: "string"
+            type: string
     DeviceStartRequest:
-      type: "object"
+      type: object
       required:
-        - "client"
+        - client
       properties:
         client:
           description: "Shown on the approval page, e.g. `mopm 0.1.0`."
-          type: "string"
+          type: string
           minLength: 1
           maxLength: 80
     DeviceStartResponse:
-      type: "object"
+      type: object
       required:
-        - "device_code"
-        - "user_code"
-        - "verification_uri"
-        - "expires_in"
-        - "interval"
+        - device_code
+        - user_code
+        - verification_uri
+        - expires_in
+        - interval
       properties:
         device_code:
-          type: "string"
+          type: string
           minLength: 16
         user_code:
-          type: "string"
+          type: string
           minLength: 4
         verification_uri:
-          type: "string"
-          format: "uri"
+          type: string
+          format: uri
         expires_in:
           description: "Seconds. Ten minutes."
-          type: "integer"
+          type: integer
           minimum: 1
         interval:
           description: "Minimum seconds between polls."
-          type: "integer"
+          type: integer
           minimum: 1
     DevicePollRequest:
-      type: "object"
+      type: object
       required:
-        - "device_code"
+        - device_code
       properties:
         device_code:
-          type: "string"
+          type: string
           minLength: 16
     DevicePollResponse:
-      type: "object"
+      type: object
       required:
-        - "status"
+        - status
       properties:
         status:
-          type: "string"
+          type: string
           enum:
-            - "pending"
-            - "approved"
-            - "denied"
-            - "expired"
+            - pending
+            - approved
+            - denied
+            - expired
         interval:
-          type: "integer"
+          type: integer
           minimum: 1
         token:
           $ref: "#/components/schemas/Token"
         token_kind:
-          type: "string"
+          type: string
           enum:
-            - "session"
+            - session
         expires_at:
           $ref: "#/components/schemas/Timestamp"
         fresh_until:
           $ref: "#/components/schemas/Timestamp"
         handle:
-          type: "string"
+          type: string
           minLength: 1
         namespace:
           description: "The user namespace of the account that approved (its login in lower case), when the login made it or found it. Absent when the login cannot be a namespace (see `MeV2.unavailable_namespace`)."
@@ -1585,52 +1585,52 @@ components:
       if:
         properties:
           status:
-            const: "approved"
+            const: approved
       then:
         required:
-          - "token"
-          - "token_kind"
-          - "expires_at"
-          - "fresh_until"
-          - "handle"
+          - token
+          - token_kind
+          - expires_at
+          - fresh_until
+          - handle
     OidcExchangeRequest:
       description: |
         Two forms. `name` and `version`: a token for that one package version. `packages`: one token for every
         listed package version, all of one namespace. Every name is a full name, and the CI identity must match a trusted
         publisher of its namespace; the call creates no package. Send one form, not both; a name is listed once. Either
         form takes the optional `purpose`.
-      type: "object"
+      type: object
       required:
-        - "jwt"
+        - jwt
       oneOf:
         - required:
-            - "name"
-            - "version"
+            - name
+            - version
         - required:
-            - "packages"
+            - packages
       properties:
         jwt:
-          type: "string"
+          type: string
           minLength: 1
         purpose:
           description: "What the token is for. `publish` is the default; `stage` mints a token that cannot commit or yank."
-          type: "string"
+          type: string
           enum:
-            - "publish"
-            - "stage"
+            - publish
+            - stage
         name:
           $ref: "#/components/schemas/FullName"
         version:
           $ref: "#/components/schemas/Version"
         packages:
-          type: "array"
+          type: array
           minItems: 1
           maxItems: 500
           items:
-            type: "object"
+            type: object
             required:
-              - "name"
-              - "version"
+              - name
+              - version
             properties:
               name:
                 $ref: "#/components/schemas/FullName"
@@ -1640,25 +1640,25 @@ components:
       description: |
         `name` and `version` answer the single-package form, `packages` the list form. Exactly one
         of the two, as the request is.
-      type: "object"
+      type: object
       required:
-        - "token"
-        - "token_kind"
-        - "expires_at"
+        - token
+        - token_kind
+        - expires_at
       oneOf:
         - required:
-            - "name"
-            - "version"
+            - name
+            - version
         - required:
-            - "packages"
+            - packages
       properties:
         token:
           $ref: "#/components/schemas/Token"
         token_kind:
-          type: "string"
+          type: string
           enum:
-            - "publish"
-            - "stage"
+            - publish
+            - stage
         expires_at:
           $ref: "#/components/schemas/Timestamp"
         name:
@@ -1666,12 +1666,12 @@ components:
         version:
           $ref: "#/components/schemas/Version"
         packages:
-          type: "array"
+          type: array
           items:
-            type: "object"
+            type: object
             required:
-              - "name"
-              - "version"
+              - name
+              - version
             properties:
               name:
                 $ref: "#/components/schemas/FullName"
@@ -1682,35 +1682,35 @@ components:
         `publish` creates, uploads, reads, aborts and commits groups and publishes single versions; it may also yank.
         `yank` yanks. `stage` prepares a group (create, read, abort) and nothing else: it cannot commit a group, publish a
         single version, yank or create a package, and it is not enough alone where `publish` or `yank` is asked for.
-      type: "string"
+      type: string
       enum:
-        - "publish"
-        - "yank"
-        - "stage"
+        - publish
+        - yank
+        - stage
     TokenPackages:
       description: "An explicit list of full names, or the string `all_current`."
       oneOf:
-        - type: "array"
+        - type: array
           minItems: 1
           uniqueItems: true
           items:
             $ref: "#/components/schemas/FullName"
-        - type: "string"
-          const: "all_current"
+        - type: string
+          const: all_current
     CreateTokenRequest:
-      type: "object"
+      type: object
       required:
-        - "name"
-        - "scopes"
-        - "packages"
-        - "expires_in_days"
+        - name
+        - scopes
+        - packages
+        - expires_in_days
       properties:
         name:
-          type: "string"
+          type: string
           minLength: 1
           maxLength: 80
         scopes:
-          type: "array"
+          type: array
           minItems: 1
           uniqueItems: true
           items:
@@ -1718,28 +1718,28 @@ components:
         packages:
           $ref: "#/components/schemas/TokenPackages"
         expires_in_days:
-          type: "integer"
+          type: integer
           minimum: 1
           maximum: 90
     CreateTokenResponse:
-      type: "object"
+      type: object
       required:
-        - "id"
-        - "name"
-        - "token"
-        - "scopes"
-        - "packages"
-        - "expires_at"
+        - id
+        - name
+        - token
+        - scopes
+        - packages
+        - expires_at
       properties:
         id:
-          type: "string"
+          type: string
           minLength: 1
         name:
-          type: "string"
+          type: string
         token:
           $ref: "#/components/schemas/Token"
         scopes:
-          type: "array"
+          type: array
           items:
             $ref: "#/components/schemas/TokenScope"
         packages:
@@ -1747,22 +1747,22 @@ components:
         expires_at:
           $ref: "#/components/schemas/Timestamp"
     TokenMeta:
-      type: "object"
+      type: object
       required:
-        - "id"
-        - "name"
-        - "scopes"
-        - "packages"
-        - "created_at"
-        - "expires_at"
+        - id
+        - name
+        - scopes
+        - packages
+        - created_at
+        - expires_at
       properties:
         id:
-          type: "string"
+          type: string
           minLength: 1
         name:
-          type: "string"
+          type: string
         scopes:
-          type: "array"
+          type: array
           items:
             $ref: "#/components/schemas/TokenScope"
         packages:
@@ -1776,21 +1776,21 @@ components:
             - $ref: "#/components/schemas/Timestamp"
             - type: "null"
     TokenList:
-      type: "object"
+      type: object
       required:
-        - "tokens"
+        - tokens
       properties:
         tokens:
-          type: "array"
+          type: array
           items:
             $ref: "#/components/schemas/TokenMeta"
     PackageSummary:
-      type: "object"
+      type: object
       required:
-        - "name"
-        - "latest"
-        - "description"
-        - "updated_at"
+        - name
+        - latest
+        - description
+        - updated_at
       properties:
         name:
           $ref: "#/components/schemas/FullName"
@@ -1801,30 +1801,30 @@ components:
             - type: "null"
         description:
           type:
-            - "string"
+            - string
             - "null"
         updated_at:
           $ref: "#/components/schemas/Timestamp"
     PackageList:
-      type: "object"
+      type: object
       required:
-        - "packages"
-        - "next_cursor"
+        - packages
+        - next_cursor
       properties:
         packages:
-          type: "array"
+          type: array
           items:
             $ref: "#/components/schemas/PackageSummary"
         next_cursor:
           type:
-            - "string"
+            - string
             - "null"
     VersionSummary:
-      type: "object"
+      type: object
       required:
-        - "version"
-        - "state"
-        - "published_at"
+        - version
+        - state
+        - published_at
       properties:
         version:
           $ref: "#/components/schemas/Version"
@@ -1834,61 +1834,61 @@ components:
           $ref: "#/components/schemas/Timestamp"
         yank_reason:
           type:
-            - "string"
+            - string
             - "null"
     VersionList:
-      type: "object"
+      type: object
       required:
-        - "versions"
-        - "next_cursor"
+        - versions
+        - next_cursor
       properties:
         versions:
-          type: "array"
+          type: array
           items:
             $ref: "#/components/schemas/VersionSummary"
         next_cursor:
           type:
-            - "string"
+            - string
             - "null"
     Provenance:
-      type: "object"
+      type: object
       required:
-        - "kind"
+        - kind
       properties:
         kind:
-          type: "string"
+          type: string
           enum:
-            - "none"
-            - "oidc"
+            - none
+            - oidc
         repository:
-          type: "string"
+          type: string
         workflow_ref:
-          type: "string"
+          type: string
     Tombstone:
-      type: "object"
+      type: object
       required:
-        - "reason_code"
-        - "date"
+        - reason_code
+        - date
       properties:
         reason_code:
-          type: "string"
+          type: string
           minLength: 1
         date:
-          type: "string"
-          format: "date"
+          type: string
+          format: date
     VersionDetail:
-      type: "object"
+      type: object
       required:
-        - "name"
-        - "version"
-        - "state"
-        - "published_at"
-        - "requires_mojo"
-        - "deps"
-        - "native"
-        - "files"
-        - "manifest_sha256"
-        - "provenance"
+        - name
+        - version
+        - state
+        - published_at
+        - requires_mojo
+        - deps
+        - native
+        - files
+        - manifest_sha256
+        - provenance
       properties:
         name:
           $ref: "#/components/schemas/FullName"
@@ -1898,28 +1898,28 @@ components:
           $ref: "#/components/schemas/VersionState"
         yank_reason:
           type:
-            - "string"
+            - string
             - "null"
         tombstone:
           $ref: "#/components/schemas/Tombstone"
         published_at:
           $ref: "#/components/schemas/Timestamp"
         published_by:
-          type: "string"
+          type: string
         requires_mojo:
           description: "The conda requirement on the compiler, e.g. `==1.0.0`."
-          type: "string"
+          type: string
           minLength: 1
         deps:
-          type: "array"
+          type: array
           items:
             $ref: "#/components/schemas/Dep"
         native:
-          type: "array"
+          type: array
           items:
             $ref: "#/components/schemas/NativeRef"
         files:
-          type: "array"
+          type: array
           minItems: 1
           items:
             $ref: "#/components/schemas/FileRef"
@@ -1939,21 +1939,21 @@ components:
           $ref: "#/components/schemas/SourceCommit"
         description:
           description: "`[package] description` of this version's mopm.toml. Absent when not set."
-          type: "string"
+          type: string
           maxLength: 512
         license:
           description: "`[package] license`, an SPDX expression. Absent when not set."
-          type: "string"
+          type: string
           maxLength: 128
         repository:
           description: "An https URL. Absent when not set."
-          type: "string"
-          format: "uri"
+          type: string
+          format: uri
           maxLength: 2048
         homepage:
           description: "An https URL. Absent when not set. Untrusted input, so check the scheme before linking it."
-          type: "string"
-          format: "uri"
+          type: string
+          format: uri
           maxLength: 2048
         keywords:
           $ref: "#/components/schemas/Keywords"
@@ -1964,90 +1964,90 @@ components:
             and `license` are untrusted plain text: escape them, never render them as markup. Render it as untrusted text. Absent when the version has none. The five fields above and this one are copied from
             mopm.toml by the publish pipeline when it publishes a version; versions published before that carry none
             of them. All are additive and optional, so older clients ignore them.
-          type: "string"
+          type: string
           maxLength: 65536
         readme_html:
           description: "Sanitised HTML. Never trust it on a cookie-authenticated origin."
           type:
-            - "string"
+            - string
             - "null"
         provenance:
           $ref: "#/components/schemas/Provenance"
     CreateNamespaceRequest:
-      type: "object"
+      type: object
       required:
-        - "namespace"
+        - namespace
       properties:
         namespace:
           $ref: "#/components/schemas/Namespace"
     NamespaceInfo:
-      type: "object"
+      type: object
       required:
-        - "namespace"
-        - "kind"
-        - "github_id"
-        - "login"
+        - namespace
+        - kind
+        - github_id
+        - login
       properties:
         namespace:
           $ref: "#/components/schemas/Namespace"
         kind:
-          type: "string"
+          type: string
           enum:
-            - "user"
-            - "org"
+            - user
+            - org
         github_id:
-          type: "integer"
+          type: integer
           minimum: 1
         login:
           description: "A user namespace: the GitHub login of the account as of its last login, which differs from namespace after a rename. An organization namespace: the namespace."
-          type: "string"
+          type: string
           minLength: 1
     NamespacePollResponse:
-      type: "object"
+      type: object
       required:
-        - "status"
+        - status
       properties:
         status:
-          type: "string"
+          type: string
           enum:
-            - "pending"
-            - "created"
-            - "denied"
-            - "expired"
+            - pending
+            - created
+            - denied
+            - expired
         interval:
-          type: "integer"
+          type: integer
           minimum: 1
         namespace:
           $ref: "#/components/schemas/NamespaceInfo"
       if:
         properties:
           status:
-            const: "created"
+            const: created
       then:
         required:
-          - "namespace"
+          - namespace
     MemberRole:
-      type: "string"
+      type: string
       enum:
-        - "owner"
-        - "member"
+        - owner
+        - member
     Member:
-      type: "object"
+      type: object
       required:
-        - "user"
-        - "handle"
-        - "github_id"
-        - "role"
-        - "added_at"
+        - user
+        - handle
+        - github_id
+        - role
+        - added_at
       properties:
         user:
           $ref: "#/components/schemas/Namespace"
         handle:
           description: "The GitHub login of the account at its last mopm login."
-          type: "string"
+          type: string
           minLength: 1
         github_id:
-          type: "integer"
+          type: integer
           minimum: 1
         role:
           $ref: "#/components/schemas/MemberRole"
@@ -2055,90 +2055,90 @@ components:
           description: "When the account was added or its role last changed."
           $ref: "#/components/schemas/Timestamp"
     MemberList:
-      type: "object"
+      type: object
       required:
-        - "namespace"
-        - "members"
+        - namespace
+        - members
       properties:
         namespace:
           $ref: "#/components/schemas/Namespace"
         members:
-          type: "array"
+          type: array
           items:
             $ref: "#/components/schemas/Member"
     SetMemberRequest:
-      type: "object"
+      type: object
       required:
-        - "role"
+        - role
       properties:
         role:
           $ref: "#/components/schemas/MemberRole"
     MeV2:
-      type: "object"
+      type: object
       required:
-        - "github_id"
-        - "handle"
-        - "namespaces"
+        - github_id
+        - handle
+        - namespaces
       properties:
         github_id:
-          type: "integer"
+          type: integer
           minimum: 1
         handle:
-          type: "string"
+          type: string
           minLength: 1
         namespaces:
-          type: "array"
+          type: array
           items:
-            type: "object"
+            type: object
             required:
-              - "namespace"
-              - "kind"
-              - "role"
-              - "packages"
+              - namespace
+              - kind
+              - role
+              - packages
             properties:
               namespace:
                 $ref: "#/components/schemas/Namespace"
               kind:
-                type: "string"
+                type: string
                 enum:
-                  - "user"
-                  - "org"
+                  - user
+                  - org
               role:
                 description: "owner for a user namespace of the caller and for an organization namespace the caller owns; member for an organization namespace the caller is a member of."
-                type: "string"
+                type: string
                 enum:
-                  - "owner"
-                  - "member"
+                  - owner
+                  - member
               packages:
-                type: "array"
+                type: array
                 items:
                   $ref: "#/components/schemas/FullName"
         unavailable_namespace:
           description: "The caller's GitHub login when it cannot be the caller's namespace (another account holds it, it is reserved, or it is outside the grammar). Absent otherwise."
-          type: "string"
+          type: string
     PackageInfoV2:
-      type: "object"
+      type: object
       required:
-        - "name"
-        - "state"
-        - "namespace"
-        - "latest"
-        - "repository"
-        - "license"
-        - "description"
-        - "created_at"
-        - "versions"
+        - name
+        - state
+        - namespace
+        - latest
+        - repository
+        - license
+        - description
+        - created_at
+        - versions
       properties:
         name:
           $ref: "#/components/schemas/FullName"
         display_name:
-          type: "string"
+          type: string
         state:
           description: "`claimed` until the first version is published, `active` from then on. A package with no version does not expire."
-          type: "string"
+          type: string
           enum:
-            - "claimed"
-            - "active"
+            - claimed
+            - active
         namespace:
           description: "The namespace the package belongs to. It is the package's owner; there are no package owners."
           $ref: "#/components/schemas/NamespaceInfo"
@@ -2149,40 +2149,40 @@ components:
         repository:
           description: "An https URL. Untrusted input."
           type:
-            - "string"
+            - string
             - "null"
         license:
           type:
-            - "string"
+            - string
             - "null"
         description:
           type:
-            - "string"
+            - string
             - "null"
         homepage:
           description: "An https URL, from mopm.toml. Absent when not set. Untrusted input, so check the scheme before linking it."
-          type: "string"
-          format: "uri"
+          type: string
+          format: uri
           maxLength: 2048
         keywords:
           $ref: "#/components/schemas/Keywords"
         readme:
           description: "Markdown of the latest version's readme (see VersionDetail.readme). Untrusted Markdown, sanitize before rendering. Absent when it has none."
-          type: "string"
+          type: string
           maxLength: 65536
         created_at:
           $ref: "#/components/schemas/Timestamp"
         versions:
-          type: "array"
+          type: array
           items:
             $ref: "#/components/schemas/VersionSummary"
     BeginUploadRequest:
-      type: "object"
+      type: object
       required:
-        - "subdir"
-        - "filename"
-        - "sha256"
-        - "size"
+        - subdir
+        - filename
+        - sha256
+        - size
       properties:
         subdir:
           $ref: "#/components/schemas/Subdir"
@@ -2192,42 +2192,42 @@ components:
           $ref: "#/components/schemas/Sha256"
         size:
           description: "Bytes. At most 100 MB (100,000,000 bytes)."
-          type: "integer"
+          type: integer
           minimum: 1
           maximum: 100000000
     BeginUploadResponse:
-      type: "object"
+      type: object
       required:
-        - "upload_id"
-        - "put_url"
-        - "put_headers"
-        - "expires_at"
+        - upload_id
+        - put_url
+        - put_headers
+        - expires_at
       properties:
         upload_id:
-          type: "string"
+          type: string
           minLength: 1
         put_url:
-          type: "string"
-          format: "uri"
+          type: string
+          format: uri
         put_headers:
           description: "Headers the client MUST send with the PUT, exactly as given."
-          type: "object"
+          type: object
           additionalProperties:
-            type: "string"
+            type: string
         expires_at:
           $ref: "#/components/schemas/Timestamp"
     CommitPublishRequest:
-      type: "object"
+      type: object
       required:
-        - "upload_ids"
+        - upload_ids
       properties:
         upload_ids:
-          type: "array"
+          type: array
           minItems: 1
           maxItems: 20
           uniqueItems: true
           items:
-            type: "string"
+            type: string
             minLength: 1
         manifest_sha256:
           description: |
@@ -2246,23 +2246,23 @@ components:
           $ref: "#/components/schemas/SourceCommit"
         description:
           description: "`[package] description` of this version's mopm.toml: one line, no line breaks. Stored on the version and served back by `getVersion`."
-          type: "string"
+          type: string
           minLength: 1
           maxLength: 512
         license:
           description: "`[package] license`, an SPDX expression."
-          type: "string"
+          type: string
           minLength: 1
           maxLength: 128
         repository:
           description: "An https URL."
-          type: "string"
-          format: "uri"
+          type: string
+          format: uri
           maxLength: 2048
         homepage:
           description: "An https URL."
-          type: "string"
-          format: "uri"
+          type: string
+          format: uri
           maxLength: 2048
         keywords:
           $ref: "#/components/schemas/Keywords"
@@ -2276,48 +2276,48 @@ components:
             `invalid_request` rather than stored and never shown. `maxLength`
             below is in characters and can only bound the byte count from
             above.
-          type: "string"
+          type: string
           maxLength: 65536
     CommitPublishResponse:
-      type: "object"
+      type: object
       required:
-        - "publish_id"
-        - "status_url"
+        - publish_id
+        - status_url
       properties:
         publish_id:
-          type: "string"
+          type: string
           minLength: 1
         status_url:
           description: "Path on the same host. GET it with the same token."
-          type: "string"
+          type: string
           pattern: "^/api/v2/publishes/"
     PublishStatus:
-      type: "object"
+      type: object
       required:
-        - "publish_id"
-        - "name"
-        - "version"
-        - "status"
+        - publish_id
+        - name
+        - version
+        - status
       properties:
         publish_id:
-          type: "string"
+          type: string
           minLength: 1
         name:
           $ref: "#/components/schemas/FullName"
         version:
           $ref: "#/components/schemas/Version"
         status:
-          type: "string"
+          type: string
           enum:
-            - "pending"
-            - "validating"
-            - "indexing"
-            - "published"
-            - "rejected"
+            - pending
+            - validating
+            - indexing
+            - published
+            - rejected
         rejection_code:
           $ref: "#/components/schemas/RejectionCode"
         message:
-          type: "string"
+          type: string
         warnings:
           description: |
             What did not stop the publish and the publisher should read: a native dependency whose name the registry's copy of
@@ -2325,23 +2325,23 @@ components:
             or a copy that could not be read. Present only once the validator has found something to say, and so may first
             appear on a `validating` or later status. Absent means nothing to report. A client prints these and goes on;
             a client built before this field ignores it.
-          type: "array"
+          type: array
           items:
-            type: "string"
+            type: string
       if:
         properties:
           status:
-            const: "rejected"
+            const: rejected
       then:
         required:
-          - "rejection_code"
+          - rejection_code
     GroupFile:
-      type: "object"
+      type: object
       required:
-        - "subdir"
-        - "filename"
-        - "sha256"
-        - "size"
+        - subdir
+        - filename
+        - sha256
+        - size
       properties:
         subdir:
           $ref: "#/components/schemas/Subdir"
@@ -2351,31 +2351,31 @@ components:
           $ref: "#/components/schemas/Sha256"
         size:
           description: "Bytes. At most 100 MB (100,000,000 bytes)."
-          type: "integer"
+          type: integer
           minimum: 1
           maximum: 100000000
     ReadmeRef:
       description: |
         A readme named by the SHA-256 of its bytes and their count, for a readme that travels as an uploaded object. At most
         64 KiB (65,536 bytes) of UTF-8.
-      type: "object"
+      type: object
       required:
-        - "sha256"
-        - "size"
+        - sha256
+        - size
       properties:
         sha256:
           $ref: "#/components/schemas/Sha256"
         size:
           description: "Bytes, 1 to 65536."
-          type: "integer"
+          type: integer
           minimum: 1
           maximum: 65536
     GroupMemberRequest:
-      type: "object"
+      type: object
       required:
-        - "name"
-        - "version"
-        - "files"
+        - name
+        - version
+        - files
       properties:
         name:
           $ref: "#/components/schemas/FullName"
@@ -2389,19 +2389,19 @@ components:
             (`GroupUploadReadme`) unless the answer is `reserving`.
           $ref: "#/components/schemas/ReadmeRef"
         files:
-          type: "array"
+          type: array
           minItems: 1
           maxItems: 20
           items:
             $ref: "#/components/schemas/GroupFile"
     CreateGroupRequest:
-      type: "object"
+      type: object
       required:
-        - "members"
+        - members
       properties:
         members:
           description: "One member per package. The registry's limit on members is 500 by default."
-          type: "array"
+          type: array
           minItems: 1
           maxItems: 500
           items:
@@ -2414,50 +2414,50 @@ components:
             the group id, so the same set with either value is the same group. A registry that predates this option
             ignores it and supersedes, and does not name what it ended in `superseded` either, so a client that must
             never supersede cannot rely on `refuse` against a registry it has not seen name them.
-          type: "string"
+          type: string
           enum:
-            - "supersede"
-            - "refuse"
+            - supersede
+            - refuse
     GroupStatusName:
       description: "Where a group is. A client treats a value it does not know as \"unknown\"."
-      type: "string"
+      type: string
       enum:
-        - "open"
-        - "validating"
-        - "committed"
-        - "visible"
-        - "rejected"
-        - "failed"
-        - "expired"
-        - "aborted"
-        - "superseded"
+        - open
+        - validating
+        - committed
+        - visible
+        - rejected
+        - failed
+        - expired
+        - aborted
+        - superseded
     GroupUploadFile:
-      type: "object"
+      type: object
       required:
-        - "subdir"
-        - "filename"
-        - "upload_id"
-        - "uploaded"
+        - subdir
+        - filename
+        - upload_id
+        - uploaded
       properties:
         subdir:
           $ref: "#/components/schemas/Subdir"
         filename:
           $ref: "#/components/schemas/Filename"
         upload_id:
-          type: "string"
+          type: string
           minLength: 1
         uploaded:
           description: "The bytes are already in storage; there is nothing to PUT."
-          type: "boolean"
+          type: boolean
         put_url:
           description: "Present when `uploaded` is false."
-          type: "string"
-          format: "uri"
+          type: string
+          format: uri
         put_headers:
           description: "Headers the client MUST send with the PUT, exactly as given. Present when `uploaded` is false."
-          type: "object"
+          type: object
           additionalProperties:
-            type: "string"
+            type: string
         expires_at:
           $ref: "#/components/schemas/Timestamp"
     GroupUploadReadme:
@@ -2465,43 +2465,43 @@ components:
         Where to PUT the readme a member declared, with the same meaning as `GroupUploadFile`: `uploaded` is true when the
         object is in storage at the declared size, and then there is nothing to PUT; otherwise `put_url`, `put_headers` and
         `expires_at` are present, and the PUT is pinned to the declared SHA-256 and size.
-      type: "object"
+      type: object
       required:
-        - "sha256"
-        - "size"
-        - "upload_id"
-        - "uploaded"
+        - sha256
+        - size
+        - upload_id
+        - uploaded
       properties:
         sha256:
           $ref: "#/components/schemas/Sha256"
         size:
-          type: "integer"
+          type: integer
           minimum: 1
           maximum: 65536
         upload_id:
-          type: "string"
+          type: string
           minLength: 1
         uploaded:
           description: "The bytes are already in storage; there is nothing to PUT."
-          type: "boolean"
+          type: boolean
         put_url:
           description: "Present when `uploaded` is false."
-          type: "string"
-          format: "uri"
+          type: string
+          format: uri
         put_headers:
           description: "Headers the client MUST send with the PUT, exactly as given. Present when `uploaded` is false."
-          type: "object"
+          type: object
           additionalProperties:
-            type: "string"
+            type: string
         expires_at:
           $ref: "#/components/schemas/Timestamp"
     GroupMemberAnswer:
-      type: "object"
+      type: object
       required:
-        - "name"
-        - "version"
-        - "action"
-        - "files"
+        - name
+        - version
+        - action
+        - files
       properties:
         name:
           $ref: "#/components/schemas/FullName"
@@ -2511,13 +2511,13 @@ components:
           description: |
             `new`: this call reserved the number. `join`: it was already reserved for the group, or was taken over from a
             reservation nobody used. `skip_identical`: the group has nothing more to do for this member.
-          type: "string"
+          type: string
           enum:
-            - "new"
-            - "join"
-            - "skip_identical"
+            - new
+            - join
+            - skip_identical
         files:
-          type: "array"
+          type: array
           items:
             $ref: "#/components/schemas/GroupUploadFile"
         readme:
@@ -2527,13 +2527,13 @@ components:
             registry as one that does not take readme objects.
           $ref: "#/components/schemas/GroupUploadReadme"
     CreateGroupResponse:
-      type: "object"
+      type: object
       required:
-        - "group_id"
-        - "status"
-        - "attempt"
-        - "deadline_at"
-        - "members"
+        - group_id
+        - status
+        - attempt
+        - deadline_at
+        - members
       properties:
         group_id:
           $ref: "#/components/schemas/GroupId"
@@ -2541,13 +2541,13 @@ components:
           $ref: "#/components/schemas/GroupStatusName"
         attempt:
           description: "Starts at 1; a group that ended and was created again has the next one."
-          type: "integer"
+          type: integer
           minimum: 1
         superseded:
           description: |
             The ids of the caller's own groups this call ended as `superseded`, as the `group_supersede` audit rows record.
             Absent when it ended none, and on a later call that only continues the group.
-          type: "array"
+          type: array
           minItems: 1
           items:
             $ref: "#/components/schemas/GroupId"
@@ -2555,25 +2555,25 @@ components:
           $ref: "#/components/schemas/Timestamp"
         reserving:
           description: "Present when the call ran out of time before it reached every member; `members` holds the first `done`. Send the same request again."
-          type: "object"
+          type: object
           required:
-            - "done"
-            - "total"
+            - done
+            - total
           properties:
             done:
-              type: "integer"
+              type: integer
               minimum: 0
             total:
-              type: "integer"
+              type: integer
               minimum: 1
         members:
-          type: "array"
+          type: array
           items:
             $ref: "#/components/schemas/GroupMemberAnswer"
     CommitGroupMember:
-      type: "object"
+      type: object
       required:
-        - "name"
+        - name
       properties:
         name:
           $ref: "#/components/schemas/FullName"
@@ -2585,23 +2585,23 @@ components:
           $ref: "#/components/schemas/SourceCommit"
         description:
           description: "As in `CommitPublishRequest`."
-          type: "string"
+          type: string
           minLength: 1
           maxLength: 512
         license:
           description: "As in `CommitPublishRequest`."
-          type: "string"
+          type: string
           minLength: 1
           maxLength: 128
         repository:
           description: "An https URL."
-          type: "string"
-          format: "uri"
+          type: string
+          format: uri
           maxLength: 2048
         homepage:
           description: "An https URL."
-          type: "string"
-          format: "uri"
+          type: string
+          format: uri
           maxLength: 2048
         keywords:
           $ref: "#/components/schemas/Keywords"
@@ -2624,57 +2624,57 @@ components:
             A registry from before `group_readme_objects` refuses a readme that is not a string with `invalid_request`,
             and the group stays `open`, so a client can send the text instead.
           oneOf:
-            - type: "string"
+            - type: string
               maxLength: 65536
             - $ref: "#/components/schemas/ReadmeRef"
     CommitGroupRequest:
-      type: "object"
+      type: object
       required:
-        - "members"
+        - members
       properties:
         members:
           description: "One entry for each member of the group, and no other."
-          type: "array"
+          type: array
           minItems: 1
           maxItems: 500
           items:
             $ref: "#/components/schemas/CommitGroupMember"
     CommitGroupResponse:
-      type: "object"
+      type: object
       required:
-        - "group_id"
-        - "status"
-        - "attempt"
-        - "status_url"
+        - group_id
+        - status
+        - attempt
+        - status_url
       properties:
         group_id:
           $ref: "#/components/schemas/GroupId"
         status:
           $ref: "#/components/schemas/GroupStatusName"
         attempt:
-          type: "integer"
+          type: integer
           minimum: 1
         status_url:
           description: "Path on the same host. GET it with the same token."
-          type: "string"
+          type: string
           pattern: "^/api/v2/groups/"
     Group:
-      type: "object"
+      type: object
       required:
-        - "group_id"
-        - "status"
-        - "attempt"
-        - "created_at"
-        - "deadline_at"
-        - "member_count"
-        - "members"
+        - group_id
+        - status
+        - attempt
+        - created_at
+        - deadline_at
+        - member_count
+        - members
       properties:
         group_id:
           $ref: "#/components/schemas/GroupId"
         status:
           $ref: "#/components/schemas/GroupStatusName"
         attempt:
-          type: "integer"
+          type: integer
           minimum: 1
         created_at:
           $ref: "#/components/schemas/Timestamp"
@@ -2684,69 +2684,69 @@ components:
           $ref: "#/components/schemas/Timestamp"
         failure:
           description: "Why a group that was `rejected` or `failed` ended."
-          type: "object"
+          type: object
           required:
-            - "code"
-            - "message"
+            - code
+            - message
           properties:
             code:
               description: "A rejection code of the validator, or one of `deadline_passed`, `upload_too_old`, `upload_missing`, `sha256_mismatch`, `limit_exceeded`, `operator`."
-              type: "string"
+              type: string
             message:
-              type: "string"
+              type: string
             member:
               description: "The package the verdict is about, when it is about one."
-              type: "string"
+              type: string
         member_count:
-          type: "integer"
+          type: integer
           minimum: 1
         yank:
           description: "Present once the group has been yanked (`yankGroup`): where the yank is."
-          type: "object"
+          type: object
           required:
-            - "state"
-            - "reason"
-            - "requested_at"
-            - "yanked_members"
+            - state
+            - reason
+            - requested_at
+            - yanked_members
           properties:
             state:
               description: "`yanking` and `unyanking` are running; `yanked` and `restored` are at rest."
-              type: "string"
+              type: string
               enum:
-                - "yanking"
-                - "yanked"
-                - "unyanking"
-                - "restored"
+                - yanking
+                - yanked
+                - unyanking
+                - restored
             reason:
-              type: "string"
+              type: string
               maxLength: 280
             requested_at:
               $ref: "#/components/schemas/Timestamp"
             yanked_members:
               description: "The members the yank has changed so far; an unyank restores these and no others."
-              type: "integer"
+              type: integer
               minimum: 0
         members:
-          type: "array"
+          type: array
           items:
-            type: "object"
+            type: object
             required:
-              - "name"
-              - "version"
-              - "state"
+              - name
+              - version
+              - state
             properties:
               name:
                 $ref: "#/components/schemas/FullName"
               version:
                 $ref: "#/components/schemas/Version"
               state:
-                type: "string"
+                type: string
                 enum:
-                  - "pending"
-                  - "reserved"
-                  - "staged"
-                  - "published"
-                  - "yanked"
+                  - pending
+                  - reserved
+                  - staged
+                  - published
+                  - yanked
               files:
                 description: |
                   Present on the answer of `getGroup` only (not on the answers of `abortGroup` and `yankGroup`, which omit it). The
@@ -2755,40 +2755,40 @@ components:
                   longer holds for this group (the group ended and another group or publish took the number). A group is
                   declared with at most 500 members of at most 20 files each; the answer lists no more than the registry's current
                   member cap.
-                type: "array"
+                type: array
                 items:
-                  type: "object"
+                  type: object
                   required:
-                    - "subdir"
-                    - "filename"
-                    - "sha256"
-                    - "size"
+                    - subdir
+                    - filename
+                    - sha256
+                    - size
                   properties:
                     subdir:
-                      type: "string"
+                      type: string
                     filename:
-                      type: "string"
+                      type: string
                     sha256:
                       $ref: "#/components/schemas/Sha256"
                     size:
-                      type: "integer"
+                      type: integer
                       minimum: 1
                     uploaded:
                       description: |
                         Present only while the group is `open`: true when the file is in storage at its declared size (the same test
                         `createGroup` makes when it answers a repeated request). Absent for every other status, for which the
                         registry makes no storage check.
-                      type: "boolean"
+                      type: boolean
     YankRequest:
-      type: "object"
+      type: object
       required:
-        - "yanked"
+        - yanked
       properties:
         yanked:
-          type: "boolean"
+          type: boolean
         reason:
           description: "Required when `yanked` is true. Shown to people who locked the version."
-          type: "string"
+          type: string
           maxLength: 280
       if:
         properties:
@@ -2796,194 +2796,59 @@ components:
             const: true
       then:
         required:
-          - "reason"
+          - reason
 x-mopm-errors:
-  invalid_request:
-    status: 400
-    message: "The request is not valid: {detail}."
-    hint: "Check the request against the API documentation; update mopm if it is old."
-  invalid_name:
-    status: 400
-    message: "'{name}' is not a valid package name."
-    hint: "Names are lowercase letters, digits and underscores, 2 to 64 characters, starting with a letter."
-  invalid_version:
-    status: 400
-    message: "'{version}' is not a valid version."
-    hint: "A version is MAJOR.MINOR.PATCH: three numbers separated by dots, such as 1.2.3. Suffixes such as rc1 are not supported."
-  upload_invalid:
-    status: 400
-    message: "The upload does not match what was declared: {detail}."
-    hint: "Begin a new upload with the real file name, sha256 and size."
-  token_missing:
-    status: 401
-    message: "This request needs a token."
-    hint: "Run 'mopm login' or pass a token."
-  token_unknown:
-    status: 401
-    message: "The token is not recognised."
-    hint: "Create a new token with 'mopm token create', or run 'mopm login'."
-  token_expired:
-    status: 401
-    message: "The token expired at {expires_at}."
-    hint: "Create a new token."
-  token_revoked:
-    status: 401
-    message: "The token was revoked."
-    hint: "Create a new token."
-  stale_session:
-    status: 401
-    message: "This action needs a login from the last 15 minutes."
-    hint: "Run 'mopm login' again."
-  oidc_token_invalid:
-    status: 401
-    message: "The CI identity token was rejected: {detail}."
-    hint: "Check the audience and that the job has permission to request an identity token."
-  scope_missing:
-    status: 403
-    message: "The token does not have the '{scope}' scope for '{name}'."
-    hint: "Create a token with that scope and that package."
-  not_owner:
-    status: 403
-    message: "You are not an owner of '{name}'."
-    hint: "Use a token of an account that can write the namespace."
-  name_reserved:
-    status: 403
-    message: "'{name}' is {what}."
-    hint: "Choose another name."
-  oidc_not_trusted:
-    status: 403
-    message: "No trusted publisher of '{name}' matches this CI identity."
-    hint: "Register the repository, workflow and environment as a trusted publisher of the package."
-  limit_exceeded:
-    status: 403
-    message: "Adding this file would put '{name}' over its storage limit of {limit} bytes; {remaining} bytes are left."
-    hint: "Yanked versions still count toward the limit; only a takedown frees space. Reduce the package size."
-  package_not_found:
-    status: 404
-    message: "There is no package '{name}'."
-    hint: "Check the spelling; a package is created by publishing it."
-  version_not_found:
-    status: 404
-    message: "'{name}' has no version '{version}'."
-    hint: "List the versions with 'mopm info {name}'."
-  device_code_unknown:
-    status: 404
-    message: "The device code is not recognised."
-    hint: "Start the login again."
-  token_not_found:
-    status: 404
-    message: "There is no such token."
-    hint: "List yours with 'mopm token list'."
-  publish_not_found:
-    status: 404
-    message: "There is no such publish."
-    hint: "Publish ids are only valid for the caller who made them."
-  group_not_found:
-    status: 404
-    message: "There is no such group."
-    hint: "Group ids are only valid for the caller who made them, or for an owner of every package in the group."
-  version_exists:
-    status: 409
-    message: "'{name}' {version} already exists (sha256 {sha256}); versions are immutable."
-    hint: "Publish a new version."
-  upload_used:
-    status: 409
-    message: "The upload '{upload_id}' was already used."
-    hint: "Begin a new upload."
-  group_not_open:
-    status: 409
-    message: "Group {group_id} is {status}; only an open group can be aborted."
-    hint: "Create the group again with the same request to open it again."
-  group_conflict:
-    status: 409
-    message: "The group cannot be created: {detail}."
-    hint: "Abort or finish your other groups, or publish a new version."
-  group_commit_refused:
-    status: 409
-    message: "The group cannot be committed: {detail}."
-    hint: "Read the group with its status request; create it again with the same request to open it again."
-  group_not_settled:
-    status: 409
-    message: "Group {group_id} cannot be yanked or unyanked now: {detail}."
-    hint: "A group is yanked once it is visible, and not while another yank or unyank of it is running; read the group with its status request."
-  invalid_transition:
-    status: 409
-    message: "Cannot {action} '{name}' {version}: it is {state}."
-    hint: "Only a published version can be yanked, only a yanked version can be unyanked, and a tombstoned version never changes."
-  payload_too_large:
-    status: 413
-    message: "The file is larger than the limit of {limit} bytes."
-    hint: "Reduce the package size."
-  rate_limited:
-    status: 429
-    message: "Too many requests."
-    hint: "Wait {retry_after} seconds; the Retry-After header says how long."
-  internal_error:
-    status: 500
-    message: "Something went wrong on our side."
-    hint: "Try again; report the request id if it persists."
-  read_only_mode:
-    status: 503
-    message: "The registry is read-only right now; new uploads are refused."
-    hint: "Installs still work. Try again later."
-  unavailable:
-    status: 503
-    message: "The registry is temporarily unavailable."
-    hint: "Try again shortly."
-  route_not_found:
-    status: 404
-    message: "There is no such operation."
-    hint: "Check the request against the API documentation; update mopm if it is old."
-  invalid_namespace:
-    status: 400
-    message: "'{namespace}' is not a valid namespace."
-    hint: "A namespace is a GitHub login in lower case: letters, digits and single hyphens, at most 39 characters."
-  not_namespace_member:
-    status: 403
-    message: "You cannot write in '{namespace}'."
-    hint: "Ask an owner of '{namespace}' to run 'mopm org add {namespace} <your mopm username>'."
-  namespace_reserved:
-    status: 403
-    message: "'{namespace}' is reserved."
-    hint: "Publish in an organization's namespace."
-  namespace_not_found:
-    status: 404
-    message: "There is no namespace '{namespace}'."
-    hint: "A user's namespace is made at their first 'mopm login'; an organization's by one of its admins."
-  namespace_taken:
-    status: 409
-    message: "'{namespace}' is taken."
-    hint: "Choose the namespace of another GitHub organization."
-  not_org_admin:
-    status: 403
-    message: "You are not an active admin of the GitHub organization '{namespace}'."
-    hint: "An admin of the GitHub organization runs 'mopm org create {namespace}'; an organization that restricts OAuth apps approves the mopm registry first."
-  github_account_mismatch:
-    status: 403
-    message: "The GitHub account that approved is not the one logged in to mopm."
-    hint: "Approve with the GitHub account you logged in with, or run 'mopm login' with the other one."
-  not_namespace_owner:
-    status: 403
-    message: "You are not an owner of '{namespace}'."
-    hint: "Ask an owner of '{namespace}'; 'mopm org list {namespace}' shows them."
-  last_owner:
-    status: 409
-    message: "'{user}' is the last owner of '{namespace}'."
-    hint: "Make another member an owner first."
-  member_not_found:
-    status: 404
-    message: "'{user}' is not a member of '{namespace}'."
-    hint: "List the members with 'mopm org list {namespace}'."
-  user_not_found:
-    status: 404
-    message: "There is no mopm user '{user}'."
-    hint: "A user gets their name at their first 'mopm login'."
+  invalid_request: { status: 400, message: "The request is not valid: {detail}.", hint: "Check the request against the API documentation; update mopm if it is old." }
+  invalid_name: { status: 400, message: "'{name}' is not a valid package name.", hint: "Names are lowercase letters, digits and underscores, 2 to 64 characters, starting with a letter." }
+  invalid_version: { status: 400, message: "'{version}' is not a valid version.", hint: "A version is MAJOR.MINOR.PATCH: three numbers separated by dots, such as 1.2.3. Suffixes such as rc1 are not supported." }
+  upload_invalid: { status: 400, message: "The upload does not match what was declared: {detail}.", hint: "Begin a new upload with the real file name, sha256 and size." }
+  token_missing: { status: 401, message: "This request needs a token.", hint: "Run 'mopm login' or pass a token." }
+  token_unknown: { status: 401, message: "The token is not recognised.", hint: "Create a new token with 'mopm token create', or run 'mopm login'." }
+  token_expired: { status: 401, message: "The token expired at {expires_at}.", hint: "Create a new token." }
+  token_revoked: { status: 401, message: "The token was revoked.", hint: "Create a new token." }
+  stale_session: { status: 401, message: "This action needs a login from the last 15 minutes.", hint: "Run 'mopm login' again." }
+  oidc_token_invalid: { status: 401, message: "The CI identity token was rejected: {detail}.", hint: "Check the audience and that the job has permission to request an identity token." }
+  scope_missing: { status: 403, message: "The token does not have the '{scope}' scope for '{name}'.", hint: "Create a token with that scope and that package." }
+  not_owner: { status: 403, message: "You are not an owner of '{name}'.", hint: "Use a token of an account that can write the namespace." }
+  name_reserved: { status: 403, message: "'{name}' is {what}.", hint: "Choose another name." }
+  oidc_not_trusted: { status: 403, message: "No trusted publisher of '{name}' matches this CI identity.", hint: "Register the repository, workflow and environment as a trusted publisher of the package." }
+  limit_exceeded: { status: 403, message: "Adding this file would put '{name}' over its storage limit of {limit} bytes; {remaining} bytes are left.", hint: "Yanked versions still count toward the limit; only a takedown frees space. Reduce the package size." }
+  package_not_found: { status: 404, message: "There is no package '{name}'.", hint: "Check the spelling; a package is created by publishing it." }
+  version_not_found: { status: 404, message: "'{name}' has no version '{version}'.", hint: "List the versions with 'mopm info {name}'." }
+  device_code_unknown: { status: 404, message: "The device code is not recognised.", hint: "Start the login again." }
+  token_not_found: { status: 404, message: "There is no such token.", hint: "List yours with 'mopm token list'." }
+  publish_not_found: { status: 404, message: "There is no such publish.", hint: "Publish ids are only valid for the caller who made them." }
+  group_not_found: { status: 404, message: "There is no such group.", hint: "Group ids are only valid for the caller who made them, or for an owner of every package in the group." }
+  version_exists: { status: 409, message: "'{name}' {version} already exists (sha256 {sha256}); versions are immutable.", hint: "Publish a new version." }
+  upload_used: { status: 409, message: "The upload '{upload_id}' was already used.", hint: "Begin a new upload." }
+  group_not_open: { status: 409, message: "Group {group_id} is {status}; only an open group can be aborted.", hint: "Create the group again with the same request to open it again." }
+  group_conflict: { status: 409, message: "The group cannot be created: {detail}.", hint: "Abort or finish your other groups, or publish a new version." }
+  group_commit_refused: { status: 409, message: "The group cannot be committed: {detail}.", hint: "Read the group with its status request; create it again with the same request to open it again." }
+  group_not_settled: { status: 409, message: "Group {group_id} cannot be yanked or unyanked now: {detail}.", hint: "A group is yanked once it is visible, and not while another yank or unyank of it is running; read the group with its status request." }
+  invalid_transition: { status: 409, message: "Cannot {action} '{name}' {version}: it is {state}.", hint: "Only a published version can be yanked, only a yanked version can be unyanked, and a tombstoned version never changes." }
+  payload_too_large: { status: 413, message: "The file is larger than the limit of {limit} bytes.", hint: "Reduce the package size." }
+  rate_limited: { status: 429, message: "Too many requests.", hint: "Wait {retry_after} seconds; the Retry-After header says how long." }
+  internal_error: { status: 500, message: "Something went wrong on our side.", hint: "Try again; report the request id if it persists." }
+  read_only_mode: { status: 503, message: "The registry is read-only right now; new uploads are refused.", hint: "Installs still work. Try again later." }
+  unavailable: { status: 503, message: "The registry is temporarily unavailable.", hint: "Try again shortly." }
+  route_not_found: { status: 404, message: "There is no such operation.", hint: "Check the request against the API documentation; update mopm if it is old." }
+  invalid_namespace: { status: 400, message: "'{namespace}' is not a valid namespace.", hint: "A namespace is a GitHub login in lower case: letters, digits and single hyphens, at most 39 characters." }
+  not_namespace_member: { status: 403, message: "You cannot write in '{namespace}'.", hint: "Ask an owner of '{namespace}' to run 'mopm org add {namespace} <your mopm username>'." }
+  namespace_reserved: { status: 403, message: "'{namespace}' is reserved.", hint: "Publish in an organization's namespace." }
+  namespace_not_found: { status: 404, message: "There is no namespace '{namespace}'.", hint: "A user's namespace is made at their first 'mopm login'; an organization's by one of its admins." }
+  namespace_taken: { status: 409, message: "'{namespace}' is taken.", hint: "Choose the namespace of another GitHub organization." }
+  not_org_admin: { status: 403, message: "You are not an active admin of the GitHub organization '{namespace}'.", hint: "An admin of the GitHub organization runs 'mopm org create {namespace}'; an organization that restricts OAuth apps approves the mopm registry first." }
+  github_account_mismatch: { status: 403, message: "The GitHub account that approved is not the one logged in to mopm.", hint: "Approve with the GitHub account you logged in with, or run 'mopm login' with the other one." }
+  not_namespace_owner: { status: 403, message: "You are not an owner of '{namespace}'.", hint: "Ask an owner of '{namespace}'; 'mopm org list {namespace}' shows them." }
+  last_owner: { status: 409, message: "'{user}' is the last owner of '{namespace}'.", hint: "Make another member an owner first." }
+  member_not_found: { status: 404, message: "'{user}' is not a member of '{namespace}'.", hint: "List the members with 'mopm org list {namespace}'." }
+  user_not_found: { status: 404, message: "There is no mopm user '{user}'.", hint: "A user gets their name at their first 'mopm login'." }
 x-mopm-error-reasons:
   group_conflict:
-    - "number_held"
-    - "group_failed"
-    - "open_cap"
-    - "supersede_cap"
-    - "takeover_blocked"
-    - "number_taken"
-    - "overlap_refused"
+    - number_held
+    - group_failed
+    - open_cap
+    - supersede_cap
+    - takeover_blocked
+    - number_taken
+    - overlap_refused
