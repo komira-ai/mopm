@@ -1,7 +1,8 @@
 # Owner namespaces (proposed)
 
-**Proposed, not implemented.** No released mopm or registry reads or serves anything on this page, and no test reads
-it (`//:contract` checks only `spec/*.schema.json` and `spec/api/openapi.yaml`). It is the spec text that
+**Proposed, not implemented.** No released mopm or registry reads or serves anything on this page except what the
+sections below say is live, and no test reads it (`//:contract` checks only `spec/*.schema.json` and
+`spec/api/openapi.yaml`). It is the spec text that
 `docs/design/namespaces.md` implies, one section per live spec it changes. Each section moves into its live file (and
 the schema fragments into the `.schema.json` files) in the task that implements it; until then the live files describe
 what the code does.
@@ -150,89 +151,12 @@ equal to the file's `<namespace>/<name>`. Takedown entries: `name` is `FullName`
 
 ## api/openapi.yaml
 
-`/api/v2`, served beside `/api/v1`, on the same host. Operations that never name a package (`/health`, `/auth/device`,
-`/auth/device/poll`, `/me/tokens` listing and revoking, `/publishes/{publish_id}`) behave the same at both prefixes.
-Path parameters `{namespace}` (`Namespace`) and `{name}` (`Name`) replace v1's `{name}`.
-
-| v1 operation | v2 |
-|---|---|
-| `searchPackages` `GET /packages` | same path; `q` is a name prefix, or `<namespace>/` with an optional name prefix; `PackageSummary.name` is `FullName` |
-| `getPackage` `GET /packages/{name}` | `GET /packages/{namespace}/{name}`; `PackageInfo` has `namespace` (`NamespaceInfo`) instead of `owners` |
-| `claimPackage` `POST /packages/{name}/claim` | `createPackage` `PUT /packages/{namespace}/{name}`, no body; 201 created, 200 already exists |
-| `listVersions` | `GET /packages/{namespace}/{name}/versions` |
-| `listOwners`, `inviteOwner`, `removeOwner` | removed |
-| `listInvitations`, `acceptInvitation` | removed |
-| `getVersion`, `beginUpload`, `commitPublish`, `setYanked` | under `/packages/{namespace}/{name}/{version}` |
-| `getMe` `GET /me` | `MeV2` |
-| `createToken` `POST /me/tokens` | `packages` items are `FullName`; one may name a package not yet created, in a namespace the caller can write |
-| `exchangeOidcToken` | `name` and `packages[].name` are `FullName`; matched to the publishers of the namespace; mints a token, creates nothing |
-| `createGroup`, `getGroup`, `commitGroup`, `abortGroup`, `yankGroup` | members' `name` are `FullName` |
-| (new) `createNamespace` `POST /namespaces` | `{ "namespace": Namespace }`, fresh session; creates an organization namespace, or binds a new App installation to a frozen one whose GitHub id it matches; 201 or 200 `NamespaceInfo` |
-| (new) `getNamespace` `GET /namespaces/{namespace}` | public; `NamespaceInfo` |
-
-`createPackage` checks the right to write the namespace before it answers: a session of an account that can write it,
-an API token with `publish` whose `packages` names the full name, or a trusted publisher's token minted for it.
-
-New schemas:
-
-```yaml
-NamespaceInfo:
-  type: object
-  required: [namespace, kind, github_id, login, frozen]
-  properties:
-    namespace: { $ref: "#/components/schemas/Namespace" }
-    kind: { type: string, enum: [user, org] }
-    github_id: { type: integer, minimum: 1 }
-    login: { type: string, minLength: 1, description: The GitHub login the account has now; differs from namespace after a rename. }
-    frozen: { type: boolean, description: True when no App installation of this GitHub id is bound; reads work, writes are refused. }
-MeV2:
-  type: object
-  required: [github_id, handle, namespaces]
-  properties:
-    github_id: { type: integer, minimum: 1 }
-    handle: { type: string, minLength: 1 }
-    namespaces:
-      type: array
-      items:
-        type: object
-        required: [namespace, kind, role, packages]
-        properties:
-          namespace: { $ref: "#/components/schemas/Namespace" }
-          kind: { type: string, enum: [user, org] }
-          role:
-            description: owner for a user namespace of the caller; GitHub's admin or member for an organization namespace.
-            type: string
-            enum: [owner, admin, member]
-          packages: { type: array, items: { $ref: "#/components/schemas/FullName" } }
-    unavailable_namespace:
-      description: The caller's GitHub login when it cannot be the caller's namespace (another account holds it, it is reserved, or it is outside the grammar). Absent otherwise.
-      type: string
-```
-
-Who may write: in a `user` namespace, the account bound to it; in an `org` namespace, an account that passes the
-membership check of `docs/design/namespaces.md` section 2.2 (from the bound installation and the ids to the current
-logins, then `GET /orgs/{org}/memberships/{login}` with the response's `user.id` equal to the account's, `state:
-active`, role `admin` or `member`; a pass is reused for at most 5 minutes, a refusal never); `createNamespace` needs
-role `admin`, checked without reuse. A trusted publisher of a namespace may write in it; its `repository_owner_id`
-equals the namespace's `github_id`.
-
-New error codes (additive to `ErrorCode` and `x-mopm-errors`):
-
-```yaml
-invalid_namespace:     { status: 400, message: "'{namespace}' is not a valid namespace.", hint: "A namespace is a GitHub login in lower case: letters, digits and single hyphens, at most 39 characters." }
-not_namespace_member:  { status: 403, message: "You cannot write in '{namespace}'.", hint: "Ask an owner of the GitHub organization for membership." }
-namespace_unverified:  { status: 403, message: "'{namespace}' cannot be verified on GitHub: {detail}.", hint: "An owner of the organization installs the mopm registry GitHub App, then an admin runs the namespace creation again." }
-namespace_reserved:    { status: 403, message: "'{namespace}' is reserved.", hint: "Publish in an organization's namespace." }
-namespace_not_found:   { status: 404, message: "There is no namespace '{namespace}'.", hint: "A user's namespace is made at their first 'mopm login'; an organization's by one of its admins." }
-```
-
-`createPackage` answers `name_reserved` (403) for an import name that is a module of the Mojo standard library, with
-the message `'{name}' is a module of the Mojo standard library (std.{name}).` and the hint `Choose another name.`.
-
-`/api/v1` once v2 is served: `claimPackage`, and `exchangeOidcToken` for a package that does not exist, answer
-`name_reserved` with the hint "package names are in namespaces now; update mopm". Every other v1 operation is
-unchanged. Flat names that remain after the deletion (on mopm.dev, the `kci_*` packages) are served by v1 and the
-version 1 index as before.
+Live in `spec/api/openapi-v2.yaml` (ns-R3): `/api/v2`, its operations, schemas and error catalogue (`service/api` tests hold
+the catalogue to `V2_CATALOGUE`, and every operation to a router branch and a gateway route). What is not yet live is the
+state of `/api/v1` once v2 is served: `claimPackage`, and `exchangeOidcToken` for a package that does not exist, answer
+`name_reserved` with the hint "package names are in namespaces now; update mopm" (said in the descriptions of
+`spec/api/openapi.yaml`). Every other v1 operation is unchanged. Flat names that remain after the deletion (on mopm.dev,
+the `kci_*` packages) are served by v1 and the version 1 index as before.
 
 ## unit-graph.md
 
