@@ -1,6 +1,6 @@
 import { AuthError } from './errors';
 import { namespaceProblem, type NamespaceKind, type NamespaceRecord, type NamespaceStore } from './namespaces';
-import { NamespaceError, type OrgMembership, type OrgRole } from './org-membership';
+import { NamespaceError, UNVERIFIED, type OrgMembership, type OrgRole } from './org-membership';
 import type { AuthStore, UserRecord } from './types';
 
 /**
@@ -70,6 +70,23 @@ export class NamespaceAccess {
   async require(namespace: string, account_id: number): Promise<WriteRight> {
     const record = await this.find(namespace);
     return { record, role: await this.roleIn(record, account_id) };
+  }
+
+  /**
+   * May a CI identity's token (minted for a publisher of `namespace`) write there now? The namespace must exist and, for an
+   * organization, still have its App installation bound (a frozen one refuses every write). Answers the row.
+   */
+  async requireCi(namespace: string): Promise<NamespaceRecord> {
+    const record = await this.find(namespace);
+    if (record.kind === 'org' && record.installation_id === undefined) {
+      throw new NamespaceError('namespace_unverified', `'${namespace}' cannot be verified on GitHub: ${UNVERIFIED.noInstallation}.`, { namespace, detail: UNVERIFIED.noInstallation });
+    }
+    return record;
+  }
+
+  /** The handle the registry knows for an account (its last login), or `u:<id>` for one it has no row for. Recorded as `published_by`. */
+  async handleOf(account_id: number): Promise<string> {
+    return (await this.d.users.getUser(account_id))?.handle ?? `u:${account_id}`;
   }
 
   /** The account's role in a namespace row, or the refusal. */

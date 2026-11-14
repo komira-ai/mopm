@@ -394,7 +394,7 @@ describe('the ownership check for a CI token cannot be bypassed', () => {
 describe('the CI exchange and the claim route share one namespace', () => {
   const userClaim = async (s: Setup, name: string, id = 7) => {
     await s.h.authStore.upsertUser(id, `user${id}`, s.h.clock.now().toISOString());
-    return s.h.call('POST', `/api/v1/packages/${name}/claim`, await s.h.token(id, [], ['publish']), undefined);
+    return s.h.claimService(await s.h.token(id, [], ['publish']), name);
   };
 
   test('both write state claimed: a CI-created and a user-claimed package look alike except for who owns them', async () => {

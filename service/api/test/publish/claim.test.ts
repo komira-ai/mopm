@@ -12,7 +12,7 @@ import { FakeDocClient } from '../helpers';
 import { Harness, MutableFlags, pkg } from './harness';
 
 const err = (r: { body: string }) => JSON.parse(r.body).error as { code: string; message: string; hint: string };
-const claim = (h: Harness, token: string | undefined, name: string, body?: unknown) => h.call('POST', `/api/v1/packages/${name}/claim`, token, body);
+const claim = (h: Harness, token: string | undefined, name: string, body?: unknown) => h.claimService(token, name, body);
 
 /** An account with a row in the users table and an API token (an account's token, whatever its packages: it has none yet). */
 async function account(h: Harness, id = 7, handle = 'octocat'): Promise<string> {
@@ -434,7 +434,7 @@ describe('similar names', () => {
 });
 
 describe('a deployment', () => {
-  test('without a claim service has no claim route: POST is route_not_found', async () => {
+  test('without a claim service the route still refuses a claim with the update hint (it creates nothing either way)', async () => {
     const h = new Harness();
     const token = await account(h);
     const res = await route(
@@ -442,7 +442,7 @@ describe('a deployment', () => {
       { ...h.deps, publish: { ...h.deps.publish!, claims: undefined } },
       'r',
     );
-    expect([res.statusCode, err(res).code]).toEqual([404, 'route_not_found']);
+    expect([res.statusCode, err(res).code, err(res).hint]).toEqual([403, 'name_reserved', 'package names are in namespaces now; update mopm']);
     await nothingCreated(h, 'abc');
   });
 

@@ -5,7 +5,7 @@ import { Harness } from './harness';
 
 const docFor = () => new FakeDoc({ 't-config': 'key' });
 
-const claim = (h: Harness, token: string, name: string) => h.call('POST', `/api/v1/packages/${name}/claim`, token);
+const claim = (h: Harness, token: string, name: string) => h.claimService(token, name);
 
 async function account(h: Harness, id: number): Promise<string> {
   await h.authStore.upsertUser(id, `user_${id}`, h.clock.now().toISOString());
