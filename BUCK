@@ -1487,6 +1487,15 @@ zig_coverage(
 )
 
 zig_coverage(
+    name = "api_gen_coverage",
+    blocks = False,
+    floor = "coverage/api_gen.txt",
+    test_targets = [":api_gen_test"],
+    # The generator's library; tools/api_gen.zig is its command line (arguments and file writes), run by `zig build gen-api`.
+    expect = glob(["tools/api_gen/*.zig"]),
+)
+
+zig_coverage(
     name = "group_e2e_coverage",
     blocks = False,
     floor = "coverage/group_e2e.txt",
@@ -1532,6 +1541,7 @@ filegroup(
     name = "coverage_floors",
     srcs = {
         "agents": ":agents_coverage_floor",
+        "api_gen": ":api_gen_coverage_floor",
         "apt_publish": ":apt_publish_coverage_floor",
         "build_parity": ":build_parity_coverage_floor",
         "channels": ":channels_coverage_floor",

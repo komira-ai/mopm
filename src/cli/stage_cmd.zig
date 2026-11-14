@@ -459,7 +459,7 @@ fn rawState(arena: Allocator, body: []const u8) []const u8 {
 
 /// What the registry says about the package `name` (a full name) at `version` against the files `packs`, or why it could not be asked.
 pub fn check(arena: Allocator, net: Net, api_v2_url: []const u8, name: []const u8, version: []const u8, packs: []const conda.Packed) !Result(Verdict) {
-    const full = core.names.split(name) orelse core.names.FullName{ .namespace = "", .name = name };
+    const full = core.names.split(name) orelse return bad(Verdict, arena, "'{s}' is not a full name <namespace>/<name>", .{name});
     const url = try v2.url(v2.GetVersion, arena, api_v2_url, .{ .namespace = full.namespace, .name = full.name, .version = version });
     const answer = net.vtable.request(net.ptr, arena, v2.GetVersion.method, url, .{}) catch |e| {
         return bad(Verdict, arena, "cannot ask the registry about {s} {s}: {s}", .{ name, version, @errorName(e) });

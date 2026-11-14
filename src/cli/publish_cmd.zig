@@ -560,7 +560,10 @@ fn publishCmd(arena: Allocator, f: Flags, cli_version: []const u8) anyerror!u8 {
     }
 
     // Commit.
-    const full = fullOf(name);
+    const full = fullOf(name) orelse {
+        err(not_full, .{name});
+        return 1;
+    };
     const commit = v2.CommitPublishParams{
         .namespace = full.namespace,
         .name = full.name,
@@ -587,7 +590,10 @@ fn publishCmd(arena: Allocator, f: Flags, cli_version: []const u8) anyerror!u8 {
 /// is not said. Any other answer is printed as every failed request is and the result is false, so the caller stops before
 /// an upload. A request that fails before an answer is said the same way.
 pub fn ensurePackage(arena: Allocator, net: group_publish.Net, con: *group_publish.Console, api_v2_url: []const u8, token: []const u8, stage: []const u8, name: []const u8) Allocator.Error!bool {
-    const full = fullOf(name);
+    const full = fullOf(name) orelse {
+        con.fail(not_full, .{name});
+        return false;
+    };
     const url = try v2.url(v2.CreatePackage, arena, api_v2_url, .{ .namespace = full.namespace, .name = full.name });
     // An empty body, not none: the request then carries `Content-Length: 0`, which a PUT needs.
     const answer = net.request(arena, .PUT, url, .{ .token = token, .body = "", .content_type = null }) catch |e| {
@@ -604,9 +610,14 @@ pub fn ensurePackage(arena: Allocator, net: group_publish.Net, con: *group_publi
 }
 
 /// `name` (a full name) as the namespace and name the generated operations take in their path.
-fn fullOf(name: []const u8) core.names.FullName {
-    return core.names.split(name) orelse .{ .namespace = "", .name = name };
+/// `name` split into its namespace and name for a v2 path; null for a name that is not a full name `<namespace>/<name>`
+/// (the manifest checks guarantee one, so this only keeps a bare name from ever becoming a request).
+fn fullOf(name: []const u8) ?core.names.FullName {
+    return core.names.split(name);
 }
+
+/// What is said of a package name that is not a full name, before any request is sent.
+const not_full = "'{s}' is not a full name <namespace>/<name>\n";
 
 /// Every header the registry named for a PUT, as given (the client sets Content-Length itself from the body, to the same
 /// value); null after printing why not, when a header's value is not text.
@@ -644,7 +655,10 @@ fn putHeadersOf(arena: Allocator, named: std.json.ArrayHashMap([]const u8)) Allo
 /// printing why not.
 fn uploadFile(s: registry_cmd.Session, token: []const u8, name: []const u8, version: []const u8, p: conda.Packed) anyerror!?[]const u8 {
     const arena = s.arena;
-    const full = fullOf(name);
+    const full = fullOf(name) orelse {
+        err(not_full, .{name});
+        return null;
+    };
     const begin = v2.BeginUploadParams{
         .namespace = full.namespace,
         .name = full.name,
@@ -656,7 +670,15 @@ fn uploadFile(s: registry_cmd.Session, token: []const u8, name: []const u8, vers
         registry_cmd.printFailure(begun);
         return null;
     }
-    const up = try v2.decode(v2.BeginUpload, arena, begun.body);
+    const up = v2.decode(v2.BeginUpload, arena, begun.body) catch |e| {
+        // An upload header whose value is not text is said as before the answer was decoded with the generated type.
+        if (std.json.parseFromSliceLeaky(std.json.Value, arena, begun.body, .{}) catch null) |value| {
+            if (value == .object) if (value.object.get("put_headers")) |named| {
+                if ((try putHeaders(arena, named)) == null) return null;
+            };
+        }
+        return e;
+    };
     if (!registry.allowedUrl(up.put_url)) {
         err("the registry named an upload URL that is neither https nor loopback http\n", .{});
         return null;
@@ -1173,6 +1195,19 @@ test "publish creates a package the registry does not have: PUT to its full name
     try std.testing.expect(!sent.content_type_set);
     try std.testing.expectEqualStrings("created example/x on beta\n", con.out.items);
     try std.testing.expectEqualStrings("", con.err.items);
+}
+
+test "a package name that is not a full name is refused before any request" {
+    var st = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer st.deinit();
+    const a = st.allocator();
+    var con = group_publish.Console.init(a, null);
+    var script = gt.newScript(a, &.{});
+    try std.testing.expect(!(try ensurePackage(a, script.net(), &con, "http://127.0.0.1:1/api/v2", "tok", "beta", "x")));
+    try std.testing.expectEqual(@as(usize, 0), script.seen.items.len);
+    try std.testing.expectEqualStrings("mopm: 'x' is not a full name <namespace>/<name>\n", con.err.items);
+    try std.testing.expect(fullOf("x") == null);
+    try std.testing.expectEqualStrings("example", fullOf("example/x").?.namespace);
 }
 
 test "publish of a package the registry already has says nothing about creating it and goes on" {

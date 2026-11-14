@@ -147,11 +147,6 @@ pub fn judge(e: plan_mod.CommitEntry, got: ?ReadmeAnswer) Verdict {
     return .confirmed;
 }
 
-/// The create request's `readme` member of `e`, or nothing for a member without a readme to upload.
-pub fn writeRef(w: anytype, e: plan_mod.CommitEntry) !void {
-    try w.print(",\"readme\":{{\"sha256\":\"{s}\",\"size\":{d}}}", .{ e.readme_sha256, e.readme.?.len });
-}
-
 /// The entry of upload member `name`, when it has a readme with text.
 pub fn entryWithReadme(entries: []const plan_mod.CommitEntry, name: []const u8) ?plan_mod.CommitEntry {
     for (entries) |e| {

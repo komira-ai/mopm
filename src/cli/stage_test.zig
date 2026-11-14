@@ -1203,3 +1203,13 @@ test "a native archive at the old path without the namespace is not read" {
     try std.testing.expect(contains(r.err, want));
     try std.testing.expect(!fx.exists("old_native"));
 }
+
+test "the registry check refuses a member name that is not a full name, without asking" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var stub = Stub{ .asked = std.ArrayList([]const u8).init(a) };
+    const got = try stage.check(a, stub.net(), api, "x", "1.0.0", &.{});
+    try std.testing.expectEqualStrings("'x' is not a full name <namespace>/<name>", got.bad);
+    try std.testing.expectEqual(@as(usize, 0), stub.asked.items.len);
+}

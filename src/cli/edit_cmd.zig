@@ -67,16 +67,6 @@ fn bareMessage(arena: Allocator, bare: []const u8, stage: []const u8, found: ?[]
     return std.fmt.allocPrint(arena, "dependency '{s}' has no namespace: write it as <namespace>/{s}; packages named {s} on {s}: {s} (as in 'mopm add {s}')", .{ bare, bare, bare, stage, list, kept.items[0] });
 }
 
-/// `s` percent-encoded for a URL query.
-fn queryEscape(arena: Allocator, s: []const u8) Allocator.Error![]const u8 {
-    var out = std.ArrayList(u8).init(arena);
-    for (s) |c| switch (c) {
-        'a'...'z', 'A'...'Z', '0'...'9', '-', '.', '_', '~' => try out.append(c),
-        else => try out.writer().print("%{X:0>2}", .{c}),
-    };
-    return out.toOwnedSlice();
-}
-
 /// The full names of the first page of `GET <api_v2_url>/packages?q=<bare>` (no token), in the registry's order; null
 /// when the request fails, is not answered 2xx or is not a package list.
 fn searchNames(arena: Allocator, net: Net, api_v2_url: []const u8, bare: []const u8) Allocator.Error!?[]const []const u8 {
@@ -565,11 +555,13 @@ test "the bare name is percent-encoded in the search, and an unresolvable regist
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const a = arena_state.allocator();
-    try std.testing.expectEqualStrings("json-x_1.2~", try queryEscape(a, "json-x_1.2~"));
-    try std.testing.expectEqualStrings("a%26b%3Dc%20d%2F", try queryEscape(a, "a&b=c d/"));
     var fake = FakeNet{ .body = "{\"packages\":[],\"next_cursor\":null}" };
     _ = (try searchNames(a, fake.net(), "http://127.0.0.1:1/api/v2", "a&b")).?;
     try std.testing.expectEqualStrings("http://127.0.0.1:1/api/v2/packages?q=a%26b&limit=100", fake.url);
+    _ = (try searchNames(a, fake.net(), "http://127.0.0.1:1/api/v2", "json-x_1.2~")).?;
+    try std.testing.expectEqualStrings("http://127.0.0.1:1/api/v2/packages?q=json-x_1.2~&limit=100", fake.url);
+    _ = (try searchNames(a, fake.net(), "http://127.0.0.1:1/api/v2", "a&b=c d/")).?;
+    try std.testing.expectEqualStrings("http://127.0.0.1:1/api/v2/packages?q=a%26b%3Dc%20d%2F&limit=100", fake.url);
     // Neither case reaches the network: the registry is not a registry, and there is no name to search for.
     var never = FakeNet{};
     try std.testing.expectEqualStrings(try bareProblem(a, "json"), try bareRefusal(a, never.net(), "nonsense", "0.0.1", "json"));

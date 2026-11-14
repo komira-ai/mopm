@@ -66,11 +66,6 @@ pub const Session = struct {
     pub fn api(s: Session, path: []const u8) Allocator.Error![]const u8 {
         return std.fmt.allocPrint(s.arena, "{s}{s}", .{ s.config.api_url, path });
     }
-
-    /// `path` under the API version 2 (`/me`).
-    pub fn apiV2(s: Session, path: []const u8) Allocator.Error![]const u8 {
-        return std.fmt.allocPrint(s.arena, "{s}{s}", .{ s.config.api_v2_url, path });
-    }
 };
 
 fn err(comptime fmt: []const u8, args: anytype) void {
