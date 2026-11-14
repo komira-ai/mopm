@@ -9,7 +9,9 @@ import { render } from './catalogue';
 import { templateFor } from './auth-catalogue';
 import { routePublish, type PublishApi } from './publish-routes';
 import { buildIndexConfig } from '../index-files';
+import { flatCreationHint } from '../publish/catalogue';
 import { createHash } from 'node:crypto';
+import { routeV2, type V2Deps } from './v2-routes';
 
 export type Stage = 'beta' | 'gamma' | 'prod';
 
@@ -43,6 +45,8 @@ export interface RouterDeps {
   publish?: PublishApi;
   /** The hosts `GET /index/config.json` names (from the stage's configuration). Absent: that path answers 404. */
   indexConfig?: { apiDomain: string; channelDomain: string };
+  /** What `/api/v2` needs besides the services above (src/http/v2-routes.ts). Absent: every v2 path answers `unavailable`. */
+  v2?: V2Deps;
 }
 
 export const INDEX_CONFIG_PATH = '/index/config.json';
@@ -67,7 +71,7 @@ function errorResponse(requestId: string, code: string, status: number, detail: 
   const entry = templateFor(code);
   if (!entry) return errorResponse(requestId, 'internal_error', HTTP_STATUS.internal_error, {});
   return respond(status, requestId, {
-    error: { code, message: render(entry.message, detail), hint: render(entry.hint, detail) },
+    error: { code, message: render(entry.message, detail), hint: flatCreationHint(code, detail) ?? render(entry.hint, detail) },
   });
 }
 
@@ -166,10 +170,11 @@ async function requirePackage(deps: RouterDeps, name: string): Promise<PackageRe
   return p;
 }
 
-const getHealth = (deps: RouterDeps) => ({
+/** `getHealth`, the same at both prefixes but for `api_version`. */
+export const getHealth = (deps: RouterDeps, api_version: 'v1' | 'v2' = 'v1') => ({
   status: 'ok',
   stage: deps.stage,
-  api_version: 'v1',
+  api_version,
   read_only: deps.readOnly,
   // Additive fields (the contract allows them): what e2e reads to prove which release is deployed.
   version: deps.version,
@@ -338,6 +343,8 @@ function indexConfig(deps: RouterDeps, requestId: string): HttpResponse {
 export async function route(req: HttpRequest, deps: RouterDeps, requestId: string): Promise<HttpResponse> {
   try {
     if (req.path === INDEX_CONFIG_PATH && req.method === 'GET') return indexConfig(deps, requestId);
+    const v2 = await routeV2(req, deps, requestId);
+    if (v2) return v2;
     if (deps.publish) {
       const published = await routePublish(req, deps.publish, requestId);
       if (published) return published;

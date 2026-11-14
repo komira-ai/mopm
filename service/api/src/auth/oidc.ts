@@ -264,6 +264,14 @@ export class OidcExchange {
     return this.exchangeRegistered(input as { jwt: string; name: string; version: string }, purpose);
   }
 
+  /**
+   * `POST /api/v2/auth/oidc/exchange` (ns-R3): the two forms of `exchange`, with full names, matched to the publishers of
+   * the namespace; it mints a token and creates nothing.
+   */
+  async exchangeV2(_input: unknown): Promise<unknown> {
+    throw new Error('exchangeV2: not implemented');
+  }
+
   private async exchangeConfigured(input: { jwt: string; packages: unknown }, purpose: OidcPurpose) {
     const bad = (detail: string) => new AuthError('invalid_request', `The request is not valid: ${detail}.`, { detail });
     if ('name' in input || 'version' in input) throw bad("send 'packages' or 'name' and 'version', not both");

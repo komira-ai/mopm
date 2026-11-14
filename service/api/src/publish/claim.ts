@@ -7,8 +7,9 @@ import type { PublishConfig } from './config';
 import { invalidRequest, PublishError } from './errors';
 import type { Flags, PublishStore } from './ports';
 
-/** Names nobody may claim (the contract's `name_reserved`). */
-export const RESERVED_NAMES: ReadonlySet<string> = new Set(['mopm', 'mojo', 'max', 'modular', 'std', 'stdlib']);
+/** Names nobody may claim (the contract's `name_reserved`); src/names.ts holds the list. */
+export { RESERVED_NAMES } from '../names';
+import { RESERVED_NAMES } from '../names';
 
 /** A claim with no published version lapses after this long (spec/api/openapi.yaml, claimPackage). */
 export const CLAIM_TTL_MS = 30 * 24 * 3600_000;

@@ -8,6 +8,7 @@ import type { GroupRequest, GroupService } from '../publish/group-service';
 import { actorOf, type PublishService } from '../publish/service';
 import { RegistryError } from '../errors';
 import type { HttpRequest, HttpResponse } from './router';
+import type { V2Deps } from './v2-routes';
 
 /** What the publish operations need: who is calling, what they may do, and whether uploads are allowed at all. */
 export interface PublishApi {
@@ -75,7 +76,7 @@ function optionalJsonBody(req: HttpRequest): unknown {
  * Order of checks: read-only mode first (a read-only registry says so to everyone, signed in or not), then the
  * token, then the scope for this package and version, then the request itself.
  */
-export async function routePublish(req: HttpRequest, api: PublishApi, requestId: string): Promise<HttpResponse | undefined> {
+export async function routePublish(req: HttpRequest, api: PublishApi, requestId: string, _v2?: V2Deps): Promise<HttpResponse | undefined> {
   const seg = segments(req.path);
   if (!seg) return undefined;
   const isBegin = req.method === 'POST' && seg.length === 4 && seg[0] === 'packages' && seg[3] === 'files';
