@@ -29,7 +29,7 @@ export const SHARED_STYLESHEET = 'site.css';
 
 /**
  * The area stylesheets each kind of page loads after the shared one, and no others. The app shell is one page for
- * /search, /packages/<name> and /packages/<name>/<version> (main.ts picks the view after load), so it loads both of
+ * /search, /packages/<namespace>/<name> and /packages/<namespace>/<name>/<version> (main.ts picks the view after load), so it loads both of
  * their areas: a sheet per view would mean a script-inserted <link> and a flash of unstyled view on every load.
  * The 404 page needs only the shared sheet.
  */

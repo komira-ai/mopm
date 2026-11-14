@@ -225,11 +225,11 @@ jobs:
             *) fail "$asset has cache-control $(header cache-control)" ;;
           esac
 
-          code=$(get /packages/zz_absent)
-          [ "$code" = "200" ] || fail "/packages/zz_absent answered HTTP $code (the app shell expected)"
+          code=$(get /packages/zz-absent/zz_absent)
+          [ "$code" = "200" ] || fail "/packages/zz-absent/zz_absent answered HTTP $code (the app shell expected)"
           case "$(header content-type)" in
-            text/html*) echo "ok: /packages/zz_absent is the app shell" ;;
-            *) fail "/packages/zz_absent has content-type $(header content-type)" ;;
+            text/html*) echo "ok: /packages/zz-absent/zz_absent is the app shell" ;;
+            *) fail "/packages/zz-absent/zz_absent has content-type $(header content-type)" ;;
           esac
 
           code=$(get /nope.txt)

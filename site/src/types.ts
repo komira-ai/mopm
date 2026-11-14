@@ -1,4 +1,5 @@
-// Read API response shapes as the site sees them (spec/api/openapi.yaml, read operations).
+// Read API response shapes as the site sees them (spec/api/openapi-v2.yaml, read operations). Every package name is a
+// full name, `<namespace>/<name>`.
 //
 // The API is additive-only: unknown fields are ignored and an enum value this build does not know decodes as
 // 'unknown'. Fields the spec defines but the server never sends (display_name, readme_html), and the
@@ -25,9 +26,15 @@ export interface PackageList {
   next_cursor: string | null;
 }
 
-export interface Owner {
+/** The namespace a package belongs to: its owner (there are no package owners in version 2). */
+export interface NamespaceInfo {
+  namespace: string;
+  kind: 'user' | 'org' | Unknown;
   github_id: number;
-  handle: string;
+  /** The GitHub login the account has now; differs from namespace after a rename on GitHub. Untrusted text. */
+  login: string;
+  /** No GitHub App installation of this account is bound: reads work, publishing is refused. */
+  frozen: boolean;
 }
 
 export type VersionState = 'published' | 'yanked' | 'tombstoned' | Unknown;
@@ -45,7 +52,7 @@ export interface PackageInfo {
   name: string;
   display_name?: string;
   state: 'claimed' | 'active' | Unknown;
-  owners: Owner[];
+  namespace: NamespaceInfo;
   latest: string | null;
   repository: string | null;
   license: string | null;

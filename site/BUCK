@@ -72,7 +72,7 @@ _TEST_DATA = _DOCS | {
     "src/core/unit_graph.zig": "//:site.src.core.unit_graph.zig",
     "tools/cut_release.zig": "//:site.tools.cut_release.zig",
     "tools/release.zig": "//:site.tools.release.zig",
-    "tests/contract/api": "//:contract_api",
+    "tests/contract/api-v2": "//:contract_api_v2",
     "tests/drivers/examples_test.zig": "//:site.tests.drivers.examples_test.zig",
     "tests/new/lib": "//:site_new_lib",
 }
