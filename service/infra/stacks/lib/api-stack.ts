@@ -114,7 +114,7 @@ export const WRITE_GRANTS: Array<{ sid: string; actions: string[]; tables: strin
   { sid: 'ReadSwitches', actions: ['dynamodb:GetItem'], tables: ['config'] },
 ];
 
-/** The environment variable the handler reads its configured CI publishers from. The code refuses to load it on any stage but beta and prod (prod: rows that act for an account only). */
+/** The environment variable the handler reads its configured CI publishers from. The code refuses to load it on any stage but beta and prod (prod: rows that act for an account, `acts_for`, or publish in a namespace, `namespace`). */
 export const CI_PUBLISHERS_ENV = 'CI_PUBLISHERS';
 /**
  * The CI identity the BETA stage trusts by configuration (config as code): the komira repository's release workflow, on
